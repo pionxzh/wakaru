@@ -316,8 +316,26 @@ fn emit_system_module(
     for stmt in &register.prelude {
         stmt.visit_with(&mut used_names);
     }
-    let mut transformer = SystemExecuteTransformer::new(export_sym, context_sym, used_names.names);
-    for stmt in outer_hoisted_stmts(body, &imported_locals) {
+    // Module-scope bindings only. `used_names` also contains nested IIFE idents,
+    // which must not block `export const Name` when Name is free at module scope.
+    let hoisted = outer_hoisted_stmts(body, &imported_locals);
+    let mut module_bound_names = imported_locals.clone();
+    for stmt in &register.prelude {
+        collect_top_level_decl_names(stmt, &mut module_bound_names);
+    }
+    for stmt in &hoisted {
+        collect_top_level_decl_names(stmt, &mut module_bound_names);
+    }
+    for stmt in &execute_body.stmts {
+        collect_top_level_decl_names(stmt, &mut module_bound_names);
+    }
+    let mut transformer = SystemExecuteTransformer::new(
+        export_sym,
+        context_sym,
+        used_names.names,
+        module_bound_names,
+    );
+    for stmt in hoisted {
         transformer.push_stmt(stmt, &mut items);
     }
 
@@ -415,6 +433,25 @@ fn outer_hoisted_stmts(body: &FunctionBody, imported_locals: &HashSet<Atom>) -> 
         }
     }
     out
+}
+
+fn collect_top_level_decl_names(stmt: &Stmt, names: &mut HashSet<Atom>) {
+    match stmt {
+        Stmt::Decl(Decl::Var(var)) => {
+            for decl in &var.decls {
+                if let Some(name) = pat_single_ident(&decl.name) {
+                    names.insert(name.clone());
+                }
+            }
+        }
+        Stmt::Decl(Decl::Fn(func)) => {
+            names.insert(func.ident.sym.clone());
+        }
+        Stmt::Decl(Decl::Class(class)) => {
+            names.insert(class.ident.sym.clone());
+        }
+        _ => {}
+    }
 }
 
 #[derive(Default)]
@@ -577,16 +614,23 @@ struct SystemExecuteTransformer {
     exports: Vec<ExportBinding>,
     declared_exports: HashSet<(Atom, Atom)>,
     used_names: HashSet<Atom>,
+    module_bound_names: HashSet<Atom>,
 }
 
 impl SystemExecuteTransformer {
-    fn new(export_sym: Atom, context_sym: Option<Atom>, used_names: HashSet<Atom>) -> Self {
+    fn new(
+        export_sym: Atom,
+        context_sym: Option<Atom>,
+        used_names: HashSet<Atom>,
+        module_bound_names: HashSet<Atom>,
+    ) -> Self {
         Self {
             export_sym,
             context_sym,
             exports: Vec::new(),
             declared_exports: HashSet::new(),
             used_names,
+            module_bound_names,
         }
     }
 
@@ -715,7 +759,7 @@ impl SystemExecuteTransformer {
         let exported_local = exported_value_local(value.as_ref());
         let local = exported_local
             .clone()
-            .unwrap_or_else(|| self.fresh_export_name());
+            .unwrap_or_else(|| self.bind_member_export_local(&exported, is_default));
 
         let mut assignment = assign.clone();
         let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &mut assignment.left else {
@@ -740,17 +784,22 @@ impl SystemExecuteTransformer {
                 Expr::Ident(_) => Vec::new(),
                 _ => unreachable!("exported_value_local accepted an unsupported expression"),
             }
+        } else if is_default {
+            // Initialize the export before computed keys or the assignment RHS can re-enter.
+            vec![
+                self.binding_item(local.clone(), value),
+                ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(ExportDefaultExpr {
+                    span: DUMMY_SP,
+                    expr: Box::new(Expr::Ident(ident(local.clone()))),
+                })),
+            ]
+        } else if local.as_ref() == exported.as_ref() {
+            vec![self.export_const_item(local.clone(), value)]
         } else {
             let mut items = vec![self.binding_item(local.clone(), value)];
-            if is_default {
-                // Initialize the export before computed keys or the assignment RHS can re-enter.
-                items.push(ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(
-                    ExportDefaultExpr {
-                        span: DUMMY_SP,
-                        expr: Box::new(Expr::Ident(ident(local.clone()))),
-                    },
-                )));
-            } else {
+            // Name already emitted as `export const` / named export: keep the
+            // second value on a synthetic local, do not repeat the specifier.
+            if !self.export_name_is_declared(&exported) {
                 self.declared_exports
                     .insert((local.clone(), exported.clone()));
                 items.push(named_export_item(local.clone(), exported));
@@ -759,6 +808,54 @@ impl SystemExecuteTransformer {
         };
         items.push(ModuleItem::Stmt(assignment_stmt));
         Some(items)
+    }
+
+    /// Bind a free, legal Identifier to the export name. Reserved words and
+    /// module-scope collisions keep the `__systemjs_export` alias path.
+    fn bind_member_export_local(&mut self, exported: &Atom, is_default: bool) -> Atom {
+        if !is_default && self.can_bind_export_name(exported) {
+            self.module_bound_names.insert(exported.clone());
+            self.used_names.insert(exported.clone());
+            exported.clone()
+        } else {
+            self.fresh_export_name()
+        }
+    }
+
+    fn can_bind_export_name(&self, exported: &Atom) -> bool {
+        Ident::verify_symbol(exported.as_ref()).is_ok()
+            && !self.module_bound_names.contains(exported)
+            && !self.export_name_is_declared(exported)
+    }
+
+    fn export_name_is_declared(&self, exported: &Atom) -> bool {
+        self.declared_exports
+            .iter()
+            .any(|(local, name)| local == exported || name == exported)
+    }
+
+    fn export_const_item(&mut self, name: Atom, value: Box<Expr>) -> ModuleItem {
+        self.declared_exports.insert((name.clone(), name.clone()));
+        self.module_bound_names.insert(name.clone());
+        self.used_names.insert(name.clone());
+        ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+            span: DUMMY_SP,
+            decl: Decl::Var(Box::new(VarDecl {
+                span: DUMMY_SP,
+                ctxt: Default::default(),
+                kind: swc_core::ecma::ast::VarDeclKind::Const,
+                declare: false,
+                decls: vec![VarDeclarator {
+                    span: DUMMY_SP,
+                    name: Pat::Ident(BindingIdent {
+                        id: ident(name),
+                        type_ann: None,
+                    }),
+                    init: Some(value),
+                    definite: false,
+                }],
+            })),
+        }))
     }
 
     fn binding_item(&self, local: Atom, value: Box<Expr>) -> ModuleItem {
@@ -783,12 +880,14 @@ impl SystemExecuteTransformer {
     fn fresh_export_name(&mut self) -> Atom {
         let base = Atom::from("__systemjs_export");
         if self.used_names.insert(base.clone()) {
+            self.module_bound_names.insert(base.clone());
             return base;
         }
         let mut suffix = 2u32;
         loop {
             let candidate = Atom::from(format!("__systemjs_export_{suffix}"));
             if self.used_names.insert(candidate.clone()) {
+                self.module_bound_names.insert(candidate.clone());
                 return candidate;
             }
             suffix += 1;
@@ -819,9 +918,7 @@ impl SystemExecuteTransformer {
                     ))]);
                 }
                 if is_valid_ident_name(exported.as_ref()) {
-                    self.declared_exports
-                        .insert((exported.clone(), exported.clone()));
-                    return Some(vec![named_export_decl_item(exported, value)]);
+                    return Some(vec![self.export_const_item(exported, value)]);
                 }
                 None
             }
