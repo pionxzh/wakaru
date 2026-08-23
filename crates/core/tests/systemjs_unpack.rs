@@ -1423,3 +1423,134 @@ System.register("entry", [], function (_export) {
         "plain comma values must not invent exports:\n{entry}"
     );
 }
+
+#[test]
+fn statement_export_rejects_free_global_reference() {
+    // `observe(Widget)` reads a global; `export const Widget` would
+    // capture it. The alias path keeps the global read intact.
+    let source = r#"
+System.register([], function (_export, _context) {
+  return { setters: [], execute: function () {
+    observe(Widget);
+    _export("Widget", make());
+  } };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "entry.js");
+    assert!(
+        entry.contains("export { __systemjs_export as Widget };"),
+        "captured name must export through an alias:\n{entry}"
+    );
+    assert!(
+        entry.contains("observe(Widget)"),
+        "the global read must stay untouched:\n{entry}"
+    );
+}
+
+#[test]
+fn statement_export_rejects_reserved_name_binding() {
+    let source = r#"
+System.register([], function (_export, _context) {
+  return { setters: [], execute: function () {
+    _export("class", make());
+  } };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "entry.js");
+    assert!(
+        entry.contains("export { __systemjs_export as class };"),
+        "reserved export names must use an alias binding:\n{entry}"
+    );
+    assert!(
+        !entry.contains("const class"),
+        "must not declare a reserved-word binding:\n{entry}"
+    );
+}
+
+#[test]
+fn statement_export_rejects_existing_local_collision() {
+    let source = r#"
+System.register([], function (_export, _context) {
+  return { setters: [], execute: function () {
+    var Widget = 1;
+    _export("Widget", make());
+    use(Widget);
+  } };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "entry.js");
+    assert!(
+        entry.contains("export { __systemjs_export as Widget };"),
+        "colliding name must export through an alias:\n{entry}"
+    );
+    assert!(
+        entry.contains("use(Widget)"),
+        "the existing local must keep its uses:\n{entry}"
+    );
+}
+
+#[test]
+fn statement_export_binds_free_name_directly() {
+    let source = r#"
+System.register([], function (_export, _context) {
+  return { setters: [], execute: function () {
+    _export("Widget", make());
+  } };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "entry.js");
+    assert!(
+        entry.contains("export const Widget = make();"),
+        "a provably free name binds directly:\n{entry}"
+    );
+}
+
+#[test]
+fn parenthesized_direct_eval_blocks_direct_binding() {
+    // `(eval)(code)` is still a direct eval; the exported name must not
+    // become a module binding it could observe.
+    let source = r#"
+System.register([], function (_export, _context) {
+  return { setters: [], execute: function () {
+    (eval)(code);
+    _export("Widget", make());
+  } };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "entry.js");
+    assert!(
+        entry.contains("export { __systemjs_export as Widget };"),
+        "direct eval must force the alias path:\n{entry}"
+    );
+}
+
+#[test]
+fn sequence_result_export_respects_freedom_proof() {
+    // The sequence path keeps `_export`'s return value; the name it binds
+    // must pass the same freedom proof as every other direct binding.
+    let source = r#"
+System.register([], function (_export, _context) {
+  var result;
+  return { setters: [], execute: function () {
+    eval("Widget");
+    result = (_export("Widget", make()), finish());
+    use(result);
+  } };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "entry.js");
+    assert!(
+        entry.contains("export { __systemjs_export as Widget };"),
+        "direct eval must force the alias path in sequences too:\n{entry}"
+    );
+    assert!(
+        !entry.contains("export const Widget"),
+        "must not bind a name a direct eval could observe:\n{entry}"
+    );
+}
