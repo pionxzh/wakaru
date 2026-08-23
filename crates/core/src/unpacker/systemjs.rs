@@ -1,7 +1,9 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::{sync::Lrc, SourceMap, Span, DUMMY_SP};
+use swc_core::common::{
+    sync::Lrc, Globals, Mark, SourceMap, Span, SyntaxContext, DUMMY_SP, GLOBALS,
+};
 use swc_core::ecma::ast::{
     ArrayLit, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BindingIdent, CallExpr,
     Callee, Decl, EsVersion, ExportDecl, ExportDefaultExpr, ExportNamedSpecifier, ExportSpecifier,
@@ -12,6 +14,7 @@ use swc_core::ecma::ast::{
     SimpleAssignTarget, Stmt, Str, UnaryOp, VarDecl, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
+use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::js_names::is_reserved_binding_name;
@@ -316,25 +319,44 @@ fn emit_system_module(
     for stmt in &register.prelude {
         stmt.visit_with(&mut used_names);
     }
-    // Module-scope bindings only. `used_names` also contains nested IIFE idents,
-    // which must not block `export const Name` when Name is free at module scope.
     let hoisted = outer_hoisted_stmts(body, &imported_locals);
+    let mut lifted_stmts =
+        Vec::with_capacity(register.prelude.len() + hoisted.len() + execute_body.stmts.len());
+    lifted_stmts.extend(register.prelude.iter().cloned());
+    lifted_stmts.extend(hoisted.iter().cloned());
+    lifted_stmts.extend(execute_body.stmts.iter().cloned());
+
     let mut module_bound_names = imported_locals.clone();
-    for stmt in &register.prelude {
-        collect_top_level_decl_names(stmt, &mut module_bound_names);
-    }
-    for stmt in &hoisted {
-        collect_top_level_decl_names(stmt, &mut module_bound_names);
-    }
-    for stmt in &execute_body.stmts {
-        collect_top_level_decl_names(stmt, &mut module_bound_names);
-    }
+    collect_lifted_decl_names(&lifted_stmts, &mut module_bound_names);
+    let mutable_export_names =
+        collect_mutable_export_names(&lifted_stmts, &export_sym, &module_bound_names);
+    let mut direct_binding_candidates =
+        collect_member_export_binding_names(&lifted_stmts, &export_sym);
+    direct_binding_candidates.extend(mutable_export_names.iter().filter_map(|name| {
+        (name.as_ref() != "default"
+            && Ident::verify_symbol(name.as_ref()).is_ok()
+            && !is_reserved_binding_name(name.as_ref()))
+        .then_some(name.clone())
+    }));
+    let unresolved_analysis = if !direct_binding_candidates.is_empty()
+        && (direct_binding_candidates
+            .iter()
+            .any(|name| used_names.names.contains(name))
+            || used_names.names.iter().any(|name| name.as_ref() == "eval"))
+    {
+        analyze_unresolved_names(&lifted_stmts)
+    } else {
+        UnresolvedNameAnalysis::default()
+    };
     let mut transformer = SystemExecuteTransformer::new(
         export_sym,
         context_sym,
         used_names.names,
         module_bound_names,
+        unresolved_analysis.names,
+        unresolved_analysis.has_direct_eval,
     );
+    items.extend(transformer.prepare_mutable_exports(mutable_export_names));
     for stmt in hoisted {
         transformer.push_stmt(stmt, &mut items);
     }
@@ -435,22 +457,233 @@ fn outer_hoisted_stmts(body: &FunctionBody, imported_locals: &HashSet<Atom>) -> 
     out
 }
 
-fn collect_top_level_decl_names(stmt: &Stmt, names: &mut HashSet<Atom>) {
-    match stmt {
-        Stmt::Decl(Decl::Var(var)) => {
-            for decl in &var.decls {
-                if let Some(name) = pat_single_ident(&decl.name) {
-                    names.insert(name.clone());
-                }
+/// Collect bindings that will share the recovered module's top-level region.
+/// Nested function/class bodies keep their own scopes and are deliberately not
+/// traversed. Block-scoped declarations are conservatively included: choosing
+/// an alias is harmless, while missing a function-scoped `var` is not.
+fn collect_lifted_decl_names(stmts: &[Stmt], names: &mut HashSet<Atom>) {
+    let mut collector = LiftedDeclNameCollector { names };
+    for stmt in stmts {
+        stmt.visit_with(&mut collector);
+    }
+}
+
+struct LiftedDeclNameCollector<'a> {
+    names: &'a mut HashSet<Atom>,
+}
+
+impl Visit for LiftedDeclNameCollector<'_> {
+    fn visit_binding_ident(&mut self, binding: &BindingIdent) {
+        self.names.insert(binding.id.sym.clone());
+    }
+
+    fn visit_fn_decl(&mut self, function: &swc_core::ecma::ast::FnDecl) {
+        self.names.insert(function.ident.sym.clone());
+    }
+
+    fn visit_class_decl(&mut self, class: &swc_core::ecma::ast::ClassDecl) {
+        self.names.insert(class.ident.sym.clone());
+    }
+
+    fn visit_function(&mut self, _function: &Function) {}
+
+    fn visit_arrow_expr(&mut self, _arrow: &swc_core::ecma::ast::ArrowExpr) {}
+
+    fn visit_class(&mut self, _class: &swc_core::ecma::ast::Class) {}
+}
+
+/// Resolve a clone of the statements in the scope they will occupy after
+/// lifting. Any identifier still carrying `unresolved_mark` is a free/global
+/// read that a newly introduced module binding would capture.
+fn analyze_unresolved_names(stmts: &[Stmt]) -> UnresolvedNameAnalysis {
+    let globals = Globals::new();
+    GLOBALS.set(&globals, || {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+        let probe_fn = Function {
+            params: Vec::new(),
+            decorators: Vec::new(),
+            span: DUMMY_SP,
+            ctxt: SyntaxContext::empty(),
+            this_param: None,
+            body: Some(FunctionBody {
+                span: DUMMY_SP,
+                stmts: stmts.to_vec(),
+            }),
+            is_generator: false,
+            is_async: true,
+            type_params: None,
+            return_type: None,
+        };
+        let mut probe = Module {
+            span: DUMMY_SP,
+            body: vec![ModuleItem::Stmt(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Fn(FnExpr {
+                    ident: None,
+                    function: Box::new(probe_fn),
+                })),
+            }))],
+            shebang: None,
+        };
+        probe.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+
+        let mut collector = UnresolvedNameCollector {
+            unresolved_ctxt: SyntaxContext::empty().apply_mark(unresolved_mark),
+            names: HashSet::new(),
+            has_direct_eval: false,
+        };
+        probe.visit_with(&mut collector);
+        UnresolvedNameAnalysis {
+            names: collector.names,
+            has_direct_eval: collector.has_direct_eval,
+        }
+    })
+}
+
+#[derive(Default)]
+struct UnresolvedNameAnalysis {
+    names: HashSet<Atom>,
+    has_direct_eval: bool,
+}
+
+struct UnresolvedNameCollector {
+    unresolved_ctxt: SyntaxContext,
+    names: HashSet<Atom>,
+    has_direct_eval: bool,
+}
+
+impl Visit for UnresolvedNameCollector {
+    fn visit_ident(&mut self, ident: &Ident) {
+        if ident.ctxt == self.unresolved_ctxt {
+            self.names.insert(ident.sym.clone());
+        }
+    }
+
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if matches!(
+            &call.callee,
+            Callee::Expr(callee)
+                if matches!(
+                    callee.as_ref(),
+                    Expr::Ident(ident)
+                        if ident.sym.as_ref() == "eval" && ident.ctxt == self.unresolved_ctxt
+                )
+        ) {
+            self.has_direct_eval = true;
+        }
+        call.visit_children_with(self);
+    }
+}
+
+#[derive(Default)]
+struct ExportNameUse {
+    count: usize,
+    shared_local: Option<Atom>,
+    needs_mutable_binding: bool,
+}
+
+/// A repeated SystemJS export can reuse an existing ESM live binding only
+/// when every update is backed by the same module-scope local. Different,
+/// computed, or free values need one canonical mutable binding instead.
+fn collect_mutable_export_names(
+    stmts: &[Stmt],
+    export_sym: &Atom,
+    module_bound_names: &HashSet<Atom>,
+) -> Vec<Atom> {
+    let mut collector = ExportNameUseCollector {
+        export_sym,
+        uses: HashMap::new(),
+        order: Vec::new(),
+    };
+    for stmt in stmts {
+        stmt.visit_with(&mut collector);
+    }
+    collector
+        .order
+        .into_iter()
+        .filter(|name| {
+            collector.uses.get(name).is_some_and(|usage| {
+                usage.count > 1
+                    && (usage.needs_mutable_binding
+                        || !usage
+                            .shared_local
+                            .as_ref()
+                            .is_some_and(|local| module_bound_names.contains(local)))
+                    && (name.as_ref() == "default" || is_valid_ident_name(name.as_ref()))
+            })
+        })
+        .collect()
+}
+
+struct ExportNameUseCollector<'a> {
+    export_sym: &'a Atom,
+    uses: HashMap<Atom, ExportNameUse>,
+    order: Vec<Atom>,
+}
+
+impl Visit for ExportNameUseCollector<'_> {
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if let Some(ExportCall::Single { exported, value }) =
+            parse_export_call(call, self.export_sym)
+        {
+            let local = exported_value_local(value.as_ref());
+            let usage = self.uses.entry(exported.clone()).or_default();
+            if usage.count == 0 {
+                self.order.push(exported);
+                usage.needs_mutable_binding = local.is_none();
+                usage.shared_local = local;
+            } else if usage.shared_local.as_ref() != local.as_ref() {
+                usage.needs_mutable_binding = true;
             }
+            usage.count += 1;
         }
-        Stmt::Decl(Decl::Fn(func)) => {
-            names.insert(func.ident.sym.clone());
+        call.visit_children_with(self);
+    }
+}
+
+fn collect_member_export_binding_names(stmts: &[Stmt], export_sym: &Atom) -> HashSet<Atom> {
+    let mut collector = MemberExportBindingNameCollector {
+        export_sym,
+        names: HashSet::new(),
+    };
+    for stmt in stmts {
+        stmt.visit_with(&mut collector);
+    }
+    collector.names
+}
+
+struct MemberExportBindingNameCollector<'a> {
+    export_sym: &'a Atom,
+    names: HashSet<Atom>,
+}
+
+impl Visit for MemberExportBindingNameCollector<'_> {
+    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+        let exported = assign
+            .left
+            .as_simple()
+            .and_then(SimpleAssignTarget::as_member)
+            .and_then(|member| match member.obj.as_ref() {
+                Expr::Call(call) => Some(call),
+                _ => None,
+            })
+            .and_then(|call| parse_export_call(call, self.export_sym))
+            .and_then(|export_call| match export_call {
+                ExportCall::Single { exported, value }
+                    if exported.as_ref() != "default"
+                        && exported_value_local(value.as_ref()).is_none()
+                        && Ident::verify_symbol(exported.as_ref()).is_ok()
+                        && !is_reserved_binding_name(exported.as_ref()) =>
+                {
+                    Some(exported)
+                }
+                _ => None,
+            });
+        if let Some(exported) = exported {
+            self.names.insert(exported);
         }
-        Stmt::Decl(Decl::Class(class)) => {
-            names.insert(class.ident.sym.clone());
-        }
-        _ => {}
+        assign.visit_children_with(self);
     }
 }
 
@@ -608,6 +841,41 @@ fn setter_assignment_expr(expr: &Expr, module_sym: &Atom) -> Option<(Atom, Sette
     }
 }
 
+struct MutableExportRewriter<'a> {
+    export_sym: &'a Atom,
+    bindings: &'a HashMap<Atom, Atom>,
+}
+
+impl VisitMut for MutableExportRewriter<'_> {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        let replacement = match expr {
+            Expr::Call(call) => parse_export_call(call, self.export_sym).and_then(|export_call| {
+                let ExportCall::Single {
+                    exported,
+                    mut value,
+                } = export_call
+                else {
+                    return None;
+                };
+                let local = self.bindings.get(&exported)?.clone();
+                value.visit_mut_with(self);
+                // `_export(name, value)` evaluates to `value`. The assignment
+                // has the same result; grouping keeps member/callee precedence.
+                Some(Expr::Paren(ParenExpr {
+                    span: DUMMY_SP,
+                    expr: Box::new(assign_local_expr(local, value)),
+                }))
+            }),
+            _ => None,
+        };
+        if let Some(replacement) = replacement {
+            *expr = replacement;
+            return;
+        }
+        expr.visit_mut_children_with(self);
+    }
+}
+
 struct SystemExecuteTransformer {
     export_sym: Atom,
     context_sym: Option<Atom>,
@@ -615,6 +883,9 @@ struct SystemExecuteTransformer {
     declared_exports: HashSet<(Atom, Atom)>,
     used_names: HashSet<Atom>,
     module_bound_names: HashSet<Atom>,
+    unresolved_names: HashSet<Atom>,
+    has_direct_eval: bool,
+    mutable_export_bindings: HashMap<Atom, Atom>,
 }
 
 impl SystemExecuteTransformer {
@@ -623,6 +894,8 @@ impl SystemExecuteTransformer {
         context_sym: Option<Atom>,
         used_names: HashSet<Atom>,
         module_bound_names: HashSet<Atom>,
+        unresolved_names: HashSet<Atom>,
+        has_direct_eval: bool,
     ) -> Self {
         Self {
             export_sym,
@@ -631,10 +904,48 @@ impl SystemExecuteTransformer {
             declared_exports: HashSet::new(),
             used_names,
             module_bound_names,
+            unresolved_names,
+            has_direct_eval,
+            mutable_export_bindings: HashMap::new(),
         }
     }
 
+    fn prepare_mutable_exports(&mut self, exported_names: Vec<Atom>) -> Vec<ModuleItem> {
+        let mut items = Vec::new();
+        for exported in exported_names {
+            let use_direct_binding =
+                exported.as_ref() != "default" && self.can_bind_export_name(&exported);
+            let local = if use_direct_binding {
+                self.module_bound_names.insert(exported.clone());
+                self.used_names.insert(exported.clone());
+                exported.clone()
+            } else {
+                self.fresh_export_name()
+            };
+
+            self.mutable_export_bindings
+                .insert(exported.clone(), local.clone());
+            self.declared_exports
+                .insert((local.clone(), exported.clone()));
+            // The declaration is side-effect free. Original `_export` call
+            // positions become assignments to this live binding in push_stmt.
+            if use_direct_binding {
+                items.push(export_let_item(local));
+            } else {
+                items.push(let_binding_item(local.clone()));
+                items.push(named_export_item(local, exported));
+            }
+        }
+        items
+    }
+
     fn push_stmt(&mut self, mut stmt: Stmt, items: &mut Vec<ModuleItem>) {
+        let mut mutable_export_rewriter = MutableExportRewriter {
+            export_sym: &self.export_sym,
+            bindings: &self.mutable_export_bindings,
+        };
+        stmt.visit_mut_with(&mut mutable_export_rewriter);
+
         if let Some(export_items) = self.take_export_stmt(&stmt) {
             items.extend(export_items);
             return;
@@ -824,14 +1135,21 @@ impl SystemExecuteTransformer {
 
     fn can_bind_export_name(&self, exported: &Atom) -> bool {
         Ident::verify_symbol(exported.as_ref()).is_ok()
+            && !is_reserved_binding_name(exported.as_ref())
             && !self.module_bound_names.contains(exported)
+            && !self.unresolved_names.contains(exported)
+            && !self.has_direct_eval
             && !self.export_name_is_declared(exported)
     }
 
     fn export_name_is_declared(&self, exported: &Atom) -> bool {
         self.declared_exports
             .iter()
-            .any(|(local, name)| local == exported || name == exported)
+            .any(|(_, name)| name == exported)
+            || self
+                .exports
+                .iter()
+                .any(|binding| &binding.exported == exported)
     }
 
     fn export_const_item(&mut self, name: Atom, value: Box<Expr>) -> ModuleItem {
@@ -1289,6 +1607,45 @@ fn named_export_item(local: Atom, exported: Atom) -> ModuleItem {
     }))
 }
 
+fn let_binding_item(local: Atom) -> ModuleItem {
+    ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(VarDecl {
+        span: DUMMY_SP,
+        ctxt: Default::default(),
+        kind: swc_core::ecma::ast::VarDeclKind::Let,
+        declare: false,
+        decls: vec![VarDeclarator {
+            span: DUMMY_SP,
+            name: Pat::Ident(BindingIdent {
+                id: ident(local),
+                type_ann: None,
+            }),
+            init: None,
+            definite: false,
+        }],
+    }))))
+}
+
+fn export_let_item(name: Atom) -> ModuleItem {
+    ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+        span: DUMMY_SP,
+        decl: Decl::Var(Box::new(VarDecl {
+            span: DUMMY_SP,
+            ctxt: Default::default(),
+            kind: swc_core::ecma::ast::VarDeclKind::Let,
+            declare: false,
+            decls: vec![VarDeclarator {
+                span: DUMMY_SP,
+                name: Pat::Ident(BindingIdent {
+                    id: ident(name),
+                    type_ann: None,
+                }),
+                init: None,
+                definite: false,
+            }],
+        })),
+    }))
+}
+
 fn named_export_decl_item(exported: Atom, value: Box<Expr>) -> ModuleItem {
     ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
         span: DUMMY_SP,
@@ -1420,6 +1777,18 @@ fn assign_ident_item(target: BindingIdent, value: Box<Expr>) -> ModuleItem {
             right: value,
         })),
     }))
+}
+
+fn assign_local_expr(local: Atom, value: Box<Expr>) -> Expr {
+    Expr::Assign(AssignExpr {
+        span: DUMMY_SP,
+        op: AssignOp::Assign,
+        left: AssignTarget::Simple(SimpleAssignTarget::Ident(BindingIdent {
+            id: ident(local),
+            type_ann: None,
+        })),
+        right: value,
+    })
 }
 
 fn var_declarator_item(var: &VarDecl, decl: VarDeclarator) -> ModuleItem {

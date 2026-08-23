@@ -472,7 +472,7 @@ System.register("entry", [], function (_export) {
 }
 
 #[test]
-fn member_export_does_not_redeclare_existing_export_const() {
+fn repeated_member_export_updates_one_live_binding() {
     let source = r#"
 System.register("entry", [], function (_export) {
   return {
@@ -487,23 +487,17 @@ System.register("entry", [], function (_export) {
     let modules = unpack_source_raw(source);
     let entry = module_code(&modules, "entry.js");
 
-    assert_eq!(
-        entry.matches("export const HelperUtils =").count(),
-        1,
-        "plain export should remain the only HelperUtils binding:\n{entry}"
+    assert!(
+        entry.contains("export let HelperUtils;") && entry.contains("HelperUtils = makeValue()"),
+        "the first value should initialize one mutable live export:\n{entry}"
     );
     assert!(
-        entry.contains("export const HelperUtils = makeValue();"),
-        "first export should keep the original value:\n{entry}"
+        entry.contains("(HelperUtils = makeOther()).tag = \"HelperUtils\";"),
+        "the member export should update that same live binding before mutation:\n{entry}"
     );
     assert!(
-        entry.contains("const __systemjs_export = makeOther();")
-            && entry.contains("__systemjs_export.tag = \"HelperUtils\";"),
-        "member export should evaluate the second value on a synthetic binding:\n{entry}"
-    );
-    assert!(
-        !entry.contains("export { __systemjs_export as HelperUtils }"),
-        "already-declared export must not be repeated as an alias:\n{entry}"
+        !entry.contains("export const HelperUtils =") && !entry.contains("__systemjs_export"),
+        "a repeated public name must not leave the export on a stale value:\n{entry}"
     );
     assert_eq!(
         entry.matches("makeValue()").count(),
@@ -514,6 +508,138 @@ System.register("entry", [], function (_export) {
         entry.matches("makeOther()").count(),
         1,
         "makeOther should be evaluated once:\n{entry}"
+    );
+    assert_eq!(
+        validate_output_modules(&modules),
+        vec![],
+        "the reconstructed live export should remain parseable:\n{entry}"
+    );
+}
+
+#[test]
+fn member_export_does_not_capture_a_free_reference() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      _export("Widget", function () {
+        return Widget;
+      }()).ready = true;
+    }
+  };
+});
+"#;
+
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+
+    assert!(
+        entry.contains("export { __systemjs_export as Widget };")
+            && entry.contains("return Widget;")
+            && entry.contains("__systemjs_export.ready = true;"),
+        "a free Widget read must keep resolving outside the recovered module binding:\n{entry}"
+    );
+    assert!(
+        !entry.contains("export const Widget ="),
+        "binding Widget around its own initializer would introduce a TDZ capture:\n{entry}"
+    );
+}
+
+#[test]
+fn member_export_does_not_change_direct_eval_scope() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      _export("Widget", function () {
+        return eval("Widget");
+      }()).ready = true;
+    }
+  };
+});
+"#;
+
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+
+    assert!(
+        entry.contains("export { __systemjs_export as Widget };")
+            && entry.contains("return eval(\"Widget\");"),
+        "a direct eval must not see a newly introduced Widget binding:\n{entry}"
+    );
+    assert!(
+        !entry.contains("export const Widget ="),
+        "direct eval makes otherwise-free export names capture-sensitive:\n{entry}"
+    );
+}
+
+#[test]
+fn member_export_avoids_lifted_binding_collisions() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      const { Widget } = source;
+      for (var Gadget of gadgets) {
+        consume(Gadget);
+      }
+      _export("Widget", makeValue()).ready = true;
+      _export("Gadget", makeGadget()).ready = true;
+      consume(Widget);
+    }
+  };
+});
+"#;
+
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+
+    assert!(
+        entry.contains("const { Widget } = source;")
+            && entry.contains("export { __systemjs_export as Widget };")
+            && entry.contains("__systemjs_export.ready = true;")
+            && entry.contains("export { __systemjs_export_2 as Gadget };")
+            && entry.contains("__systemjs_export_2.ready = true;"),
+        "destructured and nested var bindings should force collision-free export aliases:\n{entry}"
+    );
+    assert!(
+        !entry.contains("export const Widget =") && !entry.contains("export const Gadget ="),
+        "recovered exports must not redeclare lifted bindings:\n{entry}"
+    );
+    assert_eq!(
+        validate_output_modules(&modules),
+        vec![],
+        "the destructuring collision fallback should remain parseable:\n{entry}"
+    );
+}
+
+#[test]
+fn generated_local_name_does_not_hide_same_named_public_export() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  var X;
+  return {
+    execute: function () {
+      _export("X", makeFirst()).a = 1;
+      _export("__systemjs_export", makeSecond()).b = 2;
+    }
+  };
+});
+"#;
+
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+
+    assert!(
+        entry.contains("export { __systemjs_export as X };")
+            && entry.contains("export { __systemjs_export_2 as __systemjs_export };")
+            && entry.contains("__systemjs_export_2.b = 2;"),
+        "local aliases and public export names must use separate namespaces:\n{entry}"
+    );
+    assert_eq!(
+        validate_output_modules(&modules),
+        vec![],
+        "both public exports should remain parseable:\n{entry}"
     );
 }
 
@@ -701,7 +827,7 @@ fn default_iife_member_export_avoids_module_prelude_names() {
 }
 
 #[test]
-fn direct_declaration_export_is_not_repeated_in_trailing_export_list() {
+fn repeated_exports_with_different_values_share_one_live_binding() {
     let source = r#"
 System.register("entry", [], function (_export) {
   return {
@@ -716,19 +842,86 @@ System.register("entry", [], function (_export) {
     let modules = unpack_source_raw(source);
     let entry = module_code(&modules, "entry.js");
 
-    assert_eq!(
-        entry.matches("export const Utils =").count(),
-        1,
-        "Utils should have exactly one export declaration:\n{entry}"
-    );
     assert!(
-        !entry.contains("export { Utils"),
-        "trailing named export list must not repeat Utils:\n{entry}"
+        entry.contains("let __systemjs_export;")
+            && entry.contains("export { __systemjs_export as Utils };")
+            && entry.contains("__systemjs_export = makeUtils()")
+            && entry.contains("__systemjs_export = Utils"),
+        "different values should update one mutable public export without capturing global Utils:\n{entry}"
     );
     assert_eq!(
         entry.matches("export {").count(),
-        0,
-        "fully filtered trailing exports must not emit an empty export declaration:\n{entry}"
+        1,
+        "Utils should have exactly one ESM export specifier:\n{entry}"
+    );
+    assert_eq!(
+        validate_output_modules(&modules),
+        vec![],
+        "the mutable alias path should remain parseable:\n{entry}"
+    );
+}
+
+#[test]
+fn repeated_exports_of_free_value_get_a_declared_live_binding() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      _export("Value", external);
+      _export("Value", external);
+    }
+  };
+});
+"#;
+
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+
+    assert!(
+        entry.contains("export let Value;")
+            && entry.matches("Value = external").count() == 2
+            && !entry.contains("export { external as Value }"),
+        "a free value cannot serve as an ESM local export binding:\n{entry}"
+    );
+    assert_eq!(
+        validate_output_modules(&modules),
+        vec![],
+        "the synthesized live binding should remain parseable:\n{entry}"
+    );
+}
+
+#[test]
+fn repeated_default_member_exports_share_one_live_binding() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      _export("default", makeFirst()).a = 1;
+      _export("default", makeSecond()).b = 2;
+    }
+  };
+});
+"#;
+
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+
+    assert!(
+        entry.contains("let __systemjs_export;")
+            && entry.contains("export { __systemjs_export as default };")
+            && entry.contains("(__systemjs_export = makeFirst()).a = 1;")
+            && entry.contains("(__systemjs_export = makeSecond()).b = 2;"),
+        "default updates should share one mutable live export:\n{entry}"
+    );
+    assert_eq!(
+        entry.matches(" as default").count(),
+        1,
+        "default should be exported exactly once:\n{entry}"
+    );
+    assert_eq!(
+        validate_output_modules(&modules),
+        vec![],
+        "the live default export should remain parseable:\n{entry}"
     );
 }
 
