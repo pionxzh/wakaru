@@ -328,15 +328,15 @@ fn emit_system_module(
 
     let mut module_bound_names = imported_locals.clone();
     collect_lifted_decl_names(&lifted_stmts, &mut module_bound_names);
-    let mutable_export_names =
-        collect_mutable_export_names(&lifted_stmts, &export_sym, &module_bound_names);
+    let export_name_usage =
+        collect_export_name_usage(&lifted_stmts, &export_sym, &module_bound_names);
+    let mutable_export_names = export_name_usage.mutable;
     let mut direct_binding_candidates =
         collect_member_export_binding_names(&lifted_stmts, &export_sym);
-    direct_binding_candidates.extend(mutable_export_names.iter().filter_map(|name| {
-        (name.as_ref() != "default"
+    direct_binding_candidates.extend(export_name_usage.seen.into_iter().filter(|name| {
+        name.as_ref() != "default"
             && Ident::verify_symbol(name.as_ref()).is_ok()
-            && !is_reserved_binding_name(name.as_ref()))
-        .then_some(name.clone())
+            && !is_reserved_binding_name(name.as_ref())
     }));
     let unresolved_analysis = if !direct_binding_candidates.is_empty()
         && (direct_binding_candidates
@@ -561,11 +561,13 @@ impl Visit for UnresolvedNameCollector {
     }
 
     fn visit_call_expr(&mut self, call: &CallExpr) {
+        // `(eval)(x)` is still a direct eval; only aliasing or optional
+        // calls make it indirect.
         if matches!(
             &call.callee,
             Callee::Expr(callee)
                 if matches!(
-                    callee.as_ref(),
+                    strip_paren_expr(callee),
                     Expr::Ident(ident)
                         if ident.sym.as_ref() == "eval" && ident.ctxt == self.unresolved_ctxt
                 )
@@ -583,14 +585,22 @@ struct ExportNameUse {
     needs_mutable_binding: bool,
 }
 
+struct ExportNameUsageSummary {
+    mutable: Vec<Atom>,
+    /// Every single-exported name in first-seen order. Each of these may
+    /// become a direct `export const <Name>` binding, so each is a
+    /// candidate for the free-name analysis.
+    seen: Vec<Atom>,
+}
+
 /// A repeated SystemJS export can reuse an existing ESM live binding only
 /// when every update is backed by the same module-scope local. Different,
 /// computed, or free values need one canonical mutable binding instead.
-fn collect_mutable_export_names(
+fn collect_export_name_usage(
     stmts: &[Stmt],
     export_sym: &Atom,
     module_bound_names: &HashSet<Atom>,
-) -> Vec<Atom> {
+) -> ExportNameUsageSummary {
     let mut collector = ExportNameUseCollector {
         export_sym,
         uses: HashMap::new(),
@@ -599,11 +609,11 @@ fn collect_mutable_export_names(
     for stmt in stmts {
         stmt.visit_with(&mut collector);
     }
-    collector
+    let mutable = collector
         .order
-        .into_iter()
+        .iter()
         .filter(|name| {
-            collector.uses.get(name).is_some_and(|usage| {
+            collector.uses.get(*name).is_some_and(|usage| {
                 usage.count > 1
                     && (usage.needs_mutable_binding
                         || !usage
@@ -613,7 +623,12 @@ fn collect_mutable_export_names(
                     && (name.as_ref() == "default" || is_valid_ident_name(name.as_ref()))
             })
         })
-        .collect()
+        .cloned()
+        .collect();
+    ExportNameUsageSummary {
+        mutable,
+        seen: collector.order,
+    }
 }
 
 struct ExportNameUseCollector<'a> {
@@ -1236,7 +1251,18 @@ impl SystemExecuteTransformer {
                     ))]);
                 }
                 if is_valid_ident_name(exported.as_ref()) {
-                    return Some(vec![self.export_const_item(exported, value)]);
+                    if self.can_bind_export_name(&exported) {
+                        return Some(vec![self.export_const_item(exported, value)]);
+                    }
+                    // Reserved, already taken, or observable elsewhere (free
+                    // reference or direct eval): keep the alias path.
+                    let local = self.fresh_export_name();
+                    self.declared_exports
+                        .insert((local.clone(), exported.clone()));
+                    return Some(vec![
+                        self.binding_item(local.clone(), value),
+                        named_export_item(local, exported),
+                    ]);
                 }
                 None
             }
@@ -1340,14 +1366,9 @@ impl SystemExecuteTransformer {
         if !is_default && !is_valid_ident_name(exported.as_ref()) {
             return None;
         }
-        let can_use_exported_name = !is_default
-            && !is_reserved_binding_name(exported.as_ref())
-            && self.used_names.insert(exported.clone());
-        if can_use_exported_name {
-            self.declared_exports
-                .insert((exported.clone(), exported.clone()));
+        if !is_default && self.can_bind_export_name(&exported) {
             let result = Box::new(Expr::Ident(ident(exported.clone())));
-            return Some((vec![named_export_decl_item(exported, value)], result));
+            return Some((vec![self.export_const_item(exported, value)], result));
         }
 
         let local = self.fresh_export_name();
@@ -1640,27 +1661,6 @@ fn export_let_item(name: Atom) -> ModuleItem {
                     type_ann: None,
                 }),
                 init: None,
-                definite: false,
-            }],
-        })),
-    }))
-}
-
-fn named_export_decl_item(exported: Atom, value: Box<Expr>) -> ModuleItem {
-    ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
-        span: DUMMY_SP,
-        decl: Decl::Var(Box::new(VarDecl {
-            span: DUMMY_SP,
-            ctxt: Default::default(),
-            kind: swc_core::ecma::ast::VarDeclKind::Const,
-            declare: false,
-            decls: vec![VarDeclarator {
-                span: DUMMY_SP,
-                name: Pat::Ident(BindingIdent {
-                    id: ident(exported),
-                    type_ann: None,
-                }),
-                init: Some(value),
                 definite: false,
             }],
         })),
