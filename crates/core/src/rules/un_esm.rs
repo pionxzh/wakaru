@@ -1040,6 +1040,23 @@ struct CoupledCommonJsWriteProof<'a> {
 }
 
 impl Visit for CoupledCommonJsWriteProof<'_> {
+    fn visit_opt_chain_expr(&mut self, chain: &swc_core::ecma::ast::OptChainExpr) {
+        if !self.valid {
+            return;
+        }
+        // The rewriter substitutes only plain `module.exports` members; an
+        // optional-chained access would survive as an orphaned free `module`.
+        if let OptChainBase::Member(member) = chain.base.as_ref() {
+            if let Expr::Ident(object) = strip_parens(&member.obj) {
+                if is_unresolved_ident(object, "module", self.unresolved_mark) {
+                    self.valid = false;
+                    return;
+                }
+            }
+        }
+        chain.visit_children_with(self);
+    }
+
     fn visit_assign_expr(&mut self, assignment: &AssignExpr) {
         if !self.valid {
             return;
@@ -1055,6 +1072,12 @@ impl Visit for CoupledCommonJsWriteProof<'_> {
             AssignTarget::Simple(SimpleAssignTarget::Member(target))
                 if is_module_exports_member(target, self.unresolved_mark)
         ) {
+            // A compound write (`*=`, `||=`, ...) reads or conditionally
+            // skips the right side; deleting it is not a coupled rewrite.
+            if assignment.op != AssignOp::Assign {
+                self.valid = false;
+                return;
+            }
             let Expr::Assign(binding_assignment) = strip_parens(&assignment.right) else {
                 self.valid = false;
                 return;
@@ -1144,11 +1167,12 @@ struct CoupledCommonJsDefaultRewriter {
 impl VisitMut for CoupledCommonJsDefaultRewriter {
     fn visit_mut_expr(&mut self, expression: &mut Expr) {
         if let Expr::Assign(assignment) = expression {
-            let is_whole_value_write = matches!(
-                &assignment.left,
-                AssignTarget::Simple(SimpleAssignTarget::Member(target))
-                    if is_module_exports_member(target, self.unresolved_mark)
-            );
+            let is_whole_value_write = assignment.op == AssignOp::Assign
+                && matches!(
+                    &assignment.left,
+                    AssignTarget::Simple(SimpleAssignTarget::Member(target))
+                        if is_module_exports_member(target, self.unresolved_mark)
+                );
             if is_whole_value_write {
                 let Expr::Assign(binding_assignment) = strip_parens(&assignment.right) else {
                     debug_assert!(false, "the proof accepted an uncoupled CommonJS write");

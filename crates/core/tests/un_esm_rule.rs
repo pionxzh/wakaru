@@ -2558,3 +2558,75 @@ export default require("./module.js");
     let output = apply(input);
     insta::assert_snapshot!(output);
 }
+
+#[test]
+fn coupled_lazy_default_helper_fails_closed_on_compound_module_write() {
+    // `*=` reads module.exports before writing; deleting the read-modify-
+    // write is not a coupled replacement.
+    let input = r#"
+function helper(value) {
+  module.exports *= helper = (next) => next;
+  module.exports.default = module.exports;
+  return helper(value);
+}
+module.exports = helper;
+module.exports.default = module.exports;
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("module.exports *="),
+        "a compound CommonJS write must remain visible:\n{output}"
+    );
+    assert!(
+        !output.contains("export { helper as default }"),
+        "compound writes must fail the coupling proof:\n{output}"
+    );
+}
+
+#[test]
+fn coupled_lazy_default_helper_fails_closed_on_logical_module_write() {
+    // `||=` only evaluates its right side when module.exports is falsy;
+    // the original never reassigns the helper here.
+    let input = r#"
+function helper(value) {
+  module.exports ||= helper = (next) => next;
+  module.exports.default = module.exports;
+  return helper(value);
+}
+module.exports = helper;
+module.exports.default = module.exports;
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("module.exports ||="),
+        "a conditional CommonJS write must remain visible:\n{output}"
+    );
+    assert!(
+        !output.contains("export { helper as default }"),
+        "logical assignment must fail the coupling proof:\n{output}"
+    );
+}
+
+#[test]
+fn coupled_lazy_default_helper_fails_closed_on_optional_chained_module_use() {
+    // The rewriter substitutes only plain `module.exports` members; an
+    // optional-chained access would survive as an orphaned free `module`.
+    let input = r#"
+function helper(value) {
+  module.exports = helper = (next) => next;
+  module.exports.default = module.exports;
+  return module?.exports(value);
+}
+module.exports = helper;
+module.exports.default = module.exports;
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("module.exports = helper"),
+        "the coupled write must stay when an optional-chained use exists:\n{output}"
+    );
+    assert!(
+        !output.contains("export { helper as default }"),
+        "optional-chained module access must fail the coupling proof:\n{output}"
+    );
+}

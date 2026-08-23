@@ -163,7 +163,12 @@ visible CommonJS residuals. The same local proof can recover Babel-style lazy
 default helpers when one top-level function binding and `module.exports` are
 replaced together on every whole-value write. The property mirrors remain real
 mutations of that binding, while a live ESM default specifier exposes later
-replacements. Independent writes, early observation, direct eval,
+replacements. Consumers therefore observe the current implementation rather
+than the CommonJS require-time snapshot: call results match the original
+lazy-helper pattern, but object identity across a replacement does not.
+Neither a live nor a snapshot binding reproduces require-time capture exactly;
+the live side is the deliberate choice. Independent or compound writes,
+optional-chained `module` access, early observation, direct eval,
 receiver-sensitive calls, and additional CommonJS object escapes fail closed.
 
 Two same-module proofs handle the exact
