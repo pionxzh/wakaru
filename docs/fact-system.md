@@ -206,8 +206,12 @@ fact available to consumers.
 
 - **`commonjs_default_object_composition`** — builds a monotone fixed point at
   the barrier. A provider seeds it only when the raw assignment is its sole
-  CommonJS runtime use and its recovered surface is exactly one default export
-  with no imports. A composition enters only after every relative provider is
+  CommonJS runtime use — residual `require` identifiers (conditional or nested
+  requires that never become import facts) count as runtime uses and block the
+  seed — and its recovered surface is exactly one default export with no
+  imports. Provider bodies are surface-proven only; their side-effect
+  statements move ahead of the consumer's copies under
+  `import_hoisting_eagerness` (see rewrite-assumptions.md). A composition enters only after every relative provider is
   already proven, so cycles never become eligible. Phase 2 then re-matches the
   complete normalized body before introducing default imports, one stable
   local object, the original ordered `Object.assign` calls, and a default

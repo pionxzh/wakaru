@@ -249,6 +249,31 @@ Affects: `UnEs6Class` direct `Object.defineProperty` accessor recovery.
 Level: `standard` and above. `minimal` requires attributes exactly representable
 by class syntax.
 
+### `import_hoisting_eagerness`
+
+Converting a CommonJS `require()` into an ESM `import` moves the provider's
+evaluation ahead of every consumer statement: imports are hoisted and all
+dependencies evaluate before the importing module's body. In CommonJS, a
+provider executes at its `require` call site, interleaved with the consumer's
+own statements. Every wakaru CommonJS recovery shares this deviation; it is
+observable whenever a later provider's side effects (a global write, an
+installed getter or setter) change what an earlier consumer statement — such
+as an `Object.assign` copy — reads. Relative provider order is preserved;
+only the provider-versus-consumer interleaving moves.
+
+Recoveries that copy values at a specific program point (the default-object
+composition's `Object.assign` shells) prove the consumer's body exact but
+prove providers only at their export surface: a provider may run arbitrary
+side-effect statements before its single default assignment. Proving
+providers side-effect-free would reject essentially every real module for a
+hazard every `require`-to-`import` conversion in this codebase already
+accepts.
+
+Affects: `UnEsm` require conversion, `commonjs_default_object_composition`,
+and every fact-consuming recovery that imports a proven provider.
+
+Level: all levels. This is inherent to emitting ESM from CommonJS.
+
 ## Generated Temporaries
 
 Temporaries introduced by compilers are handled by binding analysis, not by

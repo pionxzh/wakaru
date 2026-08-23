@@ -1133,6 +1133,7 @@ pub fn collect_commonjs_default_object(
         unresolved_mark,
         module_uses: 0,
         exports_uses: 0,
+        require_uses: 0,
         has_direct_eval: false,
     };
     module.visit_with(&mut runtime_surface);
@@ -1140,6 +1141,7 @@ pub fn collect_commonjs_default_object(
         declared_properties: properties,
         default_assignment_is_only_commonjs_use: runtime_surface.module_uses == 1
             && runtime_surface.exports_uses == 0
+            && runtime_surface.require_uses == 0
             && !runtime_surface.has_direct_eval,
         composition_sources: collect_commonjs_default_object_composition_sources(
             module,
@@ -1158,6 +1160,10 @@ struct CommonJsRuntimeSurfaceCollector {
     unresolved_mark: Mark,
     module_uses: usize,
     exports_uses: usize,
+    /// Convertible imports are already excluded by `imports.is_empty()` at
+    /// seed time, so any `require` identifier left here is a residual
+    /// (conditional, nested, or dynamic) runtime use.
+    require_uses: usize,
     has_direct_eval: bool,
 }
 
@@ -1177,6 +1183,8 @@ impl Visit for CommonJsRuntimeSurfaceCollector {
             self.module_uses += 1;
         } else if is_unresolved_ident(ident, "exports", self.unresolved_mark) {
             self.exports_uses += 1;
+        } else if is_unresolved_ident(ident, "require", self.unresolved_mark) {
+            self.require_uses += 1;
         }
     }
 }
@@ -1186,13 +1194,17 @@ fn collect_commonjs_default_object_composition_sources(
     unresolved_mark: Mark,
 ) -> Option<Vec<Atom>> {
     let mut expressions = Vec::new();
+    let mut in_prologue = true;
     for item in &module.body {
         let ModuleItem::Stmt(Stmt::Expr(statement)) = item else {
             return None;
         };
-        if is_use_strict_directive(&statement.expr) {
+        // Only a leading directive is a directive; a later "use strict"
+        // string statement is an extra statement and fails the match.
+        if in_prologue && is_use_strict_directive(&statement.expr) {
             continue;
         }
+        in_prologue = false;
         collect_direct_sequence_expression_clones(&statement.expr, &mut expressions);
     }
 

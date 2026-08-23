@@ -182,7 +182,14 @@ fn match_normalized_composition(
     expected_sources: &[Atom],
     unresolved_mark: Mark,
 ) -> Option<NormalizedComposition> {
-    let mut items = module.body.iter().filter(|item| !is_use_strict_item(item));
+    let mut in_prologue = true;
+    let mut items = module.body.iter().filter(move |item| {
+        // Only a leading directive is a directive; a later "use strict"
+        // string statement must fail the exact-body match.
+        let skip = in_prologue && is_use_strict_item(item);
+        in_prologue = false;
+        !skip
+    });
     let ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(default)) = items.next()? else {
         return None;
     };

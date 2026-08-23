@@ -541,6 +541,27 @@ function later() { eval("module.exports = replacement"); }
 }
 
 #[test]
+fn default_object_importability_fact_counts_residual_require() {
+    // A require that never becomes an import fact (conditional, nested) is
+    // still a CommonJS runtime use; the provider must not seed the
+    // composition fixed point on top of a residual dependency edge.
+    let facts = collect_facts(
+        r#"
+module.exports = { a: 1 };
+if (globalThis.__DEV__) require("./debug.js");
+"#,
+    );
+    assert!(
+        !facts
+            .commonjs_default_object
+            .as_ref()
+            .expect("the object assignment itself stays proven")
+            .default_assignment_is_only_commonjs_use,
+        "a residual require must block direct provider use: {facts}"
+    );
+}
+
+#[test]
 fn callable_default_properties_require_stable_unconditional_writes() {
     let facts = collect_facts(
         r#"

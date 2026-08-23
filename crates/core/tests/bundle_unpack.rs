@@ -2868,3 +2868,145 @@ fn browserify_unpack_extracts_multiple_modules() {
         "original browserify request names should be remapped:\n{entry}"
     );
 }
+
+fn composition_bundle(consumer_body: &str, providers: &str) -> String {
+    format!(
+        r#"
+(() => {{
+  var __webpack_modules__ = ({{
+    0: ((module, exports, __webpack_require__) => {{
+{consumer_body}
+    }}),
+{providers}
+  }});
+  var __webpack_module_cache__ = {{}};
+  function __webpack_require__(moduleId) {{
+    if (__webpack_module_cache__[moduleId]) return __webpack_module_cache__[moduleId].exports;
+    var module = __webpack_module_cache__[moduleId] = {{ exports: {{}} }};
+    __webpack_modules__[moduleId](module, module.exports, __webpack_require__);
+    return module.exports;
+  }}
+  __webpack_require__(0);
+}})();
+"#
+    )
+}
+
+fn unpack_composition(source: &str) -> Vec<(String, String)> {
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack5-composition-case.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("composition bundle should unpack");
+    output.modules
+}
+
+#[test]
+fn webpack5_composition_fails_closed_on_provider_residual_require() {
+    // The provider's conditional require never becomes an import fact, so it
+    // is a residual dependency edge the plan cannot order around.
+    let source = composition_bundle(
+        r#"      module.exports = {};
+      Object.assign(module.exports, __webpack_require__(1) || {});"#,
+        r#"    1: ((module, exports, __webpack_require__) => {
+      module.exports = { a: 1 };
+      if (globalThis.__DEV__) __webpack_require__(2);
+    }),
+    2: ((module) => { module.exports = {}; })"#,
+    );
+    let modules = unpack_composition(&source);
+    let consumer = &modules.iter().find(|(n, _)| n == "module-0.js").unwrap().1;
+    assert!(
+        consumer.contains("Object.assign(module.exports"),
+        "consumer must stay an honest residual over a residual provider:\n{consumer}"
+    );
+}
+
+#[test]
+fn webpack5_composition_keeps_duplicate_source_copies_in_order() {
+    let source = composition_bundle(
+        r#"      module.exports = {};
+      Object.assign(module.exports, __webpack_require__(1) || {});
+      Object.assign(module.exports, __webpack_require__(1) || {});"#,
+        r#"    1: ((module) => { module.exports = { get n() { return ++globalThis.k; } }; })"#,
+    );
+    let modules = unpack_composition(&source);
+    let consumer = &modules.iter().find(|(n, _)| n == "module-0.js").unwrap().1;
+    assert_eq!(
+        consumer.matches("import ").count(),
+        1,
+        "duplicate sources share one import:\n{consumer}"
+    );
+    assert_eq!(
+        consumer.matches("Object.assign(_defaultObject").count(),
+        2,
+        "both copies must survive in order (the getter fires twice):\n{consumer}"
+    );
+}
+
+#[test]
+fn webpack5_composition_fails_closed_on_multi_source_assign() {
+    let source = composition_bundle(
+        r#"      module.exports = {};
+      Object.assign(module.exports, __webpack_require__(1) || {}, __webpack_require__(2) || {});"#,
+        r#"    1: ((module) => { module.exports = { a: 1 }; }),
+    2: ((module) => { module.exports = { b: 2 }; })"#,
+    );
+    let modules = unpack_composition(&source);
+    let consumer = &modules.iter().find(|(n, _)| n == "module-0.js").unwrap().1;
+    assert!(
+        consumer.contains("Object.assign(module.exports"),
+        "a three-argument copy is not the proven shell:\n{consumer}"
+    );
+}
+
+#[test]
+fn webpack5_composition_fails_closed_on_nonempty_fallback() {
+    let source = composition_bundle(
+        r#"      module.exports = {};
+      Object.assign(module.exports, __webpack_require__(1) || { fallback: 1 });"#,
+        r#"    1: ((module) => { module.exports = { a: 1 }; })"#,
+    );
+    let modules = unpack_composition(&source);
+    let consumer = &modules.iter().find(|(n, _)| n == "module-0.js").unwrap().1;
+    assert!(
+        consumer.contains("Object.assign(module.exports"),
+        "a non-empty fallback is not the proven shell:\n{consumer}"
+    );
+}
+
+#[test]
+fn webpack5_composition_fails_closed_on_copy_before_init() {
+    let source = composition_bundle(
+        r#"      Object.assign(module.exports, __webpack_require__(1) || {});
+      module.exports = {};"#,
+        r#"    1: ((module) => { module.exports = { a: 1 }; })"#,
+    );
+    let modules = unpack_composition(&source);
+    let consumer = &modules.iter().find(|(n, _)| n == "module-0.js").unwrap().1;
+    assert!(
+        consumer.contains("Object.assign(module.exports"),
+        "the empty-object init must come first:\n{consumer}"
+    );
+}
+
+#[test]
+fn webpack5_composition_fails_closed_on_mid_body_strict_directive() {
+    // Only a leading directive is a directive; a later "use strict" string
+    // is an extra statement outside the proven shell.
+    let source = composition_bundle(
+        r#"      module.exports = {};
+      "use strict";
+      Object.assign(module.exports, __webpack_require__(1) || {});"#,
+        r#"    1: ((module) => { module.exports = { a: 1 }; })"#,
+    );
+    let modules = unpack_composition(&source);
+    let consumer = &modules.iter().find(|(n, _)| n == "module-0.js").unwrap().1;
+    assert!(
+        consumer.contains("Object.assign(module.exports"),
+        "a mid-body directive-lookalike is an extra statement:\n{consumer}"
+    );
+}
