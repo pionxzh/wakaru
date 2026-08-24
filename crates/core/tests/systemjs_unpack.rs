@@ -1595,18 +1595,14 @@ System.register([], function (_export, _context) {
     let raw = unpack_source_raw(source);
     let entry = module_code(&raw, "entry.js");
     assert!(
-        entry.contains("TodayShow"),
-        "string UNIQUE export must survive the comma sequence:\n{entry}"
+        entry.contains("export const TodayShow = \"TodayShow\"")
+            || entry.contains("export const TodayShow = 'TodayShow'"),
+        "TodayShow must be a bound export, not only a local mention:\n{entry}"
     );
     assert!(
         entry.contains("export const Popup")
-            || entry.contains("export {") && entry.contains("Popup"),
+            || (entry.contains("export {") && entry.contains("Popup")),
         "following named export must survive:\n{entry}"
-    );
-    assert!(
-        entry.contains("export const TodayShow")
-            || entry.contains("export {") && entry.contains("TodayShow"),
-        "TodayShow must be an export, not only a local:\n{entry}"
     );
 }
 
@@ -1671,5 +1667,107 @@ System.register([], function (_export, _context) {
         entry.contains("export const TodayShow")
             || entry.contains("export {") && entry.contains("TodayShow"),
         "nested `_export` literal must still emit the name:\n{entry}"
+    );
+}
+
+fn has_string_export_alias(code: &str, exported: &str) -> bool {
+    code.contains(&format!("as \"{exported}\"")) || code.contains(&format!("as '{exported}'"))
+}
+
+#[test]
+fn expr_export_invalid_ident_name_uses_string_alias() {
+    // A name that cannot be an Identifier must still appear on the export
+    // list. Peeling `_export` and leaving only the value drops the name.
+    let source = r#"
+System.register([], function (_export, _context) {
+  return { setters: [], execute: function () {
+    use(_export("foo-bar", "x"));
+  } };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "entry.js");
+    assert!(
+        has_string_export_alias(entry, "foo-bar") && entry.contains("__systemjs_export"),
+        "invalid ident export names must use a string alias:\n{entry}"
+    );
+    assert!(
+        !entry.contains("export const foo"),
+        "must not invent a legal binding from an illegal export name:\n{entry}"
+    );
+    assert!(
+        !entry.contains("_export("),
+        "the SystemJS helper must not remain after a successful alias:\n{entry}"
+    );
+}
+
+#[test]
+fn statement_export_invalid_ident_name_uses_string_alias() {
+    let source = r#"
+System.register([], function (_export, _context) {
+  return { setters: [], execute: function () {
+    _export("foo-bar", "x");
+  } };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "entry.js");
+    assert!(
+        has_string_export_alias(entry, "foo-bar") && entry.contains("__systemjs_export"),
+        "statement `_export` with an illegal ident must still alias:\n{entry}"
+    );
+    assert!(
+        !entry.contains("export const foo"),
+        "must not invent a legal binding from an illegal export name:\n{entry}"
+    );
+    assert!(
+        !entry.contains("_export("),
+        "the SystemJS helper must not remain after a successful alias:\n{entry}"
+    );
+}
+
+#[test]
+fn assign_of_export_literal_rejects_existing_local() {
+    let source = r#"
+System.register([], function (_export, _context) {
+  var S;
+  return { setters: [], execute: function () {
+    const TodayShow = 1;
+    S = _export("TodayShow", "TodayShow");
+    use(S, TodayShow);
+  } };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "entry.js");
+    assert!(
+        entry.contains("export { __systemjs_export as TodayShow }"),
+        "an existing local must force the alias path:\n{entry}"
+    );
+    assert!(
+        !entry.contains("export const TodayShow"),
+        "must not rebind an existing local as the export:\n{entry}"
+    );
+}
+
+#[test]
+fn assign_of_export_literal_ignores_cjs_hasownproperty_string() {
+    // `exports.hasOwnProperty("TodayShow")` is a CJS surface read. SystemJS
+    // `_export` does not own that object; a string key must not block a free name.
+    let source = r#"
+System.register([], function (_export, _context) {
+  var S;
+  return { setters: [], execute: function () {
+    exports.hasOwnProperty("TodayShow");
+    S = _export("TodayShow", "TodayShow");
+  } };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "entry.js");
+    assert!(
+        entry.contains("export const TodayShow = \"TodayShow\"")
+            || entry.contains("export const TodayShow = 'TodayShow'"),
+        "a CJS hasOwnProperty string must not force the alias path:\n{entry}"
     );
 }
