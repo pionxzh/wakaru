@@ -901,6 +901,8 @@ struct SystemExecuteTransformer {
     unresolved_names: HashSet<Atom>,
     has_direct_eval: bool,
     mutable_export_bindings: HashMap<Atom, Atom>,
+    /// Exports hoisted out of expression-position `_export` calls.
+    pending_expr_exports: Vec<ModuleItem>,
 }
 
 impl SystemExecuteTransformer {
@@ -922,6 +924,7 @@ impl SystemExecuteTransformer {
             unresolved_names,
             has_direct_eval,
             mutable_export_bindings: HashMap::new(),
+            pending_expr_exports: Vec::new(),
         }
     }
 
@@ -963,6 +966,7 @@ impl SystemExecuteTransformer {
 
         if let Some(export_items) = self.take_export_stmt(&stmt) {
             items.extend(export_items);
+            items.extend(self.take_pending_expr_exports());
             return;
         }
 
@@ -979,7 +983,12 @@ impl SystemExecuteTransformer {
         }
 
         stmt.visit_mut_with(self);
+        items.extend(self.take_pending_expr_exports());
         items.push(ModuleItem::Stmt(stmt));
+    }
+
+    fn take_pending_expr_exports(&mut self) -> Vec<ModuleItem> {
+        std::mem::take(&mut self.pending_expr_exports)
     }
 
     fn export_items(self) -> Vec<ModuleItem> {
@@ -1034,7 +1043,7 @@ impl SystemExecuteTransformer {
             }
             Expr::Assign(assign) => self
                 .export_member_assignment_items(assign)
-                .or_else(|| self.take_ident_assign_export_seq(assign)),
+                .or_else(|| self.take_ident_assign_export(assign)),
             Expr::Seq(seq) => {
                 let mut items = Vec::new();
                 let mut saw_export = false;
@@ -1044,7 +1053,7 @@ impl SystemExecuteTransformer {
                             .and_then(|export_call| self.export_call_items(export_call)),
                         Expr::Assign(assign) => self
                             .export_member_assignment_items(assign)
-                            .or_else(|| self.take_ident_assign_export_seq(assign)),
+                            .or_else(|| self.take_ident_assign_export(assign)),
                         _ => None,
                     };
                     if let Some(export_items) = export_items {
@@ -1056,6 +1065,7 @@ impl SystemExecuteTransformer {
                             expr: expr.clone(),
                         });
                         stmt.visit_mut_with(self);
+                        items.extend(self.take_pending_expr_exports());
                         items.push(ModuleItem::Stmt(stmt));
                     }
                 }
@@ -1281,6 +1291,26 @@ impl SystemExecuteTransformer {
                 Some(assignment_items)
             }
         }
+    }
+
+    fn take_ident_assign_export(&mut self, assign: &AssignExpr) -> Option<Vec<ModuleItem>> {
+        self.take_ident_assign_export_seq(assign)
+            .or_else(|| self.take_ident_assign_single_export(assign))
+    }
+
+    fn take_ident_assign_single_export(&mut self, assign: &AssignExpr) -> Option<Vec<ModuleItem>> {
+        if assign.op != AssignOp::Assign {
+            return None;
+        }
+        let target = assign.left.as_simple()?.as_ident()?.clone();
+        let Expr::Call(call) = strip_paren_expr(assign.right.as_ref()) else {
+            return None;
+        };
+        let export_call = parse_export_call(call, &self.export_sym)?;
+        let (export_items, result) = self.export_call_result_items(export_call)?;
+        let mut items = export_items;
+        items.push(assign_ident_item(target, result));
+        Some(items)
     }
 
     fn take_ident_assign_export_seq(&mut self, assign: &AssignExpr) -> Option<Vec<ModuleItem>> {
@@ -1570,8 +1600,22 @@ impl VisitMut for SystemExecuteTransformer {
             if let Some(ExportCall::Single { exported, value }) =
                 parse_export_call(call, &self.export_sym)
             {
+                // Ident / assign values stay in place: hoisting
+                // `Namespace || _export("N", Namespace = {})` would drop the
+                // assignment from the `||` operand.
                 if let Some(local) = exported_value_local(value.as_ref()) {
                     self.add_export(local, exported);
+                    *expr = export_replacement_expr(value);
+                    expr.visit_mut_children_with(self);
+                    return;
+                }
+                if let Some((items, result)) = self.export_call_result_items(ExportCall::Single {
+                    exported,
+                    value: value.clone(),
+                }) {
+                    self.pending_expr_exports.extend(items);
+                    *expr = *result;
+                    return;
                 }
                 *expr = export_replacement_expr(value);
                 expr.visit_mut_children_with(self);
