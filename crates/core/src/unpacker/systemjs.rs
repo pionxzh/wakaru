@@ -588,8 +588,8 @@ struct ExportNameUse {
 struct ExportNameUsageSummary {
     mutable: Vec<Atom>,
     /// Every single-exported name in first-seen order. Each of these may
-    /// become a direct `export const <Name>` binding, so each is a
-    /// candidate for the free-name analysis.
+    /// become a direct ESM binding, so each is a candidate for the free-name
+    /// analysis.
     seen: Vec<Atom>,
 }
 
@@ -620,7 +620,6 @@ fn collect_export_name_usage(
                             .shared_local
                             .as_ref()
                             .is_some_and(|local| module_bound_names.contains(local)))
-                    && (name.as_ref() == "default" || is_valid_ident_name(name.as_ref()))
             })
         })
         .cloned()
@@ -1000,8 +999,8 @@ struct SystemExecuteTransformer {
     unresolved_names: HashSet<Atom>,
     has_direct_eval: bool,
     mutable_export_bindings: HashMap<Atom, Atom>,
-    /// Exports hoisted out of expression-position `_export` calls.
-    pending_expr_exports: Vec<ModuleItem>,
+    /// Side-effect-free live-binding declarations needed by expression-position exports.
+    pending_expr_export_decls: Vec<ModuleItem>,
 }
 
 impl SystemExecuteTransformer {
@@ -1023,37 +1022,49 @@ impl SystemExecuteTransformer {
             unresolved_names,
             has_direct_eval,
             mutable_export_bindings: HashMap::new(),
-            pending_expr_exports: Vec::new(),
+            pending_expr_export_decls: Vec::new(),
         }
     }
 
     fn prepare_mutable_exports(&mut self, exported_names: Vec<Atom>) -> Vec<ModuleItem> {
         let mut items = Vec::new();
         for exported in exported_names {
-            let use_direct_binding =
-                exported.as_ref() != "default" && self.can_bind_export_name(&exported);
-            let local = if use_direct_binding {
-                self.module_bound_names.insert(exported.clone());
-                self.used_names.insert(exported.clone());
-                exported.clone()
-            } else {
-                self.fresh_export_name()
-            };
-
-            self.mutable_export_bindings
-                .insert(exported.clone(), local.clone());
-            self.declared_exports
-                .insert((local.clone(), exported.clone()));
-            // The declaration is side-effect free. Original `_export` call
-            // positions become assignments to this live binding in push_stmt.
-            if use_direct_binding {
-                items.push(export_let_item(local));
-            } else {
-                items.push(let_binding_item(local.clone()));
-                items.push(named_export_item(local, exported));
-            }
+            let (_, declarations) = self.ensure_mutable_export_binding(exported);
+            items.extend(declarations);
         }
         items
+    }
+
+    fn ensure_mutable_export_binding(&mut self, exported: Atom) -> (Atom, Vec<ModuleItem>) {
+        if let Some(local) = self.mutable_export_bindings.get(&exported) {
+            return (local.clone(), Vec::new());
+        }
+
+        let use_direct_binding =
+            exported.as_ref() != "default" && self.can_bind_export_name(&exported);
+        let local = if use_direct_binding {
+            self.module_bound_names.insert(exported.clone());
+            self.used_names.insert(exported.clone());
+            exported.clone()
+        } else {
+            self.fresh_export_name()
+        };
+
+        self.mutable_export_bindings
+            .insert(exported.clone(), local.clone());
+        self.declared_exports
+            .insert((local.clone(), exported.clone()));
+        // Only the declaration is lifted. Each original `_export` call is
+        // rewritten to an assignment at the same expression position.
+        let declarations = if use_direct_binding {
+            vec![export_let_item(local.clone())]
+        } else {
+            vec![
+                let_binding_item(local.clone()),
+                named_export_item(local.clone(), exported),
+            ]
+        };
+        (local, declarations)
     }
 
     fn push_stmt(&mut self, mut stmt: Stmt, items: &mut Vec<ModuleItem>) {
@@ -1064,14 +1075,15 @@ impl SystemExecuteTransformer {
         stmt.visit_mut_with(&mut mutable_export_rewriter);
 
         if let Some(export_items) = self.take_export_stmt(&stmt) {
+            items.extend(self.take_pending_expr_export_decls());
             items.extend(export_items);
-            items.extend(self.take_pending_expr_exports());
             return;
         }
 
         // `var x = (_export("A", v1), _export("B", v2))`: init is a Seq; the old rewrite only accepts Call.
         if let Stmt::Decl(Decl::Var(var)) = &stmt {
             if let Some(export_items) = self.take_var_export_seq_decls(var) {
+                items.extend(self.take_pending_expr_export_decls());
                 items.extend(export_items);
                 return;
             }
@@ -1082,12 +1094,12 @@ impl SystemExecuteTransformer {
         }
 
         stmt.visit_mut_with(self);
-        items.extend(self.take_pending_expr_exports());
+        items.extend(self.take_pending_expr_export_decls());
         items.push(ModuleItem::Stmt(stmt));
     }
 
-    fn take_pending_expr_exports(&mut self) -> Vec<ModuleItem> {
-        std::mem::take(&mut self.pending_expr_exports)
+    fn take_pending_expr_export_decls(&mut self) -> Vec<ModuleItem> {
+        std::mem::take(&mut self.pending_expr_export_decls)
     }
 
     fn export_items(self) -> Vec<ModuleItem> {
@@ -1166,7 +1178,7 @@ impl SystemExecuteTransformer {
                             expr: expr.clone(),
                         });
                         stmt.visit_mut_with(self);
-                        items.extend(self.take_pending_expr_exports());
+                        items.extend(self.take_pending_expr_export_decls());
                         items.push(ModuleItem::Stmt(stmt));
                     }
                 }
@@ -1193,6 +1205,8 @@ impl SystemExecuteTransformer {
         if !is_default && !is_valid_ident_name(exported.as_ref()) {
             return None;
         }
+        let mut value = value;
+        value.visit_mut_with(self);
         let exported_local = exported_value_local(value.as_ref());
         let local = exported_local
             .clone()
@@ -1209,17 +1223,15 @@ impl SystemExecuteTransformer {
             expr: Box::new(Expr::Assign(assignment)),
         });
         assignment_stmt.visit_mut_with(self);
-        let mut value = value;
-        value.visit_mut_with(self);
         let mut items = if exported_local.is_some() {
             self.add_export(local.clone(), exported);
-            match value.as_ref() {
-                Expr::Assign(_) => vec![ModuleItem::Stmt(Stmt::Expr(ExprStmt {
+            if exported_value_is_assignment(value.as_ref()) {
+                vec![ModuleItem::Stmt(Stmt::Expr(ExprStmt {
                     span: DUMMY_SP,
                     expr: value,
-                }))],
-                Expr::Ident(_) => Vec::new(),
-                _ => unreachable!("exported_value_local accepted an unsupported expression"),
+                }))]
+            } else {
+                Vec::new()
             }
         } else if is_default {
             // Initialize the export before computed keys or the assignment RHS can re-enter.
@@ -1340,8 +1352,15 @@ impl SystemExecuteTransformer {
 
     fn export_call_items(&mut self, export_call: ExportCall) -> Option<Vec<ModuleItem>> {
         match export_call {
-            ExportCall::Single { exported, value } => {
-                if let Expr::Assign(assign) = value.as_ref() {
+            ExportCall::Single {
+                exported,
+                mut value,
+            } => {
+                // A producer may nest aliases, for example Babel emits
+                // `_export("b", _export("a", x = make()))`. Peel the inner
+                // call before deciding which local backs the outer export.
+                value.visit_mut_with(self);
+                if let Expr::Assign(assign) = strip_paren_expr(value.as_ref()) {
                     let local = assign.left.as_simple()?.as_ident()?.sym.clone();
                     self.add_export(local, exported);
                     return Some(vec![ModuleItem::Stmt(Stmt::Expr(ExprStmt {
@@ -1398,7 +1417,7 @@ impl SystemExecuteTransformer {
                 for (exported, value) in exports {
                     let local = exported_value_local(value.as_ref())?;
                     self.add_export(local, exported);
-                    if matches!(value.as_ref(), Expr::Assign(_)) {
+                    if exported_value_is_assignment(value.as_ref()) {
                         assignment_items.push(ModuleItem::Stmt(Stmt::Expr(ExprStmt {
                             span: DUMMY_SP,
                             expr: value,
@@ -1498,7 +1517,7 @@ impl SystemExecuteTransformer {
         if let Some(local) = exported_value_local(value.as_ref()) {
             self.add_export(local.clone(), exported);
             let result = Box::new(Expr::Ident(ident(local)));
-            let items = if matches!(value.as_ref(), Expr::Assign(_)) {
+            let items = if exported_value_is_assignment(value.as_ref()) {
                 vec![ModuleItem::Stmt(Stmt::Expr(ExprStmt {
                     span: DUMMY_SP,
                     expr: value,
@@ -1714,26 +1733,24 @@ impl VisitMut for SystemExecuteTransformer {
             if let Some(ExportCall::Single { exported, value }) =
                 parse_export_call(call, &self.export_sym)
             {
-                // Ident / assign values stay in place: hoisting
-                // `Namespace || _export("N", Namespace = {})` would drop the
-                // assignment from the `||` operand.
+                let mut value = value;
+                value.visit_mut_with(self);
                 if let Some(local) = exported_value_local(value.as_ref()) {
                     self.add_export(local, exported);
                     *expr = export_replacement_expr(value);
-                    expr.visit_mut_children_with(self);
                     return;
                 }
-                if let Some((items, result)) = self.export_call_result_items(ExportCall::Single {
-                    exported,
-                    value: value.clone(),
-                }) {
-                    self.pending_expr_exports.extend(items);
-                    *expr = *result;
-                    return;
-                }
-                // Bulk / unrepresentable calls stay in place. Peeling would
-                // drop the export name while leaving only the value.
-                expr.visit_mut_children_with(self);
+
+                // Lifting an initialized declaration would evaluate `value`
+                // before its containing condition, call arguments, or other
+                // siblings. Lift only a side-effect-free declaration and keep
+                // the assignment exactly where `_export` appeared.
+                let (local, declarations) = self.ensure_mutable_export_binding(exported);
+                self.pending_expr_export_decls.extend(declarations);
+                *expr = Expr::Paren(ParenExpr {
+                    span: DUMMY_SP,
+                    expr: Box::new(assign_local_expr(local, value)),
+                });
                 return;
             }
         }
@@ -1909,7 +1926,7 @@ fn object_export_pairs(object: &ObjectLit) -> Option<Vec<(Atom, Box<Expr>)>> {
 }
 
 fn exported_value_local(expr: &Expr) -> Option<Atom> {
-    match expr {
+    match strip_paren_expr(expr) {
         Expr::Ident(id) => Some(id.sym.clone()),
         Expr::Assign(assign) => assign.left.as_simple()?.as_ident().map(|id| id.sym.clone()),
         _ => None,
@@ -1957,6 +1974,10 @@ fn starts_with_function_or_class(expr: &Expr) -> bool {
         Expr::TsSatisfies(satisfies) => starts_with_function_or_class(satisfies.expr.as_ref()),
         _ => false,
     }
+}
+
+fn exported_value_is_assignment(expr: &Expr) -> bool {
+    matches!(strip_paren_expr(expr), Expr::Assign(_))
 }
 
 fn export_replacement_expr(value: Box<Expr>) -> Expr {

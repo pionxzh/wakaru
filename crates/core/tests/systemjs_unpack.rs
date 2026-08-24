@@ -1668,8 +1668,111 @@ System.register([], function (_export, _context) {
     let entry = module_code(&raw, "entry.js");
     assert!(
         entry.contains("export const TodayShow")
+            || entry.contains("export let TodayShow")
             || entry.contains("export {") && entry.contains("TodayShow"),
         "nested `_export` literal must still emit the name:\n{entry}"
+    );
+}
+
+#[test]
+fn expression_export_preserves_sibling_evaluation_order() {
+    let source = r#"
+System.register([], function (_export, _context) {
+  return { setters: [], execute: function () {
+    use(before(), _export("TodayShow", make()), after());
+  } };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "entry.js");
+    let use_line = entry
+        .lines()
+        .find(|line| line.contains("use(before()"))
+        .unwrap_or_else(|| panic!("expected the original call expression:\n{entry}"));
+    let before = use_line.find("before()").unwrap();
+    let make = use_line
+        .find("make()")
+        .unwrap_or_else(|| panic!("export value must stay in the argument position:\n{entry}"));
+    let after = use_line.find("after()").unwrap();
+    assert!(
+        before < make && make < after,
+        "must preserve sibling argument evaluation order:\n{entry}"
+    );
+    assert!(
+        !entry.contains("_export("),
+        "the SystemJS helper must be fully reconstructed:\n{entry}"
+    );
+}
+
+#[test]
+fn babel_arbitrary_name_live_update_stays_conditional() {
+    // Babel output for:
+    //   let x = 0;
+    //   export { x as "x-y" };
+    //   cond() && x++;
+    let source = r#"
+System.register([], function (_export, _context) {
+  "use strict";
+  var x;
+  return { setters: [], execute: function () {
+    _export("x-y", x = 0);
+    cond() && (_export("x-y", +x + 1), x++);
+  } };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "entry.js");
+    let conditional_offset = entry
+        .find("cond() &&")
+        .unwrap_or_else(|| panic!("expected the conditional update:\n{entry}"));
+    let conditional_line = entry[conditional_offset..].lines().next().unwrap();
+    assert!(
+        conditional_line.contains("= +x + 1") && conditional_line.contains("x++"),
+        "the live export update must remain inside the condition:\n{entry}"
+    );
+    assert!(
+        !entry[..conditional_offset].contains("+x + 1"),
+        "the export value must not be evaluated before the condition:\n{entry}"
+    );
+    assert_eq!(
+        entry.matches("x-y").count(),
+        1,
+        "must emit exactly one public export for the arbitrary name:\n{entry}"
+    );
+    assert!(
+        !entry.contains("_export("),
+        "the SystemJS helper must be fully reconstructed:\n{entry}"
+    );
+}
+
+#[test]
+fn babel_nested_alias_exports_reconstruct_both_names() {
+    // Babel output for:
+    //   const x = make();
+    //   export { x as a, x as b };
+    let source = r#"
+System.register([], function (_export, _context) {
+  "use strict";
+  var x;
+  return { setters: [], execute: function () {
+    _export("b", _export("a", x = make()));
+  } };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "entry.js");
+    assert!(
+        entry.contains("x as a") && entry.contains("x as b"),
+        "both producer-generated aliases must be reconstructed:\n{entry}"
+    );
+    assert_eq!(
+        entry.matches("make()").count(),
+        1,
+        "the shared initializer must be evaluated exactly once:\n{entry}"
+    );
+    assert!(
+        !entry.contains("_export("),
+        "no nested SystemJS helper call may remain in ESM output:\n{entry}"
     );
 }
 
