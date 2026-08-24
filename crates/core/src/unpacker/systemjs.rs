@@ -1009,10 +1009,12 @@ impl SystemExecuteTransformer {
                 ExportSpecifier::Named(ExportNamedSpecifier {
                     span: DUMMY_SP,
                     orig: ModuleExportName::Ident(ident(local.clone())),
-                    exported: if exported.as_ref() == local.as_ref() {
+                    exported: if exported.as_ref() == local.as_ref()
+                        && is_valid_ident_name(exported.as_ref())
+                    {
                         None
                     } else {
-                        Some(ModuleExportName::Ident(ident(exported)))
+                        Some(export_name_node(&exported))
                     },
                     is_type_only: false,
                 })
@@ -1260,21 +1262,20 @@ impl SystemExecuteTransformer {
                         },
                     ))]);
                 }
-                if is_valid_ident_name(exported.as_ref()) {
-                    if self.can_bind_export_name(&exported) {
-                        return Some(vec![self.export_const_item(exported, value)]);
-                    }
-                    // Reserved, already taken, or observable elsewhere (free
-                    // reference or direct eval): keep the alias path.
-                    let local = self.fresh_export_name();
-                    self.declared_exports
-                        .insert((local.clone(), exported.clone()));
-                    return Some(vec![
-                        self.binding_item(local.clone(), value),
-                        named_export_item(local, exported),
-                    ]);
+                if is_valid_ident_name(exported.as_ref()) && self.can_bind_export_name(&exported) {
+                    return Some(vec![self.export_const_item(exported, value)]);
                 }
-                None
+                // Reserved, already taken, not an Identifier, or observable
+                // elsewhere: keep the alias path. Illegal ident names still
+                // become `export { local as "foo-bar" }` so the public name
+                // is not dropped by peeling `_export`.
+                let local = self.fresh_export_name();
+                self.declared_exports
+                    .insert((local.clone(), exported.clone()));
+                Some(vec![
+                    self.binding_item(local.clone(), value),
+                    named_export_item(local, exported),
+                ])
             }
             ExportCall::Bulk(exports) => {
                 let mut assignment_items = Vec::new();
@@ -1393,9 +1394,6 @@ impl SystemExecuteTransformer {
         }
 
         let is_default = exported.as_ref() == "default";
-        if !is_default && !is_valid_ident_name(exported.as_ref()) {
-            return None;
-        }
         if !is_default && self.can_bind_export_name(&exported) {
             let result = Box::new(Expr::Ident(ident(exported.clone())));
             return Some((vec![self.export_const_item(exported, value)], result));
@@ -1617,7 +1615,8 @@ impl VisitMut for SystemExecuteTransformer {
                     *expr = *result;
                     return;
                 }
-                *expr = export_replacement_expr(value);
+                // Bulk / unrepresentable calls stay in place. Peeling would
+                // drop the export name while leaving only the value.
                 expr.visit_mut_children_with(self);
                 return;
             }
@@ -1657,13 +1656,21 @@ struct ExportBinding {
     exported: Atom,
 }
 
+fn export_name_node(name: &Atom) -> ModuleExportName {
+    if is_valid_ident_name(name.as_ref()) {
+        ModuleExportName::Ident(ident(name.clone()))
+    } else {
+        ModuleExportName::Str(make_str(name.as_ref()))
+    }
+}
+
 fn named_export_item(local: Atom, exported: Atom) -> ModuleItem {
     ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(NamedExport {
         span: DUMMY_SP,
         specifiers: vec![ExportSpecifier::Named(ExportNamedSpecifier {
             span: DUMMY_SP,
             orig: ModuleExportName::Ident(ident(local)),
-            exported: Some(ModuleExportName::Ident(ident(exported))),
+            exported: Some(export_name_node(&exported)),
             is_type_only: false,
         })],
         src: None,
