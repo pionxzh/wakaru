@@ -220,6 +220,13 @@ fn run_un_object_rest(
         return;
     }
 
+    // Synthetic destructuring bindings use an empty SyntaxContext and are emitted
+    // textually, so they must not collide with any existing identifier name. Keep
+    // the original module-wide inventory available while inner and module scopes
+    // are rebuilt; the per-scope prefix scan below also sees aliases synthesized
+    // earlier in the same statement list.
+    let reserved_names = collect_scope_names_module(&module.body);
+
     // Process inner scopes first (function bodies, etc.) with helpers available
     let exclusion_arrays = collect_exclusion_arrays_from_module_items(&module.body);
     let mut processor = ObjectRestProcessor {
@@ -228,6 +235,7 @@ fn run_un_object_rest(
         swc_numeric_helper_namespaces: &swc_numeric_helper_namespaces,
         cross_module_namespaces: &cross_module_helpers.namespaces,
         exclusion_arrays: exclusion_arrays.clone(),
+        reserved_names: &reserved_names,
         unresolved_mark,
     };
     module.visit_mut_children_with(&mut processor);
@@ -302,7 +310,10 @@ fn run_un_object_rest(
                 &source,
                 &excluded_keys,
                 &preceding_accesses,
-                &scope_names,
+                AliasNameConflicts {
+                    scope_names: &scope_names,
+                    reserved_names: &reserved_names,
+                },
             );
             recent_stmts.push(new_stmt.clone());
             new_body.push(ModuleItem::Stmt(new_stmt));
@@ -1666,6 +1677,7 @@ struct ObjectRestProcessor<'a> {
     swc_numeric_helper_namespaces: &'a HashSet<BindingKey>,
     cross_module_namespaces: &'a HashMap<BindingKey, HashMap<String, TranspilerHelperKind>>,
     exclusion_arrays: HashMap<BindingKey, Vec<Atom>>,
+    reserved_names: &'a HashSet<Atom>,
     unresolved_mark: Mark,
 }
 
@@ -1750,7 +1762,10 @@ impl VisitMut for ObjectRestProcessor<'_> {
                     &source,
                     &excluded_keys,
                     &preceding_accesses,
-                    &scope_names,
+                    AliasNameConflicts {
+                        scope_names: &scope_names,
+                        reserved_names: self.reserved_names,
+                    },
                 ));
                 if !after.is_empty() {
                     new_stmts.push(Stmt::Decl(Decl::Var(Box::new(VarDecl {
@@ -3276,7 +3291,7 @@ fn build_rest_destructuring(
     source: &Expr,
     excluded_keys: &[Atom],
     merged: &[PrecedingAccess],
-    scope_names: &std::collections::HashSet<Atom>,
+    alias_conflicts: AliasNameConflicts<'_>,
 ) -> Stmt {
     // Build a map from prop key → (local binding name, SyntaxContext) from preceding accesses.
     // Preserving the original SyntaxContext is critical so that downstream SmartRename
@@ -3365,7 +3380,7 @@ fn build_rest_destructuring(
             // name itself can contain characters such as `:` (Vue event props),
             // which are valid in a quoted property key but not in a binding.
             let base = generated_alias_base(key);
-            let alias = find_non_conflicting_alias(&base, scope_names, &used_aliases);
+            let alias = find_non_conflicting_alias(&base, alias_conflicts, &used_aliases);
             used_aliases.insert(alias.clone());
             props.push(ObjectPatProp::KeyValue(KeyValuePatProp {
                 key: make_prop_name(key),
@@ -3570,19 +3585,32 @@ fn prop_name_atom(key: &PropName) -> Option<Atom> {
     }
 }
 
+/// Existing emitted names that a synthetic alias must not capture or redeclare.
+#[derive(Clone, Copy)]
+struct AliasNameConflicts<'a> {
+    scope_names: &'a HashSet<Atom>,
+    reserved_names: &'a HashSet<Atom>,
+}
+
+impl AliasNameConflicts<'_> {
+    fn contains(self, name: &Atom) -> bool {
+        self.scope_names.contains(name) || self.reserved_names.contains(name)
+    }
+}
+
 /// Find an alias name that doesn't collide with scope names or already-used aliases.
 fn find_non_conflicting_alias(
     base: &str,
-    scope_names: &std::collections::HashSet<Atom>,
+    conflicts: AliasNameConflicts<'_>,
     used_aliases: &std::collections::HashSet<Atom>,
 ) -> Atom {
     let base_atom = Atom::from(base);
-    if !scope_names.contains(&base_atom) && !used_aliases.contains(&base_atom) {
+    if !conflicts.contains(&base_atom) && !used_aliases.contains(&base_atom) {
         return base_atom;
     }
     for i in 1.. {
         let candidate = Atom::from(format!("{}_{}", base, i));
-        if !scope_names.contains(&candidate) && !used_aliases.contains(&candidate) {
+        if !conflicts.contains(&candidate) && !used_aliases.contains(&candidate) {
             return candidate;
         }
     }
