@@ -1554,3 +1554,122 @@ System.register([], function (_export, _context) {
         "must not bind a name a direct eval could observe:\n{entry}"
     );
 }
+
+#[test]
+fn assign_of_export_literal_keeps_name_and_return_value() {
+    // `S = _export("TodayShow", "TodayShow")` must emit the export and keep
+    // `_export`'s return value for the assignment (not drop the name).
+    let source = r#"
+System.register([], function (_export, _context) {
+  var S;
+  return { setters: [], execute: function () {
+    S = _export("TodayShow", "TodayShow");
+    use(S);
+  } };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "entry.js");
+    assert!(
+        entry.contains("export const TodayShow = \"TodayShow\"")
+            || entry.contains("export const TodayShow = 'TodayShow'"),
+        "literal UNIQUE export must be emitted:\n{entry}"
+    );
+    assert!(
+        entry.contains("S = TodayShow") || entry.contains("S=TodayShow"),
+        "assignment must keep `_export`'s return value:\n{entry}"
+    );
+}
+
+#[test]
+fn seq_assign_export_literal_then_named_export_keeps_both_names() {
+    // Activity51Popup shape: `S = _export("TodayShow", "TodayShow"), _export("Popup", ctor)`.
+    let source = r#"
+System.register([], function (_export, _context) {
+  var S;
+  return { setters: [], execute: function () {
+    S = _export("TodayShow", "TodayShow"), _export("Popup", function Popup() {});
+  } };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "entry.js");
+    assert!(
+        entry.contains("TodayShow"),
+        "string UNIQUE export must survive the comma sequence:\n{entry}"
+    );
+    assert!(
+        entry.contains("export const Popup")
+            || entry.contains("export {") && entry.contains("Popup"),
+        "following named export must survive:\n{entry}"
+    );
+    assert!(
+        entry.contains("export const TodayShow")
+            || entry.contains("export {") && entry.contains("TodayShow"),
+        "TodayShow must be an export, not only a local:\n{entry}"
+    );
+}
+
+#[test]
+fn assign_of_export_literal_respects_freedom_proof() {
+    let source = r#"
+System.register([], function (_export, _context) {
+  var S;
+  return { setters: [], execute: function () {
+    eval("TodayShow");
+    S = _export("TodayShow", "TodayShow");
+  } };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "entry.js");
+    assert!(
+        entry.contains("export { __systemjs_export as TodayShow }"),
+        "direct eval must force the alias path:\n{entry}"
+    );
+    assert!(
+        !entry.contains("export const TodayShow"),
+        "must not bind a name a direct eval could observe:\n{entry}"
+    );
+}
+
+#[test]
+fn assign_of_export_literal_rejects_reserved_name() {
+    let source = r#"
+System.register([], function (_export, _context) {
+  var S;
+  return { setters: [], execute: function () {
+    S = _export("class", "class");
+  } };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "entry.js");
+    assert!(
+        entry.contains("export { __systemjs_export as class }"),
+        "reserved export names must stay on the alias path:\n{entry}"
+    );
+    assert!(
+        !entry.contains("export const class"),
+        "must not emit a reserved binding:\n{entry}"
+    );
+}
+
+#[test]
+fn nested_export_literal_expression_keeps_name() {
+    // Expression-position `_export` (not a statement) still has to emit.
+    let source = r#"
+System.register([], function (_export, _context) {
+  return { setters: [], execute: function () {
+    use(_export("TodayShow", "TodayShow"));
+  } };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "entry.js");
+    assert!(
+        entry.contains("export const TodayShow")
+            || entry.contains("export {") && entry.contains("TodayShow"),
+        "nested `_export` literal must still emit the name:\n{entry}"
+    );
+}
