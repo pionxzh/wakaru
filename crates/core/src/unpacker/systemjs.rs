@@ -1295,7 +1295,7 @@ impl SystemExecuteTransformer {
                         id: ident(name),
                         type_ann: None,
                     }),
-                    init: Some(value),
+                    init: Some(emit_exported_value(value)),
                     definite: false,
                 }],
             })),
@@ -1314,7 +1314,7 @@ impl SystemExecuteTransformer {
                     id: ident(local),
                     type_ann: None,
                 }),
-                init: Some(value),
+                init: Some(emit_exported_value(value)),
                 definite: false,
             }],
         }));
@@ -1354,10 +1354,12 @@ impl SystemExecuteTransformer {
                     return Some(Vec::new());
                 }
                 if exported.as_ref() == "default" {
+                    // Function-callee IIFEs must stay expressions. Bare
+                    // `export default function () {}()` is a SyntaxError.
                     return Some(vec![ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(
                         ExportDefaultExpr {
                             span: DUMMY_SP,
-                            expr: value,
+                            expr: emit_exported_value(value),
                         },
                     ))]);
                 }
@@ -1559,7 +1561,7 @@ impl SystemExecuteTransformer {
                             VarDeclarator {
                                 span: decl.span,
                                 name: decl.name.clone(),
-                                init: Some(value),
+                                init: Some(emit_exported_value(value)),
                                 definite: decl.definite,
                             },
                         ));
@@ -1897,6 +1899,10 @@ fn exported_value_local(expr: &Expr) -> Option<Atom> {
         Expr::Assign(assign) => assign.left.as_simple()?.as_ident().map(|id| id.sym.clone()),
         _ => None,
     }
+}
+
+fn emit_exported_value(value: Box<Expr>) -> Box<Expr> {
+    Box::new(export_replacement_expr(value))
 }
 
 fn export_replacement_expr(value: Box<Expr>) -> Expr {
