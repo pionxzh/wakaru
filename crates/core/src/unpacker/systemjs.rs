@@ -10,8 +10,8 @@ use swc_core::ecma::ast::{
     Expr, ExprOrSpread, ExprStmt, FnExpr, Function, FunctionBody, Ident, ImportDecl,
     ImportDefaultSpecifier, ImportNamedSpecifier, ImportSpecifier, ImportStarAsSpecifier, Lit,
     MemberExpr, MemberProp, MetaPropExpr, MetaPropKind, Module, ModuleDecl, ModuleExportName,
-    ModuleItem, NamedExport, ObjectLit, ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt,
-    SimpleAssignTarget, Stmt, Str, UnaryOp, VarDecl, VarDeclarator,
+    ModuleItem, NamedExport, ObjectLit, OptChainBase, ParenExpr, Pat, Prop, PropName, PropOrSpread,
+    ReturnStmt, SimpleAssignTarget, Stmt, Str, UnaryOp, VarDecl, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::transforms::base::resolver;
@@ -1354,6 +1354,21 @@ impl SystemExecuteTransformer {
                     return Some(Vec::new());
                 }
                 if exported.as_ref() == "default" {
+                    if default_export_needs_binding(value.as_ref()) {
+                        // SWC's fixer can remove the only parens that distinguish
+                        // these values from a default function/class declaration.
+                        // A local initializer is unambiguously expression context.
+                        let local = self.fresh_export_name();
+                        return Some(vec![
+                            self.binding_item(local.clone(), value),
+                            ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(
+                                ExportDefaultExpr {
+                                    span: DUMMY_SP,
+                                    expr: Box::new(Expr::Ident(ident(local))),
+                                },
+                            )),
+                        ]);
+                    }
                     // Function-callee IIFEs must stay expressions. Bare
                     // `export default function () {}()` is a SyntaxError.
                     return Some(vec![ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(
@@ -1903,6 +1918,45 @@ fn exported_value_local(expr: &Expr) -> Option<Atom> {
 
 fn emit_exported_value(value: Box<Expr>) -> Box<Expr> {
     Box::new(export_replacement_expr(value))
+}
+
+fn default_export_needs_binding(value: &Expr) -> bool {
+    let value = strip_paren_expr(value);
+    match value {
+        // Reprinting these as declarations would hoist their names into module
+        // scope instead of keeping the names local to the expressions.
+        Expr::Fn(function) => function.ident.is_some(),
+        Expr::Class(class) => class.ident.is_some(),
+        // The direct IIFE case is safely handled by emit_exported_value. Once
+        // another operation is appended, SWC can discard the outer parens.
+        _ => starts_with_function_or_class(value) && !is_function_callee_iife(value),
+    }
+}
+
+fn starts_with_function_or_class(expr: &Expr) -> bool {
+    match expr {
+        Expr::Fn(_) | Expr::Class(_) => true,
+        Expr::Bin(binary) => starts_with_function_or_class(binary.left.as_ref()),
+        Expr::Call(call) => matches!(
+            &call.callee,
+            Callee::Expr(callee) if starts_with_function_or_class(callee.as_ref())
+        ),
+        Expr::Member(member) => starts_with_function_or_class(member.obj.as_ref()),
+        Expr::Cond(condition) => starts_with_function_or_class(condition.test.as_ref()),
+        Expr::TaggedTpl(tagged) => starts_with_function_or_class(tagged.tag.as_ref()),
+        Expr::Paren(paren) => starts_with_function_or_class(paren.expr.as_ref()),
+        Expr::OptChain(chain) => match chain.base.as_ref() {
+            OptChainBase::Member(member) => starts_with_function_or_class(member.obj.as_ref()),
+            OptChainBase::Call(call) => starts_with_function_or_class(call.callee.as_ref()),
+        },
+        Expr::TsAs(as_expr) => starts_with_function_or_class(as_expr.expr.as_ref()),
+        Expr::TsNonNull(non_null) => starts_with_function_or_class(non_null.expr.as_ref()),
+        Expr::TsInstantiation(instantiation) => {
+            starts_with_function_or_class(instantiation.expr.as_ref())
+        }
+        Expr::TsSatisfies(satisfies) => starts_with_function_or_class(satisfies.expr.as_ref()),
+        _ => false,
+    }
 }
 
 fn export_replacement_expr(value: Box<Expr>) -> Expr {
