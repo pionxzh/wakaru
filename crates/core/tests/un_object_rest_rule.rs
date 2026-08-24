@@ -195,6 +195,26 @@ use(rest);
 }
 
 #[test]
+fn bare_string_key_generates_a_valid_destructuring_binding() {
+    let input = r#"
+props["onUpdate:visible"];
+const rest = ((e, t) => {
+    const n = {};
+    for (const r in e) {
+        t.indexOf(r) >= 0 || Object.prototype.hasOwnProperty.call(e, r) && (n[r] = e[r]);
+    }
+    return n;
+})(props, ["onUpdate:visible"]);
+use(rest);
+"#;
+    let expected = r#"
+const { "onUpdate:visible": _onUpdate_visible, ...rest } = props;
+use(rest);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn multi_declarator_comma_separated() {
     // Babel output: var t = e.to, n = e.exact, d = IIFE(e, ["to","exact"]), p = expr
     let input = r#"

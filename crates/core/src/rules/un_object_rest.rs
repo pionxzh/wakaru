@@ -3361,8 +3361,10 @@ fn build_rest_destructuring(
                 }));
             }
         } else {
-            // Not in preceding — generate a `_key` alias
-            let base = format!("_{}", key);
+            // Not in preceding — generate a valid `_key` alias. The property
+            // name itself can contain characters such as `:` (Vue event props),
+            // which are valid in a quoted property key but not in a binding.
+            let base = generated_alias_base(key);
             let alias = find_non_conflicting_alias(&base, scope_names, &used_aliases);
             used_aliases.insert(alias.clone());
             props.push(ObjectPatProp::KeyValue(KeyValuePatProp {
@@ -3585,6 +3587,30 @@ fn find_non_conflicting_alias(
         }
     }
     unreachable!()
+}
+
+/// Create a readable, valid binding base for an excluded property without a
+/// preceding local binding. The quoted property key remains unchanged in the
+/// reconstructed pattern; this is only the synthetic local needed to preserve
+/// object-rest semantics.
+fn generated_alias_base(key: &str) -> String {
+    let mut alias = String::from("_");
+    let mut previous_was_separator = false;
+
+    for ch in key.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '_' || ch == '$' {
+            alias.push(ch);
+            previous_was_separator = false;
+        } else if !previous_was_separator {
+            alias.push('_');
+            previous_was_separator = true;
+        }
+    }
+
+    if alias == "_" {
+        alias.push_str("property");
+    }
+    alias
 }
 
 /// Collect all binding names from a list of statements (top-level idents only).
