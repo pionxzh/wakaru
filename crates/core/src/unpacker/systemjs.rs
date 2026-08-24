@@ -302,7 +302,7 @@ fn emit_system_module(
     let descriptor = extract_register_descriptor(body)?;
     let execute_body = descriptor.execute.body.as_ref()?;
 
-    let imports = collect_imports(&register.deps, &descriptor.setters)?;
+    let imports = collect_imports(&register.deps, &descriptor.setters, &export_sym)?;
     let imported_locals = imports
         .iter()
         .flat_map(|import| import.local_names())
@@ -708,6 +708,10 @@ struct ImportParts {
     default: Option<Atom>,
     namespace: Option<Atom>,
     named: Vec<(Atom, Atom)>,
+    /// Live `export { local as Name }` from a setter assignment + `_export`.
+    reexports: Vec<(Atom, Atom)>,
+    /// `export { imported as Name } from "dep"` — no synthesized local.
+    reexports_from: Vec<(Atom, Atom)>,
 }
 
 impl ImportParts {
@@ -719,18 +723,27 @@ impl ImportParts {
         names
     }
 
+    fn has_import_bindings(&self) -> bool {
+        self.default.is_some() || self.namespace.is_some() || !self.named.is_empty()
+    }
+
     fn to_module_items(&self) -> Vec<ModuleItem> {
         let mut items = Vec::new();
         let src = make_str(&self.source);
-        if self.default.is_none() && self.namespace.is_none() && self.named.is_empty() {
-            items.push(ModuleItem::ModuleDecl(ModuleDecl::Import(ImportDecl {
-                span: DUMMY_SP,
-                specifiers: vec![],
-                src: Box::new(src),
-                type_only: false,
-                with: None,
-                phase: Default::default(),
-            })));
+        if !self.has_import_bindings() {
+            if self.reexports_from.is_empty() && self.reexports.is_empty() {
+                items.push(ModuleItem::ModuleDecl(ModuleDecl::Import(ImportDecl {
+                    span: DUMMY_SP,
+                    specifiers: vec![],
+                    src: Box::new(src),
+                    type_only: false,
+                    with: None,
+                    phase: Default::default(),
+                })));
+                return items;
+            }
+            items.extend(self.reexport_from_items());
+            items.extend(self.reexport_items());
             return items;
         }
 
@@ -781,11 +794,33 @@ impl ImportParts {
             })));
         }
 
+        items.extend(self.reexport_items());
+        items.extend(self.reexport_from_items());
         items
+    }
+
+    fn reexport_items(&self) -> Vec<ModuleItem> {
+        self.reexports
+            .iter()
+            .map(|(local, exported)| named_reexport_item(local.clone(), exported.clone()))
+            .collect()
+    }
+
+    fn reexport_from_items(&self) -> Vec<ModuleItem> {
+        self.reexports_from
+            .iter()
+            .map(|(imported, exported)| {
+                named_export_from_item(imported.clone(), exported.clone(), &self.source)
+            })
+            .collect()
     }
 }
 
-fn collect_imports(deps: &[String], setters: &[Option<Function>]) -> Option<Vec<ImportParts>> {
+fn collect_imports(
+    deps: &[String],
+    setters: &[Option<Function>],
+    export_sym: &Atom,
+) -> Option<Vec<ImportParts>> {
     let mut imports = Vec::new();
     for (idx, dep) in deps.iter().enumerate() {
         let mut parts = ImportParts {
@@ -803,14 +838,23 @@ fn collect_imports(deps: &[String], setters: &[Option<Function>]) -> Option<Vec<
             continue;
         }
         let module_sym = module_sym?;
+        let mut pending_reexports = Vec::new();
         for stmt in &body.stmts {
-            for (local, kind) in setter_assignments(stmt, &module_sym)? {
-                match kind {
-                    SetterImportKind::Default => parts.default = Some(local),
-                    SetterImportKind::Named(imported) => parts.named.push((imported, local)),
-                    SetterImportKind::Namespace => parts.namespace = Some(local),
+            for part in setter_stmt_parts(stmt, &module_sym, export_sym)? {
+                match part {
+                    SetterPart::Import(local, kind) => match kind {
+                        SetterImportKind::Default => parts.default = Some(local),
+                        SetterImportKind::Named(imported) => parts.named.push((imported, local)),
+                        SetterImportKind::Namespace => parts.namespace = Some(local),
+                    },
+                    SetterPart::Reexport { exported, value } => {
+                        pending_reexports.push((exported, value));
+                    }
                 }
             }
+        }
+        for (exported, value) in pending_reexports {
+            apply_setter_reexport(&mut parts, &module_sym, exported, value.as_ref())?;
         }
         imports.push(parts);
     }
@@ -823,7 +867,12 @@ enum SetterImportKind {
     Namespace,
 }
 
-fn setter_assignments(stmt: &Stmt, module_sym: &Atom) -> Option<Vec<(Atom, SetterImportKind)>> {
+enum SetterPart {
+    Import(Atom, SetterImportKind),
+    Reexport { exported: Atom, value: Box<Expr> },
+}
+
+fn setter_stmt_parts(stmt: &Stmt, module_sym: &Atom, export_sym: &Atom) -> Option<Vec<SetterPart>> {
     let Stmt::Expr(expr_stmt) = stmt else {
         return None;
     };
@@ -831,9 +880,59 @@ fn setter_assignments(stmt: &Stmt, module_sym: &Atom) -> Option<Vec<(Atom, Sette
         Expr::Seq(seq) => seq
             .exprs
             .iter()
-            .map(|expr| setter_assignment_expr(expr.as_ref(), module_sym))
+            .map(|expr| setter_expr_part(expr.as_ref(), module_sym, export_sym))
             .collect(),
-        expr => setter_assignment_expr(expr, module_sym).map(|assignment| vec![assignment]),
+        expr => setter_expr_part(expr, module_sym, export_sym).map(|part| vec![part]),
+    }
+}
+
+fn setter_expr_part(expr: &Expr, module_sym: &Atom, export_sym: &Atom) -> Option<SetterPart> {
+    if let Some((local, kind)) = setter_assignment_expr(expr, module_sym) {
+        return Some(SetterPart::Import(local, kind));
+    }
+    // A setter parameter that shadows `_export` makes `e(...)` a call on the
+    // module namespace, not a re-export. Keep the whole module fail-closed.
+    if module_sym == export_sym {
+        return None;
+    }
+    let Expr::Call(call) = expr else {
+        return None;
+    };
+    let ExportCall::Single { exported, value } = parse_export_call(call, export_sym)? else {
+        return None;
+    };
+    Some(SetterPart::Reexport { exported, value })
+}
+
+fn apply_setter_reexport(
+    parts: &mut ImportParts,
+    module_sym: &Atom,
+    exported: Atom,
+    value: &Expr,
+) -> Option<()> {
+    match value {
+        Expr::Ident(id) if parts.local_names().iter().any(|name| name == &id.sym) => {
+            parts.reexports.push((id.sym.clone(), exported));
+            Some(())
+        }
+        Expr::Member(member) if member_obj_ident(member, module_sym) => {
+            let imported = member_prop_name(&member.prop)?;
+            if imported.as_ref() == "default" {
+                if let Some(local) = &parts.default {
+                    parts.reexports.push((local.clone(), exported));
+                } else {
+                    parts.reexports_from.push((Atom::from("default"), exported));
+                }
+                return Some(());
+            }
+            if let Some((_, local)) = parts.named.iter().find(|(name, _)| name == &imported) {
+                parts.reexports.push((local.clone(), exported));
+            } else {
+                parts.reexports_from.push((imported, exported));
+            }
+            Some(())
+        }
+        _ => None,
     }
 }
 
@@ -1674,6 +1773,38 @@ fn named_export_item(local: Atom, exported: Atom) -> ModuleItem {
             is_type_only: false,
         })],
         src: None,
+        type_only: false,
+        with: None,
+    }))
+}
+
+fn named_reexport_item(local: Atom, exported: Atom) -> ModuleItem {
+    ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(NamedExport {
+        span: DUMMY_SP,
+        specifiers: vec![ExportSpecifier::Named(ExportNamedSpecifier {
+            span: DUMMY_SP,
+            orig: ModuleExportName::Ident(ident(local.clone())),
+            exported: (local.as_ref() != exported.as_ref())
+                .then(|| ModuleExportName::Ident(ident(exported))),
+            is_type_only: false,
+        })],
+        src: None,
+        type_only: false,
+        with: None,
+    }))
+}
+
+fn named_export_from_item(imported: Atom, exported: Atom, source: &str) -> ModuleItem {
+    ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(NamedExport {
+        span: DUMMY_SP,
+        specifiers: vec![ExportSpecifier::Named(ExportNamedSpecifier {
+            span: DUMMY_SP,
+            orig: ModuleExportName::Ident(ident(imported.clone())),
+            exported: (imported.as_ref() != exported.as_ref())
+                .then(|| ModuleExportName::Ident(ident(exported))),
+            is_type_only: false,
+        })],
+        src: Some(Box::new(make_str(source))),
         type_only: false,
         with: None,
     }))

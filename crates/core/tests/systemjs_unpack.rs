@@ -1771,3 +1771,239 @@ System.register([], function (_export, _context) {
         "a CJS hasOwnProperty string must not force the alias path:\n{entry}"
     );
 }
+
+#[test]
+fn setter_reexport_of_imported_member_becomes_named_export() {
+    // `local = m.Name, _export("Name", m.Name)` used to fail the setter
+    // parser and leave the whole register untouched.
+    let source = r#"
+System.register("dep", [], function (_export) {
+  return {
+    execute: function () {
+      function AuctionLedgerType() {}
+      _export("AuctionLedgerType", AuctionLedgerType);
+    }
+  };
+});
+System.register("entry", ["dep"], function (_export) {
+  var Type;
+  return {
+    setters: [function (module) {
+      Type = module.AuctionLedgerType, _export("AuctionLedgerType", module.AuctionLedgerType);
+    }],
+    execute: function () {
+      _export("Entry", Type);
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "entry.js");
+    assert!(
+        !entry.contains("System.register"),
+        "setter re-export must not fail the whole module:\n{entry}"
+    );
+    assert!(
+        entry.contains("AuctionLedgerType") && entry.contains(r#"from "dep""#),
+        "the imported binding must be recovered:\n{entry}"
+    );
+    assert!(
+        entry.contains("as AuctionLedgerType")
+            || entry.contains("export { Type as AuctionLedgerType }"),
+        "setter `_export` must become a live re-export:\n{entry}"
+    );
+}
+
+#[test]
+fn setter_reexport_of_assigned_local_becomes_named_export() {
+    let source = r#"
+System.register("entry", ["dep"], function (_export) {
+  var Type;
+  return {
+    setters: [function (module) {
+      Type = module.AuctionLedgerType;
+      _export("AuctionLedgerType", Type);
+    }],
+    execute: function () {
+      use(Type);
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "entry.js");
+    assert!(
+        entry.contains("export { Type as AuctionLedgerType }")
+            || entry.contains("export {Type as AuctionLedgerType}"),
+        "re-exporting the setter local must stay a live binding:\n{entry}"
+    );
+    assert!(
+        entry.contains("use(Type)"),
+        "the imported local must remain in execute:\n{entry}"
+    );
+}
+
+#[test]
+fn setter_reexport_only_uses_export_from_without_local() {
+    // Re-export without a setter assignment must not invent `import { Name }`.
+    let source = r#"
+System.register("entry", ["dep"], function (_export) {
+  return {
+    setters: [function (module) {
+      _export("AuctionLedgerType", module.AuctionLedgerType);
+    }],
+    execute: function () {}
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "entry.js");
+    assert!(
+        !entry.contains("System.register"),
+        "a proven setter re-export must unpack:\n{entry}"
+    );
+    assert!(
+        entry.contains(r#"export { AuctionLedgerType } from "dep""#)
+            || entry.contains(r#"export {AuctionLedgerType} from "dep""#),
+        "assignment-free re-export must be `export {{ Name }} from`:\n{entry}"
+    );
+    assert!(
+        !entry.contains("import {") && !entry.contains("import AuctionLedgerType"),
+        "must not synthesize a local binding for the re-export:\n{entry}"
+    );
+}
+
+#[test]
+fn setter_unknown_export_value_preserves_whole_register() {
+    let source = r#"
+System.register("keep", [], function (_export) {
+  return {
+    execute: function () {
+      _export("value", 1);
+    }
+  };
+});
+System.register("odd", ["dep"], function (_export) {
+  return {
+    setters: [function (module) {
+      _export("AuctionLedgerType", module.AuctionLedgerType + 1);
+    }],
+    execute: function () {}
+  };
+});
+"#;
+    let output = unpack_raw(
+        source,
+        &DecompileOptions {
+            filename: "system-bundle.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("unrecognized setter export must preserve the whole input");
+    assert_eq!(
+        output.modules.len(),
+        1,
+        "unrecognized setter must not emit a partial module set: {:?}",
+        output.modules
+    );
+    assert!(
+        output.modules[0].1.contains(r#"System.register("keep""#)
+            && output.modules[0]
+                .1
+                .contains(r#"_export("AuctionLedgerType", module.AuctionLedgerType + 1)"#),
+        "fallback module should preserve both register calls:\n{}",
+        output.modules[0].1
+    );
+    assert!(
+        output.detected_formats.is_empty(),
+        "unrecognized setter input should not be reported as a successful split"
+    );
+}
+
+#[test]
+fn setter_bulk_export_preserves_whole_register() {
+    let source = r#"
+System.register("entry", ["dep"], function (_export) {
+  return {
+    setters: [function (module) {
+      _export({ AuctionLedgerType: module.AuctionLedgerType });
+    }],
+    execute: function () {}
+  };
+});
+"#;
+    let output = unpack_raw(
+        source,
+        &DecompileOptions {
+            filename: "system-bundle.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("bulk setter export must preserve the whole input");
+    assert_eq!(output.modules.len(), 1);
+    assert!(
+        output.modules[0].1.contains("System.register"),
+        "bulk setter `_export` is not a proven shape:\n{}",
+        output.modules[0].1
+    );
+}
+
+#[test]
+fn setter_param_shadowing_export_preserves_whole_register() {
+    // The setter parameter shadows `_export`, so `e(...)` is a call on the
+    // module namespace, not a re-export.
+    let source = r#"
+System.register("entry", ["dep"], function (_export) {
+  return {
+    setters: [function (_export) {
+      _export("AuctionLedgerType", _export.AuctionLedgerType);
+    }],
+    execute: function () {}
+  };
+});
+"#;
+    let output = unpack_raw(
+        source,
+        &DecompileOptions {
+            filename: "system-bundle.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("shadowed setter `_export` must preserve the whole input");
+    assert_eq!(output.modules.len(), 1);
+    assert!(
+        output.modules[0].1.contains("System.register"),
+        "a setter that shadows `_export` must stay fail-closed:\n{}",
+        output.modules[0].1
+    );
+}
+
+#[test]
+fn setter_reexport_only_does_not_invent_local_visible_to_eval() {
+    let source = r#"
+System.register("entry", ["dep"], function (_export) {
+  return {
+    setters: [function (module) {
+      _export("AuctionLedgerType", module.AuctionLedgerType);
+    }],
+    execute: function () {
+      eval("AuctionLedgerType");
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "entry.js");
+    assert!(
+        entry.contains(r#"from "dep""#),
+        "the re-export must still unpack:\n{entry}"
+    );
+    assert!(
+        !entry.contains("import {") && !entry.contains("import AuctionLedgerType"),
+        "eval must not observe a synthesized import local:\n{entry}"
+    );
+    assert!(
+        entry.contains("eval("),
+        "direct eval in execute must remain:\n{entry}"
+    );
+}
