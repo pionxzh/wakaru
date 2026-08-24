@@ -791,9 +791,12 @@ System.register("entry", [], function (_export) {
         1,
         "default export value should be evaluated once:\n{entry}"
     );
+    // Member-assigned `_export("default", IIFE).prop =` must bind once and
+    // `export default` that binding. `export default (` is the bare default
+    // IIFE path (`default_iife_export_is_parenthesized`), not this shape.
     assert!(
         !entry.contains("export default function") && !entry.contains("export default ("),
-        "default export must not apply the member assignment to the IIFE result:\n{entry}"
+        "member-assigned default must export the binding, not the IIFE:\n{entry}"
     );
 }
 
@@ -2112,7 +2115,9 @@ System.register([], function (_export, _context) {
 }
 
 #[test]
-fn named_iife_export_init_is_parenthesized() {
+fn named_iife_export_binds_const_not_default_declaration() {
+    // Named IIFE goes through `export const` (expression context). Parens are
+    // required only for `export default`; codegen may drop them on const init.
     let source = r#"
 System.register([], function (_export, _context) {
   return { setters: [], execute: function () {
@@ -2125,12 +2130,13 @@ System.register([], function (_export, _context) {
 "#;
     let raw = unpack_source_raw(source);
     let entry = module_code(&raw, "entry.js");
-    // `const X = function () {}()` is already a Call of a function
-    // expression; codegen may drop redundant parens. The hole is default
-    // exports, which parse as a declaration.
     assert!(
         entry.contains("export const Util ="),
         "named IIFE must bind the export:\n{entry}"
+    );
+    assert!(
+        entry.contains("= function") || entry.contains("= (function"),
+        "named IIFE must stay a function expression:\n{entry}"
     );
     assert!(
         !entry.contains("export default function"),
@@ -2164,28 +2170,50 @@ System.register([], function (_export, _context) {
 }
 
 #[test]
-fn leftover_statement_iife_after_export_is_parenthesized() {
-    // Side-effect IIFE left after a named export must stay an expression
-    // statement: `function () {}()` is illegal at statement position.
+fn named_iife_export_respects_direct_eval_freedom_proof() {
+    // Parenthesizing the IIFE must not bypass the #208 freedom proof.
     let source = r#"
 System.register([], function (_export, _context) {
   return { setters: [], execute: function () {
-    _export("sdk", getInstance());
-    (function () {
-      globalThis.__SDK_STORE = globalThis.__SDK_STORE || {};
-    })();
+    eval("Util");
+    _export("Util", function () {
+      function Util() {}
+      return Util;
+    }());
   } };
 });
 "#;
     let raw = unpack_source_raw(source);
     let entry = module_code(&raw, "entry.js");
     assert!(
-        entry.contains("export const sdk = getInstance();")
-            || (entry.contains("export {") && entry.contains("sdk")),
-        "named export should survive:\n{entry}"
+        entry.contains("export { __systemjs_export as Util }"),
+        "direct eval must force the alias path:\n{entry}"
     );
     assert!(
-        !entry.contains("\nfunction ()") && !entry.contains("\nfunction()"),
-        "leftover IIFE must not print as a function declaration:\n{entry}"
+        !entry.contains("export const Util"),
+        "must not bind a name a direct eval could observe:\n{entry}"
+    );
+}
+
+#[test]
+fn named_iife_export_rejects_reserved_name_binding() {
+    let source = r#"
+System.register([], function (_export, _context) {
+  return { setters: [], execute: function () {
+    _export("class", function () {
+      return 1;
+    }());
+  } };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "entry.js");
+    assert!(
+        entry.contains("export { __systemjs_export as class }"),
+        "reserved export names must stay on the alias path:\n{entry}"
+    );
+    assert!(
+        !entry.contains("export const class"),
+        "must not emit a reserved binding:\n{entry}"
     );
 }
