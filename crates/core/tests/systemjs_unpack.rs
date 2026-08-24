@@ -2082,3 +2082,110 @@ System.register(["./dep.js"], function (_export, _context) {
         );
     }
 }
+
+#[test]
+fn default_iife_export_is_parenthesized() {
+    // `_export("default", function () {}())` must stay an expression. Without
+    // parens, codegen prints `export default function () {}()`, which is a
+    // SyntaxError (function declaration + call).
+    let source = r#"
+System.register([], function (_export, _context) {
+  return { setters: [], execute: function () {
+    _export("default", function () {
+      function Util() {}
+      Util.ready = true;
+      return Util;
+    }());
+  } };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "entry.js");
+    assert!(
+        entry.contains("export default ("),
+        "default IIFE must be parenthesized:\n{entry}"
+    );
+    assert!(
+        !entry.contains("export default function"),
+        "must not print a default function declaration that is immediately called:\n{entry}"
+    );
+}
+
+#[test]
+fn named_iife_export_init_is_parenthesized() {
+    let source = r#"
+System.register([], function (_export, _context) {
+  return { setters: [], execute: function () {
+    _export("Util", function () {
+      function Util() {}
+      return Util;
+    }());
+  } };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "entry.js");
+    // `const X = function () {}()` is already a Call of a function
+    // expression; codegen may drop redundant parens. The hole is default
+    // exports, which parse as a declaration.
+    assert!(
+        entry.contains("export const Util ="),
+        "named IIFE must bind the export:\n{entry}"
+    );
+    assert!(
+        !entry.contains("export default function"),
+        "named IIFE must not fall through to a default function declaration:\n{entry}"
+    );
+}
+
+#[test]
+fn named_default_function_declaration_is_not_parenthesized() {
+    // A default function *declaration* is already legal. Wrapping it would
+    // change `export default function Named()` into an expression.
+    let source = r#"
+System.register([], function (_export, _context) {
+  return { setters: [], execute: function () {
+    _export("default", function Named() {
+      return 1;
+    });
+  } };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "entry.js");
+    assert!(
+        entry.contains("export default function Named") || entry.contains("function Named()"),
+        "named default function should stay a declaration or equivalent binding:\n{entry}"
+    );
+    assert!(
+        !entry.contains("export default (function Named"),
+        "must not wrap a non-IIFE default function declaration:\n{entry}"
+    );
+}
+
+#[test]
+fn leftover_statement_iife_after_export_is_parenthesized() {
+    // Side-effect IIFE left after a named export must stay an expression
+    // statement: `function () {}()` is illegal at statement position.
+    let source = r#"
+System.register([], function (_export, _context) {
+  return { setters: [], execute: function () {
+    _export("sdk", getInstance());
+    (function () {
+      globalThis.__SDK_STORE = globalThis.__SDK_STORE || {};
+    })();
+  } };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "entry.js");
+    assert!(
+        entry.contains("export const sdk = getInstance();")
+            || (entry.contains("export {") && entry.contains("sdk")),
+        "named export should survive:\n{entry}"
+    );
+    assert!(
+        !entry.contains("\nfunction ()") && !entry.contains("\nfunction()"),
+        "leftover IIFE must not print as a function declaration:\n{entry}"
+    );
+}
