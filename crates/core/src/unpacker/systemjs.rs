@@ -1784,8 +1784,7 @@ fn named_reexport_item(local: Atom, exported: Atom) -> ModuleItem {
         specifiers: vec![ExportSpecifier::Named(ExportNamedSpecifier {
             span: DUMMY_SP,
             orig: ModuleExportName::Ident(ident(local.clone())),
-            exported: (local.as_ref() != exported.as_ref())
-                .then(|| ModuleExportName::Ident(ident(exported))),
+            exported: (local.as_ref() != exported.as_ref()).then(|| export_name_node(&exported)),
             is_type_only: false,
         })],
         src: None,
@@ -1799,9 +1798,8 @@ fn named_export_from_item(imported: Atom, exported: Atom, source: &str) -> Modul
         span: DUMMY_SP,
         specifiers: vec![ExportSpecifier::Named(ExportNamedSpecifier {
             span: DUMMY_SP,
-            orig: ModuleExportName::Ident(ident(imported.clone())),
-            exported: (imported.as_ref() != exported.as_ref())
-                .then(|| ModuleExportName::Ident(ident(exported))),
+            orig: export_name_node(&imported),
+            exported: (imported.as_ref() != exported.as_ref()).then(|| export_name_node(&exported)),
             is_type_only: false,
         })],
         src: Some(Box::new(make_str(source))),
