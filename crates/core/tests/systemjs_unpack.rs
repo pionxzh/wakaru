@@ -2115,6 +2115,43 @@ System.register([], function (_export, _context) {
 }
 
 #[test]
+fn default_iife_member_value_keeps_expression_context() {
+    // Babel 7/8 removes the source parens in `_export`'s argument because the
+    // argument is already an expression context. Keep the complete value in
+    // an initializer so a member suffix cannot expose a declaration-like head.
+    let source = r#"
+System.register([], function (_export, _context) {
+  return { setters: [], execute: function () {
+    _export("default", function () {
+      return { value: 1 };
+    }().value);
+  } };
+});
+"#;
+
+    for (label, modules) in [
+        ("raw", unpack_source_raw(source)),
+        ("decompiled", unpack_source(source)),
+    ] {
+        let entry = module_code(&modules, "entry.js");
+        assert_eq!(
+            validate_output_modules(&modules),
+            vec![],
+            "{label} output must remain parseable:\n{entry}"
+        );
+        assert!(
+            entry.contains("const __systemjs_export =")
+                && entry.contains("export default __systemjs_export;"),
+            "{label} output must evaluate the member value in an initializer:\n{entry}"
+        );
+        assert!(
+            !entry.contains("export default function"),
+            "{label} output must not reinterpret the IIFE as a declaration:\n{entry}"
+        );
+    }
+}
+
+#[test]
 fn named_iife_export_binds_const_not_default_declaration() {
     // Named IIFE goes through `export const` (expression context). Parens are
     // required only for `export default`; codegen may drop them on const init.
@@ -2145,28 +2182,78 @@ System.register([], function (_export, _context) {
 }
 
 #[test]
-fn named_default_function_declaration_is_not_parenthesized() {
-    // A default function *declaration* is already legal. Wrapping it would
-    // change `export default function Named()` into an expression.
+fn named_default_function_expression_stays_local() {
+    // Babel 7/8 emits this shape from `export default (function Named() {})`.
+    // The name belongs only to the function expression; emitting a declaration
+    // would introduce and hoist a new module-scope `Named` binding.
     let source = r#"
 System.register([], function (_export, _context) {
   return { setters: [], execute: function () {
+    observe(typeof Named);
+    observe(eval("typeof Named"));
     _export("default", function Named() {
       return 1;
     });
   } };
 });
 "#;
-    let raw = unpack_source_raw(source);
-    let entry = module_code(&raw, "entry.js");
-    assert!(
-        entry.contains("export default function Named") || entry.contains("function Named()"),
-        "named default function should stay a declaration or equivalent binding:\n{entry}"
-    );
-    assert!(
-        !entry.contains("export default (function Named"),
-        "must not wrap a non-IIFE default function declaration:\n{entry}"
-    );
+
+    for (label, modules) in [
+        ("raw", unpack_source_raw(source)),
+        ("decompiled", unpack_source(source)),
+    ] {
+        let entry = module_code(&modules, "entry.js");
+        assert_eq!(
+            validate_output_modules(&modules),
+            vec![],
+            "{label} output must remain parseable:\n{entry}"
+        );
+        assert!(
+            entry.contains("const __systemjs_export = function Named")
+                && entry.contains("export default __systemjs_export;"),
+            "{label} output must keep the named function in an initializer:\n{entry}"
+        );
+        assert!(
+            !entry.contains("export default function Named"),
+            "{label} output must not hoist the expression name into module scope:\n{entry}"
+        );
+    }
+}
+
+#[test]
+fn named_default_class_expression_stays_local() {
+    let source = r#"
+System.register([], function (_export, _context) {
+  return { setters: [], execute: function () {
+    observe(typeof Named);
+    observe(eval("typeof Named"));
+    _export("default", class Named {
+      static value = 1;
+    });
+  } };
+});
+"#;
+
+    for (label, modules) in [
+        ("raw", unpack_source_raw(source)),
+        ("decompiled", unpack_source(source)),
+    ] {
+        let entry = module_code(&modules, "entry.js");
+        assert_eq!(
+            validate_output_modules(&modules),
+            vec![],
+            "{label} output must remain parseable:\n{entry}"
+        );
+        assert!(
+            entry.contains("const __systemjs_export = class Named")
+                && entry.contains("export default __systemjs_export;"),
+            "{label} output must keep the named class in an initializer:\n{entry}"
+        );
+        assert!(
+            !entry.contains("export default class Named"),
+            "{label} output must not hoist the expression name into module scope:\n{entry}"
+        );
+    }
 }
 
 #[test]
