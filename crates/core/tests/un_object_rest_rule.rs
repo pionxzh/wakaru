@@ -215,6 +215,92 @@ use(rest);
 }
 
 #[test]
+fn generated_string_alias_avoids_later_binding() {
+    let input = r#"
+props["onUpdate:visible"];
+const rest = ((e, t) => {
+    const n = {};
+    for (const r in e) {
+        t.indexOf(r) >= 0 || Object.prototype.hasOwnProperty.call(e, r) && (n[r] = e[r]);
+    }
+    return n;
+})(props, ["onUpdate:visible"]);
+const _onUpdate_visible = sentinel;
+use(rest, _onUpdate_visible);
+"#;
+    let expected = r#"
+const { "onUpdate:visible": _onUpdate_visible_1, ...rest } = props;
+const _onUpdate_visible = sentinel;
+use(rest, _onUpdate_visible);
+"#;
+    assert_eq_normalized(&render_rule(input, UnObjectRest::new), expected);
+}
+
+#[test]
+fn generated_string_alias_avoids_rest_binding() {
+    let input = r#"
+props["onUpdate:visible"];
+const _onUpdate_visible = ((e, t) => {
+    const n = {};
+    for (const r in e) {
+        t.indexOf(r) >= 0 || Object.prototype.hasOwnProperty.call(e, r) && (n[r] = e[r]);
+    }
+    return n;
+})(props, ["onUpdate:visible"]);
+use(_onUpdate_visible);
+"#;
+    let expected = r#"
+const { "onUpdate:visible": _onUpdate_visible_1, ..._onUpdate_visible } = props;
+use(_onUpdate_visible);
+"#;
+    assert_eq_normalized(&render_rule(input, UnObjectRest::new), expected);
+}
+
+#[test]
+fn generated_string_alias_avoids_enclosing_parameter() {
+    let input = r#"
+function renderProps(_onUpdate_visible) {
+    props["onUpdate:visible"];
+    const rest = ((e, t) => {
+        const n = {};
+        for (const r in e) {
+            t.indexOf(r) >= 0 || Object.prototype.hasOwnProperty.call(e, r) && (n[r] = e[r]);
+        }
+        return n;
+    })(props, ["onUpdate:visible"]);
+    use(rest);
+}
+"#;
+    let expected = r#"
+function renderProps(_onUpdate_visible) {
+    const { "onUpdate:visible": _onUpdate_visible_1, ...rest } = props;
+    use(rest);
+}
+"#;
+    assert_eq_normalized(&render_rule(input, UnObjectRest::new), expected);
+}
+
+#[test]
+fn generated_string_alias_avoids_merged_binding() {
+    let input = r#"
+const _onUpdate_visible = props.value;
+const rest = ((e, t) => {
+    const n = {};
+    for (const r in e) {
+        t.indexOf(r) >= 0 || Object.prototype.hasOwnProperty.call(e, r) && (n[r] = e[r]);
+    }
+    return n;
+})(props, ["value", "onUpdate:visible"]);
+use(_onUpdate_visible, rest);
+"#;
+    let expected = r#"
+const { value: _onUpdate_visible, "onUpdate:visible": _onUpdate_visible_1, ...rest } = props;
+use(_onUpdate_visible, rest);
+"#;
+    assert_eq_normalized(&render_rule(input, UnObjectRest::new), expected);
+}
+
+#[test]
 fn multi_declarator_comma_separated() {
     // Babel output: var t = e.to, n = e.exact, d = IIFE(e, ["to","exact"]), p = expr
     let input = r#"
