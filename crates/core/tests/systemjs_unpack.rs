@@ -2007,3 +2007,78 @@ System.register("entry", ["dep"], function (_export) {
         "direct eval in execute must remain:\n{entry}"
     );
 }
+
+#[test]
+fn setter_reexport_preserves_arbitrary_export_name() {
+    // Babel output for `export { foo as "foo-bar" } from "./dep.js";`.
+    let source = r#"
+System.register(["./dep.js"], function (_export, _context) {
+  "use strict";
+
+  return {
+    setters: [function (_depJs) {
+      _export("foo-bar", _depJs.foo);
+    }],
+    execute: function () {}
+  };
+});
+"#;
+
+    for (stage, modules) in [
+        ("raw", unpack_source_raw(source)),
+        ("decompiled", unpack_source(source)),
+    ] {
+        assert_eq!(modules.len(), 1, "unexpected {stage} modules: {modules:?}");
+        let entry = &modules[0].1;
+        let mut validation_modules = modules.clone();
+        validation_modules.push(("dep.js".to_string(), "export const foo = 1;".to_string()));
+        assert_eq!(
+            validate_output_modules(&validation_modules),
+            vec![],
+            "{stage} output must remain valid ESM:\n{entry}"
+        );
+        assert!(
+            entry.contains(r#"export { foo as "foo-bar" } from "./dep.js";"#),
+            "{stage} output must preserve the arbitrary exported name:\n{entry}"
+        );
+    }
+}
+
+#[test]
+fn setter_reexport_preserves_arbitrary_import_name() {
+    // Babel output for `export { "foo-bar" as fooBar } from "./dep.js";`.
+    let source = r#"
+System.register(["./dep.js"], function (_export, _context) {
+  "use strict";
+
+  return {
+    setters: [function (_depJs) {
+      _export("fooBar", _depJs["foo-bar"]);
+    }],
+    execute: function () {}
+  };
+});
+"#;
+
+    for (stage, modules) in [
+        ("raw", unpack_source_raw(source)),
+        ("decompiled", unpack_source(source)),
+    ] {
+        assert_eq!(modules.len(), 1, "unexpected {stage} modules: {modules:?}");
+        let entry = &modules[0].1;
+        let mut validation_modules = modules.clone();
+        validation_modules.push((
+            "dep.js".to_string(),
+            r#"const foo = 1; export { foo as "foo-bar" };"#.to_string(),
+        ));
+        assert_eq!(
+            validate_output_modules(&validation_modules),
+            vec![],
+            "{stage} output must remain valid ESM:\n{entry}"
+        );
+        assert!(
+            entry.contains(r#"export { "foo-bar" as fooBar } from "./dep.js";"#),
+            "{stage} output must preserve the arbitrary imported name:\n{entry}"
+        );
+    }
+}
