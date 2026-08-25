@@ -202,6 +202,11 @@ fn detect_from_prepared_factories(
         &all_top_level_bindings,
         &helper_factory_syms,
     );
+    let top_level_decl_writes = collect_top_level_decl_writes(
+        &analysis_module.body,
+        &top_level_decl_indices,
+        &all_top_level_bindings,
+    );
 
     struct PendingFactory {
         binding: BindingId,
@@ -312,7 +317,7 @@ fn detect_from_prepared_factories(
     // and return binding→module mapping for factory import synthesis.
     let ScopeExtractionResult {
         modules: scope_hoisted_modules,
-        remaining_entry,
+        mut remaining_entry,
         mut binding_to_filename,
         module_already_imports,
         module_local_atoms,
@@ -398,6 +403,9 @@ fn detect_from_prepared_factories(
                     || *owned_binding == factory.binding
                     || !top_level_decl_indices.contains_key(owned_binding)
                 {
+                    continue;
+                }
+                if binding_to_filename.contains_key(owned_binding) {
                     continue;
                 }
                 binding_to_filename.insert(owned_binding.clone(), fname.clone());
@@ -498,6 +506,125 @@ fn detect_from_prepared_factories(
         }
     }
 
+    // A factory can adopt a hoisted support declaration whose body writes
+    // state initialized by another lazy factory. Those factories cannot be
+    // separate ESM modules: the adopted function would assign to a read-only
+    // import. Build connected components from declaration-level write edges
+    // and give every component one canonical output owner.
+    let standalone_original_filenames: Vec<String> = standalone_factories
+        .iter()
+        .map(|factory| factory.filename.clone())
+        .collect();
+    let factory_index_by_filename: HashMap<String, usize> = standalone_factories
+        .iter()
+        .enumerate()
+        .map(|(index, factory)| (factory.filename.clone(), index))
+        .collect();
+    let mut writer_adjacency: Vec<HashSet<usize>> =
+        vec![HashSet::new(); standalone_factories.len()];
+    let mut writer_factory_indices = HashSet::new();
+    for (writer_index, factory) in standalone_factories.iter().enumerate() {
+        if factory.cjs_params.is_some() {
+            continue;
+        }
+        for owned_binding in factory_owned_bindings
+            .get(&factory.filename)
+            .into_iter()
+            .flatten()
+        {
+            for write_binding in top_level_decl_writes
+                .get(owned_binding)
+                .into_iter()
+                .flatten()
+            {
+                let Some(owner_index) = binding_to_filename
+                    .get(write_binding)
+                    .and_then(|filename| factory_index_by_filename.get(filename))
+                    .copied()
+                else {
+                    continue;
+                };
+                if standalone_factories[owner_index].cjs_params.is_some() {
+                    continue;
+                }
+                writer_factory_indices.insert(writer_index);
+                if owner_index != writer_index {
+                    writer_adjacency[writer_index].insert(owner_index);
+                    writer_adjacency[owner_index].insert(writer_index);
+                }
+            }
+        }
+    }
+
+    let mut factory_filename_redirects: HashMap<String, String> = HashMap::new();
+    let mut affected_factory_filenames = HashSet::new();
+    let mut visited = vec![false; standalone_factories.len()];
+    for start in 0..standalone_factories.len() {
+        if visited[start] {
+            continue;
+        }
+        let mut stack = vec![start];
+        let mut component = Vec::new();
+        visited[start] = true;
+        while let Some(current) = stack.pop() {
+            component.push(current);
+            for &next in &writer_adjacency[current] {
+                if !visited[next] {
+                    visited[next] = true;
+                    stack.push(next);
+                }
+            }
+        }
+        component.sort_unstable();
+        let canonical = standalone_original_filenames[component[0]].clone();
+        if component
+            .iter()
+            .any(|index| writer_factory_indices.contains(index))
+        {
+            affected_factory_filenames.insert(canonical.clone());
+        }
+        for &member in &component[1..] {
+            factory_filename_redirects.insert(
+                standalone_original_filenames[member].clone(),
+                canonical.clone(),
+            );
+        }
+    }
+
+    for factory in &mut standalone_factories {
+        if let Some(canonical) = factory_filename_redirects.get(&factory.filename) {
+            factory.filename = canonical.clone();
+        }
+    }
+    for filename in binding_to_filename.values_mut() {
+        if let Some(canonical) = factory_filename_redirects.get(filename) {
+            *filename = canonical.clone();
+        }
+    }
+    if !factory_filename_redirects.is_empty() {
+        let original_owned = std::mem::take(&mut factory_owned_bindings);
+        for (filename, bindings) in original_owned {
+            let canonical = factory_filename_redirects
+                .get(&filename)
+                .unwrap_or(&filename)
+                .clone();
+            factory_owned_bindings
+                .entry(canonical)
+                .or_default()
+                .extend(bindings);
+        }
+    }
+    let affected_original_factory_filenames: HashSet<String> = standalone_original_filenames
+        .iter()
+        .filter(|filename| {
+            let canonical = factory_filename_redirects
+                .get(*filename)
+                .unwrap_or(*filename);
+            affected_factory_filenames.contains(canonical)
+        })
+        .cloned()
+        .collect();
+
     let binding_filename_by_atom = atom_to_filename_binding_map(&binding_to_filename);
     let external_import_by_atom = atom_binding_map_from_keys(&external_imports);
 
@@ -509,80 +636,55 @@ fn detect_from_prepared_factories(
             let Some(factories) = merged_factories.remove(&module.filename) else {
                 continue;
             };
-            let current_binding_filename_by_atom =
-                atom_to_filename_binding_map(&binding_to_filename);
-            let merged_ref_resolver = MergedRefResolver {
-                binding_to_filename: &binding_to_filename,
-                binding_filename_by_atom: &current_binding_filename_by_atom,
-                external_imports: &external_imports,
-                external_import_by_atom: &external_import_by_atom,
-                top_level_decl_indices: &top_level_decl_indices,
-            };
-            let mut extra_imports: HashMap<String, Vec<Atom>> = HashMap::new();
-            let mut extra_external_imports: HashSet<BindingId> = HashSet::new();
-            let mut extra_owned_bindings: HashSet<BindingId> = factory_owned_bindings
-                .get(&module.filename)
-                .cloned()
-                .unwrap_or_default();
-            let mut merged_init_bodies: Vec<(Atom, Vec<Stmt>)> = Vec::new();
+            let (
+                mut extra_imports,
+                extra_external_imports,
+                extra_owned_bindings,
+                merged_init_bodies,
+            ) = {
+                let current_binding_filename_by_atom =
+                    atom_to_filename_binding_map(&binding_to_filename);
+                let merged_ref_resolver = MergedRefResolver {
+                    binding_to_filename: &binding_to_filename,
+                    binding_filename_by_atom: &current_binding_filename_by_atom,
+                    external_imports: &external_imports,
+                    external_import_by_atom: &external_import_by_atom,
+                    top_level_decl_indices: &top_level_decl_indices,
+                };
+                let mut extra_imports: HashMap<String, Vec<Atom>> = HashMap::new();
+                let mut extra_external_imports: HashSet<BindingId> = HashSet::new();
+                let mut extra_owned_bindings: HashSet<BindingId> = factory_owned_bindings
+                    .get(&module.filename)
+                    .cloned()
+                    .unwrap_or_default();
+                let mut merged_init_bodies: Vec<(Atom, Vec<Stmt>)> = Vec::new();
 
-            let already_imported = module_already_imports
-                .get(&module.filename)
-                .cloned()
-                .unwrap_or_default();
+                let already_imported = module_already_imports
+                    .get(&module.filename)
+                    .cloned()
+                    .unwrap_or_default();
 
-            for mf in factories {
-                if mf.cjs_params.is_some() {
-                    continue;
-                }
-                for write_binding in &mf.write_bindings {
-                    let owned_binding = top_level_decl_binding_by_atom
-                        .get(&write_binding.0)
-                        .unwrap_or(write_binding);
-                    if binding_to_filename
-                        .get(owned_binding)
-                        .is_some_and(|filename| filename == &module.filename)
-                        && top_level_decl_indices.contains_key(owned_binding)
-                    {
-                        extra_owned_bindings.insert(owned_binding.clone());
-                    }
-                }
-                for ref_binding in &mf.referenced_bindings {
-                    if mf.write_bindings.contains(ref_binding) {
+                for mf in factories {
+                    if mf.cjs_params.is_some() {
                         continue;
                     }
-                    if already_imported.contains(ref_binding) {
-                        continue;
-                    }
-                    match merged_ref_resolver.resolve(ref_binding, &module.filename) {
-                        MergedRefTarget::Import { filename, atom } => {
-                            extra_imports.entry(filename).or_default().push(atom);
-                        }
-                        MergedRefTarget::External(binding) => {
-                            extra_external_imports.insert(binding);
-                        }
-                        MergedRefTarget::Owned => {
-                            extra_owned_bindings.insert(ref_binding.clone());
-                        }
-                        MergedRefTarget::SameModule | MergedRefTarget::Unresolved => {}
-                    }
-                }
-                merged_init_bodies.push((mf.var_name, mf.stmts));
-            }
-
-            let mut changed = true;
-            while changed {
-                changed = false;
-                let owned_bindings: Vec<BindingId> = extra_owned_bindings.iter().cloned().collect();
-                for owned_binding in owned_bindings {
-                    for ref_binding in top_level_decl_references
-                        .get(&owned_binding)
-                        .into_iter()
-                        .flatten()
-                    {
-                        if extra_owned_bindings.contains(ref_binding)
-                            || already_imported.contains(ref_binding)
+                    for write_binding in &mf.write_bindings {
+                        let owned_binding = top_level_decl_binding_by_atom
+                            .get(&write_binding.0)
+                            .unwrap_or(write_binding);
+                        if binding_to_filename
+                            .get(owned_binding)
+                            .is_some_and(|filename| filename == &module.filename)
+                            && top_level_decl_indices.contains_key(owned_binding)
                         {
+                            extra_owned_bindings.insert(owned_binding.clone());
+                        }
+                    }
+                    for ref_binding in &mf.referenced_bindings {
+                        if mf.write_bindings.contains(ref_binding) {
+                            continue;
+                        }
+                        if already_imported.contains(ref_binding) {
                             continue;
                         }
                         match merged_ref_resolver.resolve(ref_binding, &module.filename) {
@@ -594,14 +696,52 @@ fn detect_from_prepared_factories(
                             }
                             MergedRefTarget::Owned => {
                                 extra_owned_bindings.insert(ref_binding.clone());
-                                changed = true;
                             }
                             MergedRefTarget::SameModule | MergedRefTarget::Unresolved => {}
                         }
                     }
+                    merged_init_bodies.push((mf.var_name, mf.stmts));
                 }
-            }
-            drop(merged_ref_resolver);
+
+                let mut changed = true;
+                while changed {
+                    changed = false;
+                    let owned_bindings: Vec<BindingId> =
+                        extra_owned_bindings.iter().cloned().collect();
+                    for owned_binding in owned_bindings {
+                        for ref_binding in top_level_decl_references
+                            .get(&owned_binding)
+                            .into_iter()
+                            .flatten()
+                        {
+                            if extra_owned_bindings.contains(ref_binding)
+                                || already_imported.contains(ref_binding)
+                            {
+                                continue;
+                            }
+                            match merged_ref_resolver.resolve(ref_binding, &module.filename) {
+                                MergedRefTarget::Import { filename, atom } => {
+                                    extra_imports.entry(filename).or_default().push(atom);
+                                }
+                                MergedRefTarget::External(binding) => {
+                                    extra_external_imports.insert(binding);
+                                }
+                                MergedRefTarget::Owned => {
+                                    extra_owned_bindings.insert(ref_binding.clone());
+                                    changed = true;
+                                }
+                                MergedRefTarget::SameModule | MergedRefTarget::Unresolved => {}
+                            }
+                        }
+                    }
+                }
+                (
+                    extra_imports,
+                    extra_external_imports,
+                    extra_owned_bindings,
+                    merged_init_bodies,
+                )
+            };
 
             // `extra_owned_bindings` is the complete support-declaration
             // closure discovered for the merged factory body. These bindings
@@ -715,27 +855,58 @@ fn detect_from_prepared_factories(
         }
     }
 
+    let mut standalone_factory_group_order = Vec::new();
+    let mut standalone_factory_groups: HashMap<String, Vec<PendingFactory>> = HashMap::new();
     for factory in standalone_factories {
+        if !standalone_factory_groups.contains_key(&factory.filename) {
+            standalone_factory_group_order.push(factory.filename.clone());
+        }
+        standalone_factory_groups
+            .entry(factory.filename.clone())
+            .or_default()
+            .push(factory);
+    }
+
+    for group_filename in standalone_factory_group_order {
+        let factories = standalone_factory_groups
+            .remove(&group_filename)
+            .expect("standalone factory group should exist");
+        let group_id = factories[0].var_name.to_string();
+        let mut group_source_ranges: Vec<_> = factories
+            .iter()
+            .filter_map(|factory| span_byte_range(&cm, factory.span))
+            .collect();
+        let group_write_bindings: HashSet<BindingId> = factories
+            .iter()
+            .flat_map(|factory| factory.write_bindings.iter().cloned())
+            .collect();
         let owned_decl_items = factory_owned_decl_items(
-            &factory.filename,
+            &group_filename,
             &factory_owned_bindings,
             &top_level_decl_indices,
             &module.body,
         );
+        group_source_ranges.extend(spans_byte_ranges(
+            &cm,
+            owned_decl_items.iter().map(|item| item.span()),
+        ));
         let declared_owned_atoms: HashSet<Atom> = owned_decl_items
             .iter()
             .flat_map(module_item_declared_binding_ids)
             .map(|(atom, _)| atom)
             .collect();
         let owned_export_atoms: HashSet<Atom> = factory_owned_bindings
-            .get(&factory.filename)
+            .get(&group_filename)
             .into_iter()
             .flat_map(|bindings| bindings.iter())
             .map(|(atom, _)| atom.clone())
             .collect();
-        let mut extended_referenced_bindings = factory.referenced_bindings.clone();
+        let mut extended_referenced_bindings: HashSet<BindingId> = factories
+            .iter()
+            .flat_map(|factory| factory.referenced_bindings.iter().cloned())
+            .collect();
         for owned_binding in factory_owned_bindings
-            .get(&factory.filename)
+            .get(&group_filename)
             .into_iter()
             .flatten()
         {
@@ -752,19 +923,19 @@ fn detect_from_prepared_factories(
             // Group factory's referenced bindings by source module filename.
             let mut imports_by_source: HashMap<String, Vec<BindingId>> = HashMap::new();
             let owned = factory_owned_bindings
-                .get(&factory.filename)
+                .get(&group_filename)
                 .cloned()
                 .unwrap_or_default();
             for ref_binding in &extended_referenced_bindings {
                 // Don't import bindings that this factory writes to.
-                if factory.write_bindings.contains(ref_binding)
+                if group_write_bindings.contains(ref_binding)
                     || owned.contains(ref_binding)
                     || declared_owned_atoms.contains(&ref_binding.0)
                 {
                     continue;
                 }
                 if let Some(source_filename) = binding_to_filename.get(ref_binding) {
-                    if source_filename == &factory.filename {
+                    if source_filename == &group_filename {
                         continue;
                     }
                     imports_by_source
@@ -777,8 +948,7 @@ fn detect_from_prepared_factories(
             }
             let mut reserved_import_atoms = declared_owned_atoms.clone();
             reserved_import_atoms.extend(owned_export_atoms.iter().cloned());
-            reserved_import_atoms
-                .extend(factory.write_bindings.iter().map(|(atom, _)| atom.clone()));
+            reserved_import_atoms.extend(group_write_bindings.iter().map(|(atom, _)| atom.clone()));
             let mut source_filenames: Vec<String> = imports_by_source.keys().cloned().collect();
             source_filenames.sort();
             for source_filename in source_filenames {
@@ -797,7 +967,7 @@ fn detect_from_prepared_factories(
                     }
                     names.push((imported, local));
                 }
-                let rel_path = relative_import_path(&factory.filename, &source_filename);
+                let rel_path = relative_import_path(&group_filename, &source_filename);
                 import_items.push(make_named_import_stmt_with_aliases(&names, &rel_path));
             }
         }
@@ -812,23 +982,20 @@ fn detect_from_prepared_factories(
 
         let mut body_items: Vec<ModuleItem> = import_items
             .into_iter()
-            .chain(owned_decl_items.clone())
+            .chain(owned_decl_items)
             .chain(factory_owned_export_items(
-                &factory.filename,
+                &group_filename,
                 &factory_owned_bindings,
             ))
             .collect();
         rename_bindings(&mut body_items, &import_renames);
-        let mut factory_body_stmts = factory.body_stmts;
-        rename_bindings(&mut factory_body_stmts, &import_renames);
 
-        let mut write_names: Vec<Atom> = factory
-            .write_bindings
+        let mut write_names: Vec<Atom> = group_write_bindings
             .iter()
             .filter(|binding| {
                 binding_to_filename
                     .get(*binding)
-                    .is_some_and(|filename| filename == &factory.filename)
+                    .is_some_and(|filename| filename == &group_filename)
                     && !declared_owned_atoms.contains(&binding.0)
             })
             .map(|(atom, _)| atom.clone())
@@ -843,11 +1010,7 @@ fn detect_from_prepared_factories(
         // otherwise later VarDeclToLetConst can turn trailing `var` storage
         // into TDZ-sensitive `let` declarations.
         if !body_items.is_empty() {
-            code.push_str(&emit_items(
-                body_items,
-                factory.filename.clone(),
-                cm.clone(),
-            ));
+            code.push_str(&emit_items(body_items, group_filename.clone(), cm.clone()));
         }
         if !write_names.is_empty() {
             let names = write_names
@@ -857,54 +1020,80 @@ fn detect_from_prepared_factories(
                 .join(", ");
             code.push_str(&format!("export var {names};\n"));
         }
-        if let Some(cjs_params) = &factory.cjs_params {
-            let cache_name = format!("__wakaru_{}_cache", factory.var_name);
-            code.push_str(&format!("var {cache_name};\n"));
-            code.push_str(&format!("export function {}() {{\n", factory.var_name));
-            let cached_return = cjs_params
-                .module
-                .as_ref()
-                .map(|_| format!("{cache_name}.exports"))
-                .unwrap_or_else(|| cache_name.clone());
-            code.push_str(&format!("if ({cache_name}) return {cached_return};\n"));
-            code.push_str(&format!("var {} = {{}};\n", cjs_params.exports));
-            if let Some(module_name) = &cjs_params.module {
-                code.push_str(&format!(
-                    "var {module_name} = {{ exports: {} }};\n",
-                    cjs_params.exports
+        for mut factory in factories {
+            rename_bindings(&mut factory.body_stmts, &import_renames);
+            let factory_body_stmts = std::mem::take(&mut factory.body_stmts);
+            if let Some(cjs_params) = &factory.cjs_params {
+                let cache_name = format!("__wakaru_{}_cache", factory.var_name);
+                code.push_str(&format!("var {cache_name};\n"));
+                code.push_str(&format!("export function {}() {{\n", factory.var_name));
+                let cached_return = cjs_params
+                    .module
+                    .as_ref()
+                    .map(|_| format!("{cache_name}.exports"))
+                    .unwrap_or_else(|| cache_name.clone());
+                code.push_str(&format!("if ({cache_name}) return {cached_return};\n"));
+                code.push_str(&format!("var {} = {{}};\n", cjs_params.exports));
+                if let Some(module_name) = &cjs_params.module {
+                    code.push_str(&format!(
+                        "var {module_name} = {{ exports: {} }};\n",
+                        cjs_params.exports
+                    ));
+                    code.push_str(&format!("{cache_name} = {module_name};\n"));
+                } else {
+                    code.push_str(&format!("{cache_name} = {};\n", cjs_params.exports));
+                }
+                code.push_str(&emit_items(
+                    factory_body_stmts
+                        .into_iter()
+                        .map(ModuleItem::Stmt)
+                        .collect(),
+                    group_filename.clone(),
+                    cm.clone(),
                 ));
-                code.push_str(&format!("{cache_name} = {module_name};\n"));
+                let return_expr = cjs_params
+                    .module
+                    .as_ref()
+                    .map(|module_name| format!("{module_name}.exports"))
+                    .unwrap_or_else(|| cjs_params.exports.to_string());
+                code.push_str(&format!("\nreturn {return_expr};\n}}\n"));
             } else {
-                code.push_str(&format!("{cache_name} = {};\n", cjs_params.exports));
+                code.push_str(&emit_esm_init_function_code(
+                    &factory.var_name,
+                    factory_body_stmts,
+                    group_filename.clone(),
+                    cm.clone(),
+                ));
             }
-            code.push_str(&emit_items(
-                factory_body_stmts
-                    .into_iter()
-                    .map(ModuleItem::Stmt)
-                    .collect(),
-                factory.filename.clone(),
-                cm.clone(),
-            ));
-            let return_expr = cjs_params
-                .module
-                .as_ref()
-                .map(|module_name| format!("{module_name}.exports"))
-                .unwrap_or_else(|| cjs_params.exports.to_string());
-            code.push_str(&format!("\nreturn {return_expr};\n}}\n"));
-        } else {
-            code.push_str(&emit_esm_init_function_code(
-                &factory.var_name,
-                factory_body_stmts,
-                factory.filename.clone(),
-                cm.clone(),
-            ));
         }
         modules.push(UnpackedModule {
-            id: factory.var_name.to_string(),
+            id: group_id,
             is_entry: false,
             code,
-            filename: factory.filename,
-            source_ranges: span_byte_range(&cm, factory.span).into_iter().collect(),
+            filename: group_filename,
+            source_ranges: group_source_ranges,
+            inspection_context_ranges: Vec::new(),
+            source_input: String::new(),
+            generated_source_map: Vec::new(),
+        });
+    }
+
+    let mut factory_redirects: Vec<(String, String)> = factory_filename_redirects
+        .iter()
+        .map(|(filename, canonical)| (filename.clone(), canonical.clone()))
+        .collect();
+    factory_redirects.sort();
+    for (filename, canonical) in factory_redirects {
+        let specifier = relative_import_path(&filename, &canonical);
+        modules.push(UnpackedModule {
+            id: filename
+                .strip_suffix(".js")
+                .unwrap_or(&filename)
+                .to_string(),
+            is_entry: false,
+            code: format!("export * from \"{specifier}\";\n"),
+            filename,
+            source_ranges: Vec::new(),
             inspection_context_ranges: Vec::new(),
             source_input: String::new(),
             generated_source_map: Vec::new(),
@@ -912,6 +1101,78 @@ fn detect_from_prepared_factories(
     }
 
     if !remaining_entry.is_empty() {
+        let affected_owned_bindings: HashSet<BindingId> = affected_factory_filenames
+            .iter()
+            .flat_map(|filename| {
+                factory_owned_bindings
+                    .get(filename)
+                    .into_iter()
+                    .flatten()
+                    .cloned()
+            })
+            .collect();
+        let mut relocated_entry_bindings: HashSet<BindingId> = affected_owned_bindings
+            .iter()
+            .filter(|binding| {
+                top_level_decl_writes
+                    .get(*binding)
+                    .into_iter()
+                    .flatten()
+                    .any(|written| {
+                        binding_to_filename
+                            .get(written)
+                            .is_some_and(|filename| affected_factory_filenames.contains(filename))
+                    })
+            })
+            .cloned()
+            .collect();
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for binding in &affected_owned_bindings {
+                if relocated_entry_bindings.contains(binding)
+                    || !top_level_decl_references
+                        .get(binding)
+                        .into_iter()
+                        .flatten()
+                        .any(|referenced| relocated_entry_bindings.contains(referenced))
+                {
+                    continue;
+                }
+                relocated_entry_bindings.insert(binding.clone());
+                changed = true;
+            }
+        }
+        if !relocated_entry_bindings.is_empty() {
+            let relocated_entry_atoms: HashSet<Atom> = relocated_entry_bindings
+                .iter()
+                .map(|(atom, _)| atom.clone())
+                .collect();
+            let factory_import_specifiers: HashSet<String> = affected_original_factory_filenames
+                .iter()
+                .map(|filename| relative_import_path("entry.js", filename))
+                .collect();
+            remaining_entry = remaining_entry
+                .into_iter()
+                .filter_map(|item| {
+                    if let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = &item {
+                        if import
+                            .src
+                            .value
+                            .as_str()
+                            .is_some_and(|source| factory_import_specifiers.contains(source))
+                        {
+                            return None;
+                        }
+                    }
+                    filter_item_excluding_bindings(
+                        &item,
+                        &relocated_entry_bindings,
+                        &relocated_entry_atoms,
+                    )
+                })
+                .collect();
+        }
         let entry_ranges = spans_byte_ranges(&cm, remaining_entry.iter().map(|item| item.span()));
         let remaining_entry = repair_entry_imports(remaining_entry, &binding_to_filename);
         let entry_module = Module {
@@ -1171,6 +1432,34 @@ fn collect_top_level_decl_references(
         references.insert(binding.clone(), collector.references);
     }
     references
+}
+
+fn collect_top_level_decl_writes(
+    items: &[ModuleItem],
+    decl_indices: &HashMap<BindingId, usize>,
+    top_level_bindings: &HashSet<BindingId>,
+) -> HashMap<BindingId, HashSet<BindingId>> {
+    let mut writes = HashMap::new();
+    for (binding, index) in decl_indices {
+        let owned_atoms = HashSet::from([binding.0.clone()]);
+        let Some(item) = filter_item_to_owned_bindings(&items[*index], &owned_atoms) else {
+            continue;
+        };
+        let binding_writes = exact_write_bindings_for_item(&item, top_level_bindings);
+        writes.insert(binding.clone(), binding_writes);
+    }
+    writes
+}
+
+fn exact_write_bindings_for_item(
+    item: &ModuleItem,
+    top_level_bindings: &HashSet<BindingId>,
+) -> HashSet<BindingId> {
+    let mut writes = HashSet::new();
+    if let ModuleItem::Stmt(stmt) = item {
+        collect_write_bindings(stmt, top_level_bindings, &mut writes);
+    }
+    writes
 }
 
 fn add_factory_atom_import(
@@ -2609,17 +2898,29 @@ fn adopt_scope_support_decls(
             .collect();
         indices.sort_unstable();
         indices.dedup();
+        let mut factory_written_atoms = HashSet::new();
         for index in indices {
             let Some(item) = filter_item_to_owned_bindings(&analysis_items[index], &owned_atoms)
             else {
                 continue;
             };
-            meta.written_atoms.extend(scope_write_atoms_for_item(
-                &item,
-                &metadata.top_level_bindings,
-                &metadata.top_level_atoms,
-            ));
+            for write_binding in exact_write_bindings_for_item(&item, &metadata.top_level_bindings)
+            {
+                let factory_filename = refs
+                    .factory_preassigned_bindings
+                    .get(&write_binding)
+                    .or_else(|| {
+                        maps.factory_preassigned_by_atom
+                            .get(&write_binding.0)
+                            .map(|(_, filename)| filename)
+                    });
+                let Some(_) = factory_filename else {
+                    continue;
+                };
+                factory_written_atoms.insert(write_binding.0);
+            }
         }
+        meta.written_atoms.extend(factory_written_atoms);
     }
 
     let owned_support_source_items =
@@ -2751,7 +3052,6 @@ fn compute_scope_imports_exports(
     for filename in &conflicted_factory_filenames {
         claimed_factory_filenames.remove(filename);
     }
-
     // Build binding→filename map so callers can synthesize imports in factory modules.
     let mut binding_to_filename: HashMap<BindingId, String> = binding_to_module
         .iter()
@@ -2776,10 +3076,16 @@ fn compute_scope_imports_exports(
         factory_importable_bindings
             .iter()
             .map(|(binding, filename)| {
-                let owner_filename = claimed_factory_filenames
-                    .get(filename)
-                    .unwrap_or(filename)
-                    .clone();
+                let owner_filename = binding_to_module
+                    .get(binding)
+                    .and_then(|module_index| metas.get(*module_index))
+                    .map(|meta| meta.filename.clone())
+                    .unwrap_or_else(|| {
+                        claimed_factory_filenames
+                            .get(filename)
+                            .unwrap_or(filename)
+                            .clone()
+                    });
                 (binding.clone(), owner_filename)
             })
             .collect();

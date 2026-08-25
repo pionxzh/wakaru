@@ -1422,6 +1422,177 @@ export { ns_writer, ns_reader };
     );
 }
 
+/// A binding referenced by a claimed lazy factory may already belong to the
+/// scope module that claims it. It must not be materialized a second time as
+/// relocated factory support.
+#[test]
+fn claimed_factory_does_not_duplicate_existing_scope_binding() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var f1 = y(() => { v1 = 1; });
+var f2 = y(() => { v2 = 2; });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var f5 = y(() => { v5 = 5; });
+var init_state = y(() => { shared = new Marker(); });
+var shared;
+function write(value) { shared = value; }
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var ns_writer = {};
+__export(ns_writer, { Marker: () => Marker, write: () => write });
+class Marker {}
+init_state();
+console.log(shared);
+export { ns_writer };
+"#;
+
+    let raw_pairs = expect_unpack_raw(bundle);
+    let owner_code = &raw_pairs
+        .iter()
+        .find(|(_, code)| code.contains("export function init_state"))
+        .expect("scope owner should contain the init factory")
+        .1;
+    assert_eq!(
+        owner_code.matches("class Marker").count(),
+        1,
+        "the scope-local class must not be copied as factory support:\n{owner_code}"
+    );
+    assert_eq!(
+        validate_output_modules(&raw_pairs),
+        vec![],
+        "the claimed factory owner must remain valid ESM"
+    );
+}
+
+/// A claimed factory can call support that already belongs to another scope
+/// module. Keep that declaration with its existing mutable state instead of
+/// relocating it into the factory's new owner.
+#[test]
+fn claimed_factory_preserves_existing_support_owner() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var f1 = y(() => { v1 = 1; });
+var f2 = y(() => { v2 = 2; });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var f5 = y(() => { v5 = 5; });
+var init_target = y(() => { state = 1; register("ready"); });
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var ns_registry = {};
+__export(ns_registry, { readRegistry: () => readRegistry, register: () => register });
+var registry;
+function readRegistry() { return registry; }
+function register(value) { registry = value; }
+var ns_target = {};
+__export(ns_target, { readState: () => readState, writeState: () => writeState });
+var state;
+function readState() { return state; }
+function writeState(value) { state = value; }
+init_target();
+console.log(readRegistry(), readState());
+export { ns_registry, ns_target };
+"#;
+
+    let raw_pairs = expect_unpack_raw(bundle);
+    assert!(
+        raw_pairs.iter().all(|(name, _)| name != "init_target.js"),
+        "the state writer should still claim its init factory: {raw_pairs:#?}"
+    );
+    let (registry_name, registry_code) = raw_pairs
+        .iter()
+        .find(|(_, code)| code.contains("function register"))
+        .expect("registry scope module should own its support function");
+    let target_code = &raw_pairs
+        .iter()
+        .find(|(_, code)| code.contains("export function init_target"))
+        .expect("target scope module should own the init factory")
+        .1;
+    assert!(
+        registry_code.contains("var registry")
+            && target_code.contains(&format!("from \"./{registry_name}\""))
+            && !target_code.contains("function register"),
+        "scope-owned support and its state must stay together:\nregistry:\n{registry_code}\ntarget:\n{target_code}"
+    );
+    assert_eq!(
+        validate_output_modules(&raw_pairs),
+        vec![],
+        "preserving the support owner must avoid imported-binding writes"
+    );
+}
+
+/// A standalone lazy factory can close over a hoisted support function that
+/// writes state initialized by another lazy factory. Those factories and the
+/// support declaration must share one ESM owner; otherwise both the writer
+/// module and the retained entry copy assign to imported bindings.
+#[test]
+fn standalone_factory_support_writer_shares_mutable_state_owner() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+function writeBoth(value) { left = value; right = value; }
+function runWrite(value) { writeBoth(value); }
+var init_left = y(() => { left = 0; });
+var init_right = y(() => { right = 0; runWrite(1); });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var f5 = y(() => { v5 = 5; });
+var left;
+var right;
+init_left();
+init_right();
+runWrite(2);
+console.log(left, right);
+"#;
+
+    let raw_pairs = expect_unpack_raw(bundle);
+    let owner_modules: Vec<_> = raw_pairs
+        .iter()
+        .filter(|(_, code)| {
+            code.contains("export function init_left")
+                || code.contains("export function init_right")
+        })
+        .collect();
+    assert_eq!(
+        owner_modules.len(),
+        1,
+        "cross-writing lazy factories should emit one owner module: {raw_pairs:#?}"
+    );
+    let owner_code = &owner_modules[0].1;
+    assert!(
+        owner_code.contains("export function init_left")
+            && owner_code.contains("export function init_right")
+            && owner_code.contains("function writeBoth")
+            && owner_code.contains("function runWrite")
+            && !owner_code.contains("import { left")
+            && !owner_code.contains("import { right"),
+        "the combined owner must contain both initializers, support writers, and state:\n{owner_code}"
+    );
+    let entry_code = &raw_pairs
+        .iter()
+        .find(|(name, _)| name == "entry.js")
+        .expect("entry module should exist")
+        .1;
+    assert!(
+        entry_code.contains("import {")
+            && entry_code.contains("runWrite")
+            && !entry_code.contains("function writeBoth")
+            && !entry_code.contains("function runWrite"),
+        "entry should call the relocated support function instead of retaining a writer copy:\n{entry_code}"
+    );
+    assert_eq!(
+        validate_output_modules(&raw_pairs),
+        vec![],
+        "factory support writers must not assign to imports"
+    );
+}
+
 /// Multiple pre-boundary support writers for state seeded by one lazy factory
 /// must merge just like writers discovered during the initial partition.
 #[test]
