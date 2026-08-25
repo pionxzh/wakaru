@@ -389,6 +389,23 @@ fn detect_from_prepared_factories(
 
         if let (true, Some(fname), true) = (is_single_target, target_filename, can_merge) {
             binding_to_filename.insert(factory.binding.clone(), fname.clone());
+            // The standalone factory file also owns top-level support
+            // declarations referenced by its body. When the factory is
+            // absorbed, move and export those declarations with it so other
+            // recovered modules can follow the relocated import edge.
+            for (owned_binding, owner_filename) in &factory_importable_bindings {
+                if owner_filename != &factory.filename
+                    || *owned_binding == factory.binding
+                    || !top_level_decl_indices.contains_key(owned_binding)
+                {
+                    continue;
+                }
+                binding_to_filename.insert(owned_binding.clone(), fname.clone());
+                factory_owned_bindings
+                    .entry(fname.clone())
+                    .or_default()
+                    .insert(owned_binding.clone());
+            }
             for write_binding in &factory.write_bindings {
                 let owned_binding = top_level_decl_binding_by_atom
                     .get(&write_binding.0)
@@ -483,13 +500,6 @@ fn detect_from_prepared_factories(
 
     let binding_filename_by_atom = atom_to_filename_binding_map(&binding_to_filename);
     let external_import_by_atom = atom_binding_map_from_keys(&external_imports);
-    let merged_ref_resolver = MergedRefResolver {
-        binding_to_filename: &binding_to_filename,
-        binding_filename_by_atom: &binding_filename_by_atom,
-        external_imports: &external_imports,
-        external_import_by_atom: &external_import_by_atom,
-        top_level_decl_indices: &top_level_decl_indices,
-    };
 
     // Append merged factory bodies to their target modules, synthesizing
     // imports for any cross-module reads the factory body needs.
@@ -499,9 +509,21 @@ fn detect_from_prepared_factories(
             let Some(factories) = merged_factories.remove(&module.filename) else {
                 continue;
             };
+            let current_binding_filename_by_atom =
+                atom_to_filename_binding_map(&binding_to_filename);
+            let merged_ref_resolver = MergedRefResolver {
+                binding_to_filename: &binding_to_filename,
+                binding_filename_by_atom: &current_binding_filename_by_atom,
+                external_imports: &external_imports,
+                external_import_by_atom: &external_import_by_atom,
+                top_level_decl_indices: &top_level_decl_indices,
+            };
             let mut extra_imports: HashMap<String, Vec<Atom>> = HashMap::new();
             let mut extra_external_imports: HashSet<BindingId> = HashSet::new();
-            let mut extra_owned_bindings: HashSet<BindingId> = HashSet::new();
+            let mut extra_owned_bindings: HashSet<BindingId> = factory_owned_bindings
+                .get(&module.filename)
+                .cloned()
+                .unwrap_or_default();
             let mut merged_init_bodies: Vec<(Atom, Vec<Stmt>)> = Vec::new();
 
             let already_imported = module_already_imports
@@ -578,6 +600,19 @@ fn detect_from_prepared_factories(
                         }
                     }
                 }
+            }
+            drop(merged_ref_resolver);
+
+            // `extra_owned_bindings` is the complete support-declaration
+            // closure discovered for the merged factory body. These bindings
+            // used to live in the standalone factory file, so move and export
+            // them from the scope owner as part of the same relocation.
+            for owned_binding in &extra_owned_bindings {
+                binding_to_filename.insert(owned_binding.clone(), module.filename.clone());
+                factory_owned_bindings
+                    .entry(module.filename.clone())
+                    .or_default()
+                    .insert(owned_binding.clone());
             }
 
             let mut import_items: Vec<ModuleItem> = Vec::new();
@@ -2161,6 +2196,12 @@ fn extract_scope_hoisted_modules(
     let mut maps = build_scope_binding_maps(&mut partition.metas, &metadata, &refs);
     let owned_support_source_items =
         adopt_scope_support_decls(analysis_items, &metadata, &mut partition, &mut maps, &refs);
+    // Hoisted support declarations are adopted after the initial partition.
+    // Their writes can reveal additional modules that must share ownership of
+    // one lazy factory's mutable state, so repeat the conflict merge with the
+    // complete write inventory and rebuild the module index.
+    merge_conflicting_factory_scope_metas(&mut partition.metas, &maps.factory_preassigned_by_atom);
+    maps.binding_to_module = scope_binding_to_module(&partition.metas);
     let ie = compute_scope_imports_exports(&metadata, &partition, &maps, &refs);
     let emitted = emit_scope_modules(
         cm,
@@ -2426,15 +2467,7 @@ fn build_scope_binding_maps(
     merge_conflicting_factory_scope_metas(metas, &factory_preassigned_by_atom);
 
     // Build binding → module index map for all scope-hoisted modules.
-    let mut binding_to_module: HashMap<BindingId, usize> = HashMap::new();
-    for (mi, meta) in metas.iter().enumerate() {
-        for namespace in &meta.namespaces {
-            binding_to_module.insert(namespace.namespace_binding.clone(), mi);
-        }
-        for binding in &meta.declared_bindings {
-            binding_to_module.insert(binding.clone(), mi);
-        }
-    }
+    let binding_to_module = scope_binding_to_module(metas);
 
     let decl_index_by_binding: HashMap<BindingId, usize> = item_infos
         .iter()
@@ -2452,6 +2485,19 @@ fn build_scope_binding_maps(
         binding_to_module,
         decl_index_by_binding,
     }
+}
+
+fn scope_binding_to_module(metas: &[ScopeModuleMeta]) -> HashMap<BindingId, usize> {
+    let mut binding_to_module = HashMap::new();
+    for (mi, meta) in metas.iter().enumerate() {
+        for namespace in &meta.namespaces {
+            binding_to_module.insert(namespace.namespace_binding.clone(), mi);
+        }
+        for binding in &meta.declared_bindings {
+            binding_to_module.insert(binding.clone(), mi);
+        }
+    }
+    binding_to_module
 }
 
 fn adopt_scope_support_decls(
@@ -2538,6 +2584,41 @@ fn adopt_scope_support_decls(
             };
             analysis_items[decl_index].visit_with(&mut atom_collector);
             meta.referenced_atoms.extend(atom_collector.references);
+        }
+    }
+
+    // Partition-time write analysis only sees statements after each namespace
+    // boundary. esbuild commonly hoists writer functions before that boundary,
+    // and the loop above adopts those functions as support declarations. Add
+    // their writes now so factory-state ownership uses the module's complete
+    // emitted body. Filter mixed declarations to this module's adopted
+    // bindings before scanning, matching the source-item filtering below.
+    for meta in metas.iter_mut() {
+        if meta.owned_support_bindings.is_empty() {
+            continue;
+        }
+        let owned_atoms: HashSet<Atom> = meta
+            .owned_support_bindings
+            .iter()
+            .map(|(atom, _)| atom.clone())
+            .collect();
+        let mut indices: Vec<usize> = meta
+            .owned_support_bindings
+            .iter()
+            .filter_map(|binding| decl_index_by_binding.get(binding).copied())
+            .collect();
+        indices.sort_unstable();
+        indices.dedup();
+        for index in indices {
+            let Some(item) = filter_item_to_owned_bindings(&analysis_items[index], &owned_atoms)
+            else {
+                continue;
+            };
+            meta.written_atoms.extend(scope_write_atoms_for_item(
+                &item,
+                &metadata.top_level_bindings,
+                &metadata.top_level_atoms,
+            ));
         }
     }
 
@@ -2687,8 +2768,23 @@ fn compute_scope_imports_exports(
         }
         binding_to_filename.insert(binding.clone(), owner_filename);
     }
+    // Claiming an init factory removes its standalone output file, so every
+    // importable support binding owned by that factory must follow the same
+    // relocation as its written state. Otherwise sibling scope modules can
+    // retain imports from a filename that no longer exists.
+    let relocated_factory_importable_bindings: HashMap<BindingId, String> =
+        factory_importable_bindings
+            .iter()
+            .map(|(binding, filename)| {
+                let owner_filename = claimed_factory_filenames
+                    .get(filename)
+                    .unwrap_or(filename)
+                    .clone();
+                (binding.clone(), owner_filename)
+            })
+            .collect();
     let factory_binding_filename_by_atom =
-        atom_to_filename_binding_map(factory_importable_bindings);
+        atom_to_filename_binding_map(&relocated_factory_importable_bindings);
     let binding_filename_by_atom = atom_to_filename_binding_map(&binding_to_filename);
     let filename_to_module: HashMap<String, usize> = metas
         .iter()

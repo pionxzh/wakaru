@@ -1,5 +1,5 @@
 use wakaru_core::driver::test_support::{unpack, unpack_raw};
-use wakaru_core::DecompileOptions;
+use wakaru_core::{validate_output_modules, DecompileOptions};
 
 fn expect_unpack(source: &str, filename: &str) -> Vec<(String, String)> {
     let output = unpack(
@@ -1303,6 +1303,177 @@ export { ns_writer };
     assert!(
         entry_code.contains(&writer_import) && !entry_code.contains("from \"./init_state.js\""),
         "entry should import claimed factory state from the scope writer:\n{entry_code}"
+    );
+}
+
+/// esbuild hoists function declarations ahead of a module's namespace/export
+/// boundary. Such support declarations are adopted into the recovered module
+/// after the initial partition, so their writes must still participate in
+/// factory-state ownership.
+#[test]
+fn adopted_scope_writer_claims_factory_owned_state_and_init() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var f1 = y(() => { v1 = 1; });
+var f2 = y(() => { v2 = 2; });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var f5 = y(() => { v5 = 5; });
+var init_state = y(() => { shared = { count: 0 }; });
+var shared;
+function read() { return shared; }
+function write(value) { shared = value; }
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var ns_writer = {};
+__export(ns_writer, { marker: () => marker, read: () => read, write: () => write });
+var marker = "writer";
+init_state();
+console.log(marker, shared);
+export { ns_writer };
+"#;
+
+    let raw_pairs = expect_unpack_raw(bundle);
+    assert!(
+        raw_pairs.iter().all(|(name, _)| name != "init_state.js"),
+        "the adopted writer should claim the init factory: {:?}",
+        raw_pairs.iter().map(|(name, _)| name).collect::<Vec<_>>()
+    );
+    let writer_code = &raw_pairs
+        .iter()
+        .find(|(_, code)| code.contains("function write"))
+        .expect("scope writer module should exist")
+        .1;
+    assert!(
+        writer_code.contains("var shared")
+            && writer_code.contains("export function init_state")
+            && writer_code.contains("shared = value")
+            && !writer_code.contains("import { shared"),
+        "the adopted writer must own the mutable state and initializer:\n{writer_code}"
+    );
+    assert_eq!(
+        validate_output_modules(&raw_pairs),
+        vec![],
+        "the adopted writer must not assign to an imported binding"
+    );
+}
+
+/// When a scope writer claims a lazy factory, every support binding owned by
+/// that factory moves with it. Other recovered modules must import those
+/// bindings from the new owner rather than the removed factory filename.
+#[test]
+fn claimed_factory_support_bindings_follow_scope_owner() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var f1 = y(() => { v1 = 1; });
+var f2 = y(() => { v2 = 2; });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var f5 = y(() => { v5 = 5; });
+function seed() { return { count: 0 }; }
+var init_state = y(() => { shared = seed(); });
+var shared;
+function write(value) { shared = value; }
+function readSeed() { return seed(); }
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var ns_writer = {};
+__export(ns_writer, { marker: () => marker, write: () => write });
+var marker = "writer";
+var ns_reader = {};
+__export(ns_reader, { markerReader: () => markerReader, readSeed: () => readSeed });
+var markerReader = "reader";
+init_state();
+console.log(marker, markerReader, readSeed(), shared);
+export { ns_writer, ns_reader };
+"#;
+
+    let raw_pairs = expect_unpack_raw(bundle);
+    assert!(
+        raw_pairs.iter().all(|(name, _)| name != "init_state.js"),
+        "the claimed init factory should not leave a standalone module: {:?}",
+        raw_pairs.iter().map(|(name, _)| name).collect::<Vec<_>>()
+    );
+    let owner_name = &raw_pairs
+        .iter()
+        .find(|(_, code)| code.contains("export function init_state"))
+        .expect("scope owner should contain the init factory")
+        .0;
+    let reader_code = &raw_pairs
+        .iter()
+        .find(|(_, code)| code.contains("function readSeed"))
+        .expect("reader module should exist")
+        .1;
+    assert!(
+        reader_code.contains(&format!("from \"./{owner_name}\""))
+            && !reader_code.contains("from \"./init_state.js\""),
+        "factory support imports must follow the claimed owner:\n{reader_code}"
+    );
+    assert_eq!(
+        validate_output_modules(&raw_pairs),
+        vec![],
+        "claiming a factory must not leave dangling imports"
+    );
+}
+
+/// Multiple pre-boundary support writers for state seeded by one lazy factory
+/// must merge just like writers discovered during the initial partition.
+#[test]
+fn adopted_conflicting_scope_writers_merge_with_shared_init_factory() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var f1 = y(() => { v1 = 1; });
+var f2 = y(() => { v2 = 2; });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var f5 = y(() => { v5 = 5; });
+var init_state = y(() => { sharedA = 1; sharedB = 2; });
+var sharedA;
+var sharedB;
+function readA() { return sharedA; }
+function writeA(value) { sharedA = value; }
+function readB() { return sharedB; }
+function writeB(value) { sharedB = value; }
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var ns_a = {};
+__export(ns_a, { markerA: () => markerA, readA: () => readA, writeA: () => writeA });
+var markerA = "a";
+var ns_b = {};
+__export(ns_b, { markerB: () => markerB, readB: () => readB, writeB: () => writeB });
+var markerB = "b";
+init_state();
+console.log(markerA, markerB, readA(), readB());
+export { ns_a, ns_b };
+"#;
+
+    let raw_pairs = expect_unpack_raw(bundle);
+    let combined = &raw_pairs
+        .iter()
+        .find(|(_, code)| code.contains("function writeA") && code.contains("function writeB"))
+        .expect("adopted writers should merge into one module")
+        .1;
+    assert!(
+        combined.contains("var sharedA")
+            && combined.contains("var sharedB")
+            && combined.contains("export function init_state")
+            && !combined.contains("import { sharedA")
+            && !combined.contains("import { sharedB"),
+        "the combined module must own both mutable bindings and their initializer:\n{combined}"
+    );
+    assert_eq!(
+        validate_output_modules(&raw_pairs),
+        vec![],
+        "merged adopted writers must not assign to imports"
     );
 }
 
