@@ -22,12 +22,14 @@ pub struct BindingRename {
     pub new: Atom,
 }
 
-/// True when the first character is lowercase — the JSX intrinsic-tag
-/// convention: `<kb/>` references the string tag "kb", not a binding, so a
-/// binding used as a JSX element name must never be renamed to a lowercase
-/// name.
+/// True when the first character is an ASCII lowercase letter — the JSX
+/// intrinsic-tag convention: `<kb/>` references the string tag "kb", not a
+/// binding, so a binding used as a JSX element name must never be renamed to
+/// a lowercase name. JSX transforms (Babel, TypeScript, swc) test `/^[a-z]/`,
+/// so a name starting with a non-ASCII lowercase letter (e.g. `σ`) still
+/// references a component binding.
 pub(crate) fn starts_with_lowercase(value: &str) -> bool {
-    value.chars().next().is_some_and(|c| c.is_lowercase())
+    value.chars().next().is_some_and(|c| c.is_ascii_lowercase())
 }
 
 /// Binding ids used as JSX element names (`<Tag/>`).
@@ -906,6 +908,18 @@ mod tests {
             module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
             f(&module)
         })
+    }
+
+    #[test]
+    fn starts_with_lowercase_matches_jsx_intrinsic_tag_test() {
+        assert!(starts_with_lowercase("kb"));
+        assert!(!starts_with_lowercase("Kb"));
+        assert!(!starts_with_lowercase("_kb"));
+        assert!(!starts_with_lowercase(""));
+        // JSX transforms test /^[a-z]/: a non-ASCII lowercase initial still
+        // names a component binding, not an intrinsic tag.
+        assert!(!starts_with_lowercase("σelement"));
+        assert!(!starts_with_lowercase("Σelement"));
     }
 
     fn top_level_binding(module: &Module, name: &str) -> BindingId {

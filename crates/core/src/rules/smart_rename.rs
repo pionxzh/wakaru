@@ -22,7 +22,7 @@ use super::extract_inlined_function::SharedExtractedFunctionNames;
 use super::helper_matcher::static_member_prop_name;
 use super::rename_utils::{
     collect_exported_binding_ids, collect_module_names, rename_bindings, rename_bindings_in_module,
-    BindingId, BindingRename, RenameShadowIndex,
+    starts_with_lowercase, BindingId, BindingRename, RenameShadowIndex,
 };
 use super::ObjShorthand;
 
@@ -3132,14 +3132,6 @@ fn pascalize(input: &str) -> String {
     } else {
         output
     }
-}
-
-fn starts_with_lowercase(value: &str) -> bool {
-    value
-        .chars()
-        .next()
-        .map(|ch| ch.is_ascii_lowercase())
-        .unwrap_or(false)
 }
 
 #[cfg(test)]

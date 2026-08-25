@@ -18,7 +18,7 @@ use crate::analysis::binding_uses::BindingUseIndex;
 
 use super::decl_utils::BindingId;
 use super::rename_utils::{
-    collect_exported_binding_ids_from_items, rename_bindings, BindingRename,
+    collect_exported_binding_ids_from_items, rename_bindings, starts_with_lowercase, BindingRename,
 };
 use super::RewriteLevel;
 
@@ -1392,14 +1392,6 @@ fn is_capitalization_invalid(expr: &Expr) -> bool {
         Expr::Ident(ident) => starts_with_lowercase(ident.sym.as_ref()),
         _ => false,
     }
-}
-
-fn starts_with_lowercase(value: &str) -> bool {
-    value
-        .chars()
-        .next()
-        .map(|ch| ch.is_ascii_lowercase())
-        .unwrap_or(false)
 }
 
 fn jsx_name_from_string(value: &Str) -> Option<JSXElementName> {

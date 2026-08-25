@@ -24,6 +24,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::facts::{ExportKind, ModuleFactsMap};
 use crate::js_names::is_reserved_binding_name;
+use crate::rules::rename_utils::starts_with_lowercase;
 use crate::utils::paren::strip_parens;
 
 const MAX_SYNTHETIC_NAME_ATTEMPTS: usize = 10_000;
@@ -784,13 +785,6 @@ fn is_jsx_factory_name(name: &str) -> bool {
         name,
         "createElement" | "jsx" | "jsxs" | "jsxDEV" | "_jsx" | "_jsxs"
     )
-}
-
-fn starts_with_lowercase(value: &str) -> bool {
-    value
-        .chars()
-        .next()
-        .is_some_and(|ch| ch.is_ascii_lowercase())
 }
 
 #[cfg(test)]

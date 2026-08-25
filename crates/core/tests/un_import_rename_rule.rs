@@ -328,6 +328,23 @@ export const view = <Kb/>;
 }
 
 #[test]
+fn non_ascii_lowercase_import_used_as_jsx_tag_is_still_restored() {
+    // JSX transforms treat only ASCII-lowercase-initial names as intrinsic
+    // tags (`/^[a-z]/`), so `<σButton/>` references the component binding and
+    // restoring the external name is safe.
+    let input = r#"
+import { σButton as Button_ } from './dep.js';
+export const view = <Button_/>;
+"#;
+    let expected = r#"
+import { σButton } from './dep.js';
+export const view = <σButton/>;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn still_dealiases_lowercase_import_not_used_as_jsx_tag() {
     let input = r#"
 import { kb as Kb } from './dep.js';
