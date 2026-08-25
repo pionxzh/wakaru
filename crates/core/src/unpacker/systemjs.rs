@@ -898,17 +898,15 @@ fn collect_imports(
         }
         let module_sym = module_sym?;
         let mut pending_reexports = Vec::new();
-        for stmt in &body.stmts {
-            for part in setter_stmt_parts(stmt, &module_sym, export_sym)? {
-                match part {
-                    SetterPart::Import(local, kind) => match kind {
-                        SetterImportKind::Default => parts.default = Some(local),
-                        SetterImportKind::Named(imported) => parts.named.push((imported, local)),
-                        SetterImportKind::Namespace => parts.namespace = Some(local),
-                    },
-                    SetterPart::Reexport { exported, value } => {
-                        pending_reexports.push((exported, value));
-                    }
+        for part in collect_setter_parts(&body.stmts, &module_sym, export_sym)? {
+            match part {
+                SetterPart::Import(local, kind) => match kind {
+                    SetterImportKind::Default => parts.default = Some(local),
+                    SetterImportKind::Named(imported) => parts.named.push((imported, local)),
+                    SetterImportKind::Namespace => parts.namespace = Some(local),
+                },
+                SetterPart::Reexport { exported, value } => {
+                    pending_reexports.push((exported, value));
                 }
             }
         }
@@ -931,22 +929,243 @@ enum SetterPart {
     Reexport { exported: Atom, value: Box<Expr> },
 }
 
-fn setter_stmt_parts(
-    stmt: &Stmt,
+fn collect_setter_parts(
+    stmts: &[Stmt],
     module_sym: &Atom,
     export_sym: Option<&Atom>,
 ) -> Option<Vec<SetterPart>> {
-    let Stmt::Expr(expr_stmt) = stmt else {
+    let mut parts = Vec::new();
+    let mut temp_name: Option<Atom> = None;
+    let mut temp_pairs: Vec<(Atom, Box<Expr>)> = Vec::new();
+    let mut temp_exported = false;
+    let mut hoisted_temp: Option<Atom> = None;
+
+    for stmt in stmts {
+        if let Some(name) = empty_object_binding(stmt) {
+            // One empty-object temp per setter. A second decl is not a proven shape.
+            // Reusing the module or `_export` ident makes later member matches lie.
+            if temp_name.is_some()
+                || name == *module_sym
+                || export_sym.is_some_and(|export_sym| name == *export_sym)
+            {
+                return None;
+            }
+            temp_name = Some(name);
+            continue;
+        }
+        if let Some(name) = uninitialized_var_binding(stmt) {
+            // Minifiers hoist `var n;` and then write `(n = {}).Foo = module.Foo`.
+            if hoisted_temp.is_some()
+                || temp_name.is_some()
+                || name == *module_sym
+                || export_sym.is_some_and(|export_sym| name == *export_sym)
+            {
+                return None;
+            }
+            hoisted_temp = Some(name);
+            continue;
+        }
+
+        let exprs: Vec<&Expr> = match stmt {
+            Stmt::Expr(expr_stmt) => match expr_stmt.expr.as_ref() {
+                Expr::Seq(seq) => seq.exprs.iter().map(|expr| expr.as_ref()).collect(),
+                expr => vec![expr],
+            },
+            _ => return None,
+        };
+
+        for expr in exprs {
+            if temp_name.is_none() {
+                if let Some(name) = empty_object_ident_assign(expr) {
+                    if !can_start_named_temp(&name, module_sym, export_sym, hoisted_temp.as_ref()) {
+                        return None;
+                    }
+                    temp_name = Some(name);
+                    continue;
+                }
+                if let Some((name, key, value)) = named_temp_assign_with_empty_init(expr) {
+                    if !can_start_named_temp(&name, module_sym, export_sym, hoisted_temp.as_ref()) {
+                        return None;
+                    }
+                    temp_name = Some(name);
+                    temp_pairs.push((key, value));
+                    continue;
+                }
+            }
+
+            if let Some(name) = &temp_name {
+                if !temp_exported {
+                    if let Some(pair) = named_temp_object_assign(expr, name) {
+                        temp_pairs.push(pair);
+                        continue;
+                    }
+                    if is_export_temp_ident(expr, export_sym, name) {
+                        // Setter param shadowing `_export` is a namespace call, not a re-export.
+                        if export_sym.is_some_and(|export_sym| module_sym == export_sym) {
+                            return None;
+                        }
+                        // An empty temp is `_export({})`, which is not a proven setter shape.
+                        if temp_pairs.is_empty() {
+                            return None;
+                        }
+                        for (exported, value) in temp_pairs.drain(..) {
+                            parts.push(SetterPart::Reexport { exported, value });
+                        }
+                        temp_exported = true;
+                        continue;
+                    }
+                }
+            }
+
+            // Rebinding the temp as a setter import is not the named-object spelling.
+            if let Some(name) = &temp_name {
+                if setter_assignment_expr(expr, module_sym).is_some_and(|(local, _)| local == *name)
+                {
+                    return None;
+                }
+            }
+
+            parts.push(setter_expr_part(expr, module_sym, export_sym)?);
+        }
+    }
+
+    if temp_name.is_some() && !temp_exported {
+        return None;
+    }
+    if hoisted_temp.is_some() && temp_name.is_none() {
+        return None;
+    }
+    Some(parts)
+}
+
+fn can_start_named_temp(
+    name: &Atom,
+    module_sym: &Atom,
+    export_sym: Option<&Atom>,
+    hoisted_temp: Option<&Atom>,
+) -> bool {
+    if name == module_sym || export_sym.is_some_and(|export_sym| name == export_sym) {
+        return false;
+    }
+    match hoisted_temp {
+        None => false,
+        Some(hoisted) => hoisted == name,
+    }
+}
+
+fn uninitialized_var_binding(stmt: &Stmt) -> Option<Atom> {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
         return None;
     };
-    match expr_stmt.expr.as_ref() {
-        Expr::Seq(seq) => seq
-            .exprs
-            .iter()
-            .map(|expr| setter_expr_part(expr.as_ref(), module_sym, export_sym))
-            .collect(),
-        expr => setter_expr_part(expr, module_sym, export_sym).map(|part| vec![part]),
+    if var.decls.len() != 1 {
+        return None;
     }
+    let decl = &var.decls[0];
+    if decl.init.is_some() {
+        return None;
+    }
+    let Pat::Ident(binding) = &decl.name else {
+        return None;
+    };
+    Some(binding.id.sym.clone())
+}
+
+fn empty_object_ident_assign(expr: &Expr) -> Option<Atom> {
+    let Expr::Assign(assign) = expr else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) = &assign.left else {
+        return None;
+    };
+    let Expr::Object(object) = assign.right.as_ref() else {
+        return None;
+    };
+    object.props.is_empty().then(|| binding.id.sym.clone())
+}
+
+fn named_temp_assign_with_empty_init(expr: &Expr) -> Option<(Atom, Atom, Box<Expr>)> {
+    let Expr::Assign(assign) = expr else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left else {
+        return None;
+    };
+    let Expr::Assign(init) = strip_paren_expr(member.obj.as_ref()) else {
+        return None;
+    };
+    if init.op != AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) = &init.left else {
+        return None;
+    };
+    let Expr::Object(object) = init.right.as_ref() else {
+        return None;
+    };
+    if !object.props.is_empty() {
+        return None;
+    }
+    let key = member_prop_name(&member.prop)?;
+    Some((binding.id.sym.clone(), key, assign.right.clone()))
+}
+
+fn empty_object_binding(stmt: &Stmt) -> Option<Atom> {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return None;
+    };
+    if var.decls.len() != 1 {
+        return None;
+    }
+    let decl = &var.decls[0];
+    let Pat::Ident(binding) = &decl.name else {
+        return None;
+    };
+    let Expr::Object(object) = decl.init.as_deref()? else {
+        return None;
+    };
+    object.props.is_empty().then(|| binding.id.sym.clone())
+}
+
+fn named_temp_object_assign(expr: &Expr, temp: &Atom) -> Option<(Atom, Box<Expr>)> {
+    let Expr::Assign(assign) = expr else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left else {
+        return None;
+    };
+    if !member_obj_ident(member, temp) {
+        return None;
+    }
+    let key = member_prop_name(&member.prop)?;
+    Some((key, assign.right.clone()))
+}
+
+fn is_export_temp_ident(expr: &Expr, export_sym: Option<&Atom>, temp: &Atom) -> bool {
+    let Some(export_sym) = export_sym else {
+        return false;
+    };
+    let Expr::Call(call) = expr else {
+        return false;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    if !matches!(callee.as_ref(), Expr::Ident(id) if id.sym == *export_sym) {
+        return false;
+    }
+    if call.args.len() != 1 || call.args[0].spread.is_some() {
+        return false;
+    }
+    matches!(call.args[0].expr.as_ref(), Expr::Ident(id) if id.sym == *temp)
 }
 
 fn setter_expr_part(

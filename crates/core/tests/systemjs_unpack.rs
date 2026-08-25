@@ -2189,6 +2189,576 @@ System.register(["./dep.js"], function (_export, _context) {
     }
 }
 
+fn unpacked_named_module<'a>(pairs: &'a [(String, String)], name: &str) -> &'a str {
+    if pairs.len() == 1 && pairs[0].1.contains("System.register") {
+        panic!(
+            "named setter object must unwrap, not preserve the register:\n{}",
+            pairs[0].1
+        );
+    }
+    module_code(pairs, name)
+}
+
+fn assert_preserves_whole_system_register(source: &str, needle: &str) {
+    let output = unpack_raw(
+        source,
+        &DecompileOptions {
+            filename: "system-bundle.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("unrecognized setter must preserve the whole input");
+    assert_eq!(
+        output.modules.len(),
+        1,
+        "unrecognized setter must not emit a partial module set: {:?}",
+        output.modules
+    );
+    assert!(
+        output.modules[0].1.contains("System.register") && output.modules[0].1.contains(needle),
+        "fallback module should preserve the register:\n{}",
+        output.modules[0].1
+    );
+    assert!(
+        output.detected_formats.is_empty(),
+        "unrecognized setter input should not be reported as a successful split"
+    );
+}
+
+#[test]
+fn named_setter_object_reexport_uses_export_from_without_local() {
+    // Minifiers rewrite `_export("Foo", module.Foo)` into an empty object plus
+    // static-key writes, then `_export(ident)`. That is the same proven named
+    // re-export, not a bulk object literal.
+    let source = r#"
+System.register("entry", ["dep"], function (_export) {
+  return {
+    setters: [function (module) {
+      const n = {};
+      n.Foo = module.Foo;
+      n["Bar"] = module.Bar;
+      _export(n);
+    }],
+    execute: function () {}
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = unpacked_named_module(&raw, "entry.js");
+    assert!(
+        !entry.contains("System.register"),
+        "named setter object re-export must unpack:\n{entry}"
+    );
+    assert!(
+        entry.contains(r#"from "dep""#) && entry.contains("Foo") && entry.contains("Bar"),
+        "each static key must become a named export-from:\n{entry}"
+    );
+    assert!(
+        !entry.contains("import {")
+            && !entry.contains("import Foo")
+            && !entry.contains("import Bar"),
+        "must not synthesize a local binding for the re-export:\n{entry}"
+    );
+}
+
+#[test]
+fn named_setter_object_minified_assign_init_is_named_reexport() {
+    // Minifiers emit `(n = {}).Foo = module.Foo` instead of `const n = {}; n.Foo =`.
+    let source = r#"
+System.register("entry", ["dep"], function (_export) {
+  return {
+    setters: [function (module) {
+      var n;
+      (n = {}).Foo = module.Foo, n.Bar = module.Bar, _export(n);
+    }],
+    execute: function () {}
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = unpacked_named_module(&raw, "entry.js");
+    assert!(
+        !entry.contains("System.register"),
+        "minified `(n = {{}}).Foo =` must unpack:\n{entry}"
+    );
+    assert!(
+        entry.contains(r#"from "dep""#) && entry.contains("Foo") && entry.contains("Bar"),
+        "minified static keys must stay named re-exports:\n{entry}"
+    );
+    assert!(
+        !entry.contains("import {") && !entry.contains("import Foo"),
+        "must not synthesize a local binding for the re-export:\n{entry}"
+    );
+}
+
+#[test]
+fn named_setter_object_minified_cjs_assign_init() {
+    let source = r#"
+System.register("entry", ["./dep.js", "./loader.js"], function (_export, _context) {
+  var meta, loader;
+  return {
+    setters: [
+      function (module) {
+        var n;
+        meta = module.__cjsMetaURL;
+        (n = {}).default = module.default, n.__cjsMetaURL = module.__cjsMetaURL, _export(n);
+      },
+      function (module) {
+        loader = module.default;
+      }
+    ],
+    execute: function () {
+      loader.require(meta, _context.meta.url);
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = unpacked_named_module(&raw, "entry.js");
+    assert!(
+        !entry.contains("System.register"),
+        "minified CJS static-key wrapper must unpack:\n{entry}"
+    );
+    assert!(
+        entry.contains("default") && entry.contains("__cjsMetaURL"),
+        "CJS static keys must keep their names:\n{entry}"
+    );
+    assert!(
+        entry.contains("import.meta.url"),
+        "execute `_context.meta` must become import.meta:\n{entry}"
+    );
+}
+
+#[test]
+fn named_setter_object_comma_assigns_are_named_reexports() {
+    let source = r#"
+System.register("entry", ["dep"], function (_export) {
+  return {
+    setters: [function (module) {
+      var n = {};
+      n.Foo = module.Foo, n.Bar = module.Bar;
+      _export(n);
+    }],
+    execute: function () {}
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = unpacked_named_module(&raw, "entry.js");
+    assert!(
+        !entry.contains("System.register"),
+        "comma-assigned static keys must unpack:\n{entry}"
+    );
+    assert!(
+        entry.contains("Foo") && entry.contains("Bar") && entry.contains(r#"from "dep""#),
+        "comma-assigned keys must stay named re-exports:\n{entry}"
+    );
+}
+
+#[test]
+fn named_setter_object_mixed_with_setter_import() {
+    let source = r#"
+System.register("entry", ["dep"], function (_export) {
+  var Type;
+  return {
+    setters: [function (module) {
+      Type = module.Foo;
+      const n = {};
+      n.Bar = module.Bar;
+      _export(n);
+    }],
+    execute: function () {
+      use(Type);
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = unpacked_named_module(&raw, "entry.js");
+    assert!(
+        !entry.contains("System.register"),
+        "mixed import + named object must unpack:\n{entry}"
+    );
+    assert!(
+        entry.contains(r#"import { Foo as Type } from "dep""#)
+            || entry.contains(r#"import {Foo as Type} from "dep""#),
+        "the setter assignment must stay a named import:\n{entry}"
+    );
+    assert!(
+        entry.contains(r#"export { Bar } from "dep""#)
+            || entry.contains(r#"export {Bar} from "dep""#),
+        "the object key must stay `export {{ Name }} from`:\n{entry}"
+    );
+    assert!(
+        entry.contains("use(Type)"),
+        "the imported local must remain in execute:\n{entry}"
+    );
+}
+
+#[test]
+fn named_setter_object_reexport_of_assigned_local() {
+    let source = r#"
+System.register("entry", ["dep"], function (_export) {
+  var Type;
+  return {
+    setters: [function (module) {
+      Type = module.Foo;
+      const n = {};
+      n.Foo = Type;
+      _export(n);
+    }],
+    execute: function () {
+      use(Type);
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = unpacked_named_module(&raw, "entry.js");
+    assert!(
+        entry.contains("export { Type as Foo }") || entry.contains("export {Type as Foo}"),
+        "re-exporting the setter local through the temp object must stay live:\n{entry}"
+    );
+    assert!(
+        entry.contains("use(Type)"),
+        "the imported local must remain in execute:\n{entry}"
+    );
+}
+
+#[test]
+fn named_setter_object_cjs_static_keys_and_context_meta() {
+    let source = r#"
+System.register("entry", ["./dep.js", "./loader.js"], function (_export, _context) {
+  var meta, loader;
+  return {
+    setters: [
+      function (module) {
+        meta = module.__cjsMetaURL;
+        const i = {};
+        i.default = module.default;
+        i.__cjsMetaURL = module.__cjsMetaURL;
+        _export(i);
+      },
+      function (module) {
+        loader = module.default;
+      }
+    ],
+    execute: function () {
+      if (!meta) {
+        loader.throwInvalidWrapper("./dep.js", _context.meta.url);
+      }
+      loader.require(meta);
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = unpacked_named_module(&raw, "entry.js");
+    assert!(
+        !entry.contains("System.register"),
+        "static-key CJS wrapper must unpack:\n{entry}"
+    );
+    assert!(
+        entry.contains("__cjsMetaURL") && entry.contains("default"),
+        "CJS static keys must be re-exported under their original names:\n{entry}"
+    );
+    assert!(
+        entry.contains("import.meta.url"),
+        "execute `_context.meta` must become import.meta:\n{entry}"
+    );
+    assert!(
+        !entry.contains("_context"),
+        "the declare context param must not leak into execute:\n{entry}"
+    );
+}
+
+#[test]
+fn named_setter_object_and_two_arg_export_unwrap_together() {
+    let source = r#"
+System.register("barrel", ["dep"], function (_export) {
+  return {
+    setters: [function (module) {
+      const n = {};
+      n.Foo = module.Foo;
+      _export(n);
+    }],
+    execute: function () {}
+  };
+});
+System.register("plain", [], function (_export) {
+  return {
+    execute: function () {
+      _export("X", 1);
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let barrel = unpacked_named_module(&raw, "barrel.js");
+    let plain = unpacked_named_module(&raw, "plain.js");
+    assert!(
+        !barrel.contains("System.register") && !plain.contains("System.register"),
+        "both registers must unwrap:\n{barrel}\n{plain}"
+    );
+    assert!(
+        barrel.contains(r#"export { Foo } from "dep""#)
+            || barrel.contains(r#"export {Foo} from "dep""#),
+        "the named object register must become export-from:\n{barrel}"
+    );
+    assert!(
+        plain.contains("export const X = 1") || plain.contains("export {") && plain.contains("X"),
+        "the two-arg `_export` register must still reconstruct:\n{plain}"
+    );
+}
+
+#[test]
+fn named_setter_object_for_in_preserves_whole_register() {
+    // `for-in` copies are `export *` (minus default), not proven named keys.
+    let source = r#"
+System.register("keep", [], function (_export) {
+  return {
+    execute: function () {
+      _export("value", 1);
+    }
+  };
+});
+System.register("odd", ["dep"], function (_export) {
+  return {
+    setters: [function (module) {
+      const n = {};
+      for (const p in module) {
+        if (p !== "default") n[p] = module[p];
+      }
+      _export(n);
+    }],
+    execute: function () {}
+  };
+});
+"#;
+    assert_preserves_whole_system_register(source, r#"System.register("keep""#);
+}
+
+#[test]
+fn named_setter_object_unknown_value_preserves_whole_register() {
+    let source = r#"
+System.register("odd", ["dep"], function (_export) {
+  return {
+    setters: [function (module) {
+      const n = {};
+      n.Foo = module.Foo + 1;
+      _export(n);
+    }],
+    execute: function () {}
+  };
+});
+"#;
+    assert_preserves_whole_system_register(source, "module.Foo + 1");
+}
+
+#[test]
+fn named_setter_object_literal_value_preserves_whole_register() {
+    let source = r#"
+System.register("odd", ["dep"], function (_export) {
+  return {
+    setters: [function (module) {
+      const n = {};
+      n.Foo = 1;
+      _export(n);
+    }],
+    execute: function () {}
+  };
+});
+"#;
+    assert_preserves_whole_system_register(source, "n.Foo = 1");
+}
+
+#[test]
+fn named_setter_object_without_empty_decl_preserves_whole_register() {
+    let source = r#"
+System.register("odd", ["dep"], function (_export) {
+  return {
+    setters: [function (module) {
+      n.Foo = module.Foo;
+      _export(n);
+    }],
+    execute: function () {}
+  };
+});
+"#;
+    assert_preserves_whole_system_register(source, "_export(n)");
+}
+
+#[test]
+fn named_setter_object_unused_temp_preserves_whole_register() {
+    let source = r#"
+System.register("odd", ["dep"], function (_export) {
+  return {
+    setters: [function (module) {
+      const n = {};
+      n.Foo = module.Foo;
+    }],
+    execute: function () {}
+  };
+});
+"#;
+    assert_preserves_whole_system_register(source, "const n");
+}
+
+#[test]
+fn named_setter_object_use_after_export_preserves_whole_register() {
+    let source = r#"
+System.register("odd", ["dep"], function (_export) {
+  return {
+    setters: [function (module) {
+      const n = {};
+      n.Foo = module.Foo;
+      _export(n);
+      use(n);
+    }],
+    execute: function () {}
+  };
+});
+"#;
+    assert_preserves_whole_system_register(source, "use(n)");
+}
+
+#[test]
+fn named_setter_object_computed_key_preserves_whole_register() {
+    let source = r#"
+System.register("odd", ["dep"], function (_export) {
+  return {
+    setters: [function (module) {
+      const n = {};
+      n[key] = module.Foo;
+      _export(n);
+    }],
+    execute: function () {}
+  };
+});
+"#;
+    assert_preserves_whole_system_register(source, "n[key]");
+}
+
+#[test]
+fn named_setter_object_export_spread_preserves_whole_register() {
+    let source = r#"
+System.register("odd", ["dep"], function (_export) {
+  return {
+    setters: [function (module) {
+      const n = {};
+      n.Foo = module.Foo;
+      _export(...n);
+    }],
+    execute: function () {}
+  };
+});
+"#;
+    assert_preserves_whole_system_register(source, "_export(...n)");
+}
+
+#[test]
+fn named_setter_object_empty_export_preserves_whole_register() {
+    // `_export({})` is not a proven setter shape. An empty temp is the same call.
+    let source = r#"
+System.register("odd", ["dep"], function (_export) {
+  return {
+    setters: [function (module) {
+      const n = {};
+      _export(n);
+    }],
+    execute: function () {}
+  };
+});
+"#;
+    assert_preserves_whole_system_register(source, "const n");
+}
+
+#[test]
+fn named_setter_object_rebind_before_export_preserves_whole_register() {
+    let source = r#"
+System.register("odd", ["dep"], function (_export) {
+  return {
+    setters: [function (module) {
+      var n = {};
+      n = module;
+      _export(n);
+    }],
+    execute: function () {}
+  };
+});
+"#;
+    assert_preserves_whole_system_register(source, "n = module");
+}
+
+#[test]
+fn named_setter_object_rebind_after_export_preserves_whole_register() {
+    let source = r#"
+System.register("odd", ["dep"], function (_export) {
+  return {
+    setters: [function (module) {
+      var n = {};
+      n.Foo = module.Foo;
+      _export(n);
+      n = module.Bar;
+    }],
+    execute: function () {}
+  };
+});
+"#;
+    assert_preserves_whole_system_register(source, "n = module.Bar");
+}
+
+#[test]
+fn named_setter_object_temp_shadows_module_preserves_whole_register() {
+    let source = r#"
+System.register("odd", ["dep"], function (_export) {
+  return {
+    setters: [function (module) {
+      var module = {};
+      module.Foo = module.Foo;
+      _export(module);
+    }],
+    execute: function () {}
+  };
+});
+"#;
+    assert_preserves_whole_system_register(source, "var module");
+}
+
+#[test]
+fn named_setter_object_shadowed_export_param_preserves_whole_register() {
+    let source = r#"
+System.register("odd", ["dep"], function (_export) {
+  return {
+    setters: [function (_export) {
+      const n = {};
+      n.Foo = _export.Foo;
+      _export(n);
+    }],
+    execute: function () {}
+  };
+});
+"#;
+    assert_preserves_whole_system_register(source, "_export(n)");
+}
+
+#[test]
+fn named_setter_object_assign_spread_preserves_whole_register() {
+    let source = r#"
+System.register("odd", ["dep"], function (_export) {
+  return {
+    setters: [function (module) {
+      const n = {};
+      Object.assign(n, module);
+      _export(n);
+    }],
+    execute: function () {}
+  };
+});
+"#;
+    assert_preserves_whole_system_register(source, "Object.assign");
+}
+
 #[test]
 fn default_iife_export_is_parenthesized() {
     // `_export("default", function () {}())` must stay an expression. Without
