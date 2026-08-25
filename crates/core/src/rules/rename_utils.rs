@@ -126,6 +126,10 @@ pub struct TopLevelBindingInfo {
 
 #[derive(Debug, Default)]
 pub struct RenameShadowIndex {
+    /// The bindings `for_bindings` analyzed. A query for any other binding
+    /// has no scope information behind it, so it must not be answered
+    /// "no shadowing" just because the map has no entry.
+    indexed_bindings: HashSet<BindingId>,
     forbidden_names_by_binding: HashMap<BindingId, HashSet<Atom>>,
 }
 
@@ -288,13 +292,32 @@ impl RenameShadowIndex {
         let mut builder = Builder {
             bindings,
             scope_stack: Vec::new(),
-            index: Self::default(),
+            index: Self {
+                indexed_bindings: bindings.clone(),
+                forbidden_names_by_binding: HashMap::new(),
+            },
         };
         module.visit_with(&mut builder);
         builder.index
     }
 
+    /// True when renaming `old` to `new_name` would let a nested scope's
+    /// declaration capture references to `old`.
+    ///
+    /// `old` must be one of the bindings this index was built for. The index
+    /// holds no scope information for any other binding, so such a query is
+    /// answered fail-closed (`true`, blocking the rename) and trips a debug
+    /// assertion — a silent `false` here would approve renames the index
+    /// never analyzed.
     pub fn rename_causes_shadowing(&self, old: &BindingId, new_name: &Atom) -> bool {
+        if !self.indexed_bindings.contains(old) {
+            debug_assert!(
+                false,
+                "RenameShadowIndex queried for binding {old:?} that was not \
+                 in the set passed to for_bindings"
+            );
+            return true;
+        }
         self.forbidden_names_by_binding
             .get(old)
             .is_some_and(|names| names.contains(new_name))
@@ -853,5 +876,91 @@ impl VisitMut for BindingRenamer {
         if let MemberProp::Computed(computed) = prop {
             computed.visit_mut_with(self);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, GLOBALS};
+    use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
+    use swc_core::ecma::transforms::base::resolver;
+
+    fn with_parsed_module<R>(source: &str, f: impl FnOnce(&Module) -> R) -> R {
+        GLOBALS.set(&Default::default(), || {
+            let cm: Lrc<SourceMap> = Default::default();
+            let fm = cm.new_source_file(
+                FileName::Custom("test.js".to_string()).into(),
+                source.to_string(),
+            );
+            let lexer = Lexer::new(
+                Syntax::Es(EsSyntax::default()),
+                Default::default(),
+                StringInput::from(&*fm),
+                None,
+            );
+            let mut parser = Parser::new_from(lexer);
+            let mut module = parser.parse_module().expect("failed to parse");
+            let unresolved_mark = Mark::new();
+            let top_level_mark = Mark::new();
+            module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+            f(&module)
+        })
+    }
+
+    fn top_level_binding(module: &Module, name: &str) -> BindingId {
+        collect_top_level_binding_infos(module)
+            .remove(&Atom::from(name))
+            .expect("binding not found")
+            .id
+    }
+
+    #[test]
+    fn nested_declaration_blocks_rename() {
+        with_parsed_module(
+            "var target = 1; function wrapper() { var inner = 2; return target + inner; }",
+            |module| {
+                let target = top_level_binding(module, "target");
+                let bindings = HashSet::from([target.clone()]);
+                let index = RenameShadowIndex::for_bindings(module, &bindings);
+                assert!(index.rename_causes_shadowing(&target, &Atom::from("inner")));
+                assert!(!index.rename_causes_shadowing(&target, &Atom::from("other")));
+            },
+        );
+    }
+
+    #[test]
+    fn indexed_binding_without_nested_conflicts_reports_no_shadowing() {
+        with_parsed_module("var lonely = 1; use(lonely);", |module| {
+            let lonely = top_level_binding(module, "lonely");
+            let bindings = HashSet::from([lonely.clone()]);
+            let index = RenameShadowIndex::for_bindings(module, &bindings);
+            assert!(!index.rename_causes_shadowing(&lonely, &Atom::from("anything")));
+        });
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "not in the set passed to for_bindings")]
+    fn unindexed_binding_query_is_rejected() {
+        with_parsed_module("var known = 1;", |module| {
+            let known = top_level_binding(module, "known");
+            let bindings = HashSet::from([known]);
+            let index = RenameShadowIndex::for_bindings(module, &bindings);
+            let stranger = (Atom::from("stranger"), SyntaxContext::empty());
+            index.rename_causes_shadowing(&stranger, &Atom::from("x"));
+        });
+    }
+
+    #[cfg(not(debug_assertions))]
+    #[test]
+    fn unindexed_binding_query_fails_closed() {
+        with_parsed_module("var known = 1;", |module| {
+            let known = top_level_binding(module, "known");
+            let bindings = HashSet::from([known]);
+            let index = RenameShadowIndex::for_bindings(module, &bindings);
+            let stranger = (Atom::from("stranger"), SyntaxContext::empty());
+            assert!(index.rename_causes_shadowing(&stranger, &Atom::from("x")));
+        });
     }
 }
