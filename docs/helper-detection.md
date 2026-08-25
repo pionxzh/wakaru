@@ -176,6 +176,8 @@ Each helper kind has its own dedicated rule struct (e.g., `UnInteropRequireDefau
 
 For example, `UnInteropRequireDefault`:
 - `var _a = _interopRequireDefault(require("a"))` becomes `var _a = require("a")`
+- SWC AMD's require-backed `_a = _interopRequireDefault(_a)` initialization is
+  removed when it is an unconditional top-level first use of that same binding
 - `_a.default` becomes `_a` (at all reference sites)
 - The helper function declaration is removed
 

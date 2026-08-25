@@ -1,5 +1,5 @@
 mod common;
-use common::{assert_eq_normalized, render};
+use common::{assert_eq_normalized, render, render_pipeline_until};
 
 #[test]
 fn unwraps_interop_require_default_by_import_path() {
@@ -239,6 +239,88 @@ import _a from "a";
 console.log(_a);
 "#;
     assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn unwraps_swc_assignment_form_for_same_require_binding() {
+    // SWC AMD output receives dependencies as factory parameters, then wraps
+    // those same bindings with a standalone interop assignment.
+    let input = r#"
+import { _ as _interop_require_default } from "@swc/helpers/_/_interop_require_default";
+var _react = require("react");
+_react = _interop_require_default(_react);
+console.log(_react.default.createElement("div"));
+"#;
+    let expected = r#"
+import _react from "react";
+console.log(_react.createElement("div"));
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn assignment_form_requires_the_same_target_and_argument_binding() {
+    let input = r#"
+import { _ as _interop_require_default } from "@swc/helpers/_/_interop_require_default";
+var _react = require("react");
+var wrapped;
+wrapped = _interop_require_default(_react);
+console.log(wrapped.default);
+"#;
+    let expected = r#"
+var _react = require("react");
+var wrapped;
+wrapped = _react;
+console.log(wrapped.default);
+"#;
+    assert_eq_normalized(
+        &render_pipeline_until(input, "UnInteropRequireDefault"),
+        expected,
+    );
+}
+
+#[test]
+fn assignment_form_must_precede_other_uses_of_the_require_binding() {
+    let input = r#"
+import { _ as _interop_require_default } from "@swc/helpers/_/_interop_require_default";
+var _react = require("react");
+observe(_react.default);
+_react = _interop_require_default(_react);
+console.log(_react.default);
+"#;
+    let expected = r#"
+var _react = require("react");
+observe(_react.default);
+_react = _react;
+console.log(_react.default);
+"#;
+    assert_eq_normalized(
+        &render_pipeline_until(input, "UnInteropRequireDefault"),
+        expected,
+    );
+}
+
+#[test]
+fn assignment_form_must_be_an_unconditional_top_level_statement() {
+    let input = r#"
+import { _ as _interop_require_default } from "@swc/helpers/_/_interop_require_default";
+var _react = require("react");
+if (enabled) {
+    _react = _interop_require_default(_react);
+}
+console.log(_react.default);
+"#;
+    let expected = r#"
+var _react = require("react");
+if (enabled) {
+    _react = _react;
+}
+console.log(_react.default);
+"#;
+    assert_eq_normalized(
+        &render_pipeline_until(input, "UnInteropRequireDefault"),
+        expected,
+    );
 }
 
 #[test]

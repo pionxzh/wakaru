@@ -1,5 +1,5 @@
 use wakaru_core::driver::test_support::{unpack, unpack_raw};
-use wakaru_core::DecompileOptions;
+use wakaru_core::{validate_output_modules, DecompileOptions};
 
 fn raw_pairs(source: &str) -> Vec<(String, String)> {
     unpack_raw(
@@ -183,6 +183,37 @@ define(["exports", "math-lib"], function(exports, mathLib) {
         decompiled[0].1.contains(r#"from "math-lib""#),
         "decompiled import should preserve the external package specifier:\n{}",
         decompiled[0].1
+    );
+}
+
+#[test]
+fn swc_default_interop_assignment_does_not_write_to_recovered_import() {
+    let source = r#"
+define([
+  "exports",
+  "@swc/helpers/_/_interop_require_default",
+  "react"
+], function(exports, _interop_require_default, _react) {
+  "use strict";
+  _react = _interop_require_default(_react);
+  exports.hook = _react.default.useEffect;
+});
+"#;
+
+    let decompiled = pairs(source);
+    assert_eq!(decompiled.len(), 1);
+    let module = &decompiled[0].1;
+    assert!(
+        module.contains(r#"from "react""#)
+            && module.contains("_react.useEffect")
+            && !module.contains("_react =")
+            && !module.contains("_react.default"),
+        "the generated interop assignment should collapse into a legal default import:\n{module}"
+    );
+    assert_eq!(
+        validate_output_modules(&decompiled),
+        vec![],
+        "recovered AMD modules must not assign to imports"
     );
 }
 
