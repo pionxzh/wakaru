@@ -47,6 +47,10 @@ pub(super) struct MultiSourceModule {
     webpack_numeric_module_id: Option<f64>,
     /// Whether the original container proves webpack 4's `module.i` spelling.
     webpack_legacy_module_i: bool,
+    /// A structural detector lifted this code out of a callable body. If ESM
+    /// recovery leaves a function-level return at module scope, the final
+    /// pipeline may restore that boundary after imports have been recovered.
+    restore_lifted_function_boundary: bool,
     allow_cross_chunk_rewrite: bool,
     report_import_cycle_warnings: bool,
     chunk_ids: Arc<HashSet<usize>>,
@@ -109,6 +113,7 @@ impl MultiSourceModule {
             webpack_commonjs_runtime: false,
             webpack_numeric_module_id: None,
             webpack_legacy_module_i: false,
+            restore_lifted_function_boundary: true,
             allow_cross_chunk_rewrite: true,
             report_import_cycle_warnings,
             chunk_ids: chunk_ids.into(),
@@ -166,6 +171,7 @@ impl MultiSourceModule {
             webpack_commonjs_runtime: false,
             webpack_numeric_module_id: None,
             webpack_legacy_module_i: false,
+            restore_lifted_function_boundary: false,
             allow_cross_chunk_rewrite: false,
             report_import_cycle_warnings: false,
             chunk_ids: Arc::default(),
@@ -184,6 +190,7 @@ pub(super) struct PreparedUnpackModule {
     pub(super) webpack_commonjs_runtime: bool,
     pub(super) webpack_numeric_module_id: Option<f64>,
     pub(super) webpack_legacy_module_i: bool,
+    pub(super) restore_lifted_function_boundary: bool,
     pub(super) numeric_rewrite: Option<NumericRewriteModuleContext>,
     pub(super) filename_rewrite: Option<FilenameRewriteModuleContext>,
     pub(super) report_import_cycle_warnings: bool,
@@ -202,6 +209,7 @@ impl PreparedUnpackModule {
             webpack_commonjs_runtime: false,
             webpack_numeric_module_id: None,
             webpack_legacy_module_i: false,
+            restore_lifted_function_boundary: false,
             numeric_rewrite: None,
             filename_rewrite: None,
             report_import_cycle_warnings: true,
@@ -223,6 +231,7 @@ impl PreparedUnpackModule {
             webpack_commonjs_runtime: false,
             webpack_numeric_module_id: None,
             webpack_legacy_module_i: false,
+            restore_lifted_function_boundary: false,
             numeric_rewrite: None,
             filename_rewrite: None,
             report_import_cycle_warnings,
@@ -351,6 +360,7 @@ pub(super) fn prepare_multi_source_modules(
                 webpack_commonjs_runtime: module.webpack_commonjs_runtime,
                 webpack_numeric_module_id: module.webpack_numeric_module_id,
                 webpack_legacy_module_i: module.webpack_legacy_module_i,
+                restore_lifted_function_boundary: module.restore_lifted_function_boundary,
                 numeric_rewrite,
                 filename_rewrite,
                 report_import_cycle_warnings: module.report_import_cycle_warnings,

@@ -126,6 +126,27 @@ define([], function() {
 }
 
 #[test]
+fn terminal_bare_return_before_hoist_only_vars_is_removed_safely() {
+    let source = r#"
+define([], function() {
+  initializeLibrary();
+  return;
+  var internalState, cachedValue;
+});
+"#;
+
+    let raw = raw_pairs(source);
+    assert_eq!(raw.len(), 1);
+    assert!(
+        raw[0].1.contains("initializeLibrary();")
+            && raw[0].1.contains("var internalState, cachedValue;")
+            && !raw[0].1.contains("return;"),
+        "a terminal bare return may be removed without executing later initializers:\n{}",
+        raw[0].1
+    );
+}
+
+#[test]
 fn return_before_initialized_var_is_not_treated_as_terminal() {
     let source = r#"
 define([], function() {
@@ -135,12 +156,43 @@ define([], function() {
 "#;
 
     let raw = raw_pairs(source);
+    assert_eq!(raw.len(), 1);
     assert!(
-        raw[0].1.contains("return buildLibrary();")
+        !raw[0].1.contains("define(")
+            && raw[0].1.contains("return buildLibrary();")
             && raw[0].1.contains("unexpectedEffect = initialize()"),
-        "rewriting must not make an unreachable initializer execute:\n{}",
+        "the AMD detector must restore a callable factory boundary when a return cannot be lifted:\n{}",
         raw[0].1
     );
+    assert_eq!(validate_output_modules(&raw), vec![]);
+}
+
+#[test]
+fn early_bare_return_keeps_the_amd_factory_boundary() {
+    let source = r#"
+define(["polyfill/forEach"], function() {
+  function deferImages() {
+    document.querySelectorAll("img[data-src]").forEach(loadImage);
+  }
+  if (typeof IntersectionObserver === "undefined") {
+    setTimeout(deferImages, 0);
+    return;
+  }
+  const observer = new IntersectionObserver(deferImages);
+  observer.observe(document.body);
+});
+"#;
+
+    let raw = raw_pairs(source);
+    assert_eq!(raw.len(), 1);
+    assert!(
+        !raw[0].1.contains("define(")
+            && raw[0].1.contains("return;")
+            && raw[0].1.contains("IntersectionObserver"),
+        "the lifted AMD body should regain a function boundary without losing extraction:\n{}",
+        raw[0].1
+    );
+    assert_eq!(validate_output_modules(&raw), vec![]);
 }
 
 #[test]

@@ -6,7 +6,7 @@ use rayon::prelude::*;
 use swc_core::common::{sync::Lrc, Globals, Mark, SourceMap, SyntaxContext, DUMMY_SP, GLOBALS};
 use swc_core::ecma::ast::{
     AssignExpr, AssignOp, AssignTarget, Expr, ExprStmt, Ident, IdentName, MemberExpr, MemberProp,
-    Module, ModuleItem, ObjectLit, SimpleAssignTarget, Stmt,
+    Module, ModuleDecl, ModuleItem, ObjectLit, SimpleAssignTarget, Stmt,
 };
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::VisitMutWith;
@@ -49,7 +49,42 @@ use crate::rules::{
 };
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
 use crate::synthetic_import_cleanup::downgrade_unused_synthetic_imports;
-use crate::unpacker::DetectedModuleFailure;
+use crate::unpacker::{arrow_iife_call, stmts_have_function_level_return, DetectedModuleFailure};
+
+fn restore_lifted_function_boundary(module: &mut Module, enabled: bool) -> bool {
+    if !enabled {
+        return false;
+    }
+    let statements = module
+        .body
+        .iter()
+        .filter_map(|item| match item {
+            ModuleItem::Stmt(statement) => Some(statement.clone()),
+            ModuleItem::ModuleDecl(_) => None,
+        })
+        .collect::<Vec<_>>();
+    if !stmts_have_function_level_return(&statements)
+        || module.body.iter().any(|item| {
+            matches!(
+                item,
+                ModuleItem::ModuleDecl(decl) if !matches!(decl, ModuleDecl::Import(_))
+            )
+        })
+    {
+        return false;
+    }
+
+    let mut restored = std::mem::take(&mut module.body)
+        .into_iter()
+        .filter(|item| matches!(item, ModuleItem::ModuleDecl(ModuleDecl::Import(_))))
+        .collect::<Vec<_>>();
+    restored.push(ModuleItem::Stmt(Stmt::Expr(ExprStmt {
+        span: DUMMY_SP,
+        expr: Box::new(arrow_iife_call(statements)),
+    })));
+    module.body = restored;
+    true
+}
 
 fn detector_failure_warning(filename: &str, failure: DetectedModuleFailure) -> UnpackWarning {
     match failure {
@@ -557,6 +592,10 @@ pub(super) fn unpack_multi_module_with_plan(
             if let Some(cleanup) = &mut final_recovered_import_cleanup {
                 module.visit_mut_with(cleanup);
             }
+            restore_lifted_function_boundary(
+                &mut module,
+                unpacked.restore_lifted_function_boundary,
+            );
             drop(rules_enter);
             drop(rules_span);
 
@@ -809,6 +848,94 @@ mod tests {
             .map(|module| (module.filename.clone(), module.code.clone()))
             .collect::<Vec<_>>();
         validate_output_modules(&modules)
+    }
+
+    #[test]
+    fn lifted_return_boundary_keeps_imports_at_module_scope() {
+        let code = GLOBALS.set(&Default::default(), || {
+            let cm: Lrc<SourceMap> = Default::default();
+            let mut module = parse_js(
+                r#"import { value } from "./dep.js"; if (skip) return; consume(value);"#,
+                "entry.js",
+                cm.clone(),
+            )
+            .expect("recoverable top-level return should produce an AST");
+            assert!(restore_lifted_function_boundary(&mut module, true));
+            apply_fixer(&mut module).expect("restored module should fix");
+            print_js(&module, cm).expect("restored module should print")
+        });
+
+        assert!(
+            code.starts_with("import ") && code.contains("return;") && code.contains("(()=>"),
+            "imports should remain outside the restored callable boundary:\n{code}"
+        );
+        assert_eq!(
+            validate_output_modules(&[
+                ("entry.js".to_string(), code),
+                ("dep.js".to_string(), "export const value = 1;".to_string()),
+            ]),
+            vec![]
+        );
+    }
+
+    #[test]
+    fn lifted_return_boundary_rejects_unguarded_exports() {
+        GLOBALS.set(&Default::default(), || {
+            let cm: Lrc<SourceMap> = Default::default();
+            let mut module = parse_js(
+                "if (skip) return; export const value = initialize();",
+                "entry.js",
+                cm,
+            )
+            .expect("recoverable top-level return should produce an AST");
+
+            assert!(
+                !restore_lifted_function_boundary(&mut module, true),
+                "an export initializer cannot be moved outside the restored return boundary"
+            );
+        });
+    }
+
+    #[test]
+    fn lifted_async_return_boundary_preserves_top_level_await() {
+        let code = GLOBALS.set(&Default::default(), || {
+            let cm: Lrc<SourceMap> = Default::default();
+            let mut module = parse_js(
+                "if (skip) return; await initialize();",
+                "entry.js",
+                cm.clone(),
+            )
+            .expect("recoverable top-level return should produce an AST");
+            assert!(restore_lifted_function_boundary(&mut module, true));
+            apply_fixer(&mut module).expect("restored async module should fix");
+            print_js(&module, cm).expect("restored async module should print")
+        });
+
+        assert!(
+            code.contains("async")
+                && code.contains("await initialize()")
+                && code.contains("return;"),
+            "an async lifted body must regain an async callable boundary:\n{code}"
+        );
+        assert_eq!(
+            validate_output_modules(&[("entry.js".to_string(), code)]),
+            vec![]
+        );
+    }
+
+    #[test]
+    fn lifted_return_boundary_ignores_nested_function_returns() {
+        GLOBALS.set(&Default::default(), || {
+            let cm: Lrc<SourceMap> = Default::default();
+            let mut module = parse_js(
+                "function read() { return 1; } consume(read());",
+                "entry.js",
+                cm,
+            )
+            .expect("fixture should parse");
+
+            assert!(!restore_lifted_function_boundary(&mut module, true));
+        });
     }
 
     #[test]

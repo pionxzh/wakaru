@@ -197,6 +197,129 @@ fn too_few_declarations_returns_none() {
 }
 
 #[test]
+fn iife_with_function_level_return_restores_callable_entry_boundary() {
+    let input = r#"
+        (function() {
+            if (window.disabled) return;
+
+            function a1() { return 1; }
+            function a2() { return a1() + 1; }
+            function a3() { return a2() * 2; }
+            function a4() { return a3() + 3; }
+            function a5() { return a4() - 1; }
+
+            function b1() { return 10; }
+            function b2() { return b1() + 10; }
+            function b3() { return b2() * 20; }
+            function b4() { return b3() + 30; }
+            function b5() { return b4() - 10; }
+
+            const result = a5() + b5();
+            console.log(result);
+        })();
+    "#;
+
+    let modules = split(input).expect("the IIFE should remain safely splittable");
+    let entry = modules
+        .iter()
+        .find(|(_, _, is_entry)| *is_entry)
+        .map(|(_, code, _)| code)
+        .expect("the split should retain an entry module");
+    assert!(
+        entry.contains("return;") && (entry.contains("(()=>{") || entry.contains("(() =>")),
+        "the entry should restore a function boundary around the lifted return:\n{entry}"
+    );
+    let pairs = modules
+        .into_iter()
+        .map(|(filename, code, _)| (filename, code))
+        .collect::<Vec<_>>();
+    assert_eq!(crate::validate_output_modules(&pairs), vec![]);
+}
+
+#[test]
+fn iife_with_only_nested_returns_can_still_be_unwrapped() {
+    let input = r#"
+        (function() {
+            function a1() { return 1; }
+            function a2() { return a1() + 1; }
+            function a3() { return a2() * 2; }
+            function a4() { return a3() + 3; }
+            function a5() { return a4() - 1; }
+
+            function b1() { return 10; }
+            function b2() { return b1() + 10; }
+            function b3() { return b2() * 20; }
+            function b4() { return b3() + 30; }
+            function b5() { return b4() - 10; }
+
+            const result = a5() + b5();
+            console.log(result);
+        })();
+    "#;
+
+    assert!(
+        split(input).is_some(),
+        "returns owned by nested functions must not block IIFE unwrapping"
+    );
+}
+
+#[test]
+fn recoverably_parsed_sloppy_iife_is_not_split_into_modules() {
+    let input = r#"
+        (function() {
+            function a1() { return 1; }
+            function a2() { return a1() + 1; }
+            function a3() { return a2() * 2; }
+            function a4() { return a3() + 3; }
+            function a5() { return a4() - 1; }
+
+            function b1() { return 10; }
+            function b2() { return b1() + 10; }
+            function b3() { return b2() * 20; }
+            function b4() { return b3() + 30; }
+            function b5() { return b4() - 10; }
+
+            with (window.runtimeScope) {
+                console.log(a5(), b5(), value);
+            }
+        })();
+    "#;
+
+    assert!(
+        split(input).is_none(),
+        "a module-goal recovery must not authorize ESM extraction from a sloppy script"
+    );
+}
+
+#[test]
+fn parenthesized_delete_identifier_is_not_split_into_modules() {
+    let input = r#"
+        (function() {
+            function a1() { return 1; }
+            function a2() { return a1() + 1; }
+            function a3() { return a2() * 2; }
+            function a4() { return a3() + 3; }
+            function a5() { return a4() - 1; }
+
+            function b1() { return 10; }
+            function b2() { return b1() + 10; }
+            function b3() { return b2() * 20; }
+            function b4() { return b3() + 30; }
+            function b5() { return b4() - 10; }
+
+            var temporary = a5() + b5();
+            delete (temporary);
+            console.log(temporary);
+        })();
+    "#;
+
+    assert!(
+        split(input).is_none(),
+        "sloppy-only delete syntax must not authorize scope-hoist extraction"
+    );
+}
+
+#[test]
 fn splits_independent_groups() {
     // Two clearly independent groups of functions + an entry using both.
     let input = r#"

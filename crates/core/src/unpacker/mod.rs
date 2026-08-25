@@ -17,17 +17,52 @@ use swc_core::atoms::Atom;
 use swc_core::common::{
     sync::Lrc, BytePos, FileName, Globals, LineCol, Mark, SourceMap, Span, Spanned, GLOBALS,
 };
-use swc_core::ecma::ast::{Decl, Module, ModuleDecl, ModuleItem, Stmt, VarDecl};
+use swc_core::ecma::ast::{
+    Decl, Expr, Module, ModuleDecl, ModuleItem, Stmt, UnaryExpr, UnaryOp, VarDecl, WithStmt,
+};
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 use swc_core::ecma::transforms::base::resolver;
-use swc_core::ecma::visit::VisitMutWith;
+use swc_core::ecma::visit::{Visit, VisitMutWith, VisitWith};
 
 use crate::analysis::binding_uses::BindingUseIndex;
 use crate::rules::rename_utils::{
     binding_replacement_would_be_shadowed, collect_module_names, rename_bindings_in_module,
     BindingRename, RenameShadowIndex,
 };
+use crate::utils::paren::strip_parens;
+
+/// Whether emitting this parsed tree as an ES module would make syntax that is
+/// valid only in sloppy scripts invalid. The parser reports most strict-mode
+/// violations as recoverable errors, but parenthesized delete targets such as
+/// `delete (binding)` currently pass parsing and lose their parentheses during
+/// code generation.
+pub(crate) fn has_strict_mode_syntax_hazard(module: &Module) -> bool {
+    #[derive(Default)]
+    struct StrictModeSyntaxHazard {
+        found: bool,
+    }
+
+    impl Visit for StrictModeSyntaxHazard {
+        fn visit_with_stmt(&mut self, _: &WithStmt) {
+            self.found = true;
+        }
+
+        fn visit_unary_expr(&mut self, expression: &UnaryExpr) {
+            if expression.op == UnaryOp::Delete
+                && matches!(strip_parens(&expression.arg), Expr::Ident(_))
+            {
+                self.found = true;
+                return;
+            }
+            expression.visit_children_with(self);
+        }
+    }
+
+    let mut visitor = StrictModeSyntaxHazard::default();
+    module.visit_with(&mut visitor);
+    visitor.found
+}
 
 #[derive(Default)]
 pub struct UnpackedModule {
@@ -103,6 +138,104 @@ pub(crate) fn source_fallback_for_stmts(cm: &SourceMap, statements: &[Stmt]) -> 
     let start = first_span.lo.0.saturating_sub(file.start_pos.0) as usize;
     let end = last_span.hi.0.saturating_sub(file.start_pos.0) as usize;
     file.src.get(start..end).unwrap_or_default().to_string()
+}
+
+/// Whether lifting `statements` out of their current function boundary would
+/// expose a `return` belonging to that function. Returns nested inside another
+/// function-like body do not belong to the boundary being considered.
+pub(crate) fn function_level_returns(statements: &[Stmt]) -> (usize, bool) {
+    #[derive(Default)]
+    struct FunctionLevelReturn {
+        count: usize,
+        has_value: bool,
+    }
+
+    impl Visit for FunctionLevelReturn {
+        fn visit_return_stmt(&mut self, statement: &swc_core::ecma::ast::ReturnStmt) {
+            self.count += 1;
+            self.has_value |= statement.arg.is_some();
+        }
+
+        fn visit_function(&mut self, _: &swc_core::ecma::ast::Function) {}
+
+        fn visit_arrow_expr(&mut self, _: &swc_core::ecma::ast::ArrowExpr) {}
+
+        fn visit_constructor(&mut self, _: &swc_core::ecma::ast::Constructor) {}
+
+        fn visit_getter_prop(&mut self, _: &swc_core::ecma::ast::GetterProp) {}
+
+        fn visit_setter_prop(&mut self, _: &swc_core::ecma::ast::SetterProp) {}
+    }
+
+    let mut finder = FunctionLevelReturn::default();
+    for statement in statements {
+        statement.visit_with(&mut finder);
+    }
+    (finder.count, finder.has_value)
+}
+
+pub(crate) fn stmts_have_function_level_return(statements: &[Stmt]) -> bool {
+    function_level_returns(statements).0 > 0
+}
+
+fn stmts_have_function_level_await(statements: &[Stmt]) -> bool {
+    #[derive(Default)]
+    struct FunctionLevelAwait {
+        found: bool,
+    }
+
+    impl Visit for FunctionLevelAwait {
+        fn visit_await_expr(&mut self, _: &swc_core::ecma::ast::AwaitExpr) {
+            self.found = true;
+        }
+
+        fn visit_function(&mut self, _: &swc_core::ecma::ast::Function) {}
+
+        fn visit_arrow_expr(&mut self, _: &swc_core::ecma::ast::ArrowExpr) {}
+
+        fn visit_constructor(&mut self, _: &swc_core::ecma::ast::Constructor) {}
+
+        fn visit_getter_prop(&mut self, _: &swc_core::ecma::ast::GetterProp) {}
+
+        fn visit_setter_prop(&mut self, _: &swc_core::ecma::ast::SetterProp) {}
+    }
+
+    let mut finder = FunctionLevelAwait::default();
+    for statement in statements {
+        statement.visit_with(&mut finder);
+    }
+    finder.found
+}
+
+pub(crate) fn arrow_iife_call(statements: Vec<Stmt>) -> swc_core::ecma::ast::Expr {
+    use swc_core::common::{SyntaxContext, DUMMY_SP};
+    use swc_core::ecma::ast::{
+        ArrowExpr, ArrowFunctionBody, CallExpr, Callee, Expr, FunctionBody, ParenExpr,
+    };
+
+    let is_async = stmts_have_function_level_await(&statements);
+    Expr::Call(CallExpr {
+        span: DUMMY_SP,
+        ctxt: SyntaxContext::empty(),
+        callee: Callee::Expr(Box::new(Expr::Paren(ParenExpr {
+            span: DUMMY_SP,
+            expr: Box::new(Expr::Arrow(ArrowExpr {
+                span: DUMMY_SP,
+                ctxt: SyntaxContext::empty(),
+                params: Vec::new(),
+                body: Box::new(ArrowFunctionBody::FunctionBody(FunctionBody {
+                    span: DUMMY_SP,
+                    stmts: statements,
+                })),
+                is_async,
+                is_generator: false,
+                type_params: None,
+                return_type: None,
+            })),
+        }))),
+        args: Vec::new(),
+        type_args: None,
+    })
 }
 
 /// Whether extraction can rename removed factory parameters without changing
@@ -601,7 +734,7 @@ pub(crate) fn try_prepare_bundle(source: &str) -> anyhow::Result<Option<Detected
             let _enter = span.enter();
             parse_es_module_with_recovery(source, "bundle.js", cm.clone())?
         };
-        if !recoverable_parse_errors.is_empty() {
+        if !recoverable_parse_errors.is_empty() || has_strict_mode_syntax_hazard(&module) {
             return Ok(None);
         }
         Ok(detect_parsed_source(&mut module, cm, source))
@@ -632,7 +765,7 @@ pub(crate) fn try_prepare_source(
             parse_es_module_with_recovery(source, filename, cm.clone())?
         };
 
-        if recoverable_parse_errors.is_empty() {
+        if recoverable_parse_errors.is_empty() && !has_strict_mode_syntax_hazard(&module) {
             if let Some(result) = detect_parsed_source(&mut module, cm, source) {
                 return Ok(PreparedSourceParts::Bundle(result));
             }
@@ -1041,6 +1174,32 @@ mod tests {
         assert!(
             result.is_none(),
             "module-goal recovery must not authorize webpack extraction"
+        );
+    }
+
+    #[test]
+    fn try_unpack_bundle_rejects_parenthesized_delete_identifier() {
+        let source = r#"
+(function(modules) {
+    function require(id) {
+        var module = { exports: {} };
+        modules[id](module, module.exports, require);
+        return module.exports;
+    }
+    return require(0);
+})([
+    function(module) {
+        var temporary = 1;
+        delete (temporary);
+        module.exports = temporary;
+    }
+]);
+"#;
+
+        let result = try_unpack_bundle(source).expect("the source should parse");
+        assert!(
+            result.is_none(),
+            "sloppy-only delete syntax must not authorize webpack extraction"
         );
     }
 }

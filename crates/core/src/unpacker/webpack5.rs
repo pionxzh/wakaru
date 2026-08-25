@@ -1705,13 +1705,16 @@ fn extract_webpack5_modules_with_plan(
         Some(RequireFnPlan::DirectEntry { entry_id }) => Some(entry_id.clone()),
         _ => None,
     };
-
+    let trailing_entry_body = direct_entry_id
+        .is_none()
+        .then(|| extract_trailing_entry_body(bootstrap_body))
+        .flatten();
     // Check for a trailing IIFE entry point. A directly invoked require
     // lifecycle is runtime machinery; its call argument identifies the real
     // entry module and its body must never be materialized as entry.js.
     let has_synthetic_entry = if direct_entry_id.is_some() {
         false
-    } else if let Some(entry_body) = extract_trailing_entry_body(bootstrap_body) {
+    } else if let Some(entry_body) = trailing_entry_body {
         let entry_ranges = spans_byte_ranges(&cm, entry_body.iter().map(|s| s.span()));
         let require_sym = match require_plan.as_ref() {
             Some(RequireFnPlan::Declared { sym, .. }) => sym.clone(),

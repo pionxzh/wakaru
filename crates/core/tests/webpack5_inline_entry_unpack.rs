@@ -3,7 +3,7 @@
 //! statements. These bundles previously produced no entry.js.
 
 use wakaru_core::driver::test_support::unpack;
-use wakaru_core::DecompileOptions;
+use wakaru_core::{validate_output_modules, DecompileOptions};
 
 fn expect_unpack(source: &str, filename: &str) -> Vec<(String, String)> {
     let output = unpack(
@@ -75,6 +75,51 @@ fn webpack5_inline_startup_becomes_entry_module() {
         !entry.contains("__webpack_module_cache__") && !entry.contains("cachedModule"),
         "entry must not contain runtime code, got:\n{entry}"
     );
+}
+
+#[test]
+fn webpack5_startup_iife_with_early_return_restores_the_entry_boundary() {
+    let source = r#"
+(() => {
+    var __webpack_modules__ = ({
+        1: ((__unused_webpack_module, exports) => {
+            exports.value = 42;
+        })
+    });
+    var __webpack_module_cache__ = {};
+    function __webpack_require__(moduleId) {
+        var cachedModule = __webpack_module_cache__[moduleId];
+        if (cachedModule !== undefined) {
+            return cachedModule.exports;
+        }
+        var module = __webpack_module_cache__[moduleId] = { exports: {} };
+        __webpack_modules__[moduleId](module, module.exports, __webpack_require__);
+        return module.exports;
+    }
+    (() => {
+        if (window.FAST_CMP_SCRIPT_LOADED) return;
+        window.FAST_CMP_SCRIPT_LOADED = true;
+        var dep = __webpack_require__(1);
+        console.log(dep.value);
+    })();
+})();
+"#;
+
+    let pairs = expect_unpack(source, "bundle.js");
+    assert_eq!(
+        pairs.len(),
+        2,
+        "the bundle should remain unpacked: {pairs:#?}"
+    );
+    let entry = entry_of(&pairs);
+    assert!(
+        entry.contains("./module-1.js")
+            && entry.contains("FAST_CMP_SCRIPT_LOADED")
+            && entry.contains("return;")
+            && (entry.contains("(()=>{") || entry.contains("(() =>")),
+        "imports should stay top-level while startup control flow regains a boundary:\n{entry}"
+    );
+    assert_eq!(validate_output_modules(&pairs), vec![]);
 }
 
 #[test]

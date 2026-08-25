@@ -8,7 +8,8 @@ use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use crate::module_path::relative_import_specifier;
 use crate::unpacker::wrappers::body_looks_like_umd_wrapper;
 use crate::unpacker::{
-    sanitize_relative_path, span_byte_range, BundleFormat, UnpackResult, UnpackedModule,
+    arrow_iife_call, function_level_returns, sanitize_relative_path, span_byte_range, BundleFormat,
+    UnpackResult, UnpackedModule,
 };
 use crate::utils::paren::strip_parens;
 use crate::utils::swc_safety::apply_fixer;
@@ -251,7 +252,7 @@ fn factory_to_module(
         Expr::Fn(FnExpr { function, .. }) => {
             let params = function_params(&function.params);
             let body = function.body.as_ref()?;
-            Some(module_from_factory_parts(
+            module_from_factory_parts(
                 body.stmts.clone(),
                 None,
                 deps,
@@ -259,12 +260,12 @@ fn factory_to_module(
                 filename,
                 module_id,
                 id_to_filename,
-            ))
+            )
         }
         Expr::Arrow(arrow) => {
             let params = pat_params(&arrow.params);
             match &*arrow.body {
-                ArrowFunctionBody::FunctionBody(body) => Some(module_from_factory_parts(
+                ArrowFunctionBody::FunctionBody(body) => module_from_factory_parts(
                     body.stmts.clone(),
                     None,
                     deps,
@@ -272,8 +273,8 @@ fn factory_to_module(
                     filename,
                     module_id,
                     id_to_filename,
-                )),
-                ArrowFunctionBody::Expr(expr) => Some(module_from_factory_parts(
+                ),
+                ArrowFunctionBody::Expr(expr) => module_from_factory_parts(
                     Vec::new(),
                     Some(strip_parens(expr).clone()),
                     deps,
@@ -281,10 +282,10 @@ fn factory_to_module(
                     filename,
                     module_id,
                     id_to_filename,
-                )),
+                ),
             }
         }
-        expr => Some(module_from_factory_parts(
+        expr => module_from_factory_parts(
             Vec::new(),
             Some(expr.clone()),
             deps,
@@ -292,7 +293,7 @@ fn factory_to_module(
             filename,
             module_id,
             id_to_filename,
-        )),
+        ),
     }
 }
 
@@ -322,31 +323,56 @@ fn module_from_factory_parts(
     filename: &str,
     module_id: &str,
     id_to_filename: &HashMap<String, String>,
-) -> Module {
+) -> Option<Module> {
     let mut stmts = dependency_stmts(deps, params, filename, module_id, id_to_filename);
-    stmts.extend(rewrite_terminal_return(body_stmts));
+    let body_stmts = lower_factory_body(body_stmts, deps)?;
+    stmts.extend(body_stmts);
     if let Some(expr) = returned_expr {
         stmts.push(module_exports_stmt(Box::new(expr)));
     }
-    Module {
+    Some(Module {
         span: DUMMY_SP,
         body: stmts.into_iter().map(ModuleItem::Stmt).collect(),
         shebang: None,
-    }
+    })
 }
 
-fn rewrite_terminal_return(mut stmts: Vec<Stmt>) -> Vec<Stmt> {
-    let Some(return_index) = stmts.iter().rposition(|stmt| !is_hoist_only_var(stmt)) else {
-        return stmts;
-    };
-    let Stmt::Return(return_stmt) = &mut stmts[return_index] else {
-        return stmts;
-    };
-    let Some(arg) = return_stmt.arg.take() else {
-        return stmts;
-    };
-    stmts[return_index] = module_exports_stmt(arg);
-    stmts
+fn lower_factory_body(mut stmts: Vec<Stmt>, deps: &[String]) -> Option<Vec<Stmt>> {
+    let (return_count, _) = function_level_returns(&stmts);
+    let terminal_return_index = stmts.iter().rposition(|stmt| !is_hoist_only_var(stmt));
+
+    if let Some(index) = terminal_return_index {
+        if let Stmt::Return(return_stmt) = &mut stmts[index] {
+            if return_stmt.arg.is_none() {
+                stmts.remove(index);
+            } else if return_count == 1 {
+                let arg = return_stmt.arg.take().expect("value return checked above");
+                stmts[index] = module_exports_stmt(arg);
+                return Some(stmts);
+            }
+        }
+    }
+
+    let (return_count, has_value_return) = function_level_returns(&stmts);
+    if return_count == 0 {
+        return Some(stmts);
+    }
+    if deps
+        .iter()
+        .any(|dep| matches!(dep.as_str(), "exports" | "module"))
+    {
+        return None;
+    }
+
+    let call = arrow_iife_call(stmts);
+    Some(vec![if has_value_return {
+        module_exports_stmt(Box::new(call))
+    } else {
+        Stmt::Expr(ExprStmt {
+            span: DUMMY_SP,
+            expr: Box::new(call),
+        })
+    }])
 }
 
 fn is_hoist_only_var(stmt: &Stmt) -> bool {

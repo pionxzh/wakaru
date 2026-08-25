@@ -4,7 +4,7 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::{sync::Lrc, SourceMap, Span, Spanned, GLOBALS};
+use swc_core::common::{sync::Lrc, SourceMap, Span, Spanned, DUMMY_SP, GLOBALS};
 use swc_core::ecma::ast::*;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -13,7 +13,8 @@ use super::emit_esm::{
     try_promote_fn_class_export, FilenameDedupStyle,
 };
 use super::{
-    module_item_declared_names, spans_byte_ranges, BundleFormat, UnpackResult, UnpackedModule,
+    has_strict_mode_syntax_hazard, module_item_declared_names, spans_byte_ranges, BundleFormat,
+    UnpackResult, UnpackedModule,
 };
 
 const MIN_DECLARATIONS: usize = 10;
@@ -131,7 +132,11 @@ pub(crate) fn split_scope_hoisted_with_mode(
 ) -> Option<UnpackResult> {
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
-        let module = super::parse_es_module(source, "bundle.js", cm.clone()).ok()?;
+        let (module, recoverable_parse_errors) =
+            super::parse_es_module_with_recovery(source, "bundle.js", cm.clone()).ok()?;
+        if !recoverable_parse_errors.is_empty() {
+            return None;
+        }
         split_from_module(&module, cm, render_mode, origin)
     })
 }
@@ -151,7 +156,14 @@ pub(crate) fn split_scope_hoisted_module_with_mode(
 pub fn trace_scope_hoisted(source: &str) -> Option<ScopeHoistTrace> {
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
-        let module = super::parse_es_module(source, "bundle.js", cm.clone()).ok()?;
+        let (module, recoverable_parse_errors) =
+            super::parse_es_module_with_recovery(source, "bundle.js", cm.clone()).ok()?;
+        if !recoverable_parse_errors.is_empty() {
+            return None;
+        }
+        if has_strict_mode_syntax_hazard(&module) {
+            return None;
+        }
         let iife_body = unwrap_iife(&module);
         let body = iife_body.as_deref().unwrap_or(&module.body);
         Some(trace_scope_hoist_body(source.len(), body, &cm))
@@ -292,6 +304,10 @@ fn split_from_module(
     render_mode: ScopeHoistRenderMode,
     origin: ScopeHoistSource,
 ) -> Option<UnpackResult> {
+    if has_strict_mode_syntax_hazard(module) {
+        return None;
+    }
+
     // Unwrap IIFE wrapper if present: `(()=>{ ... })()` or `(function(){ ... })()`
     let iife_body = unwrap_iife(module);
     let body = iife_body.as_deref().unwrap_or(&module.body);
@@ -428,7 +444,7 @@ fn render_scope_hoist_plan(
         clusters,
         inspection_context_by_item.as_deref(),
         cm,
-    );
+    )?;
     Some(UnpackResult::without_cycle_warnings(
         modules,
         BundleFormat::ScopeHoisted,
@@ -2395,7 +2411,7 @@ fn emit_clusters(
     clusters: Vec<Cluster>,
     inspection_context_by_item: Option<&[usize]>,
     cm: Lrc<SourceMap>,
-) -> Vec<UnpackedModule> {
+) -> Option<Vec<UnpackedModule>> {
     let dynamic_require_helpers = collect_dynamic_require_helpers(body);
     let esbuild_to_esm_helpers = collect_esbuild_to_esm_helpers(body);
     let import_decls = collect_import_decls(body);
@@ -2568,6 +2584,33 @@ fn emit_clusters(
             }
         }
 
+        if cluster.is_entry {
+            let statements = module_items
+                .iter()
+                .filter_map(|item| match item {
+                    ModuleItem::Stmt(statement) => Some(statement.clone()),
+                    ModuleItem::ModuleDecl(_) => None,
+                })
+                .collect::<Vec<_>>();
+            if super::stmts_have_function_level_return(&statements) {
+                let mut imports = Vec::new();
+                for item in std::mem::take(&mut module_items) {
+                    match item {
+                        ModuleItem::ModuleDecl(ModuleDecl::Import(import)) => {
+                            imports.push(ModuleItem::ModuleDecl(ModuleDecl::Import(import)));
+                        }
+                        ModuleItem::Stmt(_) => {}
+                        ModuleItem::ModuleDecl(_) => return None,
+                    }
+                }
+                imports.push(ModuleItem::Stmt(Stmt::Expr(ExprStmt {
+                    span: DUMMY_SP,
+                    expr: Box::new(super::arrow_iife_call(statements)),
+                })));
+                module_items = imports;
+            }
+        }
+
         if module_items.is_empty() {
             continue;
         }
@@ -2598,7 +2641,7 @@ fn emit_clusters(
         });
     }
 
-    modules
+    Some(modules)
 }
 
 fn collect_import_decls(body: &[ModuleItem]) -> Vec<ImportDecl> {
