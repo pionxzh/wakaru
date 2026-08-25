@@ -528,6 +528,7 @@ fn debug_clusters(source: &str) -> Vec<(Vec<String>, bool)> {
 #[derive(Debug)]
 struct TopLevelItem {
     declared_names: Vec<Atom>,
+    top_level_var_names: Vec<Atom>,
     referenced_names: HashSet<Atom>,
     written_names: HashSet<Atom>,
     is_module_decl: bool,
@@ -537,11 +538,20 @@ fn collect_top_level_items(body: &[ModuleItem]) -> Vec<TopLevelItem> {
     body.iter()
         .map(|item| {
             let declared_names = module_item_declared_names(item);
+            let top_level_var_names = match item {
+                ModuleItem::Stmt(Stmt::Decl(Decl::Var(var)))
+                | ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+                    decl: Decl::Var(var),
+                    ..
+                })) if var.kind == VarDeclKind::Var => declared_names.clone(),
+                _ => Vec::new(),
+            };
             let (referenced_names, written_names) =
                 item_referenced_and_written_names(item, &declared_names);
             let is_module_decl = matches!(item, ModuleItem::ModuleDecl(_));
             TopLevelItem {
                 declared_names,
+                top_level_var_names,
                 referenced_names,
                 written_names,
                 is_module_decl,
@@ -1615,6 +1625,22 @@ fn inspection_output_cluster_count(items: &[TopLevelItem], uf: &UnionFind) -> us
 #[allow(clippy::needless_range_loop)]
 fn apply_merge_signals(items: &[TopLevelItem], graph: &ReferenceGraph, uf: &mut UnionFind) {
     let adjacency_window = 3;
+
+    // Repeated top-level `var` declarations share one hoisted binding even
+    // when they are far apart in a concatenated script. Keep every declaring
+    // item in one cluster before resolving writer/owner edges; otherwise the
+    // emitter sees multiple producers and synthesizes an immutable import
+    // beside a local redeclaration of the same binding.
+    let mut first_var_declaration = HashMap::<Atom, usize>::new();
+    for (item_index, item) in items.iter().enumerate() {
+        for name in &item.top_level_var_names {
+            if let Some(&first_index) = first_var_declaration.get(name) {
+                uf.union(first_index, item_index);
+            } else {
+                first_var_declaration.insert(name.clone(), item_index);
+            }
+        }
+    }
 
     // Signal 1: Mutual references — A references B AND B references A.
     for i in 0..items.len() {

@@ -255,6 +255,48 @@ fn writer_stays_with_mutable_top_level_binding() {
 }
 
 #[test]
+fn duplicate_top_level_var_writers_share_one_output_module() {
+    let input = r#"
+        var shared = false;
+        function firstRead() { return shared; }
+        function firstWrite() { shared = true; }
+        function firstReset() { shared = false; }
+        function firstRun() { firstWrite(); return firstRead(); }
+
+        function helperA1() { return 1; }
+        function helperA2() { return helperA1() + 1; }
+        function helperA3() { return helperA2() * 2; }
+        function helperA4() { return helperA3() + 3; }
+        function publicA() { return helperA4(); }
+
+        var shared = false;
+        function secondRead() { return shared; }
+        function secondWrite() { shared = true; }
+        function secondReset() { shared = false; }
+        function secondRun() { secondWrite(); return secondRead(); }
+
+        console.log(firstRun(), secondRun(), publicA());
+    "#;
+
+    let modules = split(input).expect("the independent helper group should still allow a split");
+    assert!(
+        modules
+            .iter()
+            .all(|(_, code, _)| !code.contains("import { shared")),
+        "a repeated top-level var is one binding and must never become an imported writer:\n{modules:#?}"
+    );
+    let first_owner = modules
+        .iter()
+        .find(|(_, code, _)| code.contains("function firstWrite"))
+        .expect("one module should contain the first writer");
+    assert!(
+        first_owner.1.contains("function secondWrite"),
+        "both writers of the repeated var binding must share one owner:\n{}",
+        first_owner.1
+    );
+}
+
+#[test]
 fn inspection_bounds_cross_item_write_components() {
     // Seven owner clusters plus the writer cluster sit exactly at the cap, so
     // the mutable bindings remain with their writer as useful same-module
@@ -417,6 +459,7 @@ fn inspection_does_not_accept_offsetting_component_count_changes() {
         let written_names: HashSet<Atom> = writes.iter().map(|name| Atom::from(*name)).collect();
         TopLevelItem {
             declared_names: vec![Atom::from(name)],
+            top_level_var_names: Vec::new(),
             referenced_names: written_names.clone(),
             written_names,
             is_module_decl: false,
@@ -432,6 +475,7 @@ fn inspection_does_not_accept_offsetting_component_count_changes() {
         declaration("moduleWriterB", &[]),
         TopLevelItem {
             declared_names: Vec::new(),
+            top_level_var_names: Vec::new(),
             referenced_names: HashSet::new(),
             written_names: HashSet::new(),
             is_module_decl: false,
