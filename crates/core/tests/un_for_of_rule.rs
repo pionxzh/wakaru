@@ -266,6 +266,39 @@ function replay(items) {
 }
 
 #[test]
+fn removes_legacy_call_target_for_of_over_empty_array() {
+    let input = r#"
+for (observe("never") of []);
+keepRunning();
+"#;
+    let output = render(input);
+
+    assert!(
+        !output.contains("observe"),
+        "the zero-iteration legacy loop should be removed: {output}"
+    );
+    assert!(
+        output.contains("keepRunning"),
+        "neighboring statements must remain: {output}"
+    );
+    let findings = validate_output_modules(&[("input.js".to_string(), output.clone())]);
+    assert!(
+        findings.is_empty(),
+        "the rewritten output must parse cleanly: {output}\n{findings:#?}"
+    );
+}
+
+#[test]
+fn minimal_preserves_legacy_call_target_for_of_over_empty_array() {
+    let output = apply_with_level(r#"for (observe("never") of []);"#, RewriteLevel::Minimal);
+
+    assert!(
+        output.contains("observe"),
+        "minimal mode must preserve the legacy statement: {output}"
+    );
+}
+
+#[test]
 fn indexed_loop_keeps_iterable_temp_used_after_the_loop() {
     let input = r#"
 function replay(items) {

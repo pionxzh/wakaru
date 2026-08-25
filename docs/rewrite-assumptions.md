@@ -166,6 +166,18 @@ inlining).
 
 Level: `standard` and above. `minimal` preserves captured builtin aliases.
 
+### `standard_empty_array_iteration`
+
+A freshly-created empty array uses the standard built-in iterator and yields
+no values. This lets `UnForOf` remove the legacy sloppy-script recovery shape
+`for (call() of []);`: neither its invalid assignment target nor its body can
+run when the array yields zero values. Replacing `Array.prototype[Symbol.iterator]`
+before this statement could make the loop yield and is outside this assumption.
+
+Affects: `UnForOf`.
+
+Level: `standard` and above. `minimal` preserves the original statement.
+
 ### `effect_free_property_key_coercion`
 
 Converting a generated property-definition helper back to a computed object

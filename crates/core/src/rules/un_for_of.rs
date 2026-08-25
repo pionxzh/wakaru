@@ -454,7 +454,7 @@ impl UnForOf<'_> {
                 if self.found {
                     return;
                 }
-                if matches!(stmt, Stmt::For(_) | Stmt::Try(_)) {
+                if matches!(stmt, Stmt::For(_) | Stmt::ForOf(_) | Stmt::Try(_)) {
                     self.found = true;
                     return;
                 }
@@ -505,10 +505,34 @@ impl VisitMut for UnForOf<'_> {
     fn visit_mut_stmt(&mut self, stmt: &mut Stmt) {
         stmt.visit_mut_children_with(self);
 
+        if is_legacy_call_target_over_empty_array(stmt) {
+            *stmt = Stmt::Empty(swc_core::ecma::ast::EmptyStmt { span: stmt.span() });
+            return;
+        }
+
         if let Some(for_of) = try_convert_for_of(stmt, &self.helper_context) {
             *stmt = Stmt::ForOf(for_of);
         }
     }
+}
+
+/// V8 accepts the legacy sloppy-script form `for (call() of [])`, while the
+/// module grammar and SWC's script validator correctly reject the call as an
+/// assignment target. With the standard built-in array iterator, a fresh
+/// empty array performs zero iterations, so neither the invalid target nor the
+/// loop body is evaluated and the statement is a no-op.
+fn is_legacy_call_target_over_empty_array(stmt: &Stmt) -> bool {
+    let Stmt::ForOf(for_of) = stmt else {
+        return false;
+    };
+    if for_of.is_await {
+        return false;
+    }
+    let ForHead::Pat(left) = &for_of.left else {
+        return false;
+    };
+    matches!(left.as_ref(), Pat::Expr(expression) if matches!(strip_parens(expression), Expr::Call(_)))
+        && matches!(strip_parens(&for_of.right), Expr::Array(array) if array.elems.is_empty())
 }
 
 fn flush_stmt_run(
