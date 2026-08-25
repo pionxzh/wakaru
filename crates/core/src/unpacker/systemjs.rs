@@ -341,8 +341,12 @@ fn emit_system_module(
     filename: String,
     cm: Lrc<SourceMap>,
 ) -> Option<String> {
-    // `_export` is optional: unused export params are stripped by minifiers.
-    let export_sym = param_sym(&register.declare, 0);
+    // Missing `_export` is optional. A present but unreadable first param
+    // (rest / destructure / default) stays fail-closed.
+    let export_sym = match register.declare.params.first() {
+        None => None,
+        Some(param) => Some(pat_single_ident(&param.pat).cloned()?),
+    };
     let context_sym = param_sym(&register.declare, 1);
     let body = register.declare.body.as_ref()?;
     let descriptor = extract_register_descriptor(body)?;

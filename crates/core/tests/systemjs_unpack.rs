@@ -2477,8 +2477,7 @@ System.register("entry", ["./side.js", "./dep.js"], function () {
         "null setter must become a side-effect import:\n{entry}"
     );
     assert!(
-        entry.contains(r#"import { component } from "./dep.js""#)
-            || entry.contains("from \"./dep.js\""),
+        entry.contains(r#"import { component } from "./dep.js""#),
         "named setter binding must become an import:\n{entry}"
     );
     assert!(
@@ -2556,7 +2555,8 @@ System.register("entry", [], function (_export) {
 #[test]
 fn no_export_param_unknown_setter_preserves_whole_register() {
     // Unrecognized setter statements stay fail-closed even when declare has
-    // no `_export` parameter. Do not start accepting `e(n)` object re-exports.
+    // no `_export` parameter. This locks `const bag = {}` assignment, not
+    // the separate `e(n)` object re-export shape.
     let source = r#"
 System.register("keep", [], function (_export) {
   return {
@@ -2626,4 +2626,97 @@ System.register("IBattleRecord", ["cc"], function () {
         "the execute string must stay a string:\n{entry}"
     );
     assert_no_invented_export(entry, "filename/_RF string fixture");
+}
+
+fn assert_preserves_whole_register(source: &str, label: &str) {
+    let output = unpack_raw(
+        source,
+        &DecompileOptions {
+            filename: "system-bundle.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .unwrap_or_else(|_| panic!("{label} must preserve the whole input"));
+    assert_eq!(
+        output.modules.len(),
+        1,
+        "{label} must not emit a partial module set: {:?}",
+        output.modules
+    );
+    assert!(
+        output.modules[0].1.contains("System.register"),
+        "{label} must stay fail-closed:\n{}",
+        output.modules[0].1
+    );
+    assert!(
+        output.detected_formats.is_empty(),
+        "{label} should not be reported as a successful split"
+    );
+}
+
+#[test]
+fn unrecognized_declare_rest_param_preserves_whole_register() {
+    // A present but unreadable first param is not "no export param".
+    let source = r#"
+System.register("keep", [], function (_export) {
+  return {
+    execute: function () {
+      _export("value", 1);
+    }
+  };
+});
+System.register("odd", [], function (...args) {
+  return {
+    execute: function () {
+      args[0]("value", 1);
+    }
+  };
+});
+"#;
+    assert_preserves_whole_register(source, "rest declare param");
+}
+
+#[test]
+fn unrecognized_declare_destructured_param_preserves_whole_register() {
+    let source = r#"
+System.register("odd", [], function ({ e }) {
+  return {
+    execute: function () {
+      e("value", 1);
+    }
+  };
+});
+"#;
+    assert_preserves_whole_register(source, "destructured declare param");
+}
+
+#[test]
+fn unrecognized_declare_default_param_preserves_whole_register() {
+    let source = r#"
+System.register("odd", [], function (e = noop) {
+  return {
+    execute: function () {
+      e("value", 1);
+    }
+  };
+});
+"#;
+    assert_preserves_whole_register(source, "defaulted declare param");
+}
+
+#[test]
+fn expression_arrow_setter_stays_fail_closed() {
+    // Expression-body arrows are accepted only on the declare factory.
+    let source = r#"
+System.register("odd", ["./dep.js"], function (_export) {
+  var x;
+  return {
+    setters: [() => (x = m.foo)],
+    execute: function () {
+      _export("value", x);
+    }
+  };
+});
+"#;
+    assert_preserves_whole_register(source, "expression-body arrow setter");
 }
