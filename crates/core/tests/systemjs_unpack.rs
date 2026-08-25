@@ -2407,3 +2407,223 @@ System.register([], function (_export, _context) {
         "must not emit a reserved binding:\n{entry}"
     );
 }
+
+fn assert_no_system_register(code: &str, label: &str) {
+    assert!(
+        !code.contains("System.register"),
+        "{label} must unwrap System.register:\n{code}"
+    );
+}
+
+fn assert_no_invented_export(code: &str, label: &str) {
+    assert!(
+        !code.contains("export "),
+        "{label} must not invent an export:\n{code}"
+    );
+}
+
+#[test]
+fn no_export_param_empty_execute_unwraps_without_export() {
+    let source = r#"
+System.register("entry", [], function () {
+  return {
+    execute: function () {}
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "entry.js");
+    assert_no_system_register(entry, "zero-arg function factory");
+    assert_no_invented_export(entry, "zero-arg function factory");
+}
+
+#[test]
+fn no_export_param_expression_arrow_empty_shell_unwraps_without_export() {
+    // Rollup often emits `() => ({ execute() {} })` for empty chunk shells.
+    let source = r#"
+System.register("shell", [], () => ({
+  execute() {}
+}));
+"#;
+    let raw = unpack_source_raw(source);
+    let shell = module_code(&raw, "shell.js");
+    assert_no_system_register(shell, "expression-body arrow factory");
+    assert_no_invented_export(shell, "expression-body arrow factory");
+}
+
+#[test]
+fn no_export_param_null_setter_reconstructs_imports() {
+    let source = r#"
+System.register("entry", ["./side.js", "./dep.js"], function () {
+  var component;
+  return {
+    setters: [
+      null,
+      function (module) {
+        component = module.component;
+      }
+    ],
+    execute: function () {
+      use(component);
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "entry.js");
+    assert_no_system_register(entry, "zero-arg factory with null setter");
+    assert!(
+        entry.contains(r#"import "./side.js""#) || entry.contains("import \"./side.js\";"),
+        "null setter must become a side-effect import:\n{entry}"
+    );
+    assert!(
+        entry.contains(r#"import { component } from "./dep.js""#)
+            || entry.contains("from \"./dep.js\""),
+        "named setter binding must become an import:\n{entry}"
+    );
+    assert!(
+        entry.contains("use(component)"),
+        "execute must keep using the imported binding:\n{entry}"
+    );
+    assert_no_invented_export(entry, "zero-arg factory with null setter");
+}
+
+#[test]
+fn no_export_param_execute_body_keeps_side_effects() {
+    // Shape reduced from a real module that never calls `_export` so Terser
+    // drops the declare parameter, but still has a non-empty execute body.
+    let source = r#"
+System.register("entry", ["runtime"], function () {
+  var runtime;
+  return {
+    setters: [function (module) {
+      runtime = module.runtime;
+    }],
+    execute: function () {
+      runtime.downloader = runtime.downloader || {};
+      runtime.downloader.maxConcurrency = 6;
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "entry.js");
+    assert_no_system_register(entry, "zero-arg factory with execute body");
+    assert!(
+        entry.contains("from \"runtime\"") || entry.contains("from 'runtime'"),
+        "import from the setter must be recovered:\n{entry}"
+    );
+    assert!(
+        entry.contains("maxConcurrency = 6"),
+        "execute side effects must be lifted:\n{entry}"
+    );
+    assert_no_invented_export(entry, "zero-arg factory with execute body");
+}
+
+#[test]
+fn no_export_param_sibling_register_does_not_poison_bundle() {
+    let source = r#"
+System.register("shell", [], function () {
+  return {
+    execute: function () {}
+  };
+});
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      _export("value", 1);
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    assert!(
+        raw.len() >= 2,
+        "a zero-arg sibling must not force a whole-file fallback: {:?}",
+        raw.iter().map(|(name, _)| name).collect::<Vec<_>>()
+    );
+    let shell = module_code(&raw, "shell.js");
+    let entry = module_code(&raw, "entry.js");
+    assert_no_system_register(shell, "zero-arg sibling shell");
+    assert_no_invented_export(shell, "zero-arg sibling shell");
+    assert_no_system_register(entry, "exporting sibling");
+    assert!(
+        entry.contains("export") && entry.contains("value"),
+        "the exporting sibling must still reconstruct:\n{entry}"
+    );
+}
+
+#[test]
+fn no_export_param_unknown_setter_preserves_whole_register() {
+    // Unrecognized setter statements stay fail-closed even when declare has
+    // no `_export` parameter. Do not start accepting `e(n)` object re-exports.
+    let source = r#"
+System.register("keep", [], function (_export) {
+  return {
+    execute: function () {
+      _export("value", 1);
+    }
+  };
+});
+System.register("odd", ["dep"], function () {
+  return {
+    setters: [function (module) {
+      const bag = {};
+      bag.Name = module.Name;
+      use(bag);
+    }],
+    execute: function () {}
+  };
+});
+"#;
+    let output = unpack_raw(
+        source,
+        &DecompileOptions {
+            filename: "system-bundle.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("unrecognized setter must preserve the whole input");
+    assert_eq!(
+        output.modules.len(),
+        1,
+        "unrecognized setter must not emit a partial module set: {:?}",
+        output.modules
+    );
+    assert!(
+        output.modules[0].1.contains(r#"System.register("keep""#)
+            && output.modules[0].1.contains(r#"System.register("odd""#),
+        "fallback module should preserve both register calls:\n{}",
+        output.modules[0].1
+    );
+    assert!(
+        output.detected_formats.is_empty(),
+        "unrecognized setter input should not be reported as a successful split"
+    );
+}
+
+#[test]
+fn no_export_param_does_not_invent_export_from_execute_string() {
+    let source = r#"
+System.register("IBattleRecord", ["cc"], function () {
+  var cclegacy;
+  return {
+    setters: [function (module) {
+      cclegacy = module.cclegacy;
+    }],
+    execute: function () {
+      cclegacy._RF.push({}, "id", "IBattleRecord", undefined);
+      cclegacy._RF.pop();
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "IBattleRecord.js");
+    assert_no_system_register(entry, "filename/_RF string fixture");
+    assert!(
+        entry.contains("IBattleRecord"),
+        "the execute string must stay a string:\n{entry}"
+    );
+    assert_no_invented_export(entry, "filename/_RF string fixture");
+}

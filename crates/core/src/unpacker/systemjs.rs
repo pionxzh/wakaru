@@ -149,7 +149,7 @@ fn parse_register_call(call: &CallExpr) -> Option<SystemRegister> {
     };
 
     let deps = extract_string_array(call.args.get(deps_arg_idx)?.expr.as_ref())?;
-    let declare = extract_function(call.args.get(declare_arg_idx)?.expr.as_ref())?;
+    let declare = extract_declare_function(call.args.get(declare_arg_idx)?.expr.as_ref())?;
 
     Some(SystemRegister {
         name,
@@ -291,18 +291,64 @@ fn extract_function(expr: &Expr) -> Option<Function> {
     }
 }
 
+/// Declare factories may be expression-body arrows (`() => ({ execute() {} })`).
+/// Shared `extract_function` stays block-body-only so setter/execute arrows
+/// that return a value are not rewritten into a top-level `return`.
+fn extract_declare_function(expr: &Expr) -> Option<Function> {
+    match expr {
+        Expr::Fn(FnExpr { function, .. }) => Some(*function.clone()),
+        Expr::Paren(paren) => extract_declare_function(paren.expr.as_ref()),
+        Expr::Arrow(arrow) => {
+            let body = match arrow.body.as_ref() {
+                ArrowFunctionBody::FunctionBody(body) => body.clone(),
+                ArrowFunctionBody::Expr(value) => FunctionBody {
+                    span: DUMMY_SP,
+                    stmts: vec![Stmt::Return(ReturnStmt {
+                        span: DUMMY_SP,
+                        arg: Some(value.clone()),
+                    })],
+                },
+            };
+            let params = arrow
+                .params
+                .iter()
+                .cloned()
+                .map(|pat| swc_core::ecma::ast::Param {
+                    span: DUMMY_SP,
+                    decorators: vec![],
+                    pat,
+                })
+                .collect();
+            Some(Function {
+                params,
+                decorators: vec![],
+                span: DUMMY_SP,
+                ctxt: Default::default(),
+                this_param: None,
+                body: Some(body),
+                is_generator: arrow.is_generator,
+                is_async: arrow.is_async,
+                type_params: None,
+                return_type: None,
+            })
+        }
+        _ => None,
+    }
+}
+
 fn emit_system_module(
     register: &SystemRegister,
     filename: String,
     cm: Lrc<SourceMap>,
 ) -> Option<String> {
-    let export_sym = param_sym(&register.declare, 0)?;
+    // `_export` is optional: unused export params are stripped by minifiers.
+    let export_sym = param_sym(&register.declare, 0);
     let context_sym = param_sym(&register.declare, 1);
     let body = register.declare.body.as_ref()?;
     let descriptor = extract_register_descriptor(body)?;
     let execute_body = descriptor.execute.body.as_ref()?;
 
-    let imports = collect_imports(&register.deps, &descriptor.setters, &export_sym)?;
+    let imports = collect_imports(&register.deps, &descriptor.setters, export_sym.as_ref())?;
     let imported_locals = imports
         .iter()
         .flat_map(|import| import.local_names())
@@ -328,11 +374,20 @@ fn emit_system_module(
 
     let mut module_bound_names = imported_locals.clone();
     collect_lifted_decl_names(&lifted_stmts, &mut module_bound_names);
-    let export_name_usage =
-        collect_export_name_usage(&lifted_stmts, &export_sym, &module_bound_names);
+    let export_name_usage = match export_sym.as_ref() {
+        Some(export_sym) => {
+            collect_export_name_usage(&lifted_stmts, export_sym, &module_bound_names)
+        }
+        None => ExportNameUsageSummary {
+            mutable: Vec::new(),
+            seen: Vec::new(),
+        },
+    };
     let mutable_export_names = export_name_usage.mutable;
-    let mut direct_binding_candidates =
-        collect_member_export_binding_names(&lifted_stmts, &export_sym);
+    let mut direct_binding_candidates = match export_sym.as_ref() {
+        Some(export_sym) => collect_member_export_binding_names(&lifted_stmts, export_sym),
+        None => HashSet::new(),
+    };
     direct_binding_candidates.extend(export_name_usage.seen.into_iter().filter(|name| {
         name.as_ref() != "default"
             && Ident::verify_symbol(name.as_ref()).is_ok()
@@ -384,7 +439,8 @@ fn extract_register_descriptor(body: &FunctionBody) -> Option<RegisterDescriptor
         Stmt::Return(ReturnStmt { arg: Some(arg), .. }) => Some(arg.as_ref()),
         _ => None,
     })?;
-    let Expr::Object(obj) = return_stmt else {
+    // Expression-body arrows keep the grouping paren: `() => ({ execute() {} })`.
+    let Expr::Object(obj) = strip_paren_expr(return_stmt) else {
         return None;
     };
 
@@ -818,7 +874,7 @@ impl ImportParts {
 fn collect_imports(
     deps: &[String],
     setters: &[Option<Function>],
-    export_sym: &Atom,
+    export_sym: Option<&Atom>,
 ) -> Option<Vec<ImportParts>> {
     let mut imports = Vec::new();
     for (idx, dep) in deps.iter().enumerate() {
@@ -871,7 +927,11 @@ enum SetterPart {
     Reexport { exported: Atom, value: Box<Expr> },
 }
 
-fn setter_stmt_parts(stmt: &Stmt, module_sym: &Atom, export_sym: &Atom) -> Option<Vec<SetterPart>> {
+fn setter_stmt_parts(
+    stmt: &Stmt,
+    module_sym: &Atom,
+    export_sym: Option<&Atom>,
+) -> Option<Vec<SetterPart>> {
     let Stmt::Expr(expr_stmt) = stmt else {
         return None;
     };
@@ -885,10 +945,15 @@ fn setter_stmt_parts(stmt: &Stmt, module_sym: &Atom, export_sym: &Atom) -> Optio
     }
 }
 
-fn setter_expr_part(expr: &Expr, module_sym: &Atom, export_sym: &Atom) -> Option<SetterPart> {
+fn setter_expr_part(
+    expr: &Expr,
+    module_sym: &Atom,
+    export_sym: Option<&Atom>,
+) -> Option<SetterPart> {
     if let Some((local, kind)) = setter_assignment_expr(expr, module_sym) {
         return Some(SetterPart::Import(local, kind));
     }
+    let export_sym = export_sym?;
     // A setter parameter that shadows `_export` makes `e(...)` a call on the
     // module namespace, not a re-export. Keep the whole module fail-closed.
     if module_sym == export_sym {
@@ -955,30 +1020,32 @@ fn setter_assignment_expr(expr: &Expr, module_sym: &Atom) -> Option<(Atom, Sette
 }
 
 struct MutableExportRewriter<'a> {
-    export_sym: &'a Atom,
+    export_sym: Option<&'a Atom>,
     bindings: &'a HashMap<Atom, Atom>,
 }
 
 impl VisitMut for MutableExportRewriter<'_> {
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         let replacement = match expr {
-            Expr::Call(call) => parse_export_call(call, self.export_sym).and_then(|export_call| {
-                let ExportCall::Single {
-                    exported,
-                    mut value,
-                } = export_call
-                else {
-                    return None;
-                };
-                let local = self.bindings.get(&exported)?.clone();
-                value.visit_mut_with(self);
-                // `_export(name, value)` evaluates to `value`. The assignment
-                // has the same result; grouping keeps member/callee precedence.
-                Some(Expr::Paren(ParenExpr {
-                    span: DUMMY_SP,
-                    expr: Box::new(assign_local_expr(local, value)),
-                }))
-            }),
+            Expr::Call(call) => {
+                parse_optional_export_call(call, self.export_sym).and_then(|export_call| {
+                    let ExportCall::Single {
+                        exported,
+                        mut value,
+                    } = export_call
+                    else {
+                        return None;
+                    };
+                    let local = self.bindings.get(&exported)?.clone();
+                    value.visit_mut_with(self);
+                    // `_export(name, value)` evaluates to `value`. The assignment
+                    // has the same result; grouping keeps member/callee precedence.
+                    Some(Expr::Paren(ParenExpr {
+                        span: DUMMY_SP,
+                        expr: Box::new(assign_local_expr(local, value)),
+                    }))
+                })
+            }
             _ => None,
         };
         if let Some(replacement) = replacement {
@@ -990,7 +1057,7 @@ impl VisitMut for MutableExportRewriter<'_> {
 }
 
 struct SystemExecuteTransformer {
-    export_sym: Atom,
+    export_sym: Option<Atom>,
     context_sym: Option<Atom>,
     exports: Vec<ExportBinding>,
     declared_exports: HashSet<(Atom, Atom)>,
@@ -1005,7 +1072,7 @@ struct SystemExecuteTransformer {
 
 impl SystemExecuteTransformer {
     fn new(
-        export_sym: Atom,
+        export_sym: Option<Atom>,
         context_sym: Option<Atom>,
         used_names: HashSet<Atom>,
         module_bound_names: HashSet<Atom>,
@@ -1069,7 +1136,7 @@ impl SystemExecuteTransformer {
 
     fn push_stmt(&mut self, mut stmt: Stmt, items: &mut Vec<ModuleItem>) {
         let mut mutable_export_rewriter = MutableExportRewriter {
-            export_sym: &self.export_sym,
+            export_sym: self.export_sym.as_ref(),
             bindings: &self.mutable_export_bindings,
         };
         stmt.visit_mut_with(&mut mutable_export_rewriter);
@@ -1151,7 +1218,7 @@ impl SystemExecuteTransformer {
         };
         match expr_stmt.expr.as_ref() {
             Expr::Call(call) => {
-                let export_call = parse_export_call(call, &self.export_sym)?;
+                let export_call = parse_optional_export_call(call, self.export_sym.as_ref())?;
                 self.export_call_items(export_call)
             }
             Expr::Assign(assign) => self
@@ -1162,8 +1229,10 @@ impl SystemExecuteTransformer {
                 let mut saw_export = false;
                 for expr in &seq.exprs {
                     let export_items = match expr.as_ref() {
-                        Expr::Call(call) => parse_export_call(call, &self.export_sym)
-                            .and_then(|export_call| self.export_call_items(export_call)),
+                        Expr::Call(call) => {
+                            parse_optional_export_call(call, self.export_sym.as_ref())
+                                .and_then(|export_call| self.export_call_items(export_call))
+                        }
                         Expr::Assign(assign) => self
                             .export_member_assignment_items(assign)
                             .or_else(|| self.take_ident_assign_export(assign)),
@@ -1196,7 +1265,8 @@ impl SystemExecuteTransformer {
         let Expr::Call(call) = member.obj.as_ref() else {
             return None;
         };
-        let ExportCall::Single { exported, value } = parse_export_call(call, &self.export_sym)?
+        let ExportCall::Single { exported, value } =
+            parse_optional_export_call(call, self.export_sym.as_ref())?
         else {
             return None;
         };
@@ -1442,7 +1512,7 @@ impl SystemExecuteTransformer {
         let Expr::Call(call) = strip_paren_expr(assign.right.as_ref()) else {
             return None;
         };
-        let export_call = parse_export_call(call, &self.export_sym)?;
+        let export_call = parse_optional_export_call(call, self.export_sym.as_ref())?;
         let (export_items, result) = self.export_call_result_items(export_call)?;
         let mut items = export_items;
         items.push(assign_ident_item(target, result));
@@ -1459,7 +1529,7 @@ impl SystemExecuteTransformer {
         let mut items = Vec::new();
         for (idx, part) in exprs.iter().enumerate() {
             let export_call = match strip_paren_expr(part) {
-                Expr::Call(call) => parse_export_call(call, &self.export_sym),
+                Expr::Call(call) => parse_optional_export_call(call, self.export_sym.as_ref()),
                 _ => None,
             };
             if idx == last_idx {
@@ -1586,7 +1656,7 @@ impl SystemExecuteTransformer {
                     if let Some(ExportCall::Single {
                         exported,
                         mut value,
-                    }) = parse_export_call(call, &self.export_sym)
+                    }) = parse_optional_export_call(call, self.export_sym.as_ref())
                     {
                         value.visit_mut_with(self);
                         self.add_export(local, exported);
@@ -1618,7 +1688,7 @@ impl SystemExecuteTransformer {
         let has_export = seq.exprs.iter().any(|part| {
             matches!(
                 strip_paren_expr(part),
-                Expr::Call(call) if parse_export_call(call, &self.export_sym).is_some()
+                Expr::Call(call) if parse_optional_export_call(call, self.export_sym.as_ref()).is_some()
             )
         });
         has_export.then_some(seq.exprs.as_slice())
@@ -1636,7 +1706,7 @@ impl SystemExecuteTransformer {
         let mut items = Vec::new();
         for (idx, part) in exprs.iter().enumerate() {
             let export_call = match strip_paren_expr(part) {
-                Expr::Call(call) => parse_export_call(call, &self.export_sym),
+                Expr::Call(call) => parse_optional_export_call(call, self.export_sym.as_ref()),
                 _ => None,
             };
             if idx == last_idx {
@@ -1677,7 +1747,7 @@ impl SystemExecuteTransformer {
                 continue;
             };
             let Some(ExportCall::Single { exported, value }) =
-                parse_export_call(call, &self.export_sym)
+                parse_optional_export_call(call, self.export_sym.as_ref())
             else {
                 continue;
             };
@@ -1731,7 +1801,7 @@ impl VisitMut for SystemExecuteTransformer {
 
         if let Expr::Call(call) = expr {
             if let Some(ExportCall::Single { exported, value }) =
-                parse_export_call(call, &self.export_sym)
+                parse_optional_export_call(call, self.export_sym.as_ref())
             {
                 let mut value = value;
                 value.visit_mut_with(self);
@@ -1884,6 +1954,10 @@ fn export_let_item(name: Atom) -> ModuleItem {
 enum ExportCall {
     Single { exported: Atom, value: Box<Expr> },
     Bulk(Vec<(Atom, Box<Expr>)>),
+}
+
+fn parse_optional_export_call(call: &CallExpr, export_sym: Option<&Atom>) -> Option<ExportCall> {
+    parse_export_call(call, export_sym?)
 }
 
 fn parse_export_call(call: &CallExpr, export_sym: &Atom) -> Option<ExportCall> {
