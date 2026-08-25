@@ -8,7 +8,8 @@ use swc_core::ecma::ast::{
     ArrowExpr, AssignPat, BlockStmt, CatchClause, Class, ClassDecl, ClassExpr, Decl, DefaultDecl,
     ExportNamedSpecifier, Expr, FnDecl, FnExpr, Function, Ident, ImportDecl, ImportNamedSpecifier,
     ImportSpecifier, JSXElementName, KeyValuePatProp, KeyValueProp, MemberProp, Module, ModuleDecl,
-    ModuleExportName, ModuleItem, ObjectPatProp, Pat, Prop, PropName, Stmt, VarDeclarator,
+    ModuleExportName, ModuleItem, ObjectPatProp, Pat, Prop, PropName, Stmt, VarDecl, VarDeclKind,
+    VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -369,6 +370,36 @@ pub fn collect_module_names(module: &Module) -> HashSet<Atom> {
             _ => {}
         }
     }
+
+    // `var` is scoped to the nearest function (or the module), even when its
+    // declaration is nested under a top-level loop, block, `if`, or `try`.
+    // Those bindings must reserve their names just like direct declarations;
+    // otherwise a rename can create both an import and a module `var` with the
+    // same name. Stop at function/arrow/class boundaries because their `var`
+    // declarations belong to a different scope (including class static
+    // blocks, whose vars are local to the static block).
+    struct ModuleScopeVarCollector<'a> {
+        names: &'a mut HashSet<Atom>,
+    }
+
+    impl Visit for ModuleScopeVarCollector<'_> {
+        fn visit_var_decl(&mut self, declaration: &VarDecl) {
+            if declaration.kind == VarDeclKind::Var {
+                for declarator in &declaration.decls {
+                    collect_pat_names(&declarator.name, self.names);
+                }
+            }
+            declaration.visit_children_with(self);
+        }
+
+        fn visit_function(&mut self, _: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+
+        fn visit_class(&mut self, _: &Class) {}
+    }
+
+    module.visit_with(&mut ModuleScopeVarCollector { names: &mut names });
     names
 }
 

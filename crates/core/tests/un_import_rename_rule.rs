@@ -1,7 +1,7 @@
 mod common;
 
 use common::{assert_eq_normalized, render_rule};
-use wakaru_core::rules::UnImportRename;
+use wakaru_core::{rules::UnImportRename, validate_output_modules};
 
 fn apply(input: &str) -> String {
     render_rule(input, UnImportRename::new)
@@ -66,6 +66,117 @@ foo_1();
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn module_scope_for_var_reserves_the_imported_name() {
+    let input = r#"
+import { i as at } from 'bar';
+for (var i = 0; i < items.length; i++) {
+  consume(items[i]);
+}
+at();
+"#;
+    let expected = r#"
+import { i as i_1 } from 'bar';
+for (var i = 0; i < items.length; i++) {
+  consume(items[i]);
+}
+i_1();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+    assert_eq!(
+        validate_output_modules(&[("entry.js".to_string(), output)]),
+        vec![],
+        "the loop binding must not become an imported binding"
+    );
+}
+
+#[test]
+fn module_scope_for_in_and_for_of_vars_reserve_imported_names() {
+    let input = r#"
+import { key as importedKey, value as importedValue } from 'bar';
+for (var key in object) {
+  consumeKey(key);
+}
+for (var value of values) {
+  consumeValue(value);
+}
+use(importedKey, importedValue);
+"#;
+    let expected = r#"
+import { key as key_1, value as value_1 } from 'bar';
+for (var key in object) {
+  consumeKey(key);
+}
+for (var value of values) {
+  consumeValue(value);
+}
+use(key_1, value_1);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn var_in_top_level_control_flow_reserves_the_imported_name() {
+    let input = r#"
+import { item as importedItem } from 'bar';
+if (enabled) {
+  var item = buildItem();
+}
+use(importedItem, item);
+"#;
+    let expected = r#"
+import { item as item_1 } from 'bar';
+if (enabled) {
+  var item = buildItem();
+}
+use(item_1, item);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn nested_function_var_does_not_reserve_a_module_import_name() {
+    let input = r#"
+import { item as importedItem } from 'bar';
+function build() {
+  var item = 1;
+  return item;
+}
+use(importedItem, build());
+"#;
+    let expected = r#"
+import { item } from 'bar';
+function build() {
+  var item = 1;
+  return item;
+}
+use(item, build());
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn unreferenced_block_let_does_not_reserve_a_module_import_name() {
+    let input = r#"
+import { item as importedItem } from 'bar';
+if (enabled) {
+  let item = buildItem();
+  consume(item);
+}
+use(importedItem);
+"#;
+    let expected = r#"
+import { item } from 'bar';
+if (enabled) {
+  let item = buildItem();
+  consume(item);
+}
+use(item);
+"#;
+    assert_eq_normalized(&apply(input), expected);
 }
 
 #[test]
