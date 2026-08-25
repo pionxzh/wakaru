@@ -596,11 +596,14 @@ pub(crate) enum PreparedSource {
 pub(crate) fn try_prepare_bundle(source: &str) -> anyhow::Result<Option<DetectedBundle>> {
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
-        let mut module = {
+        let (mut module, recoverable_parse_errors) = {
             let span = tracing::info_span!("parse_bundle");
             let _enter = span.enter();
-            parse_es_module(source, "bundle.js", cm.clone())?
+            parse_es_module_with_recovery(source, "bundle.js", cm.clone())?
         };
+        if !recoverable_parse_errors.is_empty() {
+            return Ok(None);
+        }
         Ok(detect_parsed_source(&mut module, cm, source))
     })
 }
@@ -629,8 +632,10 @@ pub(crate) fn try_prepare_source(
             parse_es_module_with_recovery(source, filename, cm.clone())?
         };
 
-        if let Some(result) = detect_parsed_source(&mut module, cm, source) {
-            return Ok(PreparedSourceParts::Bundle(result));
+        if recoverable_parse_errors.is_empty() {
+            if let Some(result) = detect_parsed_source(&mut module, cm, source) {
+                return Ok(PreparedSourceParts::Bundle(result));
+            }
         }
 
         if prepare_plain_ast {
@@ -1008,6 +1013,34 @@ mod tests {
         assert!(
             result.is_none(),
             "valid non-bundle source should return None"
+        );
+    }
+
+    #[test]
+    fn try_unpack_bundle_rejects_recoverably_parsed_sloppy_bundle() {
+        let source = r#"
+(function(modules) {
+    var cache = {};
+    function require(id) {
+        if (cache[id]) return cache[id].exports;
+        var module = cache[id] = { exports: {} };
+        modules[id].call(module.exports, module, module.exports, require);
+        return module.exports;
+    }
+    return require(0);
+})([
+    function(module) {
+        with ({ value: 42 }) {
+            module.exports = value;
+        }
+    }
+]);
+"#;
+
+        let result = try_unpack_bundle(source).expect("the recoverable parse should not be fatal");
+        assert!(
+            result.is_none(),
+            "module-goal recovery must not authorize webpack extraction"
         );
     }
 }

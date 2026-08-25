@@ -74,6 +74,43 @@ fn prepared_plain_input_reuses_detection_ast_in_phase1() {
 }
 
 #[test]
+fn recoverably_parsed_sloppy_bundle_fails_closed_to_plain_input() {
+    let source = r#"
+(function(modules) {
+    var installedModules = {};
+    function __webpack_require__(moduleId) {
+        if (installedModules[moduleId]) return installedModules[moduleId].exports;
+        var module = installedModules[moduleId] = { exports: {} };
+        modules[moduleId].call(module.exports, module, module.exports, __webpack_require__);
+        return module.exports;
+    }
+    return __webpack_require__(0);
+})([
+    function(module) {
+        var scope = { value: 42 };
+        with (scope) {
+            module.exports = value;
+        }
+    }
+]);
+"#;
+
+    let input = prepare_unpack_input(
+        "sloppy-webpack.js".to_string(),
+        source.to_string(),
+        false,
+        true,
+    )
+    .expect("the classic-script bundle should remain a valid plain input");
+
+    assert_eq!(
+        input.detection(),
+        PreparedInputDetection::Plain,
+        "module-goal parser recovery must not authorize structural extraction"
+    );
+}
+
+#[test]
 fn prepared_inputs_reject_duplicate_physical_identity_names() {
     let inputs = ["const first = 1;", "const second = 2;"]
         .into_iter()
