@@ -15,6 +15,7 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::analysis::binding_uses::BindingUseIndex;
+use crate::js_names::to_valid_identifier_name;
 
 use super::decl_utils::BindingId;
 use super::rename_utils::{
@@ -443,7 +444,9 @@ impl UnJsx {
                 if is_computed_prop_name(key) {
                     return Some(wrap_prop_as_spread(prop.clone()));
                 }
-                let name = prop_name_to_attr_name(key)?;
+                let Some(name) = prop_name_to_attr_name(key) else {
+                    return Some(wrap_prop_as_spread(prop.clone()));
+                };
                 if is_true_expr(value) {
                     return Some(JSXAttrOrSpread::JSXAttr(JSXAttr {
                         span: DUMMY_SP,
@@ -469,7 +472,9 @@ impl UnJsx {
                 if is_computed_prop_name(&method.key) {
                     return Some(wrap_prop_as_spread(prop.clone()));
                 }
-                let name = prop_name_to_attr_name(&method.key)?;
+                let Some(name) = prop_name_to_attr_name(&method.key) else {
+                    return Some(wrap_prop_as_spread(prop.clone()));
+                };
                 let value = Expr::Fn(swc_core::ecma::ast::FnExpr {
                     ident: None,
                     function: method.function.clone(),
@@ -1086,8 +1091,10 @@ fn collect_display_name_renames_from_stmt(
     let Expr::Lit(Lit::Str(display_name)) = right.as_ref() else {
         return;
     };
-    let new_name =
-        generate_unique_name(used_names, pascalize(&wtf8_to_string(&display_name.value)));
+    let new_name = generate_unique_name(
+        used_names,
+        to_valid_identifier_name(&pascalize(&wtf8_to_string(&display_name.value))),
+    );
     renames.push(BindingRename {
         old: (object.sym.clone(), object.ctxt),
         new: new_name.into(),
@@ -1416,17 +1423,29 @@ fn prop_name_to_attr_name(name: &PropName) -> Option<JSXAttrName> {
         PropName::Str(str_lit) => {
             let value = wtf8_to_string(&str_lit.value);
             if let Some((ns, name)) = value.split_once(':') {
+                if !is_valid_jsx_identifier(ns) || !is_valid_jsx_identifier(name) {
+                    return None;
+                }
                 Some(JSXAttrName::JSXNamespacedName(JSXNamespacedName {
                     span: DUMMY_SP,
                     ns: ns.into(),
                     name: name.into(),
                 }))
             } else {
+                if !is_valid_jsx_identifier(&value) {
+                    return None;
+                }
                 Some(JSXAttrName::Ident(value.into()))
             }
         }
         _ => None,
     }
+}
+
+fn is_valid_jsx_identifier(value: &str) -> bool {
+    let mut chars = value.chars();
+    chars.next().is_some_and(Ident::is_valid_start)
+        && chars.all(|character| character == '-' || Ident::is_valid_continue(character))
 }
 
 fn is_fragment_name(name: &JSXElementName) -> bool {

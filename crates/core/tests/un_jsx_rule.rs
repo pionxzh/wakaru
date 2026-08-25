@@ -89,6 +89,34 @@ function fn() {
 }
 
 #[test]
+fn converts_string_literal_hyphenated_attribute_name_to_valid_jsx() {
+    let input = r#"
+const icon = React.createElement("circle", {
+  "data-app-bg-blur-radius": "12.5"
+});
+"#;
+    let expected = r#"
+const icon = <circle data-app-bg-blur-radius="12.5" />;
+"#;
+
+    assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), expected);
+}
+
+#[test]
+fn preserves_invalid_jsx_attribute_name_as_object_spread() {
+    let input = r#"
+const icon = React.createElement("circle", {
+  "'data-app-bg-blur-radius'": "12.5"
+});
+"#;
+    let expected = r#"
+const icon = <circle {...{"'data-app-bg-blur-radius'": "12.5"}} />;
+"#;
+
+    assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), expected);
+}
+
+#[test]
 fn keeps_create_element_used_as_member_object() {
     let input = r#"
 const type = React.createElement(Component, null).type;
@@ -520,6 +548,22 @@ var Baz = () => React.createElement("div", null, React.createElement(t, null));
 var FooBar = () => <div />;
 FooBar.displayName = "Foo-Bar";
 var Baz = () => <div><FooBar /></div>;
+"#;
+
+    assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), expected);
+}
+
+#[test]
+fn display_name_rename_keeps_leading_digit_name_valid() {
+    let input = r#"
+var t = () => React.createElement("svg", null);
+t.displayName = "_4kSm";
+use(t);
+"#;
+    let expected = r#"
+var _4kSm = () => <svg />;
+_4kSm.displayName = "_4kSm";
+use(_4kSm);
 "#;
 
     assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), expected);
