@@ -3434,6 +3434,101 @@ System.register("property", [], function (e) {
 }
 
 #[test]
+fn named_function_expression_recursive_calls_do_not_invent_bulk_exports() {
+    // Rollup + Terser can reuse the declare callback's short name for a named
+    // function expression. Its recursive object arguments are ordinary calls,
+    // not SystemJS bulk exports.
+    let source = r#"
+System.register("recurse", [], function (t) {
+  return {
+    execute: function () {
+      t("recurse", function t(e) {
+        if (e.left) return 1 + t({ step: e.step + 1, left: false });
+        if (e.right) return 2 + t({ step: e.step + 2, right: false });
+        return e.step;
+      });
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "recurse.js");
+    assert_no_system_register(entry, "named recursive calls with object arguments");
+    assert!(
+        entry.contains("export const recurse ="),
+        "the real two-arg export must reconstruct:\n{entry}"
+    );
+    assert!(
+        !entry.contains("export let step") && !entry.contains("export const step"),
+        "recursive calls must not invent an export named `step`:\n{entry}"
+    );
+    assert!(
+        entry.matches("t({").count() == 2,
+        "both recursive calls must remain calls to the named function:\n{entry}"
+    );
+}
+
+#[test]
+fn mutable_export_rewrite_ignores_named_function_recursive_calls() {
+    // The two real `value` exports prepare a mutable ESM binding. A nested
+    // function reusing the callback's short name must still recurse normally;
+    // the mutable-export pass must not turn its call into `value = 3`.
+    let source = r#"
+System.register("recurse", [], function (t) {
+  return {
+    execute: function () {
+      t("value", 1);
+      t("value", 2);
+      t("recurse", function t(name, value) {
+        if (name === "value") return value;
+        return t("value", 3);
+      });
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "recurse.js");
+    assert_no_system_register(entry, "mutable export beside named recursion");
+    assert!(
+        entry.contains("export let value"),
+        "the repeated real export must use one mutable binding:\n{entry}"
+    );
+    assert!(
+        entry.contains("return t(\"value\", 3)") && !entry.contains("return value = 3"),
+        "the shadowed recursive call must not become an export assignment:\n{entry}"
+    );
+}
+
+#[test]
+fn execute_local_function_shadow_is_not_export_callback() {
+    // The execute function is nested under the declare callback. A local with
+    // the same short name shadows that callback even for top-level initializers
+    // that specialized export paths inspect before the general AST visitor.
+    let source = r#"
+System.register("local", [], function (t) {
+  return {
+    execute: function () {
+      function t(name, value) {
+        return value;
+      }
+      var result = t("value", 1);
+      use(result);
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "local.js");
+    assert_no_system_register(entry, "execute-local callback shadow");
+    assert_no_invented_export(entry, "execute-local callback shadow");
+    assert!(
+        entry.contains("result = t(\"value\", 1)"),
+        "the call to the local function must remain intact:\n{entry}"
+    );
+}
+
+#[test]
 fn execute_object_export_method_shorthand_is_the_same_shape() {
     // Pretty-printers turn `assert: function () {}` into a method.
     let source = r#"
@@ -3629,6 +3724,10 @@ System.register("odd", [], function (_export) {
         !entry.contains("export {") || entry.contains("\"foo-bar\"") || entry.contains("'foo-bar'"),
         "the public name must stay quoted (#211):\n{entry}"
     );
+    assert!(
+        entry.contains("[\"foo-bar\"]: function") && entry.contains("}[\"foo-bar\"]"),
+        "the alias initializer must preserve the anonymous function's inferred name:\n{entry}"
+    );
 }
 
 #[test]
@@ -3656,6 +3755,10 @@ System.register("odd", [], function (_export) {
     assert!(
         entry.contains("class"),
         "the public name must still be exported:\n{entry}"
+    );
+    assert!(
+        entry.contains("[\"class\"]: function") && entry.contains("}[\"class\"]"),
+        "the alias initializer must preserve the anonymous function's inferred name:\n{entry}"
     );
 }
 
@@ -3972,9 +4075,9 @@ System.register("field", [], function (_export) {
 }
 
 #[test]
-fn execute_object_export_void0_with_imports_keeps_esm() {
-    // descriptor_pb.js: `_export({ Edition: void 0 })` plus setter imports and
-    // later `_export("Name", local)`. Blanket fail-closed would regress esm.
+fn execute_object_export_void0_with_unrelated_export_preserves_whole_register() {
+    // Babel emits dummy bulk exports beside unrelated two-arg exports. Dropping
+    // only the dummy would silently remove a public namespace key.
     let source = r#"
 System.register("desc", ["./message.js"], function (_export) {
   var Message;
@@ -3991,16 +4094,26 @@ System.register("desc", ["./message.js"], function (_export) {
   };
 });
 "#;
-    let raw = unpack_source_raw(source);
-    let entry = module_code(&raw, "desc.js");
-    assert_no_system_register(entry, "void0 bulk beside setter imports");
-    assert_no_leftover_export_call(entry, "void0 bulk beside setter imports");
-    assert!(
-        entry.contains("import") && entry.contains("FileDescriptorProto"),
-        "imports and the reconstructable export must survive:\n{entry}"
-    );
-    assert!(
-        !entry.contains("export let Edition") && !entry.contains("export const Edition"),
-        "the dummy must not be lifted to an export (#206):\n{entry}"
-    );
+    assert_preserves_whole_register(source, "void0 bulk beside unrelated export");
+}
+
+#[test]
+fn execute_object_export_default_bulk_with_later_single_preserves_whole_register() {
+    // Rollup + Terser can group default/named functions into a bulk call and
+    // emit a later primitive as a two-arg export. The unsupported default pair
+    // must not disappear merely because the later export is reconstructable.
+    let source = r#"
+System.register("entry", [], function (t) {
+  return {
+    execute: function () {
+      t({
+        default: function () { return 1; },
+        other: function () { return 2; }
+      });
+      t("value", 3);
+    }
+  };
+});
+"#;
+    assert_preserves_whole_register(source, "default bulk beside unrelated export");
 }
