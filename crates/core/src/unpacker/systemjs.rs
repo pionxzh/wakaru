@@ -359,31 +359,37 @@ fn emit_system_module(
         .unwrap_or_default();
 
     let imports = collect_imports(&register.deps, &descriptor.setters, export_sym.as_ref())?;
-    let imported_locals = imports
+    let assigned_import_locals = imports
         .iter()
-        .flat_map(|import| import.local_names())
+        .flat_map(|import| import.assigned_local_names())
         .collect::<HashSet<_>>();
-
-    let mut items = Vec::new();
-    for import in &imports {
-        items.extend(import.to_module_items());
-    }
-    items.extend(register.prelude.iter().cloned().map(ModuleItem::Stmt));
+    let inferred_import_locals = imports
+        .iter()
+        .flat_map(|import| import.leftover_named.iter().cloned())
+        .collect::<Vec<_>>();
 
     let mut used_names = UsedIdentCollector::default();
     register.declare.visit_with(&mut used_names);
     for stmt in &register.prelude {
         stmt.visit_with(&mut used_names);
     }
-    let hoisted = outer_hoisted_stmts(body, &imported_locals);
+    // A leftover member read has lost its original local alias. Do not let
+    // that guessed local hide a real outer declaration before collision
+    // checks have seen it.
+    let hoisted = outer_hoisted_stmts(body, &assigned_import_locals);
     let mut lifted_stmts =
         Vec::with_capacity(register.prelude.len() + hoisted.len() + execute_body.stmts.len());
     lifted_stmts.extend(register.prelude.iter().cloned());
     lifted_stmts.extend(hoisted.iter().cloned());
     lifted_stmts.extend(execute_body.stmts.iter().cloned());
 
-    let mut module_bound_names = imported_locals.clone();
+    let mut module_bound_names = assigned_import_locals;
     collect_lifted_decl_names(&lifted_stmts, &mut module_bound_names);
+    for inferred in &inferred_import_locals {
+        if !module_bound_names.insert(inferred.clone()) {
+            return None;
+        }
+    }
     let export_name_usage = match export_sym.as_ref() {
         Some(export_sym) => collect_export_name_usage(
             &lifted_stmts,
@@ -411,6 +417,7 @@ fn emit_system_module(
             && Ident::verify_symbol(name.as_ref()).is_ok()
             && !is_reserved_binding_name(name.as_ref())
     }));
+    direct_binding_candidates.extend(inferred_import_locals.iter().cloned());
     let unresolved_analysis = if !direct_binding_candidates.is_empty()
         && (direct_binding_candidates
             .iter()
@@ -421,6 +428,19 @@ fn emit_system_module(
     } else {
         UnresolvedNameAnalysis::default()
     };
+    if inferred_import_locals
+        .iter()
+        .any(|name| unresolved_analysis.names.contains(name))
+    {
+        return None;
+    }
+
+    let mut items = Vec::new();
+    for import in &imports {
+        items.extend(import.to_module_items());
+    }
+    items.extend(register.prelude.iter().cloned().map(ModuleItem::Stmt));
+
     let mut transformer = SystemExecuteTransformer::new(
         export_sym,
         context_sym,
@@ -905,11 +925,16 @@ struct ImportParts {
 }
 
 impl ImportParts {
-    fn local_names(&self) -> Vec<Atom> {
+    fn assigned_local_names(&self) -> Vec<Atom> {
         let mut names = Vec::new();
         names.extend(self.default.clone());
         names.extend(self.namespace.clone());
         names.extend(self.named.iter().map(|(_, local)| local.clone()));
+        names
+    }
+
+    fn local_names(&self) -> Vec<Atom> {
+        let mut names = self.assigned_local_names();
         names.extend(self.leftover_named.iter().cloned());
         names
     }
