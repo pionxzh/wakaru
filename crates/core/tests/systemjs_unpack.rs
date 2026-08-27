@@ -2992,6 +2992,15 @@ fn assert_no_invented_export(code: &str, label: &str) {
     );
 }
 
+fn assert_no_leftover_export_call(code: &str, label: &str) {
+    // Only the unminified declare name. Scanning `e({` / `t({` false-positives
+    // named function expressions that recurse (#209).
+    assert!(
+        !code.contains("_export(") && !code.contains("_export({"),
+        "{label} must not leave a free `_export` call:\n{code}"
+    );
+}
+
 #[test]
 fn no_export_param_empty_execute_unwraps_without_export() {
     let source = r#"
@@ -3289,4 +3298,709 @@ System.register("odd", ["./dep.js"], function (_export) {
 });
 "#;
     assert_preserves_whole_register(source, "expression-body arrow setter");
+}
+
+#[test]
+fn execute_object_export_of_functions_becomes_named_exports() {
+    // protobuf-ts / engine chunks emit `_export({ assert: function () {} })`.
+    // That is the same contract as `_export("assert", function () {})`.
+    let source = r#"
+System.register("assert", [], function (_export) {
+  return {
+    execute: function () {
+      _export({
+        assert: function (e, t) {
+          if (!e) throw new Error(t);
+        },
+        assertInt32: function (t) {
+          if (typeof t !== "number") throw new Error("invalid int 32");
+        }
+      });
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "assert.js");
+    assert_no_system_register(entry, "execute object export of functions");
+    assert!(
+        entry.contains("export const assert =") && entry.contains("export const assertInt32 ="),
+        "function values must become export const:\n{entry}"
+    );
+    assert!(
+        !entry.contains("export function assert") && !entry.contains("export function assertInt32"),
+        "must not emit export function (Function.name, #204):\n{entry}"
+    );
+    assert_no_leftover_export_call(entry, "execute object export of functions");
+}
+
+#[test]
+fn execute_object_export_mixes_function_and_ident() {
+    // varint.js: `_export({ int64FromString: function () {}, uInt64ToString: n })`.
+    let source = r#"
+System.register("varint", [], function (_export) {
+  return {
+    execute: function () {
+      _export({
+        foo: function () {
+          return n();
+        },
+        bar: n
+      });
+      function n() {
+        return 1;
+      }
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "varint.js");
+    assert_no_system_register(entry, "execute object export mix");
+    assert!(
+        entry.contains("export const foo ="),
+        "function value must become export const:\n{entry}"
+    );
+    assert!(
+        entry.contains("export { n as bar }")
+            || entry.contains("export {n as bar}")
+            || entry.contains("export {n as bar};"),
+        "ident value must become a named re-export:\n{entry}"
+    );
+}
+
+#[test]
+fn execute_object_export_named_function_value_is_the_same_shape() {
+    // number.js: `_export({ num_to_s: function e(t) { ... } })`.
+    let source = r#"
+System.register("number", [], function (_export) {
+  return {
+    execute: function () {
+      _export({
+        num_to_s: function e(t) {
+          if (t < 0) return "-" + e(-t);
+          return String(t);
+        },
+        int_to_s: m
+      });
+      function m(t) {
+        return String(t);
+      }
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "number.js");
+    assert_no_system_register(entry, "execute object export named function");
+    assert!(
+        entry.contains("export const num_to_s ="),
+        "named function value must become export const:\n{entry}"
+    );
+    assert!(
+        entry.contains("function e") && entry.contains("e(-t)"),
+        "the inner function ident must stay in expression scope (#209):\n{entry}"
+    );
+    assert!(
+        entry.contains("export { m as int_to_s }")
+            || entry.contains("export {m as int_to_s}")
+            || entry.contains("export {m as int_to_s};"),
+        "ident sibling must still become a named re-export:\n{entry}"
+    );
+}
+
+#[test]
+fn named_function_expression_recursive_call_is_not_leftover_export() {
+    // property.js: `_export("property", function e(t) { return e({ type: void 0 }); })`.
+    let source = r#"
+System.register("property", [], function (e) {
+  return {
+    execute: function () {
+      e("property", function e(t) {
+        if (t == null) return e({ type: void 0 });
+        return t;
+      });
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "property.js");
+    assert_no_system_register(entry, "named function recursive call");
+    assert!(
+        entry.contains("export const property ="),
+        "two-arg named function export must reconstruct:\n{entry}"
+    );
+}
+
+#[test]
+fn execute_object_export_method_shorthand_is_the_same_shape() {
+    // Pretty-printers turn `assert: function () {}` into a method.
+    let source = r#"
+System.register("assert", [], function (_export) {
+  return {
+    execute: function () {
+      _export({
+        assert(e, t) {
+          if (!e) throw new Error(t);
+        }
+      });
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "assert.js");
+    assert_no_system_register(entry, "execute object export method shorthand");
+    assert!(
+        entry.contains("export const assert ="),
+        "method shorthand must become export const:\n{entry}"
+    );
+}
+
+#[test]
+fn execute_object_export_sibling_two_arg_still_reconstructs() {
+    let source = r#"
+System.register("plain", [], function (_export) {
+  return {
+    execute: function () {
+      _export("X", 1);
+    }
+  };
+});
+System.register("fns", [], function (_export) {
+  return {
+    execute: function () {
+      _export({
+        assert: function (e, t) {
+          if (!e) throw new Error(t);
+        }
+      });
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let plain = module_code(&raw, "plain.js");
+    let fns = module_code(&raw, "fns.js");
+    assert_no_system_register(plain, "sibling two-arg export");
+    assert_no_system_register(fns, "sibling object export of functions");
+    assert!(
+        plain.contains("export const X = 1"),
+        "two-arg `_export` must still reconstruct:\n{plain}"
+    );
+    assert!(
+        fns.contains("export const assert ="),
+        "object function export must reconstruct next to a two-arg sibling:\n{fns}"
+    );
+}
+
+#[test]
+fn execute_object_export_void0_dummy_only_preserves_whole_register() {
+    // A lone dummy object export is not a proven live binding (#206).
+    let source = r#"
+System.register("field", [], function (_export) {
+  return {
+    execute: function () {
+      _export({ ScalarType: void 0 });
+    }
+  };
+});
+"#;
+    assert_preserves_whole_register(source, "void 0 dummy only");
+}
+
+#[test]
+fn execute_object_export_undefined_predeclare_preserves_whole_register() {
+    // Pretty-printers rewrite `void 0` to `undefined`. That ident is not a
+    // local and must not become `export { undefined as ScalarType }`.
+    let source = r#"
+System.register("field", [], function (_export) {
+  return {
+    execute: function () {
+      _export({ LongType: undefined, ScalarType: undefined });
+    }
+  };
+});
+"#;
+    assert_preserves_whole_register(source, "undefined dummy predeclare");
+}
+
+#[test]
+fn execute_object_export_unbound_ident_preserves_whole_register() {
+    // `window` is not a module local. Do not invent `export { window as bar }`.
+    let source = r#"
+System.register("odd", [], function (_export) {
+  return {
+    execute: function () {
+      _export({ bar: window });
+    }
+  };
+});
+"#;
+    assert_preserves_whole_register(source, "unbound ident object export");
+}
+
+#[test]
+fn execute_object_export_void0_dummy_drops_and_keeps_later_singles() {
+    // field.js: drop the dummy object, reconstruct later `_export("Name", {})`.
+    // Do not leave a free `_export({...})` and do not lift the dummy itself.
+    let source = r#"
+System.register("field", [], function (_export) {
+  return {
+    execute: function () {
+      var t, n;
+      _export({ LongType: void 0, ScalarType: void 0 });
+      (function (e) {
+        e[e.DOUBLE = 1] = "DOUBLE";
+      })(t || (t = _export("ScalarType", {})));
+      (function (e) {
+        e[e.BIGINT = 0] = "BIGINT";
+      })(n || (n = _export("LongType", {})));
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "field.js");
+    assert_no_system_register(entry, "void0 dummy plus later singles");
+    assert_no_leftover_export_call(entry, "void0 dummy plus later singles");
+    assert!(
+        entry.contains("ScalarType") && entry.contains("LongType"),
+        "later two-arg fills must reconstruct:\n{entry}"
+    );
+}
+
+#[test]
+fn execute_object_export_computed_key_preserves_whole_register() {
+    let source = r#"
+System.register("odd", [], function (_export) {
+  return {
+    execute: function () {
+      _export({ [key]: function () {} });
+    }
+  };
+});
+"#;
+    assert_preserves_whole_register(source, "computed key object export");
+}
+
+#[test]
+fn execute_object_export_getter_preserves_whole_register() {
+    let source = r#"
+System.register("odd", [], function (_export) {
+  return {
+    execute: function () {
+      _export({
+        get foo() {
+          return 1;
+        }
+      });
+    }
+  };
+});
+"#;
+    assert_preserves_whole_register(source, "getter object export");
+}
+
+#[test]
+fn execute_object_export_quoted_name_uses_string_alias() {
+    let source = r#"
+System.register("odd", [], function (_export) {
+  return {
+    execute: function () {
+      _export({
+        "foo-bar": function () {
+          return 1;
+        }
+      });
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "odd.js");
+    assert_no_system_register(entry, "quoted object export name");
+    assert!(
+        entry.contains("foo-bar") && (entry.contains("export {") || entry.contains("export{")),
+        "illegal ident must use a string alias:\n{entry}"
+    );
+    assert!(
+        !entry.contains("export {") || entry.contains("\"foo-bar\"") || entry.contains("'foo-bar'"),
+        "the public name must stay quoted (#211):\n{entry}"
+    );
+}
+
+#[test]
+fn execute_object_export_reserved_name_uses_alias() {
+    let source = r#"
+System.register("odd", [], function (_export) {
+  return {
+    execute: function () {
+      _export({
+        class: function () {
+          return 1;
+        }
+      });
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "odd.js");
+    assert_no_system_register(entry, "reserved object export name");
+    assert!(
+        !entry.contains("export const class"),
+        "must not bind a reserved word:\n{entry}"
+    );
+    assert!(
+        entry.contains("class"),
+        "the public name must still be exported:\n{entry}"
+    );
+}
+
+#[test]
+fn execute_object_export_mixed_fn_and_void0_preserves_whole_register() {
+    // One unlowerable pair fails the whole object. Do not emit half an export
+    // list plus leftover `_export({ bad: void 0 })`.
+    let source = r#"
+System.register("odd", [], function (_export) {
+  return {
+    execute: function () {
+      _export({
+        ok: function () {
+          return 1;
+        },
+        bad: void 0
+      });
+    }
+  };
+});
+"#;
+    assert_preserves_whole_register(source, "mixed restorable and void 0");
+}
+
+#[test]
+fn execute_object_export_mixed_ident_and_void0_preserves_whole_register() {
+    // Ident pairs call `add_export` before a later void 0 fails. The whole
+    // object must roll back; do not emit `export { n as bar }` alone.
+    let source = r#"
+System.register("odd", [], function (_export) {
+  return {
+    execute: function () {
+      _export({
+        bar: n,
+        bad: void 0
+      });
+      function n() {
+        return 1;
+      }
+    }
+  };
+});
+"#;
+    assert_preserves_whole_register(source, "mixed ident and void 0");
+}
+
+#[test]
+fn execute_object_export_mixed_assign_and_void0_preserves_whole_register() {
+    let source = r#"
+System.register("odd", [], function (_export) {
+  return {
+    execute: function () {
+      var n;
+      _export({
+        bar: (n = 1),
+        bad: void 0
+      });
+    }
+  };
+});
+"#;
+    assert_preserves_whole_register(source, "mixed assign and void 0");
+}
+
+#[test]
+fn execute_object_export_same_name_bulk_then_single_uses_live_binding() {
+    // Handbook §3: one public name, one live binding. A Bulk function then
+    // `_export("foo", 2)` must not emit `export const` plus a second export.
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      _export({
+        foo: function () {
+          return 1;
+        }
+      });
+      _export("foo", 2);
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "entry.js");
+    assert_no_system_register(entry, "bulk then single same name");
+    assert_no_leftover_export_call(entry, "bulk then single same name");
+    assert!(
+        entry.contains("export let foo"),
+        "repeated public name must share one live binding:\n{entry}"
+    );
+    assert!(
+        !entry.contains("export const foo"),
+        "must not emit a second const export for the same name:\n{entry}"
+    );
+    assert_eq!(
+        validate_output_modules(&raw),
+        vec![],
+        "same-name bulk then single must stay legal ESM:\n{entry}"
+    );
+}
+
+#[test]
+fn execute_object_export_in_and_expr_preserves_whole_register() {
+    // Expression-position Bulk is not a top-level drop. Leaving `_export({`
+    // would be illegal ESM; fail-closed instead.
+    let source = r#"
+System.register("odd", [], function (_export) {
+  return {
+    execute: function () {
+      cond && _export({
+        foo: function () {
+          return 1;
+        }
+      });
+    }
+  };
+});
+"#;
+    assert_preserves_whole_register(source, "expression-position object export");
+}
+
+#[test]
+fn execute_object_export_assign_rhs_preserves_whole_register() {
+    let source = r#"
+System.register("odd", [], function (_export) {
+  return {
+    execute: function () {
+      var x;
+      x = _export({
+        foo: function () {
+          return 1;
+        }
+      });
+    }
+  };
+});
+"#;
+    assert_preserves_whole_register(source, "assignment-rhs object export");
+}
+
+#[test]
+fn execute_object_export_void0_with_import_only_preserves_whole_register() {
+    // Import is not an export surface. Dropping the dummy must not unwrap
+    // a module that never reconstructed a public name (#206 dual).
+    let source = r#"
+System.register("desc", ["./message.js"], function (_export) {
+  var Message;
+  return {
+    setters: [
+      function (m) {
+        Message = m.Message;
+      }
+    ],
+    execute: function () {
+      _export({ Edition: void 0 });
+    }
+  };
+});
+"#;
+    assert_preserves_whole_register(source, "void0 dummy with import only");
+}
+
+#[test]
+fn execute_object_export_arrow_is_the_same_shape() {
+    let source = r#"
+System.register("odd", [], function (_export) {
+  return {
+    execute: function () {
+      _export({
+        foo: () => 1
+      });
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "odd.js");
+    assert_no_system_register(entry, "execute object export of arrow");
+    assert!(
+        entry.contains("export const foo ="),
+        "arrow value must become export const:\n{entry}"
+    );
+    assert_no_leftover_export_call(entry, "execute object export of arrow");
+}
+
+#[test]
+fn execute_object_export_class_is_the_same_shape() {
+    let source = r#"
+System.register("odd", [], function (_export) {
+  return {
+    execute: function () {
+      _export({
+        Foo: class {
+          m() {
+            return 1;
+          }
+        }
+      });
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "odd.js");
+    assert_no_system_register(entry, "execute object export of class");
+    assert!(
+        entry.contains("export const Foo ="),
+        "class value must become export const:\n{entry}"
+    );
+    assert!(
+        entry.contains("function m") || entry.contains("m()"),
+        "the class method must stay on the expression:\n{entry}"
+    );
+    assert_no_leftover_export_call(entry, "execute object export of class");
+}
+
+#[test]
+fn execute_object_export_number_literal_preserves_whole_register() {
+    // `_export("foo", 1)` reconstructs; `{ foo: 1 }` is not that proven shape.
+    let source = r#"
+System.register("odd", [], function (_export) {
+  return {
+    execute: function () {
+      _export({ foo: 1 });
+    }
+  };
+});
+"#;
+    assert_preserves_whole_register(source, "object number literal");
+}
+
+#[test]
+fn execute_object_export_default_key_preserves_whole_register() {
+    let source = r#"
+System.register("odd", [], function (_export) {
+  return {
+    execute: function () {
+      _export({
+        default: function () {
+          return 1;
+        }
+      });
+    }
+  };
+});
+"#;
+    assert_preserves_whole_register(source, "object default key");
+}
+
+#[test]
+fn execute_object_export_empty_preserves_whole_register() {
+    let source = r#"
+System.register("odd", [], function (_export) {
+  return {
+    execute: function () {
+      _export({});
+    }
+  };
+});
+"#;
+    assert_preserves_whole_register(source, "empty execute object export");
+}
+
+#[test]
+fn execute_object_export_spread_preserves_whole_register() {
+    let source = r#"
+System.register("odd", [], function (_export) {
+  return {
+    execute: function () {
+      _export({
+        foo: function () {},
+        ...other
+      });
+    }
+  };
+});
+"#;
+    assert_preserves_whole_register(source, "spread execute object export");
+}
+
+#[test]
+fn execute_object_export_void0_does_not_fail_sibling_registers() {
+    // Engine bundles mix many registers. One unlowerable `_export({ Name: void 0 })`
+    // must not fail-closed the siblings (leftover-scan used to do that).
+    let source = r#"
+System.register("plain", [], function (_export) {
+  return {
+    execute: function () {
+      _export("X", 1);
+    }
+  };
+});
+System.register("field", [], function (_export) {
+  return {
+    execute: function () {
+      _export({ ScalarType: void 0 });
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let plain = module_code(&raw, "plain.js");
+    let field = module_code(&raw, "field.js");
+    assert_no_system_register(plain, "sibling of unlowerable object export");
+    assert_no_leftover_export_call(plain, "sibling of unlowerable object export");
+    assert!(
+        plain.contains("export const X = 1"),
+        "the reconstructable sibling must stay ESM:\n{plain}"
+    );
+    assert!(
+        field.contains("System.register") && field.contains("void 0"),
+        "the dummy sibling must keep its own register, not leftover ESM:\n{field}"
+    );
+}
+
+#[test]
+fn execute_object_export_void0_with_imports_keeps_esm() {
+    // descriptor_pb.js: `_export({ Edition: void 0 })` plus setter imports and
+    // later `_export("Name", local)`. Blanket fail-closed would regress esm.
+    let source = r#"
+System.register("desc", ["./message.js"], function (_export) {
+  var Message;
+  return {
+    setters: [
+      function (m) {
+        Message = m.Message;
+      }
+    ],
+    execute: function () {
+      _export({ Edition: void 0 });
+      _export("FileDescriptorProto", Message);
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "desc.js");
+    assert_no_system_register(entry, "void0 bulk beside setter imports");
+    assert_no_leftover_export_call(entry, "void0 bulk beside setter imports");
+    assert!(
+        entry.contains("import") && entry.contains("FileDescriptorProto"),
+        "imports and the reconstructable export must survive:\n{entry}"
+    );
+    assert!(
+        !entry.contains("export let Edition") && !entry.contains("export const Edition"),
+        "the dummy must not be lifted to an export (#206):\n{entry}"
+    );
 }
