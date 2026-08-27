@@ -5,14 +5,14 @@ use swc_core::common::{
     sync::Lrc, Globals, Mark, SourceMap, Span, SyntaxContext, DUMMY_SP, GLOBALS,
 };
 use swc_core::ecma::ast::{
-    ArrayLit, ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BindingIdent,
-    CallExpr, Callee, ClassExpr, Decl, EsVersion, ExportDecl, ExportDefaultExpr,
-    ExportNamedSpecifier, ExportSpecifier, Expr, ExprOrSpread, ExprStmt, FnExpr, Function,
-    FunctionBody, Ident, ImportDecl, ImportDefaultSpecifier, ImportNamedSpecifier, ImportSpecifier,
-    ImportStarAsSpecifier, Lit, MemberExpr, MemberProp, MetaPropExpr, MetaPropKind, Module,
-    ModuleDecl, ModuleExportName, ModuleItem, NamedExport, ObjectLit, OptChainBase, ParenExpr, Pat,
-    Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt, Str, UnaryOp, VarDecl,
-    VarDeclarator,
+    ArrayLit, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BindingIdent, CallExpr,
+    Callee, ComputedPropName, Decl, EsVersion, ExportDecl, ExportDefaultExpr, ExportNamedSpecifier,
+    ExportSpecifier, Expr, ExprOrSpread, ExprStmt, FnExpr, Function, FunctionBody, Ident,
+    ImportDecl, ImportDefaultSpecifier, ImportNamedSpecifier, ImportSpecifier,
+    ImportStarAsSpecifier, KeyValueProp, Lit, MemberExpr, MemberProp, MetaPropExpr, MetaPropKind,
+    Module, ModuleDecl, ModuleExportName, ModuleItem, NamedExport, ObjectLit, OptChainBase,
+    ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt, Str,
+    UnaryOp, VarDecl, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::transforms::base::resolver;
@@ -353,6 +353,10 @@ fn emit_system_module(
     let body = register.declare.body.as_ref()?;
     let descriptor = extract_register_descriptor(body)?;
     let execute_body = descriptor.execute.body.as_ref()?;
+    let export_call_spans = export_sym
+        .as_ref()
+        .map(|export_sym| collect_export_call_spans(&register.declare, export_sym))
+        .unwrap_or_default();
 
     let imports = collect_imports(&register.deps, &descriptor.setters, export_sym.as_ref())?;
     let imported_locals = imports
@@ -381,20 +385,28 @@ fn emit_system_module(
     let mut module_bound_names = imported_locals.clone();
     collect_lifted_decl_names(&lifted_stmts, &mut module_bound_names);
     let export_name_usage = match export_sym.as_ref() {
-        Some(export_sym) => {
-            collect_export_name_usage(&lifted_stmts, export_sym, &module_bound_names)
-        }
+        Some(export_sym) => collect_export_name_usage(
+            &lifted_stmts,
+            export_sym,
+            &export_call_spans,
+            &module_bound_names,
+        ),
         None => ExportNameUsageSummary {
             mutable: Vec::new(),
             seen: Vec::new(),
         },
     };
-    let mutable_export_names = export_name_usage.mutable;
+    let ExportNameUsageSummary {
+        mutable: mutable_export_names,
+        seen: seen_export_names,
+    } = export_name_usage;
     let mut direct_binding_candidates = match export_sym.as_ref() {
-        Some(export_sym) => collect_member_export_binding_names(&lifted_stmts, export_sym),
+        Some(export_sym) => {
+            collect_member_export_binding_names(&lifted_stmts, export_sym, &export_call_spans)
+        }
         None => HashSet::new(),
     };
-    direct_binding_candidates.extend(export_name_usage.seen.into_iter().filter(|name| {
+    direct_binding_candidates.extend(seen_export_names.into_iter().filter(|name| {
         name.as_ref() != "default"
             && Ident::verify_symbol(name.as_ref()).is_ok()
             && !is_reserved_binding_name(name.as_ref())
@@ -416,6 +428,7 @@ fn emit_system_module(
         module_bound_names,
         unresolved_analysis.names,
         unresolved_analysis.has_direct_eval,
+        export_call_spans,
     );
     items.extend(transformer.prepare_mutable_exports(mutable_export_names));
     for stmt in hoisted {
@@ -433,15 +446,11 @@ fn emit_system_module(
         }
         return None;
     }
-    // Unlowerable top-level object `_export` is dropped, not left as a
-    // free call. A module that still has no *export* surface stays
-    // fail-closed: import alone is not enough (#206 dual). Lone register
-    // → None (Plain fallback); a sibling → original text so
-    // `detect_from_module` does not `?` the rest of the bundle.
-    let unlowerable = transformer.unlowerable_export;
-    let has_export_surface =
-        !transformer.exports.is_empty() || items.iter().any(module_item_is_export);
-    if unlowerable && !has_export_surface {
+    // Any unlowerable top-level object export keeps the register whole. A
+    // reconstructable sibling does not make it safe to drop public names from
+    // the object call. Lone register → None (Plain fallback); a sibling →
+    // original text so `detect_from_module` does not `?` the rest of the bundle.
+    if transformer.unlowerable_export {
         if multiple {
             return original_register_code(register, &cm);
         }
@@ -455,19 +464,6 @@ fn emit_system_module(
         shebang: None,
     };
     emit_module(&module, filename, cm).ok()
-}
-
-fn module_item_is_export(item: &ModuleItem) -> bool {
-    matches!(
-        item,
-        ModuleItem::ModuleDecl(
-            ModuleDecl::ExportDecl(_)
-                | ModuleDecl::ExportNamed(_)
-                | ModuleDecl::ExportDefaultDecl(_)
-                | ModuleDecl::ExportDefaultExpr(_)
-                | ModuleDecl::ExportAll(_)
-        )
-    )
 }
 
 fn original_register_code(register: &SystemRegister, cm: &SourceMap) -> Option<String> {
@@ -698,16 +694,83 @@ struct ExportNameUsageSummary {
     seen: Vec<Atom>,
 }
 
+/// Resolve the original declare function and retain only calls whose callee is
+/// the callback parameter binding. Resolving before lifting the execute body is
+/// important: its locals belong to a nested function in the source and can
+/// shadow the outer callback even though they later become module statements.
+fn collect_export_call_spans(declare: &Function, export_sym: &Atom) -> HashSet<Span> {
+    let globals = Globals::new();
+    GLOBALS.set(&globals, || {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+        let mut probe = Module {
+            span: DUMMY_SP,
+            body: vec![ModuleItem::Stmt(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Fn(FnExpr {
+                    ident: None,
+                    function: Box::new(declare.clone()),
+                })),
+            }))],
+            shebang: None,
+        };
+        probe.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+
+        let export_ctxt = match &probe.body[0] {
+            ModuleItem::Stmt(Stmt::Expr(expr_stmt)) => match expr_stmt.expr.as_ref() {
+                Expr::Fn(function) => match &function.function.params[0].pat {
+                    Pat::Ident(binding) => binding.id.ctxt,
+                    _ => unreachable!("the export callback is always an identifier parameter"),
+                },
+                _ => unreachable!("the export probe is always a function expression"),
+            },
+            _ => unreachable!("the export probe always contains one expression statement"),
+        };
+        let mut collector = ExportCallSpanCollector {
+            export_sym,
+            export_ctxt,
+            spans: HashSet::new(),
+        };
+        probe.visit_with(&mut collector);
+        collector.spans
+    })
+}
+
+struct ExportCallSpanCollector<'a> {
+    export_sym: &'a Atom,
+    export_ctxt: SyntaxContext,
+    spans: HashSet<Span>,
+}
+
+impl Visit for ExportCallSpanCollector<'_> {
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if matches!(
+            &call.callee,
+            Callee::Expr(callee)
+                if matches!(
+                    callee.as_ref(),
+                    Expr::Ident(ident)
+                        if ident.sym == *self.export_sym && ident.ctxt == self.export_ctxt
+                )
+        ) {
+            self.spans.insert(call.span);
+        }
+        call.visit_children_with(self);
+    }
+}
+
 /// A repeated SystemJS export can reuse an existing ESM live binding only
 /// when every update is backed by the same module-scope local. Different,
 /// computed, or free values need one canonical mutable binding instead.
 fn collect_export_name_usage(
     stmts: &[Stmt],
     export_sym: &Atom,
+    export_call_spans: &HashSet<Span>,
     module_bound_names: &HashSet<Atom>,
 ) -> ExportNameUsageSummary {
     let mut collector = ExportNameUseCollector {
         export_sym,
+        export_call_spans,
         uses: HashMap::new(),
         order: Vec::new(),
     };
@@ -737,6 +800,7 @@ fn collect_export_name_usage(
 
 struct ExportNameUseCollector<'a> {
     export_sym: &'a Atom,
+    export_call_spans: &'a HashSet<Span>,
     uses: HashMap<Atom, ExportNameUse>,
     order: Vec<Atom>,
 }
@@ -757,24 +821,31 @@ impl ExportNameUseCollector<'_> {
 
 impl Visit for ExportNameUseCollector<'_> {
     fn visit_call_expr(&mut self, call: &CallExpr) {
-        match parse_export_call(call, self.export_sym) {
-            Some(ExportCall::Single { exported, value }) => {
-                self.record(exported, exported_value_local(value.as_ref()));
-            }
-            Some(ExportCall::Bulk(exports)) => {
-                for (exported, value) in exports {
+        if self.export_call_spans.contains(&call.span) {
+            match parse_export_call(call, self.export_sym) {
+                Some(ExportCall::Single { exported, value }) => {
                     self.record(exported, exported_value_local(value.as_ref()));
                 }
+                Some(ExportCall::Bulk(exports)) => {
+                    for (exported, value) in exports {
+                        self.record(exported, exported_value_local(value.as_ref()));
+                    }
+                }
+                None => {}
             }
-            None => {}
         }
         call.visit_children_with(self);
     }
 }
 
-fn collect_member_export_binding_names(stmts: &[Stmt], export_sym: &Atom) -> HashSet<Atom> {
+fn collect_member_export_binding_names(
+    stmts: &[Stmt],
+    export_sym: &Atom,
+    export_call_spans: &HashSet<Span>,
+) -> HashSet<Atom> {
     let mut collector = MemberExportBindingNameCollector {
         export_sym,
+        export_call_spans,
         names: HashSet::new(),
     };
     for stmt in stmts {
@@ -785,6 +856,7 @@ fn collect_member_export_binding_names(stmts: &[Stmt], export_sym: &Atom) -> Has
 
 struct MemberExportBindingNameCollector<'a> {
     export_sym: &'a Atom,
+    export_call_spans: &'a HashSet<Span>,
     names: HashSet<Atom>,
 }
 
@@ -798,6 +870,7 @@ impl Visit for MemberExportBindingNameCollector<'_> {
                 Expr::Call(call) => Some(call),
                 _ => None,
             })
+            .filter(|call| self.export_call_spans.contains(&call.span))
             .and_then(|call| parse_export_call(call, self.export_sym))
             .and_then(|export_call| match export_call {
                 ExportCall::Single { exported, value }
@@ -1301,12 +1374,13 @@ fn setter_assignment_expr(expr: &Expr, module_sym: &Atom) -> Option<(Atom, Sette
 struct MutableExportRewriter<'a> {
     export_sym: Option<&'a Atom>,
     bindings: &'a HashMap<Atom, Atom>,
+    export_call_spans: &'a HashSet<Span>,
 }
 
 impl VisitMut for MutableExportRewriter<'_> {
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         let replacement = match expr {
-            Expr::Call(call) => {
+            Expr::Call(call) if self.export_call_spans.contains(&call.span) => {
                 parse_optional_export_call(call, self.export_sym).and_then(|export_call| {
                     let ExportCall::Single {
                         exported,
@@ -1344,6 +1418,9 @@ struct SystemExecuteTransformer {
     module_bound_names: HashSet<Atom>,
     unresolved_names: HashSet<Atom>,
     has_direct_eval: bool,
+    /// Calls proven by resolver to target the declare callback, rather than a
+    /// nested binding that happens to have the same minified name.
+    export_call_spans: HashSet<Span>,
     mutable_export_bindings: HashMap<Atom, Atom>,
     /// Side-effect-free live-binding declarations needed by expression-position exports.
     pending_expr_export_decls: Vec<ModuleItem>,
@@ -1352,9 +1429,6 @@ struct SystemExecuteTransformer {
     /// Expression-position object `_export` left in place; the module must
     /// stay fail-closed so the free call is not emitted as ESM.
     leftover_export_call: bool,
-    /// Nested functions that bind the declare `_export` ident. Inner
-    /// `e({` recursive calls must not look like leftover exports (#209).
-    export_shadow_depth: usize,
 }
 
 impl SystemExecuteTransformer {
@@ -1365,6 +1439,7 @@ impl SystemExecuteTransformer {
         module_bound_names: HashSet<Atom>,
         unresolved_names: HashSet<Atom>,
         has_direct_eval: bool,
+        export_call_spans: HashSet<Span>,
     ) -> Self {
         Self {
             export_sym,
@@ -1375,11 +1450,11 @@ impl SystemExecuteTransformer {
             module_bound_names,
             unresolved_names,
             has_direct_eval,
+            export_call_spans,
             mutable_export_bindings: HashMap::new(),
             pending_expr_export_decls: Vec::new(),
             unlowerable_export: false,
             leftover_export_call: false,
-            export_shadow_depth: 0,
         }
     }
 
@@ -1428,6 +1503,7 @@ impl SystemExecuteTransformer {
         let mut mutable_export_rewriter = MutableExportRewriter {
             export_sym: self.export_sym.as_ref(),
             bindings: &self.mutable_export_bindings,
+            export_call_spans: &self.export_call_spans,
         };
         stmt.visit_mut_with(&mut mutable_export_rewriter);
 
@@ -1503,28 +1579,35 @@ impl SystemExecuteTransformer {
     }
 
     fn is_export_callee(&self, call: &CallExpr) -> bool {
-        if self.export_shadow_depth > 0 {
-            return false;
-        }
         let Some(export_sym) = self.export_sym.as_ref() else {
             return false;
         };
-        matches!(
-            &call.callee,
-            Callee::Expr(callee) if matches!(callee.as_ref(), Expr::Ident(id) if id.sym == *export_sym)
-        )
+        self.export_call_spans.contains(&call.span)
+            && matches!(
+                &call.callee,
+                Callee::Expr(callee)
+                    if matches!(callee.as_ref(), Expr::Ident(id) if id.sym == *export_sym)
+            )
+    }
+
+    fn parse_execute_export_call(&self, call: &CallExpr) -> Option<ExportCall> {
+        if !self.is_export_callee(call) {
+            return None;
+        }
+        parse_optional_export_call(call, self.export_sym.as_ref())
     }
 
     /// Lower a top-level `_export(...)`. An unlowerable Bulk / unreadable
-    /// object is dropped (not left as a free call). `_export(n)` and other
-    /// unparsed execute shapes are left in place (`for-in` / `export *`
-    /// stay out of scope). A Single that `export_call_items` cannot take
-    /// is left for `visit_mut_expr`.
+    /// object is consumed and marks the module fail-closed, so the partial ESM
+    /// output is discarded rather than leaving a free call. `_export(n)` and
+    /// other unparsed execute shapes are left in place (`for-in` / `export *`
+    /// stay out of scope). A Single that `export_call_items` cannot take is
+    /// left for `visit_mut_expr`.
     fn take_parsed_export_call(&mut self, call: &CallExpr) -> Option<Vec<ModuleItem>> {
         if !self.is_export_callee(call) {
             return None;
         }
-        match parse_optional_export_call(call, self.export_sym.as_ref()) {
+        match self.parse_execute_export_call(call) {
             Some(ExportCall::Bulk(exports)) => {
                 match self.export_call_items(ExportCall::Bulk(exports)) {
                     Some(items) => Some(items),
@@ -1593,9 +1676,7 @@ impl SystemExecuteTransformer {
         let Expr::Call(call) = member.obj.as_ref() else {
             return None;
         };
-        let ExportCall::Single { exported, value } =
-            parse_optional_export_call(call, self.export_sym.as_ref())?
-        else {
+        let ExportCall::Single { exported, value } = self.parse_execute_export_call(call)? else {
             return None;
         };
 
@@ -1858,7 +1939,7 @@ impl SystemExecuteTransformer {
         let Expr::Call(call) = strip_paren_expr(assign.right.as_ref()) else {
             return None;
         };
-        let export_call = parse_optional_export_call(call, self.export_sym.as_ref())?;
+        let export_call = self.parse_execute_export_call(call)?;
         let (export_items, result) = self.export_call_result_items(export_call)?;
         let mut items = export_items;
         items.push(assign_ident_item(target, result));
@@ -1875,7 +1956,7 @@ impl SystemExecuteTransformer {
         let mut items = Vec::new();
         for (idx, part) in exprs.iter().enumerate() {
             let export_call = match strip_paren_expr(part) {
-                Expr::Call(call) => parse_optional_export_call(call, self.export_sym.as_ref()),
+                Expr::Call(call) => self.parse_execute_export_call(call),
                 _ => None,
             };
             if idx == last_idx {
@@ -2008,7 +2089,7 @@ impl SystemExecuteTransformer {
                     if let Some(ExportCall::Single {
                         exported,
                         mut value,
-                    }) = parse_optional_export_call(call, self.export_sym.as_ref())
+                    }) = self.parse_execute_export_call(call)
                     {
                         value.visit_mut_with(self);
                         self.add_export(local, exported);
@@ -2040,7 +2121,7 @@ impl SystemExecuteTransformer {
         let has_export = seq.exprs.iter().any(|part| {
             matches!(
                 strip_paren_expr(part),
-                Expr::Call(call) if parse_optional_export_call(call, self.export_sym.as_ref()).is_some()
+                Expr::Call(call) if self.parse_execute_export_call(call).is_some()
             )
         });
         has_export.then_some(seq.exprs.as_slice())
@@ -2058,7 +2139,7 @@ impl SystemExecuteTransformer {
         let mut items = Vec::new();
         for (idx, part) in exprs.iter().enumerate() {
             let export_call = match strip_paren_expr(part) {
-                Expr::Call(call) => parse_optional_export_call(call, self.export_sym.as_ref()),
+                Expr::Call(call) => self.parse_execute_export_call(call),
                 _ => None,
             };
             if idx == last_idx {
@@ -2098,8 +2179,7 @@ impl SystemExecuteTransformer {
             let Expr::Call(call) = init.as_ref() else {
                 continue;
             };
-            let Some(ExportCall::Single { exported, value }) =
-                parse_optional_export_call(call, self.export_sym.as_ref())
+            let Some(ExportCall::Single { exported, value }) = self.parse_execute_export_call(call)
             else {
                 continue;
             };
@@ -2160,6 +2240,9 @@ impl SystemExecuteTransformer {
     ) -> Option<Vec<ModuleItem>> {
         value.visit_mut_with(self);
         if let Some(local) = self.mutable_export_bindings.get(&exported).cloned() {
+            if local != exported {
+                value = preserve_bulk_export_inferred_name(&exported, value);
+            }
             return Some(vec![ModuleItem::Stmt(Stmt::Expr(ExprStmt {
                 span: DUMMY_SP,
                 expr: Box::new(assign_local_expr(local, value)),
@@ -2187,6 +2270,7 @@ impl SystemExecuteTransformer {
             return Some(vec![self.export_const_item(exported, value)]);
         }
         let local = self.fresh_export_name();
+        value = preserve_bulk_export_inferred_name(&exported, value);
         self.declared_exports
             .insert((local.clone(), exported.clone()));
         Some(vec![
@@ -2197,35 +2281,6 @@ impl SystemExecuteTransformer {
 }
 
 impl VisitMut for SystemExecuteTransformer {
-    fn visit_mut_fn_expr(&mut self, node: &mut FnExpr) {
-        let shadows = node
-            .ident
-            .as_ref()
-            .is_some_and(|id| self.is_export_sym(&id.sym));
-        self.with_export_shadow(shadows, |this| node.visit_mut_children_with(this));
-    }
-
-    fn visit_mut_function(&mut self, node: &mut Function) {
-        let shadows = node
-            .params
-            .iter()
-            .any(|param| self.pat_binds_export(&param.pat));
-        self.with_export_shadow(shadows, |this| node.visit_mut_children_with(this));
-    }
-
-    fn visit_mut_arrow_expr(&mut self, node: &mut ArrowExpr) {
-        let shadows = node.params.iter().any(|pat| self.pat_binds_export(pat));
-        self.with_export_shadow(shadows, |this| node.visit_mut_children_with(this));
-    }
-
-    fn visit_mut_class_expr(&mut self, node: &mut ClassExpr) {
-        let shadows = node
-            .ident
-            .as_ref()
-            .is_some_and(|id| self.is_export_sym(&id.sym));
-        self.with_export_shadow(shadows, |this| node.visit_mut_children_with(this));
-    }
-
     fn visit_mut_call_expr(&mut self, call: &mut CallExpr) {
         if self.is_context_import(call) {
             call.callee = Callee::Import(swc_core::ecma::ast::Import {
@@ -2285,27 +2340,6 @@ impl VisitMut for SystemExecuteTransformer {
 }
 
 impl SystemExecuteTransformer {
-    fn is_export_sym(&self, sym: &Atom) -> bool {
-        self.export_sym.as_ref().is_some_and(|export| export == sym)
-    }
-
-    fn pat_binds_export(&self, pat: &Pat) -> bool {
-        let Some(export_sym) = self.export_sym.as_ref() else {
-            return false;
-        };
-        pat_binds_ident(pat, export_sym)
-    }
-
-    fn with_export_shadow(&mut self, shadows: bool, f: impl FnOnce(&mut Self)) {
-        if shadows {
-            self.export_shadow_depth += 1;
-        }
-        f(self);
-        if shadows {
-            self.export_shadow_depth -= 1;
-        }
-    }
-
     fn is_expression_unlowerable_export(&self, call: &CallExpr) -> bool {
         if !self.is_export_callee(call) {
             return false;
@@ -2518,6 +2552,38 @@ fn is_function_or_class_expr(expr: &Expr) -> bool {
     )
 }
 
+/// Object-literal properties perform NamedEvaluation for anonymous functions,
+/// arrows, and classes. When a public export name cannot be used as the local
+/// ESM binding, retain that observable `.name` by evaluating the value through
+/// a computed property with the original key.
+fn preserve_bulk_export_inferred_name(exported: &Atom, value: Box<Expr>) -> Box<Expr> {
+    let is_anonymous = match strip_paren_expr(value.as_ref()) {
+        Expr::Fn(function) => function.ident.is_none(),
+        Expr::Arrow(_) => true,
+        Expr::Class(class) => class.ident.is_none(),
+        _ => false,
+    };
+    if !is_anonymous {
+        return value;
+    }
+
+    let property_key = || ComputedPropName {
+        span: DUMMY_SP,
+        expr: Box::new(Expr::Lit(Lit::Str(make_str(exported.as_ref())))),
+    };
+    Box::new(Expr::Member(MemberExpr {
+        span: DUMMY_SP,
+        obj: Box::new(Expr::Object(ObjectLit {
+            span: DUMMY_SP,
+            props: vec![PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
+                key: PropName::Computed(property_key()),
+                value,
+            })))],
+        })),
+        prop: MemberProp::Computed(property_key()),
+    }))
+}
+
 fn emit_exported_value(value: Box<Expr>) -> Box<Expr> {
     Box::new(export_replacement_expr(value))
 }
@@ -2645,14 +2711,6 @@ fn var_declarator_item(var: &VarDecl, decl: VarDeclarator) -> ModuleItem {
         declare: var.declare,
         decls: vec![decl],
     }))))
-}
-
-fn pat_binds_ident(pat: &Pat, sym: &Atom) -> bool {
-    match pat {
-        Pat::Ident(binding) => binding.id.sym == *sym,
-        Pat::Assign(assign) => pat_binds_ident(&assign.left, sym),
-        _ => false,
-    }
 }
 
 fn strip_paren_expr(expr: &Expr) -> &Expr {
