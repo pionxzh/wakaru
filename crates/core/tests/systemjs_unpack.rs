@@ -4117,3 +4117,437 @@ System.register("entry", [], function (t) {
 "#;
     assert_preserves_whole_register(source, "default bulk beside unrelated export");
 }
+
+fn assert_named_import_from(code: &str, spec: &str, source: &str, label: &str) {
+    let spaced = format!(r#"import {{ {spec} }} from "{source}""#);
+    let compact = format!(r#"import {{{spec}}} from "{source}""#);
+    assert!(
+        code.contains(&spaced) || code.contains(&compact),
+        "{label} must reconstruct `{spaced}`:\n{code}"
+    );
+}
+
+fn assert_valid_unpacked_esm(modules: &[(String, String)], label: &str) {
+    assert_eq!(
+        validate_output_modules(modules),
+        vec![],
+        "{label} output must remain valid ESM:\n{}",
+        modules
+            .iter()
+            .map(|(name, code)| format!("// {name}\n{code}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+#[test]
+fn unused_setter_member_read_becomes_named_import() {
+    // Terser drops an unused `a = module.native` left-hand side but keeps the
+    // getter (`pure_getters: false`). That is still `import { native }`.
+    let source = r#"
+System.register("herobdc", ["cc"], function (_export) {
+  var n;
+  return {
+    setters: [function (module) {
+      n = module.cclegacy, module.native;
+    }],
+    execute: function () {
+      n._RF.push({}, "id", "herobdc", undefined);
+      _export("HeroBDC", {});
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = unpacked_named_module(&raw, "herobdc.js");
+    assert_no_system_register(entry, "unused setter member + assigned sibling");
+    assert_named_import_from(
+        entry,
+        "cclegacy as n, native",
+        "cc",
+        "unused setter member + assigned sibling",
+    );
+    assert!(
+        entry.contains("export const HeroBDC") || entry.contains("as HeroBDC"),
+        "the two-arg execute export must still reconstruct:\n{entry}"
+    );
+    assert_valid_unpacked_esm(&raw, "unused setter member + assigned sibling");
+}
+
+#[test]
+fn unused_setter_member_read_alone_becomes_named_import() {
+    let source = r#"
+System.register("entry", ["dep"], function (_export) {
+  return {
+    setters: [function (module) {
+      module.foo;
+    }],
+    execute: function () {}
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = unpacked_named_module(&raw, "entry.js");
+    assert_no_system_register(entry, "standalone unused setter member");
+    assert_named_import_from(entry, "foo", "dep", "standalone unused setter member");
+    assert_valid_unpacked_esm(&raw, "standalone unused setter member");
+}
+
+#[test]
+fn unused_setter_member_quoted_key_is_the_same_shape() {
+    let source = r#"
+System.register("entry", ["cc"], function (_export) {
+  var n;
+  return {
+    setters: [function (module) {
+      n = module.cclegacy;
+      module["native"];
+    }],
+    execute: function () {
+      n._RF.push();
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = unpacked_named_module(&raw, "entry.js");
+    assert_no_system_register(entry, "quoted unused setter member");
+    assert_named_import_from(
+        entry,
+        "cclegacy as n, native",
+        "cc",
+        "quoted unused setter member",
+    );
+    assert_valid_unpacked_esm(&raw, "quoted unused setter member");
+}
+
+#[test]
+fn unused_setter_member_after_same_name_assignment_keeps_assigned_local() {
+    // The unused get is the DCE leftover of `a = module.native`. Keep `a`.
+    let source = r#"
+System.register("entry", ["dep"], function (_export) {
+  var a;
+  return {
+    setters: [function (module) {
+      a = module.native, module.native;
+    }],
+    execute: function () {
+      use(a);
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = unpacked_named_module(&raw, "entry.js");
+    assert_no_system_register(entry, "assigned then unused same name");
+    assert_named_import_from(
+        entry,
+        "native as a",
+        "dep",
+        "assigned then unused same name",
+    );
+    assert!(
+        !entry.contains("native as a, native") && !entry.contains("native, native"),
+        "must not emit a second specifier for the unused get:\n{entry}"
+    );
+    assert!(
+        entry.contains("use(a)"),
+        "execute must keep the assigned local:\n{entry}"
+    );
+    assert_valid_unpacked_esm(&raw, "assigned then unused same name");
+}
+
+#[test]
+fn unused_setter_member_without_export_param_still_imports() {
+    let source = r#"
+System.register("entry", ["cc"], function () {
+  var n;
+  return {
+    setters: [function (module) {
+      n = module.cclegacy, module.native;
+    }],
+    execute: function () {
+      n._RF.push();
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = unpacked_named_module(&raw, "entry.js");
+    assert_no_system_register(entry, "unused member without export param");
+    assert_named_import_from(
+        entry,
+        "cclegacy as n, native",
+        "cc",
+        "unused member without export param",
+    );
+    assert_no_invented_export(entry, "unused member without export param");
+    assert_valid_unpacked_esm(&raw, "unused member without export param");
+}
+
+#[test]
+fn unused_setter_member_call_preserves_whole_register() {
+    let source = r#"
+System.register("odd", ["dep"], function (_export) {
+  return {
+    setters: [function (module) {
+      module.foo();
+    }],
+    execute: function () {}
+  };
+});
+"#;
+    assert_preserves_whole_register(source, "unused setter member call");
+}
+
+#[test]
+fn unused_setter_member_computed_key_preserves_whole_register() {
+    let source = r#"
+System.register("odd", ["dep"], function (_export) {
+  return {
+    setters: [function (module) {
+      module[k];
+    }],
+    execute: function () {}
+  };
+});
+"#;
+    assert_preserves_whole_register(source, "unused setter computed member");
+}
+
+#[test]
+fn unused_setter_member_optional_preserves_whole_register() {
+    let source = r#"
+System.register("odd", ["dep"], function (_export) {
+  return {
+    setters: [function (module) {
+      module?.foo;
+    }],
+    execute: function () {}
+  };
+});
+"#;
+    assert_preserves_whole_register(source, "unused setter optional member");
+}
+
+#[test]
+fn unused_setter_member_default_preserves_whole_register() {
+    // Unused `module.default` would be a default import, not this named shape.
+    let source = r#"
+System.register("odd", ["dep"], function (_export) {
+  return {
+    setters: [function (module) {
+      module.default;
+    }],
+    execute: function () {}
+  };
+});
+"#;
+    assert_preserves_whole_register(source, "unused setter default member");
+}
+
+#[test]
+fn unused_setter_member_before_same_name_assignment_keeps_assigned_local() {
+    // Same leftover as assigned-then-unused, opposite comma order.
+    let source = r#"
+System.register("entry", ["dep"], function (_export) {
+  var a;
+  return {
+    setters: [function (module) {
+      module.native, a = module.native;
+    }],
+    execute: function () {
+      use(a);
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = unpacked_named_module(&raw, "entry.js");
+    assert_no_system_register(entry, "unused then assigned same name");
+    assert_named_import_from(
+        entry,
+        "native as a",
+        "dep",
+        "unused then assigned same name",
+    );
+    assert!(
+        !entry.contains("native as a, native") && !entry.contains("{ native, native as a }"),
+        "must not emit a second specifier for the unused get:\n{entry}"
+    );
+    assert_valid_unpacked_esm(&raw, "unused then assigned same name");
+}
+
+#[test]
+fn unused_setter_member_eval_still_imports_the_source_local() {
+    // Source was `import { native }`. Restoring that local is the contract,
+    // unlike `export { X } from` which never had a local (#211).
+    let source = r#"
+System.register("entry", ["dep"], function (_export) {
+  return {
+    setters: [function (module) {
+      module.native;
+    }],
+    execute: function () {
+      eval("native");
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = unpacked_named_module(&raw, "entry.js");
+    assert_no_system_register(entry, "unused member visible to eval");
+    assert_named_import_from(entry, "native", "dep", "unused member visible to eval");
+    assert!(
+        entry.contains("eval("),
+        "direct eval in execute must remain:\n{entry}"
+    );
+    assert_valid_unpacked_esm(&raw, "unused member visible to eval");
+}
+
+#[test]
+fn two_assigned_locals_for_same_imported_both_stay() {
+    // Dedup is only for the unused leftover get, not a second assigned alias.
+    let source = r#"
+System.register("entry", ["dep"], function (_export) {
+  var a, b;
+  return {
+    setters: [function (module) {
+      a = module.native, b = module.native;
+    }],
+    execute: function () {
+      use(a, b);
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = unpacked_named_module(&raw, "entry.js");
+    assert_no_system_register(entry, "two assigned locals same imported");
+    assert_named_import_from(
+        entry,
+        "native as a, native as b",
+        "dep",
+        "two assigned locals same imported",
+    );
+    assert!(
+        entry.contains("use(a, b)") || entry.contains("use(a,b)"),
+        "both assigned locals must remain in execute:\n{entry}"
+    );
+    assert_valid_unpacked_esm(&raw, "two assigned locals same imported");
+}
+
+#[test]
+fn assigned_identity_alias_beside_renamed_alias_both_stay() {
+    // `native = module.native` is an assigned import, not a leftover get.
+    // Dedup must not treat `local == imported` as unused.
+    let source = r#"
+System.register("entry", ["dep"], function (_export) {
+  var a, native;
+  return {
+    setters: [function (module) {
+      a = module.native, native = module.native;
+    }],
+    execute: function () {
+      use(a, native);
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = unpacked_named_module(&raw, "entry.js");
+    assert_no_system_register(entry, "identity assign after renamed alias");
+    assert_named_import_from(
+        entry,
+        "native as a, native",
+        "dep",
+        "identity assign after renamed alias",
+    );
+    assert!(
+        entry.contains("use(a, native)") || entry.contains("use(a,native)"),
+        "both assigned locals must remain in execute:\n{entry}"
+    );
+    assert_valid_unpacked_esm(&raw, "identity assign after renamed alias");
+}
+
+#[test]
+fn assigned_identity_alias_before_renamed_alias_both_stay() {
+    let source = r#"
+System.register("entry", ["dep"], function (_export) {
+  var a, native;
+  return {
+    setters: [function (module) {
+      native = module.native, a = module.native;
+    }],
+    execute: function () {
+      use(a, native);
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = unpacked_named_module(&raw, "entry.js");
+    assert_no_system_register(entry, "identity assign before renamed alias");
+    assert_named_import_from(
+        entry,
+        "native, native as a",
+        "dep",
+        "identity assign before renamed alias",
+    );
+    assert!(
+        entry.contains("use(a, native)") || entry.contains("use(a,native)"),
+        "both assigned locals must remain in execute:\n{entry}"
+    );
+    assert_valid_unpacked_esm(&raw, "identity assign before renamed alias");
+}
+
+#[test]
+fn unused_setter_member_reserved_key_preserves_whole_register() {
+    // Member `class` is an IdentifierName. Binding it as `import { class }`
+    // (or a sanitized local with Ident imported) is illegal ESM.
+    let source = r#"
+System.register("odd", ["dep"], function (_export) {
+  return {
+    setters: [function (module) {
+      module.class;
+    }],
+    execute: function () {}
+  };
+});
+"#;
+    assert_preserves_whole_register(source, "unused setter reserved member");
+}
+
+#[test]
+fn unused_setter_member_invalid_quoted_key_preserves_whole_register() {
+    let source = r#"
+System.register("odd", ["dep"], function (_export) {
+  return {
+    setters: [function (module) {
+      module["foo-bar"];
+    }],
+    execute: function () {}
+  };
+});
+"#;
+    assert_preserves_whole_register(source, "unused setter invalid quoted member");
+}
+
+#[test]
+fn unused_setter_member_colliding_local_preserves_whole_register() {
+    // Inventing `import { n }` beside `import { cclegacy as n }` is illegal.
+    let source = r#"
+System.register("odd", ["cc"], function (_export) {
+  var n;
+  return {
+    setters: [function (module) {
+      n = module.cclegacy, module.n;
+    }],
+    execute: function () {
+      n._RF.push();
+    }
+  };
+});
+"#;
+    assert_preserves_whole_register(source, "unused setter colliding invented local");
+}

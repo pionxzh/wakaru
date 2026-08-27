@@ -18,7 +18,7 @@ use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use crate::js_names::is_reserved_binding_name;
+use crate::js_names::{is_reserved_binding_name, is_valid_identifier_name};
 use crate::unpacker::{span_byte_range, BundleFormat, UnpackResult, UnpackedModule};
 
 pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
@@ -896,6 +896,8 @@ struct ImportParts {
     default: Option<Atom>,
     namespace: Option<Atom>,
     named: Vec<(Atom, Atom)>,
+    /// Leftover `module.Name` gets. Not the same as `Name = module.Name`.
+    leftover_named: Vec<Atom>,
     /// Live `export { local as Name }` from a setter assignment + `_export`.
     reexports: Vec<(Atom, Atom)>,
     /// `export { imported as Name } from "dep"` — no synthesized local.
@@ -908,11 +910,15 @@ impl ImportParts {
         names.extend(self.default.clone());
         names.extend(self.namespace.clone());
         names.extend(self.named.iter().map(|(_, local)| local.clone()));
+        names.extend(self.leftover_named.iter().cloned());
         names
     }
 
     fn has_import_bindings(&self) -> bool {
-        self.default.is_some() || self.namespace.is_some() || !self.named.is_empty()
+        self.default.is_some()
+            || self.namespace.is_some()
+            || !self.named.is_empty()
+            || !self.leftover_named.is_empty()
     }
 
     fn to_module_items(&self) -> Vec<ModuleItem> {
@@ -969,6 +975,17 @@ impl ImportParts {
                 }),
                 is_type_only: false,
             })
+        }));
+        specifiers.extend(self.leftover_named.iter().filter_map(|imported| {
+            if self.named.iter().any(|(name, _)| name == imported) {
+                return None;
+            }
+            Some(ImportSpecifier::Named(ImportNamedSpecifier {
+                span: DUMMY_SP,
+                local: ident(imported.clone()),
+                imported: None,
+                is_type_only: false,
+            }))
         }));
 
         if !specifiers.is_empty() {
@@ -1031,7 +1048,45 @@ fn collect_imports(
             match part {
                 SetterPart::Import(local, kind) => match kind {
                     SetterImportKind::Default => parts.default = Some(local),
-                    SetterImportKind::Named(imported) => parts.named.push((imported, local)),
+                    SetterImportKind::Named(imported) => {
+                        // An assigned leftover of the same specifier is the
+                        // DCE twin of this write. Drop the leftover get only.
+                        if let Some(idx) = parts
+                            .leftover_named
+                            .iter()
+                            .position(|name| name == &imported)
+                        {
+                            parts.leftover_named.remove(idx);
+                        }
+                        if let Some((_, existing)) =
+                            parts.named.iter().find(|(name, _)| *name == imported)
+                        {
+                            if *existing == local {
+                                // same assigned binding twice
+                            } else if parts.local_names().iter().any(|name| name == &local) {
+                                return None;
+                            } else {
+                                parts.named.push((imported, local));
+                            }
+                        } else if parts.local_names().iter().any(|name| name == &local) {
+                            return None;
+                        } else {
+                            parts.named.push((imported, local));
+                        }
+                    }
+                    SetterImportKind::UnusedNamed(imported) => {
+                        let already = parts.named.iter().any(|(name, _)| name == &imported)
+                            || parts.leftover_named.iter().any(|name| name == &imported);
+                        if already {
+                            // leftover get of an already-imported name
+                        } else if parts.local_names().iter().any(|name| name == &imported) {
+                            // Invented leftover local collides (`module.n`
+                            // beside `n = module.cclegacy`).
+                            return None;
+                        } else {
+                            parts.leftover_named.push(imported);
+                        }
+                    }
                     SetterImportKind::Namespace => parts.namespace = Some(local),
                 },
                 SetterPart::Reexport { exported, value } => {
@@ -1050,6 +1105,8 @@ fn collect_imports(
 enum SetterImportKind {
     Default,
     Named(Atom),
+    /// Terser leftover `module.Name` with no assigned local.
+    UnusedNamed(Atom),
     Namespace,
 }
 
@@ -1305,6 +1362,11 @@ fn setter_expr_part(
     if let Some((local, kind)) = setter_assignment_expr(expr, module_sym) {
         return Some(SetterPart::Import(local, kind));
     }
+    // Terser drops `a = module.Name` but keeps the getter. Recognize that
+    // before requiring `_export`, including factories with no export param.
+    if let Some((local, kind)) = unused_setter_member_import(expr, module_sym) {
+        return Some(SetterPart::Import(local, kind));
+    }
     let export_sym = export_sym?;
     // A setter parameter that shadows `_export` makes `e(...)` a call on the
     // module namespace, not a re-export. Keep the whole module fail-closed.
@@ -1350,6 +1412,25 @@ fn apply_setter_reexport(
         }
         _ => None,
     }
+}
+
+fn unused_setter_member_import(expr: &Expr, module_sym: &Atom) -> Option<(Atom, SetterImportKind)> {
+    let Expr::Member(member) = strip_paren_expr(expr) else {
+        return None;
+    };
+    if !member_obj_ident(member, module_sym) {
+        return None;
+    }
+    let imported = member_prop_name(&member.prop)?;
+    // Unused `module.default` is a default import, not this named shape.
+    // Illegal / reserved keys would print as Ident and emit invalid ESM.
+    if imported.as_ref() == "default"
+        || !is_valid_identifier_name(imported.as_ref())
+        || is_reserved_binding_name(imported.as_ref())
+    {
+        return None;
+    }
+    Some((imported.clone(), SetterImportKind::UnusedNamed(imported)))
 }
 
 fn setter_assignment_expr(expr: &Expr, module_sym: &Atom) -> Option<(Atom, SetterImportKind)> {
