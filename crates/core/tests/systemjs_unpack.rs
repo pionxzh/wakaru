@@ -4551,3 +4551,77 @@ System.register("odd", ["cc"], function (_export) {
 "#;
     assert_preserves_whole_register(source, "unused setter colliding invented local");
 }
+
+#[test]
+fn unused_setter_member_cross_dependency_collision_preserves_whole_register() {
+    // Babel SystemJS + Terser `pure_getters: false` produces this from:
+    //   import { foo as kept } from "./a.js";
+    //   import { kept as unused } from "./b.js";
+    //   export const result = kept;
+    // The second import has lost its local alias, so `kept` is not free.
+    let source = r#"
+System.register("entry", ["./a.js", "./b.js"], function (_export, _context) {
+  "use strict";
+  var kept;
+  return {
+    setters: [
+      function (_aJs) {
+        kept = _aJs.foo;
+      },
+      function (_bJs) {
+        _bJs.kept;
+      }
+    ],
+    execute: function () {
+      _export("result", kept);
+    }
+  };
+});
+"#;
+    assert_preserves_whole_register(source, "cross-dependency inferred import collision");
+}
+
+#[test]
+fn unused_setter_member_lifted_local_collision_preserves_whole_register() {
+    // Babel SystemJS + Terser `pure_getters: false` produces this from:
+    //   import { foo as unused } from "./dep.js";
+    //   let foo = 0;
+    //   globalThis.inc = () => ++foo;
+    // Treating the getter as `import { foo }` would turn `foo = 0` into an
+    // assignment to a read-only import binding.
+    let source = r#"
+System.register("entry", ["./dep.js"], function (_export, _context) {
+  "use strict";
+  var foo;
+  return {
+    setters: [function (_depJs) {
+      _depJs.foo;
+    }],
+    execute: function () {
+      foo = 0, globalThis.inc = () => ++foo;
+    }
+  };
+});
+"#;
+    assert_preserves_whole_register(source, "lifted-local inferred import collision");
+}
+
+#[test]
+fn unused_setter_member_free_name_capture_preserves_whole_register() {
+    // The erased local alias is unknowable. Introducing `import { foo }`
+    // must not capture an execute-body reference that was still global.
+    let source = r#"
+System.register("entry", ["./dep.js"], function (_export, _context) {
+  "use strict";
+  return {
+    setters: [function (_depJs) {
+      _depJs.foo;
+    }],
+    execute: function () {
+      globalThis.result = foo;
+    }
+  };
+});
+"#;
+    assert_preserves_whole_register(source, "free-name inferred import capture");
+}
