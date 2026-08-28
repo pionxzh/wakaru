@@ -46,6 +46,16 @@ Branch worktrees live as sibling checkouts at `../wakaru-<branch-suffix>`
 (e.g. `../wakaru-repro-edge-cases` for branch `codex/repro-edge-cases`).
 Run `git worktree list` before creating one — it usually already exists.
 
+### Large inputs
+
+Peak memory follows the largest recovered module, not the input size: a
+bundle that unpacks into small modules is stable at any size, while an input
+that resists unpacking keeps one giant AST alive through the whole rule
+pipeline and can use tens of gigabytes. Until you know an input splits
+cleanly, run anything around 20 MB of JavaScript or larger (or of unknown
+shape) under `scripts/guard-rss.sh <limit-gb> -- <command>`, with a ceiling
+that leaves the machine usable (for example, half of physical RAM).
+
 ## Testing
 
 ```bash
