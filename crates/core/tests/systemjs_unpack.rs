@@ -3529,6 +3529,87 @@ System.register("local", [], function (t) {
 }
 
 #[test]
+fn nested_fn_expr_param_is_not_string_export() {
+    // A nested callback parameter can reuse the factory `_export` short name.
+    // That inner call is an ordinary argument, not an export. A same-named
+    // execute local must not be rewritten to the imported binding.
+    let source = r#"
+System.register("widget", ["./helpers.js"], function (e) {
+  var n, t;
+  return {
+    setters: [function (mod) {
+      n = mod.helper;
+    }],
+    execute: function () {
+      e("Widget", function () {});
+      t = {};
+      t.update = function () {
+        var n = "01:00";
+        this.label.setByFunc(function (e) {
+          return t.prefix + "\n\n" + e("MESSAGE_KEY", n);
+        });
+      };
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "widget.js");
+    assert_no_system_register(entry, "nested fn-expr param shadow");
+    assert!(
+        entry.contains("export") && (entry.contains("Widget") || entry.contains("widget")),
+        "the real two-arg export must reconstruct:\n{entry}"
+    );
+    assert!(
+        !entry.contains("as MESSAGE_KEY") && !entry.contains("export const MESSAGE_KEY"),
+        "the shadowed callback call must not become an export:\n{entry}"
+    );
+    assert!(
+        entry.contains("e(\"MESSAGE_KEY\", n)") || entry.contains("e('MESSAGE_KEY', n)"),
+        "the inner call must remain a call:\n{entry}"
+    );
+}
+
+#[test]
+fn nested_arrow_param_is_not_string_export() {
+    // Same contract as a function-expression parameter: an arrow parameter that
+    // reuses the factory short name is not the export callback.
+    let source = r#"
+System.register("widget", ["./helpers.js"], function (e) {
+  var n, t;
+  return {
+    setters: [function (mod) {
+      n = mod.helper;
+    }],
+    execute: function () {
+      e("Widget", function () {});
+      t = {};
+      t.update = function () {
+        var n = "01:00";
+        this.label.setByFunc((e) => t.prefix + "\n\n" + e("MESSAGE_KEY", n));
+      };
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "widget.js");
+    assert_no_system_register(entry, "nested arrow param shadow");
+    assert!(
+        entry.contains("export") && (entry.contains("Widget") || entry.contains("widget")),
+        "the real two-arg export must reconstruct:\n{entry}"
+    );
+    assert!(
+        !entry.contains("as MESSAGE_KEY") && !entry.contains("export const MESSAGE_KEY"),
+        "the shadowed callback call must not become an export:\n{entry}"
+    );
+    assert!(
+        entry.contains("e(\"MESSAGE_KEY\", n)") || entry.contains("e('MESSAGE_KEY', n)"),
+        "the inner call must remain a call:\n{entry}"
+    );
+}
+
+#[test]
 fn execute_object_export_method_shorthand_is_the_same_shape() {
     // Pretty-printers turn `assert: function () {}` into a method.
     let source = r#"
