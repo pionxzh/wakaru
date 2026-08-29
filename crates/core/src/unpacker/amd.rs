@@ -8,9 +8,9 @@ use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use crate::module_path::relative_import_specifier;
 use crate::unpacker::wrappers::body_looks_like_umd_wrapper;
 use crate::unpacker::{
-    arrow_iife_call, expr_has_function_level_this_or_arguments, function_level_returns,
-    sanitize_relative_path, span_byte_range, stmts_have_function_level_this_or_arguments,
-    BundleFormat, UnpackResult, UnpackedModule,
+    arrow_iife_call_with_async, expr_has_function_level_this_or_arguments,
+    function_level_returns, sanitize_relative_path, span_byte_range,
+    stmts_have_function_level_this_or_arguments, BundleFormat, UnpackResult, UnpackedModule,
 };
 use crate::utils::paren::strip_parens;
 use crate::utils::swc_safety::apply_fixer;
@@ -256,6 +256,7 @@ fn factory_to_module(
             module_from_factory_parts(
                 body.stmts.clone(),
                 None,
+                function.is_async,
                 deps,
                 &params,
                 filename,
@@ -269,6 +270,7 @@ fn factory_to_module(
                 ArrowFunctionBody::FunctionBody(body) => module_from_factory_parts(
                     body.stmts.clone(),
                     None,
+                    arrow.is_async,
                     deps,
                     &params,
                     filename,
@@ -278,6 +280,7 @@ fn factory_to_module(
                 ArrowFunctionBody::Expr(expr) => module_from_factory_parts(
                     Vec::new(),
                     Some(strip_parens(expr).clone()),
+                    arrow.is_async,
                     deps,
                     &params,
                     filename,
@@ -289,6 +292,7 @@ fn factory_to_module(
         expr => module_from_factory_parts(
             Vec::new(),
             Some(expr.clone()),
+            false,
             deps,
             &[],
             filename,
@@ -319,6 +323,7 @@ fn pat_name(pat: &Pat) -> Option<Atom> {
 fn module_from_factory_parts(
     body_stmts: Vec<Stmt>,
     returned_expr: Option<Expr>,
+    factory_is_async: bool,
     deps: &[String],
     params: &[Atom],
     filename: &str,
@@ -336,7 +341,7 @@ fn module_from_factory_parts(
         return None;
     }
     let mut stmts = dependency_stmts(deps, params, filename, module_id, id_to_filename);
-    let body_stmts = lower_factory_body(body_stmts, deps)?;
+    let body_stmts = lower_factory_body(body_stmts, factory_is_async, deps)?;
     stmts.extend(body_stmts);
     if let Some(expr) = returned_expr {
         stmts.push(module_exports_stmt(Box::new(expr)));
@@ -348,7 +353,11 @@ fn module_from_factory_parts(
     })
 }
 
-fn lower_factory_body(mut stmts: Vec<Stmt>, deps: &[String]) -> Option<Vec<Stmt>> {
+fn lower_factory_body(
+    mut stmts: Vec<Stmt>,
+    factory_is_async: bool,
+    deps: &[String],
+) -> Option<Vec<Stmt>> {
     let (return_count, _) = function_level_returns(&stmts);
     let terminal_return_index = stmts.iter().rposition(|stmt| !is_hoist_only_var(stmt));
 
@@ -375,7 +384,9 @@ fn lower_factory_body(mut stmts: Vec<Stmt>, deps: &[String]) -> Option<Vec<Stmt>
         return None;
     }
 
-    let call = arrow_iife_call(stmts);
+    // The factory's own async flag is authoritative: a body can contain
+    // await forms (such as `for await`) without any AwaitExpr node.
+    let call = arrow_iife_call_with_async(stmts, factory_is_async);
     Some(vec![if has_value_return {
         module_exports_stmt(Box::new(call))
     } else {

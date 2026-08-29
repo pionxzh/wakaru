@@ -250,6 +250,33 @@ define("app/main", [], function() {
     );
 }
 
+/// A guarded async factory whose await appears only as `for await` must still
+/// regain an async boundary: the loop head carries no AwaitExpr node, and a
+/// sync arrow around `for await` does not parse.
+#[test]
+fn async_factory_with_for_await_restores_an_async_boundary() {
+    let source = r#"
+define("app/main", [], async function() {
+  if (globalThis.skip) return;
+  for await (const v of globalThis.src()) console.log(v);
+  return 1;
+});
+"#;
+
+    let raw = raw_pairs(source);
+    assert_eq!(raw.len(), 1, "the bundle should unpack: {raw:#?}");
+    let main = &raw[0].1;
+    assert!(
+        main.contains("async") && main.contains("for await"),
+        "the restored boundary must be async so `for await` stays legal:\n{main}"
+    );
+    assert_eq!(
+        validate_output_modules(&raw),
+        vec![],
+        "the restored async boundary must parse:\n{main}"
+    );
+}
+
 /// `arguments` inside a nested ordinary function belongs to that function and
 /// must not block the boundary restoration.
 #[test]

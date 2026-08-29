@@ -189,6 +189,14 @@ fn stmts_have_function_level_await(statements: &[Stmt]) -> bool {
             self.found = true;
         }
 
+        // `for await` carries no AwaitExpr node; the loop head is the await.
+        fn visit_for_of_stmt(&mut self, statement: &swc_core::ecma::ast::ForOfStmt) {
+            if statement.is_await {
+                self.found = true;
+            }
+            statement.visit_children_with(self);
+        }
+
         fn visit_function(&mut self, _: &swc_core::ecma::ast::Function) {}
 
         fn visit_arrow_expr(&mut self, _: &swc_core::ecma::ast::ArrowExpr) {}
@@ -266,12 +274,19 @@ pub(crate) fn expr_has_function_level_this_or_arguments(
 }
 
 pub(crate) fn arrow_iife_call(statements: Vec<Stmt>) -> swc_core::ecma::ast::Expr {
+    arrow_iife_call_with_async(statements, false)
+}
+
+pub(crate) fn arrow_iife_call_with_async(
+    statements: Vec<Stmt>,
+    force_async: bool,
+) -> swc_core::ecma::ast::Expr {
     use swc_core::common::{SyntaxContext, DUMMY_SP};
     use swc_core::ecma::ast::{
         ArrowExpr, ArrowFunctionBody, CallExpr, Callee, Expr, FunctionBody, ParenExpr,
     };
 
-    let is_async = stmts_have_function_level_await(&statements);
+    let is_async = force_async || stmts_have_function_level_await(&statements);
     Expr::Call(CallExpr {
         span: DUMMY_SP,
         ctxt: SyntaxContext::empty(),
