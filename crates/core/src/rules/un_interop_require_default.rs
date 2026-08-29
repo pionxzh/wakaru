@@ -822,18 +822,23 @@ struct DefaultRefRewriter<'a> {
 
 impl VisitMut for DefaultRefRewriter<'_> {
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
-        expr.visit_mut_children_with(self);
-
         // x.default → x  (or x["default"] → x, already normalized by UnBracketNotation)
         if let Expr::Member(member) = expr {
             if is_default_prop(&member.prop) {
                 if let Expr::Ident(obj) = member.obj.as_ref() {
                     if self.affected.contains(&(obj.sym.clone(), obj.ctxt)) {
                         *expr = Expr::Ident(obj.clone());
+                        return;
                     }
                 }
             }
         }
+
+        // Match before descending so a chain such as `x.default.default`
+        // loses exactly the innermost wrapper layer. A bottom-up visitor would
+        // turn the inner member into `x`, then immediately match the outer
+        // member too and silently erase an authored `.default` access.
+        expr.visit_mut_children_with(self);
     }
 }
 

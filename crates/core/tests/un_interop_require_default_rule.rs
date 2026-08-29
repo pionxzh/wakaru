@@ -16,6 +16,20 @@ console.log(_a);
 }
 
 #[test]
+fn default_rewrite_strips_only_the_interop_wrapper_layer() {
+    let input = r#"
+var _interopRequireDefault = require("@babel/runtime/helpers/interopRequireDefault");
+var _a = _interopRequireDefault(require("a"));
+console.log(_a.default.default);
+"#;
+    let expected = r#"
+import _a from "a";
+console.log(_a.default);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn unwraps_interop_require_default_by_esm_import_path() {
     let input = r#"
 var _interopRequireDefault = require("@babel/runtime/helpers/esm/interopRequireDefault");

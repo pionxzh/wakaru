@@ -181,8 +181,9 @@ For example, `UnInteropRequireDefault`:
   binding, the binding has no other writes, and earlier module evaluation
   cannot invoke code that observes it. Generated SWC export scaffolding,
   including its local descriptor-copy helper, is recognized as inert.
-- `_a.default` becomes `_a` at all reference sites only for a recovered,
-  non-reassigned binding.
+- The interop wrapper's `_a.default` layer becomes `_a` at all reference sites
+  only for a recovered, non-reassigned binding. Additional authored layers are
+  retained (`_a.default.default` becomes `_a.default`, not `_a`).
 - If assignment-form recovery is rejected, the wrapper call and helper stay in
   place and a synthetic AMD dependency local remains mutable around its ESM
   import. Otherwise the now-unused helper declaration is removed.
