@@ -215,18 +215,19 @@ fn stmts_have_function_level_await(statements: &[Stmt]) -> bool {
     finder.found
 }
 
-/// Whether lifted statements observe the enclosing function's `this` or
-/// `arguments`. Both change meaning when the statements move to ESM module
-/// scope or into a restored arrow boundary: `this` becomes `undefined` and
-/// `arguments` becomes an unresolved reference. Ordinary functions, class
-/// bodies, and accessors rebind them, so the scan does not descend into
-/// those; arrows inherit both, so it does.
+/// Whether lifted statements observe the enclosing function's `this`,
+/// `arguments`, or `new.target`. All three change meaning when the statements
+/// move to ESM module scope or into a restored arrow boundary: `this` becomes
+/// `undefined`, `arguments` becomes an unresolved reference, and `new.target`
+/// becomes syntactically invalid. Ordinary functions, class bodies, and
+/// accessors rebind them, so the scan does not descend into those; arrows
+/// inherit them, so it does.
 #[derive(Default)]
-struct FunctionLevelThisOrArguments {
+struct FunctionLevelSpecialBindings {
     found: bool,
 }
 
-impl Visit for FunctionLevelThisOrArguments {
+impl Visit for FunctionLevelSpecialBindings {
     fn visit_this_expr(&mut self, _: &swc_core::ecma::ast::ThisExpr) {
         self.found = true;
     }
@@ -237,13 +238,30 @@ impl Visit for FunctionLevelThisOrArguments {
         }
     }
 
+    fn visit_meta_prop_expr(&mut self, meta: &swc_core::ecma::ast::MetaPropExpr) {
+        if meta.kind == swc_core::ecma::ast::MetaPropKind::NewTarget {
+            self.found = true;
+        }
+    }
+
     fn visit_function(&mut self, _: &swc_core::ecma::ast::Function) {}
 
     fn visit_constructor(&mut self, _: &swc_core::ecma::ast::Constructor) {}
 
-    fn visit_getter_prop(&mut self, _: &swc_core::ecma::ast::GetterProp) {}
+    fn visit_getter_prop(&mut self, prop: &swc_core::ecma::ast::GetterProp) {
+        // The accessor body has its own function boundary, but a computed key
+        // evaluates in the enclosing factory context.
+        if let swc_core::ecma::ast::PropName::Computed(key) = &prop.key {
+            key.visit_with(self);
+        }
+    }
 
-    fn visit_setter_prop(&mut self, _: &swc_core::ecma::ast::SetterProp) {}
+    fn visit_setter_prop(&mut self, prop: &swc_core::ecma::ast::SetterProp) {
+        // As with getters, do not enter the body; only the key is inherited.
+        if let swc_core::ecma::ast::PropName::Computed(key) = &prop.key {
+            key.visit_with(self);
+        }
+    }
 
     fn visit_static_block(&mut self, _: &swc_core::ecma::ast::StaticBlock) {}
 
@@ -257,18 +275,18 @@ impl Visit for FunctionLevelThisOrArguments {
     fn visit_private_prop(&mut self, _: &swc_core::ecma::ast::PrivateProp) {}
 }
 
-pub(crate) fn stmts_have_function_level_this_or_arguments(statements: &[Stmt]) -> bool {
-    let mut finder = FunctionLevelThisOrArguments::default();
+pub(crate) fn stmts_have_function_level_special_bindings(statements: &[Stmt]) -> bool {
+    let mut finder = FunctionLevelSpecialBindings::default();
     for statement in statements {
         statement.visit_with(&mut finder);
     }
     finder.found
 }
 
-pub(crate) fn expr_has_function_level_this_or_arguments(
+pub(crate) fn expr_has_function_level_special_bindings(
     expression: &swc_core::ecma::ast::Expr,
 ) -> bool {
-    let mut finder = FunctionLevelThisOrArguments::default();
+    let mut finder = FunctionLevelSpecialBindings::default();
     expression.visit_with(&mut finder);
     finder.found
 }

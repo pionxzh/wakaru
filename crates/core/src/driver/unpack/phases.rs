@@ -50,7 +50,7 @@ use crate::rules::{
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
 use crate::synthetic_import_cleanup::downgrade_unused_synthetic_imports;
 use crate::unpacker::{
-    arrow_iife_call, stmts_have_function_level_return, stmts_have_function_level_this_or_arguments,
+    arrow_iife_call, stmts_have_function_level_return, stmts_have_function_level_special_bindings,
     DetectedModuleFailure,
 };
 
@@ -90,10 +90,11 @@ fn restore_lifted_function_boundary(module: &mut Module, enabled: bool) -> Bound
     }) {
         return BoundaryRestoration::Declined;
     }
-    // The restored arrow boundary inherits module-scope `this` (undefined)
-    // and has no `arguments`; a lifted body observing either would parse but
-    // break at runtime. Fail closed to the extracted-source fallback instead.
-    if stmts_have_function_level_this_or_arguments(&statements) {
+    // The restored arrow boundary inherits module-scope `this` (undefined),
+    // has no `arguments`, and cannot provide a valid `new.target`. A lifted
+    // body observing any of them would break at parse time or runtime. Fail
+    // closed to the extracted-source fallback instead.
+    if stmts_have_function_level_special_bindings(&statements) {
         return BoundaryRestoration::Declined;
     }
 

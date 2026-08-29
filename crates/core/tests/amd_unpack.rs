@@ -231,6 +231,87 @@ define("app/dep", [], function() {
     );
 }
 
+/// `new.target` is bound by the AMD factory just like `this` and
+/// `arguments`. Lifting it to module scope would emit invalid JavaScript.
+#[test]
+fn factory_observing_new_target_rejects_the_bundle() {
+    let source = r#"
+define("app/main", [], function() {
+  console.log(new.target);
+});
+define("app/dep", [], function() {
+  return 42;
+});
+"#;
+
+    let raw = raw_pairs(source);
+    assert_eq!(
+        raw.len(),
+        1,
+        "the bundle must fall back as one file: {raw:#?}"
+    );
+    assert!(
+        raw[0].1.contains("define(\"app/main\"") && raw[0].1.contains("new.target"),
+        "the original define calls must be preserved:\n{}",
+        raw[0].1
+    );
+}
+
+/// Accessor bodies bind their own `new.target`, but computed accessor keys
+/// still evaluate in the surrounding AMD factory and cannot be lifted.
+#[test]
+fn factory_observing_new_target_in_computed_accessor_key_rejects_the_bundle() {
+    let source = r#"
+define("app/main", [], function() {
+  const object = {
+    get [new.target ? "constructed" : "called"]() { return 1; }
+  };
+  return object;
+});
+define("app/dep", [], function() {
+  return 42;
+});
+"#;
+
+    let raw = raw_pairs(source);
+    assert_eq!(
+        raw.len(),
+        1,
+        "the bundle must fall back as one file: {raw:#?}"
+    );
+    assert!(
+        raw[0].1.contains("define(\"app/main\"") && raw[0].1.contains("new.target"),
+        "the original define calls must be preserved:\n{}",
+        raw[0].1
+    );
+}
+
+#[test]
+fn factory_observing_new_target_in_computed_setter_key_rejects_the_bundle() {
+    let source = r#"
+define("app/main", [], function() {
+  return {
+    set [new.target ? "constructed" : "called"](value) { consume(value); }
+  };
+});
+define("app/dep", [], function() {
+  return 42;
+});
+"#;
+
+    let raw = raw_pairs(source);
+    assert_eq!(
+        raw.len(),
+        1,
+        "the bundle must fall back as one file: {raw:#?}"
+    );
+    assert!(
+        raw[0].1.contains("define(\"app/main\"") && raw[0].1.contains("new.target"),
+        "the original define calls must be preserved:\n{}",
+        raw[0].1
+    );
+}
+
 /// Same fail-close for a factory observing its `this` receiver.
 #[test]
 fn factory_observing_this_rejects_the_bundle() {

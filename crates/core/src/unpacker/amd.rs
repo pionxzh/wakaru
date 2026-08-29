@@ -8,8 +8,8 @@ use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use crate::module_path::relative_import_specifier;
 use crate::unpacker::wrappers::body_looks_like_umd_wrapper;
 use crate::unpacker::{
-    arrow_iife_call_with_async, expr_has_function_level_this_or_arguments, function_level_returns,
-    sanitize_relative_path, span_byte_range, stmts_have_function_level_this_or_arguments,
+    arrow_iife_call_with_async, expr_has_function_level_special_bindings, function_level_returns,
+    sanitize_relative_path, span_byte_range, stmts_have_function_level_special_bindings,
     BundleFormat, UnpackResult, UnpackedModule,
 };
 use crate::utils::paren::strip_parens;
@@ -337,12 +337,13 @@ fn module_from_factory_parts(
         is_async: factory_is_async,
     } = body;
     // Lifting the factory body to module scope (or into a restored arrow
-    // boundary) changes what `this` and `arguments` resolve to. Fail closed
-    // so the whole-bundle fallback preserves the original semantics.
-    if stmts_have_function_level_this_or_arguments(&body_stmts)
+    // boundary) changes what `this`, `arguments`, and `new.target` resolve to.
+    // Fail closed so the whole-bundle fallback preserves the original
+    // semantics and never emits top-level `new.target`.
+    if stmts_have_function_level_special_bindings(&body_stmts)
         || returned_expr
             .as_ref()
-            .is_some_and(expr_has_function_level_this_or_arguments)
+            .is_some_and(expr_has_function_level_special_bindings)
     {
         return None;
     }
