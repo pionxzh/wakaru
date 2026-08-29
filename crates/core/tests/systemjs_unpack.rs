@@ -89,6 +89,29 @@ fn rollup_preserve_module_entry_raw_reconstructs_esm() {
 }
 
 #[test]
+fn rollup_terser_lifted_object_expression_stays_valid() {
+    let source = fixture("rollup-terser/entry.js");
+
+    for (stage, modules) in [
+        ("raw", unpack_source_raw(&source)),
+        ("decompiled", unpack_source(&source)),
+    ] {
+        assert_eq!(modules.len(), 1, "unexpected {stage} modules: {modules:?}");
+        let entry = &modules[0].1;
+        assert_no_system_register(entry, stage);
+        assert_no_leftover_export_call(entry, stage);
+        assert!(
+            entry.contains("Before")
+                && entry.contains("After")
+                && entry.contains("key()")
+                && entry.contains("lookup()"),
+            "{stage} output must retain the exports and object-headed call:\n{entry}"
+        );
+        assert_valid_unpacked_esm(&modules, &format!("Rollup + Terser {stage}"));
+    }
+}
+
+#[test]
 fn swc_systemjs_raw_reconstructs_context_and_assignment_exports() {
     let raw = unpack_fixture_raw("swc/src/entry.js");
     assert_eq!(raw.len(), 1);
