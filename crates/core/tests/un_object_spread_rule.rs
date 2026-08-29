@@ -266,6 +266,24 @@ use(out);
 }
 
 #[test]
+fn preserves_unconsumed_numeric_require_decl() {
+    // A numeric-require binding is collected as a *candidate* swc helper
+    // namespace, but the cleanup may only delete declarations this rule's own
+    // rewrites orphaned: the require call carries a module side effect, and
+    // the numeric id is the user's join key for chunks missing from the input.
+    let input = r#"
+const ext = require(999);
+const out = { app_name: name };
+use(out);
+"#;
+    let output = render_rule(input, UnObjectSpread::new_with_mark);
+    assert!(
+        output.contains("require(999)"),
+        "numeric require never consumed by object-spread must survive:\n{output}"
+    );
+}
+
+#[test]
 fn swc_numeric_namespace_object_spread_requires_pi_export() {
     let input = r#"
 const Y = require(39889);

@@ -177,6 +177,16 @@ fn run_un_object_spread(
     );
     let swc_numeric_helper_namespaces =
         collect_swc_numeric_helper_namespaces(module, unresolved_mark);
+    // Numeric requires are only *candidate* helper namespaces; the cleanup
+    // below may delete just the ones this rule's own rewrites orphaned.
+    // Snapshot which candidates are referenced before the replacer runs so a
+    // binding some earlier rule already orphaned is left alone (its require
+    // call still carries a module side effect).
+    let numeric_namespaces_referenced_at_entry = remaining_refs_outside_declarations(
+        module,
+        &swc_numeric_helper_namespaces,
+        &swc_numeric_helper_namespaces,
+    );
     let tslib_namespaces = local_helper_context.tslib_namespaces();
     let has_inline_object_spread_call = has_inline_object_spread_call(
         module,
@@ -202,7 +212,7 @@ fn run_un_object_spread(
         esbuild_define_normal_prop_helpers: &esbuild_define_normal_prop_helpers,
     };
     module.visit_mut_with(&mut replacer);
-    remove_unused_numeric_helper_namespace_decls(module, &swc_numeric_helper_namespaces);
+    remove_unused_numeric_helper_namespace_decls(module, &numeric_namespaces_referenced_at_entry);
 
     // Only remove root helpers whose calls were fully transformed. Dependencies
     // referenced by retained helpers must stay with those helpers.
