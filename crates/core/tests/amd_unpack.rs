@@ -218,6 +218,40 @@ define([
 }
 
 #[test]
+fn rejected_swc_default_interop_assignment_keeps_a_mutable_local() {
+    let source = r#"
+define([
+  "exports",
+  "@swc/helpers/_/_interop_require_default",
+  "react"
+], function(exports, _interop_require_default, _react) {
+  "use strict";
+  probe();
+  _react = _interop_require_default(_react);
+  exports.hook = _react.default.useEffect;
+  function probe() {
+    return _react.default;
+  }
+});
+"#;
+
+    let decompiled = pairs(source);
+    assert_eq!(decompiled.len(), 1);
+    let module = &decompiled[0].1;
+    assert!(
+        module.contains("from \"@swc/helpers/_/_interop_require_default\"")
+            && module.contains("_react.default")
+            && !module.contains("_react = _react"),
+        "a rejected interop recovery must preserve the wrapper call:\n{module}"
+    );
+    assert_eq!(
+        validate_output_modules(&decompiled),
+        vec![],
+        "the generated dependency local must remain mutable when the wrapper assignment stays"
+    );
+}
+
+#[test]
 fn object_literal_amd_define_unpack() {
     let source = r#"
 define("config", {

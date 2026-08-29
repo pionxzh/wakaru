@@ -289,9 +289,10 @@ _react = _interop_require_default(_react);
 console.log(_react.default);
 "#;
     let expected = r#"
+import { _ as _interop_require_default } from "@swc/helpers/_/_interop_require_default";
 var _react = require("react");
 observe(_react.default);
-_react = _react;
+_react = _interop_require_default(_react);
 console.log(_react.default);
 "#;
     assert_eq_normalized(
@@ -311,9 +312,10 @@ if (enabled) {
 console.log(_react.default);
 "#;
     let expected = r#"
+import { _ as _interop_require_default } from "@swc/helpers/_/_interop_require_default";
 var _react = require("react");
 if (enabled) {
-    _react = _react;
+    _react = _interop_require_default(_react);
 }
 console.log(_react.default);
 "#;
@@ -338,8 +340,9 @@ for (_react of list) {
 }
 "#;
     let expected = r#"
+import { _ as _interop_require_default } from "@swc/helpers/_/_interop_require_default";
 var _react = require("react");
-_react = _react;
+_react = _interop_require_default(_react);
 use(_react.default);
 for (_react of list) {
     use2(_react.default);
@@ -362,8 +365,9 @@ use(_react.default);
 use2(_react.default);
 "#;
     let expected = r#"
+import { _ as _interop_require_default } from "@swc/helpers/_/_interop_require_default";
 var _react = require("react");
-_react = _react;
+_react = _interop_require_default(_react);
 use(_react.default);
 [_react] = replacements;
 use2(_react.default);
@@ -388,8 +392,9 @@ function swap(next) {
 }
 "#;
     let expected = r#"
+import { _ as _interop_require_default } from "@swc/helpers/_/_interop_require_default";
 var _react = require("react");
-_react = _react;
+_react = _interop_require_default(_react);
 use(_react.default);
 function swap(next) {
     _react = next;
@@ -417,9 +422,10 @@ function probe() {
 }
 "#;
     let expected = r#"
+import { _ as _interop_require_default } from "@swc/helpers/_/_interop_require_default";
 var _react = require("react");
 probe();
-_react = _react;
+_react = _interop_require_default(_react);
 use(_react.default);
 function probe() {
     return _react.default;
@@ -428,6 +434,33 @@ function probe() {
     assert_eq_normalized(
         &render_pipeline_until(input, "UnInteropRequireDefault"),
         expected,
+    );
+}
+
+#[test]
+fn rejected_assignment_form_remains_a_mutable_local_after_require_recovery() {
+    let input = r#"
+import { _ as _interop_require_default } from "@swc/helpers/_/_interop_require_default";
+var _react = require("react");
+probe();
+_react = _interop_require_default(_react);
+use(_react.default);
+function probe() {
+    return _react.default;
+}
+"#;
+    let output = render(input);
+
+    assert!(
+        output.contains("from \"@swc/helpers/_/_interop_require_default\"")
+            && output.contains("_react.default")
+            && !output.contains("_react = _react"),
+        "a rejected wrapper assignment must keep its runtime semantics:\n{output}"
+    );
+    assert!(
+        output.contains("import __react from \"react\"")
+            && output.contains("let _react = __react"),
+        "the reassigned require local must stay mutable instead of becoming an import binding:\n{output}"
     );
 }
 
