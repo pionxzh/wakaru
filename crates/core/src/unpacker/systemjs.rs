@@ -1764,6 +1764,7 @@ impl SystemExecuteTransformer {
                             expr: expr.clone(),
                         });
                         stmt.visit_mut_with(self);
+                        parenthesize_lifted_stmt_expr(&mut stmt);
                         items.extend(self.take_pending_expr_export_decls());
                         items.push(ModuleItem::Stmt(stmt));
                     }
@@ -2090,6 +2091,7 @@ impl SystemExecuteTransformer {
                 expr: part.clone(),
             });
             stmt.visit_mut_with(self);
+            parenthesize_lifted_stmt_expr(&mut stmt);
             items.push(ModuleItem::Stmt(stmt));
         }
         None
@@ -2272,6 +2274,7 @@ impl SystemExecuteTransformer {
                 expr: part.clone(),
             });
             stmt.visit_mut_with(self);
+            parenthesize_lifted_stmt_expr(&mut stmt);
             items.push(ModuleItem::Stmt(stmt));
         }
         None
@@ -2735,6 +2738,24 @@ fn starts_with_function_or_class(expr: &Expr) -> bool {
 
 fn exported_value_is_assignment(expr: &Expr) -> bool {
     matches!(strip_paren_expr(expr), Expr::Assign(_))
+}
+
+// Comma-sequence leftovers become statements. A function-callee IIFE is
+// legal in expression position and a SyntaxError as `function () {}()`.
+fn parenthesize_lifted_stmt_expr(stmt: &mut Stmt) {
+    let Stmt::Expr(expr_stmt) = stmt else {
+        return;
+    };
+    if !is_function_callee_iife(expr_stmt.expr.as_ref())
+        && !starts_with_function_or_class(expr_stmt.expr.as_ref())
+    {
+        return;
+    }
+    let inner = expr_stmt.expr.clone();
+    *expr_stmt.expr = Expr::Paren(ParenExpr {
+        span: DUMMY_SP,
+        expr: inner,
+    });
 }
 
 fn export_replacement_expr(value: Box<Expr>) -> Expr {
