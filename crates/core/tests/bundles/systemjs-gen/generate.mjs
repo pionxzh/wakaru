@@ -17,6 +17,7 @@ const versions = {
   babelSystemjs: "7.25.9",
   swcCli: "0.7.9",
   swcCore: "1.15.3",
+  terser: "5.31.6",
   typescript: "5.9.3",
   webpack: "5.103.0",
   webpackCli: "5.1.4",
@@ -58,6 +59,31 @@ run("npx", [
   "--dir",
   "dist/preserve",
 ]);
+
+console.log("");
+console.log(`=== Rollup ${versions.rollup} + Terser ${versions.terser} ===`);
+console.log("  rollup-terser: compressed System.register sequence output");
+mkdirSync(`${cwd}/dist/rollup-terser`, { recursive: true });
+run("npx", [
+  "--yes",
+  `rollup@${versions.rollup}`,
+  "src-rollup-terser/entry.js",
+  "--format",
+  "system",
+  "--file",
+  "dist/.rollup-terser.js",
+]);
+run("npx", [
+  "--yes",
+  `terser@${versions.terser}`,
+  "dist/.rollup-terser.js",
+  "--compress",
+  "sequences=1000,passes=3",
+  "--mangle",
+  "--output",
+  "dist/rollup-terser/entry.js",
+]);
+rmSync(`${cwd}/dist/.rollup-terser.js`, { force: true });
 
 console.log("");
 console.log(`=== Babel ${versions.babelCore} ===`);
