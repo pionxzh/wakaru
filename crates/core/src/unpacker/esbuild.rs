@@ -4313,6 +4313,53 @@ struct AtomRefCollector<'a> {
     shadowed_atoms: Vec<HashSet<Atom>>,
 }
 
+impl AtomRefCollector<'_> {
+    fn visit_assignment_array(&mut self, elems: &[Option<Pat>]) {
+        for elem in elems.iter().flatten() {
+            self.visit_assignment_pat(elem);
+        }
+    }
+
+    fn visit_assignment_object(&mut self, props: &[ObjectPatProp]) {
+        for prop in props {
+            match prop {
+                ObjectPatProp::KeyValue(prop) => {
+                    prop.key.visit_with(self);
+                    self.visit_assignment_pat(&prop.value);
+                }
+                ObjectPatProp::Assign(prop) => {
+                    self.visit_ident(&prop.key.id);
+                    prop.value.visit_with(self);
+                }
+                ObjectPatProp::Rest(rest) => self.visit_assignment_pat(&rest.arg),
+            }
+        }
+    }
+
+    fn visit_assignment_pat(&mut self, pat: &Pat) {
+        match pat {
+            Pat::Ident(ident) => self.visit_ident(&ident.id),
+            Pat::Array(array) => self.visit_assignment_array(&array.elems),
+            Pat::Object(object) => self.visit_assignment_object(&object.props),
+            Pat::Assign(assign) => {
+                self.visit_assignment_pat(&assign.left);
+                assign.right.visit_with(self);
+            }
+            Pat::Rest(rest) => self.visit_assignment_pat(&rest.arg),
+            Pat::Expr(expr) => expr.visit_with(self),
+            Pat::Invalid(_) => {}
+        }
+    }
+
+    fn visit_assignment_target_pat(&mut self, pat: &AssignTargetPat) {
+        match pat {
+            AssignTargetPat::Array(array) => self.visit_assignment_array(&array.elems),
+            AssignTargetPat::Object(object) => self.visit_assignment_object(&object.props),
+            AssignTargetPat::Invalid(_) => {}
+        }
+    }
+}
+
 impl Visit for AtomRefCollector<'_> {
     fn visit_binding_ident(&mut self, ident: &BindingIdent) {
         if let Some(scope) = self.shadowed_atoms.last_mut() {
@@ -4330,6 +4377,19 @@ impl Visit for AtomRefCollector<'_> {
         self.shadowed_atoms.push(HashSet::new());
         expr.visit_children_with(self);
         self.shadowed_atoms.pop();
+    }
+
+    fn visit_assign_target(&mut self, target: &AssignTarget) {
+        match target {
+            // SWC represents an identifier assignment target with
+            // `BindingIdent`, but it is a use of an existing binding, not a
+            // declaration that shadows later references in this scope.
+            AssignTarget::Simple(SimpleAssignTarget::Ident(ident)) => {
+                self.visit_ident(&ident.id);
+            }
+            AssignTarget::Simple(target) => target.visit_children_with(self),
+            AssignTarget::Pat(target) => self.visit_assignment_target_pat(target),
+        }
     }
 
     fn visit_ident(&mut self, ident: &swc_core::ecma::ast::Ident) {
@@ -5478,6 +5538,49 @@ var obj = { JA: true };
             !refs.contains(&Atom::from("JA")),
             "parameter references and static object keys should not synthesize imports"
         );
+    }
+
+    #[test]
+    fn atom_ref_collector_treats_assignment_targets_as_references() {
+        let refs = collect_atom_refs(
+            r#"
+JA = value;
+({ answer: KA = fallback } = source);
+use(JA, KA);
+"#,
+            &["JA", "KA"],
+        );
+
+        assert_eq!(
+            refs,
+            HashSet::from([Atom::from("JA"), Atom::from("KA")]),
+            "assignment targets are uses of existing bindings, not shadow declarations"
+        );
+    }
+
+    #[test]
+    fn import_repair_keeps_assigned_relocated_bindings_visible() {
+        GLOBALS.set(&Default::default(), || {
+            let cm: Lrc<SourceMap> = Default::default();
+            let module = super::super::parse_es_module(
+                "state = next; observe(state);",
+                "entry.js",
+                cm.clone(),
+            )
+            .expect("fixture should parse");
+            let binding_to_filename = HashMap::from([(
+                (Atom::from("state"), Default::default()),
+                "owner.js".to_string(),
+            )]);
+
+            let repaired = repair_module_imports(module.body, "entry.js", &binding_to_filename);
+            let output = emit_items(repaired, "entry.js".to_string(), cm);
+
+            assert!(
+                output.contains("import { state } from \"./owner.js\""),
+                "the relocated binding write must not suppress import repair:\n{output}"
+            );
+        });
     }
 
     #[test]
