@@ -1,7 +1,9 @@
 use std::collections::HashSet;
 
+use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
-    Decl, Expr, Ident, ImportSpecifier, Lit, MemberProp, Module, ModuleItem, Pat, VarDeclarator,
+    BindingIdent, Callee, Decl, Expr, Ident, ImportSpecifier, Lit, MemberProp, Module, ModuleItem,
+    Pat, Stmt, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -246,6 +248,126 @@ pub(crate) fn collect_import_binding_keys(module: &Module) -> HashSet<BindingKey
         }
     }
     keys
+}
+
+/// Top-level `var x = require(<number>)` declarations. Bundlers rewrite
+/// `@swc/helpers` imports into numeric module ids, so the object-spread and
+/// object-rest rules treat every such declaration as a *candidate* helper
+/// namespace and match member calls through it.
+///
+/// The paired sweep may delete only candidates the calling rule's own
+/// rewrites orphaned — referenced when `collect` ran, unreferenced at sweep
+/// time. A candidate that was already unreferenced at entry was orphaned by
+/// some earlier rule and must survive: its require call still carries a
+/// module side effect, and the numeric id is the user's join key for chunks
+/// missing from the input.
+pub(crate) struct NumericRequireNamespaces {
+    pub(crate) candidates: HashSet<BindingKey>,
+    referenced_at_entry: HashSet<BindingKey>,
+}
+
+impl NumericRequireNamespaces {
+    /// With `Some(mark)`, only calls to the unresolved `require` qualify;
+    /// `None` accepts any `require` identifier (UnObjectSpread's behavior
+    /// when constructed without a mark).
+    pub(crate) fn collect(module: &Module, unresolved_mark: Option<Mark>) -> Self {
+        let mut candidates = HashSet::new();
+        for item in &module.body {
+            let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+                continue;
+            };
+            for decl in &var.decls {
+                let Pat::Ident(binding) = &decl.name else {
+                    continue;
+                };
+                if decl
+                    .init
+                    .as_deref()
+                    .is_some_and(|init| is_numeric_require_call(init, unresolved_mark))
+                {
+                    candidates.insert(binding_key(&binding.id));
+                }
+            }
+        }
+        let referenced_at_entry =
+            remaining_refs_outside_declarations(module, &candidates, &candidates);
+        Self {
+            candidates,
+            referenced_at_entry,
+        }
+    }
+
+    /// Remove candidate declarations orphaned by the calling rule's rewrites.
+    pub(crate) fn sweep_orphaned(&self, body: &mut Vec<ModuleItem>) {
+        let mut unused = HashSet::new();
+        for key in &self.referenced_at_entry {
+            let ident = Ident::new(key.0.clone(), DUMMY_SP, key.1);
+            if !ident_used_in_items(body, &ident) {
+                unused.insert(key.clone());
+            }
+        }
+        if unused.is_empty() {
+            return;
+        }
+        body.retain_mut(|item| {
+            let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+                return true;
+            };
+            var.decls.retain(|decl| {
+                let Pat::Ident(binding) = &decl.name else {
+                    return true;
+                };
+                !unused.contains(&binding_key(&binding.id))
+            });
+            !var.decls.is_empty()
+        });
+    }
+}
+
+fn is_numeric_require_call(expr: &Expr, unresolved_mark: Option<Mark>) -> bool {
+    let Expr::Call(call) = expr else {
+        return false;
+    };
+    if call.args.len() != 1 || call.args[0].spread.is_some() {
+        return false;
+    }
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    if !matches!(callee.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "require" && unresolved_mark.is_none_or(|mark| id.ctxt.outer() == mark))
+    {
+        return false;
+    }
+    matches!(call.args[0].expr.as_ref(), Expr::Lit(Lit::Num(_)))
+}
+
+fn ident_used_in_items(body: &[ModuleItem], target: &Ident) -> bool {
+    struct Finder<'a> {
+        target: &'a Ident,
+        found: bool,
+    }
+
+    impl Visit for Finder<'_> {
+        fn visit_binding_ident(&mut self, _: &BindingIdent) {}
+
+        fn visit_ident(&mut self, ident: &Ident) {
+            if ident.sym == self.target.sym && ident.ctxt == self.target.ctxt {
+                self.found = true;
+            }
+        }
+    }
+
+    let mut finder = Finder {
+        target,
+        found: false,
+    };
+    for item in body {
+        item.visit_with(&mut finder);
+        if finder.found {
+            return true;
+        }
+    }
+    finder.found
 }
 
 #[cfg(test)]
