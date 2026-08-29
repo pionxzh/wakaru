@@ -479,6 +479,64 @@ function probe() {
 }
 
 #[test]
+fn rejected_assignment_form_preserves_authored_const_semantics() {
+    let input = r#"
+import { _ as _interop_require_default } from "@swc/helpers/_/_interop_require_default";
+const react = require("react");
+probe();
+react = _interop_require_default(react);
+"#;
+    let output = render(input);
+
+    assert!(
+        output.contains("const react") && !output.contains("let react"),
+        "an authored const assignment must still throw instead of being widened:\n{output}"
+    );
+    assert!(
+        output.contains("react =")
+            && output.contains("from \"@swc/helpers/_/_interop_require_default\"")
+            && !output.contains("react = react"),
+        "the rejected wrapper assignment must remain executable:\n{output}"
+    );
+}
+
+#[test]
+fn accepted_assignment_form_preserves_authored_const_semantics() {
+    let input = r#"
+import { _ as _interop_require_default } from "@swc/helpers/_/_interop_require_default";
+const react = require("react");
+react = _interop_require_default(react);
+use(react.default);
+"#;
+    let output = render(input);
+
+    assert!(
+        output.contains("const react") && output.contains("react ="),
+        "an authored const assignment must remain and still throw: {output}"
+    );
+    assert!(
+        output.contains("react.default")
+            && output.contains("from \"@swc/helpers/_/_interop_require_default\""),
+        "the authored wrapper assignment must not be consumed: {output}"
+    );
+}
+
+#[test]
+fn rejected_assignment_form_preserves_authored_let_kind_at_rule_boundary() {
+    let input = r#"
+import { _ as _interop_require_default } from "@swc/helpers/_/_interop_require_default";
+let react = require("react");
+probe();
+react = _interop_require_default(react);
+"#;
+
+    assert_eq_normalized(
+        &render_pipeline_until(input, "UnInteropRequireDefault"),
+        input,
+    );
+}
+
+#[test]
 fn assignment_form_allows_generated_export_preamble() {
     // SWC's AMD preamble installs export getters before the interop
     // initializers: `Object.defineProperty` scaffolding and an inert local

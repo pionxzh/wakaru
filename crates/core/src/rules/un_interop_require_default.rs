@@ -74,14 +74,6 @@ fn run_un_interop_require_default(module: &mut Module, local_helpers: &LocalHelp
                 .collect();
         }
 
-        // A rejected SWC AMD assignment must remain executable. The AMD
-        // extractor represents dependency parameters as synthetic `const`
-        // require locals, which is correct only while the generated wrapper
-        // assignment can be consumed. Widen just the rejected binding to
-        // `var`; UnEsm can then capture its require into an immutable import
-        // while keeping the original binding mutable.
-        preserve_rejected_assignment_form_require_bindings(module, local_helpers);
-
         // Phase 2a: Unwrap helper calls — replace `helper(arg)` with `arg`.
         let mut call_unwrapper = CallUnwrapper {
             local_helpers,
@@ -564,6 +556,12 @@ fn collect_top_level_require_declarations(
         let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) = item else {
             continue;
         };
+        // Assignment-form interop output comes from mutable AMD factory
+        // parameters. Consuming an assignment to authored `const` would erase
+        // its mandatory TypeError; `let` has no AMD provenance either.
+        if var_decl.kind != VarDeclKind::Var {
+            continue;
+        }
         // AMD extraction emits one declaration per dependency. Requiring that
         // exact shape also avoids overlooking another use in the same item.
         let [declarator] = var_decl.decls.as_slice() else {
@@ -581,64 +579,6 @@ fn collect_top_level_require_declarations(
     }
 
     declarations
-}
-
-/// Preserve the exact rejected assignment form through later ESM recovery.
-///
-/// AMD dependency parameters are synthesized as `const name = require(...)`.
-/// When the wrapper assignment is consumed, that declaration can become an
-/// import directly. When safety proof rejects the consumption, however, the
-/// original parameter must remain mutable. Widen only a require declaration
-/// whose binding still has an exact `name = helper(name)` assignment.
-fn preserve_rejected_assignment_form_require_bindings(
-    module: &mut Module,
-    local_helpers: &LocalHelperContext,
-) {
-    let mut collector = AssignmentFormBindingCollector {
-        local_helpers,
-        bindings: HashSet::new(),
-    };
-    module.visit_with(&mut collector);
-    if collector.bindings.is_empty() {
-        return;
-    }
-
-    for item in &mut module.body {
-        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) = item else {
-            continue;
-        };
-        let [declarator] = var_decl.decls.as_slice() else {
-            continue;
-        };
-        let Pat::Ident(binding) = &declarator.name else {
-            continue;
-        };
-        let Some(init) = &declarator.init else {
-            continue;
-        };
-        if collector
-            .bindings
-            .contains(&(binding.id.sym.clone(), binding.id.ctxt))
-            && is_static_require_call(init, local_helpers)
-        {
-            var_decl.kind = VarDeclKind::Var;
-        }
-    }
-}
-
-struct AssignmentFormBindingCollector<'a> {
-    local_helpers: &'a LocalHelperContext,
-    bindings: HashSet<BindingKey>,
-}
-
-impl Visit for AssignmentFormBindingCollector<'_> {
-    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
-        if let Some(binding) = assignment_form_binding(assign, self.local_helpers) {
-            self.bindings.insert(binding);
-            return;
-        }
-        assign.visit_children_with(self);
-    }
 }
 
 fn is_static_require_call(expr: &Expr, local_helpers: &LocalHelperContext) -> bool {

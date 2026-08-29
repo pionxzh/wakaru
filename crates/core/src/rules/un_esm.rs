@@ -159,7 +159,7 @@ impl VisitMut for UnEsm {
         rewrite_recovered_default_only_default_compat_block(module, self.unresolved_mark);
         remove_dead_named_only_default_compat_blocks(module, self.unresolved_mark);
         lower_exported_cjs_requires(module, self.unresolved_mark);
-        preserve_mutable_cjs_require_bindings(module, self.unresolved_mark);
+        preserve_written_cjs_require_bindings(module, self.unresolved_mark);
         let unresolved_reference_names =
             collect_unresolved_reference_names(module, self.unresolved_mark);
         let all_declared_names = collect_all_declared_names(module);
@@ -4754,14 +4754,15 @@ fn lower_exported_cjs_requires(module: &mut Module, unresolved_mark: Mark) {
 }
 
 /// Keep writes to a CommonJS require local separate from the immutable ESM
-/// import binding that will replace the require declaration.
+/// import binding that will replace the require declaration. This includes an
+/// authored `const`: its later write must keep throwing on that local binding.
 ///
 /// For example, `var dependency = require("dep"); dependency = next` becomes
 /// `_dependency = require("dep"); var dependency = _dependency; ...` before
 /// classification. The ordinary require conversion then turns only the fresh
 /// capture into an import. Object patterns use the same whole-value capture so
-/// the original mutable destructuring binding remains local.
-fn preserve_mutable_cjs_require_bindings(module: &mut Module, unresolved_mark: Mark) {
+/// the original destructuring binding remains local.
+fn preserve_written_cjs_require_bindings(module: &mut Module, unresolved_mark: Mark) {
     let uses = BindingUseIndex::collect(module);
     let mut used_names = collect_all_identifier_names(module);
     let mut new_body = Vec::with_capacity(module.body.len());
@@ -4772,9 +4773,10 @@ fn preserve_mutable_cjs_require_bindings(module: &mut Module, unresolved_mark: M
             continue;
         };
 
-        // A write to a `const` binding is already invalid in the input. Do not
-        // silently change that author-written contract while converting CJS.
-        if var.kind == VarDeclKind::Const || var.decls.len() != 1 {
+        // A write to a `const` binding is already invalid in the input. Keep
+        // that authored local around the synthesized import as well, so the
+        // failure remains attached to the original declaration contract.
+        if var.decls.len() != 1 {
             new_body.push(ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))));
             continue;
         }

@@ -50,7 +50,7 @@ define("app/main", ["utils/math"], function(math) {
         .map(|(_, code)| code)
         .expect("expected main module");
     assert!(
-        main.contains(r#"const math = require("../utils/math.js");"#),
+        main.contains(r#"var math = require("../utils/math.js");"#),
         "dependency should become a relative require:\n{main}"
     );
 
@@ -98,7 +98,7 @@ define(["./dep"], function(dep) {
     assert_eq!(raw.len(), 1);
     assert_eq!(raw[0].0, "module.js");
     assert!(
-        raw[0].1.contains(r#"const dep = require("./dep.js");"#)
+        raw[0].1.contains(r#"var dep = require("./dep.js");"#)
             && raw[0].1.contains("module.exports = dep.value + 1;"),
         "anonymous AMD module should become a single CommonJS module:\n{}",
         raw[0].1
@@ -422,7 +422,7 @@ define(["exports", "math-lib"], function(exports, mathLib) {
     assert_eq!(raw.len(), 1);
     assert_eq!(raw[0].0, "module.js");
     assert!(
-        raw[0].1.contains(r#"const mathLib = require("math-lib");"#),
+        raw[0].1.contains(r#"var mathLib = require("math-lib");"#),
         "external AMD dependency should remain bare:\n{}",
         raw[0].1
     );

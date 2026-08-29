@@ -425,7 +425,7 @@ fn dependency_stmts(
             "require" | "exports" | "module" => {
                 if let Some(param) = param {
                     if param.as_ref() != dep {
-                        stmts.push(const_alias_stmt(param.clone(), ident_expr(dep)));
+                        stmts.push(mutable_alias_stmt(param.clone(), ident_expr(dep)));
                     }
                 }
             }
@@ -433,7 +433,7 @@ fn dependency_stmts(
                 let specifier = dependency_specifier(dep, filename, module_id, id_to_filename);
                 let require_call = require_call_expr(specifier);
                 if let Some(param) = param {
-                    stmts.push(const_alias_stmt(param.clone(), require_call));
+                    stmts.push(mutable_alias_stmt(param.clone(), require_call));
                 } else {
                     stmts.push(Stmt::Expr(ExprStmt {
                         span: DUMMY_SP,
@@ -446,11 +446,14 @@ fn dependency_stmts(
     stmts
 }
 
-fn const_alias_stmt(name: Atom, value: Expr) -> Stmt {
+/// AMD factory parameters are mutable function-scoped bindings. Preserve that
+/// declaration contract when lifting them out of the factory; the normal rule
+/// pipeline can still narrow an untouched binding or recover it as an import.
+fn mutable_alias_stmt(name: Atom, value: Expr) -> Stmt {
     Stmt::Decl(Decl::Var(Box::new(VarDecl {
         span: DUMMY_SP,
         ctxt: SyntaxContext::empty(),
-        kind: VarDeclKind::Const,
+        kind: VarDeclKind::Var,
         declare: false,
         decls: vec![VarDeclarator {
             span: DUMMY_SP,

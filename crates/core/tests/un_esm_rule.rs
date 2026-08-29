@@ -235,6 +235,22 @@ consume(dependency);
 }
 
 #[test]
+fn written_const_require_binding_preserves_its_authored_contract() {
+    let input = r#"
+const dependency = require("./dependency.js");
+dependency = replacement;
+consume(dependency);
+"#;
+    let expected = r#"
+import _dependency from "./dependency.js";
+const dependency = _dependency;
+dependency = replacement;
+consume(dependency);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
 fn nested_write_to_require_binding_stays_on_the_local() {
     let input = r#"
 var dependency = require("./dependency.js");
