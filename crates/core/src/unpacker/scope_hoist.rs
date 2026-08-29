@@ -583,15 +583,15 @@ struct TopLevelItem {
 fn collect_top_level_items(body: &[ModuleItem]) -> Vec<TopLevelItem> {
     body.iter()
         .map(|item| {
-            let declared_names = module_item_declared_names(item);
-            let top_level_var_names = match item {
-                ModuleItem::Stmt(Stmt::Decl(Decl::Var(var)))
-                | ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
-                    decl: Decl::Var(var),
-                    ..
-                })) if var.kind == VarDeclKind::Var => declared_names.clone(),
-                _ => Vec::new(),
-            };
+            let mut declared_names = module_item_declared_names(item);
+            let top_level_var_names = module_scope_var_names(item);
+            let mut seen_names = declared_names.iter().cloned().collect::<HashSet<_>>();
+            declared_names.extend(
+                top_level_var_names
+                    .iter()
+                    .filter(|name| seen_names.insert((*name).clone()))
+                    .cloned(),
+            );
             let (referenced_names, written_names) =
                 item_referenced_and_written_names(item, &declared_names);
             let is_module_decl = matches!(item, ModuleItem::ModuleDecl(_));
@@ -604,6 +604,39 @@ fn collect_top_level_items(body: &[ModuleItem]) -> Vec<TopLevelItem> {
             }
         })
         .collect()
+}
+
+/// `var` declarations nested under module-level control flow still belong to
+/// the module scope. Collect them for declaration ownership and duplicate-var
+/// unioning, while stopping at boundaries that own a different var scope.
+fn module_scope_var_names(item: &ModuleItem) -> Vec<Atom> {
+    #[derive(Default)]
+    struct ModuleScopeVarCollector {
+        names: HashSet<Atom>,
+    }
+
+    impl Visit for ModuleScopeVarCollector {
+        fn visit_var_decl(&mut self, declaration: &VarDecl) {
+            if declaration.kind == VarDeclKind::Var {
+                for declarator in &declaration.decls {
+                    collect_pat_bindings(&declarator.name, &mut self.names);
+                }
+            }
+            declaration.visit_children_with(self);
+        }
+
+        fn visit_function(&mut self, _: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+
+        fn visit_class(&mut self, _: &Class) {}
+    }
+
+    let mut collector = ModuleScopeVarCollector::default();
+    item.visit_with(&mut collector);
+    let mut names = collector.names.into_iter().collect::<Vec<_>>();
+    names.sort();
+    names
 }
 
 fn item_referenced_and_written_names(

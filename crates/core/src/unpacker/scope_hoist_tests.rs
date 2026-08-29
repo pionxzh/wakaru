@@ -601,6 +601,52 @@ fn duplicate_top_level_var_writers_share_one_output_module() {
 }
 
 #[test]
+fn nested_and_direct_module_var_declarations_share_one_output_module() {
+    let input = r#"
+        if (gate) {
+            var shared = 123;
+        }
+        function firstRead() { return shared; }
+        function firstUse() { return firstRead(); }
+
+        function helperA1() { return 1; }
+        function helperA2() { return helperA1() + 1; }
+        function helperA3() { return helperA2() * 2; }
+        function helperA4() { return helperA3() + 3; }
+        function publicA() { return helperA4(); }
+
+        var shared;
+        function secondRead() { return shared; }
+        function secondUse() { return secondRead(); }
+
+        console.log(firstUse(), secondUse(), publicA());
+    "#;
+
+    let modules = split(input).expect("the independent helper group should still allow a split");
+    let nested_declaration = modules
+        .iter()
+        .find(|(_, code, _)| code.contains("if (gate)"))
+        .expect("one output should retain the nested var declaration");
+    assert!(
+        nested_declaration.1.contains("var shared = 123;")
+            && nested_declaration.1.contains("var shared;"),
+        "both declarations of one module-scoped var must stay together:\n{modules:#?}"
+    );
+    assert!(
+        modules
+            .iter()
+            .filter(|module| module.0.as_str() != nested_declaration.0.as_str())
+            .all(|(_, code, _)| !code.contains("var shared")),
+        "no second module may own another copy of the shared binding:\n{modules:#?}"
+    );
+    let pairs = modules
+        .iter()
+        .map(|(filename, code, _)| (filename.clone(), code.clone()))
+        .collect::<Vec<_>>();
+    assert_eq!(crate::validate_output_modules(&pairs), vec![]);
+}
+
+#[test]
 fn duplicate_var_declarations_follow_a_bare_entry_writer() {
     // A bare top-level writer statement is folded into the entry together
     // with everything in its write group. The write edge reaches only the
