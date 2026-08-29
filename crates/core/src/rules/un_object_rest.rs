@@ -191,6 +191,16 @@ fn run_un_object_rest(
     let tslib_namespaces = local_helpers.tslib_namespaces();
     let swc_numeric_helper_namespaces =
         collect_swc_numeric_helper_namespaces(module, unresolved_mark);
+    // Numeric requires are only *candidate* helper namespaces; the cleanup at
+    // the end may delete just the ones this rule's own rewrites orphaned.
+    // Snapshot which candidates are referenced before any rewrite runs so a
+    // binding some earlier rule already orphaned is left alone (its require
+    // call still carries a module side effect).
+    let numeric_namespaces_referenced_at_entry = remaining_refs_outside_declarations(
+        module,
+        &swc_numeric_helper_namespaces,
+        &swc_numeric_helper_namespaces,
+    );
 
     let (property_key_helpers, property_key_typeof_helpers) =
         collect_property_key_coercion_helpers(module, local_helpers, unresolved_mark);
@@ -374,7 +384,10 @@ fn run_un_object_rest(
     }
     module.body = new_body;
     remove_unused_exclusion_array_decls(&mut module.body, &exclusion_arrays);
-    remove_unused_numeric_helper_namespace_decls(&mut module.body, &swc_numeric_helper_namespaces);
+    remove_unused_numeric_helper_namespace_decls(
+        &mut module.body,
+        &numeric_namespaces_referenced_at_entry,
+    );
 
     // Remove named helper declarations if all call sites were replaced
     if !local_named_helpers.is_empty() {

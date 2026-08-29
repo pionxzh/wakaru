@@ -1091,6 +1091,43 @@ use(picked, rest);
 }
 
 #[test]
+fn preserves_unconsumed_numeric_require_decl() {
+    // A numeric-require binding is collected as a *candidate* swc helper
+    // namespace, but the cleanup may only delete declarations this rule's own
+    // rewrites orphaned: the require call carries a module side effect, and
+    // the numeric id is the user's join key for chunks missing from the input.
+    let input = r#"
+const ext = require(999);
+const picked = input.picked;
+use(picked);
+"#;
+    let output = render_rule(input, UnObjectRest::new);
+    assert!(
+        output.contains("require(999)"),
+        "numeric require never consumed by object-rest must survive:\n{output}"
+    );
+}
+
+#[test]
+fn preserves_numeric_require_orphaned_by_other_rules() {
+    // UnJsx rewrites `r.createElement(...)` into JSX and orphans `r` before
+    // the later object-rest pass runs; that pass must not sweep the
+    // declaration it never consumed.
+    let input = r#"
+const r = require(999);
+const helper = require("./module-333.js");
+module.exports = function Widget() {
+    return r.createElement("span", null, helper.label);
+};
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("require(999)"),
+        "numeric require orphaned by UnJsx must survive the pipeline:\n{output}"
+    );
+}
+
+#[test]
 fn named_owp_helper_preserves_destructuring_defaults() {
     let input = r#"
 function _objectWithoutPropertiesLoose(r, e) {
