@@ -324,6 +324,143 @@ console.log(_react.default);
 }
 
 #[test]
+fn assignment_form_fails_closed_on_a_later_loop_head_write() {
+    // A for-of head reassigns the binding without an AssignExpr; removing the
+    // wrapper while rewriting `.default` would read the loop element instead
+    // of its `.default` property.
+    let input = r#"
+import { _ as _interop_require_default } from "@swc/helpers/_/_interop_require_default";
+var _react = require("react");
+_react = _interop_require_default(_react);
+use(_react.default);
+for (_react of list) {
+    use2(_react.default);
+}
+"#;
+    let expected = r#"
+var _react = require("react");
+_react = _react;
+use(_react.default);
+for (_react of list) {
+    use2(_react.default);
+}
+"#;
+    assert_eq_normalized(
+        &render_pipeline_until(input, "UnInteropRequireDefault"),
+        expected,
+    );
+}
+
+#[test]
+fn assignment_form_fails_closed_on_a_later_destructuring_write() {
+    let input = r#"
+import { _ as _interop_require_default } from "@swc/helpers/_/_interop_require_default";
+var _react = require("react");
+_react = _interop_require_default(_react);
+use(_react.default);
+[_react] = replacements;
+use2(_react.default);
+"#;
+    let expected = r#"
+var _react = require("react");
+_react = _react;
+use(_react.default);
+[_react] = replacements;
+use2(_react.default);
+"#;
+    assert_eq_normalized(
+        &render_pipeline_until(input, "UnInteropRequireDefault"),
+        expected,
+    );
+}
+
+#[test]
+fn assignment_form_fails_closed_on_a_deferred_write() {
+    // The write lives in a function body, so it can run at any time relative
+    // to the module's `.default` reads.
+    let input = r#"
+import { _ as _interop_require_default } from "@swc/helpers/_/_interop_require_default";
+var _react = require("react");
+_react = _interop_require_default(_react);
+use(_react.default);
+function swap(next) {
+    _react = next;
+}
+"#;
+    let expected = r#"
+var _react = require("react");
+_react = _react;
+use(_react.default);
+function swap(next) {
+    _react = next;
+}
+"#;
+    assert_eq_normalized(
+        &render_pipeline_until(input, "UnInteropRequireDefault"),
+        expected,
+    );
+}
+
+#[test]
+fn assignment_form_fails_closed_on_hoisted_pre_initializer_use() {
+    // `probe()` runs before the wrapper is installed and reads `.default`
+    // through a hoisted function declared after the initializer; the textual
+    // statement order alone cannot prove the initializer is the first use.
+    let input = r#"
+import { _ as _interop_require_default } from "@swc/helpers/_/_interop_require_default";
+var _react = require("react");
+probe();
+_react = _interop_require_default(_react);
+use(_react.default);
+function probe() {
+    return _react.default;
+}
+"#;
+    let expected = r#"
+var _react = require("react");
+probe();
+_react = _react;
+use(_react.default);
+function probe() {
+    return _react.default;
+}
+"#;
+    assert_eq_normalized(
+        &render_pipeline_until(input, "UnInteropRequireDefault"),
+        expected,
+    );
+}
+
+#[test]
+fn assignment_form_allows_generated_export_preamble() {
+    // SWC's AMD preamble installs export getters before the interop
+    // initializers: `Object.defineProperty` scaffolding and an inert local
+    // `_export` helper must not block the recovery.
+    let input = r#"
+import { _ as _interop_require_default } from "@swc/helpers/_/_interop_require_default";
+var _react = require("react");
+Object.defineProperty(exports, "__esModule", { value: true });
+function _export(target, all) {
+    for (var name in all) Object.defineProperty(target, name, { enumerable: true, get: all[name] });
+}
+_export(exports, {
+    useThing: function() { return useThing; }
+});
+_react = _interop_require_default(_react);
+function useThing() {
+    return _react.default.useEffect;
+}
+"#;
+    let output = render_pipeline_until(input, "UnInteropRequireDefault");
+    assert!(
+        !output.contains("_interop_require_default(_react)")
+            && !output.contains("_react = _react")
+            && output.contains("_react.useEffect"),
+        "the generated export preamble must not block the initializer recovery:\n{output}"
+    );
+}
+
+#[test]
 fn unwraps_inline_ternary_arrow_iife() {
     // Same pattern but with arrow function syntax
     let input = r#"
