@@ -1622,15 +1622,12 @@ fn inspection_output_cluster_count(items: &[TopLevelItem], uf: &UnionFind) -> us
     extract_inspection_clusters(items, &roots).len()
 }
 
-#[allow(clippy::needless_range_loop)]
-fn apply_merge_signals(items: &[TopLevelItem], graph: &ReferenceGraph, uf: &mut UnionFind) {
-    let adjacency_window = 3;
-
-    // Repeated top-level `var` declarations share one hoisted binding even
-    // when they are far apart in a concatenated script. Keep every declaring
-    // item in one cluster before resolving writer/owner edges; otherwise the
-    // emitter sees multiple producers and synthesizes an immutable import
-    // beside a local redeclaration of the same binding.
+/// Repeated top-level `var` declarations share one hoisted binding even
+/// when they are far apart in a concatenated script. Keep every declaring
+/// item in one group before resolving writer/owner edges; otherwise a
+/// write-based partition sees multiple producers and can synthesize an
+/// immutable import beside a local redeclaration of the same binding.
+fn union_duplicate_var_declarations(items: &[TopLevelItem], uf: &mut UnionFind) {
     let mut first_var_declaration = HashMap::<Atom, usize>::new();
     for (item_index, item) in items.iter().enumerate() {
         for name in &item.top_level_var_names {
@@ -1641,6 +1638,13 @@ fn apply_merge_signals(items: &[TopLevelItem], graph: &ReferenceGraph, uf: &mut 
             }
         }
     }
+}
+
+#[allow(clippy::needless_range_loop)]
+fn apply_merge_signals(items: &[TopLevelItem], graph: &ReferenceGraph, uf: &mut UnionFind) {
+    let adjacency_window = 3;
+
+    union_duplicate_var_declarations(items, uf);
 
     // Signal 1: Mutual references — A references B AND B references A.
     for i in 0..items.len() {
@@ -2033,6 +2037,12 @@ fn move_bare_statements_into_entry(
     clusters: Vec<Cluster>,
 ) -> Vec<Cluster> {
     let mut write_groups = UnionFind::new(items.len());
+    // The write edges in `graph` reach only the last item declaring a name,
+    // so a bare writer must first be joined with every item declaring that
+    // hoisted binding — otherwise the fold drags one declaration into the
+    // entry while another stays behind in an exporting cluster, and the
+    // entry ends up importing and redeclaring the same binding.
+    union_duplicate_var_declarations(items, &mut write_groups);
     merge_cross_item_writes(graph, &mut write_groups);
     let mut entry_write_roots = HashSet::new();
     for (item_index, item) in items.iter().enumerate() {

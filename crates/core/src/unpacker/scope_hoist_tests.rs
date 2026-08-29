@@ -297,6 +297,47 @@ fn duplicate_top_level_var_writers_share_one_output_module() {
 }
 
 #[test]
+fn duplicate_var_declarations_follow_a_bare_entry_writer() {
+    // A bare top-level writer statement is folded into the entry together
+    // with everything in its write group. The write edge reaches only the
+    // last declaring item, so both distant `var shared;` declarations must
+    // travel with it — otherwise the entry imports the binding from the
+    // cluster keeping the first declaration while also redeclaring it.
+    let input = r#"
+        var shared;
+        function libA1() { return 1; }
+        function libA2() { return libA1() + 1; }
+        function libA3() { return libA2(); }
+        var stateA = { n: libA3() };
+        function libB1() { return 10; }
+        function libB2() { return libB1() * 2; }
+        function libB3() { return libB2(); }
+        var stateB = { n: libB3() };
+        function entryUse() { return stateA.n + stateB.n; }
+        shared = entryUse();
+        var shared;
+        console.log(shared, stateA, stateB);
+    "#;
+
+    let modules = split(input).expect("the two helper groups should still allow a split");
+    for (filename, code, _) in &modules {
+        assert!(
+            !code.contains("import { shared") && !code.contains("shared }"),
+            "a hoisted binding written by the entry must never be imported ({filename}):\n{code}"
+        );
+    }
+    let entry = modules
+        .iter()
+        .find(|(_, _, is_entry)| *is_entry)
+        .expect("an entry module should exist");
+    assert!(
+        entry.1.contains("var shared") && entry.1.contains("shared = entryUse()"),
+        "the entry must own both the declarations and the bare writer:\n{}",
+        entry.1
+    );
+}
+
+#[test]
 fn inspection_bounds_cross_item_write_components() {
     // Seven owner clusters plus the writer cluster sit exactly at the cap, so
     // the mutable bindings remain with their writer as useful same-module
