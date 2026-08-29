@@ -11,6 +11,15 @@ fn split(source: &str) -> Option<Vec<(String, String, bool)>> {
     )
 }
 
+fn unwraps_first_iife(source: &str) -> bool {
+    GLOBALS.set(&Default::default(), || {
+        let cm: Lrc<SourceMap> = Default::default();
+        let module = super::super::parse_es_module(source, "bundle.js", cm)
+            .expect("the IIFE fixture should parse");
+        unwrap_iife(&module).is_some()
+    })
+}
+
 fn count_modules(source: &str) -> usize {
     split(source).map(|m| m.len()).unwrap_or(0)
 }
@@ -260,6 +269,124 @@ fn iife_with_only_nested_returns_can_still_be_unwrapped() {
     assert!(
         split(input).is_some(),
         "returns owned by nested functions must not block IIFE unwrapping"
+    );
+}
+
+#[test]
+fn iife_unwrap_declines_cross_scope_binding_collisions() {
+    for (name, input) in [
+        (
+            "nested var and trailing import",
+            r#"
+                (function () {
+                    try {
+                        var shared = globalThis;
+                    } catch {}
+                })();
+                import { value as shared } from "./dep.js";
+            "#,
+        ),
+        (
+            "inner var and trailing function",
+            r#"
+                (function () {
+                    var shared = 1;
+                })();
+                function shared() { return 2; }
+            "#,
+        ),
+        (
+            "distinct direct vars",
+            r#"
+                (() => {
+                    var shared = 1;
+                })();
+                var shared = 2;
+            "#,
+        ),
+        (
+            "closure capture and trailing var",
+            r#"
+                (function () {
+                    var shared = 1;
+                    globalThis.readInner = function () { return shared; };
+                })();
+                var shared = 2;
+            "#,
+        ),
+    ] {
+        assert!(
+            !unwraps_first_iife(input),
+            "{name} must retain the function boundary"
+        );
+    }
+}
+
+#[test]
+fn iife_unwrap_ignores_bindings_that_keep_a_nested_scope() {
+    let input = r#"
+        (function () {
+            if (globalThis.enabled) {
+                let shared = 1;
+                console.log(shared);
+            }
+            function readNested() {
+                var other = 2;
+                return other;
+            }
+            globalThis.readNested = readNested;
+        })();
+        var shared = 3;
+        var other = 4;
+    "#;
+
+    assert!(
+        unwraps_first_iife(input),
+        "block lexical and nested-function bindings do not enter module scope"
+    );
+}
+
+#[test]
+fn iife_collision_keeps_wrapper_in_split_entry() {
+    let input = r#"
+        (function () {
+            try {
+                var shared = globalThis;
+                globalThis.readInner = function () { return shared; };
+            } catch {}
+        })();
+        import { value as shared } from "./dep.js";
+
+        var a0 = () => 1;
+        function a1() { return a0(); }
+        function a2() { return a1(); }
+        function a3() { return a2(); }
+        function a4() { return a3(); }
+        function a5() { return a4(); }
+
+        function b0() { return 2; }
+        function b1() { return b0(); }
+        function b2() { return b1(); }
+        function b3() { return b2(); }
+        function b4() { return b3(); }
+        function b5() { return b4(); }
+
+        console.log(a5() + b5());
+    "#;
+
+    let modules = split(input).expect("the guarded IIFE fixture should still split");
+    let entry = modules
+        .iter()
+        .find(|(_, _, is_entry)| *is_entry)
+        .map(|(_, code, _)| code)
+        .expect("the split should retain an entry module");
+    assert!(
+        entry.contains("value as shared")
+            && entry.contains("var shared = globalThis")
+            && (entry.contains("(function()")
+                || entry.contains("(()=>{")
+                || entry.contains("(() =>")),
+        "the import and captured var need the retained function boundary:\n{entry}"
     );
 }
 

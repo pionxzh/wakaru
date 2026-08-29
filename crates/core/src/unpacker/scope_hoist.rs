@@ -8,6 +8,8 @@ use swc_core::common::{sync::Lrc, SourceMap, Span, Spanned, DUMMY_SP, GLOBALS};
 use swc_core::ecma::ast::*;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use crate::rules::rename_utils::collect_module_names;
+
 use super::emit_esm::{
     dedup_filename, emit_items, make_named_export_stmt, make_named_import_stmt,
     try_promote_fn_class_export, FilenameDedupStyle,
@@ -453,7 +455,8 @@ fn render_scope_hoist_plan(
 
 /// Detect and unwrap an IIFE wrapper: `(()=>{ ... })()` or `(function(){ ... })()`
 /// Returns the inner body statements (plus any trailing top-level items)
-/// converted to ModuleItems. Only matches when the first item is an IIFE call.
+/// converted to ModuleItems. Only matches when the first item is an IIFE call
+/// and removing its function scope cannot collide with trailing bindings.
 fn unwrap_iife(module: &Module) -> Option<Vec<ModuleItem>> {
     let first = module.body.first()?;
     let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = first else {
@@ -489,7 +492,27 @@ fn unwrap_iife(module: &Module) -> Option<Vec<ModuleItem>> {
         }
         _ => None,
     }?;
-    let mut items: Vec<ModuleItem> = stmts.iter().cloned().map(ModuleItem::Stmt).collect();
+    let lifted = Module {
+        span: module.span,
+        body: stmts.iter().cloned().map(ModuleItem::Stmt).collect(),
+        shebang: None,
+    };
+
+    // The wrapper makes these two sets distinct bindings even when their
+    // emitted names match. Removing it would either merge their captures or
+    // create an invalid duplicate module declaration, so compare names rather
+    // than SyntaxContexts deliberately. `collect_module_names(module)` keeps
+    // the function boundary and therefore sees only the trailing module-scope
+    // bindings; the synthetic module models the scope created by unwrapping.
+    let trailing_names = collect_module_names(module);
+    if !trailing_names.is_empty() {
+        let lifted_names = collect_module_names(&lifted);
+        if !lifted_names.is_disjoint(&trailing_names) {
+            return None;
+        }
+    }
+
+    let mut items = lifted.body;
     items.extend(module.body[1..].iter().cloned());
     Some(items)
 }
