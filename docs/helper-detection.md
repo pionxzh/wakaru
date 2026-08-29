@@ -177,9 +177,15 @@ Each helper kind has its own dedicated rule struct (e.g., `UnInteropRequireDefau
 For example, `UnInteropRequireDefault`:
 - `var _a = _interopRequireDefault(require("a"))` becomes `var _a = require("a")`
 - SWC AMD's require-backed `_a = _interopRequireDefault(_a)` initialization is
-  removed when it is an unconditional top-level first use of that same binding
-- `_a.default` becomes `_a` (at all reference sites)
-- The helper function declaration is removed
+  removed only when it is an unconditional top-level first use of that same
+  binding, the binding has no other writes, and earlier module evaluation
+  cannot invoke code that observes it. Generated SWC export scaffolding,
+  including its local descriptor-copy helper, is recognized as inert.
+- `_a.default` becomes `_a` at all reference sites only for a recovered,
+  non-reassigned binding.
+- If assignment-form recovery is rejected, the wrapper call and helper stay in
+  place and a synthetic AMD dependency local remains mutable around its ESM
+  import. Otherwise the now-unused helper declaration is removed.
 
 `UnEsm` also handles Babel's equivalent helper body when it is inlined directly
 at a `require()` site:

@@ -195,9 +195,10 @@ fn collect_assignment_form_initializers(
         // wrapper is installed if any earlier statement transfers control
         // into module code. Only accept prior items whose evaluation is
         // proven inert with respect to module functions: generated require
-        // declarations, sibling interop initializers, `Object.defineProperty`
-        // export scaffolding, and calls into local helper functions that
-        // neither touch the binding nor call anything unrecognized.
+        // declarations, sibling interop initializers, generated
+        // `Object.defineProperty`/descriptor export scaffolding, and calls
+        // into local helper functions that neither touch the binding nor call
+        // anything unrecognized.
         let pre_initializer_invocation_hazard =
             module.body[..index]
                 .iter()
@@ -250,13 +251,16 @@ fn collect_top_level_functions(module: &Module) -> HashMap<BindingKey, &Function
 /// the interop binding before its wrapper assignment runs.
 ///
 /// The scan whitelists exactly the calls SWC's generated module preamble
-/// performs — `require("<literal>")`, recognized interop helpers,
-/// `Object.defineProperty(...)`, and locally declared helper functions whose
-/// bodies are themselves proven inert. Everything else (unknown calls, `new`,
-/// tagged templates, optional calls, class evaluation) fails closed. The gate
-/// targets generated producer shapes: it does not model property reads that
-/// could trigger previously installed accessors, which no known transpiler
-/// preamble performs before its interop initializers.
+/// performs — `require("<literal>")`, recognized interop helpers, generated
+/// export reflection, and locally declared helper functions whose bodies are
+/// themselves proven inert. Everything else (unknown calls, `new`, tagged
+/// templates, optional calls, class evaluation) fails closed.
+/// `Object.getOwnPropertyDescriptor` is admitted only while proving one of
+/// those local helpers; an arbitrary top-level reflection call can trigger a
+/// proxy trap and remains blocked. The gate targets generated producer shapes:
+/// it does not model ordinary property reads that could trigger previously
+/// installed accessors, which no known transpiler preamble performs before its
+/// interop initializers.
 fn item_can_invoke_pre_initializer_read(
     item: &ModuleItem,
     binding: &BindingKey,
@@ -269,6 +273,7 @@ fn item_can_invoke_pre_initializer_read(
         local_helpers,
         top_level_functions,
         visiting: &visiting,
+        inside_local_helper: false,
         blocked: false,
     };
     item.visit_with(&mut scanner);
@@ -280,6 +285,7 @@ struct ImmediateInvocationScanner<'a> {
     local_helpers: &'a LocalHelperContext,
     top_level_functions: &'a HashMap<BindingKey, &'a Function>,
     visiting: &'a RefCell<HashSet<BindingKey>>,
+    inside_local_helper: bool,
     blocked: bool,
 }
 
@@ -304,10 +310,12 @@ impl ImmediateInvocationScanner<'_> {
             if let (Expr::Ident(object), MemberProp::Ident(prop)) =
                 (member.obj.as_ref(), &member.prop)
             {
-                if prop.sym.as_ref() == "defineProperty"
-                    && self
-                        .local_helpers
-                        .is_unresolved_or_unguarded_ident(object, "Object")
+                if self
+                    .local_helpers
+                    .is_unresolved_or_unguarded_ident(object, "Object")
+                    && (prop.sym.as_ref() == "defineProperty"
+                        || (self.inside_local_helper
+                            && prop.sym.as_ref() == "getOwnPropertyDescriptor"))
                 {
                     return true;
                 }
@@ -337,6 +345,7 @@ impl ImmediateInvocationScanner<'_> {
             local_helpers: self.local_helpers,
             top_level_functions: self.top_level_functions,
             visiting: self.visiting,
+            inside_local_helper: true,
             blocked: false,
         };
         // A called function's parameters and body evaluate when it runs, so

@@ -474,7 +474,10 @@ import { _ as _interop_require_default } from "@swc/helpers/_/_interop_require_d
 var _react = require("react");
 Object.defineProperty(exports, "__esModule", { value: true });
 function _export(target, all) {
-    for (var name in all) Object.defineProperty(target, name, { enumerable: true, get: all[name] });
+    for (var name in all) Object.defineProperty(target, name, {
+        enumerable: true,
+        get: Object.getOwnPropertyDescriptor(all, name).get
+    });
 }
 _export(exports, {
     useThing: function() { return useThing; }
@@ -490,6 +493,28 @@ function useThing() {
             && !output.contains("_react = _react")
             && output.contains("_react.useEffect"),
         "the generated export preamble must not block the initializer recovery:\n{output}"
+    );
+}
+
+#[test]
+fn assignment_form_rejects_top_level_reflection_before_initializer() {
+    // A proxy trap can transfer control into module code. Reflection is only
+    // accepted inside the exact generated export helper proof, not as an
+    // arbitrary top-level pre-initializer call.
+    let input = r#"
+import { _ as _interop_require_default } from "@swc/helpers/_/_interop_require_default";
+var _react = require("react");
+Object.getOwnPropertyDescriptor(proxy, "value");
+_react = _interop_require_default(_react);
+function probe() {
+    return _react.default;
+}
+"#;
+    let output = render_pipeline_until(input, "UnInteropRequireDefault");
+    assert!(
+        output.contains("_react = _interop_require_default(_react)")
+            && output.contains("_react.default"),
+        "top-level reflection must keep the recovery fail-closed:\n{output}"
     );
 }
 
