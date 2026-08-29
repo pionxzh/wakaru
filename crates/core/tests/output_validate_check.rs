@@ -538,6 +538,36 @@ fn reexport_of_missing_name_is_reported() {
 }
 
 #[test]
+fn export_of_missing_local_binding_is_reported() {
+    let findings = validate_output_modules(&modules(&[(
+        "entry.js",
+        "const present = 1;\nexport { present, missing as public_name };\n",
+    )]));
+
+    assert_eq!(findings.len(), 1, "unexpected findings: {findings:#?}");
+    assert_eq!(findings[0].kind, OutputFindingKind::MissingLocalExport);
+    assert_eq!(findings[0].kind.as_str(), "missing_local_export");
+    assert_eq!(findings[0].filename, "entry.js");
+    assert_eq!(findings[0].line, 2);
+    assert_eq!(
+        findings[0].message,
+        "local export binding \"missing\" is not declared"
+    );
+}
+
+#[test]
+fn imported_and_declared_local_exports_are_valid() {
+    let findings = kinds(&[
+        (
+            "entry.js",
+            "import { imported } from \"./provider.js\";\nconst local = 1;\nexport { imported, local };\n",
+        ),
+        ("provider.js", "export const imported = 1;\n"),
+    ]);
+    assert_eq!(findings, vec![]);
+}
+
+#[test]
 fn namespace_reexport_provides_its_alias() {
     let findings = kinds(&[
         (
@@ -576,6 +606,144 @@ fn duplicate_export_location_points_to_the_repeated_declarator() {
         findings,
         vec![(OutputFindingKind::DuplicateExport, "entry.js".into(), 2, 25,)]
     );
+}
+
+#[test]
+fn duplicate_module_declarations_are_reported() {
+    let findings = kinds(&[(
+        "entry.js",
+        r#"
+import { direct, hoisted, looped, lexical } from "pkg";
+var direct;
+if (ready) {
+    var hoisted;
+}
+for (var looped of values) {}
+let lexical;
+"#,
+    )]);
+    assert_eq!(
+        findings,
+        vec![
+            (OutputFindingKind::DuplicateDeclaration, "entry.js".into()),
+            (OutputFindingKind::DuplicateDeclaration, "entry.js".into()),
+            (OutputFindingKind::DuplicateDeclaration, "entry.js".into()),
+            (OutputFindingKind::DuplicateDeclaration, "entry.js".into()),
+        ]
+    );
+}
+
+#[test]
+fn duplicate_declaration_location_points_to_the_conflicting_binding() {
+    let findings = locations(&[("entry.js", "import { state } from \"pkg\";\nvar state;\n")]);
+    assert_eq!(
+        findings,
+        vec![(
+            OutputFindingKind::DuplicateDeclaration,
+            "entry.js".into(),
+            2,
+            5,
+        )]
+    );
+}
+
+#[test]
+fn duplicate_top_level_lexical_declarations_are_reported() {
+    let findings = kinds(&[(
+        "entry.js",
+        "export let duplicate = 1;\nlet duplicate = 2;\n",
+    )]);
+    assert_eq!(
+        findings,
+        vec![(OutputFindingKind::DuplicateDeclaration, "entry.js".into())]
+    );
+}
+
+#[test]
+fn repeated_hoisted_var_declarations_are_legal() {
+    let findings = kinds(&[(
+        "entry.js",
+        r#"
+export const marker = true;
+var repeated;
+if (marker) {
+    var repeated;
+}
+for (var repeated of []) {}
+"#,
+    )]);
+    assert_eq!(findings, vec![]);
+}
+
+#[test]
+fn nested_lexical_and_function_bindings_may_shadow_imports() {
+    let findings = kinds(&[(
+        "entry.js",
+        r#"
+import { block_local, function_local, loop_local } from "pkg";
+{
+    let block_local = 1;
+}
+function nested() {
+    var function_local;
+}
+for (let loop_local of []) {}
+"#,
+    )]);
+    assert_eq!(findings, vec![]);
+}
+
+#[test]
+fn nested_lexical_var_conflicts_are_reported() {
+    let findings = kinds(&[
+        (
+            "block.js",
+            "export {};\n{ let state; if (ready) { var state; } }\n",
+        ),
+        (
+            "switch.js",
+            "export {};\nswitch (kind) { case 0: let item; break; case 1: var item; }\n",
+        ),
+        (
+            "for.js",
+            "export {};\nfor (let value of values) { var value; }\n",
+        ),
+        (
+            "function.js",
+            "export function run() { let result; if (ready) { var result; } }\n",
+        ),
+    ]);
+    assert_eq!(
+        findings,
+        vec![
+            (OutputFindingKind::DuplicateDeclaration, "block.js".into()),
+            (OutputFindingKind::DuplicateDeclaration, "switch.js".into()),
+            (OutputFindingKind::DuplicateDeclaration, "for.js".into()),
+            (
+                OutputFindingKind::DuplicateDeclaration,
+                "function.js".into(),
+            ),
+        ]
+    );
+}
+
+#[test]
+fn nested_sibling_lexicals_and_repeated_vars_are_legal() {
+    let findings = kinds(&[(
+        "entry.js",
+        r#"
+export {};
+{ let state; }
+{ let state; }
+switch (kind) {
+    case 0: { let item; } break;
+    case 1: { let item; } break;
+}
+for (let value of values) { let value; var other; }
+function run() { var result; if (ready) { var result; } }
+"#,
+    )]);
+    assert_eq!(findings, vec![]);
 }
 
 #[test]
@@ -657,6 +825,48 @@ nested();
 }
 
 #[test]
+fn unresolved_global_writes_are_not_definite_without_an_environment_model() {
+    let findings = kinds(&[(
+        "entry.js",
+        r#"
+export const ready = true;
+globalThis = globalThis;
+process = process;
+console = console;
+onmessage = onmessage;
+environment_specific_global = 1;
+"#,
+    )]);
+    assert_eq!(findings, vec![]);
+}
+
+#[test]
+fn writes_to_declared_and_shadowed_bindings_are_not_undeclared() {
+    let findings = kinds(&[(
+        "entry.js",
+        r#"
+export let state = 0;
+state = 1;
+function update(state) {
+    let local = state;
+    local++;
+    return local;
+}
+"#,
+    )]);
+    assert_eq!(findings, vec![]);
+}
+
+#[test]
+fn sloppy_script_global_writes_are_outside_the_esm_check() {
+    let findings = kinds(&[(
+        "entry.js",
+        "implicit_global = 1;\nfunction update() { later_global++; }\n",
+    )]);
+    assert_eq!(findings, vec![]);
+}
+
+#[test]
 fn let_reassignment_is_not_reported() {
     let findings = kinds(&[(
         "entry.js",
@@ -713,6 +923,53 @@ with (scope) {
 "#,
     )]);
     assert_eq!(findings, vec![]);
+}
+
+#[test]
+fn mjs_and_mts_extensions_force_module_goal() {
+    let findings = kinds(&[
+        ("plain.mjs", "with ({ value: 1 }) { value; }\n"),
+        ("typed.mts", "with ({ value: 1 }) { value; }\n"),
+    ]);
+    assert_eq!(
+        findings,
+        vec![
+            (OutputFindingKind::ParseError, "plain.mjs".into()),
+            (OutputFindingKind::ParseError, "typed.mts".into()),
+        ]
+    );
+}
+
+#[test]
+fn static_and_dynamic_import_targets_use_module_goal() {
+    let findings = kinds(&[
+        ("static-entry.js", "import \"./static-leaf.js\";\n"),
+        ("static-leaf.js", "with ({ value: 1 }) { value; }\n"),
+        ("dynamic-entry.js", "import(\"./dynamic-leaf.js\");\n"),
+        ("dynamic-leaf.js", "with ({ value: 1 }) { value; }\n"),
+        (
+            "reexport-entry.js",
+            "export * from \"./reexport-leaf.js\";\n",
+        ),
+        ("reexport-leaf.js", "with ({ value: 1 }) { value; }\n"),
+    ]);
+    assert_eq!(
+        findings,
+        vec![
+            (OutputFindingKind::ParseError, "static-leaf.js".into()),
+            (OutputFindingKind::ParseError, "dynamic-leaf.js".into()),
+            (OutputFindingKind::ParseError, "reexport-leaf.js".into()),
+        ]
+    );
+}
+
+#[test]
+fn syntaxless_mjs_still_gets_esm_runtime_checks() {
+    let findings = kinds(&[("entry.mjs", "module.exports = 1;\n")]);
+    assert_eq!(
+        findings,
+        vec![(OutputFindingKind::EsmCommonJsResidual, "entry.mjs".into())]
+    );
 }
 
 #[test]

@@ -3,8 +3,9 @@
 //! A development/benchmark tool: parses a set of emitted modules and reports
 //! structural defects that would make the output fail to load as ESM —
 //! dangling relative references, imports of names the provider does not
-//! export, duplicate exports, unresolved CommonJS runtime bindings in ESM,
-//! and writes to imported or `const` bindings.
+//! export, local exports of missing bindings, duplicate exports or
+//! declarations, unresolved CommonJS runtime bindings in ESM, and writes to
+//! imported or `const` bindings.
 //!
 //! Raw output is deliberately out of scope: `--raw` promises only "no
 //! readability transforms" and carries no module-graph contract. Validate
@@ -14,14 +15,18 @@
 //! (it re-exports an external package or a missing module) suppresses
 //! missing-name findings for its consumers rather than guessing.
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
 
 use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, Span, Spanned, GLOBALS};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignTarget, AssignTargetPat, BindingIdent, CallExpr, Callee, Decl, Expr, ForHead,
-    ForInStmt, ForOfStmt, Id, Ident, ImportSpecifier, Lit, Module, ModuleDecl, ModuleExportName,
-    ModuleItem, ObjectPatProp, Pat, Program, PropName, SimpleAssignTarget, Str, UnaryExpr, UnaryOp,
-    UpdateExpr, VarDecl, VarDeclKind,
+    AssignExpr, AssignTarget, AssignTargetPat, BindingIdent, BlockStmt, CallExpr, Callee, Decl,
+    DefaultDecl, Expr, ForHead, ForInStmt, ForOfStmt, ForStmt, FunctionBody, Id, Ident,
+    ImportSpecifier, Lit, Module, ModuleDecl, ModuleExportName, ModuleItem, ObjectPatProp, Pat,
+    Program, PropName, SimpleAssignTarget, Stmt, Str, SwitchStmt, UnaryExpr, UnaryOp, UpdateExpr,
+    VarDecl, VarDeclKind,
 };
 use swc_core::ecma::atoms::Atom;
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
@@ -47,16 +52,21 @@ pub struct OutputFinding {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OutputFindingKind {
-    /// The module does not parse (as a module, nor as a classic script when
-    /// it contains no import/export syntax).
+    /// The file does not parse for its inferred source goal. Ambiguous files
+    /// may fall back from module to classic-script parsing.
     ParseError,
     /// A `./`-relative import/export/require target is not in the module set.
     DanglingRelativeRef,
     /// A named or default import of a name the provider does not
     /// unambiguously export.
     MissingImportedName,
+    /// A local export clause references no local declaration or import.
+    MissingLocalExport,
     /// The same name is exported more than once by one module.
     DuplicateExport,
+    /// Lexical declarations conflict with one another or with a `var`
+    /// declaration in the same module or nested lexical scope.
+    DuplicateDeclaration,
     /// Assignment or update targeting an imported binding.
     AssignToImport,
     /// Assignment or update targeting a `const` binding.
@@ -72,7 +82,9 @@ impl OutputFindingKind {
             OutputFindingKind::ParseError => "parse_error",
             OutputFindingKind::DanglingRelativeRef => "dangling_relative_ref",
             OutputFindingKind::MissingImportedName => "missing_imported_name",
+            OutputFindingKind::MissingLocalExport => "missing_local_export",
             OutputFindingKind::DuplicateExport => "duplicate_export",
+            OutputFindingKind::DuplicateDeclaration => "duplicate_declaration",
             OutputFindingKind::AssignToImport => "assign_to_import",
             OutputFindingKind::AssignToConst => "assign_to_const",
             OutputFindingKind::EsmCommonJsResidual => "esm_commonjs_residual",
@@ -91,11 +103,17 @@ pub fn validate_output_modules(modules: &[(String, String)]) -> Vec<OutputFindin
 
 fn validate_inner(modules: &[(String, String)]) -> Vec<OutputFinding> {
     let filenames: HashSet<&str> = modules.iter().map(|(name, _)| name.as_str()).collect();
+    let esm_filenames = classify_esm_filenames(modules, &filenames);
     let mut findings = Vec::new();
     let mut infos = Vec::new();
 
     for (filename, source) in modules {
-        match analyze_module(filename, source, &filenames) {
+        match analyze_module(
+            filename,
+            source,
+            &filenames,
+            esm_filenames.contains(filename),
+        ) {
             Ok((info, mut local_findings)) => {
                 findings.append(&mut local_findings);
                 infos.push(info);
@@ -296,11 +314,12 @@ fn analyze_module(
     filename: &str,
     source: &str,
     filenames: &HashSet<&str>,
+    is_esm: bool,
 ) -> Result<(ModuleInfo, Vec<OutputFinding>), ValidationParseError> {
     let ParsedModule {
         mut module,
         source_map,
-    } = parse_for_validation(filename, source)?;
+    } = parse_for_validation(filename, source, is_esm)?;
 
     let unresolved_mark = Mark::new();
     let top_level_mark = Mark::new();
@@ -443,7 +462,25 @@ fn analyze_module(
                                     imported: orig.clone(),
                                 }
                             } else if named.src.is_none() {
-                                local_export_resolution(&spec.orig, &import_reexports)
+                                match local_export_resolution(
+                                    &spec.orig,
+                                    &import_reexports,
+                                    unresolved_mark,
+                                ) {
+                                    Some(resolution) => resolution,
+                                    None => {
+                                        findings.push(finding_at_span(
+                                            filename,
+                                            &source_map,
+                                            spec.span,
+                                            OutputFindingKind::MissingLocalExport,
+                                            format!(
+                                                "local export binding \"{orig}\" is not declared"
+                                            ),
+                                        ));
+                                        ExplicitExportResolution::Synthetic
+                                    }
+                                }
                             } else {
                                 ExplicitExportResolution::Synthetic
                             };
@@ -533,12 +570,20 @@ fn analyze_module(
         }
     }
 
+    if is_esm {
+        findings.extend(duplicate_declaration_findings(
+            filename,
+            &module,
+            &source_map,
+        ));
+    }
+
     let mut const_collector = ConstBindingCollector {
         bindings: HashMap::new(),
     };
     module.visit_with(&mut const_collector);
 
-    if has_module_syntax(&module) {
+    if is_esm {
         let mut residual_collector = EsmCommonJsResidualCollector {
             unresolved_mark,
             residuals: Vec::new(),
@@ -573,6 +618,11 @@ fn analyze_module(
     module.visit_with(&mut ref_visitor);
     findings.extend(ref_visitor.dangling);
 
+    // Do not classify unresolved identifier writes here. A resolver mark only
+    // proves that the binding is outside this file; browsers, Node, workers,
+    // and embedder hosts expose different outer bindings. Without an explicit
+    // environment model, calling any such write definitely invalid would turn
+    // host-global accesses into fatal false positives.
     for (id, name, span) in &ref_visitor.writes {
         if import_bindings.contains_key(id) {
             findings.push(finding_at_span(
@@ -596,15 +646,129 @@ fn analyze_module(
     Ok((info, findings))
 }
 
-/// Parse with the module goal; when that only fails on recoverable errors and
-/// the file contains no import/export syntax, retry as a classic script
-/// (single-file decompile output can legitimately be sloppy-mode code).
+/// Classify files whose emitted source must be interpreted as ESM. Besides
+/// explicit module syntax, `.mjs` / `.mts` names and every in-set target of a
+/// static or dynamic import carry a module source goal even when the target is
+/// otherwise syntaxless.
+fn classify_esm_filenames(
+    modules: &[(String, String)],
+    filenames: &HashSet<&str>,
+) -> HashSet<String> {
+    let mut esm_filenames = HashSet::new();
+    let mut referenced_targets = Vec::new();
+
+    for (filename, source) in modules {
+        if filename_forces_module_goal(filename) {
+            esm_filenames.insert(filename.clone());
+        }
+
+        match parse_program(filename, source, true) {
+            Ok(parsed) => {
+                if has_module_syntax(&parsed.module)
+                    || parse_program(filename, source, false).is_err()
+                {
+                    esm_filenames.insert(filename.clone());
+                }
+                referenced_targets.extend(esm_target_specifiers(filename, &parsed.module));
+            }
+            Err(_) => {
+                if let Ok(parsed) = parse_program(filename, source, false) {
+                    referenced_targets.extend(esm_target_specifiers(filename, &parsed.module));
+                }
+            }
+        }
+    }
+
+    for (from_filename, specifier) in referenced_targets {
+        if let Some(target) = resolve_in_set(&from_filename, &specifier, filenames) {
+            esm_filenames.insert(target);
+        }
+    }
+    esm_filenames
+}
+
+fn filename_forces_module_goal(filename: &str) -> bool {
+    Path::new(filename)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("mjs") || extension.eq_ignore_ascii_case("mts")
+        })
+}
+
+fn esm_target_specifiers(filename: &str, module: &Module) -> Vec<(String, String)> {
+    let mut collector = EsmTargetSpecifierCollector {
+        filename: filename.to_string(),
+        specifiers: Vec::new(),
+    };
+    module.visit_with(&mut collector);
+    collector.specifiers
+}
+
+struct EsmTargetSpecifierCollector {
+    specifiers: Vec<(String, String)>,
+    filename: String,
+}
+
+impl Visit for EsmTargetSpecifierCollector {
+    fn visit_module(&mut self, module: &Module) {
+        module.visit_children_with(self);
+    }
+
+    fn visit_import_decl(&mut self, import: &swc_core::ecma::ast::ImportDecl) {
+        if let Some(specifier) = import.src.value.as_str() {
+            self.specifiers
+                .push((self.filename.clone(), specifier.to_string()));
+        }
+    }
+
+    fn visit_named_export(&mut self, export: &swc_core::ecma::ast::NamedExport) {
+        if let Some(source) = export.src.as_ref() {
+            if let Some(specifier) = source.value.as_str() {
+                self.specifiers
+                    .push((self.filename.clone(), specifier.to_string()));
+            }
+        }
+        export.visit_children_with(self);
+    }
+
+    fn visit_export_all(&mut self, export: &swc_core::ecma::ast::ExportAll) {
+        if let Some(specifier) = export.src.value.as_str() {
+            self.specifiers
+                .push((self.filename.clone(), specifier.to_string()));
+        }
+    }
+
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if matches!(call.callee, Callee::Import(_)) {
+            if let Some(argument) = call
+                .args
+                .first()
+                .filter(|argument| argument.spread.is_none())
+            {
+                if let Expr::Lit(Lit::Str(specifier)) = argument.expr.as_ref() {
+                    if let Some(specifier) = specifier.value.as_str() {
+                        self.specifiers
+                            .push((self.filename.clone(), specifier.to_string()));
+                    }
+                }
+            }
+        }
+        call.visit_children_with(self);
+    }
+}
+
+/// Parse with the module goal. Files whose source goal is otherwise
+/// ambiguous may fall back to a classic script (single-file decompile output
+/// can legitimately be sloppy-mode code).
 fn parse_for_validation(
     filename: &str,
     source: &str,
+    force_module: bool,
 ) -> Result<ParsedModule, ValidationParseError> {
     match parse_program(filename, source, true) {
         Ok(module) => Ok(module),
+        Err(module_error) if force_module => Err(module_error),
         Err(module_error) => match parse_program(filename, source, false) {
             Ok(parsed) if !has_module_syntax(&parsed.module) => Ok(parsed),
             _ => Err(module_error),
@@ -688,14 +852,18 @@ fn source_location(source_map: &SourceMap, span: Span) -> (usize, usize) {
 fn local_export_resolution(
     orig: &ModuleExportName,
     import_reexports: &HashMap<Id, ExplicitExportResolution>,
-) -> ExplicitExportResolution {
+    unresolved_mark: Mark,
+) -> Option<ExplicitExportResolution> {
     let ModuleExportName::Ident(ident) = orig else {
-        return ExplicitExportResolution::Local(module_export_name_atom(orig));
+        return None;
     };
-    import_reexports
-        .get(&ident.to_id())
-        .cloned()
-        .unwrap_or_else(|| ExplicitExportResolution::Local(ident.sym.clone()))
+    if let Some(resolution) = import_reexports.get(&ident.to_id()) {
+        Some(resolution.clone())
+    } else if ident.ctxt.outer() == unresolved_mark {
+        None
+    } else {
+        Some(ExplicitExportResolution::Local(ident.sym.clone()))
+    }
 }
 
 fn record_explicit_export(
@@ -762,6 +930,321 @@ fn export_decl_bindings(decl: &Decl) -> Vec<(Atom, Span)> {
         Decl::Fn(f) => vec![(f.ident.sym.clone(), f.ident.span)],
         Decl::Class(c) => vec![(c.ident.sym.clone(), c.ident.span)],
         _ => Vec::new(),
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DeclarationKind {
+    Lexical,
+    Var,
+}
+
+struct ScopeBinding {
+    name: Atom,
+    span: Span,
+    kind: DeclarationKind,
+}
+
+/// Collect declaration conflicts that are ESM early errors. Each lexical
+/// scope compares its direct lexical declarations with `var` declarations
+/// that hoist through nested statements to that scope. Blocks, switch case
+/// lists, loop-head scopes, and function bodies therefore need independent
+/// checks rather than one resolver-identity sweep over the module.
+fn duplicate_declaration_findings(
+    filename: &str,
+    module: &Module,
+    source_map: &SourceMap,
+) -> Vec<OutputFinding> {
+    let mut bindings = direct_module_lexical_bindings(module);
+    let mut var_collector = VarBindingCollector::default();
+    module.visit_with(&mut var_collector);
+    bindings.extend(var_collector.bindings);
+
+    let mut visitor = DuplicateDeclarationVisitor {
+        filename,
+        source_map,
+        findings: Vec::new(),
+        reported_locations: HashSet::new(),
+    };
+    visitor.check_scope(bindings, "module-scope");
+    module.visit_children_with(&mut visitor);
+    visitor.findings
+}
+
+fn direct_module_lexical_bindings(module: &Module) -> Vec<ScopeBinding> {
+    let mut bindings = Vec::new();
+    for item in &module.body {
+        match item {
+            ModuleItem::ModuleDecl(ModuleDecl::Import(import)) => {
+                for specifier in &import.specifiers {
+                    let local = match specifier {
+                        ImportSpecifier::Named(named) => &named.local,
+                        ImportSpecifier::Default(default) => &default.local,
+                        ImportSpecifier::Namespace(namespace) => &namespace.local,
+                    };
+                    bindings.push(ScopeBinding {
+                        name: local.sym.clone(),
+                        span: local.span,
+                        kind: DeclarationKind::Lexical,
+                    });
+                }
+            }
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => {
+                record_direct_lexical_decl(&export.decl, &mut bindings);
+            }
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultDecl(export)) => {
+                let ident = match &export.decl {
+                    DefaultDecl::Fn(function) => function.ident.as_ref(),
+                    DefaultDecl::Class(class) => class.ident.as_ref(),
+                    DefaultDecl::TsInterfaceDecl(_) => None,
+                };
+                if let Some(ident) = ident {
+                    bindings.push(ScopeBinding {
+                        name: ident.sym.clone(),
+                        span: ident.span,
+                        kind: DeclarationKind::Lexical,
+                    });
+                }
+            }
+            ModuleItem::Stmt(swc_core::ecma::ast::Stmt::Decl(decl)) => {
+                record_direct_lexical_decl(decl, &mut bindings);
+            }
+            _ => {}
+        }
+    }
+    bindings
+}
+
+fn record_direct_lexical_decl(decl: &Decl, bindings: &mut Vec<ScopeBinding>) {
+    match decl {
+        Decl::Var(var) if var.kind != VarDeclKind::Var => {
+            for declarator in &var.decls {
+                record_scope_binding_pat(&declarator.name, DeclarationKind::Lexical, bindings);
+            }
+        }
+        Decl::Using(using_decl) => {
+            for declarator in &using_decl.decls {
+                record_scope_binding_pat(&declarator.name, DeclarationKind::Lexical, bindings);
+            }
+        }
+        Decl::Fn(function) => bindings.push(ScopeBinding {
+            name: function.ident.sym.clone(),
+            span: function.ident.span,
+            kind: DeclarationKind::Lexical,
+        }),
+        Decl::Class(class) => bindings.push(ScopeBinding {
+            name: class.ident.sym.clone(),
+            span: class.ident.span,
+            kind: DeclarationKind::Lexical,
+        }),
+        _ => {}
+    }
+}
+
+fn record_scope_binding_pat(pat: &Pat, kind: DeclarationKind, bindings: &mut Vec<ScopeBinding>) {
+    let mut collector = ScopeBindingPatternCollector::default();
+    pat.visit_with(&mut collector);
+    bindings.extend(
+        collector
+            .bindings
+            .into_iter()
+            .map(|(name, span)| ScopeBinding { name, span, kind }),
+    );
+}
+
+#[derive(Default)]
+struct ScopeBindingPatternCollector {
+    bindings: Vec<(Atom, Span)>,
+}
+
+impl Visit for ScopeBindingPatternCollector {
+    fn visit_binding_ident(&mut self, binding: &BindingIdent) {
+        self.bindings
+            .push((binding.id.sym.clone(), binding.id.span));
+    }
+
+    // Defaults and computed keys are expressions, not bindings in the pattern.
+    fn visit_expr(&mut self, _: &Expr) {}
+}
+
+#[derive(Default)]
+struct VarBindingCollector {
+    bindings: Vec<ScopeBinding>,
+}
+
+impl Visit for VarBindingCollector {
+    fn visit_var_decl(&mut self, decl: &VarDecl) {
+        if decl.kind == VarDeclKind::Var {
+            for declarator in &decl.decls {
+                record_scope_binding_pat(
+                    &declarator.name,
+                    DeclarationKind::Var,
+                    &mut self.bindings,
+                );
+            }
+        }
+        decl.visit_children_with(self);
+    }
+
+    // `var` only hoists to the nearest function or static-block boundary.
+    fn visit_function(&mut self, _: &swc_core::ecma::ast::Function) {}
+
+    fn visit_arrow_expr(&mut self, _: &swc_core::ecma::ast::ArrowExpr) {}
+
+    fn visit_class(&mut self, _: &swc_core::ecma::ast::Class) {}
+}
+
+fn direct_statement_lexical_bindings<'a>(
+    statements: impl IntoIterator<Item = &'a Stmt>,
+) -> Vec<ScopeBinding> {
+    let mut bindings = Vec::new();
+    for statement in statements {
+        if let Stmt::Decl(decl) = statement {
+            record_direct_lexical_decl(decl, &mut bindings);
+        }
+    }
+    bindings
+}
+
+fn function_body_bindings(body: &FunctionBody) -> Vec<ScopeBinding> {
+    let mut bindings = direct_statement_lexical_bindings(&body.stmts);
+    // Function declarations at the top of a function body contribute var
+    // names, unlike block-level function declarations in strict ESM code.
+    for statement in &body.stmts {
+        if let Stmt::Decl(Decl::Fn(function)) = statement {
+            if let Some(binding) = bindings.iter_mut().find(|binding| {
+                binding.name == function.ident.sym && binding.span == function.ident.span
+            }) {
+                binding.kind = DeclarationKind::Var;
+            }
+        }
+    }
+    let mut var_collector = VarBindingCollector::default();
+    body.visit_with(&mut var_collector);
+    bindings.extend(var_collector.bindings);
+    bindings
+}
+
+struct DuplicateDeclarationVisitor<'a> {
+    filename: &'a str,
+    source_map: &'a SourceMap,
+    findings: Vec<OutputFinding>,
+    reported_locations: HashSet<(Atom, u32)>,
+}
+
+impl DuplicateDeclarationVisitor<'_> {
+    fn check_scope(&mut self, mut bindings: Vec<ScopeBinding>, scope: &str) {
+        bindings.sort_by_key(|binding| binding.span.lo);
+        let mut first_kinds: HashMap<Atom, DeclarationKind> = HashMap::new();
+        let mut reported_names = HashSet::new();
+        for binding in bindings {
+            let Some(first_kind) = first_kinds.get(&binding.name).copied() else {
+                first_kinds.insert(binding.name.clone(), binding.kind);
+                continue;
+            };
+            // Repeated `var` declarations denote the same binding and are
+            // legal. Every other repeat in this lexical scope is an early
+            // error.
+            if first_kind == DeclarationKind::Var && binding.kind == DeclarationKind::Var {
+                continue;
+            }
+            if reported_names.insert(binding.name.clone())
+                && self
+                    .reported_locations
+                    .insert((binding.name.clone(), binding.span.lo.0))
+            {
+                self.findings.push(finding_at_span(
+                    self.filename,
+                    self.source_map,
+                    binding.span,
+                    OutputFindingKind::DuplicateDeclaration,
+                    format!("duplicate {scope} declaration \"{}\"", binding.name),
+                ));
+            }
+        }
+    }
+
+    fn check_block(&mut self, block: &BlockStmt) {
+        let mut bindings = direct_statement_lexical_bindings(&block.stmts);
+        let mut var_collector = VarBindingCollector::default();
+        block.visit_with(&mut var_collector);
+        bindings.extend(var_collector.bindings);
+        self.check_scope(bindings, "block-scope");
+    }
+
+    fn check_loop_head(&mut self, head: &ForHead, body: &Stmt) {
+        let mut bindings = Vec::new();
+        match head {
+            ForHead::VarDecl(decl) if decl.kind != VarDeclKind::Var => {
+                for declarator in &decl.decls {
+                    record_scope_binding_pat(
+                        &declarator.name,
+                        DeclarationKind::Lexical,
+                        &mut bindings,
+                    );
+                }
+            }
+            ForHead::UsingDecl(decl) => {
+                for declarator in &decl.decls {
+                    record_scope_binding_pat(
+                        &declarator.name,
+                        DeclarationKind::Lexical,
+                        &mut bindings,
+                    );
+                }
+            }
+            ForHead::VarDecl(_) | ForHead::Pat(_) => {}
+        }
+        if bindings.is_empty() {
+            return;
+        }
+        let mut var_collector = VarBindingCollector::default();
+        body.visit_with(&mut var_collector);
+        bindings.extend(var_collector.bindings);
+        self.check_scope(bindings, "for-scope");
+    }
+}
+
+impl Visit for DuplicateDeclarationVisitor<'_> {
+    fn visit_block_stmt(&mut self, block: &BlockStmt) {
+        self.check_block(block);
+        block.visit_children_with(self);
+    }
+
+    fn visit_function_body(&mut self, body: &FunctionBody) {
+        self.check_scope(function_body_bindings(body), "function-body");
+        body.visit_children_with(self);
+    }
+
+    fn visit_switch_stmt(&mut self, switch: &SwitchStmt) {
+        let mut bindings = direct_statement_lexical_bindings(
+            switch.cases.iter().flat_map(|case| case.cons.iter()),
+        );
+        let mut var_collector = VarBindingCollector::default();
+        switch.visit_with(&mut var_collector);
+        bindings.extend(var_collector.bindings);
+        self.check_scope(bindings, "switch-scope");
+        switch.visit_children_with(self);
+    }
+
+    fn visit_for_stmt(&mut self, statement: &ForStmt) {
+        if let Some(swc_core::ecma::ast::VarDeclOrExpr::VarDecl(decl)) = &statement.init {
+            if decl.kind != VarDeclKind::Var {
+                let head = ForHead::VarDecl(decl.clone());
+                self.check_loop_head(&head, &statement.body);
+            }
+        }
+        statement.visit_children_with(self);
+    }
+
+    fn visit_for_in_stmt(&mut self, statement: &ForInStmt) {
+        self.check_loop_head(&statement.left, &statement.body);
+        statement.visit_children_with(self);
+    }
+
+    fn visit_for_of_stmt(&mut self, statement: &ForOfStmt) {
+        self.check_loop_head(&statement.left, &statement.body);
+        statement.visit_children_with(self);
     }
 }
 
