@@ -728,6 +728,88 @@ fn nested_lexical_var_conflicts_are_reported() {
 }
 
 #[test]
+fn function_parameters_conflict_with_each_other_and_direct_body_lexicals() {
+    let findings = kinds(&[
+        (
+            "body-lexical.js",
+            "export {};\nfunction run(value) { let value; }\n",
+        ),
+        (
+            "duplicate-parameter.js",
+            "export {};\nfunction run(value, value) {}\n",
+        ),
+    ]);
+    assert_eq!(
+        findings,
+        vec![
+            (
+                OutputFindingKind::DuplicateDeclaration,
+                "body-lexical.js".into(),
+            ),
+            (
+                OutputFindingKind::DuplicateDeclaration,
+                "duplicate-parameter.js".into(),
+            ),
+        ]
+    );
+}
+
+#[test]
+fn function_parameters_may_share_names_with_var_and_function_declarations() {
+    let findings = kinds(&[(
+        "entry.js",
+        r#"
+export {};
+function withVar(value) { var value; return value; }
+function withFunction(value) { function value() {} return value; }
+"#,
+    )]);
+    assert_eq!(findings, vec![]);
+}
+
+#[test]
+fn arrow_and_constructor_parameters_conflict_with_direct_body_lexicals() {
+    let findings = kinds(&[
+        (
+            "arrow.js",
+            "export const run = (value) => { let value; };\n",
+        ),
+        (
+            "constructor.js",
+            "export class Example { constructor(value) { let value; } }\n",
+        ),
+    ]);
+    assert_eq!(
+        findings,
+        vec![
+            (OutputFindingKind::DuplicateDeclaration, "arrow.js".into()),
+            (
+                OutputFindingKind::DuplicateDeclaration,
+                "constructor.js".into(),
+            ),
+        ]
+    );
+}
+
+#[test]
+fn catch_parameters_conflict_only_with_direct_body_lexicals() {
+    let findings = kinds(&[
+        (
+            "invalid.js",
+            "export {};\ntry {} catch (error) { let error; }\n",
+        ),
+        (
+            "valid.js",
+            "export {};\ntry {} catch (error) { var error; { let error; } }\n",
+        ),
+    ]);
+    assert_eq!(
+        findings,
+        vec![(OutputFindingKind::DuplicateDeclaration, "invalid.js".into(),)]
+    );
+}
+
+#[test]
 fn nested_sibling_lexicals_and_repeated_vars_are_legal() {
     let findings = kinds(&[(
         "entry.js",
@@ -959,6 +1041,33 @@ fn static_and_dynamic_import_targets_use_module_goal() {
             (OutputFindingKind::ParseError, "static-leaf.js".into()),
             (OutputFindingKind::ParseError, "dynamic-leaf.js".into()),
             (OutputFindingKind::ParseError, "reexport-leaf.js".into()),
+        ]
+    );
+}
+
+#[test]
+fn explicit_commonjs_extensions_are_not_promoted_to_module_goal() {
+    let findings = kinds(&[
+        ("entry.mjs", "import \"./provider.cjs\";\n"),
+        ("provider.cjs", "module.exports = { value: 1 };\n"),
+        ("typed-entry.mts", "import \"./provider.cts\";\n"),
+        ("provider.cts", "exports.value = 1;\n"),
+    ]);
+    assert_eq!(findings, vec![]);
+}
+
+#[test]
+fn explicit_commonjs_extensions_reject_module_only_syntax() {
+    let findings = kinds(&[
+        ("provider.cjs", "export const value = 1;\n"),
+        ("provider.cts", "import \"./side-effect.js\";\n"),
+        ("side-effect.js", "console.log('loaded');\n"),
+    ]);
+    assert_eq!(
+        findings,
+        vec![
+            (OutputFindingKind::ParseError, "provider.cjs".into()),
+            (OutputFindingKind::ParseError, "provider.cts".into()),
         ]
     );
 }

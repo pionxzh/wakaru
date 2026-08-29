@@ -22,11 +22,12 @@ use std::{
 
 use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, Span, Spanned, GLOBALS};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignTarget, AssignTargetPat, BindingIdent, BlockStmt, CallExpr, Callee, Decl,
-    DefaultDecl, Expr, ForHead, ForInStmt, ForOfStmt, ForStmt, FunctionBody, Id, Ident,
-    ImportSpecifier, Lit, Module, ModuleDecl, ModuleExportName, ModuleItem, ObjectPatProp, Pat,
-    Program, PropName, SimpleAssignTarget, Stmt, Str, SwitchStmt, UnaryExpr, UnaryOp, UpdateExpr,
-    VarDecl, VarDeclKind,
+    ArrowExpr, ArrowFunctionBody, AssignExpr, AssignTarget, AssignTargetPat, BindingIdent,
+    BlockStmt, CallExpr, Callee, CatchClause, Constructor, Decl, DefaultDecl, Expr, ForHead,
+    ForInStmt, ForOfStmt, ForStmt, Function, FunctionBody, Id, Ident, ImportSpecifier, Lit, Module,
+    ModuleDecl, ModuleExportName, ModuleItem, ObjectPatProp, ParamOrTsParamProp, Pat, Program,
+    PropName, SimpleAssignTarget, Stmt, Str, SwitchStmt, UnaryExpr, UnaryOp, UpdateExpr, VarDecl,
+    VarDeclKind,
 };
 use swc_core::ecma::atoms::Atom;
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
@@ -103,7 +104,7 @@ pub fn validate_output_modules(modules: &[(String, String)]) -> Vec<OutputFindin
 
 fn validate_inner(modules: &[(String, String)]) -> Vec<OutputFinding> {
     let filenames: HashSet<&str> = modules.iter().map(|(name, _)| name.as_str()).collect();
-    let esm_filenames = classify_esm_filenames(modules, &filenames);
+    let source_goals = classify_source_goals(modules, &filenames);
     let mut findings = Vec::new();
     let mut infos = Vec::new();
 
@@ -112,7 +113,10 @@ fn validate_inner(modules: &[(String, String)]) -> Vec<OutputFinding> {
             filename,
             source,
             &filenames,
-            esm_filenames.contains(filename),
+            source_goals
+                .get(filename)
+                .copied()
+                .unwrap_or(SourceGoal::Ambiguous),
         ) {
             Ok((info, mut local_findings)) => {
                 findings.append(&mut local_findings);
@@ -314,12 +318,13 @@ fn analyze_module(
     filename: &str,
     source: &str,
     filenames: &HashSet<&str>,
-    is_esm: bool,
+    source_goal: SourceGoal,
 ) -> Result<(ModuleInfo, Vec<OutputFinding>), ValidationParseError> {
     let ParsedModule {
         mut module,
         source_map,
-    } = parse_for_validation(filename, source, is_esm)?;
+    } = parse_for_validation(filename, source, source_goal)?;
+    let is_esm = source_goal == SourceGoal::Module;
 
     let unresolved_mark = Mark::new();
     let top_level_mark = Mark::new();
@@ -646,54 +651,85 @@ fn analyze_module(
     Ok((info, findings))
 }
 
-/// Classify files whose emitted source must be interpreted as ESM. Besides
-/// explicit module syntax, `.mjs` / `.mts` names and every in-set target of a
-/// static or dynamic import carry a module source goal even when the target is
-/// otherwise syntaxless.
-fn classify_esm_filenames(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SourceGoal {
+    Module,
+    Script,
+    Ambiguous,
+}
+
+/// Classify each emitted file's source goal. Explicit `.mjs` / `.mts` names,
+/// module syntax, module-only parses, and in-set import targets select ESM.
+/// Explicit `.cjs` / `.cts` names remain script/CommonJS even when imported by
+/// an ESM file. All other syntaxless files may fall back to classic script.
+fn classify_source_goals(
     modules: &[(String, String)],
     filenames: &HashSet<&str>,
-) -> HashSet<String> {
-    let mut esm_filenames = HashSet::new();
+) -> HashMap<String, SourceGoal> {
+    let mut source_goals: HashMap<String, SourceGoal> = modules
+        .iter()
+        .map(|(filename, _)| (filename.clone(), filename_source_goal(filename)))
+        .collect();
     let mut referenced_targets = Vec::new();
 
     for (filename, source) in modules {
-        if filename_forces_module_goal(filename) {
-            esm_filenames.insert(filename.clone());
-        }
-
-        match parse_program(filename, source, true) {
-            Ok(parsed) => {
-                if has_module_syntax(&parsed.module)
-                    || parse_program(filename, source, false).is_err()
-                {
-                    esm_filenames.insert(filename.clone());
+        match source_goals
+            .get(filename)
+            .copied()
+            .unwrap_or(SourceGoal::Ambiguous)
+        {
+            SourceGoal::Module => {
+                if let Ok(parsed) = parse_program(filename, source, true) {
+                    referenced_targets.extend(esm_target_specifiers(filename, &parsed.module));
                 }
-                referenced_targets.extend(esm_target_specifiers(filename, &parsed.module));
             }
-            Err(_) => {
+            SourceGoal::Script => {
                 if let Ok(parsed) = parse_program(filename, source, false) {
                     referenced_targets.extend(esm_target_specifiers(filename, &parsed.module));
                 }
             }
+            SourceGoal::Ambiguous => match parse_program(filename, source, true) {
+                Ok(parsed) => {
+                    if has_module_syntax(&parsed.module)
+                        || parse_program(filename, source, false).is_err()
+                    {
+                        source_goals.insert(filename.clone(), SourceGoal::Module);
+                    }
+                    referenced_targets.extend(esm_target_specifiers(filename, &parsed.module));
+                }
+                Err(_) => {
+                    if let Ok(parsed) = parse_program(filename, source, false) {
+                        referenced_targets.extend(esm_target_specifiers(filename, &parsed.module));
+                    }
+                }
+            },
         }
     }
 
     for (from_filename, specifier) in referenced_targets {
         if let Some(target) = resolve_in_set(&from_filename, &specifier, filenames) {
-            esm_filenames.insert(target);
+            if source_goals.get(&target) != Some(&SourceGoal::Script) {
+                source_goals.insert(target, SourceGoal::Module);
+            }
         }
     }
-    esm_filenames
+    source_goals
 }
 
-fn filename_forces_module_goal(filename: &str) -> bool {
-    Path::new(filename)
+fn filename_source_goal(filename: &str) -> SourceGoal {
+    let Some(extension) = Path::new(filename)
         .extension()
         .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| {
-            extension.eq_ignore_ascii_case("mjs") || extension.eq_ignore_ascii_case("mts")
-        })
+    else {
+        return SourceGoal::Ambiguous;
+    };
+    if extension.eq_ignore_ascii_case("mjs") || extension.eq_ignore_ascii_case("mts") {
+        SourceGoal::Module
+    } else if extension.eq_ignore_ascii_case("cjs") || extension.eq_ignore_ascii_case("cts") {
+        SourceGoal::Script
+    } else {
+        SourceGoal::Ambiguous
+    }
 }
 
 fn esm_target_specifiers(filename: &str, module: &Module) -> Vec<(String, String)> {
@@ -758,20 +794,23 @@ impl Visit for EsmTargetSpecifierCollector {
     }
 }
 
-/// Parse with the module goal. Files whose source goal is otherwise
-/// ambiguous may fall back to a classic script (single-file decompile output
-/// can legitimately be sloppy-mode code).
+/// Parse with an explicit module or script goal when the filename/graph proves
+/// one. Otherwise try module first and fall back to classic script; single-file
+/// decompile output can legitimately be sloppy-mode code.
 fn parse_for_validation(
     filename: &str,
     source: &str,
-    force_module: bool,
+    source_goal: SourceGoal,
 ) -> Result<ParsedModule, ValidationParseError> {
-    match parse_program(filename, source, true) {
-        Ok(module) => Ok(module),
-        Err(module_error) if force_module => Err(module_error),
-        Err(module_error) => match parse_program(filename, source, false) {
-            Ok(parsed) if !has_module_syntax(&parsed.module) => Ok(parsed),
-            _ => Err(module_error),
+    match source_goal {
+        SourceGoal::Module => parse_program(filename, source, true),
+        SourceGoal::Script => parse_program(filename, source, false),
+        SourceGoal::Ambiguous => match parse_program(filename, source, true) {
+            Ok(module) => Ok(module),
+            Err(module_error) => match parse_program(filename, source, false) {
+                Ok(parsed) if !has_module_syntax(&parsed.module) => Ok(parsed),
+                _ => Err(module_error),
+            },
         },
     }
 }
@@ -1125,6 +1164,29 @@ fn function_body_bindings(body: &FunctionBody) -> Vec<ScopeBinding> {
     bindings
 }
 
+fn parameter_bindings<'a>(parameters: impl IntoIterator<Item = &'a Pat>) -> Vec<ScopeBinding> {
+    let mut bindings = Vec::new();
+    for parameter in parameters {
+        record_scope_binding_pat(parameter, DeclarationKind::Lexical, &mut bindings);
+    }
+    bindings
+}
+
+/// Function declarations in a function body are var-scoped, so only direct
+/// lexical variables, classes, and `using` declarations conflict with formal
+/// parameters. Block-level function declarations elsewhere remain lexical.
+fn direct_function_body_lexical_bindings(body: &FunctionBody) -> Vec<ScopeBinding> {
+    let mut bindings = Vec::new();
+    for statement in &body.stmts {
+        if let Stmt::Decl(decl) = statement {
+            if !matches!(decl, Decl::Fn(_)) {
+                record_direct_lexical_decl(decl, &mut bindings);
+            }
+        }
+    }
+    bindings
+}
+
 struct DuplicateDeclarationVisitor<'a> {
     filename: &'a str,
     source_map: &'a SourceMap,
@@ -1206,6 +1268,47 @@ impl DuplicateDeclarationVisitor<'_> {
 }
 
 impl Visit for DuplicateDeclarationVisitor<'_> {
+    fn visit_function(&mut self, function: &Function) {
+        let mut bindings = parameter_bindings(function.params.iter().map(|param| &param.pat));
+        if let Some(body) = &function.body {
+            bindings.extend(direct_function_body_lexical_bindings(body));
+        }
+        self.check_scope(bindings, "function-parameter");
+        function.visit_children_with(self);
+    }
+
+    fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
+        let mut bindings = parameter_bindings(arrow.params.iter());
+        if let ArrowFunctionBody::FunctionBody(body) = arrow.body.as_ref() {
+            bindings.extend(direct_function_body_lexical_bindings(body));
+        }
+        self.check_scope(bindings, "function-parameter");
+        arrow.visit_children_with(self);
+    }
+
+    fn visit_constructor(&mut self, constructor: &Constructor) {
+        let mut bindings = parameter_bindings(constructor.params.iter().filter_map(|param| {
+            let ParamOrTsParamProp::Param(param) = param else {
+                return None;
+            };
+            Some(&param.pat)
+        }));
+        if let Some(body) = &constructor.body {
+            bindings.extend(direct_function_body_lexical_bindings(body));
+        }
+        self.check_scope(bindings, "function-parameter");
+        constructor.visit_children_with(self);
+    }
+
+    fn visit_catch_clause(&mut self, catch: &CatchClause) {
+        if let Some(parameter) = &catch.param {
+            let mut bindings = parameter_bindings(std::iter::once(parameter));
+            bindings.extend(direct_statement_lexical_bindings(&catch.body.stmts));
+            self.check_scope(bindings, "catch-parameter");
+        }
+        catch.visit_children_with(self);
+    }
+
     fn visit_block_stmt(&mut self, block: &BlockStmt) {
         self.check_block(block);
         block.visit_children_with(self);

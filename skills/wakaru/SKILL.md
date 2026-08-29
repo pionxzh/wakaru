@@ -138,13 +138,15 @@ wakaru debug validate out/ --json
 
 This reports dangling relative references, missing or star-ambiguous imported
 or re-exported names, local exports whose binding is missing, duplicate exports
-or conflicting declarations in module and nested lexical scopes, and writes
-to imported or `const` bindings. It also reports unresolved `module` /
-`exports` runtime uses left in ESM, excluding direct safe `typeof` probes, then
-exits nonzero on findings. `.mjs` / `.mts` files and in-tree static or dynamic
-import targets use the module source goal even without their own import/export
-declaration. Environment-dependent free identifier writes are not definite
-findings without a host model. Text output uses
+or conflicting declarations in module, nested lexical, function-parameter/body,
+and catch-parameter scopes, and writes to imported or `const` bindings. It also
+reports unresolved `module` / `exports` runtime uses left in ESM, excluding
+direct safe `typeof` probes, then exits nonzero on findings. `.mjs` / `.mts`
+files and in-tree static or dynamic import targets use the module source goal
+even without their own import/export declaration. Explicit `.cjs` / `.cts`
+files retain the script/CommonJS source goal even when imported by ESM.
+Environment-dependent free identifier writes are not definite findings
+without a host model. Text output uses
 `filename:line:column`; JSON
 findings include one-based `line` and `column`. The recursive scan accepts
 `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.tsx`, `.mts`, `.cts`, and extensionless

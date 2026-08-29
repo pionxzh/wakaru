@@ -66,14 +66,16 @@ reports structural defects that would make it fail to load as ESM: dangling
 relative references (static, re-export, dynamic `import()`, string
 `require()`), imports of names the provider doesn't unambiguously export,
 local export clauses whose binding is missing, duplicate exports or
-conflicting declarations in module and nested lexical scopes, unresolved
-`module` / `exports` runtime uses left in ESM output, and writes to imported or
-`const` bindings. Direct safe `typeof module` / `typeof exports` probes are
-excluded. `.mjs` / `.mts` files and in-tree static or dynamic import targets
-are validated with the module source goal even when they have no import/export
-declaration. Free identifier writes are not definite findings without a host
-environment model. The command exits nonzero when findings exist, so harnesses
-can gate on it.
+conflicting declarations in module, nested lexical, function-parameter/body,
+and catch-parameter scopes, unresolved `module` / `exports` runtime uses left
+in ESM output, and writes to imported or `const` bindings. Direct safe `typeof
+module` / `typeof exports` probes are excluded. `.mjs` / `.mts` files and
+in-tree static or dynamic import targets are validated with the module source
+goal even when they have no import/export declaration. Explicit `.cjs` /
+`.cts` files retain the script/CommonJS source goal even when imported by ESM.
+Free identifier writes are not definite findings without a host environment
+model. The command exits nonzero when findings exist, so harnesses can gate on
+it.
 
 ```bash
 cargo run -p wakaru-cli -- --unpack bundle.js -o out/
