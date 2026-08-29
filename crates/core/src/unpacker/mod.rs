@@ -207,6 +207,64 @@ fn stmts_have_function_level_await(statements: &[Stmt]) -> bool {
     finder.found
 }
 
+/// Whether lifted statements observe the enclosing function's `this` or
+/// `arguments`. Both change meaning when the statements move to ESM module
+/// scope or into a restored arrow boundary: `this` becomes `undefined` and
+/// `arguments` becomes an unresolved reference. Ordinary functions, class
+/// bodies, and accessors rebind them, so the scan does not descend into
+/// those; arrows inherit both, so it does.
+#[derive(Default)]
+struct FunctionLevelThisOrArguments {
+    found: bool,
+}
+
+impl Visit for FunctionLevelThisOrArguments {
+    fn visit_this_expr(&mut self, _: &swc_core::ecma::ast::ThisExpr) {
+        self.found = true;
+    }
+
+    fn visit_ident(&mut self, ident: &swc_core::ecma::ast::Ident) {
+        if ident.sym == *"arguments" {
+            self.found = true;
+        }
+    }
+
+    fn visit_function(&mut self, _: &swc_core::ecma::ast::Function) {}
+
+    fn visit_constructor(&mut self, _: &swc_core::ecma::ast::Constructor) {}
+
+    fn visit_getter_prop(&mut self, _: &swc_core::ecma::ast::GetterProp) {}
+
+    fn visit_setter_prop(&mut self, _: &swc_core::ecma::ast::SetterProp) {}
+
+    fn visit_static_block(&mut self, _: &swc_core::ecma::ast::StaticBlock) {}
+
+    fn visit_class_prop(&mut self, prop: &swc_core::ecma::ast::ClassProp) {
+        // Field initializers rebind `this`; computed keys evaluate outside.
+        if let swc_core::ecma::ast::PropName::Computed(key) = &prop.key {
+            key.visit_with(self);
+        }
+    }
+
+    fn visit_private_prop(&mut self, _: &swc_core::ecma::ast::PrivateProp) {}
+}
+
+pub(crate) fn stmts_have_function_level_this_or_arguments(statements: &[Stmt]) -> bool {
+    let mut finder = FunctionLevelThisOrArguments::default();
+    for statement in statements {
+        statement.visit_with(&mut finder);
+    }
+    finder.found
+}
+
+pub(crate) fn expr_has_function_level_this_or_arguments(
+    expression: &swc_core::ecma::ast::Expr,
+) -> bool {
+    let mut finder = FunctionLevelThisOrArguments::default();
+    expression.visit_with(&mut finder);
+    finder.found
+}
+
 pub(crate) fn arrow_iife_call(statements: Vec<Stmt>) -> swc_core::ecma::ast::Expr {
     use swc_core::common::{SyntaxContext, DUMMY_SP};
     use swc_core::ecma::ast::{

@@ -8,8 +8,9 @@ use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use crate::module_path::relative_import_specifier;
 use crate::unpacker::wrappers::body_looks_like_umd_wrapper;
 use crate::unpacker::{
-    arrow_iife_call, function_level_returns, sanitize_relative_path, span_byte_range, BundleFormat,
-    UnpackResult, UnpackedModule,
+    arrow_iife_call, expr_has_function_level_this_or_arguments, function_level_returns,
+    sanitize_relative_path, span_byte_range, stmts_have_function_level_this_or_arguments,
+    BundleFormat, UnpackResult, UnpackedModule,
 };
 use crate::utils::paren::strip_parens;
 use crate::utils::swc_safety::apply_fixer;
@@ -324,6 +325,16 @@ fn module_from_factory_parts(
     module_id: &str,
     id_to_filename: &HashMap<String, String>,
 ) -> Option<Module> {
+    // Lifting the factory body to module scope (or into a restored arrow
+    // boundary) changes what `this` and `arguments` resolve to. Fail closed
+    // so the whole-bundle fallback preserves the original semantics.
+    if stmts_have_function_level_this_or_arguments(&body_stmts)
+        || returned_expr
+            .as_ref()
+            .is_some_and(expr_has_function_level_this_or_arguments)
+    {
+        return None;
+    }
     let mut stmts = dependency_stmts(deps, params, filename, module_id, id_to_filename);
     let body_stmts = lower_factory_body(body_stmts, deps)?;
     stmts.extend(body_stmts);

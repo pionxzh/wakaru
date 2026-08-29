@@ -49,7 +49,10 @@ use crate::rules::{
 };
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
 use crate::synthetic_import_cleanup::downgrade_unused_synthetic_imports;
-use crate::unpacker::{arrow_iife_call, stmts_have_function_level_return, DetectedModuleFailure};
+use crate::unpacker::{
+    arrow_iife_call, stmts_have_function_level_return,
+    stmts_have_function_level_this_or_arguments, DetectedModuleFailure,
+};
 
 #[derive(Debug, PartialEq, Eq)]
 enum BoundaryRestoration {
@@ -85,6 +88,12 @@ fn restore_lifted_function_boundary(module: &mut Module, enabled: bool) -> Bound
             ModuleItem::ModuleDecl(decl) if !matches!(decl, ModuleDecl::Import(_))
         )
     }) {
+        return BoundaryRestoration::Declined;
+    }
+    // The restored arrow boundary inherits module-scope `this` (undefined)
+    // and has no `arguments`; a lifted body observing either would parse but
+    // break at runtime. Fail closed to the extracted-source fallback instead.
+    if stmts_have_function_level_this_or_arguments(&statements) {
         return BoundaryRestoration::Declined;
     }
 
@@ -971,6 +980,48 @@ mod tests {
             assert_eq!(
                 restore_lifted_function_boundary(&mut module, true),
                 BoundaryRestoration::NotNeeded
+            );
+        });
+    }
+
+    #[test]
+    fn lifted_boundary_declines_bodies_observing_this_or_arguments() {
+        GLOBALS.set(&Default::default(), || {
+            let cm: Lrc<SourceMap> = Default::default();
+            let mut module = parse_js(
+                "if (skip) return; consume(this.config);",
+                "entry.js",
+                cm.clone(),
+            )
+            .expect("recoverable top-level return should produce an AST");
+            assert_eq!(
+                restore_lifted_function_boundary(&mut module, true),
+                BoundaryRestoration::Declined,
+                "an arrow boundary would rebind the lifted `this`"
+            );
+
+            let mut with_arguments = parse_js(
+                "if (skip) return; consume(arguments[0]);",
+                "entry.js",
+                cm.clone(),
+            )
+            .expect("recoverable top-level return should produce an AST");
+            assert_eq!(
+                restore_lifted_function_boundary(&mut with_arguments, true),
+                BoundaryRestoration::Declined,
+                "an arrow boundary has no `arguments`"
+            );
+
+            let mut nested = parse_js(
+                "if (skip) return; function tail() { return arguments[0]; } consume(tail(1));",
+                "entry.js",
+                cm,
+            )
+            .expect("recoverable top-level return should produce an AST");
+            assert_eq!(
+                restore_lifted_function_boundary(&mut nested, true),
+                BoundaryRestoration::Restored,
+                "nested-function `arguments` belongs to that function"
             );
         });
     }

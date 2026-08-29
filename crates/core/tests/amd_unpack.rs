@@ -195,6 +195,96 @@ define(["polyfill/forEach"], function() {
     assert_eq!(validate_output_modules(&raw), vec![]);
 }
 
+/// A factory observing its own `arguments` cannot be lifted: an arrow
+/// boundary has no `arguments`, so the restored module would parse but throw
+/// at import time. The whole bundle must fall back to the original source.
+#[test]
+fn factory_observing_arguments_rejects_the_bundle() {
+    let source = r#"
+define("app/main", ["app/dep"], function(dep) {
+  if (arguments.length === 0) return;
+  console.log(arguments[0], dep);
+});
+define("app/dep", [], function() {
+  return 42;
+});
+"#;
+
+    let raw = raw_pairs(source);
+    assert_eq!(
+        raw.len(),
+        1,
+        "the bundle must fall back as one file: {raw:#?}"
+    );
+    assert!(
+        raw[0].1.contains("define(\"app/main\""),
+        "the original define calls must be preserved:\n{}",
+        raw[0].1
+    );
+
+    let decompiled = pairs(source);
+    assert_eq!(decompiled.len(), 1);
+    assert!(
+        decompiled[0].1.contains("define(") && !decompiled[0].1.contains("(()=>"),
+        "no arrow boundary may capture the factory's arguments:\n{}",
+        decompiled[0].1
+    );
+}
+
+/// Same fail-close for a factory observing its `this` receiver.
+#[test]
+fn factory_observing_this_rejects_the_bundle() {
+    let source = r#"
+define("app/main", [], function() {
+  if (this.skipBoot) return;
+  this.booted = true;
+});
+"#;
+
+    let raw = raw_pairs(source);
+    assert_eq!(raw.len(), 1);
+    assert!(
+        raw[0].1.contains("define(\"app/main\""),
+        "the original define call must be preserved:\n{}",
+        raw[0].1
+    );
+}
+
+/// `arguments` inside a nested ordinary function belongs to that function and
+/// must not block the boundary restoration.
+#[test]
+fn nested_function_arguments_does_not_block_the_lift() {
+    let source = r#"
+define("app/main", ["app/dep"], function(dep) {
+  if (dep.skip) return;
+  function tail() {
+    return arguments[0];
+  }
+  console.log(tail(dep));
+});
+define("app/dep", [], function() {
+  return { skip: false };
+});
+"#;
+
+    let raw = raw_pairs(source);
+    assert_eq!(
+        raw.len(),
+        2,
+        "nested-function arguments must not reject the bundle: {raw:#?}"
+    );
+    let main = raw
+        .iter()
+        .find(|(name, _)| name.contains("main"))
+        .expect("main module should exist");
+    assert!(
+        main.1.contains("return;") && main.1.contains("function tail"),
+        "the guarded body keeps its boundary and the nested function:\n{}",
+        main.1
+    );
+    assert_eq!(validate_output_modules(&raw), vec![]);
+}
+
 #[test]
 fn empty_amd_define_is_not_unpacked() {
     let source = "define();";
