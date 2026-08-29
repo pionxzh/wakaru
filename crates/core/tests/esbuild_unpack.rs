@@ -323,6 +323,78 @@ console.log(Root);
     );
 }
 
+const EXPORTED_RUNTIME_HELPER_BUNDLE: &str = r#"
+var H=Object.create;
+var P=Object.defineProperty;
+var q=Object.getOwnPropertyDescriptor;
+var G=Object.getOwnPropertyNames;
+var Q=Object.getPrototypeOf,W=Object.prototype.hasOwnProperty;
+var r=(e=>typeof require<"u"?require:typeof Proxy<"u"?new Proxy(e,{get:(t,o)=>(typeof require<"u"?require:t)[o]}):e)(function(e){if(typeof require<"u")return require.apply(this,arguments);throw Error('Dynamic require of "'+e+'" is not supported')});
+var X=(e,t,o,a)=>{if(t&&typeof t=="object"||typeof t=="function")for(let l of G(t))!W.call(e,l)&&l!==o&&P(e,l,{get:()=>t[l],enumerable:!(a=q(t,l))||a.enumerable});return e};
+var Y=(e,t,o)=>(o=e!=null?H(Q(e)):{},X(t||!e||!e.__esModule?P(o,"default",{value:e,enumerable:!0}):o,e));
+var Z=Math.max;
+var react=r("react"),jsx=r("react/jsx-runtime"),D=(0,react.createContext)(null);
+var wrapped=Y(r("react"));
+function App(){return (0,jsx.jsx)(wrapped.default.Fragment,{children:(0,jsx.jsx)(D.Provider,{value:null,children:"ok"})})}
+var Root=App;
+console.log(Root,Z(1,2));
+export { __HELPER__ as __ALIAS__ };
+"#;
+
+fn assert_exported_runtime_helper_keeps_cross_cluster_link(helper: &str, alias: &str) {
+    let bundle = EXPORTED_RUNTIME_HELPER_BUNDLE
+        .replace("__HELPER__", helper)
+        .replace("__ALIAS__", alias);
+
+    let raw_pairs = expect_heuristic_unpack_raw(&bundle);
+    assert!(
+        raw_pairs.len() > 1,
+        "fixture must exercise a cross-cluster link: {raw_pairs:#?}"
+    );
+    let public_module = raw_pairs
+        .iter()
+        .find(|(_, code)| code.contains(&format!("as {alias}")))
+        .expect("public helper alias should survive raw emission");
+    let imports_helper = public_module.1.lines().any(|line| {
+        line.strip_prefix("import { ")
+            .and_then(|rest| rest.split_once(" } from"))
+            .is_some_and(|(names, _)| names.split(", ").any(|name| name == helper))
+    });
+    assert!(
+        imports_helper,
+        "public helper alias must import its surviving local reference:\n{}",
+        public_module.1
+    );
+    assert_eq!(
+        validate_output_modules(&raw_pairs),
+        vec![],
+        "raw scope modules should have a complete helper link"
+    );
+
+    let normal_pairs = expect_heuristic_unpack(&bundle, "bundle.js");
+    assert!(
+        normal_pairs
+            .iter()
+            .any(|(_, code)| code.contains(&format!("as {alias}"))),
+        "normal cleanup must not prune the public helper alias: {normal_pairs:#?}"
+    );
+    assert_eq!(
+        validate_output_modules(&normal_pairs),
+        vec![],
+        "normal scope modules should retain a valid helper export"
+    );
+}
+
+#[test]
+fn exported_esbuild_to_esm_helper_keeps_cross_cluster_link() {
+    assert_exported_runtime_helper_keeps_cross_cluster_link("Y", "toEsmRuntime");
+}
+
+#[test]
+fn exported_dynamic_require_helper_keeps_cross_cluster_link() {
+    assert_exported_runtime_helper_keeps_cross_cluster_link("r", "dynamicRequireRuntime");
+}
+
 #[test]
 fn scope_module_imports_bindings_referenced_only_by_export_getters() {
     let bundle = r#"

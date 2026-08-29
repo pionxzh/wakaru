@@ -1175,6 +1175,33 @@ fn unwrap_esbuild_to_esm_helper_item(
     }
 }
 
+/// Apply the runtime-helper rewrites used by scope-hoist emission. Symbol-link
+/// analysis calls this on a clone first so it can distinguish helper
+/// references that disappear from occurrences that survive (for example, an
+/// explicit export specifier).
+fn rewrite_emitted_runtime_helpers(
+    item: &mut ModuleItem,
+    declared_names: &[Atom],
+    dynamic_require_helpers: &HashSet<Atom>,
+    esbuild_to_esm_helpers: &HashSet<Atom>,
+    default_interop_bindings: &mut HashSet<Atom>,
+) {
+    // Restore `r("react")` helper calls to direct requires everywhere except
+    // the item declaring the helper itself. The helper can land in any cluster
+    // after singleton attachment; only its own declaration must stay intact.
+    let declares_dynamic_require_helper = declared_names
+        .iter()
+        .any(|name| dynamic_require_helpers.contains(name));
+    if !dynamic_require_helpers.is_empty() && !declares_dynamic_require_helper {
+        item.visit_mut_with(&mut DynamicRequireHelperRewriter::new(
+            dynamic_require_helpers,
+        ));
+    }
+    if !esbuild_to_esm_helpers.is_empty() {
+        unwrap_esbuild_to_esm_helper_item(item, esbuild_to_esm_helpers, default_interop_bindings);
+    }
+}
+
 fn take_wrapped_require_call(expr: &Expr, helpers: &HashSet<Atom>) -> Option<Box<Expr>> {
     let Expr::Call(call) = expr else {
         return None;
@@ -2345,8 +2372,6 @@ struct ClusterSymbolLinks {
 fn build_cluster_symbol_links(
     cluster_declared: &[HashSet<Atom>],
     cluster_referenced: &[HashSet<Atom>],
-    dynamic_require_helpers: &HashSet<Atom>,
-    esbuild_to_esm_helpers: &HashSet<Atom>,
 ) -> ClusterSymbolLinks {
     let mut declaring_clusters: HashMap<Atom, Vec<usize>> = HashMap::new();
     for (cluster_index, declared_names) in cluster_declared.iter().enumerate() {
@@ -2365,10 +2390,6 @@ fn build_cluster_symbol_links(
 
     for (consumer_index, referenced_names) in cluster_referenced.iter().enumerate() {
         for name in referenced_names {
-            if dynamic_require_helpers.contains(name) || esbuild_to_esm_helpers.contains(name) {
-                continue;
-            }
-
             #[cfg(test)]
             record_emit_relation_symbol_probe();
             let Some(producer_indices) = declaring_clusters.get(name) else {
@@ -2477,12 +2498,44 @@ fn emit_clusters(
         })
         .collect();
 
-    let mut symbol_links = build_cluster_symbol_links(
-        &cluster_declared,
-        &cluster_referenced,
-        &dynamic_require_helpers,
-        &esbuild_to_esm_helpers,
-    );
+    // Helper names are omitted from cross-cluster links only where the
+    // corresponding emission rewrite actually removes that occurrence. A
+    // blanket name-based skip loses surviving references such as
+    // `export { __toESM as publicHelper }` and creates an undeclared export.
+    let emitted_item_referenced: Vec<HashSet<Atom>> = body
+        .iter()
+        .zip(items)
+        .map(|(source_item, item_info)| {
+            let references_runtime_helper = item_info.referenced_names.iter().any(|name| {
+                dynamic_require_helpers.contains(name) || esbuild_to_esm_helpers.contains(name)
+            });
+            if !references_runtime_helper {
+                return item_info.referenced_names.clone();
+            }
+            let mut emitted_item = source_item.clone();
+            let mut default_interop_bindings = HashSet::new();
+            rewrite_emitted_runtime_helpers(
+                &mut emitted_item,
+                &item_info.declared_names,
+                &dynamic_require_helpers,
+                &esbuild_to_esm_helpers,
+                &mut default_interop_bindings,
+            );
+            item_referenced_and_written_names(&emitted_item, &item_info.declared_names).0
+        })
+        .collect();
+    let cluster_link_referenced: Vec<HashSet<Atom>> = clusters
+        .iter()
+        .map(|cluster| {
+            cluster
+                .item_indices
+                .iter()
+                .flat_map(|&item| emitted_item_referenced[item].iter().cloned())
+                .collect()
+        })
+        .collect();
+
+    let mut symbol_links = build_cluster_symbol_links(&cluster_declared, &cluster_link_referenced);
 
     // Assign final filenames first so synthesized imports point at the same
     // paths the caller will write. Chunk names are derived from minified
@@ -2523,30 +2576,16 @@ fn emit_clusters(
         // Original body items, with exported declarations promoted to
         // `export function ...` / `export const ...` / `export class ...`.
         let mut leftover_exports: Vec<Atom> = Vec::new();
-        let should_rewrite_esbuild_to_esm = !esbuild_to_esm_helpers.is_empty();
         let mut default_interop_bindings = HashSet::new();
         for &i in &cluster.item_indices {
             let mut item = body[i].clone();
-            // Restore `r("react")` helper calls to direct requires everywhere
-            // except the item declaring the helper itself — the helper can
-            // land in any cluster (repartitioning attaches singletons to
-            // module anchors), and only its own declaration must stay intact.
-            let declares_dynamic_require_helper = items[i]
-                .declared_names
-                .iter()
-                .any(|name| dynamic_require_helpers.contains(name));
-            if !dynamic_require_helpers.is_empty() && !declares_dynamic_require_helper {
-                item.visit_mut_with(&mut DynamicRequireHelperRewriter::new(
-                    &dynamic_require_helpers,
-                ));
-            }
-            if should_rewrite_esbuild_to_esm {
-                unwrap_esbuild_to_esm_helper_item(
-                    &mut item,
-                    &esbuild_to_esm_helpers,
-                    &mut default_interop_bindings,
-                );
-            }
+            rewrite_emitted_runtime_helpers(
+                &mut item,
+                &items[i].declared_names,
+                &dynamic_require_helpers,
+                &esbuild_to_esm_helpers,
+                &mut default_interop_bindings,
+            );
             if exported.is_empty() {
                 module_items.push(item);
                 continue;
