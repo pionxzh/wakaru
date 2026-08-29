@@ -266,6 +266,31 @@ use(out);
 }
 
 #[test]
+fn markless_mode_ignores_numeric_requires() {
+    // Without an unresolved mark there is no way to tell a global `require`
+    // from a shadowed one, so the mark-less mode must not treat numeric
+    // requires as swc helper namespaces at all (UnObjectRest requires a mark
+    // unconditionally; this keeps the family policy aligned).
+    let input = r#"
+function require(id) {
+    return load(id);
+}
+const Y = require(39889);
+const out = Y.pi(Y.pi({}, app_info), { app_name: name });
+use(out);
+"#;
+    let output = render_rule(input, |_| UnObjectSpread::new());
+    assert!(
+        output.contains("Y.pi(Y.pi({}, app_info),"),
+        "mark-less mode must not rewrite through a numeric require namespace:\n{output}"
+    );
+    assert!(
+        output.contains("require(39889)"),
+        "mark-less mode must not sweep a numeric require declaration:\n{output}"
+    );
+}
+
+#[test]
 fn preserves_unconsumed_numeric_require_decl() {
     // A numeric-require binding is collected as a *candidate* swc helper
     // namespace, but the cleanup may only delete declarations this rule's own

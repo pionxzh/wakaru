@@ -267,10 +267,17 @@ pub(crate) struct NumericRequireNamespaces {
 }
 
 impl NumericRequireNamespaces {
-    /// With `Some(mark)`, only calls to the unresolved `require` qualify;
-    /// `None` accepts any `require` identifier (UnObjectSpread's behavior
-    /// when constructed without a mark).
+    /// Only calls to the unresolved `require` qualify. Without a mark
+    /// (`None`) there is no way to tell a global `require` from a shadowed
+    /// one, so nothing is collected and the sweep is a no-op — matching by
+    /// bare name would violate the SyntaxContext rule.
     pub(crate) fn collect(module: &Module, unresolved_mark: Option<Mark>) -> Self {
+        let Some(unresolved_mark) = unresolved_mark else {
+            return Self {
+                candidates: HashSet::new(),
+                referenced_at_entry: HashSet::new(),
+            };
+        };
         let mut candidates = HashSet::new();
         for item in &module.body {
             let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
@@ -324,7 +331,7 @@ impl NumericRequireNamespaces {
     }
 }
 
-fn is_numeric_require_call(expr: &Expr, unresolved_mark: Option<Mark>) -> bool {
+fn is_numeric_require_call(expr: &Expr, unresolved_mark: Mark) -> bool {
     let Expr::Call(call) = expr else {
         return false;
     };
@@ -334,7 +341,7 @@ fn is_numeric_require_call(expr: &Expr, unresolved_mark: Option<Mark>) -> bool {
     let Callee::Expr(callee) = &call.callee else {
         return false;
     };
-    if !matches!(callee.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "require" && unresolved_mark.is_none_or(|mark| id.ctxt.outer() == mark))
+    if !matches!(callee.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "require" && id.ctxt.outer() == unresolved_mark)
     {
         return false;
     }
