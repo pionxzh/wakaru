@@ -323,6 +323,60 @@ fn iife_unwrap_declines_cross_scope_binding_collisions() {
 }
 
 #[test]
+fn iife_unwrap_declines_named_function_self_bindings() {
+    let input = r#"
+        (function shared() {
+            globalThis.readInner = () => shared;
+        })();
+        var shared = 42;
+    "#;
+
+    assert!(
+        !unwraps_first_iife(input),
+        "a named function expression cannot lose its self-binding"
+    );
+}
+
+#[test]
+fn named_iife_self_binding_keeps_wrapper_in_split_entry() {
+    let input = r#"
+        (function shared() {
+            globalThis.readInner = () => shared;
+        })();
+        var shared = 42;
+
+        function a0() { return 1; }
+        function a1() { return a0(); }
+        function a2() { return a1(); }
+        function a3() { return a2(); }
+        function a4() { return a3(); }
+        function a5() { return a4(); }
+
+        function b0() { return 2; }
+        function b1() { return b0(); }
+        function b2() { return b1(); }
+        function b3() { return b2(); }
+        function b4() { return b3(); }
+        function b5() { return b4(); }
+
+        console.log(shared, a5(), b5());
+    "#;
+
+    let modules = split(input).expect("the guarded named-IIFE fixture should still split");
+    let entry = modules
+        .iter()
+        .find(|(_, _, is_entry)| *is_entry)
+        .map(|(_, code, _)| code)
+        .expect("the split should retain an entry module");
+    assert!(
+        entry.contains("function shared()")
+            && entry.contains("readInner")
+            && entry.contains("var shared = 42"),
+        "the named IIFE self-binding needs the retained function boundary:\n{entry}"
+    );
+}
+
+#[test]
 fn iife_unwrap_ignores_bindings_that_keep_a_nested_scope() {
     let input = r#"
         (function () {

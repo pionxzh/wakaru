@@ -484,7 +484,14 @@ fn unwrap_iife(module: &Module) -> Option<Vec<ModuleItem>> {
             }
         }
         Expr::Fn(fn_expr) => {
-            if fn_expr.function.params.is_empty() {
+            // A named function expression owns a self-binding that is visible
+            // throughout its body. Lifting the body cannot preserve that
+            // function value: a same-named outer binding would capture the
+            // references, while no outer binding would leave them unresolved.
+            // Keep the wrapper even when the name currently appears unused;
+            // fail closed rather than trying to prove every reflective use of
+            // the function identity.
+            if fn_expr.ident.is_none() && fn_expr.function.params.is_empty() {
                 fn_expr.function.body.as_ref().map(|b| &b.stmts)
             } else {
                 None
