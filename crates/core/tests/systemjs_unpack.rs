@@ -3788,6 +3788,10 @@ System.register("field", [], function (_export) {
         !has_bare_function_stmt(entry),
         "must not emit a statement-level `function (`:\n{entry}"
     );
+    assert_valid_unpacked_esm(&raw, "comma enum IIFE raw");
+
+    let decompiled = unpack_source(source);
+    assert_valid_unpacked_esm(&decompiled, "comma enum IIFE decompiled");
 }
 
 fn has_bare_function_stmt(code: &str) -> bool {
@@ -3795,6 +3799,135 @@ fn has_bare_function_stmt(code: &str) -> bool {
         let trimmed = line.trim_start();
         trimmed.starts_with("function(") || trimmed.starts_with("function (")
     })
+}
+
+#[test]
+fn lifted_object_and_assignment_heads_keep_expression_context() {
+    let cases = [
+        (
+            "object-headed call",
+            r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      _export("Before", 0),
+      { [key()]: handler }[lookup()](),
+      _export("After", 1);
+    }
+  };
+});
+"#,
+        ),
+        (
+            "function-headed assignment",
+            r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      _export("Before", 0),
+      function () { return {}; }().value = side(),
+      _export("After", 1);
+    }
+  };
+});
+"#,
+        ),
+        (
+            "source-parenthesized object-headed call",
+            r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      _export("Before", 0),
+      ({ [key()]: handler }[lookup()]()),
+      _export("After", 1);
+    }
+  };
+});
+"#,
+        ),
+    ];
+
+    for (label, source) in cases {
+        for (stage, modules) in [
+            ("raw", unpack_source_raw(source)),
+            ("decompiled", unpack_source(source)),
+        ] {
+            let entry = module_code(&modules, "entry.js");
+            assert_no_system_register(entry, label);
+            assert_no_leftover_export_call(entry, label);
+            assert!(
+                entry.contains("Before") && entry.contains("After"),
+                "{label}/{stage} must retain both exports:\n{entry}"
+            );
+            assert_valid_unpacked_esm(&modules, &format!("{label}/{stage}"));
+        }
+    }
+}
+
+#[test]
+fn lifted_string_operand_does_not_become_a_directive() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      "use client", _export("Value", 1);
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "entry.js");
+    assert!(
+        entry.contains("(\"use client\");") || entry.contains("('use client');"),
+        "a comma operand must not become a directive after lifting:\n{entry}"
+    );
+    assert_valid_unpacked_esm(&raw, "lifted string operand");
+}
+
+#[test]
+fn lifted_iife_prefix_is_parenthesized_in_assignment_and_initializer_sequences() {
+    let cases = [
+        (
+            "assignment sequence",
+            r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      var result;
+      result = (function (value) { value.hit = 1; }({}), _export("After", 1));
+    }
+  };
+});
+"#,
+        ),
+        (
+            "initializer sequence",
+            r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      var result = (function (value) { value.hit = 1; }({}), _export("After", 1));
+    }
+  };
+});
+"#,
+        ),
+    ];
+
+    for (label, source) in cases {
+        for (stage, modules) in [
+            ("raw", unpack_source_raw(source)),
+            ("decompiled", unpack_source(source)),
+        ] {
+            let entry = module_code(&modules, "entry.js");
+            assert!(
+                entry.contains("hit = 1") && entry.contains("After"),
+                "{label}/{stage} must retain the IIFE and export:\n{entry}"
+            );
+            assert_valid_unpacked_esm(&modules, &format!("{label}/{stage}"));
+        }
+    }
 }
 
 #[test]

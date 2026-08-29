@@ -5,10 +5,10 @@ use swc_core::common::{
     sync::Lrc, Globals, Mark, SourceMap, Span, SyntaxContext, DUMMY_SP, GLOBALS,
 };
 use swc_core::ecma::ast::{
-    ArrayLit, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BindingIdent, CallExpr,
-    Callee, ComputedPropName, Decl, EsVersion, ExportDecl, ExportDefaultExpr, ExportNamedSpecifier,
-    ExportSpecifier, Expr, ExprOrSpread, ExprStmt, FnExpr, Function, FunctionBody, Ident,
-    ImportDecl, ImportDefaultSpecifier, ImportNamedSpecifier, ImportSpecifier,
+    ArrayLit, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, AssignTargetPat, BindingIdent,
+    CallExpr, Callee, ComputedPropName, Decl, EsVersion, ExportDecl, ExportDefaultExpr,
+    ExportNamedSpecifier, ExportSpecifier, Expr, ExprOrSpread, ExprStmt, FnExpr, Function,
+    FunctionBody, Ident, ImportDecl, ImportDefaultSpecifier, ImportNamedSpecifier, ImportSpecifier,
     ImportStarAsSpecifier, KeyValueProp, Lit, MemberExpr, MemberProp, MetaPropExpr, MetaPropKind,
     Module, ModuleDecl, ModuleExportName, ModuleItem, NamedExport, ObjectLit, OptChainBase,
     ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt, Str,
@@ -2740,15 +2740,14 @@ fn exported_value_is_assignment(expr: &Expr) -> bool {
     matches!(strip_paren_expr(expr), Expr::Assign(_))
 }
 
-// Comma-sequence leftovers become statements. A function-callee IIFE is
-// legal in expression position and a SyntaxError as `function () {}()`.
+// A comma-sequence operand is already in expression context. Once lifted to a
+// statement, a function/class/object-headed expression can be reinterpreted as
+// a declaration or block, and a leading string can become a directive.
 fn parenthesize_lifted_stmt_expr(stmt: &mut Stmt) {
     let Stmt::Expr(expr_stmt) = stmt else {
         return;
     };
-    if !is_function_callee_iife(expr_stmt.expr.as_ref())
-        && !starts_with_function_or_class(expr_stmt.expr.as_ref())
-    {
+    if !lifted_stmt_expr_needs_parens(expr_stmt.expr.as_ref()) {
         return;
     }
     let inner = expr_stmt.expr.clone();
@@ -2756,6 +2755,95 @@ fn parenthesize_lifted_stmt_expr(stmt: &mut Stmt) {
         span: DUMMY_SP,
         expr: inner,
     });
+}
+
+fn lifted_stmt_expr_needs_parens(expr: &Expr) -> bool {
+    let mut unwrapped = expr;
+    while let Expr::Paren(paren) = unwrapped {
+        unwrapped = paren.expr.as_ref();
+    }
+    matches!(unwrapped, Expr::Lit(Lit::Str(_))) || starts_with_forbidden_stmt_head(expr)
+}
+
+fn starts_with_forbidden_stmt_head(expr: &Expr) -> bool {
+    match expr {
+        Expr::Fn(_) | Expr::Class(_) | Expr::Object(_) => true,
+        Expr::Bin(binary) => starts_with_forbidden_stmt_head(binary.left.as_ref()),
+        Expr::Call(call) => matches!(
+            &call.callee,
+            Callee::Expr(callee) if starts_with_forbidden_stmt_head(callee.as_ref())
+        ),
+        Expr::Member(member) => starts_with_forbidden_stmt_head(member.obj.as_ref()),
+        Expr::Cond(condition) => starts_with_forbidden_stmt_head(condition.test.as_ref()),
+        Expr::Seq(sequence) => sequence
+            .exprs
+            .first()
+            .is_some_and(|first| starts_with_forbidden_stmt_head(first.as_ref())),
+        Expr::TaggedTpl(tagged) => starts_with_forbidden_stmt_head(tagged.tag.as_ref()),
+        Expr::Assign(assign) => assign_target_starts_with_forbidden_stmt_head(&assign.left),
+        Expr::OptChain(chain) => match chain.base.as_ref() {
+            OptChainBase::Member(member) => starts_with_forbidden_stmt_head(member.obj.as_ref()),
+            OptChainBase::Call(call) => starts_with_forbidden_stmt_head(call.callee.as_ref()),
+        },
+        Expr::Update(update) if !update.prefix => {
+            starts_with_forbidden_stmt_head(update.arg.as_ref())
+        }
+        // Add one defensive layer even when the source supplied parentheses:
+        // the later SWC fixer may remove the original layer as redundant.
+        Expr::Paren(paren) => starts_with_forbidden_stmt_head(paren.expr.as_ref()),
+        Expr::TsAs(as_expr) => starts_with_forbidden_stmt_head(as_expr.expr.as_ref()),
+        Expr::TsConstAssertion(assertion) => {
+            starts_with_forbidden_stmt_head(assertion.expr.as_ref())
+        }
+        Expr::TsTypeAssertion(assertion) => {
+            starts_with_forbidden_stmt_head(assertion.expr.as_ref())
+        }
+        Expr::TsNonNull(non_null) => starts_with_forbidden_stmt_head(non_null.expr.as_ref()),
+        Expr::TsInstantiation(instantiation) => {
+            starts_with_forbidden_stmt_head(instantiation.expr.as_ref())
+        }
+        Expr::TsSatisfies(satisfies) => starts_with_forbidden_stmt_head(satisfies.expr.as_ref()),
+        _ => false,
+    }
+}
+
+fn assign_target_starts_with_forbidden_stmt_head(target: &AssignTarget) -> bool {
+    match target {
+        AssignTarget::Pat(AssignTargetPat::Object(_)) => true,
+        AssignTarget::Pat(_) => false,
+        AssignTarget::Simple(target) => match target {
+            SimpleAssignTarget::Member(member) => {
+                starts_with_forbidden_stmt_head(member.obj.as_ref())
+            }
+            SimpleAssignTarget::OptChain(chain) => match chain.base.as_ref() {
+                OptChainBase::Member(member) => {
+                    starts_with_forbidden_stmt_head(member.obj.as_ref())
+                }
+                OptChainBase::Call(call) => starts_with_forbidden_stmt_head(call.callee.as_ref()),
+            },
+            SimpleAssignTarget::Paren(paren) => {
+                starts_with_forbidden_stmt_head(paren.expr.as_ref())
+            }
+            SimpleAssignTarget::TsAs(as_expr) => {
+                starts_with_forbidden_stmt_head(as_expr.expr.as_ref())
+            }
+            SimpleAssignTarget::TsSatisfies(satisfies) => {
+                starts_with_forbidden_stmt_head(satisfies.expr.as_ref())
+            }
+            SimpleAssignTarget::TsNonNull(non_null) => {
+                starts_with_forbidden_stmt_head(non_null.expr.as_ref())
+            }
+            SimpleAssignTarget::TsTypeAssertion(assertion) => {
+                starts_with_forbidden_stmt_head(assertion.expr.as_ref())
+            }
+            SimpleAssignTarget::TsInstantiation(instantiation) => {
+                starts_with_forbidden_stmt_head(instantiation.expr.as_ref())
+            }
+            SimpleAssignTarget::Ident(_)
+            | SimpleAssignTarget::SuperProp(_)
+            | SimpleAssignTarget::Invalid(_) => false,
+        },
+    }
 }
 
 fn export_replacement_expr(value: Box<Expr>) -> Expr {
