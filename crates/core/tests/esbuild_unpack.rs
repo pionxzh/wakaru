@@ -1586,10 +1586,94 @@ console.log(left, right);
             && !entry_code.contains("function runWrite"),
         "entry should call the relocated support function instead of retaining a writer copy:\n{entry_code}"
     );
+    // The mutable state must relocate with its writers. A retained entry
+    // declaration would fork the binding: writers mutate the owner's copy
+    // while the entry reads its own dead one.
+    assert!(
+        !entry_code.contains("var left") && !entry_code.contains("var right"),
+        "entry must not redeclare relocated mutable state:\n{entry_code}"
+    );
+    assert!(
+        entry_code.contains("left") && entry_code.contains("right"),
+        "entry reads must resolve through imports of the relocated state:\n{entry_code}"
+    );
     assert_eq!(
         validate_output_modules(&raw_pairs),
         vec![],
         "factory support writers must not assign to imports"
+    );
+}
+
+/// A lazy factory claimed by a scope module relocates its support-declaration
+/// closure — including passive state declarations that the adoption pass
+/// cannot claim (they are not function-shaped). The entry copy of such a
+/// declaration must be dropped, not left behind as a silently forked binding.
+#[test]
+fn scope_claimed_factory_state_is_not_forked_into_the_entry() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var f1 = y(() => { v1 = 1; });
+var f2 = y(() => { v2 = 2; });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var f5 = y(() => { v5 = 5; });
+var init_state = y(() => { shared = { count: 0 }; });
+var shared;
+function read() { return shared; }
+function write(value) { shared = value; }
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var ns_writer = {};
+__export(ns_writer, { marker: () => marker, read: () => read, write: () => write });
+var marker = "writer";
+init_state();
+console.log(marker, shared);
+export { ns_writer };
+"#;
+
+    let raw_pairs = expect_unpack_raw(bundle);
+    let owner_code = &raw_pairs
+        .iter()
+        .find(|(_, code)| code.contains("function init_state"))
+        .expect("the claiming scope module should exist")
+        .1;
+    assert!(
+        owner_code.contains("var shared"),
+        "the claiming module must own the factory state declaration:\n{owner_code}"
+    );
+    let raw_entry = &raw_pairs
+        .iter()
+        .find(|(name, _)| name == "entry.js")
+        .expect("entry module should exist")
+        .1;
+    assert!(
+        !raw_entry.contains("var shared"),
+        "entry must not keep a dead duplicate of relocated factory state:\n{raw_entry}"
+    );
+
+    // The full pipeline additionally dedups the synthesized imports, so the
+    // entry read resolves through one unaliased live import of the owner's
+    // single mutable binding.
+    let decompiled = expect_unpack(bundle, "bundle.js");
+    let entry_code = &decompiled
+        .iter()
+        .find(|(name, _)| name == "entry.js")
+        .expect("entry module should exist")
+        .1;
+    assert!(
+        entry_code.contains("shared")
+            && !entry_code.contains("shared as ")
+            && !entry_code.contains("let shared")
+            && !entry_code.contains("var shared"),
+        "entry reads must resolve through an unaliased import of the owner's state:\n{entry_code}"
+    );
+    assert_eq!(
+        validate_output_modules(&decompiled),
+        vec![],
+        "relocated factory state must produce a valid module graph"
     );
 }
 

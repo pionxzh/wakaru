@@ -630,6 +630,13 @@ fn detect_from_prepared_factories(
 
     // Append merged factory bodies to their target modules, synthesizing
     // imports for any cross-module reads the factory body needs.
+    //
+    // Relocated support declarations are cloned into their owner from the
+    // shared source items; the same declaration may still occupy an entry
+    // slot. Record every relocated binding so entry emission drops the
+    // duplicate and re-imports the owner's single mutable copy instead of
+    // silently forking the state.
+    let mut entry_duplicate_declarations: HashSet<BindingId> = HashSet::new();
     let source_module_items = &module.body;
     if !merged_factories.is_empty() {
         for module in &mut modules {
@@ -822,7 +829,8 @@ fn detect_from_prepared_factories(
                     extra_owned_atoms_by_index
                         .entry(*index)
                         .or_default()
-                        .insert(binding.0);
+                        .insert(binding.0.clone());
+                    entry_duplicate_declarations.insert(binding);
                 }
             }
             let mut extra_owned_items: Vec<(usize, ModuleItem)> = extra_owned_atoms_by_index
@@ -1111,21 +1119,31 @@ fn detect_from_prepared_factories(
                     .cloned()
             })
             .collect();
-        let mut relocated_entry_bindings: HashSet<BindingId> = affected_owned_bindings
-            .iter()
-            .filter(|binding| {
-                top_level_decl_writes
-                    .get(*binding)
-                    .into_iter()
-                    .flatten()
-                    .any(|written| {
-                        binding_to_filename
-                            .get(written)
-                            .is_some_and(|filename| affected_factory_filenames.contains(filename))
-                    })
-            })
-            .cloned()
-            .collect();
+        // Seed with every writer of relocated factory state — and with the
+        // written state bindings themselves. A passive state declaration
+        // (`var state;`) neither writes nor references anything, so the
+        // reference closure below never reaches it; leaving its entry copy
+        // behind while the owner declares and exports the same binding forks
+        // the mutable state silently.
+        let mut relocated_entry_bindings: HashSet<BindingId> = entry_duplicate_declarations;
+        for binding in &affected_owned_bindings {
+            let written_state: Vec<BindingId> = top_level_decl_writes
+                .get(binding)
+                .into_iter()
+                .flatten()
+                .filter(|written| {
+                    binding_to_filename
+                        .get(*written)
+                        .is_some_and(|filename| affected_factory_filenames.contains(filename))
+                })
+                .cloned()
+                .collect();
+            if written_state.is_empty() {
+                continue;
+            }
+            relocated_entry_bindings.insert(binding.clone());
+            relocated_entry_bindings.extend(written_state);
+        }
         let mut changed = true;
         while changed {
             changed = false;
