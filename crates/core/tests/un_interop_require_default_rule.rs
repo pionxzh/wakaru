@@ -273,6 +273,200 @@ console.log(_react.createElement("div"));
 }
 
 #[test]
+fn unwraps_swc_namespace_member_assignment_form() {
+    // AMD extraction preserves the helper and dependency factory parameters
+    // as mutable bindings, then the generated wrapper initializes the latter.
+    let input = r#"
+var _interop_require_default = require("@swc/helpers/_/_interop_require_default");
+var _react = require("react");
+_react = _interop_require_default._(_react);
+console.log(_react.default.createElement("div"));
+"#;
+    let expected = r#"
+import _react from "react";
+console.log(_react.createElement("div"));
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn swc_namespace_member_preserves_authored_const_assignment_semantics() {
+    let input = r#"
+const _interop_require_default = require("@swc/helpers/_/_interop_require_default");
+const _react = require("react");
+_react = _interop_require_default._(_react);
+console.log(_react.default.createElement("div"));
+"#;
+    let output = render(input);
+
+    assert!(
+        output.contains("const _react") && output.contains("_react ="),
+        "an authored const assignment must remain and still throw:\n{output}"
+    );
+    assert!(
+        output.contains("_interop_require_default._(_react)") && output.contains("_react.default"),
+        "the member-form wrapper must fail closed with its default layer intact:\n{output}"
+    );
+}
+
+#[test]
+fn unwraps_swc_namespace_member_declarator_form() {
+    // Real SWC CommonJS external-helper output initializes the wrapped value
+    // directly instead of using AMD's later self-assignment.
+    let input = r#"
+const _interop_require_default = require("@swc/helpers/_/_interop_require_default");
+const _something = _interop_require_default._(require("lodash/dist/something.js"));
+_something.default();
+"#;
+    let expected = r#"
+import _something from "lodash/dist/something.js";
+_something();
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn unwraps_stable_var_swc_namespace_member_declarator_form() {
+    // SWC also emits `var` helper namespaces for older targets. The exact
+    // runtime path plus a no-write proof makes this namespace equally stable.
+    let input = r#"
+var _interop_require_default = require("@swc/helpers/_/_interop_require_default");
+var _something = _interop_require_default._(require("lodash/dist/something.js"));
+_something.default();
+"#;
+    let expected = r#"
+import _something from "lodash/dist/something.js";
+_something();
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn reassigned_var_swc_namespace_member_fails_closed() {
+    let input = r#"
+var helper = require("@swc/helpers/_/_interop_require_default");
+var value = require("value");
+helper = decorate(helper);
+value = helper._(value);
+use(value.default);
+"#;
+    let output = render(input);
+
+    assert!(
+        output.contains("helper = decorate(helper)")
+            && output.contains("value = helper._(value)")
+            && output.contains("value.default"),
+        "a mutable helper namespace must not inherit SWC helper semantics:\n{output}"
+    );
+    assert!(
+        output.contains("import * as") && output.contains("helper = _"),
+        "the exact helper require must remain executable through a mutable namespace alias:\n{output}"
+    );
+}
+
+#[test]
+fn swc_namespace_member_requires_the_exact_helper_path() {
+    let input = r#"
+const helper_namespace = require("user-helper");
+const value = require("value");
+value = helper_namespace._(value);
+console.log(value.default);
+"#;
+    let expected = r#"
+const helper_namespace = require("user-helper");
+const value = require("value");
+value = helper_namespace._(value);
+console.log(value.default);
+"#;
+    assert_eq_normalized(
+        &render_pipeline_until(input, "UnInteropRequireDefault"),
+        expected,
+    );
+}
+
+#[test]
+fn swc_namespace_member_requires_the_interop_default_helper_kind() {
+    // A same-binding `value = helper._(value)` is not enough: every modern
+    // SWC helper module exports its callable as `_`.
+    let input = r#"
+const _get_prototype_of = require("@swc/helpers/_/_get_prototype_of");
+const value = require("value");
+value = _get_prototype_of._(value);
+console.log(value.default);
+"#;
+    let expected = r#"
+const _get_prototype_of = require("@swc/helpers/_/_get_prototype_of");
+const value = require("value");
+value = _get_prototype_of._(value);
+console.log(value.default);
+"#;
+    assert_eq_normalized(
+        &render_pipeline_until(input, "UnInteropRequireDefault"),
+        expected,
+    );
+}
+
+#[test]
+fn rejected_swc_namespace_member_assignment_keeps_a_namespace_import() {
+    let input = r#"
+var _interop_require_default = require("@swc/helpers/_/_interop_require_default");
+var _react = require("react");
+probe();
+_react = _interop_require_default._(_react);
+use(_react.default);
+function probe() {
+    return _react.default;
+}
+"#;
+    let output = render(input);
+
+    assert!(
+        output.contains(
+            "import * as _interop_require_default from \"@swc/helpers/_/_interop_require_default\""
+        ) && output.contains("_react = _interop_require_default._(_react)")
+            && output.contains("_react.default"),
+        "a rejected member-form wrapper must preserve the SWC namespace call:\n{output}"
+    );
+    assert!(
+        output.contains("import __react from \"react\"") && output.contains("let _react = __react"),
+        "the wrapped dependency must remain a mutable local:\n{output}"
+    );
+}
+
+#[test]
+fn referenced_swc_helper_namespace_is_not_removed_after_unwrap() {
+    let input = r#"
+const helper = require("@swc/helpers/_/_interop_require_default");
+const value = helper._(require("value"));
+observe(helper);
+console.log(value.default);
+"#;
+    let expected = r#"
+import * as helper from "@swc/helpers/_/_interop_require_default";
+import value from "value";
+observe(helper);
+console.log(value);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn swc_namespace_member_matching_uses_binding_identity() {
+    let input = r#"
+const helper = require("@swc/helpers/_/_interop_require_default");
+function run(helper, value) {
+    return helper._(value);
+}
+console.log(run);
+"#;
+    let output = render_pipeline_until(input, "UnInteropRequireDefault");
+    assert!(
+        output.contains("return helper._(value)") && !output.contains("return value"),
+        "a shadowing parameter must not inherit the outer helper provenance:\n{output}"
+    );
+}
+
+#[test]
 fn assignment_form_requires_the_same_target_and_argument_binding() {
     let input = r#"
 import { _ as _interop_require_default } from "@swc/helpers/_/_interop_require_default";

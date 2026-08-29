@@ -1,17 +1,19 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
+use swc_core::atoms::Atom;
+use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignTarget, CallExpr, Callee, Class, Decl, Expr, ForHead,
-    ForInStmt, ForOfStmt, Function, Lit, MemberProp, Module, ModuleItem, NewExpr, ObjectPatProp,
-    OptChainBase, OptChainExpr, Pat, SimpleAssignTarget, Stmt, TaggedTpl, UpdateExpr, VarDeclKind,
-    VarDeclarator,
+    ForInStmt, ForOfStmt, Function, Ident, ImportDecl, ImportSpecifier, ImportStarAsSpecifier, Lit,
+    MemberProp, Module, ModuleDecl, ModuleItem, NewExpr, ObjectPatProp, OptChainBase, OptChainExpr,
+    Pat, SimpleAssignTarget, Stmt, Str, TaggedTpl, UpdateExpr, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::transpiler_helper_utils::{
-    classify_inline_helper_call, remove_helper_declarations, BindingKey, LocalHelperContext,
-    TranspilerHelperKind,
+    classify_inline_helper_call, detect_helper_from_path, helpers_with_remaining_refs,
+    remove_helper_declarations, BindingKey, LocalHelperContext, TranspilerHelperKind,
 };
 
 /// Detects and unwraps `interopRequireDefault` helper calls.
@@ -40,6 +42,10 @@ fn run_un_interop_require_default(module: &mut Module, local_helpers: &LocalHelp
 
     // --- Named helper path ---
     let helpers = local_helpers.helpers_of_kind(TranspilerHelperKind::InteropRequireDefault);
+    let swc_member_helpers =
+        local_helpers.swc_member_helpers_of_kind(TranspilerHelperKind::InteropRequireDefault);
+    let swc_member_helper_namespaces = local_helpers
+        .swc_member_helper_namespaces_of_kind(TranspilerHelperKind::InteropRequireDefault);
     let tslib_namespaces = local_helpers.tslib_namespaces();
     let has_direct_tslib_calls =
         local_helpers.has_tslib_require_member_call(TranspilerHelperKind::InteropRequireDefault);
@@ -85,6 +91,19 @@ fn run_un_interop_require_default(module: &mut Module, local_helpers: &LocalHelp
         // every same-kind helper is conservative and avoids guessing which
         // generated alias the retained call reaches.
         preserve_named_helpers = call_unwrapper.preserved_assignment_form;
+
+        // A rejected SWC member-form call still needs the namespace object
+        // returned by `require("@swc/helpers/...")`. A default ESM import is
+        // not equivalent: the modern helper subpath exports only the named
+        // `_` binding. Preserve every still-referenced proven namespace as an
+        // explicit namespace import before UnEsm classifies the remaining
+        // dependency declarations.
+        preserve_remaining_swc_member_helper_namespaces(
+            module,
+            local_helpers,
+            &swc_member_helpers,
+            &swc_member_helper_namespaces,
+        );
     }
 
     // --- Inline IIFE interop path ---
@@ -114,8 +133,168 @@ fn run_un_interop_require_default(module: &mut Module, local_helpers: &LocalHelp
 
     // Phase 3: Remove helper declarations.
     if !helpers.is_empty() && !preserve_named_helpers {
-        remove_helper_declarations(&mut module.body, &helpers);
+        // Keep the historical direct-helper cleanup policy out of this merge
+        // unit. Namespace bindings are different because the object can have
+        // meaningful non-call uses after every recognized `._(...)` call is
+        // consumed; retain just those proven SWC namespace bindings when a
+        // reference remains.
+        let retained_swc_member_helpers =
+            helpers_with_remaining_refs(module, &swc_member_helper_namespaces);
+        let removable_helpers: HashMap<BindingKey, TranspilerHelperKind> = helpers
+            .into_iter()
+            .filter(|(key, _)| !retained_swc_member_helpers.contains(key))
+            .collect();
+        remove_helper_declarations(&mut module.body, &removable_helpers);
     }
+}
+
+fn preserve_remaining_swc_member_helper_namespaces(
+    module: &mut Module,
+    local_helpers: &LocalHelperContext,
+    swc_member_helpers: &HashMap<BindingKey, TranspilerHelperKind>,
+    swc_member_helper_namespaces: &HashMap<BindingKey, TranspilerHelperKind>,
+) {
+    if swc_member_helper_namespaces.is_empty() {
+        return;
+    }
+    let remaining = helpers_with_remaining_refs(module, swc_member_helper_namespaces);
+    if remaining.is_empty() {
+        return;
+    }
+
+    let mut used_names = collect_all_identifier_names(module);
+    let mut new_body = Vec::with_capacity(module.body.len() + remaining.len());
+
+    for item in std::mem::take(&mut module.body) {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(mut var))) = item else {
+            new_body.push(item);
+            continue;
+        };
+        if !matches!(var.kind, VarDeclKind::Const | VarDeclKind::Var) {
+            new_body.push(ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))));
+            continue;
+        }
+
+        let Some((key, binding, source)) =
+            swc_member_namespace_declaration(&var, local_helpers, &remaining)
+        else {
+            new_body.push(ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))));
+            continue;
+        };
+
+        if swc_member_helpers.contains_key(&key) {
+            new_body.push(make_swc_namespace_import(binding, source));
+            continue;
+        }
+
+        // A replaced `var` namespace no longer proves that later `._(...)`
+        // calls still reach SWC's helper. Keep those calls intact, but recover
+        // the exact helper module as a namespace import behind a mutable alias
+        // so neither helper identity nor assignment semantics are invented.
+        let import_local = Ident::new(
+            fresh_namespace_import_name(&binding.sym, &mut used_names),
+            DUMMY_SP,
+            SyntaxContext::empty(),
+        );
+        new_body.push(make_swc_namespace_import(import_local.clone(), source));
+        var.decls[0].init = Some(Box::new(Expr::Ident(import_local)));
+        new_body.push(ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))));
+    }
+
+    module.body = new_body;
+}
+
+fn swc_member_namespace_declaration(
+    var: &swc_core::ecma::ast::VarDecl,
+    local_helpers: &LocalHelperContext,
+    remaining: &HashSet<BindingKey>,
+) -> Option<(BindingKey, Ident, Str)> {
+    let [decl] = var.decls.as_slice() else {
+        return None;
+    };
+    let Pat::Ident(binding) = &decl.name else {
+        return None;
+    };
+    let key = (binding.id.sym.clone(), binding.id.ctxt);
+    if !remaining.contains(&key) {
+        return None;
+    }
+    let Some(Expr::Call(call)) = decl.init.as_deref() else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Ident(require) = callee.as_ref() else {
+        return None;
+    };
+    if !local_helpers.is_unresolved_or_unguarded_ident(require, "require") {
+        return None;
+    }
+    let [arg] = call.args.as_slice() else {
+        return None;
+    };
+    if arg.spread.is_some() {
+        return None;
+    }
+    let Expr::Lit(Lit::Str(source)) = arg.expr.as_ref() else {
+        return None;
+    };
+    let source_path = source.value.as_str().unwrap_or("");
+    if !source_path.starts_with("@swc/helpers/_/_")
+        || detect_helper_from_path(source_path) != Some(TranspilerHelperKind::InteropRequireDefault)
+    {
+        return None;
+    }
+
+    Some((key, binding.id.clone(), source.clone()))
+}
+
+fn make_swc_namespace_import(mut local: Ident, source: Str) -> ModuleItem {
+    local.span = DUMMY_SP;
+    ModuleItem::ModuleDecl(ModuleDecl::Import(ImportDecl {
+        span: DUMMY_SP,
+        specifiers: vec![ImportSpecifier::Namespace(ImportStarAsSpecifier {
+            span: DUMMY_SP,
+            local,
+        })],
+        src: Box::new(source),
+        type_only: false,
+        with: None,
+        phase: Default::default(),
+    }))
+}
+
+fn collect_all_identifier_names(module: &Module) -> HashSet<Atom> {
+    struct Collector {
+        names: HashSet<Atom>,
+    }
+
+    impl Visit for Collector {
+        fn visit_ident(&mut self, ident: &Ident) {
+            self.names.insert(ident.sym.clone());
+        }
+    }
+
+    let mut collector = Collector {
+        names: HashSet::new(),
+    };
+    module.visit_with(&mut collector);
+    collector.names
+}
+
+fn fresh_namespace_import_name(name: &Atom, used_names: &mut HashSet<Atom>) -> Atom {
+    let base: Atom = format!("_{name}").into();
+    if used_names.insert(base.clone()) {
+        return base;
+    }
+    for suffix in 2usize.. {
+        let candidate: Atom = format!("_{name}{suffix}").into();
+        if used_names.insert(candidate.clone()) {
+            return candidate;
+        }
+    }
+    unreachable!()
 }
 
 // ---------------------------------------------------------------------------

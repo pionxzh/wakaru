@@ -179,14 +179,25 @@ For example, `UnInteropRequireDefault`:
 - SWC AMD's require-backed `_a = _interopRequireDefault(_a)` initialization is
   removed only when it is an unconditional top-level first use of that same
   binding, the binding has no other writes, and earlier module evaluation
-  cannot invoke code that observes it. Generated SWC export scaffolding,
-  including its local descriptor-copy helper, is recognized as inert.
+  cannot invoke code that observes it. Modern SWC external helpers also use
+  the namespace-member form `_a = helper._(_a)`; that spelling is accepted
+  only when `helper` is a binding from the exact
+  `@swc/helpers/_/_interop_require_default` path and the namespace binding is
+  never replaced. Both SWC's `const` CommonJS form and its stable `var` form
+  (including lifted AMD factory parameters) are covered. Generated SWC export
+  scaffolding, including its local descriptor-copy helper, is recognized as
+  inert. Assignment-form recovery still requires a mutable `var` dependency
+  binding; an authored `const` or `let` assignment remains intact.
 - The interop wrapper's `_a.default` layer becomes `_a` at all reference sites
   only for a recovered, non-reassigned binding. Additional authored layers are
   retained (`_a.default.default` becomes `_a.default`, not `_a`).
 - If assignment-form recovery is rejected, the wrapper call and helper stay in
   place and a synthetic AMD dependency local remains mutable around its ESM
-  import. Otherwise the now-unused helper declaration is removed.
+  import. A retained SWC member-form helper becomes a namespace import because
+  that helper subpath exports `_`, not a default binding. If the namespace
+  binding itself is replaced, it stays as a mutable local initialized from a
+  fresh namespace import and none of its member calls are rewritten. Otherwise
+  the now-unused helper declaration is removed.
 
 `UnEsm` also handles Babel's equivalent helper body when it is inlined directly
 at a `require()` site:

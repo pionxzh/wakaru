@@ -468,6 +468,84 @@ define([
 }
 
 #[test]
+fn swc_namespace_member_interop_assignment_does_not_write_to_recovered_import() {
+    // Real SWC AMD external-helper shape (swc issue-3067 fixture): the helper
+    // dependency is a namespace object whose callable export is named `_`.
+    let source = r#"
+define([
+  "require",
+  "exports",
+  "@swc/helpers/_/_interop_require_default",
+  "lodash/dist/something.js"
+], function(require, exports, _interop_require_default, _something) {
+  "use strict";
+  Object.defineProperty(exports, "__esModule", { value: true });
+  Object.defineProperty(exports, "displayC", {
+    enumerable: true,
+    get: function() { return displayC; }
+  });
+  _something = _interop_require_default._(_something);
+  function displayC() {
+    (0, _something.default)();
+    return "Display C";
+  }
+});
+"#;
+
+    let decompiled = pairs(source);
+    assert_eq!(decompiled.len(), 1);
+    let module = &decompiled[0].1;
+    assert!(
+        module.contains(r#"from "lodash/dist/something.js""#)
+            && module.contains("_something()")
+            && !module.contains("_interop_require_default")
+            && !module.contains("_something =")
+            && !module.contains("_something.default"),
+        "the SWC namespace-member wrapper should collapse into a legal default import:\n{module}"
+    );
+    assert_eq!(
+        validate_output_modules(&decompiled),
+        vec![],
+        "the real SWC AMD member form must produce a valid module graph"
+    );
+}
+
+#[test]
+fn rejected_swc_namespace_member_interop_keeps_executable_imports() {
+    let source = r#"
+define([
+  "exports",
+  "@swc/helpers/_/_interop_require_default",
+  "react"
+], function(exports, _interop_require_default, _react) {
+  "use strict";
+  probe();
+  _react = _interop_require_default._(_react);
+  exports.hook = _react.default.useEffect;
+  function probe() {
+    return _react.default;
+  }
+});
+"#;
+
+    let decompiled = pairs(source);
+    assert_eq!(decompiled.len(), 1);
+    let module = &decompiled[0].1;
+    assert!(
+        module.contains(
+            "import * as _interop_require_default from \"@swc/helpers/_/_interop_require_default\""
+        ) && module.contains("_react = _interop_require_default._(_react)")
+            && module.contains("_react.default"),
+        "a rejected member-form recovery must preserve both namespace and wrapper:\n{module}"
+    );
+    assert_eq!(
+        validate_output_modules(&decompiled),
+        vec![],
+        "the fail-closed member form must remain valid ESM"
+    );
+}
+
+#[test]
 fn rejected_swc_default_interop_assignment_keeps_a_mutable_local() {
     let source = r#"
 define([

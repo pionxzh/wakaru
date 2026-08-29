@@ -5,7 +5,12 @@
 use std::collections::HashMap;
 
 use swc_core::common::Mark;
-use swc_core::ecma::ast::{Decl, ImportSpecifier, Module, ModuleDecl, ModuleItem, Stmt};
+use swc_core::ecma::ast::{
+    Callee, Decl, Expr, ImportSpecifier, Lit, Module, ModuleDecl, ModuleItem, Pat, Stmt,
+    VarDeclKind,
+};
+
+use crate::analysis::binding_uses::BindingUseIndex;
 
 use super::*;
 
@@ -122,4 +127,84 @@ pub(super) fn collect_transpiler_helpers_inner(
         }
     }
     helpers
+}
+
+/// Collect the namespace bindings used by modern SWC external helpers.
+///
+/// SWC emits its CommonJS and AMD helper dependencies as namespace objects:
+///
+/// ```js
+/// const helper = require("@swc/helpers/_/_interop_require_default");
+/// value = helper._(value);
+/// ```
+///
+/// Every SWC helper module exports its callable as `_`, so the member spelling
+/// alone carries no helper identity. Keep this provenance separate from the
+/// ordinary direct-call helper map and accept only an exact runtime require.
+/// Modern targets commonly declare the namespace with `const`; older SWC and
+/// lifted AMD factory parameters use `var`, which is callable only when the
+/// complete binding-use index proves that namespace is never replaced.
+/// Interop-default is the only consumer for now; extending this to another
+/// helper kind requires that rule to handle namespace cleanup and fail-closed
+/// retention too.
+pub(super) fn collect_swc_member_helpers(
+    module: &Module,
+    unresolved_mark: Option<Mark>,
+) -> (
+    HashMap<BindingKey, TranspilerHelperKind>,
+    HashMap<BindingKey, TranspilerHelperKind>,
+) {
+    let direct_writes = BindingUseIndex::collect_direct_write_bindings(module);
+    let mut callable_helpers = HashMap::new();
+    let mut namespaces = HashMap::new();
+
+    for item in &module.body {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            continue;
+        };
+        if !matches!(var.kind, VarDeclKind::Const | VarDeclKind::Var) {
+            continue;
+        }
+        let [decl] = var.decls.as_slice() else {
+            continue;
+        };
+        let Pat::Ident(binding) = &decl.name else {
+            continue;
+        };
+        let Some(Expr::Call(call)) = decl.init.as_deref() else {
+            continue;
+        };
+        let Callee::Expr(callee) = &call.callee else {
+            continue;
+        };
+        let Expr::Ident(require) = callee.as_ref() else {
+            continue;
+        };
+        if !is_unresolved_or_unguarded_ident(require, "require", unresolved_mark) {
+            continue;
+        }
+        let [arg] = call.args.as_slice() else {
+            continue;
+        };
+        if arg.spread.is_some() {
+            continue;
+        }
+        let Expr::Lit(Lit::Str(source)) = arg.expr.as_ref() else {
+            continue;
+        };
+        let path = source.value.as_str().unwrap_or("");
+        if !path.starts_with("@swc/helpers/_/_")
+            || detect_helper_from_path(path) != Some(TranspilerHelperKind::InteropRequireDefault)
+        {
+            continue;
+        }
+
+        let key = binding_key(&binding.id);
+        namespaces.insert(key.clone(), TranspilerHelperKind::InteropRequireDefault);
+        if !direct_writes.contains(&key) {
+            callable_helpers.insert(key, TranspilerHelperKind::InteropRequireDefault);
+        }
+    }
+
+    (callable_helpers, namespaces)
 }

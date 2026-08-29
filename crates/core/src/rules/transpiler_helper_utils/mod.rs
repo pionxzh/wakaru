@@ -29,7 +29,7 @@ mod ts_helpers;
 mod ts_registrar;
 
 pub(crate) use collect::collect_transpiler_helpers;
-use collect::collect_transpiler_helpers_inner;
+use collect::{collect_swc_member_helpers, collect_transpiler_helpers_inner};
 
 pub(crate) use matchers::{
     classify_inline_callable, classify_inline_helper_call, collect_maybe_array_like_bindings,
@@ -136,6 +136,8 @@ struct TsHelperInfo {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct LocalHelperContext {
     helpers: HashMap<BindingKey, TranspilerHelperKind>,
+    swc_member_helpers: HashMap<BindingKey, TranspilerHelperKind>,
+    swc_member_helper_namespaces: HashMap<BindingKey, TranspilerHelperKind>,
     ts_helpers: HashMap<BindingKey, TsHelperInfo>,
     tslib_namespaces: HashSet<BindingKey>,
     tslib_require_member_calls: HashSet<TranspilerHelperKind>,
@@ -154,8 +156,12 @@ impl LocalHelperContext {
 
     fn collect_inner(module: &Module, unresolved_mark: Option<Mark>) -> Self {
         let tslib_namespaces = collect_tslib_namespace_bindings(module, unresolved_mark);
+        let (swc_member_helpers, swc_member_helper_namespaces) =
+            collect_swc_member_helpers(module, unresolved_mark);
         Self {
             helpers: collect_transpiler_helpers_inner(module, unresolved_mark),
+            swc_member_helpers,
+            swc_member_helper_namespaces,
             ts_helpers: collect_ts_helpers(module, &tslib_namespaces, unresolved_mark),
             tslib_namespaces,
             tslib_require_member_calls: collect_tslib_require_member_calls(module, unresolved_mark),
@@ -173,6 +179,28 @@ impl LocalHelperContext {
         kind: TranspilerHelperKind,
     ) -> HashMap<BindingKey, TranspilerHelperKind> {
         self.helpers
+            .iter()
+            .filter(|(_, helper_kind)| **helper_kind == kind)
+            .map(|(key, helper_kind)| (key.clone(), *helper_kind))
+            .collect()
+    }
+
+    pub(crate) fn swc_member_helpers_of_kind(
+        &self,
+        kind: TranspilerHelperKind,
+    ) -> HashMap<BindingKey, TranspilerHelperKind> {
+        self.swc_member_helpers
+            .iter()
+            .filter(|(_, helper_kind)| **helper_kind == kind)
+            .map(|(key, helper_kind)| (key.clone(), *helper_kind))
+            .collect()
+    }
+
+    pub(crate) fn swc_member_helper_namespaces_of_kind(
+        &self,
+        kind: TranspilerHelperKind,
+    ) -> HashMap<BindingKey, TranspilerHelperKind> {
+        self.swc_member_helper_namespaces
             .iter()
             .filter(|(_, helper_kind)| **helper_kind == kind)
             .map(|(key, helper_kind)| (key.clone(), *helper_kind))
@@ -252,6 +280,19 @@ impl LocalHelperContext {
         if let Expr::Ident(id) = callee {
             if let Some(kind) = self.helpers.get(&(id.sym.clone(), id.ctxt)) {
                 return Some(*kind);
+            }
+        }
+
+        if let Expr::Member(member) = callee {
+            if member_prop_name(&member.prop, "_") {
+                if let Expr::Ident(namespace) = member.obj.as_ref() {
+                    if let Some(kind) = self
+                        .swc_member_helpers
+                        .get(&(namespace.sym.clone(), namespace.ctxt))
+                    {
+                        return Some(*kind);
+                    }
+                }
             }
         }
 
