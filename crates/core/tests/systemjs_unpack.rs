@@ -3748,6 +3748,56 @@ System.register("field", [], function (_export) {
 }
 
 #[test]
+fn execute_object_export_comma_enum_iife_is_parenthesized() {
+    // protobuf-es v1 ScalarType/LongType: dummy object + comma-operator enum
+    // IIFE. The IIFE is legal in expression position; after live-binding
+    // splits the sequence it must stay parenthesized as a statement.
+    let source = r#"
+System.register("field", [], function (_export) {
+  return {
+    execute: function () {
+      var t, n;
+      _export({ LongType: void 0, ScalarType: void 0 }),
+      function (e) {
+        e[e.DOUBLE = 1] = "DOUBLE";
+      }(t || (t = _export("ScalarType", {}))),
+      function (e) {
+        e[e.BIGINT = 0] = "BIGINT";
+      }(n || (n = _export("LongType", {})));
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "field.js");
+    assert_no_system_register(entry, "comma enum IIFE");
+    assert_no_leftover_export_call(entry, "comma enum IIFE");
+    assert!(
+        entry.contains("ScalarType") && entry.contains("LongType"),
+        "live bindings must reconstruct:\n{entry}"
+    );
+    assert!(
+        entry.contains("DOUBLE = 1") && entry.contains("BIGINT = 0"),
+        "enum values must survive:\n{entry}"
+    );
+    assert!(
+        entry.contains("(function"),
+        "lifted enum IIFE must stay parenthesized:\n{entry}"
+    );
+    assert!(
+        !has_bare_function_stmt(entry),
+        "must not emit a statement-level `function (`:\n{entry}"
+    );
+}
+
+fn has_bare_function_stmt(code: &str) -> bool {
+    code.lines().any(|line| {
+        let trimmed = line.trim_start();
+        trimmed.starts_with("function(") || trimmed.starts_with("function (")
+    })
+}
+
+#[test]
 fn execute_object_export_computed_key_preserves_whole_register() {
     let source = r#"
 System.register("odd", [], function (_export) {
