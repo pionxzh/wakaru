@@ -50,8 +50,8 @@ use crate::rules::{
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
 use crate::synthetic_import_cleanup::downgrade_unused_synthetic_imports;
 use crate::unpacker::{
-    arrow_iife_call, stmts_have_function_level_return,
-    stmts_have_function_level_this_or_arguments, DetectedModuleFailure,
+    arrow_iife_call, stmts_have_function_level_return, stmts_have_function_level_this_or_arguments,
+    DetectedModuleFailure,
 };
 
 #[derive(Debug, PartialEq, Eq)]

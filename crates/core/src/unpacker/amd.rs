@@ -8,9 +8,9 @@ use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use crate::module_path::relative_import_specifier;
 use crate::unpacker::wrappers::body_looks_like_umd_wrapper;
 use crate::unpacker::{
-    arrow_iife_call_with_async, expr_has_function_level_this_or_arguments,
-    function_level_returns, sanitize_relative_path, span_byte_range,
-    stmts_have_function_level_this_or_arguments, BundleFormat, UnpackResult, UnpackedModule,
+    arrow_iife_call_with_async, expr_has_function_level_this_or_arguments, function_level_returns,
+    sanitize_relative_path, span_byte_range, stmts_have_function_level_this_or_arguments,
+    BundleFormat, UnpackResult, UnpackedModule,
 };
 use crate::utils::paren::strip_parens;
 use crate::utils::swc_safety::apply_fixer;
@@ -254,9 +254,11 @@ fn factory_to_module(
             let params = function_params(&function.params);
             let body = function.body.as_ref()?;
             module_from_factory_parts(
-                body.stmts.clone(),
-                None,
-                function.is_async,
+                FactoryBody {
+                    stmts: body.stmts.clone(),
+                    returned_expr: None,
+                    is_async: function.is_async,
+                },
                 deps,
                 &params,
                 filename,
@@ -266,33 +268,26 @@ fn factory_to_module(
         }
         Expr::Arrow(arrow) => {
             let params = pat_params(&arrow.params);
-            match &*arrow.body {
-                ArrowFunctionBody::FunctionBody(body) => module_from_factory_parts(
-                    body.stmts.clone(),
-                    None,
-                    arrow.is_async,
-                    deps,
-                    &params,
-                    filename,
-                    module_id,
-                    id_to_filename,
-                ),
-                ArrowFunctionBody::Expr(expr) => module_from_factory_parts(
-                    Vec::new(),
-                    Some(strip_parens(expr).clone()),
-                    arrow.is_async,
-                    deps,
-                    &params,
-                    filename,
-                    module_id,
-                    id_to_filename,
-                ),
-            }
+            let body = match &*arrow.body {
+                ArrowFunctionBody::FunctionBody(body) => FactoryBody {
+                    stmts: body.stmts.clone(),
+                    returned_expr: None,
+                    is_async: arrow.is_async,
+                },
+                ArrowFunctionBody::Expr(expr) => FactoryBody {
+                    stmts: Vec::new(),
+                    returned_expr: Some(strip_parens(expr).clone()),
+                    is_async: arrow.is_async,
+                },
+            };
+            module_from_factory_parts(body, deps, &params, filename, module_id, id_to_filename)
         }
         expr => module_from_factory_parts(
-            Vec::new(),
-            Some(expr.clone()),
-            false,
+            FactoryBody {
+                stmts: Vec::new(),
+                returned_expr: Some(expr.clone()),
+                is_async: false,
+            },
             deps,
             &[],
             filename,
@@ -320,16 +315,27 @@ fn pat_name(pat: &Pat) -> Option<Atom> {
     }
 }
 
-fn module_from_factory_parts(
-    body_stmts: Vec<Stmt>,
+/// The executable parts of one AMD factory: its statements, the expression an
+/// expression-bodied arrow returns, and whether the factory itself is async.
+struct FactoryBody {
+    stmts: Vec<Stmt>,
     returned_expr: Option<Expr>,
-    factory_is_async: bool,
+    is_async: bool,
+}
+
+fn module_from_factory_parts(
+    body: FactoryBody,
     deps: &[String],
     params: &[Atom],
     filename: &str,
     module_id: &str,
     id_to_filename: &HashMap<String, String>,
 ) -> Option<Module> {
+    let FactoryBody {
+        stmts: body_stmts,
+        returned_expr,
+        is_async: factory_is_async,
+    } = body;
     // Lifting the factory body to module scope (or into a restored arrow
     // boundary) changes what `this` and `arguments` resolve to. Fail closed
     // so the whole-bundle fallback preserves the original semantics.
