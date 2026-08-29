@@ -174,6 +174,12 @@ no values. This lets `UnForOf` remove the legacy sloppy-script recovery shape
 run when the array yields zero values. Replacing `Array.prototype[Symbol.iterator]`
 before this statement could make the loop yield and is outside this assumption.
 
+The body cannot *run*, but its `var`-scoped bindings still hoist to the
+enclosing function regardless of execution. The rewrite preserves those as a
+bare `var` declaration instead of deleting the bindings (function declaration
+names are collected too for sloppy Annex-B safety, though under module
+semantics they are block-scoped and a reference-less leftover is cleaned up).
+
 Affects: `UnForOf`.
 
 Level: `standard` and above. `minimal` preserves the original statement.

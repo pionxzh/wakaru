@@ -298,6 +298,64 @@ fn minimal_preserves_legacy_call_target_for_of_over_empty_array() {
     );
 }
 
+/// The removed body never runs, but its `var` bindings hoist to the enclosing
+/// function; deleting them would retarget later writes to a global.
+#[test]
+fn removed_legacy_loop_preserves_hoisted_var_bindings() {
+    let input = r#"
+function f() {
+    for (g() of []) {
+        var x;
+    }
+    x = 1;
+    return typeof x;
+}
+"#;
+    let output = render(input);
+
+    assert!(
+        !output.contains("for ("),
+        "the zero-iteration loop should be removed: {output}"
+    );
+    assert!(
+        output.contains("var x"),
+        "the hoisted var binding must survive the removal: {output}"
+    );
+}
+
+/// Destructured `var` names hoist out of the never-executed body like plain
+/// declarators. A function declaration in the body is block-scoped under
+/// module semantics (no Annex-B), so its name carries no function-level
+/// binding and may be cleaned up.
+#[test]
+fn removed_legacy_loop_preserves_destructured_var_bindings() {
+    let input = r#"
+function f() {
+    for (g() of []) {
+        function helper() { return 1; }
+        var { a, b: [c] } = source();
+    }
+    a = read();
+    c = read();
+    return [a, c];
+}
+"#;
+    let output = render(input);
+
+    assert!(
+        !output.contains("for ("),
+        "the zero-iteration loop should be removed: {output}"
+    );
+    for name in ["a", "c"] {
+        assert!(
+            output
+                .lines()
+                .any(|line| line.trim_start().starts_with("var ") && line.contains(name)),
+            "hoisted binding `{name}` must stay declared: {output}"
+        );
+    }
+}
+
 #[test]
 fn indexed_loop_keeps_iterable_temp_used_after_the_loop() {
     let input = r#"

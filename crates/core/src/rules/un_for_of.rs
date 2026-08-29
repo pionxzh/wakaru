@@ -506,7 +506,29 @@ impl VisitMut for UnForOf<'_> {
         stmt.visit_mut_children_with(self);
 
         if is_legacy_call_target_over_empty_array(stmt) {
-            *stmt = Stmt::Empty(swc_core::ecma::ast::EmptyStmt { span: stmt.span() });
+            // The body never runs, but its var-scoped declarations (and
+            // Annex-B function declaration names) still hoist to the
+            // enclosing function. Keep those bindings as bare declarations.
+            let hoisted = hoisted_var_binding_idents(stmt);
+            *stmt = if hoisted.is_empty() {
+                Stmt::Empty(swc_core::ecma::ast::EmptyStmt { span: stmt.span() })
+            } else {
+                Stmt::Decl(Decl::Var(Box::new(VarDecl {
+                    span: stmt.span(),
+                    ctxt: SyntaxContext::empty(),
+                    kind: VarDeclKind::Var,
+                    declare: false,
+                    decls: hoisted
+                        .into_iter()
+                        .map(|ident| VarDeclarator {
+                            span: DUMMY_SP,
+                            name: Pat::Ident(BindingIdent::from(ident)),
+                            init: None,
+                            definite: false,
+                        })
+                        .collect(),
+                })))
+            };
             return;
         }
 
@@ -533,6 +555,82 @@ fn is_legacy_call_target_over_empty_array(stmt: &Stmt) -> bool {
     };
     matches!(left.as_ref(), Pat::Expr(expression) if matches!(strip_parens(expression), Expr::Call(_)))
         && matches!(strip_parens(&for_of.right), Expr::Array(array) if array.elems.is_empty())
+}
+
+/// Binding idents that hoist out of a removed loop body: `var` declarator
+/// names plus function declaration names (Annex-B hoists the name as a
+/// var-like `undefined` binding when the block never executes). Nested
+/// functions, arrows, classes, and accessors own their `var` scope and are
+/// not descended into.
+fn hoisted_var_binding_idents(stmt: &Stmt) -> Vec<Ident> {
+    #[derive(Default)]
+    struct HoistedVarNames {
+        idents: Vec<Ident>,
+        seen: HashSet<(Atom, SyntaxContext)>,
+    }
+
+    impl HoistedVarNames {
+        fn record(&mut self, ident: &Ident) {
+            if self.seen.insert((ident.sym.clone(), ident.ctxt)) {
+                self.idents.push(ident.clone());
+            }
+        }
+
+        fn record_pat(&mut self, pat: &Pat) {
+            match pat {
+                Pat::Ident(binding) => self.record(&binding.id),
+                Pat::Array(array) => {
+                    for element in array.elems.iter().flatten() {
+                        self.record_pat(element);
+                    }
+                }
+                Pat::Object(object) => {
+                    for prop in &object.props {
+                        match prop {
+                            ObjectPatProp::KeyValue(kv) => self.record_pat(&kv.value),
+                            ObjectPatProp::Assign(assign) => self.record(&assign.key.id),
+                            ObjectPatProp::Rest(rest) => self.record_pat(&rest.arg),
+                        }
+                    }
+                }
+                Pat::Rest(rest) => self.record_pat(&rest.arg),
+                Pat::Assign(assign) => self.record_pat(&assign.left),
+                Pat::Expr(_) | Pat::Invalid(_) => {}
+            }
+        }
+    }
+
+    impl Visit for HoistedVarNames {
+        fn visit_var_decl(&mut self, declaration: &VarDecl) {
+            if declaration.kind == VarDeclKind::Var {
+                for declarator in &declaration.decls {
+                    self.record_pat(&declarator.name);
+                }
+            }
+            declaration.visit_children_with(self);
+        }
+
+        fn visit_fn_decl(&mut self, declaration: &swc_core::ecma::ast::FnDecl) {
+            self.record(&declaration.ident);
+        }
+
+        fn visit_function(&mut self, _: &swc_core::ecma::ast::Function) {}
+
+        fn visit_arrow_expr(&mut self, _: &swc_core::ecma::ast::ArrowExpr) {}
+
+        fn visit_class(&mut self, _: &swc_core::ecma::ast::Class) {}
+
+        fn visit_getter_prop(&mut self, _: &swc_core::ecma::ast::GetterProp) {}
+
+        fn visit_setter_prop(&mut self, _: &swc_core::ecma::ast::SetterProp) {}
+    }
+
+    let Stmt::ForOf(for_of) = stmt else {
+        return Vec::new();
+    };
+    let mut collector = HoistedVarNames::default();
+    for_of.body.visit_with(&mut collector);
+    collector.idents
 }
 
 fn flush_stmt_run(
