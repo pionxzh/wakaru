@@ -393,6 +393,17 @@ Stage 2: Transpiler helper unwrapping + module-system reconstruction
   resets, computed writes, value escapes, receiver-sensitive calls, early
   reads, direct eval, and hoisted function declarations remain fail closed.
 
+  When a literal unresolved `require()` resolves to the current output module,
+  `UnEsm` verifies the recovered self-import against that same module's export
+  surface. A synthesized default self-import with no default export rolls the
+  whole rule back for that module, keeping its CommonJS boundary visible.
+  A matching default export continues through ordinary recovery. A named-only
+  self surface may use the existing conservative provider-namespace proof, but
+  only when every observed use supports namespace semantics; whole-value,
+  mutable, computed, escaping, or otherwise incompatible reads still roll
+  back. This does not guess a namespace representation for CommonJS partial
+  exports.
+
   ── cross-module barrier (unpack only: fact collection + late pass) ──
 
 Stage 3: Structural restoration

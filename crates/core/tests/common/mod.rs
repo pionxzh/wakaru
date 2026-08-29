@@ -68,6 +68,31 @@ pub fn render_pipeline_until(source: &str, stop_after_rule: &str) -> String {
 }
 
 #[allow(dead_code)]
+pub fn render_pipeline_until_with_filename(
+    source: &str,
+    stop_after_rule: &str,
+    filename: &str,
+) -> String {
+    GLOBALS.set(&Default::default(), || {
+        let cm: Lrc<SourceMap> = Default::default();
+        let mut module = parse_module_with_filename(source, filename, cm.clone());
+
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+        module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+
+        apply_rules(
+            &mut module,
+            unresolved_mark,
+            RulePipelineOptions::until(stop_after_rule).with_current_filename(filename),
+        );
+        module.visit_mut_with(&mut fixer(None));
+
+        emit_module(&module, cm)
+    })
+}
+
+#[allow(dead_code)]
 pub fn render_pipeline_until_with_level(
     source: &str,
     stop_after_rule: &str,

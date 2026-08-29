@@ -121,12 +121,13 @@ fn split_esm_recovered_scope_hoisted_module(
         apply_rules(
             &mut module,
             unresolved_mark,
-            RulePipelineOptions::until("UnEsm"),
+            RulePipelineOptions::until("UnEsm").with_current_filename(filename),
         );
         recover_late_esm_from_factory_iifes(
             &mut module,
             unresolved_mark,
             RewriteLevel::Standard,
+            filename,
             LateEsmRecoveryOptions {
                 smart_rename: false,
                 export_rename: false,

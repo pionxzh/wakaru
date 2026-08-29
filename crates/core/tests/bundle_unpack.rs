@@ -1681,6 +1681,61 @@ fn webpack5_recovers_proven_commonjs_reads_without_runtime_residuals() {
 }
 
 #[test]
+fn webpack5_self_require_does_not_become_an_unlinkable_default_self_import() {
+    let source = r#"
+(() => {
+  var modules = ({
+    0: ((module, exports, load) => {
+      load(1);
+    }),
+    1: ((module, exports, load) => {
+      var self = load(1);
+      for (var key in self) globalThis[key] = self[key];
+    })
+  });
+  var cache = {};
+  (function load(id) {
+    var module = cache[id] = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  })(0);
+})();
+"#;
+
+    for emit_source_map in [false, true] {
+        let output = unpack(
+            source,
+            DecompileOptions {
+                filename: "webpack5-self-require.js".to_string(),
+                emit_source_map,
+                ..Default::default()
+            },
+        )
+        .expect("the synthetic webpack self-require should unpack");
+
+        assert_eq!(output.detected_formats, [BundleFormat::Webpack5]);
+        let module = output
+            .modules
+            .iter()
+            .find(|(filename, _)| filename == "module-1.js")
+            .map(|(_, code)| code)
+            .expect("expected the self-requiring factory module");
+        assert!(
+            module.contains(r#"require("./module-1.js")"#)
+                && !module.contains(r#"import self from "./module-1.js""#),
+            "self-require must stay visible instead of claiming a nonexistent default export:\n{module}"
+        );
+        let findings = validate_output_modules(&output.modules);
+        assert!(
+            findings.iter().all(|finding| {
+                finding.kind != wakaru_core::OutputFindingKind::MissingImportedName
+            }),
+            "self-require preservation must remove the false default-export contract: {findings:#?}"
+        );
+    }
+}
+
+#[test]
 fn webpack5_recovers_coupled_lazy_default_helpers_across_phase1_paths() {
     let source = r#"
 (() => {

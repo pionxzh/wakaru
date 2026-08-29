@@ -1,7 +1,8 @@
 mod common;
 
 use common::{
-    assert_eq_normalized, render_pipeline, render_pipeline_until, render_pipeline_until_with_level,
+    assert_eq_normalized, render_pipeline, render_pipeline_until,
+    render_pipeline_until_with_filename, render_pipeline_until_with_level,
 };
 use wakaru_core::{validate_output_modules, OutputFindingKind, RewriteLevel};
 
@@ -49,6 +50,113 @@ fn default_require_to_import() {
     let input = "var foo = require('foo');";
     let expected = r#"import foo from "foo";"#;
     let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn local_self_require_stays_at_the_commonjs_boundary() {
+    let input = r#"
+var self = require("./module-1.js");
+for (var key in self) globalThis[key] = self[key];
+"#;
+    let expected = r#"
+var self = require("./module-1.js");
+for (var key in self) {
+  globalThis[key] = self[key];
+}
+"#;
+    let output = render_pipeline_until_with_filename(input, "UnEsm", "module-1.js");
+
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn local_self_require_keeps_the_complete_commonjs_surface() {
+    let input = r#"
+var self = require("./module-1.js");
+var dependency = require("./module-2.js");
+exports.value = dependency.value;
+consume(self, dependency);
+"#;
+    let output = render_pipeline_until_with_filename(input, "UnEsm", "module-1.js");
+
+    assert_eq_normalized(&output, input);
+    assert!(
+        !output.contains("import ") && !output.contains("export "),
+        "a self-requiring module must not cross only part of its CommonJS boundary:\n{output}"
+    );
+}
+
+#[test]
+fn linkable_default_self_import_keeps_existing_recovery() {
+    let input = r#"
+var self = require("./module-1.js");
+module.exports = function api() {};
+consume(self);
+"#;
+    let output = render_pipeline_until_with_filename(input, "UnEsm", "module-1.js");
+
+    assert!(
+        output.contains(r#"import self from "./module-1.js""#)
+            && output.contains("export default")
+            && output.contains("function api()")
+            && !output.contains("require("),
+        "a self-cycle with a real default surface should retain existing recovery:\n{output}"
+    );
+}
+
+#[test]
+fn named_self_surface_uses_the_proven_namespace_boundary() {
+    let input = r#"
+var self = require("./module-1.js");
+exports.value = function value() {
+  return self.value;
+};
+"#;
+    let output = render_pipeline_until_with_filename(input, "UnEsm", "module-1.js");
+
+    assert!(
+        output.contains(r#"import * as self from "./module-1.js""#)
+            && output.contains("export const value")
+            && output.contains("return self.value")
+            && !output.contains("require("),
+        "a static read from a proven named self surface should use the existing namespace proof:\n{output}"
+    );
+}
+
+#[test]
+fn same_basename_in_another_directory_is_not_a_self_require() {
+    let input = r#"
+var sibling = require("../module-1.js");
+consume(sibling);
+"#;
+    let expected = r#"
+import sibling from "../module-1.js";
+consume(sibling);
+"#;
+    let output = render_pipeline_until_with_filename(input, "UnEsm", "nested/module-1.js");
+
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn shadowed_self_require_spelling_does_not_block_unesm() {
+    let input = r#"
+function inspect(require) {
+  return require("./module-1.js");
+}
+var dependency = require("./module-2.js");
+consume(inspect, dependency);
+"#;
+    let expected = r#"
+import dependency from "./module-2.js";
+function inspect(require) {
+  return require("./module-1.js");
+}
+consume(inspect, dependency);
+"#;
+    let output = render_pipeline_until_with_filename(input, "UnEsm", "module-1.js");
+
     assert_eq_normalized(&output, expected);
 }
 

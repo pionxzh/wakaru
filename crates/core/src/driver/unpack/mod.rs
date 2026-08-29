@@ -815,11 +815,15 @@ fn normalize_raw_unpacked_module(source: &str, filename: &str) -> Result<String>
         let unresolved_mark = Mark::new();
         let top_level_mark = Mark::new();
         module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
-        module.visit_mut_with(&mut UnEsm::new(unresolved_mark, RewriteLevel::Standard));
+        module.visit_mut_with(
+            &mut UnEsm::new(unresolved_mark, RewriteLevel::Standard)
+                .with_current_filename(Some(filename)),
+        );
         recover_late_esm_from_factory_iifes(
             &mut module,
             unresolved_mark,
             RewriteLevel::Standard,
+            filename,
             LateEsmRecoveryOptions {
                 smart_rename: false,
                 export_rename: false,
@@ -834,16 +838,16 @@ fn recover_late_esm_from_factory_iifes(
     module: &mut Module,
     unresolved_mark: Mark,
     level: RewriteLevel,
+    current_filename: &str,
     options: LateEsmRecoveryOptions,
 ) {
     module.visit_mut_with(&mut ArrowFunction);
     module.visit_mut_with(&mut ArrowReturn);
     module.visit_mut_with(&mut UnIife::new(level));
-    apply_rules(
-        module,
-        unresolved_mark,
-        RulePipelineOptions::between("UnCurlyBraces", "UnEsm").with_rewrite_level(level),
-    );
+    let pipeline_options = RulePipelineOptions::between("UnCurlyBraces", "UnEsm")
+        .with_rewrite_level(level)
+        .with_current_filename(current_filename);
+    apply_rules(module, unresolved_mark, pipeline_options);
     if options.smart_rename {
         module.visit_mut_with(&mut SmartRename::new(unresolved_mark));
     }

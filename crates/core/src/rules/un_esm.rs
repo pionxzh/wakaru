@@ -17,7 +17,10 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::analysis::binding_id;
 use crate::analysis::binding_uses::{BindingId, BindingUseIndex, UseKind};
+use crate::facts::{collect_module_facts, ModuleFactsMap};
 use crate::js_names::is_reserved_binding_name;
+use crate::module_path::resolve_relative_specifier;
+use crate::provider_namespace_repair::run_provider_namespace_repair;
 use crate::utils::paren::strip_parens;
 use crate::utils::prototype_members::is_prototype_mutating_member_name;
 
@@ -30,6 +33,7 @@ use super::RewriteLevel;
 pub struct UnEsm {
     unresolved_mark: Mark,
     level: RewriteLevel,
+    current_filename: Option<String>,
 }
 
 impl UnEsm {
@@ -37,7 +41,13 @@ impl UnEsm {
         Self {
             unresolved_mark,
             level,
+            current_filename: None,
         }
+    }
+
+    pub(crate) fn with_current_filename(mut self, current_filename: Option<&str>) -> Self {
+        self.current_filename = current_filename.map(str::to_owned);
+        self
     }
 }
 
@@ -146,6 +156,16 @@ impl VisitMut for UnEsm {
         if self.level < RewriteLevel::Standard {
             return;
         }
+        let current_filename = self.current_filename.clone();
+        let original_cjs_module = if contains_local_self_require(
+            module,
+            self.unresolved_mark,
+            current_filename.as_deref(),
+        ) {
+            Some(module.clone())
+        } else {
+            None
+        };
         recover_coupled_commonjs_default_binding(module, self.unresolved_mark);
         // Phase -1: hoist require() calls out of complex expressions
         hoist_embedded_requires(module, self.unresolved_mark);
@@ -564,6 +584,147 @@ impl VisitMut for UnEsm {
         merge_decl_and_named_export(&mut new_body);
         inline_adjacent_default_export_aliases(&mut new_body);
         module.body = new_body;
+
+        if let (Some(original), Some(current_filename)) =
+            (original_cjs_module, current_filename.as_deref())
+        {
+            // A self-require used only through a provider's proven named
+            // surface can use the same conservative namespace representation
+            // as the unpack fact barrier. Apply that proof locally so the
+            // phase-1 fact collector sees a linkable edge too. Whole-value,
+            // mutable, computed, escaping, and otherwise incompatible reads
+            // remain default imports and trigger the rollback below.
+            let mut local_facts = ModuleFactsMap::new();
+            local_facts.insert(current_filename, collect_module_facts(module));
+            run_provider_namespace_repair(
+                module,
+                &local_facts,
+                Some(current_filename),
+                self.unresolved_mark,
+            );
+            if has_unlinkable_default_self_import(module, current_filename) {
+                // CommonJS returns the current, partially initialized
+                // `module.exports` object for a self-require. If recovery did
+                // not also establish a default export, the synthesized default
+                // self-import cannot even link. Roll back this rule as one
+                // unit instead of mixing an unrepresentable edge with ESM.
+                *module = original;
+            }
+        }
+    }
+}
+
+fn contains_local_self_require(
+    module: &Module,
+    unresolved_mark: Mark,
+    current_filename: Option<&str>,
+) -> bool {
+    let Some(current_filename) = current_filename else {
+        return false;
+    };
+    let Some((normalized_filename, current_key)) = current_module_path_context(current_filename)
+    else {
+        return false;
+    };
+
+    let mut finder = LocalSelfRequireFinder {
+        unresolved_mark,
+        current_filename: &normalized_filename,
+        current_key: &current_key,
+        found: false,
+    };
+    module.visit_with(&mut finder);
+    finder.found
+}
+
+fn current_module_path_context(current_filename: &str) -> Option<(String, String)> {
+    let normalized_filename = current_filename.replace('\\', "/");
+    let basename = normalized_filename.rsplit('/').next()?;
+    if basename.is_empty() {
+        return None;
+    }
+    let current_key = resolve_relative_specifier(&normalized_filename, &format!("./{basename}"))?;
+    Some((normalized_filename, current_key))
+}
+
+fn has_unlinkable_default_self_import(module: &Module, current_filename: &str) -> bool {
+    if module_has_default_export(module) {
+        return false;
+    }
+    let Some((normalized_filename, current_key)) = current_module_path_context(current_filename)
+    else {
+        return false;
+    };
+
+    module.body.iter().any(|item| {
+        let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+            return false;
+        };
+        if !import
+            .specifiers
+            .iter()
+            .any(|specifier| matches!(specifier, ImportSpecifier::Default(_)))
+        {
+            return false;
+        }
+        let Some(source) = import.src.value.as_str() else {
+            return false;
+        };
+        resolve_relative_specifier(&normalized_filename, source).as_deref() == Some(&current_key)
+    })
+}
+
+fn module_has_default_export(module: &Module) -> bool {
+    module.body.iter().any(|item| {
+        let ModuleItem::ModuleDecl(decl) = item else {
+            return false;
+        };
+        match decl {
+            ModuleDecl::ExportDefaultDecl(_) | ModuleDecl::ExportDefaultExpr(_) => true,
+            ModuleDecl::ExportNamed(export) => {
+                export.specifiers.iter().any(|specifier| match specifier {
+                    ExportSpecifier::Default(_) => true,
+                    ExportSpecifier::Named(named) => module_export_name_is_default(
+                        named.exported.as_ref().unwrap_or(&named.orig),
+                    ),
+                    ExportSpecifier::Namespace(namespace) => {
+                        module_export_name_is_default(&namespace.name)
+                    }
+                })
+            }
+            _ => false,
+        }
+    })
+}
+
+fn module_export_name_is_default(name: &ModuleExportName) -> bool {
+    match name {
+        ModuleExportName::Ident(name) => name.sym == "default",
+        ModuleExportName::Str(name) => name.value.as_str() == Some("default"),
+    }
+}
+
+struct LocalSelfRequireFinder<'a> {
+    unresolved_mark: Mark,
+    current_filename: &'a str,
+    current_key: &'a str,
+    found: bool,
+}
+
+impl Visit for LocalSelfRequireFinder<'_> {
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if self.found {
+            return;
+        }
+        if let Some(source) = is_require_call(call, self.unresolved_mark) {
+            if resolve_relative_specifier(self.current_filename, &source).as_deref()
+                == Some(self.current_key)
+            {
+                self.found = true;
+                return;
+            }
+        }
+        call.visit_children_with(self);
     }
 }
 

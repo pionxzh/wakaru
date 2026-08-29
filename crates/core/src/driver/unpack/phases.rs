@@ -403,7 +403,8 @@ pub(super) fn unpack_multi_module_with_plan(
                 apply_rules(
                     &mut module,
                     unresolved_mark,
-                    RulePipelineOptions::until("UnEsm"),
+                    RulePipelineOptions::until("UnEsm")
+                        .with_current_filename(&unpacked.module.filename),
                 );
             }
             // ESM recovery mutates the AST heavily (UnIife, factory-IIFE
@@ -423,6 +424,7 @@ pub(super) fn unpack_multi_module_with_plan(
                         &mut facts_module,
                         unresolved_mark,
                         RewriteLevel::Standard,
+                        &unpacked.module.filename,
                         LateEsmRecoveryOptions::default(),
                     );
                 }
@@ -436,6 +438,7 @@ pub(super) fn unpack_multi_module_with_plan(
                         &mut module,
                         unresolved_mark,
                         RewriteLevel::Standard,
+                        &unpacked.module.filename,
                         LateEsmRecoveryOptions::default(),
                     );
                 }
@@ -599,6 +602,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 &mut module,
                 unresolved_mark,
                 options.level,
+                &unpacked.module.filename,
                 LateEsmRecoveryOptions::default(),
             );
             module.visit_mut_with(&mut UnOptionalChaining::new(unresolved_mark, options.level));
@@ -770,7 +774,8 @@ pub(super) fn unpack_multi_module_with_plan(
                     apply_rules(
                         &mut module,
                         unresolved_mark,
-                        RulePipelineOptions::until("UnEsm"),
+                        RulePipelineOptions::until("UnEsm")
+                            .with_current_filename(&unpacked.module.filename),
                     );
                 }
 

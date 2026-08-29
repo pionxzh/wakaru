@@ -58,7 +58,8 @@ pub fn decompile_owned(
                 unresolved_mark,
                 RulePipelineOptions::default()
                     .with_dce_mode(options.dce_mode)
-                    .with_rewrite_level(options.level),
+                    .with_rewrite_level(options.level)
+                    .with_current_filename(&options.filename),
             );
         }
 

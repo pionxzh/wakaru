@@ -289,7 +289,8 @@ runner!(run_un_webpack_interop, |ctx| UnWebpackInterop::new(
 runner!(run_un_esm, |ctx| UnEsm::new(
     ctx.unresolved_mark,
     ctx.rewrite_level
-));
+)
+.with_current_filename(ctx.current_filename));
 fn run_un_template_literal(module: &mut Module, ctx: RuleRunContext<'_>) {
     let local_helpers = ctx.local_helpers(module);
     let mut rule = if let Some(module_facts) = ctx.module_facts {
