@@ -122,6 +122,78 @@ fn webpack5_startup_iife_with_early_return_restores_the_entry_boundary() {
     assert_eq!(validate_output_modules(&pairs), vec![]);
 }
 
+/// When the startup body keeps a guarding `return` *and* ESM recovery finds an
+/// export, the boundary cannot be restored (the export would move outside the
+/// guarded flow). The module must degrade to its extracted body plus a failed
+/// diagnostic instead of emitting ESM that cannot parse.
+#[test]
+fn webpack5_startup_with_unrestorable_boundary_falls_back_to_extracted_source() {
+    let source = r#"
+(() => {
+    var __webpack_modules__ = ({
+        1: ((__unused_webpack_module, exports) => {
+            exports.value = 42;
+        })
+    });
+    var __webpack_module_cache__ = {};
+    function __webpack_require__(moduleId) {
+        var cachedModule = __webpack_module_cache__[moduleId];
+        if (cachedModule !== undefined) {
+            return cachedModule.exports;
+        }
+        var module = __webpack_module_cache__[moduleId] = { exports: {} };
+        __webpack_modules__[moduleId](module, module.exports, __webpack_require__);
+        return module.exports;
+    }
+    (() => {
+        if (window.FLAG_LOADED) return;
+        window.FLAG_LOADED = true;
+        var dep = __webpack_require__(1);
+        module.exports = dep;
+    })();
+})();
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "bundle.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("unpack should succeed");
+    let entry = &output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "entry.js")
+        .expect("entry.js should exist")
+        .1;
+    assert!(
+        entry.contains("return;")
+            && entry.contains("module.exports")
+            && !entry.contains("export default"),
+        "the extracted startup body must be preserved instead of invalid ESM:\n{entry}"
+    );
+    assert!(
+        output.warnings.iter().any(|warning| {
+            warning.filename == "entry.js"
+                && warning.kind == wakaru_core::UnpackWarningKind::DecompileFailed
+        }),
+        "the unrestorable boundary must be reported as a failed module: {:?}",
+        output.warnings
+    );
+    let dependency = &output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "module-1.js")
+        .expect("module-1.js should exist")
+        .1;
+    assert!(
+        dependency.contains("export const value = 42;"),
+        "sibling modules stay fully recovered:\n{dependency}"
+    );
+}
+
 #[test]
 fn webpack5_inline_startup_works_with_array_modules() {
     let source = r#"

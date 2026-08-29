@@ -51,9 +51,22 @@ use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
 use crate::synthetic_import_cleanup::downgrade_unused_synthetic_imports;
 use crate::unpacker::{arrow_iife_call, stmts_have_function_level_return, DetectedModuleFailure};
 
-fn restore_lifted_function_boundary(module: &mut Module, enabled: bool) -> bool {
+#[derive(Debug, PartialEq, Eq)]
+enum BoundaryRestoration {
+    /// Restoration was disabled or the module has no function-level return
+    /// at module scope; the module is already valid ESM at this boundary.
+    NotNeeded,
+    /// The lifted statements were wrapped back into a callable boundary.
+    Restored,
+    /// A function-level return remains at module scope but the module cannot
+    /// be wrapped (recovered exports would move outside the guarded flow).
+    /// Emitting this module as ESM would not parse.
+    Declined,
+}
+
+fn restore_lifted_function_boundary(module: &mut Module, enabled: bool) -> BoundaryRestoration {
     if !enabled {
-        return false;
+        return BoundaryRestoration::NotNeeded;
     }
     let statements = module
         .body
@@ -63,15 +76,16 @@ fn restore_lifted_function_boundary(module: &mut Module, enabled: bool) -> bool 
             ModuleItem::ModuleDecl(_) => None,
         })
         .collect::<Vec<_>>();
-    if !stmts_have_function_level_return(&statements)
-        || module.body.iter().any(|item| {
-            matches!(
-                item,
-                ModuleItem::ModuleDecl(decl) if !matches!(decl, ModuleDecl::Import(_))
-            )
-        })
-    {
-        return false;
+    if !stmts_have_function_level_return(&statements) {
+        return BoundaryRestoration::NotNeeded;
+    }
+    if module.body.iter().any(|item| {
+        matches!(
+            item,
+            ModuleItem::ModuleDecl(decl) if !matches!(decl, ModuleDecl::Import(_))
+        )
+    }) {
+        return BoundaryRestoration::Declined;
     }
 
     let mut restored = std::mem::take(&mut module.body)
@@ -83,7 +97,7 @@ fn restore_lifted_function_boundary(module: &mut Module, enabled: bool) -> bool 
         expr: Box::new(arrow_iife_call(statements)),
     })));
     module.body = restored;
-    true
+    BoundaryRestoration::Restored
 }
 
 fn detector_failure_warning(filename: &str, failure: DetectedModuleFailure) -> UnpackWarning {
@@ -592,10 +606,23 @@ pub(super) fn unpack_multi_module_with_plan(
             if let Some(cleanup) = &mut final_recovered_import_cleanup {
                 module.visit_mut_with(cleanup);
             }
-            restore_lifted_function_boundary(
+            // A module that still carries a function-level return at module
+            // scope after a declined restoration would not parse as ESM.
+            // Preserve the extracted body and report the module as failed
+            // instead of claiming a successful unpack over invalid output.
+            if restore_lifted_function_boundary(
                 &mut module,
                 unpacked.restore_lifted_function_boundary,
-            );
+            ) == BoundaryRestoration::Declined
+            {
+                let mut fallback_warnings = input_parse_warnings.clone();
+                fallback_warnings.push(UnpackWarning::new(
+                    &unpacked.module.filename,
+                    UnpackWarningKind::DecompileFailed,
+                    "lifted function boundary could not be restored around a module-scope return; preserving the extracted body",
+                ));
+                return Ok((unpacked.module.code.clone(), None, fallback_warnings, None));
+            }
             drop(rules_enter);
             drop(rules_span);
 
@@ -860,7 +887,10 @@ mod tests {
                 cm.clone(),
             )
             .expect("recoverable top-level return should produce an AST");
-            assert!(restore_lifted_function_boundary(&mut module, true));
+            assert_eq!(
+                restore_lifted_function_boundary(&mut module, true),
+                BoundaryRestoration::Restored
+            );
             apply_fixer(&mut module).expect("restored module should fix");
             print_js(&module, cm).expect("restored module should print")
         });
@@ -889,8 +919,9 @@ mod tests {
             )
             .expect("recoverable top-level return should produce an AST");
 
-            assert!(
-                !restore_lifted_function_boundary(&mut module, true),
+            assert_eq!(
+                restore_lifted_function_boundary(&mut module, true),
+                BoundaryRestoration::Declined,
                 "an export initializer cannot be moved outside the restored return boundary"
             );
         });
@@ -906,7 +937,10 @@ mod tests {
                 cm.clone(),
             )
             .expect("recoverable top-level return should produce an AST");
-            assert!(restore_lifted_function_boundary(&mut module, true));
+            assert_eq!(
+                restore_lifted_function_boundary(&mut module, true),
+                BoundaryRestoration::Restored
+            );
             apply_fixer(&mut module).expect("restored async module should fix");
             print_js(&module, cm).expect("restored async module should print")
         });
@@ -934,7 +968,10 @@ mod tests {
             )
             .expect("fixture should parse");
 
-            assert!(!restore_lifted_function_boundary(&mut module, true));
+            assert_eq!(
+                restore_lifted_function_boundary(&mut module, true),
+                BoundaryRestoration::NotNeeded
+            );
         });
     }
 
