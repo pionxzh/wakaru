@@ -166,6 +166,30 @@ inlining).
 
 Level: `standard` and above. `minimal` preserves captured builtin aliases.
 
+### `terser_unsafe_proto`
+
+The literal receiver in a prototype-call shape came from Terser's
+`unsafe_proto` compression and may be reversed to the corresponding builtin
+prototype:
+
+```js
+Array.prototype.splice.apply(value, args)
+// terser unsafe_proto ->
+[].splice.apply(value, args)
+```
+
+Terser keeps `unsafe_proto` disabled by default and applies it only when the
+builtin reference is undeclared. Wakaru does not retain that producer
+provenance. Reversing the shape therefore assumes the synthesized `Array`,
+`String`, `Object`, `Number`, `RegExp`, or `Function` identifier still resolves
+to the intended builtin. The rule deliberately does not model lexical
+bindings, `with`, or direct `eval` to prove that condition.
+
+Affects: `UnBuiltinPrototype`.
+
+Level: `aggressive` only. `minimal` and `standard` preserve the literal
+receiver.
+
 ### `effect_free_property_key_coercion`
 
 Converting a generated property-definition helper back to a computed object

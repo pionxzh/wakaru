@@ -29,6 +29,20 @@ pub fn render(source: &str) -> String {
 }
 
 #[allow(dead_code)]
+pub fn render_with_level(source: &str, level: RewriteLevel) -> String {
+    decompile(
+        source,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            level,
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code
+}
+
+#[allow(dead_code)]
 pub fn render_rule<R, F>(source: &str, build_rule: F) -> String
 where
     R: VisitMut,

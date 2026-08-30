@@ -112,6 +112,10 @@ fn standard_or_above(ctx: RuleRunContext<'_>) -> bool {
     ctx.rewrite_level >= RewriteLevel::Standard
 }
 
+fn aggressive_only(ctx: RuleRunContext<'_>) -> bool {
+    ctx.rewrite_level == RewriteLevel::Aggressive
+}
+
 macro_rules! runner {
     ($name:ident, |$ctx:ident| $rule:expr) => {
         fn $name(module: &mut Module, $ctx: RuleRunContext<'_>) {
@@ -305,7 +309,9 @@ runner!(run_un_while_loop, UnWhileLoop);
 runner!(run_un_type_constructor, |ctx| UnTypeConstructor::new(
     ctx.rewrite_level
 ));
-runner!(run_un_builtin_prototype, UnBuiltinPrototype);
+runner!(run_un_builtin_prototype, |ctx| UnBuiltinPrototype::new(
+    ctx.rewrite_level
+));
 runner!(run_un_argument_spread, |ctx| UnArgumentSpread::new(
     ctx.unresolved_mark,
     ctx.rewrite_level
@@ -589,7 +595,7 @@ define_rule_registry! {
     ]),
     ("UnTemplateLiteral", Structural, run_un_template_literal, always_enabled),
     ("UnTypeConstructor", Structural, run_un_type_constructor, always_enabled),
-    ("UnBuiltinPrototype", Structural, run_un_builtin_prototype, always_enabled),
+    ("UnBuiltinPrototype", Structural, run_un_builtin_prototype, aggressive_only),
     ("UnArgumentSpread", Structural, run_un_argument_spread, always_enabled),
     ("UnArrayConcatSpread", Structural, run_un_array_concat_spread, always_enabled),
     ("UnSpreadArrayLiteral", Structural, run_un_spread_array_literal, always_enabled),

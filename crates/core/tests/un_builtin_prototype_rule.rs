@@ -1,92 +1,78 @@
 mod common;
 
-use common::{assert_eq_normalized, render_rule};
+use common::{assert_eq_normalized, render_rule, render_with_level};
 use wakaru_core::rules::UnBuiltinPrototype;
+use wakaru_core::RewriteLevel;
 
-fn apply(input: &str) -> String {
-    render_rule(input, |_| UnBuiltinPrototype)
+const SIX_LITERAL_RECEIVERS: &str = r#"
+[].splice.apply(value, args);
+"".indexOf.call(value, "x");
+({}).hasOwnProperty.call(value, "x");
+0..toFixed.call(value, 2);
+/x/.test.call(value, "x");
+(function() {}).call.apply(value, args);
+"#;
+
+const SIX_BUILTIN_PROTOTYPES: &str = r#"
+Array.prototype.splice.apply(value, args);
+String.prototype.indexOf.call(value, "x");
+Object.prototype.hasOwnProperty.call(value, "x");
+Number.prototype.toFixed.call(value, 2);
+RegExp.prototype.test.call(value, "x");
+Function.prototype.call.apply(value, args);
+"#;
+
+const SIX_STANDARD_LITERAL_RECEIVERS: &str = r#"
+[].splice.apply(value, args);
+"".indexOf.call(value, "x");
+({}).hasOwnProperty.call(value, "x");
+0..toFixed.call(value, 2);
+/x/.test.call(value, "x");
+(() => {}).call.apply(value, args);
+"#;
+
+fn apply(input: &str, level: RewriteLevel) -> String {
+    render_rule(input, |_| UnBuiltinPrototype::new(level))
 }
 
 #[test]
-fn replaces_array_instance_with_prototype() {
-    let input = r#"
-[].splice.apply(a, [1, 2]);
-"#;
-    let expected = r#"
-Array.prototype.splice.apply(a, [1, 2]);
-"#;
-    let output = apply(input);
-    assert_eq_normalized(&output, expected);
+fn aggressive_recovers_all_six_builtin_prototypes() {
+    let output = apply(SIX_LITERAL_RECEIVERS, RewriteLevel::Aggressive);
+
+    assert_eq_normalized(&output, SIX_BUILTIN_PROTOTYPES);
 }
 
 #[test]
-fn replaces_number_instance_with_prototype() {
-    let input = r#"
-0..toFixed.call(Math.PI, 2);
-"#;
-    let expected = r#"
-Number.prototype.toFixed.call(Math.PI, 2);
-"#;
-    let output = apply(input);
-    assert_eq_normalized(&output, expected);
+fn minimal_preserves_literal_receivers() {
+    let output = apply(SIX_LITERAL_RECEIVERS, RewriteLevel::Minimal);
+
+    assert_eq_normalized(&output, SIX_LITERAL_RECEIVERS);
 }
 
 #[test]
-fn replaces_object_instance_with_prototype() {
-    let input = r#"
-({}).hasOwnProperty.call(d, "foo");
-"#;
-    let expected = r#"
-Object.prototype.hasOwnProperty.call(d, "foo");
-"#;
-    let output = apply(input);
-    assert_eq_normalized(&output, expected);
+fn standard_preserves_literal_receivers() {
+    let output = apply(SIX_LITERAL_RECEIVERS, RewriteLevel::Standard);
+
+    assert_eq_normalized(&output, SIX_LITERAL_RECEIVERS);
 }
 
 #[test]
-fn replaces_string_instance_with_prototype() {
-    let input = r#"
-"".indexOf.call(e, "bar");
-"#;
-    let expected = r#"
-String.prototype.indexOf.call(e, "bar");
-"#;
-    let output = apply(input);
-    assert_eq_normalized(&output, expected);
+fn full_pipeline_minimal_preserves_literal_receivers() {
+    let output = render_with_level(SIX_LITERAL_RECEIVERS, RewriteLevel::Minimal);
+
+    assert_eq_normalized(&output, SIX_LITERAL_RECEIVERS);
 }
 
 #[test]
-fn replaces_regexp_instance_with_prototype() {
-    let input = r#"
-/t/.test.call(/foo/, "bar");
-"#;
-    let expected = r#"
-RegExp.prototype.test.call(/foo/, "bar");
-"#;
-    let output = apply(input);
-    assert_eq_normalized(&output, expected);
+fn full_pipeline_standard_preserves_literal_receivers() {
+    let output = render_with_level(SIX_LITERAL_RECEIVERS, RewriteLevel::Standard);
+
+    assert_eq_normalized(&output, SIX_STANDARD_LITERAL_RECEIVERS);
 }
 
 #[test]
-fn replaces_function_instance_with_prototype() {
-    let input = r#"
-(function() {}).call.apply(console.log, [console, "foo"]);
-"#;
-    let expected = r#"
-Function.prototype.call.apply(console.log, [console, "foo"]);
-"#;
-    let output = apply(input);
-    assert_eq_normalized(&output, expected);
-}
+fn full_pipeline_aggressive_recovers_all_six_builtin_prototypes() {
+    let output = render_with_level(SIX_LITERAL_RECEIVERS, RewriteLevel::Aggressive);
 
-#[test]
-fn replaces_arrow_function_instance_with_prototype() {
-    let input = r#"
-(() => {}).call.apply(console.log, [console, "foo"]);
-"#;
-    let expected = r#"
-Function.prototype.call.apply(console.log, [console, "foo"]);
-"#;
-    let output = apply(input);
-    assert_eq_normalized(&output, expected);
+    assert_eq_normalized(&output, SIX_BUILTIN_PROTOTYPES);
 }

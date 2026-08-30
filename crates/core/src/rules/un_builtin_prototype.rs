@@ -1,15 +1,40 @@
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    ArrowExpr, CallExpr, Callee, Expr, FnExpr, Ident, IdentName, Lit, MemberExpr, MemberProp, Regex,
+    ArrowExpr, CallExpr, Callee, Expr, FnExpr, Ident, IdentName, Lit, MemberExpr, MemberProp,
+    Module, Regex,
 };
 use swc_core::ecma::utils::ExprFactory;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
+use super::RewriteLevel;
 use crate::utils::paren::strip_parens;
 
-pub struct UnBuiltinPrototype;
+pub struct UnBuiltinPrototype {
+    level: RewriteLevel,
+}
+
+impl UnBuiltinPrototype {
+    pub fn new(level: RewriteLevel) -> Self {
+        Self { level }
+    }
+}
+
+impl Default for UnBuiltinPrototype {
+    fn default() -> Self {
+        Self::new(RewriteLevel::Aggressive)
+    }
+}
 
 impl VisitMut for UnBuiltinPrototype {
+    fn visit_mut_module(&mut self, module: &mut Module) {
+        // `terser_unsafe_proto`: recovering the builtin name relies on the
+        // producer having transformed only undeclared builtin references.
+        if self.level != RewriteLevel::Aggressive {
+            return;
+        }
+        module.visit_mut_children_with(self);
+    }
+
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         expr.visit_mut_children_with(self);
 

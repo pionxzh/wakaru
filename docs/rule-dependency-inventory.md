@@ -150,6 +150,12 @@ rationale, or level gating appear.
   expect.
 - **UnTypeConstructor** — whole rule gated to `standard+`: `+x` → `Number(x)`
   is semantically equivalent but changes readability intent.
+- **UnBuiltinPrototype** — whole rule is `aggressive` only, under
+  `terser_unsafe_proto`. It reverses Terser's opt-in `unsafe_proto` compression,
+  whose producer-side matcher only transforms undeclared builtin references.
+  Wakaru accepts that producer assumption in aggressive mode and deliberately
+  keeps a compact shape matcher instead of rebuilding a JS+TS scope model.
+  `minimal` and `standard` preserve literal receivers.
 - **UnEsmoduleFlag** — removes `__esModule` flag statements; confirmed UnEsm
   prerequisite (export classification noise).
 - **UnAssignmentMerging** — splits `a = b = val`; confirmed UnEsm
