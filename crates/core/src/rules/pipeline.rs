@@ -418,9 +418,11 @@ runner!(
 runner!(run_obj_shorthand, ObjShorthand);
 runner!(run_obj_method_shorthand, ObjMethodShorthand);
 runner!(run_un_prototype_class, UnPrototypeClass);
-runner!(run_exponent, Exponent);
+runner!(run_exponent, |ctx| Exponent::new(ctx.unresolved_mark));
 runner!(run_arg_rest, |ctx| ArgRest::new(ctx.rewrite_level));
-runner!(run_un_rest_array_copy, UnRestArrayCopy);
+runner!(run_un_rest_array_copy, |ctx| UnRestArrayCopy::new(
+    ctx.unresolved_mark
+));
 runner!(run_arrow_function, ArrowFunction);
 runner!(run_un_namespace, UnNamespace);
 runner!(run_arrow_return, ArrowReturn);

@@ -1,9 +1,20 @@
+use swc_core::common::Mark;
 use swc_core::ecma::ast::{BinaryOp, Callee, Expr, MemberProp};
 use swc_core::ecma::utils::ExprFactory;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
+use super::expr_utils::is_unresolved_ident;
+
 /// Converts `Math.pow(a, b)` → `a ** b`.
-pub struct Exponent;
+pub struct Exponent {
+    unresolved_mark: Mark,
+}
+
+impl Exponent {
+    pub fn new(unresolved_mark: Mark) -> Self {
+        Self { unresolved_mark }
+    }
+}
 
 impl VisitMut for Exponent {
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
@@ -28,7 +39,7 @@ impl VisitMut for Exponent {
         let Expr::Ident(obj_ident) = member.obj.as_ref() else {
             return;
         };
-        if obj_ident.sym != "Math" {
+        if !is_unresolved_ident(obj_ident, "Math", self.unresolved_mark) {
             return;
         }
         let MemberProp::Ident(prop_ident) = &member.prop else {

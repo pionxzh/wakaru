@@ -1,4 +1,5 @@
 use swc_core::atoms::Atom;
+use swc_core::common::Mark;
 use swc_core::ecma::ast::{
     ArrowExpr, AssignOp, AssignTarget, BindingIdent, Callee, Expr, Function, FunctionBody, Ident,
     MemberProp, ObjectPatProp, Pat, SimpleAssignTarget, Stmt, UpdateOp, VarDeclOrExpr,
@@ -7,6 +8,7 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::decl_utils::{binding_id, ident_matches_binding, BindingId};
+use super::expr_utils::is_unresolved_ident;
 
 /// Eliminates the Babel-compiled rest-args array-copy loop.
 ///
@@ -40,7 +42,15 @@ use super::decl_utils::{binding_id, ident_matches_binding, BindingId};
 /// also binds the replacement name, replacing it there would silently change which
 /// `args` the expression refers to.  In that situation the outer transformation is
 /// skipped to preserve semantics.
-pub struct UnRestArrayCopy;
+pub struct UnRestArrayCopy {
+    unresolved_mark: Mark,
+}
+
+impl UnRestArrayCopy {
+    pub fn new(unresolved_mark: Mark) -> Self {
+        Self { unresolved_mark }
+    }
+}
 
 impl VisitMut for UnRestArrayCopy {
     fn visit_mut_function(&mut self, func: &mut Function) {
@@ -54,7 +64,7 @@ impl VisitMut for UnRestArrayCopy {
 
         // There may be multiple copy loops (unlikely but possible)
         loop {
-            let Some((loop_idx, copy)) = find_copy_loop(body, &rest) else {
+            let Some((loop_idx, copy)) = find_copy_loop(body, &rest, self.unresolved_mark) else {
                 break;
             };
 
@@ -89,11 +99,15 @@ fn get_rest_param(func: &Function) -> Option<BindingId> {
 
 /// Scan `body` for the Babel rest-args copy pattern whose source matches `rest`.
 /// Returns `(statement_index, copy_binding_id)` on the first match.
-fn find_copy_loop(body: &FunctionBody, rest: &BindingId) -> Option<(usize, BindingId)> {
+fn find_copy_loop(
+    body: &FunctionBody,
+    rest: &BindingId,
+    unresolved_mark: Mark,
+) -> Option<(usize, BindingId)> {
     body.stmts
         .iter()
         .enumerate()
-        .find_map(|(i, stmt)| match_copy_loop(stmt, rest).map(|copy| (i, copy)))
+        .find_map(|(i, stmt)| match_copy_loop(stmt, rest, unresolved_mark).map(|copy| (i, copy)))
 }
 
 /// Match:
@@ -103,7 +117,7 @@ fn find_copy_loop(body: &FunctionBody, rest: &BindingId) -> Option<(usize, Bindi
 /// }
 /// ```
 /// where `REST` has the given `BindingId`. Returns the `BindingId` of `copy`.
-fn match_copy_loop(stmt: &Stmt, rest: &BindingId) -> Option<BindingId> {
+fn match_copy_loop(stmt: &Stmt, rest: &BindingId, unresolved_mark: Mark) -> Option<BindingId> {
     let Stmt::For(for_stmt) = stmt else {
         return None;
     };
@@ -123,7 +137,7 @@ fn match_copy_loop(stmt: &Stmt, rest: &BindingId) -> Option<BindingId> {
     }
 
     // Decl 1: copy = Array(len) or new Array(len)
-    let copy = extract_array_copy_decl(&init.decls[1], &len)?;
+    let copy = extract_array_copy_decl(&init.decls[1], &len, unresolved_mark)?;
 
     // Decl 2: idx = 0
     let idx = extract_zero_init_decl(&init.decls[2])?;
@@ -166,12 +180,16 @@ fn extract_len_decl(decl: &VarDeclarator) -> Option<(BindingId, BindingId)> {
 }
 
 /// `copy = Array(len)` or `copy = new Array(len)`  →  `copy_binding_id`
-pub(super) fn extract_array_copy_decl(decl: &VarDeclarator, len: &BindingId) -> Option<BindingId> {
+pub(super) fn extract_array_copy_decl(
+    decl: &VarDeclarator,
+    len: &BindingId,
+    unresolved_mark: Mark,
+) -> Option<BindingId> {
     let Pat::Ident(BindingIdent { id: copy_id, .. }) = &decl.name else {
         return None;
     };
 
-    let is_array_ctor = |sym: &Atom| sym == "Array";
+    let is_array_ctor = |id: &Ident| is_unresolved_ident(id, "Array", unresolved_mark);
     let one_len_arg = |args: &[swc_core::ecma::ast::ExprOrSpread]| -> bool {
         args.len() == 1
             && args[0].spread.is_none()
@@ -186,7 +204,7 @@ pub(super) fn extract_array_copy_decl(decl: &VarDeclarator, len: &BindingId) -> 
             let Expr::Ident(id) = callee.as_ref() else {
                 return None;
             };
-            if !is_array_ctor(&id.sym) || !one_len_arg(&call.args) {
+            if !is_array_ctor(id) || !one_len_arg(&call.args) {
                 return None;
             }
         }
@@ -194,7 +212,7 @@ pub(super) fn extract_array_copy_decl(decl: &VarDeclarator, len: &BindingId) -> 
             let Expr::Ident(id) = new_expr.callee.as_ref() else {
                 return None;
             };
-            if !is_array_ctor(&id.sym) {
+            if !is_array_ctor(id) {
                 return None;
             }
             let args = new_expr.args.as_deref().unwrap_or(&[]);

@@ -12,7 +12,7 @@ use wakaru_core::rules::UnRestArrayCopy;
 // The rule detects this and skips the outer transformation to preserve semantics.
 
 fn apply(input: &str) -> String {
-    render_rule(input, |_| UnRestArrayCopy)
+    render_rule(input, UnRestArrayCopy::new)
 }
 
 fn apply_pipeline(input: &str) -> String {
@@ -123,4 +123,30 @@ export function outer() {
 }
 "#;
     assert_eq_normalized(&apply_pipeline(input), expected);
+}
+
+#[test]
+fn local_array_constructor_preserves_copy_loop() {
+    let input = r#"
+function collect(Array, ...args) {
+    for (let len = args.length, copy = Array(len), index = 0; index < len; index++) {
+        copy[index] = args[index];
+    }
+    return copy;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn local_array_new_constructor_preserves_copy_loop() {
+    let input = r#"
+function collect(Array, ...args) {
+    for (let len = args.length, copy = new Array(len), index = 0; index < len; index++) {
+        copy[index] = args[index];
+    }
+    return copy;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
 }

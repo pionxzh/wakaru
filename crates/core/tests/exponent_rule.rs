@@ -4,7 +4,7 @@ use common::{assert_eq_normalized, render_rule};
 use wakaru_core::rules::Exponent;
 
 fn apply(input: &str) -> String {
-    render_rule(input, |_| Exponent)
+    render_rule(input, Exponent::new)
 }
 
 #[test]
@@ -63,5 +63,15 @@ fn other_math_methods_not_converted() {
 #[test]
 fn non_math_pow_not_converted() {
     let input = r#"const x = foo.pow(2, 3);"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn local_math_binding_is_not_converted() {
+    let input = r#"
+function calculate(Math) {
+    return Math.pow(2, 3);
+}
+"#;
     assert_eq_normalized(&apply(input), input);
 }

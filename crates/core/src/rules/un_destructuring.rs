@@ -275,7 +275,7 @@ fn loop_has_array_allocation(
     };
     init.decls.iter().any(|decl| {
         array_allocation_uses_unresolved_array(decl, unresolved_mark)
-            && extract_array_copy_decl(decl, len).as_ref() == Some(output)
+            && extract_array_copy_decl(decl, len, unresolved_mark).as_ref() == Some(output)
     })
 }
 
@@ -397,7 +397,7 @@ fn matches_array_like_copy_loop(
         .decls
         .iter()
         .filter(|decl| array_allocation_uses_unresolved_array(decl, unresolved_mark))
-        .filter_map(|decl| extract_array_copy_decl(decl, len))
+        .filter_map(|decl| extract_array_copy_decl(decl, len, unresolved_mark))
         .collect();
     if !inline_allocations.is_empty()
         && (inline_allocations.len() != 1 || inline_allocations[0] != *output)
@@ -424,7 +424,7 @@ fn matches_standalone_array_allocation(
     };
     var.decls.len() == 1
         && array_allocation_uses_unresolved_array(&var.decls[0], unresolved_mark)
-        && extract_array_copy_decl(&var.decls[0], len).as_ref() == Some(output)
+        && extract_array_copy_decl(&var.decls[0], len, unresolved_mark).as_ref() == Some(output)
 }
 
 fn array_allocation_uses_unresolved_array(decl: &VarDeclarator, unresolved_mark: Mark) -> bool {
