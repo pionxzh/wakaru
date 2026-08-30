@@ -3,6 +3,7 @@ source: crates/core/tests/un_esm_rule.rs
 expression: output
 ---
 import "./module-11.js";
+"use strict";
 const r = {
     apiBase: "https://example.com",
     timeout: 5000

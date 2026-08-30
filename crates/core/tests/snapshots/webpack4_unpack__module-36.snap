@@ -5,6 +5,7 @@ expression: code
 ---
 import { ERROR, START, SUCCESS } from "./module-26.js";
 import { FETCH_DATA } from "./module-19.js";
+"use strict";
 let r;
 const u = {
     isLoading: false,

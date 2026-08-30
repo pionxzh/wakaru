@@ -32,6 +32,18 @@ function foo(...args) {
 }
 
 #[test]
+fn direct_strict_directive_preserves_function_arguments() {
+    let input = r#"
+function foo() {
+    "use strict";
+    return arguments[0] + arguments[1];
+}
+"#;
+
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
 fn minimal_does_not_convert_arguments_index_to_rest_args() {
     let input = r#"
 function foo() {
@@ -335,6 +347,20 @@ class Foo {
 }
 
 #[test]
+fn direct_strict_directive_preserves_constructor_arguments() {
+    let input = r#"
+class Foo {
+    constructor() {
+        "use strict";
+        console.log(arguments[0]);
+    }
+}
+"#;
+
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
 fn constructor_babel_copy_loop_removed() {
     // The Babel rest-args copy loop should be removed when rest param is added
     let input = r#"
@@ -377,6 +403,30 @@ function foo(...args) {
 }
 "#;
     assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn copy_loop_removal_does_not_promote_later_strict_string_to_directive() {
+    let input = r#"
+function foo() {
+    for (var len = arguments.length, args = Array(len), i = 0; i < len; i++) {
+        args[i] = arguments[i];
+    }
+    "use strict";
+    return args;
+}
+class Foo {
+    constructor() {
+        for (var len = arguments.length, args = Array(len), i = 0; i < len; i++) {
+            args[i] = arguments[i];
+        }
+        "use strict";
+        this.args = args;
+    }
+}
+"#;
+
+    assert_eq_normalized(&apply(input), input);
 }
 
 #[test]

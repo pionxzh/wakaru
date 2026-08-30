@@ -5,5 +5,6 @@ expression: code
 import "./module-50.js";
 import { Route, Switch } from "./module-24.js";
 import i from "./module-37.js";
+"use strict";
 const a = <Switch><Route exact path="/" component={i.FrontPage}/></Switch>;
 export default a;

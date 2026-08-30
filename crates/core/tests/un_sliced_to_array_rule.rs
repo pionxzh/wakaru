@@ -966,6 +966,45 @@ const out = entries.filter(([, value]) => value != null);
 }
 
 #[test]
+fn direct_strict_callback_preserves_simple_parameter() {
+    let input = r#"
+import sliced from "@babel/runtime/helpers/slicedToArray";
+const out = entries.filter(function(entry) {
+    "use strict";
+    const value = sliced(entry, 2)[1];
+    return value != null;
+});
+"#;
+
+    assert_eq_normalized(
+        &common::render_rule(input, |_| UnSlicedToArray::new()),
+        input,
+    );
+}
+
+#[test]
+fn callback_recovery_does_not_promote_later_strict_string_to_directive() {
+    let input = r#"
+import sliced from "@babel/runtime/helpers/slicedToArray";
+const out = entries.filter(function(entry) {
+    const value = sliced(entry, 2)[1];
+    "use strict";
+    return value != null;
+});
+const out2 = entries.filter((entry) => {
+    const value = sliced(entry, 2)[1];
+    "use strict";
+    return value != null;
+});
+"#;
+
+    assert_eq_normalized(
+        &common::render_rule(input, |_| UnSlicedToArray::new()),
+        input,
+    );
+}
+
+#[test]
 fn recovers_direct_sliced_callback_comparison() {
     let input = r#"
 import sliced from "@babel/runtime/helpers/slicedToArray";

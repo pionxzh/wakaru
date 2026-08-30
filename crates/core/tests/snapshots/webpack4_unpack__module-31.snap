@@ -2,6 +2,7 @@
 source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
+"use strict";
 export function a(e) {
     let t;
     const e_Symbol = e.Symbol;

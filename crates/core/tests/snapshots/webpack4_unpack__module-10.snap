@@ -8,6 +8,7 @@ import * as l from "./module-2.js";
 import { k } from "./module-2.js";
 import { a as a_1 } from "./module-6.js";
 import { a as a_2 } from "./module-9.js";
+"use strict";
 const o = {
     done: true,
     value: undefined

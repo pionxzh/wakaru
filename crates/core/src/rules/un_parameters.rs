@@ -11,7 +11,9 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::js_names::{is_likely_generated_alias, is_reserved_binding_name};
 
-use super::decl_utils::same_ident;
+use super::decl_utils::{
+    contains_use_strict_string_statement, has_direct_use_strict_directive, same_ident,
+};
 use super::rename_utils::{rename_bindings, BindingRename};
 use super::RewriteLevel;
 use crate::utils::paren::strip_parens;
@@ -56,6 +58,36 @@ fn process_function_params(
     level: RewriteLevel,
     unresolved_mark: Mark,
 ) {
+    if has_direct_use_strict_directive(body) {
+        return;
+    }
+    if !contains_use_strict_string_statement(body) {
+        process_function_params_inner(params, body, level, unresolved_mark);
+        return;
+    }
+
+    let mut candidate_params = params.clone();
+    let mut candidate_body = body.clone();
+    process_function_params_inner(
+        &mut candidate_params,
+        &mut candidate_body,
+        level,
+        unresolved_mark,
+    );
+
+    if has_direct_use_strict_directive(&candidate_body) {
+        return;
+    }
+    *params = candidate_params;
+    *body = candidate_body;
+}
+
+fn process_function_params_inner(
+    params: &mut Vec<Param>,
+    body: &mut FunctionBody,
+    level: RewriteLevel,
+    unresolved_mark: Mark,
+) {
     let body_bindings = collect_body_bindings(body);
 
     process_pattern_a_params(params, body, unresolved_mark, &body_bindings);
@@ -76,6 +108,36 @@ fn process_function_params(
 
 /// Process Pattern A for arrow functions with Vec<Pat>.
 fn process_arrow_params(
+    params: &mut Vec<Pat>,
+    body: &mut FunctionBody,
+    level: RewriteLevel,
+    unresolved_mark: Mark,
+) {
+    if has_direct_use_strict_directive(body) {
+        return;
+    }
+    if !contains_use_strict_string_statement(body) {
+        process_arrow_params_inner(params, body, level, unresolved_mark);
+        return;
+    }
+
+    let mut candidate_params = params.clone();
+    let mut candidate_body = body.clone();
+    process_arrow_params_inner(
+        &mut candidate_params,
+        &mut candidate_body,
+        level,
+        unresolved_mark,
+    );
+
+    if has_direct_use_strict_directive(&candidate_body) {
+        return;
+    }
+    *params = candidate_params;
+    *body = candidate_body;
+}
+
+fn process_arrow_params_inner(
     params: &mut Vec<Pat>,
     body: &mut FunctionBody,
     level: RewriteLevel,

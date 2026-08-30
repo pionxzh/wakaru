@@ -2,6 +2,7 @@
 source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
+"use strict";
 const r = [];
 let o = 0;
 function i(e) {

@@ -3,6 +3,7 @@ source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
 import { a as a_1 } from "./module-7.js";
+"use strict";
 function o(e) {
     return e.charAt(0) === "/";
 }

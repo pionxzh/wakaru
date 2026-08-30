@@ -2,5 +2,6 @@
 source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
+"use strict";
 const r = ()=>{};
 export default r;

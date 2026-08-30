@@ -373,7 +373,6 @@ fn rule_descriptors_expose_dependency_metadata() {
         &[
             "UnCurlyBraces",
             "UnEsmoduleFlag",
-            "UnUseStrict",
             "UnAssignmentMerging",
             "UnVariableMergingDeclsOnly",
             "UnWebpackInterop"

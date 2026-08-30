@@ -3,3 +3,4 @@ source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
 import "./module-11.js";
+"use strict";

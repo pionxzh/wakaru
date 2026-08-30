@@ -1794,6 +1794,10 @@ var User = function() {
     assert!(output.contains("greet()"), "{output}");
     assert!(output.contains("static create(name)"), "{output}");
     assert!(!output.contains("_create_class"), "{output}");
+    assert!(
+        !output.contains("\"use strict\""),
+        "class syntax subsumes the recovered wrapper's strict directive: {output}"
+    );
 }
 
 // ============================================================

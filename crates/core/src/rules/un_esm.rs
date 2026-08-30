@@ -2428,15 +2428,28 @@ fn make_deferred_webpack_default_export(
 }
 
 fn expose_unused_iife_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) {
-    if module.body.len() != 1 {
+    let candidate_index = module
+        .body
+        .iter()
+        .take_while(|item| is_use_strict_module_item(item))
+        .count();
+    if candidate_index + 1 != module.body.len() {
         return;
     }
-    let Some(expanded) =
-        extract_unused_iife_webpack_export_getter_body(&module.body[0], unresolved_mark)
-    else {
+    let Some(expanded) = extract_unused_iife_webpack_export_getter_body(
+        &module.body[candidate_index],
+        unresolved_mark,
+    ) else {
         return;
     };
-    module.body = expanded;
+    module.body.truncate(candidate_index);
+    module.body.extend(expanded);
+}
+
+fn is_use_strict_module_item(item: &ModuleItem) -> bool {
+    matches!(item, ModuleItem::Stmt(Stmt::Expr(statement))
+        if matches!(strip_parens(&statement.expr), Expr::Lit(Lit::Str(value))
+            if value.value.as_str() == Some("use strict")))
 }
 
 fn extract_unused_iife_webpack_export_getter_body(

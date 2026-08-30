@@ -203,6 +203,22 @@ fn export_default_expr() {
 }
 
 #[test]
+fn use_strict_does_not_hide_a_commonjs_passthrough() {
+    let facts = collect_facts(
+        r#"
+"use strict";
+module.exports = require("./provider.js");
+"#,
+    );
+
+    assert_eq!(
+        facts.passthrough_target.as_deref(),
+        Some("./provider.js"),
+        "a preserved strict directive must not block transparent-provider facts"
+    );
+}
+
+#[test]
 fn export_default_function() {
     let facts = collect_facts(r#"export default function foo() {}"#);
     assert_eq!(

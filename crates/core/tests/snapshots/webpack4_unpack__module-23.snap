@@ -9,6 +9,7 @@ import y from "./module-32.js";
 import _b from "./module-5.js";
 import { isValidElementType } from "./module-43.js";
 import { bindActionCreators } from "./module-11.js";
+"use strict";
 const c = u.shape({
     trySubscribe: u.func.isRequired,
     tryUnsubscribe: u.func.isRequired,

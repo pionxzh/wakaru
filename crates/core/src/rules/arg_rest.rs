@@ -7,7 +7,10 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use super::decl_utils::{binding_id, ident_matches_binding, BindingId};
+use super::decl_utils::{
+    binding_id, contains_use_strict_string_statement, has_direct_use_strict_directive,
+    ident_matches_binding, BindingId,
+};
 use super::RewriteLevel;
 
 /// Replaces `arguments[N]` / `arguments.length` patterns with a rest parameter
@@ -47,6 +50,10 @@ impl VisitMut for ArgRest {
         }
 
         let Some(body) = &func.body else { return };
+        if has_direct_use_strict_directive(body) {
+            return;
+        }
+        let original = contains_use_strict_string_statement(body).then(|| func.clone());
         let fixed_param_count = func.params.len();
 
         let copy_var = detect_copy_var_ident(body, fixed_param_count);
@@ -73,6 +80,16 @@ impl VisitMut for ArgRest {
                 fixed_param_count,
             });
         }
+
+        if let Some(original) = original {
+            if func
+                .body
+                .as_ref()
+                .is_some_and(has_direct_use_strict_directive)
+            {
+                *func = original;
+            }
+        }
     }
 
     fn visit_mut_constructor(&mut self, ctor: &mut Constructor) {
@@ -90,6 +107,10 @@ impl VisitMut for ArgRest {
         }
 
         let Some(body) = &ctor.body else { return };
+        if has_direct_use_strict_directive(body) {
+            return;
+        }
+        let original = contains_use_strict_string_statement(body).then(|| ctor.clone());
         let fixed_param_count = ctor.params.len();
 
         let copy_var = detect_copy_var_ident(body, fixed_param_count);
@@ -116,6 +137,16 @@ impl VisitMut for ArgRest {
                 ident: rest_ident,
                 fixed_param_count,
             });
+        }
+
+        if let Some(original) = original {
+            if ctor
+                .body
+                .as_ref()
+                .is_some_and(has_direct_use_strict_directive)
+            {
+                *ctor = original;
+            }
         }
     }
 }

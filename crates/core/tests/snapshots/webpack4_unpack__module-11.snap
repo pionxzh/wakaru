@@ -3,6 +3,7 @@ source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
 import { a } from "./module-21.js";
+"use strict";
 export const __DO_NOT_USE__ActionTypes = {
     INIT: `@@redux/INIT${Math.random().toString(36).substring(7).split("").join(".")}`,
     REPLACE: `@@redux/REPLACE${Math.random().toString(36).substring(7).split("").join(".")}`

@@ -1941,6 +1941,7 @@ function i(t, e = null) {
 #[test]
 fn unused_iife_with_webpack_export_getters_becomes_module_exports() {
     let input = r#"
+"use strict";
 ((t)=>{
   require.d(exports, "VERSION", ()=>o);
   require.d(exports, "getConfig", ()=>i);
@@ -1963,6 +1964,10 @@ fn unused_iife_with_webpack_export_getters_becomes_module_exports() {
     assert!(
         !output.contains("require.d"),
         "webpack export getter helper should not survive:\n{output}"
+    );
+    assert!(
+        output.contains("\"use strict\""),
+        "the leading strict directive must survive IIFE exposure:\n{output}"
     );
     insta::assert_snapshot!(output);
 }

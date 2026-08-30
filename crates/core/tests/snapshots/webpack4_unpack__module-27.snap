@@ -6,6 +6,7 @@ import { combineReducers } from "./module-11.js";
 import { routerReducer } from "./module-18.js";
 import "./module-13.js";
 import main from "./module-36.js";
+"use strict";
 const a = combineReducers({
     router: routerReducer,
     main

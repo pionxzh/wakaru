@@ -8,5 +8,6 @@ import { Provider } from "./module-23.js";
 import { ConnectedRouter } from "./module-18.js";
 import U from "./module-39.js";
 import l from "./module-34.js";
+"use strict";
 const store = l;
 o.render(<Provider store={store}><ConnectedRouter history={l.history}><U/></ConnectedRouter></Provider>, document.getElementById("app"));

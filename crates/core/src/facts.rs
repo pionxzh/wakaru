@@ -1730,15 +1730,25 @@ fn is_regenerator_runtime_binding(module: &Module, local: &Atom) -> bool {
 /// re-exports another module's namespace as its default export. Returns the
 /// target specifier.
 ///
-/// Only matches modules whose body contains nothing except the single
-/// `export default require("./X.js")`. Any other statement (side effects,
-/// imports, additional exports) disqualifies the module.
+/// Only matches modules whose body contains leading `"use strict"` directives
+/// and the single `export default require("./X.js")`. Any other statement
+/// (side effects, imports, additional exports) disqualifies the module.
 fn detect_passthrough(module: &Module) -> Option<Atom> {
-    if module.body.len() != 1 {
+    let mut items = module.body.iter();
+    let export_item = loop {
+        let item = items.next()?;
+        if matches!(item, ModuleItem::Stmt(Stmt::Expr(statement))
+            if is_use_strict_directive(&statement.expr))
+        {
+            continue;
+        }
+        break item;
+    };
+    if items.next().is_some() {
         return None;
     }
 
-    let ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(export)) = &module.body[0] else {
+    let ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(export)) = export_item else {
         return None;
     };
     let Expr::Call(call) = export.expr.as_ref() else {

@@ -1022,6 +1022,7 @@ var dep, read = (dep = require("./dep.js")) && dep.__esModule ? dep : {
 "#;
     let expected = r#"
 import read from "./dep.js";
+"use strict";
 export default function(target, values) {
     return values.map((value) => read(target, value)).filter(Boolean);
 };

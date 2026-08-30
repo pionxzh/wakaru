@@ -8,6 +8,7 @@ import "./module-27.js";
 import "./module-13.js";
 import { fetchData } from "./module-25.js";
 import a from "./module-35.js";
+"use strict";
 const u = {
     fetchData
 };

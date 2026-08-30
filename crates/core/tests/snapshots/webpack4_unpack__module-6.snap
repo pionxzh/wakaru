@@ -5,6 +5,7 @@ expression: code
 import { b, c as c_1, h as h_1, p as p_1, q, w } from "./module-0.js";
 import { a as a_1 } from "./module-9.js";
 import { a as a_2 } from "./module-12.js";
+"use strict";
 export const a = {
     type: "@@redux-saga/CHANNEL_END"
 };

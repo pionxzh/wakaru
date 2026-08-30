@@ -38,6 +38,38 @@ function foo(a = 1, b = 2) {
 }
 
 #[test]
+fn direct_strict_directive_preserves_simple_parameters() {
+    let input = r#"
+function foo(a) {
+  "use asm";
+  "use strict";
+  if (a === void 0) a = 1;
+  return a;
+}
+"#;
+
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn parameter_recovery_does_not_promote_later_strict_string_to_directive() {
+    let input = r#"
+function foo(a) {
+  if (a === void 0) a = 1;
+  "use strict";
+  return a;
+}
+const bar = (a) => {
+  if (a === void 0) a = 2;
+  "use strict";
+  return a;
+};
+"#;
+
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
 fn void0_guard_reversed_operands() {
     let input = r#"
 function foo(a, b) {

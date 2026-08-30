@@ -282,7 +282,6 @@ runner!(run_un_curly_braces, UnCurlyBraces);
 runner!(run_un_esmodule_flag, |ctx| UnEsmoduleFlag::new(
     ctx.unresolved_mark
 ));
-runner!(run_un_use_strict, UnUseStrict);
 runner!(run_un_assignment_merging, UnAssignmentMerging);
 runner!(run_un_webpack_interop, |ctx| UnWebpackInterop::new(
     ctx.unresolved_mark
@@ -550,15 +549,14 @@ define_rule_registry! {
     ("UnPossibleConstructorReturn", Helpers, run_un_possible_constructor_return, always_enabled),
     ("UnTypeofPolyfill", Helpers, run_un_typeof_polyfill, always_enabled),
     // UnEsm prerequisites: add braces to enable assignment splitting, remove
-    // __esModule flags, strip "use strict", split chained assignments, and
-    // resolve webpack interop getters. These dependencies are documented in
+    // __esModule flags, split chained assignments, and resolve webpack interop
+    // getters. These dependencies are documented in
     // docs/rule-dependency-inventory.md.
     ("UnCurlyBraces", Helpers, run_un_curly_braces, always_enabled),
     ("SimplifySequence2", Helpers, run_simplify_sequence, always_enabled, requires: [
         "UnCurlyBraces"
     ]),
     ("UnEsmoduleFlag", Helpers, run_un_esmodule_flag, always_enabled),
-    ("UnUseStrict", Helpers, run_un_use_strict, standard_or_above),
     ("UnAssignmentMerging", Helpers, run_un_assignment_merging, always_enabled, requires: [
         "UnCurlyBraces"
     ]),
@@ -575,7 +573,6 @@ define_rule_registry! {
     ("UnEsm", Helpers, run_un_esm, always_enabled, requires: [
         "UnCurlyBraces",
         "UnEsmoduleFlag",
-        "UnUseStrict",
         "UnAssignmentMerging",
         "UnVariableMergingDeclsOnly",
         "UnWebpackInterop"

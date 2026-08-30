@@ -3,8 +3,8 @@ use std::collections::HashSet;
 use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    BindingIdent, Decl, Expr, Function, Id, Ident, Lit, MethodKind, ObjectLit, Param, Pat, Prop,
-    PropName, PropOrSpread, Stmt, VarDecl, VarDeclKind,
+    BindingIdent, Decl, Expr, Function, FunctionBody, Id, Ident, Lit, MethodKind, ObjectLit, Param,
+    Pat, Prop, PropName, PropOrSpread, Stmt, VarDecl, VarDeclKind,
 };
 use swc_core::ecma::utils::find_pat_ids;
 use swc_core::ecma::visit::{Visit, VisitWith};
@@ -15,6 +15,36 @@ pub(crate) use crate::analysis::{binding_id, ident_matches_binding, BindingId};
 
 pub fn same_ident(left: &Ident, right: &Ident) -> bool {
     left.sym == right.sym && left.ctxt == right.ctxt
+}
+
+/// Whether the function's directive prologue directly enables strict mode.
+///
+/// A function with this directive must keep a simple parameter list. Rewrites
+/// that synthesize defaults, rest parameters, or destructuring must therefore
+/// leave its parameters and prologue statements untouched.
+pub(crate) fn has_direct_use_strict_directive(body: &FunctionBody) -> bool {
+    for stmt in &body.stmts {
+        let Stmt::Expr(expr_stmt) = stmt else {
+            break;
+        };
+        let Expr::Lit(Lit::Str(directive)) = expr_stmt.expr.as_ref() else {
+            break;
+        };
+        if directive.value.as_str() == Some("use strict") {
+            return true;
+        }
+    }
+    false
+}
+
+/// Whether the direct statement list contains a `"use strict"` string that a
+/// rewrite could promote into the directive prologue by removing its prefix.
+pub(crate) fn contains_use_strict_string_statement(body: &FunctionBody) -> bool {
+    body.stmts.iter().any(|stmt| {
+        matches!(stmt, Stmt::Expr(expr_stmt)
+            if matches!(expr_stmt.expr.as_ref(), Expr::Lit(Lit::Str(value))
+                if value.value.as_str() == Some("use strict")))
+    })
 }
 
 /// Whether a parameter list declares the same name twice. Arrow, method, and

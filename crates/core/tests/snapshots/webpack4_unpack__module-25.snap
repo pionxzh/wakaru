@@ -5,6 +5,7 @@ expression: code
 import { FETCH_DATA } from "./module-19.js";
 import { START, SUCCESS } from "./module-26.js";
 import "./module-13.js";
+"use strict";
 export const startFetchingData = ()=>({
         type: FETCH_DATA + START
     });

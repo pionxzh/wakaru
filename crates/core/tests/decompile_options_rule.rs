@@ -1,7 +1,7 @@
 mod common;
 
 use common::assert_eq_normalized;
-use wakaru_core::{decompile, DecompileOptions, RewriteLevel};
+use wakaru_core::{decompile, validate_output_modules, DecompileOptions, RewriteLevel};
 
 #[test]
 fn dce_mode_off_preserves_dead_code() {
@@ -121,8 +121,9 @@ fn standard_keeps_loose_optional_chaining_recovery_enabled() {
 }
 
 #[test]
-fn minimal_preserves_use_strict_directives() {
+fn rewrite_levels_preserve_use_strict_directives() {
     let input = r#"
+"use strict";
 function foo(a, b, c) {
   "use strict";
   for (var value of arguments) {
@@ -133,32 +134,74 @@ function foo(a, b, c) {
 }
 "#;
 
-    let output = decompile(
-        input,
-        DecompileOptions {
-            filename: "fixture.js".to_string(),
-            level: RewriteLevel::Minimal,
-            ..Default::default()
-        },
-    )
-    .expect("decompile should succeed")
-    .code;
+    for level in [
+        RewriteLevel::Minimal,
+        RewriteLevel::Standard,
+        RewriteLevel::Aggressive,
+    ] {
+        let output = decompile(
+            input,
+            DecompileOptions {
+                filename: "fixture.js".to_string(),
+                level,
+                ..Default::default()
+            },
+        )
+        .expect("decompile should succeed")
+        .code;
 
-    assert!(
-        output.contains("\"use strict\""),
-        "minimal should preserve strict directives: {output}"
-    );
+        assert_eq!(
+            output.matches("\"use strict\"").count(),
+            2,
+            "{level:?} must preserve top-level and nested strict directives: {output}"
+        );
+    }
 }
 
 #[test]
-fn standard_strips_use_strict_directives() {
+fn direct_strict_functions_remain_parseable_with_simple_parameters() {
     let input = r#"
-function foo() {
+function withDefault() {
   "use strict";
-  return 1;
+  var value = arguments.length > 0 && arguments[0] !== void 0
+    ? arguments[0]
+    : 1;
+  return value;
+}
+function withRest() {
+  "use strict";
+  return arguments[0] + arguments[1];
 }
 "#;
 
+    for level in [RewriteLevel::Standard, RewriteLevel::Aggressive] {
+        let output = decompile(
+            input,
+            DecompileOptions {
+                filename: "fixture.js".to_string(),
+                level,
+                ..Default::default()
+            },
+        )
+        .expect("decompile should succeed")
+        .code;
+
+        assert!(
+            validate_output_modules(&[("fixture.js".to_string(), output.clone())]).is_empty(),
+            "{level:?} output must remain valid JavaScript: {output}"
+        );
+        assert!(
+            !output.contains("function withDefault(value = 1)"),
+            "{level:?} must not synthesize a default parameter: {output}"
+        );
+        assert!(
+            !output.contains("function withRest(..."),
+            "{level:?} must not synthesize a rest parameter: {output}"
+        );
+    }
+}
+
+fn assert_pipeline_output_is_valid(input: &str) -> String {
     let output = decompile(
         input,
         DecompileOptions {
@@ -171,9 +214,58 @@ function foo() {
     .code;
 
     assert!(
-        !output.contains("\"use strict\""),
-        "standard should keep existing cleanup behavior: {output}"
+        validate_output_modules(&[("fixture.js".to_string(), output.clone())]).is_empty(),
+        "output must remain valid JavaScript: {output}"
     );
+    output
+}
+
+#[test]
+fn default_recovery_does_not_promote_a_strict_directive() {
+    let output = assert_pipeline_output_is_valid(
+        r#"
+function foo(a) {
+  if (a === void 0) a = 1;
+  "use strict";
+  return a;
+}
+"#,
+    );
+
+    assert!(!output.contains("foo(a = 1)"), "{output}");
+}
+
+#[test]
+fn rest_recovery_does_not_promote_a_strict_directive() {
+    let output = assert_pipeline_output_is_valid(
+        r#"
+function foo() {
+  for (var len = arguments.length, args = Array(len), i = 0; i < len; i++) {
+    args[i] = arguments[i];
+  }
+  "use strict";
+  return args;
+}
+"#,
+    );
+
+    assert!(!output.contains("foo(...args)"), "{output}");
+}
+
+#[test]
+fn sliced_callback_recovery_does_not_promote_a_strict_directive() {
+    let output = assert_pipeline_output_is_valid(
+        r#"
+import sliced from "@babel/runtime/helpers/slicedToArray";
+const out = entries.filter(function(entry) {
+  const value = sliced(entry, 2)[1];
+  "use strict";
+  return value != null;
+});
+"#,
+    );
+
+    assert!(!output.contains("filter(([, value])"), "{output}");
 }
 
 #[test]

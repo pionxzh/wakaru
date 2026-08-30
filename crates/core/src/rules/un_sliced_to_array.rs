@@ -15,8 +15,8 @@ use super::cross_module_helper_refs::{
     cross_module_member_helper_kind, CrossModuleHelperRefs,
 };
 use super::decl_utils::{
-    can_remove_prior_uninitialized_decls_by, remove_prior_uninitialized_decls_by,
-    UninitializedDeclKind,
+    can_remove_prior_uninitialized_decls_by, contains_use_strict_string_statement,
+    has_direct_use_strict_directive, remove_prior_uninitialized_decls_by, UninitializedDeclKind,
 };
 use super::eval_utils::is_direct_eval_call;
 use super::helper_matcher::BindingKey;
@@ -306,12 +306,20 @@ fn rewrite_function_callback_params(
     if function.is_generator {
         return;
     }
-    let Some(body) = function.body.as_mut() else {
+    let Some(body) = function.body.as_ref() else {
         return;
     };
+    if has_direct_use_strict_directive(body) {
+        return;
+    }
     if callback_body_has_dynamic_scope_hazard(body) {
         return;
     }
+    let original = contains_use_strict_string_statement(body).then(|| function.clone());
+    let body = function
+        .body
+        .as_mut()
+        .expect("function body was checked above");
 
     loop {
         let matched = function
@@ -387,6 +395,16 @@ fn rewrite_function_callback_params(
         };
         function.params[param_index].pat = Pat::Array(pattern);
     }
+
+    if let Some(original) = original {
+        if function
+            .body
+            .as_ref()
+            .is_some_and(has_direct_use_strict_directive)
+        {
+            *function = original;
+        }
+    }
 }
 
 fn rewrite_arrow_callback_params(
@@ -402,6 +420,15 @@ fn rewrite_arrow_callback_params(
     if callback_arrow_has_dynamic_scope_hazard(arrow) {
         return;
     }
+
+    if matches!(arrow.body.as_ref(), ArrowFunctionBody::FunctionBody(body)
+        if has_direct_use_strict_directive(body))
+    {
+        return;
+    }
+    let original = matches!(arrow.body.as_ref(), ArrowFunctionBody::FunctionBody(body)
+        if contains_use_strict_string_statement(body))
+    .then(|| arrow.clone());
 
     if let ArrowFunctionBody::FunctionBody(body) = arrow.body.as_mut() {
         loop {
@@ -470,6 +497,14 @@ fn rewrite_arrow_callback_params(
             continue;
         };
         arrow.params[param_index] = Pat::Array(pattern);
+    }
+
+    if let Some(original) = original {
+        if matches!(arrow.body.as_ref(), ArrowFunctionBody::FunctionBody(body)
+            if has_direct_use_strict_directive(body))
+        {
+            *arrow = original;
+        }
     }
 }
 

@@ -1330,7 +1330,16 @@ fn parse_class_body(
     // (inline _inherits pattern), we still need to rewrite super calls.
     let needs_super_rewrite = super_param.is_some() || has_super;
 
+    let mut in_directive_prologue = true;
     for stmt in stmts {
+        if in_directive_prologue && is_use_strict_directive(stmt) {
+            // The recovered class constructor and methods are intrinsically
+            // strict, so this wrapper directive is consumed by the class
+            // reconstruction instead of blocking it.
+            continue;
+        }
+        in_directive_prologue = false;
+
         // `return t;` or `return _createClass(t, ...)` or
         // `return t.method1 = fn, t.method2 = fn, ..., t;` — end of IIFE body
         if let Stmt::Return(ret_stmt) = stmt {
@@ -2097,6 +2106,12 @@ fn find_inner_constructor_ident(stmts: &[Stmt]) -> Option<&Ident> {
         }
     }
     None
+}
+
+fn is_use_strict_directive(stmt: &Stmt) -> bool {
+    matches!(stmt, Stmt::Expr(ExprStmt { expr, .. })
+        if matches!(strip_parens(expr), Expr::Lit(Lit::Str(value))
+            if value.value.as_str() == Some("use strict")))
 }
 
 /// Return true if `expr` is `t.prototype` where `t` is `ctor_name`.

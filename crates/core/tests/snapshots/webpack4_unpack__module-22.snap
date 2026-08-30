@@ -10,6 +10,7 @@ import * as u from "./module-2.js";
 import { a as a_1 } from "./module-9.js";
 import * as w from "./module-10.js";
 import E from "./module-17.js";
+"use strict";
 export const utils = {
     get TASK () {
         return o.e;

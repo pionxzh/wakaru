@@ -3,6 +3,7 @@ source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
 import _r from "./module-14.js";
+"use strict";
 const i = {};
 let _a = 0;
 export const a = (e, t = {}, n)=>{

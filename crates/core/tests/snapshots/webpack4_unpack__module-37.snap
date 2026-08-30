@@ -3,6 +3,7 @@ source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
 import FrontPage from "./module-28.js";
+"use strict";
 export default {
     FrontPage
 };
