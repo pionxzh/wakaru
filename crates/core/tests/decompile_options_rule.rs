@@ -159,6 +159,33 @@ function foo(a, b, c) {
 }
 
 #[test]
+fn strict_only_final_output_is_empty() {
+    let output = decompile(
+        r#"
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+"#,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code;
+
+    assert!(
+        output.trim().is_empty(),
+        "a consumed module marker must not leave an inert strict-only file: {output}"
+    );
+    assert!(
+        validate_output_modules(&[("fixture.js".to_string(), output.clone())]).is_empty(),
+        "empty output must remain valid JavaScript: {output}"
+    );
+}
+
+#[test]
 fn proven_module_removes_only_top_level_use_strict() {
     let input = r#"
 "use strict";
