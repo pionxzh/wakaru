@@ -4,7 +4,7 @@ use common::{assert_eq_normalized, render, render_pipeline_until, render_rule};
 use wakaru_core::facts::{
     ModuleFacts, ModuleFactsMap, TypeScriptHelperExportFact, TypeScriptHelperKind,
 };
-use wakaru_core::{rules::UnForOf, validate_output_modules, RewriteLevel};
+use wakaru_core::{rules::UnForOf, validate_output_modules, OutputFindingKind, RewriteLevel};
 
 fn apply_with_level(input: &str, level: RewriteLevel) -> String {
     render_rule(input, |mark| UnForOf::new_with_mark(mark, level))
@@ -266,7 +266,7 @@ function replay(items) {
 }
 
 #[test]
-fn removes_legacy_call_target_for_of_over_empty_array() {
+fn preserves_legacy_call_target_for_of_over_empty_array() {
     let input = r#"
 for (observe("never") of []);
 keepRunning();
@@ -274,85 +274,40 @@ keepRunning();
     let output = render(input);
 
     assert!(
-        !output.contains("observe"),
-        "the zero-iteration legacy loop should be removed: {output}"
+        output.contains("observe"),
+        "authored legacy syntax must remain visible: {output}"
     );
     assert!(
         output.contains("keepRunning"),
         "neighboring statements must remain: {output}"
     );
     let findings = validate_output_modules(&[("input.js".to_string(), output.clone())]);
+    assert_eq!(
+        findings.len(),
+        1,
+        "the preserved engine-specific syntax should remain visible to validation: {output}\n{findings:#?}"
+    );
+    assert_eq!(findings[0].kind, OutputFindingKind::ParseError);
     assert!(
-        findings.is_empty(),
-        "the rewritten output must parse cleanly: {output}\n{findings:#?}"
+        findings[0].message.contains("TS2406"),
+        "SWC should report the non-assignable call target: {findings:#?}"
     );
 }
 
 #[test]
-fn minimal_preserves_legacy_call_target_for_of_over_empty_array() {
-    let output = apply_with_level(r#"for (observe("never") of []);"#, RewriteLevel::Minimal);
-
-    assert!(
-        output.contains("observe"),
-        "minimal mode must preserve the legacy statement: {output}"
-    );
-}
-
-/// The removed body never runs, but its `var` bindings hoist to the enclosing
-/// function; deleting them would retarget later writes to a global.
-#[test]
-fn removed_legacy_loop_preserves_hoisted_var_bindings() {
-    let input = r#"
-function f() {
-    for (g() of []) {
-        var x;
-    }
-    x = 1;
-    return typeof x;
-}
-"#;
-    let output = render(input);
-
-    assert!(
-        !output.contains("for ("),
-        "the zero-iteration loop should be removed: {output}"
-    );
-    assert!(
-        output.contains("var x"),
-        "the hoisted var binding must survive the removal: {output}"
-    );
-}
-
-/// Destructured `var` names hoist out of the never-executed body like plain
-/// declarators. A function declaration in the body is block-scoped under
-/// module semantics (no Annex-B), so its name carries no function-level
-/// binding and may be cleaned up.
-#[test]
-fn removed_legacy_loop_preserves_destructured_var_bindings() {
+fn legacy_empty_array_loop_body_is_not_rewritten() {
     let input = r#"
 function f() {
     for (g() of []) {
         function helper() { return 1; }
         var { a, b: [c] } = source();
     }
-    a = read();
-    c = read();
-    return [a, c];
+    use(helper, a, c);
 }
 "#;
-    let output = render(input);
 
-    assert!(
-        !output.contains("for ("),
-        "the zero-iteration loop should be removed: {output}"
-    );
-    for name in ["a", "c"] {
-        assert!(
-            output
-                .lines()
-                .any(|line| line.trim_start().starts_with("var ") && line.contains(name)),
-            "hoisted binding `{name}` must stay declared: {output}"
-        );
+    for level in [RewriteLevel::Standard, RewriteLevel::Aggressive] {
+        assert_eq_normalized(&apply_with_level(input, level), input);
     }
 }
 
