@@ -1676,6 +1676,59 @@ console.log(left, right);
     );
 }
 
+/// A top-level initialization assignment is part of the mutable binding's
+/// ownership unit. If support writers make a standalone factory own the
+/// declaration, leaving the initializer in entry.js creates an assignment to
+/// an immutable synthesized import.
+#[test]
+fn standalone_factory_owns_top_level_state_initializer() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var first = y(() => { firstValue = 1; });
+var second = y(() => { secondValue = 2; });
+var third = y(() => { thirdValue = 3; });
+var fourth = y(() => { fourthValue = 4; });
+var ready = typeof window !== "undefined";
+var state;
+state = ready ? getComputedStyle(document.documentElement) : undefined;
+function readState() { return state; }
+function writeState(value) { state = value; }
+var init_config = y(() => { use(ready, readState, writeState); });
+init_config();
+console.log(state);
+"#;
+
+    let raw_pairs = expect_unpack_raw(bundle);
+    let owner_code = &raw_pairs
+        .iter()
+        .find(|(_, code)| code.contains("export function init_config"))
+        .expect("config factory should own its mutable support closure")
+        .1;
+    assert!(
+        owner_code.contains("var state")
+            && owner_code
+                .contains("state = ready ? getComputedStyle(document.documentElement) : undefined")
+            && owner_code.contains("function writeState")
+            && !owner_code.contains("import { state"),
+        "the owner must contain the declaration, initializer, and later writer:\n{owner_code}"
+    );
+
+    let entry_code = &raw_pairs
+        .iter()
+        .find(|(name, _)| name == "entry.js")
+        .expect("entry module should exist")
+        .1;
+    assert!(
+        !entry_code.contains("state = ready ?") && !entry_code.contains("var state"),
+        "entry must not retain a writer or duplicate declaration:\n{entry_code}"
+    );
+    assert_eq!(
+        validate_output_modules(&raw_pairs),
+        vec![],
+        "relocating the mutable initialization must produce valid ESM"
+    );
+}
+
 /// A lazy factory claimed by a scope module relocates its support-declaration
 /// closure — including passive state declarations that the adoption pass
 /// cannot claim (they are not function-shaped). The entry copy of such a

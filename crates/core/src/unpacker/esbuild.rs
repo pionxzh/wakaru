@@ -3,12 +3,12 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, Mark, SourceMap, Span, Spanned, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, ArrowFunctionBody, AssignTarget, AssignTargetPat, BindingIdent, Bool, CallExpr,
-    Callee, ClassDecl, Decl, ExportDecl, ExportSpecifier, Expr, ExprOrSpread, ExprStmt, FnDecl,
-    ForInStmt, Function, FunctionBody, Ident, IdentName, ImportDecl, ImportSpecifier, KeyValueProp,
-    Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, ObjectLit,
-    ObjectPatProp, Pat, Prop, PropName, PropOrSpread, SimpleAssignTarget, Stmt, Str, VarDecl,
-    VarDeclKind, VarDeclarator,
+    ArrowExpr, ArrowFunctionBody, AssignOp, AssignTarget, AssignTargetPat, BindingIdent, Bool,
+    CallExpr, Callee, ClassDecl, Decl, ExportDecl, ExportSpecifier, Expr, ExprOrSpread, ExprStmt,
+    FnDecl, ForInStmt, Function, FunctionBody, Ident, IdentName, ImportDecl, ImportSpecifier,
+    KeyValueProp, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem,
+    ObjectLit, ObjectPatProp, Pat, Prop, PropName, PropOrSpread, SimpleAssignTarget, Stmt, Str,
+    VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::utils::find_pat_ids;
@@ -207,6 +207,49 @@ fn detect_from_prepared_factories(
         &top_level_decl_indices,
         &all_top_level_bindings,
     );
+
+    struct TopLevelWriterItem {
+        source_index: usize,
+        target: BindingId,
+        referenced_bindings: HashSet<BindingId>,
+        span: Span,
+    }
+
+    // Keep a narrow inventory of unconditional plain assignments. A later
+    // ownership pass may move the target declaration into a standalone lazy
+    // factory; if so, this initializer must follow the same mutable binding.
+    let top_level_writer_items: Vec<TopLevelWriterItem> = analysis_module
+        .body
+        .iter()
+        .enumerate()
+        .filter_map(|(source_index, item)| {
+            let ModuleItem::Stmt(Stmt::Expr(expr_stmt)) = item else {
+                return None;
+            };
+            let Expr::Assign(assign) = expr_stmt.expr.as_ref() else {
+                return None;
+            };
+            if assign.op != AssignOp::Assign {
+                return None;
+            }
+            let ident = assign.left.as_ident()?;
+            let target = (ident.sym.clone(), ident.ctxt);
+            if !all_top_level_bindings.contains(&target) {
+                return None;
+            }
+            let mut collector = TopLevelRefCollector {
+                top_level_bindings: &all_top_level_bindings,
+                references: HashSet::new(),
+            };
+            item.visit_with(&mut collector);
+            Some(TopLevelWriterItem {
+                source_index,
+                target,
+                referenced_bindings: collector.references,
+                span: item.span(),
+            })
+        })
+        .collect();
 
     struct PendingFactory {
         binding: BindingId,
@@ -625,6 +668,54 @@ fn detect_from_prepared_factories(
         .cloned()
         .collect();
 
+    // A support declaration can make a standalone factory the sole owner of
+    // mutable state while a plain top-level initializer for that state remains
+    // in entry.js. Import repair would then turn the initializer into an
+    // assignment to an immutable ESM import. Move only direct, unconditional
+    // plain assignments whose target and every top-level dependency already
+    // have a concrete emitted owner. This keeps the ownership unit atomic
+    // without guessing across conditional/control-flow boundaries.
+    let remaining_entry_spans: HashSet<(u32, u32)> = remaining_entry
+        .iter()
+        .map(|item| (item.span().lo.0, item.span().hi.0))
+        .collect();
+    let standalone_group_filenames: HashSet<String> = standalone_factories
+        .iter()
+        .map(|factory| factory.filename.clone())
+        .collect();
+    let mut relocated_factory_writer_items: HashMap<String, Vec<TopLevelWriterItem>> =
+        HashMap::new();
+    let mut relocated_factory_writer_spans: HashSet<(u32, u32)> = HashSet::new();
+    for writer in top_level_writer_items {
+        if !remaining_entry_spans.contains(&(writer.span.lo.0, writer.span.hi.0)) {
+            continue;
+        }
+        let Some(owner_filename) = binding_to_filename.get(&writer.target) else {
+            continue;
+        };
+        if !affected_factory_filenames.contains(owner_filename)
+            || !standalone_group_filenames.contains(owner_filename)
+            || !factory_owned_bindings
+                .get(owner_filename)
+                .is_some_and(|owned| owned.contains(&writer.target))
+        {
+            continue;
+        }
+        let has_unowned_top_level_dependency = writer.referenced_bindings.iter().any(|binding| {
+            top_level_decl_indices.contains_key(binding)
+                && !binding_to_filename.contains_key(binding)
+                && !external_imports.contains_key(binding)
+        });
+        if has_unowned_top_level_dependency {
+            continue;
+        }
+        relocated_factory_writer_spans.insert((writer.span.lo.0, writer.span.hi.0));
+        relocated_factory_writer_items
+            .entry(owner_filename.clone())
+            .or_default()
+            .push(writer);
+    }
+
     let binding_filename_by_atom = atom_to_filename_binding_map(&binding_to_filename);
     let external_import_by_atom = atom_binding_map_from_keys(&external_imports);
 
@@ -879,6 +970,9 @@ fn detect_from_prepared_factories(
         let factories = standalone_factory_groups
             .remove(&group_filename)
             .expect("standalone factory group should exist");
+        let relocated_writer_items = relocated_factory_writer_items
+            .remove(&group_filename)
+            .unwrap_or_default();
         let group_id = factories[0].var_name.to_string();
         let mut group_source_ranges: Vec<_> = factories
             .iter()
@@ -888,19 +982,27 @@ fn detect_from_prepared_factories(
             .iter()
             .flat_map(|factory| factory.write_bindings.iter().cloned())
             .collect();
-        let owned_decl_items = factory_owned_decl_items(
+        let mut owned_prelude_items: Vec<(u32, ModuleItem)> = factory_owned_decl_items(
             &group_filename,
             &factory_owned_bindings,
             &top_level_decl_indices,
             &module.body,
-        );
+        )
+        .into_iter()
+        .map(|item| (item.span().lo.0, item))
+        .collect();
+        owned_prelude_items.extend(relocated_writer_items.iter().map(|writer| {
+            let item = module.body[writer.source_index].clone();
+            (item.span().lo.0, item)
+        }));
+        owned_prelude_items.sort_by_key(|(position, _)| *position);
         group_source_ranges.extend(spans_byte_ranges(
             &cm,
-            owned_decl_items.iter().map(|item| item.span()),
+            owned_prelude_items.iter().map(|(_, item)| item.span()),
         ));
-        let declared_owned_atoms: HashSet<Atom> = owned_decl_items
+        let declared_owned_atoms: HashSet<Atom> = owned_prelude_items
             .iter()
-            .flat_map(module_item_declared_binding_ids)
+            .flat_map(|(_, item)| module_item_declared_binding_ids(item))
             .map(|(atom, _)| atom)
             .collect();
         let owned_export_atoms: HashSet<Atom> = factory_owned_bindings
@@ -913,6 +1015,11 @@ fn detect_from_prepared_factories(
             .iter()
             .flat_map(|factory| factory.referenced_bindings.iter().cloned())
             .collect();
+        extended_referenced_bindings.extend(
+            relocated_writer_items
+                .iter()
+                .flat_map(|writer| writer.referenced_bindings.iter().cloned()),
+        );
         for owned_binding in factory_owned_bindings
             .get(&group_filename)
             .into_iter()
@@ -990,7 +1097,7 @@ fn detect_from_prepared_factories(
 
         let mut body_items: Vec<ModuleItem> = import_items
             .into_iter()
-            .chain(owned_decl_items)
+            .chain(owned_prelude_items.into_iter().map(|(_, item)| item))
             .chain(factory_owned_export_items(
                 &group_filename,
                 &factory_owned_bindings,
@@ -1190,6 +1297,11 @@ fn detect_from_prepared_factories(
                     )
                 })
                 .collect();
+        }
+        if !relocated_factory_writer_spans.is_empty() {
+            remaining_entry.retain(|item| {
+                !relocated_factory_writer_spans.contains(&(item.span().lo.0, item.span().hi.0))
+            });
         }
         let entry_ranges = spans_byte_ranges(&cm, remaining_entry.iter().map(|item| item.span()));
         let remaining_entry = repair_entry_imports(remaining_entry, &binding_to_filename);
