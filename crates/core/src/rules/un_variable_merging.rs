@@ -197,16 +197,14 @@ fn extract_for_init_stmts(mut for_stmt: ForStmt) -> Vec<Stmt> {
         }
     }
 
-    // Phase 2: partition declarators into keep/extract, preserving original order.
-    let mut keep_in_for: Vec<VarDeclarator> = Vec::new();
-    let mut extract_before: Vec<VarDeclarator> = Vec::new();
-    for (i, decl) in decls.into_iter().enumerate() {
-        if must_keep.contains(&i) {
-            keep_in_for.push(decl);
-        } else {
-            extract_before.push(decl);
-        }
-    }
+    // Phase 2: extract only the contiguous prefix before the earliest must-keep
+    // declarator. Pulling a later declarator across an earlier one would reorder
+    // their initializer side effects. When nothing must stay, the whole init can
+    // be extracted in source order.
+    let extract_end = must_keep.iter().copied().min().unwrap_or(decls.len());
+    let mut decls = decls.into_iter();
+    let extract_before: Vec<VarDeclarator> = decls.by_ref().take(extract_end).collect();
+    let keep_in_for: Vec<VarDeclarator> = decls.collect();
 
     let mut result: Vec<Stmt> = Vec::new();
 

@@ -168,7 +168,11 @@ rationale, or level gating appear.
   runs early as a confirmed UnEsm prerequisite (one declarator per statement
   so CJS imports classify); the full pass stays later because its for-loop
   initializer extraction interacts with var→let/const conversion and loop
-  scoping.
+  scoping. The full pass computes the existing test/update `must_keep` set and
+  initializer dependency closure, then extracts only the contiguous prefix
+  before the earliest retained declarator. The complete suffix stays in the
+  header so initializer effects keep their source order; an empty `must_keep`
+  set permits extracting the whole initializer.
 - **UnBuiltinAliases** — runs after `UnVariableMergingDeclsOnly` so minifier
   aliases such as `var e = Object.freeze, r = Object.defineProperty` have
   already been split into single-declarator statements. Runs before later

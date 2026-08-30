@@ -134,8 +134,7 @@ function c(e, t) {
     return `Given ${n && `action "${String(n)}"` || "an action"}, reducer "${e}" returned undefined. To ignore an action, you must explicitly return the previous state. If you want this reducer to hold no value, you can return null instead of undefined.`;
 }
 export function combineReducers(e) {
-    const n = {};
-    for(let t = Object.keys(e), r = 0; r < t.length; r++){
+    for(var t = Object.keys(e), n = {}, r = 0; r < t.length; r++){
         const i = t[r];
         if (typeof e[i] === "function") {
             n[i] = e[i];
@@ -197,8 +196,7 @@ export function bindActionCreators(e, t) {
     if ((e === undefined ? "undefined" : typeof e) !== "object" || e === null) {
         throw new Error(`bindActionCreators expected an object or a function, instead received ${e === null ? "null" : e === undefined ? "undefined" : typeof e}. Did you write "import ActionCreators from" instead of "import * as ActionCreators from"?`);
     }
-    const r = {};
-    for(let n = Object.keys(e), o = 0; o < n.length; o++){
+    for(var n = Object.keys(e), r = {}, o = 0; o < n.length; o++){
         const a = n[o];
         const u = e[a];
         if (typeof u === "function") {

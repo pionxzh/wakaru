@@ -93,6 +93,38 @@ for (var j = 0, k = 0; j < 10; k++) {
 }
 
 #[test]
+fn preserves_initializer_evaluation_order_with_kept_suffix() {
+    let input = r#"
+for (var a = A(), n = N(), b = B(); n < limit; n++) {}
+"#;
+    let expected = r#"
+var a = A();
+for (var n = N(), b = B(); n < limit; n++) {}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn extracts_only_setup_from_terser_merged_loop_init() {
+    // Terser 5 currently merges the preceding setup declaration into this
+    // for-init shape. Keeping the suffix preserves prepare → start → first.
+    let input = r#"
+for (var setup = prepare(), index = start(), current = first(); index < limit; index++) {
+  use(current);
+}
+"#;
+    let expected = r#"
+var setup = prepare();
+for (var index = start(), current = first(); index < limit; index++) {
+  use(current);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn does_not_split_let_const_for_init() {
     // Only `var` inits are split; `let` and `const` are left alone.
     let input = r#"
