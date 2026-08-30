@@ -3,7 +3,15 @@ use std::path::{Path, PathBuf};
 
 mod common;
 
+use common::{assert_eq_normalized, render};
 use wakaru_core::{decompile, DecompileOptions};
+
+#[test]
+fn then_rejection_handler_without_promise_provenance_is_preserved() {
+    let input = r#"const result = customThenable.then(null, onRejected);"#;
+
+    assert_eq_normalized(&render(input), input);
+}
 
 #[test]
 fn decompile_handles_existing_bundled_fixtures() {

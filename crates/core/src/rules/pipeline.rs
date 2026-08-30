@@ -402,9 +402,6 @@ fn run_un_async_await(module: &mut Module, ctx: RuleRunContext<'_>) {
         ctx.current_filename,
     );
 }
-runner!(run_un_then_catch, |ctx| UnThenCatch::new(
-    ctx.unresolved_mark
-));
 runner!(run_un_undefined_init, |ctx| UnUndefinedInit::new(
     ctx.unresolved_mark
 ));
@@ -646,7 +643,6 @@ define_rule_registry! {
     ("UnWebpackInterop2", Complex, run_un_webpack_interop, always_enabled, requires: [
         "UnObjectRest3"
     ]),
-    ("UnThenCatch", Modernization, run_un_then_catch, always_enabled),
     ("UnUndefinedInit", Modernization, run_un_undefined_init, always_enabled),
     ("VarDeclToLetConst", Modernization, run_var_decl_to_let_const, always_enabled),
     ("ClassExpressionToDeclaration", Modernization, run_class_expression_to_declaration, always_enabled, requires: [
