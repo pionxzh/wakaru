@@ -62,28 +62,31 @@ run("npx", [
 
 console.log("");
 console.log(`=== Rollup ${versions.rollup} + Terser ${versions.terser} ===`);
-console.log("  rollup-terser: compressed System.register sequence output");
+console.log("  rollup-terser: compressed System.register expression outputs");
 mkdirSync(`${cwd}/dist/rollup-terser`, { recursive: true });
-run("npx", [
-  "--yes",
-  `rollup@${versions.rollup}`,
-  "src-rollup-terser/entry.js",
-  "--format",
-  "system",
-  "--file",
-  "dist/.rollup-terser.js",
-]);
-run("npx", [
-  "--yes",
-  `terser@${versions.terser}`,
-  "dist/.rollup-terser.js",
-  "--compress",
-  "sequences=1000,passes=3",
-  "--mangle",
-  "--output",
-  "dist/rollup-terser/entry.js",
-]);
-rmSync(`${cwd}/dist/.rollup-terser.js`, { force: true });
+for (const name of ["entry", "async-default"]) {
+  const intermediate = `dist/.rollup-terser-${name}.js`;
+  run("npx", [
+    "--yes",
+    `rollup@${versions.rollup}`,
+    `src-rollup-terser/${name}.js`,
+    "--format",
+    "system",
+    "--file",
+    intermediate,
+  ]);
+  run("npx", [
+    "--yes",
+    `terser@${versions.terser}`,
+    intermediate,
+    "--compress",
+    "sequences=1000,passes=3",
+    "--mangle",
+    "--output",
+    `dist/rollup-terser/${name}.js`,
+  ]);
+  rmSync(`${cwd}/${intermediate}`, { force: true });
+}
 
 console.log("");
 console.log(`=== Babel ${versions.babelCore} ===`);

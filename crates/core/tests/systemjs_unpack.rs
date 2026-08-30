@@ -140,6 +140,28 @@ fn swc_systemjs_raw_reconstructs_context_and_assignment_exports() {
 }
 
 #[test]
+fn rollup_terser_async_default_keeps_generated_result_local() {
+    let source = fixture("rollup-terser/async-default.js");
+
+    for (stage, modules) in [
+        ("raw", unpack_source_raw(&source)),
+        ("decompiled", unpack_source(&source)),
+    ] {
+        assert_eq!(modules.len(), 1, "unexpected {stage} modules: {modules:?}");
+        let entry = &modules[0].1;
+        assert_no_system_register(entry, stage);
+        assert!(
+            entry.contains("__systemjs_export")
+                && entry.contains("export default __systemjs_export;")
+                && entry.contains("__systemjs_export.marker")
+                && !entry.contains("const e ="),
+            "{stage} output must not claim the async return ident as the Promise binding:\n{entry}"
+        );
+        assert_valid_unpacked_esm(&modules, &format!("Rollup + Terser async {stage}"));
+    }
+}
+
+#[test]
 fn babel_systemjs_raw_reconstructs_outer_exports() {
     let raw = unpack_fixture_raw("babel/entry.js");
     assert_eq!(raw.len(), 1);
@@ -896,6 +918,55 @@ System.register("entry", [], function (_export) {
 }
 
 #[test]
+fn async_and_generator_iife_results_do_not_claim_returned_binding_identity() {
+    let cases = [
+        (
+            "async function",
+            r#"async function () {
+        function DefaultValue() {}
+        return DefaultValue;
+      }()"#,
+        ),
+        (
+            "async arrow",
+            r#"(async () => {
+        function DefaultValue() {}
+        return DefaultValue;
+      })()"#,
+        ),
+        (
+            "generator function",
+            r#"function* () {
+        function DefaultValue() {}
+        return DefaultValue;
+      }()"#,
+        ),
+    ];
+
+    for (label, value) in cases {
+        let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      _export("default", $VALUE$).marker = true;
+    }
+  };
+});
+"#
+        .replace("$VALUE$", value);
+        let modules = unpack_source_raw(&source);
+        let entry = module_code(&modules, "entry.js");
+        assert!(
+            entry.contains("const __systemjs_export =")
+                && entry.contains("export default __systemjs_export;")
+                && entry.contains("__systemjs_export.marker = true;")
+                && !entry.contains("const DefaultValue ="),
+            "{label} call result must keep a generated local instead of claiming the returned binding identity:\n{entry}"
+        );
+    }
+}
+
+#[test]
 fn default_iife_member_minified_return_ident_is_bound() {
     let source = r#"
 System.register("entry", [], function (_export) {
@@ -949,6 +1020,34 @@ System.register("entry", [], function (e) {
             && entry.contains("e.marker = true;")
             && !entry.contains("__systemjs_export"),
         "matching callback name must still bind the returned ident:\n{entry}"
+    );
+}
+
+#[test]
+fn default_iife_member_surviving_callback_call_falls_back() {
+    let source = r#"
+System.register("entry", [], function (e) {
+  return {
+    execute: function () {
+      e("default", function () {
+        function e() {}
+        return e;
+      }()).marker = true;
+      e(dynamicName, dynamicValue);
+    }
+  };
+});
+"#;
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        entry.contains("const __systemjs_export =")
+            && entry.contains("export default __systemjs_export;")
+            && entry.contains("__systemjs_export.marker = true;")
+            && (entry.contains("e(dynamicName, dynamicValue)")
+                || entry.contains("e(dynamicName,dynamicValue)"))
+            && !entry.contains("const e ="),
+        "a callback call that survives lowering must block reuse of its name:\n{entry}"
     );
 }
 
