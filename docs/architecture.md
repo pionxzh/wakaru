@@ -499,7 +499,7 @@ Optional enhancement when `--sourcemap` is provided. Runs **after** the rules pi
 2. `ImportDedup` needs `UnEsm` to run first (converting `require()` → `import`), and must merge duplicates before rename so we rename one binding instead of five.
 
 ```
-ImportDedup           → merge repeated imports from same source
+ImportDedup           → merge repeated imports from same module request
 apply_sourcemap_renames → recover original names via position lookup
 UnImportRename        → clean up import aliases
 ```

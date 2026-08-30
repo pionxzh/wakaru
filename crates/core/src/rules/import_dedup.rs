@@ -1,23 +1,21 @@
 use std::collections::{HashMap, HashSet};
 
-use swc_core::atoms::Atom;
+use swc_core::atoms::{Atom, Wtf8Atom};
 use swc_core::common::SyntaxContext;
-use swc_core::ecma::ast::{ImportSpecifier, Module, ModuleDecl, ModuleExportName, ModuleItem, Str};
+use swc_core::ecma::ast::{
+    ImportDecl, ImportPhase, ImportSpecifier, Module, ModuleDecl, ModuleExportName, ModuleItem,
+};
 use swc_core::ecma::visit::VisitMut;
 
 use super::rename_utils::{rename_bindings_in_module, BindingId, BindingRename, RenameShadowIndex};
 
-fn src_to_key(src: &Str) -> String {
-    src.value.as_str().unwrap_or("").to_string()
-}
-
 /// Deduplicates and merges ESM imports.
 ///
 /// 1. **Dedup**: when the same specifier is imported multiple times from the same
-///    module (common in scope-hoisted bundles), keeps the first binding as canonical,
-///    rewrites all uses of duplicates, and removes redundant specifiers.
+///    module request (common in scope-hoisted bundles), keeps the first binding as
+///    canonical, rewrites all uses of duplicates, and removes redundant specifiers.
 ///
-/// 2. **Merge**: consolidates separate import statements from the same source module
+/// 2. **Merge**: consolidates separate import statements with the same module request
 ///    into a single statement (e.g. three `import ... from "path"` → one).
 pub struct ImportDedup;
 
@@ -39,6 +37,37 @@ enum ImportKey {
     Named(Atom),
     Default,
     Namespace,
+}
+
+#[derive(PartialEq, Eq, Hash, Clone)]
+struct ImportRequestKey {
+    src: Wtf8Atom,
+    with: Option<Vec<(Atom, Wtf8Atom)>>,
+    phase: ImportPhase,
+}
+
+fn import_request_key(import: &ImportDecl) -> Option<ImportRequestKey> {
+    let with = match &import.with {
+        Some(attributes) => {
+            let attributes = attributes.as_import_with()?;
+            let mut seen_keys = HashSet::new();
+            let mut normalized = Vec::with_capacity(attributes.values.len());
+            for item in attributes.values {
+                if !seen_keys.insert(item.key.sym.clone()) {
+                    return None;
+                }
+                normalized.push((item.key.sym, item.value.value));
+            }
+            Some(normalized)
+        }
+        None => None,
+    };
+
+    Some(ImportRequestKey {
+        src: import.src.value.clone(),
+        with,
+        phase: import.phase,
+    })
 }
 
 fn spec_key_and_local(spec: &ImportSpecifier) -> Option<(ImportKey, Atom, SyntaxContext)> {
@@ -80,8 +109,9 @@ fn dedup_imports(module: &mut Module) {
         .collect();
     let shadow_index = RenameShadowIndex::for_bindings(module, &candidate_bindings);
 
-    // (source_module, ImportKey) → canonical local (sym, ctxt)
-    let mut canonical: HashMap<(String, ImportKey), (Atom, SyntaxContext)> = HashMap::new();
+    // (module request, ImportKey) → canonical local (sym, ctxt)
+    let mut canonical: HashMap<(ImportRequestKey, ImportKey), (Atom, SyntaxContext)> =
+        HashMap::new();
     let mut renames: Vec<BindingRename> = Vec::new();
     // Set of (module item index, specifier index) for duplicate specifiers.
     let mut to_remove: HashSet<(usize, usize)> = HashSet::new();
@@ -90,14 +120,16 @@ fn dedup_imports(module: &mut Module) {
         let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
             continue;
         };
-        let src = src_to_key(&import.src);
+        let Some(request) = import_request_key(import) else {
+            continue;
+        };
 
         for (specifier_index, spec) in import.specifiers.iter().enumerate() {
             let Some((key, local_sym, local_ctxt)) = spec_key_and_local(spec) else {
                 continue;
             };
 
-            let map_key = (src.clone(), key);
+            let map_key = (request.clone(), key);
             if let Some(entry) = canonical.get(&map_key) {
                 let local_id = (local_sym.clone(), local_ctxt);
                 if *entry != local_id && shadow_index.rename_causes_shadowing(&local_id, &entry.0) {
@@ -155,7 +187,7 @@ fn dedup_imports(module: &mut Module) {
     }
 }
 
-/// Merges separate import statements from the same source into a single statement.
+/// Merges separate import statements with the same module request into one statement.
 ///
 /// ```js
 /// import { join } from "path";
@@ -166,7 +198,7 @@ fn dedup_imports(module: &mut Module) {
 /// Namespace imports (`import * as ns`) are kept as separate statements since they
 /// cannot be combined with named/default specifiers.
 fn merge_imports(module: &mut Module) {
-    let mut first_import: HashMap<String, usize> = HashMap::new();
+    let mut first_import: HashMap<ImportRequestKey, usize> = HashMap::new();
     let mut merged_indices: HashSet<usize> = HashSet::new();
 
     let import_indices: Vec<usize> = module
@@ -191,14 +223,16 @@ fn merge_imports(module: &mut Module) {
             continue;
         }
 
-        let src = src_to_key(&import.src);
+        let Some(request) = import_request_key(import) else {
+            continue;
+        };
 
         let has_default = import
             .specifiers
             .iter()
             .any(|s| matches!(s, ImportSpecifier::Default(_)));
 
-        if let Some(&first_idx) = first_import.get(&src) {
+        if let Some(&first_idx) = first_import.get(&request) {
             let first_has_default = {
                 let ModuleItem::ModuleDecl(ModuleDecl::Import(first)) = &module.body[first_idx]
                 else {
@@ -229,7 +263,7 @@ fn merge_imports(module: &mut Module) {
             first.specifiers.extend(specs);
             merged_indices.insert(idx);
         } else {
-            first_import.insert(src, idx);
+            first_import.insert(request, idx);
         }
     }
 

@@ -45,3 +45,67 @@ use(primary);
 "#;
     assert_eq_normalized(&render_rule(input, |_| ImportDedup), input);
 }
+
+#[test]
+fn keeps_duplicate_specifiers_with_different_import_attributes() {
+    let input = r#"
+import jsonValue from "./resource" with { type: "json" };
+import cssValue from "./resource" with { type: "css" };
+sink(jsonValue, cssValue);
+"#;
+    assert_eq_normalized(&render_rule(input, |_| ImportDedup), input);
+}
+
+#[test]
+fn does_not_merge_imports_with_different_import_attributes() {
+    let input = r#"
+import { jsonValue } from "./resource" with { type: "json" };
+import { cssValue } from "./resource" with { type: "css" };
+sink(jsonValue, cssValue);
+"#;
+    assert_eq_normalized(&render_rule(input, |_| ImportDedup), input);
+}
+
+#[test]
+fn does_not_merge_imports_with_different_phases() {
+    let input = r#"
+import source sourceValue from "./resource";
+import { evaluatedValue } from "./resource";
+sink(sourceValue, evaluatedValue);
+"#;
+    assert_eq_normalized(&render_rule(input, |_| ImportDedup), input);
+}
+
+#[test]
+fn keeps_duplicate_specifiers_with_different_phases() {
+    let input = r#"
+import source sourceValue from "./resource";
+import evaluatedValue from "./resource";
+sink(sourceValue, evaluatedValue);
+"#;
+    assert_eq_normalized(&render_rule(input, |_| ImportDedup), input);
+}
+
+#[test]
+fn merges_imports_with_identical_request_metadata() {
+    let input = r#"
+import { first } from "./resource" with { type: "json" };
+import { second } from "./resource" with { type: "json" };
+sink(first, second);
+"#;
+    let expected = r#"
+import { first, second } from "./resource" with { type: "json" };
+sink(first, second);
+"#;
+    assert_eq_normalized(&render_rule(input, |_| ImportDedup), expected);
+}
+
+#[test]
+fn invalid_duplicate_import_attribute_keys_fail_closed() {
+    let input = r#"
+import { a } from "m" with { type: "json", type: "css" };
+import { b } from "m" with { type: "json", type: "css" };
+use(a, b);
+"#;
+    assert_eq_normalized(&render_rule(input, |_| ImportDedup), input);
+}
