@@ -99,7 +99,14 @@ pub(super) fn eliminate_dead_helper_modules(
         return (modules, warnings);
     }
 
-    let dropped = compute_dropped(&triples);
+    let mut dropped = compute_dropped(&triples);
+    // A drop set covering the complete output has no surviving graph root that
+    // proves these modules are unreachable. This occurs for standalone lazy
+    // chunks made entirely of exported helpers: their consumers live in a
+    // different physical asset. Fail closed instead of emitting an empty tree.
+    if dropped.len() == triples.len() {
+        dropped.clear();
+    }
 
     let mut modules = Vec::with_capacity(triples.len());
     let mut warnings = Vec::new();
@@ -502,6 +509,18 @@ mod tests {
             "export default function _x() {}".to_string(),
             vec![],
             report(vec![], vec![], true, true, true),
+        )];
+        let (modules, _) = eliminate_dead_helper_modules(triples);
+        assert!(names(&modules).contains(&"helper.js"));
+    }
+
+    #[test]
+    fn keeps_complete_helper_only_output() {
+        let triples = vec![(
+            "helper.js".to_string(),
+            "export default function _x() {}".to_string(),
+            vec![],
+            report(vec![], vec![], true, false, true),
         )];
         let (modules, _) = eliminate_dead_helper_modules(triples);
         assert!(names(&modules).contains(&"helper.js"));

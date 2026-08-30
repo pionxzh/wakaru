@@ -1,5 +1,5 @@
 use wakaru_core::driver::test_support::{unpack, unpack_raw};
-use wakaru_core::{validate_output_modules, DecompileOptions};
+use wakaru_core::{validate_output_modules, DceMode, DecompileOptions};
 
 fn expect_unpack(source: &str, filename: &str) -> Vec<(String, String)> {
     let output = unpack(
@@ -287,6 +287,71 @@ fn webpack5_chunk_unpacks_modules() {
             "module {name} still has require.d"
         );
     }
+}
+
+#[test]
+fn webpack5_standalone_chunk_keeps_public_helper_modules() {
+    // Webpack lazy chunks have no in-file entry. Their module exports are
+    // consumed by the runtime in another physical asset, so absence of a local
+    // binding importer is not proof that a pure helper module is dead.
+    let source = r#"
+(self.webpackChunk_app = self.webpackChunk_app || []).push([
+  [123],
+  {
+    44320: function(module, exports, require) {
+      require.d(exports, { A: function() { return extend; } });
+      function extend() {
+        return (extend = Object.assign ? Object.assign.bind() : function(target) {
+          for (var i = 1; i < arguments.length; i++) {
+            var source = arguments[i];
+            for (var key in source) {
+              if (Object.prototype.hasOwnProperty.call(source, key)) target[key] = source[key];
+            }
+          }
+          return target;
+        }).apply(null, arguments);
+      }
+    },
+    88915: function(module, exports, require) {
+      require.d(exports, { A: function() { return rest; } });
+      function rest(source, excluded) {
+        if (source == null) return {};
+        var target = {};
+        for (var key in source) {
+          if (Object.prototype.hasOwnProperty.call(source, key) && excluded.indexOf(key) < 0) {
+            target[key] = source[key];
+          }
+        }
+        return target;
+      }
+    }
+  }
+]);
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "chunk.js".to_string(),
+            dce_mode: DceMode::TransformOnly,
+            ..Default::default()
+        },
+    )
+    .expect("standalone webpack helper chunk should unpack");
+
+    let filenames = output
+        .modules
+        .iter()
+        .map(|(filename, _)| filename.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        filenames.len(),
+        2,
+        "public chunk modules were lost: {filenames:?}"
+    );
+    assert!(filenames.contains(&"module-44320.js"), "{filenames:?}");
+    assert!(filenames.contains(&"module-88915.js"), "{filenames:?}");
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
 }
 
 #[test]
