@@ -9,7 +9,7 @@ use swc_core::ecma::ast::{
     Module, ModuleDecl, ModuleItem, ObjectLit, SimpleAssignTarget, Stmt,
 };
 use swc_core::ecma::transforms::base::resolver;
-use swc_core::ecma::visit::VisitMutWith;
+use swc_core::ecma::visit::{Visit, VisitMutWith, VisitWith};
 
 use super::super::diagnostics::{collect_input_parse_warnings, collect_output_diagnostics};
 use super::super::io::{
@@ -43,15 +43,18 @@ use crate::namespace_decomposition::run_namespace_decomposition;
 use crate::provider_import_repair::run_provider_import_repair;
 use crate::provider_namespace_repair::run_provider_namespace_repair;
 use crate::reexport_consolidation::run_reexport_consolidation;
+use crate::rules::eval_utils::DirectEvalAnalyzer;
+use crate::rules::expr_utils::is_unresolved_ident;
 use crate::rules::{
-    apply_rules, apply_rules_to_recovered_module, DeadImports, ImportDedup, RewriteLevel,
-    RulePipelineOptions, SimplifySequence, UnAssignmentMerging, UnConditionals,
-    UnConditionalsAssignmentOnly, UnImportRename, UnOptionalChaining,
+    apply_rules, apply_rules_to_recovered_module, contains_local_self_require, DeadImports,
+    ImportDedup, RewriteLevel, RulePipelineOptions, SimplifySequence, UnAssignmentMerging,
+    UnConditionals, UnConditionalsAssignmentOnly, UnImportRename, UnOptionalChaining,
 };
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
 use crate::synthetic_import_cleanup::downgrade_unused_synthetic_imports;
 use crate::unpacker::{
-    arrow_iife_call, stmts_have_function_level_return, stmts_have_function_level_special_bindings,
+    arrow_iife_call, module_stmts_have_function_level_special_bindings,
+    stmts_have_function_level_return, stmts_have_function_level_special_bindings,
     DetectedModuleFailure,
 };
 
@@ -139,39 +142,102 @@ struct Phase1Module {
     suggested_filename: Option<String>,
 }
 
-/// Restore the default object that webpack creates before invoking an empty
-/// CommonJS factory. The detector body is intentionally left empty for raw
-/// output; only the normal ESM-recovery pipeline receives this synthetic fact.
-fn restore_empty_webpack_factory_default(
+/// Restore the default object that webpack creates before invoking a CommonJS
+/// factory. Empty factories carry this detector fact directly. A non-empty
+/// self-requiring factory may use the same fact only when its complete body
+/// cannot observe the original wrapper-created object through a runtime alias.
+/// Raw output never calls this normal-pipeline helper.
+fn restore_webpack_factory_default(
     module: &mut Module,
     unresolved_mark: Mark,
-    enabled: bool,
+    implicit_empty_default: bool,
+    webpack_commonjs_runtime: bool,
+    current_filename: &str,
 ) {
-    if !enabled || !module.body.is_empty() {
+    let restore_empty = implicit_empty_default && module.body.is_empty();
+    let restore_self_required = webpack_commonjs_runtime
+        && !module.body.is_empty()
+        && !module
+            .body
+            .iter()
+            .any(|item| matches!(item, ModuleItem::ModuleDecl(_)))
+        && contains_local_self_require(module, unresolved_mark, Some(current_filename))
+        && !observes_webpack_factory_environment(module, unresolved_mark);
+    if !restore_empty && !restore_self_required {
         return;
     }
 
+    let insert_at = module
+        .body
+        .iter()
+        .take_while(|item| is_directive_prologue_item(item))
+        .count();
     let module_ident = Ident::new(
         "module".into(),
         DUMMY_SP,
         SyntaxContext::empty().apply_mark(unresolved_mark),
     );
-    module.body.push(ModuleItem::Stmt(Stmt::Expr(ExprStmt {
-        span: DUMMY_SP,
-        expr: Box::new(Expr::Assign(AssignExpr {
+    module.body.insert(
+        insert_at,
+        ModuleItem::Stmt(Stmt::Expr(ExprStmt {
             span: DUMMY_SP,
-            op: AssignOp::Assign,
-            left: AssignTarget::Simple(SimpleAssignTarget::Member(MemberExpr {
+            expr: Box::new(Expr::Assign(AssignExpr {
                 span: DUMMY_SP,
-                obj: Box::new(Expr::Ident(module_ident)),
-                prop: MemberProp::Ident(IdentName::new("exports".into(), DUMMY_SP)),
-            })),
-            right: Box::new(Expr::Object(ObjectLit {
-                span: DUMMY_SP,
-                props: Vec::new(),
+                op: AssignOp::Assign,
+                left: AssignTarget::Simple(SimpleAssignTarget::Member(MemberExpr {
+                    span: DUMMY_SP,
+                    obj: Box::new(Expr::Ident(module_ident)),
+                    prop: MemberProp::Ident(IdentName::new("exports".into(), DUMMY_SP)),
+                })),
+                right: Box::new(Expr::Object(ObjectLit {
+                    span: DUMMY_SP,
+                    props: Vec::new(),
+                })),
             })),
         })),
-    })));
+    );
+}
+
+fn is_directive_prologue_item(item: &ModuleItem) -> bool {
+    matches!(item, ModuleItem::Stmt(Stmt::Expr(statement))
+        if matches!(statement.expr.as_ref(), Expr::Lit(swc_core::ecma::ast::Lit::Str(_))))
+}
+
+/// Replacing webpack's initial exports object at the first executable
+/// statement is unobservable unless the factory body retained an alias to the
+/// original object. Reject every explicit wrapper binding and the dynamic
+/// mechanisms that can recover one.
+fn observes_webpack_factory_environment(module: &Module, unresolved_mark: Mark) -> bool {
+    let mut observer = WebpackFactoryEnvironmentObserver {
+        unresolved_mark,
+        observed: false,
+    };
+    module.visit_with(&mut observer);
+    if observer.observed {
+        return true;
+    }
+    if module_stmts_have_function_level_special_bindings(module) {
+        return true;
+    }
+
+    let mut eval = DirectEvalAnalyzer::default();
+    module.visit_with(&mut eval);
+    eval.unknown_direct_eval || !eval.known_direct_eval_sources.is_empty()
+}
+
+struct WebpackFactoryEnvironmentObserver {
+    unresolved_mark: Mark,
+    observed: bool,
+}
+
+impl Visit for WebpackFactoryEnvironmentObserver {
+    fn visit_ident(&mut self, ident: &Ident) {
+        if is_unresolved_ident(ident, "module", self.unresolved_mark)
+            || is_unresolved_ident(ident, "exports", self.unresolved_mark)
+        {
+            self.observed = true;
+        }
+    }
 }
 
 /// Multi-module unpack with cross-module late pass.
@@ -370,11 +436,6 @@ pub(super) fn unpack_multi_module_with_plan(
             } else {
                 None
             };
-            restore_empty_webpack_factory_default(
-                &mut module,
-                unresolved_mark,
-                unpacked.implicit_commonjs_default_object,
-            );
             apply_filename_rewrites(
                 &mut module,
                 unresolved_mark,
@@ -392,6 +453,13 @@ pub(super) fn unpack_multi_module_with_plan(
                 unpacked.webpack_commonjs_runtime,
                 unpacked.webpack_numeric_module_id,
                 unpacked.webpack_legacy_module_i,
+            );
+            restore_webpack_factory_default(
+                &mut module,
+                unresolved_mark,
+                unpacked.implicit_commonjs_default_object,
+                unpacked.webpack_commonjs_runtime,
+                &unpacked.module.filename,
             );
             let commonjs_default_object =
                 collect_commonjs_default_object(&module, unresolved_mark);
@@ -744,11 +812,6 @@ pub(super) fn unpack_multi_module_with_plan(
                     module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
                     unresolved_mark
                 };
-                restore_empty_webpack_factory_default(
-                    &mut module,
-                    unresolved_mark,
-                    unpacked.implicit_commonjs_default_object,
-                );
                 apply_filename_rewrites(
                     &mut module,
                     unresolved_mark,
@@ -766,6 +829,13 @@ pub(super) fn unpack_multi_module_with_plan(
                     unpacked.webpack_commonjs_runtime,
                     unpacked.webpack_numeric_module_id,
                     unpacked.webpack_legacy_module_i,
+                );
+                restore_webpack_factory_default(
+                    &mut module,
+                    unresolved_mark,
+                    unpacked.implicit_commonjs_default_object,
+                    unpacked.webpack_commonjs_runtime,
+                    &unpacked.module.filename,
                 );
 
                 // Through-UnEsm range.
@@ -897,6 +967,58 @@ mod tests {
             .map(|module| (module.filename.clone(), module.code.clone()))
             .collect::<Vec<_>>();
         validate_output_modules(&modules)
+    }
+
+    #[test]
+    fn webpack_self_default_restoration_requires_an_unobserved_factory_object() {
+        fn restore(source: &str) -> String {
+            GLOBALS.set(&Default::default(), || {
+                let cm: Lrc<SourceMap> = Default::default();
+                let mut module = parse_js(source, "provider.js", cm.clone())
+                    .expect("webpack factory fixture should parse");
+                let unresolved_mark = Mark::new();
+                module.visit_mut_with(&mut resolver(unresolved_mark, Mark::new(), false));
+                restore_webpack_factory_default(
+                    &mut module,
+                    unresolved_mark,
+                    false,
+                    true,
+                    "provider.js",
+                );
+                print_js(&module, cm).expect("restored fixture should print")
+            })
+        }
+
+        let restored = restore(
+            r#""use strict";
+var current = require("./provider.js");
+for (var key in current) globalThis[key] = current[key];"#,
+        );
+        let directive = restored
+            .find("\"use strict\";")
+            .expect("expected directive");
+        let default = restored
+            .find("module.exports = {};")
+            .expect("expected detector-owned default restoration");
+        let self_require = restored
+            .find("require(\"./provider.js\")")
+            .expect("expected self require");
+        assert!(directive < default && default < self_require, "{restored}");
+
+        for source in [
+            r#"var current = require("./provider.js"); consume(module, current);"#,
+            r#"var current = require("./provider.js"); consume(exports, current);"#,
+            r#"var current = require("./provider.js"); consume(this, current);"#,
+            r#"var current = require("./provider.js"); consume(arguments, current);"#,
+            r#"var current = require("./provider.js"); eval("exports");"#,
+            r#"export const marker = 1; var current = require("./provider.js");"#,
+        ] {
+            let output = restore(source);
+            assert!(
+                !output.contains("module.exports = {};"),
+                "an observable factory environment must fail closed:\n{output}"
+            );
+        }
     }
 
     #[test]

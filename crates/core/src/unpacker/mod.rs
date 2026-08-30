@@ -283,6 +283,16 @@ pub(crate) fn stmts_have_function_level_special_bindings(statements: &[Stmt]) ->
     finder.found
 }
 
+pub(crate) fn module_stmts_have_function_level_special_bindings(module: &Module) -> bool {
+    let mut finder = FunctionLevelSpecialBindings::default();
+    for item in &module.body {
+        if let ModuleItem::Stmt(statement) = item {
+            statement.visit_with(&mut finder);
+        }
+    }
+    finder.found
+}
+
 pub(crate) fn expr_has_function_level_special_bindings(
     expression: &swc_core::ecma::ast::Expr,
 ) -> bool {

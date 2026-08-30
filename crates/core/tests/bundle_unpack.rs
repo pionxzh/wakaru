@@ -1681,7 +1681,7 @@ fn webpack5_recovers_proven_commonjs_reads_without_runtime_residuals() {
 }
 
 #[test]
-fn webpack5_self_require_does_not_become_an_unlinkable_default_self_import() {
+fn webpack5_observable_self_require_stays_at_the_commonjs_boundary() {
     let source = r#"
 (() => {
   var modules = ({
@@ -1690,6 +1690,7 @@ fn webpack5_self_require_does_not_become_an_unlinkable_default_self_import() {
     }),
     1: ((module, exports, load) => {
       var self = load(1);
+      observe(exports === self);
       for (var key in self) globalThis[key] = self[key];
     })
   });
@@ -1723,14 +1724,107 @@ fn webpack5_self_require_does_not_become_an_unlinkable_default_self_import() {
         assert!(
             module.contains(r#"require("./module-1.js")"#)
                 && !module.contains(r#"import self from "./module-1.js""#),
-            "self-require must stay visible instead of claiming a nonexistent default export:\n{module}"
+            "an observed factory exports alias must keep the self-require at the CommonJS boundary:\n{module}"
         );
         let findings = validate_output_modules(&output.modules);
         assert!(
             findings.iter().all(|finding| {
                 finding.kind != wakaru_core::OutputFindingKind::MissingImportedName
             }),
-            "self-require preservation must remove the false default-export contract: {findings:#?}"
+            "CommonJS-boundary preservation must avoid a false default-export contract: {findings:#?}"
+        );
+    }
+}
+
+#[test]
+fn webpack5_self_required_empty_default_remains_linkable_to_consumers() {
+    let source = r#"
+(() => {
+  var modules = ({
+    0: ((module, exports, load) => {
+      function asDefault(value) {
+        return value && value.__esModule ? value : { default: value };
+      }
+      var dependency = asDefault(load(1));
+      consume(dependency.default.open);
+    }),
+    1: ((module, exports, load) => {
+      var current = load(1);
+      for (var key in current) globalThis[key] = current[key];
+    })
+  });
+  var cache = {};
+  (function load(id) {
+    var module = cache[id] = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  })(0);
+})();
+"#;
+
+    let raw = unpack_raw(
+        source,
+        &DecompileOptions {
+            filename: "webpack5-self-default-consumer.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("raw extraction should preserve the detector body");
+    let raw_provider = raw
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "module-1.js")
+        .map(|(_, code)| code)
+        .expect("expected raw self-required provider");
+    assert!(
+        raw_provider.contains(r#"require("./module-1.js")"#)
+            && !raw_provider.contains("module.exports = {};"),
+        "runtime-default restoration must stay out of raw output:\n{raw_provider}"
+    );
+
+    for emit_source_map in [false, true] {
+        let output = unpack(
+            source,
+            DecompileOptions {
+                filename: "webpack5-self-default-consumer.js".to_string(),
+                emit_source_map,
+                diagnostics: true,
+                ..Default::default()
+            },
+        )
+        .expect("the synthetic webpack self-require consumer should unpack");
+
+        assert_eq!(output.detected_formats, [BundleFormat::Webpack5]);
+        assert!(
+            output
+                .warnings
+                .iter()
+                .all(|warning| warning.kind != wakaru_core::UnpackWarningKind::TdzViolation),
+            "the restored self default must initialize before its first read: {:#?}",
+            output.warnings
+        );
+        let provider = output
+            .modules
+            .iter()
+            .find(|(filename, _)| filename == "module-1.js")
+            .map(|(_, code)| code)
+            .expect("expected self-required provider");
+        let default = provider
+            .find("export default")
+            .expect("webpack's runtime-created object should become a default export");
+        let first_read = provider
+            .find("for(")
+            .expect("expected the self-required object read");
+        assert!(
+            default < first_read,
+            "the self default must initialize before the loop reads it:\n{provider}"
+        );
+        let findings = validate_output_modules(&output.modules);
+        assert!(
+            findings.iter().all(|finding| {
+                finding.kind != wakaru_core::OutputFindingKind::MissingImportedName
+            }),
+            "a consumer must not default-import an unexported self-required value: {findings:#?}"
         );
     }
 }

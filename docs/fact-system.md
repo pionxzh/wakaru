@@ -128,11 +128,15 @@ conditional, nested, or reassigned shapes fail closed. Neither collector
 mutates the AST or shared state.
 
 Normal processing also restores webpack's runtime-created `module.exports = {}`
-only when structural webpack detection proves that a normalized extracted
-factory body is empty. That synthetic statement passes through the ordinary
-`UnEsm` path, while `--raw` keeps the detector's empty-body passthrough
-unchanged. Non-empty factories are not generalized from this narrow runtime
-fact.
+when structural webpack detection proves that a normalized extracted factory
+body is empty. A non-empty factory gets the same restoration only when it has a
+literal local self-require, cannot observe the original wrapper-created object
+through unresolved `module` / `exports`, and contains no function-level
+`this`, `arguments`, `new.target`, module syntax, or direct eval. The synthetic
+assignment is inserted after the directive prologue and passes through the
+ordinary `UnEsm` path, giving both the self edge and downstream consumers a
+real default export. All other non-empty factories remain fail closed, and
+`--raw` keeps detector output unchanged.
 
 The same detector-owned boundary permits a normal-only webpack runtime
 normalizer for two exact inner-UMD expressions whose CommonJS branch is

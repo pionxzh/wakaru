@@ -404,6 +404,16 @@ Stage 2: Transpiler helper unwrapping + module-system reconstruction
   back. This does not guess a namespace representation for CommonJS partial
   exports.
 
+  Structurally extracted webpack factories have one additional detector-owned
+  option before this check. When a non-empty factory self-requires and its
+  complete body cannot observe webpack's original `module.exports` object via
+  `module` / `exports`, and contains no function-level `this`, `arguments`,
+  `new.target`, module syntax, or direct eval, the unpack driver materializes
+  that runtime-created empty object at the first executable statement.
+  Ordinary `UnEsm` recovery can then expose a linkable default on both the self
+  edge and downstream consumer edges. Other factories keep the rollback
+  behavior above.
+
   ── cross-module barrier (unpack only: fact collection + late pass) ──
 
 Stage 3: Structural restoration

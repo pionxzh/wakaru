@@ -614,7 +614,7 @@ impl VisitMut for UnEsm {
     }
 }
 
-fn contains_local_self_require(
+pub(crate) fn contains_local_self_require(
     module: &Module,
     unresolved_mark: Mark,
     current_filename: Option<&str>,
