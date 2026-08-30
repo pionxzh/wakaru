@@ -90,9 +90,9 @@ wakaru ./compiled-app --unpack --raw -o out/  # extract a Bun single-file execut
 wakaru bun extract ./compiled-app -o raw/     # dump every embedded Bun file byte-for-byte
 ```
 
-Bun single-file executable extraction accepts an explicit executable path. It validates
-the embedded module graph; directory scans and stdin remain JavaScript-only
-inputs. `--unpack` selects the JavaScript-like records and sends them through
+Bun single-file executable extraction requires an explicit executable path
+(directory scans and stdin handle JavaScript only). `--unpack` selects the
+JavaScript-like records and sends them through
 bundle splitting. Prefer `--raw` when comparing their shipped representation.
 
 Use `wakaru bun extract` instead when the task needs the container itself. It
@@ -103,53 +103,10 @@ transforming it and records loader metadata and byte ranges in
 and module-info regions; do not treat `source-map.bunmap` as a v3 JSON map.
 The extractor supports Bun 1.3.3+.
 
-Ordinary Browserify bundles use unambiguous dependency-map request paths for
-readable module filenames. Conflicting or missing hints retain
-`module-<id>.js`, and entry names remain stable.
-
-Webpack string module IDs keep their safe relative resource path. JavaScript-
-like extensions (`.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.tsx`, `.mts`, and
-`.cts`) stay unchanged; every other or extensionless resource appends `.js`
-(for example, `style.less` becomes `style.less.js`). Loader queries and URL
-fragments do not enter filesystem names, and collisions are made unique before
-consumer references are synthesized.
-
-For normal multi-input unpack, heuristic scope-hoisted ESM inputs and
-structural esbuild ESM chunks keep their original safe relative input paths as
-public entry filenames. Generated children live beneath each public filename's
-stem, so sibling ESM imports and dynamic imports continue to resolve. Plain
-passthrough inputs keep their relative directory structure too (a
-parent-relative `../` prefix is dropped), so same-named files from different
-directories coexist and sibling imports between inputs stay resolvable.
-Generated modules yield to these reserved physical-input paths. Duplicate
-normalized paths claimed by physical ESM identities fail as ambiguous instead
-of suffixing either identity; script-loaded bundle inputs do not reserve their
-physical filenames. Raw output only skips readability transforms, keeps
-provisional extraction names, and has no public-path reservation or usable
-module-graph contract.
-
-For development or benchmark triage, validate a normal output tree as one
-emitted-module graph:
-
-```bash
-wakaru debug validate out/
-wakaru debug validate out/ --json
-```
-
-This reports dangling relative references, missing or star-ambiguous imported
-or re-exported names, duplicate or conflicting exports and declarations,
-writes to imported or `const` bindings, and unresolved `module` / `exports`
-runtime uses left in ESM (direct safe `typeof` probes are excluded), then
-exits nonzero on findings. Text output uses
-`filename:line:column`; JSON
-findings include one-based `line` and `column`. The recursive scan accepts
-`.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.tsx`, `.mts`, `.cts`, and extensionless
-emitted modules, including modules emitted beneath `node_modules`; hidden paths
-and unrelated extensions stay excluded. Do not use it to grade raw output,
-which has no usable module-graph contract.
-Directory validation has no per-module status sidecar, so it also scans
-artifacts emitted after failed factory recovery. Unresolved numeric webpack
-runtime calls in those artifacts are not treated as relative module edges.
+Module filenames are `module-<id>.js` unless the bundle carries usable naming
+hints (resource paths, dependency-map requests, original input paths), which
+yield readable relative filenames; collisions are made unique. Raw output
+keeps provisional extraction names.
 
 ### 3. Recover names / original source when a map exists
 
@@ -208,10 +165,7 @@ npx wakaru deobfuscated.js --unpack -o out/
 - `--unpack=inspect` — recursively retain finer scope-hoist boundaries for
   static inspection. The resulting module graph may not preserve runtime
   initialization order; the CLI prints a warning whenever this mode is used.
-  Add `--raw` independently to skip readability transforms. With
-  `--provenance`, optional `context_ranges` group fine siblings that share a
-  coarse evidence context; they do not claim that the siblings share one
-  package identity.
+  Add `--raw` independently to skip readability transforms.
 
 By default, Wakaru removes only dead code introduced by its own transforms and
 preserves dead code already present in the input. Use `--dce` when a full
