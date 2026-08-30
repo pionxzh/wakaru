@@ -100,7 +100,7 @@ Wakaru restores structure while respecting JavaScript semantics:
   Separate canonical baselines cover multi-file ESM module graphs. See
   [test262-roundtrip.md](./docs/test262-roundtrip.md) and the current
   [`test262-stats.json`](./scripts/correctness/test262-stats.json).
-- **97.4% pattern recovery across 1,858 transpiler × minifier test shapes.**
+- **96.1% pattern recovery across 1,858 transpiler × minifier test shapes.**
   Reproduction matrices compile known inputs through real Babel/TypeScript/
   SWC/esbuild/Terser version combinations and verify Wakaru recovers the
   original construct. Current rates per matrix:

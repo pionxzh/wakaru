@@ -594,7 +594,7 @@ define_rule_registry! {
         "UnObjectRest2"
     ]),
     ("UnTemplateLiteral", Structural, run_un_template_literal, always_enabled),
-    ("UnTypeConstructor", Structural, run_un_type_constructor, always_enabled),
+    ("UnTypeConstructor", Structural, run_un_type_constructor, aggressive_only),
     ("UnBuiltinPrototype", Structural, run_un_builtin_prototype, aggressive_only),
     ("UnArgumentSpread", Structural, run_un_argument_spread, always_enabled),
     ("UnArrayConcatSpread", Structural, run_un_array_concat_spread, always_enabled),

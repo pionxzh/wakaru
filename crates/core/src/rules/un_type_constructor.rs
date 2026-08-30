@@ -26,7 +26,7 @@ impl Default for UnTypeConstructor {
 
 impl VisitMut for UnTypeConstructor {
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
-        if self.level < RewriteLevel::Standard {
+        if self.level < RewriteLevel::Aggressive {
             return;
         }
         expr.visit_mut_children_with(self);

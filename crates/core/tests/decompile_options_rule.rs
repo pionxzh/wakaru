@@ -1116,7 +1116,7 @@ fn minimal_disables_type_constructor_recovery() {
 }
 
 #[test]
-fn standard_keeps_type_constructor_recovery() {
+fn standard_disables_type_constructor_recovery() {
     let input = r#"+x;"#;
 
     let output = decompile(
@@ -1124,6 +1124,24 @@ fn standard_keeps_type_constructor_recovery() {
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Standard,
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code;
+
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn aggressive_enables_type_constructor_recovery() {
+    let input = r#"+x;"#;
+
+    let output = decompile(
+        input,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            level: RewriteLevel::Aggressive,
             ..Default::default()
         },
     )

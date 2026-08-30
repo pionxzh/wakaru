@@ -148,8 +148,11 @@ rationale, or level gating appear.
   it first; the Rust pipeline cannot until those matchers handle the
   block-body form. Produces the block shapes UnConditionals and UnParameters
   expect.
-- **UnTypeConstructor** — whole rule gated to `standard+`: `+x` → `Number(x)`
-  is semantically equivalent but changes readability intent.
+- **UnTypeConstructor** — whole rule is `aggressive` only. `+x` → `Number(x)`
+  changes BigInt behavior from throwing to conversion, while `x + ""` →
+  `String(x)` changes the coercion hint observed by `Symbol.toPrimitive`.
+  Replacing a hole array with `Array(n)` also introduces a mutable global
+  constructor lookup. `minimal` and `standard` preserve all three shapes.
 - **UnBuiltinPrototype** — whole rule is `aggressive` only, under
   `terser_unsafe_proto`. It reverses Terser's opt-in `unsafe_proto` compression,
   whose producer-side matcher only transforms undeclared builtin references.

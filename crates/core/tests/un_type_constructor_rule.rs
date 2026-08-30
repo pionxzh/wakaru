@@ -4,7 +4,7 @@ use common::{assert_eq_normalized, render_rule};
 use wakaru_core::{rules::UnTypeConstructor, RewriteLevel};
 
 fn apply(input: &str) -> String {
-    apply_with_level(input, RewriteLevel::Standard)
+    apply_with_level(input, RewriteLevel::Aggressive)
 }
 
 fn apply_with_level(input: &str, level: RewriteLevel) -> String {
@@ -27,11 +27,51 @@ Number(numStr);
 }
 
 #[test]
-fn minimal_does_not_transform_unary_plus_ident_to_number_call() {
+fn minimal_preserves_all_constructor_recovery_shapes() {
     let input = r#"
-+x;
+const number = +x;
+const string = x + "";
+const holes = [,,,];
 "#;
     let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn standard_preserves_all_constructor_recovery_shapes() {
+    let input = r#"
+const number = +x;
+const string = x + "";
+const holes = [,,,];
+"#;
+    let output = apply_with_level(input, RewriteLevel::Standard);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn default_rule_preserves_all_constructor_recovery_shapes() {
+    let input = r#"
+const number = +x;
+const string = x + "";
+const holes = [,,,];
+"#;
+    let output = render_rule(input, |_| UnTypeConstructor::default());
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn standard_preserves_unary_plus_bigint_risk() {
+    // `+bigintValue` throws for a BigInt, while `Number(bigintValue)` converts it.
+    let input = r#"const number = +bigintValue;"#;
+    let output = apply_with_level(input, RewriteLevel::Standard);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn standard_preserves_symbol_to_primitive_hint() {
+    // Addition uses the default coercion hint, while `String(value)` uses string.
+    let input = r#"const string = value + "";"#;
+    let output = apply_with_level(input, RewriteLevel::Standard);
     assert_eq_normalized(&output, input);
 }
 
