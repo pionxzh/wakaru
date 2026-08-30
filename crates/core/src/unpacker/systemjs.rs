@@ -382,6 +382,7 @@ fn emit_system_module(
     lifted_stmts.extend(register.prelude.iter().cloned());
     lifted_stmts.extend(hoisted.iter().cloned());
     lifted_stmts.extend(execute_body.stmts.iter().cloned());
+    let transformed_stmts = &lifted_stmts[register.prelude.len()..];
 
     let mut module_bound_names = assigned_import_locals;
     collect_lifted_decl_names(&lifted_stmts, &mut module_bound_names);
@@ -419,9 +420,11 @@ fn emit_system_module(
     }));
     direct_binding_candidates.extend(inferred_import_locals.iter().cloned());
     let default_iife_return_idents = match export_sym.as_ref() {
-        Some(export_sym) => {
-            collect_default_iife_member_return_idents(&lifted_stmts, export_sym, &export_call_spans)
-        }
+        Some(export_sym) => collect_default_iife_member_return_idents(
+            transformed_stmts,
+            export_sym,
+            &export_call_spans,
+        ),
         None => HashSet::new(),
     };
     let needs_unresolved_analysis = (!direct_binding_candidates.is_empty()
@@ -438,8 +441,13 @@ fn emit_system_module(
     let (temp_local_unresolved, temp_local_proof_ready) = if default_iife_return_idents.is_empty() {
         (HashSet::new(), false)
     } else {
+        let parsed_export_call_spans = collect_parsed_export_call_spans(
+            transformed_stmts,
+            export_sym.as_ref()?,
+            &export_call_spans,
+        );
         (
-            analyze_unresolved_names(&lifted_stmts, &export_call_spans).names,
+            analyze_unresolved_names(&lifted_stmts, &parsed_export_call_spans).names,
             true,
         )
     };
@@ -952,6 +960,42 @@ fn collect_default_iife_member_return_idents(
         stmt.visit_with(&mut collector);
     }
     collector.names
+}
+
+/// Parsed calls in statements handled by `SystemExecuteTransformer` are
+/// either lowered or make the module fall back as a whole. Unparsed callback
+/// calls survive, so their callee must remain visible to the free-name proof.
+fn collect_parsed_export_call_spans(
+    stmts: &[Stmt],
+    export_sym: &Atom,
+    export_call_spans: &HashSet<Span>,
+) -> HashSet<Span> {
+    let mut collector = ParsedExportCallSpanCollector {
+        export_sym,
+        export_call_spans,
+        parsed: HashSet::new(),
+    };
+    for stmt in stmts {
+        stmt.visit_with(&mut collector);
+    }
+    collector.parsed
+}
+
+struct ParsedExportCallSpanCollector<'a> {
+    export_sym: &'a Atom,
+    export_call_spans: &'a HashSet<Span>,
+    parsed: HashSet<Span>,
+}
+
+impl Visit for ParsedExportCallSpanCollector<'_> {
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if self.export_call_spans.contains(&call.span)
+            && parse_export_call(call, self.export_sym).is_some()
+        {
+            self.parsed.insert(call.span);
+        }
+        call.visit_children_with(self);
+    }
 }
 
 struct DefaultIifeMemberReturnCollector<'a> {
@@ -2973,17 +3017,12 @@ fn is_function_callee_iife(expr: &Expr) -> bool {
     )
 }
 
-/// Unique `return Ident` from the outermost function-callee IIFE. Nested
-/// functions are skipped. A comma sequence is inferred only when its
-/// completion value is an Ident.
+/// Unique `return Ident` from the outermost synchronous, non-generator IIFE.
+/// Nested functions are skipped. A comma sequence is inferred only when its
+/// completion value is an Ident. Async and generator calls produce a Promise
+/// or iterator rather than the returned binding itself.
 fn inferred_iife_returned_ident(expr: &Expr) -> Option<Atom> {
     let expr = strip_paren_expr(expr);
-    if !is_function_callee_iife(expr) {
-        return None;
-    }
-    if let Some(body) = iife_body(expr) {
-        return unique_block_returned_ident(body);
-    }
     let Expr::Call(call) = expr else {
         return None;
     };
@@ -2991,12 +3030,15 @@ fn inferred_iife_returned_ident(expr: &Expr) -> Option<Atom> {
         return None;
     };
     match strip_paren_expr(callee.as_ref()) {
-        Expr::Arrow(arrow) => match arrow.body.as_ref() {
+        Expr::Fn(function) if !function.function.is_async && !function.function.is_generator => {
+            unique_block_returned_ident(function.function.body.as_ref()?)
+        }
+        Expr::Arrow(arrow) if !arrow.is_async && !arrow.is_generator => match arrow.body.as_ref() {
+            ArrowFunctionBody::FunctionBody(body) => unique_block_returned_ident(body),
             ArrowFunctionBody::Expr(value) => match strip_paren_expr(value.as_ref()) {
                 Expr::Ident(id) => Some(id.sym.clone()),
                 _ => None,
             },
-            _ => None,
         },
         _ => None,
     }
