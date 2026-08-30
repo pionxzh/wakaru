@@ -796,18 +796,22 @@ System.register("entry", [], function (_export) {
     let modules = unpack_source(source);
     let entry = module_code(&modules, "entry.js");
     let binding = entry
-        .find("const __systemjs_export_2 =")
-        .unwrap_or_else(|| panic!("default export should use a collision-free binding:\n{entry}"));
+        .find("const DefaultValue =")
+        .unwrap_or_else(|| panic!("default export should reuse the IIFE return ident:\n{entry}"));
     let member_assignment = entry
-        .find("__systemjs_export_2.marker = \"default\";")
+        .find("DefaultValue.marker = \"default\";")
         .unwrap_or_else(|| panic!("member assignment should use the binding:\n{entry}"));
     let default_export = entry
-        .find("export default __systemjs_export_2;")
+        .find("export default DefaultValue;")
         .unwrap_or_else(|| panic!("default export should use the binding:\n{entry}"));
 
     assert!(
         binding < default_export && default_export < member_assignment,
         "binding, default export, and member assignment should preserve order:\n{entry}"
+    );
+    assert!(
+        !entry.contains("__systemjs_export"),
+        "prelude `__systemjs_export` must not become the default local:\n{entry}"
     );
     assert_eq!(
         entry.matches("function DefaultValue()").count(),
@@ -846,9 +850,454 @@ fn default_iife_member_export_avoids_module_prelude_names() {
     let entry = module_code(&modules, "entry.js");
 
     assert!(
-        entry.contains("const __systemjs_export_2 =")
-            && entry.contains("export default __systemjs_export_2;"),
-        "default export binding should avoid names in the module prelude:\n{entry}"
+        entry.contains("const DefaultValue =")
+            && entry.contains("export default DefaultValue;")
+            && entry.contains("DefaultValue.ready = true;"),
+        "default export should reuse the IIFE return ident instead of the prelude name:\n{entry}"
+    );
+    assert!(
+        !entry.contains("const __systemjs_export") && !entry.contains("const __systemjs_export_2"),
+        "prelude `__systemjs_export` must not be reused as the default local:\n{entry}"
+    );
+}
+
+#[test]
+fn default_iife_member_returned_ident_is_bound() {
+    // Reconstruction contract is `--raw`. Decompile may later fold a
+    // parameter-less IIFE into `class`, which is a different rule.
+    // Member-assigned `_export("default", IIFE).prop =` should reuse the
+    // unique returned Identifier when that name is free at module scope.
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      _export("default", function (Base) {
+        function DefaultValue() {}
+        return DefaultValue;
+      }(Base)).marker = "default";
+    }
+  };
+});
+"#;
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        entry.contains("const DefaultValue =")
+            && entry.contains("export default DefaultValue;")
+            && entry.contains("DefaultValue.marker = \"default\";"),
+        "returned ident must back the default binding:\n{entry}"
+    );
+    assert!(
+        !entry.contains("__systemjs_export")
+            && !entry.contains("export default function")
+            && !entry.contains("export default ("),
+        "must not fall through to the synthetic alias or a default IIFE:\n{entry}"
+    );
+}
+
+#[test]
+fn default_iife_member_minified_return_ident_is_bound() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      _export("Named", 1);
+      _export("default", function () {
+        function e() {}
+        return e;
+      }()).marker = true;
+    }
+  };
+});
+"#;
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        entry.contains("const e =")
+            && entry.contains("export default e;")
+            && entry.contains("e.marker = true;"),
+        "minified return ident must back the default binding:\n{entry}"
+    );
+    assert!(
+        entry.contains("export const Named =") && !entry.contains("__systemjs_export"),
+        "sibling named exports must stay and no synthetic alias should appear:\n{entry}"
+    );
+}
+
+#[test]
+fn default_iife_member_callback_name_match_is_binding_safe() {
+    // The declare callback and the returned ident may share a minified name.
+    // Only proven export-call callees are ignored; the inner function still
+    // owns that name, so the module binding is safe.
+    let source = r#"
+System.register("entry", [], function (e) {
+  return {
+    execute: function () {
+      e("default", function () {
+        function e() {}
+        return e;
+      }()).marker = true;
+    }
+  };
+});
+"#;
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        entry.contains("const e =")
+            && entry.contains("export default e;")
+            && entry.contains("e.marker = true;")
+            && !entry.contains("__systemjs_export"),
+        "matching callback name must still bind the returned ident:\n{entry}"
+    );
+}
+
+#[test]
+fn default_iife_member_module_collision_falls_back() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      const DefaultValue = 1;
+      _export("default", function () {
+        function DefaultValue() {}
+        return DefaultValue;
+      }()).marker = true;
+    }
+  };
+});
+"#;
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        entry.contains("const __systemjs_export")
+            && entry.contains("export default __systemjs_export;")
+            && !entry.contains("const DefaultValue = function"),
+        "an existing module local must force the synthetic alias:\n{entry}"
+    );
+}
+
+#[test]
+fn default_iife_member_import_collision_falls_back() {
+    // Returned ident `n` is already the setter local for an import.
+    let source = r#"
+System.register("entry", ["./dep.js"], function (_export) {
+  var n;
+  return {
+    setters: [function (mod) {
+      n = mod.legacy;
+    }],
+    execute: function () {
+      _export("default", function () {
+        var e, n;
+        return (e = (n = function () {}).prototype).init = function () {}, n;
+      }()).marker = true;
+    }
+  };
+});
+"#;
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        entry.contains("import { legacy as n }")
+            && entry.contains("const __systemjs_export")
+            && entry.contains("export default __systemjs_export;")
+            && !entry.contains("const n = function"),
+        "an imported local must force the synthetic alias:\n{entry}"
+    );
+}
+
+#[test]
+fn default_iife_member_typeof_free_name_falls_back() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      observe(typeof e);
+      _export("default", function () {
+        function e() {}
+        return e;
+      }()).marker = true;
+    }
+  };
+});
+"#;
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        entry.contains("const __systemjs_export")
+            && entry.contains("export default __systemjs_export;")
+            && !entry.contains("const e ="),
+        "a free/typeof name must not be captured by the inferred local:\n{entry}"
+    );
+}
+
+#[test]
+fn default_iife_member_direct_eval_falls_back() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      eval("observe()");
+      _export("default", function () {
+        function DefaultValue() {}
+        return DefaultValue;
+      }()).marker = true;
+    }
+  };
+});
+"#;
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        entry.contains("const __systemjs_export")
+            && entry.contains("export default __systemjs_export;")
+            && !entry.contains("const DefaultValue ="),
+        "direct eval must keep the synthetic alias:\n{entry}"
+    );
+}
+
+#[test]
+fn default_iife_member_free_arrow_return_falls_back() {
+    // `() => { return e }` reads a free `e`. Inventing `const e` would make
+    // that return self-referential.
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      _export("default", (() => {
+        return e;
+      })()).marker = true;
+    }
+  };
+});
+"#;
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        entry.contains("const __systemjs_export")
+            && entry.contains("export default __systemjs_export;")
+            && !entry.contains("const e ="),
+        "a free arrow return must not become `const e`:\n{entry}"
+    );
+}
+
+#[test]
+fn default_iife_member_surviving_callback_use_falls_back() {
+    let source = r#"
+System.register("entry", [], function (e) {
+  return {
+    execute: function () {
+      observe(e);
+      e("default", function () {
+        function e() {}
+        return e;
+      }()).marker = true;
+    }
+  };
+});
+"#;
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        entry.contains("const __systemjs_export")
+            && entry.contains("export default __systemjs_export;")
+            && !entry.contains("const e ="),
+        "a surviving callback reference must keep the name unresolved:\n{entry}"
+    );
+}
+
+#[test]
+fn default_iife_member_repeated_default_stays_mutable() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      _export("default", function () {
+        function First() {}
+        return First;
+      }()).a = 1;
+      _export("default", function () {
+        function Second() {}
+        return Second;
+      }()).b = 2;
+    }
+  };
+});
+"#;
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        entry.contains("let __systemjs_export;")
+            && entry.contains("export { __systemjs_export as default };")
+            && entry.matches(" as default").count() == 1
+            && !entry.contains("const First =")
+            && !entry.contains("const Second =")
+            && !entry.contains("export default"),
+        "repeated default member exports must keep one live binding:\n{entry}"
+    );
+}
+
+#[test]
+fn default_iife_member_seq_tail_ident_is_bound() {
+    // Class IIFEs assign prototype methods in the return sequence, then
+    // complete with the constructor ident.
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      _export("default", function () {
+        function e() {}
+        var n = e.prototype;
+        return n.method = function () {}, e;
+      }()).marker = true;
+    }
+  };
+});
+"#;
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        entry.contains("const e =")
+            && entry.contains("export default e;")
+            && entry.contains("e.marker = true;")
+            && !entry.contains("__systemjs_export"),
+        "a sequence whose completion value is the ctor ident must bind that ident:\n{entry}"
+    );
+}
+
+#[test]
+fn default_iife_member_comma_return_does_not_infer() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      _export("default", function () {
+        function e() {}
+        return e, make();
+      }()).marker = true;
+    }
+  };
+});
+"#;
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        entry.contains("const __systemjs_export")
+            && entry.contains("export default __systemjs_export;")
+            && !entry.contains("const e ="),
+        "a comma return whose completion value is not an Ident must not infer:\n{entry}"
+    );
+}
+
+#[test]
+fn default_iife_member_nested_return_does_not_infer() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      _export("default", function () {
+        function inner() {
+          function Nested() {}
+          return Nested;
+        }
+        return inner();
+      }()).marker = true;
+    }
+  };
+});
+"#;
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        entry.contains("const __systemjs_export")
+            && entry.contains("export default __systemjs_export;")
+            && !entry.contains("const Nested =")
+            && !entry.contains("const inner ="),
+        "a nested function return must not be treated as the outer return:\n{entry}"
+    );
+}
+
+#[test]
+fn default_iife_member_branch_return_does_not_infer() {
+    // Returns in the same function, including `if` branches, must all
+    // complete with the same Ident. A second Ident fails closed.
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      _export("default", function () {
+        function DefaultValue() {}
+        if (cond) return Other;
+        return DefaultValue;
+      }()).marker = true;
+    }
+  };
+});
+"#;
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        entry.contains("const __systemjs_export")
+            && entry.contains("export default __systemjs_export;")
+            && !entry.contains("const DefaultValue =")
+            && !entry.contains("const Other ="),
+        "divergent branch returns must not infer a writable binding:\n{entry}"
+    );
+}
+
+#[test]
+fn default_iife_member_branch_same_ident_is_bound() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      _export("default", function () {
+        function DefaultValue() {}
+        if (cond) return DefaultValue;
+        return DefaultValue;
+      }()).marker = true;
+    }
+  };
+});
+"#;
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        entry.contains("const DefaultValue =")
+            && entry.contains("export default DefaultValue;")
+            && entry.contains("DefaultValue.marker = true;")
+            && !entry.contains("__systemjs_export"),
+        "the same Ident in every own-function return must still bind:\n{entry}"
+    );
+}
+
+#[test]
+fn default_iife_result_returned_ident_is_bound() {
+    // Ident-assign of `_export("default", IIFE())` goes through
+    // `export_call_result_items`. Proof must not depend on a sibling
+    // member-assign. Nested `use(_export(...))` stays on the existing
+    // mutable live-binding path.
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      result = _export("default", function () {
+        function DefaultValue() {}
+        return DefaultValue;
+      }());
+    }
+  };
+});
+"#;
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        entry.contains("const DefaultValue =")
+            && entry.contains("export default DefaultValue;")
+            && entry.contains("result = DefaultValue")
+            && !entry.contains("__systemjs_export"),
+        "an export-call result IIFE must bind the returned ident:\n{entry}"
     );
 }
 

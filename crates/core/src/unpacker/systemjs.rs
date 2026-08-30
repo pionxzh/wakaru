@@ -418,15 +418,30 @@ fn emit_system_module(
             && !is_reserved_binding_name(name.as_ref())
     }));
     direct_binding_candidates.extend(inferred_import_locals.iter().cloned());
-    let unresolved_analysis = if !direct_binding_candidates.is_empty()
+    let default_iife_return_idents = match export_sym.as_ref() {
+        Some(export_sym) => {
+            collect_default_iife_member_return_idents(&lifted_stmts, export_sym, &export_call_spans)
+        }
+        None => HashSet::new(),
+    };
+    let needs_unresolved_analysis = (!direct_binding_candidates.is_empty()
         && (direct_binding_candidates
             .iter()
             .any(|name| used_names.names.contains(name))
-            || used_names.names.iter().any(|name| name.as_ref() == "eval"))
-    {
-        analyze_unresolved_names(&lifted_stmts)
+            || used_names.names.iter().any(|name| name.as_ref() == "eval")))
+        || !default_iife_return_idents.is_empty();
+    let unresolved_analysis = if needs_unresolved_analysis {
+        analyze_unresolved_names(&lifted_stmts, &HashSet::new())
     } else {
         UnresolvedNameAnalysis::default()
+    };
+    let (temp_local_unresolved, temp_local_proof_ready) = if default_iife_return_idents.is_empty() {
+        (HashSet::new(), false)
+    } else {
+        (
+            analyze_unresolved_names(&lifted_stmts, &export_call_spans).names,
+            true,
+        )
     };
     if inferred_import_locals
         .iter()
@@ -450,6 +465,8 @@ fn emit_system_module(
         unresolved_analysis.has_direct_eval,
         export_call_spans,
     );
+    transformer.temp_local_unresolved = temp_local_unresolved;
+    transformer.temp_local_proof_ready = temp_local_proof_ready;
     items.extend(transformer.prepare_mutable_exports(mutable_export_names));
     for stmt in hoisted {
         transformer.push_stmt(stmt, &mut items);
@@ -616,7 +633,10 @@ impl Visit for LiftedDeclNameCollector<'_> {
 /// Resolve a clone of the statements in the scope they will occupy after
 /// lifting. Any identifier still carrying `unresolved_mark` is a free/global
 /// read that a newly introduced module binding would capture.
-fn analyze_unresolved_names(stmts: &[Stmt]) -> UnresolvedNameAnalysis {
+fn analyze_unresolved_names(
+    stmts: &[Stmt],
+    skip_export_call_spans: &HashSet<Span>,
+) -> UnresolvedNameAnalysis {
     let globals = Globals::new();
     GLOBALS.set(&globals, || {
         let unresolved_mark = Mark::new();
@@ -653,6 +673,7 @@ fn analyze_unresolved_names(stmts: &[Stmt]) -> UnresolvedNameAnalysis {
             unresolved_ctxt: SyntaxContext::empty().apply_mark(unresolved_mark),
             names: HashSet::new(),
             has_direct_eval: false,
+            skip_export_call_spans: skip_export_call_spans.clone(),
         };
         probe.visit_with(&mut collector);
         UnresolvedNameAnalysis {
@@ -672,6 +693,7 @@ struct UnresolvedNameCollector {
     unresolved_ctxt: SyntaxContext,
     names: HashSet<Atom>,
     has_direct_eval: bool,
+    skip_export_call_spans: HashSet<Span>,
 }
 
 impl Visit for UnresolvedNameCollector {
@@ -694,6 +716,12 @@ impl Visit for UnresolvedNameCollector {
                 )
         ) {
             self.has_direct_eval = true;
+        }
+        if self.skip_export_call_spans.contains(&call.span) {
+            for arg in &call.args {
+                arg.visit_with(self);
+            }
+            return;
         }
         call.visit_children_with(self);
     }
@@ -907,6 +935,45 @@ impl Visit for MemberExportBindingNameCollector<'_> {
             self.names.insert(exported);
         }
         assign.visit_children_with(self);
+    }
+}
+
+fn collect_default_iife_member_return_idents(
+    stmts: &[Stmt],
+    export_sym: &Atom,
+    export_call_spans: &HashSet<Span>,
+) -> HashSet<Atom> {
+    let mut collector = DefaultIifeMemberReturnCollector {
+        export_sym,
+        export_call_spans,
+        names: HashSet::new(),
+    };
+    for stmt in stmts {
+        stmt.visit_with(&mut collector);
+    }
+    collector.names
+}
+
+struct DefaultIifeMemberReturnCollector<'a> {
+    export_sym: &'a Atom,
+    export_call_spans: &'a HashSet<Span>,
+    names: HashSet<Atom>,
+}
+
+impl Visit for DefaultIifeMemberReturnCollector<'_> {
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if self.export_call_spans.contains(&call.span) {
+            if let Some(ExportCall::Single { exported, value }) =
+                parse_export_call(call, self.export_sym)
+            {
+                if exported.as_ref() == "default" {
+                    if let Some(returned) = inferred_iife_returned_ident(value.as_ref()) {
+                        self.names.insert(returned);
+                    }
+                }
+            }
+        }
+        call.visit_children_with(self);
     }
 }
 
@@ -1527,6 +1594,10 @@ struct SystemExecuteTransformer {
     /// Calls proven by resolver to target the declare callback, rather than a
     /// nested binding that happens to have the same minified name.
     export_call_spans: HashSet<Span>,
+    /// Unresolved names after ignoring proven export-call callees. Used only
+    /// for inferred default IIFE locals; `unresolved_names` stays complete.
+    temp_local_unresolved: HashSet<Atom>,
+    temp_local_proof_ready: bool,
     mutable_export_bindings: HashMap<Atom, Atom>,
     /// Side-effect-free live-binding declarations needed by expression-position exports.
     pending_expr_export_decls: Vec<ModuleItem>,
@@ -1557,6 +1628,8 @@ impl SystemExecuteTransformer {
             unresolved_names,
             has_direct_eval,
             export_call_spans,
+            temp_local_unresolved: HashSet::new(),
+            temp_local_proof_ready: false,
             mutable_export_bindings: HashMap::new(),
             pending_expr_export_decls: Vec::new(),
             unlowerable_export: false,
@@ -1794,9 +1867,9 @@ impl SystemExecuteTransformer {
         let mut value = value;
         value.visit_mut_with(self);
         let exported_local = exported_value_local(value.as_ref());
-        let local = exported_local
-            .clone()
-            .unwrap_or_else(|| self.bind_member_export_local(&exported, is_default));
+        let local = exported_local.clone().unwrap_or_else(|| {
+            self.bind_member_export_local(&exported, is_default, value.as_ref())
+        });
 
         let mut assignment = assign.clone();
         let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &mut assignment.left else {
@@ -1847,14 +1920,42 @@ impl SystemExecuteTransformer {
 
     /// Bind a free, legal Identifier to the export name. Reserved words and
     /// module-scope collisions keep the `__systemjs_export` alias path.
-    fn bind_member_export_local(&mut self, exported: &Atom, is_default: bool) -> Atom {
-        if !is_default && self.can_bind_export_name(exported) {
+    /// Default member-assign IIFEs prefer the unique returned ident when the
+    /// binding-identity freedom proof allows it.
+    fn bind_member_export_local(
+        &mut self,
+        exported: &Atom,
+        is_default: bool,
+        value: &Expr,
+    ) -> Atom {
+        if is_default {
+            if let Some(inferred) = inferred_iife_returned_ident(value) {
+                if self.can_bind_temp_local(&inferred) {
+                    self.module_bound_names.insert(inferred.clone());
+                    self.used_names.insert(inferred.clone());
+                    return inferred;
+                }
+            }
+            return self.fresh_export_name();
+        }
+        if self.can_bind_export_name(exported) {
             self.module_bound_names.insert(exported.clone());
             self.used_names.insert(exported.clone());
             exported.clone()
         } else {
             self.fresh_export_name()
         }
+    }
+
+    fn can_bind_temp_local(&self, name: &Atom) -> bool {
+        self.temp_local_proof_ready
+            && Ident::verify_symbol(name.as_ref()).is_ok()
+            && !is_reserved_binding_name(name.as_ref())
+            && !self.module_bound_names.contains(name)
+            && !self.temp_local_unresolved.contains(name)
+            && !self.has_direct_eval
+            && !self.exports.iter().any(|binding| binding.local == *name)
+            && !self.declared_exports.iter().any(|(local, _)| local == name)
     }
 
     fn can_bind_export_name(&self, exported: &Atom) -> bool {
@@ -2145,7 +2246,11 @@ impl SystemExecuteTransformer {
             return Some((vec![self.export_const_item(exported, value)], result));
         }
 
-        let local = self.fresh_export_name();
+        let local = if is_default {
+            self.bind_member_export_local(&exported, true, value.as_ref())
+        } else {
+            self.fresh_export_name()
+        };
         let mut items = vec![self.binding_item(local.clone(), value)];
         if is_default {
             items.push(ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(
@@ -2866,6 +2971,96 @@ fn is_function_callee_iife(expr: &Expr) -> bool {
         Callee::Expr(callee)
             if matches!(callee.as_ref(), Expr::Fn(_) | Expr::Arrow(_))
     )
+}
+
+/// Unique `return Ident` from the outermost function-callee IIFE. Nested
+/// functions are skipped. A comma sequence is inferred only when its
+/// completion value is an Ident.
+fn inferred_iife_returned_ident(expr: &Expr) -> Option<Atom> {
+    let expr = strip_paren_expr(expr);
+    if !is_function_callee_iife(expr) {
+        return None;
+    }
+    if let Some(body) = iife_body(expr) {
+        return unique_block_returned_ident(body);
+    }
+    let Expr::Call(call) = expr else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    match strip_paren_expr(callee.as_ref()) {
+        Expr::Arrow(arrow) => match arrow.body.as_ref() {
+            ArrowFunctionBody::Expr(value) => match strip_paren_expr(value.as_ref()) {
+                Expr::Ident(id) => Some(id.sym.clone()),
+                _ => None,
+            },
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn unique_block_returned_ident(body: &FunctionBody) -> Option<Atom> {
+    let mut collector = OwnFunctionReturnIdentCollector::default();
+    for stmt in &body.stmts {
+        stmt.visit_with(&mut collector);
+    }
+    if collector.conflict {
+        None
+    } else {
+        collector.found
+    }
+}
+
+/// Collect `return` completion values in this function only. Nested
+/// functions / arrows / classes are skipped so their returns cannot
+/// satisfy or poison the outer IIFE.
+#[derive(Default)]
+struct OwnFunctionReturnIdentCollector {
+    found: Option<Atom>,
+    conflict: bool,
+}
+
+impl Visit for OwnFunctionReturnIdentCollector {
+    fn visit_function(&mut self, _function: &Function) {}
+
+    fn visit_arrow_expr(&mut self, _arrow: &swc_core::ecma::ast::ArrowExpr) {}
+
+    fn visit_class(&mut self, _class: &swc_core::ecma::ast::Class) {}
+
+    fn visit_return_stmt(&mut self, ret: &ReturnStmt) {
+        if self.conflict {
+            return;
+        }
+        let Some(name) = ret
+            .arg
+            .as_ref()
+            .and_then(|arg| returned_value_ident(arg.as_ref()))
+        else {
+            self.conflict = true;
+            return;
+        };
+        match &self.found {
+            None => self.found = Some(name),
+            Some(prev) if *prev == name => {}
+            Some(_) => self.conflict = true,
+        }
+    }
+}
+
+/// Bare `return ident`, or a comma sequence whose completion value is `ident`
+/// (`return proto.m = fn, ident`).
+fn returned_value_ident(expr: &Expr) -> Option<Atom> {
+    match strip_paren_expr(expr) {
+        Expr::Ident(id) => Some(id.sym.clone()),
+        Expr::Seq(seq) => match strip_paren_expr(seq.exprs.last()?.as_ref()) {
+            Expr::Ident(id) => Some(id.sym.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 #[derive(Default)]
