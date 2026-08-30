@@ -3,7 +3,6 @@ source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
 import { ForwardRef, Memo, isMemo } from "./module-43.js";
-"use strict";
 const o = {
     childContextTypes: true,
     contextType: true,

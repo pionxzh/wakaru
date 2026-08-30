@@ -9,6 +9,7 @@ use super::io::{
     apply_fixer, build_output_sourcemap, parse_js_with_recovery_owned, print_js,
     print_js_with_srcmap,
 };
+use super::output_finalize::strip_redundant_module_use_strict;
 use super::types::{DecompileOptions, DecompileOutput};
 use crate::rules::{apply_rules, ImportDedup, RulePipelineOptions, UnImportRename};
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
@@ -74,6 +75,7 @@ pub fn decompile_owned(
         if options.level >= crate::rules::RewriteLevel::Standard {
             crate::rules::strip_redundant_sentry_source_file(&mut module, &options.filename);
         }
+        strip_redundant_module_use_strict(&mut module, &options.filename, true);
 
         let mut warnings = collect_input_parse_warnings(&parsed.recoverable_errors);
 

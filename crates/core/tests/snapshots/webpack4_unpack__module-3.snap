@@ -2,5 +2,4 @@
 source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
-"use strict";
 export default require("./module-50.js");

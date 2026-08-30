@@ -6,7 +6,6 @@ import r from "./module-4.js";
 import i from "./module-5.js";
 import { Children, Component } from "./module-50.js";
 import c from "./module-1.js";
-"use strict";
 export class a extends Component {
     constructor(...i){
         super(...i);

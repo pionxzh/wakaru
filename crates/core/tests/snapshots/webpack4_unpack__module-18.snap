@@ -6,7 +6,6 @@ import { Component } from "./module-50.js";
 import i from "./module-1.js";
 import * as u from "./module-16.js";
 import { a } from "./module-15.js";
-"use strict";
 export const LOCATION_CHANGE = "@@router/LOCATION_CHANGE";
 const s = {
     location: null

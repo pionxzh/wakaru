@@ -2,7 +2,6 @@
 source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
-"use strict";
 const i = (e)=>`@@redux-saga/${e}`;
 const a = i("TASK");
 const u = i("HELPER");

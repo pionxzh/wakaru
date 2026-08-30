@@ -3,7 +3,6 @@ source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
 import r from "./module-44.js";
-"use strict";
 function o() {}
 function i() {}
 i.resetWarningCache = o;

@@ -4,6 +4,7 @@ mod error;
 mod io;
 mod normalize;
 mod output;
+mod output_finalize;
 mod single_file;
 mod trace;
 mod types;

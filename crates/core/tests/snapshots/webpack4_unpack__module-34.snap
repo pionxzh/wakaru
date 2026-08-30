@@ -8,7 +8,6 @@ import { routerMiddleware } from "./module-18.js";
 import { createBrowserHistory } from "./module-8.js";
 import u from "./module-27.js";
 import l from "./module-33.js";
-"use strict";
 export const history = createBrowserHistory();
 const f = o();
 const d = [

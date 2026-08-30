@@ -4,7 +4,6 @@ expression: code
 ---
 import { Component } from "./module-50.js";
 import "./module-28.js";
-"use strict";
 class i extends Component {
     componentDidMount() {
         this.props.fetchData();

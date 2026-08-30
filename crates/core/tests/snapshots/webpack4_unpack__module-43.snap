@@ -2,7 +2,6 @@
 source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
-"use strict";
 const r = typeof Symbol === "function" && Symbol.for;
 export const Element = r ? Symbol.for("react.element") : 60103;
 export const Portal = r ? Symbol.for("react.portal") : 60106;

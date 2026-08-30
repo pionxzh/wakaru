@@ -5,7 +5,6 @@ expression: code
 import { a, b, c, e, f, g, h, j, k, l, m, n, o as o_1, p, q, r, s, t } from "./module-2.js";
 import * as o from "./module-10.js";
 import { d } from "./module-10.js";
-"use strict";
 export function takeEvery(e, t, ...i) {
     return k(o.b, e, t, ...i);
 }

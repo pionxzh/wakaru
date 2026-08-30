@@ -6,7 +6,7 @@
 //! imports in its consumers.
 
 use wakaru_core::driver::test_support::{unpack_files, UnpackInput};
-use wakaru_core::{DecompileOptions, RewriteLevel};
+use wakaru_core::{validate_output_modules, DecompileOptions, RewriteLevel};
 
 /// A self-contained `_extends` helper module + a consumer that uses it in a
 /// spread-rewritable call. After the pipeline the consumer's helper call becomes
@@ -16,6 +16,7 @@ fn helper_and_consumer() -> Vec<UnpackInput> {
         UnpackInput {
             filename: "helper.js".to_string(),
             source: r#"
+"use strict";
 function _extends() {
     _extends = Object.assign || function(target) {
         for (var i = 1; i < arguments.length; i++) {
@@ -79,6 +80,49 @@ fn strips_side_effect_import_of_dropped_helper() {
     assert!(
         !consumer.contains("helper.js"),
         "the vacuous side-effect import of the dropped helper should be stripped:\n{consumer}"
+    );
+}
+
+#[test]
+fn preserves_strict_when_dropped_helper_import_was_the_only_module_proof() {
+    let mut inputs = helper_and_consumer();
+    inputs[1].source = r#"
+"use strict";
+import _extends from "./helper.js";
+const result = _extends({}, source);
+function inspectThis() { return this; }
+sink(result, inspectThis());
+"#
+    .to_string();
+
+    let output = unpack_files(inputs, dce_options()).expect("unpack");
+    let names = output
+        .modules
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        !names.contains(&"helper.js"),
+        "the pure helper should still be dropped: {names:?}"
+    );
+
+    let consumer = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "consumer.js")
+        .map(|(_, code)| code)
+        .expect("consumer should remain");
+    assert!(
+        !consumer.contains("helper.js") && consumer.contains("...source"),
+        "the helper import and call should be removed:\n{consumer}"
+    );
+    assert!(
+        consumer.contains("\"use strict\""),
+        "strict semantics must survive when import pruning leaves a script:\n{consumer}"
+    );
+    assert!(
+        validate_output_modules(&[("consumer.js".to_string(), consumer.clone())]).is_empty(),
+        "the surviving script should remain valid JavaScript:\n{consumer}"
     );
 }
 

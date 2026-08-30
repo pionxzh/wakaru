@@ -159,6 +159,140 @@ function foo(a, b, c) {
 }
 
 #[test]
+fn proven_module_removes_only_top_level_use_strict() {
+    let input = r#"
+"use strict";
+export const value = 1;
+function inspectThis() {
+  "use strict";
+  return this;
+}
+"use strict";
+"#;
+
+    let output = decompile(
+        input,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code;
+
+    assert_eq!(
+        output.matches("\"use strict\"").count(),
+        1,
+        "only the function-level directive should remain: {output}"
+    );
+    assert!(
+        validate_output_modules(&[("fixture.js".to_string(), output.clone())]).is_empty(),
+        "output must remain valid JavaScript: {output}"
+    );
+}
+
+#[test]
+fn module_extension_removes_top_level_use_strict_without_module_declarations() {
+    let output = decompile(
+        r#"
+"use strict";
+function inspectThis() {
+  "use strict";
+  return this;
+}
+"#,
+        DecompileOptions {
+            filename: "fixture.mjs".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code;
+
+    assert_eq!(
+        output.matches("\"use strict\"").count(),
+        1,
+        "the .mjs goal should remove only the top-level directive: {output}"
+    );
+}
+
+#[test]
+fn import_meta_proves_module_goal_for_top_level_use_strict_cleanup() {
+    let output = decompile(
+        "\"use strict\";\nconsole.log(import.meta.url);",
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code;
+
+    assert!(
+        !output.contains("\"use strict\""),
+        "import.meta is module-only syntax: {output}"
+    );
+}
+
+#[test]
+fn dynamic_import_does_not_prove_module_goal() {
+    let output = decompile(
+        "\"use strict\";\nload(import(\"./dependency.js\"));",
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code;
+
+    assert!(
+        output.contains("\"use strict\""),
+        "dynamic import is valid in scripts and must not prove module goal: {output}"
+    );
+}
+
+#[test]
+fn commonjs_esmodule_marker_does_not_prove_module_goal() {
+    let output = decompile(
+        r#"
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+console.log(this);
+"#,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code;
+
+    assert!(
+        output.contains("\"use strict\""),
+        "a CommonJS interop marker is not trustworthy module provenance: {output}"
+    );
+}
+
+#[test]
+fn explicit_script_extension_wins_over_conflicting_module_syntax() {
+    let output = decompile(
+        "\"use strict\";\nexport const value = 1;",
+        DecompileOptions {
+            filename: "fixture.cjs".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code;
+
+    assert!(
+        output.contains("\"use strict\""),
+        "a conflicting .cjs signal must fail closed: {output}"
+    );
+}
+
+#[test]
 fn direct_strict_functions_remain_parseable_with_simple_parameters() {
     let input = r#"
 function withDefault() {

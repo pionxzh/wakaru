@@ -3,7 +3,6 @@ source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
 import { a as a_1 } from "./module-31.js";
-"use strict";
 let o;
 o = globalThis;
 export const a = a_1(o);

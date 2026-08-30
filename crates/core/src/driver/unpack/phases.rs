@@ -16,6 +16,7 @@ use super::super::io::{
     apply_fixer, build_output_sourcemap, parse_js, parse_js_with_recovery, print_js,
     print_js_with_srcmap, ParseDiagnostic,
 };
+use super::super::output_finalize::strip_redundant_module_use_strict;
 use super::super::types::{
     DecompileOptions, PreparedInputId, PreparedModuleOutput, PreparedModuleProvenance,
     PreparedUnpackOutput, UnpackWarning, UnpackWarningKind,
@@ -650,8 +651,21 @@ pub(super) fn unpack_multi_module_with_plan(
                 );
             }
 
-            // Collect the dead-module-elimination report from the final AST
-            // (sources are in recovered-name space after the remap above).
+            let final_filename = rename_ref
+                .get(&unpacked.module.filename)
+                .map(|s| s.as_str())
+                .unwrap_or(&unpacked.module.filename);
+            if !matches!(options.level, RewriteLevel::Minimal) {
+                crate::rules::strip_redundant_sentry_source_file(&mut module, final_filename);
+            }
+            // Dead-helper DCE may still prune bare side-effect imports after
+            // this parallel phase. Do not use such an import as the only
+            // Module proof when that later mutation is enabled.
+            strip_redundant_module_use_strict(&mut module, final_filename, !eliminate_dead_modules);
+
+            // Collect the dead-module-elimination report after output
+            // finalization so redundant module directives do not make an
+            // otherwise pure generated helper appear side-effectful.
             let report = if eliminate_dead_modules {
                 let is_helper = facts_ref
                     .get(&unpacked.module.filename)
@@ -664,14 +678,6 @@ pub(super) fn unpack_multi_module_with_plan(
             } else {
                 None
             };
-
-            let final_filename = rename_ref
-                .get(&unpacked.module.filename)
-                .map(|s| s.as_str())
-                .unwrap_or(&unpacked.module.filename);
-            if !matches!(options.level, RewriteLevel::Minimal) {
-                crate::rules::strip_redundant_sentry_source_file(&mut module, final_filename);
-            }
 
             {
                 let span = tracing::info_span!("phase2: fixer");

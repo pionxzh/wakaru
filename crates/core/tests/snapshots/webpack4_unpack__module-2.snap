@@ -3,7 +3,6 @@ source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
 import * as r from "./module-0.js";
-"use strict";
 const o = r.x("IO");
 const i = "TAKE";
 const a = "PUT";
