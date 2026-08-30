@@ -234,8 +234,8 @@ use(x);
 #[test]
 fn handles_swc_numeric_namespace_object_spread() {
     let input = r#"
-const Y = require(39889);
-const out = Y.pi(Y.pi({}, app_info), { app_name: name });
+const ns = require(1234);
+const out = ns.pi(ns.pi({}, app_info), { app_name: name });
 "#;
     let expected = r#"
 const out = { ...app_info, app_name: name };
@@ -249,14 +249,14 @@ fn preserves_shadowed_numeric_require_object_spread_namespace() {
 function require(id) {
     return load(id);
 }
-const Y = require(39889);
-const out = Y.pi(Y.pi({}, app_info), { app_name: name });
+const ns = require(1234);
+const out = ns.pi(ns.pi({}, app_info), { app_name: name });
 use(out);
 "#;
 
     let output = render(input);
     assert!(
-        output.contains("Y.pi(Y.pi({}, app_info),"),
+        output.contains("ns.pi(ns.pi({}, app_info),"),
         "shadowed numeric require namespace must not be rewritten:\n{output}"
     );
     assert!(
@@ -275,17 +275,17 @@ fn markless_mode_ignores_numeric_requires() {
 function require(id) {
     return load(id);
 }
-const Y = require(39889);
-const out = Y.pi(Y.pi({}, app_info), { app_name: name });
+const ns = require(1234);
+const out = ns.pi(ns.pi({}, app_info), { app_name: name });
 use(out);
 "#;
     let output = render_rule(input, |_| UnObjectSpread::new());
     assert!(
-        output.contains("Y.pi(Y.pi({}, app_info),"),
+        output.contains("ns.pi(ns.pi({}, app_info),"),
         "mark-less mode must not rewrite through a numeric require namespace:\n{output}"
     );
     assert!(
-        output.contains("require(39889)"),
+        output.contains("require(1234)"),
         "mark-less mode must not sweep a numeric require declaration:\n{output}"
     );
 }
@@ -311,8 +311,8 @@ use(out);
 #[test]
 fn swc_numeric_namespace_object_spread_requires_pi_export() {
     let input = r#"
-const Y = require(39889);
-const out = Y.notPi(Y.notPi({}, app_info), { app_name: name });
+const ns = require(1234);
+const out = ns.notPi(ns.notPi({}, app_info), { app_name: name });
 "#;
     let output = render(input);
     insta::assert_snapshot!(output);
@@ -321,8 +321,8 @@ const out = Y.notPi(Y.notPi({}, app_info), { app_name: name });
 #[test]
 fn swc_numeric_namespace_object_spread_preserves_mutating_target() {
     let input = r#"
-const Y = require(39889);
-const out = Y.pi(target, app_info);
+const ns = require(1234);
+const out = ns.pi(target, app_info);
 "#;
     let output = render(input);
     insta::assert_snapshot!(output);
