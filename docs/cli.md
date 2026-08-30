@@ -273,9 +273,8 @@ writes to imported or `const` bindings. It also reports unresolved `module` /
 `.mjs` / `.mts` files and in-tree static or dynamic import targets use the
 module source goal even when they contain no import/export declaration
 themselves; explicit `.cjs` / `.cts` files retain the script/CommonJS source
-goal even when imported by ESM. Free identifier writes are
-environment-dependent host-global accesses and are not classified as definite
-defects without an explicit runtime environment model.
+goal even when imported by ESM. Writes to undeclared identifiers (host
+globals) are not reported.
 Human-readable findings use `filename:line:column`; JSON findings carry
 one-based `line` and `column` fields. The recursive scan accepts `.js`, `.mjs`,
 `.cjs`, `.jsx`, `.ts`, `.tsx`, `.mts`, `.cts`, and extensionless emitted
