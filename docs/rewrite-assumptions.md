@@ -294,7 +294,11 @@ hazard every `require`-to-`import` conversion in this codebase already
 accepts.
 
 Affects: `UnEsm` require conversion, `commonjs_default_object_composition`,
-and every fact-consuming recovery that imports a proven provider.
+and every fact-consuming recovery that imports a proven provider. The esbuild
+unpacker's ownership relocation (moving a top-level state writer into the
+module that owns the state declaration) shifts that statement's evaluation to
+the owner's import time — the same provider-versus-consumer interleaving
+deviation.
 
 Level: all levels. This is inherent to emitting ESM from CommonJS.
 

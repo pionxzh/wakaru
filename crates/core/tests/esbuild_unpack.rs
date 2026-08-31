@@ -1729,6 +1729,107 @@ console.log(state);
     );
 }
 
+/// A conditional top-level writer is part of the mutable binding's ownership
+/// unit exactly like a plain initializer: when a standalone factory owns the
+/// declaration, leaving `if (ready) state = ...` in entry.js creates an
+/// assignment to an immutable synthesized import.
+#[test]
+fn standalone_factory_owns_conditional_state_writer() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var first = y(() => { firstValue = 1; });
+var second = y(() => { secondValue = 2; });
+var third = y(() => { thirdValue = 3; });
+var fourth = y(() => { fourthValue = 4; });
+var ready = typeof window !== "undefined";
+var state;
+if (ready) state = getComputedStyle(document.documentElement);
+function readState() { return state; }
+function writeState(value) { state = value; }
+var init_config = y(() => { use(ready, readState, writeState); });
+init_config();
+console.log(state);
+"#;
+
+    let raw_pairs = expect_unpack_raw(bundle);
+    let owner_code = &raw_pairs
+        .iter()
+        .find(|(_, code)| code.contains("export function init_config"))
+        .expect("config factory should own its mutable support closure")
+        .1;
+    assert!(
+        owner_code.contains("var state")
+            && owner_code.contains("if (ready) state = getComputedStyle(document.documentElement)")
+            && !owner_code.contains("import { state"),
+        "the owner must contain the declaration and the conditional writer:\n{owner_code}"
+    );
+
+    let entry_code = &raw_pairs
+        .iter()
+        .find(|(name, _)| name == "entry.js")
+        .expect("entry module should exist")
+        .1;
+    assert!(
+        !entry_code.contains("state = getComputedStyle") && !entry_code.contains("var state"),
+        "entry must not retain a writer or duplicate declaration:\n{entry_code}"
+    );
+    assert_eq!(
+        validate_output_modules(&raw_pairs),
+        vec![],
+        "relocating the conditional writer must produce valid ESM"
+    );
+}
+
+/// When a top-level writer of factory-owned state cannot be relocated (here it
+/// reads `flags`, an entry-owned binding nothing exports), the ownership split
+/// must be cancelled as a unit: the factory group stays in entry.js instead of
+/// leaving the writer behind as an assignment to an immutable import.
+#[test]
+fn unrelocatable_state_writer_demotes_the_factory_group() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var first = y(() => { firstValue = 1; });
+var second = y(() => { secondValue = 2; });
+var third = y(() => { thirdValue = 3; });
+var fourth = y(() => { fourthValue = 4; });
+var flags = readFlags();
+flags.checked = true;
+var state;
+state = flags.enabled ? getComputedStyle(document.documentElement) : undefined;
+function readState() { return state; }
+function writeState(value) { state = value; }
+var init_config = y(() => { use(readState, writeState); });
+init_config();
+console.log(state, flags);
+"#;
+
+    let raw_pairs = expect_unpack_raw(bundle);
+    let entry_code = &raw_pairs
+        .iter()
+        .find(|(name, _)| name == "entry.js")
+        .expect("entry module should exist")
+        .1;
+    assert!(
+        entry_code.contains("var state")
+            && entry_code.contains("state = flags.enabled ?")
+            && entry_code.contains("init_config")
+            && !entry_code.contains("import { state"),
+        "the demoted group must stay in entry with its writer:\n{entry_code}"
+    );
+    assert!(
+        !raw_pairs
+            .iter()
+            .any(|(name, code)| name != "entry.js" && code.contains("init_config")),
+        "no other module may claim the demoted factory: {:?}",
+        raw_pairs.iter().map(|(name, _)| name).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        validate_output_modules(&raw_pairs),
+        vec![],
+        "cancelling the split must produce valid ESM"
+    );
+}
+
 /// A lazy factory claimed by a scope module relocates its support-declaration
 /// closure — including passive state declarations that the adoption pass
 /// cannot claim (they are not function-shaped). The entry copy of such a
