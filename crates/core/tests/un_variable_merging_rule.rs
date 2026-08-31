@@ -106,6 +106,45 @@ for (var n = N(), b = B(); n < limit; n++) {}
 }
 
 #[test]
+fn extracts_uninitialized_declarator_past_kept_initializer() {
+    // A declarator with no initializer evaluates nothing, so pulling it out of
+    // the header cannot reorder effects even when an earlier declarator stays.
+    // This is the swc/babel iterator-protocol shape UnForOf matches on.
+    let input = r#"
+for (var iterator = items[Symbol.iterator](), step; !(done = (step = iterator.next()).done); done = true) {
+  use(step.value);
+}
+"#;
+    let expected = r#"
+var step;
+for (var iterator = items[Symbol.iterator](); !(done = (step = iterator.next()).done); done = true) {
+  use(step.value);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn keeps_later_initializer_behind_kept_initializer() {
+    // `second = makeSecond()` must not move: it would run before the kept
+    // `index = start()` and reorder their side effects.
+    let input = r#"
+for (var index = start(), second = makeSecond(), gap; index < limit; index++) {
+  use(second, gap);
+}
+"#;
+    let expected = r#"
+var gap;
+for (var index = start(), second = makeSecond(); index < limit; index++) {
+  use(second, gap);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn extracts_only_setup_from_terser_merged_loop_init() {
     // Terser 5 currently merges the preceding setup declaration into this
     // for-init shape. Keeping the suffix preserves prepare → start → first.

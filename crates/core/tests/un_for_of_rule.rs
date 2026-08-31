@@ -922,6 +922,43 @@ for (const item of items) {
 }
 
 #[test]
+fn for_of_from_swc_symbol_iterator_helper_merged_header() {
+    // The raw swc-es5 (+ terser) shape: completion flags merged into one `var`
+    // and the uninitialized `step` still inside the for header. UnVariableMerging
+    // must pull `step` out (a no-init declarator is always safe to extract) or
+    // the UnForOf matcher never fires. Regression test for the for-of matrix
+    // drop to 73.9% (see un_variable_merging_rule.rs).
+    let input = r#"
+export function f(items) {
+  var normal = true, didError = false, iteratorError = void 0;
+  try {
+    for (var iterator = items[Symbol.iterator](), step; !(normal = (step = iterator.next()).done); normal = true) {
+      var item = step.value;
+      use(item);
+    }
+  } catch (err) {
+    didError = true;
+    iteratorError = err;
+  } finally {
+    try {
+      normal || null == iterator.return || iterator.return();
+    } finally {
+      if (didError) throw iteratorError;
+    }
+  }
+}
+"#;
+    let expected = r#"
+export function f(items) {
+  for (const item of items) {
+    use(item);
+  }
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn shadowed_binding_does_not_force_let() {
     let input = r#"
 for (var i = 0; i < items.length; i++) {

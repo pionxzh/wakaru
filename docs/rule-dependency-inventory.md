@@ -169,10 +169,13 @@ rationale, or level gating appear.
   so CJS imports classify); the full pass stays later because its for-loop
   initializer extraction interacts with var→let/const conversion and loop
   scoping. The full pass computes the existing test/update `must_keep` set and
-  initializer dependency closure, then extracts only the contiguous prefix
-  before the earliest retained declarator. The complete suffix stays in the
-  header so initializer effects keep their source order; an empty `must_keep`
-  set permits extracting the whole initializer.
+  initializer dependency closure, then partitions in source order: a declarator
+  with an initializer is extracted only while no kept declarator with an
+  initializer precedes it (crossing one would reorder initializer effects); a
+  declarator without an initializer is always extracted, since it evaluates
+  nothing. The no-init case is load-bearing for UnForOf — the swc/babel
+  iterator-protocol matcher needs the bare `step` pulled out of
+  `for (var it = x[Symbol.iterator](), step; ...)`.
 - **UnBuiltinAliases** — runs after `UnVariableMergingDeclsOnly` so minifier
   aliases such as `var e = Object.freeze, r = Object.defineProperty` have
   already been split into single-declarator statements. Runs before later

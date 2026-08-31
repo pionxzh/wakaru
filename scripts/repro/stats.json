@@ -1,10 +1,10 @@
 {
-  "commit": "a4d551b3",
-  "date": "2026-08-30",
+  "commit": "bb69ddc6",
+  "date": "2026-08-31",
   "aggregate": {
-    "yes": 1786,
+    "yes": 1810,
     "total": 1858,
-    "pct": 96.1
+    "pct": 97.4
   },
   "matrices": [
     {
@@ -57,11 +57,11 @@
     },
     {
       "name": "for-of-iteration",
-      "yes": 68,
-      "no": 24,
+      "yes": 92,
+      "no": 0,
       "error": 0,
       "total": 92,
-      "pct": 73.9
+      "pct": 100
     },
     {
       "name": "object-rest-spread",
