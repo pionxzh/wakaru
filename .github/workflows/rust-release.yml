@@ -38,6 +38,11 @@ jobs:
             artifact: wakaru.exe
             archive: wakaru-win32-x64.zip
             npm-pkg: cli-win32-x64
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            artifact: wakaru.exe
+            archive: wakaru-win32-arm64.zip
+            npm-pkg: cli-win32-arm64
     steps:
       - uses: actions/checkout@v6
       - name: Install pinned Rust toolchain
