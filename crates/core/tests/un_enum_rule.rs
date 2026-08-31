@@ -170,6 +170,33 @@ fn recovers_collapsed_arrow_enum_beside_cc_rf_push_module() {
 }
 
 #[test]
+fn collapsed_enum_rejects_nested_cc_rf_marker_pair() {
+    let input = format!(
+        "function registerLater() {{\n  {CC_RF_PUSH}\n  {CC_RF_POP}\n}}\n{}\nregisterLater();\n",
+        collapsed_numeric_mode_iife()
+    );
+    assert_eq_normalized(&apply_resolved(&input), &input);
+}
+
+#[test]
+fn collapsed_enum_rejects_cc_rf_marker_pair_after_enum() {
+    let input = format!(
+        "{}\n{CC_RF_PUSH}\n{CC_RF_POP}\n",
+        collapsed_numeric_mode_iife()
+    );
+    assert_eq_normalized(&apply_resolved(&input), &input);
+}
+
+#[test]
+fn collapsed_enum_rejects_closed_cc_rf_marker_pair_before_enum() {
+    let input = format!(
+        "{CC_RF_PUSH}\n{CC_RF_POP}\n{}\n",
+        collapsed_numeric_mode_iife()
+    );
+    assert_eq_normalized(&apply_resolved(&input), &input);
+}
+
+#[test]
 fn collapsed_enum_rejects_cclegacy_rf_push_module() {
     let input = r#"
 cclegacy._RF.push(module, "uuid", "ScriptName");
