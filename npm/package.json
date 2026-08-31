@@ -29,6 +29,7 @@
     "@wakaru/cli-darwin-arm64": "1.10.0",
     "@wakaru/cli-linux-arm64": "1.10.0",
     "@wakaru/cli-linux-x64": "1.10.0",
-    "@wakaru/cli-win32-x64": "1.10.0"
+    "@wakaru/cli-win32-x64": "1.10.0",
+    "@wakaru/cli-win32-arm64": "1.10.0"
   }
 }

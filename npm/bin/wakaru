@@ -13,6 +13,7 @@ const PLATFORMS = {
   },
   win32: {
     x64: "@wakaru/cli-win32-x64/wakaru.exe",
+    arm64: "@wakaru/cli-win32-arm64/wakaru.exe",
   },
 };
 
