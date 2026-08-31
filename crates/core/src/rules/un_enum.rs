@@ -302,6 +302,64 @@ impl PublicExportUseFinder<'_> {
         matches!(obj, Expr::Ident(ident) if is_unresolved_named(ident, "module", self.unresolved_mark))
     }
 
+    /// Cocos 2.x `cc._RF.push(module, uuid, script)` stores the CJS module
+    /// handle for uuid / script-name registration. That bare `module` ident
+    /// is not a read of `exports.<public_name>`. Only unresolved `cc` plus
+    /// ident members `_RF.push` match; `cclegacy` and computed keys do not.
+    ///
+    /// `pop()` later iterates `module.exports` keys and may assign
+    /// `module.exports = frame.cls` if that object is empty. Folding the
+    /// enum removes a CJS write, so a real `module` could see a different
+    /// key set. UnEsm already emits `export class` beside the same marker,
+    /// which is the same mixed CJS/ESM contract; this skip matches that
+    /// recovered shape rather than re-running Cocos's loader.
+    fn is_cc_rf_push_callee(&self, callee: &Expr) -> bool {
+        let Expr::Member(push) = strip_parens(callee) else {
+            return false;
+        };
+        let MemberProp::Ident(push_name) = &push.prop else {
+            return false;
+        };
+        if push_name.sym != "push" {
+            return false;
+        }
+        let Expr::Member(rf) = strip_parens(&push.obj) else {
+            return false;
+        };
+        let MemberProp::Ident(rf_name) = &rf.prop else {
+            return false;
+        };
+        if rf_name.sym != "_RF" {
+            return false;
+        }
+        let Expr::Ident(cc) = strip_parens(&rf.obj) else {
+            return false;
+        };
+        is_unresolved_named(cc, "cc", self.unresolved_mark)
+    }
+
+    fn first_arg_is_unresolved_module(&self, call: &CallExpr) -> bool {
+        let Some(first) = call.args.first() else {
+            return false;
+        };
+        if first.spread.is_some() {
+            return false;
+        }
+        matches!(
+            strip_parens(&first.expr),
+            Expr::Ident(ident) if is_unresolved_named(ident, "module", self.unresolved_mark)
+        )
+    }
+
+    /// Skip visiting the first `module` ident of `cc._RF.push(module, …)`.
+    /// Remaining args and the callee are still walked.
+    fn should_skip_cc_rf_push_module_arg(&self, call: &CallExpr) -> bool {
+        let Callee::Expr(callee) = &call.callee else {
+            return false;
+        };
+        self.is_cc_rf_push_callee(callee) && self.first_arg_is_unresolved_module(call)
+    }
+
     /// Direct eval resolves `exports`/`module` from the calling scope, so it
     /// can read the surface invisibly to the AST scan. Returns true when the
     /// call was a direct eval (handled here, hazardous or not).
@@ -369,9 +427,20 @@ impl Visit for PublicExportUseFinder<'_> {
                 }
             }
         }
-        if !self.found {
-            call.visit_children_with(self);
+        if self.found {
+            return;
         }
+        if self.should_skip_cc_rf_push_module_arg(call) {
+            call.callee.visit_with(self);
+            for arg in call.args.iter().skip(1) {
+                if self.found {
+                    return;
+                }
+                arg.visit_with(self);
+            }
+            return;
+        }
+        call.visit_children_with(self);
     }
 
     fn visit_opt_call(&mut self, call: &OptCall) {
