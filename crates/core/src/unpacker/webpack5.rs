@@ -434,7 +434,10 @@ pub(super) fn detect_chunk_from_module_prepared(
 
     Some(
         DetectedBundle::new(
-            UnpackResult::new(all_modules, BundleFormat::Webpack5),
+            // A standalone chunk has no in-file runtime: its modules are
+            // registered for consumption by runtimes in other physical assets,
+            // so dead-module elimination must fail closed for them.
+            UnpackResult::new(all_modules, BundleFormat::Webpack5).with_external_consumers(),
             all_prepared,
             cm,
         )

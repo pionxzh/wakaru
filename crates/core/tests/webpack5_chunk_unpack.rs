@@ -355,6 +355,65 @@ fn webpack5_standalone_chunk_keeps_public_helper_modules() {
 }
 
 #[test]
+fn webpack5_mixed_chunk_keeps_helper_without_local_importer() {
+    // Mixed standalone chunk: an app module (impure, no imports) plus a pure
+    // exported helper that no module in this asset imports. The helper's
+    // consumers live in another physical asset behind the webpack runtime
+    // registry, so it must survive even though the total-drop guard cannot
+    // fire (the app module survives on its own).
+    let source = r#"
+(self.webpackChunk_app = self.webpackChunk_app || []).push([
+  [456],
+  {
+    10001: function(module, exports, require) {
+      require.d(exports, { boot: function() { return boot; } });
+      function boot() {
+        console.log("app module booted");
+      }
+      boot();
+    },
+    10002: function(module, exports, require) {
+      require.d(exports, { A: function() { return extend; } });
+      function extend() {
+        return (extend = Object.assign ? Object.assign.bind() : function(target) {
+          for (var i = 1; i < arguments.length; i++) {
+            var source = arguments[i];
+            for (var key in source) {
+              if (Object.prototype.hasOwnProperty.call(source, key)) target[key] = source[key];
+            }
+          }
+          return target;
+        }).apply(null, arguments);
+      }
+    }
+  }
+]);
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "chunk.js".to_string(),
+            dce_mode: DceMode::TransformOnly,
+            ..Default::default()
+        },
+    )
+    .expect("mixed webpack chunk should unpack");
+
+    let filenames = output
+        .modules
+        .iter()
+        .map(|(filename, _)| filename.as_str())
+        .collect::<Vec<_>>();
+    assert!(filenames.contains(&"module-10001.js"), "{filenames:?}");
+    assert!(
+        filenames.contains(&"module-10002.js"),
+        "externally consumed helper was dropped: {filenames:?}"
+    );
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
 fn webpack5_chunk_unpacks_arrow_and_method_factories() {
     let source = r#"
 (self.webpackChunk_N_E = self.webpackChunk_N_E || []).push([

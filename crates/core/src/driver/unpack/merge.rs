@@ -53,6 +53,10 @@ pub(super) struct MultiSourceModule {
     restore_lifted_function_boundary: bool,
     allow_cross_chunk_rewrite: bool,
     report_import_cycle_warnings: bool,
+    /// The source container registers its modules for consumption by runtimes
+    /// in other physical assets (standalone lazy chunk): dead-module
+    /// elimination must fail closed for this module.
+    external_consumers: bool,
     chunk_ids: Arc<HashSet<usize>>,
     input_filename: String,
     input_group: String,
@@ -116,6 +120,7 @@ impl MultiSourceModule {
             restore_lifted_function_boundary: true,
             allow_cross_chunk_rewrite: true,
             report_import_cycle_warnings,
+            external_consumers: false,
             chunk_ids: chunk_ids.into(),
             input_filename,
             input_group,
@@ -125,6 +130,11 @@ impl MultiSourceModule {
 
     pub(super) fn with_implicit_commonjs_default_object(mut self, enabled: bool) -> Self {
         self.implicit_commonjs_default_object = enabled;
+        self
+    }
+
+    pub(super) fn with_external_consumers(mut self, enabled: bool) -> Self {
+        self.external_consumers = enabled;
         self
     }
 
@@ -174,6 +184,7 @@ impl MultiSourceModule {
             restore_lifted_function_boundary: false,
             allow_cross_chunk_rewrite: false,
             report_import_cycle_warnings: false,
+            external_consumers: false,
             chunk_ids: Arc::default(),
             input_filename: String::new(),
             input_group: String::new(),
@@ -194,6 +205,8 @@ pub(super) struct PreparedUnpackModule {
     pub(super) numeric_rewrite: Option<NumericRewriteModuleContext>,
     pub(super) filename_rewrite: Option<FilenameRewriteModuleContext>,
     pub(super) report_import_cycle_warnings: bool,
+    /// See [`MultiSourceModule::external_consumers`].
+    pub(super) external_consumers: bool,
     pub(super) input: Option<PreparedInputId>,
     pub(super) reserved_public_path: bool,
 }
@@ -213,6 +226,7 @@ impl PreparedUnpackModule {
             numeric_rewrite: None,
             filename_rewrite: None,
             report_import_cycle_warnings: true,
+            external_consumers: false,
             input: None,
             reserved_public_path: false,
         }
@@ -235,6 +249,7 @@ impl PreparedUnpackModule {
             numeric_rewrite: None,
             filename_rewrite: None,
             report_import_cycle_warnings,
+            external_consumers: false,
             input: None,
             reserved_public_path: false,
         }
@@ -364,6 +379,7 @@ pub(super) fn prepare_multi_source_modules(
                 numeric_rewrite,
                 filename_rewrite,
                 report_import_cycle_warnings: module.report_import_cycle_warnings,
+                external_consumers: module.external_consumers,
                 input: module.input,
             }
         })

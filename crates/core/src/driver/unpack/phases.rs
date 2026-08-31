@@ -678,6 +678,7 @@ pub(super) fn unpack_multi_module_with_plan(
                     &module,
                     unpacked.module.is_entry,
                     is_helper,
+                    unpacked.external_consumers,
                 ))
             } else {
                 None

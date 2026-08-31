@@ -71,6 +71,7 @@ pub(super) fn maybe_split_scope_hoisted_modules_excluding(
     UnpackResult {
         modules,
         report_import_cycle_warnings: result.report_import_cycle_warnings && !did_split,
+        external_consumers: result.external_consumers,
         format: result.format,
     }
 }
@@ -553,6 +554,7 @@ mod tests {
                 ..Default::default()
             }],
             report_import_cycle_warnings: true,
+            external_consumers: false,
             format: BundleFormat::Webpack5,
         };
 
@@ -579,6 +581,7 @@ mod tests {
                 ..Default::default()
             }],
             report_import_cycle_warnings: true,
+            external_consumers: false,
             format: BundleFormat::Webpack5,
         };
 
@@ -623,6 +626,7 @@ mod tests {
                         ..Default::default()
                     }],
                     report_import_cycle_warnings: true,
+                    external_consumers: false,
                     format: BundleFormat::Webpack5,
                 },
                 true,

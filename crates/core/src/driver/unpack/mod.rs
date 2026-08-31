@@ -527,6 +527,7 @@ pub fn unpack_prepared_inputs_with_policy(
                 let (result, prepared, module_failures) = detected.into_parts();
                 let has_module_failures = !module_failures.is_empty();
                 let report_import_cycle_warnings = result.report_import_cycle_warnings;
+                let external_consumers = result.external_consumers;
                 let input_group = input_group_for_filename(&filename);
                 modules.extend(
                     result
@@ -564,6 +565,7 @@ pub fn unpack_prepared_inputs_with_policy(
                             // capture the deliberately unresolved call.
                             .with_cross_chunk_rewrite(!has_module_failures)
                             .with_detector_failure(detector_failure)
+                            .with_external_consumers(external_consumers)
                         }),
                 );
             }

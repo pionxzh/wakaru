@@ -550,6 +550,12 @@ impl BundleFormat {
 pub struct UnpackResult {
     pub modules: Vec<UnpackedModule>,
     pub report_import_cycle_warnings: bool,
+    /// The detected container registers its modules into a cross-asset runtime
+    /// registry (e.g. a webpack JSONP/CommonJS lazy chunk): consumers may live
+    /// in other physical assets, so the absence of a local importer is not
+    /// evidence that a module is dead. Dead-module elimination must fail
+    /// closed for these modules.
+    pub external_consumers: bool,
     pub format: BundleFormat,
 }
 
@@ -766,6 +772,7 @@ impl UnpackResult {
         Self {
             modules,
             report_import_cycle_warnings: true,
+            external_consumers: false,
             format,
         }
     }
@@ -777,8 +784,16 @@ impl UnpackResult {
         Self {
             modules,
             report_import_cycle_warnings: false,
+            external_consumers: false,
             format,
         }
+    }
+
+    /// Mark every module in this result as reachable from other physical
+    /// assets (see [`UnpackResult::external_consumers`]).
+    pub(crate) fn with_external_consumers(mut self) -> Self {
+        self.external_consumers = true;
+        self
     }
 }
 

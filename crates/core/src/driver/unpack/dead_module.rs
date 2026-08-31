@@ -16,6 +16,11 @@
 //! module contributes an [`ImportReport`] (computed from its final AST before
 //! print); the barrier counts binding importers, picks the drop set, and
 //! re-parses only the affected consumers to strip their side-effect imports.
+//!
+//! Modules from a standalone lazy chunk (webpack JSONP/CommonJS push containers
+//! with no in-file runtime) carry `external_consumers` provenance from the
+//! detector: their importers live in other physical assets, so they are never
+//! drop candidates regardless of local reachability.
 
 use std::collections::HashSet;
 
@@ -46,6 +51,11 @@ pub(super) struct ImportReport {
     is_entry: bool,
     /// Phase-1 facts proved this module exports a transpiler helper.
     is_helper: bool,
+    /// The module came from a container that registers modules for
+    /// consumption by runtimes in other physical assets (standalone lazy
+    /// chunk). Local importer analysis cannot prove such a module dead, so it
+    /// is never a drop candidate.
+    external_consumers: bool,
 }
 
 /// Collect the elimination report from a module's final AST.
@@ -53,6 +63,7 @@ pub(super) fn collect_import_report(
     module: &Module,
     is_entry: bool,
     is_helper: bool,
+    external_consumers: bool,
 ) -> ImportReport {
     let mut static_imports = Vec::new();
     for item in &module.body {
@@ -72,6 +83,7 @@ pub(super) fn collect_import_report(
         own_body_pure: is_own_body_pure(module),
         is_entry,
         is_helper,
+        external_consumers,
     }
 }
 
@@ -100,10 +112,10 @@ pub(super) fn eliminate_dead_helper_modules(
     }
 
     let mut dropped = compute_dropped(&triples);
-    // A drop set covering the complete output has no surviving graph root that
-    // proves these modules are unreachable. This occurs for standalone lazy
-    // chunks made entirely of exported helpers: their consumers live in a
-    // different physical asset. Fail closed instead of emitting an empty tree.
+    // Defense in depth behind the `external_consumers` provenance flag: a drop
+    // set covering the complete output has no surviving graph root that proves
+    // these modules are unreachable. If a container without chunk provenance
+    // ever produces that shape, fail closed instead of emitting an empty tree.
     if dropped.len() == triples.len() {
         dropped.clear();
     }
@@ -216,15 +228,21 @@ fn compute_dropped(
     }
 
     // Fixpoint 2 — cascade: start from droppable candidates (recognized helper,
-    // transitively pure, non-entry), then remove any whose binding-importer is
-    // still live (not itself dropped). Dropping a helper removes its own binding
-    // imports, so a helper-dependency whose only binding importer is dropped
-    // becomes droppable too.
+    // transitively pure, non-entry, no external consumers), then remove any
+    // whose binding-importer is still live (not itself dropped). Dropping a
+    // helper removes its own binding imports, so a helper-dependency whose only
+    // binding importer is dropped becomes droppable too. A module whose
+    // container has external consumers (a standalone lazy chunk) is never a
+    // candidate: its importers live in other physical assets that this
+    // analysis cannot see.
     let mut candidate: HashSet<String> = triples
         .iter()
         .filter(|(name, ..)| {
             let report = report_of(name);
-            report.is_helper && !report.is_entry && pure.contains(name.as_str())
+            report.is_helper
+                && !report.is_entry
+                && !report.external_consumers
+                && pure.contains(name.as_str())
         })
         .map(|(name, ..)| name.clone())
         .collect();
@@ -354,6 +372,24 @@ mod tests {
         is_entry: bool,
         is_helper: bool,
     ) -> Option<ImportReport> {
+        let mut report = report_with_external_consumers(
+            static_imports,
+            dynamic_refs,
+            own_body_pure,
+            is_entry,
+            is_helper,
+        );
+        report.as_mut().unwrap().external_consumers = false;
+        report
+    }
+
+    fn report_with_external_consumers(
+        static_imports: Vec<(&str, bool)>,
+        dynamic_refs: Vec<&str>,
+        own_body_pure: bool,
+        is_entry: bool,
+        is_helper: bool,
+    ) -> Option<ImportReport> {
         Some(ImportReport {
             static_imports: static_imports
                 .into_iter()
@@ -363,6 +399,7 @@ mod tests {
             own_body_pure,
             is_entry,
             is_helper,
+            external_consumers: true,
         })
     }
 
@@ -415,6 +452,7 @@ mod tests {
             &parse("import a from \"./a.js\"; import \"./b.js\";"),
             false,
             true,
+            false,
         );
         assert!(report
             .static_imports
@@ -430,6 +468,7 @@ mod tests {
     fn report_collects_dynamic_refs() {
         let report = collect_import_report(
             &parse("const x = import(\"./a.js\"); const y = require(\"./b.js\");"),
+            false,
             false,
             false,
         );
@@ -523,6 +562,31 @@ mod tests {
             report(vec![], vec![], true, false, true),
         )];
         let (modules, _) = eliminate_dead_helper_modules(triples);
+        assert!(names(&modules).contains(&"helper.js"));
+    }
+
+    #[test]
+    fn keeps_externally_consumable_helper_beside_live_module() {
+        // Mixed standalone chunk: an app module plus a pure exported helper
+        // with no local importer. The total-drop guard cannot fire (the app
+        // module survives), so only the external-consumers provenance keeps
+        // the helper whose consumers live in another physical asset.
+        let triples = vec![
+            (
+                "app.js".to_string(),
+                "boot();".to_string(),
+                vec![],
+                report_with_external_consumers(vec![], vec![], false, false, false),
+            ),
+            (
+                "helper.js".to_string(),
+                "export default function _x() {}".to_string(),
+                vec![],
+                report_with_external_consumers(vec![], vec![], true, false, true),
+            ),
+        ];
+        let (modules, _) = eliminate_dead_helper_modules(triples);
+        assert!(names(&modules).contains(&"app.js"));
         assert!(names(&modules).contains(&"helper.js"));
     }
 
