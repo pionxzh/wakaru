@@ -25,7 +25,9 @@ use crate::utils::paren::strip_parens;
 use crate::utils::prototype_members::is_prototype_mutating_member_name;
 
 use super::decl_utils::{collect_decl_names, collect_pat_names, same_ident};
-use super::eval_utils::{direct_eval_call_source, js_source_mentions_binding, EvalCallSource};
+use super::eval_utils::{
+    direct_eval_call_source, js_source_mentions_binding, DirectEvalAnalyzer, EvalCallSource,
+};
 use super::helper_matcher::count_binding_refs;
 use super::rename_utils::{collect_unresolved_reference_names, rename_bindings, BindingRename};
 use super::RewriteLevel;
@@ -3808,9 +3810,9 @@ fn has_hoistable_require(items: &[ModuleItem], unresolved_mark: Mark) -> bool {
         ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) if var_decl.decls.len() == 1 => {
             var_decl.decls[0].init.as_ref().is_some_and(|init| {
                 try_extract_inline_conditional_interop(init, unresolved_mark).is_some()
-            })
+            }) || item_has_toplevel_require_named_member_arg(item, unresolved_mark)
         }
-        _ => false,
+        _ => item_has_toplevel_require_named_member_arg(item, unresolved_mark),
     })
 }
 
@@ -3933,6 +3935,304 @@ fn hoist_embedded_requires(module: &mut Module, unresolved_mark: Mark) {
         }
     }
 
+    module.body = new_body;
+    hoist_toplevel_require_named_member_args(module, unresolved_mark);
+}
+
+/// Top-level immediately-evaluated Call whose direct argument is
+/// `require("mod").Name` (not `.default`). Hoist to
+/// `const Name = require("mod").Name` immediately before the statement so
+/// the existing NamedProp classifier can emit `import { Name }`.
+///
+/// This pass is all-or-nothing: if any candidate fails the binding proof,
+/// no argument is rewritten. Other UnEsm paths still run.
+fn hoist_toplevel_require_named_member_args(module: &mut Module, unresolved_mark: Mark) {
+    let candidates = collect_toplevel_require_named_member_args(&module.body, unresolved_mark);
+    if candidates.is_empty() {
+        return;
+    }
+    let Some(plan) = prove_toplevel_require_named_member_args(module, unresolved_mark, &candidates)
+    else {
+        return;
+    };
+    apply_toplevel_require_named_member_args(module, plan);
+}
+
+struct ToplevelRequireNamedMemberArg {
+    item_index: usize,
+    arg_index: usize,
+    source: String,
+    name: Atom,
+}
+
+struct ToplevelRequireNamedMemberInsert {
+    local: Ident,
+    init: Box<Expr>,
+}
+
+struct ToplevelRequireNamedMemberPlan {
+    replacements: HashMap<usize, Vec<(usize, Ident)>>,
+    inserts: HashMap<usize, Vec<ToplevelRequireNamedMemberInsert>>,
+}
+
+fn item_has_toplevel_require_named_member_arg(item: &ModuleItem, unresolved_mark: Mark) -> bool {
+    let Some(call) = toplevel_item_call_expr(item) else {
+        return false;
+    };
+    call.args.iter().any(|arg| {
+        arg.spread.is_none()
+            && match_require_named_member_expr(&arg.expr, unresolved_mark).is_some()
+    })
+}
+
+fn collect_toplevel_require_named_member_args(
+    items: &[ModuleItem],
+    unresolved_mark: Mark,
+) -> Vec<ToplevelRequireNamedMemberArg> {
+    let mut candidates = Vec::new();
+    for (item_index, item) in items.iter().enumerate() {
+        let Some(call) = toplevel_item_call_expr(item) else {
+            continue;
+        };
+        for (arg_index, arg) in call.args.iter().enumerate() {
+            if arg.spread.is_some() {
+                continue;
+            }
+            let Some((source, name)) = match_require_named_member_expr(&arg.expr, unresolved_mark)
+            else {
+                continue;
+            };
+            candidates.push(ToplevelRequireNamedMemberArg {
+                item_index,
+                arg_index,
+                source,
+                name,
+            });
+        }
+    }
+    candidates
+}
+
+/// Direct argument of a top-level Call: `require("mod").Name` with a static
+/// string specifier and a non-`default` ident (or computed ident string).
+fn match_require_named_member_expr(expr: &Expr, unresolved_mark: Mark) -> Option<(String, Atom)> {
+    let Expr::Member(member) = strip_parens(expr) else {
+        return None;
+    };
+    let Expr::Call(call) = strip_parens(member.obj.as_ref()) else {
+        return None;
+    };
+    let source = is_require_call(call, unresolved_mark)?;
+    let prop = is_ident_prop(&member.prop)?;
+    if prop.as_ref() == "default" {
+        return None;
+    }
+    Some((source, prop))
+}
+
+fn toplevel_item_call_expr(item: &ModuleItem) -> Option<&CallExpr> {
+    let expr = match item {
+        ModuleItem::Stmt(Stmt::Expr(stmt)) => stmt.expr.as_ref(),
+        ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) if var.decls.len() == 1 => {
+            var.decls[0].init.as_deref()?
+        }
+        _ => return None,
+    };
+    match strip_parens(expr) {
+        Expr::Call(call) => Some(call),
+        _ => None,
+    }
+}
+
+fn toplevel_item_call_expr_mut(item: &mut ModuleItem) -> Option<&mut CallExpr> {
+    match item {
+        ModuleItem::Stmt(Stmt::Expr(stmt)) => call_expr_mut(stmt.expr.as_mut()),
+        ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) if var.decls.len() == 1 => {
+            call_expr_mut(var.decls[0].init.as_mut()?.as_mut())
+        }
+        _ => None,
+    }
+}
+
+fn call_expr_mut(expr: &mut Expr) -> Option<&mut CallExpr> {
+    match expr {
+        Expr::Call(call) => Some(call),
+        Expr::Paren(paren) => call_expr_mut(paren.expr.as_mut()),
+        _ => None,
+    }
+}
+
+fn existing_require_named_prop_item(
+    item: &ModuleItem,
+    source: &str,
+    name: &Atom,
+    unresolved_mark: Mark,
+) -> Option<Ident> {
+    let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+        return None;
+    };
+    if var.decls.len() != 1 {
+        return None;
+    }
+    let decl = &var.decls[0];
+    let Pat::Ident(binding) = &decl.name else {
+        return None;
+    };
+    if binding.id.sym != *name {
+        return None;
+    }
+    let init = decl.init.as_deref()?;
+    match match_require_named_member_expr(init, unresolved_mark) {
+        Some((ref existing_source, ref prop)) if existing_source == source && prop == name => {
+            Some(binding.id.clone())
+        }
+        _ => None,
+    }
+}
+
+/// Reuse a NamedProp local only when it is declared *before* the call, already
+/// initialized, and never written. A later `var Name = require(src).Name` is
+/// not a stable identity for an earlier argument; a mutated local is not the
+/// original member read.
+fn reusable_require_named_prop(
+    items: &[ModuleItem],
+    source: &str,
+    name: &Atom,
+    before_item_index: usize,
+    unresolved_mark: Mark,
+    uses: &BindingUseIndex,
+) -> Option<Ident> {
+    let mut reusable = None;
+    for (index, item) in items.iter().enumerate() {
+        if index >= before_item_index {
+            break;
+        }
+        let Some(ident) = existing_require_named_prop_item(item, source, name, unresolved_mark)
+        else {
+            continue;
+        };
+        if uses.has_direct_write(&binding_id(&ident)) {
+            return None;
+        }
+        reusable = Some(ident);
+    }
+    reusable
+}
+
+fn candidate_named_member_init(
+    items: &[ModuleItem],
+    candidate: &ToplevelRequireNamedMemberArg,
+) -> Option<Box<Expr>> {
+    let call = toplevel_item_call_expr(&items[candidate.item_index])?;
+    let arg = call.args.get(candidate.arg_index)?;
+    Some(Box::new(strip_parens(arg.expr.as_ref()).clone()))
+}
+
+fn prove_toplevel_require_named_member_args(
+    module: &Module,
+    unresolved_mark: Mark,
+    candidates: &[ToplevelRequireNamedMemberArg],
+) -> Option<ToplevelRequireNamedMemberPlan> {
+    let mut eval_analyzer = DirectEvalAnalyzer::default();
+    module.visit_with(&mut eval_analyzer);
+    if eval_analyzer.unknown_direct_eval {
+        return None;
+    }
+
+    let declared_names = collect_all_declared_names(module);
+    let unresolved_reference_names = collect_unresolved_reference_names(module, unresolved_mark);
+    let uses = BindingUseIndex::collect(module);
+    let mut claimed_source_by_local: HashMap<Atom, String> = HashMap::new();
+    let mut claimed_local: HashMap<Atom, Ident> = HashMap::new();
+    let mut plan = ToplevelRequireNamedMemberPlan {
+        replacements: HashMap::new(),
+        inserts: HashMap::new(),
+    };
+
+    for candidate in candidates {
+        let name_str = candidate.name.as_ref();
+        if !is_valid_js_ident(name_str) || is_reserved_binding_name(name_str) {
+            return None;
+        }
+        if eval_analyzer
+            .known_direct_eval_sources
+            .iter()
+            .any(|source| js_source_mentions_binding(source, &candidate.name))
+        {
+            return None;
+        }
+
+        let local = if let Some(claimed_source) = claimed_source_by_local.get(&candidate.name) {
+            if claimed_source != &candidate.source {
+                return None;
+            }
+            claimed_local
+                .get(&candidate.name)
+                .cloned()
+                .expect("claimed source must have a local ident")
+        } else if let Some(existing) = reusable_require_named_prop(
+            &module.body,
+            &candidate.source,
+            &candidate.name,
+            candidate.item_index,
+            unresolved_mark,
+            &uses,
+        ) {
+            claimed_source_by_local.insert(candidate.name.clone(), candidate.source.clone());
+            claimed_local.insert(candidate.name.clone(), existing.clone());
+            existing
+        } else if declared_names.contains(&candidate.name)
+            || unresolved_reference_names.contains(&candidate.name)
+        {
+            return None;
+        } else {
+            let local = make_ident(candidate.name.clone());
+            claimed_source_by_local.insert(candidate.name.clone(), candidate.source.clone());
+            claimed_local.insert(candidate.name.clone(), local.clone());
+            let init = candidate_named_member_init(&module.body, candidate)?;
+            plan.inserts.entry(candidate.item_index).or_default().push(
+                ToplevelRequireNamedMemberInsert {
+                    local: local.clone(),
+                    init,
+                },
+            );
+            local
+        };
+
+        plan.replacements
+            .entry(candidate.item_index)
+            .or_default()
+            .push((candidate.arg_index, local));
+    }
+
+    Some(plan)
+}
+
+fn apply_toplevel_require_named_member_args(
+    module: &mut Module,
+    plan: ToplevelRequireNamedMemberPlan,
+) {
+    let mut new_body = Vec::with_capacity(module.body.len() + plan.inserts.len());
+    for (index, mut item) in std::mem::take(&mut module.body).into_iter().enumerate() {
+        if let Some(inserts) = plan.inserts.get(&index) {
+            for insert in inserts {
+                new_body.push(make_require_var_item(
+                    insert.local.clone(),
+                    insert.init.clone(),
+                ));
+            }
+        }
+        if let Some(replacements) = plan.replacements.get(&index) {
+            if let Some(call) = toplevel_item_call_expr_mut(&mut item) {
+                for (arg_index, ident) in replacements {
+                    if let Some(arg) = call.args.get_mut(*arg_index) {
+                        *arg.expr = Expr::Ident(ident.clone());
+                    }
+                }
+            }
+        }
+        new_body.push(item);
+    }
     module.body = new_body;
 }
 

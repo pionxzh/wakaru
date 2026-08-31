@@ -2759,3 +2759,520 @@ module.exports.default = module.exports;
         "optional-chained module access must fail the coupling proof:\n{output}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Top-level Call args: require("mod").Name → named import
+//
+// Producer: a CJS compiler emits a static `require(mod).Name` as a direct
+// argument of an immediately-evaluated top-level call (typically an IIFE).
+// UnEsm already converts `var x = require("mod").Name` via NamedProp; this
+// shape never reached that classifier. `.default` args stay out of scope.
+// ---------------------------------------------------------------------------
+
+fn leftover_require_named_member(output: &str) -> bool {
+    output.contains("require(") && output.contains(".UIBase")
+}
+
+fn apply_unesm(input: &str) -> String {
+    render_pipeline_until(input, "UnEsm")
+}
+
+#[test]
+fn toplevel_iife_require_named_member_arg_to_named_import() {
+    let input = r#"
+(function (base) {
+  use(base);
+})(require("./UIBase.js").UIBase);
+"#;
+    let expected = r#"
+import { UIBase } from "./UIBase.js";
+(function (base) {
+  use(base);
+})(UIBase);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+    assert!(
+        !output.contains("require("),
+        "the hoisted named member must become an import:\n{output}"
+    );
+}
+
+#[test]
+fn toplevel_iife_require_named_member_arg_survives_later_rules() {
+    let input = r#"
+(function (base) {
+  use(base);
+})(require("./UIBase.js").UIBase);
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("import { UIBase } from \"./UIBase.js\"") && !output.contains("require("),
+        "later rules must keep the named import:\n{output}"
+    );
+}
+
+#[test]
+fn toplevel_var_init_iife_require_named_member_arg_to_named_import() {
+    let input = r#"
+var Child = (function (base) {
+  use(base);
+})(require("./UIBase.js").UIBase);
+"#;
+    let expected = r#"
+import { UIBase } from "./UIBase.js";
+var Child = function (base) {
+  use(base);
+}(UIBase);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_iife_computed_ident_require_named_member_arg_to_named_import() {
+    // UnBracketNotation may already fold this to `.UIBase`; UnEsm must still
+    // accept `is_ident_prop` computed strings if the member survives.
+    let input = r#"
+(function (base) {
+  use(base);
+})(require("./UIBase.js")["UIBase"]);
+"#;
+    let expected = r#"
+import { UIBase } from "./UIBase.js";
+(function (base) {
+  use(base);
+})(UIBase);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_named_member_arg_reuses_existing_named_prop() {
+    let input = r#"
+var UIBase = require("./UIBase.js").UIBase;
+(function (base) {
+  use(base);
+})(require("./UIBase.js").UIBase);
+"#;
+    let expected = r#"
+import { UIBase } from "./UIBase.js";
+(function (base) {
+  use(base);
+})(UIBase);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_named_member_arg_reuses_existing_named_prop_through_full_pipeline() {
+    // Replacing the argument with make_ident() would drop the resolved ctxt of
+    // `var UIBase`, so DeadImports would treat the named import as unused.
+    let input = r#"
+var UIBase = require("./UIBase.js").UIBase;
+(function (base) {
+  use(base);
+})(require("./UIBase.js").UIBase);
+"#;
+    let expected = r#"
+import { UIBase } from "./UIBase.js";
+((base) => {
+  use(base);
+})(UIBase);
+"#;
+    let output = render_pipeline(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_iife_require_named_member_arg_keeps_import_through_full_pipeline() {
+    let input = r#"
+(function (base) {
+  use(base);
+})(require("./UIBase.js").UIBase);
+"#;
+    let expected = r#"
+import { UIBase } from "./UIBase.js";
+((base) => {
+  use(base);
+})(UIBase);
+"#;
+    let output = render_pipeline(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_named_member_does_not_reuse_later_named_prop() {
+    let input = r#"
+(function (base) {
+  use(base);
+})(require("./UIBase.js").UIBase);
+var UIBase = require("./UIBase.js").UIBase;
+var keep = require("./keep.js");
+"#;
+    let expected = r#"
+import { UIBase } from "./UIBase.js";
+import keep from "./keep.js";
+(function (base) {
+  use(base);
+})(require("./UIBase.js").UIBase);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_named_member_does_not_reuse_mutated_named_prop() {
+    let input = r#"
+var UIBase = require("./UIBase.js").UIBase;
+UIBase = other;
+(function (base) {
+  use(base);
+})(require("./UIBase.js").UIBase);
+var keep = require("./keep.js");
+"#;
+    let output = apply_unesm(input);
+    assert!(
+        output.contains("require(\"./UIBase.js\").UIBase")
+            && output.contains("import keep from \"./keep.js\""),
+        "a mutated NamedProp local must not be reused as the call argument:\n{output}"
+    );
+}
+
+#[test]
+fn toplevel_require_named_member_default_arg_is_out_of_scope() {
+    let input = r#"
+var keep = require("./keep.js");
+(function (base) {
+  use(base);
+})(require("./UIBase.js").default);
+"#;
+    let expected = r#"
+import keep from "./keep.js";
+(function (base) {
+  use(base);
+})(require("./UIBase.js").default);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_named_member_ternary_arg_is_left_alone() {
+    let input = r#"
+var keep = require("./keep.js");
+f(cond ? require("./UIBase.js").UIBase : other);
+"#;
+    let expected = r#"
+import keep from "./keep.js";
+f(cond ? require("./UIBase.js").UIBase : other);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_named_member_inside_then_callback_is_left_alone() {
+    let input = r#"
+var keep = require("./keep.js");
+then(function () {
+  return require("./UIBase.js").UIBase;
+});
+"#;
+    let expected = r#"
+import keep from "./keep.js";
+then(function () {
+  return require("./UIBase.js").UIBase;
+});
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_named_member_inside_function_body_is_left_alone() {
+    let input = r#"
+var keep = require("./keep.js");
+function wrap() {
+  (function (base) {
+    use(base);
+  })(require("./UIBase.js").UIBase);
+}
+"#;
+    let expected = r#"
+import keep from "./keep.js";
+function wrap() {
+  (function (base) {
+    use(base);
+  })(require("./UIBase.js").UIBase);
+}
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_named_member_dynamic_require_is_left_alone() {
+    let input = r#"
+var keep = require("./keep.js");
+(function (base) {
+  use(base);
+})(require(dyn).UIBase);
+"#;
+    let expected = r#"
+import keep from "./keep.js";
+(function (base) {
+  use(base);
+})(require(dyn).UIBase);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_named_member_spread_arg_is_left_alone() {
+    let input = r#"
+var keep = require("./keep.js");
+f(...require("./UIBase.js").UIBase);
+"#;
+    let expected = r#"
+import keep from "./keep.js";
+f(...require("./UIBase.js").UIBase);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_named_member_computed_dynamic_key_is_left_alone() {
+    let input = r#"
+var keep = require("./keep.js");
+(function (base) {
+  use(base);
+})(require("./UIBase.js")[key]);
+"#;
+    let expected = r#"
+import keep from "./keep.js";
+(function (base) {
+  use(base);
+})(require("./UIBase.js")[key]);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_named_member_local_require_binding_is_left_alone() {
+    let input = r#"
+function require(x) {
+  return x;
+}
+(function (base) {
+  use(base);
+})(require("./UIBase.js").UIBase);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn toplevel_require_named_member_comma_expr_arg_is_left_alone() {
+    let input = r#"
+var keep = require("./keep.js");
+(function (base) {
+  use(base);
+})((0, require("./UIBase.js").UIBase));
+"#;
+    let expected = r#"
+import keep from "./keep.js";
+(function (base) {
+  use(base);
+})((0, require("./UIBase.js").UIBase));
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_named_member_fails_closed_on_existing_import_local() {
+    let input = r#"
+import { UIBase } from "./other.js";
+var keep = require("./keep.js");
+(function (base) {
+  use(base);
+})(require("./UIBase.js").UIBase);
+"#;
+    let expected = r#"
+import { UIBase } from "./other.js";
+import keep from "./keep.js";
+(function (base) {
+  use(base);
+})(require("./UIBase.js").UIBase);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_named_member_fails_closed_on_existing_let_binding() {
+    let input = r#"
+let UIBase = 0;
+var keep = require("./keep.js");
+(function (base) {
+  use(base);
+})(require("./UIBase.js").UIBase);
+"#;
+    let expected = r#"
+import keep from "./keep.js";
+let UIBase = 0;
+(function (base) {
+  use(base);
+})(require("./UIBase.js").UIBase);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_named_member_fails_closed_on_unresolved_reference() {
+    let input = r#"
+observe(UIBase);
+var keep = require("./keep.js");
+(function (base) {
+  use(base);
+})(require("./UIBase.js").UIBase);
+"#;
+    let expected = r#"
+import keep from "./keep.js";
+observe(UIBase);
+(function (base) {
+  use(base);
+})(require("./UIBase.js").UIBase);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_named_member_fails_closed_on_two_sources_one_local() {
+    let input = r#"
+var keep = require("./keep.js");
+(function (a) {
+  use(a);
+})(require("./A.js").A);
+(function (b) {
+  use(b);
+})(require("./B.js").A);
+"#;
+    let expected = r#"
+import keep from "./keep.js";
+(function (a) {
+  use(a);
+})(require("./A.js").A);
+(function (b) {
+  use(b);
+})(require("./B.js").A);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_named_member_fails_closed_on_eval_of_name() {
+    let input = r#"
+eval("UIBase");
+var keep = require("./keep.js");
+(function (base) {
+  use(base);
+})(require("./UIBase.js").UIBase);
+"#;
+    let expected = r#"
+import keep from "./keep.js";
+eval("UIBase");
+(function (base) {
+  use(base);
+})(require("./UIBase.js").UIBase);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_named_member_fails_closed_on_dynamic_eval() {
+    let input = r#"
+eval(source);
+var keep = require("./keep.js");
+(function (base) {
+  use(base);
+})(require("./UIBase.js").UIBase);
+"#;
+    let expected = r#"
+import keep from "./keep.js";
+eval(source);
+(function (base) {
+  use(base);
+})(require("./UIBase.js").UIBase);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_named_member_fails_closed_on_reserved_prop() {
+    let input = r#"
+var keep = require("./keep.js");
+(function (base) {
+  use(base);
+})(require("./X.js").class);
+"#;
+    let expected = r#"
+import keep from "./keep.js";
+(function (base) {
+  use(base);
+})(require("./X.js").class);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_named_member_fails_closed_on_illegal_ident_prop() {
+    let input = r#"
+var keep = require("./keep.js");
+(function (base) {
+  use(base);
+})(require("./X.js")["foo-bar"]);
+"#;
+    let expected = r#"
+import keep from "./keep.js";
+(function (base) {
+  use(base);
+})(require("./X.js")["foo-bar"]);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_named_member_sibling_import_does_not_recover_default_arg() {
+    let input = r#"
+import { keep } from "./keep.js";
+(function (base) {
+  use(base);
+})(require("./UIBase.js").default);
+"#;
+    let expected = r#"
+import { keep } from "./keep.js";
+(function (base) {
+  use(base);
+})(require("./UIBase.js").default);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+    assert!(
+        leftover_require_named_member(&output) || output.contains(".default"),
+        "a sibling named import must not recover an out-of-scope .default arg:\n{output}"
+    );
+}
