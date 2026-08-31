@@ -50,6 +50,14 @@ fn minimal_preserves_literal_receivers() {
 }
 
 #[test]
+fn default_rule_preserves_literal_receivers() {
+    // Default construction must not bypass the aggressive-only gate.
+    let output = render_rule(SIX_LITERAL_RECEIVERS, |_| UnBuiltinPrototype::default());
+
+    assert_eq_normalized(&output, SIX_LITERAL_RECEIVERS);
+}
+
+#[test]
 fn standard_preserves_literal_receivers() {
     let output = apply(SIX_LITERAL_RECEIVERS, RewriteLevel::Standard);
 

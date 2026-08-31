@@ -20,8 +20,10 @@ impl UnBuiltinPrototype {
 }
 
 impl Default for UnBuiltinPrototype {
+    // Standard, like every other level-aware rule: a default-constructed
+    // instance must not bypass the `terser_unsafe_proto` aggressive-only gate.
     fn default() -> Self {
-        Self::new(RewriteLevel::Aggressive)
+        Self::new(RewriteLevel::Standard)
     }
 }
 
