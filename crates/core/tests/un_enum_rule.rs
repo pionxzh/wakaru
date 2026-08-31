@@ -128,6 +128,381 @@ export var Mode = {
     assert_eq_normalized(&apply_resolved(input), expected);
 }
 
+const CC_RF_PUSH: &str = r#"cc._RF.push(module, "uuid", "ScriptName");"#;
+const CC_RF_POP: &str = r#"cc._RF.pop();"#;
+
+fn collapsed_numeric_mode_iife() -> &'static str {
+    r#"(function (e) {
+  e[e.None = 0] = "None";
+})(exports.Mode || (exports.Mode = {}));"#
+}
+
+fn wrap_cc_rf(body: &str) -> String {
+    format!("{CC_RF_PUSH}\n{body}\n{CC_RF_POP}\n")
+}
+
+#[test]
+fn recovers_collapsed_enum_beside_cc_rf_push_module() {
+    let input = wrap_cc_rf(collapsed_numeric_mode_iife());
+    let expected = wrap_cc_rf(
+        r#"export var Mode = {
+  None: 0,
+  0: "None"
+};"#,
+    );
+    assert_eq_normalized(&apply_resolved(&input), &expected);
+}
+
+#[test]
+fn recovers_collapsed_arrow_enum_beside_cc_rf_push_module() {
+    let input = wrap_cc_rf(
+        r#"((t) => {
+  t[t.None = 0] = "None";
+})(exports.Mode || (exports.Mode = {}));"#,
+    );
+    let expected = wrap_cc_rf(
+        r#"export var Mode = {
+  None: 0,
+  0: "None"
+};"#,
+    );
+    assert_eq_normalized(&apply_resolved(&input), &expected);
+}
+
+#[test]
+fn collapsed_enum_rejects_cclegacy_rf_push_module() {
+    let input = r#"
+cclegacy._RF.push(module, "uuid", "ScriptName");
+(function (e) {
+  e[e.None = 0] = "None";
+})(exports.Mode || (exports.Mode = {}));
+cclegacy._RF.pop();
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn collapsed_enum_rejects_cc_rf_push_module_exports() {
+    let input = format!(
+        "cc._RF.push(module.exports, \"uuid\", \"ScriptName\");\n{}\n{CC_RF_POP}\n",
+        collapsed_numeric_mode_iife()
+    );
+    assert_eq_normalized(&apply_resolved(&input), &input);
+}
+
+#[test]
+fn collapsed_enum_rejects_cc_rf_push_exports() {
+    let input = format!(
+        "cc._RF.push(exports, \"uuid\", \"ScriptName\");\n{}\n{CC_RF_POP}\n",
+        collapsed_numeric_mode_iife()
+    );
+    assert_eq_normalized(&apply_resolved(&input), &input);
+}
+
+#[test]
+fn collapsed_enum_rejects_cc_rf_push_extra_exports_mode_arg() {
+    let input = format!(
+        "cc._RF.push(module, exports.Mode);\n{}\n{CC_RF_POP}\n",
+        collapsed_numeric_mode_iife()
+    );
+    assert_eq_normalized(&apply_resolved(&input), &input);
+}
+
+#[test]
+fn collapsed_enum_rejects_local_cc_rf_push_module() {
+    let input = format!(
+        "const cc = fake;\ncc._RF.push(module, \"uuid\", \"ScriptName\");\n{}\ncc._RF.pop();\n",
+        collapsed_numeric_mode_iife()
+    );
+    assert_eq_normalized(&apply_resolved(&input), &input);
+}
+
+#[test]
+fn collapsed_enum_rejects_other_rf_push_module() {
+    let input = format!(
+        "other._RF.push(module, \"uuid\", \"ScriptName\");\n{}\n{CC_RF_POP}\n",
+        collapsed_numeric_mode_iife()
+    );
+    assert_eq_normalized(&apply_resolved(&input), &input);
+}
+
+#[test]
+fn collapsed_enum_rejects_cc_rf_unshift_module() {
+    let input = format!(
+        "cc._RF.unshift(module, \"uuid\", \"ScriptName\");\n{}\n{CC_RF_POP}\n",
+        collapsed_numeric_mode_iife()
+    );
+    assert_eq_normalized(&apply_resolved(&input), &input);
+}
+
+#[test]
+fn collapsed_enum_rejects_comma_called_cc_rf_push_module() {
+    let input = format!(
+        "(0, cc._RF.push)(module, \"uuid\", \"ScriptName\");\n{}\n{CC_RF_POP}\n",
+        collapsed_numeric_mode_iife()
+    );
+    assert_eq_normalized(&apply_resolved(&input), &input);
+}
+
+#[test]
+fn collapsed_enum_rejects_computed_cc_rf_push_keys() {
+    let input = r#"
+cc["_RF"]["push"](module, "uuid", "ScriptName");
+(function (e) {
+  e[e.None = 0] = "None";
+})(exports.Mode || (exports.Mode = {}));
+cc["_RF"].pop();
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn collapsed_enum_rejects_cc_rf_push_spread_module() {
+    let input = format!(
+        "cc._RF.push(...module, \"uuid\", \"ScriptName\");\n{}\n{CC_RF_POP}\n",
+        collapsed_numeric_mode_iife()
+    );
+    assert_eq_normalized(&apply_resolved(&input), &input);
+}
+
+#[test]
+fn collapsed_enum_rejects_cc_rf_push_second_module_arg() {
+    let input = format!(
+        "cc._RF.push(module, module);\n{}\n{CC_RF_POP}\n",
+        collapsed_numeric_mode_iife()
+    );
+    assert_eq_normalized(&apply_resolved(&input), &input);
+}
+
+#[test]
+fn pipeline_unbrackets_computed_cc_rf_push_then_recovers_enum() {
+    let input = r#"
+cc["_RF"]["push"](module, "uuid", "ScriptName");
+(function (e) {
+  e[e.None = 0] = "None";
+})(exports.Mode || (exports.Mode = {}));
+cc["_RF"].pop();
+"#;
+    let expected = r#"
+cc._RF.push(module, "uuid", "ScriptName");
+export const Mode = {
+  None: 0,
+  0: "None"
+};
+cc._RF.pop();
+"#;
+    assert_eq_normalized(&render_pipeline(input), expected);
+}
+
+#[test]
+fn collapsed_enum_with_cc_rf_push_rejects_later_public_export_read() {
+    let input = wrap_cc_rf(&format!(
+        "{}\nobserve(exports.Mode);",
+        collapsed_numeric_mode_iife()
+    ));
+    assert_eq_normalized(&apply_resolved(&input), &input);
+}
+
+#[test]
+fn collapsed_enum_with_cc_rf_push_rejects_exports_escape() {
+    let input = wrap_cc_rf(&format!(
+        "const publicApi = exports;\n{}\nobserve(publicApi.Mode);",
+        collapsed_numeric_mode_iife()
+    ));
+    assert_eq_normalized(&apply_resolved(&input), &input);
+}
+
+#[test]
+fn collapsed_enum_with_cc_rf_push_rejects_module_exports_read() {
+    let input = wrap_cc_rf(&format!(
+        "{}\nobserve(module.exports.Mode);",
+        collapsed_numeric_mode_iife()
+    ));
+    assert_eq_normalized(&apply_resolved(&input), &input);
+}
+
+#[test]
+fn collapsed_enum_with_cc_rf_push_rejects_other_bare_module() {
+    let input = wrap_cc_rf(&format!(
+        "{}\nconst api = module;",
+        collapsed_numeric_mode_iife()
+    ));
+    assert_eq_normalized(&apply_resolved(&input), &input);
+}
+
+#[test]
+fn collapsed_enum_with_cc_rf_push_rejects_surface_method_call() {
+    let input = wrap_cc_rf(&format!(
+        "{}\nobserve(exports.hasOwnProperty(\"Mode\"));",
+        collapsed_numeric_mode_iife()
+    ));
+    assert_eq_normalized(&apply_resolved(&input), &input);
+}
+
+#[test]
+fn collapsed_enum_with_cc_rf_push_rejects_module_identity_call() {
+    let input = wrap_cc_rf(&format!(
+        "{}\nobserve(module.valueOf().exports.Mode);",
+        collapsed_numeric_mode_iife()
+    ));
+    assert_eq_normalized(&apply_resolved(&input), &input);
+}
+
+#[test]
+fn collapsed_enum_with_cc_rf_push_rejects_direct_eval_reading_exports() {
+    let input = wrap_cc_rf(&format!(
+        "{}\nobserve(eval(\"exports.Mode\"));",
+        collapsed_numeric_mode_iife()
+    ));
+    assert_eq_normalized(&apply_resolved(&input), &input);
+}
+
+#[test]
+fn collapsed_enum_with_cc_rf_push_rejects_direct_eval_mentioning_name() {
+    let input = wrap_cc_rf(&format!(
+        "{}\nobserve(eval(\"Mode\"));",
+        collapsed_numeric_mode_iife()
+    ));
+    assert_eq_normalized(&apply_resolved(&input), &input);
+}
+
+#[test]
+fn collapsed_enum_with_cc_rf_push_rejects_unknown_direct_eval() {
+    let input = wrap_cc_rf(&format!(
+        "{}\nobserve(eval(source));",
+        collapsed_numeric_mode_iife()
+    ));
+    assert_eq_normalized(&apply_resolved(&input), &input);
+}
+
+#[test]
+fn collapsed_enum_with_cc_rf_push_rejects_existing_local_name() {
+    let input = wrap_cc_rf(&format!("var Mode = 1;\n{}", collapsed_numeric_mode_iife()));
+    assert_eq_normalized(&apply_resolved(&input), &input);
+}
+
+#[test]
+fn collapsed_enum_with_cc_rf_push_rejects_import_collision() {
+    let input = format!(
+        "import {{ Mode }} from \"./dep.js\";\n{CC_RF_PUSH}\n{}\n{CC_RF_POP}\nuse(Mode);\n",
+        collapsed_numeric_mode_iife()
+    );
+    assert_eq_normalized(&apply_resolved(&input), &input);
+}
+
+#[test]
+fn collapsed_enum_with_cc_rf_push_rejects_reserved_name() {
+    let input = wrap_cc_rf(
+        r#"(function (e) {
+  e["Dev"] = "dev";
+})(exports.class || (exports.class = {}));"#,
+    );
+    assert_eq_normalized(&apply_resolved(&input), &input);
+}
+
+#[test]
+fn collapsed_enum_with_cc_rf_push_rejects_invalid_identifier_name() {
+    let input = wrap_cc_rf(
+        "(function (e) {\n  e[\"Dev\"] = \"dev\";\n})(exports[\"a\u{B2}\"] || (exports[\"a\u{B2}\"] = {}));",
+    );
+    assert_eq_normalized(&apply_resolved(&input), &input);
+}
+
+#[test]
+fn collapsed_enum_with_cc_rf_push_rejects_duplicate_exported_class_name() {
+    let input = wrap_cc_rf(&format!(
+        "export class Mode {{}}\n{}",
+        collapsed_numeric_mode_iife()
+    ));
+    assert_eq_normalized(&apply_resolved(&input), &input);
+}
+
+#[test]
+fn collapsed_enum_with_cc_rf_push_rejects_duplicate_esm_export() {
+    let input = wrap_cc_rf(&format!(
+        "var Existing;\nexport {{ Existing as Mode }};\n{}",
+        collapsed_numeric_mode_iife()
+    ));
+    assert_eq_normalized(&apply_resolved(&input), &input);
+}
+
+#[test]
+fn collapsed_enum_with_cc_rf_push_rejects_delete_exports_mode() {
+    let input = wrap_cc_rf(&format!(
+        "{}\ndelete exports.Mode;",
+        collapsed_numeric_mode_iife()
+    ));
+    assert_eq_normalized(&apply_resolved(&input), &input);
+}
+
+#[test]
+fn collapsed_enum_with_cc_rf_push_rejects_inner_class_despite_sibling_export() {
+    let input = wrap_cc_rf(
+        r#"export class Config {}
+(function (e) {
+  class Inner {}
+  e[e.Dev = 0] = "Dev";
+})(exports.Mode || (exports.Mode = {}));"#,
+    );
+    assert_eq_normalized(&apply_resolved(&input), &input);
+}
+
+#[test]
+fn collapsed_enum_with_cc_rf_push_rejects_effectful_values() {
+    let input = wrap_cc_rf(
+        r#"(function (e) {
+  e[e.Dev = observe()] = "Dev";
+})(exports.Mode || (exports.Mode = {}));"#,
+    );
+    assert_eq_normalized(&apply_resolved(&input), &input);
+}
+
+#[test]
+fn collapsed_enum_with_cc_rf_push_rejects_for_in_exports() {
+    let input = wrap_cc_rf(&format!(
+        "{}\nfor (const k in exports) {{\n  observe(k);\n}}",
+        collapsed_numeric_mode_iife()
+    ));
+    assert_eq_normalized(&apply_resolved(&input), &input);
+}
+
+#[test]
+fn collapsed_enum_with_cc_rf_push_rejects_for_in_module_exports() {
+    let input = wrap_cc_rf(&format!(
+        "{}\nfor (const k in module.exports) {{\n  observe(k);\n}}",
+        collapsed_numeric_mode_iife()
+    ));
+    assert_eq_normalized(&apply_resolved(&input), &input);
+}
+
+#[test]
+fn collapsed_enum_with_cc_rf_push_rejects_spread_exports() {
+    let input = wrap_cc_rf(&format!(
+        "{}\nobserve({{ ...exports }});",
+        collapsed_numeric_mode_iife()
+    ));
+    assert_eq_normalized(&apply_resolved(&input), &input);
+}
+
+#[test]
+fn collapsed_enum_with_cc_rf_push_rejects_destructured_exports() {
+    let input = wrap_cc_rf(&format!(
+        "{}\nconst {{ Mode }} = exports;",
+        collapsed_numeric_mode_iife()
+    ));
+    assert_eq_normalized(&apply_resolved(&input), &input);
+}
+
+#[test]
+fn collapsed_enum_with_cc_rf_push_rejects_rest_param_iife() {
+    let input = wrap_cc_rf(
+        r#"(function (t, ...rest) {
+  t[t.Dev = 0] = "Dev";
+})(exports.Mode || (exports.Mode = {}));"#,
+    );
+    assert_eq_normalized(&apply_resolved(&input), &input);
+}
+
 #[test]
 fn collapsed_exported_enum_rejects_later_public_export_read() {
     let input = r#"
