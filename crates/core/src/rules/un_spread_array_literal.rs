@@ -1,4 +1,5 @@
-use swc_core::ecma::ast::{CallExpr, Expr, ExprOrSpread, NewExpr};
+use swc_core::common::DUMMY_SP;
+use swc_core::ecma::ast::{CallExpr, Expr, ExprOrSpread, Lit, NewExpr, Number, UnaryExpr, UnaryOp};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 /// Inlines spread-over-array-literal in function call arguments.
@@ -47,14 +48,23 @@ fn inline_spread_array_args(args: &mut Vec<ExprOrSpread>) {
                 for elem in arr.elems {
                     match elem {
                         Some(eos) => args.push(eos),
-                        // Array holes become `undefined` when spread
+                        // Array holes yield the undefined value when spread.
+                        // Synthesize `void 0` instead of the identifier
+                        // `undefined`: printed output is name-based, so a
+                        // local binding named `undefined` could capture the
+                        // identifier. RemoveVoid has already run, so the
+                        // expression survives to output.
                         None => args.push(ExprOrSpread {
                             spread: None,
-                            expr: Box::new(Expr::Ident(swc_core::ecma::ast::Ident::new(
-                                "undefined".into(),
-                                swc_core::common::DUMMY_SP,
-                                Default::default(),
-                            ))),
+                            expr: Box::new(Expr::Unary(UnaryExpr {
+                                span: DUMMY_SP,
+                                op: UnaryOp::Void,
+                                arg: Box::new(Expr::Lit(Lit::Num(Number {
+                                    span: DUMMY_SP,
+                                    value: 0.0,
+                                    raw: None,
+                                }))),
+                            })),
                         }),
                     }
                 }

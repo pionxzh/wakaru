@@ -57,6 +57,32 @@ const x = fn(a, b, c, d);
 }
 
 #[test]
+fn holes_become_void_0_not_the_undefined_identifier() {
+    // Spreading an array hole yields the undefined value. Emit `void 0`
+    // rather than the identifier `undefined`, which a local binding named
+    // `undefined` could capture after printing. RemoveVoid has already run,
+    // so the synthesized expression survives to output.
+    let input = r#"
+const x = fn(...[a, , b]);
+"#;
+    let expected = r#"
+const x = fn(a, void 0, b);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn trailing_hole_becomes_void_0() {
+    let input = r#"
+const x = fn(...[a, , ]);
+"#;
+    let expected = r#"
+const x = fn(a, void 0);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn inlines_empty_spread_array() {
     let input = r#"
 const x = fn(a, ...[], b);
