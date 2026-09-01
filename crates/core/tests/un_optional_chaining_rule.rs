@@ -42,7 +42,8 @@ fn transforms_method_call_with_args() {
 
 #[test]
 fn standard_transforms_strict_babel_temp_variable_assignment_form() {
-    let input = r#"(_a = a) === null || _a === void 0 ? void 0 : _a.b"#;
+    let input = r#"var _a;
+(_a = a) === null || _a === void 0 ? void 0 : _a.b"#;
     let expected = r#"a?.b"#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
@@ -50,7 +51,8 @@ fn standard_transforms_strict_babel_temp_variable_assignment_form() {
 
 #[test]
 fn aggressive_transforms_strict_temp_variable_assignment_form() {
-    let input = r#"(_a = a) === null || _a === void 0 ? void 0 : _a.b"#;
+    let input = r#"var _a;
+(_a = a) === null || _a === void 0 ? void 0 : _a.b"#;
     let expected = r#"a?.b"#;
     let output = apply_with_level(input, RewriteLevel::Aggressive);
     assert_eq_normalized(&output, expected);
@@ -58,7 +60,8 @@ fn aggressive_transforms_strict_temp_variable_assignment_form() {
 
 #[test]
 fn standard_transforms_strict_babel_optional_call_form() {
-    let input = r#"(_a = obj.getRootNode) === null || _a === void 0 ? void 0 : _a.call(obj)"#;
+    let input = r#"var _a;
+(_a = obj.getRootNode) === null || _a === void 0 ? void 0 : _a.call(obj)"#;
     let expected = r#"obj.getRootNode?.()"#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
@@ -74,7 +77,8 @@ fn transforms_optional_member_call_pattern_into_optional_call() {
 
 #[test]
 fn standard_transforms_strict_babel_optional_call_with_memoized_context() {
-    let input = r#"(_obj_method = (_obj = getObj()).method) === null || _obj_method === void 0 ? void 0 : _obj_method.call(_obj, arg)"#;
+    let input = r#"var _obj, _obj_method;
+(_obj_method = (_obj = getObj()).method) === null || _obj_method === void 0 ? void 0 : _obj_method.call(_obj, arg)"#;
     let expected = r#"getObj().method?.(arg)"#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
@@ -82,7 +86,8 @@ fn standard_transforms_strict_babel_optional_call_with_memoized_context() {
 
 #[test]
 fn standard_transforms_strict_babel_optional_call_from_optional_member() {
-    let input = r#"(_a = te?.getRootNode) === null || _a === void 0 ? void 0 : _a.call(te)"#;
+    let input = r#"var _a;
+(_a = te?.getRootNode) === null || _a === void 0 ? void 0 : _a.call(te)"#;
     let expected = r#"te?.getRootNode?.()"#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
@@ -97,7 +102,8 @@ fn does_not_transform_optional_call_with_wrong_context() {
 
 #[test]
 fn standard_transforms_nested_babel_optional_call_from_lowered_optional_member() {
-    let input = r#"(_a = (_b = runtime?.plugin) === null || _b === void 0 ? void 0 : _b.createHook) === null || _a === void 0 ? void 0 : _a.call(_b, "payload")"#;
+    let input = r#"var _a, _b;
+(_a = (_b = runtime?.plugin) === null || _b === void 0 ? void 0 : _b.createHook) === null || _a === void 0 ? void 0 : _a.call(_b, "payload")"#;
     let expected = r#"runtime?.plugin?.createHook?.("payload")"#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
@@ -262,18 +268,69 @@ function f() {
 
 #[test]
 fn standard_transforms_nested_babel_optional_member_from_recovered_optional_chain() {
-    let input = r#"(_a = runtime?.plugin) === null || _a === void 0 ? void 0 : _a.version"#;
+    let input = r#"var _a;
+(_a = runtime?.plugin) === null || _a === void 0 ? void 0 : _a.version"#;
     let expected = r#"runtime?.plugin?.version"#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
 #[test]
-fn standard_transforms_generated_named_temp_member_access() {
+fn standard_preserves_undeclared_generated_looking_temp() {
+    // `T1` has no declaration anywhere: it is not a compiler temporary (Babel,
+    // SWC, and tsc always declare theirs). In module code the assignment
+    // throws ReferenceError; in sloppy code it writes a global. The name shape
+    // alone is an ordinary minified identifier, so `standard` keeps the
+    // assignment (Generated Temporaries hard rule in rewrite-assumptions.md).
     let input = r#"(T1 = source.adapter) === null || T1 === void 0 ? void 0 : T1.name"#;
-    let expected = r#"source.adapter?.name"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn standard_preserves_undeclared_minified_temp_in_ternary_and_loose_forms() {
+    let input = r#"
+function f(obj) {
+  return (e1 = obj) === null || e1 === void 0 ? void 0 : e1.x;
+}
+function g(obj) {
+  return (e1 = obj) == null ? undefined : e1.x;
+}
+function h(obj) {
+  return (_a = obj) === null || _a === void 0 ? void 0 : _a.call(obj);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn standard_transforms_declared_minified_temp() {
+    // The same shape with a resolver-proven, otherwise-unreferenced
+    // declaration is the compiler temporary the declared-temp path proves.
+    let input = r#"
+function f(obj) {
+  var e1;
+  return (e1 = obj) === null || e1 === void 0 ? void 0 : e1.x;
+}
+"#;
+    let expected = r#"
+function f(obj) {
+  return obj?.x;
+}
+"#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn aggressive_preserves_undeclared_generated_looking_temp() {
+    // No level accepts an undeclared name: deleting the assignment drops a
+    // ReferenceError (module code) or a global write (sloppy code). The
+    // Generated Temporaries hard rule has no aggressive exemption.
+    let input = r#"(T1 = source.adapter) === null || T1 === void 0 ? void 0 : T1.name"#;
+    let output = apply_with_level(input, RewriteLevel::Aggressive);
+    assert_eq_normalized(&output, input);
 }
 
 #[test]
@@ -971,7 +1028,8 @@ fn does_not_transform_loose_eq_assignment_member_access() {
 
 #[test]
 fn standard_transforms_loose_eq_babel_assignment_member_access() {
-    let input = r#"const x = (_a = e.ownerDocument) == null ? undefined : _a.defaultView"#;
+    let input = r#"var _a;
+const x = (_a = e.ownerDocument) == null ? undefined : _a.defaultView"#;
     let expected = r#"const x = e.ownerDocument?.defaultView"#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
@@ -999,7 +1057,8 @@ fn does_not_transform_loose_eq_assignment_method_call() {
 
 #[test]
 fn standard_transforms_loose_eq_babel_optional_call_form() {
-    let input = r#"const x = (_a = obj.getRootNode) == null ? undefined : _a.call(obj)"#;
+    let input = r#"var _a;
+const x = (_a = obj.getRootNode) == null ? undefined : _a.call(obj)"#;
     let expected = r#"const x = obj.getRootNode?.()"#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
@@ -1007,7 +1066,8 @@ fn standard_transforms_loose_eq_babel_optional_call_form() {
 
 #[test]
 fn aggressive_transforms_loose_eq_assignment_method_call() {
-    let input = r#"const x = (t = obj.getRootNode) == null ? undefined : t.call(obj)"#;
+    let input = r#"var t;
+const x = (t = obj.getRootNode) == null ? undefined : t.call(obj)"#;
     let expected = r#"const x = obj.getRootNode?.()"#;
     let output = apply_with_level(input, RewriteLevel::Aggressive);
     assert_eq_normalized(&output, expected);
@@ -1022,7 +1082,8 @@ fn does_not_transform_loose_neq_assignment_form() {
 
 #[test]
 fn aggressive_transforms_loose_neq_assignment_form() {
-    let input = r#"const x = (n = e.body) != null ? n.scrollWidth : undefined"#;
+    let input = r#"var n;
+const x = (n = e.body) != null ? n.scrollWidth : undefined"#;
     let expected = r#"const x = e.body?.scrollWidth"#;
     let output = apply_with_level(input, RewriteLevel::Aggressive);
     assert_eq_normalized(&output, expected);
@@ -1037,7 +1098,8 @@ fn does_not_transform_loose_eq_assignment_with_computed_access() {
 
 #[test]
 fn aggressive_transforms_loose_eq_assignment_with_computed_access() {
-    let input = r#"const x = (t = e[n.type]) == null ? undefined : t.duration"#;
+    let input = r#"var t;
+const x = (t = e[n.type]) == null ? undefined : t.duration"#;
     let expected = r#"const x = e[n.type]?.duration"#;
     let output = apply_with_level(input, RewriteLevel::Aggressive);
     assert_eq_normalized(&output, expected);
@@ -1077,19 +1139,31 @@ use(_a);
 }
 
 #[test]
-fn aggressive_rewrites_observable_temp_assignment_pattern() {
+fn aggressive_preserves_observed_temp_assignment_pattern() {
+    // `use(n)` reads the value the pattern assigned; removing the assignment
+    // would change it. The hard rule applies at aggressive too.
     let input = r#"
 let n = 0;
 const x = (n = obj) == null ? undefined : n.value;
 use(n);
 "#;
-    let expected = r#"
+    let output = apply_with_level(input, RewriteLevel::Aggressive);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn aggressive_preserves_initialized_temp_assignment_pattern() {
+    // Not the Babel `var n;` shape. A reference count cannot tell a writable
+    // `let` from a `const`, an import, a parameter observed through sloppy
+    // `arguments`, or a `let` still in its TDZ — each of which makes the
+    // deleted assignment observable. No producer emits this shape, so there
+    // is no aggressive shortcut for it.
+    let input = r#"
 let n = 0;
-const x = obj?.value;
-use(n);
+const x = (n = obj) == null ? undefined : n.value;
 "#;
     let output = apply_with_level(input, RewriteLevel::Aggressive);
-    assert_eq_normalized(&output, expected);
+    assert_eq_normalized(&output, input);
 }
 
 // --- logical AND boolean-context recovery ---

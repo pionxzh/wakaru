@@ -560,8 +560,9 @@ const fn = () => value;
 
 #[test]
 fn standard_keeps_babel_strict_optional_chaining_assignment_recovery() {
-    let input =
-        r#"const x = (_a = e.ownerDocument) === null || _a === void 0 ? void 0 : _a.defaultView;"#;
+    // Babel declares its temp; the declared-temp proof is what `standard` relies on.
+    let input = r#"var _a;
+const x = (_a = e.ownerDocument) === null || _a === void 0 ? void 0 : _a.defaultView;"#;
 
     let output = decompile(
         input,
@@ -580,11 +581,10 @@ fn standard_keeps_babel_strict_optional_chaining_assignment_recovery() {
 
 #[test]
 fn aggressive_enables_non_babel_strict_optional_chaining_assignment_recovery() {
-    // A declared temp with an initializer is not the Babel `var n;` shape, so
-    // standard leaves it; aggressive may drop the assignment because nothing
-    // outside the pattern observes `n`. An undeclared `n` is preserved at
-    // every level (its assignment would throw or write a global).
-    let input = r#"let n = 0;
+    // The temp is declared (`var n;`), as every producer emits; an undeclared
+    // `n` is preserved at every level (its assignment would throw or write a
+    // global), and so is a declared-with-initializer one.
+    let input = r#"var n;
 const x = (n = e.ownerDocument) === null || n === void 0 ? void 0 : n.defaultView;"#;
 
     let output = decompile(
@@ -607,8 +607,7 @@ const x = (n = e.ownerDocument) === null || n === void 0 ? void 0 : n.defaultVie
 
 #[test]
 fn aggressive_enables_loose_optional_chaining_assignment_recovery() {
-    // Declared with an initializer and otherwise unobserved: aggressive-only.
-    let input = r#"let n = 0;
+    let input = r#"var n;
 const x = (n = e.ownerDocument) == null ? undefined : n.defaultView;"#;
 
     let output = decompile(

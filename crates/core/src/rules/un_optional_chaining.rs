@@ -596,7 +596,6 @@ fn try_logical_and_optional_chain_prefix(
     if !chain_temps_are_safe(
         &temps,
         &terms[..=index],
-        policy.level,
         uninitialized_bindings,
         binding_references,
     ) {
@@ -779,7 +778,6 @@ fn try_flattened_optional_chain(
     try_flattened_strict_optional_chain(
         test,
         alt,
-        policy,
         uninitialized_bindings,
         binding_references,
         unresolved_mark,
@@ -809,7 +807,6 @@ fn try_flattened_optional_chain(
 fn try_flattened_strict_optional_chain(
     test: &Expr,
     alt: &Expr,
-    policy: RewritePolicy,
     uninitialized_bindings: &HashSet<BindingId>,
     binding_references: &HashMap<BindingId, usize>,
     unresolved_mark: Mark,
@@ -870,7 +867,6 @@ fn try_flattened_strict_optional_chain(
         &temps,
         test,
         alt,
-        policy.level,
         uninitialized_bindings,
         binding_references,
     ) {
@@ -939,7 +935,6 @@ fn try_flattened_mixed_loose_root_optional_chain(
         &temps,
         test,
         alt,
-        policy.level,
         uninitialized_bindings,
         binding_references,
     ) {
@@ -1006,7 +1001,6 @@ fn try_flattened_loose_optional_chain(
                     &temps,
                     test,
                     alt,
-                    policy.level,
                     uninitialized_bindings,
                     binding_references,
                 ) {
@@ -1039,7 +1033,6 @@ fn try_flattened_loose_optional_chain(
         &temps,
         test,
         alt,
-        policy.level,
         uninitialized_bindings,
         binding_references,
     ) {
@@ -1316,14 +1309,12 @@ fn flattened_chain_temps_are_safe(
     temps: &[Ident],
     test: &Expr,
     alt: &Expr,
-    level: RewriteLevel,
     uninitialized_bindings: &HashSet<BindingId>,
     binding_references: &HashMap<BindingId, usize>,
 ) -> bool {
     chain_temps_are_safe(
         temps,
         &[test, alt],
-        level,
         uninitialized_bindings,
         binding_references,
     )
@@ -1332,7 +1323,6 @@ fn flattened_chain_temps_are_safe(
 fn chain_temps_are_safe(
     temps: &[Ident],
     pattern_exprs: &[&Expr],
-    level: RewriteLevel,
     uninitialized_bindings: &HashSet<BindingId>,
     binding_references: &HashMap<BindingId, usize>,
 ) -> bool {
@@ -1343,12 +1333,6 @@ fn chain_temps_are_safe(
         let pattern_count = pattern_references.get(binding_id).copied().unwrap_or(0);
         let total_count = binding_references.get(binding_id).copied().unwrap_or(0);
         if uninitialized_bindings.contains(binding_id) && total_count == pattern_count + 1 {
-            return true;
-        }
-        if level >= RewriteLevel::Aggressive
-            && looks_generated_temp_sym(&binding_id.0)
-            && total_count == pattern_count
-        {
             return true;
         }
         false
@@ -1371,10 +1355,7 @@ fn temp_expr_is_safe_for_pattern(
         .unwrap_or(0);
     let total_references = binding_references.get(&binding_id).copied().unwrap_or(0);
 
-    if uninitialized_bindings.contains(&binding_id) && total_references == pattern_references + 1 {
-        return true;
-    }
-    looks_generated_temp_sym(sym) && total_references == pattern_references
+    uninitialized_bindings.contains(&binding_id) && total_references == pattern_references + 1
 }
 
 fn count_binding_references_in_exprs(exprs: &[&Expr]) -> HashMap<BindingId, usize> {
@@ -1416,18 +1397,8 @@ fn try_ternary_optional_chain(
         // Strict Babel lowering references the temp four times:
         // assignment target, null check left/right, and the final access/call.
         if is_standard_temp_expr(&checked, uninitialized_bindings, binding_references, 4)
-            || is_generated_temp_expr(&checked, binding_references, 3)
-            // Generated member/nested-chain temps skip the declaration-site proof, so we only
-            // require the three references inside the lowered chain itself.
-            || is_generated_member_temp_expr(&checked, &real_rhs, binding_references, 3)
-            || is_nested_optional_chain_temp_expr(&checked, &real_rhs, binding_references, 3)
             || (is_optional_call_on_checked(alt, &checked)
-                && (is_standard_temp_expr(
-                    &checked,
-                    uninitialized_bindings,
-                    binding_references,
-                    5,
-                ) || is_generated_member_temp_expr(&checked, &real_rhs, binding_references, 5)))
+                && is_standard_temp_expr(&checked, uninitialized_bindings, binding_references, 5))
         {
             if let Some(chain) =
                 make_optional_chain_replacing(&checked, &real_rhs, alt, unresolved_mark)
@@ -1435,12 +1406,11 @@ fn try_ternary_optional_chain(
                 return (policy.level >= RewriteLevel::Standard).then_some(chain);
             }
         }
-        if policy.level < RewriteLevel::Aggressive {
-            return None;
-        }
-        // Assignment form: `checked` is `tmp`, `real_rhs` is the original expr
-        // alt must use `tmp` as the object
-        return make_optional_chain_replacing(&checked, &real_rhs, alt, unresolved_mark);
+        // No further path: an undeclared, observed, or initialized temp cannot
+        // lose its assignment at any level (Generated Temporaries hard rule),
+        // and the declared `var _a;` shape is exactly what the proof above
+        // accepts.
+        return None;
     }
 
     // Plain form
@@ -1816,56 +1786,45 @@ fn try_loose_chain_with_assign(
         let recovered_real_rhs = recover_lowered_optional_chain_expr(real_rhs, unresolved_mark)
             .map(|recovered| recovered.chain);
         // Loose Babel lowering references the temp twice inside the chain:
-        // once in the null check and once in the final access/call.
-        if is_standard_temp_expr(
+        // once in the null check and once in the final access/call. Only a
+        // declared temp proven isolated to the pattern may lose its
+        // assignment — at every level (Generated Temporaries hard rule).
+        let temp_proven = is_standard_temp_expr(
             &tmp_ident_expr,
             uninitialized_bindings,
             binding_references,
             3,
-        ) || is_generated_temp_expr(&tmp_ident_expr, binding_references, 2)
-            || is_generated_member_temp_expr(&tmp_ident_expr, real_rhs, binding_references, 2)
-            || is_nested_optional_chain_temp_expr(&tmp_ident_expr, real_rhs, binding_references, 2)
-            || temp_expr_is_safe_for_pattern(
-                &tmp_ident_expr,
-                &[&checked, access],
-                uninitialized_bindings,
-                binding_references,
-            )
-        {
-            if let Some(chain) = make_optional_chain_replacing_preferred(
-                &tmp_ident_expr,
-                real_rhs,
-                recovered_real_rhs.as_ref(),
-                access,
-                unresolved_mark,
-            ) {
-                return Some(chain);
-            }
-        }
-        if policy.assumptions.pure_getters {
-            if let Some(recovered_access) =
-                recover_loose_repeated_optional_call_chain(access, unresolved_mark)
-            {
-                if let Some(chain) = make_optional_chain_replacing(
-                    &tmp_ident_expr,
-                    real_rhs,
-                    &recovered_access,
-                    unresolved_mark,
-                ) {
-                    return Some(chain);
-                }
-            }
-        }
-        if policy.level < RewriteLevel::Aggressive {
+        ) || temp_expr_is_safe_for_pattern(
+            &tmp_ident_expr,
+            &[&checked, access],
+            uninitialized_bindings,
+            binding_references,
+        );
+        if !temp_proven {
             return None;
         }
-        make_optional_chain_replacing_preferred(
+        if let Some(chain) = make_optional_chain_replacing_preferred(
             &tmp_ident_expr,
             real_rhs,
             recovered_real_rhs.as_ref(),
             access,
             unresolved_mark,
-        )
+        ) {
+            return Some(chain);
+        }
+        if policy.assumptions.pure_getters {
+            if let Some(recovered_access) =
+                recover_loose_repeated_optional_call_chain(access, unresolved_mark)
+            {
+                return make_optional_chain_replacing(
+                    &tmp_ident_expr,
+                    real_rhs,
+                    &recovered_access,
+                    unresolved_mark,
+                );
+            }
+        }
+        None
     } else {
         make_optional_chain(checked, access)
     }
@@ -2360,61 +2319,6 @@ fn is_standard_temp_expr(
     let binding_id = (sym.clone(), *ctxt);
     uninitialized_bindings.contains(&binding_id)
         && binding_references.get(&binding_id).copied() == Some(expected_references)
-}
-
-fn is_generated_temp_expr(
-    checked: &Expr,
-    binding_references: &HashMap<BindingId, usize>,
-    expected_references: usize,
-) -> bool {
-    let Expr::Ident(Ident { sym, ctxt, .. }) = strip_parens(checked) else {
-        return false;
-    };
-    let binding_id = (sym.clone(), *ctxt);
-    looks_generated_temp_sym(sym)
-        && binding_references.get(&binding_id).copied() == Some(expected_references)
-}
-
-fn is_nested_optional_chain_temp_expr(
-    checked: &Expr,
-    real_rhs: &Expr,
-    binding_references: &HashMap<BindingId, usize>,
-    expected_references: usize,
-) -> bool {
-    if !matches!(strip_parens(real_rhs), Expr::OptChain(_)) {
-        return false;
-    }
-    let Expr::Ident(Ident { sym, ctxt, .. }) = strip_parens(checked) else {
-        return false;
-    };
-    let binding_id = (sym.clone(), *ctxt);
-    looks_generated_temp_sym(sym)
-        && binding_references.get(&binding_id).copied() == Some(expected_references)
-}
-
-fn is_generated_member_temp_expr(
-    checked: &Expr,
-    real_rhs: &Expr,
-    binding_references: &HashMap<BindingId, usize>,
-    expected_references: usize,
-) -> bool {
-    if !matches!(strip_parens(real_rhs), Expr::Member(_)) {
-        return false;
-    }
-    let Expr::Ident(Ident { sym, ctxt, .. }) = strip_parens(checked) else {
-        return false;
-    };
-    let binding_id = (sym.clone(), *ctxt);
-    looks_generated_temp_sym(sym)
-        && binding_references.get(&binding_id).copied() == Some(expected_references)
-}
-
-fn is_babel_temp_sym(sym: &swc_core::atoms::Atom) -> bool {
-    sym.starts_with('_')
-}
-
-fn looks_generated_temp_sym(sym: &swc_core::atoms::Atom) -> bool {
-    is_babel_temp_sym(sym) || sym.chars().any(|ch| ch.is_ascii_digit())
 }
 
 #[derive(Default)]
