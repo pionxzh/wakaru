@@ -1108,3 +1108,62 @@ backup = _source$tags3[2];
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
+
+#[test]
+fn does_not_hoist_right_operand_assignment_behind_an_effectful_left_operand() {
+    // `check()` evaluates before `source.p` in the input; hoisting the
+    // assignment would read the member first. The hoist runs before any group
+    // is proven, so it may not reorder evaluation on its own.
+    let input = r#"
+let backup;
+const out = check() !== (backup = source.p) ? 0 : 1;
+use(out, backup);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn does_not_hoist_right_operand_assignment_behind_an_identifier_left_operand() {
+    // An identifier read has no effects, but a getter on the hoisted member
+    // could write it, so it is not literal-like either. That includes the
+    // unresolved `undefined`: inside a `with` body the getter can install an
+    // `undefined` property on the with-object that the read then resolves to.
+    let input = r#"
+let backup;
+const out = flag !== (backup = source.p) ? 0 : 1;
+const out2 = undefined !== (backup = source.q) ? undefined : backup;
+use(out, out2, backup);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn reconstructs_array_when_fused_assignment_follows_a_literal_left_operand() {
+    // With a literal on the left (`null != (backup = _e[2])`), evaluating the
+    // member first changes nothing, so the hoist still fires and the array
+    // pattern completes.
+    let input = r#"
+let source;
+let _d;
+let _e;
+let primary;
+let backup;
+let _f;
+source = input;
+_d = source.tags;
+primary = (_e = _d === undefined ? [] : _d)[0];
+_f = null != (backup = _e[2]) ? backup : fallback();
+use(primary, backup, _f);
+"#;
+    let expected = r#"
+let source;
+let primary;
+let backup;
+let _f;
+source = input;
+({ tags: [primary, , backup] = [] } = source);
+_f = null != backup ? backup : fallback();
+use(primary, backup, _f);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}

@@ -7,7 +7,7 @@ use swc_core::ecma::ast::{
     BinaryOp, BindingIdent, Bool, Callee, CondExpr, Decl, Expr, ExprOrSpread, ExprStmt, Function,
     FunctionBody, Ident, IdentName, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module,
     ModuleItem, Number, ObjectPat, ObjectPatProp, Param, Pat, PropName, RestPat, ReturnStmt,
-    SimpleAssignTarget, Stmt, VarDecl, VarDeclKind, VarDeclOrExpr, VarDeclarator,
+    SimpleAssignTarget, Stmt, UnaryOp, VarDecl, VarDeclKind, VarDeclOrExpr, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -584,6 +584,13 @@ fn same_binding_ident(left: &Ident, right: &Ident) -> bool {
 /// The embedded `backup = _e[2]` assignment is hoisted to its own preceding
 /// statement so the surrounding destructuring group can pick it up. Restricted
 /// to member-access right-hand sides so it only targets the extraction pattern.
+///
+/// The hoist runs before any group is proven, so it must not reorder
+/// evaluation on its own: the assignment is taken from the left operand
+/// (evaluated first, so hoisting it changes nothing), or from the right
+/// operand only when the left one is a literal-like value that no member read
+/// can affect. `check() !== (backup = source.p)` stays fused — hoisting would
+/// read `source.p` before `check()` runs.
 fn hoist_conditional_test_assignments(stmts: Vec<Stmt>) -> Vec<Stmt> {
     let mut result = Vec::with_capacity(stmts.len());
     for mut stmt in stmts {
@@ -609,7 +616,26 @@ fn take_hoistable_cond_test_assignment(stmt: &mut Stmt) -> Option<Stmt> {
     if let Some(hoisted) = take_member_assign_operand(&mut bin.left, &outer_target) {
         return Some(hoisted);
     }
+    if !is_literal_like_operand(&bin.left) {
+        return None;
+    }
     take_member_assign_operand(&mut bin.right, &outer_target)
+}
+
+/// A left operand whose evaluation neither has effects nor can be changed by
+/// the member read hoisted ahead of it: a literal or `void <literal>`. Every
+/// identifier read is excluded, including the unresolved `undefined`: the
+/// resolver only rules out lexical shadowing, and inside a `with` body a
+/// getter on the hoisted member can install an `undefined` property on the
+/// `with` object that the later read then resolves to.
+fn is_literal_like_operand(expr: &Expr) -> bool {
+    match strip_parens(expr) {
+        Expr::Lit(_) => true,
+        Expr::Unary(unary) if unary.op == UnaryOp::Void => {
+            matches!(strip_parens(&unary.arg), Expr::Lit(_))
+        }
+        _ => false,
+    }
 }
 
 /// Returns the statement's outer assignment target (if any) and a mutable
