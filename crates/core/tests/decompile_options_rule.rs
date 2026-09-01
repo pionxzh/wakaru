@@ -580,8 +580,12 @@ fn standard_keeps_babel_strict_optional_chaining_assignment_recovery() {
 
 #[test]
 fn aggressive_enables_non_babel_strict_optional_chaining_assignment_recovery() {
-    let input =
-        r#"const x = (n = e.ownerDocument) === null || n === void 0 ? void 0 : n.defaultView;"#;
+    // A declared temp with an initializer is not the Babel `var n;` shape, so
+    // standard leaves it; aggressive may drop the assignment because nothing
+    // outside the pattern observes `n`. An undeclared `n` is preserved at
+    // every level (its assignment would throw or write a global).
+    let input = r#"let n = 0;
+const x = (n = e.ownerDocument) === null || n === void 0 ? void 0 : n.defaultView;"#;
 
     let output = decompile(
         input,
@@ -594,13 +598,18 @@ fn aggressive_enables_non_babel_strict_optional_chaining_assignment_recovery() {
     .expect("decompile should succeed")
     .code;
 
-    let expected = r#"const x = e.ownerDocument?.defaultView;"#;
-    assert_eq_normalized(&output, expected);
+    assert!(
+        output.contains("const x = e.ownerDocument?.defaultView;")
+            && !output.contains("(n = e.ownerDocument)"),
+        "aggressive should drop the isolated declared temp's assignment:\n{output}"
+    );
 }
 
 #[test]
 fn aggressive_enables_loose_optional_chaining_assignment_recovery() {
-    let input = r#"const x = (n = e.ownerDocument) == null ? undefined : n.defaultView;"#;
+    // Declared with an initializer and otherwise unobserved: aggressive-only.
+    let input = r#"let n = 0;
+const x = (n = e.ownerDocument) == null ? undefined : n.defaultView;"#;
 
     let output = decompile(
         input,
@@ -613,8 +622,11 @@ fn aggressive_enables_loose_optional_chaining_assignment_recovery() {
     .expect("decompile should succeed")
     .code;
 
-    let expected = r#"const x = e.ownerDocument?.defaultView;"#;
-    assert_eq_normalized(&output, expected);
+    assert!(
+        output.contains("const x = e.ownerDocument?.defaultView;")
+            && !output.contains("n = e.ownerDocument"),
+        "aggressive should drop the isolated declared temp's assignment:\n{output}"
+    );
 }
 
 #[test]
@@ -1514,4 +1526,45 @@ fn standard_keeps_for_of_recovery() {
 
     let expected = r#"for (const x of items) { console.log(x); }"#;
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn strict_script_top_level_awaiter_reading_this_keeps_the_wrapper() {
+    // wakaru preserves the script goal for input without module syntax. A
+    // strict script's top-level `this` is the global object, which the helper
+    // passes to the generator; a receiver-less async IIFE would see
+    // `undefined`. There is no module-level exception in the awaiter gate.
+    let input = r#""use strict";
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+  return new (P || (P = Promise))(function (resolve, reject) {
+    function fulfilled(value) { step(generator.next(value)); }
+    function rejected(value) { step(generator["throw"](value)); }
+    function step(result) { result.done ? resolve(result.value) : Promise.resolve(result.value).then(fulfilled, rejected); }
+    step((generator = generator.apply(thisArg, _arguments || [])).next());
+  });
+};
+__awaiter(this, void 0, void 0, function* () {
+  yield this.flag;
+});
+"#;
+
+    let output = decompile(
+        input,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            level: RewriteLevel::Standard,
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code;
+
+    assert!(
+        output.contains("__awaiter(this") && output.contains("this.flag"),
+        "top-level this must not be rebound by an IIFE in a strict script:\n{output}"
+    );
+    assert!(
+        !output.contains("async function"),
+        "no async IIFE may be synthesized here:\n{output}"
+    );
 }

@@ -3,10 +3,11 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, Span, Spanned, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignOp, AssignTarget, AssignTargetPat, AwaitExpr, CallExpr, Callee,
-    Decl, Expr, ExprOrSpread, ExprStmt, Function, FunctionBody, Ident, IfStmt, MemberExpr, Module,
-    ObjectPat, ObjectPatProp, Param, Pat, Prop, PropName, ReturnStmt, SeqExpr, SimpleAssignTarget,
-    Stmt, SwitchCase, UnaryOp, VarDecl, VarDeclKind, VarDeclarator, YieldExpr,
+    ArrowExpr, AssignExpr, AssignOp, AssignTarget, AssignTargetPat, AutoAccessor, AwaitExpr,
+    CallExpr, Callee, ClassProp, Constructor, Decl, Expr, ExprOrSpread, ExprStmt, Function,
+    FunctionBody, Ident, IfStmt, MemberExpr, Module, ObjectPat, ObjectPatProp, Param, Pat,
+    PrivateProp, Prop, PropName, ReturnStmt, SeqExpr, SimpleAssignTarget, StaticBlock, Stmt,
+    SwitchCase, ThisExpr, UnaryOp, VarDecl, VarDeclKind, VarDeclarator, YieldExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -55,6 +56,7 @@ impl UnAsyncAwait {
         if let Some(module_facts) = module_facts {
             helpers.extend_cross_module(module, module_facts, current_filename);
         }
+        helpers.record_module_hazards(module);
         module.visit_mut_with(&mut UnAsyncAwaitWithHelpers { helpers: &helpers });
         module.visit_mut_with(&mut AwaiterIifeTransformer { helpers: &helpers });
         remove_unused_inline_async_helpers(module, local_helpers);
@@ -64,8 +66,9 @@ impl UnAsyncAwait {
 impl VisitMut for UnAsyncAwait {
     fn visit_mut_module(&mut self, module: &mut Module) {
         let local_helpers = LocalHelperContext::collect(module);
-        let helpers =
+        let mut helpers =
             AsyncHelperContext::from_local_helpers(&local_helpers, Some(self.unresolved_mark));
+        helpers.record_module_hazards(module);
         module.visit_mut_with(&mut UnAsyncAwaitWithHelpers { helpers: &helpers });
         module.visit_mut_with(&mut AwaiterIifeTransformer { helpers: &helpers });
         remove_unused_inline_async_helpers(module, &local_helpers);
@@ -106,6 +109,17 @@ struct AsyncHelperContext {
     generator_namespaces: HashMap<BindingKey, HashSet<String>>,
     values_helpers: HashSet<BindingKey>,
     unresolved_mark: Option<Mark>,
+    /// Bindings written anywhere in the module (assignments, updates,
+    /// destructuring and for-in/of targets). A thisArg alias that is written
+    /// after capture cannot be substituted for `this`: the wrapper reads it
+    /// once at call time, the spliced body would read it live.
+    written_bindings: HashSet<BindingKey>,
+    /// The module contains a `with` statement. Inside its body any identifier
+    /// may resolve to a property of the with-object at runtime, which the
+    /// resolver cannot see, so the identifier-shaped canonical frame slots
+    /// (`undefined`, `arguments`, `Promise`, a `this` alias) are not trusted
+    /// anywhere in the module. `this` and `void <literal>` are unaffected.
+    with_statement_present: bool,
 }
 
 impl AsyncHelperContext {
@@ -120,7 +134,15 @@ impl AsyncHelperContext {
             generator_namespaces: HashMap::new(),
             values_helpers: local_helpers.ts_helpers_of_kind(TsHelperKind::Values),
             unresolved_mark,
+            written_bindings: HashSet::new(),
+            with_statement_present: false,
         }
+    }
+
+    fn record_module_hazards(&mut self, module: &Module) {
+        self.written_bindings =
+            crate::analysis::binding_uses::BindingUseIndex::collect_direct_write_bindings(module);
+        self.with_statement_present = module_has_with_stmt(module);
     }
 
     fn extend_cross_module(
@@ -285,6 +307,8 @@ pub(crate) fn try_transform_ts_generator_body(
         generator_namespaces: HashMap::new(),
         values_helpers: HashSet::new(),
         unresolved_mark: None,
+        written_bindings: HashSet::new(),
+        with_statement_present: false,
     };
     try_transform_generator(body, &helpers, reserved_names)
 }
@@ -1928,7 +1952,8 @@ fn extract_awaiter_body(stmt: Stmt, helpers: &AsyncHelperContext) -> Option<Vec<
     if !awaiter_call_has_canonical_frame(&call, helpers) {
         return None;
     }
-    let this_arg = classify_awaiter_this_arg(&call.args[0].expr, helpers.unresolved_mark);
+    let this_arg = classify_awaiter_this_arg(&call.args[0].expr, helpers);
+    let arguments_slot = classify_awaiter_arguments_arg(&call.args[1].expr);
 
     let gen_fn_arg = *call.args.remove(3).expr;
     let Expr::Fn(fn_expr) = gen_fn_arg else {
@@ -1941,7 +1966,10 @@ fn extract_awaiter_body(stmt: Stmt, helpers: &AsyncHelperContext) -> Option<Vec<
     }
     let body = fn_expr.function.body?;
     let mut stmts = body.stmts;
-    apply_awaiter_this_arg(&mut stmts, this_arg)?;
+    if !arguments_slot_survives_splice(arguments_slot, &stmts, AwaiterSplice::EnclosingFunction) {
+        return None;
+    }
+    apply_awaiter_this_arg(&mut stmts, this_arg, AwaiterSplice::EnclosingFunction)?;
     Some(stmts)
 }
 
@@ -1957,7 +1985,7 @@ fn awaiter_call_has_canonical_frame(call: &CallExpr, helpers: &AsyncHelperContex
     if call.args.len() != 4 || call.args.iter().any(|arg| arg.spread.is_some()) {
         return false;
     }
-    is_awaiter_arguments_arg(&call.args[1].expr, helpers.unresolved_mark)
+    is_awaiter_arguments_arg(&call.args[1].expr, helpers)
         && is_awaiter_promise_arg(&call.args[2].expr, helpers)
 }
 
@@ -1976,16 +2004,89 @@ fn is_void_literal(expr: &Expr) -> bool {
 /// the time this rule runs. Any other identifier is not canonical — a real
 /// array here is applied to the generator's parameters, which unwrapping
 /// discards, and an undeclared name would even lose its ReferenceError.
-/// Without a resolver mark, `undefined` cannot be proven global, so it fails
-/// closed.
-fn is_awaiter_arguments_arg(expr: &Expr, unresolved_mark: Option<Mark>) -> bool {
+/// Both canonical names must carry the resolver mark: the implicit
+/// `arguments` object is unresolved, while a (sloppy-mode) binding of that
+/// name is a real array. Without a mark nothing is proven, so it fails closed.
+fn is_awaiter_arguments_arg(expr: &Expr, helpers: &AsyncHelperContext) -> bool {
     match strip_parens(expr) {
-        Expr::Ident(id) if id.sym.as_ref() == "arguments" => true,
-        Expr::Ident(id) if id.sym.as_ref() == "undefined" => {
-            unresolved_mark.is_some_and(|mark| id.ctxt.outer() == mark)
+        Expr::Ident(id) if matches!(id.sym.as_ref(), "arguments" | "undefined") => {
+            !helpers.with_statement_present
+                && helpers
+                    .unresolved_mark
+                    .is_some_and(|mark| id.ctxt.outer() == mark)
         }
         expr => is_void_literal(expr),
     }
+}
+
+/// Whether the module contains a `with` statement anywhere. Compilers never
+/// emit one, so a module-wide check is a cheap stand-in for a with-scope
+/// model: the identifier-shaped frame slots simply stop being canonical.
+fn module_has_with_stmt(module: &Module) -> bool {
+    struct Finder(bool);
+    impl Visit for Finder {
+        fn visit_with_stmt(&mut self, _: &swc_core::ecma::ast::WithStmt) {
+            self.0 = true;
+        }
+    }
+    let mut finder = Finder(false);
+    module.visit_with(&mut finder);
+    finder.0
+}
+
+/// Where the generator body ends up after unwrapping. The two destinations
+/// give the body different `this` and `arguments` bindings, so the canonical
+/// frame slots are compatible with different body contents in each.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AwaiterSplice {
+    /// `return __awaiter(...)` — the body is spliced into the enclosing
+    /// function, whose `this` and `arguments` it then shares.
+    EnclosingFunction,
+    /// Expression-position `__awaiter(...)` — the body becomes a new
+    /// `(async function () {...})()`, called with no receiver and no
+    /// arguments. No top-level exception: a module's `this` is `undefined`
+    /// like the IIFE's, but wakaru preserves the script goal, and a strict
+    /// script's top-level `this` is the global object.
+    NewFunction,
+}
+
+/// The already-validated arguments slot, classified by what the generator
+/// body observed as `arguments` before unwrapping.
+#[derive(Clone, Copy)]
+enum AwaiterArgumentsArg {
+    /// `arguments` — the enclosing function's arguments object.
+    EnclosingArguments,
+    /// `void 0` / `undefined` — the helper applies an empty list.
+    Empty,
+}
+
+fn classify_awaiter_arguments_arg(expr: &Expr) -> AwaiterArgumentsArg {
+    match strip_parens(expr) {
+        Expr::Ident(id) if id.sym.as_ref() == "arguments" => {
+            AwaiterArgumentsArg::EnclosingArguments
+        }
+        _ => AwaiterArgumentsArg::Empty,
+    }
+}
+
+/// A body that reads `arguments` keeps its meaning only when the destination
+/// binds `arguments` to the same value the helper applied: the enclosing
+/// function's arguments when splicing there, an empty list inside a fresh
+/// IIFE. tsc never emits the mismatching pairs; anything else preserves the
+/// wrapper.
+fn arguments_slot_survives_splice(
+    slot: AwaiterArgumentsArg,
+    stmts: &[Stmt],
+    splice: AwaiterSplice,
+) -> bool {
+    let compatible = matches!(
+        (slot, splice),
+        (
+            AwaiterArgumentsArg::EnclosingArguments,
+            AwaiterSplice::EnclosingFunction
+        ) | (AwaiterArgumentsArg::Empty, AwaiterSplice::NewFunction)
+    );
+    compatible || !stmts_read_lexical_arguments(stmts)
 }
 
 /// The Promise-constructor slot: only shapes that mean "use the native
@@ -1999,9 +2100,12 @@ fn is_awaiter_promise_arg(expr: &Expr, helpers: &AsyncHelperContext) -> bool {
         return true;
     }
     match strip_parens(expr) {
-        Expr::Ident(id) if matches!(id.sym.as_ref(), "undefined" | "Promise") => helpers
-            .unresolved_mark
-            .is_some_and(|mark| id.ctxt.outer() == mark),
+        Expr::Ident(id) if matches!(id.sym.as_ref(), "undefined" | "Promise") => {
+            !helpers.with_statement_present
+                && helpers
+                    .unresolved_mark
+                    .is_some_and(|mark| id.ctxt.outer() == mark)
+        }
         _ => false,
     }
 }
@@ -2010,9 +2114,11 @@ fn is_awaiter_promise_arg(expr: &Expr, helpers: &AsyncHelperContext) -> bool {
 /// wrapper splices the body into the enclosing function, which rebinds `this`,
 /// so anything other than the enclosing `this` must be accounted for.
 enum AwaiterThisArg {
-    /// `this` (same binding after splicing) or `void 0` / `undefined`
-    /// (tsc emits these only where `this` is not used meaningfully).
-    Compatible,
+    /// `this` — the enclosing function's receiver.
+    EnclosingThis,
+    /// `void 0` / `undefined` — the helper applies no receiver (`undefined`
+    /// in strict code, the global object in sloppy code).
+    Undefined,
     /// A captured alias such as tsc's `var _this = this`; body-level `this`
     /// references are rewritten to it.
     Alias(Ident),
@@ -2021,13 +2127,19 @@ enum AwaiterThisArg {
     Unsupported,
 }
 
-fn classify_awaiter_this_arg(expr: &Expr, unresolved_mark: Option<Mark>) -> AwaiterThisArg {
+fn classify_awaiter_this_arg(expr: &Expr, helpers: &AsyncHelperContext) -> AwaiterThisArg {
+    let unresolved_mark = helpers.unresolved_mark;
+    // Under a `with` statement no identifier is trustworthy (see
+    // `with_statement_present`); only `this` and `void <literal>` remain.
+    if helpers.with_statement_present && matches!(strip_parens(expr), Expr::Ident(_)) {
+        return AwaiterThisArg::Unsupported;
+    }
     match strip_parens(expr) {
-        Expr::This(_) => AwaiterThisArg::Compatible,
+        Expr::This(_) => AwaiterThisArg::EnclosingThis,
         // Only `void <literal>`: `void probe()` would delete the side effect.
         Expr::Unary(unary) if unary.op == UnaryOp::Void => {
             if matches!(strip_parens(&unary.arg), Expr::Lit(_)) {
-                AwaiterThisArg::Compatible
+                AwaiterThisArg::Undefined
             } else {
                 AwaiterThisArg::Unsupported
             }
@@ -2039,15 +2151,17 @@ fn classify_awaiter_this_arg(expr: &Expr, unresolved_mark: Option<Mark>) -> Awai
             if id.sym.as_ref() == "undefined"
                 && unresolved_mark.is_some_and(|mark| id.ctxt.outer() == mark) =>
         {
-            AwaiterThisArg::Compatible
+            AwaiterThisArg::Undefined
         }
         // The alias path is for resolver-proven local bindings (tsc's
         // `var _this = this`). An unresolved name would throw ReferenceError
         // when evaluated; if the body never reads `this`, unwrapping would
         // delete that throw entirely. Without a mark nothing is proven, so
-        // fail closed.
+        // fail closed. A written alias is rejected too: the helper reads it
+        // once at call time, while the spliced body would read it live.
         Expr::Ident(id) => {
-            if unresolved_mark.is_some_and(|mark| id.ctxt.outer() != mark) {
+            let proven_local = unresolved_mark.is_some_and(|mark| id.ctxt.outer() != mark);
+            if proven_local && !helpers.written_bindings.contains(&binding_id(id)) {
                 AwaiterThisArg::Alias(id.clone())
             } else {
                 AwaiterThisArg::Unsupported
@@ -2058,9 +2172,24 @@ fn classify_awaiter_this_arg(expr: &Expr, unresolved_mark: Option<Mark>) -> Awai
 }
 
 /// Returns `None` when the thisArg cannot be represented after unwrapping.
-fn apply_awaiter_this_arg(stmts: &mut [Stmt], this_arg: AwaiterThisArg) -> Option<()> {
+///
+/// `this` and `void 0` are each compatible with exactly one destination when
+/// the body reads `this`: splicing into the enclosing function keeps `this`
+/// for a `this` thisArg, while a fresh IIFE (called with no receiver)
+/// reproduces `void 0`. The mismatching pairs change what `this` evaluates
+/// to, so they preserve the wrapper unless the body never reads `this`.
+fn apply_awaiter_this_arg(
+    stmts: &mut [Stmt],
+    this_arg: AwaiterThisArg,
+    splice: AwaiterSplice,
+) -> Option<()> {
     match this_arg {
-        AwaiterThisArg::Compatible => Some(()),
+        AwaiterThisArg::EnclosingThis => (splice == AwaiterSplice::EnclosingFunction
+            || !stmts_read_lexical_this(stmts))
+        .then_some(()),
+        AwaiterThisArg::Undefined => {
+            (splice == AwaiterSplice::NewFunction || !stmts_read_lexical_this(stmts)).then_some(())
+        }
         AwaiterThisArg::Unsupported => None,
         AwaiterThisArg::Alias(alias) => {
             if stmts_declare_name(stmts, &alias.sym) {
@@ -2125,16 +2254,78 @@ impl VisitMut for ThisToAlias {
     }
 
     // `this` is lexical only through arrows; anything with its own `this`
-    // binding keeps its references untouched.
+    // binding keeps its references untouched. Inside a class that means
+    // method/constructor bodies, field initializers, and static blocks — but
+    // the `extends` expression and computed keys evaluate in the enclosing
+    // scope and are rewritten.
     fn visit_mut_function(&mut self, _func: &mut Function) {}
 
-    fn visit_mut_class(&mut self, _class: &mut swc_core::ecma::ast::Class) {}
+    fn visit_mut_constructor(&mut self, _ctor: &mut Constructor) {}
+
+    fn visit_mut_static_block(&mut self, _block: &mut StaticBlock) {}
+
+    fn visit_mut_class_prop(&mut self, prop: &mut ClassProp) {
+        prop.key.visit_mut_with(self);
+    }
+
+    fn visit_mut_private_prop(&mut self, _prop: &mut PrivateProp) {}
+
+    fn visit_mut_auto_accessor(&mut self, accessor: &mut AutoAccessor) {
+        accessor.key.visit_mut_with(self);
+    }
+}
+
+/// Whether the statements read the lexical `this` — through arrows, class
+/// `extends` expressions, and computed keys, but not inside anything with its
+/// own `this` binding.
+fn stmts_read_lexical_this(stmts: &[Stmt]) -> bool {
+    struct Finder(bool);
+    impl Visit for Finder {
+        fn visit_this_expr(&mut self, _: &ThisExpr) {
+            self.0 = true;
+        }
+        fn visit_function(&mut self, _: &Function) {}
+        fn visit_constructor(&mut self, _: &Constructor) {}
+        fn visit_static_block(&mut self, _: &StaticBlock) {}
+        fn visit_class_prop(&mut self, prop: &ClassProp) {
+            prop.key.visit_with(self);
+        }
+        fn visit_private_prop(&mut self, _: &PrivateProp) {}
+        fn visit_auto_accessor(&mut self, accessor: &AutoAccessor) {
+            accessor.key.visit_with(self);
+        }
+    }
+    let mut finder = Finder(false);
+    for stmt in stmts {
+        stmt.visit_with(&mut finder);
+    }
+    finder.0
+}
+
+/// Whether the statements read the lexical `arguments` object — through
+/// arrows, but not inside functions with their own `arguments` binding.
+fn stmts_read_lexical_arguments(stmts: &[Stmt]) -> bool {
+    struct Finder(bool);
+    impl Visit for Finder {
+        fn visit_ident(&mut self, id: &Ident) {
+            self.0 |= id.sym.as_ref() == "arguments";
+        }
+        fn visit_function(&mut self, _: &Function) {}
+        fn visit_constructor(&mut self, _: &Constructor) {}
+        fn visit_static_block(&mut self, _: &StaticBlock) {}
+    }
+    let mut finder = Finder(false);
+    for stmt in stmts {
+        stmt.visit_with(&mut finder);
+    }
+    finder.0
 }
 
 /// Transform a standalone `__awaiter(this, void0, void0, function*() {...})`
 /// expression into `(async function() {...})()`. Handles the IIFE pattern where
 /// `__awaiter(...)` appears at expression level rather than inside a function body.
 fn try_transform_awaiter_iife(expr: &mut Expr, helpers: &AsyncHelperContext) {
+    let splice = AwaiterSplice::NewFunction;
     let original_span = expr.span();
     let Expr::Call(call) = expr else { return };
     if !helpers.is_awaiter_call(call) || !awaiter_call_has_canonical_frame(call, helpers) {
@@ -2152,11 +2343,15 @@ fn try_transform_awaiter_iife(expr: &mut Expr, helpers: &AsyncHelperContext) {
     if contains_unresolved_generator_wrapper(body, helpers) {
         return;
     }
-    let this_arg = classify_awaiter_this_arg(&call.args[0].expr, helpers.unresolved_mark);
+    let this_arg = classify_awaiter_this_arg(&call.args[0].expr, helpers);
+    let arguments_slot = classify_awaiter_arguments_arg(&call.args[1].expr);
     let fn_span = fn_expr.function.span;
 
     let mut stmts = body.stmts.clone();
-    if apply_awaiter_this_arg(&mut stmts, this_arg).is_none() {
+    if !arguments_slot_survives_splice(arguments_slot, &stmts, splice) {
+        return;
+    }
+    if apply_awaiter_this_arg(&mut stmts, this_arg, splice).is_none() {
         return;
     }
     replace_yield_with_await(&mut stmts);

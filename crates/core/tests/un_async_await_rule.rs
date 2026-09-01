@@ -1929,9 +1929,12 @@ __awaiter(this, void 0, void 0, function* () {
 
 #[test]
 fn nested_arrow_generator_does_not_block_standalone_awaiter_iife() {
+    // The nested wrapper passes `void 0`, not `this`: a body that read the
+    // top-level `this` would preserve the outer wrapper for a different
+    // reason (see the module-level this test below).
     let input = r#"
 __awaiter(this, void 0, void 0, function* () {
-  const nested = () => __generator(this, function (_a) {
+  const nested = () => __generator(void 0, function (_a) {
     switch (_a.label) {
       case 0:
         return [9, work()];
@@ -1951,7 +1954,7 @@ __awaiter(this, void 0, void 0, function* () {
         "the standalone awaiter yield should become await, got:\n{output}"
     );
     assert!(
-        output.contains("=>__generator(this, function(_a)"),
+        output.contains("=>__generator(void 0, function(_a)"),
         "the unsupported nested arrow wrapper must remain intact, got:\n{output}"
     );
 }
@@ -2329,5 +2332,234 @@ function f(undefined) {
     assert!(
         !output.contains("await this.x"),
         "shadowed undefined must not become the enclosing this in the isolated rule:\n{output}"
+    );
+}
+
+// ── thisArg / arguments slots must survive the splice destination ──────────
+
+#[test]
+fn recovers_arguments_slot_when_the_spliced_body_reads_arguments() {
+    // tsc's canonical pair: the `arguments` slot with a body that reads
+    // `arguments`. Splicing into the enclosing function keeps the same
+    // arguments object.
+    let input = r#"
+var __awaiter = require("tslib").__awaiter;
+function h() {
+    return __awaiter(this, arguments, void 0, function* () {
+        yield arguments[0];
+    });
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("async function h()") && output.contains("await arguments[0]"),
+        "the canonical arguments pair must recover:\n{output}"
+    );
+}
+
+#[test]
+fn return_path_preserves_wrapper_when_empty_arguments_body_reads_arguments() {
+    // `void 0` applies an empty arguments list, but the spliced body would
+    // read the enclosing function's real arguments.
+    let input = r#"
+var __awaiter = require("tslib").__awaiter;
+function h() {
+    return __awaiter(this, void 0, void 0, function* () {
+        yield arguments[0];
+    });
+}
+"#;
+    let output = apply(input);
+    assert!(
+        !output.contains("async function h()"),
+        "an empty arguments slot must not splice a body that reads arguments:\n{output}"
+    );
+}
+
+#[test]
+fn return_path_preserves_wrapper_when_undefined_this_arg_body_reads_this() {
+    // `void 0` binds `this` to undefined inside the generator; splicing into
+    // `g` would rebind it to g's receiver.
+    let input = r#"
+var __awaiter = require("tslib").__awaiter;
+function g() {
+    return __awaiter(void 0, void 0, void 0, function* () {
+        yield this.x;
+    });
+}
+"#;
+    let output = apply(input);
+    assert!(
+        !output.contains("async function g()"),
+        "a void thisArg must not splice a body that reads this into the enclosing function:\n{output}"
+    );
+    // The expression-position fallback is exact here: a receiver-less IIFE
+    // also sees `this === undefined`.
+    assert!(
+        output.contains("async function()") && output.contains("await this.x"),
+        "the IIFE form reproduces the undefined receiver:\n{output}"
+    );
+}
+
+#[test]
+fn iife_path_preserves_wrapper_when_this_arg_body_reads_this_inside_a_function() {
+    // Inside `f`, `this` is f's receiver; a fresh IIFE would see undefined.
+    let input = r#"
+var __awaiter = require("tslib").__awaiter;
+function f() {
+    return [1].map(() => __awaiter(this, void 0, void 0, function* () {
+        yield this.x;
+    }));
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("__awaiter(this") && output.contains("yield this.x"),
+        "an IIFE would rebind this; the wrapper must stay:\n{output}"
+    );
+}
+
+#[test]
+fn iife_path_preserves_wrapper_when_top_level_this_arg_body_reads_this() {
+    // A module's top-level `this` is undefined like the IIFE's, but wakaru
+    // preserves the script goal and a strict script's top-level `this` is the
+    // global object — the receiver-less IIFE would change it. No depth-zero
+    // exception: fail closed.
+    let input = r#"
+var __awaiter = require("tslib").__awaiter;
+__awaiter(this, void 0, void 0, function* () {
+    yield this.x;
+});
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("__awaiter(this") && output.contains("yield this.x"),
+        "top-level this must not be rebound by an IIFE:\n{output}"
+    );
+}
+
+#[test]
+fn iife_path_preserves_wrapper_when_arguments_slot_body_reads_arguments() {
+    // The `arguments` slot forwards f's arguments; a fresh IIFE receives none.
+    let input = r#"
+var __awaiter = require("tslib").__awaiter;
+function f() {
+    run(__awaiter(this, arguments, void 0, function* () {
+        yield arguments[0];
+    }));
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("__awaiter(this, arguments"),
+        "an IIFE would empty arguments; the wrapper must stay:\n{output}"
+    );
+}
+
+#[test]
+fn preserves_wrapper_when_this_alias_is_written() {
+    // The helper reads `_this` once at call time; the spliced body would read
+    // it live, after the reassignment.
+    let input = r#"
+var __awaiter = require("tslib").__awaiter;
+function k() {
+    var _this = this;
+    _this = other;
+    return __awaiter(_this, void 0, void 0, function* () {
+        yield this.x;
+    });
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("__awaiter(_this") && !output.contains("async function k()"),
+        "a written alias must preserve the wrapper:\n{output}"
+    );
+}
+
+#[test]
+fn this_alias_rewrites_lexical_this_in_class_extends_and_computed_keys() {
+    // `extends` expressions and computed keys evaluate in the enclosing scope
+    // and must follow the alias; method bodies keep their own `this`.
+    let input = r#"
+var __awaiter = require("tslib").__awaiter;
+function f(ctx) {
+    return __awaiter(ctx, void 0, void 0, function* () {
+        const C = class extends this.Base {
+            [this.k]() { return this; }
+        };
+        yield C;
+    });
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("extends ctx.Base") && output.contains("[ctx.k]"),
+        "lexical this inside the class must follow the alias:\n{output}"
+    );
+    assert!(
+        output.contains("return this;"),
+        "the method body keeps its own this:\n{output}"
+    );
+}
+
+// ── with statements make identifier-shaped frame slots untrustworthy ────────
+
+#[test]
+fn with_statement_preserves_wrapper_with_identifier_this_arg() {
+    // Inside `with (box)`, `undefined` may resolve to `box.undefined` at
+    // runtime and carry a real receiver; the resolver cannot see that. The
+    // module-wide check refuses every identifier-shaped slot.
+    let input = r#"
+var __awaiter = require("tslib").__awaiter;
+var box = { undefined: ctx };
+with (box) {
+    __awaiter(undefined, void 0, void 0, function* () {
+        yield this.x;
+    });
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("__awaiter(undefined") && !output.contains("async function"),
+        "an identifier thisArg under a with statement must keep the wrapper:\n{output}"
+    );
+}
+
+#[test]
+fn with_statement_still_recovers_literal_frame_slots() {
+    // `this` and `void <literal>` are not name lookups, so a `with` elsewhere
+    // in the module does not affect them.
+    let input = r#"
+var __awaiter = require("tslib").__awaiter;
+with (box) { use(value); }
+function f() {
+    return __awaiter(this, void 0, void 0, function* () {
+        yield work();
+    });
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("async function f()") && output.contains("await work()"),
+        "literal-shaped slots stay canonical under a with statement:\n{output}"
+    );
+}
+
+#[test]
+fn with_statement_rejects_identifier_arguments_and_promise_slots() {
+    let input = r#"
+var __awaiter = require("tslib").__awaiter;
+with (box) { use(value); }
+function g() {
+    return __awaiter(this, arguments, Promise, function* () {
+        yield work();
+    });
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("__awaiter(this, arguments, Promise") && !output.contains("async function"),
+        "identifier arguments/Promise slots under a with statement must keep the wrapper:\n{output}"
     );
 }
