@@ -11,11 +11,11 @@ use wakaru_core::validate_output_modules;
 
 fn apply(input: &str) -> String {
     let input = format!("{TS_HELPERS}\n{input}");
-    render_rule(&input, |_| UnAsyncAwait)
+    render_rule(&input, UnAsyncAwait::new)
 }
 
 fn apply_without_helpers(input: &str) -> String {
-    render_rule(input, |_| UnAsyncAwait)
+    render_rule(input, UnAsyncAwait::new)
 }
 
 const TS_HELPERS: &str = r#"
@@ -2097,4 +2097,237 @@ async function save(items) {
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+// ── __awaiter canonical call frame ──────────────────────────────────────────
+
+#[test]
+fn awaiter_with_void_call_this_arg_is_preserved() {
+    // `void probe()` is not tsc output; unwrapping would delete the
+    // `probe()` evaluation.
+    let input = r#"
+function f() {
+  return __awaiter(void probe(), void 0, void 0, function* () {
+    yield work();
+  });
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("return __awaiter(void probe(), void 0, void 0, function*()"),
+        "a side-effecting thisArg must preserve the awaiter wrapper, got:\n{output}"
+    );
+    assert!(
+        !output.contains("async function f"),
+        "a side-effecting thisArg must not be recovered as async, got:\n{output}"
+    );
+}
+
+#[test]
+fn awaiter_with_extra_arguments_is_preserved() {
+    // tsc emits exactly four arguments; a fifth would be silently dropped.
+    let input = r#"
+function f() {
+  return __awaiter(this, void 0, void 0, function* () {
+    yield work();
+  }, extra());
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("extra()"),
+        "an extra argument must survive, got:\n{output}"
+    );
+    assert!(
+        !output.contains("async function f"),
+        "a five-argument call must not be recovered as async, got:\n{output}"
+    );
+}
+
+#[test]
+fn awaiter_with_custom_promise_constructor_is_preserved() {
+    // A custom Promise slot means the returned promise's identity differs
+    // from a native `async` function's; the wrapper must stay.
+    let input = r#"
+function f() {
+  return __awaiter(this, void 0, CustomPromise, function* () {
+    yield work();
+  });
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("return __awaiter(this, void 0, CustomPromise, function*()"),
+        "a custom Promise constructor must preserve the awaiter wrapper, got:\n{output}"
+    );
+    assert!(
+        !output.contains("async function f"),
+        "a custom Promise constructor must not be recovered as async, got:\n{output}"
+    );
+}
+
+#[test]
+fn awaiter_with_side_effecting_arguments_slot_is_preserved() {
+    let input = r#"
+function f() {
+  return __awaiter(this, probe(), void 0, function* () {
+    yield work();
+  });
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("probe()"),
+        "a side-effecting arguments slot must survive, got:\n{output}"
+    );
+    assert!(
+        !output.contains("async function f"),
+        "a side-effecting arguments slot must not be recovered as async, got:\n{output}"
+    );
+}
+
+#[test]
+fn awaiter_with_canonical_void_frame_is_recovered() {
+    let input = r#"
+function f() {
+  return __awaiter(this, void 0, void 0, function* () {
+    yield work();
+  });
+}
+"#;
+    let expected = r#"
+async function f() {
+  await work();
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn awaiter_with_global_promise_frame_is_recovered() {
+    let input = r#"
+function f() {
+  return __awaiter(this, void 0, Promise, function* () {
+    yield work();
+  });
+}
+"#;
+    let expected = r#"
+async function f() {
+  await work();
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn preserves_awaiter_with_arbitrary_arguments_identifier() {
+    // A non-`arguments` identifier in the arguments slot applies real values
+    // to the generator; unwrapping would discard them (and an undeclared name
+    // would even lose its ReferenceError).
+    let input = r#"
+var __awaiter = require("tslib").__awaiter;
+function f() {
+    return __awaiter(this, supplied, void 0, function* (x) {
+        yield x;
+    });
+}
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("__awaiter") && output.contains("supplied"),
+        "non-canonical arguments slot must preserve the wrapper:\n{output}"
+    );
+}
+
+#[test]
+fn preserves_awaiter_with_parameterized_generator() {
+    let input = r#"
+var __awaiter = require("tslib").__awaiter;
+function f() {
+    return __awaiter(this, arguments, void 0, function* (x) {
+        yield x;
+    });
+}
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("__awaiter"),
+        "parameterized generator must preserve the wrapper:\n{output}"
+    );
+}
+
+#[test]
+fn shadowed_undefined_this_arg_is_treated_as_an_alias() {
+    // A local binding named `undefined` carries a value; splicing the body
+    // must not silently rebind `this` to the enclosing one.
+    let input = r#"
+var __awaiter = require("tslib").__awaiter;
+function f(undefined) {
+    return __awaiter(undefined, void 0, void 0, function* () {
+        yield this.x;
+    });
+}
+"#;
+    let output = render(input);
+    assert!(
+        !output.contains("await this.x"),
+        "shadowed undefined must not become the enclosing this:\n{output}"
+    );
+}
+
+#[test]
+fn preserves_awaiter_with_unresolved_this_alias() {
+    // An undeclared thisArg identifier throws ReferenceError when evaluated;
+    // if the generator body never reads `this`, unwrapping would delete that
+    // throw entirely. Only resolver-proven local aliases take the alias path.
+    let input = r#"
+var __awaiter = require("tslib").__awaiter;
+function f() {
+    return __awaiter(missing, void 0, void 0, function* () {
+        yield work();
+    });
+}
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("__awaiter") && output.contains("missing"),
+        "unresolved thisArg must preserve the wrapper:\n{output}"
+    );
+}
+
+#[test]
+fn isolated_rule_preserves_unresolved_this_alias() {
+    // The standalone rule now carries the resolver mark, so the isolated
+    // path applies the same fail-closed alias proof as the pipeline.
+    let input = r#"
+var __awaiter = require("tslib").__awaiter;
+function f() {
+    return __awaiter(missing, void 0, void 0, function* () {
+        yield work();
+    });
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("__awaiter") && output.contains("missing"),
+        "unresolved thisArg must preserve the wrapper in the isolated rule:\n{output}"
+    );
+}
+
+#[test]
+fn isolated_rule_treats_shadowed_undefined_as_an_alias() {
+    let input = r#"
+var __awaiter = require("tslib").__awaiter;
+function f(undefined) {
+    return __awaiter(undefined, void 0, void 0, function* () {
+        yield this.x;
+    });
+}
+"#;
+    let output = apply(input);
+    assert!(
+        !output.contains("await this.x"),
+        "shadowed undefined must not become the enclosing this in the isolated rule:\n{output}"
+    );
 }

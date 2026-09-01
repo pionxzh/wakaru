@@ -6,7 +6,7 @@ use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignTarget, AssignTargetPat, AwaitExpr, CallExpr, Callee,
     Decl, Expr, ExprOrSpread, ExprStmt, Function, FunctionBody, Ident, IfStmt, MemberExpr, Module,
     ObjectPat, ObjectPatProp, Param, Pat, Prop, PropName, ReturnStmt, SeqExpr, SimpleAssignTarget,
-    Stmt, SwitchCase, VarDecl, VarDeclKind, VarDeclarator, YieldExpr,
+    Stmt, SwitchCase, UnaryOp, VarDecl, VarDeclKind, VarDeclarator, YieldExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -28,7 +28,19 @@ use crate::facts::{ModuleFactsMap, TypeScriptHelperKind};
 use crate::js_names::is_likely_generated_alias;
 use crate::utils::paren::strip_parens;
 
-pub struct UnAsyncAwait;
+pub struct UnAsyncAwait {
+    unresolved_mark: Mark,
+}
+
+impl UnAsyncAwait {
+    /// The resolver mark is required: the canonical-frame checks distinguish
+    /// genuine globals (`undefined`, `Promise`, `arguments`) and
+    /// resolver-proven local aliases from unresolved names, and without the
+    /// mark those checks fail closed.
+    pub fn new(unresolved_mark: Mark) -> Self {
+        Self { unresolved_mark }
+    }
+}
 
 impl UnAsyncAwait {
     pub(crate) fn run_with_helpers(
@@ -52,7 +64,8 @@ impl UnAsyncAwait {
 impl VisitMut for UnAsyncAwait {
     fn visit_mut_module(&mut self, module: &mut Module) {
         let local_helpers = LocalHelperContext::collect(module);
-        let helpers = AsyncHelperContext::from_local_helpers(&local_helpers, None);
+        let helpers =
+            AsyncHelperContext::from_local_helpers(&local_helpers, Some(self.unresolved_mark));
         module.visit_mut_with(&mut UnAsyncAwaitWithHelpers { helpers: &helpers });
         module.visit_mut_with(&mut AwaiterIifeTransformer { helpers: &helpers });
         remove_unused_inline_async_helpers(module, &local_helpers);
@@ -1912,19 +1925,85 @@ fn extract_awaiter_body(stmt: Stmt, helpers: &AsyncHelperContext) -> Option<Vec<
     if !helpers.is_awaiter_call(&call) {
         return None;
     }
-    if call.args.len() < 4 {
+    if !awaiter_call_has_canonical_frame(&call, helpers) {
         return None;
     }
-    let this_arg = classify_awaiter_this_arg(&call.args[0].expr);
+    let this_arg = classify_awaiter_this_arg(&call.args[0].expr, helpers.unresolved_mark);
 
     let gen_fn_arg = *call.args.remove(3).expr;
     let Expr::Fn(fn_expr) = gen_fn_arg else {
         return None;
     };
+    // tsc's generator is always parameterless; a parameterized generator
+    // receives the applied arguments array, which unwrapping discards.
+    if !fn_expr.function.params.is_empty() {
+        return None;
+    }
     let body = fn_expr.function.body?;
     let mut stmts = body.stmts;
     apply_awaiter_this_arg(&mut stmts, this_arg)?;
     Some(stmts)
+}
+
+/// Canonical tsc `__awaiter` call frame: exactly four arguments
+/// (`thisArg, _arguments, PromiseCtor, generator`), no spread, and
+/// side-effect-free operands in the dropped slots. Anything else is not
+/// recognized tsc output: an extra argument would be silently discarded, a
+/// side-effecting operand would be deleted, and a custom Promise constructor
+/// in the third slot would change the returned promise's identity under a
+/// native-`async` rewrite. Mirrors the esbuild `__async` frame gate in
+/// `un_regenerator.rs`.
+fn awaiter_call_has_canonical_frame(call: &CallExpr, helpers: &AsyncHelperContext) -> bool {
+    if call.args.len() != 4 || call.args.iter().any(|arg| arg.spread.is_some()) {
+        return false;
+    }
+    is_awaiter_arguments_arg(&call.args[1].expr, helpers.unresolved_mark)
+        && is_awaiter_promise_arg(&call.args[2].expr, helpers)
+}
+
+/// `void <literal>` — the only `void` shape tsc emits in the awaiter frame.
+fn is_void_literal(expr: &Expr) -> bool {
+    match strip_parens(expr) {
+        Expr::Unary(unary) if unary.op == UnaryOp::Void => {
+            matches!(strip_parens(&unary.arg), Expr::Lit(_))
+        }
+        _ => false,
+    }
+}
+
+/// The arguments slot: tsc emits exactly `arguments` or `void 0`, and
+/// RemoveVoid has already rewritten `void 0` to the unresolved `undefined` by
+/// the time this rule runs. Any other identifier is not canonical — a real
+/// array here is applied to the generator's parameters, which unwrapping
+/// discards, and an undeclared name would even lose its ReferenceError.
+/// Without a resolver mark, `undefined` cannot be proven global, so it fails
+/// closed.
+fn is_awaiter_arguments_arg(expr: &Expr, unresolved_mark: Option<Mark>) -> bool {
+    match strip_parens(expr) {
+        Expr::Ident(id) if id.sym.as_ref() == "arguments" => true,
+        Expr::Ident(id) if id.sym.as_ref() == "undefined" => {
+            unresolved_mark.is_some_and(|mark| id.ctxt.outer() == mark)
+        }
+        expr => is_void_literal(expr),
+    }
+}
+
+/// The Promise-constructor slot: only shapes that mean "use the native
+/// Promise" are accepted — `void <literal>`, the unresolved global
+/// `undefined`, or the unresolved global `Promise`. Anything else is a custom
+/// constructor whose promise identity a native-`async` rewrite would change.
+/// Without a resolver mark the names cannot be proven global, so they fail
+/// closed; both entry points supply the mark.
+fn is_awaiter_promise_arg(expr: &Expr, helpers: &AsyncHelperContext) -> bool {
+    if is_void_literal(expr) {
+        return true;
+    }
+    match strip_parens(expr) {
+        Expr::Ident(id) if matches!(id.sym.as_ref(), "undefined" | "Promise") => helpers
+            .unresolved_mark
+            .is_some_and(|mark| id.ctxt.outer() == mark),
+        _ => false,
+    }
 }
 
 /// The state machine's `this` is the awaiter's first argument. Unwrapping the
@@ -1942,14 +2021,38 @@ enum AwaiterThisArg {
     Unsupported,
 }
 
-fn classify_awaiter_this_arg(expr: &Expr) -> AwaiterThisArg {
+fn classify_awaiter_this_arg(expr: &Expr, unresolved_mark: Option<Mark>) -> AwaiterThisArg {
     match strip_parens(expr) {
         Expr::This(_) => AwaiterThisArg::Compatible,
-        Expr::Unary(unary) if unary.op == swc_core::ecma::ast::UnaryOp::Void => {
+        // Only `void <literal>`: `void probe()` would delete the side effect.
+        Expr::Unary(unary) if unary.op == UnaryOp::Void => {
+            if matches!(strip_parens(&unary.arg), Expr::Lit(_)) {
+                AwaiterThisArg::Compatible
+            } else {
+                AwaiterThisArg::Unsupported
+            }
+        }
+        // Only the genuine global `undefined` means "no thisArg"; a local
+        // binding named `undefined` carries a value and is treated as an
+        // ordinary alias below. Without a mark, fail closed.
+        Expr::Ident(id)
+            if id.sym.as_ref() == "undefined"
+                && unresolved_mark.is_some_and(|mark| id.ctxt.outer() == mark) =>
+        {
             AwaiterThisArg::Compatible
         }
-        Expr::Ident(id) if id.sym.as_ref() == "undefined" => AwaiterThisArg::Compatible,
-        Expr::Ident(id) => AwaiterThisArg::Alias(id.clone()),
+        // The alias path is for resolver-proven local bindings (tsc's
+        // `var _this = this`). An unresolved name would throw ReferenceError
+        // when evaluated; if the body never reads `this`, unwrapping would
+        // delete that throw entirely. Without a mark nothing is proven, so
+        // fail closed.
+        Expr::Ident(id) => {
+            if unresolved_mark.is_some_and(|mark| id.ctxt.outer() != mark) {
+                AwaiterThisArg::Alias(id.clone())
+            } else {
+                AwaiterThisArg::Unsupported
+            }
+        }
         _ => AwaiterThisArg::Unsupported,
     }
 }
@@ -2034,7 +2137,7 @@ impl VisitMut for ThisToAlias {
 fn try_transform_awaiter_iife(expr: &mut Expr, helpers: &AsyncHelperContext) {
     let original_span = expr.span();
     let Expr::Call(call) = expr else { return };
-    if !helpers.is_awaiter_call(call) || call.args.len() < 4 {
+    if !helpers.is_awaiter_call(call) || !awaiter_call_has_canonical_frame(call, helpers) {
         return;
     }
     let Expr::Fn(fn_expr) = call.args[3].expr.as_ref() else {
@@ -2049,7 +2152,7 @@ fn try_transform_awaiter_iife(expr: &mut Expr, helpers: &AsyncHelperContext) {
     if contains_unresolved_generator_wrapper(body, helpers) {
         return;
     }
-    let this_arg = classify_awaiter_this_arg(&call.args[0].expr);
+    let this_arg = classify_awaiter_this_arg(&call.args[0].expr, helpers.unresolved_mark);
     let fn_span = fn_expr.function.span;
 
     let mut stmts = body.stmts.clone();
