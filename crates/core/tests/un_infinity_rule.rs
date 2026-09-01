@@ -4,7 +4,7 @@ use common::{assert_eq_normalized, render_rule};
 use wakaru_core::rules::UnInfinity;
 
 fn apply(input: &str) -> String {
-    render_rule(input, |_| UnInfinity)
+    render_rule(input, UnInfinity::new)
 }
 
 #[test]

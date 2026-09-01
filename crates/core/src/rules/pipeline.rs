@@ -182,7 +182,7 @@ fn run_remove_void(module: &mut Module, ctx: RuleRunContext<'_>) {
 
 runner!(run_unminify_booleans, UnminifyBooleans);
 runner!(run_un_double_negation, UnDoubleNegation);
-runner!(run_un_infinity, UnInfinity);
+runner!(run_un_infinity, |ctx| UnInfinity::new(ctx.unresolved_mark));
 runner!(run_un_indirect_call, |ctx| UnIndirectCall::new(
     ctx.rewrite_level
 ));
