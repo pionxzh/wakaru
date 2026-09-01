@@ -1830,6 +1830,174 @@ console.log(state, flags);
     );
 }
 
+/// A `for ... in` / `for ... of` assignment head writes its existing binding
+/// even though SWC represents that target as a pattern rather than an
+/// `AssignExpr`. Those writers must follow state owned by a standalone factory
+/// just like ordinary assignment statements.
+#[test]
+fn standalone_factory_owns_for_head_state_writers() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var first = y(() => { firstValue = 1; });
+var second = y(() => { secondValue = 2; });
+var third = y(() => { thirdValue = 3; });
+var fourth = y(() => { fourthValue = 4; });
+var state;
+for (state of globalThis.values) consume(state);
+var key;
+for (key in globalThis.values) consume(key);
+function readState() { return state; }
+function writeState(value) { state = value; }
+function readKey() { return key; }
+function writeKey(value) { key = value; }
+var init_config = y(() => { use(readState, writeState, readKey, writeKey); });
+init_config();
+console.log(state, key);
+"#;
+
+    let raw_pairs = expect_unpack_raw(bundle);
+    let owner_code = &raw_pairs
+        .iter()
+        .find(|(_, code)| code.contains("export function init_config"))
+        .expect("config factory should own its mutable support closure")
+        .1;
+    assert!(
+        owner_code.contains("var state")
+            && owner_code.contains("for (state of globalThis.values)")
+            && owner_code.contains("var key")
+            && owner_code.contains("key in globalThis.values"),
+        "for-head writers must move with their declarations:\n{owner_code}"
+    );
+
+    let entry_code = &raw_pairs
+        .iter()
+        .find(|(name, _)| name == "entry.js")
+        .expect("entry module should exist")
+        .1;
+    assert!(
+        !entry_code.contains("state of globalThis.values")
+            && !entry_code.contains("key in globalThis.values"),
+        "entry must not retain a writer of relocated state:\n{entry_code}"
+    );
+    assert_eq!(
+        validate_output_modules(&raw_pairs),
+        vec![],
+        "relocating for-head writers must produce valid ESM"
+    );
+}
+
+/// Demotion closure must use the references of top-level writer statements
+/// already scheduled for relocation. Otherwise a writer can move into group A
+/// while its dependency's group B is demoted back to entry, leaving an
+/// unresolved binding in A.
+#[test]
+fn demotion_cascades_through_relocated_writer_dependencies() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var first = y(() => { firstValue = 1; });
+var second = y(() => { secondValue = 2; });
+var third = y(() => { thirdValue = 3; });
+var fourth = y(() => { fourthValue = 4; });
+var flags = readFlags();
+flags.checked = true;
+var stateB;
+stateB = flags.enabled ? getComputedStyle(document.documentElement) : undefined;
+function readB() { return stateB; }
+function writeB(value) { stateB = value; }
+var init_b = y(() => { use(readB, writeB); });
+var stateA;
+if (globalThis.ready) stateA = stateB;
+function readA() { return stateA; }
+function writeA(value) { stateA = value; }
+var init_a = y(() => { use(readA, writeA); });
+init_a();
+init_b();
+console.log(stateA, stateB, flags);
+"#;
+
+    let raw_pairs = expect_unpack_raw(bundle);
+    let entry_code = &raw_pairs
+        .iter()
+        .find(|(name, _)| name == "entry.js")
+        .expect("entry module should exist")
+        .1;
+    assert!(
+        entry_code.contains("var stateA")
+            && entry_code.contains("var stateB")
+            && entry_code.contains("stateA = stateB")
+            && entry_code.contains("function init_a")
+            && entry_code.contains("function init_b"),
+        "both dependent ownership groups must demote together:\n{entry_code}"
+    );
+    assert!(
+        !raw_pairs.iter().any(|(name, code)| {
+            name != "entry.js" && (code.contains("init_a") || code.contains("init_b"))
+        }),
+        "no standalone module may retain either demoted group: {:?}",
+        raw_pairs.iter().map(|(name, _)| name).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        validate_output_modules(&raw_pairs),
+        vec![],
+        "cascading demotion must not leave an unresolved cross-group reference"
+    );
+}
+
+/// The support declarations adopted by a standalone group participate in its
+/// emitted dependency surface too. Their references must therefore drive the
+/// same demotion closure as factory bodies and relocated writer statements.
+#[test]
+fn demotion_cascades_through_owned_support_dependencies() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var first = y(() => { firstValue = 1; });
+var second = y(() => { secondValue = 2; });
+var third = y(() => { thirdValue = 3; });
+var fourth = y(() => { fourthValue = 4; });
+var flags = readFlags();
+flags.checked = true;
+var stateB;
+stateB = flags.enabled ? getComputedStyle(document.documentElement) : undefined;
+function readB() { return stateB; }
+function writeB(value) { stateB = value; }
+var init_b = y(() => { use(readB, writeB); });
+var stateA;
+function readA() { return stateA === stateB; }
+function writeA(value) { stateA = value; }
+var init_a = y(() => { use(readA, writeA); });
+init_a();
+init_b();
+console.log(stateA, stateB, flags);
+"#;
+
+    let raw_pairs = expect_unpack_raw(bundle);
+    let entry_code = &raw_pairs
+        .iter()
+        .find(|(name, _)| name == "entry.js")
+        .expect("entry module should exist")
+        .1;
+    assert!(
+        entry_code.contains("var stateA")
+            && entry_code.contains("var stateB")
+            && entry_code.contains("stateA === stateB")
+            && entry_code.contains("function init_a")
+            && entry_code.contains("function init_b"),
+        "a support-declaration dependency must demote both groups:\n{entry_code}"
+    );
+    assert!(
+        !raw_pairs.iter().any(|(name, code)| {
+            name != "entry.js" && (code.contains("init_a") || code.contains("init_b"))
+        }),
+        "no standalone module may retain either demoted group: {:?}",
+        raw_pairs.iter().map(|(name, _)| name).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        validate_output_modules(&raw_pairs),
+        vec![],
+        "support-dependency demotion must not leave an unresolved reference"
+    );
+}
+
 /// A lazy factory claimed by a scope module relocates its support-declaration
 /// closure — including passive state declarations that the adoption pass
 /// cannot claim (they are not function-shaped). The entry copy of such a

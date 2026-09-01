@@ -5,10 +5,10 @@ use swc_core::common::{sync::Lrc, Mark, SourceMap, Span, Spanned, SyntaxContext,
 use swc_core::ecma::ast::{
     ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, AssignTargetPat,
     BindingIdent, Bool, CallExpr, Callee, ClassDecl, Decl, ExportDecl, ExportSpecifier, Expr,
-    ExprOrSpread, ExprStmt, FnDecl, ForInStmt, Function, FunctionBody, Ident, IdentName, IfStmt,
-    ImportDecl, ImportSpecifier, KeyValueProp, Lit, MemberExpr, MemberProp, Module, ModuleDecl,
-    ModuleExportName, ModuleItem, ObjectLit, ObjectPatProp, Pat, Prop, PropName, PropOrSpread,
-    ReturnStmt, SimpleAssignTarget, Stmt, Str, VarDecl, VarDeclKind, VarDeclarator,
+    ExprOrSpread, ExprStmt, FnDecl, ForHead, ForInStmt, Function, FunctionBody, Ident, IdentName,
+    IfStmt, ImportDecl, ImportSpecifier, KeyValueProp, Lit, MemberExpr, MemberProp, Module,
+    ModuleDecl, ModuleExportName, ModuleItem, ObjectLit, ObjectPatProp, Pat, Prop, PropName,
+    PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt, Str, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::utils::find_pat_ids;
@@ -750,11 +750,55 @@ fn detect_from_prepared_factories(
     // Demote groups with an unrelocatable writer: cancel their standalone
     // split and re-synthesize their init functions into the entry, where the
     // writers and owned declarations already live. Demotion cascades over
-    // standalone groups that reference a demoted binding (their synthesized
-    // imports would dangle). If a scope module or merged factory depends on a
-    // demoted binding, demotion cannot be applied safely; that residual keeps
-    // today's shape and is reported by output validation.
+    // standalone groups whose complete emission surface references a demoted
+    // binding (their synthesized imports would dangle). If a scope module or
+    // merged factory depends on a demoted binding, demotion cannot be applied
+    // safely; that residual keeps today's shape and is reported by output
+    // validation.
     if !relocation_demoted_groups.is_empty() {
+        // Build the same dependency surface that standalone emission will use.
+        // Factory bodies are only one source: adopted support declarations and
+        // top-level writer statements scheduled for relocation can also require
+        // a binding owned by another standalone group. If that provider is
+        // demoted into entry, every such consumer must demote with it because
+        // this pass cannot synthesize an import from entry.js. Build this map
+        // only on the uncommon demotion path to avoid retaining another binding
+        // graph for ordinary large bundles.
+        let mut standalone_group_references: HashMap<String, HashSet<BindingId>> = HashMap::new();
+        for factory in &standalone_factories {
+            standalone_group_references
+                .entry(factory.filename.clone())
+                .or_default()
+                .extend(factory.referenced_bindings.iter().cloned());
+        }
+        for (filename, writers) in &relocated_factory_writer_items {
+            standalone_group_references
+                .entry(filename.clone())
+                .or_default()
+                .extend(
+                    writers
+                        .iter()
+                        .flat_map(|writer| writer.referenced_bindings.iter().cloned()),
+                );
+        }
+        for (filename, owned_bindings) in &factory_owned_bindings {
+            if !standalone_group_filenames.contains(filename) {
+                continue;
+            }
+            let references = standalone_group_references
+                .entry(filename.clone())
+                .or_default();
+            for binding in owned_bindings {
+                references.extend(
+                    top_level_decl_references
+                        .get(binding)
+                        .into_iter()
+                        .flatten()
+                        .cloned(),
+                );
+            }
+        }
+
         let mut demoted = relocation_demoted_groups;
         loop {
             let demoted_bindings: HashSet<&BindingId> = binding_to_filename
@@ -762,16 +806,15 @@ fn detect_from_prepared_factories(
                 .filter(|(_, filename)| demoted.contains(*filename))
                 .map(|(binding, _)| binding)
                 .collect();
-            let additions: Vec<String> = standalone_factories
+            let additions: Vec<String> = standalone_group_references
                 .iter()
-                .filter(|factory| !demoted.contains(&factory.filename))
-                .filter(|factory| {
-                    factory
-                        .referenced_bindings
+                .filter(|(filename, _)| !demoted.contains(*filename))
+                .filter(|(_, references)| {
+                    references
                         .iter()
                         .any(|binding| demoted_bindings.contains(binding))
                 })
-                .map(|factory| factory.filename.clone())
+                .map(|(filename, _)| filename.clone())
                 .collect();
             if additions.is_empty() {
                 break;
@@ -4872,44 +4915,101 @@ fn collect_write_bindings(
         writes: &'a mut HashSet<BindingId>,
     }
 
+    impl WriteCollector<'_> {
+        fn record_ident(&mut self, ident: &Ident) {
+            let binding = (ident.sym.clone(), ident.ctxt);
+            if self.top_level_bindings.contains(&binding) {
+                self.writes.insert(binding);
+            }
+        }
+
+        fn record_assignment_pat(&mut self, pat: &Pat) {
+            match pat {
+                Pat::Ident(ident) => self.record_ident(&ident.id),
+                Pat::Array(array) => {
+                    for elem in array.elems.iter().flatten() {
+                        self.record_assignment_pat(elem);
+                    }
+                }
+                Pat::Object(object) => {
+                    for prop in &object.props {
+                        match prop {
+                            ObjectPatProp::KeyValue(prop) => {
+                                self.record_assignment_pat(&prop.value);
+                            }
+                            ObjectPatProp::Assign(prop) => self.record_ident(&prop.key.id),
+                            ObjectPatProp::Rest(rest) => {
+                                self.record_assignment_pat(&rest.arg);
+                            }
+                        }
+                    }
+                }
+                Pat::Assign(assign) => self.record_assignment_pat(&assign.left),
+                Pat::Rest(rest) => self.record_assignment_pat(&rest.arg),
+                // A member target writes the property, not the object binding.
+                // SWC can represent a direct identifier target either as
+                // `Pat::Ident` or as an expression after parser recovery.
+                Pat::Expr(expr) => {
+                    if let Expr::Ident(ident) = &**expr {
+                        self.record_ident(ident);
+                    }
+                }
+                Pat::Invalid(_) => {}
+            }
+        }
+
+        fn record_assignment_target_pat(&mut self, pat: &AssignTargetPat) {
+            match pat {
+                AssignTargetPat::Array(array) => {
+                    for elem in array.elems.iter().flatten() {
+                        self.record_assignment_pat(elem);
+                    }
+                }
+                AssignTargetPat::Object(object) => {
+                    for prop in &object.props {
+                        match prop {
+                            ObjectPatProp::KeyValue(prop) => {
+                                self.record_assignment_pat(&prop.value);
+                            }
+                            ObjectPatProp::Assign(prop) => self.record_ident(&prop.key.id),
+                            ObjectPatProp::Rest(rest) => {
+                                self.record_assignment_pat(&rest.arg);
+                            }
+                        }
+                    }
+                }
+                AssignTargetPat::Invalid(_) => {}
+            }
+        }
+    }
+
     impl Visit for WriteCollector<'_> {
         fn visit_assign_expr(&mut self, assign: &swc_core::ecma::ast::AssignExpr) {
             if let Some(ident) = assign.left.as_ident() {
-                let binding = (ident.sym.clone(), ident.ctxt);
-                if self.top_level_bindings.contains(&binding) {
-                    self.writes.insert(binding);
-                }
+                self.record_ident(ident);
             } else if let swc_core::ecma::ast::AssignTarget::Pat(pat) = &assign.left {
-                let mut collector = AssignTargetWriteCollector {
-                    top_level_bindings: self.top_level_bindings,
-                    writes: self.writes,
-                };
-                pat.visit_with(&mut collector);
+                self.record_assignment_target_pat(pat);
             }
+            // Computed member targets and destructuring defaults can contain
+            // nested assignments of their own.
+            assign.left.visit_children_with(self);
             assign.right.visit_with(self);
         }
 
         fn visit_update_expr(&mut self, update: &swc_core::ecma::ast::UpdateExpr) {
             if let Expr::Ident(ident) = &*update.arg {
-                let binding = (ident.sym.clone(), ident.ctxt);
-                if self.top_level_bindings.contains(&binding) {
-                    self.writes.insert(binding);
-                }
+                self.record_ident(ident);
             }
+            update.arg.visit_with(self);
         }
-    }
 
-    struct AssignTargetWriteCollector<'a> {
-        top_level_bindings: &'a HashSet<BindingId>,
-        writes: &'a mut HashSet<BindingId>,
-    }
-
-    impl Visit for AssignTargetWriteCollector<'_> {
-        fn visit_ident(&mut self, ident: &Ident) {
-            let binding = (ident.sym.clone(), ident.ctxt);
-            if self.top_level_bindings.contains(&binding) {
-                self.writes.insert(binding);
+        fn visit_for_head(&mut self, head: &ForHead) {
+            if let ForHead::Pat(pat) = head {
+                self.record_assignment_pat(pat);
             }
+            // Keep traversing the iterable declaration/default expressions so
+            // nested assignments are inventoried as well.
+            head.visit_children_with(self);
         }
     }
 
