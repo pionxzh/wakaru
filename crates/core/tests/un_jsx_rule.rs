@@ -657,3 +657,23 @@ export const factory = createElement;
 
     assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), expected);
 }
+
+#[test]
+fn shadowed_object_assign_is_not_expanded_into_jsx_attrs() {
+    // A local binding named `Object` is not the global: its `assign` may do
+    // anything, so its arguments must not be flattened into separate JSX
+    // attributes. The call survives as a single spread attribute instead.
+    let input = r#"
+import { jsx as _jsx } from "react/jsx-runtime";
+function render(Object, props) {
+    return _jsx("div", Object.assign({}, props));
+}
+"#;
+    let expected = r#"
+import { jsx as _jsx } from "react/jsx-runtime";
+function render(Object, props) {
+    return <div {...Object.assign({}, props)}/>;
+}
+"#;
+    assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), expected);
+}

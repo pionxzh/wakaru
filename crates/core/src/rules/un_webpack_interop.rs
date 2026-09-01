@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::{Mark, DUMMY_SP};
+use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowFunctionBody, AssignOp, AssignTarget, BindingIdent, CallExpr, Callee, Expr, Ident,
     IdentName, IfStmt, ImportSpecifier, Lit, MemberExpr, MemberProp, Module, ModuleDecl,
@@ -886,7 +886,7 @@ impl VisitMut for WebpackHasOwnReplacer {
         *expr = Expr::Call(CallExpr {
             span: call.span,
             ctxt: call.ctxt,
-            callee: object_prototype_has_own_property_call_callee(),
+            callee: object_prototype_has_own_property_call_callee(self.unresolved_mark),
             args: vec![
                 swc_core::ecma::ast::ExprOrSpread {
                     spread: None,
@@ -920,8 +920,14 @@ fn is_require_o_call(call: &CallExpr, unresolved_mark: Mark) -> bool {
         && matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "o")
 }
 
-fn object_prototype_has_own_property_call_callee() -> Callee {
-    let object = Expr::Ident(Ident::new_no_ctxt("Object".into(), DUMMY_SP));
+fn object_prototype_has_own_property_call_callee(unresolved_mark: Mark) -> Callee {
+    // Carry the unresolved mark so downstream scope-aware matchers recognize
+    // the synthesized global.
+    let object = Expr::Ident(Ident::new(
+        "Object".into(),
+        DUMMY_SP,
+        SyntaxContext::empty().apply_mark(unresolved_mark),
+    ));
     let prototype = Expr::Member(MemberExpr {
         span: DUMMY_SP,
         obj: Box::new(object),

@@ -403,7 +403,9 @@ impl UnJsx {
     fn to_jsx_attrs_from_expr(&self, expr: &Expr) -> Option<Vec<JSXAttrOrSpread>> {
         match expr {
             Expr::Lit(Lit::Null(_)) => Some(Vec::new()),
-            Expr::Call(call) if is_react_spread(call) || is_object_assign(call) => {
+            Expr::Call(call)
+                if is_react_spread(call) || is_object_assign(call, self.unresolved_mark) =>
+            {
                 let mut attrs = Vec::new();
                 for arg in &call.args {
                     attrs.extend(self.to_jsx_attrs(arg)?);
@@ -562,11 +564,11 @@ impl UnJsx {
         }
 
         let props_expr = call.args[1].expr.as_ref();
-        if !expr_has_jsxish_props(props_expr) {
+        if !expr_has_jsxish_props(props_expr, self.unresolved_mark) {
             return false;
         }
 
-        is_automatic_pragma(pragma) || is_jsxish_props_container(props_expr)
+        is_automatic_pragma(pragma) || is_jsxish_props_container(props_expr, self.unresolved_mark)
     }
 
     /// Visit `expr` without converting its paren-transitive root call: the
@@ -1479,7 +1481,7 @@ fn is_react_spread(call: &CallExpr) -> bool {
     matches!(&member.prop, MemberProp::Ident(ident) if ident.sym == *"__spread")
 }
 
-fn is_object_assign(call: &CallExpr) -> bool {
+fn is_object_assign(call: &CallExpr, unresolved_mark: Mark) -> bool {
     let Callee::Expr(expr) = &call.callee else {
         return false;
     };
@@ -1489,7 +1491,7 @@ fn is_object_assign(call: &CallExpr) -> bool {
     let Expr::Ident(object) = member.obj.as_ref() else {
         return false;
     };
-    object.sym == *"Object"
+    super::expr_utils::is_unresolved_ident(object, "Object", unresolved_mark)
         && matches!(&member.prop, MemberProp::Ident(ident) if ident.sym == *"assign")
 }
 
@@ -1568,25 +1570,28 @@ fn extract_children_attr(attrs: &mut Vec<JSXAttrOrSpread>) -> Option<JSXAttrValu
     attr.value
 }
 
-fn expr_has_jsxish_props(expr: &Expr) -> bool {
+fn expr_has_jsxish_props(expr: &Expr, unresolved_mark: Mark) -> bool {
     match expr {
-        Expr::Object(obj) => object_lit_has_jsxish_props(obj),
-        Expr::Call(call) if is_react_spread(call) || is_object_assign(call) => call
-            .args
-            .iter()
-            .any(|arg| expr_has_jsxish_props(arg.expr.as_ref())),
+        Expr::Object(obj) => object_lit_has_jsxish_props(obj, unresolved_mark),
+        Expr::Call(call) if is_react_spread(call) || is_object_assign(call, unresolved_mark) => {
+            call.args
+                .iter()
+                .any(|arg| expr_has_jsxish_props(arg.expr.as_ref(), unresolved_mark))
+        }
         _ => false,
     }
 }
 
-fn is_jsxish_props_container(expr: &Expr) -> bool {
+fn is_jsxish_props_container(expr: &Expr, unresolved_mark: Mark) -> bool {
     matches!(expr, Expr::Object(_))
-        || matches!(expr, Expr::Call(call) if is_react_spread(call) || is_object_assign(call))
+        || matches!(expr, Expr::Call(call) if is_react_spread(call) || is_object_assign(call, unresolved_mark))
 }
 
-fn object_lit_has_jsxish_props(obj: &ObjectLit) -> bool {
+fn object_lit_has_jsxish_props(obj: &ObjectLit, unresolved_mark: Mark) -> bool {
     obj.props.iter().any(|prop| match prop {
-        PropOrSpread::Spread(spread) => expr_has_jsxish_props(spread.expr.as_ref()),
+        PropOrSpread::Spread(spread) => {
+            expr_has_jsxish_props(spread.expr.as_ref(), unresolved_mark)
+        }
         PropOrSpread::Prop(prop) => prop_has_jsxish_name(prop.as_ref()),
     })
 }

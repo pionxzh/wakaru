@@ -9,6 +9,7 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::decl_utils::BindingId;
+use super::expr_utils::is_unresolved_ident;
 
 pub struct UnWebpackObjectGetters {
     unresolved_mark: Mark,
@@ -28,7 +29,7 @@ impl VisitMut for UnWebpackObjectGetters {
 
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
         stmts.visit_mut_children_with(self);
-        rewrite_stmts(stmts);
+        rewrite_stmts(stmts, self.unresolved_mark);
     }
 }
 
@@ -50,7 +51,9 @@ fn rewrite_module_items(items: &mut Vec<ModuleItem>, unresolved_mark: Mark) {
         }
 
         if i + 1 < original.len() {
-            if let Some(item) = maybe_rewrite_module_item_pair(&original[i], &original[i + 1]) {
+            if let Some(item) =
+                maybe_rewrite_module_item_pair(&original[i], &original[i + 1], unresolved_mark)
+            {
                 rewritten.push(item);
                 i += 2;
                 continue;
@@ -128,7 +131,9 @@ fn maybe_rewrite_webpack_namespace(
         }
 
         if !seen_non_marker {
-            if let Some(getter) = extract_single_define_property_getter(&items[index], target) {
+            if let Some(getter) =
+                extract_single_define_property_getter(&items[index], target, unresolved_mark)
+            {
                 odp_getters.push(getter);
                 odp_indices.push(index);
                 index += 1;
@@ -158,7 +163,7 @@ fn maybe_rewrite_webpack_namespace(
     None
 }
 
-fn rewrite_stmts(stmts: &mut Vec<Stmt>) {
+fn rewrite_stmts(stmts: &mut Vec<Stmt>, unresolved_mark: Mark) {
     let mut original = std::mem::take(stmts);
     let mut rewritten = Vec::with_capacity(original.len());
     let mut skip_until = 0;
@@ -171,7 +176,9 @@ fn rewrite_stmts(stmts: &mut Vec<Stmt>) {
         }
 
         if i + 1 < original.len() {
-            if let Some(stmt) = maybe_rewrite_stmt_pair(&original[i], &original[i + 1]) {
+            if let Some(stmt) =
+                maybe_rewrite_stmt_pair(&original[i], &original[i + 1], unresolved_mark)
+            {
                 rewritten.push(stmt);
                 i += 2;
                 continue;
@@ -182,9 +189,11 @@ fn rewrite_stmts(stmts: &mut Vec<Stmt>) {
             let mut getters = Vec::new();
             let mut j = i + 1;
             while j < original.len() {
-                if let Some(getter) =
-                    extract_single_define_property_getter_from_stmt(&original[j], &binding)
-                {
+                if let Some(getter) = extract_single_define_property_getter_from_stmt(
+                    &original[j],
+                    &binding,
+                    unresolved_mark,
+                ) {
                     getters.push(getter);
                     j += 1;
                 } else {
@@ -211,12 +220,16 @@ fn rewrite_stmts(stmts: &mut Vec<Stmt>) {
     *stmts = rewritten;
 }
 
-fn maybe_rewrite_module_item_pair(current: &ModuleItem, next: &ModuleItem) -> Option<ModuleItem> {
+fn maybe_rewrite_module_item_pair(
+    current: &ModuleItem,
+    next: &ModuleItem,
+    unresolved_mark: Mark,
+) -> Option<ModuleItem> {
     let binding = extract_empty_object_binding_from_module_item(current)?;
     let ModuleItem::Stmt(next_stmt) = next else {
         return None;
     };
-    let getters = extract_define_properties_getters(next_stmt, &binding)?;
+    let getters = extract_define_properties_getters(next_stmt, &binding, unresolved_mark)?;
     if getters.len() < 2 {
         return None;
     }
@@ -256,9 +269,9 @@ fn replace_module_item_init_with_getters(
     }
 }
 
-fn maybe_rewrite_stmt_pair(current: &Stmt, next: &Stmt) -> Option<Stmt> {
+fn maybe_rewrite_stmt_pair(current: &Stmt, next: &Stmt, unresolved_mark: Mark) -> Option<Stmt> {
     let binding = extract_empty_object_binding_from_stmt(current)?;
-    let getters = extract_define_properties_getters(next, &binding)?;
+    let getters = extract_define_properties_getters(next, &binding, unresolved_mark)?;
     if getters.len() < 2 {
         return None;
     }
@@ -338,26 +351,29 @@ fn extract_empty_object_binding_from_var_decl(decls: &[VarDeclarator]) -> Option
 fn extract_single_define_property_getter(
     item: &ModuleItem,
     target: &BindingId,
+    unresolved_mark: Mark,
 ) -> Option<GetterProp> {
     let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
         return None;
     };
-    extract_single_define_property_getter_from_expr(expr.as_ref(), target)
+    extract_single_define_property_getter_from_expr(expr.as_ref(), target, unresolved_mark)
 }
 
 fn extract_single_define_property_getter_from_stmt(
     stmt: &Stmt,
     target: &BindingId,
+    unresolved_mark: Mark,
 ) -> Option<GetterProp> {
     let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
         return None;
     };
-    extract_single_define_property_getter_from_expr(expr.as_ref(), target)
+    extract_single_define_property_getter_from_expr(expr.as_ref(), target, unresolved_mark)
 }
 
 fn extract_single_define_property_getter_from_expr(
     expr: &Expr,
     target: &BindingId,
+    unresolved_mark: Mark,
 ) -> Option<GetterProp> {
     let Expr::Call(call) = expr else {
         return None;
@@ -371,7 +387,7 @@ fn extract_single_define_property_getter_from_expr(
     let Expr::Ident(object_ident) = member.obj.as_ref() else {
         return None;
     };
-    if object_ident.sym.as_ref() != "Object" {
+    if !is_unresolved_ident(object_ident, "Object", unresolved_mark) {
         return None;
     }
     let MemberProp::Ident(prop) = &member.prop else {
@@ -399,7 +415,11 @@ fn extract_single_define_property_getter_from_expr(
     extract_getter_descriptor(&prop_name, call.args[2].expr.as_ref())
 }
 
-fn extract_define_properties_getters(stmt: &Stmt, target: &BindingId) -> Option<Vec<GetterProp>> {
+fn extract_define_properties_getters(
+    stmt: &Stmt,
+    target: &BindingId,
+    unresolved_mark: Mark,
+) -> Option<Vec<GetterProp>> {
     let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
         return None;
     };
@@ -415,7 +435,7 @@ fn extract_define_properties_getters(stmt: &Stmt, target: &BindingId) -> Option<
     let Expr::Ident(object_ident) = member.obj.as_ref() else {
         return None;
     };
-    if object_ident.sym.as_ref() != "Object" {
+    if !is_unresolved_ident(object_ident, "Object", unresolved_mark) {
         return None;
     }
     let MemberProp::Ident(prop) = &member.prop else {

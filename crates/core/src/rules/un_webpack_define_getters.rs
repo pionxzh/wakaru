@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use swc_core::common::{Mark, Span, Spanned, DUMMY_SP};
+use swc_core::common::{Mark, Span, Spanned, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     Bool, CallExpr, Callee, Decl, Expr, ExprStmt, Ident, IdentName, KeyValueProp, Lit, Module,
     ModuleDecl, ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread, Stmt, Str, VarDeclarator,
@@ -121,6 +121,7 @@ fn maybe_build_define_properties_item(
                 target.clone(),
                 descriptors,
                 stmt_span,
+                unresolved_mark,
             )),
         }))),
         next_index,
@@ -152,6 +153,7 @@ fn maybe_build_define_properties_stmt(
                 target.clone(),
                 descriptors,
                 stmt_span,
+                unresolved_mark,
             )),
         })),
         next_index,
@@ -309,6 +311,7 @@ fn build_define_properties_call(
     target: BindingId,
     descriptors: Vec<(String, Box<Expr>)>,
     span: Span,
+    unresolved_mark: Mark,
 ) -> Expr {
     let descriptor_props: Vec<PropOrSpread> = descriptors
         .into_iter()
@@ -340,7 +343,13 @@ fn build_define_properties_call(
         ctxt: Default::default(),
         callee: Expr::Member(swc_core::ecma::ast::MemberExpr {
             span: DUMMY_SP,
-            obj: Box::new(Expr::Ident(Ident::new_no_ctxt("Object".into(), DUMMY_SP))),
+            // Carry the unresolved mark so downstream scope-aware matchers
+            // (UnWebpackObjectGetters) recognize the synthesized global.
+            obj: Box::new(Expr::Ident(Ident::new(
+                "Object".into(),
+                DUMMY_SP,
+                SyntaxContext::empty().apply_mark(unresolved_mark),
+            ))),
             prop: swc_core::ecma::ast::MemberProp::Ident(IdentName::new(
                 "defineProperties".into(),
                 DUMMY_SP,

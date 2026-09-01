@@ -375,3 +375,45 @@ function init() {
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
+
+#[test]
+fn preserves_calls_on_a_shadowed_local_object_binding() {
+    // A local binding named `Object` is not the global: its defineProperty
+    // may do anything, so deleting the calls and folding getters is unsound.
+    let input = r#"
+function init(Object) {
+  const ns = {};
+  Object.defineProperty(ns, "a", {
+    enumerable: true,
+    get: ()=>aValue
+  });
+  Object.defineProperty(ns, "b", {
+    enumerable: true,
+    get: ()=>bValue
+  });
+  return ns;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn preserves_define_properties_on_a_shadowed_local_object_binding() {
+    let input = r#"
+function init(Object) {
+  const utils = {};
+  Object.defineProperties(utils, {
+    TASK: {
+      enumerable: true,
+      get: ()=>o.e
+    },
+    SAGA_ACTION: {
+      enumerable: true,
+      get: ()=>o.c
+    }
+  });
+  return utils;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
