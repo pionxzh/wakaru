@@ -18,7 +18,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use crate::analysis::binding_id;
 use crate::analysis::binding_uses::{BindingId, BindingUseIndex, UseKind};
 use crate::facts::{collect_module_facts, ModuleFactsMap};
-use crate::js_names::is_reserved_binding_name;
+use crate::js_names::{is_reserved_binding_name, is_valid_identifier_name};
 use crate::module_path::resolve_relative_specifier;
 use crate::provider_namespace_repair::run_provider_namespace_repair;
 use crate::utils::paren::strip_parens;
@@ -159,11 +159,21 @@ impl VisitMut for UnEsm {
             return;
         }
         let current_filename = self.current_filename.clone();
-        let original_cjs_module = if contains_local_self_require(
-            module,
-            self.unresolved_mark,
-            current_filename.as_deref(),
-        ) {
+        let has_local_self_require =
+            contains_local_self_require(module, self.unresolved_mark, current_filename.as_deref());
+        // The named-member argument pre-pass cannot prove that a self export
+        // is initialized before the call. Keep the whole CommonJS boundary;
+        // otherwise an early partial-object read becomes an ESM TDZ read.
+        if has_local_self_require
+            && has_toplevel_require_named_member_self_arg(
+                &module.body,
+                self.unresolved_mark,
+                current_filename.as_deref(),
+            )
+        {
+            return;
+        }
+        let original_cjs_module = if has_local_self_require {
             Some(module.clone())
         } else {
             None
@@ -4013,12 +4023,40 @@ fn collect_toplevel_require_named_member_args(
     candidates
 }
 
+fn has_toplevel_require_named_member_self_arg(
+    items: &[ModuleItem],
+    unresolved_mark: Mark,
+    current_filename: Option<&str>,
+) -> bool {
+    let Some(current_filename) = current_filename else {
+        return false;
+    };
+    let Some((normalized_filename, current_key)) = current_module_path_context(current_filename)
+    else {
+        return false;
+    };
+
+    collect_toplevel_require_named_member_args(items, unresolved_mark)
+        .into_iter()
+        .any(|candidate| {
+            resolve_relative_specifier(&normalized_filename, &candidate.source).as_deref()
+                == Some(&current_key)
+        })
+}
+
 /// Direct argument of a top-level Call: `require("mod").Name` with a static
 /// string specifier and a non-`default` ident (or computed ident string).
 fn match_require_named_member_expr(expr: &Expr, unresolved_mark: Mark) -> Option<(String, Atom)> {
     let Expr::Member(member) = strip_parens(expr) else {
         return None;
     };
+    match_require_named_member(member, unresolved_mark)
+}
+
+fn match_require_named_member(
+    member: &MemberExpr,
+    unresolved_mark: Mark,
+) -> Option<(String, Atom)> {
     let Expr::Call(call) = strip_parens(member.obj.as_ref()) else {
         return None;
     };
@@ -4028,6 +4066,77 @@ fn match_require_named_member_expr(expr: &Expr, unresolved_mark: Mark) -> Option
         return None;
     }
     Some((source, prop))
+}
+
+/// Collect direct mutations of `require(source).Name`. Replacing separate
+/// member reads with one recovered import is unsafe when the CommonJS object
+/// can be changed through the same static edge.
+struct RequireNamedMemberMutationCollector {
+    unresolved_mark: Mark,
+    write_target_depth: usize,
+    mutations: HashSet<(String, Atom)>,
+}
+
+impl RequireNamedMemberMutationCollector {
+    fn collect(module: &Module, unresolved_mark: Mark) -> HashSet<(String, Atom)> {
+        let mut collector = Self {
+            unresolved_mark,
+            write_target_depth: 0,
+            mutations: HashSet::new(),
+        };
+        module.visit_with(&mut collector);
+        collector.mutations
+    }
+}
+
+impl Visit for RequireNamedMemberMutationCollector {
+    fn visit_member_expr(&mut self, member: &MemberExpr) {
+        if self.write_target_depth > 0 {
+            if let Some(mutation) = match_require_named_member(member, self.unresolved_mark) {
+                self.mutations.insert(mutation);
+            }
+        }
+        member.visit_children_with(self);
+    }
+
+    fn visit_assign_expr(&mut self, assignment: &AssignExpr) {
+        self.write_target_depth += 1;
+        assignment.left.visit_with(self);
+        self.write_target_depth -= 1;
+        assignment.right.visit_with(self);
+    }
+
+    fn visit_update_expr(&mut self, update: &swc_core::ecma::ast::UpdateExpr) {
+        self.write_target_depth += 1;
+        update.arg.visit_with(self);
+        self.write_target_depth -= 1;
+    }
+
+    fn visit_unary_expr(&mut self, unary: &swc_core::ecma::ast::UnaryExpr) {
+        if unary.op == UnaryOp::Delete {
+            self.write_target_depth += 1;
+            unary.arg.visit_with(self);
+            self.write_target_depth -= 1;
+        } else {
+            unary.visit_children_with(self);
+        }
+    }
+
+    fn visit_for_in_stmt(&mut self, stmt: &ForInStmt) {
+        self.write_target_depth += 1;
+        stmt.left.visit_with(self);
+        self.write_target_depth -= 1;
+        stmt.right.visit_with(self);
+        stmt.body.visit_with(self);
+    }
+
+    fn visit_for_of_stmt(&mut self, stmt: &swc_core::ecma::ast::ForOfStmt) {
+        self.write_target_depth += 1;
+        stmt.left.visit_with(self);
+        self.write_target_depth -= 1;
+        stmt.right.visit_with(self);
+        stmt.body.visit_with(self);
+    }
 }
 
 fn toplevel_item_call_expr(item: &ModuleItem) -> Option<&CallExpr> {
@@ -4142,6 +4251,8 @@ fn prove_toplevel_require_named_member_args(
     let declared_names = collect_all_declared_names(module);
     let unresolved_reference_names = collect_unresolved_reference_names(module, unresolved_mark);
     let uses = BindingUseIndex::collect(module);
+    let provider_member_mutations =
+        RequireNamedMemberMutationCollector::collect(module, unresolved_mark);
     let mut claimed_source_by_local: HashMap<Atom, String> = HashMap::new();
     let mut claimed_local: HashMap<Atom, Ident> = HashMap::new();
     let mut plan = ToplevelRequireNamedMemberPlan {
@@ -4151,7 +4262,10 @@ fn prove_toplevel_require_named_member_args(
 
     for candidate in candidates {
         let name_str = candidate.name.as_ref();
-        if !is_valid_js_ident(name_str) || is_reserved_binding_name(name_str) {
+        if !is_valid_identifier_name(name_str) || is_reserved_binding_name(name_str) {
+            return None;
+        }
+        if provider_member_mutations.contains(&(candidate.source.clone(), candidate.name.clone())) {
             return None;
         }
         if eval_analyzer
