@@ -39,6 +39,18 @@ jobs:
             exit 1
           fi
 
+  npm-platforms:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Verify npm platform packages
+        run: node --test scripts/release/npm-platforms.test.mjs
+
   fmt:
     runs-on: ubuntu-latest
     steps:

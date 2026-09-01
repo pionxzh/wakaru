@@ -116,7 +116,7 @@ jobs:
       - name: Publish platform packages
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          for pkg in cli-darwin-arm64 cli-linux-arm64 cli-linux-x64 cli-win32-x64; do
+          for pkg in cli-darwin-arm64 cli-linux-arm64 cli-linux-x64 cli-win32-arm64 cli-win32-x64; do
             PKG_DIR="npm/platforms/$pkg"
             cp artifacts/$pkg/* "$PKG_DIR/"
             cd "$PKG_DIR"

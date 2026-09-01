@@ -1,7 +1,7 @@
 {
   "name": "@wakaru/cli-win32-arm64",
   "version": "1.10.0",
-  "description": "Wakaru CLI binary for Windows x64",
+  "description": "Wakaru CLI binary for Windows ARM64",
   "author": "Pionxzh",
   "license": "Apache-2.0",
   "os": ["win32"],
