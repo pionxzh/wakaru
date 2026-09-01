@@ -180,6 +180,11 @@ code {
   overflow: hidden;
 }
 
+.demo:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
 .demo-head {
   display: flex;
   align-items: center;
