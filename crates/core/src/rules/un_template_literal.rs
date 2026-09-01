@@ -125,7 +125,7 @@ impl VisitMut for UnTemplateLiteral<'_> {
     }
 
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
-        if let Some(next) = rewrite_concat_chain(expr) {
+        if let Some(next) = rewrite_concat_chain(expr, self.level) {
             *expr = next;
             expr.visit_mut_children_with(self);
         } else if let Some(next) = rewrite_plus_chain(expr, self.level) {
@@ -171,13 +171,27 @@ impl VisitMut for TaggedTemplateReplacer<'_> {
     }
 }
 
-fn rewrite_concat_chain(expr: &Expr) -> Option<Expr> {
+/// `"a".concat(b, "c")` → `` `a${b}c` `` — the Babel (spec mode), SWC,
+/// esbuild, and TypeScript ≥ 4.5 lowering of a template literal.
+///
+/// `String.prototype.concat` evaluates every argument before coercing any of
+/// them; a template coerces each substitution before evaluating the next. The
+/// two differ only when a substitution's coercion has effects a later
+/// substitution's evaluation can observe. `standard` accepts that under the
+/// `concat_coercion_order` assumption (`rewrite-assumptions.md`); the
+/// string-literal receiver is strong producer evidence, not a proof. `minimal`
+/// rewrites only when every substitution is a syntax-proven primitive, where
+/// coercion is the identity and the two orders coincide.
+fn rewrite_concat_chain(expr: &Expr, level: RewriteLevel) -> Option<Expr> {
     let Expr::Call(call) = expr else {
         return None;
     };
 
     let mut parts = Vec::new();
     if !collect_concat_parts(call, &mut parts) {
+        return None;
+    }
+    if level == RewriteLevel::Minimal && !substitutions_are_syntax_proven_primitive(&parts) {
         return None;
     }
 
@@ -463,6 +477,16 @@ fn is_inline_template_helper(expr: &Expr) -> bool {
 /// literal. All non-string elements that appear **before** the first string
 /// literal are grouped into a single sub-expression to preserve arithmetic
 /// semantics (e.g. `a + b + "c"` → `` `${a + b}c` `` not `` `${a}${b}c` ``).
+///
+/// A plus chain evaluates and coerces its operands in the same order a
+/// template does; the only difference is the coercion hint (`+` uses
+/// `default`, a template uses `string`), which matters for objects whose
+/// `valueOf` and `toString` disagree. Babel loose mode and TypeScript ≤ 4.4
+/// lower templates to this exact shape, indistinguishable from handwritten
+/// concatenation. `standard` accepts the hint change under the
+/// `string_coercion_hint` assumption (`rewrite-assumptions.md`); `minimal`
+/// rewrites only when every substitution is a syntax-proven primitive, where
+/// the hint is irrelevant.
 fn rewrite_plus_chain(expr: &Expr, level: RewriteLevel) -> Option<Expr> {
     // Collect the flat left-associative operand list
     let mut operands: Vec<&Expr> = Vec::new();
@@ -473,9 +497,6 @@ fn rewrite_plus_chain(expr: &Expr, level: RewriteLevel) -> Option<Expr> {
         return None;
     }
     let first_str_idx = operands.iter().position(|e| is_str_lit(e))?;
-    if level == RewriteLevel::Minimal && is_empty_str_lit(operands[first_str_idx]) {
-        return None;
-    }
 
     // Determine the span for the resulting template
     let span = match expr {
@@ -507,8 +528,51 @@ fn rewrite_plus_chain(expr: &Expr, level: RewriteLevel) -> Option<Expr> {
     if !parts.iter().any(|p| matches!(p, Part::Expr(_))) {
         return None;
     }
+    if level == RewriteLevel::Minimal && !substitutions_are_syntax_proven_primitive(&parts) {
+        return None;
+    }
 
     Some(Expr::Tpl(parts_to_template(parts, span)))
+}
+
+fn substitutions_are_syntax_proven_primitive(parts: &[Part]) -> bool {
+    parts.iter().all(|part| match part {
+        Part::Text(_) => true,
+        Part::Expr(expr) => is_syntax_proven_primitive(expr),
+    })
+}
+
+/// Whether an expression's value is a primitive by syntax alone. ToPrimitive
+/// is the identity on primitives, so for these substitutions neither the
+/// coercion hint nor the coercion order can be observed and the template
+/// rewrite is exact at every level.
+///
+/// Unary and binary operators always produce primitives (any exception they
+/// raise happens while evaluating the operand, identically in both forms), so
+/// they count regardless of their operands. Identifiers do not: even
+/// `undefined` or `NaN` would need the resolver mark to be trusted here.
+fn is_syntax_proven_primitive(expr: &Expr) -> bool {
+    match strip_parens(expr) {
+        Expr::Lit(lit) => !matches!(lit, Lit::Regex(_) | Lit::JSXText(_)),
+        Expr::Tpl(_) => true,
+        Expr::Unary(_) | Expr::Update(_) => true,
+        // Logical operators yield one of their operands unchanged; every
+        // other binary operator yields a number, bigint, boolean, or string.
+        Expr::Bin(bin) => match bin.op {
+            BinaryOp::LogicalAnd | BinaryOp::LogicalOr | BinaryOp::NullishCoalescing => {
+                is_syntax_proven_primitive(&bin.left) && is_syntax_proven_primitive(&bin.right)
+            }
+            _ => true,
+        },
+        Expr::Cond(cond) => {
+            is_syntax_proven_primitive(&cond.cons) && is_syntax_proven_primitive(&cond.alt)
+        }
+        Expr::Seq(seq) => seq
+            .exprs
+            .last()
+            .is_some_and(|last| is_syntax_proven_primitive(last)),
+        _ => false,
+    }
 }
 
 /// Flatten a left-associative `+` chain into individual operands.
@@ -529,10 +593,6 @@ fn collect_add_chain<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
 
 fn is_str_lit(expr: &Expr) -> bool {
     matches!(expr, Expr::Lit(Lit::Str(_)))
-}
-
-fn is_empty_str_lit(expr: &Expr) -> bool {
-    matches!(expr, Expr::Lit(Lit::Str(s)) if s.value.is_empty())
 }
 
 fn normalize_escaped_newline_template_raw(tpl: &mut Tpl, level: RewriteLevel) {

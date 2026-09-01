@@ -523,3 +523,98 @@ var out = tag`hello ${name}`;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
+// ── minimal: only syntax-proven primitive substitutions ──────────────────────
+
+#[test]
+fn minimal_keeps_plus_chain_with_unproven_substitutions() {
+    // `+` coerces with hint "default", a template with hint "string"; an
+    // identifier, member, or call may hold an object whose valueOf and
+    // toString disagree. `standard` accepts this under `string_coercion_hint`;
+    // `minimal` does not.
+    let input = r#"
+var a = "prefix: " + value;
+var b = "user " + user.name + "!";
+var c = "id=" + read();
+var d = value + " suffix";
+"#;
+    let output = apply_minimal(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn minimal_rewrites_plus_chain_with_syntax_proven_primitive_substitutions() {
+    // Literals, arithmetic, typeof, and nested templates are primitives by
+    // syntax; ToPrimitive is the identity on them, so the rewrite is exact.
+    let input = r#"
+var a = "n=" + 1 + " ok=" + true;
+var b = "sum=" + (x + y) + " type=" + typeof z;
+var c = "neg=" + -count + " inner=" + `t${1}`;
+var d = "pick=" + (flag ? 1 : "no") + " cmp=" + (a < b);
+"#;
+    let expected = r#"
+var a = `n=${1} ok=${true}`;
+var b = `sum=${x + y} type=${typeof z}`;
+var c = `neg=${-count} inner=${`t${1}`}`;
+var d = `pick=${flag ? 1 : "no"} cmp=${a < b}`;
+"#;
+    let output = apply_minimal(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn minimal_keeps_logical_substitutions_with_unproven_operands() {
+    // `a || b` yields one operand unchanged, so it is primitive only when both
+    // operands are.
+    let input = r#"
+var a = "v=" + (value || fallback);
+var b = "v=" + (1 || "x");
+"#;
+    let expected = r#"
+var a = "v=" + (value || fallback);
+var b = `v=${1 || "x"}`;
+"#;
+    let output = apply_minimal(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn minimal_keeps_concat_chain_with_unproven_substitutions() {
+    // concat evaluates every argument before coercing any; a template
+    // interleaves the two. `standard` accepts this under
+    // `concat_coercion_order`; `minimal` does not.
+    let input = r#"
+var a = "Hello ".concat(name, "!");
+var b = "".concat(prefix, "/users/").concat(id);
+"#;
+    let output = apply_minimal(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn minimal_rewrites_concat_chain_with_syntax_proven_primitive_substitutions() {
+    let input = r#"
+var a = "n=".concat(1, " ok=", true);
+var b = "".concat(x * 2, "/").concat(typeof y);
+"#;
+    let expected = r#"
+var a = `n=${1} ok=${true}`;
+var b = `${x * 2}/${typeof y}`;
+"#;
+    let output = apply_minimal(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_rewrites_concat_chain_with_unproven_substitutions() {
+    let input = r#"
+var a = "Hello ".concat(name, "!");
+var b = "".concat(prefix, "/users/").concat(id);
+"#;
+    let expected = r#"
+var a = `Hello ${name}!`;
+var b = `${prefix}/users/${id}`;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}

@@ -189,6 +189,15 @@ rationale, or level gating appear.
   `obj.fn.apply(null, args)` is *intentionally skipped* — rewriting it to
   `fn(...args)` is not semantics-preserving without cross-module proof that
   the member is a plain imported function (candidate fact reader).
+- **UnTemplateLiteral** — level gating is per path, not per rule (the rule is
+  always enabled because tagged-template helper recovery is provenance-checked
+  and runs at every level). The `+`-chain path (`string_coercion_hint`) and the
+  `.concat`-chain path (`concat_coercion_order`) are `standard+` for arbitrary
+  substitutions; at `minimal` both rewrite only when every substitution is a
+  primitive by syntax. The plus-chain path was deliberately kept at `standard`
+  rather than demoted to `aggressive`: Babel loose and TypeScript ≤ 4.4 lower
+  templates to plain concatenation, and the private fixtures recover ~3,000
+  templates through it.
 - **UnArrayConcatSpread** — `standard+`: `[a].concat(b)` → `[a, ...b]` is not
   strictly equivalent for scalars, strings, patched `concat`, or
   `Symbol.isConcatSpreadable`; the useful generated shape is

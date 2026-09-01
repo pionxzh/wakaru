@@ -211,6 +211,68 @@ depend on this assumption.
 
 Level: `standard` and above. `minimal` preserves the helper call.
 
+### `string_coercion_hint`
+
+Recovering a template literal from a string-literal-led `+` chain assumes the
+substituted values coerce to the same string under ToPrimitive hint `default`
+(what `+` uses) and hint `string` (what a template uses).
+
+```js
+"Hello " + name + "!"   // ToPrimitive(name, "default"): valueOf first
+`Hello ${name}!`        // ToString(name): toString first
+```
+
+Evaluation order is identical in both forms — each operand is evaluated and
+coerced before the next is evaluated — so the hint is the only difference. It
+is observable for objects whose `valueOf` returns a primitive that differs from
+their `toString` (date/time libraries such as moment, dayjs, and luxon return a
+timestamp from `valueOf`), for `Symbol.toPrimitive` implementations that branch
+on the hint, and for objects whose `valueOf` throws (Temporal). Every built-in
+coerces identically: `Date` treats the default hint as `string`, and primitive
+wrappers, arrays, plain objects, and symbols behave the same either way.
+
+Babel loose mode and TypeScript ≤ 4.4 lower templates to this exact shape, so
+the reversal restores the original template where the chain was generated — but
+the shape is indistinguishable from handwritten concatenation, so it is an
+assumption, not a proof. The private fixture suite recovers roughly 3,000
+templates through this path with no substitution shaped like a known
+hint-sensitive object, which is why `standard` keeps it rather than demoting it
+to `aggressive`.
+
+Affects: `UnTemplateLiteral` (plus-chain path).
+
+Level: `standard` and above. `minimal` rewrites only chains whose substitutions
+are primitives by syntax (literals, nested templates, unary/update/arithmetic
+and comparison results, and conditionals or logical operators over those),
+where ToPrimitive is the identity and the hint cannot be observed.
+
+### `concat_coercion_order`
+
+Recovering a template literal from a string-literal-led `.concat` chain assumes
+that coercing one substitution has no effect a later substitution's evaluation
+can observe.
+
+```js
+"a".concat(first(), second())  // evaluates both calls, then coerces both
+`a${first()}${second()}`       // coerces first() before evaluating second()
+```
+
+`String.prototype.concat` coerces with ToString, the same hint a template uses,
+so the coercion result is identical; only the interleaving of evaluation and
+coercion differs. It is observable only when a substitution's `toString` /
+`Symbol.toPrimitive` has side effects that a later substitution reads.
+
+The string-literal receiver is strong producer evidence — Babel (spec mode),
+SWC, esbuild, and TypeScript ≥ 4.5 all lower templates this way and handwritten
+code almost never calls `.concat` on a literal — but the AST cannot prove the
+producer, so this remains a named assumption.
+
+Affects: `UnTemplateLiteral` (concat-chain path). Tagged-template helper
+recovery is a separate, provenance-checked path and does not depend on this.
+
+Level: `standard` and above. `minimal` rewrites only chains whose substitutions
+are primitives by syntax, as for `string_coercion_hint`.
+
 ### `set_computed_properties`
 
 Folding a sequence of member assignments back into an object literal assumes
