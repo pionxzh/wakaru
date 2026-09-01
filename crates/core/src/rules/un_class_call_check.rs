@@ -13,8 +13,11 @@ use crate::utils::paren::strip_parens;
 /// Removes `_classCallCheck(this, Foo)` calls and equivalent inline IIFEs.
 ///
 /// These are Babel transpiler artifacts for class constructors that guard against
-/// calling a class without `new`. Since we're decompiling (not running), these
-/// guards are pure noise.
+/// calling a class without `new`. Once `UnEs6Class` recovers the class, the
+/// `class` syntax carries that guard itself, so the call is redundant. Removing
+/// it from a constructor that is *not* recovered as a class drops the no-`new`
+/// throw; that is a recorded trade-off (tracked in the rule-correctness audit)
+/// pending consumption inside the `UnEs6Class` transaction.
 ///
 /// Handles two forms:
 /// 1. Named function: `_classCallCheck(this, Foo)` where the function is declared
