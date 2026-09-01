@@ -16,7 +16,7 @@ import { createShareUrl, readShareState, SHARE_LIMIT_MESSAGE } from "./lib/share
 import { parseMappings, lineColorClass, lineColorActiveClass, generateMappingCSS, LINE_COLORS_RGB } from "./lib/sourcemap";
 import type { MappingData } from "./lib/sourcemap";
 import { applyVuePreviewResult, resetVuePreview } from "./lib/vuePreview";
-import type { OutputView } from "./lib/vuePreview";
+import { resolveOutputPaneView, type OutputPaneView } from "./lib/outputPane";
 import {
   getProducerDescriptor,
   ROUND_TRIP_EXAMPLE,
@@ -73,6 +73,7 @@ export function App() {
   const [vueSfcEnabled, setVueSfcEnabled] = useState(
     INITIAL_SHARE_STATE?.vueSfc ?? false
   );
+  const [diffView, setDiffView] = useState(false);
   const [warnings, setWarnings] = useState<WakaruWarning[]>([]);
   const [level, setLevel] = useState<Level>(INITIAL_SHARE_STATE?.level ?? "standard");
   const [formatter, setFormatter] = useState(
@@ -315,9 +316,19 @@ export function App() {
     }
   }, [sourceMapJson, output]);
 
-  const activeOutputView: OutputView = outputView === "vue" && vueSfc
-    ? "vue"
-    : "javascript";
+  const handleOutputViewChange = useCallback((view: OutputPaneView) => {
+    setDiffView(view === "diff");
+    if (view !== "diff") {
+      setVuePreview((current) => ({ ...current, view }));
+    }
+  }, []);
+
+  const activeOutputView = resolveOutputPaneView({
+    diffRequested: diffView,
+    diffAvailable: mode === "roundtrip",
+    vueRequested: outputView === "vue",
+    vueAvailable: vueSfc !== null,
+  });
   const mappingActive = mappingEnabled && activeOutputView === "javascript";
   const producerDescriptor = getProducerDescriptor(producer);
 
@@ -559,10 +570,10 @@ export function App() {
             javascriptLabel={mode === "roundtrip" ? "Wakaru restored" : "JavaScript"}
             vueSfcEnabled={vueSfcEnabled}
             vueSfc={vueSfc}
-            view={outputView}
-            onViewChange={(view: OutputView) => {
-              setVuePreview((current) => ({ ...current, view }));
-            }}
+            diffAvailable={mode === "roundtrip"}
+            diffOriginal={roundTripSource}
+            view={activeOutputView}
+            onViewChange={handleOutputViewChange}
             isLoading={isLoading}
             decorations={outputDecorations}
             onHoverLine={handleOutputHover}
