@@ -4,7 +4,7 @@ use swc_core::common::util::take::Take;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
     Callee, Decl, Expr, ExprStmt, Ident, ImportDecl, ImportStarAsSpecifier, Lit, Module,
-    ModuleDecl, ModuleItem, Pat, Stmt, VarDecl,
+    ModuleDecl, ModuleItem, Pat, Stmt, UnaryOp, VarDecl,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -54,10 +54,13 @@ fn run_un_interop_require_wildcard(module: &mut Module, local_helpers: &LocalHel
     }
 
     // Phase 1: Convert `var _a = _irw(require("path"))` → `import * as _a from "path"`
-    // and unwrap non-require calls in expressions.
+    // and unwrap non-require calls in expressions. A binding written anywhere
+    // in the module must stay a var: an assignment to an import binding is a
+    // runtime error in ESM.
+    let written = collect_written_bindings(module);
     let mut new_body = Vec::with_capacity(module.body.len());
     for item in module.body.drain(..) {
-        if let Some(imports) = try_convert_to_namespace_import(&item, local_helpers) {
+        if let Some(imports) = try_convert_to_namespace_import(&item, local_helpers, &written) {
             new_body.extend(imports);
         } else {
             new_body.push(item);
@@ -133,6 +136,7 @@ fn run_un_interop_require_wildcard(module: &mut Module, local_helpers: &LocalHel
 fn try_convert_to_namespace_import(
     item: &ModuleItem,
     local_helpers: &LocalHelperContext,
+    written: &HashSet<BindingKey>,
 ) -> Option<Vec<ModuleItem>> {
     let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
         return None;
@@ -151,6 +155,11 @@ fn try_convert_to_namespace_import(
             remaining_decls.push(decl.clone());
             continue;
         };
+
+        if written.contains(&binding_key(&bi.id)) {
+            remaining_decls.push(decl.clone());
+            continue;
+        }
 
         if let Some(source) = extract_wildcard_require(init, local_helpers) {
             // Convert to: import * as _x from "source"
@@ -205,6 +214,17 @@ fn extract_wildcard_require(
     if call.args.is_empty() || call.args.len() > 2 {
         return None;
     }
+    if call.args.iter().any(|arg| arg.spread.is_some()) {
+        return None;
+    }
+    // The second argument is Babel's nodeInterop flag; generated call sites
+    // pass a literal (or nothing). Anything else is not a recognized producer
+    // shape, and dropping it could delete a side effect.
+    if let Some(second) = call.args.get(1) {
+        if !is_canonical_interop_flag(second.expr.as_ref()) {
+            return None;
+        }
+    }
 
     // First arg must be require("path")
     let Expr::Call(require_call) = call.args[0].expr.as_ref() else {
@@ -218,6 +238,7 @@ fn extract_wildcard_require(
     };
     if !local_helpers.is_unresolved_or_unguarded_ident(require_id, "require")
         || require_call.args.len() != 1
+        || require_call.args[0].spread.is_some()
     {
         return None;
     }
@@ -255,12 +276,43 @@ impl VisitMut for WildcardCallUnwrapper<'_> {
         if call.args.is_empty() || call.args.len() > 2 {
             return;
         }
+        if call.args.iter().any(|arg| arg.spread.is_some()) {
+            return;
+        }
+        // Unwrapping drops the second argument, so it must be a canonical
+        // side-effect-free interop flag.
+        if let Some(second) = call.args.get(1) {
+            if !is_canonical_interop_flag(second.expr.as_ref()) {
+                return;
+            }
+        }
 
         // Only unwrap when the first arg is require("...")
         if is_require_call(&call.args[0].expr, self.local_helpers) {
             *expr = *call.args[0].expr.take();
         }
     }
+}
+
+/// The canonical shapes of Babel's second `_interopRequireWildcard` argument
+/// (the nodeInterop flag) after earlier syntax rules ran: a literal
+/// (UnminifyBooleans already rewrote `!0`/`!1`), or `void <literal>`.
+fn is_canonical_interop_flag(expr: &Expr) -> bool {
+    match expr {
+        Expr::Lit(_) => true,
+        Expr::Unary(unary) if unary.op == UnaryOp::Void => {
+            matches!(unary.arg.as_ref(), Expr::Lit(_))
+        }
+        _ => false,
+    }
+}
+
+/// Collects bindings written anywhere in the module. Uses the shared
+/// [`BindingUseIndex`] direct-write pass — it already covers parenthesized
+/// assignment targets, update operands, destructuring targets, and for-in/of
+/// heads, which a bespoke collector here would have to re-enumerate.
+fn collect_written_bindings(module: &Module) -> HashSet<BindingKey> {
+    crate::analysis::binding_uses::BindingUseIndex::collect_direct_write_bindings(module)
 }
 
 fn is_require_call(expr: &Expr, local_helpers: &LocalHelperContext) -> bool {
@@ -271,7 +323,9 @@ fn is_require_call(expr: &Expr, local_helpers: &LocalHelperContext) -> bool {
     let Expr::Ident(id) = callee.as_ref() else {
         return false;
     };
-    local_helpers.is_unresolved_or_unguarded_ident(id, "require") && call.args.len() == 1
+    local_helpers.is_unresolved_or_unguarded_ident(id, "require")
+        && call.args.len() == 1
+        && call.args[0].spread.is_none()
 }
 
 fn collect_import_dependencies(

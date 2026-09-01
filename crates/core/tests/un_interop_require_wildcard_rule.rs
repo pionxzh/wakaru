@@ -251,3 +251,90 @@ use(ns);
 
     assert_eq_normalized(&render(input), expected);
 }
+
+#[test]
+fn preserves_side_effecting_second_argument() {
+    // Babel emits only a literal nodeInterop flag; a side-effecting second
+    // argument is not a recognized producer shape and must not be dropped.
+    let input = r#"
+var _interopRequireWildcard = require("@babel/runtime/helpers/interopRequireWildcard");
+var _a = _interopRequireWildcard(require("a"), probe());
+console.log(_a);
+"#;
+    insta::assert_snapshot!(render(input));
+}
+
+#[test]
+fn preserves_spread_arguments() {
+    let input = r#"
+var _interopRequireWildcard = require("@babel/runtime/helpers/interopRequireWildcard");
+var _a = _interopRequireWildcard(...args);
+console.log(_a);
+"#;
+    insta::assert_snapshot!(render(input));
+}
+
+#[test]
+fn reassigned_binding_is_not_converted_to_an_import() {
+    // `import * as _a` would make the later assignment a runtime TypeError;
+    // the binding must stay a var.
+    let input = r#"
+var _interopRequireWildcard = require("@babel/runtime/helpers/interopRequireWildcard");
+var _a = _interopRequireWildcard(require("a"), true);
+_a = fallback();
+console.log(_a.x);
+"#;
+    let output = render(input);
+    insta::assert_snapshot!(&output);
+    assert_valid_esm_output(output);
+}
+
+#[test]
+fn parenthesized_writes_also_block_import_conversion() {
+    // `(_a) = ...` and `(_a)++` are writes even though the target is wrapped
+    // in parens; the binding must stay a var (assignment to an import binding
+    // is a runtime TypeError in ESM).
+    let input = r#"
+var _interopRequireWildcard = require("@babel/runtime/helpers/interopRequireWildcard");
+var _a = _interopRequireWildcard(require("a"), true);
+(_a) = fallback();
+console.log(_a.x);
+var _b = _interopRequireWildcard(require("b"), true);
+(_b)++;
+console.log(_b);
+"#;
+    let output = render(input);
+    assert!(
+        !output.contains("import * as _a") && !output.contains("import * as _b"),
+        "written bindings must not become namespace imports:\n{output}"
+    );
+    assert_valid_esm_output(output);
+}
+
+/// The whole point of the write guard is that the output stays valid ESM:
+/// no assignment may target an import binding, and the module must parse.
+fn assert_valid_esm_output(output: String) {
+    use wakaru_core::{validate_output_modules, OutputFindingKind};
+    let findings = validate_output_modules(&[("entry.js".into(), output)]);
+    assert!(
+        findings.iter().all(|finding| !matches!(
+            finding.kind,
+            OutputFindingKind::AssignToImport | OutputFindingKind::ParseError
+        )),
+        "output must be valid ESM: {findings:?}"
+    );
+}
+
+#[test]
+fn preserves_spread_require_argument() {
+    let input = r#"
+var _interopRequireWildcard = require("@babel/runtime/helpers/interopRequireWildcard");
+var _a = _interopRequireWildcard(require(..."ab"), true);
+console.log(_a);
+"#;
+    let output = render(input);
+    assert!(
+        !output.contains("import * as _a"),
+        "spread require argument must not convert to an import:\n{output}"
+    );
+}

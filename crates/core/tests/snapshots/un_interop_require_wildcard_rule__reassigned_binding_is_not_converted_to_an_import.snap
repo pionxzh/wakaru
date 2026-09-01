@@ -1,0 +1,8 @@
+---
+source: crates/core/tests/un_interop_require_wildcard_rule.rs
+expression: render(input)
+---
+import __a from "a";
+let _a = __a;
+_a = fallback();
+console.log(_a.x);
