@@ -3159,3 +3159,31 @@ fn webpack5_composition_fails_closed_on_mid_body_strict_directive() {
         "a mid-body directive-lookalike is an extra statement:\n{consumer}"
     );
 }
+
+#[test]
+fn webpack5_does_not_misdetect_method_object_without_require_lifecycle() {
+    // Regression: esbuild browser bundles contain vendor objects whose props
+    // are all functions (e.g. rxjs's Immediate polyfill). Once the outer IIFE
+    // is unwrapped, that body becomes a detection candidate — a real webpack5
+    // modules object must be backed by the proven require lifecycle
+    // (cache write + indexed invocation + returned exports); named-only
+    // property access must not count as webpack5 evidence.
+    let source = r#"
+(() => {
+    var handles = {};
+    var Immediate = {
+        setImmediate(cb) { handles[1] = cb; return 1; },
+        clearImmediate(handle) { delete handles[handle]; }
+    };
+    var id = Immediate.setImmediate(() => console.log("tick"));
+    Immediate.clearImmediate(id);
+    console.log("done");
+})();
+"#;
+    let output = unpack(source, DecompileOptions::default()).expect("unpack should succeed");
+    let names: Vec<_> = output.modules.iter().map(|(n, _)| n.clone()).collect();
+    assert!(
+        !names.iter().any(|n| n.starts_with("module-")),
+        "method-only object misdetected as a webpack5 modules object: {names:?}"
+    );
+}

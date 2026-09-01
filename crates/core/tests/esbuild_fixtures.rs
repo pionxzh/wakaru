@@ -100,20 +100,26 @@ fn es_mixed_extracts_factories_scope_modules_and_decompiles() {
 }
 
 #[test]
-fn iife_factories_remains_single_module_passthrough() {
+fn iife_factories_unpacks_through_iife_wrapper() {
+    // Browser esbuild output (--format=iife) wraps the factories in a
+    // zero-arg IIFE. The wrapper is unwrapped during detection, so the
+    // factories split exactly like the cjs format of the same app.
     let raw = unpack_fixture_raw("iife-factories/bundle.js");
-    assert_eq!(
-        raw.len(),
-        1,
-        "iife-factories: expected passthrough, got {:?}",
-        filenames(&raw)
+    let names = filenames(&raw);
+    assert!(
+        raw.len() > 1,
+        "iife-factories: expected split modules, got {}: {names:?}",
+        raw.len()
+    );
+    assert!(
+        names.contains(&"entry.js"),
+        "iife-factories: missing entry.js: {names:?}"
     );
 
     let decompiled = unpack_fixture("iife-factories/bundle.js");
-    assert_eq!(
-        decompiled.len(),
-        1,
-        "iife-factories decompile: expected passthrough, got {:?}",
+    assert!(
+        decompiled.len() > 1,
+        "iife-factories decompile: expected split modules, got {:?}",
         filenames(&decompiled)
     );
 }

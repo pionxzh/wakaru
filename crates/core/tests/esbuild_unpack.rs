@@ -3145,3 +3145,71 @@ fn webpack_style_bundle_not_detected_as_esbuild() {
         "webpack4 bundle should be split by webpack4 detector, not esbuild"
     );
 }
+
+#[test]
+fn esbuild_unpacks_iife_wrapped_browser_bundle() {
+    // esbuild --format=iife (the browser default) wraps the entire bundle in a
+    // zero-arg arrow IIFE: (() => { ...helpers + factories + entry... })();
+    let inner = make_bundle(
+        "(q,K)=>()=>(K||q((K={exports:{}}).exports,K),K.exports)",
+        "m",
+    );
+    let bundle = format!("(() => {{\n{inner}\n}})();\n");
+    let pairs = expect_unpack(&bundle, "bundle.js");
+
+    assert!(
+        pairs.len() >= 6,
+        "expected ≥6 modules (5 factories + entry), got {}: {:?}",
+        pairs.len(),
+        pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+    assert!(
+        pairs.iter().any(|(n, _)| n == "entry.js"),
+        "missing entry.js"
+    );
+    assert!(
+        pairs.iter().any(|(n, _)| n == "mod_a.js"),
+        "missing mod_a.js"
+    );
+}
+
+#[test]
+fn esbuild_unpacks_named_global_iife_bundle() {
+    // esbuild --format=iife --global-name=app (and rollup's iife output with a
+    // name) assign the IIFE result: var app = (function () { ...; return X; })();
+    let inner = make_bundle(
+        "(q,K)=>()=>(K||q((K={exports:{}}).exports,K),K.exports)",
+        "m",
+    );
+    let bundle = format!("var app = (function () {{\n{inner}\nreturn mod_a;\n}})();\n");
+    let pairs = expect_unpack(&bundle, "bundle.js");
+
+    assert!(
+        pairs.len() >= 6,
+        "expected ≥6 modules (5 factories + entry), got {}: {:?}",
+        pairs.len(),
+        pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+    assert!(
+        pairs.iter().any(|(n, _)| n == "entry.js"),
+        "missing entry.js"
+    );
+}
+
+#[test]
+fn esbuild_unpacks_bang_iife_bundle() {
+    // Some minifiers emit !function(){ ... }() instead of a parenthesized IIFE.
+    let inner = make_bundle(
+        "(q,K)=>()=>(K||q((K={exports:{}}).exports,K),K.exports)",
+        "m",
+    );
+    let bundle = format!("!function () {{\n{inner}\n}}();\n");
+    let pairs = expect_unpack(&bundle, "bundle.js");
+
+    assert!(
+        pairs.len() >= 6,
+        "expected ≥6 modules (5 factories + entry), got {}: {:?}",
+        pairs.len(),
+        pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+}

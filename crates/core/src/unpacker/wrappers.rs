@@ -1,8 +1,8 @@
 use swc_core::atoms::Atom;
-use swc_core::common::DUMMY_SP;
+use swc_core::common::{Span, Spanned, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, ArrowFunctionBody, CallExpr, Callee, Expr, ExprStmt, FnExpr, Function, FunctionBody,
-    Ident, Module, ModuleItem, Pat, ReturnStmt, Stmt, UnaryOp,
+    ArrowExpr, ArrowFunctionBody, CallExpr, Callee, Decl, Expr, ExprStmt, FnExpr, Function,
+    FunctionBody, Ident, Module, ModuleItem, Pat, ReturnStmt, Stmt, UnaryOp,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -12,14 +12,56 @@ pub(super) fn collect_unwrap_candidates(module: &Module) -> Vec<Module> {
     let mut candidates = Vec::new();
 
     for item in &module.body {
-        let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
-            continue;
-        };
-        collect_umd_factory_candidates(expr, &mut candidates);
-        collect_amd_define_candidates(expr, &mut candidates);
+        match item {
+            ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) => {
+                collect_umd_factory_candidates(expr, &mut candidates);
+                collect_amd_define_candidates(expr, &mut candidates);
+                collect_plain_iife_candidates(expr, &mut candidates);
+            }
+            // var app = (() => { ... })();  — esbuild --global-name / rollup
+            // iife output assign the wrapper result to a global.
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) => {
+                for declarator in &var_decl.decls {
+                    if let Some(init) = &declarator.init {
+                        collect_plain_iife_candidates(init, &mut candidates);
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 
     candidates
+}
+
+// Zero-arg IIFE wrapper around an entire bundle: `(() => { ... })();`,
+// `(function () { ... })();`, or `!function () { ... }();`. esbuild's
+// --format=iife (the browser default) and rollup's iife output emit this
+// shape. The body becomes a detection candidate; a trailing `return X;`
+// (named-global form) is dropped.
+fn collect_plain_iife_candidates(expr: &Expr, candidates: &mut Vec<Module>) {
+    let Some(call) = top_level_call(expr) else {
+        return;
+    };
+    if !call.args.is_empty() {
+        return;
+    }
+    let Some((params, body)) = wrapper_callee_parts(&call.callee) else {
+        return;
+    };
+    if !params.is_empty() {
+        return;
+    }
+
+    let stmts = body.stmts.as_slice();
+    let inner = match stmts.last() {
+        Some(Stmt::Return(_)) => &stmts[..stmts.len() - 1],
+        _ => stmts,
+    };
+    if inner.is_empty() || inner.iter().any(|stmt| matches!(stmt, Stmt::Return(_))) {
+        return;
+    }
+    candidates.push(module_from_stmts(inner.to_vec()));
 }
 
 /// Tries Bun's compiled CommonJS container by moving its body into the
@@ -262,15 +304,25 @@ fn collect_block_candidates(body: &FunctionBody, candidates: &mut Vec<Module>) {
 }
 
 fn push_expr_candidate(expr: &Expr, candidates: &mut Vec<Module>) {
+    let expr = strip_parens(expr);
     candidates.push(module_from_stmts(vec![Stmt::Expr(ExprStmt {
-        span: DUMMY_SP,
-        expr: Box::new(strip_parens(expr).clone()),
+        span: expr.span(),
+        expr: Box::new(expr.clone()),
     })]));
 }
 
+/// Candidates keep a real span covering their statements: downstream
+/// detection looks up the candidate's source file through `module.span`
+/// (e.g. esbuild path-comment hints), and a `DUMMY_SP` module panics there.
 fn module_from_stmts(stmts: Vec<Stmt>) -> Module {
+    let span = match (stmts.first(), stmts.last()) {
+        (Some(first), Some(last)) if first.span().lo.0 != 0 && last.span().hi.0 != 0 => {
+            Span::new(first.span().lo, last.span().hi)
+        }
+        _ => DUMMY_SP,
+    };
     Module {
-        span: DUMMY_SP,
+        span,
         body: stmts.into_iter().map(ModuleItem::Stmt).collect(),
         shebang: None,
     }
