@@ -1293,8 +1293,135 @@ fn is_wrap_call(expr: &Expr) -> bool {
     if call.args.is_empty() {
         return false;
     }
+    if !wrap_call_operands_are_canonical(call, member) {
+        return false;
+    }
     // Validate that the first argument is a state machine function
     is_state_machine_fn(&call.args[0].expr)
+}
+
+/// Recovery drops the wrap receiver and the marker/`this` operands and never
+/// evaluates the try-region argument, so every dropped operand must match the
+/// canonical generated shape. Anything else is not proven regenerator output,
+/// and rewriting it could delete a side effect.
+fn wrap_call_operands_are_canonical(call: &CallExpr, member: &MemberExpr) -> bool {
+    // Generated arity is at most (stateMachineFn, marker, thisArg, tryLocs).
+    if call.args.len() > 4 {
+        return false;
+    }
+    if call.args.iter().any(|arg| arg.spread.is_some()) {
+        return false;
+    }
+    if !is_canonical_wrap_receiver(&member.obj) {
+        return false;
+    }
+    // args[1] (marker) and args[2] (thisArg) are dropped without evaluation.
+    if !call
+        .args
+        .iter()
+        .skip(1)
+        .take(2)
+        .all(|arg| is_effect_free_dropped_operand(arg.expr.as_ref()))
+    {
+        return false;
+    }
+    // args[3] is the try-region table; require the complete canonical shape,
+    // not just an array shell — a non-canonical entry would be dropped
+    // without evaluation.
+    match call.args.get(3) {
+        None => true,
+        Some(arg) => match arg.expr.as_ref() {
+            Expr::Array(arr) => is_canonical_try_locs_table(arr),
+            _ => false,
+        },
+    }
+}
+
+/// The canonical regenerator tryLocs table: an array of region arrays whose
+/// slots are numeric literals or holes (Babel emits holes for absent
+/// catch/finally slots, e.g. `[[0, , 5]]`). Any other entry — a call, spread,
+/// or non-array element — would be discarded without evaluation, so the whole
+/// recovery fails closed.
+fn is_canonical_try_locs_table(arr: &ArrayLit) -> bool {
+    arr.elems.iter().all(|elem| {
+        let Some(entry) = elem else {
+            return false;
+        };
+        if entry.spread.is_some() {
+            return false;
+        }
+        let Expr::Array(region) = entry.expr.as_ref() else {
+            return false;
+        };
+        (2..=4).contains(&region.elems.len())
+            // The leading tryLoc slot is mandatory; only the later
+            // catch/finally/after slots may be holes.
+            && region.elems.first().is_some_and(|slot| slot.is_some())
+            && region.elems.iter().all(|slot| match slot {
+                None => true,
+                Some(slot) => {
+                    // Region slots are statement indices: non-negative
+                    // integers small enough to convert exactly. An
+                    // out-of-range value would saturate through the `usize`
+                    // cast downstream instead of failing closed here.
+                    slot.spread.is_none()
+                        && matches!(
+                            slot.expr.as_ref(),
+                            Expr::Lit(Lit::Num(n)) if n.value >= 0.0
+                                && n.value.fract() == 0.0
+                                && n.value <= u32::MAX as f64
+                        )
+                }
+            })
+    })
+}
+
+/// Canonical wrap receivers: the runtime binding (`regeneratorRuntime`, a
+/// minified alias), an ident member chain (`runtime.default`), or the Babel
+/// 7.18+ lazy runtime call (`_regeneratorRuntime()` / minified `t()`), which
+/// takes no arguments. A receiver with arguments or any other effectful shape
+/// is rejected: recovery drops its evaluation.
+fn is_canonical_wrap_receiver(expr: &Expr) -> bool {
+    match expr {
+        Expr::Ident(_) => true,
+        Expr::Member(member) => {
+            is_canonical_wrap_receiver(&member.obj) && matches!(&member.prop, MemberProp::Ident(_))
+        }
+        Expr::Call(call) => {
+            call.args.is_empty()
+                && call
+                    .callee
+                    .as_expr()
+                    .is_some_and(|callee| matches!(callee.as_ref(), Expr::Ident(_)))
+        }
+        Expr::Paren(paren) => is_canonical_wrap_receiver(&paren.expr),
+        _ => false,
+    }
+}
+
+/// Side-effect-free shapes Babel emits for the dropped marker/`this`
+/// operands: an identifier (`_marked`, `_callee`), an ident member chain with
+/// literal computed keys (Babel 6's `_marked[0]`), `this`, a literal
+/// (`null`), or `void <literal>`.
+fn is_effect_free_dropped_operand(expr: &Expr) -> bool {
+    match expr {
+        Expr::Ident(_) | Expr::This(_) | Expr::Lit(_) => true,
+        Expr::Unary(unary) if unary.op == swc_core::ecma::ast::UnaryOp::Void => {
+            matches!(unary.arg.as_ref(), Expr::Lit(_))
+        }
+        Expr::Member(member) => {
+            is_effect_free_dropped_operand(&member.obj)
+                && match &member.prop {
+                    MemberProp::Ident(_) => true,
+                    MemberProp::Computed(computed) => {
+                        matches!(computed.expr.as_ref(), Expr::Lit(_))
+                    }
+                    MemberProp::PrivateName(_) => false,
+                }
+        }
+        Expr::Paren(paren) => is_effect_free_dropped_operand(&paren.expr),
+        _ => false,
+    }
 }
 
 /// Check if an expression is a state machine function:
@@ -1445,6 +1572,9 @@ fn extract_wrap_args(
         return None;
     }
     if call.args.is_empty() {
+        return None;
+    }
+    if !wrap_call_operands_are_canonical(&call, member) {
         return None;
     }
 

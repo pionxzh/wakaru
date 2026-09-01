@@ -2850,3 +2850,196 @@ __async(null, null, function* () {
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
+// ── Canonical-operand gating (dropped operands must be effect-free) ─────────
+
+#[test]
+fn preserves_wrap_on_effectful_call_receiver() {
+    // Recovery drops the receiver's evaluation. A call receiver with
+    // arguments is not the canonical lazy-runtime shape, so it is preserved.
+    let input = r#"
+function myGen() {
+  return getRuntime(config).wrap(function(_context) {
+    while (1) switch (_context.prev = _context.next) {
+      case 0:
+        _context.next = 2;
+        return 1;
+      case 2:
+      case "end":
+        return _context.stop();
+    }
+  }, _marked, this);
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn preserves_wrap_with_extra_arguments() {
+    // The generated call has at most four arguments; a fifth is not producer
+    // output and would be silently discarded by recovery.
+    let input = r#"
+function myGen() {
+  return regeneratorRuntime.wrap(function(_context) {
+    while (1) switch (_context.prev = _context.next) {
+      case 0:
+        _context.next = 2;
+        return 1;
+      case 2:
+      case "end":
+        return _context.stop();
+    }
+  }, _marked, this, [], probe());
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn preserves_wrap_with_effectful_dropped_operand() {
+    // The marker/thisArg operands are dropped without evaluation, so a call
+    // in either slot must fail the match.
+    let input = r#"
+function myGen() {
+  return regeneratorRuntime.wrap(function(_context) {
+    while (1) switch (_context.prev = _context.next) {
+      case 0:
+        _context.next = 2;
+        return 1;
+      case 2:
+      case "end":
+        return _context.stop();
+    }
+  }, probe(), this);
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn recovers_wrap_with_indexed_marker_operand() {
+    // Babel 6 emits `_marked[0]` markers; a literal-indexed ident chain is a
+    // canonical dropped operand.
+    let input = r#"
+var _marked = [myGen].map(regeneratorRuntime.mark);
+function myGen() {
+  return regeneratorRuntime.wrap(function(_context) {
+    while (1) switch (_context.prev = _context.next) {
+      case 0:
+        _context.next = 2;
+        return 1;
+      case 2:
+      case "end":
+        return _context.stop();
+    }
+  }, _marked[0], this);
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("function*"),
+        "indexed marker should still recover: {output}"
+    );
+}
+
+#[test]
+fn preserves_wrap_with_non_canonical_try_region_entry() {
+    // A try-region table entry that is not a numeric region array would be
+    // dropped without evaluation; the whole recovery must fail closed.
+    let input = r#"
+function gen() {
+  return regeneratorRuntime.wrap(function callee$(_ctx) {
+    while (1) switch (_ctx.prev = _ctx.next) {
+      case 0:
+      case "end":
+        return _ctx.stop();
+    }
+  }, _marked, null, [probe()]);
+}
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("probe()"),
+        "non-canonical try-region entry must preserve the call:\n{output}"
+    );
+}
+
+#[test]
+fn preserves_wrap_with_spread_try_region_entry() {
+    let input = r#"
+function gen() {
+  return regeneratorRuntime.wrap(function callee$(_ctx) {
+    while (1) switch (_ctx.prev = _ctx.next) {
+      case 0:
+      case "end":
+        return _ctx.stop();
+    }
+  }, _marked, null, [...regions]);
+}
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("regions"),
+        "spread try-region table must preserve the call:\n{output}"
+    );
+}
+
+#[test]
+fn preserves_wrap_with_non_integer_try_region_slot() {
+    let input = r#"
+function gen() {
+  return regeneratorRuntime.wrap(function callee$(_ctx) {
+    while (1) switch (_ctx.prev = _ctx.next) {
+      case 0:
+      case "end":
+        return _ctx.stop();
+    }
+  }, _marked, null, [[-1, 2.5]]);
+}
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("regeneratorRuntime.wrap") || output.contains(".wrap"),
+        "non-integer region slots must preserve the wrapper:\n{output}"
+    );
+}
+
+#[test]
+fn preserves_wrap_with_missing_leading_try_region_slot() {
+    let input = r#"
+function gen() {
+  return regeneratorRuntime.wrap(function callee$(_ctx) {
+    while (1) switch (_ctx.prev = _ctx.next) {
+      case 0:
+      case "end":
+        return _ctx.stop();
+    }
+  }, _marked, null, [[, 2]]);
+}
+"#;
+    let output = render(input);
+    assert!(
+        output.contains(".wrap"),
+        "hole in the mandatory tryLoc slot must preserve the wrapper:\n{output}"
+    );
+}
+
+#[test]
+fn preserves_wrap_with_out_of_range_try_region_slot() {
+    let input = r#"
+function gen() {
+  return regeneratorRuntime.wrap(function callee$(_ctx) {
+    while (1) switch (_ctx.prev = _ctx.next) {
+      case 0:
+      case "end":
+        return _ctx.stop();
+    }
+  }, _marked, null, [[1e30, 2]]);
+}
+"#;
+    let output = render(input);
+    assert!(
+        output.contains(".wrap"),
+        "out-of-range region slot must preserve the wrapper:\n{output}"
+    );
+}
