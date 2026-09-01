@@ -1,9 +1,10 @@
 <!DOCTYPE html>
-<!-- Source for public/og.png (the og:image social card).
-     Edit this file, then regenerate from website/:
+<!-- Source for website/public/og.png (the og:image social card).
+     Lives in design/ so the website deploy does not serve it.
+     Edit this file, then regenerate from the repo root:
        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
          --headless=new --disable-gpu --hide-scrollbars \
-         --window-size=1200,630 --screenshot=public/og.png og-card.html
+         --window-size=1200,630 --screenshot=website/public/og.png design/og-card.html
      (any Chromium works; keep 1200x630) -->
 <html>
 <head>
@@ -92,10 +93,10 @@
 </style>
 </head>
 <body>
-  <img class="watermark" src="./public/icon.svg">
+  <img class="watermark" src="../website/public/icon.svg">
   <div class="frame">
     <div class="brand-row">
-      <img src="./public/icon.svg">
+      <img src="../website/public/icon.svg">
       <span class="brand">wakaru<span class="cursor"></span></span>
     </div>
     <div class="middle">
