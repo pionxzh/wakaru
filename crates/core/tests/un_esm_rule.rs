@@ -3256,6 +3256,92 @@ import keep from "./keep.js";
 }
 
 #[test]
+fn toplevel_require_named_member_fails_closed_on_invalid_unicode_ident_prop() {
+    let input = r#"
+var keep = require("./keep.js");
+f(require("./X.js")["a²"]);
+"#;
+    let expected = r#"
+import keep from "./keep.js";
+f(require("./X.js")["a²"]);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_named_member_early_self_read_keeps_commonjs_boundary() {
+    let input = r#"
+consume(require("./module-1.js").value);
+exports.value = 1;
+"#;
+    let output = render_pipeline_until_with_filename(input, "UnEsm", "module-1.js");
+
+    assert_eq_normalized(&output, input);
+    assert!(
+        !output.contains("import ") && !output.contains("export "),
+        "a direct named self-read must not cross only part of its CommonJS boundary:\n{output}"
+    );
+}
+
+#[test]
+fn toplevel_require_named_member_fails_closed_on_provider_member_write() {
+    let input = r#"
+consume(require("./dep.js").UIBase);
+require("./dep.js").UIBase = replacement;
+consume(require("./dep.js").UIBase);
+"#;
+    let output = apply_unesm(input);
+
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn toplevel_require_named_member_fails_closed_on_other_provider_member_mutations() {
+    let mutations = [
+        r#"require("./dep.js").UIBase += replacement;"#,
+        r#"require("./dep.js").UIBase++;"#,
+        r#"delete require("./dep.js").UIBase;"#,
+        r#"for (require("./dep.js").UIBase in values) {}"#,
+        r#"for (require("./dep.js").UIBase of values) {}"#,
+    ];
+
+    for mutation in mutations {
+        let input = format!(
+            r#"
+consume(require("./dep.js").UIBase);
+{mutation}
+consume(require("./dep.js").UIBase);
+"#
+        );
+        let output = apply_unesm(&input);
+
+        assert!(
+            !output.contains("import { UIBase }")
+                && output.matches("require(\"./dep.js\").UIBase").count() >= 2,
+            "provider mutation must keep fresh member reads:\n{output}"
+        );
+    }
+}
+
+#[test]
+fn toplevel_require_named_member_does_not_reuse_local_across_provider_member_write() {
+    let input = r#"
+var UIBase = require("./dep.js").UIBase;
+require("./dep.js").UIBase = replacement;
+consume(require("./dep.js").UIBase);
+"#;
+    let expected = r#"
+import { UIBase } from "./dep.js";
+require("./dep.js").UIBase = replacement;
+consume(require("./dep.js").UIBase);
+"#;
+    let output = apply_unesm(input);
+
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn toplevel_require_named_member_sibling_import_does_not_recover_default_arg() {
     let input = r#"
 import { keep } from "./keep.js";
