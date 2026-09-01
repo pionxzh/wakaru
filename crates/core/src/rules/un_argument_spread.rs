@@ -149,7 +149,15 @@ fn try_convert_apply(call: CallExpr, unresolved_mark: Mark) -> Result<Expr, Call
     // The callee's object is a member expression AND first arg equals the outer object.
     // e.g. callee = obj.fn.apply, callee_obj = obj.fn (Member), first_arg should = obj
     if let Expr::Member(callee_member_obj) = callee_obj {
-        if exprs_structurally_equal(first_arg, &callee_member_obj.obj) {
+        // The non-memoized same-receiver form accepts only an identifier or
+        // `this` receiver. A member-chain receiver (`root.child.method.apply(
+        // root.child, args)`) is read twice by the input and once by the
+        // output, so a getter's evaluation count would change. Babel emits
+        // the bare form only for plain identifiers and `this`; it memoizes
+        // member receivers, which the memoized paths below handle.
+        if matches!(first_arg, Expr::Ident(_) | Expr::This(_))
+            && exprs_structurally_equal(first_arg, &callee_member_obj.obj)
+        {
             return Ok(make_spread_call(call));
         }
         if let Some(receiver) = memoized_receiver_source(&callee_member_obj.obj, first_arg) {

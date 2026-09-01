@@ -305,3 +305,18 @@ const out = (_app_info = app_info).build.apply(other_info, [prefix, ...items, ta
     let output = apply(input);
     assert_eq_normalized(&output, input);
 }
+
+#[test]
+fn preserves_apply_with_member_chain_receiver() {
+    // `root.child` is read twice by the input (callee chain and thisArg) and
+    // would be read once by the converted output, changing a getter's
+    // evaluation count. Babel memoizes member receivers, so the bare form
+    // with a member-chain receiver is not producer output — preserve it.
+    let input = r#"
+root.child.method.apply(root.child, [1, 2]);
+"#;
+    let expected = r#"
+root.child.method.apply(root.child, [1, 2]);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
