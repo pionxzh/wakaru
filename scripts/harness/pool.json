@@ -1,0 +1,24 @@
+{
+  "comment": "Stratified npm package pool for synthetic fixtures. All browser-safe, bundleable without framework-specific transforms (no JSX/SFC compilation needed). Versions resolved at install time and frozen by workspace/package-lock.json.",
+  "categories": {
+    "ui-runtime": ["react", "react-dom", "preact", "vue"],
+    "utilities": ["lodash", "ramda", "date-fns", "dayjs", "luxon"],
+    "data": ["axios", "qs", "uuid", "nanoid", "zod", "ajv"],
+    "state": ["redux", "zustand", "immer", "mobx"],
+    "text": ["marked", "dompurify", "classnames", "highlight.js"],
+    "events": ["eventemitter3", "mitt", "rxjs"],
+    "crypto": ["crypto-js", "hash.js"],
+    "storage": ["js-cookie", "store2", "idb"]
+  },
+  "tooling": [
+    "esbuild",
+    "webpack",
+    "webpack-cli",
+    "rollup",
+    "@rollup/plugin-node-resolve",
+    "@rollup/plugin-commonjs",
+    "@rollup/plugin-replace",
+    "@rollup/plugin-terser",
+    "@rollup/plugin-json"
+  ]
+}
