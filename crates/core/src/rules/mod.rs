@@ -129,7 +129,11 @@ impl RewriteAssumptions {
             RewriteLevel::Standard => Self {
                 no_document_all: true,
                 pure_getters: false,
-                stable_builtins: false,
+                // Matches the documented contract and actual behavior: SmartInline's
+                // builtin-alias inlining and UnBuiltinAliases both run at standard+.
+                // Nothing consumes this flag yet; it exists so future consumers
+                // inherit the correct policy.
+                stable_builtins: true,
             },
             RewriteLevel::Aggressive => Self {
                 no_document_all: true,
@@ -240,3 +244,32 @@ pub use un_webpack_object_getters::UnWebpackObjectGetters;
 pub use un_while_loop::UnWhileLoop;
 pub use unminify_booleans::UnminifyBooleans;
 pub use var_decl_to_let_const::VarDeclToLetConst;
+
+#[cfg(test)]
+mod rewrite_assumptions_tests {
+    use super::{RewriteAssumptions, RewriteLevel};
+
+    // Pins the current per-level assumption table. `stable_builtins` matches
+    // the documented standard+ contract and the rules that embody it
+    // (SmartInline builtin-alias inlining, UnBuiltinAliases). `pure_getters`
+    // is pinned at its current aggressive-only value; the documented contract
+    // is shape-sensitive (identifier bases at standard), which a single
+    // boolean cannot express — reconcile matcher gating before widening it.
+    #[test]
+    fn assumption_table_pins_current_policy() {
+        let minimal = RewriteAssumptions::from_level(RewriteLevel::Minimal);
+        assert!(!minimal.no_document_all);
+        assert!(!minimal.pure_getters);
+        assert!(!minimal.stable_builtins);
+
+        let standard = RewriteAssumptions::from_level(RewriteLevel::Standard);
+        assert!(standard.no_document_all);
+        assert!(!standard.pure_getters);
+        assert!(standard.stable_builtins);
+
+        let aggressive = RewriteAssumptions::from_level(RewriteLevel::Aggressive);
+        assert!(aggressive.no_document_all);
+        assert!(aggressive.pure_getters);
+        assert!(aggressive.stable_builtins);
+    }
+}
