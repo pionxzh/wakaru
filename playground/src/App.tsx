@@ -509,6 +509,7 @@ export function App() {
         onFormatterChange={setFormatter}
         onMappingChange={setMappingEnabled}
         onVueSfcChange={handleVueSfcChange}
+        onLoadExample={setDecompileSource}
         onShare={handleShare}
         isLoading={showRunningStatus}
         wasmReady={wasmReady}

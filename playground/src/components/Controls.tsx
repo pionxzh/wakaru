@@ -1,4 +1,5 @@
 import { LEVELS, type Level } from "../lib/constants";
+import { EXAMPLES } from "../lib/examples";
 import {
   PRODUCERS,
   type PlaygroundMode,
@@ -31,6 +32,7 @@ interface ControlsProps {
   onFormatterChange: (formatter: boolean) => void;
   onMappingChange: (mapping: boolean) => void;
   onVueSfcChange: (vueSfc: boolean) => void;
+  onLoadExample: (source: string) => void;
   onShare: () => void;
   isLoading: boolean;
   wasmReady: boolean;
@@ -53,6 +55,7 @@ export function Controls({
   onFormatterChange,
   onMappingChange,
   onVueSfcChange,
+  onLoadExample,
   onShare,
   isLoading,
   wasmReady,
@@ -81,6 +84,28 @@ export function Controls({
             Compile &amp; Restore
           </button>
         </div>
+        {mode === "decompile" && (
+          <label className="controls-label">
+            Example
+            <select
+              className="controls-select"
+              value=""
+              onChange={(event) => {
+                const example = EXAMPLES.find(
+                  ({ value }) => value === event.target.value
+                );
+                if (example) onLoadExample(example.source);
+              }}
+            >
+              <option value="" disabled>
+                Load…
+              </option>
+              {EXAMPLES.map(({ value, label }) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+          </label>
+        )}
         {mode === "roundtrip" && (
           <label className="controls-label">
             Producer
