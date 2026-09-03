@@ -1585,8 +1585,8 @@
       "variant": "case",
       "status": "unsupported",
       "kind": "node-module-baseline",
-      "fingerprint": "098f6a4839c0790a2df00e6903403bde3694fbe885939f2b9ed337732638d946",
-      "summary": "Error: module: expected success, got runtime Error: module worker produced no outcome: node:internal/modules/esm/resolve:271\n    throw new ERR_MODULE_NOT_FOUND(\nError [ERR_MODULE_NOT_FOUND]: Cannot find module '<tmp> imported from <tmp>"
+      "fingerprint": "a2125ae729db169f93a63d616b3cb7f6cf712acde25958ea90cc72b72b703fd8",
+      "summary": "Error [ERR_MODULE_NOT_FOUND]: Cannot find module '<tmp> imported from <tmp>"
     },
     {
       "path": "test/language/module-code/verify-dfs-a_FIXTURE.js",

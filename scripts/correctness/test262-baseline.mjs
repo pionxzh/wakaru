@@ -222,7 +222,22 @@ function stableDiagnostic(value) {
       ),
     )
     .map((line) => line.replace(runtimeTempPathPattern, "<tmp>"))
-    .map((line) => line.replace(/file:\/{2,3}<tmp>/g, "file://<tmp>"));
+    .map((line) => line.replace(/file:\/{2,3}<tmp>/g, "file://<tmp>"))
+    .map((line) =>
+      line.replace(/\bnode:internal\/[^\s:]+:\d+(?::\d+)?/g, "<node-internal>"),
+    );
+  // A missing module-worker marker wraps the child's stderr in an outer Error.
+  // Prefer the leaf error without changing how unrelated diagnostics are fingerprinted.
+  if (lines.some((line) => line.includes("module worker produced no outcome"))) {
+    const workerError = lines.findLast(
+      (line, index) =>
+        index > 0 &&
+        /^(?:Error|[A-Za-z_$][\w$]*Error)(?:\s+\[[A-Z0-9_]+\])?(?::|$)/.test(line),
+    );
+    if (workerError) {
+      return workerError;
+    }
+  }
   const typedError = lines.find((line) => /^[A-Za-z_$][\w$]*Error(?::|$)/.test(line));
   if (typedError) {
     return typedError;

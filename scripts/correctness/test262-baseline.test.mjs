@@ -306,6 +306,59 @@ test("fingerprints ignore unstable VM source carets", () => {
   assert.equal(left, right);
 });
 
+test("fingerprints ignore Node-internal source line drift in nested worker errors", () => {
+  const workerError = (line) =>
+    `Error: module: expected success, got runtime Error: module worker produced no outcome: node:internal/modules/esm/resolve:${line}\n` +
+    "    throw new ERR_MODULE_NOT_FOUND(\n" +
+    "Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/tmp/wakaru-test262-module/missing.mjs'";
+  const leftError = workerError(271);
+  const rightError = workerError(272);
+
+  const left = fingerprintTest262Outcome({
+    status: "unsupported",
+    reason: "node-module-baseline",
+    error: leftError,
+  });
+  const right = fingerprintTest262Outcome({
+    status: "unsupported",
+    reason: "node-module-baseline",
+    error: rightError,
+  });
+  const baseline = createTest262Baseline(
+    report([
+      {
+        path: "module.js",
+        status: "unsupported",
+        reason: "node-module-baseline",
+        error: leftError,
+      },
+    ]),
+  );
+
+  assert.equal(left, right);
+  assert.match(baseline.outcomes[0].summary, /^Error \[ERR_MODULE_NOT_FOUND\]:/);
+  assert.doesNotMatch(baseline.outcomes[0].summary, /node:internal|resolve:271/);
+});
+
+test("fingerprints retain the concrete error from nested worker stderr", () => {
+  const moduleNotFound = fingerprintTest262Outcome({
+    status: "unsupported",
+    reason: "node-module-baseline",
+    error:
+      "Error: module worker produced no outcome: node:internal/modules/esm/resolve:271\n" +
+      "Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/tmp/missing.mjs'",
+  });
+  const syntaxError = fingerprintTest262Outcome({
+    status: "unsupported",
+    reason: "node-module-baseline",
+    error:
+      "Error: module worker produced no outcome: node:internal/modules/esm/loader:271\n" +
+      "SyntaxError: Unexpected token 'export'",
+  });
+
+  assert.notEqual(moduleNotFound, syntaxError);
+});
+
 test("fingerprints and summaries scrub cross-platform temporary paths", () => {
   const aliceError = String.raw`Error: Cannot find module 'C:\Users\Alice\AppData\Local\Temp\wakaru-test262-one\module.mjs'`;
   const bobError = String.raw`Error: Cannot find module 'D:\Users\Bob\AppData\Local\Temp\wakaru-test262-two\module.mjs'`;
