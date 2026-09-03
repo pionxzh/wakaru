@@ -3,11 +3,12 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::Span;
 use swc_core::ecma::ast::{
-    ArrayPat, ArrowExpr, AssignExpr, AssignOp, AssignTarget, BindingIdent, Callee, CatchClause,
-    ClassDecl, ClassExpr, Expr, FnDecl, FnExpr, ForHead, ForInStmt, ForOfStmt, Function, Ident,
-    ImportDecl, ImportSpecifier, JSXElementName, JSXObject, KeyValuePatProp, MemberExpr,
-    MemberProp, Module, ModuleItem, ObjectPat, ObjectPatProp, Pat, PropName, SimpleAssignTarget,
-    Stmt, UnaryExpr, UnaryOp, UpdateExpr, VarDeclarator,
+    ArrayPat, ArrowExpr, AssignExpr, AssignOp, AssignTarget, BindingIdent, BlockStmt, Callee,
+    CatchClause, ClassDecl, ClassExpr, Constructor, Expr, FnDecl, FnExpr, ForHead, ForInStmt,
+    ForOfStmt, Function, FunctionBody, Ident, ImportDecl, ImportSpecifier, JSXElementName,
+    JSXObject, KeyValuePatProp, MemberExpr, MemberProp, Module, ModuleItem, ObjectPat,
+    ObjectPatProp, Pat, PropName, SimpleAssignTarget, StaticBlock, Stmt, SwitchCase, UnaryExpr,
+    UnaryOp, UpdateExpr, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -32,6 +33,9 @@ pub(crate) enum UseKind {
 pub(crate) struct UseSite {
     pub(crate) kind: UseKind,
     pub(crate) span: Span,
+    /// Id of the innermost function-like construct (function, arrow,
+    /// constructor, static block) containing the use; `0` is the module body.
+    pub(crate) function_id: usize,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -44,7 +48,21 @@ pub(crate) struct BindingInfo {
 pub(crate) struct BindingUseIndex {
     bindings: HashMap<BindingId, BindingInfo>,
     uninitialized: HashSet<BindingId>,
+    uninitialized_decls: HashMap<BindingId, UninitializedDecl>,
     legacy_ident_occurrences: HashMap<BindingId, usize>,
+}
+
+/// An uninitialized declarator (`var x;` / `let x;`) with what a temp proof
+/// needs to know about where it sits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct UninitializedDecl {
+    kind: VarDeclKind,
+    function_id: usize,
+    lo: swc_core::common::BytePos,
+    /// Span of the straight-line statement list (module body, function body,
+    /// or block) the declaration is a direct child of; `None` when it sits
+    /// directly in a `switch` case, whose consequent can be skipped.
+    list_span: Option<Span>,
 }
 
 impl BindingUseIndex {
@@ -81,6 +99,7 @@ impl BindingUseIndex {
         Self {
             bindings: collector.bindings,
             uninitialized: collector.uninitialized,
+            uninitialized_decls: collector.uninitialized_decls,
             legacy_ident_occurrences: legacy.references,
         }
     }
@@ -115,12 +134,49 @@ impl BindingUseIndex {
         Self {
             bindings: collector.bindings,
             uninitialized: collector.uninitialized,
+            uninitialized_decls: collector.uninitialized_decls,
             legacy_ident_occurrences: legacy.references,
         }
     }
 
     pub(crate) fn uninitialized_bindings(&self) -> HashSet<BindingId> {
         self.uninitialized.clone()
+    }
+
+    /// The subset of [`uninitialized_bindings`](Self::uninitialized_bindings)
+    /// a matched pattern may assign without observable difference: `var`
+    /// declarators (hoisted, readable from the start of their function), and
+    /// `let` declarators that are definitely initialized at every use by
+    /// straight-line control flow — the declaration is a direct statement of a
+    /// module body, function body, or block, or the initializer of an ordinary
+    /// `for (let n; …)` loop (which runs before the test, body, and update),
+    /// but not a direct child of a `switch` case (another case can skip it)
+    /// nor a `for (let x in/of …)` head (the loop writes it) — and every use
+    /// lies textually after it, inside that same list, and inside the same
+    /// function-like construct (a hoisted function declaration invoked earlier
+    /// would otherwise reach the use first). `const` never qualifies:
+    /// assigning it throws. Compilers declare temps as `var _a;`; wakaru's own
+    /// `VarDeclToLetConst` turns those into `let _a;` before the later
+    /// cleanup passes run, which is why the `let` form matters.
+    pub(crate) fn assignable_uninitialized_bindings(&self) -> HashSet<BindingId> {
+        self.uninitialized_decls
+            .iter()
+            .filter(|(id, decl)| match decl.kind {
+                VarDeclKind::Var => true,
+                VarDeclKind::Let => decl.list_span.is_some_and(|list| {
+                    self.bindings.get(*id).is_none_or(|info| {
+                        info.uses.iter().all(|use_site| {
+                            use_site.function_id == decl.function_id
+                                && use_site.span.lo > decl.lo
+                                && use_site.span.lo >= list.lo
+                                && use_site.span.hi <= list.hi
+                        })
+                    })
+                }),
+                VarDeclKind::Const => false,
+            })
+            .map(|(id, _)| id.clone())
+            .collect()
     }
 
     /// Compatibility count for older rules that intentionally count declaration
@@ -211,11 +267,43 @@ impl BindingUseIndex {
 struct BindingUseCollector {
     bindings: HashMap<BindingId, BindingInfo>,
     uninitialized: HashSet<BindingId>,
+    uninitialized_decls: HashMap<BindingId, UninitializedDecl>,
     direct_write_bindings: HashSet<BindingId>,
     direct_writes_only: bool,
+    /// Kind of the `var`/`let`/`const` statement whose declarators are being
+    /// visited, so an uninitialized declarator can be classified by kind.
+    current_var_kind: Option<VarDeclKind>,
+    /// Stack of function-like construct ids; the module body is `0`.
+    function_stack: Vec<usize>,
+    next_function_id: usize,
+    /// Stack of enclosing statement lists: `Some(span)` for a module body,
+    /// function body, or block; `None` for a `switch` case consequent.
+    statement_lists: Vec<Option<Span>>,
+    /// Visiting a `for (var/let x of ...)` head: its declarator is written by
+    /// the loop, not a temp a pattern may consume.
+    in_for_head: bool,
 }
 
 impl BindingUseCollector {
+    fn current_function_id(&self) -> usize {
+        self.function_stack.last().copied().unwrap_or(0)
+    }
+
+    fn enter_function(&mut self) {
+        self.next_function_id += 1;
+        self.function_stack.push(self.next_function_id);
+    }
+
+    fn leave_function(&mut self) {
+        self.function_stack.pop();
+    }
+
+    fn with_statement_list<T: VisitWith<Self>>(&mut self, list: Option<Span>, node: &T) {
+        self.statement_lists.push(list);
+        node.visit_children_with(self);
+        self.statement_lists.pop();
+    }
+
     fn direct_writes_only() -> Self {
         Self {
             direct_writes_only: true,
@@ -263,9 +351,11 @@ impl BindingUseCollector {
             return;
         }
         let id = Self::binding_id(ident);
+        let function_id = self.current_function_id();
         self.bindings.entry(id).or_default().uses.push(UseSite {
             kind,
             span: ident.span,
+            function_id,
         });
     }
 
@@ -467,11 +557,16 @@ impl BindingUseCollector {
     fn visit_for_head_as_assignment(&mut self, head: &ForHead) {
         match head {
             ForHead::Pat(pat) => self.record_pat_decls_as_writes(pat, UseKind::Write),
-            _ => head.visit_with(self),
+            _ => {
+                self.in_for_head = true;
+                head.visit_with(self);
+                self.in_for_head = false;
+            }
         }
     }
 
     fn visit_function_params_and_body(&mut self, function: &Function) {
+        self.enter_function();
         for param in &function.params {
             self.record_pat_decls(&param.pat);
         }
@@ -481,6 +576,7 @@ impl BindingUseCollector {
         if let Some(body) = &function.body {
             body.visit_with(self);
         }
+        self.leave_function();
     }
 
     fn visit_prop_name_exprs(&mut self, prop: &PropName) {
@@ -498,6 +594,22 @@ impl BindingUseCollector {
 }
 
 impl Visit for BindingUseCollector {
+    fn visit_module(&mut self, module: &Module) {
+        self.with_statement_list(Some(module.span), module);
+    }
+
+    fn visit_block_stmt(&mut self, block: &BlockStmt) {
+        self.with_statement_list(Some(block.span), block);
+    }
+
+    fn visit_function_body(&mut self, body: &FunctionBody) {
+        self.with_statement_list(Some(body.span), body);
+    }
+
+    fn visit_switch_case(&mut self, case: &SwitchCase) {
+        self.with_statement_list(None, case);
+    }
+
     fn visit_import_decl(&mut self, import: &ImportDecl) {
         for specifier in &import.specifiers {
             match specifier {
@@ -508,10 +620,28 @@ impl Visit for BindingUseCollector {
         }
     }
 
+    fn visit_var_decl(&mut self, decl: &VarDecl) {
+        let previous = self.current_var_kind.replace(decl.kind);
+        decl.visit_children_with(self);
+        self.current_var_kind = previous;
+    }
+
     fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
         if !self.direct_writes_only && declarator.init.is_none() {
             if let Pat::Ident(binding) = &declarator.name {
-                self.uninitialized.insert(Self::binding_ident_id(binding));
+                let id = Self::binding_ident_id(binding);
+                if let (Some(kind), false) = (self.current_var_kind, self.in_for_head) {
+                    self.uninitialized_decls.insert(
+                        id.clone(),
+                        UninitializedDecl {
+                            kind,
+                            function_id: self.current_function_id(),
+                            lo: binding.id.span.lo,
+                            list_span: self.statement_lists.last().copied().flatten(),
+                        },
+                    );
+                }
+                self.uninitialized.insert(id);
             }
         }
         self.record_pat_decls(&declarator.name);
@@ -537,12 +667,26 @@ impl Visit for BindingUseCollector {
     }
 
     fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
+        self.enter_function();
         for param in &arrow.params {
             self.record_pat_decls(param);
         }
         arrow.body.visit_with(self);
         arrow.return_type.visit_with(self);
         arrow.type_params.visit_with(self);
+        self.leave_function();
+    }
+
+    fn visit_constructor(&mut self, ctor: &Constructor) {
+        self.enter_function();
+        ctor.visit_children_with(self);
+        self.leave_function();
+    }
+
+    fn visit_static_block(&mut self, block: &StaticBlock) {
+        self.enter_function();
+        block.visit_children_with(self);
+        self.leave_function();
     }
 
     fn visit_class_decl(&mut self, decl: &ClassDecl) {

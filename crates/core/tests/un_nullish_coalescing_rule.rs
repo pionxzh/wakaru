@@ -535,3 +535,15 @@ var v = (G = B.broadcast) === null || G === undefined || G;"#;
         "should transform when temp is only used in pattern: {output}"
     );
 }
+
+#[test]
+fn preserves_let_temp_declared_after_the_pattern() {
+    // Same proof as UnOptionalChaining: an uninitialized `let` declared after
+    // the pattern is in its TDZ there; the input throws ReferenceError.
+    let input = r#"
+const x = (n = foo) !== null && n !== void 0 ? n : "bar";
+let n;
+use(x);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}

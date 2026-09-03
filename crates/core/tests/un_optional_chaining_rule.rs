@@ -1245,3 +1245,90 @@ use(l);
     let output = apply(input);
     assert_eq_normalized(&output, input);
 }
+
+#[test]
+fn standard_preserves_let_temp_declared_after_the_pattern() {
+    // `n` is in its temporal dead zone when the pattern assigns it, so the
+    // input throws ReferenceError. "No initializer" is not "safe to assign":
+    // only hoisted `var` declarators are the compiler-temp shape.
+    let input = r#"
+const obj = { value: 1 };
+const x = (n = obj) == null ? undefined : n.value;
+let n;
+use(x);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn standard_preserves_let_temp_used_in_a_hoisted_function_before_its_declaration() {
+    // Textually the `let` precedes the function body that assigns `n`, but the
+    // hoisted declaration is called first, so the assignment is still in the
+    // TDZ. The proof requires the declaration and every use to share a
+    // function.
+    let input = r#"
+read();
+let n;
+function read() {
+  return (n = obj) == null ? undefined : n.value;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn standard_preserves_let_temp_used_only_inside_a_nested_function() {
+    // Same rule from the other side: a `let` in the outer scope consumed only
+    // inside a nested function is not a compiler temp (they are declared in
+    // the function that uses them) and its TDZ cannot be judged textually.
+    let input = r#"
+let n;
+const read = () => (n = obj) == null ? undefined : n.value;
+use(read);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn standard_preserves_let_temp_declared_in_a_skippable_switch_case() {
+    // Textually before the use and in the same function, yet `mode === 1`
+    // jumps past `let n;`, so the assignment throws in its TDZ. Only a `let`
+    // that is a direct statement of a block/function/module body counts as
+    // definitely initialized at later uses in that list.
+    let input = r#"
+switch (mode) {
+  case 0:
+    let n;
+    break;
+  case 1:
+    const x = (n = obj) == null ? undefined : n.value;
+    use(x);
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn standard_transforms_let_temp_declared_in_the_enclosing_function_body() {
+    // The shape VarDeclToLetConst produces from a hoisted `var _a;` before the
+    // cleanup passes: a `let` at the top of the function body, every use
+    // after it in the same body.
+    let input = r#"
+function f(obj) {
+  let n;
+  if (ready) {
+    return (n = obj) == null ? undefined : n.value;
+  }
+  return fallback;
+}
+"#;
+    let expected = r#"
+function f(obj) {
+  if (ready) {
+    return obj?.value;
+  }
+  return fallback;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}

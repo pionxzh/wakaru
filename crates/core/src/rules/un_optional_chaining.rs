@@ -42,7 +42,11 @@ impl UnOptionalChaining {
 impl VisitMut for UnOptionalChaining {
     fn visit_mut_module(&mut self, module: &mut Module) {
         let facts = collect_binding_facts(module);
-        self.uninitialized_bindings = facts.uninitialized;
+        // Hoisted `var _a;` temps, or `let _a;` declared before every use in
+        // the same function (VarDeclToLetConst's rewrite of the former); an
+        // uninitialized `let` elsewhere may be in its TDZ where the pattern
+        // assigns it.
+        self.uninitialized_bindings = facts.assignable_uninitialized;
         self.binding_references = facts.references;
         self.consumed_uninitialized_bindings.clear();
         module.visit_mut_children_with(self);
