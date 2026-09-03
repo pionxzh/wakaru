@@ -273,6 +273,42 @@ fn iife_with_only_nested_returns_can_still_be_unwrapped() {
 }
 
 #[test]
+fn minified_bang_iife_can_be_unwrapped() {
+    let body = two_group_fixture("function b1() { return 10; }");
+    let input = format!("!function() {{\n{body}\n}}();");
+
+    assert!(
+        unwraps_first_iife(&input),
+        "the minified Rollup IIFE form should expose its scope-hoisted body"
+    );
+    assert_splits(&input, "the minified Rollup IIFE should split");
+}
+
+#[test]
+fn generator_iife_cannot_be_unwrapped() {
+    let body = two_group_fixture("function b1() { return 10; }");
+    let input = format!("(function*() {{\n{body}\n}})();");
+
+    assert!(
+        !unwraps_first_iife(&input),
+        "calling a generator does not execute its body"
+    );
+    assert_does_not_split(&input, "a generator body must retain its boundary");
+}
+
+#[test]
+fn async_iife_cannot_be_unwrapped() {
+    let body = two_group_fixture("function b1() { return 10; }");
+    let input = format!("(async function() {{\nawait 0;\n{body}\n}})();");
+
+    assert!(
+        !unwraps_first_iife(&input),
+        "an async IIFE must retain its promise and suspension boundary"
+    );
+    assert_does_not_split(&input, "an async IIFE body must retain its boundary");
+}
+
+#[test]
 fn iife_unwrap_declines_cross_scope_binding_collisions() {
     for (name, input) in [
         (

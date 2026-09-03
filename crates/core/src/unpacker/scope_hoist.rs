@@ -310,7 +310,8 @@ fn split_from_module(
         return None;
     }
 
-    // Unwrap IIFE wrapper if present: `(()=>{ ... })()` or `(function(){ ... })()`
+    // Unwrap IIFE wrapper if present: `(()=>{ ... })()`, `(function(){ ... })()`,
+    // or the minified `!function(){ ... }()` form.
     let iife_body = unwrap_iife(module);
     let body = iife_body.as_deref().unwrap_or(&module.body);
 
@@ -453,7 +454,8 @@ fn render_scope_hoist_plan(
     ))
 }
 
-/// Detect and unwrap an IIFE wrapper: `(()=>{ ... })()` or `(function(){ ... })()`
+/// Detect and unwrap an IIFE wrapper: `(()=>{ ... })()`, `(function(){ ... })()`,
+/// or `!function(){ ... }()`.
 /// Returns the inner body statements (plus any trailing top-level items)
 /// converted to ModuleItems. Only matches when the first item is an IIFE call
 /// and removing its function scope cannot collide with trailing bindings.
@@ -462,7 +464,15 @@ fn unwrap_iife(module: &Module) -> Option<Vec<ModuleItem>> {
     let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = first else {
         return None;
     };
-    let Expr::Call(call) = &**expr else {
+    let call_expr = match &**expr {
+        Expr::Unary(UnaryExpr {
+            op: UnaryOp::Bang,
+            arg,
+            ..
+        }) => &**arg,
+        other => other,
+    };
+    let Expr::Call(call) = call_expr else {
         return None;
     };
     if !call.args.is_empty() {
@@ -476,7 +486,7 @@ fn unwrap_iife(module: &Module) -> Option<Vec<ModuleItem>> {
         other => other,
     };
     let stmts = match inner {
-        Expr::Arrow(arrow) if arrow.params.is_empty() => {
+        Expr::Arrow(arrow) if !arrow.is_async && arrow.params.is_empty() => {
             if let ArrowFunctionBody::FunctionBody(block) = &*arrow.body {
                 Some(&block.stmts)
             } else {
@@ -491,7 +501,11 @@ fn unwrap_iife(module: &Module) -> Option<Vec<ModuleItem>> {
             // Keep the wrapper even when the name currently appears unused;
             // fail closed rather than trying to prove every reflective use of
             // the function identity.
-            if fn_expr.ident.is_none() && fn_expr.function.params.is_empty() {
+            if fn_expr.ident.is_none()
+                && !fn_expr.function.is_async
+                && !fn_expr.function.is_generator
+                && fn_expr.function.params.is_empty()
+            {
                 fn_expr.function.body.as_ref().map(|b| &b.stmts)
             } else {
                 None

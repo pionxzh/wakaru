@@ -12,26 +12,43 @@ pub(super) fn collect_unwrap_candidates(module: &Module) -> Vec<Module> {
     let mut candidates = Vec::new();
 
     for item in &module.body {
-        match item {
-            ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) => {
-                collect_umd_factory_candidates(expr, &mut candidates);
-                collect_amd_define_candidates(expr, &mut candidates);
-                collect_plain_iife_candidates(expr, &mut candidates);
-            }
-            // var app = (() => { ... })();  — esbuild --global-name / rollup
-            // iife output assign the wrapper result to a global.
-            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) => {
-                for declarator in &var_decl.decls {
-                    if let Some(init) = &declarator.init {
-                        collect_plain_iife_candidates(init, &mut candidates);
-                    }
-                }
-            }
-            _ => {}
-        }
+        let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
+            continue;
+        };
+        collect_umd_factory_candidates(expr, &mut candidates);
+        collect_amd_define_candidates(expr, &mut candidates);
     }
+    collect_plain_iife_module_candidate(module, &mut candidates);
 
     candidates
+}
+
+// Plain IIFEs are much broader than UMD/AMD wrapper shapes, so only accept one
+// when it owns the entire parsed module. Otherwise a successful inner detector
+// would silently discard sibling top-level statements.
+fn collect_plain_iife_module_candidate(module: &Module, candidates: &mut Vec<Module>) {
+    let [item] = module.body.as_slice() else {
+        return;
+    };
+    match item {
+        ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) => {
+            collect_plain_iife_candidates(expr, candidates);
+        }
+        // var app = (() => { ... })();  — esbuild --global-name / rollup
+        // iife output assigns the wrapper result to a global.
+        ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) => {
+            let [declarator] = var_decl.decls.as_slice() else {
+                return;
+            };
+            if !matches!(declarator.name, Pat::Ident(_)) {
+                return;
+            }
+            if let Some(init) = &declarator.init {
+                collect_plain_iife_candidates(init, candidates);
+            }
+        }
+        _ => {}
+    }
 }
 
 // Zero-arg IIFE wrapper around an entire bundle: `(() => { ... })();`,
@@ -46,22 +63,39 @@ fn collect_plain_iife_candidates(expr: &Expr, candidates: &mut Vec<Module>) {
     if !call.args.is_empty() {
         return;
     }
-    let Some((params, body)) = wrapper_callee_parts(&call.callee) else {
+    let Some(body) = plain_iife_callee_body(&call.callee) else {
         return;
     };
-    if !params.is_empty() {
-        return;
-    }
 
     let stmts = body.stmts.as_slice();
     let inner = match stmts.last() {
         Some(Stmt::Return(_)) => &stmts[..stmts.len() - 1],
         _ => stmts,
     };
-    if inner.is_empty() || inner.iter().any(|stmt| matches!(stmt, Stmt::Return(_))) {
+    if inner.is_empty() || super::stmts_have_function_level_return(inner) {
         return;
     }
     candidates.push(module_from_stmts(inner.to_vec()));
+}
+
+fn plain_iife_callee_body(callee: &Callee) -> Option<&FunctionBody> {
+    let Callee::Expr(callee_expr) = callee else {
+        return None;
+    };
+    match strip_parens(callee_expr) {
+        Expr::Fn(FnExpr { function, .. })
+            if !function.is_async && !function.is_generator && function.params.is_empty() =>
+        {
+            function.body.as_ref()
+        }
+        Expr::Arrow(arrow) if !arrow.is_async && arrow.params.is_empty() => {
+            let ArrowFunctionBody::FunctionBody(body) = &*arrow.body else {
+                return None;
+            };
+            Some(body)
+        }
+        _ => None,
+    }
 }
 
 /// Tries Bun's compiled CommonJS container by moving its body into the

@@ -3213,3 +3213,98 @@ fn esbuild_unpacks_bang_iife_bundle() {
         pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn esbuild_iife_with_sibling_statements_fails_closed() {
+    let inner = make_bundle(
+        "(q,K)=>()=>(K||q((K={exports:{}}).exports,K),K.exports)",
+        "m",
+    );
+    let bundle = format!(
+        "console.log('before-wrapper');\n(() => {{\n{inner}\n}})();\nconsole.log('after-wrapper');\n"
+    );
+    let pairs = expect_unpack_raw(&bundle);
+
+    assert_eq!(
+        pairs.len(),
+        1,
+        "an IIFE with top-level siblings is not a whole-file wrapper: {:?}",
+        pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+    assert!(pairs[0].1.contains("before-wrapper"));
+    assert!(pairs[0].1.contains("after-wrapper"));
+}
+
+#[test]
+fn esbuild_iife_with_nested_return_fails_closed() {
+    let inner = make_bundle(
+        "(q,K)=>()=>(K||q((K={exports:{}}).exports,K),K.exports)",
+        "m",
+    );
+    let bundle = format!("(() => {{\nif (globalThis.skipBundle) return;\n{inner}\n}})();\n");
+    let pairs = expect_unpack_raw(&bundle);
+
+    assert_eq!(
+        pairs.len(),
+        1,
+        "a wrapper with a function-level return must remain intact: {:?}",
+        pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+    assert!(pairs[0].1.contains("return"));
+}
+
+#[test]
+fn esbuild_generator_iife_fails_closed() {
+    let inner = make_bundle(
+        "(q,K)=>()=>(K||q((K={exports:{}}).exports,K),K.exports)",
+        "m",
+    );
+    let bundle = format!("(function* () {{\n{inner}\n}})();\n");
+    let pairs = expect_unpack_raw(&bundle);
+
+    assert_eq!(
+        pairs.len(),
+        1,
+        "calling a generator does not execute its bundle-looking body: {:?}",
+        pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+    assert!(pairs[0].1.contains("function*"));
+}
+
+#[test]
+fn esbuild_async_iife_fails_closed() {
+    let inner = make_bundle(
+        "(q,K)=>()=>(K||q((K={exports:{}}).exports,K),K.exports)",
+        "m",
+    );
+    let bundle = format!("(async function () {{\nawait 0;\n{inner}\n}})();\n");
+    let pairs = expect_unpack_raw(&bundle);
+
+    assert_eq!(
+        pairs.len(),
+        1,
+        "an async IIFE does not share the enclosing module's execution boundary: {:?}",
+        pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+    assert!(pairs[0].1.contains("async function"));
+    assert!(pairs[0].1.contains("await 0"));
+}
+
+#[test]
+fn esbuild_iife_with_parameter_fails_closed() {
+    let inner = make_bundle(
+        "(q,K)=>()=>(K||q((K={exports:{}}).exports,K),K.exports)",
+        "m",
+    );
+    let bundle =
+        format!("(function (unused = console.log('parameter-default')) {{\n{inner}\n}})();\n");
+    let pairs = expect_unpack_raw(&bundle);
+
+    assert_eq!(
+        pairs.len(),
+        1,
+        "unwrapping a parameterized IIFE could discard parameter initialization: {:?}",
+        pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+    assert!(pairs[0].1.contains("parameter-default"));
+}

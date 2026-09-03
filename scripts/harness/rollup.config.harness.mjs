@@ -14,7 +14,13 @@ export default {
   input: process.env.H_ENTRY,
   output: process.env.H_OUTDIR
     ? { dir: process.env.H_OUTDIR, format: "es", sourcemap: true }
-    : { file: process.env.H_OUT, format: "iife", name: "app", sourcemap: true },
+    : {
+        file: process.env.H_OUT,
+        format: "iife",
+        name: "app",
+        sourcemap: true,
+        inlineDynamicImports: true,
+      },
   plugins: [
     replace({
       preventAssignment: true,

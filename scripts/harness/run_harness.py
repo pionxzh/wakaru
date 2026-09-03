@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Synthetic-bundle harness orchestrator for unpacker verification.
 
-Per fixture (seeded synthetic app) and matrix variant (bundler x mode):
+Per fixture (seeded synthetic app) and matrix variant (bundler x mode x layout):
   generate app -> build bundle (+source map) -> wakaru --unpack --provenance
   -> verify the bundle actually split into modules.
 
 Usage:
   python3 run_harness.py --seeds 1,2,3 --bundlers esbuild,webpack5,rollup \
-      --modes prod,dev [--wakaru /path/to/wakaru]
+      --modes prod,dev --layouts iife,split [--wakaru /path/to/wakaru]
 
 The harness exercises real bundler output shapes (esbuild --format=iife /
 --splitting, webpack5 prod/dev, rollup iife / code-split esm) against the
@@ -15,6 +15,7 @@ unpacker. Detection evaluation on these fixtures lives in the detector
 research repo, not here.
 """
 import argparse
+from collections import Counter
 import json
 import os
 import shutil
@@ -67,9 +68,19 @@ def ensure_workspace():
         print("  installed.")
 
 
-def build_variant(app_dir, bundler, mode, split):
+def variant_name(bundler, mode, layout):
+    return f"{bundler}-{mode}" if layout is None else f"{bundler}-{mode}-{layout}"
+
+
+def layouts_for_bundler(bundler, requested_layouts):
+    if bundler in ("esbuild", "rollup"):
+        return requested_layouts
+    return [None]
+
+
+def build_variant(app_dir, bundler, mode, layout):
     entry = app_dir / "src" / "main.js"
-    dist = app_dir / "dist" / f"{bundler}-{mode}"
+    dist = app_dir / "dist" / variant_name(bundler, mode, layout)
     if dist.exists():
         shutil.rmtree(dist)
     dist.mkdir(parents=True)
@@ -81,7 +92,7 @@ def build_variant(app_dir, bundler, mode, split):
                      "--platform=browser", "--target=es2017",
                      "--log-level=error",
                      f'--define:process.env.NODE_ENV="{nodeenv}"']
-        if split:
+        if layout == "split":
             cmd += ["--splitting", "--format=esm", f"--outdir={dist}"]
         else:
             cmd += ["--format=iife", f"--outfile={out}"]
@@ -105,7 +116,7 @@ def build_variant(app_dir, bundler, mode, split):
             "H_MODE": "production" if mode == "prod" else "development",
             "H_MIN": "1" if mode == "prod" else "0",
         }
-        if split:
+        if layout == "split":
             env["H_OUTDIR"] = str(dist)
         else:
             env["H_OUT"] = str(out)
@@ -117,8 +128,8 @@ def build_variant(app_dir, bundler, mode, split):
     return dist
 
 
-def unpack(wakaru, dist, app_dir, bundler, mode):
-    unpacked = app_dir / "unpacked" / f"{bundler}-{mode}"
+def unpack(wakaru, dist, app_dir, bundler, mode, layout):
+    unpacked = app_dir / "unpacked" / variant_name(bundler, mode, layout)
     if unpacked.exists():
         shutil.rmtree(unpacked)
     # Pass the whole dist dir: directory inputs are expanded recursively and
@@ -131,11 +142,37 @@ def unpack(wakaru, dist, app_dir, bundler, mode):
     return unpacked
 
 
+def split_evidence(unpacked):
+    provenance_path = unpacked / "provenance.json"
+    if not provenance_path.exists():
+        return False, {"outputs": 0, "inputs": 0, "expanded_inputs": 0}
+    try:
+        provenance = json.loads(provenance_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return False, {"outputs": 0, "inputs": 0, "expanded_inputs": 0}
+
+    inputs = []
+    for module in provenance.get("modules", {}).values():
+        source_input = module.get("input")
+        if source_input:
+            inputs.append(str(Path(source_input).resolve()))
+    counts = Counter(inputs)
+    expanded_inputs = sum(count > 1 for count in counts.values())
+    metrics = {
+        "outputs": len(inputs),
+        "inputs": len(counts),
+        "expanded_inputs": expanded_inputs,
+    }
+    return expanded_inputs > 0, metrics
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--seeds", default="1,2,3")
     ap.add_argument("--bundlers", default="esbuild,webpack5,rollup")
     ap.add_argument("--modes", default="prod,dev")
+    ap.add_argument("--layouts", default="iife,split",
+                    help="esbuild/rollup layouts: iife,split")
     ap.add_argument("--wakaru", default=str(DEFAULT_WAKARU))
     args = ap.parse_args()
 
@@ -148,39 +185,39 @@ def main():
     seeds = [int(s) for s in args.seeds.split(",")]
     bundlers = args.bundlers.split(",")
     modes = args.modes.split(",")
+    layouts = args.layouts.split(",")
+    invalid_layouts = sorted(set(layouts) - {"iife", "split"})
+    if invalid_layouts:
+        sys.exit(f"unknown layouts: {', '.join(invalid_layouts)}")
 
     results = []
     for seed in seeds:
         manifest = generate(seed, APPS)
         app_dir = APPS / manifest["name"]
-        split = manifest.get("dynamic_roots", 0) > 0
         print(f"\n=== {manifest['name']}: {manifest['n_modules']} app modules "
               f"({manifest.get('cjs_modules', 0)} cjs, {manifest.get('dynamic_roots', 0)} dyn roots), "
               f"{len(manifest['packages'])} packages: {', '.join(manifest['packages'])}")
         for bundler in bundlers:
             for mode in modes:
-                name = f"{manifest['name']}-{bundler}-{mode}"
-                print(f"  [{name}]")
-                dist = build_variant(app_dir, bundler, mode, split)
-                if dist is None:
-                    results.append((name, "build-failed"))
-                    continue
-                unpacked = unpack(wakaru, dist, app_dir, bundler, mode)
-                if unpacked is None:
-                    results.append((name, "unpack-failed"))
-                    continue
-                n_flat = len(list(unpacked.glob("*.js")))
-                n_all = len(list(unpacked.rglob("*.js")))
-                print(f"    unpacked {n_all} modules ({n_flat} top-level)")
-                if n_all > n_flat * 2:
-                    # nested output = original paths leaked into the bundle
-                    # (dev builds), wakaru reproduced the directory tree
-                    results.append((name, f"ok-nested({n_all})"))
-                elif n_all > 1:
-                    results.append((name, f"ok({n_all})"))
-                else:
-                    # a single output file means the bundle was not split
-                    results.append((name, "not-split"))
+                for layout in layouts_for_bundler(bundler, layouts):
+                    variant = variant_name(bundler, mode, layout)
+                    name = f"{manifest['name']}-{variant}"
+                    print(f"  [{name}]")
+                    dist = build_variant(app_dir, bundler, mode, layout)
+                    if dist is None:
+                        results.append((name, "build-failed"))
+                        continue
+                    unpacked = unpack(wakaru, dist, app_dir, bundler, mode, layout)
+                    if unpacked is None:
+                        results.append((name, "unpack-failed"))
+                        continue
+                    did_split, metrics = split_evidence(unpacked)
+                    print(f"    {metrics['outputs']} outputs from {metrics['inputs']} inputs; "
+                          f"{metrics['expanded_inputs']} inputs expanded")
+                    if did_split:
+                        results.append((name, f"ok({metrics['outputs']})"))
+                    else:
+                        results.append((name, "not-split"))
 
     print("\n=== Harness summary ===")
     failed = False
