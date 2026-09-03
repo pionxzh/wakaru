@@ -257,10 +257,14 @@ can observe.
 `a${first()}${second()}`       // coerces first() before evaluating second()
 ```
 
-`String.prototype.concat` coerces with ToString, the same hint a template uses,
-so the coercion result is identical; only the interleaving of evaluation and
-coercion differs. It is observable only when a substitution's `toString` /
-`Symbol.toPrimitive` has side effects that a later substitution reads.
+Under the execution-environment baseline (the `concat` being called is the
+intrinsic `String.prototype.concat`), the method coerces with ToString, the
+same hint a template uses, so the coercion result is identical; only the
+interleaving of evaluation and coercion differs. It is observable only when a
+substitution's `toString` / `Symbol.toPrimitive` has side effects that a later
+substitution reads. A patched `concat` is outside the baseline — `minimal`'s
+primitive-only rewrite is exact with respect to coercion, not with respect to a
+replaced method.
 
 The string-literal receiver is strong producer evidence — Babel (spec mode),
 SWC, esbuild, and TypeScript ≥ 4.5 all lower templates this way and handwritten
@@ -364,6 +368,36 @@ deviation.
 
 Level: all levels. This is inherent to emitting ESM from CommonJS.
 
+## Execution Environment Baseline
+
+Every level assumes the program runs in a standard ECMAScript environment:
+intrinsic objects, global bindings, and prototype methods retain their
+specified behavior. wakaru does not model mutations performed by opaque calls,
+other scripts or modules, host code, other realms, or dynamically evaluated
+code, and there is currently **no pipeline-wide mutation detection** — an
+explicit `String.prototype.concat = ...` in the same input does not stop the
+`.concat` rewrite. Individual rules may fail closed on a mutation directly
+visible to their own matcher; that coverage is rule-specific hardening, not a
+contract. `minimal` reduces speculative source recovery; it is not a guarantee
+against a modified runtime.
+
+This is what lets a rule treat an unresolved `Math`, `Object`, `Array`,
+`Promise`, or `String.prototype.concat` as the intrinsic: `Math.pow(a, b)` →
+`a ** b`, `"a".concat(b)` → `` `a${b}` ``, `Object.assign({}, x)` → spread,
+`new (P || (P = Promise))` → a native `async` function. Resolver identity is
+still required — a local binding named `Math` is never the intrinsic. A future
+`EnvironmentHazards` pre-pass over the resolved original AST could record
+directly visible same-input mutations for every rule; once it exists, this
+section should narrow the baseline to exclude them. It is deliberately
+distinct from `stable_builtins`, which is narrower: that
+assumption says a builtin is not patched *between an alias capture and its
+later use*, because alias inlining moves the lookup in time. The baseline says
+the intrinsics are intact to begin with.
+
+Rationale: requiring each rule to prove the whole realm untouched would reject
+essentially every real toolchain shape for a hazard wakaru cannot observe
+anyway. The trade is recorded here once instead of being re-argued per rule.
+
 ## Generated Temporaries
 
 Temporaries introduced by compilers are handled by binding analysis, not by
@@ -449,6 +483,26 @@ regular functions have their own function-only bindings and do not block an
 outer conversion; nested arrows still do. For `function() {}.bind(this)`, a
 source that mentions only `this` is safe because both forms capture the same
 value, while `arguments` and `new.target` still block conversion.
+
+Three boundaries follow from this. Coverage is rule-specific: the boundaries
+describe what a rule *may* rely on, not checks every rule already performs.
+
+- `SyntaxContext` covers static lexical scope only. It does not see bindings a
+  `with` object or a sloppy direct `eval` introduces at runtime, so a rule that
+  relies on an identifier resolving to the global (`undefined`, `Infinity`,
+  `Promise`) should treat a candidate inside a `with` body, or in a var scope
+  with an unknown direct `eval`, as unproven and skip it. Today only
+  `UnAsyncAwait` applies the `with` half (module-wide: any `with` statement
+  makes its identifier-shaped frame slots non-canonical); the other rules that
+  read an unresolved `undefined` or builtin name as the global do not check
+  for `with` yet — see the rule-correctness audit for the tracked class and
+  the shared-flag proposal.
+- Unknown direct `eval` is a conservative bail-out for renames, binding
+  removal, declaration-kind changes, and synthesized identifier insertion; a
+  known source string keeps the name-mention best effort above.
+- Indirect `eval`, opaque calls, other modules, and host code can mutate
+  globals and intrinsics but not the current lexical scope. Those mutations
+  fall under the Execution Environment Baseline and are not tracked.
 
 This limitation should be documented for users, especially for `minimal`.
 

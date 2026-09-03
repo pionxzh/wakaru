@@ -181,7 +181,10 @@ impl VisitMut for TaggedTemplateReplacer<'_> {
 /// `concat_coercion_order` assumption (`rewrite-assumptions.md`); the
 /// string-literal receiver is strong producer evidence, not a proof. `minimal`
 /// rewrites only when every substitution is a syntax-proven primitive, where
-/// coercion is the identity and the two orders coincide.
+/// coercion is the identity and the two orders coincide. Like every rewrite
+/// of a builtin method call, this relies on the execution-environment
+/// baseline (`String.prototype.concat` is the intrinsic; see
+/// `rewrite-assumptions.md`), not on anything the AST proves.
 fn rewrite_concat_chain(expr: &Expr, level: RewriteLevel) -> Option<Expr> {
     let Expr::Call(call) = expr else {
         return None;
