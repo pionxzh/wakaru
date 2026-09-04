@@ -161,15 +161,20 @@ impl VisitMut for UnEsm {
         let current_filename = self.current_filename.clone();
         let has_local_self_require =
             contains_local_self_require(module, self.unresolved_mark, current_filename.as_deref());
-        // The named-member argument pre-pass cannot prove that a self export
-        // is initialized before the call. Keep the whole CommonJS boundary;
-        // otherwise an early partial-object read becomes an ESM TDZ read.
+        // Named/default member argument pre-passes cannot prove that a self
+        // export is initialized before the call. Keep the whole CommonJS
+        // boundary; otherwise an early partial-object read becomes an ESM TDZ
+        // read.
         if has_local_self_require
-            && has_toplevel_require_named_member_self_arg(
+            && (has_toplevel_require_named_member_self_arg(
                 &module.body,
                 self.unresolved_mark,
                 current_filename.as_deref(),
-            )
+            ) || has_toplevel_require_default_member_self_arg(
+                &module.body,
+                self.unresolved_mark,
+                current_filename.as_deref(),
+            ))
         {
             return;
         }
@@ -181,6 +186,11 @@ impl VisitMut for UnEsm {
         recover_coupled_commonjs_default_binding(module, self.unresolved_mark);
         // Phase -1: hoist require() calls out of complex expressions
         hoist_embedded_requires(module, self.unresolved_mark);
+        // Parallel to the named-member pass inside hoist_embedded_requires.
+        // Must not sit behind has_hoistable_require: a file whose only
+        // hoistable shape is `require(mod).default` as a call argument would
+        // otherwise skip the pre-pass entirely.
+        hoist_toplevel_require_default_member_args(module, self.unresolved_mark);
         split_called_module_exports_assignments(module, self.unresolved_mark);
         split_chained_local_module_exports_assignments(module, self.unresolved_mark);
         // Phase 0: split compound `var s = exports.X = expr` →
@@ -4325,6 +4335,387 @@ fn prove_toplevel_require_named_member_args(
 fn apply_toplevel_require_named_member_args(
     module: &mut Module,
     plan: ToplevelRequireNamedMemberPlan,
+) {
+    let mut new_body = Vec::with_capacity(module.body.len() + plan.inserts.len());
+    for (index, mut item) in std::mem::take(&mut module.body).into_iter().enumerate() {
+        if let Some(inserts) = plan.inserts.get(&index) {
+            for insert in inserts {
+                new_body.push(make_require_var_item(
+                    insert.local.clone(),
+                    insert.init.clone(),
+                ));
+            }
+        }
+        if let Some(replacements) = plan.replacements.get(&index) {
+            if let Some(call) = toplevel_item_call_expr_mut(&mut item) {
+                for (arg_index, ident) in replacements {
+                    if let Some(arg) = call.args.get_mut(*arg_index) {
+                        *arg.expr = Expr::Ident(ident.clone());
+                    }
+                }
+            }
+        }
+        new_body.push(item);
+    }
+    module.body = new_body;
+}
+
+/// Top-level immediately-evaluated Call whose direct argument is
+/// `require("mod").default`. Hoist to `const L = require("mod").default`
+/// immediately before the statement so the existing DefaultProp classifier
+/// can emit `import L from "mod"`.
+///
+/// Independent of the named-member pass: a failed default proof must not
+/// roll back named recovery, and vice versa. This pass is all-or-nothing
+/// for `.default` arguments only.
+fn hoist_toplevel_require_default_member_args(module: &mut Module, unresolved_mark: Mark) {
+    let candidates = collect_toplevel_require_default_member_args(&module.body, unresolved_mark);
+    if candidates.is_empty() {
+        return;
+    }
+    let Some(plan) =
+        prove_toplevel_require_default_member_args(module, unresolved_mark, &candidates)
+    else {
+        return;
+    };
+    apply_toplevel_require_default_member_args(module, plan);
+}
+
+struct ToplevelRequireDefaultMemberArg {
+    item_index: usize,
+    arg_index: usize,
+    source: String,
+}
+
+struct ToplevelRequireDefaultMemberInsert {
+    local: Ident,
+    init: Box<Expr>,
+}
+
+struct ToplevelRequireDefaultMemberPlan {
+    replacements: HashMap<usize, Vec<(usize, Ident)>>,
+    inserts: HashMap<usize, Vec<ToplevelRequireDefaultMemberInsert>>,
+}
+
+fn collect_toplevel_require_default_member_args(
+    items: &[ModuleItem],
+    unresolved_mark: Mark,
+) -> Vec<ToplevelRequireDefaultMemberArg> {
+    let mut candidates = Vec::new();
+    for (item_index, item) in items.iter().enumerate() {
+        let Some(call) = toplevel_item_call_expr(item) else {
+            continue;
+        };
+        for (arg_index, arg) in call.args.iter().enumerate() {
+            if arg.spread.is_some() {
+                continue;
+            }
+            let Some(source) = match_require_default_member_expr(&arg.expr, unresolved_mark) else {
+                continue;
+            };
+            candidates.push(ToplevelRequireDefaultMemberArg {
+                item_index,
+                arg_index,
+                source,
+            });
+        }
+    }
+    candidates
+}
+
+fn has_toplevel_require_default_member_self_arg(
+    items: &[ModuleItem],
+    unresolved_mark: Mark,
+    current_filename: Option<&str>,
+) -> bool {
+    let Some(current_filename) = current_filename else {
+        return false;
+    };
+    let Some((normalized_filename, current_key)) = current_module_path_context(current_filename)
+    else {
+        return false;
+    };
+
+    collect_toplevel_require_default_member_args(items, unresolved_mark)
+        .into_iter()
+        .any(|candidate| {
+            resolve_relative_specifier(&normalized_filename, &candidate.source).as_deref()
+                == Some(&current_key)
+        })
+}
+
+/// Direct argument of a top-level Call: `require("mod").default` with a
+/// static string specifier (Ident or computed ident string). Does not share
+/// `match_require_named_member`, which must keep skipping `.default`.
+fn match_require_default_member_expr(expr: &Expr, unresolved_mark: Mark) -> Option<String> {
+    let Expr::Member(member) = strip_parens(expr) else {
+        return None;
+    };
+    match_require_default_member(member, unresolved_mark)
+}
+
+fn match_require_default_member(member: &MemberExpr, unresolved_mark: Mark) -> Option<String> {
+    let Expr::Call(call) = strip_parens(member.obj.as_ref()) else {
+        return None;
+    };
+    let source = is_require_call(call, unresolved_mark)?;
+    let prop = is_ident_prop(&member.prop)?;
+    if prop.as_ref() != "default" {
+        return None;
+    }
+    Some(source)
+}
+
+/// Collect direct mutations of `require(source).default`. Folding later
+/// default-member reads into one recovered import is unsafe when the
+/// CommonJS object can be changed through the same static edge.
+struct RequireDefaultMemberMutationCollector {
+    unresolved_mark: Mark,
+    write_target_depth: usize,
+    mutations: HashSet<String>,
+}
+
+impl RequireDefaultMemberMutationCollector {
+    fn collect(module: &Module, unresolved_mark: Mark) -> HashSet<String> {
+        let mut collector = Self {
+            unresolved_mark,
+            write_target_depth: 0,
+            mutations: HashSet::new(),
+        };
+        module.visit_with(&mut collector);
+        collector.mutations
+    }
+}
+
+impl Visit for RequireDefaultMemberMutationCollector {
+    fn visit_member_expr(&mut self, member: &MemberExpr) {
+        if self.write_target_depth > 0 {
+            if let Some(source) = match_require_default_member(member, self.unresolved_mark) {
+                self.mutations.insert(source);
+            }
+        }
+        member.visit_children_with(self);
+    }
+
+    fn visit_assign_expr(&mut self, assignment: &AssignExpr) {
+        self.write_target_depth += 1;
+        assignment.left.visit_with(self);
+        self.write_target_depth -= 1;
+        assignment.right.visit_with(self);
+    }
+
+    fn visit_update_expr(&mut self, update: &swc_core::ecma::ast::UpdateExpr) {
+        self.write_target_depth += 1;
+        update.arg.visit_with(self);
+        self.write_target_depth -= 1;
+    }
+
+    fn visit_unary_expr(&mut self, unary: &swc_core::ecma::ast::UnaryExpr) {
+        if unary.op == UnaryOp::Delete {
+            self.write_target_depth += 1;
+            unary.arg.visit_with(self);
+            self.write_target_depth -= 1;
+        } else {
+            unary.visit_children_with(self);
+        }
+    }
+
+    fn visit_for_in_stmt(&mut self, stmt: &ForInStmt) {
+        self.write_target_depth += 1;
+        stmt.left.visit_with(self);
+        self.write_target_depth -= 1;
+        stmt.right.visit_with(self);
+        stmt.body.visit_with(self);
+    }
+
+    fn visit_for_of_stmt(&mut self, stmt: &swc_core::ecma::ast::ForOfStmt) {
+        self.write_target_depth += 1;
+        stmt.left.visit_with(self);
+        self.write_target_depth -= 1;
+        stmt.right.visit_with(self);
+        stmt.body.visit_with(self);
+    }
+}
+
+fn existing_require_default_prop_item(
+    item: &ModuleItem,
+    source: &str,
+    unresolved_mark: Mark,
+) -> Option<Ident> {
+    let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+        return None;
+    };
+    if var.decls.len() != 1 {
+        return None;
+    }
+    let decl = &var.decls[0];
+    let Pat::Ident(binding) = &decl.name else {
+        return None;
+    };
+    let init = decl.init.as_deref()?;
+    match match_require_default_member_expr(init, unresolved_mark) {
+        Some(ref existing_source) if existing_source == source => Some(binding.id.clone()),
+        _ => None,
+    }
+}
+
+fn existing_default_import_item(item: &ModuleItem, source: &str) -> Option<Ident> {
+    let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+        return None;
+    };
+    if wtf8_to_string(&import.src.value) != source {
+        return None;
+    }
+    import.specifiers.iter().find_map(|spec| match spec {
+        ImportSpecifier::Default(default) => Some(default.local.clone()),
+        _ => None,
+    })
+}
+
+/// Reuse a DefaultProp local or an existing default import only when it is
+/// declared *before* the call and never written. A later
+/// `var L = require(src).default` is not a stable identity for an earlier
+/// argument; a mutated local is not the original member read.
+fn reusable_require_default_local(
+    items: &[ModuleItem],
+    source: &str,
+    before_item_index: usize,
+    unresolved_mark: Mark,
+    uses: &BindingUseIndex,
+) -> Option<Ident> {
+    let mut reusable = None;
+    for (index, item) in items.iter().enumerate() {
+        if index >= before_item_index {
+            break;
+        }
+        let ident = existing_require_default_prop_item(item, source, unresolved_mark)
+            .or_else(|| existing_default_import_item(item, source));
+        let Some(ident) = ident else {
+            continue;
+        };
+        if uses.has_direct_write(&binding_id(&ident)) {
+            // A mutated earlier DefaultProp is not reusable, but a later
+            // stable binding of the same source still is.
+            continue;
+        }
+        reusable = Some(ident);
+    }
+    reusable
+}
+
+fn candidate_default_member_init(
+    items: &[ModuleItem],
+    candidate: &ToplevelRequireDefaultMemberArg,
+) -> Option<Box<Expr>> {
+    let call = toplevel_item_call_expr(&items[candidate.item_index])?;
+    let arg = call.args.get(candidate.arg_index)?;
+    Some(Box::new(strip_parens(arg.expr.as_ref()).clone()))
+}
+
+fn specifier_basename(source: &str) -> Option<Atom> {
+    let last = source.rsplit('/').next().unwrap_or(source);
+    let stem = last.strip_suffix(".js").unwrap_or(last);
+    if stem.is_empty() {
+        return None;
+    }
+    if !is_valid_identifier_name(stem) || is_reserved_binding_name(stem) {
+        return None;
+    }
+    Some(Atom::from(stem))
+}
+
+fn direct_eval_mentions_name(analyzer: &DirectEvalAnalyzer, name: &Atom) -> bool {
+    analyzer
+        .known_direct_eval_sources
+        .iter()
+        .any(|source| js_source_mentions_binding(source, name))
+}
+
+fn prove_toplevel_require_default_member_args(
+    module: &Module,
+    unresolved_mark: Mark,
+    candidates: &[ToplevelRequireDefaultMemberArg],
+) -> Option<ToplevelRequireDefaultMemberPlan> {
+    let mut eval_analyzer = DirectEvalAnalyzer::default();
+    module.visit_with(&mut eval_analyzer);
+    if eval_analyzer.unknown_direct_eval {
+        return None;
+    }
+
+    let declared_names = collect_all_declared_names(module);
+    let unresolved_reference_names = collect_unresolved_reference_names(module, unresolved_mark);
+    let uses = BindingUseIndex::collect(module);
+    let provider_member_mutations =
+        RequireDefaultMemberMutationCollector::collect(module, unresolved_mark);
+    let mut used_names = declared_names;
+    used_names.extend(unresolved_reference_names);
+    let mut claimed_local_by_source: HashMap<String, Ident> = HashMap::new();
+    let mut plan = ToplevelRequireDefaultMemberPlan {
+        replacements: HashMap::new(),
+        inserts: HashMap::new(),
+    };
+    let default_prefix = Atom::from("default");
+
+    for candidate in candidates {
+        if provider_member_mutations.contains(&candidate.source) {
+            return None;
+        }
+
+        let local = if let Some(existing) = claimed_local_by_source.get(&candidate.source) {
+            existing.clone()
+        } else if let Some(existing) = reusable_require_default_local(
+            &module.body,
+            &candidate.source,
+            candidate.item_index,
+            unresolved_mark,
+            &uses,
+        ) {
+            claimed_local_by_source.insert(candidate.source.clone(), existing.clone());
+            existing
+        } else {
+            let basename = specifier_basename(&candidate.source);
+            let local_name = if let Some(ref name) = basename {
+                if !used_names.contains(name) && !direct_eval_mentions_name(&eval_analyzer, name) {
+                    used_names.insert(name.clone());
+                    name.clone()
+                } else {
+                    let synthetic = fresh_prefixed_name(&default_prefix, &mut used_names);
+                    if direct_eval_mentions_name(&eval_analyzer, &synthetic) {
+                        return None;
+                    }
+                    synthetic
+                }
+            } else {
+                let synthetic = fresh_prefixed_name(&default_prefix, &mut used_names);
+                if direct_eval_mentions_name(&eval_analyzer, &synthetic) {
+                    return None;
+                }
+                synthetic
+            };
+            let local = make_ident(local_name);
+            claimed_local_by_source.insert(candidate.source.clone(), local.clone());
+            let init = candidate_default_member_init(&module.body, candidate)?;
+            plan.inserts.entry(candidate.item_index).or_default().push(
+                ToplevelRequireDefaultMemberInsert {
+                    local: local.clone(),
+                    init,
+                },
+            );
+            local
+        };
+
+        plan.replacements
+            .entry(candidate.item_index)
+            .or_default()
+            .push((candidate.arg_index, local));
+    }
+
+    Some(plan)
+}
+
+fn apply_toplevel_require_default_member_args(
+    module: &mut Module,
+    plan: ToplevelRequireDefaultMemberPlan,
 ) {
     let mut new_body = Vec::with_capacity(module.body.len() + plan.inserts.len());
     for (index, mut item) in std::mem::take(&mut module.body).into_iter().enumerate() {
