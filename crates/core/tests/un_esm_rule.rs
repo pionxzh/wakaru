@@ -2766,12 +2766,8 @@ module.exports.default = module.exports;
 // Producer: a CJS compiler emits a static `require(mod).Name` as a direct
 // argument of an immediately-evaluated top-level call (typically an IIFE).
 // UnEsm already converts `var x = require("mod").Name` via NamedProp; this
-// shape never reached that classifier. `.default` args stay out of scope.
+// shape never reached that classifier. `.default` args use a parallel pass.
 // ---------------------------------------------------------------------------
-
-fn leftover_require_named_member(output: &str) -> bool {
-    output.contains("require(") && output.contains(".UIBase")
-}
 
 fn apply_unesm(input: &str) -> String {
     render_pipeline_until(input, "UnEsm")
@@ -2942,7 +2938,7 @@ var keep = require("./keep.js");
 }
 
 #[test]
-fn toplevel_require_named_member_default_arg_is_out_of_scope() {
+fn toplevel_iife_require_default_member_arg_to_default_import() {
     let input = r#"
 var keep = require("./keep.js");
 (function (base) {
@@ -2951,12 +2947,17 @@ var keep = require("./keep.js");
 "#;
     let expected = r#"
 import keep from "./keep.js";
+import UIBase from "./UIBase.js";
 (function (base) {
   use(base);
-})(require("./UIBase.js").default);
+})(UIBase);
 "#;
     let output = apply_unesm(input);
     assert_eq_normalized(&output, expected);
+    assert!(
+        !output.contains("require("),
+        "the hoisted default member must become an import:\n{output}"
+    );
 }
 
 #[test]
@@ -3342,7 +3343,7 @@ consume(require("./dep.js").UIBase);
 }
 
 #[test]
-fn toplevel_require_named_member_sibling_import_does_not_recover_default_arg() {
+fn toplevel_require_default_member_sibling_named_import_does_not_block_recovery() {
     let input = r#"
 import { keep } from "./keep.js";
 (function (base) {
@@ -3351,14 +3352,597 @@ import { keep } from "./keep.js";
 "#;
     let expected = r#"
 import { keep } from "./keep.js";
+import UIBase from "./UIBase.js";
+(function (base) {
+  use(base);
+})(UIBase);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_var_init_iife_require_default_member_arg_to_default_import() {
+    let input = r#"
+var Child = (function (base) {
+  use(base);
+})(require("./UIBase.js").default);
+"#;
+    let expected = r#"
+import UIBase from "./UIBase.js";
+var Child = function (base) {
+  use(base);
+}(UIBase);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_iife_computed_require_default_member_arg_to_default_import() {
+    let input = r#"
+(function (base) {
+  use(base);
+})(require("./UIBase.js")["default"]);
+"#;
+    let expected = r#"
+import UIBase from "./UIBase.js";
+(function (base) {
+  use(base);
+})(UIBase);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_default_member_arg_reuses_existing_default_prop() {
+    let input = r#"
+var UIBase = require("./UIBase.js").default;
+(function (base) {
+  use(base);
+})(require("./UIBase.js").default);
+"#;
+    let expected = r#"
+import UIBase from "./UIBase.js";
+(function (base) {
+  use(base);
+})(UIBase);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_default_member_arg_reuses_existing_default_import() {
+    let input = r#"
+import UIBase from "./UIBase.js";
+(function (base) {
+  use(base);
+})(require("./UIBase.js").default);
+"#;
+    let expected = r#"
+import UIBase from "./UIBase.js";
+(function (base) {
+  use(base);
+})(UIBase);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_default_member_arg_reuses_existing_default_import_through_full_pipeline() {
+    let input = r#"
+import UIBase from "./UIBase.js";
+(function (base) {
+  use(base);
+})(require("./UIBase.js").default);
+"#;
+    let expected = r#"
+import UIBase from "./UIBase.js";
+((base) => {
+  use(base);
+})(UIBase);
+"#;
+    let output = render_pipeline(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_default_member_arg_reuses_existing_default_prop_through_full_pipeline() {
+    let input = r#"
+var UIBase = require("./UIBase.js").default;
+(function (base) {
+  use(base);
+})(require("./UIBase.js").default);
+"#;
+    let expected = r#"
+import UIBase from "./UIBase.js";
+((base) => {
+  use(base);
+})(UIBase);
+"#;
+    let output = render_pipeline(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_iife_require_default_member_arg_keeps_import_through_full_pipeline() {
+    let input = r#"
+(function (base) {
+  use(base);
+})(require("./UIBase.js").default);
+"#;
+    let expected = r#"
+import UIBase from "./UIBase.js";
+((base) => {
+  use(base);
+})(UIBase);
+"#;
+    let output = render_pipeline(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_default_member_shares_local_across_same_source_args() {
+    let input = r#"
+(function (first) {
+  use(first);
+})(require("./UIBase.js").default);
+(function (second) {
+  use(second);
+})(require("./UIBase.js").default);
+"#;
+    let expected = r#"
+import UIBase from "./UIBase.js";
+(function (first) {
+  use(first);
+})(UIBase);
+(function (second) {
+  use(second);
+})(UIBase);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_default_member_falls_back_when_basename_matches_import() {
+    let input = r#"
+import { UIBase } from "./other.js";
+var keep = require("./keep.js");
+(function (base) {
+  use(base);
+})(require("./UIBase.js").default);
+"#;
+    let expected = r#"
+import { UIBase } from "./other.js";
+import keep from "./keep.js";
+import _default from "./UIBase.js";
+(function (base) {
+  use(base);
+})(_default);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_default_member_falls_back_when_basename_matches_let() {
+    let input = r#"
+let UIBase = 0;
+var keep = require("./keep.js");
+(function (base) {
+  use(base);
+})(require("./UIBase.js").default);
+"#;
+    let expected = r#"
+import keep from "./keep.js";
+import _default from "./UIBase.js";
+let UIBase = 0;
+(function (base) {
+  use(base);
+})(_default);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_default_member_falls_back_when_basename_is_unresolved() {
+    let input = r#"
+observe(UIBase);
+var keep = require("./keep.js");
+(function (base) {
+  use(base);
+})(require("./UIBase.js").default);
+"#;
+    let expected = r#"
+import keep from "./keep.js";
+import _default from "./UIBase.js";
+observe(UIBase);
+(function (base) {
+  use(base);
+})(_default);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_default_member_ternary_arg_is_left_alone() {
+    let input = r#"
+var keep = require("./keep.js");
+f(cond ? require("./UIBase.js").default : other);
+"#;
+    let expected = r#"
+import keep from "./keep.js";
+f(cond ? require("./UIBase.js").default : other);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_default_member_inside_then_callback_is_left_alone() {
+    let input = r#"
+var keep = require("./keep.js");
+then(function () {
+  return require("./UIBase.js").default;
+});
+"#;
+    let expected = r#"
+import keep from "./keep.js";
+then(function () {
+  return require("./UIBase.js").default;
+});
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_default_member_inside_function_body_is_left_alone() {
+    let input = r#"
+var keep = require("./keep.js");
+function wrap() {
+  (function (base) {
+    use(base);
+  })(require("./UIBase.js").default);
+}
+"#;
+    let expected = r#"
+import keep from "./keep.js";
+function wrap() {
+  (function (base) {
+    use(base);
+  })(require("./UIBase.js").default);
+}
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_default_member_dynamic_require_is_left_alone() {
+    let input = r#"
+var keep = require("./keep.js");
+(function (base) {
+  use(base);
+})(require(dyn).default);
+"#;
+    let expected = r#"
+import keep from "./keep.js";
+(function (base) {
+  use(base);
+})(require(dyn).default);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_default_member_spread_arg_is_left_alone() {
+    let input = r#"
+var keep = require("./keep.js");
+f(...require("./UIBase.js").default);
+"#;
+    let expected = r#"
+import keep from "./keep.js";
+f(...require("./UIBase.js").default);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_default_member_local_require_binding_is_left_alone() {
+    let input = r#"
+function require(x) {
+  return x;
+}
+(function (base) {
+  use(base);
+})(require("./UIBase.js").default);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn toplevel_require_default_member_comma_expr_arg_is_left_alone() {
+    let input = r#"
+var keep = require("./keep.js");
+(function (base) {
+  use(base);
+})((0, require("./UIBase.js").default));
+"#;
+    let expected = r#"
+import keep from "./keep.js";
+(function (base) {
+  use(base);
+})((0, require("./UIBase.js").default));
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_default_member_fails_closed_on_unknown_eval() {
+    let input = r#"
+eval(source);
+var keep = require("./keep.js");
+(function (base) {
+  use(base);
+})(require("./UIBase.js").default);
+"#;
+    let expected = r#"
+import keep from "./keep.js";
+eval(source);
 (function (base) {
   use(base);
 })(require("./UIBase.js").default);
 "#;
     let output = apply_unesm(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_default_member_falls_back_when_eval_mentions_basename() {
+    let input = r#"
+eval("UIBase");
+var keep = require("./keep.js");
+(function (base) {
+  use(base);
+})(require("./UIBase.js").default);
+"#;
+    let expected = r#"
+import keep from "./keep.js";
+import _default from "./UIBase.js";
+eval("UIBase");
+(function (base) {
+  use(base);
+})(_default);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_default_member_fails_closed_on_eval_of_synthetic_name() {
+    let input = r#"
+import { UIBase } from "./other.js";
+eval("_default");
+var keep = require("./keep.js");
+(function (base) {
+  use(base);
+})(require("./UIBase.js").default);
+"#;
+    let expected = r#"
+import { UIBase } from "./other.js";
+import keep from "./keep.js";
+eval("_default");
+(function (base) {
+  use(base);
+})(require("./UIBase.js").default);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_default_member_early_self_read_keeps_commonjs_boundary() {
+    let input = r#"
+consume(require("./module-1.js").default);
+exports.default = 1;
+"#;
+    let output = render_pipeline_until_with_filename(input, "UnEsm", "module-1.js");
+
+    assert_eq_normalized(&output, input);
     assert!(
-        leftover_require_named_member(&output) || output.contains(".default"),
-        "a sibling named import must not recover an out-of-scope .default arg:\n{output}"
+        !output.contains("import ") && !output.contains("export "),
+        "a direct default self-read must not cross only part of its CommonJS boundary:\n{output}"
     );
+}
+
+#[test]
+fn toplevel_require_default_member_fails_closed_on_provider_member_write() {
+    let input = r#"
+consume(require("./dep.js").default);
+require("./dep.js").default = replacement;
+consume(require("./dep.js").default);
+"#;
+    let output = apply_unesm(input);
+
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn toplevel_require_default_member_fails_closed_on_other_provider_member_mutations() {
+    let mutations = [
+        r#"require("./dep.js").default += replacement;"#,
+        r#"require("./dep.js").default++;"#,
+        r#"delete require("./dep.js").default;"#,
+        r#"for (require("./dep.js").default in values) {}"#,
+        r#"for (require("./dep.js").default of values) {}"#,
+    ];
+
+    for mutation in mutations {
+        let input = format!(
+            r#"
+consume(require("./dep.js").default);
+{mutation}
+consume(require("./dep.js").default);
+"#
+        );
+        let output = apply_unesm(&input);
+
+        assert!(
+            !output.contains("import ")
+                && output.matches("require(\"./dep.js\").default").count() >= 2,
+            "provider mutation must keep fresh default member reads:\n{output}"
+        );
+    }
+}
+
+#[test]
+fn toplevel_require_default_member_does_not_reuse_later_default_prop() {
+    let input = r#"
+(function (base) {
+  use(base);
+})(require("./UIBase.js").default);
+var UIBase = require("./UIBase.js").default;
+var keep = require("./keep.js");
+"#;
+    let expected = r#"
+import _default from "./UIBase.js";
+import UIBase from "./UIBase.js";
+import keep from "./keep.js";
+(function (base) {
+  use(base);
+})(_default);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_default_member_does_not_reuse_mutated_default_prop() {
+    let input = r#"
+var UIBase = require("./UIBase.js").default;
+UIBase = other;
+(function (base) {
+  use(base);
+})(require("./UIBase.js").default);
+var keep = require("./keep.js");
+"#;
+    let expected = r#"
+import _UIBase from "./UIBase.js";
+import _default from "./UIBase.js";
+import keep from "./keep.js";
+var UIBase = _UIBase;
+UIBase = other;
+(function (base) {
+  use(base);
+})(_default);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_default_member_skips_written_binding_and_reuses_later_stable() {
+    // Basename UIBase is taken and eval mentions `_default`, so recovery is
+    // only possible by reusing the later unwritten DefaultProp.
+    let input = r#"
+import { UIBase } from "./other.js";
+eval("_default");
+var keep = require("./keep.js");
+var poisoned = require("./UIBase.js").default;
+poisoned = other;
+var helper = require("./UIBase.js").default;
+(function (base) {
+  use(base);
+})(require("./UIBase.js").default);
+"#;
+    let output = apply_unesm(input);
+    assert!(
+        output.contains("import keep from \"./keep.js\"")
+            && output.contains("import helper from \"./UIBase.js\"")
+            && output.contains("})(helper)")
+            && !output.contains("require(\"./UIBase.js\").default"),
+        "a later unwritten DefaultProp must still be reusable after a mutated one:\n{output}"
+    );
+}
+
+#[test]
+fn toplevel_require_default_member_does_not_reuse_local_across_provider_member_write() {
+    let input = r#"
+var UIBase = require("./dep.js").default;
+require("./dep.js").default = replacement;
+consume(require("./dep.js").default);
+"#;
+    let expected = r#"
+import UIBase from "./dep.js";
+require("./dep.js").default = replacement;
+consume(require("./dep.js").default);
+"#;
+    let output = apply_unesm(input);
+
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_named_member_failure_does_not_block_default_member() {
+    let input = r#"
+import { A } from "./other.js";
+var keep = require("./keep.js");
+(function (a) {
+  use(a);
+})(require("./A.js").A);
+(function (b) {
+  use(b);
+})(require("./B.js").default);
+"#;
+    let expected = r#"
+import { A } from "./other.js";
+import keep from "./keep.js";
+import B from "./B.js";
+(function (a) {
+  use(a);
+})(require("./A.js").A);
+(function (b) {
+  use(b);
+})(B);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_default_member_failure_does_not_block_named_member() {
+    let input = r#"
+var keep = require("./keep.js");
+require("./B.js").default = replacement;
+(function (a) {
+  use(a);
+})(require("./A.js").A);
+(function (b) {
+  use(b);
+})(require("./B.js").default);
+"#;
+    let expected = r#"
+import keep from "./keep.js";
+import { A } from "./A.js";
+require("./B.js").default = replacement;
+(function (a) {
+  use(a);
+})(A);
+(function (b) {
+  use(b);
+})(require("./B.js").default);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
 }
