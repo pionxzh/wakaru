@@ -13,6 +13,7 @@ the registry defines *what*.
 | Task | Read |
 |---|---|
 | Any code change | [testing.md](testing.md) — test patterns, helpers, required verification before commit |
+| PR / branch review, or taking over existing work | [reviewing.md](reviewing.md) — scope, evidence, handoff, and review completion; [testing.md](testing.md#sharing-verification-results) — reuse and invalidation of test evidence |
 | Rule bugfix / snapshot regression | [debugging.md](debugging.md) — rule tracing, snapshot layers, fixture workflow |
 | New rule, or moving a rule | [rule-dependency-inventory.md](rule-dependency-inventory.md) — ordering rationale, fragile edges, experiment log; [rewrite-assumptions.md](rewrite-assumptions.md) — level gating and named assumptions |
 | Transpiler helper work | [helper-detection.md](helper-detection.md) — detection design and rejected alternatives |

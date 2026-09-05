@@ -463,11 +463,17 @@ for new heuristics.
 
 #### Key design pattern: `unresolved_mark`
 
-After `resolver()` runs, every identifier gets a `SyntaxContext`. Free variables (globals like `Object`, `JSON`, `require`) are marked with `unresolved_mark`. This is how rules distinguish between:
-- A local variable named `e` (has a bound SyntaxContext)
-- The global `Object` (has `unresolved_mark` as outer mark)
+After `resolver()` runs, binding identifiers and references carry a
+`SyntaxContext`. There are three separate responsibilities:
 
-Rules that match identifiers by name **must** check `SyntaxContext` to avoid renaming/transforming the wrong binding:
+| Operation | Required check |
+|---|---|
+| Recognize a known global, such as `Object` or `require` | Match its name and require `unresolved_mark` |
+| Follow a local helper, factory parameter, or alias | Match its resolved binding ID `(sym, ctxt)` |
+| Insert or rename a binding | Check emitted-name collisions and capture at affected use sites, as well as binding identity |
+
+For global recognition, the visitor takes `unresolved_mark: Mark` and guards
+the name match:
 
 ```rust
 // Guard: only match free-variable references, skip bound inner-scope identifiers
@@ -476,9 +482,29 @@ if id.ctxt.outer() != self.unresolved_mark {
 }
 ```
 
-Without this guard, a rule matching `e` (a webpack param name) would also rename `e` inside `function inner(e) { ... }` — a completely unrelated binding.
+This rejects a local variable named `Object`. It does not prove that an
+unresolved `Object` has unmodified intrinsic behavior; that is governed by the
+execution-environment baseline in [rewrite-assumptions.md](rewrite-assumptions.md).
 
-**Pattern to follow when adding new visitors:** always take `unresolved_mark: Mark` and gate identifier matches on `id.ctxt.outer() == self.unresolved_mark`.
+A local helper or factory parameter has a bound context, so requiring
+`unresolved_mark` would reject the binding you intended to match. Capture its
+resolved ID and compare references to that ID. An inner parameter with the same
+spelling has a different ID.
+
+Use `rename_utils::BindingRenamer`, through `rename_bindings_in_module` or
+`rename_bindings`, to apply binding renames. Never rename by `sym` alone.
+The caller must choose a safe replacement name: different contexts do not make
+two identical spellings safe after emission. For example, inserting an import
+named `UIBase` can capture an existing global `UIBase` assignment even though
+their pre-emission contexts differ.
+
+Inspect existing utilities before writing a collector: `rename_utils.rs`
+contains binding renaming and name/shadowing analysis, `analysis/binding_uses.rs`
+contains shared binding-use and write analysis, and `js_names.rs` contains
+identifier validation. Check each utility's coverage against the operation:
+an expression-reference collector is not a complete inventory of assignment
+targets, JSX names, or declarations. Binding identity, name availability, and
+runtime assumptions are separate proofs.
 
 **Known deviation: Vue SFC recovery (being retired).** The experimental
 `--vue-sfc` recovery path (`crates/core/src/vue_recovery.rs` and
@@ -494,13 +520,6 @@ the AST. Removing that string machinery by carrying the resolved AST in the IR i
 the last step of the resolver redesign (issue #196; see the sequencing plan).
 Treat the remaining string passes as debt of the experimental Vue subsystem, not
 a precedent for new rules in the main decompile pipeline.
-
-> **Why not use SWC's built-in `rename()`?**
-> `swc_ecma_transforms_base::rename::rename(map: &FxHashMap<Id, Atom>)` exists and is
-> battle-tested, but requires pre-building a map of `(Atom, SyntaxContext)` keys — which
-> is the same information our `unresolved_mark` guard checks. For the narrow
-> webpack factory-param use case our approach is simpler and equally correct.
-> If a more general rename feature is ever needed, migrate to `rename_with_config()`.
 
 ### Source map pipeline (`crates/core/src/sourcemap_rename.rs`)
 

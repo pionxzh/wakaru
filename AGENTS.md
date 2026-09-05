@@ -13,6 +13,7 @@ reading everything:
 | Task | Also read |
 |---|---|
 | Any code change | `docs/testing.md` — test patterns, helpers, required verification |
+| PR / branch review, or taking over existing work | `docs/reviewing.md` — scope, evidence, handoff, and review completion; `docs/testing.md#sharing-verification-results` — reuse and invalidation of test evidence |
 | Rule bugfix / snapshot regression | `docs/debugging.md` — rule tracing, snapshot layers, fixture workflow |
 | New rule, or moving a rule | `docs/rule-dependency-inventory.md` — ordering rationale, fragile edges; `docs/rewrite-assumptions.md` — level gating, named assumptions |
 | Transpiler helper work | `docs/helper-detection.md` — detection design and what was already rejected |
@@ -84,8 +85,13 @@ See `docs/testing.md` for test helpers, patterns, and organization.
 
 **No code change is committed without a corresponding unit test.** Pipeline snapshot updates alone are not sufficient — they test the whole pipeline, not the individual change.
 
+Extend the existing test file and use the existing harness where possible.
+This requirement does not mean adding a new test file or framework for every
+change. For non-core and documentation changes, use the applicable checks in
+`docs/testing.md`.
+
 Write tests before implementation when the input→output is known:
-1. Create `crates/core/tests/my_rule_rule.rs` with failing test cases
+1. Add failing cases to the existing rule test file (create one for a new rule)
 2. Implement `crates/core/src/rules/my_rule.rs` until tests pass
 3. Run pipeline tests to check for regressions
 
@@ -128,7 +134,8 @@ blocks, `catch` clauses, and class static blocks remain `BlockStmt`.
 
 ### Scope-aware identifier matching
 
-If your rule matches identifiers by name, you **must** check `SyntaxContext` to avoid matching the wrong binding:
+Identifier matching must use resolver identity. For a known global such as
+`Object` or `require`, check the name and `unresolved_mark`:
 
 ```rust
 if id.ctxt.outer() != self.unresolved_mark {
@@ -136,13 +143,23 @@ if id.ctxt.outer() != self.unresolved_mark {
 }
 ```
 
-Every new visitor that matches identifiers by name must take `unresolved_mark: Mark` and gate on it. See `docs/architecture.md` for details.
+Visitors that recognize globals must take `unresolved_mark: Mark` and gate on
+it. For a local helper, parameter, or alias, match its resolved binding ID
+`(sym, ctxt)` instead; local bindings do not carry `unresolved_mark`.
+Inserting or renaming a binding also needs emitted-name collision checks:
+`SyntaxContext` alone does not prevent capture in printed JavaScript.
+See `docs/architecture.md` for the matching and renaming responsibilities.
 
 ### Renaming identifiers
 
 Always use `rename_utils::BindingRenamer` (via `rename_bindings_in_module` or `rename_bindings`). Never write a custom `VisitMut` that renames by `sym` alone — it will hit inner-scope locals and parameters with the same name.
 
 ## Definition of Done
+
+Apply the checks for the changed surface in `docs/testing.md`. The full core
+suite is required for core/rule changes; non-core changes use their relevant
+package or tooling checks. Review-only work may reuse verification evidence
+under that document's handoff rules.
 
 1. Run the focused rule tests you touched
 2. Run the full core suite (covers all pipeline + unpack snapshot tests):
@@ -166,7 +183,7 @@ Always use `rename_utils::BindingRenamer` (via `rename_bindings_in_module` or `r
 ## Important Rules
 
 1. **All changes must be tested** — no exceptions.
-2. **Always check `SyntaxContext`** — rules matching identifiers by name must guard on `unresolved_mark`.
+2. **Use resolver identity** — globals require `unresolved_mark`; local bindings require `(sym, ctxt)`. Check emitted-name capture separately.
 3. **Use `BindingRenamer` for renames** — never rename by `sym` alone.
 4. **Formatting must pass, but don't format opportunistically** — run `cargo fmt --check`; if formatting is needed, keep it limited to files you intentionally changed and avoid unrelated rustfmt churn.
 5. **Inspect snapshot diffs** — "different" without "better" is a regression.

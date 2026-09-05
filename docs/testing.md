@@ -34,6 +34,22 @@ For code changes, run the full relevant checklist before committing. Do not
 count a snapshot update alone as coverage for a rule change; add or update the
 focused rule regression test as well.
 
+Apply the checklist to the changed surface:
+
+- Core/rule changes require the full core suite and the applicable reproduction
+  and fixture checks below.
+- Changes confined to other crates, the website, release tooling, or CI use
+  their relevant tests, lint, build, and behavior checks. Add core checks when
+  the change can affect core behavior or shared dependencies.
+- Documentation-only changes require checking local links, referenced commands
+  and APIs, consistency with related guidance, and `git diff --check`; they do
+  not require a Rust test run.
+
+For code changes, add or update focused tests using the existing harness where
+possible. A new test file or framework is not required merely because a file
+changed. Explain the failure a new test prevents and why its coverage belongs
+with this change.
+
 1. Focused regression test for the rule or behavior you touched:
 
    ```bash
@@ -126,6 +142,29 @@ focused rule regression test as well.
 Review every snapshot diff before committing. A snapshot change is acceptable
 only when the output is semantically better or the test fixture expectation is
 intentionally changing.
+
+## Sharing Verification Results
+
+Verification belongs to the tested source and environment, not to the person
+or agent that ran it. A reviewer may reuse completed results for the same
+source state. Record the worktree, commit (and any tested uncommitted diff),
+commands, results, and log locations when available. For fixture or reproduction
+checks, also identify the reference revision; for a standalone binary, record
+its source revision and build profile. Distinguish checks you ran from results
+reported by another agent or CI, and state any missing evidence.
+
+Re-run affected checks when implementation, relevant base code, dependencies,
+configuration, or references changed, or when a new counterexample or failure
+casts doubt on the evidence. Relevant core changes still require the full core
+suite. A commit-message-only change does not invalidate results. After rebase,
+inspect both the replayed patches and incoming base changes before deciding
+which results remain applicable; matching patches alone are not sufficient.
+
+When the user explicitly requests review without rerunning tests, inspect the
+code and supplied evidence, report any validation gap, and respect that limit.
+Do not describe pending checks as passed or rerun an unchanged suite merely
+because a new reviewer took over. This avoids duplicate execution; it does not
+remove the required verification for changed code.
 
 ## Running Checks From a Worktree
 
