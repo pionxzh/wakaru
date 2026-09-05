@@ -262,6 +262,7 @@
         <p>A formatter only changes whitespace and layout. Wakaru rewrites the JavaScript AST to
            reverse minifier artifacts, restore transpiled syntax, remove bundler runtime patterns,
            and split bundles back into modules.</p>
+        <p class="faq-more"><a href="/docs/what-is-wakaru">Docs: What is Wakaru</a></p>
       </details>
       <details>
         <summary>How do I unminify JavaScript?</summary>
@@ -269,6 +270,7 @@
            <a href="/playground/">playground</a>. Wakaru reverses minifier artifacts (sequence
            expressions, <code>!0</code>/<code>void 0</code> literal tricks, flipped comparisons) and
            transpiler helpers (Babel, TypeScript, SWC) to recover readable modern JavaScript.</p>
+        <p class="faq-more"><a href="/docs/guides/unminify-a-file">Docs: Unminify a file</a></p>
       </details>
       <details>
         <summary>How do I decompile a webpack bundle and extract its modules?</summary>
@@ -276,6 +278,7 @@
            esbuild, Bun, Metro, Browserify and Cocos Creator 2.x, Closure ModuleManager, SystemJS,
            AMD/UMD, and scope-hoisted Rollup/Vite output, plus Bun single-file executables, then
            splits the bundle into individual modules and decompiles each one.</p>
+        <p class="faq-more"><a href="/docs/guides/unpack-a-bundle">Docs: Unpack a bundle</a></p>
       </details>
       <details>
         <summary>Can Wakaru extract JavaScript from a Bun single-file executable?</summary>
@@ -284,6 +287,7 @@
            embedded module graph and decompiles the JavaScript entries without ever executing the
            binary. <code>npx wakaru bun extract ./compiled-app -o extracted/</code> dumps every
            embedded file, assets included.</p>
+        <p class="faq-more"><a href="/docs/guides/bun-single-file-executable">Docs: Bun single-file executable</a></p>
       </details>
       <details>
         <summary>Can Wakaru deobfuscate JavaScript?</summary>
@@ -295,6 +299,7 @@
 <span class="cmd-prompt">$</span> npx webcrack --no-unpack --no-unminify obfuscated.js &gt; deobfuscated.js
 <span class="tok-com"># 2. recover readable modules</span>
 <span class="cmd-prompt">$</span> npx wakaru deobfuscated.js --unpack -o out/</code></pre>
+        <p class="faq-more"><a href="/docs/guides/obfuscated-code">Docs: Obfuscated code</a></p>
       </details>
       <details>
         <summary>Can Wakaru tell me which npm packages a bundle uses?</summary>
@@ -310,19 +315,22 @@
            imports. Without one, it applies conservative renaming heuristics where the code gives
            evidence, but most mangled names stay short. Pair it with an LLM renamer like
            <a href="https://github.com/jehna/humanify">humanify</a> if you want guessed names.</p>
+        <p class="faq-more"><a href="/docs/guides/source-maps">Docs: Source maps</a></p>
       </details>
       <details>
         <summary>Is the output guaranteed to behave the same?</summary>
         <p>Wakaru is designed to preserve behavior while recovering readable structure. Its
-           <a href="https://github.com/pionxzh/wakaru/blob/main/docs/rewrite-assumptions.md">three rewrite levels</a>
+           <a href="/docs/guides/rewrite-levels">three rewrite levels</a>
            let you choose between behavioral fidelity and stronger readability-oriented recovery;
            use <code>minimal</code> when fidelity matters most. Semantic preservation is continuously
            measured with the Test262 round-trip harness.</p>
+        <p class="faq-more"><a href="/docs/project/correctness">Docs: Correctness</a></p>
       </details>
       <details>
         <summary>Does it run in the browser?</summary>
         <p>Yes — the <a href="/playground/">playground</a> is the WebAssembly build of the same
            Rust engine, running entirely in your browser. No code leaves your machine.</p>
+        <p class="faq-more"><a href="/docs/guides/playground">Docs: Playground</a></p>
       </details>
     </div>
   </section>

@@ -532,6 +532,10 @@ code {
   margin: 0 0 20px 27px;
   max-width: calc(100% - 27px);
 }
+#faq details p.faq-more {
+  margin-top: -10px;
+  font-size: 14px;
+}
 
 /* closing cta */
 
