@@ -52,6 +52,7 @@ struct RetainedInput {
     id: InputId,
     prepared: wakaru_core::driver::PreparedUnpackInput,
     preserve: bool,
+    unpack_mode: UnpackMode,
 }
 
 impl std::fmt::Debug for UnpackJob {
@@ -80,6 +81,13 @@ impl UnpackJob {
                 anyhow!("raw unpack mode does not support output source maps"),
             ));
         }
+        if matches!(options.modules(), ModuleMode::Raw) && options.recovery().angular_components() {
+            return Err(Error::new(
+                ErrorKind::InvalidOptions,
+                None,
+                anyhow!("raw unpack mode does not support component recovery"),
+            ));
+        }
         Ok(Self {
             options,
             reports: Vec::new(),
@@ -95,7 +103,7 @@ impl UnpackJob {
     /// remains usable. A successful push returns the assigned ID and
     /// detection result so a walker can report progress before `finish`.
     pub fn push(&mut self, input: Source) -> Result<InputReceipt> {
-        self.push_with_unmatched(input, self.options.unmatched())
+        self.push_with_unmatched_and_mode(input, self.options.unmatched(), self.options.mode())
     }
 
     /// Detects and prepares one input using an input-specific plain-source
@@ -107,6 +115,21 @@ impl UnpackJob {
         &mut self,
         input: Source,
         unmatched: UnmatchedInput,
+    ) -> Result<InputReceipt> {
+        self.push_with_unmatched_and_mode(input, unmatched, self.options.mode())
+    }
+
+    /// Detects and prepares one input with input-specific plain-source and
+    /// scope-hoist policies while retaining every other job option.
+    ///
+    /// This is useful for mixed explicit-file and directory jobs, where
+    /// heuristic splitting may be desirable for an explicit file but not for
+    /// production chunks discovered while walking a directory.
+    pub fn push_with_unmatched_and_mode(
+        &mut self,
+        input: Source,
+        unmatched: UnmatchedInput,
+        unpack_mode: UnpackMode,
     ) -> Result<InputReceipt> {
         if input.source_map().is_some() {
             return Err(Error::new(
@@ -123,7 +146,7 @@ impl UnpackJob {
             parts.code,
             matches!(self.options.modules(), ModuleMode::Decompile(_))
                 && unmatched == UnmatchedInput::Process,
-            core_scope_hoist_policy(&self.options),
+            core_scope_hoist_policy_for_mode(&self.options, unpack_mode),
         )
         .map_err(|error| {
             let kind = from_core_driver_error(error.kind());
@@ -159,6 +182,7 @@ impl UnpackJob {
                 id,
                 prepared,
                 preserve,
+                unpack_mode,
             });
         }
 
@@ -190,6 +214,11 @@ impl UnpackJob {
             ));
         }
 
+        let inspection_only = self.options.mode() == UnpackMode::Inspect
+            || self
+                .retained
+                .iter()
+                .any(|input| input.unpack_mode == UnpackMode::Inspect);
         let mut processed = Vec::new();
         let mut preserved = Vec::new();
         for input in self.retained {
@@ -201,6 +230,8 @@ impl UnpackJob {
         }
 
         let mut modules = Vec::new();
+        let mut pre_rewrite_modules = Vec::new();
+        let mut module_facts = wakaru_core::ModuleFactsMap::new();
         let mut diagnostics = Vec::new();
         if !processed.is_empty() {
             let processed_meta = processed
@@ -215,16 +246,27 @@ impl UnpackJob {
                 matches!(self.options.modules(), ModuleMode::Raw),
             );
             modules = converted.modules;
+            pre_rewrite_modules = converted.pre_rewrite_modules;
+            module_facts = converted.module_facts;
             diagnostics = converted.diagnostics;
         }
 
         append_preserved_modules(&mut modules, &mut self.reports, preserved);
+        let (artifacts, recovery_diagnostics) = crate::artifacts::recover_artifacts(
+            &modules,
+            &pre_rewrite_modules,
+            Some(&module_facts),
+            self.options.recovery(),
+            self.options.diagnostics(),
+        );
+        diagnostics.extend(recovery_diagnostics);
 
         Ok(UnpackOutput {
             modules,
+            artifacts,
             inputs: self.reports,
             diagnostics,
-            safety: if self.options.mode() == UnpackMode::Inspect {
+            safety: if inspection_only {
                 OutputSafety::InspectionOnly
             } else {
                 OutputSafety::Normal
@@ -266,7 +308,7 @@ fn map_bundle_detection(format: wakaru_core::BundleFormat) -> InputDetection {
 fn run_core_unpack(
     inputs: Vec<RetainedInput>,
     options: &UnpackOptions,
-) -> Result<wakaru_core::driver::PreparedUnpackOutput> {
+) -> Result<wakaru_core::driver::CapturedUnpackOutput> {
     let span = tracing::info_span!("public_unpack_core");
     let _enter = span.enter();
     let (level, dce_mode, raw) = match options.modules() {
@@ -282,19 +324,35 @@ fn run_core_unpack(
         diagnostics: !raw && options.diagnostics(),
         emit_source_map: options.output_source_maps(),
     };
-    let core_inputs = inputs.into_iter().map(|input| input.prepared).collect();
+    let core_inputs = inputs
+        .into_iter()
+        .map(|input| {
+            (
+                input.prepared,
+                core_scope_hoist_policy_for_mode(options, input.unpack_mode),
+            )
+        })
+        .collect();
 
-    let result = wakaru_core::driver::unpack_prepared_inputs_with_policy(
+    let result = wakaru_core::driver::unpack_prepared_inputs_with_policies_and_capture(
         core_inputs,
         core_options,
         raw,
-        core_scope_hoist_policy(options),
+        !raw && options.recovery().angular_components(),
     );
     result.map_err(|error| Error::new(ErrorKind::Internal, None, error))
 }
 
+#[cfg(test)]
 fn core_scope_hoist_policy(options: &UnpackOptions) -> wakaru_core::driver::ScopeHoistPolicy {
-    match options.mode() {
+    core_scope_hoist_policy_for_mode(options, options.mode())
+}
+
+fn core_scope_hoist_policy_for_mode(
+    options: &UnpackOptions,
+    mode: UnpackMode,
+) -> wakaru_core::driver::ScopeHoistPolicy {
+    match mode {
         UnpackMode::Strict => wakaru_core::driver::ScopeHoistPolicy::Disabled,
         UnpackMode::Inspect => wakaru_core::driver::ScopeHoistPolicy::Inspect,
         UnpackMode::Auto => match options.modules() {
@@ -310,17 +368,24 @@ fn core_scope_hoist_policy(options: &UnpackOptions) -> wakaru_core::driver::Scop
 
 struct ConvertedOutput {
     modules: Vec<ModuleOutput>,
+    pre_rewrite_modules: Vec<(String, String)>,
+    module_facts: wakaru_core::ModuleFactsMap,
     diagnostics: Vec<Diagnostic>,
 }
 
 fn convert_core_output(
-    output: wakaru_core::driver::PreparedUnpackOutput,
+    captured: wakaru_core::driver::CapturedUnpackOutput,
     processed: &[ProcessedInput],
     reports: &mut [InputReport],
     raw: bool,
 ) -> ConvertedOutput {
     let span = tracing::info_span!("public_unpack_convert_output");
     let _enter = span.enter();
+    let wakaru_core::driver::CapturedUnpackOutput {
+        output,
+        pre_rewrite_modules,
+        module_facts,
+    } = captured;
     let only_input = (processed.len() == 1).then_some(processed[0].id);
     let failed: HashSet<&str> = output
         .warnings
@@ -418,6 +483,8 @@ fn convert_core_output(
 
     ConvertedOutput {
         modules,
+        pre_rewrite_modules,
+        module_facts,
         diagnostics,
     }
 }
@@ -525,6 +592,141 @@ mod tests {
 
     const CLOSURE_MODULE_MANAGER_FIXTURE: &str =
         include_str!("../../core/tests/bundles/closure-module-manager/synthetic.js");
+    const ANGULAR_PRODUCTION_RUNTIME: &str =
+        include_str!("../../core/tests/bundles/angular-ivy-gen/dist/runtime.js");
+    const ANGULAR_PRODUCTION_MAIN: &str =
+        include_str!("../../core/tests/bundles/angular-ivy-gen/dist/main.js");
+    const ANGULAR_PRODUCTION_LAZY: &str =
+        include_str!("../../core/tests/bundles/angular-ivy-gen/dist/lazy.js");
+    const CLOSURE_ANGULAR_COMPONENT_FIXTURE: &str = r#"
+        "use strict";
+        this.localSuite = this.localSuite || {};
+        (function(shared) {
+          var window = this;
+
+          /*_M:runtime*/
+          try {
+            shared.before("runtime");
+            shared._ModuleManager_initialize(
+              "runtime/component:0",
+              ["runtime", "component"]
+            );
+            shared.define = function(value) {
+              return shared.noSideEffects(() => Object.assign({}, shared.baseDefinition, {
+                type: value.type,
+                selectors: value.selectors,
+                template: value.template,
+                dependencies: value.dependencies,
+                styles: value.styles
+              }));
+            };
+            shared.element = function() {
+              return shared.element;
+            };
+            shared.publicRuntime = {
+              "ɵɵelement": shared.element
+            };
+            shared.after();
+          } catch (error) {
+            shared._DumpException(error);
+          }
+
+          /*_M:component*/
+          try {
+            shared.before("component");
+            shared.Card = class CardComponent {
+              title = "Local";
+            };
+            shared.Card.definition = shared.define({
+              type: shared.Card,
+              selectors: [["local-card"]],
+              template: function(renderFlags) {
+                if (renderFlags & 1) {
+                  shared.element(0, "article");
+                }
+              },
+              dependencies: [],
+              styles: []
+            });
+            shared.after();
+          } catch (error) {
+            shared._DumpException(error);
+          }
+        }).call(this, this.localSuite);
+    "#;
+    const WEBPACK_ANGULAR_RENAMED_RUNTIME_FIXTURE: &str = r#"
+        (() => {
+          var __webpack_modules__ = ({
+            1: ((__unused_webpack_module, exports, __webpack_require__) => {
+              __webpack_require__.r(exports);
+              __webpack_require__.d(exports, {
+                VBU: () => Ea,
+                nrm: () => element
+              });
+              function Ea(definition) {
+                return noSideEffects(() => Object.assign({}, baseDefinition, {
+                  type: definition.type,
+                  selectors: definition.selectors,
+                  template: definition.template,
+                  dependencies: definition.dependencies,
+                  styles: definition.styles
+                }));
+              }
+              function elementStart(index, name, attrs, refs) {
+                createNode(index, name, attrs, refs);
+                return elementStart;
+              }
+              function elementEnd() {
+                leaveNode();
+                return elementEnd;
+              }
+              function element(index, name, attrs, refs) {
+                elementStart(index, name, attrs, refs);
+                elementEnd();
+                return element;
+              }
+            }),
+            2: ((__unused_webpack_module, exports, __webpack_require__) => {
+              __webpack_require__.r(exports);
+              __webpack_require__.d(exports, { Card: () => Card });
+              var core = __webpack_require__(1);
+              class Card {
+                static compiled = core.VBU({
+                  type: Card,
+                  selectors: [["fact-card"]],
+                  template(renderFlags) {
+                    if (renderFlags & 1) {
+                      core.nrm(0, "article");
+                    }
+                  },
+                  dependencies: [],
+                  styles: []
+                });
+              }
+            })
+          });
+          var __webpack_module_cache__ = {};
+          function __webpack_require__(moduleId) {
+            var module = __webpack_module_cache__[moduleId];
+            if (module !== undefined) return module.exports;
+            module = __webpack_module_cache__[moduleId] = { exports: {} };
+            __webpack_modules__[moduleId](module, module.exports, __webpack_require__);
+            return module.exports;
+          }
+          __webpack_require__.d = (exports, definition) => {
+            for (var key in definition) {
+              if (__webpack_require__.o(definition, key) && !__webpack_require__.o(exports, key)) {
+                Object.defineProperty(exports, key, { enumerable: true, get: definition[key] });
+              }
+            }
+          };
+          __webpack_require__.o = (object, property) => Object.prototype.hasOwnProperty.call(object, property);
+          __webpack_require__.r = (exports) => {
+            Object.defineProperty(exports, "__esModule", { value: true });
+          };
+          __webpack_require__(2);
+        })();
+    "#;
     const METRO_FIXTURE: &str = r#"
         __d(function(global, require, importDefault, importAll, module, exports, dependencyMap) {
             module.exports = 1;
@@ -621,6 +823,47 @@ mod tests {
     }
 
     #[test]
+    fn mixed_job_inputs_keep_their_own_scope_hoist_modes() {
+        let source = r#"
+            class A {}
+            const x1 = 1; function f1() { return x1; }
+            const x2 = 2; function f2() { return x2; }
+            const x3 = 3; function f3() { return x3; }
+            const x4 = 4; function f4() { return x4; }
+            function make() { return new A(); }
+            const result = make();
+            console.log(result, f1(), f2(), f3(), f4());
+            export { result };
+        "#;
+        let mut job = UnpackJob::new(
+            UnpackOptions::default()
+                .with_modules(ModuleMode::Raw)
+                .with_mode(UnpackMode::Auto),
+        )
+        .expect("mixed-mode job options should be valid");
+
+        let explicit = job
+            .push_with_unmatched_and_mode(
+                Source::new("explicit.js", source),
+                UnmatchedInput::Process,
+                UnpackMode::Auto,
+            )
+            .expect("explicit input should prepare");
+        let directory = job
+            .push_with_unmatched_and_mode(
+                Source::new("directory/chunk.js", source),
+                UnmatchedInput::Process,
+                UnpackMode::Strict,
+            )
+            .expect("directory input should prepare");
+
+        assert_eq!(explicit.detection, InputDetection::HeuristicScopeHoisted);
+        assert_eq!(directory.detection, InputDetection::Plain);
+        let output = job.finish().expect("mixed-mode job should finish");
+        assert_eq!(output.safety, OutputSafety::Normal);
+    }
+
+    #[test]
     fn unpack_profiles_map_to_valid_internal_policies() {
         assert_eq!(
             core_scope_hoist_policy(&UnpackOptions::default()),
@@ -662,6 +905,234 @@ mod tests {
         let output = job.finish().expect("Closure bundle should unpack");
         assert!(!output.modules.is_empty());
         assert_eq!(output.inputs[0].detection, receipt.detection);
+    }
+
+    #[test]
+    fn closure_unpack_and_angular_recovery_remain_separate_root_phases() {
+        let options = UnpackOptions::default()
+            .with_recovery(crate::RecoveryOptions::default().with_angular_components(true));
+        let output = unpack(
+            vec![Source::new(
+                "local-closure-bundle.js",
+                CLOSURE_ANGULAR_COMPONENT_FIXTURE,
+            )],
+            options,
+        )
+        .expect("synthetic Closure bundle should unpack and recover artifacts");
+
+        assert_eq!(
+            output.inputs[0].detection,
+            InputDetection::Structural(BundleFormat::ClosureModuleManager)
+        );
+        assert_eq!(
+            output.artifacts.len(),
+            1,
+            "modules: {:#?}\ndiagnostics: {:#?}",
+            output.modules,
+            output.diagnostics
+        );
+        let artifact = &output.artifacts[0];
+        assert_eq!(artifact.kind, crate::ArtifactKind::AngularModule);
+        assert_eq!(artifact.status, crate::ArtifactStatus::Complete);
+        assert!(artifact.filename.ends_with(".angular.ts"));
+        assert_eq!(artifact.module_indices.len(), 1);
+        assert!(artifact.code.contains("<article></article>"));
+        assert!(!artifact.code.contains("shared."));
+    }
+
+    #[test]
+    fn angular_cli_production_chunks_recover_through_the_root_operation() {
+        let output = unpack(
+            vec![
+                Source::new("runtime.js", ANGULAR_PRODUCTION_RUNTIME),
+                Source::new("main.js", ANGULAR_PRODUCTION_MAIN),
+                Source::new("lazy.js", ANGULAR_PRODUCTION_LAZY),
+            ],
+            UnpackOptions::default()
+                .with_mode(UnpackMode::Strict)
+                .with_unmatched(UnmatchedInput::Process)
+                .with_recovery(crate::RecoveryOptions::default().with_angular_components(true)),
+        )
+        .expect("generated Angular chunks should decompile and recover artifacts");
+
+        assert_eq!(output.modules.len(), 3);
+        assert_eq!(output.artifacts.len(), 2);
+        assert!(output
+            .artifacts
+            .iter()
+            .all(|artifact| artifact.kind == crate::ArtifactKind::AngularModule));
+        assert!(output.artifacts.iter().any(|artifact| {
+            artifact.status == crate::ArtifactStatus::Complete
+                && artifact.code.contains("selector: \"fixture-card\"")
+                && artifact.code.contains("(click)=\"select()\"")
+                && artifact.code.contains("[disabled]=\"disabled\"")
+        }));
+        assert!(output
+            .artifacts
+            .iter()
+            .any(|artifact| artifact.code.contains("selector: \"fixture-lazy-card\"")));
+    }
+
+    #[test]
+    fn angular_recovery_uses_stage_two_facts_for_renamed_webpack_runtime_exports() {
+        let output = unpack(
+            vec![Source::new(
+                "renamed-angular-runtime.js",
+                WEBPACK_ANGULAR_RENAMED_RUNTIME_FIXTURE,
+            )],
+            UnpackOptions::default()
+                .with_mode(UnpackMode::Strict)
+                .with_recovery(crate::RecoveryOptions::default().with_angular_components(true)),
+        )
+        .expect("renamed Angular webpack runtime should unpack");
+
+        let artifact = output
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.code.contains("selector: \"fact-card\""))
+            .unwrap_or_else(|| {
+                panic!(
+                    "fact-backed Angular artifact was not recovered\nmodules: {:#?}\ndiagnostics: {:#?}",
+                    output.modules, output.diagnostics
+                )
+            });
+        assert_eq!(artifact.status, crate::ArtifactStatus::Complete);
+        assert!(artifact.code.contains("<article></article>"));
+    }
+
+    #[test]
+    fn angular_artifacts_link_components_across_proven_esm_edges() {
+        let child = r#"
+            import * as core from "@angular/core";
+            export class a {
+                static compiled = core.ɵɵdefineComponent({
+                    type: a,
+                    selectors: [["child-card"]],
+                    template(rf) {
+                        if (rf & 1) core.ɵɵelement(0, "span");
+                    },
+                });
+            }
+        "#;
+        let parent = r#"
+            import * as core from "@angular/core";
+            import { a as c } from "./child.js";
+            export class b {
+                childType = c;
+                static compiled = core.ɵɵdefineComponent({
+                    type: b,
+                    selectors: [["parent-card"]],
+                    template(rf) {
+                        if (rf & 1) core.ɵɵelement(0, "main");
+                    },
+                    dependencies: [c],
+                });
+            }
+        "#;
+        let output = unpack(
+            vec![
+                Source::new("src/child.js", child),
+                Source::new("src/parent.js", parent),
+            ],
+            UnpackOptions::default()
+                .with_mode(UnpackMode::Strict)
+                .with_unmatched(UnmatchedInput::Process)
+                .with_recovery(crate::RecoveryOptions::default().with_angular_components(true)),
+        )
+        .expect("ordinary ESM modules should recover linked Angular artifacts");
+
+        assert_eq!(output.artifacts.len(), 2);
+        let parent = output
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.code.contains("selector: \"parent-card\""))
+            .expect("the parent artifact should be recovered");
+        assert!(parent
+            .code
+            .contains(r#"import { ChildCardComponent } from "./child.angular";"#));
+        assert!(parent.code.contains("imports: [ChildCardComponent]"));
+        assert!(parent.code.contains("childType = ChildCardComponent;"));
+        assert!(!parent.code.contains(r#"from "./child.js""#));
+    }
+
+    #[test]
+    fn angular_evidence_imports_follow_reserved_physical_module_paths() {
+        let child = r#"
+            import * as core from "@angular/core";
+            const sentryMarker = {
+                "data-sentry-component": "ChildCard",
+                "data-sentry-source-file": "src/renamed-child.js"
+            };
+            void sentryMarker;
+            export class a {
+                static compiled = core.ɵɵdefineComponent({
+                    type: a,
+                    selectors: [["renamed-child-card"]],
+                    template(rf) {
+                        if (rf & 1) core.ɵɵelement(0, "span");
+                    },
+                });
+            }
+        "#;
+        let parent = r#"
+            import * as core from "@angular/core";
+            import { a as c } from "./child.js";
+            export class b {
+                childType = c;
+                static compiled = core.ɵɵdefineComponent({
+                    type: b,
+                    selectors: [["renamed-parent-card"]],
+                    template(rf) {
+                        if (rf & 1) core.ɵɵelement(0, "main");
+                    },
+                    dependencies: [c],
+                });
+            }
+        "#;
+        let output = unpack(
+            vec![
+                Source::new("src/child.js", child),
+                Source::new("src/parent.js", parent),
+            ],
+            UnpackOptions::default()
+                .with_mode(UnpackMode::Strict)
+                .with_unmatched(UnmatchedInput::Process)
+                .with_recovery(crate::RecoveryOptions::default().with_angular_components(true)),
+        )
+        .expect("renamed ESM modules should recover linked Angular artifacts");
+
+        assert!(
+            output
+                .modules
+                .iter()
+                .any(|module| module.filename == "src/child.js"),
+            "module names: {:?}",
+            output
+                .modules
+                .iter()
+                .map(|module| &module.filename)
+                .collect::<Vec<_>>()
+        );
+        assert!(output
+            .artifacts
+            .iter()
+            .any(|artifact| artifact.filename == "src/child.angular.ts"));
+        let parent = output
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.code.contains("selector: \"renamed-parent-card\""))
+            .expect("the renamed parent artifact should recover");
+        assert_eq!(parent.status, crate::ArtifactStatus::Complete);
+        assert!(
+            parent
+                .code
+                .contains(r#"import { RenamedChildCardComponent } from "./child.angular";"#),
+            "{}",
+            parent.code
+        );
+        assert!(parent.code.contains("imports: [RenamedChildCardComponent]"));
+        assert!(!parent.code.contains(r#"from "./child.js""#));
+        assert!(!parent.code.contains("renamed-child.angular"));
     }
 
     #[test]
@@ -843,6 +1314,17 @@ mod tests {
     }
 
     #[test]
+    fn raw_output_rejects_component_recovery() {
+        let error = UnpackJob::new(
+            UnpackOptions::default()
+                .with_modules(ModuleMode::Raw)
+                .with_recovery(crate::RecoveryOptions::default().with_angular_components(true)),
+        )
+        .expect_err("raw mode should not run component recovery");
+        assert_eq!(error.kind(), ErrorKind::InvalidOptions);
+    }
+
+    #[test]
     fn duplicate_input_filenames_fail_as_ambiguous_public_paths() {
         let error = unpack(
             vec![
@@ -906,12 +1388,15 @@ mod tests {
                 module_indices: Vec::new(),
             })
             .collect::<Vec<_>>();
-        let output = wakaru_core::driver::PreparedUnpackOutput {
-            modules: vec![wakaru_core::driver::PreparedModuleOutput {
-                filename: "synthesized.js".to_string(),
-                code: "export {};".to_string(),
+        let output = wakaru_core::driver::CapturedUnpackOutput {
+            output: wakaru_core::driver::PreparedUnpackOutput {
+                modules: vec![wakaru_core::driver::PreparedModuleOutput {
+                    filename: "synthesized.js".to_string(),
+                    code: "export {};".to_string(),
+                    ..Default::default()
+                }],
                 ..Default::default()
-            }],
+            },
             ..Default::default()
         };
 

@@ -83,8 +83,9 @@ are not strictly equivalent to `x === null || x === undefined`. Optional
 chaining and nullish coalescing recovery from loose checks depends on this
 assumption.
 
-Affects: `UnOptionalChaining` (loose null-check forms), `UnNullishCoalescing`
-(loose null-check forms).
+Affects: `UnOptionalChaining` (loose null-check forms, including cloned
+restored-listener normalization during Angular recovery),
+`UnNullishCoalescing` (loose null-check forms).
 
 Level: `standard` and above. `minimal` should only recover optional chaining
 and nullish coalescing from strict checks or temp-based patterns where the

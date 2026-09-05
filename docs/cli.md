@@ -31,7 +31,9 @@ Directory inputs are supported only with `--unpack`. Wakaru recursively scans
 `.js`, `.mjs`, and `.cjs` files, skips hidden files/directories and
 `node_modules`, and includes only files detected as bundles or chunks. Skipped
 files are not copied or decompiled. Explicit file inputs keep the normal
-fallback behavior when no bundle format is detected.
+fallback behavior when no bundle format is detected. With `--angular`,
+ordinary JavaScript files in a directory are also processed so a production
+Angular build can be inspected as a module set.
 
 An explicit PE, Mach-O, or ELF file can be a Bun single-file executable. Wakaru
 validates Bun's embedded module graph, selects its JS/JSX/TS/TSX entries, and
@@ -44,6 +46,12 @@ only `.js`, `.mjs`, and `.cjs` candidates, and stdin remains text input. Use
 `--raw` to preserve the exact embedded JavaScript before readability rewrites.
 See [bun-standalone.md](bun-standalone.md) for the container format, safety
 properties, and current limits.
+
+When `--angular` is used with a directory and the requested unpack mode is
+`auto`, structural bundle detection remains enabled but the heuristic
+scope-hoist fallback is disabled for those files. Unmatched JavaScript is
+processed intact, preserving relative ESM edges between production chunks for
+the Ivy analyzer. An explicit `--unpack=inspect` request is still honored.
 
 ## Extract every file from a Bun single-file executable
 
@@ -172,8 +180,8 @@ have new generated coordinates, so applying the bundle-level map could assign
 incorrect or duplicate binding names.
 
 `--emit-source-map` writes a `.map` file alongside each decompiled JavaScript
-output file, mapping the output back to the input. Vue SFC sidecars from
-`--vue-sfc` do not get source maps. Unlike input `--source-map`, this option is
+output file, mapping the output back to the input. Recovered Vue and Angular
+artifacts do not get source maps. Unlike input `--source-map`, this option is
 supported with `--unpack`.
 
 ## Vue SFC recovery
@@ -201,6 +209,55 @@ output, and recovered Vue render modules also get sibling `.vue` artifacts.
 See [vue-decompile.md](vue-decompile.md) for the supported recovery scope and
 [vue-sfc-recovery-status.md](vue-sfc-recovery-status.md) for current gaps and
 follow-up targets.
+
+## Angular Ivy recovery
+
+```bash
+wakaru compiled.js --angular
+wakaru compiled.js --angular -o compiled.angular.ts
+wakaru compiled.js --angular -o readable.js
+wakaru bundle.js --unpack --angular -o out/
+wakaru dist/ --unpack --angular -o out/
+```
+
+`--angular` is an experimental production-AOT recovery path. It emits one
+readable TypeScript module artifact per source module, with every recovered
+sibling component's `template` and `styles` inline. It does not require
+development metadata or an original template literal.
+
+In single-file mode without `-o`, Wakaru prints the recovered TypeScript when
+the input module contains at least one recovered component, and normal
+decompiled JavaScript when none is found.
+
+With `-o`, `.ts` paths are Angular-only and write the recovered module. Other
+paths are JavaScript-primary: Wakaru writes normal decompiled JavaScript to the
+requested path and writes one sibling `<module-stem>.angular.ts` sidecar.
+
+In unpack mode, recovery is additive. Every module still gets JavaScript
+output, and each module containing recovered components gets one uniquely named
+`*.angular.ts` artifact. Directory input also processes ordinary JavaScript
+modules under `--angular`, which supports inspecting an unbundled production
+build. Default directory mode preserves ordinary production chunks as intact
+modules rather than heuristically splitting their internal scope-hoisted code.
+The Ivy analyzer consumes the same generic module workspace whether the modules
+came from a regular build or any supported unpacker. When ordinary ESM
+import/export bindings prove that one recovered component depends on another,
+the artifacts receive relative imports between their final `.angular.ts`
+filenames. Closure loader dependencies are not treated as ESM evidence.
+
+Complete artifacts contain only supported template regions. Partial artifacts
+preserve unsupported Ivy instructions explicitly instead of guessing.
+Restored listeners that contain bounded declarations or `if` / `else`
+application logic may be represented as collision-safe synthesized component
+methods, with the template passing `$event` and proven view locals explicitly.
+With `--diagnostics`, Wakaru also reports component-candidate accounting and
+rendered, unsupported, and malformed Ivy runtime-call totals. The most frequent
+unknown calls are summarized by render phase and invocation arity. This makes
+a `Complete` result auditable instead of treating unrecognized render
+operations as absent.
+`--angular` cannot be combined with `--raw` or `--vue-sfc`. See
+[angular-decompile.md](angular-decompile.md) for the recovery boundary and
+current scope.
 
 ## Extract original sources
 
@@ -243,10 +300,15 @@ echo 'var a=1;' | wakaru --json             # single-file JSON (includes code)
 
 `--json` writes structured JSON to stdout instead of human-readable summaries.
 Warnings and errors are included in the JSON object. Useful for CI pipelines
-and tooling integration. In unpack mode, each module includes an artifact
-`kind` such as `javascript` or `vue_sfc` and a `status` such as `decompiled`,
-`recovered_vue_sfc`, or `vue_sfc_fallback_js` for likely-Vue modules that
-could not be recovered as SFC output.
+and tooling integration. In unpack mode, each output includes an artifact
+`kind` such as `javascript`, `vue_sfc`, or `angular_module`. Angular status
+values are `recovered_angular_module`, `partial_angular_module`, and
+`angular_module_source_js` for paired JavaScript. Vue status values remain
+`recovered_vue_sfc`, `vue_sfc_source_js`, and `vue_sfc_fallback_js`.
+
+For single-file JavaScript-primary Angular output, the JSON `artifacts` array
+lists every written TypeScript sidecar. Angular-only output is described by the
+top-level `kind`, `status`, and `source_filename` fields.
 
 ## Diagnostics and profiling
 
@@ -285,6 +347,10 @@ raw output has no usable module-graph contract.
 Directory validation reads only the emitted files, so it also scans artifacts
 left behind by failed factory recovery. Unresolved numeric webpack runtime
 calls in those artifacts are not treated as relative module edges.
+
+Angular recovery profiles separate module-view preparation, Ivy-role
+inference, artifact-symbol indexing, and component rendering under
+`angular: ...` spans.
 
 ## Overwrite protection
 

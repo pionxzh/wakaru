@@ -1,0 +1,58 @@
+{
+  "$schema": "./node_modules/@angular/cli/lib/config/schema.json",
+  "version": 1,
+  "cli": {
+    "analytics": false,
+    "packageManager": "npm"
+  },
+  "projects": {
+    "fixture": {
+      "projectType": "application",
+      "root": "",
+      "sourceRoot": "src",
+      "prefix": "fixture",
+      "architect": {
+        "build": {
+          "builder": "@angular/build:application",
+          "options": {
+            "browser": "src/main.ts",
+            "index": "src/index.html",
+            "styles": [
+              "src/styles.css"
+            ],
+            "tsConfig": "tsconfig.app.json",
+            "outputPath": "target/angular-build"
+          },
+          "configurations": {
+            "production": {
+              "extractLicenses": false,
+              "namedChunks": false,
+              "optimization": true,
+              "outputHashing": "none",
+              "sourceMap": false
+            },
+            "advanced-producer": {
+              "browser": "src/advanced-main.ts",
+              "outputPath": "target/angular-advanced-build",
+              "extractLicenses": false,
+              "namedChunks": false,
+              "optimization": true,
+              "outputHashing": "none",
+              "sourceMap": false
+            },
+            "advanced-structural-producer": {
+              "browser": "src/advanced-structural-main.ts",
+              "outputPath": "target/angular-advanced-structural-build",
+              "extractLicenses": false,
+              "namedChunks": false,
+              "optimization": true,
+              "outputHashing": "none",
+              "sourceMap": false
+            }
+          },
+          "defaultConfiguration": "production"
+        }
+      }
+    }
+  }
+}

@@ -9,8 +9,8 @@ use swc_core::ecma::visit::VisitMutWith;
 
 use super::io::{apply_fixer, parse_js, print_js};
 use super::types::{
-    DecompileOptions, ModuleProvenance, PreparedInputId, PreparedUnpackOutput, UnpackInput,
-    UnpackOutput, UnpackWarning, UnpackWarningKind,
+    CapturedUnpackOutput, DecompileOptions, ModuleProvenance, PreparedInputId,
+    PreparedUnpackOutput, UnpackInput, UnpackOutput, UnpackWarning, UnpackWarningKind,
 };
 #[cfg(test)]
 use super::unpack_cycles::{collect_import_cycle_warnings, scan_local_import_dependencies};
@@ -37,7 +37,7 @@ use merge::{
 };
 #[cfg(test)]
 use phases::unpack_multi_module;
-use phases::unpack_multi_module_with_plan;
+use phases::unpack_multi_module_with_plan_and_capture;
 use scope_split::{maybe_split_scope_hoisted_modules, maybe_split_scope_hoisted_modules_excluding};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -277,7 +277,7 @@ fn prepare_plain_ast_for_filename(source: &str, filename: &str) -> Result<Prepar
 }
 
 fn plan_public_paths(
-    inputs: &[PreparedUnpackInput],
+    inputs: &[&PreparedUnpackInput],
     raw: bool,
 ) -> Result<merge::PlannedPublicPaths> {
     let mut planned = merge::PlannedPublicPaths::default();
@@ -314,7 +314,7 @@ fn plan_public_paths(
     Ok(planned)
 }
 
-fn common_absolute_input_parent(inputs: &[PreparedUnpackInput]) -> Option<PathBuf> {
+fn common_absolute_input_parent(inputs: &[&PreparedUnpackInput]) -> Option<PathBuf> {
     // Relative inputs derive their public paths from their own relative
     // structure; they must not veto the shared root of the absolute inputs
     // (collapsing those to bare basenames invites spurious collisions).
@@ -403,20 +403,54 @@ pub fn unpack_prepared_inputs(
 
 pub fn unpack_prepared_inputs_with_policy(
     inputs: Vec<PreparedUnpackInput>,
-    mut options: DecompileOptions,
+    options: DecompileOptions,
     raw: bool,
     scope_hoist_policy: ScopeHoistPolicy,
 ) -> Result<PreparedUnpackOutput> {
+    unpack_prepared_inputs_with_policy_and_capture(inputs, options, raw, scope_hoist_policy, false)
+        .map(|captured| captured.output)
+}
+
+#[doc(hidden)]
+pub fn unpack_prepared_inputs_with_policy_and_capture(
+    inputs: Vec<PreparedUnpackInput>,
+    options: DecompileOptions,
+    raw: bool,
+    scope_hoist_policy: ScopeHoistPolicy,
+    capture_pre_rewrite: bool,
+) -> Result<CapturedUnpackOutput> {
+    unpack_prepared_inputs_with_policies_and_capture(
+        inputs
+            .into_iter()
+            .map(|input| (input, scope_hoist_policy))
+            .collect(),
+        options,
+        raw,
+        capture_pre_rewrite,
+    )
+}
+
+#[doc(hidden)]
+pub fn unpack_prepared_inputs_with_policies_and_capture(
+    inputs: Vec<(PreparedUnpackInput, ScopeHoistPolicy)>,
+    mut options: DecompileOptions,
+    raw: bool,
+    capture_pre_rewrite: bool,
+) -> Result<CapturedUnpackOutput> {
     if inputs.is_empty() {
         return Err(anyhow!("at least one prepared input is required"));
     }
 
-    let public_paths = plan_public_paths(&inputs, raw)?;
+    // Scope-hoist policy controls how an input is split, not the stable public
+    // path derived from that input. Borrow only the input side for planning so
+    // source and prepared-AST payloads are not cloned.
+    let public_path_inputs = inputs.iter().map(|(input, _)| input).collect::<Vec<_>>();
+    let public_paths = plan_public_paths(&public_path_inputs, raw)?;
 
     let mut modules = Vec::new();
     let mut detected_formats = Vec::new();
     let mut preparation_warnings = Vec::new();
-    for (input_index, input) in inputs.into_iter().enumerate() {
+    for (input_index, (input, scope_hoist_policy)) in inputs.into_iter().enumerate() {
         let input_id = PreparedInputId::from_index(input_index);
         let PreparedUnpackInput {
             filename,
@@ -635,14 +669,23 @@ pub fn unpack_prepared_inputs_with_policy(
         options.dce_mode = super::types::DceMode::Off;
     }
     let (modules, numeric_rewrite_plan) = prepare_multi_source_modules(modules, &public_paths);
-    let mut output = if raw {
-        emit_raw_modules_with_numeric_rewrites(modules, numeric_rewrite_plan)?
+    let mut captured = if raw {
+        CapturedUnpackOutput {
+            output: emit_raw_modules_with_numeric_rewrites(modules, numeric_rewrite_plan)?,
+            pre_rewrite_modules: Vec::new(),
+            module_facts: Default::default(),
+        }
     } else {
-        unpack_multi_module_with_plan(modules, numeric_rewrite_plan, options.clone())?
+        unpack_multi_module_with_plan_and_capture(
+            modules,
+            numeric_rewrite_plan,
+            options.clone(),
+            capture_pre_rewrite,
+        )?
     };
-    output.warnings.splice(0..0, preparation_warnings);
-    output.detected_formats = detected_formats;
-    Ok(output)
+    captured.output.warnings.splice(0..0, preparation_warnings);
+    captured.output.detected_formats = detected_formats;
+    Ok(captured)
 }
 
 pub fn unpack(source: &str, options: DecompileOptions) -> Result<UnpackOutput> {
