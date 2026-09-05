@@ -19,6 +19,7 @@ export interface PlaygroundShareState {
   producer: Producer;
   level: Level;
   formatter: boolean;
+  mapping: boolean;
   vueSfc: boolean;
   version: string;
 }
@@ -57,6 +58,7 @@ export function readShareState(hash = window.location.hash): PlaygroundShareStat
     const json = ungzip(decodeBase64Url(encodedState), { to: "string" });
     const parsed = JSON.parse(json) as Partial<PlaygroundShareState>;
     const formatter = normalizeFormatter(parsed.formatter);
+    const mapping = normalizeMapping(parsed.mapping);
     const vueSfc = normalizeVueSfc(parsed.vueSfc);
     const mode = normalizeMode(parsed.mode);
     const producer = normalizeProducer(parsed.producer);
@@ -64,6 +66,7 @@ export function readShareState(hash = window.location.hash): PlaygroundShareStat
       typeof parsed.source !== "string" ||
       !isLevel(parsed.level) ||
       formatter === null ||
+      mapping === null ||
       vueSfc === null ||
       mode === null ||
       producer === null ||
@@ -82,6 +85,7 @@ export function readShareState(hash = window.location.hash): PlaygroundShareStat
       producer,
       level: parsed.level,
       formatter,
+      mapping,
       vueSfc,
       version: parsed.version,
     };
@@ -122,6 +126,16 @@ function isLevel(value: unknown): value is Level {
 function normalizeFormatter(value: unknown): boolean | null {
   if (value === undefined) {
     return true;
+  }
+  if (typeof value === "boolean") {
+    return value;
+  }
+  return null;
+}
+
+function normalizeMapping(value: unknown): boolean | null {
+  if (value === undefined) {
+    return false;
   }
   if (typeof value === "boolean") {
     return value;

@@ -13,6 +13,7 @@ import type { WakaruWarning } from "./wasm/types";
 import type { Level } from "./lib/constants";
 import { DEFAULT_EXAMPLE } from "./lib/examples";
 import { createShareUrl, readShareState, SHARE_LIMIT_MESSAGE } from "./lib/share";
+import { readEmbedFlag, standaloneUrl } from "./lib/embed";
 import { parseMappings, lineColorClass, lineColorActiveClass, generateMappingCSS, LINE_COLORS_RGB } from "./lib/sourcemap";
 import type { MappingData } from "./lib/sourcemap";
 import { applyVuePreviewResult, resetVuePreview } from "./lib/vuePreview";
@@ -29,6 +30,7 @@ const WAKARU_VERSION = import.meta.env.VITE_WAKARU_VERSION;
 const WAKARU_GIT_HASH = import.meta.env.VITE_WAKARU_GIT_HASH;
 const VERSION_LABEL = `v${WAKARU_VERSION}+${WAKARU_GIT_HASH}`;
 const INITIAL_SHARE_STATE = readShareState();
+const EMBED = readEmbedFlag(window.location.search);
 const INITIAL_AUTO_RUN_DELAY_MS = 80;
 const MIN_AUTO_RUN_DELAY_MS = 60;
 const MAX_AUTO_RUN_DELAY_MS = 300;
@@ -85,7 +87,9 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState<number | null>(null);
   const [shareStatus, setShareStatus] = useState<string | null>(null);
-  const [mappingEnabled, setMappingEnabled] = useState(false);
+  const [mappingEnabled, setMappingEnabled] = useState(
+    INITIAL_SHARE_STATE?.mapping ?? false
+  );
   const formatterEnabled = formatter && !mappingEnabled;
   const [sourceMapJson, setSourceMapJson] = useState<string | undefined>();
   const [hoveredOutputLine, setHoveredOutputLine] = useState<number | null>(null);
@@ -273,6 +277,7 @@ export function App() {
         producer,
         level,
         formatter: formatterEnabled,
+        mapping: mappingEnabled,
         vueSfc: vueSfcEnabled,
         version: VERSION_LABEL,
       });
@@ -292,7 +297,7 @@ export function App() {
     } catch {
       showShareStatus("URL updated");
     }
-  }, [decompileSource, formatterEnabled, level, mode, producer, roundTripSource, showShareStatus, vueSfcEnabled]);
+  }, [decompileSource, formatterEnabled, level, mappingEnabled, mode, producer, roundTripSource, showShareStatus, vueSfcEnabled]);
 
   const handleVueSfcChange = useCallback((enabled: boolean) => {
     setVueSfcEnabled(enabled);
@@ -502,11 +507,13 @@ export function App() {
 
   return (
     <div className="app">
-      <Header
-        version={WAKARU_VERSION}
-        gitHash={WAKARU_GIT_HASH}
-      />
-      <Controls
+      {!EMBED && (
+        <Header
+          version={WAKARU_VERSION}
+          gitHash={WAKARU_GIT_HASH}
+        />
+      )}
+      {!EMBED && <Controls
         mode={mode}
         producer={producer}
         level={level}
@@ -527,7 +534,7 @@ export function App() {
         elapsed={elapsed}
         shareStatus={shareStatus}
         coveragePct={mappingData?.coveragePct ?? null}
-      />
+      />}
       <div ref={editorWrapRef} style={{ position: "relative", flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
         <canvas
           ref={canvasRef}
@@ -578,6 +585,16 @@ export function App() {
             decorations={outputDecorations}
             onHoverLine={handleOutputHover}
             onEditorReady={(ed) => { outputEditorRef.current = ed; }}
+            trailing={EMBED ? (
+              <a
+                className="embed-open"
+                href={standaloneUrl(window.location.href)}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Open in playground ↗
+              </a>
+            ) : undefined}
           />
         </SplitLayout>
       </div>

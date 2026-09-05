@@ -7,6 +7,7 @@ const sharedState: PlaygroundShareState = {
   producer: "swc",
   level: "minimal",
   formatter: false,
+  mapping: true,
   vueSfc: true,
   version: "v1.4.0+test",
 };
@@ -24,6 +25,20 @@ describe("playground share state", () => {
     const hash = new URL(url).hash.replace("|", "%7C");
 
     expect(readShareState(hash)).toEqual(sharedState);
+  });
+
+  it("defaults the mapping view off for older shared links", () => {
+    const legacyState = { ...sharedState } as Partial<PlaygroundShareState>;
+    delete legacyState.mapping;
+    const url = createShareUrl(
+      legacyState as PlaygroundShareState,
+      "https://wakaru.vercel.app/playground/"
+    );
+
+    expect(readShareState(new URL(url).hash)).toEqual({
+      ...legacyState,
+      mapping: false,
+    });
   });
 
   it("defaults Vue SFC recovery off for older shared links", () => {

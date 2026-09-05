@@ -33,6 +33,23 @@ body {
   height: 100vh;
 }
 
+/* Embed mode (?embed=1): header and controls hidden, one way out */
+.embed-open {
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  line-height: 1;
+  text-decoration: none;
+  text-transform: uppercase;
+  white-space: nowrap;
+  transition: color 0.15s;
+}
+
+.embed-open:hover {
+  color: var(--text-primary);
+}
+
 /* Header */
 .header {
   display: flex;
@@ -457,6 +474,13 @@ body {
 .output-tab:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: -2px;
+}
+
+.output-header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
 }
 
 .output-status {

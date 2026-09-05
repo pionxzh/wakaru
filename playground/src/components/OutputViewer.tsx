@@ -1,5 +1,5 @@
 import MonacoEditor, { DiffEditor, type OnMount } from "@monaco-editor/react";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, type ReactNode } from "react";
 import type { editor as MonacoEditorNS } from "monaco-editor";
 import type { EditorDecoration } from "./Editor";
 import type { OutputPaneView } from "../lib/outputPane";
@@ -18,6 +18,8 @@ interface OutputViewerProps {
   decorations?: EditorDecoration[];
   onHoverLine?: (line: number | null) => void;
   onEditorReady?: (editor: MonacoEditorNS.IStandaloneCodeEditor) => void;
+  /** Rendered at the right end of the pane header (embed mode's exit link). */
+  trailing?: ReactNode;
 }
 
 export function OutputViewer({
@@ -33,6 +35,7 @@ export function OutputViewer({
   decorations,
   onHoverLine,
   onEditorReady,
+  trailing,
 }: OutputViewerProps) {
   const editorRef = useRef<MonacoEditorNS.IStandaloneCodeEditor | null>(null);
   const decorationIds = useRef<string[]>([]);
@@ -112,11 +115,14 @@ export function OutputViewer({
             </button>
           )}
         </div>
-        {vueSfcEnabled && (
-          <span className={`output-status${vueSfc ? " output-status-success" : ""}`}>
-            {vueSfc ? "Experimental" : isLoading ? "Checking…" : "Not recovered"}
-          </span>
-        )}
+        <div className="output-header-right">
+          {vueSfcEnabled && (
+            <span className={`output-status${vueSfc ? " output-status-success" : ""}`}>
+              {vueSfc ? "Experimental" : isLoading ? "Checking…" : "Not recovered"}
+            </span>
+          )}
+          {trailing}
+        </div>
       </EditorPaneHeader>
       {activeView === "diff" ? (
         <DiffEditor
