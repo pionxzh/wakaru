@@ -1,6 +1,7 @@
 # Cross-Module Fact System
 
-See also: [Architecture](architecture.md) for the multi-module pipeline design,
+See also: [Architecture](architecture.md) for the pipeline overview,
+[Unpacking](unpacking.md) for detector and extraction boundaries,
 [Rule dependency inventory](rule-dependency-inventory.md) for where fact-reading
 rules fit in the pipeline.
 
@@ -36,7 +37,7 @@ merge step.
 ## Shape
 
 Multi-module unpack runs in two parallel phases with a single barrier between
-them (`crates/core/src/driver/unpack.rs::unpack_multi_module`):
+them (`crates/core/src/driver/unpack/phases.rs`):
 
 ```
 Phase 1 (per module, parallel):
@@ -172,6 +173,27 @@ expose the detector's extracted factory body unchanged.
 Helper export facts are still pure AST facts. They only record helper identity
 when the exported local binding matches a known helper body shape or runtime
 export shape after Stage 2. They do not speculate from consumer-side usage.
+
+### Same-module recovery boundary
+
+UnEsm also recovers narrowly proven same-module CommonJS reads: a later
+`module.exports` read may use the sole stable default binding, and a later
+`exports.name` read may use a uniquely assigned stable export binding. Direct
+method calls additionally require a receiver-insensitive function. Earlier
+`undefined` export declarations are permitted; multiple value writes, later
+resets, computed writes, value escapes, receiver-sensitive calls, early
+reads, direct eval, and hoisted function declarations remain fail closed.
+
+When a literal unresolved `require()` resolves to the current output module,
+`UnEsm` verifies the recovered self-import against that same module's export
+surface. A synthesized default self-import with no default export rolls the
+whole rule back for that module, keeping its CommonJS boundary visible.
+A matching default export continues through ordinary recovery. A named-only
+self surface may use the existing conservative provider-namespace proof, but
+only when every observed use supports namespace semantics; whole-value,
+mutable, computed, escaping, or otherwise incompatible reads still roll
+back. This does not guess a namespace representation for CommonJS partial
+exports.
 
 Stable same-module `module.exports` / `exports.name` read recovery is not a
 cross-module fact. `UnEsm` proves and consumes that identity within one resolved

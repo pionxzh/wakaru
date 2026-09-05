@@ -3,6 +3,8 @@
 Start with [architecture.md](architecture.md) — what wakaru does, the
 pipeline flow, and the design patterns every change touches. Everything else
 is read-on-demand by task. Don't read the whole directory; use the map.
+The architecture overview keeps shared invariants; update format-specific
+behavior in the relevant topic document instead of expanding the overview.
 
 For rule ordering, stages, and enforced edges, the registry in
 `crates/core/src/rules/pipeline.rs` is authoritative — the docs explain *why*,
@@ -13,11 +15,13 @@ the registry defines *what*.
 | Task | Read |
 |---|---|
 | Any code change | [testing.md](testing.md) — test patterns, helpers, required verification before commit |
+| Finding source entry points | [code-map.md](code-map.md) — file lookup by subsystem |
 | PR / branch review, or taking over existing work | [reviewing.md](reviewing.md) — scope, evidence, handoff, and review completion; [testing.md](testing.md#sharing-verification-results) — reuse and invalidation of test evidence |
 | Rule bugfix / snapshot regression | [debugging.md](debugging.md) — rule tracing, snapshot layers, fixture workflow |
 | New rule, or moving a rule | [rule-dependency-inventory.md](rule-dependency-inventory.md) — ordering rationale, fragile edges, experiment log; [rewrite-assumptions.md](rewrite-assumptions.md) — level gating and named assumptions |
 | Transpiler helper work | [helper-detection.md](helper-detection.md) — detection design and rejected alternatives |
-| Cross-module / unpack behavior | [fact-system.md](fact-system.md) — the two-phase barrier and module facts |
+| Detection, unpacking, or scope-hoisted splitting | [unpacking.md](unpacking.md) — format shapes, factory normalization, raw/multi-input behavior, and fallback boundaries |
+| Cross-module recovery | [fact-system.md](fact-system.md) — the two-phase barrier, module facts, and same-module proof boundaries |
 | Bun single-file executables | [bun-standalone.md](bun-standalone.md) — binary container extraction, CLI behavior, safety, and current limits |
 | Public Rust API | [public-api.md](public-api.md) — design decisions and boundaries; rustdoc (`cargo doc -p wakaru`) is the behavioral contract |
 | Vue SFC recovery (`--vue-sfc`) | [vue-decompile.md](vue-decompile.md) — the recovery path and CLI behavior; [vue-sfc-recovery-status.md](vue-sfc-recovery-status.md) — experimental status and known gaps |

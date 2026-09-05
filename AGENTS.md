@@ -13,11 +13,13 @@ reading everything:
 | Task | Also read |
 |---|---|
 | Any code change | `docs/testing.md` — test patterns, helpers, required verification |
+| Finding source entry points | `docs/code-map.md` — file lookup by subsystem |
 | PR / branch review, or taking over existing work | `docs/reviewing.md` — scope, evidence, handoff, and review completion; `docs/testing.md#sharing-verification-results` — reuse and invalidation of test evidence |
 | Rule bugfix / snapshot regression | `docs/debugging.md` — rule tracing, snapshot layers, fixture workflow |
 | New rule, or moving a rule | `docs/rule-dependency-inventory.md` — ordering rationale, fragile edges; `docs/rewrite-assumptions.md` — level gating, named assumptions |
 | Transpiler helper work | `docs/helper-detection.md` — detection design and what was already rejected |
-| Cross-module / unpack behavior | `docs/fact-system.md` — the two-phase barrier and module facts |
+| Detection, unpacking, or scope-hoisted splitting | `docs/unpacking.md` — format shapes, factory normalization, raw/multi-input behavior, and fallback boundaries |
+| Cross-module recovery | `docs/fact-system.md` — the two-phase barrier, module facts, and same-module proof boundaries |
 | Bun single-file executables | `docs/bun-standalone.md` — binary graph format, CLI flow, safety, and public API limits |
 | Public Rust API (`wakaru` crate) | `docs/public-api.md` — design decisions and boundaries; rustdoc (`cargo doc -p wakaru`) is the behavioral contract |
 | Vue SFC recovery (`--vue-sfc`) | `docs/vue-decompile.md` — the recovery path and CLI behavior; `docs/vue-sfc-recovery-status.md` — experimental status and known gaps |
