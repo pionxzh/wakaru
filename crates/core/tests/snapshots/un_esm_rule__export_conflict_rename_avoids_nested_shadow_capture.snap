@@ -2,8 +2,8 @@
 source: crates/core/tests/un_esm_rule.rs
 expression: output
 ---
-const _a2 = 0;
+const _a_2 = 0;
 function f(_a) {
-    return _a2 + _a;
+    return _a_2 + _a;
 }
-export const a = (x)=>_a2 + f(x);
+export const a = (x)=>_a_2 + f(x);

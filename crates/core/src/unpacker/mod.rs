@@ -456,7 +456,7 @@ fn fresh_runtime_local_name(name: &Atom, used_names: &mut std::collections::Hash
 
     let mut suffix = 2usize;
     loop {
-        let candidate = Atom::from(format!("_{name}{suffix}"));
+        let candidate = Atom::from(format!("_{name}_{suffix}"));
         if used_names.insert(candidate.clone()) {
             return candidate;
         }
@@ -1213,6 +1213,16 @@ pub fn unpack_webpack4_raw(source: &str) -> Option<UnpackResult> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn runtime_local_name_uses_delimited_suffix() {
+        let mut used_names = std::collections::HashSet::from([Atom::from("_value")]);
+
+        assert_eq!(
+            fresh_runtime_local_name(&Atom::from("value"), &mut used_names),
+            "_value_2"
+        );
+    }
 
     #[test]
     fn sanitize_relative_path_drops_only_path_components() {

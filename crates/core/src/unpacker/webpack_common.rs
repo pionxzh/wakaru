@@ -422,7 +422,7 @@ fn fresh_runtime_value_name(parameter: &Atom, used_names: &mut HashSet<Atom>) ->
     }
     let mut suffix = 2usize;
     loop {
-        let candidate = Atom::from(format!("_{parameter}{suffix}"));
+        let candidate = Atom::from(format!("_{parameter}_{suffix}"));
         if used_names.insert(candidate.clone()) {
             return candidate;
         }
@@ -1246,7 +1246,7 @@ fn fresh_dependency_name(used_names: &mut HashSet<Atom>) -> Atom {
     }
     let mut suffix = 2usize;
     loop {
-        let candidate = Atom::from(format!("_dependency{suffix}"));
+        let candidate = Atom::from(format!("_dependency_{suffix}"));
         if used_names.insert(candidate.clone()) {
             return candidate;
         }
@@ -1472,4 +1472,24 @@ pub(super) fn numeric_id_from_expr(expr: &Expr) -> Option<usize> {
         return None;
     }
     Some(value as usize)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_names_use_delimited_suffixes() {
+        let mut runtime_names = HashSet::from([Atom::from("_value")]);
+        assert_eq!(
+            fresh_runtime_value_name(&Atom::from("value"), &mut runtime_names),
+            "_value_2"
+        );
+
+        let mut dependency_names = HashSet::from([Atom::from("_dependency")]);
+        assert_eq!(
+            fresh_dependency_name(&mut dependency_names),
+            "_dependency_2"
+        );
+    }
 }

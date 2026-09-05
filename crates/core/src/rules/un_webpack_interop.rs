@@ -674,7 +674,7 @@ fn fresh_prefixed_name(name: &Atom, used_names: &mut HashSet<Atom>) -> Atom {
 
     let mut index = 2usize;
     loop {
-        let candidate = Atom::from(format!("_{name}{index}"));
+        let candidate = Atom::from(format!("_{name}_{index}"));
         if used_names.insert(candidate.clone()) {
             return candidate;
         }
@@ -944,4 +944,19 @@ fn object_prototype_has_own_property_call_callee(unresolved_mark: Mark) -> Calle
         prop: MemberProp::Ident(IdentName::new("call".into(), DUMMY_SP)),
     });
     Callee::Expr(Box::new(call))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prefixed_name_uses_delimited_suffix() {
+        let mut used_names = HashSet::from([Atom::from("_value")]);
+
+        assert_eq!(
+            fresh_prefixed_name(&Atom::from("value"), &mut used_names),
+            "_value_2"
+        );
+    }
 }

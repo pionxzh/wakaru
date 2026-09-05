@@ -4634,12 +4634,17 @@ fn direct_eval_mentions_name(analyzer: &DirectEvalAnalyzer, name: &Atom) -> bool
 }
 
 fn fresh_default_import_name(used_names: &mut HashSet<Atom>) -> Atom {
-    let readable = Atom::from("defaultExport");
-    if used_names.insert(readable.clone()) {
-        readable
-    } else {
-        fresh_prefixed_name(&readable, used_names)
+    let base = Atom::from("defaultExport");
+    if used_names.insert(base.clone()) {
+        return base;
     }
+    for suffix in 1usize.. {
+        let candidate = Atom::from(format!("defaultExport_{suffix}"));
+        if used_names.insert(candidate.clone()) {
+            return candidate;
+        }
+    }
+    unreachable!()
 }
 
 fn prove_toplevel_require_default_member_args(
@@ -6542,7 +6547,7 @@ fn fresh_prefixed_name(name: &Atom, used_names: &mut HashSet<Atom>) -> Atom {
 
     let mut index = 2usize;
     loop {
-        let candidate = Atom::from(format!("_{name}{index}"));
+        let candidate = Atom::from(format!("_{name}_{index}"));
         if used_names.insert(candidate.clone()) {
             return candidate;
         }
@@ -6567,6 +6572,31 @@ fn rename_export_kind(kind: &mut CjsExportKind, renames: &[BindingRename]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_import_fallback_uses_delimited_suffixes() {
+        let mut used_names = HashSet::new();
+
+        assert_eq!(fresh_default_import_name(&mut used_names), "defaultExport");
+        assert_eq!(
+            fresh_default_import_name(&mut used_names),
+            "defaultExport_1"
+        );
+        assert_eq!(
+            fresh_default_import_name(&mut used_names),
+            "defaultExport_2"
+        );
+    }
+
+    #[test]
+    fn prefixed_name_uses_delimited_suffix() {
+        let mut used_names = HashSet::from([Atom::from("_value")]);
+
+        assert_eq!(
+            fresh_prefixed_name(&Atom::from("value"), &mut used_names),
+            "_value_2"
+        );
+    }
 
     #[test]
     fn get_or_insert_records_source_order_once() {

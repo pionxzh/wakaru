@@ -289,7 +289,7 @@ fn fresh_namespace_import_name(name: &Atom, used_names: &mut HashSet<Atom>) -> A
         return base;
     }
     for suffix in 2usize.. {
-        let candidate: Atom = format!("_{name}{suffix}").into();
+        let candidate: Atom = format!("_{name}_{suffix}").into();
         if used_names.insert(candidate.clone()) {
             return candidate;
         }
@@ -1014,5 +1014,20 @@ fn is_default_prop(prop: &MemberProp) -> bool {
             matches!(c.expr.as_ref(), Expr::Lit(Lit::Str(s)) if s.value.as_str() == Some("default"))
         }
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn namespace_import_name_uses_delimited_suffix() {
+        let mut used_names = HashSet::from([Atom::from("_value")]);
+
+        assert_eq!(
+            fresh_namespace_import_name(&Atom::from("value"), &mut used_names),
+            "_value_2"
+        );
     }
 }

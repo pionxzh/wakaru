@@ -2966,12 +2966,18 @@ fn toplevel_require_default_member_uses_readable_fallback_for_numeric_module_nam
 (function (base) {
   use(base);
 })(require("./module-42.js").default);
+consume(require("./module-43.js").default);
+consume(require("./module-44.js").default);
 "#;
     let expected = r#"
 import defaultExport from "./module-42.js";
+import defaultExport_1 from "./module-43.js";
+import defaultExport_2 from "./module-44.js";
 (function (base) {
   use(base);
 })(defaultExport);
+consume(defaultExport_1);
+consume(defaultExport_2);
 "#;
     let output = apply_unesm(input);
     assert_eq_normalized(&output, expected);
@@ -2984,9 +2990,9 @@ let defaultExport = existing;
 consume(require("./module-42.js").default);
 "#;
     let expected = r#"
-import _defaultExport from "./module-42.js";
+import defaultExport_1 from "./module-42.js";
 let defaultExport = existing;
-consume(_defaultExport);
+consume(defaultExport_1);
 "#;
     let output = apply_unesm(input);
     assert_eq_normalized(&output, expected);
