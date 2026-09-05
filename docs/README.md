@@ -27,7 +27,7 @@ the registry defines *what*.
 | Vue SFC recovery (`--vue-sfc`) | [vue-decompile.md](vue-decompile.md) — the recovery path and CLI behavior; [vue-sfc-recovery-status.md](vue-sfc-recovery-status.md) — experimental status and known gaps |
 | Correctness / semantics questions | [rewrite-assumptions.md](rewrite-assumptions.md); [test262-roundtrip.md](test262-roundtrip.md) — the semantic round-trip harness |
 | Before proposing a redesign | [learnings/](learnings/) — approaches already built, measured, and reverted |
-| CLI flag or output changes | [cli.md](cli.md) — the user-facing CLI reference; [../skills/wakaru/SKILL.md](../skills/wakaru/SKILL.md) — the agent skill (keep both in sync; the skill carries only what changes the commands an agent runs or how it reads output — behavior detail belongs in cli.md) |
+| CLI flag or output changes | [cli.md](cli.md) — the CLI reference and source of truth for behavior detail; [../skills/wakaru/SKILL.md](../skills/wakaru/SKILL.md) — the agent skill (carries only what changes the commands an agent runs or how it reads output); [../docs-site/content/docs/reference/cli.mdx](../docs-site/content/docs/reference/cli.mdx) — the user-facing docs page. Keep all three in sync in the same commit |
 | Agent / tool integration | [../skills/wakaru/SKILL.md](../skills/wakaru/SKILL.md) — the CLI-based agent surface |
 | Cutting a release | [releasing.md](releasing.md) |
 

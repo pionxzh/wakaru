@@ -25,7 +25,7 @@ reading everything:
 | Vue SFC recovery (`--vue-sfc`) | `docs/vue-decompile.md` — the recovery path and CLI behavior; `docs/vue-sfc-recovery-status.md` — experimental status and known gaps |
 | Correctness / semantics questions | `docs/rewrite-assumptions.md`, `docs/test262-roundtrip.md` |
 | Before proposing a redesign | `docs/learnings/` — approaches already built, measured, and reverted |
-| CLI flag or output changes | `docs/cli.md` — the user-facing CLI reference; `skills/wakaru/SKILL.md` — the agent skill (keep both in sync; the skill carries only what changes the commands an agent runs or how it reads output — behavior detail belongs in cli.md) |
+| CLI flag or output changes | `docs/cli.md` — the CLI reference and source of truth for behavior detail; `skills/wakaru/SKILL.md` — the agent skill (carries only what changes the commands an agent runs or how it reads output); `docs-site/content/docs/reference/cli.mdx` — the user-facing docs page. Keep all three in sync in the same commit |
 | Agent / tool integration | `skills/wakaru/SKILL.md` — CLI-based agent surface |
 | Cutting a release | `docs/releasing.md` |
 

@@ -2,6 +2,8 @@
   "buildCommand": "",
   "outputDirectory": ".",
   "routes": [
+    { "src": "/docs$", "dest": "https://wakaru-docs.vercel.app/docs" },
+    { "src": "/docs/(.*)", "dest": "https://wakaru-docs.vercel.app/docs/$1" },
     { "src": "/playground$", "dest": "https://wakaru-playground.vercel.app/playground" },
     { "src": "/playground/(.*)", "dest": "https://wakaru-playground.vercel.app/playground/$1" },
     { "handle": "filesystem" }

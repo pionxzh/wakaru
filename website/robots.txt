@@ -2,3 +2,4 @@ User-agent: *
 Allow: /
 
 Sitemap: https://wakarujs.com/sitemap.xml
+Sitemap: https://wakarujs.com/docs/sitemap.xml
