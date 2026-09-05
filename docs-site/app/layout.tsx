@@ -29,6 +29,7 @@ export default function Layout({ children }: LayoutProps<'/'>) {
       </head>
       <body className="flex flex-col min-h-screen">
         <RootProvider
+          theme={{ defaultTheme: 'dark' }}
           search={{
             // fetch() does not apply basePath automatically.
             options: { api: '/docs/api/search' },

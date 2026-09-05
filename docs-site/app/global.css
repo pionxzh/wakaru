@@ -10,3 +10,35 @@ html > body[data-scroll-locked] {
   margin-right: 0px !important;
   --removed-body-scroll-bar-size: 0px !important;
 }
+
+/* Landing palette (website/styles.css :root). Dark is the primary look and
+   the default theme; light keeps the neutral preset with the landing blue. */
+:root {
+  --color-fd-primary: #3d6fce;
+  --color-fd-ring: #3d6fce;
+}
+
+.dark {
+  --color-fd-background: #141924;
+  --color-fd-foreground: #e8ecf3;
+  --color-fd-muted: #1c2330;
+  --color-fd-muted-foreground: #9da8ba;
+  --color-fd-popover: #1c2330;
+  --color-fd-popover-foreground: #e8ecf3;
+  --color-fd-card: #181e2a;
+  --color-fd-card-foreground: #e8ecf3;
+  --color-fd-border: #2c3547;
+  --color-fd-primary: #82b4ff;
+  --color-fd-primary-foreground: #141924;
+  --color-fd-secondary: #202838;
+  --color-fd-secondary-foreground: #e8ecf3;
+  --color-fd-accent: #252d3d;
+  --color-fd-accent-foreground: #e8ecf3;
+  --color-fd-ring: #3d6fce;
+}
+
+.dark #nd-sidebar {
+  --color-fd-muted: #181e2a;
+  --color-fd-secondary: #202838;
+  --color-fd-muted-foreground: #9da8ba;
+}
