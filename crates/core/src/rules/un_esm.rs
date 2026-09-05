@@ -29,7 +29,9 @@ use super::eval_utils::{
     direct_eval_call_source, js_source_mentions_binding, DirectEvalAnalyzer, EvalCallSource,
 };
 use super::helper_matcher::count_binding_refs;
-use super::rename_utils::{collect_unresolved_reference_names, rename_bindings, BindingRename};
+use super::rename_utils::{
+    collect_module_names, collect_unresolved_reference_names, rename_bindings, BindingRename,
+};
 use super::RewriteLevel;
 
 pub struct UnEsm {
@@ -4563,7 +4565,7 @@ fn existing_default_import_item(item: &ModuleItem, source: &str) -> Option<Ident
     let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
         return None;
     };
-    if wtf8_to_string(&import.src.value) != source {
+    if import.type_only || wtf8_to_string(&import.src.value) != source {
         return None;
     }
     import.specifiers.iter().find_map(|spec| match spec {
@@ -6409,7 +6411,7 @@ fn collect_all_declared_names(module: &Module) -> HashSet<Atom> {
     }
 
     let mut collector = Collector {
-        names: HashSet::new(),
+        names: collect_module_names(module),
     };
     module.visit_with(&mut collector);
     collector.names
