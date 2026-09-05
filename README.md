@@ -25,7 +25,7 @@ npx wakaru bundle.js --unpack -o out/  # unpack and decompile a bundle
 npx wakaru dist/ --unpack -o out/      # scan a bundle output directory
 ```
 
-See the [CLI reference](./docs/cli.md) for rewrite levels, source maps, and more options.
+See the [CLI reference](https://wakarujs.com/docs/reference/cli) for rewrite levels, source maps, and more options.
 
 ### Install
 
@@ -78,7 +78,7 @@ short because the input does not provide their original names.
 - **Transpiled code:** recover modern syntax from Babel, TypeScript, and SWC output.
 - **Minified code:** expand compact expressions and simplify control flow.
 
-See [supported bundle formats](./docs/cli.md#unpack-bundles-and-chunks) for the full list and format-specific limits.
+See [supported inputs](https://wakarujs.com/docs/reference/supported-inputs) for the full list and format-specific limits.
 
 ## Tested like a compiler
 
