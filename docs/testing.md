@@ -28,6 +28,22 @@ in `.cargo/config.toml`); accept intentional changes with `cargo insta accept`.
 For semantic round-trip coverage with Test262, see
 [Test262 Round-Trip](test262-roundtrip.md).
 
+### Optional: shallow-fetch git dependencies
+
+The formatter depends on several OXC crates from a pinned git revision. With
+a fresh Cargo cache, fetching the OXC monorepo can take time.
+
+If you already use nightly Cargo, you can opt into its
+[unstable shallow git fetch mode](https://doc.rust-lang.org/cargo/reference/unstable.html#git)
+before building or testing:
+
+```bash
+cargo +nightly fetch -Zgit=shallow-deps
+```
+
+This is optional. Normal development uses the stable toolchain pinned in
+`rust-toolchain.toml`.
+
 ## Required Verification Before Commit
 
 For code changes, run the full relevant checklist before committing. Do not
