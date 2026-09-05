@@ -4,12 +4,15 @@ expression: code
 ---
 import r from "./module-40.js";
 export default h;
-export const compile = (e, t)=>tokensToFunction(parse(e, t), t);
+export const parse = h.parse = i;
+export const compile = h.compile = (e, t)=>l(i(e, t), t);
+export const tokensToFunction = h.tokensToFunction = l;
+export const tokensToRegExp = h.tokensToRegExp = p;
 const o = new RegExp([
     "(\\\\.)",
     "([\\/.])?(?:(?:\\:(\\w+)(?:\\(((?:\\\\.|[^\\\\()])+)\\))?|\\(((?:\\\\.|[^\\\\()])+)\\))([+*?])?|(\\*))"
 ].join("|"), "g");
-export function parse(e, t) {
+function i(e, t) {
     let n;
     const r = [];
     let i = 0;
@@ -67,7 +70,7 @@ function a(e) {
 function u(e) {
     return encodeURI(e).replace(/[?#]/g, (e)=>`%${e.charCodeAt(0).toString(16).toUpperCase()}`);
 }
-export function tokensToFunction(e, t) {
+function l(e, t) {
     const n = new Array(e.length);
     for(let o = 0; o < e.length; o++){
         if (typeof e[o] === "object") {
@@ -139,7 +142,7 @@ function d(e) {
     }
     return "i";
 }
-export function tokensToRegExp(e, t, n) {
+function p(e, t, n) {
     if (!r(t)) {
         n = t || n;
         t = [];
@@ -203,5 +206,5 @@ function h(e, t, n) {
             return f(new RegExp(`(?:${r.join("|")})`, d(n)), t);
         })(e, t, n);
     }
-    return ((e, t, n)=>tokensToRegExp(parse(e, n), t, n))(e, t, n);
+    return ((e, t, n)=>p(i(e, n), t, n))(e, t, n);
 }

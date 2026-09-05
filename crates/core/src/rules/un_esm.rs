@@ -26,7 +26,8 @@ use crate::utils::prototype_members::is_prototype_mutating_member_name;
 
 use super::decl_utils::{collect_decl_names, collect_pat_names, same_ident};
 use super::eval_utils::{
-    direct_eval_call_source, js_source_mentions_binding, DirectEvalAnalyzer, EvalCallSource,
+    direct_eval_call_source, js_source_mentions_binding, DirectEvalAnalyzer, DirectEvalPresence,
+    EvalCallSource,
 };
 use super::helper_matcher::count_binding_refs;
 use super::rename_utils::{
@@ -218,8 +219,45 @@ impl VisitMut for UnEsm {
         // Phase 1: classify
         let mut classified: Vec<Classified> = Vec::with_capacity(items.len());
 
+        let mut stable_default = None;
         for item in items {
-            classified.push(classify_item(item, self.unresolved_mark, &require_bindings));
+            let property_write = stable_default.as_ref().and_then(|binding| {
+                preserve_default_property_write(&item, binding, self.unresolved_mark)
+            });
+            let next_default =
+                top_level_module_exports_ident_assignment(&item, self.unresolved_mark).filter(
+                    |(span, _)| {
+                        Some(*span) == commonjs_read_recovery.stable_default_assignment_span
+                    },
+                );
+            let mut entry = classify_item(item, self.unresolved_mark, &require_bindings);
+            if let (
+                Some(write),
+                Classified::CjsExport {
+                    kind: CjsExportKind::Named { expr, is_void, .. },
+                    ..
+                },
+            ) = (property_write, &mut entry)
+            {
+                if matches!(expr.as_ref(), Expr::Ident(id)
+                    if stable_default.as_ref().is_some_and(|binding| same_ident(id, binding)))
+                {
+                    // Reading the proven stable default again is harmless;
+                    // keep the original named binding instead of an alias.
+                    classified.push(Classified::Keep(ModuleItem::Stmt(Stmt::Expr(ExprStmt {
+                        span: DUMMY_SP,
+                        expr: write,
+                    }))));
+                } else {
+                    *expr = write;
+                    // Even an undefined sentinel writes an observable property.
+                    *is_void = false;
+                }
+            }
+            classified.push(entry);
+            if let Some((_, binding)) = next_default {
+                stable_default = Some(binding);
+            }
         }
 
         // Webpack/Babel interop often emits:
@@ -788,21 +826,6 @@ fn collect_commonjs_read_recovery_evidence(
             uses,
         ),
         stable_named_properties: collect_stable_named_properties(module, unresolved_mark, uses),
-    }
-}
-
-#[derive(Default)]
-struct DirectEvalPresence {
-    found: bool,
-}
-
-impl Visit for DirectEvalPresence {
-    fn visit_call_expr(&mut self, call: &CallExpr) {
-        if direct_eval_call_source(call).is_some() {
-            self.found = true;
-            return;
-        }
-        call.visit_children_with(self);
     }
 }
 
@@ -1447,6 +1470,38 @@ fn collect_stable_default_assignment_span(
     }
 
     Some(*span)
+}
+
+/// A named ESM export alone does not preserve a property on the default
+/// object. Keep that write as the export initializer, so aliases still observe
+/// it and its RHS/setter run once at the original position. The caller only
+/// enables this after the existing whole-module stable-default proof succeeds;
+/// writes to the initial `exports` object are a different lifetime.
+fn preserve_default_property_write(
+    item: &ModuleItem,
+    binding: &Ident,
+    unresolved_mark: Mark,
+) -> Option<Box<Expr>> {
+    let ModuleItem::Stmt(Stmt::Expr(statement)) = item else {
+        return None;
+    };
+    let Expr::Assign(assignment) = strip_parens(&statement.expr) else {
+        return None;
+    };
+    if assignment.op != AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assignment.left else {
+        return None;
+    };
+    if !is_module_exports_expr(strip_parens(&member.obj), unresolved_mark) {
+        return None;
+    }
+    let mut assignment = assignment.clone();
+    let mut member = member.clone();
+    member.obj = Box::new(Expr::Ident(binding.clone()));
+    assignment.left = AssignTarget::Simple(SimpleAssignTarget::Member(member));
+    Some(Box::new(Expr::Assign(assignment)))
 }
 
 fn collect_stable_named_properties(

@@ -145,7 +145,11 @@ also supported by replacing the reset with the localized value before lifting
 its initializer. An exact `module.exports = exportsParameter = value` bridge,
 including one element of a top-level comma sequence, keeps the assignment chain
 in place and introduces an uninitialized local for the parameter's second
-lifetime; an initializer that reads the old exports value remains opaque.
+lifetime. This bridge requires a declared, unwritten default binding and one
+whole-value export assignment, with no module-object escape or direct eval.
+Complex initializers and unproven defaults remain opaque so later ESM recovery
+cannot erase properties observable through the alias. Proven named property
+writes stay on the default object as well as becoming named exports.
 Numeric calls
 absent from the current table remain explicit `require(<number>)` runtime calls
 and never synthesize an ESM edge. Webpack 5's pure `.g` and `.amdO`

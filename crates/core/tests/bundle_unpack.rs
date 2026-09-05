@@ -758,6 +758,7 @@ fn webpack5_reused_exports_parameter_in_commonjs_alias_chain_is_localized() {
        context.exports.Ajv = Ajv,
        Object.defineProperty(publicValue, "__esModule", { value: true }),
        publicValue.default = Ajv);
+      globalThis.observed = publicValue.Ajv === Ajv;
     })
   });
   var cache = {};
@@ -796,9 +797,68 @@ fn webpack5_reused_exports_parameter_in_commonjs_alias_chain_is_localized() {
             && !module.contains("exports ="),
         "the factory parameter's callable lifetime must be a local binding:\n{module}"
     );
+    assert!(
+        module.contains(".Ajv ="),
+        "the callable property must survive:\n{module}"
+    );
     assert!(module.contains("export default Ajv"), "{module}");
     assert!(module.contains("export { Ajv"), "{module}");
     assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
+fn webpack5_unproven_commonjs_alias_default_keeps_the_wrapper() {
+    for (initializer, tail) in [
+        ("(effect(), Engine)", ""),
+        ("Engine", "Engine = replacement;"),
+        ("Engine", "context.exports = replacement;"),
+        ("Engine", "expose(context);"),
+        ("Engine", "eval(source);"),
+        ("Engine", "eval(0);"),
+        (
+            "Engine",
+            "function read() { return context.exports; } read();",
+        ),
+    ] {
+        let source = format!(
+            r#"
+(() => {{
+  var modules = ({{0: ((context, publicValue) => {{
+    Object.defineProperty(publicValue, "__esModule", {{value: true}});
+    class Engine {{}}
+    context.exports = publicValue = {initializer};
+    context.exports.Engine = Engine;
+    globalThis.observed = publicValue.Engine === Engine;
+    {tail}
+  }})}});
+  var cache = {{}};
+  (function load(id) {{
+    var module = cache[id] = {{exports: {{}}}};
+    modules[id](module, module.exports, load);
+    return module.exports;
+  }})(0);
+}})();
+"#
+        );
+        let output =
+            unpack(&source, DecompileOptions::default()).expect("preserve the original boundary");
+        assert!(
+            output.detected_formats.is_empty(),
+            "unproven default was extracted: {initializer}; {tail}: {:?}",
+            output.detected_formats
+        );
+        assert_eq!(output.modules.len(), 1);
+        assert!(
+            !output.modules[0].1.contains("export default"),
+            "{}",
+            output.modules[0].1
+        );
+        assert!(
+            output.modules[0].1.contains("publicValue.Engine"),
+            "{}",
+            output.modules[0].1
+        );
+    }
 }
 
 #[test]

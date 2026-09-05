@@ -12,6 +12,21 @@ pub(crate) enum EvalCallSource {
 }
 
 #[derive(Default)]
+pub(crate) struct DirectEvalPresence {
+    pub(crate) found: bool,
+}
+
+impl Visit for DirectEvalPresence {
+    fn visit_call_expr(&mut self, call: &swc_core::ecma::ast::CallExpr) {
+        if direct_eval_call_source(call).is_some() {
+            self.found = true;
+            return;
+        }
+        call.visit_children_with(self);
+    }
+}
+
+#[derive(Default)]
 pub(crate) struct DirectEvalAnalyzer {
     pub(crate) known_direct_eval_sources: Vec<String>,
     pub(crate) known_indirect_eval_sources: Vec<String>,

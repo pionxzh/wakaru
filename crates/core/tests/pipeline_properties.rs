@@ -391,3 +391,30 @@ consume(select);
         output.code
     );
 }
+
+#[test]
+fn commonjs_alias_keeps_the_default_objects_named_property() {
+    let source = r#"
+class Engine {}
+var alias;
+module.exports = alias = Engine;
+module.exports.Engine = Engine;
+globalThis.observed = alias.Engine === Engine;
+"#;
+    let output = decompile(source, DecompileOptions::default()).expect("decompile should succeed");
+    assert!(
+        output.code.contains(".Engine ="),
+        "the property write used through the alias disappeared:\n{}",
+        output.code
+    );
+    assert!(
+        output.code.contains(".Engine ==="),
+        "the alias observation must remain:\n{}",
+        output.code
+    );
+    assert!(
+        !output.code.contains("module.exports"),
+        "the proven CommonJS default should recover:\n{}",
+        output.code
+    );
+}

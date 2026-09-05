@@ -4073,3 +4073,23 @@ require("./B.js").default = replacement;
     let output = apply_unesm(input);
     assert_eq_normalized(&output, expected);
 }
+
+#[test]
+fn stable_default_named_write_preserves_the_object_property() {
+    let input = "class Engine {} module.exports = Engine; module.exports.value = next(); observe(Engine.value);";
+    let output = render_pipeline_until(input, "UnEsm");
+    assert!(output.contains("Engine.value = next()"), "{output}");
+    assert_eq!(output.matches("next()").count(), 1, "{output}");
+    assert!(output.contains("export const value ="), "{output}");
+}
+
+#[test]
+fn stable_default_duplicate_named_writes_keep_property_effects() {
+    let input = "class Engine {} module.exports = Engine; module.exports.value = first(); observe(Engine.value); module.exports.value = void 0;";
+    let output = render_pipeline_until(input, "UnEsm");
+    assert!(output.contains("Engine.value = first()"), "{output}");
+    assert!(
+        output.contains("Engine.value = void 0") || output.contains("Engine.value = undefined"),
+        "{output}"
+    );
+}
