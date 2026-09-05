@@ -4633,6 +4633,15 @@ fn direct_eval_mentions_name(analyzer: &DirectEvalAnalyzer, name: &Atom) -> bool
         .any(|source| js_source_mentions_binding(source, name))
 }
 
+fn fresh_default_import_name(used_names: &mut HashSet<Atom>) -> Atom {
+    let readable = Atom::from("defaultExport");
+    if used_names.insert(readable.clone()) {
+        readable
+    } else {
+        fresh_prefixed_name(&readable, used_names)
+    }
+}
+
 fn prove_toplevel_require_default_member_args(
     module: &Module,
     unresolved_mark: Mark,
@@ -4656,8 +4665,6 @@ fn prove_toplevel_require_default_member_args(
         replacements: HashMap::new(),
         inserts: HashMap::new(),
     };
-    let default_prefix = Atom::from("default");
-
     for candidate in candidates {
         if provider_member_mutations.contains(&candidate.source) {
             return None;
@@ -4681,14 +4688,14 @@ fn prove_toplevel_require_default_member_args(
                     used_names.insert(name.clone());
                     name.clone()
                 } else {
-                    let synthetic = fresh_prefixed_name(&default_prefix, &mut used_names);
+                    let synthetic = fresh_default_import_name(&mut used_names);
                     if direct_eval_mentions_name(&eval_analyzer, &synthetic) {
                         return None;
                     }
                     synthetic
                 }
             } else {
-                let synthetic = fresh_prefixed_name(&default_prefix, &mut used_names);
+                let synthetic = fresh_default_import_name(&mut used_names);
                 if direct_eval_mentions_name(&eval_analyzer, &synthetic) {
                     return None;
                 }

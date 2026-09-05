@@ -2961,6 +2961,38 @@ import UIBase from "./UIBase.js";
 }
 
 #[test]
+fn toplevel_require_default_member_uses_readable_fallback_for_numeric_module_name() {
+    let input = r#"
+(function (base) {
+  use(base);
+})(require("./module-42.js").default);
+"#;
+    let expected = r#"
+import defaultExport from "./module-42.js";
+(function (base) {
+  use(base);
+})(defaultExport);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_default_member_avoids_readable_fallback_collision() {
+    let input = r#"
+let defaultExport = existing;
+consume(require("./module-42.js").default);
+"#;
+    let expected = r#"
+import _defaultExport from "./module-42.js";
+let defaultExport = existing;
+consume(_defaultExport);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn toplevel_require_named_member_ternary_arg_is_left_alone() {
     let input = r#"
 var keep = require("./keep.js");
@@ -3578,10 +3610,10 @@ var keep = require("./keep.js");
     let expected = r#"
 import { UIBase } from "./other.js";
 import keep from "./keep.js";
-import _default from "./UIBase.js";
+import defaultExport from "./UIBase.js";
 (function (base) {
   use(base);
-})(_default);
+})(defaultExport);
 "#;
     let output = apply_unesm(input);
     assert_eq_normalized(&output, expected);
@@ -3598,11 +3630,11 @@ var keep = require("./keep.js");
 "#;
     let expected = r#"
 import keep from "./keep.js";
-import _default from "./UIBase.js";
+import defaultExport from "./UIBase.js";
 let UIBase = 0;
 (function (base) {
   use(base);
-})(_default);
+})(defaultExport);
 "#;
     let output = apply_unesm(input);
     assert_eq_normalized(&output, expected);
@@ -3619,11 +3651,11 @@ var keep = require("./keep.js");
 "#;
     let expected = r#"
 import keep from "./keep.js";
-import _default from "./UIBase.js";
+import defaultExport from "./UIBase.js";
 observe(UIBase);
 (function (base) {
   use(base);
-})(_default);
+})(defaultExport);
 "#;
     let output = apply_unesm(input);
     assert_eq_normalized(&output, expected);
@@ -3636,9 +3668,9 @@ UIBase = globalValue;
 consume(require("./UIBase.js").default);
 "#;
     let expected = r#"
-import _default from "./UIBase.js";
+import defaultExport from "./UIBase.js";
 UIBase = globalValue;
-consume(_default);
+consume(defaultExport);
 "#;
     let output = apply_unesm(input);
     assert_eq_normalized(&output, expected);
@@ -3651,9 +3683,9 @@ export default function UIBase() {}
 consume(require("./UIBase.js").default);
 "#;
     let expected = r#"
-import _default from "./UIBase.js";
+import defaultExport from "./UIBase.js";
 export default function UIBase() {}
-consume(_default);
+consume(defaultExport);
 "#;
     let output = apply_unesm(input);
     assert_eq_normalized(&output, expected);
@@ -3808,11 +3840,11 @@ var keep = require("./keep.js");
 "#;
     let expected = r#"
 import keep from "./keep.js";
-import _default from "./UIBase.js";
+import defaultExport from "./UIBase.js";
 eval("UIBase");
 (function (base) {
   use(base);
-})(_default);
+})(defaultExport);
 "#;
     let output = apply_unesm(input);
     assert_eq_normalized(&output, expected);
@@ -3822,7 +3854,7 @@ eval("UIBase");
 fn toplevel_require_default_member_fails_closed_on_eval_of_synthetic_name() {
     let input = r#"
 import { UIBase } from "./other.js";
-eval("_default");
+eval("defaultExport");
 var keep = require("./keep.js");
 (function (base) {
   use(base);
@@ -3831,7 +3863,7 @@ var keep = require("./keep.js");
     let expected = r#"
 import { UIBase } from "./other.js";
 import keep from "./keep.js";
-eval("_default");
+eval("defaultExport");
 (function (base) {
   use(base);
 })(require("./UIBase.js").default);
@@ -3905,12 +3937,12 @@ var UIBase = require("./UIBase.js").default;
 var keep = require("./keep.js");
 "#;
     let expected = r#"
-import _default from "./UIBase.js";
+import defaultExport from "./UIBase.js";
 import UIBase from "./UIBase.js";
 import keep from "./keep.js";
 (function (base) {
   use(base);
-})(_default);
+})(defaultExport);
 "#;
     let output = apply_unesm(input);
     assert_eq_normalized(&output, expected);
@@ -3928,13 +3960,13 @@ var keep = require("./keep.js");
 "#;
     let expected = r#"
 import _UIBase from "./UIBase.js";
-import _default from "./UIBase.js";
+import defaultExport from "./UIBase.js";
 import keep from "./keep.js";
 var UIBase = _UIBase;
 UIBase = other;
 (function (base) {
   use(base);
-})(_default);
+})(defaultExport);
 "#;
     let output = apply_unesm(input);
     assert_eq_normalized(&output, expected);
@@ -3942,11 +3974,11 @@ UIBase = other;
 
 #[test]
 fn toplevel_require_default_member_skips_written_binding_and_reuses_later_stable() {
-    // Basename UIBase is taken and eval mentions `_default`, so recovery is
+    // Basename UIBase is taken and eval mentions `defaultExport`, so recovery is
     // only possible by reusing the later unwritten DefaultProp.
     let input = r#"
 import { UIBase } from "./other.js";
-eval("_default");
+eval("defaultExport");
 var keep = require("./keep.js");
 var poisoned = require("./UIBase.js").default;
 poisoned = other;
