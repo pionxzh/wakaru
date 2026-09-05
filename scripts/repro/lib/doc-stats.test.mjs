@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  extractDocsSiteReproStat,
   extractReadmeReproStat,
   extractWebsiteReproStat,
   findReproStatDrift,
@@ -21,6 +22,20 @@ const WEBSITE_SAMPLE = [
   "</a>",
 ].join("\n");
 
+const DOCS_SITE_SAMPLE = [
+  "recovers the original construct. Current rate: **95.0% across 1,234 test",
+  "shapes**. Per-matrix rates live in",
+].join("\n");
+
+const SURFACES = { readme: README_SAMPLE, website: WEBSITE_SAMPLE, docsSite: DOCS_SITE_SAMPLE };
+
+test("extractDocsSiteReproStat reads a citation wrapped across MDX lines", () => {
+  assert.deepEqual(extractDocsSiteReproStat(DOCS_SITE_SAMPLE), {
+    pct: 95.0,
+    total: 1234,
+  });
+});
+
 test("extractReadmeReproStat reads pct and comma-grouped total", () => {
   assert.deepEqual(extractReadmeReproStat(README_SAMPLE), {
     pct: 95.0,
@@ -39,29 +54,24 @@ test("extractWebsiteReproStat reads the stat card pair", () => {
   });
 });
 
-test("findReproStatDrift is empty when both surfaces match", () => {
-  const drift = findReproStatDrift(
-    { pct: 95.0, total: 1234 },
-    { readme: README_SAMPLE, website: WEBSITE_SAMPLE },
-  );
+test("findReproStatDrift is empty when every surface matches", () => {
+  const drift = findReproStatDrift({ pct: 95.0, total: 1234 }, SURFACES);
   assert.deepEqual(drift, []);
 });
 
 test("findReproStatDrift reports a stale surface with both values", () => {
-  const drift = findReproStatDrift(
-    { pct: 96.2, total: 1300 },
-    { readme: README_SAMPLE, website: WEBSITE_SAMPLE },
-  );
-  assert.equal(drift.length, 2);
+  const drift = findReproStatDrift({ pct: 96.2, total: 1300 }, SURFACES);
+  assert.equal(drift.length, 3);
   assert.match(drift[0], /^README\.md: cites 95% across 1234/);
   assert.match(drift[0], /records 96\.2% across 1300/);
   assert.match(drift[1], /^website\/index\.html: cites/);
+  assert.match(drift[2], /^docs-site\/content\/docs\/project\/correctness\.mdx: cites/);
 });
 
 test("findReproStatDrift reports an unlocatable citation as drift", () => {
   const drift = findReproStatDrift(
     { pct: 95.0, total: 1234 },
-    { readme: "reworded copy", website: WEBSITE_SAMPLE },
+    { ...SURFACES, readme: "reworded copy" },
   );
   assert.equal(drift.length, 1);
   assert.match(drift[0], /README\.md: could not find/);
@@ -70,9 +80,6 @@ test("findReproStatDrift reports an unlocatable citation as drift", () => {
 test("integer pct in stats.json matches a trailing-zero citation", () => {
   // +((yes / total) * 100).toFixed(1) drops the trailing zero, so stats.json
   // records 97 while the copy may say "97.0%"; the comparison is numeric.
-  const drift = findReproStatDrift(
-    { pct: 95, total: 1234 },
-    { readme: README_SAMPLE, website: WEBSITE_SAMPLE },
-  );
+  const drift = findReproStatDrift({ pct: 95, total: 1234 }, SURFACES);
   assert.deepEqual(drift, []);
 });

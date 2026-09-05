@@ -223,6 +223,7 @@ if (checkMode) {
 const drift = findReproStatDrift(stats.aggregate, {
   readme: readFileSync(join(repoRoot, "README.md"), "utf8"),
   website: readFileSync(join(repoRoot, "website/index.html"), "utf8"),
+  docsSite: readFileSync(join(repoRoot, "docs-site/content/docs/project/correctness.mdx"), "utf8"),
 });
 if (drift.length > 0) {
   console.error("\nStat citations are out of sync with the measured aggregate:");

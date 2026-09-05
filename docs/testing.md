@@ -410,8 +410,8 @@ node scripts/repro/collect-stats.mjs
 # Check whether stats.json matches a fresh run
 node scripts/repro/collect-stats.mjs --check
 
-# Both modes also fail if the aggregate cited in README.md or
-# website/index.html no longer matches (scripts/repro/lib/doc-stats.mjs)
+# Both modes also fail if the aggregate cited in README.md, website/index.html,
+# or the docs-site Correctness page no longer matches (scripts/repro/lib/doc-stats.mjs)
 
 # Run a single matrix with details
 node scripts/repro/array-spread-rest-matrix/matrix.mjs --details

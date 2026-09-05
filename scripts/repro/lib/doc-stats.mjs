@@ -1,5 +1,6 @@
 // Verifies that human-facing copy citing the reproduction-matrix aggregate
-// (README.md, website/index.html) matches stats.json. Regenerating stats.json
+// (README.md, website/index.html, the docs-site Correctness page) matches
+// stats.json. Regenerating stats.json
 // without updating the copy is the drift this catches; collect-stats.mjs
 // runs it in both modes so the numbers move together.
 
@@ -8,6 +9,10 @@ const README_PATTERN =
 
 const WEBSITE_PATTERN =
   /<span class="stat-value">([\d.]+)%<\/span>\s*<span class="stat-label">pattern recovery across ([\d,]+) transpiler\/minifier test shapes<\/span>/;
+
+// The MDX source wraps lines, so whitespace between words is flexible.
+const DOCS_SITE_PATTERN =
+  /Current rate: \*\*([\d.]+)% across ([\d,]+) test\s+shapes\*\*/;
 
 function parseCitation(match) {
   return {
@@ -26,6 +31,11 @@ export function extractWebsiteReproStat(html) {
   return match ? parseCitation(match) : null;
 }
 
+export function extractDocsSiteReproStat(mdx) {
+  const match = DOCS_SITE_PATTERN.exec(mdx);
+  return match ? parseCitation(match) : null;
+}
+
 // Returns human-readable drift messages; empty when every surface cites the
 // aggregate correctly. A surface whose citation cannot be located is drift
 // too: rewording the copy must update the extractor, never silently skip it.
@@ -33,6 +43,10 @@ export function findReproStatDrift(aggregate, surfaces) {
   const checks = [
     ["README.md", extractReadmeReproStat(surfaces.readme)],
     ["website/index.html", extractWebsiteReproStat(surfaces.website)],
+    [
+      "docs-site/content/docs/project/correctness.mdx",
+      extractDocsSiteReproStat(surfaces.docsSite),
+    ],
   ];
 
   const drift = [];
