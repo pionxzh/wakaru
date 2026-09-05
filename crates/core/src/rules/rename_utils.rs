@@ -52,11 +52,12 @@ pub(crate) fn collect_jsx_tag_bindings(module: &Module) -> HashSet<BindingId> {
     collector.bindings
 }
 
-/// Names used by unresolved expression references in this module.
+/// Names used by unresolved identifier references in this module.
 ///
 /// A transform that introduces a module-scoped binding with one of these
 /// names would capture the reference even though their syntax contexts differ
-/// before the transform.
+/// before the transform. Visit identifiers directly so write targets and JSX
+/// element names are covered as well as value-position expressions.
 pub(crate) fn collect_unresolved_reference_names(
     module: &Module,
     unresolved_mark: Mark,
@@ -67,13 +68,10 @@ pub(crate) fn collect_unresolved_reference_names(
     }
 
     impl Visit for Collector {
-        fn visit_expr(&mut self, expr: &Expr) {
-            if let Expr::Ident(ident) = expr {
-                if ident.ctxt.outer() == self.unresolved_mark {
-                    self.names.insert(ident.sym.clone());
-                }
+        fn visit_ident(&mut self, ident: &Ident) {
+            if ident.ctxt.outer() == self.unresolved_mark {
+                self.names.insert(ident.sym.clone());
             }
-            expr.visit_children_with(self);
         }
     }
 

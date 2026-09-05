@@ -3157,6 +3157,38 @@ observe(UIBase);
 }
 
 #[test]
+fn toplevel_require_named_member_fails_closed_on_unresolved_assignment_target() {
+    let input = r#"
+UIBase = globalValue;
+var keep = require("./keep.js");
+consume(require("./UIBase.js").UIBase);
+"#;
+    let expected = r#"
+import keep from "./keep.js";
+UIBase = globalValue;
+consume(require("./UIBase.js").UIBase);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_named_member_fails_closed_on_unresolved_jsx_tag() {
+    let input = r#"
+render(<UIBase />);
+var keep = require("./keep.js");
+consume(require("./UIBase.js").UIBase);
+"#;
+    let expected = r#"
+import keep from "./keep.js";
+render(<UIBase />);
+consume(require("./UIBase.js").UIBase);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn toplevel_require_named_member_fails_closed_on_two_sources_one_local() {
     let input = r#"
 var keep = require("./keep.js");
@@ -3432,6 +3464,33 @@ import UIBase from "./UIBase.js";
 }
 
 #[test]
+fn toplevel_require_default_member_promotes_type_only_import_for_runtime_value() {
+    let input = r#"
+import type UIBase from "./UIBase.js";
+(function (base) {
+  use(base);
+})(require("./UIBase.js").default);
+"#;
+    let output = wakaru_core::decompile(
+        input,
+        wakaru_core::DecompileOptions {
+            filename: "fixture.ts".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("TypeScript input should decompile")
+    .code;
+    let expected = r#"
+import UIBase from "./UIBase.js";
+((base) => {
+  use(base);
+})(UIBase);
+"#;
+
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn toplevel_require_default_member_arg_reuses_existing_default_import_through_full_pipeline() {
     let input = r#"
 import UIBase from "./UIBase.js";
@@ -3565,6 +3624,36 @@ observe(UIBase);
 (function (base) {
   use(base);
 })(_default);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_default_member_falls_back_for_unresolved_assignment_target() {
+    let input = r#"
+UIBase = globalValue;
+consume(require("./UIBase.js").default);
+"#;
+    let expected = r#"
+import _default from "./UIBase.js";
+UIBase = globalValue;
+consume(_default);
+"#;
+    let output = apply_unesm(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn toplevel_require_default_member_falls_back_for_named_default_declaration() {
+    let input = r#"
+export default function UIBase() {}
+consume(require("./UIBase.js").default);
+"#;
+    let expected = r#"
+import _default from "./UIBase.js";
+export default function UIBase() {}
+consume(_default);
 "#;
     let output = apply_unesm(input);
     assert_eq_normalized(&output, expected);
