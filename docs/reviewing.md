@@ -21,6 +21,38 @@ Start the report with the review verdict, the concrete problem, and intended
 before/after behavior. Explain unfamiliar case labels and where their
 inputs came from before asking the user to decide what to do about them.
 
+## Transfer ownership
+
+When transferring work, name the receiving task or person and the deliverable.
+Send the result through the agreed channel, including its revision or document
+path, remaining work, and decisions that still apply. For a follow-up, send the
+delta and link the existing evidence instead of repeating the full history.
+
+The coordinator confirms that the recipient has incorporated the completed
+handoff before reporting the transfer as complete. A file on disk or a sent
+message alone does not establish that. If the recipient finished before the
+source arrived, send the missing result and reconcile it. This can happen in
+the existing conversation; it does not require another checklist or document.
+
+## Pause and resume research
+
+A research task can remain useful while its branch is inactive. Record what is
+known, the unresolved question, the evidence or need that would justify
+resuming, and the first useful action. Link the exact revisions and durable
+artifacts. Keep accepted boundaries and deferred decisions visible so the next
+owner does not reopen them by accident.
+
+On resume, first check what changed and choose the next question or experiment.
+Reading, extracting findings, or inspecting an old revision may need no rebase
+or build. Update the branch when the selected work depends on newer code or is
+being prepared for integration. Being behind main alone is not a reason to
+rebase a parked branch. After an update, apply the verification rules in
+[testing.md](testing.md#sharing-verification-results).
+
+Conversation history, a branch, a checkout, and build artifacts have different
+lifetimes. Preserve evidence and uncommitted work before any agreed cleanup;
+keeping a research task does not require keeping its build artifacts.
+
 ## Classify findings before proposing fixes
 
 For each actionable finding, identify:

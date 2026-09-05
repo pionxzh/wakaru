@@ -14,7 +14,7 @@ reading everything:
 |---|---|
 | Any code change | `docs/testing.md` — test patterns, helpers, required verification |
 | Finding source entry points | `docs/code-map.md` — file lookup by subsystem |
-| PR / branch review, or taking over existing work | `docs/reviewing.md` — scope, evidence, handoff, and review completion; `docs/testing.md#sharing-verification-results` — reuse and invalidation of test evidence |
+| PR / branch review, handoff, or resuming research | `docs/reviewing.md` — scope, evidence, ownership transfer, and research resumption; `docs/testing.md#sharing-verification-results` — reuse and invalidation of test evidence |
 | Rule bugfix / snapshot regression | `docs/debugging.md` — rule tracing, snapshot layers, fixture workflow |
 | New rule, or moving a rule | `docs/rule-dependency-inventory.md` — ordering rationale, fragile edges; `docs/rewrite-assumptions.md` — level gating, named assumptions |
 | Transpiler helper work | `docs/helper-detection.md` — detection design and what was already rejected |
