@@ -4,26 +4,46 @@
 
 **Unpack. Unminify. Understand.**
 
-Wakaru unpacks webpack, esbuild, and other production bundles, then reverses
-minifier and transpiler output into readable modern JavaScript.
+Wakaru is a JavaScript decompiler. It splits production bundles into modules
+and restores readable, modern syntax from minified and transpiled code.
 
 [![CI](https://img.shields.io/github/actions/workflow/status/pionxzh/wakaru/rust-ci.yml?branch=main&label=CI)](https://github.com/pionxzh/wakaru/actions/workflows/rust-ci.yml)
 [![npm](https://img.shields.io/npm/v/@wakaru/cli?label=npm)](https://www.npmjs.com/package/@wakaru/cli)
 [![Telegram](https://img.shields.io/badge/Telegram-group-blue)](https://t.me/wakarujs)
 
-[**Try it in the playground**](https://wakarujs.com/playground) — paste
-minified JavaScript, or compare pinned Babel, SWC, and esbuild output with
-Wakaru's restoration.
+[**Try it in the playground**](https://wakarujs.com/playground)
 
 </div>
 
+## Quick start
+
+Run without a global install:
+
+```bash
+npx wakaru input.js -o output.js       # decompile a file
+npx wakaru bundle.js --unpack -o out/  # unpack and decompile a bundle
+npx wakaru dist/ --unpack -o out/      # scan a bundle output directory
+```
+
+See the [CLI reference](./docs/cli.md) for rewrite levels, source maps, and more options.
+
+### Install
+
+For regular use, install the CLI globally:
+
+```bash
+npm install -g wakaru@latest
+```
+
+Standalone binaries are available from
+[GitHub Releases](https://github.com/pionxzh/wakaru/releases).
+
 ## What it does
 
-A formatter only changes whitespace and layout. Wakaru rewrites the JavaScript
-AST to reverse minifier artifacts, restore transpiled syntax, remove bundler
-runtimes, and split bundles back into modules.
+Wakaru rewrites the JavaScript AST to recover modern syntax, remove recognized
+runtime helpers, and split supported bundles into modules.
 
-Feed Wakaru this minified Babel output:
+**Minified Babel output:**
 
 ```js
 "use strict";Object.defineProperty(exports,"__esModule",{value:!0}),exports.loadProfile=void 0;
@@ -34,7 +54,7 @@ function c(e,t,r,n,o,a,i){try{var u=e[a](i),c=u.value}catch(e){return void r(e)}
 var loadProfile=function(){var e=_asyncToGenerator(function*(e){var t=yield _api.default.fetchUser(e),r=null!=t.name?t.name:"anonymous";return{name:r,avatar:null==t.profile?void 0:t.profile.avatar}});return function(t){return e.apply(this,arguments)}}();exports.loadProfile=loadProfile;
 ```
 
-and get this back:
+**Wakaru output:**
 
 ```js
 import _api from "./api";
@@ -48,144 +68,74 @@ export const loadProfile = async (e)=>{
 };
 ```
 
-That is real, unedited output: the runtime helpers are gone, `async`/`await`
-is recovered from the generator state machine, `??` and `?.` are restored,
-and the module is ESM again. (Wakaru applies conservative renaming heuristics
-where the code gives evidence, but most mangled locals like `e` stay short
-unless the source map includes original names.)
-
-## Quick start
-
-```bash
-npx wakaru input.js -o output.js               # decompile a file
-npx wakaru bundle.js --unpack -o out/          # unpack and decompile a bundle
-npx wakaru dist/ --unpack -o out/              # scan a bundle output directory
-npx wakaru ./compiled-app --unpack -o out/     # extract a Bun single-file executable
-npx wakaru bun extract ./compiled-app -o raw/  # dump every embedded Bun file byte-for-byte
-```
-
-Full flag reference: [docs/cli.md](./docs/cli.md).
+The helpers become `async`/`await`, the null checks become `??` and `?.`, and
+CommonJS imports and exports become ESM. Some names, such as `e` and `t`, stay
+short because the input does not provide their original names.
 
 ## What it handles
 
-- **Bundle and container splitting** — byte-exact extraction of every file in
-  Bun single-file PE/Mach-O/ELF executables, plus JavaScript unpacking;
-  webpack 4/5 (including Vercel ncc CommonJS output
-  with an IIFE webpack bootstrap), esbuild, Bun, Browserify (including Cocos
-  Creator 2.x project-script bundles), Metro, Closure ModuleManager, SystemJS,
-  AMD/UMD, plus heuristic splitting of scope-hoisted ESM output (Rollup, Vite).
-- **Transpiler recovery** — Babel, TypeScript/tslib, and SWC runtime helpers:
-  async/await from generator state machines, classes, spread/rest, enums,
-  JSX, template literals, optional chaining, nullish coalescing, default
-  parameters, `for...of`, and more.
-- **Minifier recovery** — sequence expressions, flipped comparisons,
-  `!0`/`void 0` literal tricks, IIFE flattening, alias inlining.
-- **Three rewrite levels** — `minimal` (highest-confidence,
-  semantics-preserving transforms for auditing and diffing), `standard`
-  (default), `aggressive` (maximum readability). The semantic contract per
-  level is documented in
-  [rewrite-assumptions.md](./docs/rewrite-assumptions.md).
+- **Bundles:** split webpack, esbuild/Bun, Browserify, and Metro output into readable modules.
+- **Transpiled code:** recover modern syntax from Babel, TypeScript, and SWC output.
+- **Minified code:** expand compact expressions and simplify control flow.
+
+See [supported bundle formats](./docs/cli.md#unpack-bundles-and-chunks) for the full list and format-specific limits.
 
 ## Tested like a compiler
 
-Wakaru restores structure while respecting JavaScript semantics:
+We test both behavior and recovery against real compiler and minifier output:
 
-- **62,061 passing Test262 semantic round trips, with zero Wakaru correctness
-  failures.** The canonical 3-producer × 20-slice matrix contains 66,729
-  runnable inputs; 4,668 are classified as unsupported or rejected rather
-  than counted as passes. A pass preserves the typed Test262
-  expectation; positive and runtime/resolution-negative cases run the
-  original source, transformed/minified source, and Wakaru's output through
-  the same harness.
-  Separate canonical baselines cover multi-file ESM module graphs. See
-  [test262-roundtrip.md](./docs/test262-roundtrip.md) and the current
-  [`test262-stats.json`](./scripts/correctness/test262-stats.json).
-- **97.4% pattern recovery across 1,858 transpiler × minifier test shapes.**
-  Reproduction matrices compile known inputs through real Babel/TypeScript/
-  SWC/esbuild/Terser version combinations and verify Wakaru recovers the
-  original construct. Current rates per matrix:
-  [`scripts/repro/stats.json`](./scripts/repro/stats.json).
-## Works with other tools
-
-**Obfuscated input?** Wakaru is deliberately not a deobfuscator — heavy
-obfuscation (string arrays, control-flow flattening, VM-based protectors) is
-a different problem. Strip it first with a dedicated tool like
-[webcrack](https://github.com/j4k0xb/webcrack), then let Wakaru recover the
-readable modules:
-
-```bash
-npx webcrack --no-unpack --no-unminify obfuscated.js > deobfuscated.js  # 1. strip the obfuscation
-npx wakaru deobfuscated.js --unpack -o out/                             # 2. recover readable modules
-```
-
-**Want better names?** Pair Wakaru's deterministic structure recovery with an
-LLM renamer like [humanify](https://github.com/jehna/humanify), or use
-`--source-map` when the map includes original names.
+- **62,061 passing Test262 semantic round trips.** [Methodology and baseline](./docs/test262-roundtrip.md).
+- **97.4% pattern recovery across 1,858 transpiler × minifier test shapes.** [Per-matrix results](./scripts/repro/stats.json).
 
 ## Use cases
 
-- **Security review & bug bounty** — read what a site actually ships instead
-  of scrolling one 5 MB line. Split the bundle, find the first-party code,
-  audit it as modules.
-- **Incident response & malware triage** — unminify a suspicious script into
-  something a human can diff and reason about, using `minimal` level to favor
-  behavioral fidelity.
-- **Recovering lost source** — the vendor vanished, the laptop died, and all
-  that's left is `dist/`. Reconstruct a workable codebase from the bundle
-  (and `wakaru extract` recovers originals when the map includes
-  `sourcesContent`).
-- **Debugging third-party SDKs** — turn the vendored blob into readable
-  modules so the stack trace points at code you can actually understand.
-- **Supply-chain inspection** — see what's inside a dependency's shipped
-  bundle rather than trusting the repo it claims to be built from.
+- **Security and supply-chain review:** inspect the JavaScript a site or
+  dependency ships, with supported bundles split into modules.
+- **Debugging third-party SDKs:** follow the code behind a stack trace or
+  investigate behavior in a distributed build.
+- **Source recovery:** recover readable modules when only build artifacts
+  remain, or extract original files embedded in source maps.
 
-## In development: package inventory
+## Works with other tools
 
-Unpacking shows you a bundle one module at a time. The feature we're building
-next answers the same question at the package level: which npm packages — and
-which versions — a production bundle actually ships. Think of it as an SBOM
-for a bundle you didn't build.
+Wakaru focuses on minifier and transpiler recovery. For supported obfuscation
+patterns, a deobfuscator such as [webcrack](https://github.com/j4k0xb/webcrack)
+can prepare the input before Wakaru processes it. Heavy control-flow or
+VM-based obfuscation needs a dedicated approach.
 
-If you want that,
-[register interest](https://github.com/pionxzh/wakaru/issues/new?template=package_inventory_interest.yml)
-and tell us your use case. What people ask for decides how soon it ships and
-what shape it takes. You can also reach us directly at
-[hello@wakarujs.com](mailto:hello@wakarujs.com).
+For AI-assisted identifier naming, see
+[humanify](https://github.com/jehna/humanify). Inferred names are reading aids;
+source maps are the source of original names when available.
 
 ## Use it from an agent
 
-Coding agents hit unreadable minified JS constantly. Wakaru ships a
-[`SKILL.md`](./skills/wakaru/SKILL.md) — drop it into Claude Code, Codex, Grok, or any
-agent that reads skills, and the agent knows when and how to unpack a bundle,
-read the recovered modules like ordinary source, and pick the right rewrite
-level.
+Give your coding agent readable modules to search and inspect. With the
+Wakaru skill, it can unpack a bundle and focus on the files relevant to your
+question, keeping unrelated code out of context.
 
-Agents that support the skills format can install it with:
+Install via skills.sh:
 
 ```bash
 npx skills add pionxzh/wakaru
 ```
 
-## Install
+## In development: package inventory
 
-```bash
-npm install -g wakaru@latest
-```
+Package inventory is under development: identify which npm packages and
+versions a production bundle contains. It is not part of the current release.
 
-Or pre-built binaries from [GitHub Releases](https://github.com/pionxzh/wakaru/releases).
-Full CLI documentation: [docs/cli.md](./docs/cli.md).
+[Share your use case](https://github.com/pionxzh/wakaru/issues/new?template=package_inventory_interest.yml)
+to help shape its scope and priority, or contact
+[hello@wakarujs.com](mailto:hello@wakarujs.com).
 
 ## Contributing
 
-Contributions are welcome, especially:
+Small fixes, missing recovery patterns, and correctness reports are welcome.
+For a bug report, include the input, command, current output, and expected
+behavior. A clear issue is useful even without a proposed fix.
 
-- Share real-world bundles that Wakaru doesn't handle well
-- Report missing helper detection or false positives
-- Report semantic or correctness issues
-
-When reporting a bug, please include: the input code, the command you ran, the current output, and what you expected instead.
-
-See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for development setup and PR checks. Project docs start at [`docs/README.md`](./docs/README.md).
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for setup and PR guidance, and
+[docs/README.md](./docs/README.md) for the development documentation.
 
 ## License
 
