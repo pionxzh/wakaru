@@ -57,11 +57,17 @@ attempted in order — first match wins:
    with dangling imports. Indexed/file RAM bundles and Hermes bytecode are
    separate binary formats and are not handled by this detector.
 
-If nothing matches directly, `wrappers.rs` unwraps UMD factory and AMD
-`define()` wrapper shapes and retries the same detection chain on each
-unwrapped candidate. Finally, **AMD** (`amd.rs`) detects files consisting of
-top-level `define(id, deps, factory)` calls and splits each define into a
-module.
+If nothing matches directly, `wrappers.rs` unwraps UMD factory, AMD
+`define()`, and whole-file synchronous zero-argument IIFE wrapper shapes and
+retries the same detection chain on each unwrapped candidate. The plain-IIFE
+path covers esbuild/Rollup browser output, including a single named-global
+declaration such as `var app = (() => { ... })()`. A terminal `return expr`
+retains `expr` as an evaluated startup statement. Named function expressions,
+function-only binding observations (`this`, `arguments`, or `new.target`),
+parameters, async/generator wrappers, nested function-level returns, and
+top-level siblings retain their original boundary. Finally, **AMD** (`amd.rs`)
+detects files consisting of top-level `define(id, deps, factory)` calls and
+splits each define into a module.
 
 ## Vercel ncc
 
@@ -136,7 +142,11 @@ factory parameter, or a direct element inside a top-level/initializer sequence
 when splitting the sequence preserves its evaluation result. A consumed alias
 reset on the guaranteed-once right-hand side of a top-level `for ... in` is
 also supported by replacing the reset with the localized value before lifting
-its initializer. Numeric calls
+its initializer. An exact `module.exports = exportsParameter = value` bridge,
+including one element of a top-level comma sequence, keeps the assignment chain
+in place and introduces an uninitialized local for the parameter's second
+lifetime; an initializer that reads the old exports value remains opaque.
+Numeric calls
 absent from the current table remain explicit `require(<number>)` runtime calls
 and never synthesize an ESM edge. Webpack 5's pure `.g` and `.amdO`
 runtime-member reads may occur in a conditional loader prefix because its

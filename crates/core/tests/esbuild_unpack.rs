@@ -3197,6 +3197,55 @@ fn esbuild_unpacks_named_global_iife_bundle() {
 }
 
 #[test]
+fn esbuild_named_global_iife_preserves_returned_entry_call() {
+    // esbuild 0.28.2 --bundle --format=iife --global-name=App places the
+    // CommonJS entry startup in the wrapper's terminal return expression.
+    let bundle = r#"
+var App = (() => {
+  var __commonJS = (cb, mod) => function __require() {
+    return mod || (0, cb[Object.getOwnPropertyNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  };
+  var require_entry = __commonJS({
+    "entry.js"(exports, module) {
+      globalThis.trace = ["loaded"];
+      module.exports = 42;
+    }
+  });
+  return require_entry();
+})();
+"#;
+    let pairs = expect_unpack_raw(bundle);
+
+    assert!(
+        pairs.len() >= 2,
+        "expected entry factory plus startup: {pairs:#?}"
+    );
+    assert!(
+        pairs
+            .iter()
+            .any(|(_, code)| code.contains("require_entry();")),
+        "the terminal return expression must remain evaluated: {pairs:#?}"
+    );
+}
+
+#[test]
+fn esbuild_plain_iife_preserves_terminal_return_side_effect() {
+    let inner = make_bundle(
+        "(q,K)=>()=>(K||q((K={exports:{}}).exports,K),K.exports)",
+        "m",
+    );
+    let bundle = format!("(() => {{\n{inner}\nreturn globalThis.after = 9;\n}})();\n");
+    let pairs = expect_unpack_raw(&bundle);
+
+    assert!(
+        pairs
+            .iter()
+            .any(|(_, code)| code.contains("globalThis.after = 9")),
+        "unwrapping must retain terminal return-expression effects: {pairs:#?}"
+    );
+}
+
+#[test]
 fn esbuild_unpacks_bang_iife_bundle() {
     // Some minifiers emit !function(){ ... }() instead of a parenthesized IIFE.
     let inner = make_bundle(
@@ -3307,4 +3356,41 @@ fn esbuild_iife_with_parameter_fails_closed() {
         pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
     );
     assert!(pairs[0].1.contains("parameter-default"));
+}
+
+#[test]
+fn esbuild_named_function_iife_self_binding_fails_closed() {
+    let inner = make_bundle(
+        "(q,K)=>()=>(K||q((K={exports:{}}).exports,K),K.exports)",
+        "m",
+    );
+    let bundle = format!(
+        "(function ownWrapper() {{\n{inner}\nglobalThis.kind = typeof ownWrapper;\n}})();\n"
+    );
+    let pairs = expect_unpack_raw(&bundle);
+
+    assert_eq!(
+        pairs.len(),
+        1,
+        "a named function expression must keep its self-binding: {pairs:#?}"
+    );
+    assert!(pairs[0].1.contains("function ownWrapper"));
+}
+
+#[test]
+fn esbuild_function_iife_arguments_binding_fails_closed() {
+    let inner = make_bundle(
+        "(q,K)=>()=>(K||q((K={exports:{}}).exports,K),K.exports)",
+        "m",
+    );
+    let bundle =
+        format!("(function () {{\n{inner}\nglobalThis.count = arguments.length;\n}})();\n");
+    let pairs = expect_unpack_raw(&bundle);
+
+    assert_eq!(
+        pairs.len(),
+        1,
+        "a regular-function IIFE must keep its arguments binding: {pairs:#?}"
+    );
+    assert!(pairs[0].1.contains("arguments.length"));
 }

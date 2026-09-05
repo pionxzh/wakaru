@@ -524,6 +524,16 @@ fn lift_first_runtime_parameter_write(
             None
         }
         ModuleItem::Stmt(Stmt::Expr(expr_stmt)) => {
+            if let Some(replacement) = lift_commonjs_exports_alias_chain(
+                &mut expr_stmt.expr,
+                kind,
+                target,
+                unresolved_mark,
+                local,
+                module_ids,
+            ) {
+                return Some(replacement);
+            }
             if let Some(split) = split_mid_sequence_parameter_assignment(
                 &mut expr_stmt.expr,
                 kind,
@@ -604,6 +614,126 @@ fn lift_first_runtime_parameter_write(
         }
         _ => None,
     }
+}
+
+fn lift_commonjs_exports_alias_chain(
+    expr: &mut Box<Expr>,
+    kind: FactoryRuntimeParameter,
+    target: &BindingId,
+    unresolved_mark: Mark,
+    local: &Ident,
+    module_ids: &ReusedLoaderModuleIds<'_>,
+) -> Option<Vec<ModuleItem>> {
+    if let Some(initializer) =
+        commonjs_exports_alias_chain_initializer_mut(expr, kind, target, unresolved_mark)
+    {
+        let normalized = canonicalize_parameter_initializer(
+            initializer.clone(),
+            kind,
+            target,
+            unresolved_mark,
+            module_ids,
+        )?;
+        *initializer = normalized;
+        return Some(vec![
+            var_binding_declaration_item(local.clone()),
+            expr_item(expr.clone()),
+        ]);
+    }
+
+    let Expr::Seq(sequence) = strip_parens_mut(expr) else {
+        return None;
+    };
+    let mut boundary_index = None;
+    for (index, candidate) in sequence.exprs.iter_mut().enumerate() {
+        let Some(initializer) =
+            commonjs_exports_alias_chain_initializer_mut(candidate, kind, target, unresolved_mark)
+        else {
+            continue;
+        };
+        let normalized = canonicalize_parameter_initializer(
+            initializer.clone(),
+            kind,
+            target,
+            unresolved_mark,
+            module_ids,
+        )?;
+        *initializer = normalized;
+        boundary_index = Some(index);
+        break;
+    }
+    let index = boundary_index?;
+    if !sequence.exprs[..index].iter_mut().all(|prefix| {
+        canonicalize_immediate_expression(prefix, kind, target, unresolved_mark, module_ids)
+    }) {
+        return None;
+    }
+
+    let mut replacement = sequence.exprs[..index]
+        .iter()
+        .cloned()
+        .map(expr_item)
+        .collect::<Vec<_>>();
+    replacement.push(var_binding_declaration_item(local.clone()));
+    replacement.push(expr_item(sequence.exprs[index].clone()));
+    let suffix = sequence.exprs[index + 1..].to_vec();
+    match suffix.len() {
+        0 => {}
+        1 => replacement.push(expr_item(
+            suffix.into_iter().next().expect("single sequence suffix"),
+        )),
+        _ => replacement.push(expr_item(Box::new(Expr::Seq(SeqExpr {
+            span: sequence.span,
+            exprs: suffix,
+        })))),
+    }
+    Some(replacement)
+}
+
+/// Match the exact right-to-left CommonJS bridge used by Ajv and similar
+/// packages: `module.exports = exportsParam = value`.
+///
+/// The outer runtime assignment must remain in place: evaluating its left-hand
+/// reference before `value` is part of JavaScript assignment order. We only
+/// hoist an uninitialized local declaration, then the binding-wide rename below
+/// turns the inner factory-parameter write into a write to that local without
+/// reordering either assignment.
+fn commonjs_exports_alias_chain_initializer_mut<'a>(
+    expr: &'a mut Box<Expr>,
+    kind: FactoryRuntimeParameter,
+    target: &BindingId,
+    unresolved_mark: Mark,
+) -> Option<&'a mut Box<Expr>> {
+    if kind != FactoryRuntimeParameter::Exports {
+        return None;
+    }
+    let Expr::Assign(outer) = strip_parens_mut(expr) else {
+        return None;
+    };
+    if outer.op != AssignOp::Assign
+        || !is_unresolved_module_exports_target(&outer.left, unresolved_mark)
+    {
+        return None;
+    }
+    let Expr::Assign(inner) = strip_parens_mut(&mut outer.right) else {
+        return None;
+    };
+    if inner.op != AssignOp::Assign
+        || !simple_assignment_ident(&inner.left)
+            .is_some_and(|ident| ident.sym == target.0 && ident.ctxt == target.1)
+    {
+        return None;
+    }
+    Some(&mut inner.right)
+}
+
+fn is_unresolved_module_exports_target(target: &AssignTarget, unresolved_mark: Mark) -> bool {
+    let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = target else {
+        return false;
+    };
+    matches!(member.obj.as_ref(), Expr::Ident(module)
+        if module.sym.as_ref() == "module" && module.ctxt.outer() == unresolved_mark)
+        && matches!(&member.prop, MemberProp::Ident(exports) if exports.sym.as_ref() == "exports")
 }
 
 fn take_leading_parameter_assignment(
@@ -1183,6 +1313,21 @@ fn var_binding_item(local: Ident, initializer: Box<Expr>) -> ModuleItem {
             span: DUMMY_SP,
             name: Pat::Ident(BindingIdent::from(local)),
             init: Some(initializer),
+            definite: false,
+        }],
+    })
+}
+
+fn var_binding_declaration_item(local: Ident) -> ModuleItem {
+    var_decl_item(VarDecl {
+        span: DUMMY_SP,
+        ctxt: SyntaxContext::empty(),
+        kind: VarDeclKind::Var,
+        declare: false,
+        decls: vec![VarDeclarator {
+            span: DUMMY_SP,
+            name: Pat::Ident(BindingIdent::from(local)),
+            init: None,
             definite: false,
         }],
     })

@@ -55,7 +55,8 @@ fn collect_plain_iife_module_candidate(module: &Module, candidates: &mut Vec<Mod
 // `(function () { ... })();`, or `!function () { ... }();`. esbuild's
 // --format=iife (the browser default) and rollup's iife output emit this
 // shape. The body becomes a detection candidate; a trailing `return X;`
-// (named-global form) is dropped.
+// (named-global form) becomes `X;` so its startup/effects still run even
+// though the wrapper result itself is not represented by the module graph.
 fn collect_plain_iife_candidates(expr: &Expr, candidates: &mut Vec<Module>) {
     let Some(call) = top_level_call(expr) else {
         return;
@@ -68,14 +69,24 @@ fn collect_plain_iife_candidates(expr: &Expr, candidates: &mut Vec<Module>) {
     };
 
     let stmts = body.stmts.as_slice();
-    let inner = match stmts.last() {
-        Some(Stmt::Return(_)) => &stmts[..stmts.len() - 1],
-        _ => stmts,
-    };
-    if inner.is_empty() || super::stmts_have_function_level_return(inner) {
+    if super::stmts_have_function_level_special_bindings(stmts) {
         return;
     }
-    candidates.push(module_from_stmts(inner.to_vec()));
+    let mut inner = stmts.to_vec();
+    if let Some(Stmt::Return(return_stmt)) = inner.last_mut() {
+        if let Some(arg) = return_stmt.arg.take() {
+            *inner.last_mut().expect("terminal return is present") = Stmt::Expr(ExprStmt {
+                span: return_stmt.span,
+                expr: arg,
+            });
+        } else {
+            inner.pop();
+        }
+    }
+    if inner.is_empty() || super::stmts_have_function_level_return(&inner) {
+        return;
+    }
+    candidates.push(module_from_stmts(inner));
 }
 
 fn plain_iife_callee_body(callee: &Callee) -> Option<&FunctionBody> {
@@ -83,9 +94,10 @@ fn plain_iife_callee_body(callee: &Callee) -> Option<&FunctionBody> {
         return None;
     };
     match strip_parens(callee_expr) {
-        Expr::Fn(FnExpr { function, .. })
-            if !function.is_async && !function.is_generator && function.params.is_empty() =>
-        {
+        Expr::Fn(FnExpr {
+            ident: None,
+            function,
+        }) if !function.is_async && !function.is_generator && function.params.is_empty() => {
             function.body.as_ref()
         }
         Expr::Arrow(arrow) if !arrow.is_async && arrow.params.is_empty() => {

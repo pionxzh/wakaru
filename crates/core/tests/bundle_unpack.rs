@@ -741,6 +741,67 @@ fn webpack4_reused_exports_parameter_preserves_the_runtime_export_lifetime() {
 }
 
 #[test]
+fn webpack5_reused_exports_parameter_in_commonjs_alias_chain_is_localized() {
+    // Ajv 8.20.0 authors this compatibility bridge before TypeScript and
+    // webpack lower/minify it: `module.exports = exports = Ajv`. The exports
+    // factory parameter has a CommonJS-object lifetime before the chain and a
+    // callable-local lifetime after it.
+    let source = r#"
+(() => {
+  var modules = ({
+    0: ((context, publicValue) => {
+      Object.defineProperty(publicValue, "__esModule", { value: true });
+      publicValue.SchemaEnv = void 0;
+      class Ajv {}
+      (publicValue.Ajv = Ajv,
+       context.exports = publicValue = Ajv,
+       context.exports.Ajv = Ajv,
+       Object.defineProperty(publicValue, "__esModule", { value: true }),
+       publicValue.default = Ajv);
+    })
+  });
+  var cache = {};
+  (function load(id) {
+    var module = cache[id] = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  })(0);
+})();
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack5-ajv-exports-alias.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("the Ajv-style exports alias chain should unpack");
+
+    assert_eq!(output.detected_formats, [BundleFormat::Webpack5]);
+    assert!(output.warnings.iter().all(|warning| {
+        warning.kind != wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed
+    }));
+    let module = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "module-0.js")
+        .map(|(_, code)| code)
+        .expect("expected recovered Ajv-style module");
+    assert!(module.contains("class Ajv"), "{module}");
+    assert!(
+        module.contains("let _publicValue;")
+            && module.contains("_publicValue = Ajv")
+            && !module.contains("\npublicValue")
+            && !module.contains("exports ="),
+        "the factory parameter's callable lifetime must be a local binding:\n{module}"
+    );
+    assert!(module.contains("export default Ajv"), "{module}");
+    assert!(module.contains("export { Ajv"), "{module}");
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
 fn webpack5_reused_exports_and_loader_parameters_split_in_evaluation_order() {
     let source = r#"
 (() => {
