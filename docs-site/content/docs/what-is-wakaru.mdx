@@ -1,0 +1,123 @@
+---
+title: What is Wakaru
+description: What Wakaru does, what it deliberately does not do, and how it fits with other tools.
+---
+
+Wakaru is a JavaScript decompiler. It takes bundled, transpiled, minified
+production JavaScript and recovers readable, modern source. It is written in
+Rust and runs as a CLI, a Rust crate, or fully in your browser via
+WebAssembly.
+
+## Three layers of transformation, reversed
+
+Production JavaScript is usually the result of three tools stacked on top of
+each other: a transpiler, a bundler, and a minifier. Wakaru reverses each
+layer. Here is what that looks like on one small module:
+
+```js title="Before: minified Babel output"
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: !0 });
+exports.loadProfile = void 0;
+var _api = _interopRequireDefault(require("./api"));
+// _interopRequireDefault and _asyncToGenerator helper definitions omitted
+var loadProfile = function () {
+    var e = _asyncToGenerator(function* (e) {
+        var t = yield _api.default.fetchUser(e), r = null != t.name ? t.name : "anonymous";
+        return { name: r, avatar: null == t.profile ? void 0 : t.profile.avatar };
+    });
+    return function (t) { return e.apply(this, arguments); };
+}();
+exports.loadProfile = loadProfile;
+```
+
+```js title="After: wakaru profile.min.js"
+import _api from "./api";
+export const loadProfile = async (e) => {
+    const t = await _api.fetchUser(e);
+    const name = t.name ?? "anonymous";
+    return {
+        name,
+        avatar: t.profile?.avatar
+    };
+};
+```
+
+The interop `require` became an `import`. The `exports` assignment became an
+`export`. The generator state machine became `async`/`await`. The `null !=`
+checks became `??` and `?.`.
+
+### Bundlers
+
+A bundler packs hundreds of modules into one file and wires them together
+with its own runtime. Wakaru recognizes that runtime, removes it, and splits
+the bundle back into one file per module.
+
+- webpack 4/5
+- `@vercel/ncc`
+- Rollup/Vite scope-hoisted ESM output (heuristic)
+- esbuild and Bun
+- Metro (React Native)
+- Browserify, including Cocos Creator 2.x
+- SystemJS, Closure ModuleManager, and AMD/UMD wrappers
+- [Bun single-file executables](/guides/bun-single-file-executable)
+
+### Transpilers
+
+A transpiler rewrites modern syntax for old runtimes: an `async` function
+becomes a generator state machine, a class becomes prototype wiring, JSX
+becomes `createElement` calls. Wakaru detects the helpers Babel, TypeScript
+(tslib), SWC, and Closure Compiler emit and restores the syntax they
+replaced:
+
+- async/await
+- classes
+- spread/rest
+- enums
+- JSX
+- optional chaining
+- nullish coalescing
+- default parameters
+- and more
+
+### Minifiers
+
+A minifier shrinks code without changing what it does, and readability is
+what it trades away: `true` becomes `!0`, statements collapse into comma
+chains, comparisons flip. Wakaru reverses those artifacts from:
+
+- Terser
+- SWC
+- esbuild
+
+## What it is not
+
+**Not a formatter.** A formatter or beautifier only changes whitespace and
+layout. Wakaru rewrites the AST: it reverses minifier artifacts, restores
+transpiled syntax, removes bundler runtime patterns, and splits bundles into
+modules.
+
+**Not a deobfuscator.** Heavy obfuscation (string arrays, control-flow
+flattening, VM-based protectors) is a different problem. Strip it first with
+a dedicated tool like [webcrack](https://github.com/j4k0xb/webcrack), then
+use Wakaru to recover readable modules:
+
+```bash
+# 1. strip the obfuscation
+npx webcrack --no-unpack --no-unminify obfuscated.js > deobfuscated.js
+# 2. recover readable modules
+npx wakaru deobfuscated.js --unpack -o out/
+```
+
+**Not a name guesser.** When a source map with original names is available,
+Wakaru recovers them. Without one, it applies conservative renaming
+heuristics where the code gives evidence, but most mangled names stay short.
+Pair it with an LLM renamer like
+[humanify](https://github.com/jehna/humanify) if you want guessed names.
+
+## Does the output behave the same?
+
+Wakaru is designed to preserve behavior while recovering readable structure.
+Three [rewrite levels](/guides/rewrite-levels) let you choose between
+behavioral fidelity and stronger readability-oriented recovery. Each level
+has a documented semantic contract, and a Test262 round-trip harness
+continuously measures semantic preservation.

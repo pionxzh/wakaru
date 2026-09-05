@@ -1,0 +1,29 @@
+---
+title: Coding agents
+description: Give your agent the ability to read minified JavaScript.
+---
+
+Coding agents hit unreadable minified JavaScript constantly. Left alone, an
+agent burns tokens scrolling a one-line bundle and guesses at what the code
+does. With the Wakaru skill installed, it unpacks the bundle into readable
+modules, reads only the files it needs, and reasons about real code instead
+of guessing. Works with Claude Code, Codex, Grok, and any other agent that
+reads the skills format.
+
+```bash
+npx skills add pionxzh/wakaru
+```
+
+## What the skill teaches
+
+- Unpack a bundle to a directory and read modules selectively, instead of
+  dumping thousands of modules into context
+- Use `--json` for structured results: detected formats, module lists,
+  warnings, failure counts
+- Pick the rewrite level by intent: `minimal` for security review and
+  audits, `aggressive` for pure reading
+- Triage unpacked modules by size. The largest files are usually vendored
+  libraries, and the app code is smaller and more numerous.
+
+The skill itself is the full reference:
+[skills/wakaru/SKILL.md](https://github.com/pionxzh/wakaru/blob/main/skills/wakaru/SKILL.md).

@@ -1,0 +1,41 @@
+---
+title: Unminify a file
+description: Turn one minified or transpiled file back into readable JavaScript.
+---
+
+```bash
+npx wakaru input.js -o output.js
+```
+
+Without `-o`, output goes to stdout. Stdin works too. For a quick look
+without installing anything, paste the code into the
+[playground](https://wakarujs.com/playground/).
+
+## What comes back
+
+Wakaru rewrites the AST, not the whitespace. Minifier tricks like `!0`,
+`void 0 === t`, and comma chains become plain syntax again. Transpiler
+helpers become the constructs they replaced: an `_asyncToGenerator` state
+machine comes back as `async`/`await`, `_createClass` wiring comes back as a
+`class`. See [What is Wakaru](/what-is-wakaru) for a full before and after.
+
+## Variable names
+
+Mangled names like `e` and `t` mostly stay short. Wakaru applies
+conservative renaming heuristics where the code gives evidence, and stops
+there. Two ways to get real names back:
+
+- A source map with original names. See [Source maps](/guides/source-maps).
+- An LLM renamer like [humanify](https://github.com/jehna/humanify), if
+  guessed names are acceptable.
+
+## Options worth knowing
+
+```bash
+npx wakaru input.js --level minimal -o output.js   # behavioral fidelity first
+npx wakaru input.js --formatter -o output.js       # final formatting pass
+```
+
+`--formatter` runs a formatting pass after decompilation. It is off by
+default. For what each level may change, see
+[Rewrite levels](/guides/rewrite-levels).

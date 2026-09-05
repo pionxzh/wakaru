@@ -1,0 +1,47 @@
+---
+title: Correctness
+description: How Wakaru measures that decompiled code still behaves the same.
+---
+
+Wakaru takes correctness and JavaScript semantics seriously. The goal is a
+trustworthy tool, not another code beautifier. Wakaru is not perfect, so we
+measure instead of promising. Two harnesses run continuously against real
+toolchain output and count every miss.
+
+## Test262 round trips
+
+Test262 is the official ECMAScript conformance suite. The round-trip harness
+takes a Test262 case, compiles or minifies it with a real toolchain,
+decompiles the result with Wakaru, and runs all three versions through the
+same harness: the original, the transformed input, and Wakaru's output. A
+pass means the decompiled code preserves the exact expected behavior.
+
+Current state: **62,061 passing round trips, with zero Wakaru correctness
+failures**. The canonical matrix contains 66,729 runnable inputs. The 4,668
+cases Wakaru cannot support are classified and excluded, not counted as
+passes. The numbers live in
+[test262-stats.json](https://github.com/pionxzh/wakaru/blob/main/scripts/correctness/test262-stats.json).
+
+## Pattern recovery
+
+Reproduction matrices compile known inputs through real Babel, TypeScript,
+SWC, esbuild, and Terser version combinations, then verify that Wakaru
+recovers the original construct. Current rate: **97.4% across 1,858 test
+shapes**. Per-matrix rates live in
+[stats.json](https://github.com/pionxzh/wakaru/blob/main/scripts/repro/stats.json).
+
+## What this promises, and what it does not
+
+The measurements cover the constructs and toolchains in the matrices. That
+is strong evidence, not a formal equivalence proof. When behavioral fidelity
+matters most, use `--level minimal`, and treat decompiled output as
+something to verify rather than something verified.
+
+If you want the exact rules, the full semantic contract lives in
+[rewrite-assumptions.md](https://github.com/pionxzh/wakaru/blob/main/docs/rewrite-assumptions.md):
+every named assumption, and which levels may rely on it.
+
+And if you ever observe decompiled code behaving differently from its input,
+that is a bug we want.
+[Open an issue](https://github.com/pionxzh/wakaru/issues) with the input,
+reduced if you can.

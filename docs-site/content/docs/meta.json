@@ -1,0 +1,13 @@
+{
+  "pages": [
+    "---Introduction---",
+    "index",
+    "what-is-wakaru",
+    "---Guides---",
+    "...guides",
+    "---Reference---",
+    "...reference",
+    "---Project---",
+    "...project"
+  ]
+}

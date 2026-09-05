@@ -1,0 +1,55 @@
+---
+title: Obfuscated code
+description: What to do when the input is obfuscated, not just minified.
+---
+
+Wakaru is not a deobfuscator. Minification and obfuscation look alike at a
+glance, but they are different problems. Minification shrinks code and leaves
+its structure alone. Obfuscation hides the structure on purpose. Wakaru
+reverses the first and leaves the second to a dedicated tool.
+
+Wakaru parses and rewrites the code. It does not execute it, so suspicious
+samples are safe to feed in.
+
+## Minified or obfuscated?
+
+A few tells:
+
+- Short names, `!0`, comma chains, one long line. That is minification.
+  Wakaru handles it directly.
+- A large array of strings near the top, and every string in the code is
+  looked up by index. That is string-array obfuscation.
+- Functions built as one big `while (true)` loop with a `switch` over a
+  state variable. That is control-flow flattening.
+- Code that decodes a blob and runs it through its own interpreter. That is
+  a VM-based protector.
+
+The last three need stripping first.
+
+## Strip first, then decompile
+
+```bash
+# 1. strip the obfuscation
+npx webcrack --no-unpack --no-unminify obfuscated.js > deobfuscated.js
+# 2. recover readable modules
+npx wakaru deobfuscated.js --unpack -o out/
+```
+
+[webcrack](https://github.com/j4k0xb/webcrack) can also unpack and unminify.
+The two flags turn that off, so each tool does one job. Unpacking and
+unminifying happen in step 2.
+
+An obfuscated bundle is still a bundle once the obfuscation is gone, which is
+why step 2 uses `--unpack`. For a single file, drop the flag.
+
+## Reviewing suspicious code
+
+Add `--level minimal` when the sample is suspicious. The output stays as
+close as possible to the input's behavior, so what you read is what runs.
+See [Rewrite levels](/guides/rewrite-levels).
+
+## Names
+
+Stripping obfuscation does not bring names back. Mangled names like `e` and
+`t` stay short unless a source map has the originals. See
+[Variable names](/guides/unminify-a-file#variable-names) for the options.

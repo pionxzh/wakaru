@@ -1,0 +1,50 @@
+---
+title: Source maps
+description: Recover names and original sources from a map, or emit maps for the decompiled output.
+---
+
+Wakaru works with source maps in both directions. An input map improves the
+decompiled output. An output map connects the decompiled result back to the
+input.
+
+## Recover the original sources
+
+```bash
+npx wakaru extract input.js.map -o src/
+```
+
+Many production maps embed the original files themselves, in a field called
+`sourcesContent`. `wakaru extract` writes those files straight to disk. When
+this works, you get the original source, not a reconstruction. Try it first
+whenever a map is available.
+
+## Recover names with an input map
+
+```bash
+npx wakaru input.js --source-map input.js.map -o output.js
+```
+
+Not every map embeds the sources. When it only carries names and mappings,
+pass it to a normal decompile run: Wakaru applies the original names and
+deduplicates imports. This works in single-file mode only. `--unpack`
+rejects input maps, because the split modules no longer line up with the
+bundle's coordinates.
+
+## Emit a map for the output
+
+```bash
+npx wakaru input.js --emit-source-map -o output.js
+npx wakaru bundle.js --unpack --emit-source-map -o out/
+```
+
+`--emit-source-map` writes a `.map` next to each output file, mapping the
+decompiled code back to the input. Unlike input maps, this works with
+`--unpack`.
+
+## See the mapping visually
+
+The [playground](https://wakarujs.com/playground/) has a Mapping toggle. It
+colors each line of the output and highlights the input it came from, so you
+can trace any decompiled line back to the original.
+
+![Mapping view in the playground: each output line colored by its input line, with a hovered pair connected by an arrow](/screenshots/mapping.png)

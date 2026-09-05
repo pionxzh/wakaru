@@ -1,0 +1,80 @@
+---
+title: Quick Start
+description: Decompile your first file with the Wakaru CLI in two minutes.
+---
+
+Wakaru turns production JavaScript back into readable modules. It reverses
+bundling, transpilation, and minification. No install needed:
+
+```bash
+# decompile a single file
+npx wakaru input.js -o output.js
+
+# unpack a bundle into individual modules
+npx wakaru bundle.js --unpack -o out/
+```
+
+Without `-o`, output goes to stdout. Stdin works too:
+
+```bash
+cat input.js | npx wakaru > output.js
+```
+
+## Install
+
+```bash
+npm install -g wakaru@latest
+wakaru --version
+```
+
+Prebuilt binaries for macOS, Linux, and Windows are on
+[GitHub Releases](https://github.com/pionxzh/wakaru/releases).
+
+## Unpack a bundle
+
+`--unpack` detects the bundle format automatically and splits the bundle
+into one file per module. webpack, Rollup/Vite, esbuild, and even
+[Bun single-file executables](/guides/bun-single-file-executable) are
+supported.
+
+```bash
+npx wakaru bundle.js --unpack -o out/
+npx wakaru dist/ --unpack -o out/     # a whole directory works too
+```
+
+See [Unpack a bundle](/guides/unpack-a-bundle) for the full list of
+supported bundlers.
+
+## Pick a rewrite level
+
+`--level` chooses how far Wakaru rewrites:
+
+| Level | Use it for |
+| --- | --- |
+| `minimal` | Auditing, diffing, malware triage. Behavioral fidelity comes first |
+| `standard` (default) | Full helper and syntax recovery under documented assumptions |
+| `aggressive` | Maximum readability. May alter edge-case behavior |
+
+```bash
+npx wakaru input.js --level minimal -o output.js
+```
+
+See [Rewrite levels](/guides/rewrite-levels) for what each level may change.
+
+## Try it in the browser
+
+The [playground](https://wakarujs.com/playground/) runs the same engine in
+your browser. Turn on Mapping and every output line is colored by the input
+line it came from:
+
+![Playground mapping view: minified input on the left, decompiled output on the right, each output line colored by its source line](/screenshots/mapping.png)
+
+See [Playground](/guides/playground) for everything it can do.
+
+## Next steps
+
+<Cards>
+  <Card title="What is Wakaru" href="/what-is-wakaru" />
+  <Card title="CLI reference" href="/reference/cli" />
+  <Card title="Unpack a bundle" href="/guides/unpack-a-bundle" />
+</Cards>

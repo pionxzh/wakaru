@@ -1,0 +1,38 @@
+---
+title: Bun single-file executable
+description: Decompile the JavaScript inside a `bun build --compile` binary.
+---
+
+`bun build --compile` packs a whole app, JavaScript and assets included,
+into one executable. Wakaru reads that container directly and never runs
+the binary. Binaries built with Bun 1.3.3 and later are supported.
+
+## Decompile the JavaScript
+
+```bash
+npx wakaru ./compiled-app --unpack -o out/
+```
+
+Wakaru validates Bun's embedded module graph, picks out the JavaScript
+entries, and unpacks them like any other bundle. Windows, macOS, and Linux
+executables (PE, Mach-O, ELF) all work, on any host platform.
+
+Add `--raw` to preserve the exact embedded JavaScript without readability
+rewrites.
+
+## Extract every embedded file
+
+```bash
+npx wakaru bun extract ./compiled-app -o extracted/
+```
+
+`bun extract` copies everything in the container, byte for byte:
+JavaScript, CSS, assets, WebAssembly, native add-ons, embedded SQLite
+databases. Nothing is parsed or executed. `extracted/manifest.json` records
+each file's original path, loader, and role.
+
+Two options:
+
+- `--json` also prints the manifest to stdout
+- `--include-internals` also writes Bun's runtime regions (opaque source
+  map, bytecode, module info). These are runtime data, not project assets.

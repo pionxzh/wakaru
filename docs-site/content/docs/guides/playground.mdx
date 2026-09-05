@@ -1,0 +1,83 @@
+---
+title: Playground
+description: Run Wakaru in your browser. Nothing to install, and no code leaves your machine.
+---
+
+The [playground](https://wakarujs.com/playground/) runs the same Rust engine
+as the CLI, compiled to WebAssembly. Paste code on the left and the output
+appears on the right. Nothing is uploaded. Your code stays in the browser
+tab.
+
+The header shows the engine version and commit. A shared link tells the
+reader exactly which build produced the output.
+
+![The playground: minified input on the left, decompiled JavaScript on the right](/screenshots/playground.png)
+
+## Decompile
+
+The default mode. Output updates as you type or change a setting.
+
+- **Example** loads a sample: Babel output, TypeScript output, Terser
+  output, or a CommonJS interop module.
+- **Level** is the same `minimal` / `standard` / `aggressive` choice as the
+  CLI. See [Rewrite levels](/guides/rewrite-levels).
+- **Formatter** runs a formatting pass after decompilation. It is on by
+  default in the playground and off by default in the CLI.
+
+Warnings from the engine appear under the output.
+
+## Mapping
+
+Turn on **Mapping** and every output line is colored by the input line it
+came from. Hover a line on either side to highlight its counterpart. The
+percentage next to the switch shows how much of the output has a mapping.
+
+![Mapping view: each output line colored by its input line, with a hovered pair connected by an arrow](/screenshots/mapping.png)
+
+This is the source map the CLI writes with `--emit-source-map`, drawn
+instead of saved. The formatter is turned off while Mapping is on. See
+[Source maps](/guides/source-maps).
+
+## Compile & Restore
+
+Write modern source on the left. A real transpiler compiles it in your
+browser, and Wakaru restores the result. You see all three: your source, the
+compiled output, and what Wakaru gets back.
+
+- **Producer** picks the transpiler: Babel, SWC, or esbuild. Each one
+  targets an older browser, so `async`/`await`, classes, spread, optional
+  chaining, and JSX all get compiled down.
+- The **Diff** tab in the output pane compares Wakaru's output against your
+  original source. That is the quickest way to see what a round trip keeps
+  and what it loses.
+
+![Compile & Restore: original source, Babel output, and the Diff tab comparing Wakaru's output against the original](/screenshots/roundtrip-diff.png)
+
+## Vue SFC
+
+An experimental switch. When recovery succeeds, a **Vue SFC** tab appears
+next to the JavaScript output. When it does not, the JavaScript output stays
+as is. See [Vue SFC](/guides/vue-sfc) for what recovery covers.
+
+![Vue SFC tab showing a recovered script setup block and template next to the compiled render function](/screenshots/vue-sfc.png)
+
+## Share
+
+**Share** copies a link to your clipboard. The code and every setting are
+compressed into the URL fragment, the part after `#`. Browsers do not send
+the fragment to any server, so the link works without a backend and your
+code still stays private. Very large inputs cannot fit in a URL, and the
+button says so.
+
+## When to use the CLI instead
+
+The playground handles one file at a time. Reach for the CLI when you need
+to:
+
+- Unpack a bundle into modules
+- Feed in a directory, or an entry plus its chunks
+- Apply an input source map with `--source-map`
+- Get `--json` output for scripts or agents
+- Work on inputs too large for a browser tab
+
+See [Install](/#install) to get the CLI.

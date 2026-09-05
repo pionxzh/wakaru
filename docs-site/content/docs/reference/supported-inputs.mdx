@@ -1,0 +1,51 @@
+---
+title: Supported inputs
+description: Every bundle format, transpiler, and minifier Wakaru understands.
+---
+
+## Bundlers
+
+- webpack 4/5
+- `@vercel/ncc`
+- Rollup / Vite scope-hoisted ESM output (heuristic)
+- esbuild and Bun
+- Metro (React Native)
+- Browserify, including Cocos Creator 2.x
+- Closure ModuleManager
+- SystemJS
+- AMD/UMD wrappers
+- [Bun single-file executables](/guides/bun-single-file-executable)
+
+Two caveats:
+
+- **Metro**: plain JavaScript bundles only. RAM bundles and Hermes bytecode
+  are not JavaScript and are out of scope.
+- **ncc**: CommonJS output is split structurally. `.mjs` output uses a
+  top-level runtime and is not structurally split.
+
+## Transpilers
+
+Helper and pattern recovery for output from:
+
+- Babel
+- TypeScript (tslib)
+- SWC
+- Closure Compiler
+
+## Minifiers
+
+Artifact reversal for:
+
+- Terser
+- SWC
+- esbuild
+
+## Input kinds
+
+- A single `.js` file, or stdin
+- Multiple explicit files, such as an entry plus its chunks
+- A directory: with `--unpack`, Wakaru recursively scans `.js`, `.mjs`, and
+  `.cjs` files, skipping hidden paths and `node_modules`
+- A Bun single-file executable, passed as an explicit path
+
+Directory inputs work only with `--unpack`.

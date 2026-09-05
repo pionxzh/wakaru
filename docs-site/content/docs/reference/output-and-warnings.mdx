@@ -1,0 +1,47 @@
+---
+title: Output & warnings
+description: How unpacked output is laid out, named, and reported.
+---
+
+## Layout
+
+`--unpack` writes one JavaScript file per recovered module into the output
+directory. The directory must be new or empty unless you pass `--force`.
+
+## Filenames
+
+- Modules with real path evidence keep readable relative filenames. Evidence
+  includes webpack string IDs, Browserify dependency maps, and original
+  input paths.
+- Everything else gets a stable generated name like `module-42.js`.
+- Names that collide receive numeric suffixes.
+- Emitted files always end in a JavaScript extension. A module recorded as
+  `src/style.less` becomes `src/style.less.js`.
+- For supported `@vercel/ncc` bundles, the bundle's inline startup code is
+  written as `entry.js`.
+
+## Warnings
+
+Wakaru prints human-readable summaries by default. `--json` puts the same
+information on stdout as structured output:
+
+- Every warning carries an `is_error` field. `false` means non-fatal. An
+  error-class warning fails the command, even when output files were
+  written.
+- In unpack mode, `total` counts modules and `failed` counts modules that
+  errored during decompilation. Treat `failed > 0` as a failed run.
+
+## Validating an output tree
+
+`debug validate` is an internal debugging tool, built for Wakaru's own
+development. You can still run it on an unpacked output tree if you are
+curious:
+
+```bash
+npx wakaru debug validate out/
+```
+
+It checks the emitted modules as one graph: dangling relative references,
+broken imports and exports, duplicate declarations, writes to imported or
+`const` bindings. It exits nonzero when it finds anything. Validate normal
+output only. Raw output has no module-graph contract.

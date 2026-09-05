@@ -1,0 +1,36 @@
+---
+title: Rewrite levels
+description: Choose between behavioral fidelity and maximum readability.
+---
+
+Wakaru has three rewrite levels, from behavioral fidelity to maximum
+readability:
+
+```bash
+npx wakaru input.js --level minimal
+npx wakaru input.js                     # standard is the default
+npx wakaru input.js --level aggressive
+```
+
+## Choosing a level
+
+| Level | What it does | Use it for |
+| --- | --- | --- |
+| `minimal` | Highest-confidence, semantics-preserving transforms only | Auditing, diffing, malware triage |
+| `standard` | Full helper and syntax recovery under documented assumptions | Everyday reading and code recovery |
+| `aggressive` | Stronger intent-recovery heuristics. May alter edge-case behavior | You just want to read the code |
+
+Every level has a documented semantic contract. The named assumptions each
+level may rely on are listed in
+[rewrite-assumptions.md](https://github.com/pionxzh/wakaru/blob/main/docs/rewrite-assumptions.md).
+A Test262 round-trip harness continuously measures semantic preservation.
+
+## Dead code
+
+By default, Wakaru removes only the dead code its own transforms create.
+Dead code that already existed in the input stays. Opt into a full
+reachability sweep with:
+
+```bash
+npx wakaru input.js --dce
+```

@@ -1,0 +1,13 @@
+{
+  "pages": [
+    "unpack-a-bundle",
+    "unminify-a-file",
+    "obfuscated-code",
+    "rewrite-levels",
+    "source-maps",
+    "bun-single-file-executable",
+    "vue-sfc",
+    "playground",
+    "coding-agents"
+  ]
+}

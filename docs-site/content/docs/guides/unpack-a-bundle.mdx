@@ -1,0 +1,77 @@
+---
+title: Unpack a bundle
+description: Split a production bundle back into individual, readable modules.
+---
+
+```bash
+npx wakaru bundle.js --unpack -o out/
+```
+
+Wakaru detects the bundle format automatically, splits the bundle into one
+file per module, and decompiles each module.
+
+## Supported bundlers
+
+You don't have to pass a format flag for any of these:
+
+- **webpack 4/5**
+- **`@vercel/ncc`**
+- **Rollup / Vite** scope-hoisted ESM output (heuristic)
+- **esbuild / Bun**
+- **Metro** (React Native)
+- **Browserify**, including Cocos Creator 2.x
+- **Closure ModuleManager**
+- **SystemJS**
+- **AMD/UMD** wrappers
+
+Bun single-file executables work too. See
+[Bun single-file executable](/guides/bun-single-file-executable).
+
+## Inputs
+
+```bash
+npx wakaru entry.js chunk.js --unpack -o out/   # multiple explicit files
+npx wakaru dist/ --unpack -o out/               # recursively scan a directory
+```
+
+Directory inputs recursively scan `.js`, `.mjs`, and `.cjs` files. Hidden
+paths and `node_modules` are skipped. Only files detected as bundles or
+chunks are included.
+
+## Output
+
+One file per module. A small production webpack bundle with four modules
+comes out like this:
+
+```
+out/
+├── entry.js
+├── module-184.js
+├── module-611.js
+└── module-823.js
+```
+
+Module filenames come from the best available evidence. When the bundle
+still carries real paths, such as webpack string IDs or Browserify
+dependency maps, Wakaru uses them. Other modules get stable generated names
+like `module-184.js` above, where the number is the bundle's own module ID.
+Name collisions receive numeric suffixes.
+
+The output directory must be new or empty unless you pass `--force`.
+
+## Variants
+
+```bash
+npx wakaru bundle.js --unpack --raw -o out/       # raw split, no readability transforms
+npx wakaru bundle.js --unpack=strict -o out/      # structural detection only, no heuristic fallback
+npx wakaru bundle.js --unpack=inspect -o out/     # finer boundaries for static inspection
+```
+
+`--raw` splits the bundle without any readability rewrites. Module names
+stay provisional, and the result is not a usable module graph.
+
+`--unpack=inspect` splits at finer boundaries for static inspection. The
+result may not preserve initialization order. Do not treat it as runnable
+code.
+
+See the [CLI reference](/reference/cli) for the full option list.

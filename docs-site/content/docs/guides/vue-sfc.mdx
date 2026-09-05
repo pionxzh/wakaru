@@ -1,0 +1,43 @@
+---
+title: Vue SFC
+description: Best-effort recovery of .vue files from compiled Vue 3 components.
+---
+
+`--vue-sfc` recovers a `.vue` artifact from compiled Vue 3 component
+JavaScript. It is experimental and best-effort. Treat the result as an
+inspection aid, not as original source.
+
+```bash
+npx wakaru input.js --vue-sfc                    # print the .vue when recovery succeeds
+npx wakaru input.js --vue-sfc -o App.vue         # .vue output only, errors if recovery fails
+npx wakaru bundle.js --unpack --vue-sfc -o out/  # .vue sidecars for recovered modules
+```
+
+The [playground](/guides/playground) has the same switch. Compiled render
+code on the left, the recovered `.vue` on the right:
+
+![Playground with Vue SFC on: compiled render function on the left, recovered script setup and template on the right](/screenshots/vue-sfc.png)
+
+## How output paths behave
+
+- Without `-o`, Wakaru prints the recovered `.vue`, or normal decompiled
+  JavaScript when recovery fails.
+- With `-o App.vue`, output is Vue-only. Wakaru errors if recovery fails.
+- With any other output path, JavaScript comes first. Wakaru writes the
+  normal decompiled JavaScript, and adds a sibling `.vue` file when recovery
+  succeeds.
+- With `--unpack`, recovery is additive. Every module still gets JavaScript
+  output, and recovered Vue modules also get sibling `.vue` artifacts.
+
+## Checking what happened
+
+Add `--json` to see per-module results. Each module has a `kind`
+(`javascript` or `vue_sfc`) and a `status`:
+
+- `recovered_vue_sfc`: a `.vue` artifact was written
+- `vue_sfc_source_js`: the paired JavaScript for a recovered module
+- `vue_sfc_fallback_js`: the module looked like Vue but stayed JavaScript
+
+Keep the paired JavaScript around when a recovery looks too heuristic. The
+[playground](https://wakarujs.com/playground/) has a Vue SFC toggle if you
+want to try a snippet first.
