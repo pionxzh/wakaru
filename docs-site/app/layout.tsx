@@ -20,6 +20,13 @@ export const metadata: Metadata = {
 export default function Layout({ children }: LayoutProps<'/'>) {
   return (
     <html lang="en" className={inter.className} suppressHydrationWarning>
+      <head>
+        {/* Vercel Web Analytics, same tag as the landing page. The path is
+            deliberately not under the basePath: through the wakarujs.com/docs
+            proxy it reaches the main site's project, so docs traffic lands in
+            the same dashboard. */}
+        <script defer src="/_vercel/insights/script.js" />
+      </head>
       <body className="flex flex-col min-h-screen">
         <RootProvider
           search={{

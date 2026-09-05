@@ -28,6 +28,9 @@ export function Header({ version, gitHash }: HeaderProps) {
         )}
       </div>
       <div className="header-right">
+        <a href="https://wakarujs.com/docs" className="header-link">
+          Docs
+        </a>
         <a
           href="https://github.com/pionxzh/wakaru"
           target="_blank"
