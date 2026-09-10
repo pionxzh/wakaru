@@ -1,5 +1,6 @@
 use std::fmt;
 
+use crate::facts::ModuleFactsMap;
 use crate::rules::RewriteLevel;
 use crate::unpacker::BundleFormat;
 
@@ -144,6 +145,24 @@ pub struct UnpackOutput {
     /// Per-module source maps (filename, source map JSON). Only populated when
     /// `DecompileOptions::emit_source_map` is set.
     pub source_maps: Vec<(String, String)>,
+}
+
+/// Lockstep façade result for an explicitly requested pre-rewrite source view.
+///
+/// This keeps the ordinary [`PreparedUnpackOutput`] contract unchanged. The
+/// sidecar is generic module source; framework meaning is assigned only by the
+/// caller.
+#[doc(hidden)]
+#[derive(Debug, Clone, Default)]
+pub struct CapturedUnpackOutput {
+    pub output: PreparedUnpackOutput,
+    pub pre_rewrite_modules: Vec<(String, String)>,
+    /// Post-Stage-2 transport facts for the surviving captured modules.
+    ///
+    /// Keys and relative sources use the same final filenames as `output` and
+    /// `pre_rewrite_modules`. Framework artifact analyzers may use these facts
+    /// to project their own semantic evidence across proven module edges.
+    pub module_facts: ModuleFactsMap,
 }
 
 /// Byte-range provenance for one unpacked module.

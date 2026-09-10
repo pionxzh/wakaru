@@ -23,8 +23,8 @@ version changes.
 - Detect and parse each input once in the normal path.
 - Represent partial recovery explicitly instead of requiring callers to infer
   it from warning strings.
-- Keep inputs, module artifacts, provenance, diagnostics, and detection
-  reports structurally associated.
+- Keep inputs, module artifacts, recovered artifacts, provenance, diagnostics,
+  and detection reports structurally associated.
 - Leave room to add formats and diagnostics without another breaking release.
 
 ## Surface overview
@@ -34,7 +34,9 @@ Two root operations — `decompile(Source, DecompileOptions)` and
 incremental-intake form — plus optional namespaces: `bun` (single-file
 executable extraction), `debug` (normalize, rule tracing, rule metadata),
 `sourcemap` (embedded-source extraction), and `vue` (experimental standalone
-SFC recovery). See rustdoc for everything else.
+SFC recovery). Root operation options carry `RecoveryOptions`; enabled
+framework recovery returns framework-neutral `ArtifactOutput` values alongside
+the primary JavaScript modules. See rustdoc for everything else.
 
 ## Design decisions
 
@@ -44,9 +46,12 @@ SFC recovery). See rustdoc for everything else.
   SWC's source storage instead of imposing a `source.to_string()` copy.
 - Use private option fields with builder methods so options can grow without
   breaking callers; result types are `#[non_exhaustive]`.
-- One `ModuleOutput` artifact type for both operations; single-file decompile
-  uses `EntryStatus::Unknown` and empty provenance rather than a second
-  single-file-only module type.
+- One `ModuleOutput` module artifact type for both operations; single-file
+  decompile uses `EntryStatus::Unknown` and empty provenance rather than a
+  second single-file-only module type.
+- Framework recovery is additive: `ArtifactOutput` associates unique,
+  normalized output files with module indices and explicit kind/status values;
+  recovery failure leaves the JavaScript output intact and emits a diagnostic.
 - Keep `InputReport::module_indices`, because synthesized modules can have no
   provenance.
 - Keep the failure-oriented name `ModuleStatus::DecompileFailed`; it always
@@ -65,6 +70,10 @@ SFC recovery). See rustdoc for everything else.
   detection and processing implementation.
 - Return `InputReceipt` from `UnpackJob::push` so detection progress is
   available during intake.
+- Keep module mode, recovery, diagnostics, and source-map behavior job-wide,
+  while allowing an intake call to override unmatched-input and scope-hoist
+  policies for one input. This lets explicit files and directory candidates
+  share one cross-module job without sharing the same detection policy.
 - Evaluate `UnmatchedInput::Error` at `finish`, preserving operation-level
   failure semantics while keeping the job usable after every successful push.
 - Represent heuristic scope-hoist recovery as
@@ -83,20 +92,56 @@ SFC recovery). See rustdoc for everything else.
   but span names, fields, and nesting are instrumentation details, not a
   stable contract.
 
-### Future framework recovery
+### Framework recovery
 
-Vue must not establish a per-framework end-to-end composition pattern. If
-component recovery becomes a supported root workflow, or Wakaru adds Svelte,
-Angular, or another framework, recovery is added as an option on `decompile`
-and `unpack`: the integrated phase consumes Wakaru's module graph and prepared
-state before final materialization instead of reparsing every emitted module
-once per framework, resolves sibling imports from Wakaru's own module graph,
-and emits a framework-neutral multi-file artifact associated with module
-indices. Future framework namespaces may provide standalone recovery and
-option types, but not `svelte::decompile`, `angular::decompile`, or
-equivalent composition entry points. Private option fields and non-exhaustive
-result types allow that integrated surface to be added without a breaking
-change.
+Vue does not establish a per-framework end-to-end composition pattern.
+Supported root workflows use `RecoveryOptions` on `decompile` and `unpack`,
+and return framework-neutral `ArtifactOutput` values. Angular module
+recovery is the first root workflow using this contract.
+
+The common artifact model supports multiple files rather than assuming every
+framework produces one source file. Artifacts associate themselves with module
+indices, following `InputReport`, and guarantee unique normalized filenames.
+
+The current experimental Angular path analyzes two aligned, owned views of one
+generic module workspace. A pre-rewrite view preserves compiler evidence before
+readability transforms can erase it; the finalized view supplies readable class
+bodies. This preserves cross-module role evidence and avoids any
+bundler-specific analyzer route. The two views are currently materialized and
+parsed only when recovery is enabled. Moving them onto retained prepared ASTs
+with stable origin identities is a performance optimization and must not
+change the artifact contract or make a bundler own framework semantics.
+Caller-supplied import resolution remains useful only for standalone namespace
+operations such as `vue::recover`.
+
+The low-level Angular namespace provides `analyze_angular_components_*`
+operations alongside convenience `recover_angular_components_*` and
+`recover_angular_modules_*` wrappers. Analysis retains per-component sources
+and diagnostics for compatibility, and also returns one module artifact for
+each source module containing recovered components. A module result lists its
+indices into the component result vector; sibling component dependencies and
+binding renames are resolved inside that unit, and shared support declarations
+are emitted once. Proven cross-module ESM component edges are returned as
+`RecoveredAngularModuleDependency` records containing source/target component
+indices, the target module, exported target name, and collision-free local
+name. The root façade resolves those records against final artifact filenames
+and injects relative `.angular` imports; low-level callers can apply their own
+filename policy.
+
+Issue entries preserve occurrences and identify the source module index,
+recovered component, view, render phase, per-view operation ordinal, and
+module-relative source range. When known, they distinguish the canonical Ivy
+role from the concise callee spelling in the evidence source. Unknown runtime
+calls are also grouped by phase and argument-list shape at component and
+workspace scope. The root façade emits `ArtifactKind::AngularModule` and keeps
+those framework details out of `ArtifactOutput`; optional diagnostics expose
+only the aggregate report.
+
+Private option fields and non-exhaustive result types allow that integrated
+surface to be added without a breaking change. Future framework namespaces may
+provide framework-specific standalone recovery and option types, but should
+not add `svelte::decompile`, `angular::decompile`, or equivalent composition
+entry points.
 
 ## Not public
 
@@ -143,12 +188,15 @@ filename or sentinel string for a later adapter to decode.
    the next candidate. Peak intake memory is therefore bounded by retained
    detected/processed inputs rather than every file visited by a directory
    walk.
-6. Text is materialized only for final output, explicit raw output, or a
-   recovery fallback.
+6. Text is materialized only for final output, explicit raw output, or an
+   explicitly enabled framework-recovery view.
 7. Source-map modes may take an explicitly slower path when source-coordinate
    state cannot safely cross the parallel boundary.
 8. All output ordering is deterministic regardless of Rayon scheduling.
 
-These invariants prevent the public API from reintroducing the emit/parse
-round trips removed by the prepared-AST work. They are enforced by span tests
-in `wakaru-core` (see `docs/fact-system.md` and the driver tests).
+These invariants prevent the normal rewrite pipeline from reintroducing the
+emit/parse round trips removed by the prepared-AST work. Experimental framework
+recovery may parse its aligned evidence and finalized module views until it can
+consume retained prepared ASTs directly. The normal-path invariants are
+enforced by span tests in `wakaru-core` (see `docs/fact-system.md` and the
+driver tests).

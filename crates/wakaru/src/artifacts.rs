@@ -1,0 +1,414 @@
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::fmt::Write;
+use std::path::{Path, PathBuf};
+
+use crate::output::{
+    ArtifactKind, ArtifactOutput, ArtifactStatus, Diagnostic, DiagnosticCode, DiagnosticSeverity,
+    ModuleOutput, ModuleStatus,
+};
+
+pub(crate) fn recover_artifacts(
+    modules: &[ModuleOutput],
+    pre_rewrite_modules: &[(String, String)],
+    module_facts: Option<&wakaru_core::ModuleFactsMap>,
+    recovery: crate::RecoveryOptions,
+    diagnostics: bool,
+) -> (Vec<ArtifactOutput>, Vec<Diagnostic>) {
+    if !recovery.angular_components() {
+        return (Vec::new(), Vec::new());
+    }
+
+    match recover_angular_modules(modules, pre_rewrite_modules, module_facts) {
+        Ok((artifacts, stats, unknown_runtime_call_shapes)) => {
+            let unknown_shape_summary =
+                format_unknown_runtime_call_shapes(&unknown_runtime_call_shapes);
+            let recovery_diagnostics = diagnostics
+                .then(|| Diagnostic {
+                    severity: if stats.partial_components > 0
+                        || stats.rejected_component_candidates > 0
+                    {
+                        DiagnosticSeverity::Warning
+                    } else {
+                        DiagnosticSeverity::Info
+                    },
+                    code: DiagnosticCode::ArtifactRecoveryReport,
+                    message: format!(
+                        "Angular recovery emitted {}/{} component candidates \
+                         ({} complete, {} partial, {} rejected); rendered {}/{} runtime calls \
+                         ({} unsupported, {} malformed){}",
+                        stats.recovered_components,
+                        stats.component_candidates,
+                        stats.complete_components,
+                        stats.partial_components,
+                        stats.rejected_component_candidates,
+                        stats.rendered_instruction_calls,
+                        stats.runtime_calls_observed,
+                        stats.unsupported_runtime_calls,
+                        stats.malformed_instruction_calls,
+                        unknown_shape_summary,
+                    ),
+                    input: None,
+                    module: None,
+                    span: None,
+                })
+                .into_iter()
+                .collect();
+            (artifacts, recovery_diagnostics)
+        }
+        Err(error) => (
+            Vec::new(),
+            vec![Diagnostic {
+                severity: DiagnosticSeverity::Warning,
+                code: DiagnosticCode::ArtifactRecoveryFailed,
+                message: format!("Angular module recovery was skipped: {error}"),
+                input: None,
+                module: None,
+                span: None,
+            }],
+        ),
+    }
+}
+
+fn recover_angular_modules(
+    modules: &[ModuleOutput],
+    pre_rewrite_modules: &[(String, String)],
+    module_facts: Option<&wakaru_core::ModuleFactsMap>,
+) -> anyhow::Result<(
+    Vec<ArtifactOutput>,
+    wakaru_core::AngularRecoveryStats,
+    Vec<wakaru_core::AngularUnknownRuntimeCallShape>,
+)> {
+    let eligible = modules
+        .iter()
+        .enumerate()
+        .filter(|(_, module)| module.status == ModuleStatus::Decompiled)
+        .collect::<Vec<_>>();
+    if eligible.is_empty() {
+        return Ok((
+            Vec::new(),
+            wakaru_core::AngularRecoveryStats::default(),
+            Vec::new(),
+        ));
+    }
+
+    let evidence_by_filename = pre_rewrite_modules
+        .iter()
+        .map(|(filename, source)| (filename.as_str(), source.as_str()))
+        .collect::<std::collections::HashMap<_, _>>();
+    let views = eligible
+        .iter()
+        .map(|(_, module)| wakaru_core::AngularModuleView {
+            filename: module.filename.as_str(),
+            evidence_source: evidence_by_filename
+                .get(module.filename.as_str())
+                .copied()
+                .unwrap_or(module.code.as_str()),
+            readable_source: module.code.as_str(),
+        })
+        .collect::<Vec<_>>();
+    let report = if let Some(module_facts) = module_facts {
+        wakaru_core::analyze_angular_components_from_module_views_with_facts(
+            &views,
+            module_facts,
+            wakaru_core::AngularRecoveryOptions::default(),
+        )?
+    } else {
+        wakaru_core::analyze_angular_components_from_module_views(
+            &views,
+            wakaru_core::AngularRecoveryOptions::default(),
+        )?
+    };
+
+    let mut seen = modules
+        .iter()
+        .filter_map(|module| wakaru_core::safe_relative_module_path(&module.filename).ok())
+        .map(|path| path.to_string_lossy().to_lowercase())
+        .collect::<HashSet<_>>();
+    let wakaru_core::AngularRecoveryReport {
+        modules: recovered_modules,
+        stats,
+        unknown_runtime_call_shapes,
+        ..
+    } = report;
+    let pending = recovered_modules
+        .into_iter()
+        .map(|recovered_module| {
+            let (module_index, module) = eligible
+                .get(recovered_module.module_index)
+                .copied()
+                .ok_or_else(|| anyhow::anyhow!("Angular source module index is out of bounds"))?;
+            let filename = angular_module_artifact_filename(&module.filename, &mut seen);
+            Ok((module_index, filename, recovered_module))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let artifact_filenames = pending
+        .iter()
+        .map(|(_, filename, recovered)| (recovered.module_index, filename.clone()))
+        .collect::<HashMap<_, _>>();
+    let artifacts = pending
+        .into_iter()
+        .map(|(module_index, filename, recovered_module)| {
+            let code = link_angular_artifact_dependencies(
+                &recovered_module.source,
+                &filename,
+                &recovered_module.dependencies,
+                &artifact_filenames,
+            );
+            ArtifactOutput {
+                filename,
+                code,
+                kind: ArtifactKind::AngularModule,
+                status: match recovered_module.completeness {
+                    wakaru_core::AngularRecoveryCompleteness::Complete => ArtifactStatus::Complete,
+                    wakaru_core::AngularRecoveryCompleteness::Partial => ArtifactStatus::Partial,
+                    _ => ArtifactStatus::Partial,
+                },
+                module_indices: vec![module_index],
+            }
+        })
+        .collect();
+    Ok((artifacts, stats, unknown_runtime_call_shapes))
+}
+
+fn link_angular_artifact_dependencies(
+    source: &str,
+    filename: &str,
+    dependencies: &[wakaru_core::RecoveredAngularModuleDependency],
+    artifact_filenames: &HashMap<usize, String>,
+) -> String {
+    let mut imports = BTreeMap::<String, BTreeSet<(String, String)>>::new();
+    for dependency in dependencies {
+        let Some(target_filename) = artifact_filenames.get(&dependency.target_module_index) else {
+            continue;
+        };
+        if target_filename == filename {
+            continue;
+        }
+        let target_module = target_filename
+            .strip_suffix(".ts")
+            .unwrap_or(target_filename);
+        let specifier = relative_artifact_specifier(filename, target_module);
+        imports.entry(specifier).or_default().insert((
+            dependency.target_name.clone(),
+            dependency.local_name.clone(),
+        ));
+    }
+    if imports.is_empty() {
+        return source.to_string();
+    }
+
+    let mut import_source = String::new();
+    for (specifier, bindings) in imports {
+        let bindings = bindings
+            .into_iter()
+            .map(|(target, local)| {
+                if target == local {
+                    target
+                } else {
+                    format!("{target} as {local}")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        import_source.push_str(&format!(
+            "import {{ {bindings} }} from {};\n",
+            quote_module_specifier(&specifier)
+        ));
+    }
+    let insertion = source.find('\n').map_or(source.len(), |index| index + 1);
+    let mut linked = String::with_capacity(source.len() + import_source.len());
+    linked.push_str(&source[..insertion]);
+    linked.push_str(&import_source);
+    linked.push_str(&source[insertion..]);
+    linked
+}
+
+fn quote_module_specifier(specifier: &str) -> String {
+    let mut quoted = String::with_capacity(specifier.len() + 2);
+    quoted.push('"');
+    for character in specifier.chars() {
+        match character {
+            '"' => quoted.push_str("\\\""),
+            '\\' => quoted.push_str("\\\\"),
+            '\n' => quoted.push_str("\\n"),
+            '\r' => quoted.push_str("\\r"),
+            '\t' => quoted.push_str("\\t"),
+            '\u{0008}' => quoted.push_str("\\b"),
+            '\u{000c}' => quoted.push_str("\\f"),
+            '\u{2028}' => quoted.push_str("\\u2028"),
+            '\u{2029}' => quoted.push_str("\\u2029"),
+            character if character <= '\u{001f}' => {
+                write!(quoted, "\\u{:04x}", character as u32)
+                    .expect("writing to a String cannot fail");
+            }
+            character => quoted.push(character),
+        }
+    }
+    quoted.push('"');
+    quoted
+}
+
+fn relative_artifact_specifier(from_filename: &str, target_filename: &str) -> String {
+    let from = from_filename.replace('\\', "/");
+    let target = target_filename.replace('\\', "/");
+    let from_dir = from
+        .rsplit_once('/')
+        .map(|(directory, _)| {
+            directory
+                .split('/')
+                .filter(|part| !part.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let target_parts = target
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    let mut common = 0;
+    while common < from_dir.len()
+        && common < target_parts.len()
+        && from_dir[common] == target_parts[common]
+    {
+        common += 1;
+    }
+    let mut parts = Vec::new();
+    parts.extend(std::iter::repeat_n("..", from_dir.len() - common));
+    parts.extend(target_parts[common..].iter().copied());
+    let relative = parts.join("/");
+    if relative.starts_with("../") {
+        relative
+    } else {
+        format!("./{relative}")
+    }
+}
+
+fn format_unknown_runtime_call_shapes(
+    shapes: &[wakaru_core::AngularUnknownRuntimeCallShape],
+) -> String {
+    if shapes.is_empty() {
+        return String::new();
+    }
+
+    let mut shapes = shapes.iter().collect::<Vec<_>>();
+    shapes.sort_by(|left, right| {
+        right
+            .runtime_calls
+            .cmp(&left.runtime_calls)
+            .then_with(|| right.occurrences.cmp(&left.occurrences))
+            .then_with(|| left.phase.cmp(&right.phase))
+            .then_with(|| left.argument_counts.cmp(&right.argument_counts))
+    });
+    let visible = shapes
+        .iter()
+        .take(5)
+        .map(|shape| {
+            let phase = match shape.phase {
+                wakaru_core::AngularTemplatePhase::Creation => "creation",
+                wakaru_core::AngularTemplatePhase::Update => "update",
+                wakaru_core::AngularTemplatePhase::OutsideRender => "outside-render",
+                _ => "unknown-phase",
+            };
+            let argument_counts = shape
+                .argument_counts
+                .iter()
+                .map(usize::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let occurrence_label = if shape.occurrences == 1 {
+                "occurrence"
+            } else {
+                "occurrences"
+            };
+            let call_label = if shape.runtime_calls == 1 {
+                "call"
+            } else {
+                "calls"
+            };
+            format!(
+                "{phase} [{argument_counts}] ({} {occurrence_label}/{} {call_label})",
+                shape.occurrences, shape.runtime_calls,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let omitted = shapes.len().saturating_sub(5);
+    if omitted == 0 {
+        format!("; unknown call shapes: {visible}")
+    } else {
+        format!("; unknown call shapes: {visible}, +{omitted} more")
+    }
+}
+
+fn angular_module_artifact_filename(module_filename: &str, seen: &mut HashSet<String>) -> String {
+    let module_path =
+        wakaru_core::safe_relative_module_path(module_filename).unwrap_or_else(|_| {
+            Path::new(module_filename)
+                .file_name()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("module.js"))
+        });
+    let parent = module_path.parent().filter(|path| *path != Path::new(""));
+    let stem = module_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .filter(|stem| !stem.is_empty())
+        .unwrap_or("module");
+    let filename = format!("{stem}.angular.ts");
+    let candidate = parent
+        .map(|parent| parent.join(&filename))
+        .unwrap_or_else(|| PathBuf::from(filename));
+    deduplicate_angular_module_path(&candidate, seen)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn deduplicate_angular_module_path(path: &Path, seen: &mut HashSet<String>) -> PathBuf {
+    if seen.insert(path.to_string_lossy().to_lowercase()) {
+        return path.to_path_buf();
+    }
+
+    let filename = path
+        .file_name()
+        .and_then(|filename| filename.to_str())
+        .unwrap_or("module.angular.ts");
+    let stem = filename.strip_suffix(".angular.ts").unwrap_or("module");
+    let parent = path.parent().unwrap_or(Path::new(""));
+    let mut suffix = 2;
+    loop {
+        let candidate = parent.join(format!("{stem}_{suffix}.angular.ts"));
+        if seen.insert(candidate.to_string_lossy().to_lowercase()) {
+            return candidate;
+        }
+        suffix += 1;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn module_artifact_names_are_relative_and_deduplicated_case_insensitively() {
+        let mut seen = HashSet::new();
+        assert_eq!(
+            angular_module_artifact_filename("/tmp/input.js", &mut seen),
+            "input.angular.ts"
+        );
+        assert_eq!(
+            angular_module_artifact_filename("src/feature.js", &mut seen),
+            "src/feature.angular.ts"
+        );
+        assert_eq!(
+            angular_module_artifact_filename("src/FEATURE.mjs", &mut seen),
+            "src/FEATURE_2.angular.ts"
+        );
+    }
+
+    #[test]
+    fn generated_import_specifiers_are_javascript_string_literals() {
+        assert_eq!(
+            quote_module_specifier("./child\"\\\n\u{2028}.angular"),
+            "\"./child\\\"\\\\\\n\\u2028.angular\""
+        );
+    }
+}

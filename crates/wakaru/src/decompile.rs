@@ -20,6 +20,11 @@ use crate::source::Source;
 ///   failures where Wakaru cannot return any coherent artifact.
 pub fn decompile(input: Source, options: DecompileOptions) -> Result<DecompileOutput> {
     let input = input.into_parts();
+    let pre_rewrite_modules = if options.recovery().angular_components() {
+        vec![(input.filename.clone(), input.code.clone())]
+    } else {
+        Vec::new()
+    };
     let core_options = wakaru_core::DecompileOptions {
         filename: input.filename.clone(),
         sourcemap: input.source_map,
@@ -32,21 +37,31 @@ pub fn decompile(input: Source, options: DecompileOptions) -> Result<DecompileOu
 
     match wakaru_core::driver::decompile_owned(input.code, core_options) {
         Ok(output) => {
-            let diagnostics = output
+            let mut diagnostics = output
                 .warnings
                 .into_iter()
                 .map(|warning| diagnostic_from_core(warning, Some(0)))
-                .collect();
+                .collect::<Vec<_>>();
+            let module = ModuleOutput {
+                filename: input.filename,
+                code: output.code,
+                source_map: output.source_map,
+                provenance: Vec::new(),
+                inspection_context: Vec::new(),
+                entry: EntryStatus::Unknown,
+                status: ModuleStatus::Decompiled,
+            };
+            let (artifacts, recovery_diagnostics) = crate::artifacts::recover_artifacts(
+                std::slice::from_ref(&module),
+                &pre_rewrite_modules,
+                None,
+                options.recovery(),
+                options.diagnostics(),
+            );
+            diagnostics.extend(recovery_diagnostics);
             Ok(DecompileOutput {
-                module: ModuleOutput {
-                    filename: input.filename,
-                    code: output.code,
-                    source_map: output.source_map,
-                    provenance: Vec::new(),
-                    inspection_context: Vec::new(),
-                    entry: EntryStatus::Unknown,
-                    status: ModuleStatus::Decompiled,
-                },
+                module,
+                artifacts,
                 diagnostics,
             })
         }
@@ -68,6 +83,7 @@ pub fn decompile(input: Source, options: DecompileOptions) -> Result<DecompileOu
                     entry: EntryStatus::Unknown,
                     status: ModuleStatus::DecompileFailed,
                 },
+                artifacts: Vec::new(),
                 diagnostics: vec![Diagnostic {
                     severity: DiagnosticSeverity::Error,
                     code: DiagnosticCode::DecompileFailed,
@@ -138,6 +154,91 @@ mod tests {
         assert_eq!(output.module.entry, EntryStatus::Unknown);
         assert_eq!(output.module.status, ModuleStatus::Decompiled);
         assert!(output.module.provenance.is_empty());
+        assert!(output.artifacts.is_empty());
+    }
+
+    #[test]
+    fn decompile_recovers_an_inline_angular_module_artifact() {
+        let source = r#"
+            import * as core from "@angular/core";
+
+            export class DemoCardComponent {
+                title = "Example";
+
+                static ɵcmp = core.ɵɵdefineComponent({
+                    type: DemoCardComponent,
+                    selectors: [["demo-card"]],
+                    template: function(rf, context) {
+                        if (rf & 1) {
+                            core.ɵɵelementStart(0, "article");
+                            core.ɵɵtext(1);
+                            core.ɵɵelementEnd();
+                        }
+                        if (rf & 2) {
+                            core.ɵɵadvance();
+                            core.ɵɵtextInterpolate(context.title);
+                        }
+                    },
+                });
+            }
+        "#;
+        let output = decompile(
+            Source::new("/tmp/input.js", source),
+            DecompileOptions::default()
+                .with_recovery(crate::RecoveryOptions::default().with_angular_components(true)),
+        )
+        .expect("Angular AOT input should decompile");
+
+        assert_eq!(output.artifacts.len(), 1);
+        let artifact = &output.artifacts[0];
+        assert_eq!(artifact.filename, "input.angular.ts");
+        assert_eq!(artifact.kind, crate::ArtifactKind::AngularModule);
+        assert_eq!(artifact.status, crate::ArtifactStatus::Complete);
+        assert_eq!(artifact.module_indices, vec![0]);
+        assert!(artifact.code.contains("@Component({"));
+        assert!(artifact.code.contains("<article>{{ title }}</article>"));
+        assert!(!artifact.code.contains("ɵɵdefineComponent"));
+    }
+
+    #[test]
+    fn angular_diagnostics_report_candidate_and_instruction_accounting() {
+        let source = r#"
+            import * as core from "@angular/core";
+
+            class DiagnosticComponent {
+                static ɵcmp = core.ɵɵdefineComponent({
+                    type: DiagnosticComponent,
+                    selectors: [["diagnostic-card"]],
+                    template: function(rf) {
+                        if (rf & 1) {
+                            core.ɵɵelement(0, "article");
+                            core.unknownRuntimeCall(1)(2, 3);
+                        }
+                    },
+                });
+            }
+        "#;
+        let output = decompile(
+            Source::new("diagnostic.js", source),
+            DecompileOptions::default()
+                .with_diagnostics(true)
+                .with_recovery(crate::RecoveryOptions::default().with_angular_components(true)),
+        )
+        .expect("Angular diagnostics should not prevent recovery");
+
+        let report = output
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == DiagnosticCode::ArtifactRecoveryReport)
+            .expect("the recovery accounting diagnostic should be present");
+        assert_eq!(report.severity, DiagnosticSeverity::Warning);
+        assert!(report
+            .message
+            .contains("emitted 1/1 component candidates (0 complete, 1 partial, 0 rejected)"));
+        assert!(report.message.contains("rendered 1/3 runtime calls"));
+        assert!(report
+            .message
+            .contains("unknown call shapes: creation [1, 2] (1 occurrence/2 calls)"));
     }
 
     #[test]

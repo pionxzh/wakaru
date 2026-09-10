@@ -25,6 +25,8 @@ pub struct JsonDecompileOutput {
     pub source_filename: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vue_sidecar_filename: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub artifacts: Vec<JsonModule>,
     pub warnings: Vec<JsonWarning>,
     pub elapsed_ms: u64,
 }
@@ -44,6 +46,8 @@ pub enum JsonModuleKind {
     JavaScript,
     #[serde(rename = "vue_sfc")]
     VueSfc,
+    #[serde(rename = "angular_module")]
+    AngularModule,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -56,6 +60,12 @@ pub enum JsonModuleStatus {
     RecoveredVueSfc,
     #[serde(rename = "vue_sfc_fallback_js")]
     VueSfcFallbackJs,
+    #[serde(rename = "angular_module_source_js")]
+    AngularModuleSourceJs,
+    #[serde(rename = "recovered_angular_module")]
+    RecoveredAngularModule,
+    #[serde(rename = "partial_angular_module")]
+    PartialAngularModule,
 }
 
 #[derive(Serialize)]
