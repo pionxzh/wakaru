@@ -75,7 +75,9 @@ Initial recovery covers:
 - compiled component dependencies when their bindings can be materialized as
   imports or portable local aliases;
 - inline component styles;
-- the component class body after Ivy definition fields are removed.
+- the component class body after Ivy definition fields are removed, including
+  exact `this.<field> = ...` definitions inside class static blocks. Unrelated
+  static-block statements retain their original order.
 
 Other defer triggers, defer timing/hydration metadata, legacy
 structural-directive re-sugaring, and original package provenance after
