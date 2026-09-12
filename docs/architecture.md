@@ -302,7 +302,8 @@ When unpacking bundles, the driver runs a two-phase pipeline:
    resolved, bundler-normalized AST directly. Apply exact normal-only rewrites
    backed by detector-owned runtime facts. When root framework recovery is
    enabled, materialize an optional generic evidence view after those exact
-   normalizations and before the readability registry. Then run the rule
+   normalizations and before the readability registry. Capture stable
+   whole-value CommonJS import edges at the same boundary. Then run the rule
    registry through `UnEsm`, clone that barrier AST for webpack factory-IIFE
    fact recovery, preserve its pre-readability local binding names, and extract
    import/export facts. Retain the pre-recovery AST together with its `Globals`

@@ -45,8 +45,8 @@ use crate::commonjs_default_object_composition::{
 };
 use crate::facts::{
     collect_commonjs_default_attached_properties, collect_commonjs_default_object,
-    collect_module_facts, collect_require_returns_exports_object, collect_whole_require_sources,
-    ModuleFactsMap,
+    collect_commonjs_whole_value_imports, collect_module_facts,
+    collect_require_returns_exports_object, collect_whole_require_sources, ModuleFactsMap,
 };
 use crate::namespace_decomposition::run_namespace_decomposition;
 use crate::provider_import_repair::run_provider_import_repair;
@@ -551,6 +551,8 @@ pub(super) fn unpack_multi_module_with_plan_and_capture(
             let require_returns_exports_object =
                 collect_require_returns_exports_object(&module, unresolved_mark);
             let whole_require_sources = collect_whole_require_sources(&module, unresolved_mark);
+            let commonjs_whole_value_imports =
+                collect_commonjs_whole_value_imports(&module, unresolved_mark);
             let binding_snapshot =
                 capture_pre_rewrite.then(|| TopLevelBindingSnapshot::collect(&module));
             let pre_rewrite_source = capture_pre_rewrite.then(|| {
@@ -635,6 +637,7 @@ pub(super) fn unpack_multi_module_with_plan_and_capture(
                 commonjs_default_attached_properties;
             facts.require_returns_exports_object = require_returns_exports_object;
             facts.whole_require_sources = whole_require_sources;
+            facts.commonjs_whole_value_imports = commonjs_whole_value_imports;
             (
                 facts,
                 prepared,
