@@ -48,8 +48,9 @@ pub use driver::{
     UnpackWarning, UnpackWarningKind,
 };
 pub use facts::{
-    collect_module_facts, ExportFact, ExportKind, HelperExportFact, HelperKind, ImportFact,
-    ImportKind, ModuleFacts, ModuleFactsMap, TypeScriptHelperExportFact, TypeScriptHelperKind,
+    collect_commonjs_whole_value_imports, collect_module_facts, CommonJsWholeValueImportFact,
+    ExportFact, ExportKind, HelperExportFact, HelperKind, ImportFact, ImportKind, ModuleFacts,
+    ModuleFactsMap, TypeScriptHelperExportFact, TypeScriptHelperKind,
 };
 pub use output_validate::{
     validate_output_modules, validate_output_modules_with_inputs, OutputFinding, OutputFindingKind,

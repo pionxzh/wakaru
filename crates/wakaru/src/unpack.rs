@@ -1007,6 +1007,52 @@ mod tests {
     }
 
     #[test]
+    fn angular_recovery_does_not_treat_a_default_value_as_a_namespace() {
+        let runtime = r#"
+            export function VBU(definition) {
+                return noSideEffects(() => Object.assign({}, baseDefinition, {
+                    type: definition.type,
+                    selectors: definition.selectors,
+                    template: definition.template,
+                }));
+            }
+            const ordinaryDefault = {
+                VBU(definition) {
+                    return definition;
+                },
+            };
+            export default ordinaryDefault;
+        "#;
+        let component = r#"
+            import core from "./runtime.js";
+            export class DefaultValueCard {
+                static compiled = core.VBU({
+                    type: DefaultValueCard,
+                    selectors: [["default-value-card"]],
+                    template() {},
+                });
+            }
+        "#;
+        let output = unpack(
+            vec![
+                Source::new("runtime.js", runtime),
+                Source::new("component.js", component),
+            ],
+            UnpackOptions::default()
+                .with_mode(UnpackMode::Strict)
+                .with_unmatched(UnmatchedInput::Process)
+                .with_recovery(crate::RecoveryOptions::default().with_angular_components(true)),
+        )
+        .expect("ordinary ESM modules should decompile");
+
+        assert!(
+            output.artifacts.is_empty(),
+            "a property of the default value must not inherit the same-named export's Ivy role: {:#?}",
+            output.artifacts
+        );
+    }
+
+    #[test]
     fn angular_artifacts_link_components_across_proven_esm_edges() {
         let child = r#"
             import * as core from "@angular/core";

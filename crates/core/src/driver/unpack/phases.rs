@@ -39,7 +39,7 @@ use crate::commonjs_default_object_composition::{
 };
 use crate::facts::{
     collect_commonjs_default_attached_properties, collect_commonjs_default_object,
-    collect_module_facts, ModuleFactsMap,
+    collect_commonjs_whole_value_imports, collect_module_facts, ModuleFactsMap,
 };
 use crate::namespace_decomposition::run_namespace_decomposition;
 use crate::provider_import_repair::run_provider_import_repair;
@@ -499,6 +499,8 @@ pub(super) fn unpack_multi_module_with_plan_and_capture(
                 collect_commonjs_default_object(&module, unresolved_mark);
             let commonjs_default_attached_properties =
                 collect_commonjs_default_attached_properties(&module, unresolved_mark);
+            let commonjs_whole_value_imports =
+                collect_commonjs_whole_value_imports(&module, unresolved_mark);
             let binding_snapshot =
                 capture_pre_rewrite.then(|| TopLevelBindingSnapshot::collect(&module));
             let pre_rewrite_source = capture_pre_rewrite.then(|| {
@@ -566,6 +568,7 @@ pub(super) fn unpack_multi_module_with_plan_and_capture(
             facts.commonjs_default_object = commonjs_default_object;
             facts.commonjs_default_attached_properties =
                 commonjs_default_attached_properties;
+            facts.commonjs_whole_value_imports = commonjs_whole_value_imports;
             (
                 facts,
                 prepared,

@@ -236,6 +236,9 @@ pub(super) fn rewrite_module_fact_sources(
     for import in &mut facts.imports {
         rewrite(&mut import.source);
     }
+    for import in &mut facts.commonjs_whole_value_imports {
+        rewrite(&mut import.source);
+    }
     if let Some(target) = &mut facts.passthrough_target {
         rewrite(target);
     }
@@ -585,6 +588,10 @@ import { internal } from "./chunk_internal.js";
                 source: "./a.js".into(),
                 kind: crate::facts::ImportKind::Namespace,
             }],
+            commonjs_whole_value_imports: vec![crate::facts::CommonJsWholeValueImportFact {
+                local: "requiredDependency".into(),
+                source: "./a.js".into(),
+            }],
             passthrough_target: Some("./a.js".into()),
             ..Default::default()
         };
@@ -596,6 +603,10 @@ import { internal } from "./chunk_internal.js";
         rewrite_module_fact_sources(&mut facts, "consumer.js", &rename_map);
 
         assert_eq!(facts.imports[0].source.as_ref(), "./Widget.js");
+        assert_eq!(
+            facts.commonjs_whole_value_imports[0].source.as_ref(),
+            "./Widget.js"
+        );
         assert_eq!(facts.passthrough_target.as_deref(), Some("./Widget.js"));
     }
 }
