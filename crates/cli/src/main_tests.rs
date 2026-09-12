@@ -1374,6 +1374,7 @@ fn unpack_output_survives_worker_pool_teardown_and_reuse() {
                 RewriteLevel::Standard,
                 false,
                 false,
+                false,
             )
             .unwrap()
         });
