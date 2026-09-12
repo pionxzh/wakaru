@@ -401,6 +401,14 @@ similarly bounded to a uniquely resolved static/interpolated message and a
 valid containing element. A semantically identified `ɵɵi18nPostprocess` call
 may decode a static compiler replacement table, including the prior value in
 Angular's `message = postprocess(message, replacements)` assignment form.
+Generated constant factories are interpreted only when their complete body is
+a straight-line sequence of local declarations and assignments followed by one
+reachable return. Branches, loops, early returns, writes to outer bindings,
+async functions, and generators leave the constant table unresolved. Message
+calls are decoded only for resolver-proven global `$localize` / `goog.getMsg`,
+a semantically proven Angular postprocessor, or a stable local function whose
+complete body returns its sole parameter unchanged. Same-spelling shadowed
+globals and arbitrary one-argument functions are not localization evidence.
 Its one-argument Closure-specialized form is inferred only when the complete
 runtime body retains the multi-value placeholder contract: a replacement
 callback, pipe-delimited alternatives, marker matching, one-entry removal,
