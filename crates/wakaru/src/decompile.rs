@@ -37,6 +37,10 @@ pub fn decompile(input: Source, options: DecompileOptions) -> Result<DecompileOu
 
     match wakaru_core::driver::decompile_owned(input.code, core_options) {
         Ok(output) => {
+            let binding_correspondences = std::collections::HashMap::from([(
+                input.filename.clone(),
+                output.binding_correspondences.clone(),
+            )]);
             let mut diagnostics = output
                 .warnings
                 .into_iter()
@@ -54,6 +58,7 @@ pub fn decompile(input: Source, options: DecompileOptions) -> Result<DecompileOu
             let (artifacts, recovery_diagnostics) = crate::artifacts::recover_artifacts(
                 std::slice::from_ref(&module),
                 &pre_rewrite_modules,
+                &binding_correspondences,
                 None,
                 options.recovery(),
                 options.diagnostics(),
@@ -198,6 +203,80 @@ mod tests {
         assert!(artifact.code.contains("@Component({"));
         assert!(artifact.code.contains("<article>{{ title }}</article>"));
         assert!(!artifact.code.contains("ɵɵdefineComponent"));
+    }
+
+    #[test]
+    fn angular_artifact_uses_the_proven_readable_class_after_export_renaming() {
+        let source = r#"
+            import * as core from "@angular/core";
+
+            class a {
+                correctBody = "component";
+                static ɵcmp = core.ɵɵdefineComponent({
+                    type: a,
+                    selectors: [["identity-card"]],
+                    template(rf) {
+                        if (rf & 1) core.ɵɵelement(0, "article");
+                    },
+                });
+            }
+            class b {
+                wrongBody = "unrelated";
+            }
+            export { a as IdentityCardComponent, b as a };
+        "#;
+        let output = decompile(
+            Source::new("identity.js", source),
+            DecompileOptions::default()
+                .with_recovery(crate::RecoveryOptions::default().with_angular_components(true)),
+        )
+        .expect("renamed component input should decompile");
+
+        assert!(output.module.code.contains("class IdentityCardComponent"));
+        let artifact = &output.artifacts[0];
+        assert!(artifact.code.contains("correctBody = \"component\""));
+        assert!(!artifact.code.contains("wrongBody"));
+    }
+
+    #[test]
+    fn angular_artifact_renames_sibling_references_inside_templates() {
+        let source = r#"
+            import * as core from "@angular/core";
+
+            class a {
+                static name = "child";
+                static ɵcmp = core.ɵɵdefineComponent({
+                    type: a,
+                    selectors: [["child-card"]],
+                    template(rf) {
+                        if (rf & 1) core.ɵɵelement(0, "span");
+                    },
+                });
+            }
+            class b {
+                static ɵcmp = core.ɵɵdefineComponent({
+                    type: b,
+                    selectors: [["parent-card"]],
+                    template(rf) {
+                        if (rf & 1) core.ɵɵtext(0);
+                        if (rf & 2) core.ɵɵtextInterpolate(a.name);
+                    },
+                    dependencies: [a],
+                });
+            }
+            export { a as ChildCardComponent, b as ParentCardComponent };
+        "#;
+        let output = decompile(
+            Source::new("siblings.js", source),
+            DecompileOptions::default()
+                .with_recovery(crate::RecoveryOptions::default().with_angular_components(true)),
+        )
+        .expect("renamed sibling components should decompile");
+
+        let artifact = &output.artifacts[0];
+        assert!(artifact.code.contains("imports: [ChildCardComponent]"));
+        assert!(artifact.code.contains("{{ ChildCardComponent.name }}"));
+        assert!(!artifact.code.contains("{{ a.name }}"));
     }
 
     #[test]

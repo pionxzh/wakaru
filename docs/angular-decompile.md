@@ -167,7 +167,8 @@ Ambiguous values are left unknown. Object-literal order alone is not proof.
 Root recovery uses two views of the same generic module set:
 
 1. After format-specific extraction and numeric-edge normalization, capture a
-   pre-rewrite evidence view only when Angular recovery is requested.
+   pre-rewrite evidence view and generic top-level binding origins only when
+   Angular recovery is requested.
 2. At the ordinary Stage-2 barrier, retain the generic import/export fact
    snapshot without readability-only binding renames.
 3. Run the ordinary Wakaru pipeline and finalize normal JavaScript without an
@@ -175,8 +176,10 @@ Root recovery uses two views of the same generic module set:
 4. Project proven fact transport edges into the evidence workspace, then build
    the Ivy role table and component/template IR from that evidence view.
 5. Match each proven component to a unique finalized class binding in the same
-   module. Use that readable class body when the match is unambiguous; otherwise
-   retain the evidence class.
+   module through the binding-correspondence sidecar. Use that readable class
+   body when the match is proven; otherwise retain the evidence class and its
+   evidence-side support symbols. Apply the same mapping before printing
+   template expressions so artifact-local renames cannot leave stale names.
 6. Emit artifacts independently from the JavaScript modules.
 
 This split is required because an ordinary readability rule can erase useful
