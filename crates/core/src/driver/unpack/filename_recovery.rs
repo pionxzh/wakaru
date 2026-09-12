@@ -588,7 +588,7 @@ import { internal } from "./chunk_internal.js";
             passthrough_target: Some("./a.js".into()),
             ..Default::default()
         };
-        let rename_map = HashMap::from([
+        let rename_map = HashMap::from_iter([
             ("consumer.js".to_string(), "src/Consumer.js".to_string()),
             ("a.js".to_string(), "src/Widget.js".to_string()),
         ]);

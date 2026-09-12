@@ -590,7 +590,7 @@ pub(super) fn unpack_multi_module_with_plan_and_capture(
     let mut module_facts = ModuleFactsMap::new();
     let mut prepared_modules = Vec::with_capacity(phase1.len());
     let mut prepared_parse_warnings = Vec::with_capacity(phase1.len());
-    let mut pre_rewrite_by_provisional = std::collections::HashMap::new();
+    let mut pre_rewrite_by_provisional = crate::collections::HashMap::default();
     let mut warnings = Vec::new();
     let mut rename_entries = Vec::with_capacity(phase1.len());
     for phase1_module in phase1 {
@@ -1045,7 +1045,7 @@ pub(super) fn unpack_multi_module_with_plan_and_capture(
 fn remap_captured_import_sources(
     source: &str,
     provisional_filename: &str,
-    rename_map: &std::collections::HashMap<String, String>,
+    rename_map: &crate::collections::HashMap<String, String>,
 ) -> Result<String> {
     let globals = Globals::new();
     GLOBALS.set(&globals, || {

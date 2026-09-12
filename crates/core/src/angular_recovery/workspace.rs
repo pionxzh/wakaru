@@ -1,5 +1,3 @@
-use std::collections::{HashMap, HashSet};
-
 use swc_core::atoms::Atom;
 use swc_core::common::{Spanned, SyntaxContext};
 use swc_core::ecma::ast::{
@@ -11,6 +9,7 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::analysis::binding_uses::BindingUseIndex;
+use crate::collections::{HashMap, HashSet};
 use crate::facts::{ImportKind, ModuleFacts, ModuleFactsMap};
 
 use super::syntax::{binding_key, member_prop_name, BindingKey};
@@ -36,7 +35,7 @@ pub(super) struct WorkspaceAliasIndex {
 impl WorkspaceAliasIndex {
     pub(super) fn collect(modules: &[PreparedAngularModule]) -> Self {
         let aliases = collect_esm_symbol_aliases(modules);
-        let mut adjacency = HashMap::<WorkspaceSymbol, Vec<WorkspaceSymbol>>::new();
+        let mut adjacency = HashMap::<WorkspaceSymbol, Vec<WorkspaceSymbol>>::default();
         for alias in aliases {
             adjacency
                 .entry(alias.left.clone())
@@ -46,7 +45,7 @@ impl WorkspaceAliasIndex {
         }
 
         let mut index = Self::default();
-        let mut visited = HashSet::new();
+        let mut visited = HashSet::default();
         for start in adjacency.keys() {
             if visited.contains(start) {
                 continue;
@@ -250,7 +249,7 @@ fn fact_export_symbols(
     facts: &ModuleFacts,
     bindings: &TopLevelBindingIndex,
 ) -> HashMap<Atom, WorkspaceSymbol> {
-    let mut exports = HashMap::<Atom, Option<WorkspaceSymbol>>::new();
+    let mut exports = HashMap::<Atom, Option<WorkspaceSymbol>>::default();
     for export in &facts.exports {
         let Some(local) = export
             .local
@@ -392,7 +391,7 @@ fn record_import_alias(
 }
 
 fn collect_local_exports(module: &swc_core::ecma::ast::Module) -> HashMap<String, WorkspaceSymbol> {
-    let mut exports = HashMap::new();
+    let mut exports = HashMap::default();
     for item in &module.body {
         let ModuleItem::ModuleDecl(declaration) = item else {
             continue;
@@ -549,14 +548,14 @@ pub(super) fn canonicalize_immediate_iife_namespace_aliases(
     let binding_uses = BindingUseIndex::collect(module);
     let mut namespace_mutations = NamespaceMutationCollector {
         unresolved_ctxt,
-        paths: HashMap::new(),
+        paths: HashMap::default(),
     };
     module.visit_with(&mut namespace_mutations);
 
     let mut collector = ImmediateIifeAliasCollector {
         unresolved_ctxt,
-        aliases: HashMap::new(),
-        ambiguous: HashSet::new(),
+        aliases: HashMap::default(),
+        ambiguous: HashSet::default(),
         dynamic_this_depth: 0,
     };
     module.visit_with(&mut collector);
@@ -900,7 +899,7 @@ mod tests {
     #[test]
     fn extensionless_resolution_rejects_ambiguous_module_candidates() {
         let lookup = ModuleLookup {
-            filenames: HashMap::from([
+            filenames: HashMap::from_iter([
                 ("dependency.js".to_string(), 0),
                 ("dependency.mjs".to_string(), 1),
             ]),
