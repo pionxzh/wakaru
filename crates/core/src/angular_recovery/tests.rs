@@ -9471,7 +9471,11 @@ fn rejects_control_flow_in_component_constant_factories() {
                     return [message];
                 },
                 template(rf) {
-                    if (rf & 1) core.ɵɵi18n(0, 0);
+                    if (rf & 1) {
+                        core.ɵɵelementStart(0, "p");
+                        core.ɵɵi18n(1, 0);
+                        core.ɵɵelementEnd();
+                    }
                 },
             });
         }
@@ -9487,6 +9491,106 @@ fn rejects_control_flow_in_component_constant_factories() {
         .issues
         .iter()
         .any(|issue| issue.instruction.as_deref() == Some("ɵɵi18n")));
+}
+
+#[test]
+fn decodes_only_agreeing_side_effect_free_conditional_i18n_assignments() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        class GeneratedConditionalI18nComponent {
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: GeneratedConditionalI18nComponent,
+                selectors: [["generated-conditional-i18n"]],
+                consts: () => {
+                    let message;
+                    return typeof ngI18nClosureMode < "u" && ngI18nClosureMode
+                        ? message = goog.getMsg(
+                            "Hello {$name}",
+                            { name: "world" },
+                            { original_code: { name: "{{ name }}" } }
+                        )
+                        : message = $localize`Hello ${"world"}:NAME:`,
+                        [message];
+                },
+                template(rf) {
+                    if (rf & 1) {
+                        core.ɵɵelementStart(0, "p");
+                        core.ɵɵi18n(1, 0);
+                        core.ɵɵelementEnd();
+                    }
+                },
+            });
+        }
+
+        class DisagreeingConditionalI18nComponent {
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: DisagreeingConditionalI18nComponent,
+                selectors: [["disagreeing-conditional-i18n"]],
+                consts: () => {
+                    let message;
+                    return typeof ngI18nClosureMode < "u" && ngI18nClosureMode
+                        ? message = goog.getMsg("first")
+                        : message = $localize`second`,
+                        [message];
+                },
+                template(rf) {
+                    if (rf & 1) {
+                        core.ɵɵelementStart(0, "p");
+                        core.ɵɵi18n(1, 0);
+                        core.ɵɵelementEnd();
+                    }
+                },
+            });
+        }
+
+        class EffectfulConditionalI18nComponent {
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: EffectfulConditionalI18nComponent,
+                selectors: [["effectful-conditional-i18n"]],
+                consts: () => {
+                    let message;
+                    return chooseLocale()
+                        ? message = goog.getMsg("same")
+                        : message = $localize`same`,
+                        [message];
+                },
+                template(rf) {
+                    if (rf & 1) {
+                        core.ɵɵelementStart(0, "p");
+                        core.ɵɵi18n(1, 0);
+                        core.ɵɵelementEnd();
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("conditional i18n constant factories should remain analyzable");
+    let by_selector = recovered
+        .iter()
+        .map(|component| (component.selector.as_str(), component))
+        .collect::<HashMap<_, _>>();
+
+    let generated = by_selector["generated-conditional-i18n"];
+    assert_eq!(
+        generated.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        generated.issues,
+        generated.source,
+    );
+    assert!(generated.source.contains("<p i18n>Hello world</p>"));
+
+    for selector in ["disagreeing-conditional-i18n", "effectful-conditional-i18n"] {
+        let component = by_selector[selector];
+        assert_eq!(component.completeness, AngularRecoveryCompleteness::Partial);
+        assert!(component
+            .issues
+            .iter()
+            .any(|issue| issue.instruction.as_deref() == Some("ɵɵi18n")));
+    }
 }
 
 #[test]
