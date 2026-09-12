@@ -405,11 +405,15 @@ may decode a static compiler replacement table, including the prior value in
 Angular's `message = postprocess(message, replacements)` assignment form.
 Generated constant factories are interpreted only when their complete body is
 a straight-line sequence of local declarations and assignments followed by one
-reachable return. Branches, loops, early returns, writes to outer bindings,
-async functions, and generators leave the constant table unresolved. Message
-calls are decoded only for resolver-proven global `$localize` / `goog.getMsg`,
-a semantically proven Angular postprocessor, or a stable local function whose
-complete body returns its sole parameter unchanged. Same-spelling shadowed
+reachable return. The one bounded branch form is Angular's locale-mode ternary:
+its condition must be side-effect-free, both arms must assign the same declared
+local, and both values must decode to identical text. Other branches, loops,
+early returns, writes to outer bindings, async functions, and generators leave
+the constant table unresolved. Message calls are decoded only for
+resolver-proven global `$localize` / `goog.getMsg`, a semantically proven
+Angular postprocessor, or a stable local function whose complete body returns
+its sole parameter unchanged. `goog.getMsg`'s generated `original_code`
+metadata is accepted but does not contribute text. Same-spelling shadowed
 globals and arbitrary one-argument functions are not localization evidence.
 Its one-argument Closure-specialized form is inferred only when the complete
 runtime body retains the multi-value placeholder contract: a replacement
