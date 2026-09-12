@@ -7100,14 +7100,18 @@ fn decode_conditional_branches(
         conditions: Vec<(String, bool)>,
     }
 
+    struct ConditionalExpressionContext<'a> {
+        component_contexts: &'a HashSet<BindingKey>,
+        local_references: &'a HashMap<BindingKey, String>,
+        local_contexts: &'a HashMap<BindingKey, HashMap<String, String>>,
+        artifact_binding_names: &'a HashMap<BindingKey, Atom>,
+        cm: Lrc<SourceMap>,
+    }
+
     fn collect_leaves(
         selection: &Expr,
         conditions: &mut Vec<(String, bool)>,
-        component_contexts: &HashSet<BindingKey>,
-        local_references: &HashMap<BindingKey, String>,
-        local_contexts: &HashMap<BindingKey, HashMap<String, String>>,
-        artifact_binding_names: &HashMap<BindingKey, Atom>,
-        cm: Lrc<SourceMap>,
+        context: &ConditionalExpressionContext<'_>,
         leaves: &mut Vec<Leaf>,
     ) -> Option<()> {
         let Expr::Cond(conditional) = strip_parentheses(selection) else {
@@ -7123,37 +7127,19 @@ fn decode_conditional_branches(
         };
         let condition = print_template_expression_with_aliases(
             conditional.test.as_ref(),
-            component_contexts,
-            local_references,
+            context.component_contexts,
+            context.local_references,
             &HashMap::default(),
-            local_contexts,
-            artifact_binding_names,
-            cm.clone(),
+            context.local_contexts,
+            context.artifact_binding_names,
+            context.cm.clone(),
         )
         .ok()?;
         conditions.push((condition.clone(), true));
-        collect_leaves(
-            conditional.cons.as_ref(),
-            conditions,
-            component_contexts,
-            local_references,
-            local_contexts,
-            artifact_binding_names,
-            cm.clone(),
-            leaves,
-        )?;
+        collect_leaves(conditional.cons.as_ref(), conditions, context, leaves)?;
         conditions.pop();
         conditions.push((condition, false));
-        collect_leaves(
-            conditional.alt.as_ref(),
-            conditions,
-            component_contexts,
-            local_references,
-            local_contexts,
-            artifact_binding_names,
-            cm,
-            leaves,
-        )?;
+        collect_leaves(conditional.alt.as_ref(), conditions, context, leaves)?;
         conditions.pop();
         Some(())
     }
@@ -7182,15 +7168,18 @@ fn decode_conditional_branches(
         })
     }
 
-    let mut leaves = Vec::new();
-    collect_leaves(
-        strip_parentheses(selection),
-        &mut Vec::new(),
+    let context = ConditionalExpressionContext {
         component_contexts,
         local_references,
         local_contexts,
         artifact_binding_names,
         cm,
+    };
+    let mut leaves = Vec::new();
+    collect_leaves(
+        strip_parentheses(selection),
+        &mut Vec::new(),
+        &context,
         &mut leaves,
     )?;
     let has_omitted_leaf = leaves.iter().any(|leaf| leaf.index == -1);
