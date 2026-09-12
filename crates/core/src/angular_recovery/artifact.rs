@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::VecDeque;
 
 use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
@@ -9,6 +9,7 @@ use swc_core::ecma::ast::{
 
 use super::syntax::{binding_key, BindingKey};
 use crate::analysis::binding_uses::BindingUseIndex;
+use crate::collections::{HashMap, HashSet};
 
 type SourceOrder = (usize, usize);
 
@@ -59,7 +60,7 @@ impl ArtifactSymbolTable {
                             binding,
                             SupportEntry {
                                 order: (item_index, specifier_index),
-                                references: HashSet::new(),
+                                references: HashSet::default(),
                                 kind: SupportEntryKind::Supported {
                                     item: ModuleItem::ModuleDecl(ModuleDecl::Import(filtered)),
                                     is_import: true,
@@ -86,7 +87,12 @@ impl ArtifactSymbolTable {
         reserved_names: &HashSet<Atom>,
         report_unresolved: bool,
     ) -> ArtifactSupportPlan {
-        self.recover_with_provided(roots, reserved_names, &HashSet::new(), report_unresolved)
+        self.recover_with_provided(
+            roots,
+            reserved_names,
+            &HashSet::default(),
+            report_unresolved,
+        )
     }
 
     pub(super) fn bindings(&self) -> impl Iterator<Item = &BindingKey> {
@@ -108,7 +114,7 @@ impl ArtifactSymbolTable {
             .collect::<Vec<_>>();
         roots.sort_by(|left, right| left.0.cmp(&right.0));
 
-        let mut selected = HashMap::<BindingKey, SupportUnit>::new();
+        let mut selected = HashMap::<BindingKey, SupportUnit>::default();
         for root in roots {
             let Some(units) = self.recover_root(&root, reserved_names, provided_bindings) else {
                 if report_unresolved {
@@ -141,7 +147,7 @@ impl ArtifactSymbolTable {
         provided_bindings: &HashSet<BindingKey>,
     ) -> Option<Vec<SupportUnit>> {
         let mut pending = VecDeque::from([root.clone()]);
-        let mut visited = HashSet::new();
+        let mut visited = HashSet::default();
         let mut units = Vec::new();
 
         while let Some(binding) = pending.pop_front() {
@@ -197,7 +203,7 @@ impl ArtifactSymbolTable {
                     binding_key(&class.ident),
                     SupportEntry {
                         order: (item_index, 0),
-                        references: HashSet::new(),
+                        references: HashSet::default(),
                         kind: SupportEntryKind::Unsupported,
                     },
                 );
@@ -216,7 +222,7 @@ impl ArtifactSymbolTable {
                             binding_key(&binding.id),
                             SupportEntry {
                                 order: (item_index, declarator_index),
-                                references: HashSet::new(),
+                                references: HashSet::default(),
                                 kind: SupportEntryKind::Unsupported,
                             },
                         );

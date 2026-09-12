@@ -1,5 +1,3 @@
-use std::collections::{HashMap, HashSet};
-
 use swc_core::atoms::Atom;
 use swc_core::common::{Spanned, SyntaxContext};
 use swc_core::ecma::ast::{
@@ -12,6 +10,7 @@ use swc_core::ecma::visit::{Visit, VisitWith};
 use super::syntax::{binding_key, member_prop_name, wtf8_to_string, BindingKey};
 use super::workspace::{WorkspaceSymbol, WorkspaceSymbolAlias};
 use super::PreparedAngularModule;
+use crate::collections::{HashMap, HashSet};
 use crate::facts::ModuleFactsMap;
 
 mod structural;
@@ -618,7 +617,7 @@ impl IvyRoleTable {
     }
 
     fn install_aliases(&mut self, aliases: &[WorkspaceSymbolAlias]) {
-        let mut adjacency: HashMap<SymbolIdentity, Vec<SymbolIdentity>> = HashMap::new();
+        let mut adjacency: HashMap<SymbolIdentity, Vec<SymbolIdentity>> = HashMap::default();
         for alias in aliases {
             let left = workspace_symbol_identity(&alias.left);
             let right = workspace_symbol_identity(&alias.right);
@@ -629,7 +628,7 @@ impl IvyRoleTable {
             adjacency.entry(right).or_default().push(left);
         }
 
-        let mut visited = HashSet::new();
+        let mut visited = HashSet::default();
         for start in adjacency.keys() {
             if visited.contains(start) {
                 continue;

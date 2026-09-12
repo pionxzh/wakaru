@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::BTreeSet;
 
 use anyhow::{anyhow, Result};
 use swc_core::atoms::Atom;
@@ -18,6 +18,7 @@ use super::roles::{AngularClassApi, AngularQueryOwner, IvyInstruction, IvyRoleTa
 use super::syntax::{binding_key, member_prop_name, prop_name, BindingKey};
 use super::template::{RecoveredListenerMethod, RecoveredTemplate};
 use super::ComponentQueryMetadata;
+use crate::collections::{HashMap, HashSet};
 use crate::rules::rename_utils::{rename_bindings, BindingRename};
 
 pub(super) struct ComponentEmitInput<'a> {
@@ -325,8 +326,8 @@ fn query_rewrite_plans(
         .iter()
         .map(|query| (query.field.clone(), query))
         .collect::<HashMap<_, _>>();
-    let mut plans = HashMap::new();
-    let mut ambiguous = HashSet::new();
+    let mut plans = HashMap::default();
+    let mut ambiguous = HashSet::default();
 
     let mut record = |field: Atom, initializer: &CallExpr| {
         let Some(query) = metadata.get(&field) else {
@@ -518,7 +519,7 @@ impl ClassApiRewriter<'_> {
         class: &mut Class,
         plans: &HashMap<Atom, QueryRewritePlan>,
     ) -> HashSet<BindingKey> {
-        let mut field_counts = HashMap::<Atom, usize>::new();
+        let mut field_counts = HashMap::<Atom, usize>::default();
         for member in &class.body {
             match member {
                 ClassMember::ClassProp(property) if !property.is_static => {
@@ -540,7 +541,7 @@ impl ClassApiRewriter<'_> {
             }
         }
 
-        let mut references = HashSet::new();
+        let mut references = HashSet::default();
         for member in &mut class.body {
             match member {
                 ClassMember::ClassProp(property) if !property.is_static => {
@@ -849,8 +850,8 @@ pub(super) fn print_template_expression(
         expression,
         component_contexts,
         local_references,
-        &HashMap::new(),
-        &HashMap::new(),
+        &HashMap::default(),
+        &HashMap::default(),
         cm,
     )
 }
@@ -867,7 +868,7 @@ pub(super) fn print_template_expression_with_aliases(
     if !expression_aliases.is_empty() {
         expression.visit_mut_with(&mut TemplateExpressionAliasResolver {
             aliases: expression_aliases,
-            active: HashSet::new(),
+            active: HashSet::default(),
         });
     }
     if !component_contexts.is_empty() || !local_references.is_empty() || !local_contexts.is_empty()
