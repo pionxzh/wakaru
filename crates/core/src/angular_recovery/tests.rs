@@ -8163,6 +8163,43 @@ fn recovers_artifact_imports_local_helpers_and_compiled_dependencies() {
 }
 
 #[test]
+fn refuses_reassigned_artifact_support_bindings() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        let sharedLabel = "stale initializer";
+        sharedLabel = "current value";
+        function decorate(value) {
+            return value;
+        }
+        decorate = replacement;
+
+        class ReassignedSupportComponent {
+            title = decorate(sharedLabel);
+
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: ReassignedSupportComponent,
+                selectors: [["reassigned-support"]],
+                template(rf) {
+                    if (rf & 1) core.ɵɵelement(0, "p");
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("reassigned support bindings should remain analyzable");
+    let component = &recovered[0];
+
+    assert!(component
+        .source
+        .contains("// Unresolved artifact-local symbols: decorate, sharedLabel"));
+    assert!(!component.source.contains("stale initializer"));
+    assert!(!component.source.contains("function decorate"));
+    assert!(component.source.contains("title = decorate(sharedLabel)"));
+}
+
+#[test]
 fn groups_sibling_components_and_relationships_into_one_module_artifact() {
     let source = r#"
         import * as core from "@angular/core";
