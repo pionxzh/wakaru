@@ -260,24 +260,87 @@ pub(super) fn clean_component_class(
 ) -> Box<Class> {
     let mut class = Box::new(class.clone());
     class.decorators.clear();
-    class.body.retain(|member| match member {
-        ClassMember::ClassProp(property) if property.is_static => {
-            let canonical_ivy_field =
-                prop_name(&property.key).is_some_and(|name| name.starts_with('ɵ'));
-            let assigned_component_field = definition_field
-                .is_some_and(|field| prop_name(&property.key).as_deref() == Some(field.as_ref()));
-            let component_initializer = property.value.as_deref().is_some_and(|value| {
-                let Expr::Call(call) = value else {
-                    return false;
-                };
-                roles.instruction_for_callee(&call.callee, unresolved_ctxt)
-                    == Some(IvyInstruction::DefineComponent)
-            });
-            !canonical_ivy_field && !assigned_component_field && !component_initializer
-        }
-        _ => true,
-    });
+    class.body = std::mem::take(&mut class.body)
+        .into_iter()
+        .filter_map(|mut member| match &mut member {
+            ClassMember::ClassProp(property)
+                if property.is_static
+                    && is_ivy_definition_field(
+                        prop_name(&property.key).as_deref(),
+                        property.value.as_deref(),
+                        definition_field,
+                        roles,
+                        unresolved_ctxt,
+                    ) =>
+            {
+                None
+            }
+            ClassMember::StaticBlock(block) => {
+                block.body.stmts.retain(|statement| {
+                    !is_static_block_ivy_definition(
+                        statement,
+                        definition_field,
+                        roles,
+                        unresolved_ctxt,
+                    )
+                });
+                (!block.body.stmts.is_empty()).then_some(member)
+            }
+            _ => Some(member),
+        })
+        .collect();
     class
+}
+
+fn is_ivy_definition_field(
+    field: Option<&str>,
+    value: Option<&Expr>,
+    definition_field: Option<&Atom>,
+    roles: &IvyRoleTable,
+    unresolved_ctxt: SyntaxContext,
+) -> bool {
+    let canonical_ivy_field = field.is_some_and(|field| field.starts_with('ɵ'));
+    let assigned_component_field =
+        definition_field.is_some_and(|definition| field == Some(definition.as_ref()));
+    let component_initializer = value.is_some_and(|value| {
+        let Expr::Call(call) = value else {
+            return false;
+        };
+        roles.instruction_for_callee(&call.callee, unresolved_ctxt)
+            == Some(IvyInstruction::DefineComponent)
+    });
+    canonical_ivy_field || assigned_component_field || component_initializer
+}
+
+fn is_static_block_ivy_definition(
+    statement: &Stmt,
+    definition_field: Option<&Atom>,
+    roles: &IvyRoleTable,
+    unresolved_ctxt: SyntaxContext,
+) -> bool {
+    let Stmt::Expr(statement) = statement else {
+        return false;
+    };
+    let Expr::Assign(assignment) = statement.expr.as_ref() else {
+        return false;
+    };
+    if assignment.op != swc_core::ecma::ast::AssignOp::Assign {
+        return false;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Member(target)) = &assignment.left else {
+        return false;
+    };
+    if !matches!(target.obj.as_ref(), Expr::This(_)) {
+        return false;
+    }
+    let field = member_prop_name(&target.prop);
+    is_ivy_definition_field(
+        field.as_deref(),
+        Some(assignment.right.as_ref()),
+        definition_field,
+        roles,
+        unresolved_ctxt,
+    )
 }
 
 pub(super) fn recover_component_class_apis(

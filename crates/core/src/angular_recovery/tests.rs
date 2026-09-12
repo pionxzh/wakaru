@@ -8200,6 +8200,51 @@ fn refuses_reassigned_artifact_support_bindings() {
 }
 
 #[test]
+fn removes_ivy_definitions_from_class_static_blocks() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        class StaticBlockComponent {
+            static {
+                this.ɵfac = function StaticBlockComponent_Factory(type) {
+                    return new (type || StaticBlockComponent)();
+                };
+                this.compiled = core.ɵɵdefineComponent({
+                    type: StaticBlockComponent,
+                    selectors: [["static-block"]],
+                    template(rf) {
+                        if (rf & 1) core.ɵɵelement(0, "p");
+                    },
+                });
+            }
+
+            static {
+                this.keep = "preserved";
+            }
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("static-block component definitions should recover");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete
+    );
+    assert!(!component.source.contains("ɵfac"));
+    assert!(!component.source.contains("this.compiled"));
+    assert!(component.source.contains(r#"this.keep = "preserved""#));
+    assert_eq!(
+        component.source.matches("static{").count(),
+        1,
+        "{}",
+        component.source
+    );
+    assert_typescript_parses(&component.source);
+}
+
+#[test]
 fn groups_sibling_components_and_relationships_into_one_module_artifact() {
     let source = r#"
         import * as core from "@angular/core";
