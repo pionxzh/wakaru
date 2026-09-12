@@ -9289,6 +9289,125 @@ fn selects_a_unique_direct_expression_i18n_constant_factory() {
 }
 
 #[test]
+fn does_not_decode_arbitrary_constant_factory_calls_as_i18n() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        function rewrite(message) {
+            return "different at runtime";
+        }
+
+        class ArbitraryLocalizerComponent {
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: ArbitraryLocalizerComponent,
+                selectors: [["arbitrary-localizer"]],
+                consts: () => [rewrite("invented message")],
+                template(rf) {
+                    if (rf & 1) {
+                        core.ɵɵelementStart(0, "p");
+                        core.ɵɵi18n(1, 0);
+                        core.ɵɵelementEnd();
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("arbitrary localizer fixture should parse");
+    let component = &recovered[0];
+
+    assert_eq!(component.completeness, AngularRecoveryCompleteness::Partial);
+    assert!(!component.source.contains("invented message"));
+    assert!(component
+        .issues
+        .iter()
+        .any(|issue| issue.instruction.as_deref() == Some("ɵɵi18n")));
+}
+
+#[test]
+fn does_not_trust_shadowed_localization_globals() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        function $localize(message) {
+            return message;
+        }
+        const goog = {
+            getMsg(message) {
+                return message;
+            },
+        };
+
+        class ShadowedLocalizeComponent {
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: ShadowedLocalizeComponent,
+                selectors: [["shadowed-localize"]],
+                consts: () => [$localize`invented tagged message`],
+                template(rf) {
+                    if (rf & 1) core.ɵɵi18n(0, 0);
+                },
+            });
+        }
+
+        class ShadowedGoogComponent {
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: ShadowedGoogComponent,
+                selectors: [["shadowed-goog"]],
+                consts: () => [goog.getMsg("invented goog message")],
+                template(rf) {
+                    if (rf & 1) core.ɵɵi18n(0, 0);
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("shadowed localization globals should parse");
+
+    assert_eq!(recovered.len(), 2);
+    for component in &recovered {
+        assert_eq!(component.completeness, AngularRecoveryCompleteness::Partial);
+        assert!(!component.source.contains("invented"));
+    }
+}
+
+#[test]
+fn rejects_control_flow_in_component_constant_factories() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        class ConditionalConstantsComponent {
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: ConditionalConstantsComponent,
+                selectors: [["conditional-constants"]],
+                consts: () => {
+                    let message = "first branch";
+                    if (globalThis.chooseSecond) {
+                        message = "invented second branch";
+                    }
+                    return [message];
+                },
+                template(rf) {
+                    if (rf & 1) core.ɵɵi18n(0, 0);
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("conditional constant factory should remain analyzable");
+    let component = &recovered[0];
+
+    assert_eq!(component.completeness, AngularRecoveryCompleteness::Partial);
+    assert!(!component.source.contains("invented second branch"));
+    assert!(component
+        .issues
+        .iter()
+        .any(|issue| issue.instruction.as_deref() == Some("ɵɵi18n")));
+}
+
+#[test]
 fn resolves_closure_assigned_component_and_parent_context_aliases() {
     let source = r#"
         import * as core from "@angular/core";
