@@ -346,9 +346,12 @@ not make the driver assign Angular, Vue, or other framework meaning; it only
 preserves the compiler shapes that a root artifact analyzer requested. The
 normal JavaScript output continues through the same rule pipeline. For modules
 whose evidence view survives, root capture also exposes a filtered, final-name
-snapshot of the generic Stage-2 transport facts. Artifact analyzers can derive
-evidence-side symbol equivalences from that snapshot without placing framework
-roles in the driver or fact system.
+snapshot of the generic Stage-2 transport facts and a binding-correspondence
+sidecar. The latter relates top-level evidence and readable names only when the
+same non-synthetic declaration span survives the pipeline uniquely; replaced,
+removed, or ambiguous declarations have no edge. Artifact analyzers can derive
+cross-module symbol equivalences and cross-view names from those generic proofs
+without placing framework roles in the driver or fact system.
 
 ## File structure
 

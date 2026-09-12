@@ -738,6 +738,7 @@ pub(super) fn handler_expression(
     expression: &Expr,
     component_contexts: &HashSet<BindingKey>,
     local_references: &HashMap<BindingKey, String>,
+    artifact_binding_names: &HashMap<BindingKey, Atom>,
     cm: Lrc<SourceMap>,
 ) -> Result<String> {
     let mut expression = expression.clone();
@@ -746,28 +747,62 @@ pub(super) fn handler_expression(
         Expr::Fn(function) => {
             let body = function.function.body.as_ref();
             if let Some(expression) = body.and_then(single_return_expression) {
-                print_template_expression(expression, component_contexts, local_references, cm)
+                print_template_expression_with_binding_names(
+                    expression,
+                    component_contexts,
+                    local_references,
+                    artifact_binding_names,
+                    cm,
+                )
             } else if let Some(expressions) = body.and_then(handler_effect_expressions) {
-                print_handler_effects(&expressions, component_contexts, local_references, cm)
+                print_handler_effects(
+                    &expressions,
+                    component_contexts,
+                    local_references,
+                    artifact_binding_names,
+                    cm,
+                )
             } else {
                 print_expression(&expression, cm)
             }
         }
         Expr::Arrow(arrow) => match arrow.body.as_ref() {
-            ArrowFunctionBody::Expr(expression) => {
-                print_template_expression(expression, component_contexts, local_references, cm)
-            }
+            ArrowFunctionBody::Expr(expression) => print_template_expression_with_binding_names(
+                expression,
+                component_contexts,
+                local_references,
+                artifact_binding_names,
+                cm,
+            ),
             ArrowFunctionBody::FunctionBody(block) => {
                 if let Some(expression) = single_return_expression(block) {
-                    print_template_expression(expression, component_contexts, local_references, cm)
+                    print_template_expression_with_binding_names(
+                        expression,
+                        component_contexts,
+                        local_references,
+                        artifact_binding_names,
+                        cm,
+                    )
                 } else if let Some(expressions) = handler_effect_expressions(block) {
-                    print_handler_effects(&expressions, component_contexts, local_references, cm)
+                    print_handler_effects(
+                        &expressions,
+                        component_contexts,
+                        local_references,
+                        artifact_binding_names,
+                        cm,
+                    )
                 } else {
                     print_expression(&expression, cm)
                 }
             }
         },
-        _ => print_template_expression(&expression, component_contexts, local_references, cm),
+        _ => print_template_expression_with_binding_names(
+            &expression,
+            component_contexts,
+            local_references,
+            artifact_binding_names,
+            cm,
+        ),
     }
 }
 
@@ -829,21 +864,29 @@ fn print_handler_effects(
     expressions: &[&Expr],
     component_contexts: &HashSet<BindingKey>,
     local_references: &HashMap<BindingKey, String>,
+    artifact_binding_names: &HashMap<BindingKey, Atom>,
     cm: Lrc<SourceMap>,
 ) -> Result<String> {
     expressions
         .iter()
         .map(|expression| {
-            print_template_expression(expression, component_contexts, local_references, cm.clone())
+            print_template_expression_with_binding_names(
+                expression,
+                component_contexts,
+                local_references,
+                artifact_binding_names,
+                cm.clone(),
+            )
         })
         .collect::<Result<Vec<_>>>()
         .map(|expressions| expressions.join("; "))
 }
 
-pub(super) fn print_template_expression(
+fn print_template_expression_with_binding_names(
     expression: &Expr,
     component_contexts: &HashSet<BindingKey>,
     local_references: &HashMap<BindingKey, String>,
+    artifact_binding_names: &HashMap<BindingKey, Atom>,
     cm: Lrc<SourceMap>,
 ) -> Result<String> {
     print_template_expression_with_aliases(
@@ -852,6 +895,7 @@ pub(super) fn print_template_expression(
         local_references,
         &HashMap::default(),
         &HashMap::default(),
+        artifact_binding_names,
         cm,
     )
 }
@@ -862,6 +906,7 @@ pub(super) fn print_template_expression_with_aliases(
     local_references: &HashMap<BindingKey, String>,
     expression_aliases: &HashMap<BindingKey, Box<Expr>>,
     local_contexts: &HashMap<BindingKey, HashMap<String, String>>,
+    artifact_binding_names: &HashMap<BindingKey, Atom>,
     cm: Lrc<SourceMap>,
 ) -> Result<String> {
     let mut expression = expression.clone();
@@ -870,6 +915,16 @@ pub(super) fn print_template_expression_with_aliases(
             aliases: expression_aliases,
             active: HashSet::default(),
         });
+    }
+    if !artifact_binding_names.is_empty() {
+        let renames = artifact_binding_names
+            .iter()
+            .map(|(old, new)| BindingRename {
+                old: old.clone(),
+                new: new.clone(),
+            })
+            .collect::<Vec<_>>();
+        rename_bindings(&mut expression, &renames);
     }
     if !component_contexts.is_empty() || !local_references.is_empty() || !local_contexts.is_empty()
     {

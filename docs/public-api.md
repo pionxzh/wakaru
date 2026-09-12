@@ -106,7 +106,9 @@ indices, following `InputReport`, and guarantee unique normalized filenames.
 The current experimental Angular path analyzes two aligned, owned views of one
 generic module workspace. A pre-rewrite view preserves compiler evidence before
 readability transforms can erase it; the finalized view supplies readable class
-bodies. This preserves cross-module role evidence and avoids any
+bodies only through a proven binding-correspondence sidecar. A missing or
+ambiguous correspondence retains the evidence class rather than matching by
+spelling. This preserves cross-module role evidence and avoids any
 bundler-specific analyzer route. The two views are currently materialized and
 parsed only when recovery is enabled. Moving them onto retained prepared ASTs
 with stable origin identities is a performance optimization and must not

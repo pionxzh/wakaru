@@ -221,15 +221,17 @@ struct TemplateRecoveryEnvironment<'a> {
     roles: &'a IvyRoleTable,
     template_functions: &'a TemplateFunctionTable,
     implicit_view_context_properties: &'a HashSet<String>,
+    artifact_binding_names: &'a HashMap<BindingKey, Atom>,
     unresolved_ctxt: SyntaxContext,
     source_start_pos: u32,
     cm: Lrc<SourceMap>,
 }
 
-pub(super) struct TemplateRecoveryContext {
+pub(super) struct TemplateRecoveryContext<'a> {
     pub(super) unresolved_ctxt: SyntaxContext,
     pub(super) source_start_pos: u32,
     pub(super) cm: Lrc<SourceMap>,
+    pub(super) artifact_binding_names: &'a HashMap<BindingKey, Atom>,
 }
 
 #[derive(Clone)]
@@ -725,6 +727,7 @@ pub(super) fn recover_template(
         roles,
         template_functions,
         implicit_view_context_properties: &implicit_view_context_properties,
+        artifact_binding_names: context.artifact_binding_names,
         unresolved_ctxt: context.unresolved_ctxt,
         source_start_pos: context.source_start_pos,
         cm: context.cm,
@@ -4056,6 +4059,7 @@ fn recover_inline_view_listener_handler(
                 &local_names,
                 &expression_aliases,
                 &local_context_bindings,
+                environment.artifact_binding_names,
                 environment.cm.clone(),
             )
             .map_err(|error| error.to_string())?,
@@ -4069,6 +4073,7 @@ fn recover_inline_view_listener_handler(
                 &local_names,
                 &expression_aliases,
                 &local_context_bindings,
+                environment.artifact_binding_names,
                 environment.cm.clone(),
             )
             .map_err(|error| error.to_string())?,
@@ -4556,6 +4561,7 @@ fn recover_restored_two_way_listener_target(
         &local_names,
         &HashMap::default(),
         &local_context_bindings,
+        environment.artifact_binding_names,
         environment.cm.clone(),
     )
     .map_err(|error| error.to_string())?;
@@ -5103,6 +5109,7 @@ fn apply_create_instruction(
                     value.as_ref(),
                     &program.component_contexts,
                     &program.local_reference_names,
+                    environment.artifact_binding_names,
                     environment.cm.clone(),
                 ) else {
                     record_malformed_instruction(
@@ -5149,6 +5156,7 @@ fn apply_create_instruction(
                 handler.as_ref(),
                 &program.component_contexts,
                 &program.local_reference_names,
+                environment.artifact_binding_names,
                 environment.cm.clone(),
             ) else {
                 record_malformed_instruction(
@@ -5354,6 +5362,7 @@ fn apply_create_instruction(
                         handler.as_ref(),
                         &program.component_contexts,
                         &program.local_reference_names,
+                        environment.artifact_binding_names,
                         environment.cm.clone(),
                     ) else {
                         record_malformed_instruction(
@@ -6162,6 +6171,7 @@ fn print_repeater_track_body(
         &local_names,
         &HashMap::default(),
         &program.local_context_bindings,
+        environment.artifact_binding_names,
         environment.cm.clone(),
     )
     .map_err(|error| error.to_string())?;
@@ -6810,7 +6820,7 @@ fn apply_update_instruction(
             program.pending_i18n_expressions.clear();
         }
         IvyInstruction::Conditional => {
-            if !apply_conditional_instruction(call, tree, environment.cm.clone(), program) {
+            if !apply_conditional_instruction(call, tree, environment, program) {
                 return Ok(());
             }
         }
@@ -6908,7 +6918,7 @@ fn merge_template_program(parent: &mut TemplateProgram, child: TemplateProgram) 
 fn apply_conditional_instruction(
     call: &InstructionCall,
     tree: &mut TemplateTree,
-    cm: Lrc<SourceMap>,
+    environment: &TemplateRecoveryEnvironment<'_>,
     program: &mut TemplateProgram,
 ) -> bool {
     if !matches!(call.args.len(), 1 | 2) {
@@ -6938,7 +6948,8 @@ fn apply_conditional_instruction(
         &program.component_contexts,
         &program.local_reference_names,
         &program.local_context_bindings,
-        cm,
+        environment.artifact_binding_names,
+        environment.cm.clone(),
     ) else {
         record_malformed_instruction(
             call,
@@ -7029,6 +7040,7 @@ fn decode_conditional_branches(
     component_contexts: &HashSet<BindingKey>,
     local_references: &HashMap<BindingKey, String>,
     local_contexts: &HashMap<BindingKey, HashMap<String, String>>,
+    artifact_binding_names: &HashMap<BindingKey, Atom>,
     cm: Lrc<SourceMap>,
 ) -> Option<Vec<(usize, ConditionalBranch)>> {
     struct Leaf {
@@ -7042,6 +7054,7 @@ fn decode_conditional_branches(
         component_contexts: &HashSet<BindingKey>,
         local_references: &HashMap<BindingKey, String>,
         local_contexts: &HashMap<BindingKey, HashMap<String, String>>,
+        artifact_binding_names: &HashMap<BindingKey, Atom>,
         cm: Lrc<SourceMap>,
         leaves: &mut Vec<Leaf>,
     ) -> Option<()> {
@@ -7062,6 +7075,7 @@ fn decode_conditional_branches(
             local_references,
             &HashMap::default(),
             local_contexts,
+            artifact_binding_names,
             cm.clone(),
         )
         .ok()?;
@@ -7072,6 +7086,7 @@ fn decode_conditional_branches(
             component_contexts,
             local_references,
             local_contexts,
+            artifact_binding_names,
             cm.clone(),
             leaves,
         )?;
@@ -7083,6 +7098,7 @@ fn decode_conditional_branches(
             component_contexts,
             local_references,
             local_contexts,
+            artifact_binding_names,
             cm,
             leaves,
         )?;
@@ -7121,6 +7137,7 @@ fn decode_conditional_branches(
         component_contexts,
         local_references,
         local_contexts,
+        artifact_binding_names,
         cm,
         &mut leaves,
     )?;
@@ -7571,6 +7588,7 @@ fn recover_template_expression(
         &program.local_reference_names,
         &HashMap::default(),
         &program.local_context_bindings,
+        environment.artifact_binding_names,
         environment.cm.clone(),
     )?;
     program

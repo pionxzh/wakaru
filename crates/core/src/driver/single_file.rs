@@ -3,6 +3,7 @@ use swc_core::common::{sync::Lrc, Mark, SourceMap, GLOBALS};
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::VisitMutWith;
 
+use super::binding_correspondence::TopLevelBindingSnapshot;
 use super::diagnostics::{collect_input_parse_warnings, collect_output_diagnostics};
 use super::error::DriverErrorKind;
 use super::io::{
@@ -49,6 +50,7 @@ pub fn decompile_owned(
             let _enter = span.enter();
             module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
         }
+        let binding_snapshot = TopLevelBindingSnapshot::collect(&module);
 
         {
             let span = tracing::info_span!("rules");
@@ -77,6 +79,7 @@ pub fn decompile_owned(
             crate::rules::strip_redundant_sentry_source_file(&mut module, &options.filename);
         }
         strip_redundant_module_use_strict(&mut module, &options.filename, true);
+        let binding_correspondences = binding_snapshot.correspondences(&module);
 
         let mut warnings = collect_input_parse_warnings(&parsed.recoverable_errors);
 
@@ -112,6 +115,7 @@ pub fn decompile_owned(
             code,
             warnings,
             source_map,
+            binding_correspondences,
         })
     });
 
