@@ -51,6 +51,12 @@ export class DemoCardComponent {
 "#;
 
 #[test]
+fn internal_hash_tables_use_the_core_aliases() {
+    assert!(std::any::type_name::<HashMap<u8, u8>>().contains("FxBuildHasher"));
+    assert!(std::any::type_name::<HashSet<u8>>().contains("FxBuildHasher"));
+}
+
+#[test]
 fn recovers_production_component_as_inline_template_typescript() {
     assert!(!PRODUCTION_COMPONENT.contains("ɵsetClassMetadata"));
     assert!(!PRODUCTION_COMPONENT.contains("template: `"));

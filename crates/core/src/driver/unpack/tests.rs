@@ -198,7 +198,7 @@ fn per_input_scope_policies_preserve_public_path_planning() {
             .iter()
             .map(|module| module.filename.as_str())
             .collect::<HashSet<_>>(),
-        HashSet::from(["src/consumer.js", "src/value.js"])
+        HashSet::from_iter(["src/consumer.js", "src/value.js"])
     );
 }
 
