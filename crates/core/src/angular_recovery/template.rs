@@ -3,9 +3,9 @@ use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, SourceMap, Span, Spanned, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BinaryOp, BindingIdent, CallExpr,
-    Callee, Decl, Expr, ExprOrSpread, ExprStmt, FnDecl, Function, FunctionBody, Ident, Lit,
-    MemberExpr, MemberProp, Module, ModuleItem, Param, Pat, ReturnStmt, SimpleAssignTarget, Stmt,
-    ThisExpr, UnaryOp, VarDeclarator,
+    Callee, CondExpr, Decl, Expr, ExprOrSpread, ExprStmt, FnDecl, Function, FunctionBody, Ident,
+    Lit, MemberExpr, MemberProp, Module, ModuleItem, Param, Pat, ReturnStmt, SimpleAssignTarget,
+    Stmt, ThisExpr, UnaryOp, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -8172,6 +8172,27 @@ impl ComponentConstantFactoryEvaluator {
                 }
                 Some(())
             }
+            Expr::Cond(conditional)
+                if is_side_effect_free_constant_condition(conditional.test.as_ref()) =>
+            {
+                let (consequent_key, consequent) =
+                    constant_factory_assignment(conditional.cons.as_ref(), &self.declared)?;
+                let (alternate_key, alternate) =
+                    constant_factory_assignment(conditional.alt.as_ref(), &self.declared)?;
+                if consequent_key != alternate_key {
+                    return None;
+                }
+                let value = Box::new(Expr::Cond(CondExpr {
+                    span: conditional.span,
+                    test: conditional.test.clone(),
+                    cons: consequent.clone(),
+                    alt: alternate.clone(),
+                }));
+                if let Some(previous) = self.values.insert(consequent_key.clone(), value) {
+                    self.previous_values.insert(consequent_key, previous);
+                }
+                Some(())
+            }
             _ => None,
         }
     }
@@ -8186,6 +8207,69 @@ impl ComponentConstantFactoryEvaluator {
             return self.return_value(returned.as_ref());
         }
         Some(Box::new(expression.clone()))
+    }
+}
+
+fn constant_factory_assignment<'a>(
+    expression: &'a Expr,
+    declared: &HashSet<BindingKey>,
+) -> Option<(BindingKey, &'a Box<Expr>)> {
+    let Expr::Assign(assignment) = strip_parentheses(expression) else {
+        return None;
+    };
+    if assignment.op != AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) = &assignment.left else {
+        return None;
+    };
+    let key = binding_key(&binding.id);
+    declared.contains(&key).then_some((key, &assignment.right))
+}
+
+fn is_side_effect_free_constant_condition(expression: &Expr) -> bool {
+    match strip_parentheses(expression) {
+        Expr::Ident(_) | Expr::Lit(_) => true,
+        Expr::Unary(unary)
+            if matches!(unary.op, UnaryOp::Bang | UnaryOp::TypeOf)
+                && is_side_effect_free_constant_condition(unary.arg.as_ref()) =>
+        {
+            true
+        }
+        Expr::Bin(binary)
+            if matches!(binary.op, BinaryOp::LogicalAnd | BinaryOp::LogicalOr)
+                && is_side_effect_free_constant_condition(binary.left.as_ref())
+                && is_side_effect_free_constant_condition(binary.right.as_ref()) =>
+        {
+            true
+        }
+        Expr::Bin(binary)
+            if matches!(binary.op, BinaryOp::EqEqEq | BinaryOp::NotEqEq)
+                && is_side_effect_free_constant_condition(binary.left.as_ref())
+                && is_side_effect_free_constant_condition(binary.right.as_ref()) =>
+        {
+            true
+        }
+        Expr::Bin(binary)
+            if matches!(
+                binary.op,
+                BinaryOp::Lt | BinaryOp::LtEq | BinaryOp::Gt | BinaryOp::GtEq
+            ) && is_primitive_constant_condition_operand(binary.left.as_ref())
+                && is_primitive_constant_condition_operand(binary.right.as_ref()) =>
+        {
+            true
+        }
+        _ => false,
+    }
+}
+
+fn is_primitive_constant_condition_operand(expression: &Expr) -> bool {
+    match strip_parentheses(expression) {
+        Expr::Lit(_) => true,
+        Expr::Unary(unary) if unary.op == UnaryOp::TypeOf => {
+            matches!(strip_parentheses(unary.arg.as_ref()), Expr::Ident(_))
+        }
+        _ => false,
     }
 }
 
@@ -8241,6 +8325,13 @@ fn decode_i18n_message_expression(
         Expr::Seq(sequence) => {
             decode_i18n_message_expression(sequence.exprs.last()?.as_ref(), environment, resolving)
         }
+        Expr::Cond(conditional) => {
+            let consequent =
+                decode_i18n_message_expression(conditional.cons.as_ref(), environment, resolving)?;
+            let alternate =
+                decode_i18n_message_expression(conditional.alt.as_ref(), environment, resolving)?;
+            (consequent == alternate).then_some(consequent)
+        }
         Expr::Bin(binary) if binary.op == BinaryOp::Add => {
             let mut message =
                 decode_i18n_message_expression(binary.left.as_ref(), environment, resolving)?;
@@ -8262,7 +8353,7 @@ fn decode_i18n_message_expression(
             decode_localized_template(tagged.tpl.as_ref(), environment, resolving)
         }
         Expr::Call(call) if is_goog_get_msg(call, environment.unresolved_ctxt) => {
-            decode_localization_call(call, environment, resolving)
+            decode_goog_get_msg_call(call, environment, resolving)
         }
         Expr::Call(call) if is_i18n_postprocess_call(call, environment) => {
             decode_i18n_postprocess_call(call, environment, resolving)
@@ -8272,6 +8363,47 @@ fn decode_i18n_message_expression(
         }
         _ => None,
     }
+}
+
+fn decode_goog_get_msg_call(
+    call: &CallExpr,
+    environment: &I18nMessageDecodeEnvironment<'_>,
+    resolving: &mut HashSet<BindingKey>,
+) -> Option<String> {
+    match call.args.as_slice() {
+        [_] | [_, _] => decode_localization_call(call, environment, resolving),
+        [_, _, metadata] if is_angular_original_code_metadata(metadata) => {
+            let mut call = call.clone();
+            call.args.pop();
+            decode_localization_call(&call, environment, resolving)
+        }
+        _ => None,
+    }
+}
+
+fn is_angular_original_code_metadata(argument: &ExprOrSpread) -> bool {
+    if argument.spread.is_some() {
+        return false;
+    }
+    let Expr::Object(metadata) = strip_parentheses(argument.expr.as_ref()) else {
+        return false;
+    };
+    let [swc_core::ecma::ast::PropOrSpread::Prop(property)] = metadata.props.as_slice() else {
+        return false;
+    };
+    let swc_core::ecma::ast::Prop::KeyValue(property) = property.as_ref() else {
+        return false;
+    };
+    prop_name(&property.key).as_deref() == Some("original_code")
+        && matches!(
+            strip_parentheses(property.value.as_ref()),
+            Expr::Object(original_code)
+                if original_code.props.iter().all(|property| matches!(
+                    property,
+                    swc_core::ecma::ast::PropOrSpread::Prop(property)
+                        if matches!(property.as_ref(), swc_core::ecma::ast::Prop::KeyValue(_))
+                ))
+        )
 }
 
 fn decode_localized_template(
