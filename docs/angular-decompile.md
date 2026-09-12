@@ -142,14 +142,17 @@ side. This is the same generic workspace operation regardless of how a module
 was produced.
 
 Bundled inputs add one earlier form of the same transport proof. Root unpacking
-retains its generic Stage-2 import/export facts alongside the pre-rewrite view.
+retains its generic Stage-2 import/export facts and stable whole-value
+CommonJS-import facts alongside the pre-rewrite view.
 The Angular workspace adapts those facts into evidence-side symbol edges. If a
 runtime fact records `exported: VBU, local: Ea` and a consumer fact records the
-namespace-like binding `core`, the workspace can establish `core.VBU ≡ Ea`
+whole-value binding `core`, the workspace can establish `core.VBU ≡ Ea`
 even though final JavaScript has already become a named ESM import. Structural
 analysis may then prove that `Ea` is `DefineComponent`. Neither the unpacker nor
 the fact map stores that Ivy conclusion, and ambiguous or missing local
-bindings produce no edge.
+bindings produce no edge. An authored ESM default import maps only to the
+provider's default export; similarly named provider exports do not become
+properties of that default value.
 
 Descriptor property names may also be renamed. Recovery therefore prefers a
 known canonical key when available, then classifies a value from structural

@@ -236,6 +236,9 @@ pub(super) fn rewrite_module_fact_sources(
     for import in &mut facts.imports {
         rewrite(&mut import.source);
     }
+    for import in &mut facts.commonjs_whole_value_imports {
+        rewrite(&mut import.source);
+    }
     if let Some(default_object) = &mut facts.commonjs_default_object {
         for source in &mut default_object.composition_sources {
             rewrite(source);
@@ -599,6 +602,10 @@ import { internal } from "./chunk_internal.js";
                 source: "./a.js".into(),
                 kind: crate::facts::ImportKind::Namespace,
             }],
+            commonjs_whole_value_imports: vec![crate::facts::CommonJsWholeValueImportFact {
+                local: "requiredDependency".into(),
+                source: "./a.js".into(),
+            }],
             commonjs_default_object: Some(crate::facts::CommonJsDefaultObjectFact {
                 declared_properties: Vec::new(),
                 default_assignment_is_only_commonjs_use: false,
@@ -626,6 +633,10 @@ import { internal } from "./chunk_internal.js";
         rewrite_module_fact_sources(&mut facts, "consumer.js", &rename_map);
 
         assert_eq!(facts.imports[0].source.as_ref(), "./Widget.js");
+        assert_eq!(
+            facts.commonjs_whole_value_imports[0].source.as_ref(),
+            "./Widget.js"
+        );
         assert_eq!(
             facts
                 .commonjs_default_object
