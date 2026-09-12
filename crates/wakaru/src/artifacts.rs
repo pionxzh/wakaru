@@ -353,10 +353,16 @@ fn format_unknown_runtime_call_shapes(
 fn angular_module_artifact_filename(module_filename: &str, seen: &mut HashSet<String>) -> String {
     let module_path =
         wakaru_core::safe_relative_module_path(module_filename).unwrap_or_else(|_| {
-            Path::new(module_filename)
-                .file_name()
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("module.js"))
+            let normalized = module_filename.replace('\\', "/");
+            Path::new(
+                normalized
+                    .rsplit('/')
+                    .find(|part| !part.is_empty() && *part != "." && *part != "..")
+                    .unwrap_or("module.js"),
+            )
+            .file_name()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("module.js"))
         });
     let parent = module_path.parent().filter(|path| *path != Path::new(""));
     let stem = module_path
@@ -368,7 +374,11 @@ fn angular_module_artifact_filename(module_filename: &str, seen: &mut HashSet<St
     let candidate = parent
         .map(|parent| parent.join(&filename))
         .unwrap_or_else(|| PathBuf::from(filename));
-    deduplicate_angular_module_path(&candidate, seen)
+    let candidate = wakaru_core::safe_relative_module_path(&candidate.to_string_lossy())
+        .unwrap_or_else(|_| PathBuf::from("module.angular.ts"));
+    let deduplicated = deduplicate_angular_module_path(&candidate, seen);
+    wakaru_core::safe_relative_module_path(&deduplicated.to_string_lossy())
+        .unwrap_or_else(|_| PathBuf::from("module.angular.ts"))
         .to_string_lossy()
         .replace('\\', "/")
 }
@@ -412,6 +422,23 @@ mod tests {
         assert_eq!(
             angular_module_artifact_filename("src/FEATURE.mjs", &mut seen),
             "src/FEATURE_2.angular.ts"
+        );
+    }
+
+    #[test]
+    fn module_artifact_names_reject_foreign_platform_escapes_before_normalizing() {
+        let mut seen = HashSet::new();
+        assert_eq!(
+            angular_module_artifact_filename("..\\escape.js", &mut seen),
+            "escape.angular.ts"
+        );
+        assert_eq!(
+            angular_module_artifact_filename("C:\\tmp\\input.js", &mut seen),
+            "input.angular.ts"
+        );
+        assert_eq!(
+            angular_module_artifact_filename("src\\feature.js", &mut seen),
+            "src/feature.angular.ts"
         );
     }
 

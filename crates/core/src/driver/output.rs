@@ -269,6 +269,27 @@ mod tests {
     }
 
     #[test]
+    fn safe_relative_module_path_rejects_foreign_platform_escapes() {
+        for filename in [
+            "..\\escape.js",
+            "C:\\tmp\\escape.js",
+            "C:escape.js",
+            "\\\\server\\share\\escape.js",
+        ] {
+            let err = safe_relative_module_path(filename)
+                .expect_err("foreign-platform escape should reject");
+            assert!(err.to_string().contains("path escapes output directory"));
+        }
+    }
+
+    #[test]
+    fn safe_relative_module_path_normalizes_foreign_separators() {
+        let path = safe_relative_module_path("src\\feature\\index.js")
+            .expect("portable relative path should be safe");
+        assert_eq!(path, PathBuf::from("src").join("feature").join("index.js"));
+    }
+
+    #[test]
     fn safe_relative_module_path_strips_current_dir_components() {
         let path = safe_relative_module_path("./src/./index.js").expect("relative path is safe");
         assert_eq!(path, PathBuf::from("src").join("index.js"));
