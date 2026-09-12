@@ -12,8 +12,6 @@ mod syntax;
 mod template;
 mod workspace;
 
-use std::collections::hash_map::Entry;
-
 use anyhow::{anyhow, Result};
 use rayon::prelude::*;
 use swc_core::atoms::Atom;
@@ -30,6 +28,7 @@ use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::{Visit, VisitMutWith, VisitWith};
 
 use crate::collections::{HashMap, HashSet};
+use crate::driver::BindingCorrespondence;
 use crate::facts::ModuleFactsMap;
 use crate::js_names::{is_likely_generated_alias, to_valid_identifier_name};
 use crate::rules::rename_utils::BindingRename;
@@ -230,6 +229,10 @@ pub struct AngularModuleView<'a> {
     pub filename: &'a str,
     pub evidence_source: &'a str,
     pub readable_source: &'a str,
+    /// Proven top-level binding-name correspondence from the evidence view to
+    /// the readable view. An empty slice makes class reuse fail closed unless
+    /// both views are identical.
+    pub binding_correspondences: &'a [BindingCorrespondence],
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -248,15 +251,23 @@ struct ComponentClass {
     name: Atom,
     class: Box<Class>,
     identity: SymbolIdentity,
-    portable_identity: PortableSymbolIdentity,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum PortableSymbolIdentity {
-    LocalBinding(Atom),
-    LocalMember { object: Atom, property: Atom },
-    GlobalBinding(Atom),
-    GlobalMember { object: Atom, property: Atom },
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ComponentClassView {
+    Evidence,
+    Readable,
+}
+
+struct SelectedComponentClass {
+    component: ComponentClass,
+    view: ComponentClassView,
+}
+
+#[derive(Default)]
+struct CrossViewBindingMap {
+    readable_by_evidence: HashMap<BindingKey, BindingKey>,
+    identical_views: bool,
 }
 
 struct ComponentDescriptor {
@@ -287,12 +298,13 @@ struct RecoveredModuleComponentDraft {
     class: Box<Class>,
     template_source: String,
     listener_methods: Vec<RecoveredListenerMethod>,
-    readable_class_roots: HashSet<BindingKey>,
+    class_roots: HashSet<BindingKey>,
+    class_view: ComponentClassView,
     template_roots: HashSet<BindingKey>,
     dependencies: Vec<Box<Expr>>,
     angular_imports: Vec<AngularClassApi>,
     evidence_class_identity: SymbolIdentity,
-    readable_class_identity: SymbolIdentity,
+    readable_class_identity: Option<SymbolIdentity>,
     completeness: AngularRecoveryCompleteness,
     issues: Vec<AngularRecoveryIssue>,
 }
@@ -370,7 +382,7 @@ pub fn analyze_angular_components_from_modules(
                 .map(|source| GLOBALS.set(&globals, || prepare_module(source)))
                 .collect::<Result<Vec<_>>>()?
         };
-        recover_prepared_modules(&modules, None, None)
+        recover_prepared_modules(&modules, None, None, None)
     })
 }
 
@@ -451,7 +463,12 @@ fn analyze_angular_components_from_module_views_impl(
         };
         let evidence_modules = evidence_modules?;
         let readable_modules = readable_modules?;
-        recover_prepared_modules(&evidence_modules, Some(&readable_modules), module_facts)
+        recover_prepared_modules(
+            &evidence_modules,
+            Some(&readable_modules),
+            module_facts,
+            Some(views),
+        )
     })
 }
 
@@ -459,6 +476,7 @@ fn recover_prepared_modules(
     evidence_modules: &[PreparedAngularModule],
     readable_modules: Option<&[PreparedAngularModule]>,
     module_facts: Option<&ModuleFactsMap>,
+    module_views: Option<&[AngularModuleView<'_>]>,
 ) -> Result<AngularRecoveryReport> {
     let recovery_span = tracing::info_span!(
         "angular: recover prepared modules",
@@ -471,7 +489,12 @@ fn recover_prepared_modules(
         let _enter = span.enter();
         IvyRoleTable::collect(evidence_modules, module_facts)
     };
-    let (evidence_artifact_symbols, readable_artifact_symbols, readable_classes) = {
+    let (
+        evidence_artifact_symbols,
+        readable_artifact_symbols,
+        readable_classes,
+        cross_view_bindings,
+    ) = {
         let span = tracing::info_span!("angular: index artifact symbols");
         let _enter = span.enter();
         let evidence_artifact_symbols = evidence_modules
@@ -484,14 +507,28 @@ fn recover_prepared_modules(
             .collect::<Vec<_>>();
         let readable_classes = readable_modules
             .iter()
-            .map(|prepared| {
-                collect_portable_component_classes(&prepared.module, prepared.unresolved_ctxt)
+            .map(|prepared| collect_component_classes(&prepared.module, prepared.unresolved_ctxt))
+            .collect::<Vec<_>>();
+        let cross_view_bindings = evidence_modules
+            .iter()
+            .zip(readable_modules)
+            .enumerate()
+            .map(|(module_index, (evidence, readable))| {
+                let view = module_views.and_then(|views| views.get(module_index));
+                CrossViewBindingMap::collect(
+                    evidence,
+                    readable,
+                    view.map(|view| view.binding_correspondences)
+                        .unwrap_or_default(),
+                    view.is_some_and(|view| view.evidence_source == view.readable_source),
+                )
             })
             .collect::<Vec<_>>();
         (
             evidence_artifact_symbols,
             readable_artifact_symbols,
             readable_classes,
+            cross_view_bindings,
         )
     };
 
@@ -514,7 +551,8 @@ fn recover_prepared_modules(
         let mut calls = roles::IvyCallCollector::new(&roles, prepared.unresolved_ctxt);
         prepared.module.visit_with(&mut calls);
 
-        for candidate in &calls.define_component_calls {
+        let mut planned_components = Vec::new();
+        for candidate in calls.define_component_calls {
             stats.component_candidates += 1;
             let call = &candidate.call;
             let Some(descriptor) = parse_component_descriptor(
@@ -527,6 +565,41 @@ fn recover_prepared_modules(
                 stats.rejected_component_candidates += 1;
                 continue;
             };
+            let selected_class = cross_view_bindings[module_index]
+                .readable_identity(&descriptor.class.identity)
+                .and_then(|identity| {
+                    readable_classes[module_index]
+                        .get(&identity)
+                        .cloned()
+                        .map(|component| SelectedComponentClass {
+                            component,
+                            view: ComponentClassView::Readable,
+                        })
+                })
+                .unwrap_or_else(|| SelectedComponentClass {
+                    component: descriptor.class.clone(),
+                    view: ComponentClassView::Evidence,
+                });
+            let name = unique_recovered_component_name(
+                recovered_component_name(
+                    selected_class.component.name.as_ref(),
+                    &descriptor.selector,
+                ),
+                &mut recovered_names,
+            );
+            planned_components.push((candidate, descriptor, selected_class, name));
+        }
+
+        let template_binding_names = planned_components
+            .iter()
+            .filter_map(|(_, descriptor, _, name)| {
+                local_identity_binding(&descriptor.class.identity)
+                    .cloned()
+                    .map(|binding| (binding, Atom::from(name.as_str())))
+            })
+            .collect::<HashMap<_, _>>();
+
+        for (candidate, descriptor, selected_class, name) in planned_components {
             let mut recovered_template = recover_template(
                 &descriptor.template,
                 descriptor.constants.as_deref(),
@@ -537,24 +610,22 @@ fn recover_prepared_modules(
                     unresolved_ctxt: prepared.unresolved_ctxt,
                     source_start_pos: prepared.source_start_pos,
                     cm: emit_cm.clone(),
+                    artifact_binding_names: &template_binding_names,
                 },
             )?;
-            let readable_class = readable_classes[module_index]
-                .get(&descriptor.class.portable_identity)
-                .unwrap_or(&descriptor.class);
-            let name = unique_recovered_component_name(
-                recovered_component_name(readable_class.name.as_ref(), &descriptor.selector),
-                &mut recovered_names,
-            );
             for issue in &mut recovered_template.issues {
                 issue.module_index = Some(module_index);
                 issue.component = Some(name.clone());
             }
+            let selected_context = match selected_class.view {
+                ComponentClassView::Evidence => prepared.unresolved_ctxt,
+                ComponentClassView::Readable => readable_modules[module_index].unresolved_ctxt,
+            };
             let class = clean_component_class(
-                &readable_class.class,
+                &selected_class.component.class,
                 candidate.definition_field.as_ref(),
                 &roles,
-                prepared.unresolved_ctxt,
+                selected_context,
             );
             let (class, angular_imports, query_roots) = recover_component_class_apis(
                 &class,
@@ -562,11 +633,11 @@ fn recover_prepared_modules(
                 &descriptor.queries,
                 &roles,
                 prepared.unresolved_ctxt,
-                readable_modules[module_index].unresolved_ctxt,
+                selected_context,
             );
             let mut reserved_names = HashSet::from_iter([
                 Atom::from("Component"),
-                readable_class.name.clone(),
+                selected_class.component.name.clone(),
                 Atom::from(name.as_str()),
             ]);
             reserved_names.extend(
@@ -575,12 +646,12 @@ fn recover_prepared_modules(
                     .map(|api| Atom::from(api.canonical_export_name())),
             );
             let mut class_roots = class_references(&class);
-            class_roots.retain(|root| root.0 != readable_class.name);
-            let mut support = readable_artifact_symbols[module_index].recover(
-                &class_roots,
-                &reserved_names,
-                true,
-            );
+            class_roots.retain(|root| root.0 != selected_class.component.name);
+            let class_symbols = match selected_class.view {
+                ComponentClassView::Evidence => &evidence_artifact_symbols[module_index],
+                ComponentClassView::Readable => &readable_artifact_symbols[module_index],
+            };
+            let mut support = class_symbols.recover(&class_roots, &reserved_names, true);
             support.merge(evidence_artifact_symbols[module_index].recover(
                 &recovered_template.artifact_references,
                 &reserved_names,
@@ -650,12 +721,14 @@ fn recover_prepared_modules(
                 class: class.clone(),
                 template_source: recovered_template.source.clone(),
                 listener_methods: recovered_template.listener_methods.clone(),
-                readable_class_roots: class_roots,
+                class_roots,
+                class_view: selected_class.view,
                 template_roots,
                 dependencies: descriptor.dependencies.clone(),
                 angular_imports,
                 evidence_class_identity: descriptor.class.identity.clone(),
-                readable_class_identity: readable_class.identity.clone(),
+                readable_class_identity: (selected_class.view == ComponentClassView::Readable)
+                    .then(|| selected_class.component.identity.clone()),
                 completeness,
                 issues: recovered_template.issues.clone(),
             });
@@ -756,7 +829,10 @@ impl ComponentAliasResolver {
         for (module_index, module_drafts) in drafts.iter().enumerate() {
             for draft in module_drafts {
                 let identity = if readable {
-                    &draft.readable_class_identity
+                    let Some(identity) = draft.readable_class_identity.as_ref() else {
+                        continue;
+                    };
+                    identity
                 } else {
                     &draft.evidence_class_identity
                 };
@@ -842,10 +918,9 @@ fn emit_recovered_angular_module(
         );
         let recovered_name = Atom::from(draft.name.as_str());
         reserved_names.insert(recovered_name.clone());
-        for identity in [
-            &draft.evidence_class_identity,
-            &draft.readable_class_identity,
-        ] {
+        for identity in std::iter::once(&draft.evidence_class_identity)
+            .chain(draft.readable_class_identity.iter())
+        {
             let Some(binding) = local_identity_binding(identity) else {
                 continue;
             };
@@ -861,14 +936,22 @@ fn emit_recovered_angular_module(
             evidence_component_bindings.insert(binding.clone());
             evidence_component_names.insert(binding.clone(), draft.name.clone());
         }
-        if let Some(binding) = local_identity_binding(&draft.readable_class_identity) {
-            readable_component_bindings.insert(binding.clone());
+        if let Some(identity) = &draft.readable_class_identity {
+            if let Some(binding) = local_identity_binding(identity) {
+                readable_component_bindings.insert(binding.clone());
+            }
         }
     }
 
     let readable_roots = drafts
         .iter()
-        .flat_map(|draft| draft.readable_class_roots.iter().cloned())
+        .filter(|draft| draft.class_view == ComponentClassView::Readable)
+        .flat_map(|draft| draft.class_roots.iter().cloned())
+        .collect::<HashSet<_>>();
+    let evidence_class_roots = drafts
+        .iter()
+        .filter(|draft| draft.class_view == ComponentClassView::Evidence)
+        .flat_map(|draft| draft.class_roots.iter().cloned())
         .collect::<HashSet<_>>();
     let template_roots = drafts
         .iter()
@@ -971,6 +1054,12 @@ fn emit_recovered_angular_module(
         &readable_component_bindings,
         true,
     );
+    support.merge(evidence_symbols.recover_with_provided(
+        &evidence_class_roots,
+        &reserved_names,
+        &evidence_component_bindings,
+        true,
+    ));
     support.merge(evidence_symbols.recover_with_provided(
         &template_roots,
         &reserved_names,
@@ -1126,31 +1215,87 @@ fn collect_component_classes(
     collector.classes
 }
 
-fn collect_portable_component_classes(
-    module: &Module,
-    unresolved_ctxt: SyntaxContext,
-) -> HashMap<PortableSymbolIdentity, ComponentClass> {
-    let mut classes = HashMap::default();
-    let mut ambiguous = HashSet::default();
-    for class in collect_component_classes(module, unresolved_ctxt).into_values() {
-        let identity = class.portable_identity.clone();
-        if ambiguous.contains(&identity) {
-            continue;
+impl CrossViewBindingMap {
+    fn collect(
+        evidence: &PreparedAngularModule,
+        readable: &PreparedAngularModule,
+        correspondences: &[BindingCorrespondence],
+        identical_views: bool,
+    ) -> Self {
+        let evidence_bindings = workspace::TopLevelBindingIndex::collect(&evidence.module);
+        let readable_bindings = workspace::TopLevelBindingIndex::collect(&readable.module);
+        let pairs = if identical_views && correspondences.is_empty() {
+            evidence_bindings
+                .names()
+                .map(|name| (name.as_ref(), name.as_ref()))
+                .collect::<Vec<_>>()
+        } else {
+            correspondences
+                .iter()
+                .map(|pair| (pair.evidence.as_str(), pair.readable.as_str()))
+                .collect::<Vec<_>>()
+        };
+        let mut candidates = HashMap::<BindingKey, Option<BindingKey>>::default();
+        let mut readable_counts = HashMap::<BindingKey, usize>::default();
+        for (evidence_name, readable_name) in pairs {
+            let Some(evidence_binding) = evidence_bindings.unique(&Atom::from(evidence_name))
+            else {
+                continue;
+            };
+            let Some(readable_binding) = readable_bindings.unique(&Atom::from(readable_name))
+            else {
+                continue;
+            };
+            candidates
+                .entry(evidence_binding)
+                .and_modify(|existing| {
+                    if existing.as_ref() != Some(&readable_binding) {
+                        *existing = None;
+                    }
+                })
+                .or_insert_with(|| Some(readable_binding.clone()));
+            *readable_counts.entry(readable_binding).or_default() += 1;
         }
-        match classes.entry(identity.clone()) {
-            Entry::Vacant(entry) => {
-                entry.insert(class);
-            }
-            Entry::Occupied(entry)
-                if entry.get().name == class.name && entry.get().class.span == class.class.span => {
-            }
-            Entry::Occupied(entry) => {
-                entry.remove();
-                ambiguous.insert(identity);
-            }
+        let readable_by_evidence = candidates
+            .into_iter()
+            .filter_map(|(evidence, readable)| {
+                let readable = readable?;
+                (readable_counts.get(&readable) == Some(&1)).then_some((evidence, readable))
+            })
+            .collect();
+        Self {
+            readable_by_evidence,
+            identical_views,
         }
     }
-    classes
+
+    fn readable_identity(&self, identity: &SymbolIdentity) -> Option<SymbolIdentity> {
+        match identity {
+            SymbolIdentity::LocalBinding(binding) => self
+                .readable_by_evidence
+                .get(binding)
+                .cloned()
+                .map(SymbolIdentity::LocalBinding),
+            SymbolIdentity::LocalMember { object, property } => self
+                .readable_by_evidence
+                .get(object)
+                .cloned()
+                .map(|object| SymbolIdentity::LocalMember {
+                    object,
+                    property: property.clone(),
+                }),
+            SymbolIdentity::GlobalBinding(binding) if self.identical_views => {
+                Some(SymbolIdentity::GlobalBinding(binding.clone()))
+            }
+            SymbolIdentity::GlobalMember { object, property } if self.identical_views => {
+                Some(SymbolIdentity::GlobalMember {
+                    object: object.clone(),
+                    property: property.clone(),
+                })
+            }
+            SymbolIdentity::GlobalBinding(_) | SymbolIdentity::GlobalMember { .. } => None,
+        }
+    }
 }
 
 struct ComponentClassCollector {
@@ -1163,7 +1308,6 @@ impl ComponentClassCollector {
         let Some(identity) = symbol_identity(expression, self.unresolved_ctxt) else {
             return;
         };
-        let portable_identity = portable_symbol_identity(&identity);
         let name = Atom::from(to_valid_identifier_name(fallback_name));
         self.classes.insert(
             identity.clone(),
@@ -1171,28 +1315,8 @@ impl ComponentClassCollector {
                 name,
                 class: Box::new(class.clone()),
                 identity,
-                portable_identity,
             },
         );
-    }
-}
-
-fn portable_symbol_identity(identity: &SymbolIdentity) -> PortableSymbolIdentity {
-    match identity {
-        SymbolIdentity::LocalBinding(binding) => {
-            PortableSymbolIdentity::LocalBinding(binding.0.clone())
-        }
-        SymbolIdentity::LocalMember { object, property } => PortableSymbolIdentity::LocalMember {
-            object: object.0.clone(),
-            property: property.clone(),
-        },
-        SymbolIdentity::GlobalBinding(binding) => {
-            PortableSymbolIdentity::GlobalBinding(binding.clone())
-        }
-        SymbolIdentity::GlobalMember { object, property } => PortableSymbolIdentity::GlobalMember {
-            object: object.clone(),
-            property: property.clone(),
-        },
     }
 }
 

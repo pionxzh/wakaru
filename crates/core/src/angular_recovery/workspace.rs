@@ -275,12 +275,12 @@ fn fact_export_symbols(
 }
 
 #[derive(Default)]
-struct TopLevelBindingIndex {
+pub(super) struct TopLevelBindingIndex {
     bindings: HashMap<Atom, HashSet<BindingKey>>,
 }
 
 impl TopLevelBindingIndex {
-    fn collect(module: &swc_core::ecma::ast::Module) -> Self {
+    pub(super) fn collect(module: &swc_core::ecma::ast::Module) -> Self {
         let mut index = Self::default();
         for item in &module.body {
             match item {
@@ -319,7 +319,7 @@ impl TopLevelBindingIndex {
         index
     }
 
-    fn unique(&self, name: &Atom) -> Option<BindingKey> {
+    pub(super) fn unique(&self, name: &Atom) -> Option<BindingKey> {
         let candidates = self.bindings.get(name)?;
         let mut candidates = candidates.iter();
         let binding = candidates.next()?;
@@ -327,6 +327,10 @@ impl TopLevelBindingIndex {
             return None;
         }
         Some(binding.clone())
+    }
+
+    pub(super) fn names(&self) -> impl Iterator<Item = &Atom> {
+        self.bindings.keys()
     }
 
     fn record_decl(&mut self, declaration: &Decl) {
