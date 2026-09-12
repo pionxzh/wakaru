@@ -115,6 +115,51 @@ impl TemplateFunctionTable {
         }
         Box::new(expression.clone())
     }
+
+    fn is_identity_localizer(&self, expression: &Expr) -> bool {
+        fn function_is_identity(function: &Function) -> bool {
+            if function.is_async || function.is_generator || function.params.len() != 1 {
+                return false;
+            }
+            let Pat::Ident(parameter) = &function.params[0].pat else {
+                return false;
+            };
+            function
+                .body
+                .as_ref()
+                .and_then(single_return_value)
+                .is_some_and(|returned| {
+                    matches!(strip_parentheses(returned), Expr::Ident(identifier)
+                        if binding_key(identifier) == binding_key(&parameter.id))
+                })
+        }
+
+        fn arrow_is_identity(arrow: &swc_core::ecma::ast::ArrowExpr) -> bool {
+            if arrow.is_async || arrow.is_generator || arrow.params.len() != 1 {
+                return false;
+            }
+            let Pat::Ident(parameter) = &arrow.params[0] else {
+                return false;
+            };
+            let returned = match arrow.body.as_ref() {
+                ArrowFunctionBody::Expr(expression) => Some(expression.as_ref()),
+                ArrowFunctionBody::FunctionBody(body) => single_return_value(body),
+            };
+            returned.is_some_and(|returned| {
+                matches!(strip_parentheses(returned), Expr::Ident(identifier)
+                    if binding_key(identifier) == binding_key(&parameter.id))
+            })
+        }
+
+        let resolved = self.resolve_expression(expression);
+        match strip_parentheses(resolved.as_ref()) {
+            Expr::Fn(function) => function_is_identity(function.function.as_ref()),
+            Expr::Arrow(arrow) => arrow_is_identity(arrow),
+            _ => self
+                .resolve(expression)
+                .is_some_and(|resolved| function_is_identity(&resolved.function)),
+        }
+    }
 }
 
 struct TemplateFunctionCollector<'a> {
@@ -714,7 +759,14 @@ pub(super) fn recover_template(
     context: TemplateRecoveryContext,
 ) -> Result<RecoveredTemplate> {
     let constants = constant_table
-        .map(|constants| decode_component_constant_table(constants, roles, context.unresolved_ctxt))
+        .map(|constants| {
+            decode_component_constant_table(
+                constants,
+                roles,
+                template_functions,
+                context.unresolved_ctxt,
+            )
+        })
         .unwrap_or_default();
     let implicit_view_context_properties = discover_implicit_view_context_properties(
         template_functions,
@@ -7916,6 +7968,7 @@ fn numeric_expr(expression: &Expr) -> Option<usize> {
 fn decode_component_constant_table(
     constants: &Expr,
     roles: &IvyRoleTable,
+    template_functions: &TemplateFunctionTable,
     unresolved_ctxt: SyntaxContext,
 ) -> TemplateConstants {
     let Some(decoded) = decode_component_constant_entries(constants) else {
@@ -7925,8 +7978,8 @@ fn decode_component_constant_table(
         values: &decoded.values,
         previous_values: &decoded.previous_values,
         roles,
+        template_functions,
         unresolved_ctxt,
-        allow_unnamed_localizer: decoded.allow_unnamed_localizer,
     };
     TemplateConstants {
         attributes: decoded
@@ -7975,7 +8028,6 @@ struct DecodedComponentConstantEntries {
     entries: Vec<Option<Box<Expr>>>,
     values: HashMap<BindingKey, Box<Expr>>,
     previous_values: HashMap<BindingKey, Box<Expr>>,
-    allow_unnamed_localizer: bool,
 }
 
 fn decode_component_constant_entries(expression: &Expr) -> Option<DecodedComponentConstantEntries> {
@@ -7988,45 +8040,48 @@ fn decode_component_constant_entries(expression: &Expr) -> Option<DecodedCompone
                 .collect(),
             values: HashMap::default(),
             previous_values: HashMap::default(),
-            allow_unnamed_localizer: false,
         });
     }
 
     let body = match strip_parentheses(expression) {
-        Expr::Fn(function) if function.function.params.is_empty() => {
+        Expr::Fn(function)
+            if function.function.params.is_empty()
+                && !function.function.is_async
+                && !function.function.is_generator =>
+        {
             function.function.body.as_ref()?
         }
-        Expr::Arrow(arrow) => match arrow.body.as_ref() {
-            ArrowFunctionBody::FunctionBody(body) if arrow.params.is_empty() => body,
-            ArrowFunctionBody::Expr(expression) => {
-                let Expr::Array(array) = strip_parentheses(expression.as_ref()) else {
-                    return None;
-                };
-                return Some(DecodedComponentConstantEntries {
-                    entries: array
-                        .elems
-                        .iter()
-                        .map(|element| element.as_ref().map(|element| element.expr.clone()))
-                        .collect(),
-                    values: HashMap::default(),
-                    previous_values: HashMap::default(),
-                    allow_unnamed_localizer: true,
-                });
+        Expr::Arrow(arrow) if arrow.params.is_empty() && !arrow.is_async && !arrow.is_generator => {
+            match arrow.body.as_ref() {
+                ArrowFunctionBody::FunctionBody(body) => body,
+                ArrowFunctionBody::Expr(expression) => {
+                    let Expr::Array(array) = strip_parentheses(expression.as_ref()) else {
+                        return None;
+                    };
+                    return Some(DecodedComponentConstantEntries {
+                        entries: array
+                            .elems
+                            .iter()
+                            .map(|element| element.as_ref().map(|element| element.expr.clone()))
+                            .collect(),
+                        values: HashMap::default(),
+                        previous_values: HashMap::default(),
+                    });
+                }
             }
-            _ => return None,
-        },
+        }
         _ => return None,
     };
 
-    let mut collector = ComponentConstantFactoryCollector::default();
-    body.visit_with(&mut collector);
-    let returned = collector.returns.last()?.as_ref();
+    let mut evaluator = ComponentConstantFactoryEvaluator::default();
+    let returned = evaluator.evaluate(&body.stmts)?;
+    let returned = returned.as_ref();
     let returned = match strip_parentheses(returned) {
         Expr::Seq(sequence) => sequence.exprs.last()?.as_ref(),
         expression => expression,
     };
     let returned =
-        resolve_constant_expression(returned, &collector.values, &mut HashSet::default())?;
+        resolve_constant_expression(returned, &evaluator.values, &mut HashSet::default())?;
     let Expr::Array(array) = strip_parentheses(returned) else {
         return None;
     };
@@ -8036,53 +8091,102 @@ fn decode_component_constant_entries(expression: &Expr) -> Option<DecodedCompone
             .iter()
             .map(|element| element.as_ref().map(|element| element.expr.clone()))
             .collect(),
-        values: collector.values,
-        previous_values: collector.previous_values,
-        allow_unnamed_localizer: true,
+        values: evaluator.values,
+        previous_values: evaluator.previous_values,
     })
 }
 
 #[derive(Default)]
-struct ComponentConstantFactoryCollector {
+struct ComponentConstantFactoryEvaluator {
     values: HashMap<BindingKey, Box<Expr>>,
     // Angular rewrites a localized value in place with i18nPostprocess. Retain
     // only the immediately preceding assignment so that semantically proven
     // postprocess calls can read that prior version without general dataflow.
     previous_values: HashMap<BindingKey, Box<Expr>>,
-    returns: Vec<Box<Expr>>,
+    declared: HashSet<BindingKey>,
 }
 
-impl Visit for ComponentConstantFactoryCollector {
-    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
-        if let (Pat::Ident(binding), Some(initializer)) = (&declarator.name, &declarator.init) {
-            self.values
-                .insert(binding_key(&binding.id), initializer.clone());
+impl ComponentConstantFactoryEvaluator {
+    fn evaluate(&mut self, statements: &[Stmt]) -> Option<Box<Expr>> {
+        let mut returned = None;
+        for statement in statements {
+            if returned.is_some() {
+                if matches!(statement, Stmt::Empty(_)) {
+                    continue;
+                }
+                return None;
+            }
+            match statement {
+                Stmt::Empty(_) => {}
+                Stmt::Expr(statement)
+                    if matches!(
+                        strip_parentheses(statement.expr.as_ref()),
+                        Expr::Lit(Lit::Str(_))
+                    ) =>
+                {
+                    // Function directive prologue.
+                }
+                Stmt::Decl(Decl::Var(declaration)) => {
+                    for declarator in &declaration.decls {
+                        let Pat::Ident(binding) = &declarator.name else {
+                            return None;
+                        };
+                        let key = binding_key(&binding.id);
+                        if !self.declared.insert(key.clone()) {
+                            return None;
+                        }
+                        if let Some(initializer) = &declarator.init {
+                            self.values.insert(key, initializer.clone());
+                        }
+                    }
+                }
+                Stmt::Expr(statement) => self.apply_effect(statement.expr.as_ref())?,
+                Stmt::Return(statement) => {
+                    returned = Some(self.return_value(statement.arg.as_deref()?)?);
+                }
+                _ => return None,
+            }
         }
-        declarator.visit_children_with(self);
+        returned
     }
 
-    fn visit_assign_expr(&mut self, assignment: &AssignExpr) {
-        if assignment.op == AssignOp::Assign {
-            if let AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) = &assignment.left {
+    fn apply_effect(&mut self, expression: &Expr) -> Option<()> {
+        match strip_parentheses(expression) {
+            Expr::Seq(sequence) => {
+                for expression in &sequence.exprs {
+                    self.apply_effect(expression.as_ref())?;
+                }
+                Some(())
+            }
+            Expr::Assign(assignment) if assignment.op == AssignOp::Assign => {
+                let AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) = &assignment.left
+                else {
+                    return None;
+                };
                 let key = binding_key(&binding.id);
+                if !self.declared.contains(&key) {
+                    return None;
+                }
                 if let Some(previous) = self.values.insert(key.clone(), assignment.right.clone()) {
                     self.previous_values.insert(key, previous);
                 }
+                Some(())
             }
+            _ => None,
         }
-        assignment.visit_children_with(self);
     }
 
-    fn visit_return_stmt(&mut self, statement: &ReturnStmt) {
-        if let Some(argument) = &statement.arg {
-            self.returns.push(argument.clone());
+    fn return_value(&mut self, expression: &Expr) -> Option<Box<Expr>> {
+        let expression = strip_parentheses(expression);
+        if let Expr::Seq(sequence) = expression {
+            let (returned, effects) = sequence.exprs.split_last()?;
+            for effect in effects {
+                self.apply_effect(effect.as_ref())?;
+            }
+            return self.return_value(returned.as_ref());
         }
-        statement.visit_children_with(self);
+        Some(Box::new(expression.clone()))
     }
-
-    fn visit_function(&mut self, _function: &Function) {}
-
-    fn visit_arrow_expr(&mut self, _arrow: &swc_core::ecma::ast::ArrowExpr) {}
 }
 
 fn resolve_constant_expression<'a>(
@@ -8107,8 +8211,8 @@ struct I18nMessageDecodeEnvironment<'a> {
     values: &'a HashMap<BindingKey, Box<Expr>>,
     previous_values: &'a HashMap<BindingKey, Box<Expr>>,
     roles: &'a IvyRoleTable,
+    template_functions: &'a TemplateFunctionTable,
     unresolved_ctxt: SyntaxContext,
-    allow_unnamed_localizer: bool,
 }
 
 fn decode_i18n_message_expression(
@@ -8150,18 +8254,20 @@ fn decode_i18n_message_expression(
         Expr::TaggedTpl(tagged)
             if matches!(
                 strip_parentheses(tagged.tag.as_ref()),
-                Expr::Ident(identifier) if identifier.sym == "$localize"
+                Expr::Ident(identifier)
+                    if identifier.sym == "$localize"
+                        && identifier.ctxt == environment.unresolved_ctxt
             ) =>
         {
             decode_localized_template(tagged.tpl.as_ref(), environment, resolving)
         }
-        Expr::Call(call) if is_goog_get_msg(call) => {
+        Expr::Call(call) if is_goog_get_msg(call, environment.unresolved_ctxt) => {
             decode_localization_call(call, environment, resolving)
         }
         Expr::Call(call) if is_i18n_postprocess_call(call, environment) => {
             decode_i18n_postprocess_call(call, environment, resolving)
         }
-        Expr::Call(call) if environment.allow_unnamed_localizer => {
+        Expr::Call(call) if is_proven_identity_localizer_call(call, environment) => {
             decode_localization_call(call, environment, resolving)
         }
         _ => None,
@@ -8212,7 +8318,7 @@ fn strip_localize_metadata(value: &str) -> &str {
     value
 }
 
-fn is_goog_get_msg(call: &CallExpr) -> bool {
+fn is_goog_get_msg(call: &CallExpr, unresolved_ctxt: SyntaxContext) -> bool {
     let Callee::Expr(callee) = &call.callee else {
         return false;
     };
@@ -8221,8 +8327,21 @@ fn is_goog_get_msg(call: &CallExpr) -> bool {
     };
     matches!(
         strip_parentheses(member.obj.as_ref()),
-        Expr::Ident(identifier) if identifier.sym == "goog"
+        Expr::Ident(identifier)
+            if identifier.sym == "goog" && identifier.ctxt == unresolved_ctxt
     ) && member_prop_name(&member.prop).is_some_and(|property| property == "getMsg")
+}
+
+fn is_proven_identity_localizer_call(
+    call: &CallExpr,
+    environment: &I18nMessageDecodeEnvironment<'_>,
+) -> bool {
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    environment
+        .template_functions
+        .is_identity_localizer(callee.as_ref())
 }
 
 fn decode_localization_call(
@@ -8230,10 +8349,11 @@ fn decode_localization_call(
     environment: &I18nMessageDecodeEnvironment<'_>,
     resolving: &mut HashSet<BindingKey>,
 ) -> Option<String> {
-    let mut message = call
-        .args
-        .first()
-        .and_then(|argument| string_lit(argument.expr.as_ref()))?;
+    let first = call.args.first()?;
+    if first.spread.is_some() {
+        return None;
+    }
+    let mut message = string_lit(first.expr.as_ref())?;
     let Some(mapping) = call.args.get(1) else {
         if call.args.len() != 1 {
             return None;
@@ -8241,6 +8361,9 @@ fn decode_localization_call(
         return Some(message);
     };
     if call.args.len() != 2 {
+        return None;
+    }
+    if mapping.spread.is_some() {
         return None;
     }
     let Expr::Object(mapping) = strip_parentheses(mapping.expr.as_ref()) else {
