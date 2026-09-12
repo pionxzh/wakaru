@@ -1,3 +1,4 @@
+mod binding_correspondence;
 mod diagnostics;
 mod discovery;
 mod error;
@@ -26,9 +27,9 @@ pub(crate) use output::{split_logical_path, PathSegment};
 pub use single_file::{decompile, decompile_owned, OwnedDecompileFailure};
 pub use trace::{format_trace_events, trace_rules, RuleTraceEvent, RuleTraceOptions};
 pub use types::{
-    CapturedUnpackOutput, DceMode, DecompileOptions, DecompileOutput, PreparedInputId,
-    PreparedModuleOutput, PreparedModuleProvenance, PreparedUnpackOutput, UnpackWarning,
-    UnpackWarningKind,
+    BindingCorrespondence, CapturedUnpackOutput, DceMode, DecompileOptions, DecompileOutput,
+    PreparedInputId, PreparedModuleOutput, PreparedModuleProvenance, PreparedUnpackOutput,
+    UnpackWarning, UnpackWarningKind,
 };
 pub use unpack::{
     explain_interop, prepare_unpack_input, prepare_unpack_input_with_policy,

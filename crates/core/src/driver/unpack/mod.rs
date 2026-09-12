@@ -776,6 +776,7 @@ fn unpack_prepared_inputs_impl(
         CapturedUnpackOutput {
             output: emit_raw_modules_with_numeric_rewrites(modules, numeric_rewrite_plan)?,
             pre_rewrite_modules: Vec::new(),
+            binding_correspondences: Default::default(),
             module_facts: Default::default(),
         }
     } else {

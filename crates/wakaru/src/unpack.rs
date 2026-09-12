@@ -244,6 +244,7 @@ impl UnpackJob {
 
         let mut modules = Vec::new();
         let mut pre_rewrite_modules = Vec::new();
+        let mut binding_correspondences = HashMap::new();
         let mut module_facts = wakaru_core::ModuleFactsMap::new();
         let mut diagnostics = Vec::new();
         if !processed.is_empty() {
@@ -260,6 +261,7 @@ impl UnpackJob {
             );
             modules = converted.modules;
             pre_rewrite_modules = converted.pre_rewrite_modules;
+            binding_correspondences = converted.binding_correspondences;
             module_facts = converted.module_facts;
             diagnostics = converted.diagnostics;
         }
@@ -269,6 +271,7 @@ impl UnpackJob {
         let (artifacts, recovery_diagnostics) = crate::artifacts::recover_artifacts(
             &modules,
             &pre_rewrite_modules,
+            &binding_correspondences,
             Some(&module_facts),
             self.options.recovery(),
             self.options.diagnostics(),
@@ -403,6 +406,7 @@ fn core_scope_hoist_policy_for_mode(
 struct ConvertedOutput {
     modules: Vec<ModuleOutput>,
     pre_rewrite_modules: Vec<(String, String)>,
+    binding_correspondences: HashMap<String, Vec<wakaru_core::driver::BindingCorrespondence>>,
     module_facts: wakaru_core::ModuleFactsMap,
     diagnostics: Vec<Diagnostic>,
 }
@@ -418,6 +422,7 @@ fn convert_core_output(
     let wakaru_core::driver::CapturedUnpackOutput {
         output,
         pre_rewrite_modules,
+        binding_correspondences,
         module_facts,
     } = captured;
     let only_input = (processed.len() == 1).then_some(processed[0].id);
@@ -524,6 +529,7 @@ fn convert_core_output(
     ConvertedOutput {
         modules,
         pre_rewrite_modules,
+        binding_correspondences: binding_correspondences.into_iter().collect(),
         module_facts,
         diagnostics,
     }

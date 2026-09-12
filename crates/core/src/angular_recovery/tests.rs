@@ -1574,11 +1574,13 @@ fn projects_only_unambiguous_fact_transport_edges_into_the_evidence_workspace() 
             filename: "runtime.js",
             evidence_source: runtime,
             readable_source: runtime,
+            binding_correspondences: &[],
         },
         AngularModuleView {
             filename: "component.js",
             evidence_source: component,
             readable_source: component,
+            binding_correspondences: &[],
         },
     ];
     let mut facts = ModuleFactsMap::new();
@@ -1775,6 +1777,7 @@ fn profiling_spans_separate_angular_preparation_inference_and_recovery() {
                 filename: "profiled.js",
                 evidence_source: PRODUCTION_COMPONENT,
                 readable_source: PRODUCTION_COMPONENT,
+                binding_correspondences: &[],
             }],
             AngularRecoveryOptions::default(),
         )
@@ -3180,11 +3183,16 @@ fn uses_pre_rewrite_evidence_with_the_readable_class_view() {
         }
     "#;
 
+    let binding_correspondences = [BindingCorrespondence {
+        evidence: "PipelineCardComponent".to_string(),
+        readable: "PipelineCardComponent".to_string(),
+    }];
     let recovered = recover_angular_components_from_module_views(
         &[AngularModuleView {
             filename: "pipeline-card.js",
             evidence_source: evidence,
             readable_source: readable,
+            binding_correspondences: &binding_correspondences,
         }],
         AngularRecoveryOptions::default(),
     )
@@ -7437,11 +7445,13 @@ fn bridges_fact_aliases_when_proving_view_state_capture_flow() {
             filename: "runtime.js",
             evidence_source: runtime,
             readable_source: runtime,
+            binding_correspondences: &[],
         },
         AngularModuleView {
             filename: "component.js",
             evidence_source: component,
             readable_source: component,
+            binding_correspondences: &[],
         },
     ];
     let mut facts = ModuleFactsMap::new();
