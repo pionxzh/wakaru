@@ -10,6 +10,7 @@ use crate::output::{
 pub(crate) fn recover_artifacts(
     modules: &[ModuleOutput],
     pre_rewrite_modules: &[(String, String)],
+    binding_correspondences: &HashMap<String, Vec<wakaru_core::BindingCorrespondence>>,
     module_facts: Option<&wakaru_core::ModuleFactsMap>,
     recovery: crate::RecoveryOptions,
     diagnostics: bool,
@@ -18,7 +19,12 @@ pub(crate) fn recover_artifacts(
         return (Vec::new(), Vec::new());
     }
 
-    match recover_angular_modules(modules, pre_rewrite_modules, module_facts) {
+    match recover_angular_modules(
+        modules,
+        pre_rewrite_modules,
+        binding_correspondences,
+        module_facts,
+    ) {
         Ok((artifacts, stats, unknown_runtime_call_shapes)) => {
             let unknown_shape_summary =
                 format_unknown_runtime_call_shapes(&unknown_runtime_call_shapes);
@@ -72,6 +78,7 @@ pub(crate) fn recover_artifacts(
 fn recover_angular_modules(
     modules: &[ModuleOutput],
     pre_rewrite_modules: &[(String, String)],
+    binding_correspondences: &HashMap<String, Vec<wakaru_core::BindingCorrespondence>>,
     module_facts: Option<&wakaru_core::ModuleFactsMap>,
 ) -> anyhow::Result<(
     Vec<ArtifactOutput>,
@@ -104,6 +111,10 @@ fn recover_angular_modules(
                 .copied()
                 .unwrap_or(module.code.as_str()),
             readable_source: module.code.as_str(),
+            binding_correspondences: binding_correspondences
+                .get(&module.filename)
+                .map(Vec::as_slice)
+                .unwrap_or_default(),
         })
         .collect::<Vec<_>>();
     let report = if let Some(module_facts) = module_facts {
