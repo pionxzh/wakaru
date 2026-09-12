@@ -1,5 +1,3 @@
-use std::collections::{HashMap, HashSet};
-
 use anyhow::{anyhow, Result};
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, SourceMap, Span, Spanned, SyntaxContext, DUMMY_SP};
@@ -12,6 +10,7 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::analysis::binding_uses::BindingUseIndex;
+use crate::collections::{HashMap, HashSet};
 use crate::js_names::{is_likely_generated_alias, to_valid_identifier_name};
 use crate::rules::eval_utils::is_direct_eval_call;
 use crate::rules::{RewriteLevel, UnOptionalChaining};
@@ -69,7 +68,7 @@ impl TemplateFunctionTable {
 
     fn resolve(&self, expression: &Expr) -> Option<ResolvedTemplateFunction> {
         let mut expression = strip_parentheses(expression);
-        let mut visited = HashSet::new();
+        let mut visited = HashSet::default();
         for _ in 0..32 {
             match expression {
                 Expr::Ident(identifier) => {
@@ -100,7 +99,7 @@ impl TemplateFunctionTable {
 
     pub(super) fn resolve_expression(&self, expression: &Expr) -> Box<Expr> {
         let mut expression = strip_parentheses(expression);
-        let mut visited = HashSet::new();
+        let mut visited = HashSet::default();
         for _ in 0..32 {
             let Expr::Ident(identifier) = expression else {
                 break;
@@ -135,10 +134,10 @@ impl<'a> TemplateFunctionCollector<'a> {
         Self {
             binding_uses,
             uninitialized_bindings,
-            functions: HashMap::new(),
-            values: HashMap::new(),
-            definitions: HashSet::new(),
-            ambiguous: HashSet::new(),
+            functions: HashMap::default(),
+            values: HashMap::default(),
+            definitions: HashSet::default(),
+            ambiguous: HashSet::default(),
         }
     }
 
@@ -335,7 +334,7 @@ impl TemplateProgram {
         if self.is_component_view {
             return ViewContextScope {
                 is_component: true,
-                local_properties: HashMap::new(),
+                local_properties: HashMap::default(),
             };
         }
         let Some(item) = self.repeater_item_name.as_ref() else {
@@ -730,7 +729,7 @@ pub(super) fn recover_template(
         source_start_pos: context.source_start_pos,
         cm: context.cm,
     };
-    let mut active_templates = HashSet::new();
+    let mut active_templates = HashSet::default();
     let mut next_view_id = 0;
     let (tree, program) = recover_template_tree(
         template,
@@ -918,7 +917,7 @@ fn recover_template_tree(
 }
 
 fn apply_local_let_alias_hints(tree: &mut TemplateTree, hints: &[ViewLetAliasHint]) {
-    let mut candidates = HashMap::<usize, HashSet<String>>::new();
+    let mut candidates = HashMap::<usize, HashSet<String>>::default();
     for hint in hints.iter().filter(|hint| hint.context_depth == 0) {
         candidates
             .entry(hint.slot)
@@ -1404,7 +1403,7 @@ fn unobserved_assignment_candidates(body: &FunctionBody) -> HashSet<BindingKey> 
     let mut direct_eval = DirectEvalFinder::default();
     body.visit_with(&mut direct_eval);
     if direct_eval.found {
-        return HashSet::new();
+        return HashSet::default();
     }
 
     let binding_uses = BindingUseIndex::collect_stmts(&body.stmts);
@@ -1488,8 +1487,8 @@ fn inlined_current_view_captures(
     let mut collector = Collector {
         roles,
         unresolved_ctxt,
-        member_initializers: HashSet::new(),
-        restored_bindings: HashSet::new(),
+        member_initializers: HashSet::default(),
+        restored_bindings: HashSet::default(),
     };
     body.visit_with(&mut collector);
     collector
@@ -1578,7 +1577,7 @@ fn discover_implicit_view_context_properties(
         fn visit_arrow_expr(&mut self, _arrow: &swc_core::ecma::ast::ArrowExpr) {}
     }
 
-    let mut properties = HashSet::new();
+    let mut properties = HashSet::default();
     for function in template_functions.functions.values() {
         if ivy_template_score(function, roles, unresolved_ctxt) < 3 {
             continue;
@@ -1593,7 +1592,7 @@ fn discover_implicit_view_context_properties(
         let mut collector = Collector {
             context: &context,
             member_objects: &member_objects,
-            properties: HashSet::new(),
+            properties: HashSet::default(),
         };
         body.visit_with(&mut collector);
         properties.extend(collector.properties);
@@ -2937,7 +2936,7 @@ fn recover_structured_view_listener_handler(
         component_contexts: program.component_contexts.clone(),
         local_names: program.local_reference_names.clone(),
         local_context_bindings: program.local_context_bindings.clone(),
-        expression_aliases: HashMap::new(),
+        expression_aliases: HashMap::default(),
         let_alias_hints: Vec::new(),
         binding_uses: BindingUseIndex::collect_stmts(&block.stmts),
         next_parameter_marker: 0,
@@ -3028,7 +3027,7 @@ fn recover_structured_view_listener_handler(
     if !state.expression_aliases.is_empty() {
         body.visit_mut_with(&mut TemplateExpressionAliasResolver {
             aliases: &state.expression_aliases,
-            active: HashSet::new(),
+            active: HashSet::default(),
         });
     }
     let mut occupied_names = ListenerBindingNameCollector::default();
@@ -3039,7 +3038,7 @@ fn recover_structured_view_listener_handler(
         local_contexts: &state.local_context_bindings,
         occupied_names: occupied_names.names,
         parameters: Vec::new(),
-        parameters_by_template_name: HashMap::new(),
+        parameters_by_template_name: HashMap::default(),
     };
     body.visit_mut_with(&mut binding_rewriter);
     binding_rewriter
@@ -3710,7 +3709,7 @@ fn recover_inline_view_listener_handler(
     let mut component_contexts = program.component_contexts.clone();
     let mut local_names = program.local_reference_names.clone();
     let mut local_context_bindings = program.local_context_bindings.clone();
-    let mut expression_aliases = HashMap::new();
+    let mut expression_aliases = HashMap::default();
     let mut let_alias_hints = Vec::new();
     let mut effects = Vec::new();
     let mut effect_references = Vec::new();
@@ -4555,7 +4554,7 @@ fn recover_restored_two_way_listener_target(
         target,
         &component_contexts,
         &local_names,
-        &HashMap::new(),
+        &HashMap::default(),
         &local_context_bindings,
         environment.cm.clone(),
     )
@@ -6152,7 +6151,7 @@ fn print_repeater_track_body(
     let [Pat::Ident(index_binding), Pat::Ident(item_binding)] = parameters else {
         return Err("track function does not have two identifier parameters".to_string());
     };
-    let mut local_names = HashMap::from([
+    let mut local_names = HashMap::from_iter([
         (binding_key(&index_binding.id), "$index".to_string()),
         (binding_key(&item_binding.id), item.to_string()),
     ]);
@@ -6161,12 +6160,12 @@ fn print_repeater_track_body(
         body,
         &program.component_contexts,
         &local_names,
-        &HashMap::new(),
+        &HashMap::default(),
         &program.local_context_bindings,
         environment.cm.clone(),
     )
     .map_err(|error| error.to_string())?;
-    let parameter_keys = HashSet::from([
+    let parameter_keys = HashSet::from_iter([
         binding_key(&index_binding.id),
         binding_key(&item_binding.id),
     ]);
@@ -6282,7 +6281,7 @@ fn seed_local_reference_slots(
 
 fn seed_let_names(calls: &[InstructionCall]) -> HashMap<usize, String> {
     let mut cursor = 0usize;
-    let mut names = HashMap::new();
+    let mut names = HashMap::default();
     for call in calls {
         match call.instruction {
             IvyInstruction::Advance => {
@@ -7061,7 +7060,7 @@ fn decode_conditional_branches(
             conditional.test.as_ref(),
             component_contexts,
             local_references,
-            &HashMap::new(),
+            &HashMap::default(),
             local_contexts,
             cm.clone(),
         )
@@ -7130,7 +7129,7 @@ fn decode_conditional_branches(
         .iter()
         .filter(|leaf| leaf.index >= 0)
         .collect::<Vec<_>>();
-    let mut indices = HashSet::new();
+    let mut indices = HashSet::default();
     if visible.is_empty()
         || visible
             .iter()
@@ -7570,7 +7569,7 @@ fn recover_template_expression(
         expression,
         &program.component_contexts,
         &program.local_reference_names,
-        &HashMap::new(),
+        &HashMap::default(),
         &program.local_context_bindings,
         environment.cm.clone(),
     )?;
@@ -7919,7 +7918,7 @@ fn decode_component_constant_table(
                 entry
                     .as_deref()
                     .and_then(|entry| {
-                        resolve_constant_expression(entry, &decoded.values, &mut HashSet::new())
+                        resolve_constant_expression(entry, &decoded.values, &mut HashSet::default())
                     })
                     .map(decode_constant_attributes)
                     .unwrap_or_default()
@@ -7932,7 +7931,7 @@ fn decode_component_constant_table(
                 entry
                     .as_deref()
                     .and_then(|entry| {
-                        resolve_constant_expression(entry, &decoded.values, &mut HashSet::new())
+                        resolve_constant_expression(entry, &decoded.values, &mut HashSet::default())
                     })
                     .and_then(decode_local_references)
                     .unwrap_or_default()
@@ -7943,7 +7942,11 @@ fn decode_component_constant_table(
             .iter()
             .map(|entry| {
                 entry.as_deref().and_then(|entry| {
-                    decode_i18n_message_expression(entry, &i18n_environment, &mut HashSet::new())
+                    decode_i18n_message_expression(
+                        entry,
+                        &i18n_environment,
+                        &mut HashSet::default(),
+                    )
                 })
             })
             .collect(),
@@ -7965,8 +7968,8 @@ fn decode_component_constant_entries(expression: &Expr) -> Option<DecodedCompone
                 .iter()
                 .map(|element| element.as_ref().map(|element| element.expr.clone()))
                 .collect(),
-            values: HashMap::new(),
-            previous_values: HashMap::new(),
+            values: HashMap::default(),
+            previous_values: HashMap::default(),
             allow_unnamed_localizer: false,
         });
     }
@@ -7987,8 +7990,8 @@ fn decode_component_constant_entries(expression: &Expr) -> Option<DecodedCompone
                         .iter()
                         .map(|element| element.as_ref().map(|element| element.expr.clone()))
                         .collect(),
-                    values: HashMap::new(),
-                    previous_values: HashMap::new(),
+                    values: HashMap::default(),
+                    previous_values: HashMap::default(),
                     allow_unnamed_localizer: true,
                 });
             }
@@ -8004,7 +8007,8 @@ fn decode_component_constant_entries(expression: &Expr) -> Option<DecodedCompone
         Expr::Seq(sequence) => sequence.exprs.last()?.as_ref(),
         expression => expression,
     };
-    let returned = resolve_constant_expression(returned, &collector.values, &mut HashSet::new())?;
+    let returned =
+        resolve_constant_expression(returned, &collector.values, &mut HashSet::default())?;
     let Expr::Array(array) = strip_parentheses(returned) else {
         return None;
     };
@@ -8292,7 +8296,7 @@ fn decode_i18n_postprocess_call(
     let Expr::Object(replacements) = strip_parentheses(replacements.expr.as_ref()) else {
         return None;
     };
-    let mut decoded_replacements = HashMap::new();
+    let mut decoded_replacements = HashMap::default();
     for property in &replacements.props {
         let swc_core::ecma::ast::PropOrSpread::Prop(property) = property else {
             return None;
@@ -8336,7 +8340,7 @@ fn replace_i18n_multi_value_placeholders(message: &str) -> Option<String> {
     }
 
     let mut rendered = String::new();
-    let mut alternatives = HashMap::<String, Vec<I18nMultiValuePlaceholder>>::new();
+    let mut alternatives = HashMap::<String, Vec<I18nMultiValuePlaceholder>>::default();
     let mut template_stack = vec![0usize];
     let mut cursor = 0;
     while cursor < message.len() {
@@ -8455,7 +8459,7 @@ fn replace_i18n_postprocess_tokens(
     replacements: &HashMap<String, String>,
 ) -> Option<String> {
     let mut rendered = String::new();
-    let mut replaced = HashSet::new();
+    let mut replaced = HashSet::default();
     let mut cursor = 0;
     while cursor < message.len() {
         let character = message[cursor..].chars().next()?;
@@ -8570,7 +8574,7 @@ fn parse_bounded_icu_message(message: &str) -> Option<BoundedIcuMessage> {
 
     let mut case_count = 0usize;
     let mut saw_other = false;
-    let mut case_keys = HashSet::new();
+    let mut case_keys = HashSet::default();
     loop {
         skip_icu_whitespace(message, &mut cursor, content_end);
         if message[cursor..content_end].starts_with('}') {
@@ -8669,7 +8673,7 @@ fn parse_structural_i18n_message(
     const MARKER: char = '\u{fffd}';
 
     let mut tokens = Vec::new();
-    let mut element_stacks = HashMap::<Option<usize>, Vec<usize>>::new();
+    let mut element_stacks = HashMap::<Option<usize>, Vec<usize>>::default();
     let mut active_sub_template = None;
     let mut active_template_index = None;
     let mut selected_sub_template_regions = 0usize;
@@ -9097,7 +9101,7 @@ impl TemplateTree {
 }
 
 fn render_tree(tree: &TemplateTree) -> String {
-    render_tree_at_depth(tree, 0, &mut HashSet::new())
+    render_tree_at_depth(tree, 0, &mut HashSet::default())
 }
 
 fn render_tree_at_depth(
