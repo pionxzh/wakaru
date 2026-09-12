@@ -196,7 +196,6 @@ pub(super) fn collect_fact_symbol_aliases(
                         "default",
                         &exports[target_index],
                     );
-                    record_fact_namespace_aliases(&mut aliases, &local, &exports[target_index]);
                 }
                 ImportKind::Named(imported) => record_fact_import_alias(
                     &mut aliases,
@@ -208,6 +207,16 @@ pub(super) fn collect_fact_symbol_aliases(
                     record_fact_namespace_aliases(&mut aliases, &local, &exports[target_index])
                 }
             }
+        }
+        for import in &module_facts.commonjs_whole_value_imports {
+            let Some(local) = bindings[module_index].unique(&import.local) else {
+                continue;
+            };
+            let Some(target_index) = lookup.resolve(&module.filename, import.source.as_ref())
+            else {
+                continue;
+            };
+            record_fact_namespace_aliases(&mut aliases, &local, &exports[target_index]);
         }
     }
 
