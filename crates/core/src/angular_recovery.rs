@@ -12,7 +12,7 @@ mod syntax;
 mod template;
 mod workspace;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::hash_map::Entry;
 
 use anyhow::{anyhow, Result};
 use rayon::prelude::*;
@@ -29,6 +29,7 @@ use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::{Visit, VisitMutWith, VisitWith};
 
+use crate::collections::{HashMap, HashSet};
 use crate::facts::ModuleFactsMap;
 use crate::js_names::{is_likely_generated_alias, to_valid_identifier_name};
 use crate::rules::rename_utils::BindingRename;
@@ -501,13 +502,13 @@ fn recover_prepared_modules(
         ..AngularRecoveryStats::default()
     };
     let mut unknown_runtime_call_shapes =
-        HashMap::<(AngularTemplatePhase, Vec<usize>), (usize, usize)>::new();
+        HashMap::<(AngularTemplatePhase, Vec<usize>), (usize, usize)>::default();
     let component_span = tracing::info_span!("angular: recover components");
     let _component_enter = component_span.enter();
     for (module_index, prepared) in evidence_modules.iter().enumerate() {
         let emit_cm: Lrc<SourceMap> = Default::default();
         let mut module_drafts = Vec::new();
-        let mut recovered_names = HashSet::new();
+        let mut recovered_names = HashSet::default();
         let classes = collect_component_classes(&prepared.module, prepared.unresolved_ctxt);
         let template_functions = TemplateFunctionTable::collect(&prepared.module);
         let mut calls = roles::IvyCallCollector::new(&roles, prepared.unresolved_ctxt);
@@ -563,7 +564,7 @@ fn recover_prepared_modules(
                 prepared.unresolved_ctxt,
                 readable_modules[module_index].unresolved_ctxt,
             );
-            let mut reserved_names = HashSet::from([
+            let mut reserved_names = HashSet::from_iter([
                 Atom::from("Component"),
                 readable_class.name.clone(),
                 Atom::from(name.as_str()),
@@ -749,9 +750,9 @@ impl ComponentAliasResolver {
         readable: bool,
     ) -> Self {
         let aliases = workspace::WorkspaceAliasIndex::collect(modules);
-        let mut targets_by_group = HashMap::<usize, Vec<RecoveredComponentTarget>>::new();
+        let mut targets_by_group = HashMap::<usize, Vec<RecoveredComponentTarget>>::default();
         let mut targets_by_symbol =
-            HashMap::<workspace::WorkspaceSymbol, Vec<RecoveredComponentTarget>>::new();
+            HashMap::<workspace::WorkspaceSymbol, Vec<RecoveredComponentTarget>>::default();
         for (module_index, module_drafts) in drafts.iter().enumerate() {
             for draft in module_drafts {
                 let identity = if readable {
@@ -825,12 +826,12 @@ fn emit_recovered_angular_module(
     relationships: &ComponentRelationshipIndex,
     cm: Lrc<SourceMap>,
 ) -> Result<RecoveredAngularModule> {
-    let mut evidence_component_names = HashMap::<BindingKey, String>::new();
-    let mut readable_component_bindings = HashSet::new();
-    let mut evidence_component_bindings = HashSet::new();
+    let mut evidence_component_names = HashMap::<BindingKey, String>::default();
+    let mut readable_component_bindings = HashSet::default();
+    let mut evidence_component_bindings = HashSet::default();
     let mut renames = Vec::new();
-    let mut renamed_bindings = HashSet::new();
-    let mut reserved_names = HashSet::from([Atom::from("Component")]);
+    let mut renamed_bindings = HashSet::default();
+    let mut reserved_names = HashSet::from_iter([Atom::from("Component")]);
 
     for draft in drafts {
         reserved_names.extend(
@@ -892,16 +893,17 @@ fn emit_recovered_angular_module(
                 .map(|target| (target.component_index, binding.clone()))
         })
         .fold(
-            HashMap::<usize, Vec<BindingKey>>::new(),
+            HashMap::<usize, Vec<BindingKey>>::default(),
             |mut bindings, (component_index, binding)| {
                 bindings.entry(component_index).or_default().push(binding);
                 bindings
             },
         );
-    let mut linked_dependencies = HashMap::<BindingKey, (RecoveredComponentTarget, String)>::new();
-    let mut local_names_by_target = HashMap::<usize, String>::new();
+    let mut linked_dependencies =
+        HashMap::<BindingKey, (RecoveredComponentTarget, String)>::default();
+    let mut local_names_by_target = HashMap::<usize, String>::default();
     let mut module_dependencies = Vec::new();
-    let mut seen_module_dependencies = HashSet::new();
+    let mut seen_module_dependencies = HashSet::default();
     for draft in drafts {
         for dependency in &draft.dependencies {
             let Some(binding) = dependency_binding(dependency.as_ref()) else {
@@ -984,7 +986,7 @@ fn emit_recovered_angular_module(
     let dependency_names = drafts
         .iter()
         .map(|draft| {
-            let mut seen = HashSet::new();
+            let mut seen = HashSet::default();
             draft
                 .dependencies
                 .iter()
@@ -1118,7 +1120,7 @@ fn collect_component_classes(
 ) -> HashMap<SymbolIdentity, ComponentClass> {
     let mut collector = ComponentClassCollector {
         unresolved_ctxt,
-        classes: HashMap::new(),
+        classes: HashMap::default(),
     };
     module.visit_with(&mut collector);
     collector.classes
@@ -1128,21 +1130,21 @@ fn collect_portable_component_classes(
     module: &Module,
     unresolved_ctxt: SyntaxContext,
 ) -> HashMap<PortableSymbolIdentity, ComponentClass> {
-    let mut classes = HashMap::new();
-    let mut ambiguous = std::collections::HashSet::new();
+    let mut classes = HashMap::default();
+    let mut ambiguous = HashSet::default();
     for class in collect_component_classes(module, unresolved_ctxt).into_values() {
         let identity = class.portable_identity.clone();
         if ambiguous.contains(&identity) {
             continue;
         }
         match classes.entry(identity.clone()) {
-            std::collections::hash_map::Entry::Vacant(entry) => {
+            Entry::Vacant(entry) => {
                 entry.insert(class);
             }
-            std::collections::hash_map::Entry::Occupied(entry)
+            Entry::Occupied(entry)
                 if entry.get().name == class.name && entry.get().class.span == class.class.span => {
             }
-            std::collections::hash_map::Entry::Occupied(entry) => {
+            Entry::Occupied(entry) => {
                 entry.remove();
                 ambiguous.insert(identity);
             }
@@ -1493,7 +1495,7 @@ fn descriptor_signal_queries(
         }
     }
 
-    let mut counts = HashMap::<Atom, usize>::new();
+    let mut counts = HashMap::<Atom, usize>::default();
     for query in &recovered {
         *counts.entry(query.field.clone()).or_default() += 1;
     }

@@ -1,5 +1,3 @@
-use std::collections::{HashMap, HashSet};
-
 use swc_core::atoms::Atom;
 use swc_core::common::{Span, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
@@ -19,6 +17,7 @@ use crate::angular_recovery::syntax::{
     binding_key, member_prop_name, prop_name, render_flag_mask, wtf8_to_string, BindingKey,
 };
 use crate::angular_recovery::PreparedAngularModule;
+use crate::collections::{HashMap, HashSet};
 
 pub(super) struct StructuralRoleEvidence {
     functions: Vec<RuntimeFunction>,
@@ -128,7 +127,7 @@ impl StructuralRoleEvidence {
             .into_iter()
             .map(|(identity, _)| identity)
             .collect::<HashSet<_>>();
-        let mut adjacency = HashMap::<SymbolIdentity, Vec<SymbolIdentity>>::new();
+        let mut adjacency = HashMap::<SymbolIdentity, Vec<SymbolIdentity>>::default();
         for (left, right) in &self.value_aliases {
             adjacency
                 .entry(left.clone())
@@ -140,7 +139,7 @@ impl StructuralRoleEvidence {
                 .push(left.clone());
         }
 
-        let mut visited = HashSet::new();
+        let mut visited = HashSet::default();
         for start in adjacency.keys() {
             if visited.contains(start) {
                 continue;
@@ -303,7 +302,7 @@ impl StructuralRoleEvidence {
     ) -> Vec<(SymbolIdentity, Vec<Box<Expr>>)> {
         let direct = self.specialized_signal_api_calls();
         let mut arguments = direct.iter().cloned().collect::<HashMap<_, _>>();
-        let mut adjacency = HashMap::<SymbolIdentity, Vec<SymbolIdentity>>::new();
+        let mut adjacency = HashMap::<SymbolIdentity, Vec<SymbolIdentity>>::default();
         for (left, right) in &self.value_aliases {
             adjacency
                 .entry(left.clone())
@@ -319,7 +318,7 @@ impl StructuralRoleEvidence {
             .iter()
             .map(|(identity, _)| identity)
             .collect::<HashSet<_>>();
-        let mut visited = HashSet::new();
+        let mut visited = HashSet::default();
         for start in adjacency.keys() {
             if visited.contains(start) {
                 continue;
@@ -404,7 +403,7 @@ impl StructuralRoleEvidence {
             roles.extend(inferred);
         }
 
-        let mut adjacency = HashMap::<SymbolIdentity, Vec<SymbolIdentity>>::new();
+        let mut adjacency = HashMap::<SymbolIdentity, Vec<SymbolIdentity>>::default();
         for (left, right) in &self.value_aliases {
             adjacency
                 .entry(left.clone())
@@ -415,7 +414,7 @@ impl StructuralRoleEvidence {
                 .or_default()
                 .push(left.clone());
         }
-        let mut visited = HashSet::new();
+        let mut visited = HashSet::default();
         for start in adjacency.keys() {
             if visited.contains(start) {
                 continue;
@@ -476,7 +475,8 @@ impl StructuralRoleEvidence {
             creation_false_assignments.extend(collector.creation_false_assignments);
         }
 
-        let mut by_identity: HashMap<SymbolIdentity, Vec<TemplateCallObservation>> = HashMap::new();
+        let mut by_identity: HashMap<SymbolIdentity, Vec<TemplateCallObservation>> =
+            HashMap::default();
         for observation in observations {
             by_identity
                 .entry(observation.identity.clone())
@@ -922,9 +922,9 @@ fn is_inject_options_flags_shape(function: &RuntimeFunction) -> bool {
 
     let mut evidence = InjectFlagsEvidence {
         options: &options,
-        properties: HashSet::new(),
+        properties: HashSet::default(),
         typeof_options: false,
-        type_strings: HashSet::new(),
+        type_strings: HashSet::default(),
         bitwise_or: false,
         closure_undefined_check: false,
     };
@@ -1922,22 +1922,22 @@ impl Visit for InjectFlagsEvidence<'_> {
 fn collect_runtime_functions(modules: &[PreparedAngularModule]) -> StructuralRoleEvidence {
     let mut functions = Vec::new();
     let mut classes = Vec::new();
-    let mut definition_counts = HashMap::<SymbolIdentity, usize>::new();
-    let mut invalid_values = HashSet::new();
-    let mut assignment_definitions = HashMap::<SymbolIdentity, Vec<(usize, u32)>>::new();
+    let mut definition_counts = HashMap::<SymbolIdentity, usize>::default();
+    let mut invalid_values = HashSet::default();
+    let mut assignment_definitions = HashMap::<SymbolIdentity, Vec<(usize, u32)>>::default();
     let mut value_aliases = Vec::new();
-    let mut integer_candidates = HashMap::new();
+    let mut integer_candidates = HashMap::default();
     for (module_index, prepared) in modules.iter().enumerate() {
         let mut collector = RuntimeFunctionCollector {
             module_index,
             unresolved_ctxt: prepared.unresolved_ctxt,
             functions: Vec::new(),
             classes: Vec::new(),
-            definition_counts: HashMap::new(),
-            invalid_values: HashSet::new(),
-            assignment_definitions: HashMap::new(),
+            definition_counts: HashMap::default(),
+            invalid_values: HashSet::default(),
+            assignment_definitions: HashMap::default(),
             value_aliases: Vec::new(),
-            integer_candidates: HashMap::new(),
+            integer_candidates: HashMap::default(),
         };
         prepared.module.visit_with(&mut collector);
         functions.extend(collector.functions);
@@ -2057,8 +2057,8 @@ struct RuntimeFunctionIndex<'a> {
 
 impl<'a> RuntimeFunctionIndex<'a> {
     fn new(functions: &'a [RuntimeFunction], roles: &'a IvyRoleTable) -> Self {
-        let mut exact = HashMap::new();
-        let mut aliases = HashMap::new();
+        let mut exact = HashMap::default();
+        let mut aliases = HashMap::default();
         for function in functions {
             if let Some(group) = roles.alias_group_index(&function.identity) {
                 aliases.entry(group).or_insert_with(Vec::new).push(function);
@@ -2395,7 +2395,7 @@ fn has_unclassified_element_anchor(
     observations: &[TemplateCallObservation],
     function_index: &RuntimeFunctionIndex<'_>,
 ) -> bool {
-    let mut grouped: HashMap<&SymbolIdentity, Vec<&TemplateCallObservation>> = HashMap::new();
+    let mut grouped: HashMap<&SymbolIdentity, Vec<&TemplateCallObservation>> = HashMap::default();
     for observation in observations {
         grouped
             .entry(&observation.identity)
@@ -2453,8 +2453,8 @@ fn infer_specialized_element_pair(
     function_index: &RuntimeFunctionIndex<'_>,
     observations: &HashMap<SymbolIdentity, Vec<TemplateCallObservation>>,
 ) -> Vec<(SymbolIdentity, &'static str)> {
-    let mut starts_by_view: HashMap<usize, HashSet<SymbolIdentity>> = HashMap::new();
-    let mut ends_by_view: HashMap<usize, HashSet<SymbolIdentity>> = HashMap::new();
+    let mut starts_by_view: HashMap<usize, HashSet<SymbolIdentity>> = HashMap::default();
+    let mut ends_by_view: HashMap<usize, HashSet<SymbolIdentity>> = HashMap::default();
     for (identity, calls) in observations {
         let Some(definition) = function_index.unique(identity) else {
             continue;
@@ -2477,8 +2477,8 @@ fn infer_specialized_element_pair(
         }
     }
 
-    let mut proven_starts = HashSet::new();
-    let mut proven_ends = HashSet::new();
+    let mut proven_starts = HashSet::default();
+    let mut proven_ends = HashSet::default();
     for (view_id, starts) in starts_by_view {
         let Some(ends) = ends_by_view.get(&view_id) else {
             continue;
@@ -2611,7 +2611,7 @@ fn infer_namespace_family(
     observations: &HashMap<SymbolIdentity, Vec<TemplateCallObservation>>,
     creation_null_assignments: &[CreationNullAssignmentObservation],
 ) -> Vec<(SymbolIdentity, &'static str)> {
-    let mut candidates = HashMap::<SymbolIdentity, NamespaceCandidates>::new();
+    let mut candidates = HashMap::<SymbolIdentity, NamespaceCandidates>::default();
     for (identity, calls) in observations {
         let Some(definition) = function_index.unique(identity) else {
             continue;
@@ -2732,8 +2732,8 @@ fn infer_styling_property_family(
     function_index: &RuntimeFunctionIndex<'_>,
     observations: &HashMap<SymbolIdentity, Vec<TemplateCallObservation>>,
 ) -> Vec<(SymbolIdentity, &'static str)> {
-    let mut styles_by_helper = HashMap::<SymbolIdentity, Vec<&SymbolIdentity>>::new();
-    let mut classes_by_helper = HashMap::<SymbolIdentity, Vec<&SymbolIdentity>>::new();
+    let mut styles_by_helper = HashMap::<SymbolIdentity, Vec<&SymbolIdentity>>::default();
+    let mut classes_by_helper = HashMap::<SymbolIdentity, Vec<&SymbolIdentity>>::default();
 
     for (identity, calls_in_templates) in observations {
         let Some(definition) = function_index.unique(identity) else {
@@ -2810,9 +2810,9 @@ fn infer_styling_map_family(
     function_index: &RuntimeFunctionIndex<'_>,
     observations: &HashMap<SymbolIdentity, Vec<TemplateCallObservation>>,
 ) -> Vec<(SymbolIdentity, &'static str)> {
-    let mut styles_by_helper = HashMap::<SymbolIdentity, Vec<(&SymbolIdentity, bool)>>::new();
-    let mut classes_by_helper = HashMap::<SymbolIdentity, Vec<(&SymbolIdentity, bool)>>::new();
-    let mut seen = HashSet::new();
+    let mut styles_by_helper = HashMap::<SymbolIdentity, Vec<(&SymbolIdentity, bool)>>::default();
+    let mut classes_by_helper = HashMap::<SymbolIdentity, Vec<(&SymbolIdentity, bool)>>::default();
+    let mut seen = HashSet::default();
 
     for function in functions {
         let identity = &function.identity;
@@ -2930,7 +2930,8 @@ fn infer_i18n_role_family(
         }
     }
 
-    let mut calls_by_definition = HashMap::<SymbolIdentity, Vec<&TemplateCallObservation>>::new();
+    let mut calls_by_definition =
+        HashMap::<SymbolIdentity, Vec<&TemplateCallObservation>>::default();
     for (identity, calls) in observations {
         let Some(definition) = function_index.unique(identity) else {
             continue;
@@ -2941,7 +2942,7 @@ fn infer_i18n_role_family(
             .extend(calls);
     }
 
-    let mut starts_by_target = HashMap::<SymbolIdentity, HashSet<SymbolIdentity>>::new();
+    let mut starts_by_target = HashMap::<SymbolIdentity, HashSet<SymbolIdentity>>::default();
     for (identity, calls) in &calls_by_definition {
         let Some(definition) = function_index.unique(identity) else {
             continue;
@@ -3250,15 +3251,15 @@ fn infer_two_way_role_family(
                 .map(move |(property, _)| ((*listener).clone(), (*property).clone()))
         })
         .collect::<Vec<_>>();
-    let mut listener_pair_counts = HashMap::<SymbolIdentity, usize>::new();
-    let mut property_pair_counts = HashMap::<SymbolIdentity, usize>::new();
+    let mut listener_pair_counts = HashMap::<SymbolIdentity, usize>::default();
+    let mut property_pair_counts = HashMap::<SymbolIdentity, usize>::default();
     for (listener, property) in &pairs {
         *listener_pair_counts.entry(listener.clone()).or_default() += 1;
         *property_pair_counts.entry(property.clone()).or_default() += 1;
     }
 
     let mut inferred = Vec::new();
-    let mut inferred_binding_sets = HashSet::new();
+    let mut inferred_binding_sets = HashSet::default();
     for (listener, property) in pairs {
         if listener_pair_counts.get(&listener) != Some(&1)
             || property_pair_counts.get(&property) != Some(&1)
@@ -3415,7 +3416,7 @@ fn nested_runtime_call_identities(
 
     let mut collector = Collector {
         unresolved_ctxt,
-        identities: HashSet::new(),
+        identities: HashSet::default(),
     };
     expression.visit_with(&mut collector);
     collector.identities
@@ -3668,7 +3669,7 @@ fn infer_defer_role_family(
     function_index: &RuntimeFunctionIndex<'_>,
     observations: &HashMap<SymbolIdentity, Vec<TemplateCallObservation>>,
 ) -> Vec<(SymbolIdentity, &'static str)> {
-    let mut template_slots_by_view = HashMap::<usize, HashSet<usize>>::new();
+    let mut template_slots_by_view = HashMap::<usize, HashSet<usize>>::default();
     for calls in observations.values() {
         for call in calls {
             if is_embedded_template_arguments(&call.arguments) {
@@ -3683,8 +3684,8 @@ fn infer_defer_role_family(
     }
 
     let mut inferred = Vec::new();
-    let mut defer_views = HashSet::new();
-    let mut ordinary_trigger_positions = HashSet::new();
+    let mut defer_views = HashSet::default();
+    let mut ordinary_trigger_positions = HashSet::default();
     for (identity, calls) in observations {
         let Some(definition) = function_index.unique(identity) else {
             continue;
@@ -3772,7 +3773,7 @@ fn is_defer_arguments(
         return false;
     }
 
-    let mut referenced = HashSet::from([primary_index]);
+    let mut referenced = HashSet::from_iter([primary_index]);
     for argument in arguments.iter().take(6).skip(3) {
         if is_nullish(argument.as_ref(), unresolved_ctxt) {
             continue;
@@ -3954,8 +3955,8 @@ fn infer_repeater_role_family(
     observations: &HashMap<SymbolIdentity, Vec<TemplateCallObservation>>,
 ) -> Vec<(SymbolIdentity, &'static str)> {
     let mut inferred = Vec::new();
-    let mut repeater_views = HashSet::new();
-    let mut track_candidates = HashSet::new();
+    let mut repeater_views = HashSet::default();
+    let mut track_candidates = HashSet::default();
     for (identity, calls) in observations {
         let Some(definition) = function_index.unique(identity) else {
             continue;
@@ -3979,7 +3980,7 @@ fn infer_repeater_role_family(
         return inferred;
     }
 
-    let mut updates_by_view = HashMap::<usize, HashSet<SymbolIdentity>>::new();
+    let mut updates_by_view = HashMap::<usize, HashSet<SymbolIdentity>>::default();
     for (identity, calls) in observations {
         let Some(definition) = function_index.unique(identity) else {
             continue;
@@ -4006,7 +4007,7 @@ fn infer_repeater_role_family(
             }
         }
     }
-    let mut proven_updates = HashSet::new();
+    let mut proven_updates = HashSet::default();
     for candidates in updates_by_view.values() {
         if let Some(candidate) = single_identity(candidates.iter()) {
             proven_updates.insert(candidate.clone());
@@ -4172,8 +4173,8 @@ fn infer_view_state_role_family(
     integer_constants: &HashMap<BindingKey, u64>,
     roles: &IvyRoleTable,
 ) -> Vec<(SymbolIdentity, &'static str)> {
-    let mut restores_by_state: HashMap<ValuePath, Vec<&RuntimeFunction>> = HashMap::new();
-    let mut resets_by_state: HashMap<ValuePath, Vec<&RuntimeFunction>> = HashMap::new();
+    let mut restores_by_state: HashMap<ValuePath, Vec<&RuntimeFunction>> = HashMap::default();
+    let mut resets_by_state: HashMap<ValuePath, Vec<&RuntimeFunction>> = HashMap::default();
     for function in functions {
         let Some(parameters) = plain_parameter_bindings(function) else {
             continue;
@@ -4354,8 +4355,8 @@ fn uses_capture_restore_flow(
             restore,
             roles,
             unresolved_ctxt: prepared.unresolved_ctxt,
-            captures: HashSet::new(),
-            restored: HashSet::new(),
+            captures: HashSet::default(),
+            restored: HashSet::default(),
         };
         prepared.module.visit_with(&mut collector);
         collector
@@ -4415,7 +4416,7 @@ fn single_assigned_member(
 
     let mut collector = Collector {
         value,
-        targets: HashSet::new(),
+        targets: HashSet::default(),
     };
     function.body.visit_with(&mut collector);
     let mut targets = collector.targets.into_iter();
@@ -4698,7 +4699,7 @@ fn infer_aria_property_family(
     function_index: &RuntimeFunctionIndex<'_>,
     observations_by_identity: &HashMap<SymbolIdentity, Vec<TemplateCallObservation>>,
 ) -> Vec<(SymbolIdentity, &'static str)> {
-    let mut attribute_write_targets = HashSet::new();
+    let mut attribute_write_targets = HashSet::default();
     for (identity, observations) in observations_by_identity {
         let Some(definition) = function_index.unique(identity) else {
             continue;
@@ -5252,7 +5253,7 @@ fn infer_projection_role_family(
     observations: &HashMap<SymbolIdentity, Vec<TemplateCallObservation>>,
 ) -> Vec<(SymbolIdentity, &'static str)> {
     let mut observations_by_definition =
-        HashMap::<SymbolIdentity, Vec<&TemplateCallObservation>>::new();
+        HashMap::<SymbolIdentity, Vec<&TemplateCallObservation>>::default();
     for (identity, calls) in observations {
         let Some(definition) = function_index.unique(identity) else {
             continue;
@@ -5263,8 +5264,8 @@ fn infer_projection_role_family(
             .extend(calls);
     }
 
-    let mut definitions_by_property = HashMap::<Atom, HashSet<SymbolIdentity>>::new();
-    let mut projections_by_property = HashMap::<Atom, HashSet<SymbolIdentity>>::new();
+    let mut definitions_by_property = HashMap::<Atom, HashSet<SymbolIdentity>>::default();
+    let mut projections_by_property = HashMap::<Atom, HashSet<SymbolIdentity>>::default();
     for (identity, calls) in observations_by_definition {
         let Some(definition) = function_index.unique(&identity) else {
             continue;
@@ -5398,7 +5399,7 @@ fn assigned_member_properties(block: &FunctionBody) -> HashSet<Atom> {
     }
 
     let mut collector = Collector {
-        properties: HashSet::new(),
+        properties: HashSet::default(),
     };
     block.visit_with(&mut collector);
     collector.properties
@@ -5434,7 +5435,7 @@ fn member_properties_assigned_from_binding(
 
     let mut collector = Collector {
         binding,
-        properties: HashSet::new(),
+        properties: HashSet::default(),
     };
     block.visit_with(&mut collector);
     collector.properties
@@ -5978,7 +5979,7 @@ fn all_call_callees(function: &RuntimeFunction) -> HashSet<SymbolIdentity> {
 
     let mut collector = Collector {
         unresolved_ctxt: function.unresolved_ctxt,
-        callees: HashSet::new(),
+        callees: HashSet::default(),
     };
     function.body.visit_with(&mut collector);
     collector.callees
@@ -6956,7 +6957,7 @@ impl ReturnedDescriptorBuilder<'_> {
         let mut evidence = DescriptorBuilderEvidence {
             parameter: self.parameter,
             unresolved_ctxt: self.unresolved_ctxt,
-            parameter_fields: HashSet::new(),
+            parameter_fields: HashSet::default(),
             has_object_assign: false,
             has_minified_component_descriptor: false,
             has_ng_standalone_marker: false,
@@ -7034,8 +7035,8 @@ fn is_minified_component_descriptor_object(object: &ObjectLit, parameter: &Bindi
     const MIN_FORWARDED_FIELDS: usize = 8;
 
     let mut property_count = 0usize;
-    let mut output_fields = HashSet::new();
-    let mut parameter_fields = HashSet::new();
+    let mut output_fields = HashSet::default();
+    let mut parameter_fields = HashSet::default();
     let mut has_empty_id = false;
 
     for property in &object.props {
@@ -7054,7 +7055,7 @@ fn is_minified_component_descriptor_object(object: &ObjectLit, parameter: &Bindi
         }
         let mut collector = ParameterFieldCollector {
             parameter,
-            fields: HashSet::new(),
+            fields: HashSet::default(),
         };
         property.value.visit_with(&mut collector);
         parameter_fields.extend(collector.fields);
@@ -7102,7 +7103,7 @@ fn is_unresolved_object_assign(callee: &Callee, unresolved_ctxt: SyntaxContext) 
 }
 
 fn infer_element_family(functions: &[RuntimeFunction]) -> Vec<(SymbolIdentity, &'static str)> {
-    let mut by_identity: HashMap<&SymbolIdentity, Vec<&RuntimeFunction>> = HashMap::new();
+    let mut by_identity: HashMap<&SymbolIdentity, Vec<&RuntimeFunction>> = HashMap::default();
     for function in functions {
         by_identity
             .entry(&function.identity)
@@ -7147,7 +7148,7 @@ fn infer_element_family(functions: &[RuntimeFunction]) -> Vec<(SymbolIdentity, &
 fn infer_element_container_family(
     functions: &[RuntimeFunction],
 ) -> Vec<(SymbolIdentity, &'static str)> {
-    let mut by_identity: HashMap<&SymbolIdentity, Vec<&RuntimeFunction>> = HashMap::new();
+    let mut by_identity: HashMap<&SymbolIdentity, Vec<&RuntimeFunction>> = HashMap::default();
     for function in functions {
         by_identity
             .entry(&function.identity)
