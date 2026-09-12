@@ -1623,7 +1623,7 @@ fn projects_only_unambiguous_fact_transport_edges_into_the_evidence_workspace() 
             imports: vec![ImportFact {
                 local: "core".into(),
                 source: "./runtime.js".into(),
-                kind: ImportKind::Default,
+                kind: ImportKind::Namespace,
             }],
             ..Default::default()
         },
@@ -7483,7 +7483,7 @@ fn bridges_fact_aliases_when_proving_view_state_capture_flow() {
             imports: vec![ImportFact {
                 local: "core".into(),
                 source: "./runtime.js".into(),
-                kind: ImportKind::Default,
+                kind: ImportKind::Namespace,
             }],
             ..Default::default()
         },

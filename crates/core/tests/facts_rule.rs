@@ -6,9 +6,10 @@ use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::VisitMutWith;
 use wakaru_core::facts::{
     collect_commonjs_default_object, collect_commonjs_value_is_default,
-    collect_default_object_tail, collect_input_is_es_module, collect_marks_es_module,
-    collect_module_facts, ExportFact, ExportKind, HelperExportFact, HelperKind, ImportFact,
-    ImportKind, ModuleFacts, ModuleFactsMap, TypeScriptHelperExportFact, TypeScriptHelperKind,
+    collect_commonjs_whole_value_imports, collect_default_object_tail, collect_input_is_es_module,
+    collect_marks_es_module, collect_module_facts, ExportFact, ExportKind, HelperExportFact,
+    HelperKind, ImportFact, ImportKind, ModuleFacts, ModuleFactsMap, TypeScriptHelperExportFact,
+    TypeScriptHelperKind,
 };
 use wakaru_core::{apply_rules, RulePipelineOptions};
 
@@ -36,6 +37,8 @@ fn collect_facts(source: &str) -> ModuleFacts {
         let top_level_mark = Mark::new();
         module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
         let commonjs_default_object = collect_commonjs_default_object(&module, unresolved_mark);
+        let commonjs_whole_value_imports =
+            collect_commonjs_whole_value_imports(&module, unresolved_mark);
 
         // Run pipeline through end of Stage 2
         apply_rules(
@@ -46,6 +49,7 @@ fn collect_facts(source: &str) -> ModuleFacts {
 
         let mut facts = collect_module_facts(&module);
         facts.commonjs_default_object = commonjs_default_object;
+        facts.commonjs_whole_value_imports = commonjs_whole_value_imports;
         facts
     })
 }
@@ -172,6 +176,29 @@ fn require_becomes_default_import() {
         facts.imports,
         vec![import("x", "./mod", ImportKind::Default),]
     );
+    assert_eq!(facts.commonjs_whole_value_imports.len(), 1);
+    assert_eq!(facts.commonjs_whole_value_imports[0].local.as_ref(), "x");
+    assert_eq!(
+        facts.commonjs_whole_value_imports[0].source.as_ref(),
+        "./mod"
+    );
+}
+
+#[test]
+fn default_property_require_is_not_a_whole_value_import() {
+    let facts = collect_facts(r#"var x = require("./mod").default;"#);
+    assert!(facts.commonjs_whole_value_imports.is_empty());
+}
+
+#[test]
+fn reassigned_require_binding_is_not_a_stable_whole_value_import() {
+    let facts = collect_facts(
+        r#"
+var x = require("./mod");
+x = replacement;
+"#,
+    );
+    assert!(facts.commonjs_whole_value_imports.is_empty());
 }
 
 #[test]

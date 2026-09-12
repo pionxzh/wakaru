@@ -10,8 +10,9 @@ rules fit in the pipeline.
 A barrier-and-read mechanism that lets Phase 2 rules read provider shape from
 **other** modules in the same bundle. Most facts describe normalized ESM
 imports/exports. Deliberately narrow pre-`UnEsm` facts preserve CommonJS
-provider shape that `UnEsm` would otherwise erase: the proven identity and
-statically declared properties of an object assigned directly to
+transport and provider shape that `UnEsm` would otherwise erase: stable
+top-level bindings initialized from the complete `require()` value, the proven
+identity and statically declared properties of an object assigned directly to
 `module.exports`, and whether the module marks itself `__esModule`; on the
 consumer side, one record per `require()` call (its form, interop, and
 uses). For object defaults, the identity proof is independent of
@@ -25,12 +26,13 @@ shared state, merging them at a barrier, and reading back immutable facts.
 We do not need that. After `UnEsm` runs, ESM `import`/`export` declarations are
 already a normalized, AST-level representation of module shape. That AST *is*
 the fact. The exceptions are syntactic facts collected from the resolved input
-before the rule range reaches `UnEsm`, such as whether raw `module.exports`
-receives an object literal (or a stable local alias to one). `UnEsm` otherwise
-erases the important distinction between that CommonJS value and ESM named
-exports. All collectors
-remain pure functions of one module — no rule-written observations and no
-merge step.
+before the rule range reaches `UnEsm`, such as whether a stable top-level
+binding receives the complete value from a static unresolved `require()`, or
+whether raw `module.exports` receives an object literal (or a stable local alias
+to one). `UnEsm` otherwise erases the important distinction between a whole
+CommonJS transport edge, an ESM default import, and ESM named exports. All
+collectors remain pure functions of one module — no rule-written observations
+and no merge step.
 
 ## Shape
 
@@ -43,7 +45,8 @@ before `UnEsm`, so every module reaches `UnEsm` before any runs it
 Phase 1a (per module, parallel):
     obtain resolved AST (prepared detector AST, or parse → resolver)
     normalize exact detector-proven webpack runtime branches
-    collect raw CommonJS provider facts (default object, exports shape)
+    collect raw CommonJS provider facts (whole-value imports, default object,
+      exports shape)
     collect require edges: form and interop, keyed by call span
     rule range up to, not including, UnEsm
     add each edge's uses, on the AST UnEsm will see
@@ -189,11 +192,12 @@ conservatively retain the graph.
 `crates/core/src/facts.rs`:
 
 - `ImportFact { local, source, kind: Default | Namespace | Named(imported) }`
+- `CommonJsWholeValueImportFact { local, source }`
 - `ExportFact { exported, local, kind: Default | Named }`
 - `HelperExportFact { exported, local, kind }`
 - `ReexportFact { exported, imported, source }` — `export { A as B } from`
 - `ImportCallEdge { source, imported, consumed_by_exports }`
-- `ModuleFacts { imports, exports, helper_exports,
+- `ModuleFacts { imports, commonjs_whole_value_imports, exports, helper_exports,
   commonjs_default_object,
   require_returns_exports_object, input_is_es_module, commonjs_value_is_default,
   replaces_module_exports,
@@ -205,6 +209,12 @@ conservatively retain the graph.
   (handles `./foo`, `foo`, `foo.js` variants)
 
 Extraction (`collect_module_facts`) reads the post-Stage-2 AST. Before Stage 2,
+`collect_commonjs_whole_value_imports` records only stable top-level identifier
+bindings initialized directly from a one-argument, static, unresolved
+`require(source)` call. Property reads such as `require(source).default`,
+reassigned bindings, destructuring, dynamic sources, and nested calls are not
+whole-value facts.
+
 `collect_commonjs_default_object` records only direct unresolved
 `module.exports = {...}` assignments and stable top-level object aliases. Its
 `Option<CommonJsDefaultObjectFact>` distinguishes an unknown value from a
@@ -793,8 +803,10 @@ Neither proof creates a default-object fact available to consumers.
   consumer-side property spelling alone is never sufficient.
 - **Framework artifact workspaces** — may adapt the retained root snapshot into
   binding-equivalence edges between pre-rewrite module views. For example, a
-  recovered namespace-like import plus a proven target export can establish
-  `core.VBU ≡ Ea`. The fact system supplies only transport identity; the
+  recovered namespace import, or a proven whole-value CommonJS import, plus a
+  target export can establish `core.VBU ≡ Ea`. An ESM default import establishes
+  only the provider's default identity; it never inherits same-named namespace
+  members. The fact system supplies only transport identity; the
   framework analyzer decides whether `Ea` has any Angular, Vue, or other
   semantic role.
 
@@ -849,9 +861,9 @@ unpack tests catch a fact read the check misses.
 - No shared mutable state between rules in the same phase.
 - No multi-round merging.
 - No speculative facts ("this might be an X"). A fact holds iff the normalized
-  post-Stage-2 AST says it does, or the narrow pre-`UnEsm` collector proves the
-  exact raw CommonJS assignment shape. The one bounded exception is the
-  class-recovery prediction on `ImportCallEdge` described above.
+  post-Stage-2 AST says it does, or a narrow pre-`UnEsm` collector proves an
+  exact raw CommonJS transport or assignment shape. The one bounded exception
+  is the class-recovery prediction on `ImportCallEdge` described above.
 - No framework roles or evidence conclusions in `ModuleFactsMap`.
 
 Rules that need heavier semantic conclusions (e.g. "this namespace projection
