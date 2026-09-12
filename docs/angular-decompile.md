@@ -646,10 +646,13 @@ class and template have been selected. Its roots are:
 An exact ESM import specifier is retained when one of those roots resolves to
 it. A local helper is copied only when its complete top-level dependency
 closure is portable: function declarations, function or arrow initializers,
-literal constants, and direct aliases. If that closure reaches a class,
-eager call, or another unsupported initializer, the helper is omitted and the
-artifact contains an explicit unresolved-symbol comment. This prevents one
-module artifact from absorbing an arbitrary runtime graph.
+literal constants, and direct aliases. Every copied local must also remain
+unwritten after its declaration; a later assignment or update means the
+initializer no longer proves the value observed by the class. If that closure
+reaches a class, eager call, mutated binding, or another unsupported
+initializer, the helper is omitted and the artifact contains an explicit
+unresolved-symbol comment. This prevents one module artifact from absorbing an
+arbitrary or stale runtime graph.
 
 When a compiled dependency root can be materialized, the emitter adds it to a
 reconstructed `imports` list. This is an inspection-oriented equivalent of

@@ -49,6 +49,7 @@ pub(super) struct ArtifactSupportPlan {
 impl ArtifactSymbolTable {
     pub(super) fn collect(module: &Module) -> Self {
         let mut table = Self::default();
+        let directly_written = BindingUseIndex::collect_direct_write_bindings(module);
         for (item_index, item) in module.body.iter().enumerate() {
             match item {
                 ModuleItem::ModuleDecl(ModuleDecl::Import(import)) => {
@@ -70,10 +71,10 @@ impl ArtifactSymbolTable {
                     }
                 }
                 ModuleItem::Stmt(Stmt::Decl(declaration)) => {
-                    table.record_declaration(declaration, item_index);
+                    table.record_declaration(declaration, item_index, &directly_written);
                 }
                 ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => {
-                    table.record_declaration(&export.decl, item_index);
+                    table.record_declaration(&export.decl, item_index, &directly_written);
                 }
                 _ => {}
             }
@@ -182,12 +183,29 @@ impl ArtifactSymbolTable {
         Some(units)
     }
 
-    fn record_declaration(&mut self, declaration: &Decl, item_index: usize) {
+    fn record_declaration(
+        &mut self,
+        declaration: &Decl,
+        item_index: usize,
+        directly_written: &HashSet<BindingKey>,
+    ) {
         match declaration {
             Decl::Fn(function) => {
+                let binding = binding_key(&function.ident);
+                if directly_written.contains(&binding) {
+                    self.entries.insert(
+                        binding,
+                        SupportEntry {
+                            order: (item_index, 0),
+                            references: HashSet::default(),
+                            kind: SupportEntryKind::Unsupported,
+                        },
+                    );
+                    return;
+                }
                 let item = ModuleItem::Stmt(Stmt::Decl(Decl::Fn(function.clone())));
                 self.entries.insert(
-                    binding_key(&function.ident),
+                    binding,
                     SupportEntry {
                         order: (item_index, 0),
                         references: item_references(&item),
@@ -216,7 +234,8 @@ impl ArtifactSymbolTable {
                     let supported = declarator
                         .init
                         .as_deref()
-                        .is_some_and(is_portable_initializer);
+                        .is_some_and(is_portable_initializer)
+                        && !directly_written.contains(&binding_key(&binding.id));
                     if !supported {
                         self.entries.insert(
                             binding_key(&binding.id),
