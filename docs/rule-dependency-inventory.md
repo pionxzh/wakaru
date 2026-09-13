@@ -312,6 +312,11 @@ rationale, or level gating appear.
   preserve the whole CommonJS boundary. The synthesized declarations use
   fresh resolver contexts and collision-free emitted names, and precede
   VarDeclToLetConst so that rule decides their final declaration kind.
+  A leading statement-level `exports.name = void 0` or unresolved
+  `undefined` sentinel is omitted once recovery creates the same uninitialized
+  binding, provided its prefix contains only directives, imports, hoisted
+  function declarations, statically classified require declarations, and
+  other sentinels. Later or effectful initializers remain.
   Ordinary `exports.public = local` assignments keep CommonJS snapshot
   semantics when `local` has any direct or deferred write: UnEsm captures its
   value at the assignment instead of emitting a live export alias. A proven

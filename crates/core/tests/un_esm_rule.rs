@@ -4300,6 +4300,149 @@ export { read as snapshot };
 }
 
 #[test]
+fn leading_conditional_export_sentinels_are_removed() {
+    let source = r#"
+"use strict";
+import dependency from "./dependency.js";
+function readDependency() {
+  return dependency;
+}
+exports.current = void 0;
+module.exports.ready = undefined;
+if (flag) {
+  exports.current = first();
+  module.exports.ready = true;
+} else {
+  exports.current = second();
+  module.exports.ready = false;
+}
+consume(readDependency(), exports.current, module.exports.ready);
+"#;
+    let expected = r#"
+import dependency from "./dependency.js";
+export var current;
+export var ready;
+"use strict";
+function readDependency() {
+  return dependency;
+}
+if (flag) {
+  current = first();
+  ready = true;
+} else {
+  current = second();
+  ready = false;
+}
+consume(readDependency(), current, ready);
+"#;
+
+    let output = common::render_rule(source, |mark| {
+        wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
+    });
+    assert_eq_normalized(&output, expected);
+
+    let pipeline_output = common::render_pipeline(source);
+    assert!(
+        pipeline_output.contains("export let current;"),
+        "{pipeline_output}"
+    );
+    assert!(
+        pipeline_output.contains("export let ready;"),
+        "{pipeline_output}"
+    );
+    assert!(
+        !pipeline_output.contains("current = undefined"),
+        "{pipeline_output}"
+    );
+    assert!(
+        !pipeline_output.contains("ready = undefined"),
+        "{pipeline_output}"
+    );
+    assert!(
+        validate_output_modules(&[
+            ("entry.js".into(), pipeline_output.clone()),
+            ("dependency.js".into(), "export default {};".into()),
+        ])
+        .is_empty(),
+        "{pipeline_output}"
+    );
+}
+
+#[test]
+fn require_declarations_do_not_end_the_export_sentinel_prefix() {
+    let source = r#"
+const dependency = require("dependency");
+exports.current = void 0;
+if (flag) {
+  exports.current = dependency.first();
+} else {
+  exports.current = dependency.second();
+}
+"#;
+    let expected = r#"
+import dependency from "dependency";
+export var current;
+if (flag) {
+  current = dependency.first();
+} else {
+  current = dependency.second();
+}
+"#;
+
+    let output = common::render_rule(source, |mark| {
+        wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
+    });
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn conditional_export_sentinels_after_other_code_are_preserved() {
+    for prefix in [
+        "sideEffect();",
+        "require('side-effect');",
+        "const marker = 1;",
+        "exports.current = initial;",
+    ] {
+        let source = format!(
+            "{prefix} exports.current = void 0; if (flag) {{ exports.current = next(); }} consume(exports.current);"
+        );
+        let output = common::render_rule(&source, |mark| {
+            wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
+        });
+        assert!(
+            output.contains("current = void 0") || output.contains("current = undefined"),
+            "{output}"
+        );
+    }
+
+    let shadowed = r#"
+const undefined = fallback;
+exports.current = undefined;
+if (flag) {
+  exports.current = next();
+}
+consume(exports.current);
+"#;
+    let output = common::render_rule(shadowed, |mark| {
+        wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
+    });
+    assert!(output.contains("current = undefined"), "{output}");
+
+    let effectful_void = r#"
+exports.current = void sideEffect();
+if (flag) {
+  exports.current = next();
+}
+consume(exports.current);
+"#;
+    let output = common::render_rule(effectful_void, |mark| {
+        wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
+    });
+    assert_eq!(output.matches("sideEffect()").count(), 1, "{output}");
+    assert!(output.contains("current = void sideEffect()"), "{output}");
+}
+
+#[test]
 fn conditional_named_export_chains_share_live_bindings() {
     let source = r#"
 if (flag) {

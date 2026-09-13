@@ -6170,6 +6170,8 @@ fn recover_conditional_named_exports(
         };
         locals.insert(public.clone(), fresh_binding_ident(local_name, DUMMY_SP));
     }
+    let leading_sentinels =
+        leading_conditional_export_sentinels(module, &candidate_names, unresolved_mark);
 
     struct Rewriter<'a> {
         unresolved_mark: Mark,
@@ -6218,6 +6220,13 @@ fn recover_conditional_named_exports(
         unresolved_mark,
         locals: &locals,
     });
+    if !leading_sentinels.is_empty() {
+        module.body = std::mem::take(&mut module.body)
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, item)| (!leading_sentinels.contains(&index)).then_some(item))
+            .collect();
+    }
 
     let mut declarations = Vec::with_capacity(candidates.len() * 2 + module.body.len());
     for public in candidates {
@@ -6265,6 +6274,81 @@ fn recover_conditional_named_exports(
     declarations.append(&mut module.body);
     module.body = declarations;
     ConditionalExportRecovery::Recovered(original_body)
+}
+
+/// Find TypeScript-style `exports.name = void 0` declarations at the start of
+/// a module. Once conditional recovery creates an uninitialized module binding,
+/// these writes repeat its existing `undefined` value and can be omitted.
+///
+/// Stop at the first ordinary statement. Looking only through directives,
+/// imports, hoisted function declarations, statically classified require
+/// declarations, and other sentinels keeps this independent of control-flow
+/// and call analysis.
+fn leading_conditional_export_sentinels(
+    module: &Module,
+    candidate_names: &HashSet<Atom>,
+    unresolved_mark: Mark,
+) -> HashSet<usize> {
+    fn sentinel_name(item: &ModuleItem, unresolved_mark: Mark) -> Option<Atom> {
+        let ModuleItem::Stmt(Stmt::Expr(statement)) = item else {
+            return None;
+        };
+        let Expr::Assign(assign) = strip_parens(statement.expr.as_ref()) else {
+            return None;
+        };
+        if assign.op != AssignOp::Assign {
+            return None;
+        }
+        let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left else {
+            return None;
+        };
+        if !is_cjs_export_object_expr(&member.obj, unresolved_mark) {
+            return None;
+        }
+        let name = is_ident_prop(&member.prop)?;
+        match strip_parens(assign.right.as_ref()) {
+            Expr::Unary(UnaryExpr {
+                op: UnaryOp::Void,
+                arg,
+                ..
+            }) if matches!(strip_parens(arg), Expr::Lit(Lit::Num(number)) if number.value == 0.0) => {
+                Some(name)
+            }
+            Expr::Ident(ident) if is_undefined_ident(ident, unresolved_mark) => Some(name),
+            _ => None,
+        }
+    }
+
+    fn is_directive(item: &ModuleItem) -> bool {
+        matches!(item,
+            ModuleItem::Stmt(Stmt::Expr(statement))
+                if matches!(strip_parens(statement.expr.as_ref()), Expr::Lit(Lit::Str(_))))
+    }
+
+    fn is_require_declaration(item: &ModuleItem, unresolved_mark: Mark) -> bool {
+        let ModuleItem::Stmt(statement @ Stmt::Decl(Decl::Var(_))) = item else {
+            return false;
+        };
+        try_classify_cjs_require(statement, unresolved_mark).is_some()
+    }
+
+    let mut removable = HashSet::default();
+    for (index, item) in module.body.iter().enumerate() {
+        if matches!(item, ModuleItem::ModuleDecl(ModuleDecl::Import(_)))
+            || matches!(item, ModuleItem::Stmt(Stmt::Decl(Decl::Fn(_))))
+            || is_directive(item)
+            || is_require_declaration(item, unresolved_mark)
+        {
+            continue;
+        }
+        let Some(name) = sentinel_name(item, unresolved_mark) else {
+            break;
+        };
+        if candidate_names.contains(&name) {
+            removable.insert(index);
+        }
+    }
+    removable
 }
 
 /// Recognize a remaining named-export assignment chain as one operation,
