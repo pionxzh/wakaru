@@ -744,6 +744,161 @@ function f() {
     assert_eq_normalized(&output, expected);
 }
 
+#[test]
+fn named_import_snapshot_alias_uses_readable_local_name() {
+    let input = r#"
+import { unstable_runWithPriority } from "./scheduler.js";
+const Wt = unstable_runWithPriority;
+use(Wt);
+"#;
+    let expected = r#"
+import { unstable_runWithPriority } from "./scheduler.js";
+const unstable_runWithPriority_1 = unstable_runWithPriority;
+use(unstable_runWithPriority_1);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn named_import_snapshot_aliases_get_distinct_readable_names() {
+    let input = r#"
+import { unstable_now } from "./scheduler.js";
+const a = unstable_now;
+const b = unstable_now;
+use(a, b);
+"#;
+    let expected = r#"
+import { unstable_now } from "./scheduler.js";
+const unstable_now_1 = unstable_now;
+const unstable_now_2 = unstable_now;
+use(unstable_now_1, unstable_now_2);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn named_import_snapshot_alias_avoids_nested_name_capture() {
+    let input = r#"
+import { unstable_now } from "./scheduler.js";
+const a = unstable_now;
+function read() {
+    const unstable_now_1 = localClock();
+    return a();
+}
+"#;
+    let expected = r#"
+import { unstable_now } from "./scheduler.js";
+const unstable_now_2 = unstable_now;
+function read() {
+    const unstable_now_1 = localClock();
+    return unstable_now_2();
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn named_import_snapshot_rename_preserves_specifier_export_name() {
+    let input = r#"
+import { unstable_now } from "./scheduler.js";
+const a = unstable_now;
+export { a };
+"#;
+    let expected = r#"
+import { unstable_now } from "./scheduler.js";
+const unstable_now_1 = unstable_now;
+export { unstable_now_1 as a };
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn named_import_snapshot_rename_skips_export_declaration() {
+    let input = r#"
+import { unstable_now } from "./scheduler.js";
+export const a = unstable_now;
+const b = unstable_now;
+use(a, b);
+"#;
+    let expected = r#"
+import { unstable_now } from "./scheduler.js";
+export const a = unstable_now;
+const unstable_now_1 = unstable_now;
+use(a, unstable_now_1);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn named_import_snapshot_rename_keeps_mutable_and_jsx_aliases() {
+    let input = r#"
+import { unstable_now, widget } from "./runtime.js";
+let a = unstable_now;
+const Wt = widget;
+use(a, <Wt />);
+"#;
+    let expected = r#"
+import { unstable_now, widget } from "./runtime.js";
+let a = unstable_now;
+const Widget = widget;
+use(a, <Widget />);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn named_import_snapshot_rename_respects_known_direct_eval_names() {
+    let input = r#"
+import { unstable_now } from "./scheduler.js";
+const a = unstable_now;
+const b = unstable_now;
+eval("a");
+use(a, b);
+"#;
+    let expected = r#"
+import { unstable_now } from "./scheduler.js";
+const a = unstable_now;
+const unstable_now_1 = unstable_now;
+eval("a");
+use(a, unstable_now_1);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn named_import_snapshot_rename_stops_for_unknown_direct_eval() {
+    let input = r#"
+import { unstable_now } from "./scheduler.js";
+const a = unstable_now;
+eval(source);
+use(a);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn named_import_snapshot_rename_does_not_capture_known_eval_name() {
+    let input = r#"
+import { unstable_now } from "./scheduler.js";
+const a = unstable_now;
+eval("unstable_now_1");
+use(a);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn named_import_snapshot_rename_stops_for_with_statement() {
+    let input = r#"
+import { unstable_now } from "./scheduler.js";
+const a = unstable_now;
+with (scope) {
+    use(a);
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
 // --- semantic regressions ---
 
 #[test]

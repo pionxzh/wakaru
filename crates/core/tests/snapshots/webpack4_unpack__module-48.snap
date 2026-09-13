@@ -1419,8 +1419,8 @@ qt(zt, 2);
 for(let Ut = "change selectionchange textInput compositionstart compositionend compositionupdate".split(" "), Ht = 0; Ht < Ut.length; Ht++){
     Ft.set(Ut[Ht], 0);
 }
-const Wt = unstable_UserBlockingPriority;
-const $t = unstable_runWithPriority;
+const unstable_UserBlockingPriority_1 = unstable_UserBlockingPriority;
+const unstable_runWithPriority_1 = unstable_runWithPriority;
 let Bt = true;
 function Vt(e, t) {
     Qt(t, e, false);
@@ -1447,7 +1447,7 @@ function Qt(e, t, n) {
             break;
         case 1:
             r = ((e, t, n, r)=>{
-                $t(Wt, Kt.bind(null, e, t, n, r));
+                unstable_runWithPriority_1(unstable_UserBlockingPriority_1, Kt.bind(null, e, t, n, r));
             }).bind(null, t, 1, e);
             break;
         default:
@@ -3056,36 +3056,36 @@ function xo(e, t, n) {
     }
     so(ho, n);
 }
-const ko = unstable_runWithPriority;
-const To = unstable_scheduleCallback;
-const So = unstable_cancelCallback;
-const Oo = unstable_requestPaint;
-const Co = unstable_now;
-const Po = unstable_getCurrentPriorityLevel;
-const _o = unstable_ImmediatePriority;
-const jo = unstable_UserBlockingPriority;
-const Ro = unstable_NormalPriority;
-const No = unstable_LowPriority;
-const Mo = unstable_IdlePriority;
+const unstable_runWithPriority_2 = unstable_runWithPriority;
+const unstable_scheduleCallback_1 = unstable_scheduleCallback;
+const unstable_cancelCallback_1 = unstable_cancelCallback;
+const unstable_requestPaint_1 = unstable_requestPaint;
+const unstable_now_1 = unstable_now;
+const unstable_getCurrentPriorityLevel_1 = unstable_getCurrentPriorityLevel;
+const unstable_ImmediatePriority_1 = unstable_ImmediatePriority;
+const unstable_UserBlockingPriority_2 = unstable_UserBlockingPriority;
+const unstable_NormalPriority_1 = unstable_NormalPriority;
+const unstable_LowPriority_1 = unstable_LowPriority;
+const unstable_IdlePriority_1 = unstable_IdlePriority;
 const Ao = {};
-const Lo = unstable_shouldYield;
-const Io = Oo !== undefined ? Oo : ()=>{};
+const unstable_shouldYield_1 = unstable_shouldYield;
+const Io = unstable_requestPaint_1 !== undefined ? unstable_requestPaint_1 : ()=>{};
 let Do = null;
 let Fo = null;
 let zo = false;
-const qo = Co();
-const Uo = qo < 10000 ? Co : ()=>Co() - qo;
+const qo = unstable_now_1();
+const Uo = qo < 10000 ? unstable_now_1 : ()=>unstable_now_1() - qo;
 function Ho() {
-    switch(Po()){
-        case _o:
+    switch(unstable_getCurrentPriorityLevel_1()){
+        case unstable_ImmediatePriority_1:
             return 99;
-        case jo:
+        case unstable_UserBlockingPriority_2:
             return 98;
-        case Ro:
+        case unstable_NormalPriority_1:
             return 97;
-        case No:
+        case unstable_LowPriority_1:
             return 96;
-        case Mo:
+        case unstable_IdlePriority_1:
             return 95;
         default:
             throw Error(a(332));
@@ -3094,33 +3094,33 @@ function Ho() {
 function Wo(e) {
     switch(e){
         case 99:
-            return _o;
+            return unstable_ImmediatePriority_1;
         case 98:
-            return jo;
+            return unstable_UserBlockingPriority_2;
         case 97:
-            return Ro;
+            return unstable_NormalPriority_1;
         case 96:
-            return No;
+            return unstable_LowPriority_1;
         case 95:
-            return Mo;
+            return unstable_IdlePriority_1;
         default:
             throw Error(a(332));
     }
 }
 function $o(e, t) {
     e = Wo(e);
-    return ko(e, t);
+    return unstable_runWithPriority_2(e, t);
 }
 function Bo(e, t, n) {
     e = Wo(e);
-    return To(e, t, n);
+    return unstable_scheduleCallback_1(e, t, n);
 }
 function Vo(e) {
     if (Do === null) {
         Do = [
             e
         ];
-        Fo = To(_o, Ko);
+        Fo = unstable_scheduleCallback_1(unstable_ImmediatePriority_1, Ko);
     } else {
         Do.push(e);
     }
@@ -3130,7 +3130,7 @@ function Qo() {
     if (Fo !== null) {
         const e = Fo;
         Fo = null;
-        So(e);
+        unstable_cancelCallback_1(e);
     }
     Ko();
 }
@@ -3153,7 +3153,7 @@ function Ko() {
             if (Do !== null) {
                 Do = Do.slice(e + 1);
             }
-            To(_o, Qo);
+            unstable_scheduleCallback_1(unstable_ImmediatePriority_1, Qo);
             throw t;
         } finally{
             zo = false;
@@ -6804,7 +6804,7 @@ function ul(e) {
                     return;
                 }
                 if (n !== Ao) {
-                    So(n);
+                    unstable_cancelCallback_1(n);
                 }
             }
             e.callbackExpirationTime = t;
@@ -7250,7 +7250,7 @@ function yl() {
     }
 }
 function vl() {
-    while(Au !== null && !Lo()){
+    while(Au !== null && !unstable_shouldYield_1()){
         Au = bl(Au);
     }
 }

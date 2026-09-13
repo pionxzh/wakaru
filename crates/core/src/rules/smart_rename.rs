@@ -17,12 +17,13 @@ use crate::js_names::{
     is_likely_generated_alias, is_reserved_binding_name, to_valid_identifier_name,
 };
 
+use super::eval_utils::{js_source_mentions_binding, module_has_with_stmt, DirectEvalAnalyzer};
 use super::expr_utils::is_unresolved_ident;
 use super::extract_inlined_function::SharedExtractedFunctionNames;
 use super::helper_matcher::static_member_prop_name;
 use super::rename_utils::{
-    collect_exported_binding_ids, collect_module_names, rename_bindings, rename_bindings_in_module,
-    starts_with_lowercase, BindingId, BindingRename, RenameShadowIndex,
+    collect_exported_binding_ids, collect_jsx_tag_bindings, collect_module_names, rename_bindings,
+    rename_bindings_in_module, starts_with_lowercase, BindingId, BindingRename, RenameShadowIndex,
 };
 use super::ObjShorthand;
 
@@ -58,6 +59,7 @@ impl VisitMut for SmartRename {
         );
         destructuring_rename_module_with(module, &mut cached_names, &exported_bindings);
         member_init_rename_module_with(module, &mut cached_names, &exported_bindings);
+        import_snapshot_alias_rename_module(module, &mut cached_names);
         symbol_for_rename_module_with(
             module,
             &mut cached_names,
@@ -1148,6 +1150,87 @@ fn collect_member_init_var_renames(
             old: (bi.id.sym.clone(), bi.id.ctxt),
             new: new_name.as_str().into(),
         });
+    }
+}
+
+/// Give a module-level snapshot of a named import a readable local name while
+/// keeping the `const` copy intact. This deliberately does not inline the
+/// imported binding: the provider may mutate its live export after this module
+/// captures the value.
+fn import_snapshot_alias_rename_module(module: &mut Module, all_names: &mut HashSet<Atom>) {
+    if module_has_with_stmt(module) {
+        return;
+    }
+    let mut direct_eval = DirectEvalAnalyzer::default();
+    module.visit_with(&mut direct_eval);
+    if direct_eval.unknown_direct_eval {
+        return;
+    }
+
+    let mut named_imports = HashSet::default();
+    for item in &module.body {
+        let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+            continue;
+        };
+        for specifier in &import.specifiers {
+            let ImportSpecifier::Named(named) = specifier else {
+                continue;
+            };
+            named_imports.insert((named.local.sym.clone(), named.local.ctxt));
+        }
+    }
+    if named_imports.is_empty() {
+        return;
+    }
+
+    let jsx_tags = collect_jsx_tag_bindings(module);
+    let mut renames = Vec::new();
+    for item in &module.body {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            continue;
+        };
+        if var.kind != VarDeclKind::Const {
+            continue;
+        }
+        for decl in &var.decls {
+            let Pat::Ident(alias) = &decl.name else {
+                continue;
+            };
+            if !is_likely_generated_alias(&alias.id.sym) {
+                continue;
+            }
+            let Some(init) = &decl.init else { continue };
+            let Expr::Ident(imported) = init.as_ref() else {
+                continue;
+            };
+            if !named_imports.contains(&(imported.sym.clone(), imported.ctxt))
+                || is_likely_generated_alias(&imported.sym)
+            {
+                continue;
+            }
+            let alias_id = (alias.id.sym.clone(), alias.id.ctxt);
+            if starts_with_lowercase(&imported.sym) && jsx_tags.contains(&alias_id) {
+                continue;
+            }
+
+            let target = find_non_conflicting_name(imported.sym.as_ref(), all_names);
+            let target: Atom = target.into();
+            if direct_eval.known_direct_eval_sources.iter().any(|source| {
+                js_source_mentions_binding(source, &alias.id.sym)
+                    || js_source_mentions_binding(source, &target)
+            }) {
+                continue;
+            }
+            all_names.insert(target.clone());
+            renames.push(BindingRename {
+                old: alias_id,
+                new: target,
+            });
+        }
+    }
+
+    if !renames.is_empty() {
+        rename_bindings_in_module(module, &renames);
     }
 }
 
