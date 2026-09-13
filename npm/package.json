@@ -1,6 +1,6 @@
 {
   "name": "@wakaru/cli",
-  "version": "1.11.0",
+  "version": "1.12.0",
   "description": "JavaScript decompiler — unpack bundles and turn minified, transpiled production code back into readable modules. Written in Rust.",
   "author": "Pionxzh",
   "license": "Apache-2.0",
@@ -26,10 +26,10 @@
     "rust"
   ],
   "optionalDependencies": {
-    "@wakaru/cli-darwin-arm64": "1.11.0",
-    "@wakaru/cli-linux-arm64": "1.11.0",
-    "@wakaru/cli-linux-x64": "1.11.0",
-    "@wakaru/cli-win32-x64": "1.11.0",
-    "@wakaru/cli-win32-arm64": "1.11.0"
+    "@wakaru/cli-darwin-arm64": "1.12.0",
+    "@wakaru/cli-linux-arm64": "1.12.0",
+    "@wakaru/cli-linux-x64": "1.12.0",
+    "@wakaru/cli-win32-x64": "1.12.0",
+    "@wakaru/cli-win32-arm64": "1.12.0"
   }
 }

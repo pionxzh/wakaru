@@ -1,5 +1,38 @@
 # Changelog
 
+## [1.12.0](https://github.com/pionxzh/wakaru/compare/v1.11.0...v1.12.0) (2026-09-14)
+
+### Features
+
+* **un-esm:** drop redundant conditional export sentinels ([8f6018db0](https://github.com/pionxzh/wakaru/commit/8f6018db0c188bb84aa3b23053e70e4903c83615))
+* **smart-rename:** name import snapshots from their bindings ([2780dbcff](https://github.com/pionxzh/wakaru/commit/2780dbcff62600fd4bd083483b0e325a0abf9cd5))
+* **un-esm:** recover conditional named export bindings ([c171262e0](https://github.com/pionxzh/wakaru/commit/c171262e011faf3c85558450c9bd0e7fddb6a5aa))
+* **cli:** add debug enumerate-chunks ([99297cff6](https://github.com/pionxzh/wakaru/commit/99297cff6c9f961583c81d825810e9294113dea9))
+* **unpack:** enumerate lazy-chunk references statically ([c75c6a9f7](https://github.com/pionxzh/wakaru/commit/c75c6a9f74c0104c04d081f102923766910d66a3))
+
+### Bug Fixes
+
+* **rules:** recover discarded numeric index holes in UnForOf ([cefc4c4be](https://github.com/pionxzh/wakaru/commit/cefc4c4bee6d7e2e8418b7d9762d1f5fed700c10))
+* **unpack:** route CommonJS factories through the shared ownership path ([05d2da4f3](https://github.com/pionxzh/wakaru/commit/05d2da4f3a808a8e94f3fbb6436c521dbb55c7cf))
+* **unpack:** own factory-written state in one writer group ([0457cd862](https://github.com/pionxzh/wakaru/commit/0457cd862abf6ba8676565b1c4b08247f92a1277))
+* **unpack:** keep support writers with their mutable state ([f42ac731a](https://github.com/pionxzh/wakaru/commit/f42ac731a4721cad3d4e8492af52678855392bcd))
+* **rules:** preserve constructors that collide with parameters ([f8d0d3b69](https://github.com/pionxzh/wakaru/commit/f8d0d3b69ff51e59b172b5838df4159b707dd307))
+* **diagnostics:** detect hoisted var and lexical declaration conflicts ([d41000a6c](https://github.com/pionxzh/wakaru/commit/d41000a6ce9d5633dde241ace50c62a1711eec40))
+* **exports:** normalize stable chains and preserve unsupported CommonJS boundaries ([498ef0f34](https://github.com/pionxzh/wakaru/commit/498ef0f34f212aa43c523dd297ed9f462a32c6cd))
+* fold adjacent inert class initialization into declarations ([2af50dd80](https://github.com/pionxzh/wakaru/commit/2af50dd803cb8acf0dd05f1f2b7a62e3c4952dee))
+* preserve for-of binding mutability across nested writes ([ec38bebdc](https://github.com/pionxzh/wakaru/commit/ec38bebdc75c7e71cc9233ce5cdc72ce4accb2e0))
+* **rules:** preserve mutable alias and rest assignment bindings ([ff9980d4f](https://github.com/pionxzh/wakaru/commit/ff9980d4f317d6e3025c2cc2fa3c5fc972de2c1d))
+* **rules:** match the generator state parameter by resolver identity ([2c7e43000](https://github.com/pionxzh/wakaru/commit/2c7e43000662da885b78cf9d05f8451762576098))
+
+### Performance
+
+* borrow rest statement history and move spread argument trees ([c6fcd3ebc](https://github.com/pionxzh/wakaru/commit/c6fcd3ebc5e66881dcb7269b6186a5efbabdb412))
+* **core:** hash internal binding tables with FxHasher ([7ae73908b](https://github.com/pionxzh/wakaru/commit/7ae73908b3533ea47efbf8ca6d9ff5df4a335ba7))
+* **core:** dispatch modules largest-first in both unpack phases ([c355e55f5](https://github.com/pionxzh/wakaru/commit/c355e55f5168ec989803d169e6bc0839adb4ea70))
+* **cli:** use mimalloc for AST allocation workloads ([3e8a3c294](https://github.com/pionxzh/wakaru/commit/3e8a3c294ec0c7309d561faaae1c49a15fc6c783))
+* **core:** defer unused binding analysis and parallelize esbuild metadata ([3063e0034](https://github.com/pionxzh/wakaru/commit/3063e0034c40eb216052dda93456e438ab446892))
+* **core:** avoid cloning untouched object-rest statement trees ([b786e19d8](https://github.com/pionxzh/wakaru/commit/b786e19d8f90fc89d47f8ec997af7fb58d0d7e4b))
+
 ## [1.11.0](https://github.com/pionxzh/wakaru/compare/v1.10.0...v1.11.0) (2026-09-10)
 
 ### Features
