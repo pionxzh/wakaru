@@ -312,6 +312,10 @@ rationale, or level gating appear.
   preserve the whole CommonJS boundary. The synthesized declarations use
   fresh resolver contexts and collision-free emitted names, and precede
   VarDeclToLetConst so that rule decides their final declaration kind.
+  Ordinary `exports.public = local` assignments keep CommonJS snapshot
+  semantics when `local` has any direct or deferred write: UnEsm captures its
+  value at the assignment instead of emitting a live export alias. A proven
+  `Object.defineProperty` or webpack getter remains live.
 - **UnIife** — two passes; the second catches IIFEs created by SmartInline.
   Exposes class IIFEs for UnEs6Class and enum IIFEs for UnEnum. Gating:
   param cleanup and literal hoisting are `standard+`; `.call()` unwrapping on

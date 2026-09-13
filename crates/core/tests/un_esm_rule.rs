@@ -993,6 +993,26 @@ export { rawCache };
 }
 
 #[test]
+fn define_property_getter_to_mutable_binding_stays_live() {
+    let input = r#"
+let value = 1;
+Object.defineProperty(exports, "value", {
+  enumerable: true,
+  get() {
+    return value;
+  }
+});
+value = 2;
+"#;
+    let expected = r#"
+export let value = 1;
+value = 2;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn define_property_member_getter_becomes_live_reexport() {
     let input = r#"
 const dep = require("./dep.js");
@@ -2014,6 +2034,22 @@ function i(t, e = null) {
 "#;
     let output = apply(input);
     insta::assert_snapshot!(output);
+}
+
+#[test]
+fn webpack_export_getter_to_mutable_binding_stays_live() {
+    let input = r#"
+let value = 1;
+require.d(exports, "value", () => value);
+value = 2;
+"#;
+    let expected = r#"
+let value = 1;
+value = 2;
+export { value };
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
 }
 
 #[test]
@@ -4324,12 +4360,92 @@ fn unsafe_conditional_named_exports_keep_the_commonjs_boundary() {
         "Object.defineProperty(exports, 'value', { value: 0 }); if (flag) { exports.value = 1; } exports.ready = 1;",
         "if (flag) { exports.value = 1; } function later() { exports.other = 2; } exports.ready = 1;",
         "if (flag) { exports.value = 1; } observe(exports.other); exports.ready = 1;",
+        "if (flag) { exports.current = first(); } else { exports.current = second(); } consume(exports?.current);",
     ] {
         let output = common::render_rule(source, |mark| {
             wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
         });
         assert_eq_normalized(&output, source);
     }
+}
+
+#[test]
+fn mutable_named_export_values_are_snapshots() {
+    let source = r#"
+exports.a = 1;
+if (flag) {
+  exports.a = 2;
+}
+exports.b = exports.a;
+function bump() {
+  exports.a = 3;
+}
+exports.bump = bump;
+"#;
+    let expected = r#"
+export var a;
+a = 1;
+if (flag) {
+  a = 2;
+}
+export const b = a;
+function bump() {
+  a = 3;
+}
+export { bump };
+"#;
+
+    let output = common::render_rule(source, |mark| {
+        wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
+    });
+    assert_eq_normalized(&output, expected);
+    let pipeline_output = common::render_pipeline(source);
+    assert!(
+        pipeline_output.contains("export const b = a;"),
+        "{pipeline_output}"
+    );
+    assert!(
+        validate_output_modules(&[("entry.js".into(), pipeline_output.clone())]).is_empty(),
+        "{pipeline_output}"
+    );
+
+    let before_write = r#"
+exports.b = exports.a;
+if (flag) {
+  exports.a = 1;
+}
+"#;
+    let expected = r#"
+export var a;
+export const b = a;
+if (flag) {
+  a = 1;
+}
+"#;
+    let output = common::render_rule(before_write, |mark| {
+        wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
+    });
+    assert_eq_normalized(&output, expected);
+
+    let same_name = r#"
+var value = 1;
+exports.value = value;
+function bump() {
+  value = 2;
+}
+"#;
+    let expected = r#"
+var value = 1;
+var _value = value;
+export { _value as value };
+function bump() {
+  value = 2;
+}
+"#;
+    let output = common::render_rule(same_name, |mark| {
+        wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
+    });
+    assert_eq_normalized(&output, expected);
 }
 
 #[test]

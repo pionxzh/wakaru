@@ -11,9 +11,9 @@ use swc_core::ecma::ast::{
     ForInStmt, ForOfStmt, Function, FunctionBody, Id, Ident, IdentName, IfStmt, ImportDecl,
     ImportDefaultSpecifier, ImportNamedSpecifier, ImportSpecifier, ImportStarAsSpecifier, Lit,
     MemberExpr, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, NamedExport,
-    ObjectPatProp, OptCall, OptChainBase, Pat, PrivateProp, Prop, PropName, PropOrSpread,
-    ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, Str, TaggedTpl, ThisExpr, UnaryExpr, UnaryOp,
-    UpdateExpr, VarDecl, VarDeclKind, VarDeclarator,
+    ObjectPatProp, OptCall, OptChainBase, OptChainExpr, Pat, PrivateProp, Prop, PropName,
+    PropOrSpread, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, Str, TaggedTpl, ThisExpr,
+    UnaryExpr, UnaryOp, UpdateExpr, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::utils::{find_pat_ids, ExprFactory};
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -95,6 +95,7 @@ enum CjsExportKind {
         name: Atom,
         expr: Box<Expr>,
         is_void: bool,
+        is_live: bool,
     },
     /// exports.default = expr → export default expr
     NamedDefault { expr: Box<Expr> },
@@ -238,7 +239,8 @@ impl VisitMut for UnEsm {
         //          `var s = expr; exports.X = s;`
         split_compound_exports(module, self.unresolved_mark);
         rewrite_commonjs_export_star_loops(module, self.unresolved_mark);
-        rewrite_webpack_export_getters(module, self.unresolved_mark);
+        let live_webpack_export_assignments =
+            rewrite_webpack_export_getters(module, self.unresolved_mark);
         rewrite_recovered_default_only_default_compat_block(module, self.unresolved_mark);
         remove_dead_named_only_default_compat_blocks(module, self.unresolved_mark);
         lower_exported_cjs_requires(module, self.unresolved_mark);
@@ -280,6 +282,20 @@ impl VisitMut for UnEsm {
                     },
                 );
             let mut entry = classify_item(item, self.unresolved_mark, &require_bindings);
+            // The webpack pre-pass lowers getters to ordinary assignments.
+            // Restore their live semantics before snapshot analysis.
+            if let Classified::CjsExport {
+                span,
+                kind: CjsExportKind::Named { name, is_live, .. },
+            } = &mut entry
+            {
+                if live_webpack_export_assignments
+                    .iter()
+                    .any(|(live_span, live_name)| live_span == span && live_name == name)
+                {
+                    *is_live = true;
+                }
+            }
             if let (
                 Some(write),
                 Classified::CjsExport {
@@ -605,6 +621,7 @@ impl VisitMut for UnEsm {
                         name,
                         expr,
                         is_void: false,
+                        ..
                     },
                 ..
             } = c
@@ -615,6 +632,37 @@ impl VisitMut for UnEsm {
                 }
             }
         }
+
+        // A CommonJS property assignment snapshots its RHS at this statement.
+        // Keep an identifier export as a live alias only when its binding is
+        // stable; a later direct or deferred write must not update the public
+        // property retroactively. Getter-based exports are deliberately live.
+        // Record this before conflict renames change binding identities.
+        let snapshot_export_indices: HashSet<usize> = classified
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, classified)| {
+                let Classified::CjsExport {
+                    kind:
+                        CjsExportKind::Named {
+                            expr,
+                            is_void: false,
+                            is_live: false,
+                            ..
+                        },
+                    ..
+                } = classified
+                else {
+                    return None;
+                };
+                let Expr::Ident(ident) = expr.as_ref() else {
+                    return None;
+                };
+                binding_uses
+                    .has_direct_write(&binding_id(ident))
+                    .then_some(idx)
+            })
+            .collect();
 
         // Rename conflicting locals before building exports. The export
         // expression can reference a conflicting module-level local, so apply
@@ -682,8 +730,10 @@ impl VisitMut for UnEsm {
                         new_body.extend(build_export_items(
                             span,
                             kind,
+                            snapshot_export_indices.contains(&idx),
                             &mut used_export_binding_names,
                             &unresolved_reference_names,
+                            &all_declared_names,
                         ));
                     }
                 }
@@ -2471,10 +2521,11 @@ fn is_computed_key_member(
             if matches!(strip_parens(computed.expr.as_ref()), Expr::Ident(id) if same_ident(id, key)))
 }
 
-fn rewrite_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) {
+fn rewrite_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) -> Vec<(Span, Atom)> {
     expose_unused_iife_webpack_export_getters(module, unresolved_mark);
 
     let mut converted_getter_map = false;
+    let mut live_named_assignments = Vec::new();
     let mut new_body = Vec::with_capacity(module.body.len());
     // Webpack5 getter maps appear at the top of the module, before the
     // declarations they reference.  Deferring all converted exports to the
@@ -2496,6 +2547,7 @@ fn rewrite_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) {
                         unresolved_mark,
                     ));
                 } else {
+                    live_named_assignments.push((item_span, name.clone()));
                     deferred_named.push(make_exports_assign_expr_item(
                         item_span,
                         (name, expr),
@@ -2521,6 +2573,7 @@ fn rewrite_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) {
                 } else {
                     // Keep named assignments in place so the ordinary export
                     // classifier can merge them with nearby declarations.
+                    live_named_assignments.push((item_span, name.clone()));
                     new_body.push(make_exports_assign_expr_item(
                         item_span,
                         (name, expr),
@@ -2543,6 +2596,7 @@ fn rewrite_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) {
     new_body.extend(deferred_named);
     new_body.extend(deferred_default);
     module.body = new_body;
+    live_named_assignments
 }
 
 /// Rewrite ncc's CommonJS default-object adapter when the complete generated
@@ -3807,8 +3861,10 @@ fn make_import_decl(src: &str, specifiers: Vec<ImportSpecifier>) -> ImportDecl {
 fn build_export_items(
     span: Span,
     kind: CjsExportKind,
+    snapshot_ident: bool,
     used_names: &mut HashSet<Atom>,
     unresolved_reference_names: &HashSet<Atom>,
+    declared_names: &HashSet<Atom>,
 ) -> Vec<ModuleItem> {
     match kind {
         CjsExportKind::EsModuleFlag => vec![],
@@ -3845,8 +3901,19 @@ fn build_export_items(
             name,
             expr,
             is_void: false,
+            ..
         } => {
             if let Expr::Ident(id) = *expr {
+                if snapshot_ident {
+                    return build_named_export_snapshot(
+                        span,
+                        name,
+                        id,
+                        used_names,
+                        unresolved_reference_names,
+                        declared_names,
+                    );
+                }
                 if id.sym == name {
                     // export { foo }
                     vec![ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(
@@ -3937,6 +4004,70 @@ fn build_export_items(
         CjsExportKind::Named { is_void: true, .. } => vec![], // should have been dropped
         CjsExportKind::SelfRef => vec![],
     }
+}
+
+fn build_named_export_snapshot(
+    span: Span,
+    name: Atom,
+    value: Ident,
+    used_names: &mut HashSet<Atom>,
+    unresolved_reference_names: &HashSet<Atom>,
+    declared_names: &HashSet<Atom>,
+) -> Vec<ModuleItem> {
+    if !is_reserved_binding_name(&name)
+        && !unresolved_reference_names.contains(&name)
+        && !declared_names.contains(&name)
+    {
+        return vec![ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+            span,
+            decl: Decl::Var(Box::new(VarDecl {
+                span: DUMMY_SP,
+                ctxt: Default::default(),
+                kind: VarDeclKind::Const,
+                declare: false,
+                decls: vec![VarDeclarator {
+                    span: DUMMY_SP,
+                    name: Pat::Ident(BindingIdent {
+                        id: fresh_binding_ident(name, DUMMY_SP),
+                        type_ann: None,
+                    }),
+                    init: Some(Box::new(Expr::Ident(value))),
+                    definite: false,
+                }],
+            })),
+        }))];
+    }
+
+    let local = fresh_binding_ident(fresh_prefixed_name(&name, used_names), DUMMY_SP);
+    vec![
+        ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(VarDecl {
+            span,
+            ctxt: Default::default(),
+            kind: VarDeclKind::Var,
+            declare: false,
+            decls: vec![VarDeclarator {
+                span: DUMMY_SP,
+                name: Pat::Ident(BindingIdent {
+                    id: local.clone(),
+                    type_ann: None,
+                }),
+                init: Some(Box::new(Expr::Ident(value))),
+                definite: false,
+            }],
+        })))),
+        ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(NamedExport {
+            span,
+            specifiers: vec![ExportSpecifier::Named(ExportNamedSpecifier {
+                span: DUMMY_SP,
+                orig: ModuleExportName::Ident(local),
+                exported: Some(ModuleExportName::Ident(make_name_ident(name))),
+                is_type_only: false,
+            })],
+            src: None,
+            type_only: false,
+            with: None,
+        })),
+    ]
 }
 
 fn build_dropped_export_side_effect_items(span: Span, kind: CjsExportKind) -> Vec<ModuleItem> {
@@ -5809,6 +5940,17 @@ fn recover_conditional_named_exports(
     }
 
     impl Visit for Scanner {
+        fn visit_opt_chain_expr(&mut self, chain: &OptChainExpr) {
+            if matches!(chain.base.as_ref(),
+                OptChainBase::Member(member)
+                    if is_cjs_export_object_expr(&member.obj, self.unresolved_mark))
+            {
+                self.receiver_is_unsafe = true;
+                return;
+            }
+            chain.visit_children_with(self);
+        }
+
         fn visit_assign_expr(&mut self, assignment: &AssignExpr) {
             let nested = self.statement_depth > 0 && self.function_depth == 0;
             if let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assignment.left {
@@ -6831,6 +6973,7 @@ fn try_classify_cjs_export(
                 name: prop,
                 expr: assign.right.clone(),
                 is_void,
+                is_live: false,
             });
         }
         // bracket notation on module.exports — skip
@@ -6884,6 +7027,7 @@ fn try_classify_define_property_export(
             name: export_name,
             expr: Box::new(Expr::Ident(ident)),
             is_void: false,
+            is_live: true,
         });
     }
 
