@@ -302,7 +302,16 @@ rationale, or level gating appear.
   CommonJS live getters (`get: () => dep.member`) become source re-exports
   only when `dep` is a resolver-proven top-level literal `require()` binding
   and every use is a static member read; writes, dynamic reads, and escapes
-  preserve the getter form.
+  preserve the getter form. Static named CommonJS writes inside control-flow
+  statements that run during module activation become module-scoped live ESM
+  bindings; reads and later writes to the same property follow that binding.
+  A write found only in a function, constructor, or instance field does not
+  trigger recovery. Bare receiver uses, dynamic keys, receiver replacement,
+  unsupported writes, direct eval/`with`, self-require, pre-existing ESM
+  exports, or another CommonJS member access that would survive conversion
+  preserve the whole CommonJS boundary. The synthesized declarations use
+  fresh resolver contexts and collision-free emitted names, and precede
+  VarDeclToLetConst so that rule decides their final declaration kind.
 - **UnIife** — two passes; the second catches IIFEs created by SmartInline.
   Exposes class IIFEs for UnEs6Class and enum IIFEs for UnEnum. Gating:
   param cleanup and literal hoisting are `standard+`; `.call()` unwrapping on

@@ -5,14 +5,15 @@ use std::collections::hash_map::Entry;
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, Span, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BinaryOp, BindingIdent,
-    BlockStmt, CallExpr, Callee, CondExpr, Decl, ExportAll, ExportDecl, ExportDefaultExpr,
-    ExportNamedSpecifier, ExportSpecifier, Expr, ExprStmt, ForHead, ForInStmt, Function,
-    FunctionBody, Id, Ident, IdentName, IfStmt, ImportDecl, ImportDefaultSpecifier,
-    ImportNamedSpecifier, ImportSpecifier, ImportStarAsSpecifier, Lit, MemberExpr, MemberProp,
-    Module, ModuleDecl, ModuleExportName, ModuleItem, NamedExport, ObjectPatProp, OptCall,
-    OptChainBase, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt,
-    Str, TaggedTpl, ThisExpr, UnaryOp, VarDecl, VarDeclKind, VarDeclarator,
+    ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, AutoAccessor, BinaryOp,
+    BindingIdent, BlockStmt, CallExpr, Callee, ClassProp, CondExpr, Constructor, Decl, ExportAll,
+    ExportDecl, ExportDefaultExpr, ExportNamedSpecifier, ExportSpecifier, Expr, ExprStmt, ForHead,
+    ForInStmt, ForOfStmt, Function, FunctionBody, Id, Ident, IdentName, IfStmt, ImportDecl,
+    ImportDefaultSpecifier, ImportNamedSpecifier, ImportSpecifier, ImportStarAsSpecifier, Lit,
+    MemberExpr, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, NamedExport,
+    ObjectPatProp, OptCall, OptChainBase, Pat, PrivateProp, Prop, PropName, PropOrSpread,
+    ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, Str, TaggedTpl, ThisExpr, UnaryExpr, UnaryOp,
+    UpdateExpr, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::utils::{find_pat_ids, ExprFactory};
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -169,15 +170,32 @@ impl VisitMut for UnEsm {
         // import/export rewrites; converting only its outer write leaves an
         // orphaned RHS.
         let original_body = normalize_named_export_chains(module, self.unresolved_mark);
-        if has_unhandled_named_export_chain(module, self.unresolved_mark) {
-            if let Some(original_body) = original_body {
-                module.body = original_body;
-            }
-            return;
-        }
         let current_filename = self.current_filename.clone();
         let has_local_self_require =
             contains_local_self_require(module, self.unresolved_mark, current_filename.as_deref());
+        let conditional_original_body = match recover_conditional_named_exports(
+            module,
+            self.unresolved_mark,
+            has_local_self_require,
+        ) {
+            ConditionalExportRecovery::NotApplicable => None,
+            ConditionalExportRecovery::Recovered(original) => Some(original),
+            ConditionalExportRecovery::Unsupported => {
+                if let Some(original) = original_body {
+                    module.body = original;
+                }
+                return;
+            }
+        };
+        if has_unhandled_named_export_chain(module, self.unresolved_mark) {
+            if let Some(original) = original_body
+                .as_ref()
+                .or(conditional_original_body.as_ref())
+            {
+                module.body = original.clone();
+            }
+            return;
+        }
         // Named/default member argument pre-passes cannot prove that a self
         // export is initialized before the call. Keep the whole CommonJS
         // boundary; otherwise an early partial-object read becomes an ESM TDZ
@@ -201,6 +219,9 @@ impl VisitMut for UnEsm {
             None
         };
         if !prepare_swc_async_namespace_requires(module, self.unresolved_mark) {
+            if let Some(original) = conditional_original_body {
+                module.body = original;
+            }
             return;
         }
         recover_coupled_commonjs_default_binding(module, self.unresolved_mark);
@@ -5697,6 +5718,411 @@ fn collect_mutable_module_var_bindings(module: &Module) -> HashSet<BindingId> {
         })
         .flat_map(|var| var.decls.iter().flat_map(|decl| find_pat_ids(&decl.name)))
         .collect()
+}
+
+enum ConditionalExportRecovery {
+    NotApplicable,
+    Recovered(Vec<ModuleItem>),
+    Unsupported,
+}
+
+#[derive(Default)]
+struct ConditionalExportFacts {
+    has_nested_write: bool,
+    has_deferred_write: bool,
+    has_read: bool,
+}
+
+/// Recover named CommonJS exports written in nested statements during module
+/// activation as live ESM bindings. Replacing the member target in place
+/// preserves RHS evaluation count and order; the module-scoped `var` also
+/// preserves CommonJS's pre-initialization `undefined` reads until
+/// VarDeclToLetConst selects `let`.
+///
+/// The proof requires the CommonJS receiver to stay private and stable. Bare
+/// `exports` / `module` uses, dynamic keys, slot replacement, unsupported write
+/// positions, pre-existing ESM exports, self-require, and dynamic scope keep the
+/// whole CommonJS boundary. This avoids a partial conversion that would leave
+/// nested `exports.name` writes inside ESM output. Property replacement relies
+/// on `commonjs_exports_data_properties`; rewriting member calls to direct calls
+/// relies on `call_receiver_independence`.
+fn recover_conditional_named_exports(
+    module: &mut Module,
+    unresolved_mark: Mark,
+    has_local_self_require: bool,
+) -> ConditionalExportRecovery {
+    struct Scanner {
+        unresolved_mark: Mark,
+        facts: HashMap<Atom, ConditionalExportFacts>,
+        order: Vec<Atom>,
+        statement_depth: usize,
+        function_depth: usize,
+        write_context_nested: Option<bool>,
+        receiver_is_unsafe: bool,
+        unsupported_write: bool,
+        has_nested_unsupported_write: bool,
+    }
+
+    impl Scanner {
+        fn record_write(&mut self, name: Atom, nested: bool) {
+            if matches!(name.as_ref(), "default" | "__esModule" | "exports")
+                || is_prototype_mutating_member_name(name.as_ref())
+                || is_reserved_binding_name(&name)
+                || !is_valid_identifier_name(&name)
+            {
+                self.unsupported_write = true;
+                self.has_nested_unsupported_write |= nested;
+                return;
+            }
+            if !self.facts.contains_key(&name) {
+                self.order.push(name.clone());
+            }
+            let facts = self.facts.entry(name).or_default();
+            facts.has_nested_write |= nested;
+            facts.has_deferred_write |= self.function_depth > 0;
+        }
+
+        fn record_read(&mut self, name: Atom) {
+            if !self.facts.contains_key(&name) {
+                self.order.push(name.clone());
+            }
+            self.facts.entry(name).or_default().has_read = true;
+        }
+
+        fn visit_write_target<T>(&mut self, target: &T, nested: bool)
+        where
+            T: VisitWith<Self> + ?Sized,
+        {
+            let previous = self.write_context_nested.replace(nested);
+            target.visit_with(self);
+            self.write_context_nested = previous;
+        }
+
+        fn mark_unsupported_write(&mut self, nested: bool) {
+            self.unsupported_write = true;
+            self.has_nested_unsupported_write |= nested;
+        }
+
+        fn visit_top_level_stmt(&mut self, statement: &Stmt) {
+            statement.visit_children_with(self);
+        }
+    }
+
+    impl Visit for Scanner {
+        fn visit_assign_expr(&mut self, assignment: &AssignExpr) {
+            let nested = self.statement_depth > 0 && self.function_depth == 0;
+            if let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assignment.left {
+                if is_cjs_export_object_expr(&member.obj, self.unresolved_mark) {
+                    if let Some(name) = is_ident_prop(&member.prop) {
+                        if assignment.op == AssignOp::Assign {
+                            self.record_write(name, nested);
+                        } else {
+                            self.mark_unsupported_write(nested);
+                        }
+                    } else {
+                        self.receiver_is_unsafe = true;
+                        self.has_nested_unsupported_write |= nested;
+                        if let MemberProp::Computed(computed) = &member.prop {
+                            computed.expr.visit_with(self);
+                        }
+                    }
+                    assignment.right.visit_with(self);
+                    return;
+                }
+                if is_module_exports_member(member, self.unresolved_mark) {
+                    self.receiver_is_unsafe = true;
+                    assignment.right.visit_with(self);
+                    return;
+                }
+            }
+            if matches!(&assignment.left,
+                AssignTarget::Simple(SimpleAssignTarget::Ident(binding))
+                    if is_unresolved_ident(&binding.id, "exports", self.unresolved_mark)
+                        || is_unresolved_ident(&binding.id, "module", self.unresolved_mark))
+            {
+                self.receiver_is_unsafe = true;
+                assignment.right.visit_with(self);
+                return;
+            }
+            self.visit_write_target(&assignment.left, nested);
+            assignment.right.visit_with(self);
+        }
+
+        fn visit_member_expr(&mut self, member: &MemberExpr) {
+            if is_cjs_export_object_expr(&member.obj, self.unresolved_mark) {
+                if let Some(name) = is_ident_prop(&member.prop) {
+                    if let Some(nested) = self.write_context_nested {
+                        self.mark_unsupported_write(nested);
+                    } else {
+                        self.record_read(name);
+                    }
+                } else {
+                    self.receiver_is_unsafe = true;
+                    if let Some(nested) = self.write_context_nested {
+                        self.has_nested_unsupported_write |= nested;
+                    }
+                    if let MemberProp::Computed(computed) = &member.prop {
+                        computed.expr.visit_with(self);
+                    }
+                }
+                return;
+            }
+            if is_module_exports_member(member, self.unresolved_mark) {
+                self.receiver_is_unsafe = true;
+                if let Some(nested) = self.write_context_nested {
+                    self.has_nested_unsupported_write |= nested;
+                }
+                return;
+            }
+            member.visit_children_with(self);
+        }
+
+        fn visit_ident(&mut self, ident: &Ident) {
+            if is_unresolved_ident(ident, "exports", self.unresolved_mark)
+                || is_unresolved_ident(ident, "module", self.unresolved_mark)
+            {
+                self.receiver_is_unsafe = true;
+            }
+        }
+
+        fn visit_update_expr(&mut self, update: &UpdateExpr) {
+            let nested = self.statement_depth > 0 && self.function_depth == 0;
+            self.visit_write_target(update.arg.as_ref(), nested);
+        }
+
+        fn visit_unary_expr(&mut self, unary: &UnaryExpr) {
+            if unary.op == UnaryOp::Delete {
+                let nested = self.statement_depth > 0 && self.function_depth == 0;
+                self.visit_write_target(unary.arg.as_ref(), nested);
+            } else {
+                unary.visit_children_with(self);
+            }
+        }
+
+        fn visit_stmt(&mut self, statement: &Stmt) {
+            self.statement_depth += 1;
+            statement.visit_children_with(self);
+            self.statement_depth -= 1;
+        }
+
+        fn visit_function(&mut self, function: &Function) {
+            self.function_depth += 1;
+            function.visit_children_with(self);
+            self.function_depth -= 1;
+        }
+
+        fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
+            self.function_depth += 1;
+            arrow.visit_children_with(self);
+            self.function_depth -= 1;
+        }
+
+        fn visit_constructor(&mut self, constructor: &Constructor) {
+            self.function_depth += 1;
+            constructor.visit_children_with(self);
+            self.function_depth -= 1;
+        }
+
+        fn visit_class_prop(&mut self, property: &ClassProp) {
+            property.key.visit_with(self);
+            property.decorators.visit_with(self);
+            if let Some(value) = &property.value {
+                self.function_depth += usize::from(!property.is_static);
+                value.visit_with(self);
+                self.function_depth -= usize::from(!property.is_static);
+            }
+        }
+
+        fn visit_private_prop(&mut self, property: &PrivateProp) {
+            property.decorators.visit_with(self);
+            if let Some(value) = &property.value {
+                self.function_depth += usize::from(!property.is_static);
+                value.visit_with(self);
+                self.function_depth -= usize::from(!property.is_static);
+            }
+        }
+
+        fn visit_auto_accessor(&mut self, accessor: &AutoAccessor) {
+            accessor.key.visit_with(self);
+            accessor.decorators.visit_with(self);
+            if let Some(value) = &accessor.value {
+                self.function_depth += usize::from(!accessor.is_static);
+                value.visit_with(self);
+                self.function_depth -= usize::from(!accessor.is_static);
+            }
+        }
+
+        fn visit_for_in_stmt(&mut self, for_in: &ForInStmt) {
+            self.visit_write_target(&for_in.left, self.function_depth == 0);
+            for_in.right.visit_with(self);
+            for_in.body.visit_with(self);
+        }
+
+        fn visit_for_of_stmt(&mut self, for_of: &ForOfStmt) {
+            self.visit_write_target(&for_of.left, self.function_depth == 0);
+            for_of.right.visit_with(self);
+            for_of.body.visit_with(self);
+        }
+    }
+
+    let mut scanner = Scanner {
+        unresolved_mark,
+        facts: HashMap::default(),
+        order: Vec::new(),
+        statement_depth: 0,
+        function_depth: 0,
+        write_context_nested: None,
+        receiver_is_unsafe: false,
+        unsupported_write: false,
+        has_nested_unsupported_write: false,
+    };
+    for item in &module.body {
+        match item {
+            ModuleItem::Stmt(statement) => scanner.visit_top_level_stmt(statement),
+            ModuleItem::ModuleDecl(declaration) => declaration.visit_with(&mut scanner),
+        }
+    }
+
+    let candidates: Vec<Atom> = scanner
+        .order
+        .iter()
+        .filter(|name| {
+            scanner
+                .facts
+                .get(*name)
+                .is_some_and(|facts| facts.has_nested_write)
+        })
+        .cloned()
+        .collect();
+    if candidates.is_empty() && !scanner.has_nested_unsupported_write {
+        return ConditionalExportRecovery::NotApplicable;
+    }
+    let candidate_names: HashSet<Atom> = candidates.iter().cloned().collect();
+    let has_existing_exports = module.body.iter().any(|item| {
+        matches!(item, ModuleItem::ModuleDecl(decl) if !matches!(decl, ModuleDecl::Import(_)))
+    });
+    let has_surviving_commonjs_access = scanner.facts.iter().any(|(name, facts)| {
+        !candidate_names.contains(name) && (facts.has_deferred_write || facts.has_read)
+    });
+    let mut direct_eval = DirectEvalPresence::default();
+    module.visit_with(&mut direct_eval);
+    if candidates.is_empty()
+        || scanner.receiver_is_unsafe
+        || scanner.unsupported_write
+        || has_surviving_commonjs_access
+        || has_existing_exports
+        || has_local_self_require
+        || direct_eval.found
+        || super::eval_utils::module_has_with_stmt(module)
+    {
+        return ConditionalExportRecovery::Unsupported;
+    }
+
+    let mut used_names = collect_all_identifier_names(module);
+    let mut locals = HashMap::default();
+    for public in &candidates {
+        let local_name = if used_names.insert(public.clone()) {
+            public.clone()
+        } else {
+            fresh_prefixed_name(public, &mut used_names)
+        };
+        locals.insert(public.clone(), fresh_binding_ident(local_name, DUMMY_SP));
+    }
+
+    struct Rewriter<'a> {
+        unresolved_mark: Mark,
+        locals: &'a HashMap<Atom, Ident>,
+    }
+
+    impl Rewriter<'_> {
+        fn local_for(&self, member: &MemberExpr) -> Option<Ident> {
+            if !is_cjs_export_object_expr(&member.obj, self.unresolved_mark) {
+                return None;
+            }
+            let name = is_ident_prop(&member.prop)?;
+            let mut local = self.locals.get(&name)?.clone();
+            local.span = member.span;
+            Some(local)
+        }
+    }
+
+    impl VisitMut for Rewriter<'_> {
+        fn visit_mut_expr(&mut self, expression: &mut Expr) {
+            if let Expr::Member(member) = expression {
+                if let Some(local) = self.local_for(member) {
+                    *expression = Expr::Ident(local);
+                    return;
+                }
+            }
+            expression.visit_mut_children_with(self);
+        }
+
+        fn visit_mut_simple_assign_target(&mut self, target: &mut SimpleAssignTarget) {
+            if let SimpleAssignTarget::Member(member) = target {
+                if let Some(local) = self.local_for(member) {
+                    *target = SimpleAssignTarget::Ident(BindingIdent {
+                        id: local,
+                        type_ann: None,
+                    });
+                    return;
+                }
+            }
+            target.visit_mut_children_with(self);
+        }
+    }
+
+    let original_body = module.body.clone();
+    module.visit_mut_with(&mut Rewriter {
+        unresolved_mark,
+        locals: &locals,
+    });
+
+    let mut declarations = Vec::with_capacity(candidates.len() * 2 + module.body.len());
+    for public in candidates {
+        let local = locals.remove(&public).expect("candidate has a binding");
+        let declaration = VarDecl {
+            span: DUMMY_SP,
+            ctxt: Default::default(),
+            kind: VarDeclKind::Var,
+            declare: false,
+            decls: vec![VarDeclarator {
+                span: DUMMY_SP,
+                name: Pat::Ident(BindingIdent {
+                    id: local.clone(),
+                    type_ann: None,
+                }),
+                init: None,
+                definite: false,
+            }],
+        };
+        if local.sym == public {
+            declarations.push(ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+                span: DUMMY_SP,
+                decl: Decl::Var(Box::new(declaration)),
+            })));
+        } else {
+            declarations.push(ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(
+                declaration,
+            )))));
+            declarations.push(ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(
+                NamedExport {
+                    span: DUMMY_SP,
+                    specifiers: vec![ExportSpecifier::Named(ExportNamedSpecifier {
+                        span: DUMMY_SP,
+                        orig: ModuleExportName::Ident(local),
+                        exported: Some(ModuleExportName::Ident(make_name_ident(public))),
+                        is_type_only: false,
+                    })],
+                    src: None,
+                    type_only: false,
+                    with: None,
+                },
+            )));
+        }
+    }
+    declarations.append(&mut module.body);
+    module.body = declarations;
+    ConditionalExportRecovery::Recovered(original_body)
 }
 
 /// Recognize a remaining named-export assignment chain as one operation,

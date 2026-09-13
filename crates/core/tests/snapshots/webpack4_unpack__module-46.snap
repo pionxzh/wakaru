@@ -2,7 +2,8 @@
 source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
-"use strict";
+export let unstable_now;
+export let unstable_forceFrameRate;
 let r;
 let o;
 let i;
@@ -14,7 +15,7 @@ if (typeof window === "undefined" || typeof MessageChannel !== "function") {
     const s = ()=>{
         if (l !== null) {
             try {
-                const e = exports.unstable_now();
+                const e = unstable_now();
                 l(true, e);
                 l = null;
             } catch (e) {
@@ -24,7 +25,7 @@ if (typeof window === "undefined" || typeof MessageChannel !== "function") {
         }
     };
     const f = Date.now();
-    exports.unstable_now = ()=>Date.now() - f;
+    unstable_now = ()=>Date.now() - f;
     r = (e)=>{
         if (l !== null) {
             setTimeout(r, 0, e);
@@ -40,7 +41,7 @@ if (typeof window === "undefined" || typeof MessageChannel !== "function") {
         clearTimeout(c);
     };
     a = ()=>false;
-    u = exports.unstable_forceFrameRate = ()=>{};
+    u = unstable_forceFrameRate = ()=>{};
 } else {
     const { performance: d, Date: p, setTimeout: h, clearTimeout: m } = window;
     if (typeof console !== "undefined") {
@@ -53,19 +54,19 @@ if (typeof window === "undefined" || typeof MessageChannel !== "function") {
         }
     }
     if (typeof d === "object" && typeof d.now === "function") {
-        exports.unstable_now = ()=>d.now();
+        unstable_now = ()=>d.now();
     } else {
         const v = p.now();
-        exports.unstable_now = ()=>p.now() - v;
+        unstable_now = ()=>p.now() - v;
     }
     let b = false;
     let g = null;
     let w = -1;
     let E = 5;
     let x = 0;
-    a = ()=>exports.unstable_now() >= x;
+    a = ()=>unstable_now() >= x;
     u = ()=>{};
-    exports.unstable_forceFrameRate = (e)=>{
+    unstable_forceFrameRate = (e)=>{
         if (e < 0 || e > 125) {
             console.error("forceFrameRate takes a positive int between 0 and 125, forcing framerates higher than 125 fps is not unsupported");
         } else {
@@ -76,7 +77,7 @@ if (typeof window === "undefined" || typeof MessageChannel !== "function") {
     const T = k.port2;
     k.port1.onmessage = ()=>{
         if (g !== null) {
-            const e = exports.unstable_now();
+            const e = unstable_now();
             x = e + E;
             try {
                 if (g(true, e)) {
@@ -102,7 +103,7 @@ if (typeof window === "undefined" || typeof MessageChannel !== "function") {
     };
     o = (e, n)=>{
         w = h(()=>{
-            e(exports.unstable_now());
+            e(unstable_now());
         }, n);
     };
     i = ()=>{
@@ -226,7 +227,7 @@ function z(e, n) {
                 N.callback = null;
                 M = N.priorityLevel;
                 const l = u(N.expirationTime <= n);
-                n = exports.unstable_now();
+                n = unstable_now();
                 if (typeof l === "function") {
                     N.callback = l;
                 } else if (N === O(_)) {
@@ -267,25 +268,25 @@ function q(e) {
             return 5000;
     }
 }
-const U = u;
-exports.unstable_IdlePriority = 5;
-exports.unstable_ImmediatePriority = 1;
-exports.unstable_LowPriority = 4;
-exports.unstable_NormalPriority = 3;
-exports.unstable_Profiling = null;
-exports.unstable_UserBlockingPriority = 2;
-exports.unstable_cancelCallback = (e)=>{
+export const unstable_requestPaint = u;
+export const unstable_IdlePriority = 5;
+export const unstable_ImmediatePriority = 1;
+export const unstable_LowPriority = 4;
+export const unstable_NormalPriority = 3;
+export const unstable_Profiling = null;
+export const unstable_UserBlockingPriority = 2;
+export const unstable_cancelCallback = (e)=>{
     e.callback = null;
 };
-exports.unstable_continueExecution = ()=>{
+export const unstable_continueExecution = ()=>{
     if (!(L || A)) {
         L = true;
         r(z);
     }
 };
-exports.unstable_getCurrentPriorityLevel = ()=>M;
-exports.unstable_getFirstCallbackNode = ()=>O(_);
-exports.unstable_next = (e)=>{
+export const unstable_getCurrentPriorityLevel = ()=>M;
+export const unstable_getFirstCallbackNode = ()=>O(_);
+export const unstable_next = (e)=>{
     switch(M){
         case 1:
         case 2:
@@ -303,9 +304,8 @@ exports.unstable_next = (e)=>{
         M = n;
     }
 };
-exports.unstable_pauseExecution = ()=>{};
-exports.unstable_requestPaint = U;
-exports.unstable_runWithPriority = (e, t)=>{
+export const unstable_pauseExecution = ()=>{};
+export const unstable_runWithPriority = (e, t)=>{
     switch(e){
         case 1:
         case 2:
@@ -324,8 +324,8 @@ exports.unstable_runWithPriority = (e, t)=>{
         M = n;
     }
 };
-exports.unstable_scheduleCallback = (e, callback, a)=>{
-    const u = exports.unstable_now();
+export const unstable_scheduleCallback = (e, callback, a)=>{
+    const u = unstable_now();
     if (typeof a === "object" && a !== null) {
         var l = a.delay;
         l = typeof l === "number" && l > 0 ? u + l : u;
@@ -363,13 +363,13 @@ exports.unstable_scheduleCallback = (e, callback, a)=>{
     }
     return e;
 };
-exports.unstable_shouldYield = ()=>{
-    const e = exports.unstable_now();
+export const unstable_shouldYield = ()=>{
+    const e = unstable_now();
     D(e);
     const n = O(_);
     return n !== N && N !== null && n !== null && n.callback !== null && n.startTime <= e && n.expirationTime < N.expirationTime || a();
 };
-exports.unstable_wrapCallback = (e)=>{
+export const unstable_wrapCallback = (e)=>{
     const t = M;
     return function() {
         const n = M;

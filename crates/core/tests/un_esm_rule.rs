@@ -4221,6 +4221,157 @@ fn chained_export_initializers_preserve_effectful_and_shadowed_values() {
 }
 
 #[test]
+fn conditional_named_exports_become_live_bindings() {
+    for root in ["exports", "module.exports"] {
+        let source = r#"
+if (flag) {
+  $ROOT.current = first();
+} else {
+  $ROOT.current = second();
+}
+function read() {
+  return $ROOT.current();
+}
+function reset() {
+  $ROOT.current = third();
+  return $ROOT.current;
+}
+exports.snapshot = read;
+"#
+        .replace("$ROOT", root);
+        let expected = r#"
+export var current;
+if (flag) {
+  current = first();
+} else {
+  current = second();
+}
+function read() {
+  return current();
+}
+function reset() {
+  current = third();
+  return current;
+}
+export { read as snapshot };
+"#;
+
+        let output = common::render_rule(&source, |mark| {
+            wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
+        });
+        assert_eq_normalized(&output, expected);
+    }
+}
+
+#[test]
+fn conditional_named_export_chains_share_live_bindings() {
+    let source = r#"
+if (flag) {
+  exports.left = module.exports.right = makeValue();
+}
+consume(exports.left, module.exports.right);
+"#;
+    let expected = r#"
+export var left;
+export var right;
+if (flag) {
+  left = right = makeValue();
+}
+consume(left, right);
+"#;
+
+    let output = common::render_rule(source, |mark| {
+        wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
+    });
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn conditional_named_export_bindings_do_not_capture_existing_names() {
+    let source = r#"
+const current = local;
+if (flag) {
+  exports.current = next();
+}
+consume(current, exports.current);
+"#;
+    let expected = r#"
+var _current;
+export { _current as current };
+const current = local;
+if (flag) {
+  _current = next();
+}
+consume(current, _current);
+"#;
+
+    let output = common::render_rule(source, |mark| {
+        wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
+    });
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn unsafe_conditional_named_exports_keep_the_commonjs_boundary() {
+    for source in [
+        "const alias = exports; if (flag) { exports.value = 1; } exports.ready = 1;",
+        "module.exports = replacement; if (flag) { exports.value = 1; } exports.ready = 1;",
+        "if (flag) { exports[key] = 1; } exports.ready = 1;",
+        "if (flag) { exports.value += 1; } exports.ready = 1;",
+        "if (flag) { delete exports.value; } exports.ready = 1;",
+        "if (flag) { exports.value = 1; } eval('value'); exports.ready = 1;",
+        "if (flag) { exports.value = 1; } with (scope) { observe(); } exports.ready = 1;",
+        "Object.defineProperty(exports, 'value', { value: 0 }); if (flag) { exports.value = 1; } exports.ready = 1;",
+        "if (flag) { exports.value = 1; } function later() { exports.other = 2; } exports.ready = 1;",
+        "if (flag) { exports.value = 1; } observe(exports.other); exports.ready = 1;",
+    ] {
+        let output = common::render_rule(source, |mark| {
+            wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
+        });
+        assert_eq_normalized(&output, source);
+    }
+}
+
+#[test]
+fn deferred_named_export_writes_do_not_trigger_conditional_recovery() {
+    let source = r#"
+class Example {
+  value = exports.field = createField();
+  constructor() {
+    exports.value = createValue();
+  }
+}
+"#;
+
+    let output = common::render_rule(source, |mark| {
+        wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
+    });
+    assert_eq_normalized(&output, source);
+}
+
+#[test]
+fn conditional_named_exports_validate_through_the_pipeline() {
+    let source = r#"
+var selected;
+if (flag) {
+  selected = exports.current = first();
+} else {
+  exports.current = second();
+  selected = exports.current;
+}
+consume(selected, exports.current);
+"#;
+    let output = common::render_pipeline(source);
+
+    assert!(output.contains("export let current;"), "{output}");
+    assert!(!output.contains("exports."), "{output}");
+    assert!(
+        validate_output_modules(&[("entry.js".into(), output.clone())]).is_empty(),
+        "{output}"
+    );
+}
+
+#[test]
 fn unsupported_named_export_chains_keep_the_commonjs_boundary() {
     for chain in [
         "module.exports.a = module.exports = void 0;",

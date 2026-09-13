@@ -62,7 +62,8 @@ that observes `this`, even though the recovered form matches the original ESM
 source shape.
 
 Affects: `UnIndirectCall` (member-callee forms), `UnInteropRequireDefault`
-(call sites rewritten from `.default`), and `UnEsm` (default interop recovery).
+(call sites rewritten from `.default`), and `UnEsm` (default interop recovery
+and conditional named-export reads rewritten from `exports.fn()` to `fn()`).
 
 Level: receiver-changing `UnIndirectCall` and `UnEsm` forms require `standard`
 or above. Explicit transpiler-helper recovery in `UnInteropRequireDefault`
@@ -482,11 +483,16 @@ CommonJS receivers, including chains made entirely of static
 recovery replaces a property write with a binding, so an accessor on `exports`
 is already ignored; its whole-chain recovery also evaluates a chained
 function value once into a binding and moves each target's reference
-evaluation past it, which creating a function cannot observe). A primitive literal or `void <number>` needs no
-assumption about the repeated value, but receiver stability is a separate
-condition. Nested receiver chains that also replace `module.exports`, mix
-roots, mutate prototypes, or write the `exports` key stay intact; splitting
-them would require a stronger proof or a receiver capture.
+evaluation past it, which creating a function cannot observe; its conditional
+named-export recovery replaces each eligible property with a live binding at
+the original read/write positions). A primitive literal or `void <number>`
+needs no assumption about the repeated value, but receiver stability is a
+separate condition. Nested receiver chains that also replace
+`module.exports`, mutate prototypes, or write the `exports` key stay intact;
+splitting them would require a stronger proof or a receiver capture. A
+conditional named-export chain may mix static `exports.name` and
+`module.exports.name` roots only after proving that neither receiver can be
+rebound, replaced, aliased, or observed dynamically.
 
 Level: all levels. UnEsm's recovery is itself unconditional on this point.
 
