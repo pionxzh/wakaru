@@ -496,6 +496,55 @@ rebound, replaced, aliased, or observed dynamically.
 
 Level: all levels. UnEsm's recovery is itself unconditional on this point.
 
+### `chain_receiver_reference_order`
+
+Recovering a chained named-export assignment as one operation evaluates the
+value first and the target references afterwards. The original chain
+evaluates every target reference (`exports`, `module.exports`) before the
+value. The two orders differ only if evaluating the value synchronously
+rebinds `exports` or replaces `module.exports`; the property writes
+themselves happen in the same order, to the same objects, with the value
+evaluated exactly once in both forms.
+
+```js
+var Lib = require("lib");
+exports.first = exports.second = Lib.matcher(KEY);
+// recovered: the value is stored first, then each target reads the receiver
+var second = Lib.matcher(KEY);
+exports.second = second;
+exports.first = second;
+```
+
+Rebinding `exports` needs a write to that parameter, which only code lexically
+inside this module can perform. Replacing `module.exports` needs the `module`
+object, which only this module's code holds unless it passes `module` out. A
+call on a provider binding (a top-level `require("literal")` declarator, or a
+static member chain rooted at one, declared once and never written) with
+identifier or literal arguments therefore cannot rebind either receiver on its
+own. It can do so only by calling back into a closure this module registered
+earlier, or through an escaped `module`, and the single-export recovery
+(`exports.name = Lib.make(x)` to `export const name = Lib.make(x)`) already
+accepts those channels without inspecting the module for them. The chain
+recovery accepts them on the same terms and does not widen them: arguments
+that are the wrapper bindings `module`, `exports`, or `require`, computed
+callee keys, spread arguments, optional calls, `new`, and every call whose
+callee root is a local function, object, or an unresolved global stay whole.
+The value stays at the chain's own position; unlike the `require("literal")`
+value (`import_hoisting_eagerness`), nothing is hoisted.
+
+This is an accepted assumption in the same sense as
+`commonjs_exports_data_properties`: it names the residual rather than proving
+it absent. A local call (`makeValue()`) is excluded not because the argument
+fails but because a local function body that writes `module.exports` is a
+realistic shape, while a provider re-entering this module's receivers is not.
+
+Affects: `UnEsm` whole-chain recovery of top-level named-export chains whose
+value is a provider call. Everything the recovery does afterwards (binding
+name, snapshot exports, `module.exports` head) is the existing function-value
+path.
+
+Level: all levels, matching the rest of the chain recovery.
+
 ### `import_hoisting_eagerness`
 
 Converting a CommonJS `require()` into an ESM `import` moves the provider's

@@ -4725,6 +4725,34 @@ fn whole_named_export_chains_are_recovered_in_one_pass() {
             "module.exports = exports.default = require(\"impl-lib\");",
             "export default require(\"impl-lib\");",
         ),
+        // A call on a provider binding (a top-level `require("literal")`
+        // declarator that is never rewritten) with repeatable arguments is
+        // evaluated once into a binding at the chain's position
+        // (`chain_receiver_reference_order`).
+        (
+            "var Lib = require(\"./lib\"); var KEY = \"alpha\"; exports.first = exports.second = Lib.matcher(KEY);",
+            "import Lib from \"./lib\"; var KEY = \"alpha\"; export var second = Lib.matcher(KEY); export { second as first };",
+        ),
+        (
+            "var Lib = require(\"./lib\"); exports.first = exports.second = Lib.matcher(\"beta\");",
+            "import Lib from \"./lib\"; export var second = Lib.matcher(\"beta\"); export { second as first };",
+        ),
+        (
+            "var counter = require(\"./lib\").matcher; var T = \"gamma\"; exports.first = exports.second = counter(T);",
+            "import { matcher as counter } from \"./lib\"; var T = \"gamma\"; export var second = counter(T); export { second as first };",
+        ),
+        (
+            "var make = require(\"./make\"); exports.a = exports.b = make(1, void 0);",
+            "import make from \"./make\"; export var b = make(1, void 0); export { b as a };",
+        ),
+        (
+            "var P = require(\"./lib\"); var Q = P; exports.a = exports.b = Q.make(1);",
+            "import P from \"./lib\"; var Q = P; export var b = Q.make(1); export { b as a };",
+        ),
+        (
+            "var Lib = require(\"./lib\"); module.exports = exports.helper = Lib.build.helper();",
+            "import Lib from \"./lib\"; export var helper = Lib.build.helper(); export default helper;",
+        ),
     ] {
         let once = common::render_rule(source, |mark| {
             wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
@@ -4755,6 +4783,36 @@ fn named_export_chains_keep_the_boundary_under_dynamic_scope_or_effectful_values
         "const require = load; exports.a = exports.b = require(\"x\");",
         "exports.a = exports.b = new Thing();",
         "exports.a = exports.b = void sideEffect();",
+        // A provider call is accepted only when the callee is rooted at a
+        // top-level `require("literal")` binding that is declared once and
+        // never rewritten, reached through static keys, and every argument
+        // is repeatable and not a CommonJS wrapper binding.
+        "var Lib = require(\"./lib\"); exports.a = exports.b = Lib.make(other());",
+        "var Lib = require(\"./lib\"); exports.a = exports.b = Lib[key](1);",
+        "var Lib = require(\"./lib\"); exports.a = exports.b = Lib.make(...xs);",
+        "var Lib = require(\"./lib\"); exports.a = exports.b = Lib?.make(1);",
+        "var Lib = require(\"./lib\"); exports.a = exports.b = Lib.make?.(1);",
+        "var Lib = require(\"./lib\"); exports.a = exports.b = Lib.make(module);",
+        "var Lib = require(\"./lib\"); exports.a = exports.b = Lib.make(exports);",
+        "var Lib = require(\"./lib\"); exports.a = exports.b = Lib.make(require);",
+        "var Lib = require(\"./lib\"); exports.a = exports.b = Lib.make(/re/);",
+        "var Lib = require(\"./lib\"); exports.a = exports.b = new Lib.Thing(1);",
+        "var Lib = require(\"./lib\"); Lib = local; exports.a = exports.b = Lib.make(1);",
+        "var Lib = require(\"./lib\"); var Lib = other; exports.a = exports.b = Lib.make(1);",
+        "var Lib = require(\"./lib\"); function reset() { Lib = other; } exports.a = exports.b = Lib.make(1);",
+        // An alias of a rewritten or redeclared root is not a provider either.
+        "var P = require(\"./lib\"); P = function () { module.exports = {}; return 1; }; var Q = P; module.exports.a = module.exports.b = Q();",
+        "var P = require(\"./lib\"); var P = other; var Q = P; exports.a = exports.b = Q(1);",
+        "var P = require(\"./lib\"); var Q = P.make; function swap() { P = other; } exports.a = exports.b = Q(1);",
+        "var P = require(\"./lib\"); var Q = P; Q = local; exports.a = exports.b = Q(1);",
+        "var Lib = require(name); exports.a = exports.b = Lib.make(1);",
+        "var Lib = require(\"./lib\", extra); exports.a = exports.b = Lib.make(1);",
+        "var Lib = require(\"./lib\")[pick]; exports.a = exports.b = Lib.make(1);",
+        "var Lib = require(\"./lib\")(); exports.a = exports.b = Lib.make(1);",
+        "function Lib() {} exports.a = exports.b = Lib.make(1);",
+        "var Lib = { make() {} }; exports.a = exports.b = Lib.make(1);",
+        "function scope() { var Lib = require(\"./lib\"); } exports.a = exports.b = Lib.make(1);",
+        "const require = load; var Lib = require(\"./lib\"); exports.a = exports.b = Lib.make(1);",
         "module.exports.a = module.exports.b = (module.exports = {}, 1);",
         "exports.a = exports.b = (exports = {}, 1);",
         "module.exports = exports.default = (exports = {}, fn);",
@@ -4778,6 +4836,8 @@ fn whole_named_export_chains_validate_through_the_pipeline() {
         "var u; if (flag) { u = () => 1; } u = exports.paint = () => {}; exports.now = () => 1;",
         "exports.a = module.exports.b = void 0; const a = () => 1; exports.a = a; var b = () => 2; module.exports.b = b;",
         "exports.decode = exports.parse = require(\"qs-decode\"); exports.encode = exports.stringify = require(\"qs-encode\");",
+        "var Lib = require(\"shared-lib\"); var KEY = \"alpha\"; exports.name = KEY; exports.root = KEY; exports.first = exports.second = Lib.matcher(KEY); exports.run = function (input) { return Lib.run(input, KEY); };",
+        "var counter = require(\"shared-lib\").matcher; var T = \"gamma\"; exports.first = exports.second = counter(T);",
     ] {
         let output = common::render_pipeline(source);
         assert!(!output.contains("exports."), "{output}");

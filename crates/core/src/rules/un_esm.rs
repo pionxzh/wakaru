@@ -6429,9 +6429,16 @@ fn has_unhandled_named_export_chain(module: &Module, unresolved_mark: Mark) -> b
 /// reassigned later. Creating a function runs no code, so moving the receiver
 /// evaluations past it is invisible without any module-wide analysis. The
 /// require form accepts the provider-ordering deviation the single
-/// `exports.name = require(...)` recovery already takes. Any other effectful
-/// value (another call, `new`, a sequence, a class with computed keys or
-/// static blocks) stays whole.
+/// `exports.name = require(...)` recovery already takes. A call whose callee
+/// is rooted, through static keys, at a provider binding (a top-level
+/// `require("literal")` declarator, or a static member of one, declared once
+/// and never written) with repeatable arguments that are not the CommonJS
+/// wrapper bindings is also evaluated once into that binding, at the chain's
+/// own position: code reached only through another module's value cannot
+/// rebind this module's `exports` or replace its `module.exports` on its own
+/// (`chain_receiver_reference_order` in docs/rewrite-assumptions.md). Any
+/// other effectful value (a local or computed call, `new`, a sequence, a
+/// class with computed keys or static blocks) stays whole.
 /// `module.exports = exports.default = value` becomes the two-statement mirror
 /// that default-export recovery already removes; the `module.exports.default`
 /// read has no mirror recognizer and stays whole.
@@ -6533,13 +6540,109 @@ fn normalize_named_export_chains(
     /// runs no code. A `require("literal")` runs the provider, which the
     /// existing `exports.name = require(...)` recovery already moves ahead of
     /// the module body (`import_hoisting_eagerness`); the recovered binding
-    /// then goes through the same require-to-import path.
-    fn is_stored_value(expr: &Expr, unresolved_mark: Mark) -> bool {
+    /// then goes through the same require-to-import path. A provider call
+    /// (`is_provider_call`) runs another module's code at the chain's own
+    /// position; the only ordering change is that the target references are
+    /// evaluated after it (`chain_receiver_reference_order`).
+    fn is_stored_value(expr: &Expr, unresolved_mark: Mark, providers: &HashSet<BindingId>) -> bool {
         match expr {
             Expr::Fn(_) | Expr::Arrow(_) => true,
-            Expr::Call(call) => is_require_call(call, unresolved_mark).is_some(),
+            Expr::Call(call) => {
+                is_require_call(call, unresolved_mark).is_some()
+                    || is_provider_call(call, providers, unresolved_mark)
+            }
             _ => false,
         }
+    }
+
+    /// Bindings whose value came from another module: a top-level
+    /// `var P = require("literal")` declarator, or a static member chain
+    /// rooted at such a binding or at a literal require, declared exactly
+    /// once and never written afterwards. Code reached through them cannot
+    /// rebind this module's `exports` or replace `module.exports` on its own;
+    /// it can only do so by re-entering code that lexically lives in this
+    /// module, which the single-export recovery already accepts.
+    fn collect_provider_bindings(module: &Module, unresolved_mark: Mark) -> HashSet<BindingId> {
+        let mut providers: HashSet<BindingId> = HashSet::default();
+        // Qualify each candidate before it can seed an alias: an alias of a
+        // rewritten or redeclared root must not survive as a provider.
+        let mut uses: Option<BindingUseIndex> = None;
+        for item in &module.body {
+            let ModuleItem::Stmt(Stmt::Decl(Decl::Var(decl))) = item else {
+                continue;
+            };
+            for declarator in &decl.decls {
+                let Pat::Ident(binding) = &declarator.name else {
+                    continue;
+                };
+                let Some(init) = &declarator.init else {
+                    continue;
+                };
+                if !is_provider_root(strip_parens(init), &providers, unresolved_mark, true) {
+                    continue;
+                }
+                let id = binding_id(&binding.id);
+                let uses = uses.get_or_insert_with(|| BindingUseIndex::collect(module));
+                if uses.has_single_declaration(&id) && !uses.has_direct_write(&id) {
+                    providers.insert(id);
+                }
+            }
+        }
+        providers
+    }
+
+    /// `P` or `P.a.b` through static keys, rooted at a provider binding.
+    /// With `allow_require`, the root may also be a literal `require(...)`
+    /// call (a declarator initializer such as `require("lib").helper`).
+    fn is_provider_root(
+        expr: &Expr,
+        providers: &HashSet<BindingId>,
+        unresolved_mark: Mark,
+        allow_require: bool,
+    ) -> bool {
+        let mut current = strip_parens(expr);
+        loop {
+            match current {
+                Expr::Ident(id) => return providers.contains(&binding_id(id)),
+                Expr::Call(call) => {
+                    return allow_require && is_require_call(call, unresolved_mark).is_some();
+                }
+                Expr::Member(member) => {
+                    if is_ident_prop(&member.prop).is_none() {
+                        return false;
+                    }
+                    current = strip_parens(&member.obj);
+                }
+                _ => return false,
+            }
+        }
+    }
+
+    /// A plain call (no optional chain, no spread) whose callee is rooted at a
+    /// provider binding and whose arguments are repeatable values other than
+    /// the CommonJS wrapper bindings, so the call receives nothing that could
+    /// reach this module's receivers.
+    fn is_provider_call(
+        call: &CallExpr,
+        providers: &HashSet<BindingId>,
+        unresolved_mark: Mark,
+    ) -> bool {
+        let Callee::Expr(callee) = &call.callee else {
+            return false;
+        };
+        if !is_provider_root(callee, providers, unresolved_mark, false) {
+            return false;
+        }
+        call.args.iter().all(|arg| {
+            arg.spread.is_none()
+                && is_repeatable_value(&arg.expr)
+                && !matches!(
+                    strip_parens(&arg.expr),
+                    Expr::Ident(id)
+                        if id.ctxt.outer() == unresolved_mark
+                            && matches!(id.sym.as_ref(), "module" | "exports" | "require")
+                )
+        })
     }
 
     fn assign_item(
@@ -6573,6 +6676,20 @@ fn normalize_named_export_chains(
         return None;
     }
 
+    // Provider bindings are only needed for a chain carrying a non-require
+    // call; skip the binding-use walk otherwise.
+    let needs_providers = parsed.iter().flatten().any(|chain| {
+        matches!(
+            chain.value.as_ref(),
+            Expr::Call(call) if is_require_call(call, unresolved_mark).is_none()
+        )
+    });
+    let providers = if needs_providers {
+        collect_provider_bindings(module, unresolved_mark)
+    } else {
+        HashSet::default()
+    };
+
     let original_body = module.body.clone();
     let mut used_names = collect_all_identifier_names(module);
     let mut changed = false;
@@ -6583,7 +6700,7 @@ fn normalize_named_export_chains(
             continue;
         };
         let repeatable = is_repeatable_value(&chain.value);
-        if !repeatable && !is_stored_value(&chain.value, unresolved_mark) {
+        if !repeatable && !is_stored_value(&chain.value, unresolved_mark, &providers) {
             body.push(item);
             continue;
         }
