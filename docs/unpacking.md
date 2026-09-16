@@ -350,6 +350,9 @@ numeric webpack module IDs are mapped to those final filenames so entry/chunk
 references can be rewritten across physical input files. Duplicate numeric IDs
 are treated as ambiguous and are not rewritten globally, which avoids merging
 unrelated webpack runtimes from the same scanned directory.
+In normal output, opaque factories still reserve their numeric IDs but cannot
+become rewritten callers or targets. Recoverable siblings remain eligible for
+cross-input rewrites; an opaque factory does not disable its whole container.
 
 **`unpack_raw(source)`** — bundle splitting without the normal decompile rule
 pipeline. It returns detector output after only the extraction and

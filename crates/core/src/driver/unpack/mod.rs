@@ -526,7 +526,6 @@ pub fn unpack_prepared_inputs_with_policy(
                     )?
                 };
                 let (result, prepared, module_failures) = detected.into_parts();
-                let has_module_failures = !module_failures.is_empty();
                 let report_import_cycle_warnings = result.report_import_cycle_warnings;
                 let external_consumers = result.external_consumers;
                 let input_group = input_group_for_filename(&filename);
@@ -560,11 +559,6 @@ pub fn unpack_prepared_inputs_with_policy(
                             .with_webpack_commonjs_runtime(webpack_commonjs_runtime)
                             .with_webpack_numeric_module_id(webpack_numeric_module_id)
                             .with_webpack_legacy_module_i(webpack_legacy_module_i)
-                            // Intra-container edges were already rewritten by
-                            // the detector. If any local ID is opaque, do not
-                            // let a same-numbered module from another input
-                            // capture the deliberately unresolved call.
-                            .with_cross_chunk_rewrite(!has_module_failures)
                             .with_detector_failure(detector_failure)
                             .with_external_consumers(external_consumers)
                         }),
