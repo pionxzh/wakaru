@@ -19,8 +19,7 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::analysis::binding_uses::{BindingUseIndex, UseKind};
-use crate::rules::eval_utils::DirectEvalAnalyzer;
-use crate::rules::rename_utils::collect_module_names;
+use crate::rules::eval_utils::{module_has_with_stmt, DirectEvalAnalyzer};
 use crate::utils::paren::{strip_parens, strip_parens_mut};
 
 pub(super) fn normalize_webpack_commonjs_runtime(
@@ -33,6 +32,7 @@ pub(super) fn normalize_webpack_commonjs_runtime(
     if !enabled {
         return;
     }
+    restore_webpack_exports_iife(module, unresolved_mark);
     if let Some(module_id) = numeric_module_id {
         normalize_webpack_css_runtime(module, unresolved_mark, module_id, legacy_module_i);
     }
@@ -82,6 +82,74 @@ pub(super) fn normalize_webpack_commonjs_runtime(
     *module = candidate;
 }
 
+/// A sole synchronous UMD IIFE can receive webpack's initial exports object
+/// without lifting its body or guessing its eventual properties. Require the
+/// argument to be the entire free CommonJS surface so no other code can replace
+/// or observe the runtime object through an unmodeled path.
+fn restore_webpack_exports_iife(module: &mut Module, unresolved_mark: Mark) {
+    if !matches!(module.body.as_slice(), [ModuleItem::Stmt(Stmt::Expr(_))]) {
+        return;
+    }
+    if module_has_with_stmt(module) {
+        return;
+    }
+    let mut eval = DirectEvalAnalyzer::default();
+    module.visit_with(&mut eval);
+    if eval.unknown_direct_eval || !eval.known_direct_eval_sources.is_empty() {
+        return;
+    }
+    let mut candidate = module.clone();
+    let [ModuleItem::Stmt(Stmt::Expr(statement))] = candidate.body.as_mut_slice() else {
+        return;
+    };
+    let mut expression = strip_parens_mut(&mut statement.expr);
+    while let Expr::Unary(unary) = expression {
+        if !matches!(unary.op, UnaryOp::Bang | UnaryOp::Void) {
+            return;
+        }
+        expression = strip_parens_mut(&mut unary.arg);
+    }
+    let Expr::Call(call) = expression else {
+        return;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return;
+    };
+    let synchronous = match strip_parens(callee) {
+        Expr::Fn(function) => !function.function.is_async && !function.function.is_generator,
+        Expr::Arrow(arrow) => !arrow.is_async,
+        _ => false,
+    };
+    let [argument] = call.args.as_mut_slice() else {
+        return;
+    };
+    if !synchronous || argument.spread.is_some() {
+        return;
+    }
+    if !matches!(strip_parens(&argument.expr), Expr::Ident(ident)
+        if ident.sym == "exports" && ident.ctxt.outer() == unresolved_mark)
+    {
+        return;
+    }
+    let capture = fresh_named_capture_ident(module, "_webpackExports");
+    *argument.expr = Expr::Ident(capture.clone());
+    let mut runtime = RuntimeCommonJsReferenceFinder {
+        unresolved_mark,
+        found: false,
+    };
+    candidate.visit_with(&mut runtime);
+    if runtime.found {
+        return;
+    }
+    candidate
+        .body
+        .insert(0, empty_object_declaration(capture.clone()));
+    candidate
+        .body
+        .push(module_exports_assignment(capture, unresolved_mark));
+    *module = candidate;
+}
+
 /// Restore the narrow webpack runtime contract emitted by CSS loader chains.
 ///
 /// Old and current producers represent one CSS list item as
@@ -125,7 +193,7 @@ fn normalize_webpack_css_runtime(
         if rewrite_css_locals_assignment(&mut locals_candidate, locals.assignment_span, &capture) {
             locals_candidate
                 .body
-                .insert(0, css_default_declaration(capture.clone()));
+                .insert(0, empty_object_declaration(capture.clone()));
             locals_candidate
                 .body
                 .push(module_exports_assignment(capture, unresolved_mark));
@@ -500,7 +568,18 @@ impl VisitMut for CssLocalsAssignmentRewriter<'_> {
 }
 
 fn fresh_named_capture_ident(module: &Module, base: &str) -> Ident {
-    let mut used_names = collect_module_names(module);
+    // Captures may be referenced inside an IIFE. Reserve both nested bindings
+    // and free references so the printed name cannot capture either direction.
+    #[derive(Default)]
+    struct Names(HashSet<Atom>);
+    impl Visit for Names {
+        fn visit_ident(&mut self, ident: &Ident) {
+            self.0.insert(ident.sym.clone());
+        }
+    }
+    let mut names = Names::default();
+    module.visit_with(&mut names);
+    let mut used_names = names.0;
     let base: Atom = base.into();
     let name = if used_names.insert(base.clone()) {
         base
@@ -513,7 +592,7 @@ fn fresh_named_capture_ident(module: &Module, base: &str) -> Ident {
     Ident::new(name, DUMMY_SP, SyntaxContext::empty())
 }
 
-fn css_default_declaration(capture: Ident) -> ModuleItem {
+fn empty_object_declaration(capture: Ident) -> ModuleItem {
     ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(VarDecl {
         span: DUMMY_SP,
         ctxt: SyntaxContext::empty(),
@@ -927,6 +1006,65 @@ mod tests {
 
     fn normalize(source: &str, enabled: bool) -> String {
         normalize_with_module_id(source, enabled, None, false)
+    }
+
+    #[test]
+    fn sole_exports_iife_receives_the_runtime_created_object() {
+        for source in [
+            "!function(out) { out.value = 42; }(exports);",
+            "((out) => { out.value = 42; })(exports);",
+            "void function(out) { out.read = function() { return out; }; }(exports);",
+        ] {
+            let output = normalize(source, true);
+            assert!(output.contains("var _webpackExports = {}"), "{output}");
+            assert!(output.contains("(_webpackExports)"), "{output}");
+            assert!(
+                output.contains("module.exports = _webpackExports"),
+                "{output}"
+            );
+            assert!(!normalize(source, false).contains("_webpackExports"));
+        }
+    }
+
+    #[test]
+    fn exports_iife_restoration_requires_the_complete_runtime_surface() {
+        for source in [
+            "function later() { (function(out) { out.value = 42; })(exports); }",
+            "ready && (function(out) { out.value = 42; })(exports);",
+            "(async function(out) { out.value = 42; })(exports);",
+            "(function*(out) { out.value = 42; })(exports);",
+            "(function(out) { module.exports = out; })(exports);",
+            "(function(out) { out.other = exports; })(exports);",
+            "(function(out) { out.value = require('./other.js'); })(exports);",
+            "(function(out) { eval('module.exports = out'); })(exports);",
+            "(function(out) { eval(source); })(exports);",
+            "(function(out) { out.value = 42; })(...exports);",
+            "(function(out) { out.value = 42; })(exports, effect());",
+            "var exports = {}; (function(out) { out.value = 42; })(exports);",
+        ] {
+            assert_eq!(
+                normalize(source, true),
+                normalize(source, false),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn exports_iife_capture_avoids_nested_binding_collisions() {
+        let output = normalize(
+            "(function(out) { var _webpackExports = 42; out.value = _webpackExports; })(exports);",
+            true,
+        );
+        assert!(output.contains("var _webpackExports_1 = {}"), "{output}");
+        assert!(output.contains("var _webpackExports = 42"), "{output}");
+        assert!(output.contains("(_webpackExports_1)"), "{output}");
+        let output = normalize(
+            "(function(out) { out.value = _webpackExports; })(exports);",
+            true,
+        );
+        assert!(output.contains("var _webpackExports_1 = {}"), "{output}");
+        assert!(output.contains("out.value = _webpackExports;"), "{output}");
     }
 
     #[test]

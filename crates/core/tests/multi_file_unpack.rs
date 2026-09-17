@@ -18,6 +18,76 @@ fn assert_valid_module_graph(modules: &[(String, String)]) {
 }
 
 #[test]
+fn webpack_exports_iife_preserves_a_shared_mutable_default() {
+    // A webpack-extracted UMD factory mutates the supplied exports object.
+    let provider = r#"
+(self.webpackChunk_app = self.webpackChunk_app || []).push([[1], {
+    100: function(module, exports) {
+        !function(out) {
+            "use strict";
+            out.value = 42;
+            out.read = function() { return out.value; };
+            globalThis.published = out;
+            Object.defineProperty(out, "__esModule", { value: true });
+        }(exports);
+    }
+}]);
+"#;
+    let consumer = r#"
+(self.webpackChunk_app = self.webpackChunk_app || []).push([[2], {
+    200: function(module, exports, load) {
+        var provider = load(100);
+        module.exports = provider;
+    },
+    300: function(module, exports, load) {
+        var value = load(100).value;
+        exports.result = value;
+    }
+}]);
+"#;
+    for emit_source_map in [false, true] {
+        let inputs = vec![
+            UnpackInput {
+                filename: "provider.js".into(),
+                source: provider.into(),
+            },
+            UnpackInput {
+                filename: "consumer.js".into(),
+                source: consumer.into(),
+            },
+        ];
+        let output = unpack_files(
+            inputs.clone(),
+            DecompileOptions {
+                emit_source_map,
+                ..Default::default()
+            },
+        )
+        .expect("exports-object IIFE should recover");
+        assert_valid_module_graph(&output.modules);
+        let provider = &output
+            .modules
+            .iter()
+            .find(|(name, _)| name == "module-100.js")
+            .unwrap()
+            .1;
+        assert!(provider.contains("export default"), "{provider}");
+        assert!(provider.contains("globalThis.published"), "{provider}");
+        assert!(!provider.contains("module.exports"), "{provider}");
+        let raw = unpack_files_raw(inputs, &DecompileOptions::default())
+            .expect("raw extraction should stay unchanged");
+        let raw_provider = &raw
+            .modules
+            .iter()
+            .find(|(name, _)| name == "module-100.js")
+            .unwrap()
+            .1;
+        assert!(raw_provider.contains("}(exports)"), "{raw_provider}");
+        assert!(!raw_provider.contains("_webpackExports"), "{raw_provider}");
+    }
+}
+
+#[test]
 fn webpack_chunks_recover_healthy_edges_beside_an_opaque_factory() {
     let application = r#"
 (self.webpackChunk_app = self.webpackChunk_app || []).push([[1], {

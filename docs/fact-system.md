@@ -157,6 +157,16 @@ exactly one rewrite must match, and no unresolved CommonJS runtime references
 may remain. Synthetic children from recursive splitting do not inherit the
 proof; `--raw` remains detector passthrough.
 
+For a module consisting solely of a synchronous IIFE called with `exports`,
+normal processing also restores the runtime-created object, passes it to the
+original IIFE, and exports that same mutable object as the CommonJS default.
+The argument must be the entire free CommonJS runtime surface: any other
+`module`, `exports`, or `require` reference, direct eval, or `with` blocks this
+recovery. The IIFE body and its object aliases stay intact; no named exports
+are guessed. Async/generator calls, spread or extra arguments, and conditional
+or deferred calls are excluded. This uses the same detector-owned boundary and
+does not change raw extraction.
+
 That boundary also restores two exact CSS-loader runtime values without
 attempting CSS source recovery. A three- or four-field CSS list tuple whose
 first item is free `module.id` receives the numeric value preserved from its
