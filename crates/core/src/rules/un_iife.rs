@@ -108,14 +108,22 @@ fn process_iife(call: &mut CallExpr, level: RewriteLevel, with_statement_present
     if let Callee::Expr(callee_expr) = &mut call.callee {
         match callee_expr.as_mut() {
             Expr::Fn(fn_expr) => {
-                process_fn_iife(&mut fn_expr.function, &mut call.args);
+                process_fn_iife(
+                    &mut fn_expr.function,
+                    &mut call.args,
+                    fn_expr.ident.as_ref(),
+                );
             }
             Expr::Arrow(arrow_expr) => {
                 process_arrow_iife(arrow_expr, &mut call.args);
             }
             Expr::Paren(paren) => match paren.expr.as_mut() {
                 Expr::Fn(fn_expr) => {
-                    process_fn_iife(&mut fn_expr.function, &mut call.args);
+                    process_fn_iife(
+                        &mut fn_expr.function,
+                        &mut call.args,
+                        fn_expr.ident.as_ref(),
+                    );
                 }
                 Expr::Arrow(arrow_expr) => {
                     process_arrow_iife(arrow_expr, &mut call.args);
@@ -175,7 +183,11 @@ fn try_unwrap_dot_call_on_arrow(call: &mut CallExpr) -> bool {
     true
 }
 
-fn process_fn_iife(function: &mut Function, args: &mut Vec<ExprOrSpread>) {
+fn process_fn_iife(
+    function: &mut Function,
+    args: &mut Vec<ExprOrSpread>,
+    fn_expr_name: Option<&Ident>,
+) {
     let Some(body) = &mut function.body else {
         return;
     };
@@ -183,7 +195,49 @@ fn process_fn_iife(function: &mut Function, args: &mut Vec<ExprOrSpread>) {
         return;
     }
     let preserve_arg_list = body_uses_own_arguments(body);
-    process_params_and_args(&mut function.params, args, body, preserve_arg_list);
+    process_params_and_args(
+        &mut function.params,
+        args,
+        body,
+        preserve_arg_list,
+        fn_expr_name,
+    );
+}
+
+/// Named function expressions bind their name inside the function. Any use of
+/// that binding in the body or in parameter initializers — call / `new` /
+/// `.call` / escape / `typeof` — or a known eval source that mentions the
+/// printed name, means a later invocation can pass a different argument.
+/// Literal extraction would freeze the IIFE snapshot.
+fn named_fn_expr_is_reused(
+    fn_expr_name: Option<&Ident>,
+    params: &[Param],
+    body: &FunctionBody,
+    param_value_refs: &ParamValueRefs,
+) -> bool {
+    let Some(name) = fn_expr_name else {
+        return false;
+    };
+    let binding = (name.sym.clone(), name.ctxt);
+    // Defaults and computed pattern keys see the name with the same binding
+    // identity as the body. `b = o` can re-enter after the IIFE snapshot.
+    if param_value_refs.refs.contains(&binding) {
+        return true;
+    }
+    let binding_uses = BindingUseIndex::collect_stmts(&body.stmts);
+    if binding_uses.use_count(&binding) > 0 {
+        return true;
+    }
+    let mut eval_analyzer = DirectEvalAnalyzer::default();
+    params.visit_with(&mut eval_analyzer);
+    for stmt in &body.stmts {
+        stmt.visit_with(&mut eval_analyzer);
+    }
+    !eval_analyzer.unknown_direct_eval
+        && eval_analyzer
+            .known_direct_eval_sources
+            .iter()
+            .any(|source| js_source_mentions_binding(source, &name.sym))
 }
 
 fn process_arrow_iife(arrow: &mut ArrowExpr, args: &mut Vec<ExprOrSpread>) {
@@ -210,8 +264,13 @@ fn process_params_and_args(
     args: &mut Vec<ExprOrSpread>,
     body: &mut FunctionBody,
     preserve_arg_list: bool,
+    fn_expr_name: Option<&Ident>,
 ) {
     let param_value_refs = collect_param_value_refs(params);
+    // Re-entry uses the same fail-closed path as an observable `arguments`
+    // object: keep the parameter so later calls can still pass a value.
+    let preserve_arg_list =
+        preserve_arg_list || named_fn_expr_is_reused(fn_expr_name, params, body, &param_value_refs);
     let plan = plan_param_rewrites(
         params.len(),
         args,
