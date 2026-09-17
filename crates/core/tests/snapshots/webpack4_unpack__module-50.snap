@@ -1,5 +1,6 @@
 ---
 source: crates/core/tests/webpack4_unpack.rs
+assertion_line: 208
 expression: code
 ---
 import r from "./module-29.js";
@@ -153,8 +154,7 @@ function M(e, t, n) {
     if (e == null) {
         return 0;
     }
-    return function e(t, r, o) {
-        let n = "";
+    return function e(t, n, r, o) {
         let u = typeof t;
         if (!(u !== "undefined" && u !== "boolean")) {
             t = null;
@@ -200,7 +200,7 @@ function M(e, t, n) {
             }
         }
         return l;
-    }(e, t, n);
+    }(e, "", t, n);
 }
 function A(e, t) {
     if (typeof e === "object" && e !== null && e.key != null) {

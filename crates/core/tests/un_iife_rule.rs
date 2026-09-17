@@ -910,3 +910,200 @@ with (scope) { observe(); }
 "#;
     assert_eq_normalized(&apply_rule(input), input);
 }
+
+#[test]
+fn named_fn_expr_reenter_call_keeps_literal_param() {
+    // A named function expression used as an IIFE may still be invoked again
+    // with a different argument. Baking the IIFE literal into `const a = 0`
+    // would make later `o(next)` drop that argument.
+    let input = r#"
+(function o(a) {
+  if (a < 2) {
+    return o(a + 1);
+  }
+  return a;
+})(0);
+"#;
+    assert_eq_normalized(&apply_rule(input), input);
+}
+
+#[test]
+fn named_fn_expr_reenter_new_keeps_literal_param() {
+    let input = r#"
+(function o(a) {
+  return new o(a + 1);
+})(0);
+"#;
+    assert_eq_normalized(&apply_rule(input), input);
+}
+
+#[test]
+fn named_fn_expr_reenter_dot_call_keeps_literal_param() {
+    let input = r#"
+(function o(a) {
+  return o.call(null, a + 1);
+})(0);
+"#;
+    assert_eq_normalized(&apply_rule(input), input);
+}
+
+#[test]
+fn named_fn_expr_escape_keeps_literal_param() {
+    let input = r#"
+(function o(a) {
+  later(o);
+  return a;
+})(0);
+"#;
+    assert_eq_normalized(&apply_rule(input), input);
+}
+
+#[test]
+fn named_fn_expr_eval_mentioning_name_keeps_literal_param() {
+    // Known eval source can invoke the function name even though the body has
+    // no identifier use of that binding.
+    let input = r#"
+(function o(a) {
+  eval("o(1)");
+  use(a);
+})(0);
+"#;
+    assert_eq_normalized(&apply_rule(input), input);
+}
+
+#[test]
+fn named_fn_expr_typeof_name_keeps_literal_param() {
+    // Any live use of the function-name binding is fail-closed: `typeof o`
+    // does not prove later code cannot observe a fresh call through eval or
+    // an aliased binding we did not reconstruct.
+    let input = r#"
+(function o(a) {
+  use(typeof o, a);
+})(0);
+"#;
+    assert_eq_normalized(&apply_rule(input), input);
+}
+
+#[test]
+fn unused_named_fn_expr_still_extracts_literal_param() {
+    // A name kept only for stack traces is not a re-entry. Extraction stays.
+    let input = r#"
+(function o(a) {
+  use(a);
+})(0);
+"#;
+    let expected = r#"
+(function o() {
+  const a = 0;
+  use(a);
+})();
+"#;
+    assert_eq_normalized(&apply_rule(input), expected);
+}
+
+#[test]
+fn shadowed_named_fn_expr_still_extracts_literal_param() {
+    // Inner `var o` is a different binding after resolver. The function name
+    // is unused, so the IIFE literal is still a single-invocation snapshot.
+    let input = r#"
+(function o(a) {
+  var o = helper;
+  use(a, o);
+})(0);
+"#;
+    let expected = r#"
+(function o() {
+  const a = 0;
+  var o = helper;
+  use(a, o);
+})();
+"#;
+    assert_eq_normalized(&apply_rule(input), expected);
+}
+
+#[test]
+fn nested_param_shadowing_named_fn_expr_still_extracts_literal_param() {
+    // Nested `function inner(o)` is not the IIFE name. Compare binding
+    // identity, not the printed short name.
+    let input = r#"
+(function o(a) {
+  function inner(o) {
+    o(1);
+  }
+  use(a);
+})(0);
+"#;
+    let expected = r#"
+(function o() {
+  const a = 0;
+  function inner(o) {
+    o(1);
+  }
+  use(a);
+})();
+"#;
+    assert_eq_normalized(&apply_rule(input), expected);
+}
+
+#[test]
+fn named_fn_expr_reenter_still_renames_ident_arg() {
+    // Ident args stay parameters. Recursion must still receive the renamed
+    // binding; do not skip the rename path just because the name re-enters.
+    let input = r#"
+(function o(a) {
+  return o(next);
+})(start);
+"#;
+    let expected = r#"
+(function o(start_1) {
+  return o(next);
+})(start);
+"#;
+    assert_eq_normalized(&apply_rule(input), expected);
+}
+
+#[test]
+fn paren_named_fn_expr_reenter_keeps_literal_param() {
+    let input = r#"
+(function o(a) {
+  return o(next);
+})(0);
+"#;
+    assert_eq_normalized(&apply_rule(input), input);
+}
+
+#[test]
+fn named_fn_expr_reenter_keeps_mutated_literal_param() {
+    let input = r#"
+(function o(a) {
+  a += 1;
+  return o(a);
+})(0);
+"#;
+    assert_eq_normalized(&apply_rule(input), input);
+}
+
+#[test]
+fn named_fn_expr_reenter_from_param_default_keeps_literal_param() {
+    // The name binding is visible in parameter initializers. `b = o` can
+    // invoke the function again after the IIFE snapshot; extracting `a`
+    // would freeze it and shift later arguments onto `b`.
+    let input = r#"
+(function o(a, b = o) {
+  return a === 0 ? b(1) : a;
+})(0);
+"#;
+    assert_eq_normalized(&apply_rule(input), input);
+}
+
+#[test]
+fn named_fn_expr_eval_in_param_default_keeps_literal_param() {
+    // Known eval in a default can invoke the name even when the body never
+    // mentions it.
+    let input = r#"
+(function o(a, b = eval("o")) {
+  use(a, b);
+})(0);
+"#;
+    assert_eq_normalized(&apply_rule(input), input);
+}
