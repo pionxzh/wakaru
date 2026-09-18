@@ -337,7 +337,7 @@ export function createBrowserHistory(e = {}) {
         }
     }
     const M = g(S());
-    let A = [
+    var A = [
         M.key
     ];
     function L(e) {
@@ -579,7 +579,7 @@ export function createHashHistory(e = {}) {
         R(M);
     }
     const A = y();
-    let L = [
+    var L = [
         createPath(A)
     ];
     function I(e) {

@@ -670,6 +670,38 @@ source's emitted name is checked again at each alias's use. If it would be
 captured there, the alias stays declared while its initializer receives safe
 substitutions for earlier links.
 
+## Declaration-Kind Capture Safety
+
+`VarDeclToLetConst` treats references to local function declarations as possible
+execution or escape, regardless of invocation syntax (`f()`, `f.call(...)`,
+`f.apply(...)`, callback arguments, or alias creation). Resolver binding IDs
+connect references between declarations in the same function/module scope.
+Captures include nested closures, parameter defaults, computed keys and class
+members. Closures and classes are conservatively observed at creation; the
+rule does not follow aliases through properties or model individual APIs.
+
+A captured `var` can become lexical only when its declaration has completed
+before the exposure in a containing statement-list block. This includes
+ordinary nested blocks, but does not infer initialization across branches,
+`switch` cases, or loop headers. Existing block-escape, loop-capture, duplicate
+declaration and dynamic-scope guards still apply. A plain function/arrow
+initializer may reference its own binding: creating it cannot execute its
+body before initialization. Calls and class initializers do not get that
+exception.
+
+The reference graph expands each function summary once at its earliest local
+exposure; it does not build a transitive capture set for every function.
+Analysis is bounded to each scope and reuses one capture traversal for named
+functions and anonymous function-like values. Enclosing scopes still inspect
+nested bodies for captures, so this is not a claim of globally linear AST
+processing across arbitrarily deep function nesting.
+
+This proof does not add cross-module entry roots for every exported function.
+It retains the existing declaration-position capture guard and `minimal`'s
+exported-`var` preservation. Arbitrary ESM-cycle entry before module execution
+requires a separate cross-module policy; same-scope analysis is not such a
+proof.
+
 ## Dynamic Scope Limits
 
 wakaru does not fully model `eval`, `with`, or host-level observation of

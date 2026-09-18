@@ -89,6 +89,7 @@ mod un_webpack_object_getters;
 mod un_while_loop;
 mod unminify_booleans;
 mod var_decl_to_let_const;
+mod var_decl_to_let_const_captures;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum RewriteLevel {

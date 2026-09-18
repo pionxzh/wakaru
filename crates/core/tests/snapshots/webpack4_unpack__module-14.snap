@@ -8,7 +8,7 @@ export const parse = h.parse = i;
 export const compile = h.compile = (e, t)=>l(i(e, t), t);
 export const tokensToFunction = h.tokensToFunction = l;
 export const tokensToRegExp = h.tokensToRegExp = p;
-const o = new RegExp([
+var o = new RegExp([
     "(\\\\.)",
     "([\\/.])?(?:(?:\\:(\\w+)(?:\\(((?:\\\\.|[^\\\\()])+)\\))?|\\(((?:\\\\.|[^\\\\()])+)\\))([+*?])?|(\\*))"
 ].join("|"), "g");

@@ -1749,3 +1749,164 @@ function f() {
     let output = apply_rule(input);
     assert_eq_normalized(&output, input);
 }
+
+// Capture/reference analysis must not depend on call syntax.
+#[test]
+fn early_function_value_uses_preserve_captured_vars() {
+    for invocation in [
+        "write.call(null)",
+        "write.apply(null, [])",
+        "write[method](null)",
+        "Reflect.apply(write, null, [])",
+        "consume(write)",
+        "const alias = write",
+    ] {
+        let input = format!("{invocation}; var value; function write() {{ value = 1; }}");
+        assert_eq_normalized(&apply_rule(&input), &input);
+    }
+}
+
+#[test]
+fn transitive_function_value_uses_preserve_captured_vars() {
+    let input =
+        "start(); var value; function start() { consume(write); } function write() { value = 1; }";
+    assert_eq_normalized(&apply_rule(input), input);
+}
+
+#[test]
+fn recursive_function_value_uses_preserve_captured_vars() {
+    let input = "start(); var value; function start() { write(); } function write() { if (again) start(); value = 1; }";
+    assert_eq_normalized(&apply_rule(input), input);
+}
+
+#[test]
+fn initialized_capture_still_modernizes_with_indirect_use() {
+    let input = "var value = 1; consume(read); function read() { return value; }";
+    let expected = "const value = 1; consume(read); function read() { return value; }";
+    assert_eq_normalized(&apply_rule(input), expected);
+}
+
+#[test]
+fn same_spelling_different_binding_does_not_block_capture() {
+    let input = "(function(read) { consume(read); })(other); var value = 1; function read() { return value; } consume(read);";
+    let expected = "(function(read) { consume(read); })(other); const value = 1; function read() { return value; } consume(read);";
+    assert_eq_normalized(&apply_rule(input), expected);
+}
+
+#[test]
+fn deferred_parameter_default_preserves_capture_before_initialization() {
+    let input = "read(); var value; function read(arg = value) { return arg; }";
+    assert_eq_normalized(&apply_rule(input), input);
+}
+
+#[test]
+fn nested_deferred_capture_in_initializer_stays_var() {
+    let input = "var value = consume(() => () => () => value);";
+    assert_eq_normalized(&apply_rule(input), input);
+}
+
+#[test]
+fn same_block_initialized_capture_still_modernizes() {
+    let input = "if (condition) { var value = 1; consume(() => value); }";
+    let expected = "if (condition) { const value = 1; consume(() => value); }";
+    assert_eq_normalized(&apply_rule(input), expected);
+}
+
+#[test]
+fn indirect_early_write_preserves_hoisting_at_every_level() {
+    let input = "hoge.call(this, []); var zzz, xxx; function hoge() { xxx = 'ok'; zzz = 'x'; }";
+    for level in [
+        RewriteLevel::Minimal,
+        RewriteLevel::Standard,
+        RewriteLevel::Aggressive,
+    ] {
+        assert_eq_normalized(&apply_rule_with_level(input, level), input);
+    }
+}
+
+#[test]
+fn block_function_reference_before_capture_declaration_stays_var() {
+    let input =
+        "if (condition) { consume(read); var value = 1; function read() { return value; } }";
+    assert_eq_normalized(&apply_rule(input), input);
+}
+
+#[test]
+fn block_function_reference_after_capture_declaration_modernizes() {
+    let input =
+        "if (condition) { var value = 1; consume(read); function read() { return value; } }";
+    let expected =
+        "if (condition) { const value = 1; consume(read); function read() { return value; } }";
+    assert_eq_normalized(&apply_rule(input), expected);
+}
+
+#[test]
+fn capture_initialization_does_not_flow_across_branches() {
+    let input = "if (condition) { var value = 1; } else { consume(() => value); }";
+    assert_eq_normalized(&apply_rule(input), input);
+}
+
+#[test]
+fn capture_in_later_declarator_can_use_completed_declaration() {
+    let input = "var value = 1, read = () => value; consume(read);";
+    let expected = "const value = 1, read = () => value; consume(read);";
+    assert_eq_normalized(&apply_rule(input), expected);
+}
+
+#[test]
+fn function_reference_in_pattern_default_preserves_capture() {
+    let input =
+        "var { result = read.call(null) } = source; var value; function read() { return value; }";
+    let expected =
+        "const { result = read.call(null) } = source; var value; function read() { return value; }";
+    assert_eq_normalized(&apply_rule(input), expected);
+}
+
+#[test]
+fn deeply_nested_callback_and_computed_key_preserve_capture() {
+    for expression in [
+        "consume(() => () => () => value)",
+        "consume({ [read()]: 1 })",
+        "consume(class { method() { return () => value; } })",
+    ] {
+        let input = format!("{expression}; var value; function read() {{ return value; }}");
+        assert_eq_normalized(&apply_rule(&input), &input);
+    }
+}
+
+#[test]
+fn safe_self_reference_through_nested_closure_still_modernizes() {
+    let input = "var read = () => () => read; consume(read);";
+    let expected = "const read = () => () => read; consume(read);";
+    assert_eq_normalized(&apply_rule(input), expected);
+}
+
+#[test]
+fn reference_graph_handles_dense_cycles_and_many_exposures() {
+    let mut input = String::new();
+    for _ in 0..32 {
+        input.push_str("consume(f0); ");
+    }
+    input.push_str("var value; ");
+    for i in 0..32 {
+        input.push_str(&format!("function f{i}() {{ "));
+        for j in 0..32 {
+            input.push_str(&format!("consume(f{j}); "));
+        }
+        if i == 31 {
+            input.push_str("value = 1; ");
+        }
+        input.push_str("} ");
+    }
+    assert_eq_normalized(&apply_rule(&input), &input);
+}
+
+#[test]
+fn deeply_nested_capture_reaches_outer_binding() {
+    let mut expression = String::from("value");
+    for _ in 0..64 {
+        expression = format!("() => {expression}");
+    }
+    let input = format!("consume({expression}); var value;");
+    assert_eq_normalized(&apply_rule(&input), &input);
+}
