@@ -711,12 +711,18 @@ processing across arbitrarily deep function nesting.
 
 Pure ESM export specifiers (`export { f }`, including aliases/default names)
 link bindings without evaluating their values, so they do not add a local
-exposure. Actual value references, including `export default f` expressions,
-property stores and getter closures, still do. Named function declarations
-retain the existing declaration-position capture guard, independently of
-whether they are exported. Simple named class declarations use the deferred
-boundary above, including named/default exports; anonymous default classes
-remain exposed at creation.
+exposure. A default-export expression consisting only of a parenthesized or
+bare identifier bound to a local function declaration or simple class
+declaration also adds no capture exposure. Unlike a specifier's live binding,
+`export default f` evaluates and snapshots the binding value, but does not
+execute its body. The value read and any class TDZ error remain in the output;
+ordinary variables still undergo use-before-declaration checks. This exception
+does not include calls, object/array literals, sequences, aliases or anonymous
+functions/classes. Property stores and getter closures still expose captures.
+Named function declarations retain the existing declaration-position capture
+guard, independently of whether they are exported. Simple named class
+declarations use the deferred boundary above, including named/default exports;
+anonymous default classes remain exposed at creation.
 
 This proof does not add cross-module entry roots for every exported function
 or class. It retains `minimal`'s exported-`var` preservation. Arbitrary ESM-cycle
@@ -731,7 +737,9 @@ is not proof: a same-scope member call or setter can invoke that function early.
 We deliberately do not track object aliases or assume delayed property use,
 including at `aggressive`. This can also prevent downstream destructuring or
 name recovery. It is a known readability cost of the bounded proof, not a
-claim that each preserved `var` fixes an observed runtime failure.
+claim that each preserved `var` fixes an observed runtime failure. See the
+[cached-wrapper capture boundary](learnings/cached-wrapper-capture-boundary.md)
+for the alias, reentry and exceptional-exit counterexamples behind this decision.
 
 ## Dynamic Scope Limits
 

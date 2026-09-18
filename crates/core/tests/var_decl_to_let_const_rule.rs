@@ -1,6 +1,6 @@
 mod common;
 
-use common::{assert_eq_normalized, render_pipeline, render_rule};
+use common::{assert_eq_normalized, render_pipeline, render_rule, render_with_level};
 use wakaru_core::{rules::VarDeclToLetConst, RewriteLevel};
 
 fn apply_rule(input: &str) -> String {
@@ -1940,9 +1940,83 @@ fn export_specifier_does_not_hide_an_early_local_call() {
 }
 
 #[test]
-fn default_export_expression_still_exposes_function_value() {
-    let input = "export default read; var value = 42; function read() { return value; }";
+fn default_export_identifier_does_not_execute_function_body() {
+    for expression in ["read", "(read)", "((read))"] {
+        let input = format!(
+            "export default {expression}; var value = 42; function read() {{ return value; }}"
+        );
+        for level in [
+            RewriteLevel::Minimal,
+            RewriteLevel::Standard,
+            RewriteLevel::Aggressive,
+        ] {
+            assert_eq_normalized(
+                &apply_rule_with_level(&input, level),
+                "export default read; const value = 42; function read() { return value; }",
+            );
+        }
+    }
+}
+
+#[test]
+fn default_export_identifier_does_not_execute_simple_class_body() {
+    for input in [
+        "class Reader { read() { return value; } } export default Reader; var value = 42;",
+        // Reading the class before initialization still throws; only captures defer.
+        "export default (Reader); var value = 42; class Reader { read() { return value; } }",
+    ] {
+        for level in [
+            RewriteLevel::Minimal,
+            RewriteLevel::Standard,
+            RewriteLevel::Aggressive,
+        ] {
+            assert_eq_normalized(
+                &apply_rule_with_level(input, level),
+                &input
+                    .replace("var value", "const value")
+                    .replace("(Reader)", "Reader"),
+            );
+        }
+    }
+}
+
+#[test]
+fn complex_default_exports_still_expose_function_captures() {
+    for expression in [
+        "read()",
+        "read.call(null)",
+        "{ read }",
+        "[read]",
+        "(() => read)",
+        "(0, read)",
+    ] {
+        let input = format!(
+            "export default {expression}; var value = 42; function read() {{ return value; }}"
+        );
+        assert_eq_normalized(&apply_rule(&input), &input);
+    }
+}
+
+#[test]
+fn default_export_identifier_does_not_hide_local_execution() {
+    let input =
+        "export default read; read.call(null); var value = 42; function read() { return value; }";
     assert_eq_normalized(&apply_rule(input), input);
+    let eager_class = "class Reader { static read() { return value; } static { this.read(); } } export default Reader; var value = 42;";
+    assert_eq_normalized(&apply_rule(eager_class), eager_class);
+}
+
+#[test]
+fn default_export_still_reads_variable_binding_before_declaration() {
+    let input = "export default (value); var value = 42;";
+    assert_eq_normalized(&apply_rule(input), "export default value; var value = 42;");
+}
+
+#[test]
+fn pipeline_cjs_default_function_export_keeps_initialized_capture_lexical() {
+    let input = "exports.default = run; var LIMIT = 10; function run() { return LIMIT; }";
+    let expected = "export default run; const LIMIT = 10; function run() { return LIMIT; }";
+    assert_eq_normalized(&render_pipeline(input), expected);
 }
 
 #[test]
@@ -2095,4 +2169,105 @@ fn early_class_references_wait_for_class_initialization() {
     );
     let late = "consume(start); class First { read() { return new Second().read(); } } class Second { read() { if (again) return new First().read(); return value; } } var value = 42; function start() { return new First(); }";
     assert_eq_normalized(&apply_rule(late), late);
+}
+
+// A cached object can expose a hoisted function before its captures initialize.
+// Check both the rule and the pipeline: an early property store must not become
+// a deferred link merely because the surrounding function resembles a loader.
+fn assert_cached_capture_remains_var(input: &str) {
+    for level in [
+        RewriteLevel::Minimal,
+        RewriteLevel::Standard,
+        RewriteLevel::Aggressive,
+    ] {
+        for output in [
+            apply_rule_with_level(input, level),
+            render_with_level(input, level),
+        ] {
+            assert!(output.contains("var value = 42;"), "{level:?}: {output}");
+        }
+    }
+}
+
+#[test]
+fn cached_object_aliases_and_setters_can_read_uninitialized_captures() {
+    for (setup, before_store, after_store) in [
+        ("", "var alias = out;", "console.log(alias.read());"),
+        (
+            "",
+            "Object.defineProperty(out, 'read', { set(fn) { console.log(fn()); } });",
+            "",
+        ),
+        (
+            "var saved; function save(object) { saved = object; } function invoke() { console.log(saved.read()); }",
+            "save(out);",
+            "invoke();",
+        ),
+        (
+            "",
+            "Object.setPrototypeOf(out, { set read(fn) { console.log(fn()); } });",
+            "",
+        ),
+    ] {
+        let input = format!(
+            r#"
+            {setup}
+            var cache;
+            function factory() {{
+                if (cache) return cache;
+                var out = {{}};
+                cache = out;
+                {before_store}
+                out.read = read;
+                {after_store}
+                var value = 42;
+                function read() {{ return value; }}
+                return out;
+            }}
+            factory();
+            "#
+        );
+        assert_cached_capture_remains_var(&input);
+    }
+}
+
+#[test]
+fn cached_object_reentry_can_read_uninitialized_captures() {
+    assert_cached_capture_remains_var(
+        r#"
+        var cache;
+        function factory(callback) {
+            if (cache) return cache;
+            var out = {};
+            cache = out;
+            out.read = read;
+            callback();
+            var value = 42;
+            function read() { return value; }
+            return out;
+        }
+        factory(() => console.log(factory().read()));
+        "#,
+    );
+}
+
+#[test]
+fn cached_object_survives_exception_before_capture_initialization() {
+    assert_cached_capture_remains_var(
+        r#"
+        var cache;
+        function factory() {
+            if (cache) return cache;
+            var out = {};
+            cache = out;
+            out.read = read;
+            JSON.parse("invalid");
+            var value = 42;
+            function read() { return value; }
+            return out;
+        }
+        try { factory(); } catch {}
+        console.log(factory().read());
+        "#,
+    );
 }

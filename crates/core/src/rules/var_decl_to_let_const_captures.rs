@@ -353,6 +353,18 @@ impl Visit for Analysis<'_> {
         // governed by the existing export policy, not this local exposure graph.
     }
 
+    fn visit_export_default_expr(&mut self, node: &ExportDefaultExpr) {
+        // A bare local declaration value is read and exported, not invoked.
+        // Keep the emitted value read (including a class's own TDZ); only skip
+        // capture exposure. Cross-module entry follows the existing policy.
+        if let Expr::Ident(id) = strip_parens(&node.expr) {
+            if self.deferred.contains_key(&id.to_id()) {
+                return;
+            }
+        }
+        node.visit_children_with(self);
+    }
+
     fn visit_class_decl(&mut self, node: &ClassDecl) {
         self.class_declaration(&node.ident, &node.class);
     }
