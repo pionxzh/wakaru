@@ -1910,3 +1910,189 @@ fn deeply_nested_capture_reaches_outer_binding() {
     let input = format!("consume({expression}); var value;");
     assert_eq_normalized(&apply_rule(&input), &input);
 }
+
+#[test]
+fn export_specifiers_do_not_execute_local_functions() {
+    for export in [
+        "export { read };",
+        "export { read as default };",
+        "export { read as renamed };",
+    ] {
+        let input = format!("{export} var value = 42; function read() {{ return value; }}");
+        for level in [
+            RewriteLevel::Minimal,
+            RewriteLevel::Standard,
+            RewriteLevel::Aggressive,
+        ] {
+            assert_eq_normalized(
+                &apply_rule_with_level(&input, level),
+                &input.replace("var value", "const value"),
+            );
+        }
+    }
+}
+
+#[test]
+fn export_specifier_does_not_hide_an_early_local_call() {
+    let input =
+        "export { read }; read.call(null); var value = 42; function read() { return value; }";
+    assert_eq_normalized(&apply_rule(input), input);
+}
+
+#[test]
+fn default_export_expression_still_exposes_function_value() {
+    let input = "export default read; var value = 42; function read() { return value; }";
+    assert_eq_normalized(&apply_rule(input), input);
+}
+
+#[test]
+fn property_stores_and_getters_preserve_early_capture() {
+    for exposure in [
+        "const api = {}; api.read = read; console.log(api.read());",
+        "const api = { set read(fn) { fn(); } }; api.read = read;",
+        "const api = {}; Object.defineProperty(api, 'read', { get: () => read }); api.read();",
+        // Accepted residual: a local exports alias is not proof of deferred use.
+        "const exportsAlias = {}; exportsAlias.read = read;",
+    ] {
+        let input = format!("{exposure} var value = 42; function read() {{ return value; }}");
+        for level in [
+            RewriteLevel::Minimal,
+            RewriteLevel::Standard,
+            RewriteLevel::Aggressive,
+        ] {
+            assert_eq_normalized(&apply_rule_with_level(&input, level), &input);
+        }
+    }
+}
+
+#[test]
+fn simple_class_captures_wait_for_a_value_reference() {
+    for body in [
+        "read() { return value; }",
+        "constructor(arg = value) { this.arg = arg; }",
+        "get read() { return value; }",
+        "static read() { return value; }",
+        "field = value;",
+        "#field = value; read() { return this.#field; }",
+        "#read() { return value; } read() { return this.#read(); }",
+        "read() { return () => ({ [value]: value }); }",
+    ] {
+        let input = format!("class Reader {{ {body} }} var value = 42; consume(Reader);");
+        assert_eq_normalized(
+            &apply_rule(&input),
+            &input.replace("var value", "const value"),
+        );
+    }
+}
+
+#[test]
+fn early_simple_class_references_preserve_captures() {
+    for reference in [
+        "new Reader()",
+        "Reader.read()",
+        "consume(Reader)",
+        "const alias = Reader",
+        "api.Reader = Reader",
+    ] {
+        let input = format!(
+            "class Reader {{ static read() {{ return value; }} }} {reference}; var value = 42;"
+        );
+        assert_eq_normalized(&apply_rule(&input), &input);
+    }
+}
+
+#[test]
+fn simple_class_and_function_summaries_connect_in_both_directions() {
+    for input in [
+        "class Reader { read() { return read(); } } consume(Reader); var value = 42; function read() { return value; }",
+        "consume(start); class Reader { read() { return value; } } var value = 42; function start() { return new Reader(); }",
+        "class Reader { read() { return read(); } } consume(Reader); var value = 42; function read() { if (again) consume(Reader); return value; }",
+    ] {
+        assert_eq_normalized(&apply_rule(input), input);
+    }
+}
+
+#[test]
+fn simple_class_order_proof_stays_within_its_block() {
+    let safe = "if (condition) { class Reader { read() { return value; } } var value = 42; consume(Reader); }";
+    assert_eq_normalized(&apply_rule(safe), &safe.replace("var value", "const value"));
+    for input in [
+        "class Reader { read() { return value; } } if (condition) { var value = 42; consume(Reader); } consume(Reader);",
+        "class Reader { read() { return value; } } if (condition) { var value = 42; } else { consume(Reader); }",
+        "for (var value = 0; value < 2; value++) { class Reader { read() { return value; } } consume(Reader); }",
+    ] {
+        assert_eq_normalized(&apply_rule(input), input);
+    }
+}
+
+#[test]
+fn simple_class_matching_uses_resolver_identity() {
+    let input = "class Reader { read() { return value; } } function consumeOther(Reader) { consume(Reader); } var value = 42; consume(Reader);";
+    assert_eq_normalized(
+        &apply_rule(input),
+        &input.replace("var value", "const value"),
+    );
+}
+
+#[test]
+fn class_eager_parts_keep_declaration_exposure() {
+    for class in [
+        "class Reader extends Base { read() { return value; } }",
+        "class Reader { [key]() { return value; } }",
+        "class Reader { [key] = value; }",
+        "class Reader { static field = value; }",
+        "class Reader { static field; read() { return value; } }",
+        "class Reader { static #field = value; }",
+        "class Reader { static read() { return value; } static { this.read(); } }",
+        "class Reader { static read() { return value; } static field = this.read(); }",
+    ] {
+        let input = format!("{class} var value = 42;");
+        assert_eq_normalized(&apply_rule(&input), &input);
+    }
+}
+
+#[test]
+fn class_expressions_still_expose_captures_at_creation() {
+    let input = "consume(class Reader { read() { return value; } }); var value = 42;";
+    assert_eq_normalized(&apply_rule(input), input);
+}
+
+#[test]
+fn named_default_class_uses_local_reference_boundary() {
+    let input =
+        "export default class Reader { read() { return value; } } var value = 42; consume(Reader);";
+    assert_eq_normalized(
+        &apply_rule(input),
+        &input.replace("var value", "const value"),
+    );
+    let early =
+        "export default class Reader { read() { return value; } } consume(Reader); var value = 42;";
+    assert_eq_normalized(&apply_rule(early), early);
+    let anonymous = "export default class { read() { return value; } } var value = 42;";
+    assert_eq_normalized(&apply_rule(anonymous), anonymous);
+}
+
+#[test]
+fn simple_exported_class_methods_wait_for_local_reference() {
+    let input = "export class Reader { read() { return value; } } var value = 42; consume(Reader);";
+    assert_eq_normalized(
+        &apply_rule(input),
+        &input.replace("var value", "const value"),
+    );
+}
+
+#[test]
+fn early_class_references_wait_for_class_initialization() {
+    let input = "consume(start); var value = 42; class Reader { read() { return value; } } function start() { return new Reader(); }";
+    assert_eq_normalized(
+        &apply_rule(input),
+        &input.replace("var value", "const value"),
+    );
+    let chained = "consume(start); class First { read() { return new Second().read(); } } var value = 42; class Second { read() { return value; } } function start() { return new First(); }";
+    assert_eq_normalized(
+        &apply_rule(chained),
+        &chained.replace("var value", "const value"),
+    );
+    let late = "consume(start); class First { read() { return new Second().read(); } } class Second { read() { if (again) return new First().read(); return value; } } var value = 42; function start() { return new First(); }";
+    assert_eq_normalized(&apply_rule(late), late);
+}

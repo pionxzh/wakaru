@@ -2,7 +2,8 @@
 //!
 //! A function value reference may execute or escape. Follow references between
 //! named declarations and check their captured vars at the earliest exposure.
-//! Closures/classes are conservatively exposed at creation. Declaration order
+//! Closures and classes with eager work are exposed at creation. Simple class
+//! declarations defer captures until a value reference. Declaration order
 //! is proved only within a containing statement-list block, not across branches.
 //! Existing block-escape and loop-capture guards still apply. Export entry from
 //! another module is deliberately left to the rule's existing level policy.
@@ -17,12 +18,12 @@ use swc_core::ecma::visit::{Visit, VisitWith};
 #[derive(Default)]
 struct Uses {
     vars: HashSet<BindingId>,
-    functions: HashSet<BindingId>,
+    deferred: HashSet<BindingId>,
 }
 
 struct References<'a> {
     vars: &'a HashSet<BindingId>,
-    functions: &'a HashMap<BindingId, usize>,
+    deferred: &'a HashMap<BindingId, usize>,
     uses: Uses,
     deferred_depth: usize,
 }
@@ -30,8 +31,8 @@ struct References<'a> {
 impl Visit for References<'_> {
     fn visit_ident(&mut self, id: &Ident) {
         let id = id.to_id();
-        if self.functions.contains_key(&id) {
-            self.uses.functions.insert(id.clone());
+        if self.deferred.contains_key(&id) {
+            self.uses.deferred.insert(id.clone());
         }
         if self.deferred_depth > 0 && self.vars.contains(&id) {
             self.uses.vars.insert(id);
@@ -58,26 +59,76 @@ impl Visit for References<'_> {
     }
 }
 
-#[derive(Default)]
-struct Functions(HashMap<BindingId, usize>);
+// Only declarations whose creation cannot invoke their bodies qualify. Keep
+// expressions, inheritance, computed keys, decorators and static initialization
+// on the conservative path; `this.method()` in a static block need not mention
+// the class binding at all.
+fn is_deferred_class(class: &Class) -> bool {
+    let undecorated = |function: &Function| {
+        function.decorators.is_empty()
+            && function
+                .params
+                .iter()
+                .all(|param| param.decorators.is_empty())
+    };
+    class.super_class.is_none()
+        && class.decorators.is_empty()
+        && class.body.iter().all(|member| match member {
+            ClassMember::Constructor(ctor) => {
+                !matches!(ctor.key, PropName::Computed(_))
+                    && ctor.params.iter().all(|param| {
+                        matches!(param, ParamOrTsParamProp::Param(param) if param.decorators.is_empty())
+                    })
+            }
+            ClassMember::Method(method) => {
+                !matches!(method.key, PropName::Computed(_)) && undecorated(&method.function)
+            }
+            ClassMember::PrivateMethod(method) => undecorated(&method.function),
+            ClassMember::ClassProp(prop) => {
+                !prop.is_static
+                    && !matches!(prop.key, PropName::Computed(_))
+                    && prop.decorators.is_empty()
+            }
+            ClassMember::PrivateProp(prop) => !prop.is_static && prop.decorators.is_empty(),
+            ClassMember::Empty(_) => true,
+            _ => false,
+        })
+}
 
-impl Functions {
+#[derive(Default)]
+struct DeferredDeclarations(HashMap<BindingId, usize>);
+
+impl DeferredDeclarations {
     fn insert(&mut self, id: &Ident) {
         let index = self.0.len();
         self.0.entry(id.to_id()).or_insert(index);
     }
 }
 
-impl Visit for Functions {
+impl Visit for DeferredDeclarations {
     fn visit_fn_decl(&mut self, node: &FnDecl) {
         self.insert(&node.ident);
     }
 
+    fn visit_class_decl(&mut self, node: &ClassDecl) {
+        if is_deferred_class(&node.class) {
+            self.insert(&node.ident);
+        }
+    }
+
     fn visit_export_default_decl(&mut self, node: &ExportDefaultDecl) {
-        if let DefaultDecl::Fn(function) = &node.decl {
-            if let Some(id) = &function.ident {
-                self.insert(id);
+        match &node.decl {
+            DefaultDecl::Fn(function) => {
+                if let Some(id) = &function.ident {
+                    self.insert(id);
+                }
             }
+            DefaultDecl::Class(class) if is_deferred_class(&class.class) => {
+                if let Some(id) = &class.ident {
+                    self.insert(id);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -87,9 +138,9 @@ impl Visit for Functions {
 }
 
 pub(super) fn module(items: &[ModuleItem], vars: &HashSet<BindingId>) -> HashSet<BindingId> {
-    let mut functions = Functions::default();
-    items.visit_with(&mut functions);
-    let mut analysis = Analysis::new(vars, &functions.0);
+    let mut deferred = DeferredDeclarations::default();
+    items.visit_with(&mut deferred);
+    let mut analysis = Analysis::new(vars, &deferred.0);
     for item in items {
         analysis.direct_stmt = true;
         item.visit_with(&mut analysis);
@@ -98,18 +149,24 @@ pub(super) fn module(items: &[ModuleItem], vars: &HashSet<BindingId>) -> HashSet
 }
 
 pub(super) fn stmts(stmts: &[Stmt], vars: &HashSet<BindingId>) -> HashSet<BindingId> {
-    let mut functions = Functions::default();
-    stmts.visit_with(&mut functions);
-    let mut analysis = Analysis::new(vars, &functions.0);
+    let mut deferred = DeferredDeclarations::default();
+    stmts.visit_with(&mut deferred);
+    let mut analysis = Analysis::new(vars, &deferred.0);
     analysis.statements(stmts);
     analysis.finish()
 }
 
+enum Root {
+    Exposure(Uses),
+    ClassInitialized(usize),
+}
+
 struct Analysis<'a> {
     vars: &'a HashSet<BindingId>,
-    functions: &'a HashMap<BindingId, usize>,
+    deferred: &'a HashMap<BindingId, usize>,
     summaries: Vec<Uses>,
-    roots: Vec<(usize, Uses)>,
+    roots: Vec<(usize, Root)>,
+    class_initialization: Vec<usize>,
     // A declaration completes at a point inside one statement-list block.
     declarations: HashMap<BindingId, (usize, usize)>,
     block_ends: Vec<usize>,
@@ -119,12 +176,13 @@ struct Analysis<'a> {
 }
 
 impl<'a> Analysis<'a> {
-    fn new(vars: &'a HashSet<BindingId>, functions: &'a HashMap<BindingId, usize>) -> Self {
+    fn new(vars: &'a HashSet<BindingId>, deferred: &'a HashMap<BindingId, usize>) -> Self {
         Self {
             vars,
-            functions,
-            summaries: (0..functions.len()).map(|_| Uses::default()).collect(),
+            deferred,
+            summaries: (0..deferred.len()).map(|_| Uses::default()).collect(),
             roots: Vec::new(),
+            class_initialization: vec![0; deferred.len()],
             declarations: HashMap::default(),
             block_ends: vec![usize::MAX],
             block: 0,
@@ -136,7 +194,7 @@ impl<'a> Analysis<'a> {
     fn references<N: VisitWith<References<'a>>>(&self, node: &N) -> Uses {
         let mut collector = References {
             vars: self.vars,
-            functions: self.functions,
+            deferred: self.deferred,
             uses: Uses::default(),
             deferred_depth: 0,
         };
@@ -146,8 +204,8 @@ impl<'a> Analysis<'a> {
 
     fn expose(&mut self, uses: Uses) {
         self.point += 1;
-        if !uses.vars.is_empty() || !uses.functions.is_empty() {
-            self.roots.push((self.point, uses));
+        if !uses.vars.is_empty() || !uses.deferred.is_empty() {
+            self.roots.push((self.point, Root::Exposure(uses)));
         }
     }
 
@@ -157,12 +215,23 @@ impl<'a> Analysis<'a> {
         // including an exported declaration; do not invent module-entry roots.
         self.expose(Uses {
             vars: uses.vars.clone(),
-            functions: HashSet::default(),
+            deferred: HashSet::default(),
         });
-        let summary = &mut self.summaries[self.functions[&id.to_id()]];
+        let summary = &mut self.summaries[self.deferred[&id.to_id()]];
         // Duplicate declarations share an identity. Keep every possible body.
         summary.vars.extend(uses.vars);
-        summary.functions.extend(uses.functions);
+        summary.deferred.extend(uses.deferred);
+    }
+
+    fn class_declaration(&mut self, id: &Ident, class: &Class) {
+        if let Some(&index) = self.deferred.get(&id.to_id()) {
+            self.summaries[index] = self.references(class);
+            self.point += 1;
+            self.class_initialization[index] = self.point;
+            self.roots.push((self.point, Root::ClassInitialized(index)));
+        } else {
+            self.expose(self.references(class));
+        }
     }
 
     fn statements(&mut self, stmts: &[Stmt]) {
@@ -200,6 +269,7 @@ impl<'a> Analysis<'a> {
     fn finish(self) -> HashSet<BindingId> {
         let mut must_stay = HashSet::default();
         let mut visited = vec![false; self.summaries.len()];
+        let mut referenced = vec![false; self.summaries.len()];
         let mut pending = Vec::new();
         let mut mark =
             |vars: &HashSet<BindingId>, point| {
@@ -211,19 +281,30 @@ impl<'a> Analysis<'a> {
                     }
                 }
             };
-        // Roots are emitted in traversal order. Each function summary and its
-        // outgoing edges are expanded once, at the earliest possible exposure;
-        // never materialize a transitive capture set for every function.
-        for (point, uses) in self.roots {
-            mark(&uses.vars, point);
-            pending.extend(uses.functions.iter().map(|id| self.functions[id]));
+        // Roots are emitted in traversal order. A simple class's own TDZ prevents
+        // its captures from running before initialization. Queue early references
+        // for its initialization event, then expand each summary/edge just once.
+        // No priority queue or per-declaration transitive capture set is needed.
+        for (point, root) in self.roots {
+            match root {
+                Root::Exposure(uses) => {
+                    mark(&uses.vars, point);
+                    pending.extend(uses.deferred.iter().map(|id| self.deferred[id]));
+                }
+                Root::ClassInitialized(index) if referenced[index] => pending.push(index),
+                Root::ClassInitialized(_) => {}
+            }
             while let Some(index) = pending.pop() {
+                referenced[index] = true;
+                if point < self.class_initialization[index] {
+                    continue;
+                }
                 if std::mem::replace(&mut visited[index], true) {
                     continue;
                 }
                 let summary = &self.summaries[index];
                 mark(&summary.vars, point);
-                pending.extend(summary.functions.iter().map(|id| self.functions[id]));
+                pending.extend(summary.deferred.iter().map(|id| self.deferred[id]));
             }
         }
         must_stay
@@ -267,12 +348,30 @@ impl Visit for Analysis<'_> {
         self.function(&node.ident, &node.function);
     }
 
+    fn visit_named_export(&mut self, _: &NamedExport) {
+        // Linking a name does not evaluate its value. Cross-module entry is
+        // governed by the existing export policy, not this local exposure graph.
+    }
+
+    fn visit_class_decl(&mut self, node: &ClassDecl) {
+        self.class_declaration(&node.ident, &node.class);
+    }
+
     fn visit_export_default_decl(&mut self, node: &ExportDefaultDecl) {
-        if let DefaultDecl::Fn(function) = &node.decl {
-            if let Some(id) = &function.ident {
-                self.function(id, &function.function);
-                return;
+        match &node.decl {
+            DefaultDecl::Fn(function) => {
+                if let Some(id) = &function.ident {
+                    self.function(id, &function.function);
+                    return;
+                }
             }
+            DefaultDecl::Class(class) => {
+                if let Some(id) = &class.ident {
+                    self.class_declaration(id, &class.class);
+                    return;
+                }
+            }
+            _ => {}
         }
         node.visit_children_with(self);
     }
@@ -290,9 +389,9 @@ impl Visit for Analysis<'_> {
     }
 
     fn visit_ident(&mut self, id: &Ident) {
-        if self.functions.contains_key(&id.to_id()) {
+        if self.deferred.contains_key(&id.to_id()) {
             let mut uses = Uses::default();
-            uses.functions.insert(id.to_id());
+            uses.deferred.insert(id.to_id());
             self.expose(uses);
         }
     }

@@ -677,8 +677,21 @@ execution or escape, regardless of invocation syntax (`f()`, `f.call(...)`,
 `f.apply(...)`, callback arguments, or alias creation). Resolver binding IDs
 connect references between declarations in the same function/module scope.
 Captures include nested closures, parameter defaults, computed keys and class
-members. Closures and classes are conservatively observed at creation; the
-rule does not follow aliases through properties or model individual APIs.
+members. Anonymous closures and class expressions are conservatively observed
+at creation; the rule does not follow aliases through properties or model
+individual APIs.
+
+Named class declarations can defer their captures until a local value
+reference only when creation cannot execute those captures: no superclass,
+computed keys, decorators, static fields or static blocks. Constructors,
+ordinary/private methods (including static methods), and non-computed instance
+fields are deferred. Other class shapes remain exposed at creation. In
+particular, a static block or initializer can invoke `this.method()` without
+referencing the class identifier; it must not use the deferred path.
+An earlier reference cannot execute a simple class's captures before that
+class initializes: its own TDZ prevents access. The ordered scan queues such
+references until the class declaration completes, then expands its summary.
+This also applies to transitive references from hoisted functions or classes.
 
 A captured `var` can become lexical only when its declaration has completed
 before the exposure in a containing statement-list block. This includes
@@ -689,18 +702,36 @@ initializer may reference its own binding: creating it cannot execute its
 body before initialization. Calls and class initializers do not get that
 exception.
 
-The reference graph expands each function summary once at its earliest local
+The reference graph expands each declaration summary once at its earliest local
 exposure; it does not build a transitive capture set for every function.
 Analysis is bounded to each scope and reuses one capture traversal for named
-functions and anonymous function-like values. Enclosing scopes still inspect
+functions/classes and anonymous function-like values. Enclosing scopes still inspect
 nested bodies for captures, so this is not a claim of globally linear AST
 processing across arbitrarily deep function nesting.
 
-This proof does not add cross-module entry roots for every exported function.
-It retains the existing declaration-position capture guard and `minimal`'s
-exported-`var` preservation. Arbitrary ESM-cycle entry before module execution
-requires a separate cross-module policy; same-scope analysis is not such a
-proof.
+Pure ESM export specifiers (`export { f }`, including aliases/default names)
+link bindings without evaluating their values, so they do not add a local
+exposure. Actual value references, including `export default f` expressions,
+property stores and getter closures, still do. Named function declarations
+retain the existing declaration-position capture guard, independently of
+whether they are exported. Simple named class declarations use the deferred
+boundary above, including named/default exports; anonymous default classes
+remain exposed at creation.
+
+This proof does not add cross-module entry roots for every exported function
+or class. It retains `minimal`'s exported-`var` preservation. Arbitrary ESM-cycle
+entry before module execution requires a separate cross-module policy;
+same-scope analysis is not such a proof.
+
+Accepted residual at every level: storing a function in an object property
+before its captured variable is initialized can preserve `var` even when the
+function actually runs only later. This includes compiler-emitted lazy
+CommonJS wrappers whose exports object is a local alias. An exports-like name
+is not proof: a same-scope member call or setter can invoke that function early.
+We deliberately do not track object aliases or assume delayed property use,
+including at `aggressive`. This can also prevent downstream destructuring or
+name recovery. It is a known readability cost of the bounded proof, not a
+claim that each preserved `var` fixes an observed runtime failure.
 
 ## Dynamic Scope Limits
 
