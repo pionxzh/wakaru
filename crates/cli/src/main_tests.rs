@@ -122,6 +122,27 @@ fn parses_debug_trace_command() {
 }
 
 #[test]
+fn debug_trace_reports_an_empty_traced_range() {
+    let changed_only = trace_output_text(&[], false);
+    assert!(changed_only.contains("no rule changed the rendered output"));
+    assert!(changed_only.contains("--all"));
+    assert!(changed_only.ends_with('\n'));
+
+    let with_unchanged = trace_output_text(&[], true);
+    assert!(with_unchanged.contains("no rule ran in the traced range"));
+    assert!(!with_unchanged.contains("--all"));
+
+    let event = wakaru_core::RuleTraceEvent {
+        rule: "RemoveVoid",
+        changed: true,
+        before: "const x = void 0;\n".to_string(),
+        after: "const x = undefined;\n".to_string(),
+    };
+    let traced = trace_output_text(std::slice::from_ref(&event), false);
+    assert_eq!(traced, format_trace_events(std::slice::from_ref(&event)));
+}
+
+#[test]
 fn parses_debug_validate_command() {
     let cli = Cli::try_parse_from(["wakaru", "debug", "validate", "out", "--json"])
         .expect("debug validate command should parse");

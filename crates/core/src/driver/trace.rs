@@ -47,6 +47,10 @@ pub fn trace_rules(
 ) -> DriverResult<Vec<RuleTraceEvent>> {
     validate_trace_rule_name("trace start rule", trace_options.start_from.as_deref())?;
     validate_trace_rule_name("trace stop rule", trace_options.stop_after.as_deref())?;
+    validate_trace_rule_range(
+        trace_options.start_from.as_deref(),
+        trace_options.stop_after.as_deref(),
+    )?;
 
     if detect_bundle(source, &options.filename)
         .map_err(|error| DriverError::new(DriverErrorKind::Parse, error))?
@@ -132,6 +136,28 @@ fn validate_trace_rule_name(label: &str, rule_name: Option<&str>) -> DriverResul
             DriverErrorKind::InvalidOptions,
             anyhow!("unknown {label}: {rule_name}"),
         ))
+    }
+}
+
+/// Both names are already known rules; reject a start rule that the pipeline
+/// runs after the stop rule, because such a range would otherwise trace from
+/// the start rule to the end of the pipeline without any indication.
+fn validate_trace_rule_range(
+    start_from: Option<&str>,
+    stop_after: Option<&str>,
+) -> DriverResult<()> {
+    let (Some(start_from), Some(stop_after)) = (start_from, stop_after) else {
+        return Ok(());
+    };
+    let position = |name: &str| rule_names().iter().position(|rule| *rule == name);
+    match (position(start_from), position(stop_after)) {
+        (Some(start), Some(stop)) if start > stop => Err(DriverError::new(
+            DriverErrorKind::InvalidOptions,
+            anyhow!(
+                "trace start rule {start_from} runs after trace stop rule {stop_after} in the pipeline"
+            ),
+        )),
+        _ => Ok(()),
     }
 }
 

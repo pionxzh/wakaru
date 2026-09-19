@@ -966,7 +966,7 @@ fn run_trace(args: TraceArgs, force: bool) -> Result<()> {
             only_changed: !args.all,
         },
     )?;
-    let output = format_trace_events(&events);
+    let output = trace_output_text(&events, args.all);
 
     match args.output {
         Some(path) => {
@@ -980,6 +980,20 @@ fn run_trace(args: TraceArgs, force: bool) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// A traced range in which no rule changed the rendered output yields no
+/// events; say so instead of emitting an empty trace.
+fn trace_output_text(events: &[wakaru_core::RuleTraceEvent], include_unchanged: bool) -> String {
+    if !events.is_empty() {
+        return format_trace_events(events);
+    }
+    if include_unchanged {
+        "=== no rule ran in the traced range ===\n".to_string()
+    } else {
+        "=== no rule changed the rendered output in the traced range (pass --all to list unchanged rules) ===\n"
+            .to_string()
+    }
 }
 
 fn read_sourcemap(path: Option<&PathBuf>) -> Result<Option<Vec<u8>>> {

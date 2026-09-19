@@ -618,6 +618,44 @@ fn trace_rejects_unknown_rule_names() {
 }
 
 #[test]
+fn trace_rejects_start_rule_after_stop_rule() {
+    let err = trace_rules(
+        "const x = void 0;",
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            ..Default::default()
+        },
+        RuleTraceOptions {
+            start_from: Some("UnminifyBooleans".to_string()),
+            stop_after: Some("RemoveVoid".to_string()),
+            only_changed: false,
+        },
+    )
+    .expect_err("inverted trace range should fail");
+    let message = err.to_string();
+    assert!(
+        message.contains("UnminifyBooleans") && message.contains("RemoveVoid"),
+        "error should name both rules, got: {message}"
+    );
+}
+
+#[test]
+fn trace_accepts_same_start_and_stop_rule() {
+    let events = trace_pipeline(
+        "const x = void 0;",
+        RuleTraceOptions {
+            start_from: Some("RemoveVoid".to_string()),
+            stop_after: Some("RemoveVoid".to_string()),
+            only_changed: false,
+        },
+    );
+    assert_eq!(
+        events.iter().map(|event| event.rule).collect::<Vec<_>>(),
+        vec!["RemoveVoid"]
+    );
+}
+
+#[test]
 fn trace_accepts_un_parameters_second_pass() {
     trace_rules(
         "function fn(a) { return a; }",

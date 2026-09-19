@@ -42,7 +42,10 @@ Runs the normal single-file rule pipeline and prints the initial source plus a
 unified diff for each rule that changes the rendered output. `--all` includes
 unchanged rules; `--from` and `--until` select an inclusive rule range;
 `--level` selects the rewrite level; `-m` / `--source-map` supplies a source
-map. Output goes to stdout unless `-o` is supplied.
+map. Output goes to stdout unless `-o` is supplied. A `--from` rule that the
+pipeline runs after the `--until` rule is rejected as an option error. When
+no rule in the traced range changed the rendered output, the command prints a
+single note line saying so instead of an empty trace.
 
 This command is intentionally single-file only. Full bundle recovery uses the
 two-phase cross-module pipeline, so tracing a bundle as one source file would
