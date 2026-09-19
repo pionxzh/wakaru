@@ -91,8 +91,35 @@ fn is_emitted_module_file(path: &Path) -> bool {
             ext.to_ascii_lowercase().as_str(),
             "js" | "mjs" | "cjs" | "jsx" | "ts" | "tsx" | "mts" | "cts"
         ),
-        None => true,
+        None => path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| !is_conventional_text_file_name(name)),
     }
+}
+
+/// Extensionless files that package trees carry beside emitted modules and
+/// that never hold JavaScript: license, notice, and changelog texts, build
+/// recipes, and ownership manifests.
+fn is_conventional_text_file_name(name: &str) -> bool {
+    matches!(
+        name.to_ascii_uppercase().as_str(),
+        "LICENSE"
+            | "LICENCE"
+            | "COPYING"
+            | "NOTICE"
+            | "PATENTS"
+            | "README"
+            | "CHANGELOG"
+            | "CHANGES"
+            | "HISTORY"
+            | "AUTHORS"
+            | "CONTRIBUTORS"
+            | "CODEOWNERS"
+            | "MAKEFILE"
+            | "DOCKERFILE"
+            | "PROCFILE"
+    )
 }
 
 #[cfg(test)]
@@ -147,6 +174,8 @@ mod tests {
         fs::write(dir.join("component.tsx"), "1").expect("write tsx");
         fs::write(dir.join("module.mts"), "1").expect("write mts");
         fs::write(dir.join("module"), "1").expect("write extensionless");
+        fs::write(dir.join("LICENSE"), "MIT").expect("write license (ignored)");
+        fs::write(dir.join("Makefile"), "all:").expect("write makefile (ignored)");
         fs::write(dir.join("map.js.map"), "1").expect("write source map (ignored)");
         fs::write(dir.join(".hidden"), "1").expect("write hidden (ignored)");
         fs::write(node_modules.join("index.js"), "1").expect("write emitted node_modules module");

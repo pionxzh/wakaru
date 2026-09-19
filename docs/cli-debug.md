@@ -222,7 +222,9 @@ Locations are one-based. The command currently exits nonzero when findings
 exist and errors when the directory contains no accepted JavaScript files.
 The recursive scan accepts `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.tsx`,
 `.mts`, `.cts`, and extensionless emitted modules, including modules below
-`node_modules`; hidden paths and unrelated extensions are excluded.
+`node_modules`; hidden paths and unrelated extensions are excluded, as are
+conventional extensionless text files such as `LICENSE`, `README`,
+`CHANGELOG`, and `Makefile`.
 
 Validate normal output only. Raw unpack output has no usable module-graph
 contract. Directory validation reads only the emitted files, so it also scans
