@@ -58,6 +58,9 @@ fn import_request_key(import: &ImportDecl) -> Option<ImportRequestKey> {
                 }
                 normalized.push((item.key.sym, item.value.value));
             }
+            // Attribute order is not part of the request identity:
+            // `with { a, b }` and `with { b, a }` name the same module.
+            normalized.sort_by(|(left, _), (right, _)| left.cmp(right));
             Some(normalized)
         }
         None => None,
