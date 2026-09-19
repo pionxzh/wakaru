@@ -1998,6 +1998,425 @@ System.register("entry", [], function (_export) {
     );
 }
 
+// Execute is often one comma Seq (marker, export-shaped assign, marker).
+// Fused `(n = _export("Name", value)).prop =` and double `v = y = _export(...)`
+// are not top-level Call / `ident = _export()` / `_export().prop =`, so the
+// Seq arm used to drop flushed `export let` while keeping the assignment.
+// These tests lock keeping that pending live binding without peeling Assign.
+
+fn assert_seq_pending_export_roundtrip(source: &str, label: &str) {
+    for (stage, modules) in [
+        ("raw", unpack_source_raw(source)),
+        ("decompiled", unpack_source(source)),
+    ] {
+        let entry = module_code(&modules, "entry.js");
+        assert_no_system_register(entry, &format!("{label}/{stage}"));
+        assert_no_leftover_export_call(entry, &format!("{label}/{stage}"));
+        assert_valid_unpacked_esm(&modules, &format!("{label}/{stage}"));
+    }
+}
+
+#[test]
+fn fused_member_assign_export_in_execute_sequence_keeps_live_binding() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      mark("push"), (n = _export("HelperUtils", function () {})).tag = "HelperUtils", mark("pop");
+    }
+  };
+});
+"#;
+    assert_seq_pending_export_roundtrip(source, "fused member export");
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        exports_name(entry, "HelperUtils"),
+        "fused `_export` in an execute sequence must keep the live binding:\n{entry}"
+    );
+    assert!(
+        entry.contains("n =") && entry.contains("HelperUtils =") && entry.contains(".tag"),
+        "the outer assign, live-binding write, and member write must all survive:\n{entry}"
+    );
+    assert_eq!(
+        entry.matches("export ").count(),
+        1,
+        "HelperUtils should have exactly one ESM export:\n{entry}"
+    );
+}
+
+#[test]
+fn double_assign_export_in_execute_sequence_keeps_live_binding() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      mark("push"), v = y = _export("WidgetStore", function () {
+        this.ready = true;
+      }), mark("pop");
+    }
+  };
+});
+"#;
+    assert_seq_pending_export_roundtrip(source, "double-assign export");
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        exports_name(entry, "WidgetStore"),
+        "double-assign `_export` in an execute sequence must keep the live binding:\n{entry}"
+    );
+    assert!(
+        entry.contains("v =")
+            && entry.contains("y =")
+            && entry.contains("WidgetStore =")
+            && entry.contains("this.ready"),
+        "the double-assign chain, live-binding write, and ctor body must all survive:\n{entry}"
+    );
+}
+
+#[test]
+fn fused_member_export_beside_later_single_keeps_existing_live_binding() {
+    // A later top-level `_export("alias", n)` already set saw_export. The
+    // fused name must stay a live binding, not a second `export`.
+    let source = r#"
+System.register("entry", [], function (_export) {
+  var n;
+  return {
+    execute: function () {
+      (n = _export("WidgetMgr", function () {}))._inst = null, _export("helperMgr", n);
+    }
+  };
+});
+"#;
+    assert_seq_pending_export_roundtrip(source, "fused beside later single");
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        exports_name(entry, "WidgetMgr") && exports_name(entry, "helperMgr"),
+        "sibling single export must not drop the fused live binding:\n{entry}"
+    );
+}
+
+#[test]
+fn execute_sequence_without_export_does_not_invent_binding() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      mark("push"), other(), mark("pop");
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "entry.js");
+    assert_no_system_register(entry, "sequence without export");
+    assert_no_invented_export(entry, "sequence without export");
+    assert!(
+        entry.contains(',') || entry.contains("mark(\"push\"),"),
+        "a sequence with no `_export` must not be rewritten as exports:\n{entry}"
+    );
+    assert_valid_unpacked_esm(&raw, "sequence without export");
+}
+
+#[test]
+fn plain_assign_in_execute_sequence_is_not_an_export() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      mark("push"), (n = HelperUtils = function () {}).tag = 1, mark("pop");
+    }
+  };
+});
+"#;
+    let raw = unpack_source_raw(source);
+    let entry = module_code(&raw, "entry.js");
+    assert_no_system_register(entry, "plain assign sequence");
+    assert_no_invented_export(entry, "plain assign sequence");
+    assert!(
+        entry.contains("HelperUtils ="),
+        "the plain assignment must remain a local write:\n{entry}"
+    );
+    assert_valid_unpacked_esm(&raw, "plain assign sequence");
+}
+
+#[test]
+fn repeated_fused_member_exports_share_one_live_binding() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      (n = _export("HelperUtils", makeFirst())).a = 1, (n = _export("HelperUtils", makeSecond())).b = 2;
+    }
+  };
+});
+"#;
+    assert_seq_pending_export_roundtrip(source, "repeated fused export");
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        entry.contains("export let HelperUtils;")
+            && entry.contains("HelperUtils = makeFirst()")
+            && entry.contains("HelperUtils = makeSecond()"),
+        "same-name fused updates must share one live binding:\n{entry}"
+    );
+    assert_eq!(
+        entry.matches("export ").count(),
+        1,
+        "HelperUtils should have exactly one ESM export:\n{entry}"
+    );
+}
+
+#[test]
+fn fused_member_export_with_direct_eval_uses_alias() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      eval("HelperUtils");
+      mark("push"), (n = _export("HelperUtils", make())).tag = 1, mark("pop");
+    }
+  };
+});
+"#;
+    assert_seq_pending_export_roundtrip(source, "fused export with eval");
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        entry.contains("export { __systemjs_export as HelperUtils };"),
+        "direct eval must force the alias path:\n{entry}"
+    );
+    assert!(
+        !entry.contains("export let HelperUtils") && !entry.contains("export const HelperUtils"),
+        "eval must not observe a direct module binding:\n{entry}"
+    );
+}
+
+#[test]
+fn fused_member_export_reserved_name_uses_alias() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      mark("push"), (n = _export("class", function () {})).tag = 1, mark("pop");
+    }
+  };
+});
+"#;
+    assert_seq_pending_export_roundtrip(source, "fused reserved export");
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        entry.contains("export { __systemjs_export as class }"),
+        "reserved export names must stay on the alias path:\n{entry}"
+    );
+    assert!(
+        !entry.contains("export let class") && !entry.contains("export const class"),
+        "must not emit a reserved binding:\n{entry}"
+    );
+}
+
+#[test]
+fn fused_default_member_export_in_execute_sequence_keeps_live_binding() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      mark("push"), (n = _export("default", function () {})).tag = 1, mark("pop");
+    }
+  };
+});
+"#;
+    assert_seq_pending_export_roundtrip(source, "fused default export");
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        entry.contains("export { __systemjs_export as default }"),
+        "default fused `_export` must keep one live binding:\n{entry}"
+    );
+}
+
+#[test]
+fn fused_quoted_export_name_stays_quoted() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      mark("push"), (n = _export("foo-bar", function () {})).tag = 1, mark("pop");
+    }
+  };
+});
+"#;
+    assert_seq_pending_export_roundtrip(source, "fused quoted export");
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        entry.contains("as \"foo-bar\"") || entry.contains("as 'foo-bar'"),
+        "illegal ident export names must stay quoted:\n{entry}"
+    );
+    assert!(
+        !entry.contains(" as foo-bar"),
+        "must not print an unquoted illegal export name:\n{entry}"
+    );
+}
+
+#[test]
+fn unlowerable_object_export_in_fused_sequence_preserves_whole_register() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      _export({ UnusedDummy: void 0 }), (n = _export("HelperUtils", function () {})).tag = 1;
+    }
+  };
+});
+"#;
+    assert_preserves_whole_register(source, "leftover object beside fused");
+}
+
+#[test]
+fn unlowerable_object_export_after_fused_sequence_preserves_whole_register() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      mark("push"), (n = _export("HelperUtils", function () {})).tag = 1, mark("pop");
+      _export({ UnusedDummy: void 0 });
+    }
+  };
+});
+"#;
+    assert_preserves_whole_register(source, "leftover object after fused");
+}
+
+#[test]
+fn fused_export_sequence_keeps_function_and_object_heads() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      mark("push"),
+      (n = _export("HelperUtils", function () {})).tag = 1,
+      { [key()]: handler }[lookup()](),
+      function () { return {}; }().value = side();
+    }
+  };
+});
+"#;
+    assert_seq_pending_export_roundtrip(source, "fused #218 heads");
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        exports_name(entry, "HelperUtils"),
+        "lifting the sequence must still keep the pending export:\n{entry}"
+    );
+    assert!(
+        !has_bare_function_stmt(entry),
+        "a lifted function-headed operand must stay in expression context:\n{entry}"
+    );
+}
+
+#[test]
+fn fused_export_sequence_string_operand_does_not_become_a_directive() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      "use client", (n = _export("HelperUtils", function () {})).tag = 1;
+    }
+  };
+});
+"#;
+    assert_seq_pending_export_roundtrip(source, "fused string operand");
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        entry.contains("(\"use client\");") || entry.contains("('use client');"),
+        "a comma operand must not become a directive after lifting:\n{entry}"
+    );
+    assert!(
+        exports_name(entry, "HelperUtils"),
+        "the pending export after a string operand must survive:\n{entry}"
+    );
+}
+
+#[test]
+fn fused_export_sequence_nested_param_is_not_leftover_export() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      mark("push"), (n = _export("HelperUtils", function () {})).tag = 1, function (e) {
+        e({ step: 1 });
+      };
+    }
+  };
+});
+"#;
+    assert_seq_pending_export_roundtrip(source, "fused nested param");
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        exports_name(entry, "HelperUtils"),
+        "a nested param named `e` must not block the pending export:\n{entry}"
+    );
+    assert!(
+        entry.contains("e({") || entry.contains("e({ step"),
+        "the nested callback must keep its own `e` call:\n{entry}"
+    );
+}
+
+#[test]
+fn fused_export_sequence_keeps_evaluation_order() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      before(), (n = _export("HelperUtils", make())).tag = 1, after();
+    }
+  };
+});
+"#;
+    assert_seq_pending_export_roundtrip(source, "fused eval order");
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    let before = entry.find("before()").expect("before() should remain");
+    let assign = entry
+        .find("HelperUtils =")
+        .expect("live-binding assign should remain");
+    let after = entry.find("after()").expect("after() should remain");
+    assert!(
+        before < assign && assign < after,
+        "before / assign / after order must stay: {before} < {assign} < {after}\n{entry}"
+    );
+}
+
+#[test]
+fn fused_export_collision_with_existing_binding_uses_alias() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  var HelperUtils;
+  return {
+    execute: function () {
+      mark("push"), (n = _export("HelperUtils", make())).tag = 1, mark("pop");
+    }
+  };
+});
+"#;
+    assert_seq_pending_export_roundtrip(source, "fused export collision");
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        entry.contains("export { __systemjs_export as HelperUtils };"),
+        "an existing binding must force the alias path:\n{entry}"
+    );
+    assert!(
+        !entry.contains("export let HelperUtils") && !entry.contains("export const HelperUtils"),
+        "must not redeclare a colliding export binding:\n{entry}"
+    );
+}
+
 #[test]
 fn statement_export_rejects_free_global_reference() {
     // `observe(Widget)` reads a global; `export const Widget` would
