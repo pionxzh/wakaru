@@ -1864,6 +1864,11 @@ impl SystemExecuteTransformer {
             Expr::Seq(seq) => {
                 let mut items = Vec::new();
                 let mut saw_export = false;
+                // Fused `(n = _export("Name", v)).prop =` and `v = y = _export(...)`
+                // are not Call / `ident = _export()` / `_export().prop =`.
+                // visit_mut still rewrites the call and flushes `export let`
+                // into items; dropping that Vec used to leave a bare assign.
+                let mut kept_pending = false;
                 for expr in &seq.exprs {
                     let export_items = match strip_paren_expr(expr) {
                         Expr::Call(call) => self.take_parsed_export_call(call),
@@ -1882,11 +1887,15 @@ impl SystemExecuteTransformer {
                         });
                         stmt.visit_mut_with(self);
                         parenthesize_lifted_stmt_expr(&mut stmt);
-                        items.extend(self.take_pending_expr_export_decls());
+                        let pending = self.take_pending_expr_export_decls();
+                        if !pending.is_empty() {
+                            kept_pending = true;
+                        }
+                        items.extend(pending);
                         items.push(ModuleItem::Stmt(stmt));
                     }
                 }
-                saw_export.then_some(items)
+                (saw_export || kept_pending).then_some(items)
             }
             _ => None,
         }
