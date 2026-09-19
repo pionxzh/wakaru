@@ -238,6 +238,39 @@ function collect(output, args) {
 }
 
 #[test]
+fn preserves_split_memoized_method_apply_with_member_chain_receiver() {
+    // `root.child` is read once by the method assignment and once by the
+    // `apply` thisArg; the converted `root.child.push(...args)` reads it
+    // once, so a getter's evaluation count would change. Babel memoizes
+    // member receivers into a temp, so this direct form is not producer
+    // output — preserve it, as the bare form does.
+    let input = r#"
+function collect(root, args) {
+  let method;
+  method = root.child.push;
+  method.apply(root.child, args);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn preserves_split_memoized_method_apply_with_call_receiver() {
+    // The receiver is evaluated twice by the input; converting would drop
+    // one `make()` call.
+    let input = r#"
+function collect(args) {
+  let method;
+  method = make().push;
+  method.apply(make(), args);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn preserves_unmatched_statements_between_owned_split_apply_rewrites() {
     let input = r#"
 function collect(first, second, args) {

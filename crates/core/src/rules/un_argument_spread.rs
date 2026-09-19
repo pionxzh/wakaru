@@ -212,7 +212,13 @@ fn try_convert_split_memoized_apply(
 
     let first_arg = apply_call.args[0].expr.as_ref();
     let mut removable_bindings = vec![method_temp.clone()];
-    let receiver = if exprs_structurally_equal(first_arg, &memoized_member.obj) {
+    // The direct-receiver arm mirrors the bare same-receiver form: only an
+    // identifier or `this` receiver may be read twice by the input and once
+    // by the output without changing a getter's evaluation count. Member
+    // receivers arrive memoized into a temp and take the arm below.
+    let receiver = if matches!(first_arg, Expr::Ident(_) | Expr::This(_))
+        && exprs_structurally_equal(first_arg, &memoized_member.obj)
+    {
         memoized_member.obj.clone()
     } else {
         let receiver_temp = ident_expr(first_arg)?;
