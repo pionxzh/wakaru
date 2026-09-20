@@ -2973,3 +2973,209 @@ var Foo = (function() {{
         assert!(!output.contains("class Foo"), "{output}");
     }
 }
+
+// ============================================================
+// Same-module leftover `.call` / `.apply` on the constructor
+// (or an IIFE parameter bound to it) must skip class recovery.
+// A native class has no [[Call]]; leftover helper subclasses
+// still invoke the parent as a function.
+// ============================================================
+
+/// Babel-loose leftover: base IIFE + helper subclass that still
+/// does `Base_1.call(this)` after the base would otherwise become a class.
+fn leftover_subclass_call_input() -> &'static str {
+    r#"
+var Foo = (function() {
+    function t() {}
+    t.prototype.start = function() { this.onStart(); };
+    return t;
+})();
+var Child = ((Base_1) => {
+    function n() {
+        var t = Base_1.call(this) || this;
+        t._items = [];
+        return t;
+    }
+    inheritsLoose(n, Base_1);
+    return n;
+})(Foo);
+"#
+}
+
+#[test]
+fn same_module_iife_param_call_skips_base_class_recovery() {
+    let output = apply(leftover_subclass_call_input());
+    assert!(
+        !output.contains("class Foo"),
+        "leftover IIFE-param .call must keep the base constructible:\n{output}"
+    );
+    assert!(
+        output.contains("Base_1.call(this)") || output.contains(".call(this)"),
+        "the helper subclass must keep the function .call:\n{output}"
+    );
+}
+
+#[test]
+fn same_module_iife_param_call_skips_base_class_recovery_in_pipeline() {
+    let output = render(leftover_subclass_call_input());
+    assert!(
+        !output.contains("class Foo"),
+        "later rules must not recover the skipped base IIFE:\n{output}"
+    );
+}
+
+#[test]
+fn same_module_iife_param_apply_skips_base_class_recovery() {
+    let input = r#"
+var Foo = (function() {
+    function t() {}
+    t.prototype.start = function() { this.onStart(); };
+    return t;
+})();
+var Child = ((Base_1) => {
+    function n() {
+        return Base_1.apply(this, arguments) || this;
+    }
+    inheritsLoose(n, Base_1);
+    return n;
+})(Foo);
+"#;
+    let output = apply(input);
+    assert!(
+        !output.contains("class Foo"),
+        "leftover IIFE-param .apply must keep the base constructible:\n{output}"
+    );
+    assert!(
+        output.contains("Base_1.apply(this, arguments)"),
+        "the helper subclass must keep the function .apply:\n{output}"
+    );
+}
+
+#[test]
+fn same_module_direct_ctor_call_skips_class_recovery() {
+    let input = r#"
+var Foo = (function() {
+    function t() {}
+    t.prototype.start = function() { this.onStart(); };
+    return t;
+})();
+function make() {
+    return Foo.call(this);
+}
+"#;
+    let output = apply(input);
+    assert!(
+        !output.contains("class Foo"),
+        "a same-module Foo.call outside the IIFE must skip class recovery:\n{output}"
+    );
+    assert!(
+        output.contains("Foo.call(this)"),
+        "the leftover .call must remain:\n{output}"
+    );
+}
+
+#[test]
+fn isolated_ctor_without_call_or_apply_still_recovers() {
+    let input = r#"
+var Foo = (function() {
+    function t() {}
+    t.prototype.start = function() { this.onStart(); };
+    return t;
+})();
+var Bar = (function() {
+    function t() {}
+    t.prototype.stop = function() { this.onStop(); };
+    return t;
+})();
+"#;
+    let expected = r#"
+class Foo {
+    start() { this.onStart(); }
+}
+class Bar {
+    stop() { this.onStop(); }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn inherits_loose_without_call_or_apply_still_recovers_base() {
+    // `inheritsLoose` itself is valid on a native class (Object.create).
+    // Only leftover .call / .apply is the skip trigger.
+    let input = r#"
+var Foo = (function() {
+    function t() {}
+    t.prototype.start = function() { this.onStart(); };
+    return t;
+})();
+var Child = ((Base_1) => {
+    function n() {}
+    inheritsLoose(n, Base_1);
+    return n;
+})(Foo);
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("class Foo"),
+        "inheritsLoose without .call/.apply must not skip the base:\n{output}"
+    );
+    assert!(
+        output.contains("inheritsLoose"),
+        "the unrecognized helper subclass should stay an IIFE:\n{output}"
+    );
+}
+
+#[test]
+fn inner_shadow_call_does_not_block_outer_class_recovery() {
+    // Binding identity is (sym, ctxt). An inner function named Foo that
+    // calls itself is not the outer constructor binding.
+    let input = r#"
+var Foo = (function() {
+    function t() {}
+    t.prototype.start = function() { this.onStart(); };
+    return t;
+})();
+function wrapper() {
+    function Foo() {
+        Foo.call(this);
+    }
+    return Foo;
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("class Foo"),
+        "an inner shadow Foo.call must not block outer class recovery:\n{output}"
+    );
+    assert!(
+        output.contains("Foo.call(this)"),
+        "the inner shadow .call must remain:\n{output}"
+    );
+}
+
+#[test]
+fn nested_param_same_short_name_call_does_not_block() {
+    let input = r#"
+var Foo = (function() {
+    function t() {}
+    t.prototype.start = function() { this.onStart(); };
+    return t;
+})();
+function wrapper() {
+    function inner(Foo) {
+        Foo.call(this);
+    }
+    return inner;
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("class Foo"),
+        "a nested param with the same printed name is not the constructor:\n{output}"
+    );
+    assert!(
+        output.contains("Foo.call(this)"),
+        "the nested param .call must remain:\n{output}"
+    );
+}
