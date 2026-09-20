@@ -4,34 +4,32 @@ use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::RewriteLevel;
 
-/// Converts `[x].concat(arr)` → `[x, ...arr]`.
+/// Flattens `[x].concat([y])` into `[x, y]` when every concat argument is an
+/// array literal.
 ///
 /// Handles:
-/// - `[a].concat(b)` → `[a, ...b]`
-/// - `[a, b].concat(c)` → `[a, b, ...c]`
-/// - `[a].concat(b, c)` → `[a, ...b, ...c]`
 /// - `[a].concat([b, c])` → `[a, b, c]`
-/// - `[].concat(a)` → `[...a]`
+/// - `[a].concat([b], [c])` → `[a, b, c]`
 ///
 /// Only transforms when the receiver is an **array literal** — variable
 /// receivers like `arr.concat(other)` are left as-is since `concat` may
 /// be overridden or the receiver may not be a plain array.
 ///
-/// This is a generated-code heuristic. In `minimal`, only array literal
-/// arguments are flattened; for arbitrary runtime values, `concat` and spread
-/// differ for scalars, strings, patched `Array.prototype.concat`, and
-/// `Symbol.isConcatSpreadable`.
-pub struct UnArrayConcatSpread {
-    level: RewriteLevel,
-}
+/// Any non-array-literal argument fail-closes the whole call at every rewrite
+/// level. `concat` only spreads Array / `@@isConcatSpreadable`; spread iterates
+/// any iterable and throws on non-iterables. An identifier is not array proof.
+/// Flattening nested array *literals* is concat-faithful for ordinary arrays;
+/// patched `Array.prototype.concat` or `Symbol.isConcatSpreadable` on those
+/// nested objects can still differ. This remains a generated-code heuristic.
+pub struct UnArrayConcatSpread;
 
 impl UnArrayConcatSpread {
     pub fn new() -> Self {
         Self::new_with_level(RewriteLevel::Standard)
     }
 
-    pub fn new_with_level(level: RewriteLevel) -> Self {
-        Self { level }
+    pub fn new_with_level(_level: RewriteLevel) -> Self {
+        Self
     }
 }
 
@@ -47,14 +45,14 @@ impl VisitMut for UnArrayConcatSpread {
 
         let Expr::Call(call) = expr else { return };
 
-        if let Some(new_arr) = try_simplify_array_concat(call, self.level) {
+        if let Some(new_arr) = try_simplify_array_concat(call) {
             *expr = Expr::Array(new_arr);
         }
     }
 }
 
 /// Try to convert `[elems].concat(args...)` into a single array literal.
-fn try_simplify_array_concat(call: &CallExpr, level: RewriteLevel) -> Option<ArrayLit> {
+fn try_simplify_array_concat(call: &CallExpr) -> Option<ArrayLit> {
     // Callee must be member expression: something.concat
     let Callee::Expr(callee) = &call.callee else {
         return None;
@@ -91,23 +89,15 @@ fn try_simplify_array_concat(call: &CallExpr, level: RewriteLevel) -> Option<Arr
     // Build the new array: start with receiver elements
     let mut elems: Vec<Option<ExprOrSpread>> = receiver_arr.elems.clone();
 
-    // Add each concat argument
+    // Add each concat argument. Array literals flatten one level (concat
+    // semantics). Any other argument fail-closes the whole call — do not
+    // half-flatten mixed `[a].concat(b, [c])` into a spread.
     for arg in &call.args {
         match arg.expr.as_ref() {
-            // Array literal arg: flatten its elements
             Expr::Array(arr) => {
                 elems.extend(arr.elems.iter().cloned());
             }
-            // Non-array arg: add as spread
-            _ => {
-                if level == RewriteLevel::Minimal {
-                    return None;
-                }
-                elems.push(Some(ExprOrSpread {
-                    spread: Some(DUMMY_SP),
-                    expr: arg.expr.clone(),
-                }));
-            }
+            _ => return None,
         }
     }
 

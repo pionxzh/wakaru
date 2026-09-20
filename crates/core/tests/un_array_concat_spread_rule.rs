@@ -11,10 +11,7 @@ fn simplifies_literal_array_concat_single_element() {
     let input = r#"
 const x = [a].concat(b);
 "#;
-    let expected = r#"
-const x = [a, ...b];
-"#;
-    assert_eq_normalized(&render(input), expected);
+    assert_eq_normalized(&render(input), input);
 }
 
 #[test]
@@ -22,10 +19,7 @@ fn simplifies_literal_array_concat_multiple_elements() {
     let input = r#"
 const x = [a, b].concat(c);
 "#;
-    let expected = r#"
-const x = [a, b, ...c];
-"#;
-    assert_eq_normalized(&render(input), expected);
+    assert_eq_normalized(&render(input), input);
 }
 
 #[test]
@@ -33,10 +27,7 @@ fn simplifies_concat_with_multiple_args() {
     let input = r#"
 const x = [a].concat(b, c);
 "#;
-    let expected = r#"
-const x = [a, ...b, ...c];
-"#;
-    assert_eq_normalized(&render(input), expected);
+    assert_eq_normalized(&render(input), input);
 }
 
 #[test]
@@ -55,18 +46,14 @@ fn simplifies_empty_array_concat() {
     let input = r#"
 const x = [].concat(a);
 "#;
-    let expected = r#"
-const x = [...a];
-"#;
-    assert_eq_normalized(&render(input), expected);
+    assert_eq_normalized(&render(input), input);
 }
 
 #[test]
 fn simplifies_spread_over_concat_pattern() {
-    // The Babel class constructor pattern: e.call(...[this].concat(args))
-    // After concat→spread: e.call(...[this, ...args])
-    // The spread-over-array inlining (...[a, ...b] → a, ...b) is handled
-    // by UnArgumentSpread, so we just verify the concat is simplified.
+    // Babel class ctor leftover: e.call(...[this].concat(args)).
+    // Unknown concat args stay concat; UnSpreadArrayLiteral only inlines
+    // ...[array-literal], so the outer spread is left as-is.
     let input = r#"
 const x = e.call(...[this].concat(args));
 "#;
@@ -103,4 +90,106 @@ const x = [a, b, c];
 "#;
     let output = apply_rule_with_level(input, RewriteLevel::Minimal);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn unknown_concat_argument_stays_concat_at_standard() {
+    // concat only spreads Arrays (or @@isConcatSpreadable). An identifier is
+    // not an array proof, so Standard must keep the call.
+    let input = r#"
+const x = [].concat(a);
+"#;
+    assert_eq_normalized(&render(input), input);
+}
+
+#[test]
+fn unknown_concat_argument_stays_concat_at_aggressive() {
+    // Do not hide the old unknown-arg spread heuristic in Aggressive.
+    let input = r#"
+const x = [].concat(a);
+"#;
+    let output = apply_rule_with_level(input, RewriteLevel::Aggressive);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn unknown_this_concat_args_stays_concat_at_standard() {
+    let input = r#"
+const x = [this].concat(args);
+"#;
+    assert_eq_normalized(&render(input), input);
+}
+
+#[test]
+fn concat_map_iterator_argument_stays_concat() {
+    // MapIterator is not IsConcatSpreadable. Keep concat; do not assert .length.
+    let input = r#"
+const x = [].concat(m.values());
+"#;
+    assert_eq_normalized(&render(input), input);
+}
+
+#[test]
+fn concat_set_argument_stays_concat() {
+    let input = r#"
+const x = [].concat(new Set([1, 2]));
+"#;
+    assert_eq_normalized(&render(input), input);
+}
+
+#[test]
+fn concat_string_argument_is_not_spread() {
+    // [].concat("ab") is ["ab"]; [..."ab"] is ["a","b"].
+    let input = r#"
+const x = [].concat("ab");
+"#;
+    assert_eq_normalized(&render(input), input);
+}
+
+#[test]
+fn concat_number_argument_is_not_spread() {
+    // [].concat(1) is [1]; [...1] throws.
+    let input = r#"
+const x = [].concat(1);
+"#;
+    assert_eq_normalized(&render(input), input);
+}
+
+#[test]
+fn concat_arguments_object_stays_concat() {
+    // ES6 concat does not spread arguments; [...arguments] does.
+    let input = r#"
+function f() {
+  const x = [].concat(arguments);
+}
+"#;
+    assert_eq_normalized(&render(input), input);
+}
+
+#[test]
+fn concat_spread_argument_is_not_rewritten() {
+    // [].concat(...arr) flattens nested arrays; [...arr] does not.
+    let input = r#"
+const x = [].concat(...arr);
+"#;
+    assert_eq_normalized(&render(input), input);
+}
+
+#[test]
+fn mixed_unknown_and_array_literal_keeps_concat() {
+    // One unknown argument fail-closes the whole call; do not half-flatten.
+    let input = r#"
+const x = [a].concat(b, [c]);
+"#;
+    assert_eq_normalized(&render(input), input);
+}
+
+#[test]
+fn ident_named_arr_is_not_array_proof() {
+    // Do not treat a name, or an earlier `= []`, as proof the concat arg is an array.
+    let input = r#"
+const arr = [];
+const x = [].concat(arr);
+"#;
+    assert_eq_normalized(&render(input), input);
 }

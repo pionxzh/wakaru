@@ -945,7 +945,7 @@ fn minimal_disables_array_concat_spread_recovery_for_call_args() {
 }
 
 #[test]
-fn standard_keeps_array_concat_spread_recovery() {
+fn standard_preserves_unknown_array_concat_argument() {
     let input = r#"const x = [this].concat(args);"#;
 
     let output = decompile(
@@ -959,8 +959,7 @@ fn standard_keeps_array_concat_spread_recovery() {
     .expect("decompile should succeed")
     .code;
 
-    let expected = r#"const x = [this, ...args];"#;
-    assert_eq_normalized(&output, expected);
+    assert_eq_normalized(&output, input);
 }
 
 #[test]

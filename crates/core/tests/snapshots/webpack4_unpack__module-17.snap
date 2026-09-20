@@ -6,13 +6,26 @@ import { a, b, c, e, f, g, h, j, k, l, m, n, o as o_1, p, q, r, s, t } from "./m
 import * as o from "./module-10.js";
 import { d } from "./module-10.js";
 export function takeEvery(e, t, ...i) {
-    return k(o.b, e, t, ...i);
+    return k(...[
+        o.b,
+        e,
+        t
+    ].concat(i));
 }
 export function takeLatest(e, t, ...i) {
-    return k(d, e, t, ...i);
+    return k(...[
+        d,
+        e,
+        t
+    ].concat(i));
 }
 export function throttle(e, t, n, ...a) {
-    return k(o.f, e, t, n, ...a);
+    return k(...[
+        o.f,
+        e,
+        t,
+        n
+    ].concat(a));
 }
 export const take = s;
 export const takem = t;
