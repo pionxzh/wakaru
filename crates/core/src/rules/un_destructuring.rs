@@ -21,6 +21,7 @@ use super::un_rest_array_copy::{
     extract_array_copy_decl, extract_zero_init_decl, matches_copy_body, matches_increment,
     matches_lt_test,
 };
+use super::un_to_array::collect_to_array_bindings;
 use super::{expr_utils::is_unresolved_undefined, RewriteLevel};
 use crate::utils::paren::strip_parens;
 
@@ -34,7 +35,7 @@ pub struct UnDestructuring {
     unresolved_mark: Mark,
     level: RewriteLevel,
     sliced_to_array_helpers: Option<HashSet<BindingKey>>,
-    array_like_to_array_helpers: Option<HashSet<BindingKey>>,
+    helpers: Option<HelperBindings>,
     consumed_sliced_to_array_helpers: HashSet<BindingKey>,
 }
 
@@ -48,7 +49,7 @@ impl UnDestructuring {
             unresolved_mark,
             level,
             sliced_to_array_helpers: None,
-            array_like_to_array_helpers: None,
+            helpers: None,
             consumed_sliced_to_array_helpers: HashSet::default(),
         }
     }
@@ -62,7 +63,7 @@ impl UnDestructuring {
             unresolved_mark,
             level,
             sliced_to_array_helpers: Some(collect_sliced_to_array_helpers(local_helpers)),
-            array_like_to_array_helpers: None,
+            helpers: None,
             consumed_sliced_to_array_helpers: HashSet::default(),
         }
     }
@@ -116,17 +117,19 @@ impl VisitMut for UnDestructuring {
             .as_mut()
             .expect("helper identities were collected above")
             .retain(|key| !written.contains(key));
-        self.array_like_to_array_helpers = Some(collect_array_like_to_array_helpers(
-            module,
-            self.unresolved_mark,
-        ));
+        let mut to_array = collect_to_array_bindings(module, Some(self.unresolved_mark));
+        to_array.retain(|key| !written.contains(key));
+        self.helpers = Some(HelperBindings {
+            array_like_to_array: collect_array_like_to_array_helpers(module, self.unresolved_mark),
+            to_array,
+        });
         module.visit_mut_children_with(self);
         let (items, consumed_helpers) = process_module_items(
             std::mem::take(&mut module.body),
             self.unresolved_mark,
             self.level,
             self.sliced_to_array_helpers(),
-            self.array_like_to_array_helpers(),
+            self.helpers(),
         );
         self.consumed_sliced_to_array_helpers
             .extend(consumed_helpers);
@@ -140,7 +143,7 @@ impl VisitMut for UnDestructuring {
             self.unresolved_mark,
             self.level,
             self.sliced_to_array_helpers(),
-            self.array_like_to_array_helpers(),
+            self.helpers(),
         );
         self.consumed_sliced_to_array_helpers
             .extend(consumed_helpers);
@@ -155,7 +158,7 @@ impl VisitMut for UnDestructuring {
                     &mut func.params,
                     body,
                     self.unresolved_mark,
-                    self.array_like_to_array_helpers(),
+                    self.helpers(),
                 );
             }
         }
@@ -169,11 +172,24 @@ impl UnDestructuring {
             .expect("UnDestructuring should collect helper facts before visiting statements")
     }
 
-    fn array_like_to_array_helpers(&self) -> &HashSet<BindingKey> {
-        self.array_like_to_array_helpers
+    fn helpers(&self) -> &HelperBindings {
+        self.helpers
             .as_ref()
             .expect("UnDestructuring should collect helper facts before visiting statements")
     }
+}
+
+/// Proven helper bindings the reconstruction may read through or consume.
+struct HelperBindings {
+    /// Local `_arrayLikeToArray` copies matched by body shape.
+    array_like_to_array: HashSet<BindingKey>,
+    /// Imported or required `toArray` helpers (`UnToArray`'s proof). A nested
+    /// `ref = toArray(value)` materializes `value` for the nested rest
+    /// pattern exactly as the `[...value]` spread left by an inline helper
+    /// does; consuming it relies on the same `rest_source_is_iterable`
+    /// contract as `UnToArray`, because the original source was a native
+    /// nested rest pattern.
+    to_array: HashSet<BindingKey>,
 }
 
 fn collect_sliced_to_array_helpers(local_helpers: &LocalHelperContext) -> HashSet<BindingKey> {
@@ -458,7 +474,7 @@ fn process_module_items(
     unresolved_mark: Mark,
     level: RewriteLevel,
     sliced_to_array_helpers: &HashSet<BindingKey>,
-    array_like_to_array_helpers: &HashSet<BindingKey>,
+    helpers: &HelperBindings,
 ) -> (Vec<ModuleItem>, Vec<BindingKey>) {
     let mut result = Vec::with_capacity(items.len());
     let mut stmt_buf = Vec::new();
@@ -474,7 +490,7 @@ fn process_module_items(
                         unresolved_mark,
                         level,
                         sliced_to_array_helpers,
-                        array_like_to_array_helpers,
+                        helpers,
                     );
                     consumed_sliced_to_array_helpers.extend(consumed_helpers);
                     result.extend(processed.into_iter().map(ModuleItem::Stmt));
@@ -490,7 +506,7 @@ fn process_module_items(
             unresolved_mark,
             level,
             sliced_to_array_helpers,
-            array_like_to_array_helpers,
+            helpers,
         );
         consumed_sliced_to_array_helpers.extend(consumed_helpers);
         result.extend(processed.into_iter().map(ModuleItem::Stmt));
@@ -504,7 +520,7 @@ fn process_stmts(
     unresolved_mark: Mark,
     level: RewriteLevel,
     sliced_to_array_helpers: &HashSet<BindingKey>,
-    array_like_to_array_helpers: &HashSet<BindingKey>,
+    helpers: &HelperBindings,
 ) -> (Vec<Stmt>, Vec<BindingKey>) {
     let mut stmts = hoist_conditional_test_assignments(stmts);
     let mut result = Vec::with_capacity(stmts.len());
@@ -518,7 +534,7 @@ fn process_stmts(
             unresolved_mark,
             level,
             sliced_to_array_helpers,
-            array_like_to_array_helpers,
+            helpers,
             &mut consumed_helpers,
         ) {
             remove_prior_uninitialized_decls_for_bindings(
@@ -731,7 +747,7 @@ fn try_reconstruct_group(
     unresolved_mark: Mark,
     level: RewriteLevel,
     sliced_to_array_helpers: &HashSet<BindingKey>,
-    array_like_to_array_helpers: &HashSet<BindingKey>,
+    helpers: &HelperBindings,
     consumed_helpers: &mut Vec<BindingKey>,
 ) -> Option<ReconstructedGroup> {
     let mut group_helpers = Vec::new();
@@ -752,7 +768,7 @@ fn try_reconstruct_group(
         start,
         unresolved_mark,
         sliced_to_array_helpers,
-        array_like_to_array_helpers,
+        helpers,
         &mut group_helpers,
     ) {
         consumed_helpers.extend(group_helpers);
@@ -1314,7 +1330,7 @@ fn try_reconstruct_ref_group(
     start: usize,
     unresolved_mark: Mark,
     sliced_to_array_helpers: &HashSet<BindingKey>,
-    array_like_to_array_helpers: &HashSet<BindingKey>,
+    helpers: &HelperBindings,
     consumed_helpers: &mut Vec<BindingKey>,
 ) -> Option<ReconstructedGroup> {
     let mut ref_decl = extract_ref_decl(stmts.get(start)?)?;
@@ -1326,7 +1342,7 @@ fn try_reconstruct_ref_group(
         start + 1,
         &ref_decl.ident.id,
         unresolved_mark,
-        array_like_to_array_helpers,
+        helpers,
         &mut removed_temps,
         consumed_helpers,
     );
@@ -1433,7 +1449,7 @@ fn collect_accesses_on(
     start: usize,
     ref_ident: &Ident,
     unresolved_mark: Mark,
-    array_like_to_array_helpers: &HashSet<BindingKey>,
+    helpers: &HelperBindings,
     removed_temps: &mut Vec<BindingKey>,
     consumed_helpers: &mut Vec<BindingKey>,
 ) -> CollectedAccesses {
@@ -1446,7 +1462,7 @@ fn collect_accesses_on(
             i,
             ref_ident,
             unresolved_mark,
-            array_like_to_array_helpers,
+            helpers,
             removed_temps,
             consumed_helpers,
         ) {
@@ -1863,18 +1879,12 @@ fn try_extract_access(
     index: usize,
     ref_ident: &Ident,
     unresolved_mark: Mark,
-    array_like_to_array_helpers: &HashSet<BindingKey>,
+    helpers: &HelperBindings,
     removed_temps: &mut Vec<BindingKey>,
     consumed_helpers: &mut Vec<BindingKey>,
 ) -> Option<(Access, usize)> {
     if let Some((access, consumed, nested_temps, nested_helpers)) =
-        try_extract_inline_spread_default_access(
-            stmts,
-            index,
-            ref_ident,
-            unresolved_mark,
-            array_like_to_array_helpers,
-        )
+        try_extract_inline_spread_default_access(stmts, index, ref_ident, unresolved_mark, helpers)
     {
         removed_temps.extend(nested_temps);
         consumed_helpers.extend(nested_helpers);
@@ -1892,7 +1902,7 @@ fn try_extract_access(
             stmts,
             index + 2,
             unresolved_mark,
-            array_like_to_array_helpers,
+            helpers,
             removed_temps,
             consumed_helpers,
         ) {
@@ -1919,7 +1929,7 @@ fn try_extract_access(
     }
 
     if let Some((start, binding, helper_key)) =
-        extract_slice_rest(init, ref_ident, binding, array_like_to_array_helpers)
+        extract_slice_rest(init, ref_ident, binding, helpers)
     {
         if let Some(key) = helper_key {
             consumed_helpers.push(key);
@@ -1942,13 +1952,13 @@ fn try_extract_inline_spread_default_access(
     index: usize,
     ref_ident: &Ident,
     unresolved_mark: Mark,
-    array_like_to_array_helpers: &HashSet<BindingKey>,
+    helpers: &HelperBindings,
 ) -> Option<(Access, usize, Vec<BindingKey>, Vec<BindingKey>)> {
     let (temp, temp_init) = extract_binding_decl(stmts.get(index)?)?;
     let source_access = extract_source_access(temp_init, ref_ident)?;
 
     let (nested_ref, nested_init) = extract_binding_decl(stmts.get(index + 1)?)?;
-    let spread_source = extract_single_spread_source(nested_init)?;
+    let spread_source = extract_materialized_source(nested_init, helpers)?;
     let default = extract_default_value(spread_source, &temp.id, unresolved_mark)?;
     let temp_key = binding_key(&temp.id);
     if expr_uses_ident(&default, &temp_key) {
@@ -1962,7 +1972,7 @@ fn try_extract_inline_spread_default_access(
         index + 2,
         &nested_ref.id,
         unresolved_mark,
-        array_like_to_array_helpers,
+        helpers,
         &mut removed_temps,
         &mut consumed_helpers,
     );
@@ -1997,7 +2007,7 @@ fn try_nest_default_binding(
     stmts: &[Stmt],
     nested_start: usize,
     unresolved_mark: Mark,
-    array_like_to_array_helpers: &HashSet<BindingKey>,
+    helpers: &HelperBindings,
     removed_temps: &mut Vec<BindingKey>,
     consumed_helpers: &mut Vec<BindingKey>,
 ) -> Option<(Pat, usize)> {
@@ -2019,7 +2029,7 @@ fn try_nest_default_binding(
         nested_start,
         default_binding,
         unresolved_mark,
-        array_like_to_array_helpers,
+        helpers,
         removed_temps,
         consumed_helpers,
     );
@@ -2030,7 +2040,7 @@ fn try_nest_default_binding(
             nested_start,
             default_binding,
             unresolved_mark,
-            array_like_to_array_helpers,
+            helpers,
             removed_temps,
             consumed_helpers,
         )?;
@@ -2065,12 +2075,12 @@ fn try_expand_nested_spread_capture(
     index: usize,
     expected_source: &Ident,
     unresolved_mark: Mark,
-    array_like_to_array_helpers: &HashSet<BindingKey>,
+    helpers: &HelperBindings,
     removed_temps: &mut Vec<BindingKey>,
     consumed_helpers: &mut Vec<BindingKey>,
 ) -> Option<CollectedAccesses> {
     let (ref_binding, init) = extract_binding_decl(stmts.get(index)?)?;
-    let Expr::Ident(source) = strip_parens(extract_single_spread_source(init)?) else {
+    let Expr::Ident(source) = strip_parens(extract_materialized_source(init, helpers)?) else {
         return None;
     };
     if source.sym != expected_source.sym || source.ctxt != expected_source.ctxt {
@@ -2084,7 +2094,7 @@ fn try_expand_nested_spread_capture(
         index + 1,
         &ref_binding.id,
         unresolved_mark,
-        array_like_to_array_helpers,
+        helpers,
         &mut nested_removed_temps,
         &mut nested_consumed_helpers,
     );
@@ -2103,6 +2113,31 @@ fn try_expand_nested_spread_capture(
     consumed_helpers.extend(nested_consumed_helpers);
     collected.consumed = consumed;
     Some(collected)
+}
+
+/// The value a compiler materialized for a nested rest pattern: either the
+/// `[...value]` spread left after an inline `toArray` helper was removed, or a
+/// still-present call to a proven imported `toArray` helper, `toArray(value)`.
+fn extract_materialized_source<'a>(expr: &'a Expr, helpers: &HelperBindings) -> Option<&'a Expr> {
+    if let Some(source) = extract_single_spread_source(expr) {
+        return Some(source);
+    }
+    let Expr::Call(call) = strip_parens(expr) else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Ident(helper) = strip_parens(callee) else {
+        return None;
+    };
+    if !helpers.to_array.contains(&binding_key(helper)) {
+        return None;
+    }
+    let [ExprOrSpread { spread: None, expr }] = call.args.as_slice() else {
+        return None;
+    };
+    Some(strip_parens(expr))
 }
 
 fn extract_single_spread_source(expr: &Expr) -> Option<&Expr> {
@@ -2327,7 +2362,7 @@ fn extract_slice_rest(
     expr: &Expr,
     ref_ident: &Ident,
     binding: BindingIdent,
-    array_like_to_array_helpers: &HashSet<BindingKey>,
+    helpers: &HelperBindings,
 ) -> Option<(usize, BindingIdent, Option<BindingKey>)> {
     let Expr::Call(call) = expr else {
         return None;
@@ -2341,7 +2376,7 @@ fn extract_slice_rest(
     let Expr::Member(MemberExpr { obj, prop, .. }) = callee.as_ref() else {
         return None;
     };
-    let helper_key = match_ref_or_array_like_to_array(obj, ref_ident, array_like_to_array_helpers)?;
+    let helper_key = match_ref_or_array_like_to_array(obj, ref_ident, helpers)?;
     if !matches!(prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "slice") {
         return None;
     }
@@ -2357,7 +2392,7 @@ fn extract_slice_rest(
 fn match_ref_or_array_like_to_array(
     expr: &Expr,
     ref_ident: &Ident,
-    array_like_to_array_helpers: &HashSet<BindingKey>,
+    helpers: &HelperBindings,
 ) -> Option<Option<BindingKey>> {
     match expr {
         Expr::Ident(obj) if obj.sym == ref_ident.sym && obj.ctxt == ref_ident.ctxt => Some(None),
@@ -2375,15 +2410,11 @@ fn match_ref_or_array_like_to_array(
             if !matches!(
                 helper.sym.as_ref(),
                 "_arrayLikeToArray" | "_array_like_to_array"
-            ) && !array_like_to_array_helpers.contains(&helper_key)
+            ) && !helpers.array_like_to_array.contains(&helper_key)
             {
                 return None;
             }
-            match_ref_or_array_like_to_array(
-                call.args[0].expr.as_ref(),
-                ref_ident,
-                array_like_to_array_helpers,
-            )?;
+            match_ref_or_array_like_to_array(call.args[0].expr.as_ref(), ref_ident, helpers)?;
             Some(Some(helper_key))
         }
         _ => None,
@@ -2775,15 +2806,10 @@ fn nest_param_destructuring(
     params: &mut [Param],
     body: &mut FunctionBody,
     unresolved_mark: Mark,
-    array_like_to_array_helpers: &HashSet<BindingKey>,
+    helpers: &HelperBindings,
 ) {
     for param in params.iter_mut() {
-        nest_pat_destructuring(
-            &mut param.pat,
-            &mut body.stmts,
-            unresolved_mark,
-            array_like_to_array_helpers,
-        );
+        nest_pat_destructuring(&mut param.pat, &mut body.stmts, unresolved_mark, helpers);
     }
 }
 
@@ -2791,7 +2817,7 @@ fn nest_pat_destructuring(
     pat: &mut Pat,
     stmts: &mut Vec<Stmt>,
     unresolved_mark: Mark,
-    array_like_to_array_helpers: &HashSet<BindingKey>,
+    helpers: &HelperBindings,
 ) {
     let inner_pat = match pat {
         Pat::Assign(assign) => &mut *assign.left,
@@ -2821,7 +2847,7 @@ fn nest_pat_destructuring(
             0,
             &binding.id,
             unresolved_mark,
-            array_like_to_array_helpers,
+            helpers,
             &mut removed_temps,
             &mut consumed_helpers,
         );

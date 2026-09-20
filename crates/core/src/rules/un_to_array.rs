@@ -228,7 +228,11 @@ fn is_array_rest_assign_target(target: &AssignTarget) -> bool {
     arr.elems.iter().any(|e| matches!(e, Some(Pat::Rest(_))))
 }
 
-fn collect_to_array_bindings(
+/// Bindings proven to hold the `toArray` helper by import path or
+/// `require("…toArray")`. Shared with `UnDestructuring`, which consumes the
+/// helper as a nested-pattern materialization before this rule strips the
+/// outer call.
+pub(crate) fn collect_to_array_bindings(
     module: &Module,
     unresolved_mark: Option<Mark>,
 ) -> HashSet<BindingKey> {

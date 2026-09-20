@@ -913,6 +913,92 @@ use(primary, backup);
 }
 
 #[test]
+fn reconstructs_nested_rest_default_through_imported_to_array() {
+    // swc `externalHelpers: true` keeps the helper as an import, so the
+    // nested materialization is `_to_array(value)` rather than the `[...value]`
+    // spread an inline helper leaves. The outer call stays for `UnToArray`.
+    let input = r#"
+import { _ as _to_array } from "@swc/helpers/_/_to_array";
+var _items = _to_array(items);
+var first = _items[0];
+var tmp = _items[1];
+var _ref = _to_array(tmp === undefined ? [] : tmp);
+var nested = _ref[0];
+var inner_rest = _ref.slice(1);
+var outer_rest = _items.slice(2);
+use(first, nested, inner_rest, outer_rest);
+"#;
+    let expected = r#"
+import { _ as _to_array } from "@swc/helpers/_/_to_array";
+var [first, [nested, ...inner_rest] = [], ...outer_rest] = _to_array(items);
+use(first, nested, inner_rest, outer_rest);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn reconstructs_nested_rest_default_through_babel_runtime_to_array() {
+    let input = r#"
+import _toArray from "@babel/runtime/helpers/toArray";
+var _items = _toArray(items);
+var first = _items[0];
+var _items$ = _items[1];
+var _items$2 = _toArray(_items$ === undefined ? [] : _items$);
+var nested = _items$2[0];
+var inner_rest = _items$2.slice(1);
+var outer_rest = _items.slice(2);
+use(first, nested, inner_rest, outer_rest);
+"#;
+    let expected = r#"
+import _toArray from "@babel/runtime/helpers/toArray";
+var [first, [nested, ...inner_rest] = [], ...outer_rest] = _toArray(items);
+use(first, nested, inner_rest, outer_rest);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn preserves_nested_default_behind_unproven_materializer() {
+    // A call that is not a proven `toArray` helper may not iterate the value,
+    // so it cannot stand in for the nested rest pattern's materialization.
+    let input = r#"
+import { _ as _to_array } from "@swc/helpers/_/_to_array";
+var _items = _to_array(items);
+var first = _items[0];
+var tmp = _items[1];
+var _ref = normalize(tmp === undefined ? [] : tmp);
+var nested = _ref[0];
+var inner_rest = _ref.slice(1);
+var outer_rest = _items.slice(2);
+use(first, nested, inner_rest, outer_rest);
+"#;
+    let expected = r#"
+import { _ as _to_array } from "@swc/helpers/_/_to_array";
+var _items = _to_array(items);
+var first = _items[0];
+var tmp = _items[1];
+var [nested, ...inner_rest] = normalize(tmp === undefined ? [] : tmp);
+var outer_rest = _items.slice(2);
+use(first, nested, inner_rest, outer_rest);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn pipeline_recovers_nested_rest_default_from_swc_external_helpers() {
+    let input = r#"
+import { _ as _to_array } from "@swc/helpers/_/_to_array";
+var _items = _to_array(items), first = _items[0], tmp = _items[1], _ref = _to_array(tmp === void 0 ? [] : tmp), nested = _ref[0], inner_rest = _ref.slice(1), outer_rest = _items.slice(2);
+use(first, nested, inner_rest, outer_rest);
+"#;
+    let expected = r#"
+const [first, [nested, ...inner_rest] = [], ...outer_rest] = items;
+use(first, nested, inner_rest, outer_rest);
+"#;
+    assert_eq_normalized(&common::render_pipeline(input), expected);
+}
+
+#[test]
 fn preserves_assignment_temp_decl_when_used_before_group() {
     let input = r#"
 let source;

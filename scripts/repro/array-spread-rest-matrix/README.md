@@ -17,15 +17,16 @@ The `array-rest-basic`, `array-rest-default-hole`, and
 `array-rest-nested-pattern` snippets deliberately extend that weak boundary.
 At `standard`, direct index/`slice()` forms remain unrecovered unless a helper
 proves the required array/iterator semantics. Nested rows may recover the inner
-rest while leaving the outer index/`slice()` accesses split, and helper-heavy
-`toArray` variants may remain lowered. These intentional challenge rows expand
-the denominator and explain the matrix's lower aggregate rate; they are not
-regressions in previously passing shapes.
+rest while leaving the outer index/`slice()` accesses split. These intentional
+challenge rows expand the denominator and explain the matrix's lower aggregate
+rate; they are not regressions in previously passing shapes.
 
-Nested defaults backed by an exact single-spread materialization are recovered
-at `standard`, including the form where a minifier fuses the default expression
-into that materialization. Direct TypeScript index/`slice()` shapes and imported
-helper calls remain subject to their separate proof requirements.
+Nested defaults backed by an exact single-spread materialization, or by a call
+to a `toArray` helper proven by import path or `require` (the swc
+`externalHelpers` and `@babel/runtime` forms), are recovered at `standard`,
+including the form where a minifier fuses the default expression into that
+materialization. Direct TypeScript index/`slice()` shapes remain subject to
+their separate proof requirements.
 
 `array-rest-basic` also accepts Babel's retained single-read `_items = items`
 capture before the recovered destructuring. `items` is environment-injected in
