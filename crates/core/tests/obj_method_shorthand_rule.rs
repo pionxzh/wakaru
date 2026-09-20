@@ -156,6 +156,20 @@ new Constructor(input);
 }
 
 #[test]
+fn exported_destructured_object_property_stays_constructible() {
+    let input = r#"
+const namespace = {
+    Constructor: function(value) {
+        this.value = value;
+    }
+};
+export const { Constructor } = namespace;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn constructible_object_property_stays_function_in_destructured_default() {
     let inputs = [
         r#"

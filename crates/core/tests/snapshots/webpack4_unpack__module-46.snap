@@ -71,7 +71,7 @@ if (typeof window === "undefined" || typeof MessageChannel !== "function") {
     let E = 5;
     let x = 0;
     a = ()=>unstable_now() >= x;
-    u = ()=>{};
+    u = function() {};
     unstable_forceFrameRate = function(e) {
         if (e < 0 || e > 125) {
             console.error("forceFrameRate takes a positive int between 0 and 125, forcing framerates higher than 125 fps is not unsupported");

@@ -232,7 +232,7 @@ Route.contextTypes = {
 Route.childContextTypes = {
     router: u.object.isRequired
 };
-export const NavLink = ({ to, exact, strict, location, activeClassName, className, activeStyle, style, isActive, "aria-current": aria_current, ...rest })=>{
+export const NavLink = function({ to, exact, strict, location, activeClassName, className, activeStyle, style, isActive, "aria-current": aria_current, ...rest }) {
     const p = (to === undefined ? "undefined" : typeof to) === "object" ? to.pathname : to;
     const h = p && p.replace(/([.+*?=^!:${}()[\]|/\\])/g, "\\$1");
     return <Route path={h} exact={exact} strict={strict} location={location} children={({ location, match })=>{
@@ -323,7 +323,7 @@ Prompt.contextTypes = {
 };
 const W = {};
 let $ = 0;
-export const generatePath = (e = "/", t = {})=>{
+export const generatePath = function(e = "/", t = {}) {
     if (e === "/") {
         return e;
     }

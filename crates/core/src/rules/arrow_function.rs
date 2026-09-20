@@ -3,10 +3,9 @@ use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 
 use swc_core::ecma::ast::{
-    ArrowExpr, ArrowFunctionBody, AssignExpr, AssignTarget, BinExpr, BinaryOp, BindingIdent,
-    CallExpr, Callee, Class, Decl, ExportNamedSpecifier, ExportSpecifier, Expr, FnExpr, Function,
-    Ident, KeyValueProp, MemberExpr, MemberProp, MetaPropExpr, MetaPropKind, Module, ModuleDecl,
-    ModuleExportName, ModuleItem, NewExpr, Pat, ThisExpr, VarDeclarator,
+    ArrowExpr, ArrowFunctionBody, AssignExpr, AssignTarget, BinExpr, BinaryOp, CallExpr, Callee,
+    Class, Expr, FnExpr, Function, Ident, KeyValueProp, MemberExpr, MemberProp, MetaPropExpr,
+    MetaPropKind, Module, NewExpr, Pat, ThisExpr, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -22,10 +21,7 @@ pub struct ArrowFunction;
 
 impl VisitMut for ArrowFunction {
     fn visit_mut_module(&mut self, module: &mut Module) {
-        let mut constructor_sensitive_values = collect_constructor_sensitive_values(module);
-        // Named exports can be constructed by another module. Intra-module
-        // `new` / `.prototype` analysis cannot see those consumers.
-        constructor_sensitive_values.extend(collect_named_exported_locals(module));
+        let constructor_sensitive_values = collect_constructor_sensitive_values(module);
         module.visit_mut_with(&mut ArrowFunctionConverter {
             constructor_sensitive_values: &constructor_sensitive_values,
         });
@@ -184,51 +180,17 @@ impl VisitMut for ArrowFunctionConverter<'_> {
     }
 }
 
-fn collect_named_exported_locals(module: &Module) -> HashSet<ValueKey> {
-    let mut exported = HashSet::default();
-    for item in &module.body {
-        match item {
-            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => {
-                let Decl::Var(var) = &export.decl else {
-                    continue;
-                };
-                for declarator in &var.decls {
-                    if let Some(key) = pat_value_key(&declarator.name) {
-                        exported.insert(key);
-                    }
-                }
-            }
-            ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(named)) if named.src.is_none() => {
-                for specifier in &named.specifiers {
-                    let ExportSpecifier::Named(ExportNamedSpecifier {
-                        orig: ModuleExportName::Ident(ident),
-                        ..
-                    }) = specifier
-                    else {
-                        continue;
-                    };
-                    exported.insert(value_key_from_ident(ident));
-                }
-            }
-            _ => {}
-        }
-    }
-    exported
-}
-
-fn value_key_from_ident(ident: &Ident) -> ValueKey {
-    pat_value_key(&Pat::Ident(BindingIdent {
-        id: ident.clone(),
-        type_ann: None,
-    }))
-    .expect("an ident pattern has a value key")
-}
-
 fn visit_constructor_value_without_converting(
     expr: &mut Expr,
     converter: &mut ArrowFunctionConverter<'_>,
 ) {
     match expr {
+        Expr::Fn(fn_expr) if fn_expr.function.is_async => {
+            fn_expr.visit_mut_children_with(converter);
+            if let Some(arrow) = try_convert_to_arrow(fn_expr) {
+                *expr = Expr::Arrow(arrow);
+            }
+        }
         Expr::Fn(fn_expr) => {
             if let Some(body) = &mut fn_expr.function.body {
                 body.visit_mut_with(converter);
