@@ -2,4 +2,6 @@
 source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
-export default Array.isArray || ((e)=>Object.prototype.toString.call(e) == "[object Array]");
+export default Array.isArray || function(e) {
+    return Object.prototype.toString.call(e) == "[object Array]";
+};

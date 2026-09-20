@@ -563,7 +563,7 @@ Switch.propTypes = {
     location: u.object
 };
 export const matchPath = a;
-export const withRouter = (e)=>{
+export const withRouter = function(e) {
     const TComponent = ({ wrappedComponentRef, ...rest })=><Route children={(t)=>createElement(e, {
                 ...rest,
                 ...t,

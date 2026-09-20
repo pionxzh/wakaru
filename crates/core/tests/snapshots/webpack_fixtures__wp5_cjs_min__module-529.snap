@@ -2,4 +2,6 @@
 source: crates/core/tests/webpack_fixtures.rs
 expression: code
 ---
-export const greet = (r)=>`Hello, ${r}!`;
+export const greet = function(r) {
+    return `Hello, ${r}!`;
+};

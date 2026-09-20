@@ -24,7 +24,7 @@ const E = (e, t)=>({
         [o]: true,
         [e]: t
     });
-const x = (e)=>{
+const x = function(e) {
     r.h(W.fork(e), r.q.object, "detach(eff): argument must be a fork effect");
     e[f].detached = true;
     return e;

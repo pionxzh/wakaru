@@ -57,8 +57,10 @@ ConnectedRouter.propTypes = {
 ConnectedRouter.contextTypes = {
     store: i.object
 };
-export const getLocation = (e)=>e.router.location;
-export const createMatchSelector = (e)=>{
+export const getLocation = function(e) {
+    return e.router.location;
+};
+export const createMatchSelector = function(e) {
     let t = null;
     let n = null;
     return (r)=>{

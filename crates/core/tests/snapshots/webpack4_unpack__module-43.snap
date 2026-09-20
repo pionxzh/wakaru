@@ -54,16 +54,42 @@ export function typeOf(e) {
 export function isConcurrentMode(e) {
     return typeOf(e) === ConcurrentMode;
 }
-export const isAsyncMode = (e)=>isConcurrentMode(e) || typeOf(e) === AsyncMode;
-export const isContextConsumer = (e)=>typeOf(e) === ContextConsumer;
-export const isContextProvider = (e)=>typeOf(e) === ContextProvider;
-export const isElement = (e)=>typeof e === "object" && e !== null && e.$$typeof === Element;
-export const isForwardRef = (e)=>typeOf(e) === ForwardRef;
-export const isFragment = (e)=>typeOf(e) === Fragment;
-export const isLazy = (e)=>typeOf(e) === Lazy;
-export const isMemo = (e)=>typeOf(e) === Memo;
-export const isPortal = (e)=>typeOf(e) === Portal;
-export const isProfiler = (e)=>typeOf(e) === Profiler;
-export const isStrictMode = (e)=>typeOf(e) === StrictMode;
-export const isSuspense = (e)=>typeOf(e) === Suspense;
-export const isValidElementType = (e)=>typeof e === "string" || typeof e === "function" || e === Fragment || e === ConcurrentMode || e === Profiler || e === StrictMode || e === Suspense || e === m || typeof e === "object" && e !== null && (e.$$typeof === Lazy || e.$$typeof === Memo || e.$$typeof === ContextProvider || e.$$typeof === ContextConsumer || e.$$typeof === ForwardRef || e.$$typeof === g || e.$$typeof === w || e.$$typeof === E || e.$$typeof === b);
+export const isAsyncMode = function(e) {
+    return isConcurrentMode(e) || typeOf(e) === AsyncMode;
+};
+export const isContextConsumer = function(e) {
+    return typeOf(e) === ContextConsumer;
+};
+export const isContextProvider = function(e) {
+    return typeOf(e) === ContextProvider;
+};
+export const isElement = function(e) {
+    return typeof e === "object" && e !== null && e.$$typeof === Element;
+};
+export const isForwardRef = function(e) {
+    return typeOf(e) === ForwardRef;
+};
+export const isFragment = function(e) {
+    return typeOf(e) === Fragment;
+};
+export const isLazy = function(e) {
+    return typeOf(e) === Lazy;
+};
+export const isMemo = function(e) {
+    return typeOf(e) === Memo;
+};
+export const isPortal = function(e) {
+    return typeOf(e) === Portal;
+};
+export const isProfiler = function(e) {
+    return typeOf(e) === Profiler;
+};
+export const isStrictMode = function(e) {
+    return typeOf(e) === StrictMode;
+};
+export const isSuspense = function(e) {
+    return typeOf(e) === Suspense;
+};
+export const isValidElementType = function(e) {
+    return typeof e === "string" || typeof e === "function" || e === Fragment || e === ConcurrentMode || e === Profiler || e === StrictMode || e === Suspense || e === m || typeof e === "object" && e !== null && (e.$$typeof === Lazy || e.$$typeof === Memo || e.$$typeof === ContextProvider || e.$$typeof === ContextConsumer || e.$$typeof === ForwardRef || e.$$typeof === g || e.$$typeof === w || e.$$typeof === E || e.$$typeof === b);
+};

@@ -6,4 +6,6 @@ const _a_2 = 0;
 function f(_a) {
     return _a_2 + _a;
 }
-export const a = (x)=>_a_2 + f(x);
+export const a = function(x) {
+    return _a_2 + f(x);
+};
