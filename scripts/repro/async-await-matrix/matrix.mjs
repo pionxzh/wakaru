@@ -629,32 +629,49 @@ const babelProfiles = [
     core: "7.8.7",
     asyncPlugin: ["@babel/plugin-transform-async-to-generator", "7.8.3"],
     regeneratorPlugin: ["@babel/plugin-transform-regenerator", "7.8.7"],
+    asyncGeneratorPlugin: ["@babel/plugin-proposal-async-generator-functions", "7.8.3"],
+    destructuringPlugin: ["@babel/plugin-transform-destructuring", "7.8.3"],
   },
   {
     name: "babel-7.13",
     core: "7.13.16",
     asyncPlugin: ["@babel/plugin-transform-async-to-generator", "7.13.0"],
     regeneratorPlugin: ["@babel/plugin-transform-regenerator", "7.13.15"],
+    asyncGeneratorPlugin: ["@babel/plugin-proposal-async-generator-functions", "7.13.15"],
+    destructuringPlugin: ["@babel/plugin-transform-destructuring", "7.13.17"],
   },
   {
     name: "babel-7.28",
     core: "7.28.5",
     asyncPlugin: ["@babel/plugin-transform-async-to-generator", "7.28.6"],
     regeneratorPlugin: ["@babel/plugin-transform-regenerator", "7.28.4"],
+    asyncGeneratorPlugin: ["@babel/plugin-transform-async-generator-functions", "7.28.6"],
+    destructuringPlugin: ["@babel/plugin-transform-destructuring", "7.28.5"],
   },
   {
     name: "babel-8-rc",
     core: "8.0.0-rc.5",
     asyncPlugin: ["@babel/plugin-transform-async-to-generator", "8.0.0-rc.5"],
     regeneratorPlugin: ["@babel/plugin-transform-regenerator", "8.0.0-rc.5"],
+    asyncGeneratorPlugin: ["@babel/plugin-transform-async-generator-functions", "8.0.0-rc.5"],
+    destructuringPlugin: ["@babel/plugin-transform-destructuring", "8.0.0-rc.5"],
   },
 ];
 
 const allSources = snippets.map((s) => s.source);
 
+// Plugin order follows preset-env: `for await` is lowered by the
+// async-generator-functions plugin before async-to-generator turns the
+// enclosing `async function` into a generator (otherwise `for await` is
+// left inside a plain generator, which is not valid JavaScript), and
+// destructuring is lowered before regenerator hoists declarations (its
+// hoisting has no case for patterns with defaults or rest).
 function babelAsyncBatch(sources, profile, mode) {
-  const plugins = [profile.asyncPlugin];
-  if (mode === "regenerator") plugins.push(profile.regeneratorPlugin);
+  const plugins = [profile.asyncGeneratorPlugin, profile.asyncPlugin];
+  if (mode === "regenerator") {
+    plugins.unshift(profile.destructuringPlugin);
+    plugins.push(profile.regeneratorPlugin);
+  }
   return babelMultiPluginBatch(sources, profile, plugins);
 }
 

@@ -20,22 +20,28 @@ loop recovered as `for…of`). See `../lib/compare.mjs`.
 This replaced an earlier regex name-stripping normalizer that was lossy and
 **false-passed** unrecovered output: Terser-compressed regenerator state
 machines and Babel lazy-init helper artifacts were reported as recovered. Those
-now correctly show as `no`. Remaining `no` rows fall into three honest buckets:
+now correctly show as `no`. Remaining `no` rows fall into four honest buckets:
 
 - **state-machine** — wakaru leaves a Terser-compressed regenerator runtime intact.
 - **degraded** — a helper artifact leaks (`__rest` inlined, `const x = undefined`,
   `push.apply(...)` not recovered).
 - **control-flow** — complex `for await` plus `break` inside `try/finally`
-  remains native or lowered, or leaks generator state opcodes instead of being
-  reconstructed as one structured loop.
+  remains native or lowered (including Babel's `_asyncIterator` protocol
+  lowering), or leaks generator state opcodes instead of being reconstructed
+  as one structured loop.
+- **hoisted destructuring** — after regenerator recovery of the Babel 7.8 and
+  7.13 Terser rows, the destructuring stays in assignment form with
+  `_slicedToArray(temp = defaulted, n)` on an inline-assigned temp, and the
+  `input == null ? await load() : input` pick stays an `if`/`else` temp
+  assignment instead of folding to `??`.
 
 The matrix's `error` count is separate from those Wakaru recovery failures.
-The current errors are producer/harness transform failures: Babel regenerator
-cannot process the added object-pattern/default rows in this plugin setup, and
-older async/regenerator combinations cannot lower the `for await` challenge.
-One failed producer transform also marks its two downstream Terser variants as
-`source not in batch`, so the reported error count grows by three per failed
-source transform. Wakaru is not invoked for those rows.
+It counts producer or harness transform failures, for which Wakaru is not
+invoked; one failed producer transform also marks its two downstream Terser
+variants as `source not in batch`, so the count grows by three per failed
+source transform. The Babel profiles carry the plugins their snippets need
+(see below), so a non-zero error count means a producer regression, not a
+known limitation.
 
 Some hoisted `let x; … x = await …` splits are folded back to `let x = await …`
 by the `MergeDeclarationInit` rule, while others intentionally remain split
@@ -59,10 +65,20 @@ becomes a comma-sequence assignment plus `.apply(this, arguments)` wrapper.
 
 Babel is run in two modes:
 
-- `async-generator`: `@babel/plugin-transform-async-to-generator` only, leaving
+- `async-generator`: `@babel/plugin-transform-async-to-generator`, leaving
   native generator syntax inside `_asyncToGenerator(...)`.
 - `regenerator`: async-to-generator plus `@babel/plugin-transform-regenerator`,
-  producing `regeneratorRuntime.wrap(...)` state-machine output.
+  producing `regeneratorRuntime.wrap(...)` state-machine output, with
+  `@babel/plugin-transform-destructuring` ahead of them because regenerator's
+  declaration hoisting has no case for patterns with defaults or rest.
+
+Both modes also run the async-generator-functions plugin
+(`@babel/plugin-proposal-async-generator-functions` for the 7.8 and 7.13
+profiles, `@babel/plugin-transform-async-generator-functions` from 7.28) ahead
+of async-to-generator, in preset-env order: it lowers `for await` to the
+`_asyncIterator` protocol while the enclosing function is still `async`.
+Without it, async-to-generator leaves `for await` inside a plain generator,
+which is not valid JavaScript and which Terser rejects.
 
 Rows are grouped by distinct lowered output per snippet. The grouping key only
 normalizes CRLF to LF and trims leading/trailing whitespace, so exact helper
