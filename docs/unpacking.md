@@ -312,7 +312,13 @@ Webpack 4 `module.i` spelling is available. Exact CSS-loader runtime adapters
 consume these facts during normal processing. Numeric identity substitution is
 kept independent from any `module.exports` recovery in the same factory, while
 the optional conditional-locals default requires a complete CommonJS runtime
-surface proof. Recursively split children inherit neither detector fact.
+surface proof. A variable-held synchronous UMD factory can also recover its
+default when its sole call uses the generated `.call(exports, require, exports, module)`
+arguments and its anonymous, parameterless body does not observe that invocation
+context. The call stays in place; its undefined-result guard and initial empty
+export object are preserved. Reassignment, escape, direct eval, `with`, and
+other unmodeled CommonJS runtime references keep the original form.
+Recursively split children inherit neither detector fact.
 Detector output may also carry a private per-module failure sidecar. The normal
 driver turns it into an operational diagnostic plus
 `ModuleStatus::DecompileFailed` while preserving the raw extracted body; raw

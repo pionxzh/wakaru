@@ -150,6 +150,12 @@ echo "  wp5-inner-umd-min: Inner CommonJS modules with UMD export branches (5.10
 webpack5_5_109 --config webpack5-inner-umd-min.config.cjs 2>/dev/null
 
 echo ""
+echo "  wp5-variable-factory-min: Variable-held AMD factory with nested arguments use (5.109.0)"
+# Pin the default minifier too: its compression determines the factory shell.
+npx --yes -p webpack@5.109.0 -p webpack-cli@5.1.4 \
+  -p minimizer-webpack-plugin@5.6.1 -p terser@5.49.0 \
+  webpack --config webpack5-variable-factory-min.config.cjs 2>/dev/null
+
 echo "=== Vercel ncc (0.44.1) ==="
 
 echo "  wp5-ncc:           Node CJS bundle with inline webpack startup"

@@ -355,6 +355,38 @@ fn wp5_inner_umd_commonjs_branches_recover_defaults() {
     assert_inner_umd_defaults("wp5-inner-umd-min/bundle.js");
 }
 
+#[test]
+fn wp5_variable_factory_call_recovers_the_default() {
+    let path = "wp5-variable-factory-min/bundle.js";
+    let raw = unpack_raw(
+        &fixture(path),
+        &DecompileOptions {
+            filename: path.into(),
+            ..Default::default()
+        },
+    )
+    .expect("generated factory should unpack");
+    assert!(raw
+        .modules
+        .iter()
+        .any(|(_, code)| code.contains(".call(exports, require, exports, module)")));
+    for maps in [false, true] {
+        let pairs = unpack_fixture_with_options(path, maps);
+        assert_eq!(pairs.len(), 2);
+        assert_eq!(validate_output_modules(&pairs), vec![]);
+        assert_eq!(
+            pairs
+                .iter()
+                .filter(|(_, code)| code.contains("export default"))
+                .count(),
+            2
+        );
+        assert!(pairs
+            .iter()
+            .all(|(_, code)| !code.contains("module.exports")));
+    }
+}
+
 fn assert_inner_umd_defaults(path: &str) {
     let source = fixture(path);
     let raw = unpack_raw(

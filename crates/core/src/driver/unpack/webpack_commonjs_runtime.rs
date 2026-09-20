@@ -36,6 +36,9 @@ pub(super) fn normalize_webpack_commonjs_runtime(
     if let Some(module_id) = numeric_module_id {
         normalize_webpack_css_runtime(module, unresolved_mark, module_id, legacy_module_i);
     }
+    if restore_variable_factory_call(module, unresolved_mark) {
+        return;
+    }
     if !has_supported_module_shell(module) {
         return;
     }
@@ -80,6 +83,211 @@ pub(super) fn normalize_webpack_commonjs_runtime(
             },
         )));
     *module = candidate;
+}
+
+/// Restore a generated UMD factory invocation without evaluating or lifting
+/// its body. The factory is assigned once immediately before its only use.
+/// Runtime arguments/receiver may be dropped only when this anonymous,
+/// synchronous, parameterless function cannot observe them. The result may be
+/// undefined: preserve the guard and webpack's initial empty export object.
+/// Replacing native `Function.prototype.call` relies on `stable_builtins`.
+fn restore_variable_factory_call(module: &mut Module, unresolved_mark: Mark) -> bool {
+    let [ModuleItem::Stmt(Stmt::Decl(Decl::Var(decl))), ModuleItem::Stmt(Stmt::Expr(statement))] =
+        module.body.as_slice()
+    else {
+        return false;
+    };
+    if !matches!(decl.kind, VarDeclKind::Var | VarDeclKind::Let)
+        || decl.decls.len() != 2
+        || decl
+            .decls
+            .iter()
+            .any(|d| d.init.is_some() || !matches!(d.name, Pat::Ident(_)))
+    {
+        return false;
+    }
+    let Expr::Seq(sequence) = strip_parens(&statement.expr) else {
+        return false;
+    };
+    let [init, guarded] = sequence.exprs.as_slice() else {
+        return false;
+    };
+    let capture = fresh_capture_ident(module);
+    let parser = WebpackCommonJsRuntimeNormalizer {
+        unresolved_mark,
+        function_bindings: HashSet::default(),
+        capture: capture.clone(),
+        matches: 0,
+    };
+    let Some(init) = parser.simple_assignment(init) else {
+        return false;
+    };
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(factory)) = &init.left else {
+        return false;
+    };
+    let Expr::Fn(function) = strip_parens(&init.right) else {
+        return false;
+    };
+    if function.ident.is_some()
+        || function.function.is_async
+        || function.function.is_generator
+        || !function.function.params.is_empty()
+    {
+        return false;
+    }
+    let Some(body) = &function.function.body else {
+        return false;
+    };
+    let mut observations = FactoryInvocationObservations::default();
+    body.visit_with(&mut observations);
+    if observations.found || module_has_with_stmt(module) {
+        return false;
+    }
+    let mut eval = DirectEvalAnalyzer::default();
+    module.visit_with(&mut eval);
+    if eval.unknown_direct_eval || !eval.known_direct_eval_sources.is_empty() {
+        return false;
+    }
+    let Expr::Bin(guard) = strip_parens(guarded) else {
+        return false;
+    };
+    if guard.op != BinaryOp::LogicalOr {
+        return false;
+    }
+    let Some(value) = parser.undefined_checked_assignment(&guard.left) else {
+        return false;
+    };
+    let Some(export) = parser.module_exports_assignment(&guard.right) else {
+        return false;
+    };
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(result)) = &value.left else {
+        return false;
+    };
+    if factory.id.to_id() == result.id.to_id()
+        || !matches!(strip_parens(&export.right), Expr::Ident(id) if id.to_id() == result.id.to_id())
+    {
+        return false;
+    }
+    let declarations: HashSet<_> = decl
+        .decls
+        .iter()
+        .filter_map(|d| match &d.name {
+            Pat::Ident(id) => Some(id.id.to_id()),
+            _ => None,
+        })
+        .collect();
+    if !declarations.contains(&factory.id.to_id()) || !declarations.contains(&result.id.to_id()) {
+        return false;
+    }
+    let Expr::Call(call) = strip_parens(&value.right) else {
+        return false;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    let Expr::Member(member) = strip_parens(callee) else {
+        return false;
+    };
+    if !matches!(strip_parens(&member.obj), Expr::Ident(id) if id.to_id() == factory.id.to_id())
+        || !static_member_name_is(&member.prop, "call")
+        || call.args.len() != 4
+        || !call
+            .args
+            .iter()
+            .zip(["exports", "require", "exports", "module"])
+            .all(|(arg, name)| {
+                arg.spread.is_none()
+                    && matches!(strip_parens(&arg.expr), Expr::Ident(id)
+                if id.sym.as_ref() == name && id.ctxt.outer() == unresolved_mark)
+            })
+    {
+        return false;
+    }
+    // No reassignment, property mutation, escape, or self-observation through
+    // the variable holding the function. Matching uses resolver identity.
+    let uses = BindingUseIndex::collect(module);
+    let sites = uses.use_sites(&factory.id.to_id());
+    if sites.len() != 2
+        || sites.iter().filter(|s| s.kind == UseKind::Write).count() != 1
+        || sites
+            .iter()
+            .filter(|s| matches!(&s.kind, UseKind::StaticMemberRead(name) if name == "call"))
+            .count()
+            != 1
+    {
+        return false;
+    }
+
+    let mut direct_call = call.clone();
+    direct_call.callee = Callee::Expr(Box::new(Expr::Ident(factory.id.clone())));
+    direct_call.args.clear();
+    let mut value = value.clone();
+    value.right = Box::new(Expr::Call(direct_call));
+    let Expr::Bin(test) = strip_parens(&guard.left) else {
+        return false;
+    };
+    let mut test = test.clone();
+    if parser.is_undefined_expr(&test.left) {
+        test.right = Box::new(Expr::Assign(value));
+    } else {
+        test.left = Box::new(Expr::Assign(value));
+    }
+    let mut guard = guard.clone();
+    guard.left = Box::new(Expr::Bin(test));
+    guard.right = Box::new(parser.capture_assignment(export.span, export.right.clone()));
+    let mut sequence = sequence.clone();
+    *sequence.exprs[1] = Expr::Bin(guard);
+    let mut candidate = module.clone();
+    candidate.body[1] = ModuleItem::Stmt(Stmt::Expr(ExprStmt {
+        span: statement.span,
+        expr: Box::new(Expr::Seq(sequence)),
+    }));
+    let mut runtime = RuntimeCommonJsReferenceFinder {
+        unresolved_mark,
+        found: false,
+    };
+    candidate.visit_with(&mut runtime);
+    if runtime.found {
+        return false;
+    }
+    candidate
+        .body
+        .insert(0, empty_object_declaration(capture.clone()));
+    candidate
+        .body
+        .push(ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(
+            ExportDefaultExpr {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Ident(capture)),
+            },
+        )));
+    *module = candidate;
+    true
+}
+
+#[derive(Default)]
+struct FactoryInvocationObservations {
+    found: bool,
+}
+
+impl Visit for FactoryInvocationObservations {
+    fn visit_this_expr(&mut self, _: &swc_core::ecma::ast::ThisExpr) {
+        self.found = true;
+    }
+    fn visit_ident(&mut self, id: &Ident) {
+        if id.sym == "arguments" {
+            self.found = true;
+        }
+    }
+    fn visit_meta_prop_expr(&mut self, expr: &swc_core::ecma::ast::MetaPropExpr) {
+        if expr.kind == swc_core::ecma::ast::MetaPropKind::NewTarget {
+            self.found = true;
+        }
+    }
+    // Ordinary nested functions own their invocation context. Arrows and
+    // computed method keys are still visited because they can observe ours.
+    fn visit_function(&mut self, _: &swc_core::ecma::ast::Function) {}
+    fn visit_constructor(&mut self, _: &swc_core::ecma::ast::Constructor) {}
 }
 
 /// A sole synchronous UMD IIFE can receive webpack's initial exports object
@@ -1006,6 +1214,67 @@ mod tests {
 
     fn normalize(source: &str, enabled: bool) -> String {
         normalize_with_module_id(source, enabled, None, false)
+    }
+
+    #[test]
+    fn variable_factory_call_keeps_observed_invocation_context() {
+        for body in [
+            "return this;",
+            "return arguments;",
+            "return () => this;",
+            "return () => arguments;",
+            "return new.target;",
+            "return { [this.key]() {} };",
+            "eval('arguments'); return 1;",
+            "eval(code); return 1;",
+            "with (object) { effect(); } return 1;",
+            "factory = replacement; return 1;",
+            "factory.call = replacement; return 1;",
+            "observe(factory); return 1;",
+            "return exports;",
+            "return require('dependency');",
+            "return module;",
+        ] {
+            let source = format!("var factory, result; factory = function() {{ {body} }}, void 0 === (result = factory.call(exports, require, exports, module)) || (module.exports = result);");
+            assert_eq!(
+                normalize(&source, true),
+                normalize(&source, false),
+                "{source}"
+            );
+        }
+        let source = "var factory, result; factory = function() { return 42; }, void 0 === (result = factory.call(exports, require, exports, module)) || (module.exports = result);";
+        for invalid in [
+            source.replace("function()", "async function()"),
+            source.replace("function()", "function*()"),
+            source.replace("function()", "function(arg)"),
+            source.replace("function()", "function named()"),
+            source.replace("require, exports, module", "require, exports, effect()"),
+            source.replace("require, exports, module", "require, ...exports, module"),
+            source.replace("module.exports = result", "module.exports = factory"),
+            source
+                .replace("factory = function", "ready && (factory = function")
+                .replace("return 42; },", "return 42; }),"),
+        ] {
+            assert_eq!(
+                normalize(&invalid, true),
+                normalize(&invalid, false),
+                "{invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn variable_factory_call_preserves_the_undefined_fallback() {
+        let source = "var factory, result; factory = function() { function api() {} api.sum = function() { return arguments.length; }; return api; }, void 0 === (result = factory.call(exports, require, exports, module)) || (module.exports = result);";
+        let output = normalize(source, true);
+        assert!(output.contains("export default"), "{output}");
+        assert!(output.contains("= {}"), "{output}");
+        assert!(output.contains("result = factory()"), "{output}");
+        assert!(output.contains("arguments.length"), "{output}");
+        assert!(!output.contains("module.exports"), "{output}");
+        let output = normalize(&source.replace("return api;", "return undefined;"), true);
+        assert!(output.contains("= {}"), "{output}");
+        assert!(output.contains("void 0 ==="), "{output}");
     }
 
     #[test]
