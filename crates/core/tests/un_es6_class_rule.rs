@@ -3022,6 +3022,79 @@ fn same_module_iife_param_call_skips_base_class_recovery_in_pipeline() {
         !output.contains("class Foo"),
         "later rules must not recover the skipped base IIFE:\n{output}"
     );
+    assert!(
+        !output.contains("class t"),
+        "later rules must keep the returned constructor callable:\n{output}"
+    );
+    assert!(output.contains("function t()"), "{output}");
+    assert!(output.contains("t.prototype.start = function"), "{output}");
+}
+
+#[test]
+fn consumed_typescript_super_call_does_not_permanently_block_base_recovery() {
+    // Reproduce with TypeScript 5.9.3:
+    //   npx tsc input.ts --target ES5 --module none
+    // The derived IIFE can be recovered and consumes `_super.call`; a fresh
+    // analysis must then allow the base IIFE to recover too.
+    let input = r#"
+var __extends = (this && this.__extends) || (function () {
+    var extendStatics = function (d, b) {
+        extendStatics = Object.setPrototypeOf ||
+            ({ __proto__: [] } instanceof Array && function (d, b) { d.__proto__ = b; }) ||
+            function (d, b) { for (var p in b) if (Object.prototype.hasOwnProperty.call(b, p)) d[p] = b[p]; };
+        return extendStatics(d, b);
+    };
+    return function (d, b) {
+        if (typeof b !== "function" && b !== null)
+            throw new TypeError("Class extends value " + String(b) + " is not a constructor or null");
+        extendStatics(d, b);
+        function __() { this.constructor = d; }
+        d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+    };
+})();
+var Foo = /** @class */ (function () {
+    function Foo() {}
+    Foo.prototype.start = function () { this.onStart(); };
+    Foo.prototype.onStart = function () {};
+    return Foo;
+}());
+var Child = /** @class */ (function (_super) {
+    __extends(Child, _super);
+    function Child() {
+        return _super.call(this) || this;
+    }
+    return Child;
+}(Foo));
+new Child();
+"#;
+    let output = apply(input);
+    assert!(output.contains("class Foo"), "{output}");
+    assert!(output.contains("class Child extends Foo"), "{output}");
+}
+
+#[test]
+fn argument_after_spread_may_feed_callable_iife_parameter() {
+    let input = r#"
+var xs = [];
+var Foo = (function() {
+    function t() {}
+    t.prototype.start = function() { this.onStart(); };
+    return t;
+})();
+var Child = ((Base_1, unused) => {
+    function n() {
+        return Base_1.call(this) || this;
+    }
+    inheritsLoose(n, Base_1);
+    return n;
+})(...xs, Foo);
+new Child();
+"#;
+    let output = apply(input);
+    assert!(
+        !output.contains("class Foo"),
+        "an argument after a possibly-empty spread may still feed Base_1:\n{output}"
+    );
 }
 
 #[test]

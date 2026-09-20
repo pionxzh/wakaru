@@ -356,6 +356,41 @@ class Child extends Base {
 }
 
 #[test]
+fn residual_call_keeps_prototype_constructor_callable() {
+    let input = r#"
+function Foo() {}
+Foo.prototype.start = function() { this.onStart(); };
+function make() {
+    return Foo.call(this);
+}
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn consumed_parent_call_allows_base_on_a_later_pass() {
+    let input = r#"
+function Base() {}
+Base.prototype.base = function() { return true; };
+function Child() {
+    Base.call(this);
+}
+util.inherits(Child, Base);
+Child.prototype.child = function() { return this.base(); };
+"#;
+    let expected = r#"
+class Base {
+    base() { return true; }
+}
+class Child extends Base {
+    constructor() { super(); }
+    child() { return this.base(); }
+}
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
+#[test]
 fn test_closure_function_expression_classes_in_pipeline() {
     let input = r#"
 var Base = function() {};

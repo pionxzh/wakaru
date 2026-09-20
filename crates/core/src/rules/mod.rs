@@ -3,6 +3,7 @@ mod arrow_function;
 mod arrow_return;
 pub(crate) mod binding_facts;
 pub(crate) mod builtin_aliases;
+mod callability;
 mod class_expression_to_declaration;
 mod constructor_sensitivity;
 pub(crate) mod cross_module_helper_refs;

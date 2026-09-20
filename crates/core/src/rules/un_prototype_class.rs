@@ -13,6 +13,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::utils::paren::strip_parens;
 
+use super::callability::CallabilityIndex;
 use super::decl_utils::{
     class_accessor_descriptor_attributes, class_method_has_invalid_signature,
     ensure_setter_has_value_param, has_duplicate_param_names, ClassAccessorDescriptorAttributes,
@@ -23,13 +24,11 @@ pub struct UnPrototypeClass;
 
 impl VisitMut for UnPrototypeClass {
     fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
-        items.visit_mut_children_with(self);
-        transform_module_items(items);
+        transform_module_items_to_fixpoint(items);
     }
 
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
-        stmts.visit_mut_children_with(self);
-        transform_stmts(stmts, &[]);
+        transform_stmts_to_fixpoint(stmts, &[]);
     }
 
     fn visit_mut_function(&mut self, function: &mut Function) {
@@ -66,8 +65,84 @@ impl UnPrototypeClass {
         // A function declaration may share a parameter's binding; a class in
         // the same body may not even reuse its emitted name. Visit nested
         // scopes normally, then guard only this body's direct declarations.
+        transform_stmts_to_fixpoint(&mut body.stmts, parameters);
+    }
+}
+
+struct UnPrototypeClassPass<'a> {
+    callability: &'a CallabilityIndex,
+    converted_any: bool,
+}
+
+impl VisitMut for UnPrototypeClassPass<'_> {
+    fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
+        stmts.visit_mut_children_with(self);
+        self.converted_any |= transform_stmts(stmts, &[], self.callability);
+    }
+
+    fn visit_mut_function(&mut self, function: &mut Function) {
+        let mut body = function.body.take();
+        function.visit_mut_children_with(self);
+        if let Some(body) = &mut body {
+            self.visit_parameter_body(body, &find_pat_ids::<_, BindingKey>(&function.params));
+        }
+        function.body = body;
+    }
+
+    fn visit_mut_constructor(&mut self, constructor: &mut Constructor) {
+        let mut body = constructor.body.take();
+        constructor.visit_mut_children_with(self);
+        if let Some(body) = &mut body {
+            self.visit_parameter_body(body, &find_pat_ids::<_, BindingKey>(&constructor.params));
+        }
+        constructor.body = body;
+    }
+
+    fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
+        arrow.params.visit_mut_with(self);
+        match &mut *arrow.body {
+            ArrowFunctionBody::FunctionBody(body) => {
+                self.visit_parameter_body(body, &find_pat_ids::<_, BindingKey>(&arrow.params));
+            }
+            ArrowFunctionBody::Expr(expr) => expr.visit_mut_with(self),
+        }
+    }
+}
+
+impl UnPrototypeClassPass<'_> {
+    fn visit_parameter_body(&mut self, body: &mut FunctionBody, parameters: &[BindingKey]) {
         body.stmts.visit_mut_children_with(self);
-        transform_stmts(&mut body.stmts, parameters);
+        self.converted_any |= transform_stmts(&mut body.stmts, parameters, self.callability);
+    }
+}
+
+fn transform_module_items_to_fixpoint(items: &mut Vec<ModuleItem>) {
+    loop {
+        let callability = CallabilityIndex::collect_module_items(items);
+        let mut pass = UnPrototypeClassPass {
+            callability: &callability,
+            converted_any: false,
+        };
+        items.visit_mut_children_with(&mut pass);
+        pass.converted_any |= transform_module_items(items, &callability);
+        if !pass.converted_any {
+            break;
+        }
+    }
+}
+
+fn transform_stmts_to_fixpoint(stmts: &mut Vec<Stmt>, parameters: &[BindingKey]) {
+    loop {
+        let callability = CallabilityIndex::collect_stmts(stmts);
+        let mut pass = UnPrototypeClassPass {
+            callability: &callability,
+            converted_any: false,
+        };
+        stmts.visit_mut_children_with(&mut pass);
+        pass.converted_any |= transform_stmts(stmts, parameters, &callability);
+        if !pass.converted_any {
+            break;
+        }
     }
 }
 
@@ -105,7 +180,7 @@ enum ConstructorKind {
     VariableFunction,
 }
 
-fn transform_module_items(items: &mut Vec<ModuleItem>) {
+fn transform_module_items(items: &mut Vec<ModuleItem>, callability: &CallabilityIndex) -> bool {
     // Extract statements for analysis
     let stmts: Vec<Option<&Stmt>> = items
         .iter()
@@ -115,7 +190,7 @@ fn transform_module_items(items: &mut Vec<ModuleItem>) {
         })
         .collect();
 
-    let candidates: Vec<_> = find_candidates(&stmts, true)
+    let candidates: Vec<_> = find_candidates(&stmts, true, callability)
         .into_iter()
         .filter(|candidate| {
             candidate.constructor_kind != ConstructorKind::FunctionDeclaration
@@ -126,7 +201,7 @@ fn transform_module_items(items: &mut Vec<ModuleItem>) {
         })
         .collect();
     if candidates.is_empty() {
-        return;
+        return false;
     }
 
     let mut all_consumed: HashSet<usize> = candidates
@@ -143,6 +218,7 @@ fn transform_module_items(items: &mut Vec<ModuleItem>) {
         candidates.iter().map(|c| (c.fn_decl_idx, c)).collect();
 
     let old: Vec<ModuleItem> = std::mem::take(items);
+    let mut converted_any = false;
     for (i, item) in old.iter().enumerate() {
         if all_consumed.contains(&i) {
             continue;
@@ -151,6 +227,7 @@ fn transform_module_items(items: &mut Vec<ModuleItem>) {
             if let ModuleItem::Stmt(stmt) = item {
                 if let Some(class_decl) = build_class_decl(candidate, stmt) {
                     items.push(ModuleItem::Stmt(Stmt::Decl(Decl::Class(class_decl))));
+                    converted_any = true;
                     for &pre_idx in &candidate.pre_ref_indices {
                         items.push(old[pre_idx].clone());
                     }
@@ -169,11 +246,16 @@ fn transform_module_items(items: &mut Vec<ModuleItem>) {
             items.push(item.clone());
         }
     }
+    converted_any
 }
 
-fn transform_stmts(stmts: &mut Vec<Stmt>, parameters: &[BindingKey]) {
+fn transform_stmts(
+    stmts: &mut Vec<Stmt>,
+    parameters: &[BindingKey],
+    callability: &CallabilityIndex,
+) -> bool {
     let stmt_opts: Vec<Option<&Stmt>> = stmts.iter().map(Some).collect();
-    let candidates: Vec<_> = find_candidates(&stmt_opts, false)
+    let candidates: Vec<_> = find_candidates(&stmt_opts, false, callability)
         .into_iter()
         .filter(|candidate| {
             !parameters
@@ -182,7 +264,7 @@ fn transform_stmts(stmts: &mut Vec<Stmt>, parameters: &[BindingKey]) {
         })
         .collect();
     if candidates.is_empty() {
-        return;
+        return false;
     }
 
     let mut all_consumed: HashSet<usize> = candidates
@@ -198,6 +280,7 @@ fn transform_stmts(stmts: &mut Vec<Stmt>, parameters: &[BindingKey]) {
         candidates.iter().map(|c| (c.fn_decl_idx, c)).collect();
 
     let old: Vec<Stmt> = std::mem::take(stmts);
+    let mut converted_any = false;
     for (i, stmt) in old.iter().enumerate() {
         if all_consumed.contains(&i) {
             continue;
@@ -205,6 +288,7 @@ fn transform_stmts(stmts: &mut Vec<Stmt>, parameters: &[BindingKey]) {
         if let Some(candidate) = fn_decl_map.get(&i) {
             if let Some(class_decl) = build_class_decl(candidate, stmt) {
                 stmts.push(Stmt::Decl(Decl::Class(class_decl)));
+                converted_any = true;
                 for &pre_idx in &candidate.pre_ref_indices {
                     stmts.push(old[pre_idx].clone());
                 }
@@ -219,6 +303,7 @@ fn transform_stmts(stmts: &mut Vec<Stmt>, parameters: &[BindingKey]) {
             stmts.push(stmt.clone());
         }
     }
+    converted_any
 }
 
 fn debug_assert_candidate_points_to_function_decl(item: &ModuleItem) {
@@ -276,7 +361,11 @@ fn extract_constructor(
 }
 
 /// Find all class candidates in a list of statements.
-fn find_candidates(stmts: &[Option<&Stmt>], allow_module_var: bool) -> Vec<ClassCandidate> {
+fn find_candidates(
+    stmts: &[Option<&Stmt>],
+    allow_module_var: bool,
+    callability: &CallabilityIndex,
+) -> Vec<ClassCandidate> {
     let len = stmts.len();
     let get_stmt = |i: usize| stmts[i];
     // Phase 1: Find function declarations and single-declarator anonymous
@@ -322,7 +411,7 @@ fn find_candidates(stmts: &[Option<&Stmt>], allow_module_var: bool) -> Vec<Class
     let mut globally_consumed: HashSet<usize> = HashSet::default();
 
     for (fn_idx, binding, constructor_kind) in &fn_decls {
-        if !names_with_proto_methods.contains(binding) {
+        if !names_with_proto_methods.contains(binding) || callability.requires_call(binding) {
             continue;
         }
 
