@@ -1866,8 +1866,8 @@ impl SystemExecuteTransformer {
                 let mut saw_export = false;
                 // Fused `(n = _export("Name", v)).prop =` and `v = y = _export(...)`
                 // are not Call / `ident = _export()` / `_export().prop =`.
-                // visit_mut still rewrites the call and flushes `export let`
-                // into items; dropping that Vec used to leave a bare assign.
+                // visit_mut still rewrites the call and queues `export let`;
+                // dropping these items used to leave a bare assign.
                 let mut kept_pending = false;
                 for expr in &seq.exprs {
                     let export_items = match strip_paren_expr(expr) {
@@ -1877,9 +1877,9 @@ impl SystemExecuteTransformer {
                             .or_else(|| self.take_ident_assign_export(assign)),
                         _ => None,
                     };
-                    if let Some(export_items) = export_items {
-                        items.extend(export_items);
+                    let mut operand_items = if let Some(export_items) = export_items {
                         saw_export = true;
+                        export_items
                     } else {
                         let mut stmt = Stmt::Expr(ExprStmt {
                             span: DUMMY_SP,
@@ -1887,13 +1887,17 @@ impl SystemExecuteTransformer {
                         });
                         stmt.visit_mut_with(self);
                         parenthesize_lifted_stmt_expr(&mut stmt);
-                        let pending = self.take_pending_expr_export_decls();
-                        if !pending.is_empty() {
-                            kept_pending = true;
-                        }
-                        items.extend(pending);
-                        items.push(ModuleItem::Stmt(stmt));
+                        vec![ModuleItem::Stmt(stmt)]
+                    };
+                    // A recognized outer export can contain an expression-position
+                    // export. Its declaration must precede the outer item's write,
+                    // not wait for the next unrecognized sequence operand.
+                    let pending = self.take_pending_expr_export_decls();
+                    if !pending.is_empty() {
+                        kept_pending = true;
                     }
+                    items.extend(pending);
+                    items.append(&mut operand_items);
                 }
                 (saw_export || kept_pending).then_some(items)
             }

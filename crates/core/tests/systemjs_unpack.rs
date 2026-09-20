@@ -2075,6 +2075,38 @@ System.register("entry", [], function (_export) {
 }
 
 #[test]
+fn nested_member_export_in_execute_sequence_declares_inner_before_use() {
+    // TypeScript 5.9.3 `--module system`, followed by Terser 5.31.6 with
+    // `sequences=1000,passes=3,pure_getters=true`, produces this from:
+    //   export let Outer: any;
+    //   export let Inner: any;
+    //   (Outer = makeOuter()).prop = Inner = makeInner();
+    //   after();
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      _export("Outer", makeOuter()).prop = _export("Inner", makeInner()), after();
+    }
+  };
+});
+"#;
+    assert_seq_pending_export_roundtrip(source, "nested member export");
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    let declaration = entry
+        .find("export let Inner;")
+        .unwrap_or_else(|| panic!("the nested export needs a live binding:\n{entry}"));
+    let assignment = entry
+        .find("Inner = makeInner()")
+        .unwrap_or_else(|| panic!("the nested export write must survive:\n{entry}"));
+    assert!(
+        declaration < assignment,
+        "the live binding must be initialized before its first write:\n{entry}"
+    );
+}
+
+#[test]
 fn fused_member_export_beside_later_single_keeps_existing_live_binding() {
     // A later top-level `_export("alias", n)` already set saw_export. The
     // fused name must stay a live binding, not a second `export`.
