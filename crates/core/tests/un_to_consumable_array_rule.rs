@@ -611,10 +611,19 @@ function f(_maybeArrayLike, _toConsumableArray, items) {
     use(out);
 }
 "#;
+    let expected = r#"
+function f(_maybeArrayLike, _toConsumableArray, items) {
+    const out = [head].concat(_maybeArrayLike(_toConsumableArray, items), [
+        tail
+    ]);
+    use(out);
+}
+"#;
     let output = render(input);
+    assert_eq_normalized(&output, expected);
     assert!(
-        output.contains("..._maybeArrayLike(_toConsumableArray, items)"),
-        "should preserve local _maybeArrayLike call:\n{output}"
+        !output.contains("..._maybeArrayLike"),
+        "unknown concat arg must not become spread:\n{output}"
     );
     assert!(
         !output.contains("...items"),

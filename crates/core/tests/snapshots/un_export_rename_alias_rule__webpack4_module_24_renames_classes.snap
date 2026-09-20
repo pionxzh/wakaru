@@ -12,18 +12,38 @@ import { a } from "./module-15.js";
 import { compile } from "./module-14.js";
 import le from "./module-30.js";
 export const Router = s.a;
-export class BrowserRouter extends Component {
-    constructor(...i){
-        super(...i);
-        this.history = createBrowserHistory(this.props);
+export const BrowserRouter = ((Component_1)=>{
+    function t(...i) {
+        let n;
+        let r;
+        n = r = Component_1.call(...[
+            this
+        ].concat(i));
+        r.history = createBrowserHistory(r.props);
+        return n;
     }
-    componentWillMount() {
+    ((e, t)=>{
+        if (typeof t !== "function" && t !== null) {
+            throw new TypeError(`Super expression must either be null or a function, not ${typeof t}`);
+        }
+        e.prototype = Object.create(t && t.prototype, {
+            constructor: {
+                value: e,
+                enumerable: false,
+                writable: true,
+                configurable: true
+            }
+        });
+        t && (Object.setPrototypeOf ? Object.setPrototypeOf(e, t) : e.__proto__ = t);
+    })(t, Component_1);
+    t.prototype.componentWillMount = function() {
         r(!this.props.history, "<BrowserRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { BrowserRouter as Router }`.");
-    }
-    render() {
+    };
+    t.prototype.render = function() {
         return <Router history={this.history} children={this.props.children}/>;
-    }
-}
+    };
+    return t;
+})(Component);
 BrowserRouter.propTypes = {
     basename: u.string,
     forceRefresh: u.bool,
@@ -31,18 +51,38 @@ BrowserRouter.propTypes = {
     keyLength: u.number,
     children: u.node
 };
-export class HashRouter extends Component {
-    constructor(...i){
-        super(...i);
-        this.history = createHashHistory(this.props);
+export const HashRouter = ((Component_1)=>{
+    function t(...i) {
+        let n;
+        let r;
+        n = r = Component_1.call(...[
+            this
+        ].concat(i));
+        r.history = createHashHistory(r.props);
+        return n;
     }
-    componentWillMount() {
+    ((e, t)=>{
+        if (typeof t !== "function" && t !== null) {
+            throw new TypeError(`Super expression must either be null or a function, not ${typeof t}`);
+        }
+        e.prototype = Object.create(t && t.prototype, {
+            constructor: {
+                value: e,
+                enumerable: false,
+                writable: true,
+                configurable: true
+            }
+        });
+        t && (Object.setPrototypeOf ? Object.setPrototypeOf(e, t) : e.__proto__ = t);
+    })(t, Component_1);
+    t.prototype.componentWillMount = function() {
         r(!this.props.history, "<HashRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { HashRouter as Router }`.");
-    }
-    render() {
+    };
+    t.prototype.render = function() {
         return <Router history={this.history} children={this.props.children}/>;
-    }
-}
+    };
+    return t;
+})(Component);
 HashRouter.propTypes = {
     basename: u.string,
     getUserConfirmation: u.func,
@@ -54,11 +94,14 @@ HashRouter.propTypes = {
     children: u.node
 };
 const x = (e)=>!!(e.metaKey || e.altKey || e.ctrlKey || e.shiftKey);
-export class Link extends Component {
-    constructor(...i_1){
-        super(...i_1);
-        var r = this;
-        this.handleClick = (e)=>{
+export const Link = ((Component_1)=>{
+    function t(...i_1) {
+        let n;
+        let r;
+        n = r = Component_1.call(...[
+            this
+        ].concat(i_1));
+        r.handleClick = (e)=>{
             if (r.props.onClick) {
                 r.props.onClick(e);
             }
@@ -74,8 +117,23 @@ export class Link extends Component {
                 }
             }
         };
+        return n;
     }
-    render() {
+    ((e, t)=>{
+        if (typeof t !== "function" && t !== null) {
+            throw new TypeError(`Super expression must either be null or a function, not ${typeof t}`);
+        }
+        e.prototype = Object.create(t && t.prototype, {
+            constructor: {
+                value: e,
+                enumerable: false,
+                writable: true,
+                configurable: true
+            }
+        });
+        t && (Object.setPrototypeOf ? Object.setPrototypeOf(e, t) : e.__proto__ = t);
+    })(t, Component_1);
+    t.prototype.render = function() {
         const props = this.props;
         const { replace: _replace, to, innerRef, ...rest } = props;
         b(this.context.router, "You should not use <Link> outside a <Router>");
@@ -84,8 +142,9 @@ export class Link extends Component {
         const i = typeof to === "string" ? createLocation(to, null, null, history.location) : to;
         const href = history.createHref(i);
         return <a {...rest} onClick={this.handleClick} href={href} ref={innerRef}/>;
-    }
-}
+    };
+    return t;
+})(Component);
 Link.propTypes = {
     onClick: u.func,
     target: u.string,
@@ -111,18 +170,38 @@ Link.contextTypes = {
         }).isRequired
     }).isRequired
 };
-export class MemoryRouter extends Component {
-    constructor(...i){
-        super(...i);
-        this.history = createMemoryHistory(this.props);
+export const MemoryRouter = ((Component_1)=>{
+    function t(...i) {
+        let n;
+        let r;
+        n = r = Component_1.call(...[
+            this
+        ].concat(i));
+        r.history = createMemoryHistory(r.props);
+        return n;
     }
-    componentWillMount() {
+    ((e, t)=>{
+        if (typeof t !== "function" && t !== null) {
+            throw new TypeError(`Super expression must either be null or a function, not ${typeof t}`);
+        }
+        e.prototype = Object.create(t && t.prototype, {
+            constructor: {
+                value: e,
+                enumerable: false,
+                writable: true,
+                configurable: true
+            }
+        });
+        t && (Object.setPrototypeOf ? Object.setPrototypeOf(e, t) : e.__proto__ = t);
+    })(t, Component_1);
+    t.prototype.componentWillMount = function() {
         r(!this.props.history, "<MemoryRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { MemoryRouter as Router }`.");
-    }
-    render() {
+    };
+    t.prototype.render = function() {
         return <s.a history={this.history} children={this.props.children}/>;
-    }
-}
+    };
+    return t;
+})(Component);
 MemoryRouter.propTypes = {
     initialEntries: u.array,
     initialIndex: u.number,
@@ -131,14 +210,33 @@ MemoryRouter.propTypes = {
     children: u.node
 };
 const R = (e)=>Children.count(e) === 0;
-export class Route extends Component {
-    constructor(...i){
-        super(...i);
-        this.state = {
-            match: this.computeMatch(this.props, this.context.router)
+export const Route = ((Component_1)=>{
+    function t(...i) {
+        let n;
+        let r;
+        n = r = Component_1.call(...[
+            this
+        ].concat(i));
+        r.state = {
+            match: r.computeMatch(r.props, r.context.router)
         };
+        return n;
     }
-    getChildContext() {
+    ((e, t)=>{
+        if (typeof t !== "function" && t !== null) {
+            throw new TypeError(`Super expression must either be null or a function, not ${typeof t}`);
+        }
+        e.prototype = Object.create(t && t.prototype, {
+            constructor: {
+                value: e,
+                enumerable: false,
+                writable: true,
+                configurable: true
+            }
+        });
+        t && (Object.setPrototypeOf ? Object.setPrototypeOf(e, t) : e.__proto__ = t);
+    })(t, Component_1);
+    t.prototype.getChildContext = function() {
         return {
             router: {
                 ...this.context.router,
@@ -148,8 +246,8 @@ export class Route extends Component {
                 }
             }
         };
-    }
-    computeMatch({ computedMatch, location, path, strict, exact, sensitive }, t) {
+    };
+    t.prototype.computeMatch = ({ computedMatch, location, path, strict, exact, sensitive }, t)=>{
         if (computedMatch) {
             return computedMatch;
         }
@@ -162,20 +260,20 @@ export class Route extends Component {
             exact,
             sensitive
         }, t_route.match);
-    }
-    componentWillMount() {
+    };
+    t.prototype.componentWillMount = function() {
         r(!(this.props.component && this.props.render), "You should not use <Route component> and <Route render> in the same route; <Route render> will be ignored");
         r(!(this.props.component && this.props.children && !R(this.props.children)), "You should not use <Route component> and <Route children> in the same route; <Route children> will be ignored");
         r(!(this.props.render && this.props.children && !R(this.props.children)), "You should not use <Route render> and <Route children> in the same route; <Route children> will be ignored");
-    }
-    componentWillReceiveProps(e, t) {
+    };
+    t.prototype.componentWillReceiveProps = function(e, t) {
         r(!(e.location && !this.props.location), '<Route> elements should not change from uncontrolled to controlled (or vice versa). You initially used no "location" prop and then provided one on a subsequent render.');
         r(!(!e.location && this.props.location), '<Route> elements should not change from controlled to uncontrolled (or vice versa). You provided a "location" prop initially but omitted it on a subsequent render.');
         this.setState({
             match: this.computeMatch(e, t.router)
         });
-    }
-    render() {
+    };
+    t.prototype.render = function() {
         const match = this.state.match;
         const props = this.props;
         const { children, component: Component, render } = props;
@@ -206,8 +304,9 @@ export class Route extends Component {
             return Children.only(children);
         }
         return null;
-    }
-}
+    };
+    return t;
+})(Component);
 Route.propTypes = {
     computedMatch: u.object,
     path: u.string,
@@ -439,39 +538,57 @@ const ee = (e)=>()=>{
         b(false, "You cannot %s with <StaticRouter>", e);
     };
 const te = ()=>{};
-export class StaticRouter extends Component {
-    constructor(...i){
-        super(...i);
-        var r = this;
-        this.createHref = (e)=>X(r.props.basename + Z(e));
-        this.handlePush = (e)=>{
+export const StaticRouter = ((Component_1)=>{
+    function t(...i) {
+        let n;
+        let r;
+        n = r = Component_1.call(...[
+            this
+        ].concat(i));
+        r.createHref = (e)=>X(r.props.basename + Z(e));
+        r.handlePush = (e)=>{
             const r_props = r.props;
             const { basename, context } = r_props;
             context.action = "PUSH";
             context.location = J(basename, createLocation(e));
             context.url = Z(context.location);
         };
-        this.handleReplace = (e)=>{
+        r.handleReplace = (e)=>{
             const r_props = r.props;
             const { basename, context } = r_props;
             context.action = "REPLACE";
             context.location = J(basename, createLocation(e));
             context.url = Z(context.location);
         };
-        this.handleListen = ()=>te;
-        this.handleBlock = ()=>te;
+        r.handleListen = ()=>te;
+        r.handleBlock = ()=>te;
+        return n;
     }
-    getChildContext() {
+    ((e, t)=>{
+        if (typeof t !== "function" && t !== null) {
+            throw new TypeError(`Super expression must either be null or a function, not ${typeof t}`);
+        }
+        e.prototype = Object.create(t && t.prototype, {
+            constructor: {
+                value: e,
+                enumerable: false,
+                writable: true,
+                configurable: true
+            }
+        });
+        t && (Object.setPrototypeOf ? Object.setPrototypeOf(e, t) : e.__proto__ = t);
+    })(t, Component_1);
+    t.prototype.getChildContext = function() {
         return {
             router: {
                 staticContext: this.props.context
             }
         };
-    }
-    componentWillMount() {
+    };
+    t.prototype.componentWillMount = function() {
         r(!this.props.history, "<StaticRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { StaticRouter as Router }`.");
-    }
-    render() {
+    };
+    t.prototype.render = function() {
         const props = this.props;
         const { basename, context: _context, location, ...rest } = props;
         const history = {
@@ -499,8 +616,9 @@ export class StaticRouter extends Component {
             block: this.handleBlock
         };
         return <s.a {...rest} history={history}/>;
-    }
-}
+    };
+    return t;
+})(Component);
 StaticRouter.propTypes = {
     basename: u.string,
     context: u.object.isRequired,

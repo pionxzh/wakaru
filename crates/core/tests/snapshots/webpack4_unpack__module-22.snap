@@ -475,7 +475,9 @@ ${e.stack}`;
         if (k = u.d.select(e)) {
             return (({ selector, args }, t)=>{
                 try {
-                    const i = selector(r(), ...args);
+                    const i = selector(...[
+                        r()
+                    ].concat(args));
                     t(i);
                 } catch (e) {
                     t(e, true);
