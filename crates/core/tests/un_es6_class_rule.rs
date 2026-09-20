@@ -2055,6 +2055,95 @@ class Foo extends Bar {
 }
 
 #[test]
+fn babel_loose_alias_expanded_inheritance_is_recovered() {
+    let input = r#"
+function setPrototypeOf(object, prototype) {
+    return setPrototypeOf = Object.setPrototypeOf
+        ? Object.setPrototypeOf.bind()
+        : function(object, prototype) {
+            object.__proto__ = prototype;
+            return object;
+        }, setPrototypeOf(object, prototype);
+}
+var Child = (function(Base_1) {
+    function Child() {
+        return Base_1.apply(this, arguments) || this;
+    }
+    var constructorAlias, baseAlias;
+    baseAlias = Base_1;
+    constructorAlias = Child;
+    constructorAlias.prototype = Object.create(baseAlias.prototype);
+    constructorAlias.prototype.constructor = constructorAlias;
+    setPrototypeOf(constructorAlias, baseAlias);
+    Child.prototype.run = function() { return this.value; };
+    return Child;
+}(Base));
+"#;
+    let expected = r#"
+class Child extends Base {
+    run() { return this.value; }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn babel_loose_inheritance_with_an_escaping_alias_is_preserved() {
+    let input = r#"
+function setPrototypeOf(object, prototype) {
+    return setPrototypeOf = Object.setPrototypeOf
+        ? Object.setPrototypeOf.bind()
+        : function(object, prototype) {
+            object.__proto__ = prototype;
+            return object;
+        }, setPrototypeOf(object, prototype);
+}
+var Child = (function(Base_1) {
+    function Child() {
+        return Base_1.apply(this, arguments) || this;
+    }
+    var constructorAlias, baseAlias;
+    baseAlias = Base_1;
+    constructorAlias = Child;
+    constructorAlias.prototype = Object.create(baseAlias.prototype);
+    constructorAlias.prototype.constructor = constructorAlias;
+    setPrototypeOf(constructorAlias, baseAlias);
+    observe(constructorAlias);
+    Child.prototype.run = function() { return this.value; };
+    return Child;
+}(Base));
+"#;
+    let output = apply(input);
+    assert!(!output.contains("class Child"), "{output}");
+    assert!(output.contains("observe(constructorAlias)"), "{output}");
+    assert!(
+        output.contains("constructorAlias.prototype = Object.create"),
+        "{output}"
+    );
+}
+
+#[test]
+fn babel_loose_minified_inheritance_recovers_through_pipeline() {
+    // Reproduce from native `class Base` / `class Child extends Base` with:
+    // Babel 7.24.9 + preset-env 7.24.8 (`loose: true`, modules disabled),
+    // then Terser 5.31.6 (`--compress passes=3 --mangle --module`).
+    let input = r#"
+function t(o,r){return t=Object.setPrototypeOf?Object.setPrototypeOf.bind():function(t,o){return t.__proto__=o,t},t(o,r)}
+export var Base=function(){function t(t){void 0===t&&(t=1),this.value=t}return t.prototype.method=function(){return this.value},t}();
+export var Child=function(o){function r(){return o.apply(this,arguments)||this}var e,n;return n=o,(e=r).prototype=Object.create(n.prototype),e.prototype.constructor=e,t(e,n),r.prototype.slugify=function(){return this.method()},r}(Base);
+export const child=new Child;
+"#;
+    let output = render(input);
+    assert!(output.contains("export class Base"), "{output}");
+    assert!(
+        output.contains("export class Child extends Base"),
+        "{output}"
+    );
+    assert!(!output.contains("prototype = Object.create"), "{output}");
+    assert!(!output.contains(".apply(this, arguments)"), "{output}");
+}
+
+#[test]
 fn swc_external_inherits_loose_import() {
     let input = r#"
 import { _ as _inherits_loose } from "@swc/helpers/_/_inherits_loose";

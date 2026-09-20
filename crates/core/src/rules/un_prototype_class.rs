@@ -576,6 +576,7 @@ fn find_candidates(
         // and the leftover assignment would target a class's non-writable
         // `prototype` (a strict-mode TypeError). This hazard is independent
         // of the constructor's declaration shape.
+        let constructor_aliases = collect_constructor_aliases(stmts, binding);
         let has_retained_prototype_replacement = (0..len).any(|i| {
             get_stmt(i).is_some_and(|stmt| {
                 // These exact whole-prototype writes are consumed as recognized
@@ -583,7 +584,10 @@ fn find_candidates(
                 let consumed_inheritance = candidate.consumed_indices.contains(&i)
                     && (extract_chained_inheritance(stmt, binding).is_some()
                         || extract_object_create_inheritance(stmt, binding).is_some());
-                !consumed_inheritance && contains_prototype_replacement(stmt, binding)
+                !consumed_inheritance
+                    && constructor_aliases
+                        .iter()
+                        .any(|alias| contains_prototype_replacement(stmt, alias))
             })
         });
         if has_retained_prototype_replacement {
@@ -619,6 +623,52 @@ fn call_receives_constructor(stmt: &Stmt, binding: &BindingKey) -> bool {
 fn is_call_referencing_binding(stmt: &Stmt, binding: &BindingKey) -> bool {
     matches!(stmt, Stmt::Expr(expr_stmt) if matches!(expr_stmt.expr.as_ref(), Expr::Call(_)))
         && references_binding(stmt, binding, true)
+}
+
+/// Collect bindings reached by direct assignments such as `alias = Foo`.
+/// A later whole-prototype write through any such alias may still target
+/// Foo's prototype object and therefore prevents safe native-class recovery.
+fn collect_constructor_aliases(
+    stmts: &[Option<&Stmt>],
+    constructor: &BindingKey,
+) -> HashSet<BindingKey> {
+    #[derive(Default)]
+    struct AliasAssignments {
+        pairs: Vec<(BindingKey, BindingKey)>,
+    }
+
+    impl Visit for AliasAssignments {
+        fn visit_assign_expr(&mut self, assign: &swc_core::ecma::ast::AssignExpr) {
+            if assign.op == AssignOp::Assign {
+                if let AssignTarget::Simple(SimpleAssignTarget::Ident(target)) = &assign.left {
+                    if let Expr::Ident(source) = strip_parens(&assign.right) {
+                        self.pairs
+                            .push((binding_key(&target.id), binding_key(source)));
+                    }
+                }
+            }
+            assign.visit_children_with(self);
+        }
+    }
+
+    let mut assignments = AliasAssignments::default();
+    for stmt in stmts.iter().flatten() {
+        stmt.visit_with(&mut assignments);
+    }
+
+    let mut aliases = HashSet::default();
+    aliases.insert(constructor.clone());
+    loop {
+        let mut changed = false;
+        for (target, source) in &assignments.pairs {
+            if aliases.contains(source) {
+                changed |= aliases.insert(target.clone());
+            }
+        }
+        if !changed {
+            return aliases;
+        }
+    }
 }
 
 /// Check if a statement contains an assignment that replaces the whole

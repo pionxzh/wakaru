@@ -1178,6 +1178,24 @@ Child.prototype.run = function() {{ return this.value; }};
     }
 }
 
+#[test]
+fn alias_prototype_replacement_preserves_function_constructor() {
+    // Babel loose inheritance can route the whole-prototype replacement
+    // through a constructor alias. If the surrounding class-IIFE recognizer
+    // cannot consume the complete setup, this fallback must stay callable.
+    let input = r#"
+function Child() { return Base.apply(this, arguments) || this; }
+var constructorAlias, baseAlias;
+baseAlias = Base;
+constructorAlias = Child;
+constructorAlias.prototype = Object.create(baseAlias.prototype);
+constructorAlias.prototype.constructor = constructorAlias;
+runtimeLink(constructorAlias, baseAlias);
+Child.prototype.run = function() { return this.value; };
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
 // ============================================================
 // Named function expressions: the inner name binding
 // ============================================================

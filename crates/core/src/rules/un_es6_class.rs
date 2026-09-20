@@ -361,6 +361,7 @@ impl VisitMut for UnEs6ClassInner {
                             &scoped_inner.helpers.tslib_namespaces,
                             &scoped_inner.helpers.create_class_helpers,
                             &scoped_inner.helpers.call_super_helpers,
+                            &scoped_inner.helpers.set_prototype_of_helpers,
                             &scoped_inner.helpers.ts_extends_helpers,
                             scoped_inner.inheritance_uses.as_deref(),
                             self.unresolved_mark,
@@ -413,6 +414,7 @@ impl VisitMut for UnEs6ClassInner {
                             &self.helpers.tslib_namespaces,
                             &self.helpers.create_class_helpers,
                             &self.helpers.call_super_helpers,
+                            &self.helpers.set_prototype_of_helpers,
                             &self.helpers.ts_extends_helpers,
                             self.inheritance_uses.as_deref(),
                             self.unresolved_mark,
@@ -437,6 +439,7 @@ impl VisitMut for UnEs6ClassInner {
                             &self.helpers.tslib_namespaces,
                             &self.helpers.create_class_helpers,
                             &self.helpers.call_super_helpers,
+                            &self.helpers.set_prototype_of_helpers,
                             &self.helpers.ts_extends_helpers,
                             self.inheritance_uses.as_deref(),
                             self.unresolved_mark,
@@ -1101,6 +1104,7 @@ fn try_iife_to_class(
     tslib_namespaces: &HashSet<BindingKey>,
     create_class_helpers: &HashSet<BindingKey>,
     call_super_helpers: &HashSet<BindingKey>,
+    set_prototype_of_helpers: &HashSet<BindingKey>,
     ts_extends_helpers: &HashSet<BindingKey>,
     inheritance_uses: Option<&BindingUseIndex>,
     unresolved_mark: Mark,
@@ -1161,7 +1165,7 @@ fn try_iife_to_class(
     };
 
     // The IIFE takes 0 args (no extends) or 1 arg (extends from _super)
-    let (mut super_class, inner_param): (Option<Box<Expr>>, Option<Atom>) = match call.args.len() {
+    let (mut super_class, inner_param): (Option<Box<Expr>>, Option<Ident>) = match call.args.len() {
         0 => {
             // 0-arg IIFE — may still have inheritance via inline _inherits IIFE.
             // Allow unused params (older Babel output keeps the _super param but
@@ -1176,7 +1180,7 @@ fn try_iife_to_class(
                 return None;
             };
             let super_expr = call.args[0].expr.clone();
-            (Some(super_expr), Some(param_id.sym.clone()))
+            (Some(super_expr), Some(param_id.clone()))
         }
         _ => return None,
     };
@@ -1194,11 +1198,12 @@ fn try_iife_to_class(
     let mut class_body = parse_class_body(
         body_stmts,
         &class_name.sym,
-        inner_param.as_deref(),
+        inner_param.as_ref(),
         inherits_helpers,
         tslib_namespaces,
         create_class_helpers,
         call_super_helpers,
+        set_prototype_of_helpers,
         super_class.is_some(),
         rewrite_level >= RewriteLevel::Standard,
         unresolved_mark,
@@ -1410,10 +1415,237 @@ fn extract_iife_call(expr: &Expr) -> Option<&CallExpr> {
 // Class body parsing
 // ============================================================
 
+/// Match Babel loose inheritance after Terser expands `_inheritsLoose` through
+/// two temporary aliases:
+///
+/// ```js
+/// baseAlias = Base;
+/// constructorAlias = Child;
+/// constructorAlias.prototype = Object.create(baseAlias.prototype);
+/// constructorAlias.prototype.constructor = constructorAlias;
+/// setPrototypeOf(constructorAlias, baseAlias);
+/// ```
+///
+/// The aliases must be otherwise unused, and the final call must target a
+/// body-shape-proven Babel `_setPrototypeOf` helper. Returning every consumed
+/// statement index lets the class parser remove the setup as one atomic unit.
+fn babel_loose_inheritance_setup_indices(
+    stmts: &[Stmt],
+    inner_ctor: &Ident,
+    super_param: &Ident,
+    set_prototype_of_helpers: &HashSet<BindingKey>,
+    unresolved_mark: Mark,
+) -> Option<HashSet<usize>> {
+    const SETUP_LEN: usize = 5;
+    if stmts.len() < SETUP_LEN {
+        return None;
+    }
+
+    let inner_ctor = binding_key(inner_ctor);
+    let super_param = binding_key(super_param);
+    let all_uses = BindingUseIndex::collect_stmts(stmts);
+
+    for start in 0..=stmts.len() - SETUP_LEN {
+        let Some(base_alias) = direct_alias_assignment(&stmts[start], &super_param) else {
+            continue;
+        };
+        let Some(constructor_alias) = direct_alias_assignment(&stmts[start + 1], &inner_ctor)
+        else {
+            continue;
+        };
+        if base_alias == constructor_alias
+            || base_alias == inner_ctor
+            || base_alias == super_param
+            || constructor_alias == inner_ctor
+            || constructor_alias == super_param
+        {
+            continue;
+        }
+        if !is_alias_prototype_create(
+            &stmts[start + 2],
+            &constructor_alias,
+            &base_alias,
+            unresolved_mark,
+        ) || !is_alias_constructor_restore(&stmts[start + 3], &constructor_alias)
+            || !is_alias_set_prototype_of_call(
+                &stmts[start + 4],
+                &constructor_alias,
+                &base_alias,
+                set_prototype_of_helpers,
+            )
+        {
+            continue;
+        }
+
+        let aliases: HashSet<BindingKey> = [constructor_alias.clone(), base_alias.clone()]
+            .into_iter()
+            .collect();
+        let mut declarations = HashSet::default();
+        let mut consumed: HashSet<usize> = (start..start + SETUP_LEN).collect();
+        for (index, stmt) in stmts.iter().enumerate().take(start) {
+            let Stmt::Decl(Decl::Var(var)) = stmt else {
+                continue;
+            };
+            if var.kind != VarDeclKind::Var || var.decls.is_empty() {
+                continue;
+            }
+            let declared: Option<Vec<_>> = var
+                .decls
+                .iter()
+                .map(|decl| {
+                    if decl.init.is_some() {
+                        return None;
+                    }
+                    let Pat::Ident(binding) = &decl.name else {
+                        return None;
+                    };
+                    let key = binding_key(&binding.id);
+                    aliases.contains(&key).then_some(key)
+                })
+                .collect();
+            let Some(declared) = declared else {
+                continue;
+            };
+            declarations.extend(declared);
+            consumed.insert(index);
+        }
+        if declarations != aliases
+            || aliases
+                .iter()
+                .any(|alias| !all_uses.has_single_declaration(alias))
+        {
+            continue;
+        }
+
+        let consumed_stmts: Vec<_> = stmts
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| consumed.contains(index))
+            .map(|(_, stmt)| stmt.clone())
+            .collect();
+        let consumed_uses = BindingUseIndex::collect_stmts(&consumed_stmts);
+        if aliases
+            .iter()
+            .any(|alias| all_uses.use_count(alias) != consumed_uses.use_count(alias))
+        {
+            continue;
+        }
+
+        return Some(consumed);
+    }
+    None
+}
+
+fn direct_alias_assignment(stmt: &Stmt, source: &BindingKey) -> Option<BindingKey> {
+    let Stmt::Expr(statement) = stmt else {
+        return None;
+    };
+    let Expr::Assign(assign) = strip_parens(&statement.expr) else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(target)) = &assign.left else {
+        return None;
+    };
+    let Expr::Ident(value) = strip_parens(&assign.right) else {
+        return None;
+    };
+    (binding_key(value) == *source).then(|| binding_key(&target.id))
+}
+
+fn is_binding_prototype(expr: &Expr, binding: &BindingKey) -> bool {
+    let Expr::Member(member) = strip_parens(expr) else {
+        return false;
+    };
+    matches!(strip_parens(&member.obj), Expr::Ident(id) if binding_key(id) == *binding)
+        && matches!(&member.prop, MemberProp::Ident(name) if name.sym == "prototype")
+}
+
+fn is_alias_prototype_create(
+    stmt: &Stmt,
+    constructor_alias: &BindingKey,
+    base_alias: &BindingKey,
+    unresolved_mark: Mark,
+) -> bool {
+    let Stmt::Expr(statement) = stmt else {
+        return false;
+    };
+    let Expr::Assign(assign) = strip_parens(&statement.expr) else {
+        return false;
+    };
+    if assign.op != AssignOp::Assign {
+        return false;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Member(target)) = &assign.left else {
+        return false;
+    };
+    if !is_binding_prototype(&Expr::Member(target.clone()), constructor_alias) {
+        return false;
+    }
+    let Expr::Call(call) = strip_parens(&assign.right) else {
+        return false;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    call.args.len() == 1
+        && call.args[0].spread.is_none()
+        && is_object_create_callee(callee, unresolved_mark)
+        && is_binding_prototype(&call.args[0].expr, base_alias)
+}
+
+fn is_alias_constructor_restore(stmt: &Stmt, constructor_alias: &BindingKey) -> bool {
+    let Stmt::Expr(statement) = stmt else {
+        return false;
+    };
+    let Expr::Assign(assign) = strip_parens(&statement.expr) else {
+        return false;
+    };
+    if assign.op != AssignOp::Assign {
+        return false;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Member(target)) = &assign.left else {
+        return false;
+    };
+    if !matches!(&target.prop, MemberProp::Ident(name) if name.sym == "constructor")
+        || !is_binding_prototype(&target.obj, constructor_alias)
+    {
+        return false;
+    }
+    matches!(strip_parens(&assign.right), Expr::Ident(id) if binding_key(id) == *constructor_alias)
+}
+
+fn is_alias_set_prototype_of_call(
+    stmt: &Stmt,
+    constructor_alias: &BindingKey,
+    base_alias: &BindingKey,
+    helpers: &HashSet<BindingKey>,
+) -> bool {
+    let Stmt::Expr(statement) = stmt else {
+        return false;
+    };
+    let Expr::Call(call) = strip_parens(&statement.expr) else {
+        return false;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    let Expr::Ident(helper) = strip_parens(callee) else {
+        return false;
+    };
+    call.args.len() == 2
+        && call.args.iter().all(|arg| arg.spread.is_none())
+        && helpers.contains(&binding_key(helper))
+        && matches!(strip_parens(&call.args[0].expr), Expr::Ident(id) if binding_key(id) == *constructor_alias)
+        && matches!(strip_parens(&call.args[1].expr), Expr::Ident(id) if binding_key(id) == *base_alias)
+}
+
 /// Parse the statements inside the IIFE body and collect class members.
 ///
 /// `class_name` — the outer variable name (e.g. `"Foo"`)
-/// `super_param` — the IIFE parameter name that represents `_super` (if inheriting)
+/// `super_param` — the IIFE parameter binding that represents `_super` (if inheriting)
 /// `has_super` — true when a super class was discovered (either from IIFE arg or inline inherits)
 ///
 /// Returns None if any statement is unrecognised (conservative — no false positives).
@@ -1421,22 +1653,34 @@ fn extract_iife_call(expr: &Expr) -> Option<&CallExpr> {
 fn parse_class_body(
     stmts: &[Stmt],
     class_name: &str,
-    super_param: Option<&str>,
+    super_param: Option<&Ident>,
     inherits_helpers: &HashSet<BindingKey>,
     tslib_namespaces: &HashSet<BindingKey>,
     create_class_helpers: &HashSet<BindingKey>,
     call_super_helpers: &HashSet<BindingKey>,
+    set_prototype_of_helpers: &HashSet<BindingKey>,
     has_super: bool,
     allow_standard_assumptions: bool,
     unresolved_mark: Mark,
 ) -> Option<Vec<ClassMember>> {
     // The first real statement should define the constructor function.
     // We need to identify the inner constructor function name (often mangled, e.g. `t`).
-    let inner_ctor_name = find_inner_constructor_name(stmts)?;
+    let inner_ctor = find_inner_constructor_ident(stmts)?;
+    let inner_ctor_name = inner_ctor.sym.as_ref();
+    let alias_inheritance = super_param.and_then(|super_param| {
+        babel_loose_inheritance_setup_indices(
+            stmts,
+            inner_ctor,
+            super_param,
+            set_prototype_of_helpers,
+            unresolved_mark,
+        )
+    });
+    let super_param = super_param.map(|ident| ident.sym.as_ref());
 
     let mut members: Vec<ClassMember> = Vec::new();
     // Tracks whether we've seen and handled the `__extends` / `_inherits` call
-    let mut extends_handled = false;
+    let mut extends_handled = alias_inheritance.is_some();
     // Tracks an alias for `t.prototype` introduced in Babel loose mode:
     //   `var proto = t.prototype;`
     let mut proto_alias: Option<Atom> = None;
@@ -1447,7 +1691,7 @@ fn parse_class_body(
     let needs_super_rewrite = super_param.is_some() || has_super;
 
     let mut in_directive_prologue = true;
-    for stmt in stmts {
+    for (stmt_index, stmt) in stmts.iter().enumerate() {
         if in_directive_prologue && is_use_strict_directive(stmt) {
             // The recovered class constructor and methods are intrinsically
             // strict, so this wrapper directive is consumed by the class
@@ -1455,6 +1699,13 @@ fn parse_class_body(
             continue;
         }
         in_directive_prologue = false;
+
+        if alias_inheritance
+            .as_ref()
+            .is_some_and(|indices| indices.contains(&stmt_index))
+        {
+            continue;
+        }
 
         // `return t;` or `return _createClass(t, ...)` or
         // `return t.method1 = fn, t.method2 = fn, ..., t;` — end of IIFE body
