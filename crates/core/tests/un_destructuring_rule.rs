@@ -1111,7 +1111,10 @@ use(first, nested, inner_rest, outer_rest);
 }
 
 #[test]
-fn preserves_assignment_temp_decl_when_used_before_group() {
+fn keeps_assignment_temp_read_before_the_group() {
+    // A read of the temp anywhere outside the matched statements means the
+    // temp escapes the pattern (docs/rewrite-assumptions.md, "Generated
+    // Temporaries"), even when the read precedes the group in this list.
     let input = r#"
 let source;
 let tmp;
@@ -1122,16 +1125,7 @@ tmp = source.profile;
 name = (tmp === undefined ? {} : tmp).name;
 use(name);
 "#;
-    let expected = r#"
-let source;
-let tmp;
-let name;
-use(tmp);
-source = input;
-({ profile: { name } = {} } = source);
-use(name);
-"#;
-    assert_eq_normalized(&apply(input), expected);
+    assert_eq_normalized(&apply(input), input);
 }
 
 #[test]
@@ -1507,4 +1501,177 @@ function Ur(e) {
     assert!(output.contains("(n = e).transport"), "{output}");
     assert!(output.contains("let n;"), "{output}");
     assert!(!output.contains("let t;"), "{output}");
+}
+
+#[test]
+fn keeps_nested_default_temp_that_an_export_specifier_reads() {
+    // The export specifier sits outside the statement list the group matcher
+    // sees. Removing `tmp` with the group would leave a dangling export.
+    let input = r#"
+import { _ as _to_array } from "@swc/helpers/_/_to_array";
+var _items = _to_array(items);
+var first = _items[0];
+var tmp = _items[1];
+var _ref = _to_array(tmp === undefined ? [] : tmp);
+var nested = _ref[0];
+var inner_rest = _ref.slice(1);
+var outer_rest = _items.slice(2);
+console.log(first, nested, inner_rest, outer_rest);
+export { tmp };
+"#;
+    let expected = r#"
+import { _ as _to_array } from "@swc/helpers/_/_to_array";
+var _items = _to_array(items);
+var first = _items[0];
+var tmp = _items[1];
+var [nested, ...inner_rest] = _to_array(tmp === undefined ? [] : tmp);
+var outer_rest = _items.slice(2);
+console.log(first, nested, inner_rest, outer_rest);
+export { tmp };
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn keeps_spread_group_temp_that_an_export_declaration_reads() {
+    // `export function` is a module item, so the driver splits the statement
+    // list before it; the reader is invisible to a scan of that list.
+    let input = r#"
+var _items = [...items];
+var first = _items[0];
+var tmp = _items[1];
+var _ref = [...(tmp === undefined ? [] : tmp)];
+var nested = _ref[0];
+var inner_rest = _ref.slice(1);
+var outer_rest = _items.slice(2);
+export function read() { return tmp; }
+"#;
+    let expected = r#"
+var _items = [...items];
+var first = _items[0];
+var tmp = _items[1];
+var [nested, ...inner_rest] = tmp === undefined ? [] : tmp;
+var outer_rest = _items.slice(2);
+export function read() { return tmp; }
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn keeps_group_temp_read_by_a_closure_declared_earlier() {
+    // The closure precedes the group; a scan of the statements after the
+    // group never sees it.
+    let input = r#"
+function demo(items) {
+  function read() { return tmp; }
+  var _items = [...items];
+  var first = _items[0];
+  var tmp = _items[1];
+  var _ref = [...(tmp === undefined ? [] : tmp)];
+  var nested = _ref[0];
+  var inner_rest = _ref.slice(1);
+  var outer_rest = _items.slice(2);
+  return [first, nested, inner_rest, outer_rest, read()];
+}
+"#;
+    let expected = r#"
+function demo(items) {
+  function read() { return tmp; }
+  var _items = [...items];
+  var first = _items[0];
+  var tmp = _items[1];
+  var [nested, ...inner_rest] = tmp === undefined ? [] : tmp;
+  var outer_rest = _items.slice(2);
+  return [first, nested, inner_rest, outer_rest, read()];
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn keeps_assigned_temp_that_an_export_specifier_reads() {
+    let input = r#"
+var a, t, b;
+a = obj.a;
+t = obj.b;
+b = t === undefined ? 1 : t;
+export { t };
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn keeps_undefined_declarator_read_by_an_earlier_closure() {
+    let input = r#"
+function demo(items) {
+  function read() { return _dead; }
+  const _dead = undefined;
+  const _ref = [...items];
+  const first = _ref[0];
+  const rest = _ref.slice(1);
+  return [first, rest, read()];
+}
+"#;
+    let expected = r#"
+function demo(items) {
+  function read() { return _dead; }
+  const _dead = undefined;
+  const [first, ...rest] = items;
+  return [first, rest, read()];
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn keeps_undefined_declarator_that_an_export_specifier_reads() {
+    let input = r#"
+const _dead = undefined;
+const _ref = [...items];
+const first = _ref[0];
+const rest = _ref.slice(1);
+console.log(first, rest);
+export { _dead };
+"#;
+    let expected = r#"
+const _dead = undefined;
+const [first, ...rest] = items;
+console.log(first, rest);
+export { _dead };
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn leaves_a_long_unmatched_undefined_run_in_place() {
+    // Each declarator is a candidate sentinel with no group after it. The
+    // run is long enough that re-scanning the list per declarator per start
+    // position would take minutes in a debug build; the output must be
+    // unchanged and the test must finish promptly.
+    let input: String = (0..1500)
+        .map(|index| format!("const _tmp{index} = undefined;\n"))
+        .collect();
+    assert_eq_normalized(&apply(&input), &input);
+}
+
+#[test]
+fn pipeline_keeps_exported_temp_through_nested_rest_recovery() {
+    let input = r#"
+import { _ as _to_array } from "@swc/helpers/_/_to_array";
+var _items = _to_array(items);
+var first = _items[0];
+var tmp = _items[1];
+var _ref = _to_array(tmp === undefined ? [] : tmp);
+var nested = _ref[0];
+var inner_rest = _ref.slice(1);
+var outer_rest = _items.slice(2);
+console.log(first, nested, inner_rest, outer_rest);
+export { tmp };
+"#;
+    let output = common::render_pipeline(input);
+    assert!(output.contains("tmp"), "{output}");
+    assert!(
+        output.contains("const tmp = _items[1]") || output.contains("export const tmp"),
+        "{output}"
+    );
 }
