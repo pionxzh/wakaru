@@ -2,5 +2,9 @@
 source: crates/core/tests/webpack_fixtures.rs
 expression: code
 ---
-export const add = (r, o)=>r + o;
-export const multiply = (r, o)=>r * o;
+export const add = function(r, o) {
+    return r + o;
+};
+export const multiply = function(r, o) {
+    return r * o;
+};

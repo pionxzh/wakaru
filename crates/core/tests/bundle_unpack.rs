@@ -3062,7 +3062,7 @@ fn webpack5_require_g_is_recovered_as_global() {
         "webpack require.g.process should not survive:\n{global}"
     );
     assert!(
-        global.contains("=>require.g"),
+        global.contains("function(require)") && global.contains("return require.g"),
         "inner parameter named require should not be rewritten:\n{global}"
     );
 }
@@ -3136,7 +3136,8 @@ fn webpack5_amd_and_module_decorators_are_recovered() {
         "webpack hmd/amdO helpers should not survive:\n{runtime_helpers}"
     );
     assert!(
-        runtime_helpers.contains("=>require.amdO"),
+        runtime_helpers.contains("function(require)")
+            && runtime_helpers.contains("return require.amdO"),
         "inner parameter named require should not be rewritten:\n{runtime_helpers}"
     );
 

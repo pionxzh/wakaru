@@ -5,13 +5,19 @@ expression: code
 import { FETCH_DATA } from "./module-19.js";
 import { START, SUCCESS } from "./module-26.js";
 import "./module-13.js";
-export const startFetchingData = ()=>({
+export const startFetchingData = function() {
+    return {
         type: FETCH_DATA + START
-    });
-export const fetchDataSuccess = (payload)=>({
+    };
+};
+export const fetchDataSuccess = function(payload) {
+    return {
         type: FETCH_DATA + SUCCESS,
         payload
-    });
-export const fetchData = ()=>({
+    };
+};
+export const fetchData = function() {
+    return {
         type: FETCH_DATA
-    });
+    };
+};

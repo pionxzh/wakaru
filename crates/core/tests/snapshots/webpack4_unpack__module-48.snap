@@ -8651,7 +8651,7 @@ export const __SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED = {
     version: "16.14.0",
     rendererPackageName: "react-dom"
 });
-export const findDOMNode = (e)=>{
+export const findDOMNode = function(e) {
     if (e == null) {
         return null;
     }
@@ -8667,7 +8667,7 @@ export const findDOMNode = (e)=>{
     }
     return e = (e = tt(e__reactInternalFiber)) === null ? null : e.stateNode;
 };
-export const flushSync = (e, t)=>{
+export const flushSync = function(e, t) {
     if ((Nu & (Tu | Su)) !== xu) {
         throw Error(a(187));
     }
@@ -8680,19 +8680,19 @@ export const flushSync = (e, t)=>{
         Qo();
     }
 };
-export const hydrate = (e, t, n)=>{
+export const hydrate = function(e, t, n) {
     if (!Vl(t)) {
         throw Error(a(200));
     }
     return Ql(null, e, t, true, n);
 };
-export const render = (e, t, n)=>{
+export const render = function(e, t, n) {
     if (!Vl(t)) {
         throw Error(a(200));
     }
     return Ql(null, e, t, false, n);
 };
-export const unmountComponentAtNode = (e)=>{
+export const unmountComponentAtNode = function(e) {
     if (!Vl(e)) {
         throw Error(a(40));
     }
@@ -8703,8 +8703,10 @@ export const unmountComponentAtNode = (e)=>{
         });
     }), true);
 };
-export const unstable_createPortal = (e, t, _param_2 = null)=>createPortal(e, t, _param_2);
-export const unstable_renderSubtreeIntoContainer = (e, t, n, r)=>{
+export const unstable_createPortal = function(e, t, _param_2 = null) {
+    return createPortal(e, t, _param_2);
+};
+export const unstable_renderSubtreeIntoContainer = function(e, t, n, r) {
     if (!Vl(n)) {
         throw Error(a(200));
     }

@@ -768,8 +768,12 @@ var helper = (
 );
 "#;
     let expected = r#"
-export const first = value => value + 1;
-export const second = value => first(value);
+export const first = function(value) {
+    return value + 1;
+};
+export const second = function(value) {
+    return first(value);
+};
 consume(second(1));
 const helper = value => value;
 "#;
@@ -2492,7 +2496,9 @@ module.exports.runtime = function() {
     let expected = r#"
 const marker = typeof runtime !== "undefined" && runtime.pid ? runtime.pid : "";
 export default function() { return marker; };
-const _runtime = () => marker;
+const _runtime = function() {
+    return marker;
+};
 export { _runtime as runtime };
 "#;
     let output = apply(input);

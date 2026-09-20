@@ -647,15 +647,17 @@ process(n);
 
 #[test]
 fn no_inline_into_nested_function() {
-    // t used inside nested fn — top-level count is 0, shouldn't inline
-    // ArrowFunction rule converts the function expression to an arrow function.
+    // t used inside nested fn — top-level count is 0, shouldn't inline.
+    // Named exports keep a constructable function expression.
     let input = r#"
 const t = foo;
 export const fn2 = function() { return t; };
 "#;
     let expected = r#"
 const t = foo;
-export const fn2 = () => t;
+export const fn2 = function() {
+    return t;
+};
 "#;
     let output = apply_pipeline(input);
     assert_eq_normalized(&output, expected);

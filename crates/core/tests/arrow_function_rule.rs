@@ -626,10 +626,10 @@ fn function_with_arguments_converted_via_arg_rest() {
     // Arrow functions have no own `arguments`, but after ArgRest runs that is no
     // longer a blocker.
     let input = r#"
-export const fn = function() { return arguments[0]; };
+const fn = function() { return arguments[0]; };
 "#;
     let expected = r#"
-export const fn = (...args) => args[0];
+const fn = (...args) => args[0];
 "#;
     let output = apply_pipeline(input);
     assert_eq_normalized(&output, expected);
@@ -700,6 +700,174 @@ export default function() {
         return value;
     });
 }
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn named_exported_function_expression_not_converted() {
+    // A named export remains constructable by another module even when this
+    // file never uses `new`. Nested callbacks may still become arrows.
+    let input = r#"
+export const Name = function() {
+    return values.map(function(v) {
+        return v;
+    });
+};
+"#;
+    let expected = r#"
+export const Name = function() {
+    return values.map(v => {
+        return v;
+    });
+};
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn named_exported_empty_function_stays_constructible() {
+    let input = r#"
+export const Name = function() {};
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn named_exported_empty_function_stays_constructible_in_pipeline() {
+    let input = r#"
+export const Name = function() {};
+"#;
+    let output = apply_pipeline(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn named_export_specifier_keeps_function() {
+    let input = r#"
+const Name = function() {};
+export { Name };
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn named_export_alias_keeps_local_function() {
+    let input = r#"
+const local = function() {};
+export { local as Name };
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn assigned_then_named_export_keeps_function() {
+    let input = r#"
+var Name;
+Name = function() {};
+export { Name };
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn named_exported_paren_function_expression_not_converted() {
+    let input = r#"
+export const Name = (function() {});
+"#;
+    let expected = r#"
+export const Name = function() {};
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn named_exported_sequence_result_not_converted() {
+    let input = r#"
+export const Name = (0, function() {});
+"#;
+    let expected = r#"
+export const Name = (0, function() {});
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn inner_shadow_same_short_name_still_converts() {
+    // Binding identity is (sym, ctxt). An inner `Name` is not the export.
+    let input = r#"
+export const Name = function() {
+    const Name = function() {
+        return 42;
+    };
+    return Name;
+};
+"#;
+    let expected = r#"
+export const Name = function() {
+    const Name = () => {
+        return 42;
+    };
+    return Name;
+};
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn exported_helper_callback_argument_still_converts() {
+    let input = r#"
+export const Name = helper(function() {
+    return 1;
+});
+"#;
+    let expected = r#"
+export const Name = helper(() => {
+    return 1;
+});
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn exported_iife_call_still_converts_callee() {
+    let input = r#"
+export const C = (function(x) {
+    return x + 1;
+})(1);
+"#;
+    let expected = r#"
+export const C = ((x) => {
+    return x + 1;
+})(1);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn reexport_from_module_does_not_preserve_unrelated_local() {
+    let input = r#"
+export { foo } from "./dep.js";
+const Name = function() {
+    return 1;
+};
+"#;
+    let expected = r#"
+export { foo } from "./dep.js";
+const Name = () => {
+    return 1;
+};
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);

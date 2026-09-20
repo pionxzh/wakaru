@@ -5,7 +5,7 @@ expression: code
 import _r from "./module-14.js";
 const i = {};
 let _a = 0;
-export const a = (e, t = {}, n)=>{
+export const a = function(e, t = {}, n) {
     if (typeof t === "string") {
         t = {
             path: t

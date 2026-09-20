@@ -1,6 +1,5 @@
 ---
 source: crates/core/tests/webpack4_unpack.rs
-assertion_line: 208
 expression: code
 ---
 import r from "./module-29.js";
@@ -338,7 +337,7 @@ export const cloneElement = function(e, t, n) {
         _owner: e__owner
     };
 };
-export const createContext = (e, _calculateChangedBits = null)=>{
+export const createContext = function(e, _calculateChangedBits = null) {
     e = {
         $$typeof: f,
         _calculateChangedBits,
@@ -354,37 +353,63 @@ export const createContext = (e, _calculateChangedBits = null)=>{
     };
     return e.Consumer = e;
 };
-export const createFactory = (e)=>{
+export const createFactory = function(e) {
     const t = createElement.bind(null, e);
     t.type = e;
     return t;
 };
-export const createRef = ()=>({
+export const createRef = function() {
+    return {
         current: null
-    });
-export const forwardRef = (render)=>({
+    };
+};
+export const forwardRef = function(render) {
+    return {
         $$typeof: d,
         render
-    });
-export const lazy = (_ctor)=>({
+    };
+};
+export const lazy = function(_ctor) {
+    return {
         $$typeof: m,
         _ctor,
         _status: -1,
         _result: null
-    });
-export const memo = (type, t)=>({
+    };
+};
+export const memo = function(type, t) {
+    return {
         $$typeof: h,
         type,
         compare: t === undefined ? null : t
-    });
-export const useCallback = (e, t)=>z().useCallback(e, t);
-export const useContext = (e, t)=>z().useContext(e, t);
-export const useDebugValue = ()=>{};
-export const useEffect = (e, t)=>z().useEffect(e, t);
-export const useImperativeHandle = (e, t, n)=>z().useImperativeHandle(e, t, n);
-export const useLayoutEffect = (e, t)=>z().useLayoutEffect(e, t);
-export const useMemo = (e, t)=>z().useMemo(e, t);
-export const useReducer = (e, t, n)=>z().useReducer(e, t, n);
-export const useRef = (e)=>z().useRef(e);
-export const useState = (e)=>z().useState(e);
+    };
+};
+export const useCallback = function(e, t) {
+    return z().useCallback(e, t);
+};
+export const useContext = function(e, t) {
+    return z().useContext(e, t);
+};
+export const useDebugValue = function() {};
+export const useEffect = function(e, t) {
+    return z().useEffect(e, t);
+};
+export const useImperativeHandle = function(e, t, n) {
+    return z().useImperativeHandle(e, t, n);
+};
+export const useLayoutEffect = function(e, t) {
+    return z().useLayoutEffect(e, t);
+};
+export const useMemo = function(e, t) {
+    return z().useMemo(e, t);
+};
+export const useReducer = function(e, t, n) {
+    return z().useReducer(e, t, n);
+};
+export const useRef = function(e) {
+    return z().useRef(e);
+};
+export const useState = function(e) {
+    return z().useState(e);
+};
 export const version = "16.14.0";

@@ -8,7 +8,9 @@ import { a as a_2 } from "./module-12.js";
 export const a = {
     type: "@@redux-saga/CHANNEL_END"
 };
-const l = (e)=>e && e.type === "@@redux-saga/CHANNEL_END";
+const l = function(e) {
+    return e && e.type === "@@redux-saga/CHANNEL_END";
+};
 function c() {
     const e = [];
     return {
