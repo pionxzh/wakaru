@@ -24,7 +24,7 @@ use super::decl_utils::{
 };
 use super::eval_utils::has_dynamic_scope_construct;
 use super::expr_utils::is_unresolved_ident;
-use super::helper_matcher::{binding_key, BindingKey};
+use super::helper_matcher::{binding_key, expr_binding_key, member_prop_name, BindingKey};
 use super::transpiler_helper_utils::{
     detect_helper_from_path, is_call_super_fn, is_inherits_fn, is_set_prototype_of_fn,
     is_tslib_path, is_tslib_require_expr_with_mark, tslib_member_ts_helper_kind,
@@ -325,6 +325,126 @@ fn reused_var_bindings_in_items(items: &[ModuleItem]) -> HashSet<BindingKey> {
     collector.reused
 }
 
+/// `.call` / `.apply` sites that still treat a constructor binding as a
+/// callable. Native `class` has no `[[Call]]`, so UnEs6Class must leave the
+/// matching IIFE as a function when any of these sites sit *outside* it.
+///
+/// Direct: `Ident.call` / `Ident.apply` (object must be an Ident).
+/// Alias: IIFE/arrow argument `C` whose matching parameter is used as
+/// `.call` / `.apply`. Does not chase `const x = C; x.call` or `C.call.apply`.
+struct LeftoverCtorCallIndex {
+    sites: Vec<(BindingKey, Span)>,
+}
+
+impl LeftoverCtorCallIndex {
+    fn blocks(&self, key: BindingKey, iife_span: Span) -> bool {
+        self.sites.iter().any(|(site_key, site_span)| {
+            *site_key == key && !span_contained_by(*site_span, iife_span)
+        })
+    }
+}
+
+fn span_contained_by(inner: Span, outer: Span) -> bool {
+    inner.lo.0 >= outer.lo.0 && inner.hi.0 <= outer.hi.0
+}
+
+fn leftover_ctor_call_bindings<N: VisitWith<LeftoverCtorCallCollector>>(
+    node: &N,
+) -> LeftoverCtorCallIndex {
+    let mut collector = LeftoverCtorCallCollector::default();
+    node.visit_with(&mut collector);
+    LeftoverCtorCallIndex {
+        sites: collector.sites,
+    }
+}
+
+#[derive(Default)]
+struct LeftoverCtorCallCollector {
+    sites: Vec<(BindingKey, Span)>,
+}
+
+impl LeftoverCtorCallCollector {
+    fn record_iife_param_aliases(&mut self, call: &CallExpr) {
+        let Callee::Expr(callee) = &call.callee else {
+            return;
+        };
+        let inner = strip_parens(callee);
+        let params: Vec<&Pat> = match inner {
+            Expr::Fn(fn_expr) => fn_expr.function.params.iter().map(|p| &p.pat).collect(),
+            Expr::Arrow(arrow) => arrow.params.iter().collect(),
+            _ => return,
+        };
+        for (i, arg) in call.args.iter().enumerate() {
+            if arg.spread.is_some() {
+                continue;
+            }
+            let Some(arg_key) = expr_binding_key(strip_parens(&arg.expr)) else {
+                continue;
+            };
+            let Some(param) = params.get(i) else {
+                continue;
+            };
+            let Pat::Ident(BindingIdent { id: param_id, .. }) = param else {
+                continue;
+            };
+            if let Some(span) = first_ident_call_or_apply_span(inner, binding_key(param_id)) {
+                self.sites.push((arg_key, span));
+            }
+        }
+    }
+}
+
+impl Visit for LeftoverCtorCallCollector {
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if let Some(id) = ident_of_call_or_apply(call) {
+            self.sites.push((binding_key(id), call.span));
+        }
+        self.record_iife_param_aliases(call);
+        call.visit_children_with(self);
+    }
+}
+
+/// `Foo.call(...)` / `Foo.apply(...)` — the callee object must be an Ident.
+fn ident_of_call_or_apply(call: &CallExpr) -> Option<&Ident> {
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Member(member) = strip_parens(callee) else {
+        return None;
+    };
+    if !member_prop_name(&member.prop, "call") && !member_prop_name(&member.prop, "apply") {
+        return None;
+    }
+    match strip_parens(&member.obj) {
+        Expr::Ident(id) => Some(id),
+        _ => None,
+    }
+}
+
+fn first_ident_call_or_apply_span(expr: &Expr, key: BindingKey) -> Option<Span> {
+    struct Finder {
+        key: BindingKey,
+        span: Option<Span>,
+    }
+    impl Visit for Finder {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if self.span.is_some() {
+                return;
+            }
+            if let Some(id) = ident_of_call_or_apply(call) {
+                if binding_key(id) == self.key {
+                    self.span = Some(call.span);
+                    return;
+                }
+            }
+            call.visit_children_with(self);
+        }
+    }
+    let mut finder = Finder { key, span: None };
+    expr.visit_with(&mut finder);
+    finder.span
+}
+
 impl VisitMut for UnEs6ClassInner {
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
         let mut scope_helpers = Es6ClassHelperContext::from_stmts(stmts, self.unresolved_mark);
@@ -337,6 +457,7 @@ impl VisitMut for UnEs6ClassInner {
         scoped_inner.inheritance_uses = self.inheritance_uses.clone();
         stmts.visit_mut_children_with(&mut scoped_inner);
 
+        let leftover_super_calls = leftover_ctor_call_bindings(stmts);
         let mut converted_any = false;
         let old = std::mem::take(stmts);
         for stmt in old {
@@ -345,6 +466,7 @@ impl VisitMut for UnEs6ClassInner {
                     if let Some(class_decl) = try_iife_to_class(
                         var_decl,
                         &scoped_inner.reused_var_bindings,
+                        &leftover_super_calls,
                         &scoped_inner.helpers.inherits_helpers,
                         &scoped_inner.helpers.tslib_namespaces,
                         &scoped_inner.helpers.create_class_helpers,
@@ -385,6 +507,7 @@ impl VisitMut for UnEs6ClassInner {
             .extend(reused_var_bindings_in_items(items));
         items.visit_mut_children_with(self);
 
+        let leftover_super_calls = leftover_ctor_call_bindings(items);
         let mut converted_any = false;
         let old = std::mem::take(items);
         for item in old {
@@ -393,6 +516,7 @@ impl VisitMut for UnEs6ClassInner {
                     if let Some(class_decl) = try_iife_to_class(
                         var_decl,
                         &self.reused_var_bindings,
+                        &leftover_super_calls,
                         &self.helpers.inherits_helpers,
                         &self.helpers.tslib_namespaces,
                         &self.helpers.create_class_helpers,
@@ -416,6 +540,7 @@ impl VisitMut for UnEs6ClassInner {
                     if let Some(class_decl) = try_iife_to_class(
                         var_decl,
                         &self.reused_var_bindings,
+                        &leftover_super_calls,
                         &self.helpers.inherits_helpers,
                         &self.helpers.tslib_namespaces,
                         &self.helpers.create_class_helpers,
@@ -1185,6 +1310,7 @@ fn remove_orphaned_fn_helpers_module(items: &mut Vec<ModuleItem>, helpers: &Hash
 fn try_iife_to_class(
     var: &VarDecl,
     reused_var_bindings: &HashSet<BindingKey>,
+    leftover_super_calls: &LeftoverCtorCallIndex,
     inherits_helpers: &HashSet<BindingKey>,
     tslib_namespaces: &HashSet<BindingKey>,
     create_class_helpers: &HashSet<BindingKey>,
@@ -1217,6 +1343,15 @@ fn try_iife_to_class(
 
     // The init must be an IIFE call expression (possibly paren-wrapped)
     let call = extract_iife_call(init)?;
+
+    // Same-module leftover `C.call` / `C.apply` (including IIFE param aliases)
+    // still needs [[Call]]. Skip class recovery instead of inventing super().
+    // Sites whose span sits inside this `var` declaration are not leftover:
+    // SuperCallRewriter may turn *super-param* `.call` into `super()`, but a
+    // same-binding `Foo.call` inside this IIFE is out of this skip's contract.
+    if leftover_super_calls.blocks(binding_key(class_name), original_span) {
+        return None;
+    }
 
     // Callee must be a function or arrow expression (possibly paren-wrapped)
     let Callee::Expr(callee_expr) = &call.callee else {
