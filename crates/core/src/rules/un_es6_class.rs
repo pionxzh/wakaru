@@ -25,7 +25,9 @@ use super::decl_utils::{
 };
 use super::eval_utils::has_dynamic_scope_construct;
 use super::expr_utils::is_unresolved_ident;
-use super::helper_matcher::{binding_key, BindingKey};
+use super::helper_matcher::{
+    binding_key, remove_import_specifiers_by_binding, remove_unused_helper_declarations, BindingKey,
+};
 use super::transpiler_helper_utils::{
     detect_helper_from_path, is_call_super_fn, is_inherits_fn, is_set_prototype_of_fn,
     is_tslib_path, is_tslib_require_expr_with_mark, tslib_member_ts_helper_kind,
@@ -92,6 +94,8 @@ impl VisitMut for UnEs6Class {
             inner.inheritance_uses = Some(Rc::new(BindingUseIndex::collect_module_items(items)));
         }
         items.visit_mut_with(&mut inner);
+        let removable = remove_unused_helper_declarations(items, &inner.cleanup_candidates);
+        remove_import_specifiers_by_binding(items, &removable);
         if !used_imports.is_empty() {
             let remaining = BindingUseIndex::collect_module_items(items).referenced_bindings();
             for item in items {
@@ -117,6 +121,7 @@ impl VisitMut for UnEs6Class {
             inner.inheritance_uses = Some(Rc::new(BindingUseIndex::collect_stmts(stmts)));
         }
         stmts.visit_mut_with(&mut inner);
+        remove_unused_helper_declarations(stmts, &inner.cleanup_candidates);
     }
 }
 
@@ -259,6 +264,7 @@ struct UnEs6ClassInner {
     helpers: Es6ClassHelperContext,
     reused_var_bindings: HashSet<BindingKey>,
     inheritance_uses: Option<Rc<BindingUseIndex>>,
+    cleanup_candidates: HashSet<BindingKey>,
     unresolved_mark: Mark,
     rewrite_level: RewriteLevel,
 }
@@ -279,6 +285,7 @@ impl UnEs6ClassInner {
             helpers: helper_context,
             reused_var_bindings: HashSet::default(),
             inheritance_uses: None,
+            cleanup_candidates: HashSet::default(),
             unresolved_mark,
             rewrite_level,
         }
@@ -375,19 +382,14 @@ impl VisitMut for UnEs6ClassInner {
             converted_any = true;
         }
         if converted_any {
-            remove_orphaned_create_class_helpers(
-                stmts,
-                &scoped_inner.helpers.create_class_helpers,
-                self.unresolved_mark,
-            );
-            remove_orphaned_ts_extends_helpers_stmts(
-                stmts,
-                &scoped_inner.helpers.ts_extends_helpers,
-            );
-            remove_orphaned_fn_helpers_stmts(stmts, &scoped_inner.helpers.inherits_helpers);
-            remove_orphaned_fn_helpers_stmts(stmts, &scoped_inner.helpers.set_prototype_of_helpers);
-            remove_orphaned_fn_helpers_stmts(stmts, &scoped_inner.helpers.call_super_helpers);
+            scoped_inner
+                .cleanup_candidates
+                .extend(stmts.iter().filter_map(|stmt| {
+                    helper_cleanup_stmt_key(stmt, &scoped_inner.helpers, self.unresolved_mark)
+                }));
         }
+        self.cleanup_candidates
+            .extend(scoped_inner.cleanup_candidates);
     }
 
     fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
@@ -461,15 +463,20 @@ impl VisitMut for UnEs6ClassInner {
             converted_any = true;
         }
         if converted_any {
-            remove_orphaned_create_class_helpers_module(
-                items,
-                &self.helpers.create_class_helpers,
-                self.unresolved_mark,
-            );
-            remove_orphaned_ts_extends_helpers_module(items, &self.helpers.ts_extends_helpers);
-            remove_orphaned_fn_helpers_module(items, &self.helpers.inherits_helpers);
-            remove_orphaned_fn_helpers_module(items, &self.helpers.set_prototype_of_helpers);
-            remove_orphaned_fn_helpers_module(items, &self.helpers.call_super_helpers);
+            self.cleanup_candidates
+                .extend(items.iter().filter_map(|item| match item {
+                    ModuleItem::Stmt(stmt) => {
+                        helper_cleanup_stmt_key(stmt, &self.helpers, self.unresolved_mark)
+                    }
+                    _ => {
+                        let key = detect_create_class_item_key(item, self.unresolved_mark)?;
+                        (self.helpers.create_class_helpers.contains(&key)
+                            || self.helpers.inherits_helpers.contains(&key)
+                            || self.helpers.set_prototype_of_helpers.contains(&key)
+                            || self.helpers.call_super_helpers.contains(&key))
+                        .then_some(key)
+                    }
+                }));
         }
     }
 }
@@ -1004,26 +1011,31 @@ fn get_fn_or_arrow_body(expr: &Expr) -> Option<&[Stmt]> {
 // Orphaned helper removal
 // ============================================================
 
-/// Remove _createClass helpers that are no longer referenced after class IIFE
-/// conversion. Only removes when there are no remaining references.
-fn remove_orphaned_create_class_helpers(
-    stmts: &mut Vec<Stmt>,
-    helpers: &HashSet<BindingKey>,
+/// Preserve each helper family's declaration proof when selecting cleanup
+/// candidates. Deletion is deferred until all statement lists are rewritten.
+fn helper_cleanup_stmt_key(
+    stmt: &Stmt,
+    helpers: &Es6ClassHelperContext,
     unresolved_mark: Mark,
-) {
-    remove_unreferenced_helpers(stmts, helpers, |stmt| {
-        detect_create_class_stmt_key(stmt, unresolved_mark)
-    });
-}
-
-fn remove_orphaned_create_class_helpers_module(
-    items: &mut Vec<ModuleItem>,
-    helpers: &HashSet<BindingKey>,
-    unresolved_mark: Mark,
-) {
-    remove_unreferenced_helpers(items, helpers, |item| {
-        detect_create_class_item_key(item, unresolved_mark)
-    });
+) -> Option<BindingKey> {
+    if let Some(key) = detect_create_class_stmt_key(stmt, unresolved_mark) {
+        if helpers.create_class_helpers.contains(&key) {
+            return Some(key);
+        }
+    }
+    match stmt {
+        Stmt::Decl(Decl::Var(var)) => {
+            ts_extends_helper_decl_key(var).filter(|key| helpers.ts_extends_helpers.contains(key))
+        }
+        Stmt::Decl(Decl::Fn(decl)) => {
+            let key = binding_key(&decl.ident);
+            (helpers.inherits_helpers.contains(&key)
+                || helpers.set_prototype_of_helpers.contains(&key)
+                || helpers.call_super_helpers.contains(&key))
+            .then_some(key)
+        }
+        _ => None,
+    }
 }
 
 fn detect_create_class_stmt_key(stmt: &Stmt, unresolved_mark: Mark) -> Option<BindingKey> {
@@ -1055,27 +1067,6 @@ fn detect_create_class_item_key(item: &ModuleItem, unresolved_mark: Mark) -> Opt
     }
 }
 
-fn remove_orphaned_ts_extends_helpers_stmts(stmts: &mut Vec<Stmt>, helpers: &HashSet<BindingKey>) {
-    remove_unreferenced_helpers(stmts, helpers, |stmt| {
-        let Stmt::Decl(Decl::Var(var_decl)) = stmt else {
-            return None;
-        };
-        ts_extends_helper_decl_key(var_decl)
-    });
-}
-
-fn remove_orphaned_ts_extends_helpers_module(
-    items: &mut Vec<ModuleItem>,
-    helpers: &HashSet<BindingKey>,
-) {
-    remove_unreferenced_helpers(items, helpers, |item| {
-        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) = item else {
-            return None;
-        };
-        ts_extends_helper_decl_key(var_decl)
-    });
-}
-
 fn ts_extends_helper_decl_key(var_decl: &VarDecl) -> Option<BindingKey> {
     if var_decl.decls.len() != 1 {
         return None;
@@ -1093,108 +1084,6 @@ fn ts_extends_helper_decl_key(var_decl: &VarDecl) -> Option<BindingKey> {
         return None;
     }
     Some(binding_key(&binding.id))
-}
-
-struct BindingHelperRefCounter {
-    helpers: HashSet<BindingKey>,
-    counts: crate::collections::HashMap<BindingKey, usize>,
-}
-
-impl BindingHelperRefCounter {
-    fn new(helpers: &HashSet<BindingKey>) -> Self {
-        Self {
-            helpers: helpers.clone(),
-            counts: crate::collections::HashMap::default(),
-        }
-    }
-}
-
-impl swc_core::ecma::visit::Visit for BindingHelperRefCounter {
-    fn visit_ident(&mut self, id: &Ident) {
-        let key = binding_key(id);
-        if self.helpers.contains(&key) {
-            *self.counts.entry(key).or_insert(0) += 1;
-        }
-    }
-}
-
-/// Count references to `helpers` (skipping declarations identified by
-/// `helper_key`), then remove declarations with zero remaining references.
-fn remove_unreferenced_helpers<T>(
-    items: &mut Vec<T>,
-    helpers: &HashSet<BindingKey>,
-    helper_key: impl Fn(&T) -> Option<BindingKey>,
-) where
-    T: VisitWith<BindingHelperRefCounter>,
-{
-    if helpers.is_empty() {
-        return;
-    }
-    // A helper that stays referenced keeps its declaration, so the references
-    // inside it count for the others: shrink the removable set until stable.
-    let mut removable: HashSet<BindingKey> = items
-        .iter()
-        .filter_map(&helper_key)
-        .filter(|key| helpers.contains(key))
-        .collect();
-    loop {
-        if removable.is_empty() {
-            return;
-        }
-        let mut counter = BindingHelperRefCounter::new(&removable);
-        for item in items.iter() {
-            if helper_key(item)
-                .as_ref()
-                .is_some_and(|key| removable.contains(key))
-            {
-                continue;
-            }
-            item.visit_with(&mut counter);
-        }
-        let referenced: Vec<BindingKey> = removable
-            .iter()
-            .filter(|key| counter.counts.get(*key).copied().unwrap_or(0) > 0)
-            .cloned()
-            .collect();
-        if referenced.is_empty() {
-            break;
-        }
-        for key in referenced {
-            removable.remove(&key);
-        }
-    }
-    items.retain(|item| helper_key(item).is_none_or(|key| !removable.contains(&key)));
-}
-
-fn remove_orphaned_fn_helpers_stmts(stmts: &mut Vec<Stmt>, helpers: &HashSet<BindingKey>) {
-    remove_unreferenced_helpers(stmts, helpers, |stmt| {
-        if let Stmt::Decl(Decl::Fn(fn_decl)) = stmt {
-            Some(binding_key(&fn_decl.ident))
-        } else {
-            None
-        }
-    });
-}
-
-fn remove_orphaned_fn_helpers_module(items: &mut Vec<ModuleItem>, helpers: &HashSet<BindingKey>) {
-    remove_unreferenced_helpers(items, helpers, |item| match item {
-        ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) => Some(binding_key(&fn_decl.ident)),
-        ModuleItem::ModuleDecl(ModuleDecl::Import(import))
-            if import.specifiers.len() == 1
-                && import
-                    .src
-                    .value
-                    .as_str()
-                    .is_some_and(|p| detect_helper_from_path(p).is_some()) =>
-        {
-            match &import.specifiers[0] {
-                ImportSpecifier::Default(spec) => Some(binding_key(&spec.local)),
-                ImportSpecifier::Named(spec) => Some(binding_key(&spec.local)),
-                _ => None,
-            }
-        }
-        _ => None,
-    });
 }
 
 // ============================================================

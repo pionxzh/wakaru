@@ -94,6 +94,24 @@ uses, rewrite call sites, or remove consumed declarations. This keeps the common
 scope-sensitive lifecycle code in one place while leaving each rule's semantic
 matching local to that rule.
 
+`remove_unused_helper_declarations()` is the shared cleanup entry point for
+caller-proven function/variable declarations. It scans references across the
+supplied module, computes a stable removable set, then removes declarations in
+both module items and nested statement lists (including function bodies).
+Mixed variable declarations retain unrelated declarators. Direct exports and
+references from sibling scopes keep a helper alive. It returns the removable
+set so a caller can apply its import policy separately; it does not remove
+imports or prove that arbitrary initializers are safe to discard.
+
+Destructuring, ES6 class, private-field helper, and regenerator cleanup use this
+entry point, as does the shared transpiler-helper lifecycle. Rules still own
+candidate selection: ES6 class retains its declaration-shape checks and defers
+cleanup until all lists are rewritten; destructuring accepts only function
+declarations or direct function/arrow initializers for its name-based consumed
+helpers. Its sliced-to-array helpers still go through dependency cleanup.
+Interop module evaluation, private backing-map initialization, and regenerator
+mark bookkeeping remain rule-specific.
+
 Two removal rules hold for every caller. Removal iterates until the removable
 set is stable: a helper the module still references stays, and so does every
 helper it references, because references inside a kept declaration count.

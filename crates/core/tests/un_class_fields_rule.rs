@@ -886,3 +886,23 @@ class Foo {{
         assert!(output.contains("__init()"), "{output}");
     }
 }
+
+#[test]
+fn recovered_private_field_keeps_an_exported_helper() {
+    let input = r#"
+var get = this && this.__classPrivateFieldGet || function(receiver, state) {
+  return state.get(receiver);
+};
+var _Foo_x;
+class Foo {
+  constructor() { _Foo_x.set(this, 1); }
+  getX() { return get(this, _Foo_x, 'f'); }
+}
+_Foo_x = new WeakMap();
+export { get };
+"#;
+    let output = apply_class_fields(input);
+    assert!(output.contains("return this.#x"), "{output}");
+    assert!(output.contains("var get ="), "{output}");
+    assert!(output.contains("export { get }"), "{output}");
+}

@@ -16,10 +16,7 @@ use crate::facts::{HelperKind, ModuleFactsMap};
 
 use super::decl_utils::{collect_pat_names, fresh_binding_ident};
 use super::eval_utils::module_has_with_stmt;
-use super::helper_matcher::{
-    binding_key, count_binding_refs, member_prop_name, remove_fn_decls_by_binding,
-    remove_var_declarators_by_binding,
-};
+use super::helper_matcher::{binding_key, member_prop_name, remove_unused_helper_declarations};
 use super::remove_void::finalize_synthesized_undefined;
 use super::state_machine::{
     invert_condition, stmts_contain_state_opcode_return, CatchBindings, ForwardJumpJoin,
@@ -4508,22 +4505,9 @@ fn remove_consumed_mark_declarations(module: &mut Module, consumed_marks: &[Bind
     });
 }
 
-fn remove_helper_decls(module: &mut Module, to_remove: &[BindingKey]) {
-    let removable: HashSet<BindingKey> = to_remove.iter().cloned().collect();
-    remove_fn_decls_by_binding(module, &removable);
-    remove_var_declarators_by_binding(&mut module.body, &removable);
-}
-
 fn remove_unused_helper_decls(module: &mut Module, helpers: &[BindingKey]) {
-    if helpers.is_empty() {
-        return;
-    }
-    let unused: Vec<_> = helpers
-        .iter()
-        .filter(|helper| count_binding_refs(module, helper) <= 1)
-        .cloned()
-        .collect();
-    remove_helper_decls(module, &unused);
+    let candidates = helpers.iter().cloned().collect();
+    remove_unused_helper_declarations(module, &candidates);
 }
 
 // ============================================================

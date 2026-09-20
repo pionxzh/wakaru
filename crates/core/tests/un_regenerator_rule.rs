@@ -3618,3 +3618,20 @@ function _fetch_json() {
     assert!(output.contains("t0 = yield response.text();"), "{output}");
     assert!(output.contains("payload = t0;"), "{output}");
 }
+
+#[test]
+fn recovered_async_function_keeps_an_exported_helper() {
+    let input = r#"
+var __async = (__this, __arguments, generator) => new Promise((resolve) => {
+  step((generator = generator.apply(__this, __arguments)).next());
+});
+function load_user(app_id) {
+  return __async(this, arguments, function* () { return yield fetch_user(app_id); });
+}
+export { __async };
+"#;
+    let output = apply(input);
+    assert!(output.contains("async function load_user"), "{output}");
+    assert!(output.contains("var __async ="), "{output}");
+    assert!(output.contains("export { __async }"), "{output}");
+}

@@ -7,6 +7,7 @@ use crate::collections::{HashMap, HashSet};
 use swc_core::ecma::ast::{Decl, Expr, Module, ModuleItem, Pat, Stmt};
 
 use super::*;
+use crate::rules::helper_matcher::remove_unused_helper_declarations;
 
 /// Check which helper bindings still have references in the module body,
 /// excluding the declaration binding itself (VarDeclarator name / FnDecl ident).
@@ -25,18 +26,11 @@ pub(crate) fn helpers_with_remaining_refs(
 /// stops shrinking instead of judging every helper against the initial set.
 pub(crate) fn remove_helpers_without_remaining_refs(
     module: &mut Module,
-    mut helpers: HashMap<BindingKey, TranspilerHelperKind>,
+    helpers: HashMap<BindingKey, TranspilerHelperKind>,
 ) {
-    loop {
-        let remaining = helpers_with_remaining_refs(module, &helpers);
-        if remaining.is_empty() {
-            break;
-        }
-        helpers.retain(|key, _| !remaining.contains(key));
-    }
-    if !helpers.is_empty() {
-        remove_helper_declarations(&mut module.body, &helpers);
-    }
+    let candidates = helpers.into_keys().collect();
+    let removable = remove_unused_helper_declarations(module, &candidates);
+    remove_import_specifiers_by_binding(&mut module.body, &removable);
 }
 pub(super) fn helper_dependencies_from_ref_graph(
     ref_graph: &HashMap<BindingKey, HashSet<BindingKey>>,

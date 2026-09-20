@@ -17,7 +17,7 @@ use super::decl_utils::{
     binding_id, can_remove_prior_uninitialized_decls_by, ident_matches_binding,
     remove_prior_uninitialized_decls_by, BindingId, UninitializedDeclKind,
 };
-use super::helper_matcher::{binding_key, BindingKey};
+use super::helper_matcher::{binding_key, remove_unused_helper_declarations, BindingKey};
 use super::transpiler_helper_utils::{LocalHelperContext, TranspilerHelperKind, TsHelperKind};
 use super::un_rest_array_copy::{
     extract_array_copy_decl, extract_zero_init_decl, matches_copy_body, matches_increment,
@@ -39,7 +39,9 @@ pub struct UnDestructuring {
     level: RewriteLevel,
     sliced_to_array_helpers: Option<HashSet<BindingKey>>,
     ctx: Option<ModuleContext>,
-    consumed_sliced_to_array_helpers: HashSet<BindingKey>,
+    /// Helper bindings whose call sites a reconstructed group consumed, in
+    /// any statement list of the module.
+    consumed_helpers: HashSet<BindingKey>,
 }
 
 impl UnDestructuring {
@@ -53,7 +55,7 @@ impl UnDestructuring {
             level,
             sliced_to_array_helpers: None,
             ctx: None,
-            consumed_sliced_to_array_helpers: HashSet::default(),
+            consumed_helpers: HashSet::default(),
         }
     }
 
@@ -67,12 +69,19 @@ impl UnDestructuring {
             level,
             sliced_to_array_helpers: Some(collect_sliced_to_array_helpers(local_helpers)),
             ctx: None,
-            consumed_sliced_to_array_helpers: HashSet::default(),
+            consumed_helpers: HashSet::default(),
         }
     }
 
     pub(crate) fn consumed_sliced_to_array_helpers(&self) -> HashSet<BindingKey> {
-        self.consumed_sliced_to_array_helpers.clone()
+        let Some(ctx) = &self.ctx else {
+            return HashSet::default();
+        };
+        self.consumed_helpers
+            .iter()
+            .filter(|key| ctx.sliced_to_array.contains(*key))
+            .cloned()
+            .collect()
     }
 }
 
@@ -138,9 +147,9 @@ impl VisitMut for UnDestructuring {
             self.level,
             self.ctx(),
         );
-        self.consumed_sliced_to_array_helpers
-            .extend(consumed_helpers);
+        self.consumed_helpers.extend(consumed_helpers);
         module.body = items;
+        self.remove_dead_consumed_helpers(module);
     }
 
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
@@ -151,8 +160,7 @@ impl VisitMut for UnDestructuring {
             self.level,
             self.ctx(),
         );
-        self.consumed_sliced_to_array_helpers
-            .extend(consumed_helpers);
+        self.consumed_helpers.extend(consumed_helpers);
         *stmts = processed;
     }
 
@@ -160,7 +168,13 @@ impl VisitMut for UnDestructuring {
         func.visit_mut_children_with(self);
         if self.level >= RewriteLevel::Standard {
             if let Some(body) = &mut func.body {
-                nest_param_destructuring(&mut func.params, body, self.unresolved_mark, self.ctx());
+                let consumed_helpers = nest_param_destructuring(
+                    &mut func.params,
+                    body,
+                    self.unresolved_mark,
+                    self.ctx(),
+                );
+                self.consumed_helpers.extend(consumed_helpers);
             }
         }
     }
@@ -171,6 +185,51 @@ impl UnDestructuring {
         self.ctx
             .as_ref()
             .expect("UnDestructuring should collect module facts before visiting statements")
+    }
+
+    /// Remove the declarations of consumed helpers that nothing references
+    /// once the whole module is rewritten. This runs module-wide and against a
+    /// fresh reference scan because a per-list decision is both unsound and
+    /// incomplete: the list holding the declaration cannot see a surviving
+    /// call in a sibling segment (the driver splits the module body at imports
+    /// and exports), and a list that consumed the last call inside a function
+    /// body cannot reach a declaration outside it.
+    ///
+    /// Consumed `slicedToArray` helpers are left in place: the pipeline
+    /// removes them through `consumed_sliced_to_array_helpers` together with
+    /// the sub-helpers their bodies call, which it can only find while the
+    /// body is still there.
+    fn remove_dead_consumed_helpers(&self, module: &mut Module) {
+        if self.consumed_helpers.is_empty() {
+            return;
+        }
+        let ctx = self.ctx();
+        let mut candidates = ConsumedHelperDeclarations {
+            consumed: &self.consumed_helpers,
+            deferred: &ctx.sliced_to_array,
+            removable: HashSet::default(),
+        };
+        module.visit_with(&mut candidates);
+        remove_unused_helper_declarations(module, &candidates.removable);
+    }
+}
+
+/// Name-only call recognition does not prove arbitrary initialization can be
+/// discarded. Only declaration forms that create a callable qualify here.
+struct ConsumedHelperDeclarations<'a> {
+    consumed: &'a HashSet<BindingKey>,
+    deferred: &'a HashSet<BindingKey>,
+    removable: HashSet<BindingKey>,
+}
+
+impl Visit for ConsumedHelperDeclarations<'_> {
+    fn visit_stmt(&mut self, stmt: &Stmt) {
+        if let Some(key) = stmt_declares_callable(stmt) {
+            if self.consumed.contains(&key) && !self.deferred.contains(&key) {
+                self.removable.insert(key);
+            }
+        }
+        stmt.visit_children_with(self);
     }
 }
 
@@ -602,17 +661,7 @@ fn process_stmts(
         }
     }
 
-    if !consumed_helpers.is_empty() {
-        remove_unreferenced_helpers(&mut result, &consumed_helpers);
-    }
-
-    let consumed_sliced_to_array_helpers = consumed_helpers
-        .iter()
-        .filter(|key| ctx.sliced_to_array.contains(*key))
-        .cloned()
-        .collect();
-
-    (result, consumed_sliced_to_array_helpers)
+    (result, consumed_helpers)
 }
 
 struct ReconstructedGroup {
@@ -2861,15 +2910,24 @@ fn build_var_stmt_from_parts(
     })))
 }
 
+/// Returns the helper bindings whose calls the nested patterns consumed.
 fn nest_param_destructuring(
     params: &mut [Param],
     body: &mut FunctionBody,
     unresolved_mark: Mark,
     ctx: &ModuleContext,
-) {
+) -> Vec<BindingKey> {
+    let mut consumed_helpers = Vec::new();
     for param in params.iter_mut() {
-        nest_pat_destructuring(&mut param.pat, &mut body.stmts, unresolved_mark, ctx);
+        nest_pat_destructuring(
+            &mut param.pat,
+            &mut body.stmts,
+            unresolved_mark,
+            ctx,
+            &mut consumed_helpers,
+        );
     }
+    consumed_helpers
 }
 
 fn nest_pat_destructuring(
@@ -2877,6 +2935,7 @@ fn nest_pat_destructuring(
     stmts: &mut Vec<Stmt>,
     unresolved_mark: Mark,
     ctx: &ModuleContext,
+    consumed_helpers: &mut Vec<BindingKey>,
 ) {
     let inner_pat = match pat {
         Pat::Assign(assign) => &mut *assign.left,
@@ -2900,7 +2959,7 @@ fn nest_pat_destructuring(
         };
 
         let mut removed_temps = Vec::new();
-        let mut consumed_helpers = Vec::new();
+        let mut group_helpers = Vec::new();
         let collected = collect_accesses_on(
             stmts,
             0,
@@ -2908,7 +2967,7 @@ fn nest_pat_destructuring(
             unresolved_mark,
             ctx,
             &mut removed_temps,
-            &mut consumed_helpers,
+            &mut group_helpers,
         );
 
         if collected.accesses.is_empty()
@@ -2932,47 +2991,21 @@ fn nest_pat_destructuring(
 
         *assign.left = nested_pat;
         stmts.drain(0..collected.consumed);
+        consumed_helpers.extend(group_helpers);
         return;
     }
 }
 
-/// Remove function/var declarations for helper bindings that are no longer
-/// referenced after destructuring reconstruction consumed their call sites.
-fn remove_unreferenced_helpers(stmts: &mut Vec<Stmt>, helpers: &[BindingKey]) {
-    use crate::collections::HashSet;
-    let helper_set: HashSet<&BindingKey> = helpers.iter().collect();
-
-    // Collect which helpers are still referenced outside their own declaration.
-    let mut referenced: HashSet<&BindingKey> = HashSet::default();
-    for stmt in stmts.iter() {
-        let declaring = stmt_declares_binding(stmt);
-        for key in &helper_set {
-            if declaring.as_ref() == Some(*key) {
-                continue;
-            }
-            if stmt_uses_binding(stmt, key) {
-                referenced.insert(*key);
-            }
-        }
-    }
-
-    let dead: HashSet<&BindingKey> = helper_set.difference(&referenced).copied().collect();
-    if dead.is_empty() {
-        return;
-    }
-    stmts.retain(|stmt| {
-        if let Some(key) = stmt_declares_binding(stmt) {
-            !dead.contains(&key)
-        } else {
-            true
-        }
-    });
-}
-
-fn stmt_declares_binding(stmt: &Stmt) -> Option<BindingKey> {
+fn stmt_declares_callable(stmt: &Stmt) -> Option<BindingKey> {
     match stmt {
         Stmt::Decl(Decl::Fn(fn_decl)) => Some(binding_key(&fn_decl.ident)),
         Stmt::Decl(Decl::Var(var_decl)) if var_decl.decls.len() == 1 => {
+            if !matches!(
+                var_decl.decls[0].init.as_deref().map(strip_parens),
+                Some(Expr::Fn(_) | Expr::Arrow(_))
+            ) {
+                return None;
+            }
             let Pat::Ident(ident) = &var_decl.decls[0].name else {
                 return None;
             };
@@ -2980,15 +3013,6 @@ fn stmt_declares_binding(stmt: &Stmt) -> Option<BindingKey> {
         }
         _ => None,
     }
-}
-
-fn stmt_uses_binding(stmt: &Stmt, key: &BindingKey) -> bool {
-    let mut finder = IdentUseFinder {
-        key: (*key).clone(),
-        found: false,
-    };
-    stmt.visit_with(&mut finder);
-    finder.found
 }
 
 fn expr_uses_ident(expr: &Expr, key: &BindingKey) -> bool {

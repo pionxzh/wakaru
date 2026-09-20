@@ -3252,3 +3252,48 @@ function wrapper() {
         "the nested param .call must remain:\n{output}"
     );
 }
+
+#[test]
+fn class_helper_in_a_block_keeps_uses_in_a_sibling_block() {
+    let input = format!(
+        r#"
+function outer() {{
+  {{
+    {CREATE_CLASS_HELPER}
+    var Widget = function() {{
+      function t() {{}}
+      _createClass(t, [{{ key: "text", value: function() {{ return null; }} }}]);
+      return t;
+    }}();
+    use(Widget);
+  }}
+  {{ use(_createClass); }}
+}}
+"#
+    );
+    let output = apply(&input);
+    assert!(output.contains("class Widget"), "{output}");
+    assert!(output.contains("var _createClass ="), "{output}");
+}
+
+#[test]
+fn class_helper_is_removed_after_its_nested_block_use_is_consumed() {
+    let input = format!(
+        r#"
+function outer() {{
+  {{
+    {CREATE_CLASS_HELPER}
+    var First = function() {{
+      function t() {{}}
+      _createClass(t, [{{ key: "text", value: function() {{ return null; }} }}]);
+      return t;
+    }}();
+    use(First);
+  }}
+}}
+"#
+    );
+    let output = apply(&input);
+    assert!(output.contains("class First"), "{output}");
+    assert!(!output.contains("var _createClass ="), "{output}");
+}

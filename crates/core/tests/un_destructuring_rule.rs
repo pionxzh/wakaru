@@ -1235,9 +1235,14 @@ _source$tags3 = n(_source$tags2, 3);
 primary = _source$tags3[0];
 backup = _source$tags3[2];
 "#;
+    // The rule alone leaves the consumed sliced helper in place; the pipeline
+    // removes it together with the sub-helpers its body calls (next test).
     let expected = r#"
 function c(e) {
     if (Array.isArray(e)) return e;
+}
+function n(e, t) {
+    return c(e) || o(e, t) || s(e, t) || l();
 }
 source = _t;
 ({
@@ -1247,6 +1252,36 @@ source = _t;
 } = source);
 "#;
     assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn pipeline_removes_minified_sliced_to_array_helper_and_dependency_consumed_at_module_level() {
+    let input = r#"
+function c(e) {
+    if (Array.isArray(e)) return e;
+}
+function n(e, t) {
+    return c(e) || o(e, t) || s(e, t) || l();
+}
+let tmp;
+let ref;
+let primary;
+let backup;
+tmp = source.tags;
+ref = n(tmp === undefined ? [] : tmp, 3);
+primary = ref[0];
+backup = ref[2];
+use(primary, backup);
+"#;
+    let output = render_pipeline_until_with_level(input, "UnDestructuring", RewriteLevel::Standard);
+    assert!(
+        output.contains("tags: [primary, , backup] = []"),
+        "should recover array holes from minified sliced helper:\n{output}"
+    );
+    assert!(
+        !output.contains("function n(") && !output.contains("function c("),
+        "consumed sliced helper and its dependency should be removed:\n{output}"
+    );
 }
 
 #[test]
@@ -1674,4 +1709,110 @@ export { tmp };
         output.contains("const tmp = _items[1]") || output.contains("export const tmp"),
         "{output}"
     );
+}
+
+#[test]
+fn keeps_consumed_helper_still_called_past_an_export() {
+    // The group consumes the helper's only call in this statement list, but
+    // the module still calls it after the `export`, which splits the list.
+    let input = r#"
+function _arrayLikeToArray(arr, len) {
+  if (len == null || len > arr.length) len = arr.length;
+  for (var i = 0, arr2 = new Array(len); i < len; i++) arr2[i] = arr[i];
+  return arr2;
+}
+var _ref = [...items];
+var head = _ref[0];
+var tail = _arrayLikeToArray(_ref).slice(1);
+export { head, tail };
+var copy = _arrayLikeToArray(other, 3);
+console.log(copy);
+"#;
+    let expected = r#"
+function _arrayLikeToArray(arr, len) {
+  if (len == null || len > arr.length) len = arr.length;
+  for (var i = 0, arr2 = new Array(len); i < len; i++) arr2[i] = arr[i];
+  return arr2;
+}
+var [head, ...tail] = items;
+export { head, tail };
+var copy = _arrayLikeToArray(other, 3);
+console.log(copy);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn removes_helper_whose_last_calls_were_consumed_inside_functions() {
+    let input = r#"
+function _arrayLikeToArray(arr, len) {
+  if (len == null || len > arr.length) len = arr.length;
+  for (var i = 0, arr2 = new Array(len); i < len; i++) arr2[i] = arr[i];
+  return arr2;
+}
+function a(items) {
+  var _ref = [...items];
+  var head = _ref[0];
+  var tail = _arrayLikeToArray(_ref).slice(1);
+  return [head, tail];
+}
+function b(items) {
+  var _ref = [...items];
+  var head = _ref[0];
+  var tail = _arrayLikeToArray(_ref).slice(1);
+  return [head, tail];
+}
+"#;
+    let expected = r#"
+function a(items) {
+  var [head, ...tail] = items;
+  return [head, tail];
+}
+function b(items) {
+  var [head, ...tail] = items;
+  return [head, tail];
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn pipeline_keeps_helper_called_past_an_export() {
+    let input = r#"
+function _arrayLikeToArray(arr, len) {
+  if (len == null || len > arr.length) len = arr.length;
+  for (var i = 0, arr2 = new Array(len); i < len; i++) arr2[i] = arr[i];
+  return arr2;
+}
+var _ref = [...items];
+var head = _ref[0];
+var tail = _arrayLikeToArray(_ref).slice(1);
+export { head, tail };
+var copy = _arrayLikeToArray(other, 3);
+console.log(copy);
+"#;
+    let output = common::render_pipeline(input);
+    assert!(output.contains("function _arrayLikeToArray"), "{output}");
+    assert!(output.contains("_arrayLikeToArray(other, 3)"), "{output}");
+}
+
+#[test]
+fn preserves_unproven_helper_initialization_after_consuming_its_call() {
+    let input = r#"
+const _arrayLikeToArray = createHelper();
+function demo(items) {
+  var _ref = [...items];
+  var head = _ref[0];
+  var tail = _arrayLikeToArray(_ref).slice(1);
+  return [head, tail];
+}
+"#;
+    let expected = r#"
+const _arrayLikeToArray = createHelper();
+function demo(items) {
+  var [head, ...tail] = items;
+  return [head, tail];
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
 }

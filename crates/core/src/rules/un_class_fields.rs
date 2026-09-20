@@ -10,7 +10,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use super::helper_matcher::binding_key;
+use super::helper_matcher::{binding_key, remove_unused_helper_declarations};
 use super::transpiler_helper_utils::{
     tslib_member_ts_helper_kind, tslib_require_ts_helper_kind, BindingKey, LocalHelperContext,
     TranspilerHelperKind, TsHelperKind,
@@ -223,16 +223,7 @@ impl UnClassFields {
             .chain(self.private_set_helpers.iter())
             .cloned()
             .collect();
-        if !private_helpers.is_empty() {
-            let removable_private_helpers: HashSet<BindingKey> = private_helpers
-                .iter()
-                .filter(|key| !private_helper_has_remaining_refs(module, key))
-                .cloned()
-                .collect();
-            if !removable_private_helpers.is_empty() {
-                remove_private_helper_declarations(module, &removable_private_helpers);
-            }
-        }
+        remove_unused_helper_declarations(module, &private_helpers);
 
         if !helpers.is_empty() {
             let consumed_helpers = helpers
@@ -895,59 +886,6 @@ fn private_weak_map_assignment_key(expr: &Expr, unresolved_mark: Mark) -> Option
         return None;
     };
     Some(binding_key(&left.id))
-}
-
-fn private_helper_has_remaining_refs(module: &Module, key: &BindingKey) -> bool {
-    struct RefFinder<'a> {
-        key: &'a BindingKey,
-        found: bool,
-    }
-
-    impl Visit for RefFinder<'_> {
-        fn visit_fn_decl(&mut self, fn_decl: &swc_core::ecma::ast::FnDecl) {
-            if binding_key(&fn_decl.ident) == *self.key {
-                return;
-            }
-            fn_decl.visit_children_with(self);
-        }
-
-        fn visit_var_declarator(&mut self, decl: &swc_core::ecma::ast::VarDeclarator) {
-            if let Pat::Ident(BindingIdent { id, .. }) = &decl.name {
-                if binding_key(id) == *self.key {
-                    return;
-                }
-            }
-            decl.visit_children_with(self);
-        }
-
-        fn visit_ident(&mut self, ident: &Ident) {
-            if binding_key(ident) == *self.key {
-                self.found = true;
-            }
-        }
-    }
-
-    let mut finder = RefFinder { key, found: false };
-    module.visit_with(&mut finder);
-    finder.found
-}
-
-fn remove_private_helper_declarations(module: &mut Module, removable: &HashSet<BindingKey>) {
-    module.body.retain_mut(|item| match item {
-        ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) => {
-            !removable.contains(&binding_key(&fn_decl.ident))
-        }
-        ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) => {
-            var_decl.decls.retain(|decl| {
-                let Pat::Ident(BindingIdent { id, .. }) = &decl.name else {
-                    return true;
-                };
-                !removable.contains(&binding_key(id))
-            });
-            !var_decl.decls.is_empty()
-        }
-        _ => true,
-    });
 }
 
 fn class_has_unsupported_private_map_refs(
