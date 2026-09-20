@@ -3,9 +3,11 @@ use crate::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
     AssignExpr, AssignOp, AssignTarget, AssignTargetPat, BinExpr, BinaryOp, CallExpr, Callee,
-    Class, Expr, Ident, Lit, MemberProp, Module, NewExpr, ObjectPat, ObjectPatProp, Pat, PropName,
+    Class, Decl, ExportNamedSpecifier, ExportSpecifier, Expr, Id, Ident, Lit, MemberProp, Module,
+    ModuleDecl, ModuleExportName, ModuleItem, NewExpr, ObjectPat, ObjectPatProp, Pat, PropName,
     SimpleAssignTarget, VarDeclarator,
 };
+use swc_core::ecma::utils::find_pat_ids;
 use swc_core::ecma::visit::{Visit, VisitWith};
 
 use crate::analysis::binding_uses::BindingId;
@@ -17,11 +19,15 @@ pub(crate) struct ValueKey {
 }
 
 impl ValueKey {
-    fn binding(ident: &Ident) -> Self {
+    fn from_binding_id(root: BindingId) -> Self {
         Self {
-            root: (ident.sym.clone(), ident.ctxt),
+            root,
             properties: Vec::new(),
         }
+    }
+
+    fn binding(ident: &Ident) -> Self {
+        Self::from_binding_id((ident.sym.clone(), ident.ctxt))
     }
 
     pub(crate) fn with_property(&self, property: Atom) -> Self {
@@ -497,8 +503,19 @@ impl Visit for ConstructorSensitiveUseCollector {
 }
 
 pub(crate) fn collect_constructor_sensitive_values(module: &Module) -> HashSet<ValueKey> {
+    // Named exports can be constructed by another module. Seed their local
+    // bindings before alias propagation because intra-module `new` /
+    // `.prototype` analysis cannot see those consumers.
+    collect_constructor_sensitive_values_with_roots(module, collect_named_exported_locals(module))
+}
+
+fn collect_constructor_sensitive_values_with_roots(
+    module: &Module,
+    roots: impl IntoIterator<Item = ValueKey>,
+) -> HashSet<ValueKey> {
     let mut collector = ConstructorSensitiveUseCollector::default();
     module.visit_with(&mut collector);
+    collector.sensitive.extend(roots);
 
     let mut sources_by_target: HashMap<ValueKey, Vec<ValueKey>> = HashMap::default();
     for (target, source) in collector.aliases {
@@ -557,4 +574,35 @@ pub(crate) fn collect_constructor_sensitive_values(module: &Module) -> HashSet<V
     }
 
     collector.sensitive
+}
+
+fn collect_named_exported_locals(module: &Module) -> HashSet<ValueKey> {
+    let mut exported = HashSet::default();
+    for item in &module.body {
+        match item {
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => {
+                let Decl::Var(var) = &export.decl else {
+                    continue;
+                };
+                for declarator in &var.decls {
+                    let ids: Vec<Id> = find_pat_ids(&declarator.name);
+                    exported.extend(ids.into_iter().map(ValueKey::from_binding_id));
+                }
+            }
+            ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(named)) if named.src.is_none() => {
+                for specifier in &named.specifiers {
+                    let ExportSpecifier::Named(ExportNamedSpecifier {
+                        orig: ModuleExportName::Ident(ident),
+                        ..
+                    }) = specifier
+                    else {
+                        continue;
+                    };
+                    exported.insert(ValueKey::binding(ident));
+                }
+            }
+            _ => {}
+        }
+    }
+    exported
 }

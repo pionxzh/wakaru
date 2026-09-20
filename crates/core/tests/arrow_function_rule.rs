@@ -766,6 +766,61 @@ export { local as Name };
 }
 
 #[test]
+fn named_exported_alias_chain_keeps_source_function_constructible() {
+    // The export aliases the value through local bindings, rather than only
+    // renaming the local binding in the export specifier.
+    let input = r#"
+const Impl = function() {};
+const Alias = Impl;
+const Name = Alias;
+export { Name };
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn named_exported_destructuring_default_keeps_function_constructible() {
+    let input = r#"
+export const { Name = function() {} } = source;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn named_exported_async_function_can_convert_to_arrow() {
+    let input = r#"
+export const load = async function() {
+    return 1;
+};
+"#;
+    let expected = r#"
+export const load = async () => {
+    return 1;
+};
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn named_exported_conditional_preserves_only_constructible_function_branch() {
+    let input = r#"
+export const Factory = condition
+    ? function() { return syncValue; }
+    : async function() { return asyncValue; };
+"#;
+    let expected = r#"
+export const Factory = condition
+    ? function() { return syncValue; }
+    : async () => { return asyncValue; };
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn assigned_then_named_export_keeps_function() {
     let input = r#"
 var Name;

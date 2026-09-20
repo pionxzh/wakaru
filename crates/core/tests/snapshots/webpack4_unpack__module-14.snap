@@ -5,7 +5,9 @@ expression: code
 import r from "./module-40.js";
 export default h;
 export const parse = h.parse = i;
-export const compile = h.compile = (e, t)=>l(i(e, t), t);
+export const compile = h.compile = function(e, t) {
+    return l(i(e, t), t);
+};
 export const tokensToFunction = h.tokensToFunction = l;
 export const tokensToRegExp = h.tokensToRegExp = p;
 var o = new RegExp([
