@@ -999,6 +999,118 @@ use(first, nested, inner_rest, outer_rest);
 }
 
 #[test]
+fn skips_dead_undefined_sentinel_between_temp_and_nested_materialization() {
+    // Terser with `unused: false` inlines the compiler temp for the nested
+    // default but keeps its declaration as `void 0` (already `undefined` here)
+    // between the two statements the matcher pairs.
+    let input = r#"
+const _items2 = [...items];
+const first = _items2[0];
+const _items2$ = _items2[1];
+const _items2$2 = undefined;
+const _items2$3 = [..._items2$ === undefined ? [] : _items2$];
+const nested = _items2$3[0];
+const inner_rest = _items2$3.slice(1);
+const outer_rest = _items2.slice(2);
+use(first, nested, inner_rest, outer_rest);
+"#;
+    let expected = r#"
+const [first, [nested, ...inner_rest] = [], ...outer_rest] = items;
+use(first, nested, inner_rest, outer_rest);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn keeps_undefined_declarator_that_is_read_later() {
+    // The declarator is not a dead sentinel when anything reads it, so the
+    // outer group still stops at it; only the inner group recovers.
+    let input = r#"
+const _items2 = [...items];
+const first = _items2[0];
+const _items2$ = _items2[1];
+const _items2$2 = undefined;
+const _items2$3 = [..._items2$ === undefined ? [] : _items2$];
+const nested = _items2$3[0];
+const inner_rest = _items2$3.slice(1);
+const outer_rest = _items2.slice(2);
+use(first, nested, inner_rest, outer_rest, _items2$2);
+"#;
+    let expected = r#"
+const _items2 = [...items];
+const first = _items2[0];
+const _items2$ = _items2[1];
+const _items2$2 = undefined;
+const [nested, ...inner_rest] = _items2$ === undefined ? [] : _items2$;
+const outer_rest = _items2.slice(2);
+use(first, nested, inner_rest, outer_rest, _items2$2);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn drops_dead_undefined_sentinel_directly_before_a_recovered_group() {
+    let input = r#"
+const _items = undefined;
+const _items2 = [...items];
+const first = _items2[0];
+const rest = _items2.slice(1);
+use(first, rest);
+"#;
+    let expected = r#"
+const [first, ...rest] = items;
+use(first, rest);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn keeps_dead_undefined_declarator_without_a_following_group() {
+    let input = r#"
+const _items = undefined;
+const first = items[0];
+use(first);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn skips_dead_undefined_sentinel_between_temp_and_default() {
+    let input = r#"
+var _ref = options;
+var _ref$limit = _ref.limit;
+var _dead = undefined;
+var limit = _ref$limit === undefined ? 10 : _ref$limit;
+var name = _ref.name;
+use(limit, name);
+"#;
+    let expected = r#"
+var { limit = 10, name } = options;
+use(limit, name);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn pipeline_recovers_nested_rest_default_through_terser_kept_sentinels() {
+    let input = r#"
+function _toArray(r){return _arrayWithHoles(r)||_iterableToArray(r)||_unsupportedIterableToArray(r)||_nonIterableRest()}
+function _nonIterableRest(){throw new TypeError("Invalid attempt to destructure non-iterable instance.")}
+function _unsupportedIterableToArray(r,a){if(r){if("string"==typeof r)return _arrayLikeToArray(r,a);var t={}.toString.call(r).slice(8,-1);return"Object"===t&&r.constructor&&(t=r.constructor.name),"Map"===t||"Set"===t?Array.from(r):"Arguments"===t||/^(?:Ui|I)nt(?:8|16|32)(?:Clamped)?Array$/.test(t)?_arrayLikeToArray(r,a):void 0}}
+function _arrayLikeToArray(r,a){(null==a||a>r.length)&&(a=r.length);for(var e=0,n=Array(a);e<a;e++)n[e]=r[e];return n}
+function _iterableToArray(r){if("undefined"!=typeof Symbol&&null!=r[Symbol.iterator]||null!=r["@@iterator"])return Array.from(r)}
+function _arrayWithHoles(r){if(Array.isArray(r))return r}
+const _items=void 0,_items2=_toArray(items),first=_items2[0],_items2$=_items2[1],_items2$2=void 0,_items2$3=_toArray(void 0===_items2$?[]:_items2$),nested=_items2$3[0],inner_rest=_items2$3.slice(1),outer_rest=_items2.slice(2);
+use(first,nested,inner_rest,outer_rest);
+"#;
+    let expected = r#"
+const [first, [nested, ...inner_rest] = [], ...outer_rest] = items;
+use(first, nested, inner_rest, outer_rest);
+"#;
+    assert_eq_normalized(&common::render_pipeline(input), expected);
+}
+
+#[test]
 fn preserves_assignment_temp_decl_when_used_before_group() {
     let input = r#"
 let source;

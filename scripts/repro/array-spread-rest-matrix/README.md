@@ -25,8 +25,11 @@ Nested defaults backed by an exact single-spread materialization, or by a call
 to a `toArray` helper proven by import path or `require` (the swc
 `externalHelpers` and `@babel/runtime` forms), are recovered at `standard`,
 including the form where a minifier fuses the default expression into that
-materialization. Direct TypeScript index/`slice()` shapes remain subject to
-their separate proof requirements.
+materialization. The Terser rows here run with `unused: false`, which keeps
+the compiler temps Terser inlined as dead `const _tmp = void 0` declarators
+before and inside the lowered group; a declarator nothing reads or writes is
+consumed with the group it belongs to. Direct TypeScript index/`slice()`
+shapes remain subject to their separate proof requirements.
 
 `array-rest-basic` also accepts Babel's retained single-read `_items = items`
 capture before the recovered destructuring. `items` is environment-injected in

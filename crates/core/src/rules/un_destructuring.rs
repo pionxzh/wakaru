@@ -528,6 +528,30 @@ fn process_stmts(
     let mut i = 0;
 
     while i < stmts.len() {
+        // A compiler's source capture (`_items = items`) that a minifier
+        // inlined but kept as a dead `_items = void 0` declarator directly
+        // precedes the lowered group; it belongs to that group and leaves
+        // with it. Without a following group the declarator stays.
+        let (skipped, _) = dead_undefined_sentinels(&stmts, i, unresolved_mark);
+        if skipped > 0 {
+            if let Some(group) = try_reconstruct_group(
+                &stmts,
+                i + skipped,
+                unresolved_mark,
+                level,
+                sliced_to_array_helpers,
+                helpers,
+                &mut consumed_helpers,
+            ) {
+                remove_prior_uninitialized_decls_for_bindings(
+                    &mut result,
+                    &group.remove_prior_bindings,
+                );
+                result.push(group.stmt);
+                i += skipped + group.consumed;
+                continue;
+            }
+        }
         if let Some(group) = try_reconstruct_group(
             &stmts,
             i,
@@ -1457,17 +1481,21 @@ fn collect_accesses_on(
     let mut i = start;
 
     while i < stmts.len() {
+        // A dead sentinel only joins the group when an access follows it;
+        // trailing sentinels stay outside.
+        let (skipped, sentinel_keys) = dead_undefined_sentinels(stmts, i, unresolved_mark);
         if let Some((access, consumed)) = try_extract_access(
             stmts,
-            i,
+            i + skipped,
             ref_ident,
             unresolved_mark,
             helpers,
             removed_temps,
             consumed_helpers,
         ) {
+            removed_temps.extend(sentinel_keys);
             accesses.push(access);
-            i += consumed;
+            i += skipped + consumed;
         } else {
             break;
         }
@@ -1891,16 +1919,15 @@ fn try_extract_access(
         return Some((access, consumed));
     }
 
-    if let Some((mut access, temp)) =
+    if let Some((mut access, temps, mut consumed)) =
         try_extract_default_access(stmts, index, ref_ident, unresolved_mark)
     {
-        removed_temps.push(temp);
-        let mut consumed = 2;
+        removed_temps.extend(temps);
 
         if let Some((nested_pat, extra)) = try_nest_default_binding(
             &access,
             stmts,
-            index + 2,
+            index + consumed,
             unresolved_mark,
             helpers,
             removed_temps,
@@ -1957,7 +1984,9 @@ fn try_extract_inline_spread_default_access(
     let (temp, temp_init) = extract_binding_decl(stmts.get(index)?)?;
     let source_access = extract_source_access(temp_init, ref_ident)?;
 
-    let (nested_ref, nested_init) = extract_binding_decl(stmts.get(index + 1)?)?;
+    let (skipped, sentinel_keys) = dead_undefined_sentinels(stmts, index + 1, unresolved_mark);
+    let nested_index = index + 1 + skipped;
+    let (nested_ref, nested_init) = extract_binding_decl(stmts.get(nested_index)?)?;
     let spread_source = extract_materialized_source(nested_init, helpers)?;
     let default = extract_default_value(spread_source, &temp.id, unresolved_mark)?;
     let temp_key = binding_key(&temp.id);
@@ -1965,11 +1994,11 @@ fn try_extract_inline_spread_default_access(
         return None;
     }
 
-    let mut removed_temps = Vec::new();
+    let mut removed_temps = sentinel_keys;
     let mut consumed_helpers = Vec::new();
     let collected = collect_accesses_on(
         stmts,
-        index + 2,
+        nested_index + 1,
         &nested_ref.id,
         unresolved_mark,
         helpers,
@@ -1980,7 +2009,7 @@ fn try_extract_inline_spread_default_access(
         return None;
     }
 
-    let consumed = 2 + collected.consumed;
+    let consumed = nested_index + 1 - index + collected.consumed;
     let nested_ref_key = binding_key(&nested_ref.id);
     if ident_used_in_stmts(&stmts[index + consumed..], &nested_ref_key) {
         return None;
@@ -2163,21 +2192,26 @@ fn replace_access_left(access: &mut Access, nested_pat: Pat) {
     *assign.left = nested_pat;
 }
 
+/// Returns the access, the temps it removes (the `temp` and any dead sentinel
+/// between the two statements), and the number of statements consumed.
 fn try_extract_default_access(
     stmts: &[Stmt],
     index: usize,
     ref_ident: &Ident,
     unresolved_mark: Mark,
-) -> Option<(Access, BindingKey)> {
+) -> Option<(Access, Vec<BindingKey>, usize)> {
     let (temp, temp_init) = extract_binding_decl(stmts.get(index)?)?;
     let source = extract_source_access(temp_init, ref_ident)?;
 
-    let (binding, binding_init) = extract_binding_decl(stmts.get(index + 1)?)?;
+    let (skipped, mut removed_temps) = dead_undefined_sentinels(stmts, index + 1, unresolved_mark);
+    let binding_index = index + 1 + skipped;
+    let (binding, binding_init) = extract_binding_decl(stmts.get(binding_index)?)?;
     let default = extract_default_value(binding_init, &temp.id, unresolved_mark)?;
     let temp_key = binding_key(&temp.id);
     if expr_uses_ident(&default, &temp_key) {
         return None;
     }
+    removed_temps.push(temp_key);
 
     let pat = Pat::Assign(AssignPat {
         span: DUMMY_SP,
@@ -2190,7 +2224,36 @@ fn try_extract_default_access(
         SourceAccess::ObjectProp(key) => Access::Object { key, pat },
     };
 
-    Some((access, temp_key))
+    Some((access, removed_temps, binding_index + 1 - index))
+}
+
+/// Count the dead `binding = undefined` declarators at `start`, returning their
+/// keys. A minifier that inlines a compiler temp but keeps declarations
+/// (Terser `unused: false`) leaves `const _tmp = void 0` between the
+/// statements a group matcher expects to be adjacent. Skipping one is sound
+/// only when no other statement in the list reads or writes the binding, so
+/// removing the declarator with the group changes nothing observable.
+fn dead_undefined_sentinels(
+    stmts: &[Stmt],
+    start: usize,
+    unresolved_mark: Mark,
+) -> (usize, Vec<BindingKey>) {
+    let mut keys = Vec::new();
+    let mut index = start;
+    while let Some((binding, init)) = stmts.get(index).and_then(extract_binding_decl) {
+        if !is_unresolved_undefined(strip_parens(init), unresolved_mark) {
+            break;
+        }
+        let key = binding_key(&binding.id);
+        if ident_used_in_stmts(&stmts[..index], &key)
+            || ident_used_in_stmts(&stmts[index + 1..], &key)
+        {
+            break;
+        }
+        keys.push(key);
+        index += 1;
+    }
+    (index - start, keys)
 }
 
 fn extract_binding_decl(stmt: &Stmt) -> Option<(BindingIdent, &Expr)> {
