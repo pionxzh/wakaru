@@ -102,10 +102,13 @@ attempted in order — first match wins:
    imports. A writer reached only from entry may also retain read-only entry
    dependencies through imports: adopted hoisted functions receive the same
    deferred-body profile as ordinary declarations, so the existing timing guard
-   checks these edges per consumer. An unsafe sibling does not suppress a safe
-   consumer's import or gain permission to import the same binding. Entry
-   initializers stay in place. Writers reached from
-   extracted modules with entry-owned dependencies, or writers spanning owners,
+   checks these edges per consumer. Write checks include the complete adopted
+   declaration, even when its target is entry-owned rather than factory-owned.
+   Those writes retain the existing unlinked boundary; avoiding an import write
+   does not by itself recover shared entry state. An unsafe sibling does not
+   suppress a safe consumer's import or gain permission to import the same
+   binding. Entry initializers stay in place. Writers reached from extracted
+   modules with entry-owned dependencies, or writers spanning owners,
    are not adopted by this path; property mutations and shadowed locals do not
    count as writes to the exported binding. Functions whose own binding is
    reassigned stay in entry, avoiding a new imported-function write.

@@ -3630,8 +3630,9 @@ fn adopt_scope_support_decls(
     // Partition-time write analysis only sees statements after each namespace
     // boundary. esbuild commonly hoists writer functions before that boundary,
     // and the loop above adopts those functions as support declarations. Add
-    // their writes now so factory-state ownership uses the module's complete
-    // emitted body. Filter mixed declarations to this module's adopted
+    // all their writes now: factory-state ownership and entry-import safety
+    // both need the complete emitted body, including writes to entry-owned
+    // bindings. Filter mixed declarations to this module's adopted
     // bindings before scanning, matching the source-item filtering below.
     for meta in metas.iter_mut() {
         if meta.owned_support_bindings.is_empty() {
@@ -3649,29 +3650,17 @@ fn adopt_scope_support_decls(
             .collect();
         indices.sort_unstable();
         indices.dedup();
-        let mut factory_written_atoms = HashSet::default();
         for index in indices {
             let Some(item) = filter_item_to_owned_bindings(&analysis_items[index], &owned_atoms)
             else {
                 continue;
             };
-            for write_binding in exact_write_bindings_for_item(&item, &metadata.top_level_bindings)
-            {
-                let factory_filename = refs
-                    .factory_preassigned_bindings
-                    .get(&write_binding)
-                    .or_else(|| {
-                        maps.factory_preassigned_by_atom
-                            .get(&write_binding.0)
-                            .map(|(_, filename)| filename)
-                    });
-                let Some(_) = factory_filename else {
-                    continue;
-                };
-                factory_written_atoms.insert(write_binding.0);
-            }
+            meta.written_atoms.extend(
+                exact_write_bindings_for_item(&item, &metadata.top_level_bindings)
+                    .into_iter()
+                    .map(|binding| binding.0),
+            );
         }
-        meta.written_atoms.extend(factory_written_atoms);
     }
 
     let owned_support_source_items =

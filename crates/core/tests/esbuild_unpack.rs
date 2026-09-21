@@ -1676,6 +1676,83 @@ console.log(left, right);
     );
 }
 
+/// An adopted helper has the same write restrictions as an ordinary body
+/// declaration: entry-owned state cannot become an immutable import.
+#[test]
+fn adopted_support_writes_do_not_import_entry_state() {
+    for body in [
+        "state = 1;",
+        "state++;",
+        "[state] = [1];",
+        "for (state of [1]) {}",
+    ] {
+        let bundle = format!(
+            r#"{SCOPE_HELPERS}
+function write() {{ {body} }}
+var ns = {{}}; __export(ns, {{ write: () => write }});
+function start() {{ write(); }}
+var extra = {{}}; __export(extra, {{ read: () => read }});
+function read() {{ return 7; }}
+var state = 0;
+ns.write(); record(state); export {{ ns, extra }};
+"#
+        );
+        for pairs in [
+            expect_unpack_raw(&bundle),
+            expect_unpack(&bundle, "bundle.js"),
+        ] {
+            let owner = &pairs.iter().find(|(name, _)| name == "ns.js").unwrap().1;
+            assert!(
+                owner.contains("function write"),
+                "helper must be adopted: {owner}"
+            );
+            assert!(
+                !owner.contains("from \"./entry.js\""),
+                "writer cannot import state: {owner}"
+            );
+            let findings = validate_output_modules(&pairs);
+            assert!(
+                findings.len() == 1 && findings[0].kind == OutputFindingKind::UnresolvedReference,
+                "keep the unlinked boundary visible instead of an import write: {findings:#?}"
+            );
+        }
+    }
+}
+
+/// The write inventory is binding-aware: local assignments and property
+/// mutations do not prevent a deferred read of the imported object binding.
+#[test]
+fn adopted_support_reads_still_import_entry_state() {
+    for body in [
+        "return state;",
+        "function local(state) { state = 1; } local(0); return state;",
+        "state.value = 1; return state;",
+    ] {
+        let bundle = format!(
+            r#"{SCOPE_HELPERS}
+function read() {{ {body} }}
+var ns = {{}}; __export(ns, {{ read: () => read }});
+function start() {{ return read(); }}
+var extra = {{}}; __export(extra, {{ other: () => other }});
+function other() {{ return 7; }}
+var state = {{ value: 0 }};
+record(ns.read()); export {{ ns, extra }};
+"#
+        );
+        for pairs in [
+            expect_unpack_raw(&bundle),
+            expect_unpack(&bundle, "bundle.js"),
+        ] {
+            let owner = &pairs.iter().find(|(name, _)| name == "ns.js").unwrap().1;
+            assert!(
+                owner.contains("from \"./entry.js\""),
+                "deferred read stays linked: {owner}"
+            );
+            assert_eq!(validate_output_modules(&pairs), vec![]);
+        }
+    }
+}
+
 /// A CommonJS factory keeps its callable/cache boundary when its support
 /// writer shares state with a lazy ESM initializer.
 #[test]
