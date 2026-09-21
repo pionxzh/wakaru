@@ -1,13 +1,22 @@
 mod common;
 use common::{assert_eq_normalized, render, render_rule};
-use wakaru_core::{rules::UnArrayConcatSpread, RewriteLevel};
+use wakaru_core::{
+    rules::{UnArrayConcatSpread, UnArrayConcatSpreadRest},
+    RewriteLevel,
+};
 
 fn apply_rule_with_level(input: &str, level: RewriteLevel) -> String {
     render_rule(input, |_| UnArrayConcatSpread::new_with_level(level))
 }
 
+fn apply_rest_proof(input: &str) -> String {
+    render_rule(input, |unresolved_mark| {
+        UnArrayConcatSpreadRest::new(unresolved_mark, RewriteLevel::Standard)
+    })
+}
+
 #[test]
-fn simplifies_literal_array_concat_single_element() {
+fn preserves_unknown_concat_single_element_at_standard() {
     let input = r#"
 const x = [a].concat(b);
 "#;
@@ -15,7 +24,7 @@ const x = [a].concat(b);
 }
 
 #[test]
-fn simplifies_literal_array_concat_multiple_elements() {
+fn preserves_unknown_concat_after_multiple_elements_at_standard() {
     let input = r#"
 const x = [a, b].concat(c);
 "#;
@@ -23,7 +32,7 @@ const x = [a, b].concat(c);
 }
 
 #[test]
-fn simplifies_concat_with_multiple_args() {
+fn preserves_multiple_unknown_concat_args_at_standard() {
     let input = r#"
 const x = [a].concat(b, c);
 "#;
@@ -42,7 +51,7 @@ const x = [a, b, c];
 }
 
 #[test]
-fn simplifies_empty_array_concat() {
+fn preserves_empty_array_concat_with_unknown_arg_at_standard() {
     let input = r#"
 const x = [].concat(a);
 "#;
@@ -103,13 +112,185 @@ const x = [].concat(a);
 }
 
 #[test]
-fn unknown_concat_argument_stays_concat_at_aggressive() {
-    // Do not hide the old unknown-arg spread heuristic in Aggressive.
+fn aggressive_assumes_concat_arguments_are_arrays() {
+    // `concat_arguments_are_arrays`: retain the generated-code heuristic for
+    // Babel loose / iterableIsArray output only at Aggressive.
     let input = r#"
 const x = [].concat(a);
 "#;
+    let expected = r#"
+const x = [...a];
+"#;
     let output = apply_rule_with_level(input, RewriteLevel::Aggressive);
-    assert_eq_normalized(&output, input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn proven_rest_copy_argument_becomes_spread_at_standard() {
+    let input = r#"
+function forward() {
+  for (var len = arguments.length, args = Array(len), index = 0; index < len; index++) {
+    args[index] = arguments[index];
+  }
+  return call(...[head].concat(args, [tail]));
+}
+"#;
+    let expected = r#"
+function forward() {
+  for (var len = arguments.length, args = Array(len), index = 0; index < len; index++) {
+    args[index] = arguments[index];
+  }
+  return call(...[head, ...args, tail]);
+}
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), expected);
+}
+
+#[test]
+fn proven_typescript_rest_copy_argument_becomes_spread_at_standard() {
+    let input = r#"
+function forward(first) {
+  var args = [];
+  for (var index = 1; index < arguments.length; index++) {
+    args[index - 1] = arguments[index];
+  }
+  return call(...[first].concat(args, [tail]));
+}
+"#;
+    let expected = r#"
+function forward(first) {
+  var args = [];
+  for (var index = 1; index < arguments.length; index++) {
+    args[index - 1] = arguments[index];
+  }
+  return call(...[first, ...args, tail]);
+}
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), expected);
+}
+
+#[test]
+fn captured_rest_copy_argument_becomes_spread_at_standard() {
+    let input = r#"
+function forward() {
+  for (var len = arguments.length, args = Array(len), index = 0; index < len; index++) {
+    args[index] = arguments[index];
+  }
+  return function () {
+    return call(...[head].concat(args, [tail]));
+  };
+}
+"#;
+    let expected = r#"
+function forward() {
+  for (var len = arguments.length, args = Array(len), index = 0; index < len; index++) {
+    args[index] = arguments[index];
+  }
+  return function () {
+    return call(...[head, ...args, tail]);
+  };
+}
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), expected);
+}
+
+#[test]
+fn existing_rest_parameter_is_array_proof_at_standard() {
+    let input = r#"
+function forward(...args) {
+  return call(...[head].concat(args, [tail]));
+}
+"#;
+    let expected = r#"
+function forward(...args) {
+  return call(...[head, ...args, tail]);
+}
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), expected);
+}
+
+#[test]
+fn reassigned_rest_copy_is_not_array_proof() {
+    let input = r#"
+function forward() {
+  for (var len = arguments.length, args = Array(len), index = 0; index < len; index++) {
+    args[index] = arguments[index];
+  }
+  args = fallback;
+  return call(...[head].concat(args));
+}
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), input);
+}
+
+#[test]
+fn concat_spreadability_mutation_blocks_rest_copy_proof() {
+    let input = r#"
+function forward() {
+  for (var len = arguments.length, args = Array(len), index = 0; index < len; index++) {
+    args[index] = arguments[index];
+  }
+  args[Symbol.isConcatSpreadable] = false;
+  return call(...[head].concat(args));
+}
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), input);
+}
+
+#[test]
+fn escaped_rest_copy_is_not_array_proof() {
+    let input = r#"
+function forward() {
+  for (var len = arguments.length, args = Array(len), index = 0; index < len; index++) {
+    args[index] = arguments[index];
+  }
+  observe(args);
+  return call(...[head].concat(args));
+}
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), input);
+}
+
+#[test]
+fn shadowed_array_constructor_is_not_rest_copy_proof() {
+    let input = r#"
+function forward(Array) {
+  for (var len = arguments.length, args = Array(len), index = 0; index < len; index++) {
+    args[index] = arguments[index];
+  }
+  return call(...[head].concat(args));
+}
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), input);
+}
+
+#[test]
+fn pipeline_recovers_class_with_proven_rest_copy_super_concat() {
+    let input = r#"
+var Foo = ((Base_1) => {
+  function Foo() {
+    for (var len = arguments.length, args = Array(len), index = 0; index < len; index++) {
+      args[index] = arguments[index];
+    }
+    return Base_1.call.apply(Base_1, [this].concat(args));
+  }
+  ((Child, Base) => {
+    Child.prototype = Object.create(Base && Base.prototype, {
+      constructor: { value: Child, enumerable: false, writable: true, configurable: true }
+    });
+    Base && (Object.setPrototypeOf ? Object.setPrototypeOf(Child, Base) : Child.__proto__ = Base);
+  })(Foo, Base_1);
+  return Foo;
+})(Base);
+"#;
+    let expected = r#"
+class Foo extends Base {
+  constructor(...args) {
+    super(...args);
+  }
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
 }
 
 #[test]

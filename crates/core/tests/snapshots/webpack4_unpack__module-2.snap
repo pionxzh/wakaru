@@ -110,9 +110,7 @@ function N(e, ...n) {
     return E(f, P("fork", e, n));
 }
 function M(e, ...n) {
-    return x(N(...[
-        e
-    ].concat(n)));
+    return x(N(e, ...n));
 }
 function A(...t) {
     if (t.length > 1) {

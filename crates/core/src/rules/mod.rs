@@ -186,7 +186,7 @@ pub use simplify_sequence::SimplifySequence;
 pub use smart_inline::SmartInline;
 pub use smart_rename::{strip_redundant_sentry_source_file, SmartRename, SmartRenameSecondPass};
 pub use un_argument_spread::UnArgumentSpread;
-pub use un_array_concat_spread::UnArrayConcatSpread;
+pub use un_array_concat_spread::{UnArrayConcatSpread, UnArrayConcatSpreadRest};
 pub use un_assert_this_initialized::UnAssertThisInitialized;
 pub use un_assignment_merging::UnAssignmentMerging;
 pub use un_async_await::UnAsyncAwait;

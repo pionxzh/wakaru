@@ -103,6 +103,7 @@ UnOptionalChaining ─┘
 UnToConsumableArray ┐
 UnArgumentSpread ───┼→ UnSpreadArrayLiteral
 UnArrayConcatSpread ┘
+UnParameters → UnArrayConcatSpreadRest → UnSpreadArrayLiteral2 → UnEs6Class
 FlipComparisons ──┐
 RemoveVoid ───────┼→ UnParameters
 UnConditionals ───┤
@@ -270,10 +271,16 @@ rationale, or level gating appear.
   rather than demoted to `aggressive`: Babel loose and TypeScript ≤ 4.4 lower
   templates to plain concatenation, and the private fixtures recover ~3,000
   templates through it.
-- **UnArrayConcatSpread** — `standard+`: `[a].concat(b)` → `[a, ...b]` is not
-  strictly equivalent for scalars, strings, patched `concat`, or
-  `Symbol.isConcatSpreadable`; the useful generated shape is
-  `[fixed].concat(args)`.
+- **UnArrayConcatSpread** — array-literal arguments flatten at every level.
+  An arbitrary concat argument becomes a spread only at `aggressive`, under
+  `concat_arguments_are_arrays`; scalars, strings, and general iterables do
+  not share concat's spread semantics. At `standard`, the later
+  **UnArrayConcatSpreadRest** pass admits only existing rest parameters or
+  canonical Babel/TypeScript `arguments`-copy arrays, and only when every use
+  after initialization is an eligible concat operand. It runs before
+  UnEs6Class, followed by a second UnSpreadArrayLiteral pass, so a proven
+  `[this].concat(args)` can expose `Base.call.apply(Base, [this, ...args])`
+  without restoring the unsafe general heuristic.
 - **UnNullishCoalescing** — pattern-level gating: strict null checks
   (`x === null || x === undefined`) run at all levels; loose
   `x != null ? x : y` requires `standard+` (assumes `no_document_all`);

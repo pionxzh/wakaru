@@ -19,36 +19,18 @@ export function routerReducer(e = s, { type, payload: location } = {}) {
     }
     return e;
 }
-export const ConnectedRouter = ((Component_1)=>{
-    function t(...i) {
-        let n;
-        let r;
-        n = r = Component_1.call(...[
-            this
-        ].concat(i));
-        r.handleLocationChange = (payload)=>{
+export class ConnectedRouter extends Component {
+    constructor(...i){
+        super(...i);
+        var r = this;
+        this.handleLocationChange = (payload)=>{
             r.store.dispatch({
                 type: LOCATION_CHANGE,
                 payload
             });
         };
-        return n;
     }
-    ((e, t)=>{
-        if (typeof t !== "function" && t !== null) {
-            throw new TypeError(`Super expression must either be null or a function, not ${typeof t}`);
-        }
-        e.prototype = Object.create(t && t.prototype, {
-            constructor: {
-                value: e,
-                enumerable: false,
-                writable: true,
-                configurable: true
-            }
-        });
-        t && (Object.setPrototypeOf ? Object.setPrototypeOf(e, t) : e.__proto__ = t);
-    })(t, Component_1);
-    t.prototype.componentWillMount = function() {
+    componentWillMount() {
         const props = this.props;
         const { store, history, isSSR } = props;
         this.store = store || this.context.store;
@@ -56,17 +38,16 @@ export const ConnectedRouter = ((Component_1)=>{
         if (!isSSR) {
             this.unsubscribeFromHistory = history.listen(this.handleLocationChange);
         }
-    };
-    t.prototype.componentWillUnmount = function() {
+    }
+    componentWillUnmount() {
         if (this.unsubscribeFromHistory) {
             this.unsubscribeFromHistory();
         }
-    };
-    t.prototype.render = function() {
+    }
+    render() {
         return <u.a {...this.props}/>;
-    };
-    return t;
-})(Component);
+    }
+}
 ConnectedRouter.propTypes = {
     store: i.object,
     history: i.object.isRequired,

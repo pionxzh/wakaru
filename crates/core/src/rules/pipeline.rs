@@ -327,6 +327,9 @@ runner!(run_un_argument_spread, |ctx| UnArgumentSpread::new(
 runner!(run_un_array_concat_spread, |ctx| {
     UnArrayConcatSpread::new_with_level(ctx.rewrite_level)
 });
+runner!(run_un_array_concat_spread_rest, |ctx| {
+    UnArrayConcatSpreadRest::new(ctx.unresolved_mark, ctx.rewrite_level)
+});
 runner!(run_un_spread_array_literal, UnSpreadArrayLiteral);
 runner!(run_object_assign_spread, |ctx| ObjectAssignSpread::new(
     ctx.unresolved_mark
@@ -624,6 +627,15 @@ define_rule_registry! {
     // UnParameters can remove a for-loop initializer, exposing `for(; test;)`.
     ("UnWhileLoop", Complex, run_un_while_loop, always_enabled, requires: [
         "UnParameters"
+    ]),
+    // UnParameters leaves canonical arguments-copy loops intact. Use those
+    // loops as positive Array proof before UnEs6Class consumes the surrounding
+    // Babel inheritance wrapper, then flatten the newly built argument array.
+    ("UnArrayConcatSpreadRest", Complex, run_un_array_concat_spread_rest, standard_or_above, requires: [
+        "UnParameters"
+    ]),
+    ("UnSpreadArrayLiteral2", Complex, run_un_spread_array_literal, standard_or_above, requires: [
+        "UnArrayConcatSpreadRest"
     ]),
     ("UnEnum", Complex, run_un_enum, always_enabled),
     ("UnJsx", Complex, run_un_jsx, standard_or_above),

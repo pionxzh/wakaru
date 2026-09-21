@@ -1,7 +1,7 @@
 use crate::collections::HashSet;
 
 use swc_core::atoms::Atom;
-use swc_core::common::DUMMY_SP;
+use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignOp, AssignTarget, BinExpr, BinaryOp, BindingIdent, Callee, CondExpr, Constructor, Decl,
     Expr, Function, FunctionBody, Ident, Lit, MemberExpr, MemberProp, Number, Param,
@@ -184,6 +184,78 @@ fn detect_copy_var_ident(body: &FunctionBody, fixed_param_count: usize) -> Optio
         .or_else(|| detect_ts_copy_var_ident(body, fixed_param_count))
 }
 
+/// Positive proof that a binding is the Array populated by a canonical
+/// Babel/TypeScript rest-argument copy. `ready_stmt` is the first statement
+/// after the declaration/copy loop, where the binding can be consumed as an
+/// initialized Array.
+pub(super) struct RestArrayCopyProof {
+    pub(super) binding: Ident,
+    pub(super) start_stmt: usize,
+    pub(super) ready_stmt: usize,
+}
+
+/// Find a rest-array copy using resolver identity for the built-in `Array`
+/// constructor and the function's implicit `arguments` binding. ArgRest's
+/// historical matcher remains name-based; callers using this as an Array proof
+/// need the stronger checks before replacing concat with spread.
+pub(super) fn find_rest_array_copy_proof(
+    body: &FunctionBody,
+    fixed_param_count: usize,
+    unresolved_mark: Mark,
+) -> Option<RestArrayCopyProof> {
+    if let Some((index, binding)) = body.stmts.iter().enumerate().find_map(|(index, stmt)| {
+        detect_copy_var_ident_from_stmt_with_mark(stmt, fixed_param_count, Some(unresolved_mark))
+            .filter(|_| arguments_refs_are_unresolved(stmt, unresolved_mark))
+            .map(|binding| (index, binding))
+    }) {
+        return Some(RestArrayCopyProof {
+            binding,
+            start_stmt: index,
+            ready_stmt: index + 1,
+        });
+    }
+
+    body.stmts.windows(2).enumerate().find_map(|(index, pair)| {
+        let copy_id = ts_empty_array_ident_from_stmt(&pair[0])?;
+        let loop_copy = detect_ts_copy_loop_from_stmt(&pair[1], fixed_param_count)?;
+        if binding_id(&copy_id) != loop_copy
+            || !arguments_refs_are_unresolved(&pair[1], unresolved_mark)
+        {
+            return None;
+        }
+        Some(RestArrayCopyProof {
+            binding: copy_id,
+            start_stmt: index,
+            ready_stmt: index + 2,
+        })
+    })
+}
+
+fn arguments_refs_are_unresolved<N>(node: &N, unresolved_mark: Mark) -> bool
+where
+    N: VisitWith<ArgumentsIdentityChecker>,
+{
+    let mut checker = ArgumentsIdentityChecker {
+        unresolved_mark,
+        valid: true,
+    };
+    node.visit_with(&mut checker);
+    checker.valid
+}
+
+struct ArgumentsIdentityChecker {
+    unresolved_mark: Mark,
+    valid: bool,
+}
+
+impl Visit for ArgumentsIdentityChecker {
+    fn visit_ident(&mut self, ident: &Ident) {
+        if ident.sym == "arguments" && ident.ctxt.outer() != self.unresolved_mark {
+            self.valid = false;
+        }
+    }
+}
+
 fn detect_ts_copy_var_ident(body: &FunctionBody, fixed_param_count: usize) -> Option<Ident> {
     body.stmts.windows(2).find_map(|pair| {
         let copy_id = ts_empty_array_ident_from_stmt(&pair[0])?;
@@ -193,6 +265,14 @@ fn detect_ts_copy_var_ident(body: &FunctionBody, fixed_param_count: usize) -> Op
 }
 
 fn detect_copy_var_ident_from_stmt(stmt: &Stmt, fixed_param_count: usize) -> Option<Ident> {
+    detect_copy_var_ident_from_stmt_with_mark(stmt, fixed_param_count, None)
+}
+
+fn detect_copy_var_ident_from_stmt_with_mark(
+    stmt: &Stmt,
+    fixed_param_count: usize,
+    unresolved_mark: Option<Mark>,
+) -> Option<Ident> {
     let Stmt::For(for_stmt) = stmt else {
         return None;
     };
@@ -228,7 +308,9 @@ fn detect_copy_var_ident_from_stmt(stmt: &Stmt, fixed_param_count: usize) -> Opt
         return None;
     };
 
-    let is_array_ctor = |sym: &Atom| sym == "Array";
+    let is_array_ctor = |ident: &Ident| {
+        ident.sym == "Array" && unresolved_mark.is_none_or(|mark| ident.ctxt.outer() == mark)
+    };
     let one_len_arg = |args: &[swc_core::ecma::ast::ExprOrSpread]| -> bool {
         args.len() == 1
             && args[0].spread.is_none()
@@ -243,7 +325,7 @@ fn detect_copy_var_ident_from_stmt(stmt: &Stmt, fixed_param_count: usize) -> Opt
             let Expr::Ident(id) = callee.as_ref() else {
                 return None;
             };
-            if !is_array_ctor(&id.sym) || !one_len_arg(&call.args) {
+            if !is_array_ctor(id) || !one_len_arg(&call.args) {
                 return None;
             }
         }
@@ -251,7 +333,7 @@ fn detect_copy_var_ident_from_stmt(stmt: &Stmt, fixed_param_count: usize) -> Opt
             let Expr::Ident(id) = new_expr.callee.as_ref() else {
                 return None;
             };
-            if !is_array_ctor(&id.sym) {
+            if !is_array_ctor(id) {
                 return None;
             }
             let args = new_expr.args.as_deref().unwrap_or(&[]);
