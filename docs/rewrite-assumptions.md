@@ -340,6 +340,32 @@ recovery is a separate, provenance-checked path and does not depend on this.
 Level: `standard` and above. `minimal` rewrites only chains whose substitutions
 are primitives by syntax, as for `string_coercion_hint`.
 
+### `concat_arguments_are_arrays`
+
+Unknown arguments in an array-literal `.concat(...)` call are ordinary arrays,
+so concat's conditional flattening can be recovered as array spread:
+
+```js
+[head].concat(items, [tail])
+// ->
+[head, ...items, tail]
+```
+
+This is not true for an arbitrary value. Concat appends a scalar or string as
+one element, and spreads only arrays or values opting in through
+`Symbol.isConcatSpreadable`; array spread instead requires an iterable and
+always iterates it. Babel's loose / `iterableIsArray` transforms emit this
+concat shape after assuming their spread inputs are arrays, but the resulting
+AST no longer carries that producer setting.
+
+Affects: `UnArrayConcatSpread` for arguments whose array identity is not proven.
+Array literals are known directly. Existing rest parameters and canonical
+Babel/TypeScript `arguments`-copy arrays use a separate binding proof and do
+not depend on this assumption.
+
+Level: `aggressive` only. `minimal` and `standard` preserve unknown concat
+arguments; `standard` may still recover the proof-backed rest-array forms.
+
 ### `set_computed_properties`
 
 Folding a sequence of member assignments back into an object literal assumes

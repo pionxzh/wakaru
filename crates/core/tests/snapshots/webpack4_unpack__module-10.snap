@@ -73,11 +73,7 @@ export function b(e, t, ...r) {
                 "q1",
                 ((e)=>({
                         done: false,
-                        value: k(...[
-                            t
-                        ].concat(r, [
-                            e
-                        ]))
+                        value: k(t, ...r, e)
                     }))(f)
             ];
         }
@@ -90,11 +86,7 @@ export function d(e, t, ...r) {
     };
     const f = (e)=>({
             done: false,
-            value: k(...[
-                t
-            ].concat(r, [
-                e
-            ]))
+            value: k(t, ...r, e)
         });
     let d;
     let p;
@@ -179,11 +171,7 @@ export function f(e, t, n, ...s) {
                 "q4",
                 ((e)=>({
                         done: false,
-                        value: k(...[
-                            n
-                        ].concat(s, [
-                            e
-                        ]))
+                        value: k(n, ...s, e)
                     }))(p)
             ];
         },
