@@ -1980,3 +1980,28 @@ export function g(e) {
 "#;
     assert_eq_normalized(&render(input), expected);
 }
+
+#[test]
+fn for_of_keeps_the_elements_own_value_property() {
+    // `step.value.value` reads the `value` property of the element; only the
+    // inner `step.value` is the iterator result access.
+    let input = r#"
+let step;
+const iterator = _createForOfIteratorHelper(entries);
+try {
+  for (iterator.s(); !(step = iterator.n()).done;) {
+    use(step.value.value, step.value.key);
+  }
+} catch (err) {
+  iterator.e(err);
+} finally {
+  iterator.f();
+}
+"#;
+    let expected = r#"
+for (const step of entries) {
+  use(step.value, step.key);
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}

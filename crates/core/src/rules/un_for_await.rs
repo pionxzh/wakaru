@@ -140,6 +140,28 @@ fn try_convert_async_iterator_try(
     // TypeScript 5 copies the value into a temporary and clears `first`.
     strip_body_protocol_prefix(&mut shape, &mut protocol_idents)?;
 
+    let mut body = shape.body;
+    if let Some(value_temp) = &shape.value_temp {
+        redirect_value_temp_to_step(&mut body, value_temp, &shape.step)?;
+    }
+
+    // A state-machine decoder hoists the element to the function scope, so
+    // the body starts with `item = step.value` instead of a declaration. The
+    // element becomes the loop binding when nothing outside the protocol
+    // reads it; otherwise the loop assigns the outer binding in place.
+    let HoistedElement {
+        element: hoisted_element,
+        consumed_temps,
+    } = take_hoisted_element(&mut body, &shape.step);
+    protocol_idents.extend(consumed_temps);
+    let element_is_private = hoisted_element.as_ref().is_some_and(|element| {
+        !expr_mentions_binding(&shape.iterable, element)
+            && uses_are_within(ctx, element, std::slice::from_ref(&stmts[index]))
+    });
+    if element_is_private {
+        protocol_idents.extend(hoisted_element.iter().cloned());
+    }
+
     // Flag declarations and initial assignments before the try statement.
     let consumed: Vec<usize> = stmts[..index]
         .iter()
@@ -161,21 +183,339 @@ fn try_convert_async_iterator_try(
         return None;
     }
 
-    let mut body = shape.body;
-    if let Some(value_temp) = &shape.value_temp {
-        redirect_value_temp_to_step(&mut body, value_temp, &shape.step)?;
+    let for_of = match hoisted_element {
+        Some(element) => build_hoisted_element_for_await(
+            body,
+            shape.iterable,
+            element,
+            element_is_private,
+            stmts[index].span(),
+        )?,
+        None => {
+            let mut for_of = build_helper_for_of(
+                body,
+                shape.iterable,
+                shape.step,
+                stmts[index].span(),
+                ctx,
+                true,
+            )?;
+            unwrap_single_block_body(&mut for_of);
+            for_of
+        }
+    };
+
+    // Temporaries declared in an enclosing statement list (a decoder hoists
+    // them to the function scope) are proven private above; their now-dead
+    // declarations are removed when that list is processed.
+    let declared_here: Vec<Ident> = consumed
+        .iter()
+        .flat_map(|idx| declared_idents(&stmts[*idx]))
+        .collect();
+    let mut orphaned = ctx.orphaned_protocol_temps.borrow_mut();
+    for ident in &protocol_idents {
+        if !declared_here
+            .iter()
+            .any(|declared| same_binding(declared, ident))
+        {
+            orphaned.insert(binding_key(ident));
+        }
+    }
+    Some(AsyncRewrite { for_of, consumed })
+}
+
+#[derive(Default)]
+struct HoistedElement {
+    /// The hoisted binding the loop should bind or assign, when the body
+    /// starts by assigning `step.value` (possibly through a temporary) to it.
+    element: Option<Ident>,
+    /// Value temporaries the fold consumed (`_d` in `_d = step.value; item =
+    /// _d;`); they join the protocol temporaries so their hoisted
+    /// declarations go with the loop.
+    consumed_temps: Vec<Ident>,
+}
+
+/// Fold the element assignment a decoder leaves after hoisting the element:
+///
+/// - `item = step.value;` binds or assigns `item`;
+/// - `_d = step.value; item = _d;` (TypeScript's temporary) does the same and
+///   consumes `_d`;
+/// - `_d = step.value; const item = _d;` (or a destructuring declaration)
+///   redirects the declaration to `step.value` and leaves it to the shared
+///   builder, consuming `_d`;
+/// - `_d = step.value; use(item = _d)` (Terser inlined the alias into the
+///   first statement) binds `item` and drops the assignment expression when
+///   that assignment is the only read of `_d` and the only mention of `item`
+///   in that statement;
+/// - `_d = step.value;` followed by member reads of `_d` binds `_d` itself.
+///
+/// `step` must not be read anywhere else in the body.
+fn take_hoisted_element(body: &mut BlockStmt, step: &Ident) -> HoistedElement {
+    let Some(element) = leading_assignment(body, |right| is_value_member_of(right, step)) else {
+        return HoistedElement::default();
+    };
+    if same_binding(&element, step)
+        || body.stmts[1..]
+            .iter()
+            .any(|stmt| stmt_mentions_binding(stmt, step))
+    {
+        return HoistedElement::default();
+    }
+    body.stmts.remove(0);
+    let rest_reads_element = |stmts: &[Stmt]| {
+        stmts
+            .iter()
+            .any(|stmt| stmt_mentions_binding(stmt, &element))
+    };
+
+    // `item = _d;`
+    if let Some(alias) = leading_assignment(
+        body,
+        |right| matches!(strip_parens(right), Expr::Ident(id) if same_binding(id, &element)),
+    ) {
+        if !rest_reads_element(&body.stmts[1..]) {
+            body.stmts.remove(0);
+            return HoistedElement {
+                element: Some(alias),
+                consumed_temps: vec![element],
+            };
+        }
     }
 
-    let mut for_of = build_helper_for_of(
-        body,
-        shape.iterable,
-        shape.step,
-        stmts[index].span(),
-        ctx,
-        true,
-    )?;
+    // `const item = _d;` / `const { id } = _d;`
+    let rest_is_free_of_element = !rest_reads_element(&body.stmts[1..]);
+    let declared_alias = match body.stmts.first_mut() {
+        Some(Stmt::Decl(Decl::Var(var))) => match var.decls.as_mut_slice() {
+            [decl] => match decl.init.as_deref_mut() {
+                Some(init) if matches!(strip_parens(init), Expr::Ident(id) if same_binding(id, &element)) => {
+                    Some(init)
+                }
+                _ => None,
+            },
+            _ => None,
+        },
+        _ => None,
+    };
+    if let Some(init) = declared_alias {
+        if rest_is_free_of_element {
+            *init = step_value_member(step);
+            return HoistedElement {
+                element: None,
+                consumed_temps: vec![element],
+            };
+        }
+    }
+
+    // `use(item = _d);` as the first statement.
+    if let Some(alias) = fold_inline_alias(body, &element) {
+        return HoistedElement {
+            element: Some(alias),
+            consumed_temps: vec![element],
+        };
+    }
+
+    HoistedElement {
+        element: Some(element),
+        consumed_temps: Vec::new(),
+    }
+}
+
+/// When the body's first statement holds `alias = element` as an expression,
+/// `element` is read nowhere else in the body, and that assignment is the
+/// first mention of `alias` in the statement's evaluation order, replace the
+/// assignment with `alias` and return it: binding `alias` in the loop head
+/// gives the statement the same value, and every later read of `alias` in
+/// the body already saw the assigned value.
+fn fold_inline_alias(body: &mut BlockStmt, element: &Ident) -> Option<Ident> {
+    let first = body.stmts.first()?;
+    let mut finder = InlineAliasFinder {
+        element: binding_key(element),
+        mentions: Vec::new(),
+        alias_assignments: Vec::new(),
+    };
+    first.visit_with(&mut finder);
+    let [(alias, target_position)] = finder.alias_assignments.as_slice() else {
+        return None;
+    };
+    let alias = alias.clone();
+    if same_binding(&alias, element) {
+        return None;
+    }
+    let element_key = binding_key(element);
+    if finder
+        .mentions
+        .iter()
+        .filter(|key| **key == element_key)
+        .count()
+        != 1
+    {
+        return None;
+    }
+    let alias_key = binding_key(&alias);
+    if finder.mentions[..*target_position].contains(&alias_key) {
+        return None;
+    }
+    if body.stmts[1..]
+        .iter()
+        .any(|stmt| stmt_mentions_binding(stmt, element))
+    {
+        return None;
+    }
+    let mut replacer = InlineAliasReplacer {
+        element: element_key,
+        alias: alias.clone(),
+    };
+    body.stmts[0].visit_mut_with(&mut replacer);
+    Some(alias)
+}
+
+/// Identifier mentions of one statement in traversal (source) order, plus
+/// each `alias = element` assignment with the position its target occupies
+/// in that order.
+struct InlineAliasFinder {
+    element: BindingKey,
+    mentions: Vec<BindingKey>,
+    alias_assignments: Vec<(Ident, usize)>,
+}
+
+impl Visit for InlineAliasFinder {
+    fn visit_ident(&mut self, ident: &Ident) {
+        self.mentions.push(binding_key(ident));
+    }
+
+    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+        if let Some(target) = assign_target_ident(assign) {
+            if matches!(strip_parens(&assign.right), Expr::Ident(id)
+                if id.sym == self.element.0 && id.ctxt == self.element.1)
+            {
+                self.alias_assignments.push((target, self.mentions.len()));
+            }
+        }
+        assign.visit_children_with(self);
+    }
+}
+
+struct InlineAliasReplacer {
+    element: BindingKey,
+    alias: Ident,
+}
+
+impl VisitMut for InlineAliasReplacer {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        if let Expr::Assign(assign) = expr {
+            let is_alias_assign = assign_target_ident(assign)
+                .is_some_and(|target| same_binding(&target, &self.alias))
+                && matches!(strip_parens(&assign.right), Expr::Ident(id)
+                    if id.sym == self.element.0 && id.ctxt == self.element.1);
+            if is_alias_assign {
+                *expr = Expr::Ident(self.alias.clone());
+                return;
+            }
+        }
+        expr.visit_mut_children_with(self);
+    }
+}
+
+/// The target of a leading `target = <right>;` statement whose right side
+/// satisfies `right_matches`.
+fn leading_assignment(body: &BlockStmt, right_matches: impl Fn(&Expr) -> bool) -> Option<Ident> {
+    let Stmt::Expr(ExprStmt { expr, .. }) = body.stmts.first()? else {
+        return None;
+    };
+    let Expr::Assign(assign) = strip_parens(expr) else {
+        return None;
+    };
+    let target = assign_target_ident(assign)?;
+    right_matches(&assign.right).then_some(target)
+}
+
+/// `for await (const item of iterable)` when `item` is private to the loop
+/// (`let` if the body writes it), else `for await (item of iterable)`.
+fn build_hoisted_element_for_await(
+    body: BlockStmt,
+    iterable: Box<Expr>,
+    element: Ident,
+    element_is_private: bool,
+    span: swc_core::common::Span,
+) -> Option<ForOfStmt> {
+    let left = if element_is_private {
+        let kind = if BindingUseIndex::collect_stmts(&body.stmts)
+            .has_direct_write(&binding_key(&element))
+        {
+            VarDeclKind::Let
+        } else {
+            VarDeclKind::Const
+        };
+        ForHead::VarDecl(Box::new(swc_core::ecma::ast::VarDecl {
+            span: DUMMY_SP,
+            ctxt: Default::default(),
+            kind,
+            declare: false,
+            decls: vec![swc_core::ecma::ast::VarDeclarator {
+                span: DUMMY_SP,
+                name: Pat::Ident(swc_core::ecma::ast::BindingIdent {
+                    id: element,
+                    type_ann: None,
+                }),
+                init: None,
+                definite: false,
+            }],
+        }))
+    } else {
+        ForHead::Pat(Box::new(Pat::Ident(swc_core::ecma::ast::BindingIdent {
+            id: element,
+            type_ann: None,
+        })))
+    };
+    let for_span = if span.lo.0 != 0 { span } else { DUMMY_SP };
+    let mut for_of = ForOfStmt {
+        span: for_span,
+        is_await: true,
+        left,
+        right: iterable,
+        body: Box::new(Stmt::Block(body)),
+    };
     unwrap_single_block_body(&mut for_of);
-    Some(AsyncRewrite { for_of, consumed })
+    Some(for_of)
+}
+
+/// Every module use of `ident` sits inside `stmts`.
+fn uses_are_within(ctx: &ForOfHelperContext, ident: &Ident, stmts: &[Stmt]) -> bool {
+    let key = binding_key(ident);
+    BindingUseIndex::collect_stmts(stmts).use_count(&key) == ctx.binding_uses.use_count(&key)
+}
+
+fn declared_idents(stmt: &Stmt) -> Vec<Ident> {
+    match stmt {
+        Stmt::Decl(Decl::Var(var)) => var
+            .decls
+            .iter()
+            .filter_map(|decl| pat_as_ident(&decl.name).map(|binding| binding.id.clone()))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Drop the declarations of protocol temporaries that an inner statement
+/// list already folded into `for await`: uninitialized declarators whose
+/// binding was proven private to that protocol. A `for await` head that
+/// re-declares the element binding replaces its hoisted declaration.
+pub(super) fn remove_orphaned_temp_declarations(stmts: &mut Vec<Stmt>, ctx: &ForOfHelperContext) {
+    let orphaned = ctx.orphaned_protocol_temps.borrow();
+    if orphaned.is_empty() {
+        return;
+    }
+    stmts.retain_mut(|stmt| {
+        let Stmt::Decl(Decl::Var(var)) = stmt else {
+            return true;
+        };
+        var.decls.retain(|decl| {
+            !(decl.init.is_none()
+                && pat_as_ident(&decl.name)
+                    .is_some_and(|binding| orphaned.contains(&binding_key(&binding.id))))
+        });
+        !var.decls.is_empty()
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -250,12 +590,16 @@ fn parse_try_block(block: &BlockStmt, ctx: &ForOfHelperContext) -> Option<LoopSh
     }
 
     let (iterator, iterable) = iterator_init?;
-    let mut shape = parse_loop_test(for_stmt.test.as_deref()?, &iterator)?;
-    parse_loop_update(for_stmt, &mut shape, &preamble_flags)?;
-
     let Stmt::Block(body) = &*for_stmt.body else {
         return None;
     };
+    let mut body = body.clone();
+    let mut shape = match for_stmt.test.as_deref() {
+        Some(test) => parse_loop_test(test, &iterator)?,
+        None => parse_head_statements(&mut body, &iterator)?,
+    };
+    parse_loop_update(for_stmt, &mut shape, &preamble_flags)?;
+
     Some(LoopShape {
         iterable,
         iterator,
@@ -267,7 +611,47 @@ fn parse_try_block(block: &BlockStmt, ctx: &ForOfHelperContext) -> Option<LoopSh
         value_temp: shape.value_temp,
         preamble_flags,
         temps,
-        body: body.clone(),
+        body,
+    })
+}
+
+/// A state-machine decode of Terser-compressed TypeScript output puts the
+/// loop test in the body: `step = await it.next(); if (done = step.done)
+/// break;` (or `if (step.done) break;`) leads the body and the `for` test is
+/// empty. Consume both statements.
+fn parse_head_statements(body: &mut BlockStmt, iterator: &Ident) -> Option<LoopTest> {
+    let [Stmt::Expr(next_stmt), Stmt::If(guard), ..] = body.stmts.as_slice() else {
+        return None;
+    };
+    let Expr::Assign(next_assign) = strip_parens(&next_stmt.expr) else {
+        return None;
+    };
+    let step = assign_target_ident(next_assign)?;
+    if !is_awaited_next_call(&next_assign.right, iterator) {
+        return None;
+    }
+    if guard.alt.is_some() || !matches!(single_stmt(&guard.cons)?, Stmt::Break(_)) {
+        return None;
+    }
+    let done_temp = match strip_parens(&guard.test) {
+        Expr::Assign(done_assign) => {
+            let done_temp = assign_target_ident(done_assign)?;
+            if !is_done_member_of(&done_assign.right, &step) {
+                return None;
+            }
+            Some(done_temp)
+        }
+        test if is_done_member_of(test, &step) => None,
+        _ => return None,
+    };
+    body.stmts.drain(..2);
+    Some(LoopTest {
+        step,
+        abrupt_flag: None,
+        normal_flag: None,
+        first_flag: None,
+        done_temp,
+        value_temp: None,
     })
 }
 
@@ -499,47 +883,27 @@ fn parse_loop_update(
     None
 }
 
-/// TypeScript 5 starts the body with `value = step.value; first = false;`.
-/// Consume those so the element extraction sees the declaration first.
-fn strip_body_protocol_prefix(
-    shape: &mut LoopShape,
-    protocol_idents: &mut Vec<Ident>,
-) -> Option<()> {
-    let mut consumed = 0;
-    for stmt in shape.body.stmts.iter().take(2) {
+/// TypeScript 5 clears its `first` flag right after reading the value
+/// (`value = step.value; first = false;`). Consume the clear so the value
+/// copy is the first body statement; `take_hoisted_element` folds that copy
+/// into the loop binding.
+fn strip_body_protocol_prefix(shape: &mut LoopShape, _protocol_idents: &mut [Ident]) -> Option<()> {
+    let Some(first) = shape.first_flag.clone() else {
+        return Some(());
+    };
+    let clears_first = |stmt: &Stmt| {
         let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
-            break;
+            return false;
         };
         let Expr::Assign(assign) = strip_parens(expr) else {
-            break;
+            return false;
         };
-        let Some(target) = assign_target_ident(assign) else {
-            break;
-        };
-        if is_value_member_of(&assign.right, &shape.step) {
-            if shape.value_temp.is_some() {
-                return None;
-            }
-            protocol_idents.push(target.clone());
-            shape.value_temp = Some(target);
-            consumed += 1;
-            continue;
-        }
-        if let Some(first) = &shape.first_flag {
-            if same_binding(first, &target)
-                && matches!(strip_parens(&assign.right), Expr::Lit(Lit::Bool(b)) if !b.value)
-            {
-                consumed += 1;
-                continue;
-            }
-        }
-        break;
-    }
-    // A `first` flag that the body never clears is not the TS 5 protocol.
-    if shape.first_flag.is_some() && consumed < 2 {
-        return None;
-    }
-    shape.body.stmts.drain(..consumed);
+        assign_target_ident(assign).is_some_and(|target| same_binding(&first, &target))
+            && matches!(strip_parens(&assign.right), Expr::Lit(Lit::Bool(b)) if !b.value)
+    };
+    // The clear is the first or second statement, after the value copy.
+    let position = shape.body.stmts.iter().take(2).position(clears_first)?;
+    shape.body.stmts.remove(position);
     Some(())
 }
 
@@ -639,16 +1003,23 @@ fn parse_catch(try_stmt: &TryStmt) -> Option<CatchShape> {
                 }
                 param_captured = true;
             }
+            // `{ error: err }`, or `{ error }` once the catch parameter itself
+            // is named `error`.
             Expr::Object(object) => {
                 let [PropOrSpread::Prop(prop)] = object.props.as_slice() else {
                     return None;
                 };
-                let Prop::KeyValue(kv) = prop.as_ref() else {
-                    return None;
+                let captured = match prop.as_ref() {
+                    Prop::KeyValue(kv) => {
+                        matches!(&kv.key, PropName::Ident(key) if key.sym.as_ref() == "error")
+                            && is_ident_key(strip_parens(&kv.value), &param)
+                    }
+                    Prop::Shorthand(id) => {
+                        id.sym.as_ref() == "error" && is_ident_key(&Expr::Ident(id.clone()), &param)
+                    }
+                    _ => false,
                 };
-                if !matches!(&kv.key, PropName::Ident(key) if key.sym.as_ref() == "error")
-                    || !is_ident_key(strip_parens(&kv.value), &param)
-                {
+                if !captured {
                     return None;
                 }
                 param_captured = true;

@@ -615,3 +615,332 @@ use(total_size, total_size);
 "#;
     assert_eq_normalized(&render(&input), expected);
 }
+
+#[test]
+fn for_await_from_decoded_ts_machine_with_hoisted_temporaries() {
+    // The shape a `__generator` decode hands to UnForOf: every temporary,
+    // including the element, is hoisted to the function scope, the protocol
+    // assigns them in place, and the catch boxes the error as `{ error }`.
+    let input = with_helper(
+        TS_ASYNC_VALUES,
+        r#"
+async function consume(stream) {
+  let item;
+  let _a;
+  let stream_1;
+  let stream_1_1;
+  let _b;
+  let e_1;
+  let _c;
+  let _d;
+  try {
+    _a = true;
+    stream_1 = __asyncValues(stream);
+    for (; stream_1_1 = await stream_1.next(), _b = stream_1_1.done, !_b; _a = true) {
+      _d = stream_1_1.value;
+      _a = false;
+      item = _d;
+      await handle(item);
+    }
+  } catch (error) {
+    e_1 = { error };
+  } finally {
+    try {
+      if (!_a && !_b && (_c = stream_1.return)) {
+        await _c.call(stream_1);
+      }
+    } finally {
+      if (e_1) {
+        throw e_1.error;
+      }
+    }
+  }
+}
+"#,
+    );
+    let expected = r#"
+async function consume(stream) {
+  for await (const item of stream) {
+    await handle(item);
+  }
+}
+"#;
+    assert_eq_normalized(&render(&input), expected);
+}
+
+#[test]
+fn for_await_removes_hoisted_temporaries_declared_outside_the_protocol_list() {
+    // The protocol sits inside a user `try`, so its hoisted temporaries are
+    // declared in the enclosing function body; the function body drops them
+    // once the inner list has folded the loop.
+    let input = with_helper(
+        TS_ASYNC_VALUES,
+        r#"
+async function consume(stream) {
+  let item;
+  let _c;
+  let stream_1;
+  let stream_1_1;
+  let _d;
+  let e_1;
+  let _e;
+  let _f;
+  const output = [];
+  try {
+    try {
+      _c = true;
+      stream_1 = __asyncValues(stream);
+      for (; stream_1_1 = await stream_1.next(), _d = stream_1_1.done, !_d; _c = true) {
+        _f = stream_1_1.value;
+        _c = false;
+        item = _f;
+        if (item.done) {
+          break;
+        }
+        output.push(await normalize(item));
+      }
+    } catch (error) {
+      e_1 = { error };
+    } finally {
+      try {
+        if (!_c && !_d && (_e = stream_1.return)) {
+          await _e.call(stream_1);
+        }
+      } finally {
+        if (e_1) {
+          throw e_1.error;
+        }
+      }
+    }
+  } finally {
+    await close(stream);
+  }
+  return output;
+}
+"#,
+    );
+    let expected = r#"
+async function consume(stream) {
+  const output = [];
+  try {
+    for await (const item of stream) {
+      if (item.done) {
+        break;
+      }
+      output.push(await normalize(item));
+    }
+  } finally {
+    await close(stream);
+  }
+  return output;
+}
+"#;
+    assert_eq_normalized(&render(&input), expected);
+}
+
+#[test]
+fn for_await_assigns_an_element_that_outlives_the_loop() {
+    // `last` is read after the loop, so it stays declared outside and the loop
+    // assigns it in place instead of declaring a per-iteration binding.
+    let input = with_helper(
+        TS_ASYNC_VALUES,
+        r#"
+async function tail(stream) {
+  let last;
+  let _a;
+  let stream_1;
+  let stream_1_1;
+  let _b;
+  let e_1;
+  let _c;
+  let _d;
+  try {
+    _a = true;
+    stream_1 = __asyncValues(stream);
+    for (; stream_1_1 = await stream_1.next(), _b = stream_1_1.done, !_b; _a = true) {
+      _d = stream_1_1.value;
+      _a = false;
+      last = _d;
+      await handle(last);
+    }
+  } catch (error) {
+    e_1 = { error };
+  } finally {
+    try {
+      if (!_a && !_b && (_c = stream_1.return)) {
+        await _c.call(stream_1);
+      }
+    } finally {
+      if (e_1) {
+        throw e_1.error;
+      }
+    }
+  }
+  return last;
+}
+"#,
+    );
+    let expected = r#"
+async function tail(stream) {
+  let last;
+  for await (last of stream) {
+    await handle(last);
+  }
+  return last;
+}
+"#;
+    assert_eq_normalized(&render(&input), expected);
+}
+
+#[test]
+fn for_await_folds_an_element_alias_inlined_into_the_first_statement() {
+    // Terser compress on the TypeScript machine: `item = _d` survives only as
+    // an assignment expression inside the first body statement.
+    let input = with_helper(
+        TS_ASYNC_VALUES,
+        r#"
+async function consume(stream) {
+  let item;
+  let _a;
+  let stream_1;
+  let stream_1_1;
+  let _b;
+  let e_1;
+  let _c;
+  let _d;
+  try {
+    _a = true;
+    stream_1 = __asyncValues(stream);
+    for (; stream_1_1 = await stream_1.next(), _b = stream_1_1.done, !_b; _a = true) {
+      _d = stream_1_1.value;
+      _a = false;
+      if ((item = _d).done) break;
+      await handle(item);
+    }
+  } catch (error) {
+    e_1 = { error };
+  } finally {
+    try {
+      if (!(_a || _b || !(_c = stream_1.return))) {
+        await _c.call(stream_1);
+      }
+    } finally {
+      if (e_1) {
+        throw e_1.error;
+      }
+    }
+  }
+}
+"#,
+    );
+    let expected = r#"
+async function consume(stream) {
+  for await (const item of stream) {
+    if (item.done) {
+      break;
+    }
+    await handle(item);
+  }
+}
+"#;
+    assert_eq_normalized(&render(&input), expected);
+}
+
+#[test]
+fn for_await_folds_an_inlined_alias_read_later_in_the_same_statement() {
+    // The alias assignment sits inside the guard's awaited call and the
+    // consequent reads the alias afterwards; only a read before the
+    // assignment would make the fold unsound.
+    let input = with_helper(
+        TS_ASYNC_VALUES,
+        r#"
+async function find(stream, predicate) {
+  let entry;
+  let _a;
+  let stream_1;
+  let stream_1_1;
+  let _b;
+  let e_1;
+  let _c;
+  let _d;
+  try {
+    _a = true;
+    stream_1 = __asyncValues(stream);
+    for (; stream_1_1 = await stream_1.next(), _b = stream_1_1.done, !_b; _a = true) {
+      _d = stream_1_1.value;
+      _a = false;
+      if (await predicate(entry = _d)) return entry;
+    }
+  } catch (error) {
+    e_1 = { error };
+  } finally {
+    try {
+      if (!(_a || _b || !(_c = stream_1.return))) {
+        await _c.call(stream_1);
+      }
+    } finally {
+      if (e_1) {
+        throw e_1.error;
+      }
+    }
+  }
+  return null;
+}
+"#,
+    );
+    let expected = r#"
+async function find(stream, predicate) {
+  for await (const entry of stream) {
+    if (await predicate(entry)) {
+      return entry;
+    }
+  }
+  return null;
+}
+"#;
+    assert_eq_normalized(&render(&input), expected);
+}
+
+#[test]
+fn for_await_keeps_an_inlined_alias_that_is_read_before_it_is_assigned() {
+    // `entry` is read in the index before the assignment writes it, so the
+    // previous iteration's value is observable; the alias must stay.
+    let input = with_helper(
+        TS_ASYNC_VALUES,
+        r#"
+async function walk(stream, table) {
+  let entry;
+  let _a;
+  let stream_1;
+  let stream_1_1;
+  let _b;
+  let e_1;
+  let _c;
+  let _d;
+  try {
+    _a = true;
+    stream_1 = __asyncValues(stream);
+    for (; stream_1_1 = await stream_1.next(), _b = stream_1_1.done, !_b; _a = true) {
+      _d = stream_1_1.value;
+      _a = false;
+      table[entry] = entry = _d;
+    }
+  } catch (error) {
+    e_1 = { error };
+  } finally {
+    try {
+      if (!(_a || _b || !(_c = stream_1.return))) {
+        await _c.call(stream_1);
+      }
+    } finally {
+      if (e_1) {
+        throw e_1.error;
+      }
+    }
+  }
+}
+"#,
+    );
+    let output = render(&input);
+    assert!(output.contains("table[entry] = entry ="), "{output}");
+}
