@@ -977,6 +977,9 @@ fn detect_from_prepared_factories(
                 let canonical = factory_filename_redirects.get(original).unwrap_or(original);
                 !demoted.contains(canonical)
             });
+            // Compatibility aliases share the lifetime of their canonical
+            // owner. A demoted owner is restored in entry, not emitted as a file.
+            factory_filename_redirects.retain(|_, canonical| !demoted.contains(canonical));
             relocated_factory_writer_items.retain(|filename, _| !demoted.contains(filename));
             // Insert the re-synthesized init functions at their original
             // source positions so entry call sites stay after the definition.
@@ -4659,11 +4662,9 @@ fn build_scope_entry(
         entry_referenced,
         scope_needed_entry_bindings,
         binding_module_by_atom,
-        binding_to_filename,
         ..
     } = ie;
     let factory_referenced = refs.factory_referenced;
-    let factory_preassigned_bindings = refs.factory_preassigned_bindings;
 
     // Track which external bindings each scope-hoisted module already imports
     // (used later to avoid duplicate imports when merging init factories).
@@ -4846,42 +4847,11 @@ fn build_scope_entry(
             ));
         }
     }
-    let mut entry_factory_imports: HashMap<String, Vec<BindingId>> = HashMap::default();
-    for ref_binding in entry_referenced.iter() {
-        if let Some(source_filename) = factory_preassigned_bindings.get(ref_binding) {
-            let source_filename = binding_to_filename
-                .get(ref_binding)
-                .unwrap_or(source_filename);
-            if source_filename == "entry.js" {
-                continue;
-            }
-            entry_factory_imports
-                .entry(source_filename.clone())
-                .or_default()
-                .push(ref_binding.clone());
-        }
-    }
-    let mut entry_factory_filenames: Vec<String> = entry_factory_imports.keys().cloned().collect();
-    entry_factory_filenames.sort();
-    for source_filename in entry_factory_filenames {
-        let bindings = entry_factory_imports.get_mut(&source_filename).unwrap();
-        bindings.sort_by(|a, b| a.0.cmp(&b.0));
-        bindings.dedup();
-        let mut names = Vec::new();
-        for binding in bindings {
-            let imported = binding.0.clone();
-            let local = reserve_import_atom(&imported, &mut entry_reserved_atoms);
-            if local != imported {
-                entry_import_renames.push(BindingRename {
-                    old: binding.clone(),
-                    new: local.clone(),
-                });
-            }
-            names.push((imported, local));
-        }
-        let rel_path = relative_import_path("entry.js", &source_filename);
-        remaining.push(make_named_import_stmt_with_aliases(&names, &rel_path));
-    }
+    // Factory ownership is provisional until phase 6 finishes merging and
+    // demotion. Its final repair_entry_imports pass adds the entry edges using
+    // surviving owners, after relocated declarations have been removed. Doing
+    // this here leaves stale imports (and needless aliases) when a factory
+    // returns to entry. Scope-module imports above already have final owners.
     rename_bindings(&mut entry_tail, &entry_import_renames);
     remaining.extend(entry_tail);
 

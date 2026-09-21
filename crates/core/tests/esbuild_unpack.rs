@@ -2060,6 +2060,73 @@ record(load().read()); reset(); record(ready);
     }
 }
 
+/// Cancelling a multi-factory split must remove its compatibility aliases,
+/// while aliases of a surviving writer group still point to a real owner.
+#[test]
+fn demoted_factory_group_leaves_no_forwarding_modules() {
+    let bundle = format!(
+        r#"{SCOPE_HELPERS}
+var state = 0;
+var first = __commonJS((exports, module) => {{ state = 1; module.exports = () => state; }});
+var second = __commonJS((exports, module) => {{ state = 2; module.exports = () => state; }});
+var reset = () => {{ state = 3; }};
+var other = 0;
+var keep_first = __commonJS((exports, module) => {{ other = 4; module.exports = () => other; }});
+var keep_second = __commonJS((exports, module) => {{ other = 5; module.exports = () => other; }});
+record(first()()); record(second()()); reset(); record(state);
+record(keep_first()()); record(keep_second()());
+"#
+    );
+    for pairs in [
+        expect_unpack_raw(&bundle),
+        expect_unpack(&bundle, "bundle.js"),
+    ] {
+        assert!(
+            pairs
+                .iter()
+                .all(|(name, _)| name != "first.js" && name != "second.js"),
+            "demoted members must leave no standalone or forwarding file: {pairs:#?}"
+        );
+        assert!(pairs.iter().any(|(name, _)| name == "keep_first.js"));
+        assert!(pairs.iter().any(|(name, _)| name == "keep_second.js"));
+        let entry = &pairs.iter().find(|(name, _)| name == "entry.js").unwrap().1;
+        assert!(entry.contains("function first()") && entry.contains("function second()"));
+        assert_eq!(validate_output_modules(&pairs), vec![]);
+    }
+}
+
+/// Scope extraction precedes factory demotion. Imports for those provisional
+/// owners must not survive after both state and callables return to entry.
+#[test]
+fn demoted_factory_state_has_no_stale_entry_import() {
+    for factories in [
+        "var first = __esm(() => { state = 1; }); var second = __esm(() => { state = 2; });",
+        "var first = __commonJS(() => { state = 1; }); var second = __commonJS(() => { state = 2; });",
+    ] {
+        let bundle = format!(
+            r#"{SCOPE_HELPERS}
+var state = 0;
+{factories}
+var reset = () => {{ state = 3; }};
+first(); record(state); second(); record(state); reset(); record(state);
+var extra = {{}}; __export(extra, {{ get: () => get }});
+function get() {{ return 7; }}
+record(extra.get()); export {{ extra }};
+"#
+        );
+        for pairs in [expect_unpack_raw(&bundle), expect_unpack(&bundle, "bundle.js")] {
+            let entry = &pairs.iter().find(|(name, _)| name == "entry.js").unwrap().1;
+            assert!(entry.contains("function first()") && entry.contains("function second()"));
+            assert!(entry.contains("state = 0"));
+            assert!(
+                !entry.contains("from \"./first.js\"") && !entry.contains("from \"./second.js\""),
+                "entry cannot import demoted factory state: {entry}"
+            );
+            assert_eq!(validate_output_modules(&pairs), vec![]);
+        }
+    }
+}
+
 /// A factory declared in a mixed declaration leaves its sibling declarator
 /// in entry. With an unrelocatable entry writer the group still cancels its
 /// split, and no assignment to an import survives.

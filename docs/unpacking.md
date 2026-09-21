@@ -80,7 +80,10 @@ attempted in order — first match wins:
    import. Any other entry writer either relocates as a statement or cancels
    the split: the group demotes back into entry, a CommonJS factory as a
    synthesized cached callable and a lazy ESM initializer as a guarded init
-   function. When a scope module or merged factory still references the
+   function. Compatibility forwarding files are discarded with a demoted
+   owner; entry imports of factory-owned bindings are synthesized only after
+   final ownership is known, so no link to a cancelled split survives.
+   When a scope module or merged factory still references the
    demoted group, demotion is impossible and the entry writer's assignment
    to the imported state remains as a residual that output validation
    reports.
