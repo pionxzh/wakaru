@@ -477,6 +477,21 @@ rationale, or level gating appear.
   compares candidate-local uses with the module-wide binding index so it bails
   if the iterator/result bindings escape any enclosing block or the iterator is
   used in the loop body.
+  `for await` recovery (`rules/un_for_await.rs`) runs from the same statement
+  walk and depends on three earlier rules: `UnRegenerator`/`UnAsyncAwait`
+  must have restored `await` in the loop head (the protocol test is
+  `!(step = await it.next()).done`), `UnVariableMerging` must have hoisted
+  the loop-head declarators into statements, and `UnConditionals` must have
+  turned the Terser `a && b && (await c())` close guard into an `if`. The
+  adapter callee gates the rewrite: Babel/SWC `_asyncIterator`
+  (`TranspilerHelperKind::AsyncIterator`), tslib `__asyncValues`
+  (`TsHelperKind::AsyncValues`), or esbuild's `__forAwait` matched by shape.
+  Dependency-aware helper cleanup (`AsyncFromSyncIterator`, `__knownSymbol`)
+  runs before the tslib inline cleanup so the adapter is still declared when
+  the reference graph is walked. A lexical element that shares a printed
+  name with the iterable is renamed inside the loop (`for (const e of e)`
+  would evaluate the iterable in the element's TDZ); this applies to every
+  for-of recovery path, not only `for await`.
 - **UnUndefinedInit** — needs RemoveVoid; feeds VarDeclToLetConst.
 - **UnPrototypeClass** — runs before ArrowFunction so Closure Compiler's
   single-declarator anonymous function initializers remain available for class

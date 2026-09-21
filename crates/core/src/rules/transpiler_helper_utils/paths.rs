@@ -76,6 +76,12 @@ const ASYNC_TO_GENERATOR_PATHS: &[&str] = &[
     "@swc/helpers/_/_async_to_generator",
 ];
 
+const ASYNC_ITERATOR_PATHS: &[&str] = &[
+    "@babel/runtime/helpers/asyncIterator",
+    "@babel/runtime/helpers/esm/asyncIterator",
+    "@swc/helpers/_/_async_iterator",
+];
+
 const DEFINE_PROPERTY_PATHS: &[&str] = &[
     "@babel/runtime/helpers/defineProperty",
     "@babel/runtime/helpers/esm/defineProperty",
@@ -154,6 +160,9 @@ pub(crate) fn detect_helper_from_path(path: &str) -> Option<TranspilerHelperKind
     }
     if ASYNC_TO_GENERATOR_PATHS.contains(&path) {
         return Some(TranspilerHelperKind::AsyncToGenerator);
+    }
+    if ASYNC_ITERATOR_PATHS.contains(&path) {
+        return Some(TranspilerHelperKind::AsyncIterator);
     }
     if DEFINE_PROPERTY_PATHS.contains(&path) {
         return Some(TranspilerHelperKind::DefineProperty);

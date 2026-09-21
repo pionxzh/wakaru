@@ -52,6 +52,7 @@ mod un_esbuild_cjs_wrapper;
 mod un_esm;
 mod un_esmodule_flag;
 mod un_export_rename;
+mod un_for_await;
 mod un_for_of;
 mod un_iife;
 mod un_import_rename;

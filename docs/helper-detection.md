@@ -308,6 +308,7 @@ Priority targets, roughly ordered by real-world frequency:
 | `objectWithoutProperties` | `_objectWithoutProperties` | `__rest` | `_object_without_properties` | `const {a, ...rest} = obj` |
 | `typeof` | `_typeof` | — | `_type_of` | Native `typeof`, including self-caching declarations |
 | `asyncToGenerator` | `_asyncToGenerator` | `__awaiter` + `__generator` | `_async_to_generator` | async/await (already handled in `un_async_await.rs`) |
+| `asyncIterator` | `_asyncIterator` (+ `AsyncFromSyncIterator` dependency) | `__asyncValues` | `_async_iterator` | `for await` adapter; the loop protocol is recovered by `un_for_await.rs`. esbuild's `__forAwait` (+ `__knownSymbol`) is matched by shape inside that rule |
 
 esbuild helpers (`__commonJS`, `__esm`, `__toESM`, `__toCommonJS`) are bundler-level and already handled in the unpacker, not here.
 

@@ -1134,3 +1134,43 @@ fn inline_ts_helper_referenced_only_by_a_kept_helper_stays() {
         assert!(module_has_var(&module, "__values"));
     });
 }
+
+#[test]
+fn async_iterator_adapters_are_classified_by_producer() {
+    GLOBALS.set(&Globals::new(), || {
+        // Babel `_asyncIterator` through Terser mangle: a single-letter name,
+        // `Symbol.asyncIterator`, `TypeError`, `.call(iterable)`, no Promise.
+        // It is the Babel/SWC kind and must not double as tslib `__asyncValues`
+        // (that would let the tslib inline cleanup delete it before the
+        // dependency-aware cleanup sees its `AsyncFromSyncIterator` edge).
+        let module = parse_module(
+            r#"function t(n){var r,t,o,i=2;for("undefined"!=typeof Symbol&&(t=Symbol.asyncIterator,o=Symbol.iterator);i--;){if(t&&null!=(r=n[t]))return r.call(n);if(o&&null!=(r=n[o]))return new e(r.call(n));t="@@asyncIterator",o="@@iterator"}throw new TypeError("Object is not async iterable")}"#,
+        );
+        let context = LocalHelperContext::collect(&module);
+        assert_eq!(
+            context.helpers().values().copied().collect::<Vec<_>>(),
+            vec![TranspilerHelperKind::AsyncIterator]
+        );
+        assert!(context.ts_helpers_of_kind(TsHelperKind::AsyncValues).is_empty());
+        assert!(context.ts_helpers_of_kind(TsHelperKind::Values).is_empty());
+
+        // tslib `__asyncValues`: the async kind, not the sync `__values` whose
+        // `Symbol.iterator` signal its fallback also carries, and not a Babel
+        // adapter (its own body builds the Promise-settling wrapper).
+        let module = parse_module(
+            r#"
+            var __asyncValues = (this && this.__asyncValues) || function (o) {
+                if (!Symbol.asyncIterator) throw new TypeError("Symbol.asyncIterator is not defined.");
+                var m = o[Symbol.asyncIterator], i;
+                return m ? m.call(o) : (o = typeof __values === "function" ? __values(o) : o[Symbol.iterator](), i = {}, verb("next"), verb("throw"), verb("return"), i[Symbol.asyncIterator] = function () { return this; }, i);
+                function verb(n) { i[n] = o[n] && function (v) { return new Promise(function (resolve, reject) { v = o[n](v), settle(resolve, reject, v.done, v.value); }); }; }
+                function settle(resolve, reject, d, v) { Promise.resolve(v).then(function(v) { resolve({ value: v, done: d }); }, reject); }
+            };
+            "#,
+        );
+        let context = LocalHelperContext::collect(&module);
+        assert_eq!(context.ts_helpers_of_kind(TsHelperKind::AsyncValues).len(), 1);
+        assert!(context.ts_helpers_of_kind(TsHelperKind::Values).is_empty());
+        assert!(context.helpers().is_empty(), "{:?}", context.helpers());
+    });
+}

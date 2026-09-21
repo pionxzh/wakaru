@@ -198,6 +198,9 @@ pub(super) fn detect_helper_from_fn(
     if is_async_to_generator_fn(func) {
         return Some(TranspilerHelperKind::AsyncToGenerator);
     }
+    if is_async_iterator_fn(func) {
+        return Some(TranspilerHelperKind::AsyncIterator);
+    }
     if is_tagged_template_literal_fn(func) {
         return Some(TranspilerHelperKind::TaggedTemplateLiteral);
     }
@@ -1486,6 +1489,53 @@ pub(super) fn is_object_without_properties_fn(func: &Function) -> bool {
 }
 /// Detect `_asyncToGenerator`: single param, returns a function that calls
 /// `fn.apply(this, arguments)` and constructs `new Promise(...)`.
+/// Babel `_asyncIterator` / SWC `_async_iterator`: one iterable param, reads
+/// `Symbol.asyncIterator`, invokes the found method with `.call(iterable)`,
+/// and throws `TypeError` when nothing is iterable. TypeScript's
+/// `__asyncValues` shares those signals but also builds a `Promise`-based
+/// adapter in its own body; it is a tslib helper detected by `ts_helpers`, so
+/// a body that mentions `Promise` is rejected here.
+fn is_async_iterator_fn(func: &Function) -> bool {
+    if func.params.len() != 1 {
+        return false;
+    }
+    let Some(body) = &func.body else {
+        return false;
+    };
+    let mut finder = AsyncIteratorFinder::default();
+    body.visit_with(&mut finder);
+    finder.symbol_async_iterator && finder.type_error && finder.method_call && !finder.promise
+}
+#[derive(Default)]
+struct AsyncIteratorFinder {
+    symbol_async_iterator: bool,
+    type_error: bool,
+    method_call: bool,
+    promise: bool,
+}
+impl Visit for AsyncIteratorFinder {
+    fn visit_member_expr(&mut self, member: &swc_core::ecma::ast::MemberExpr) {
+        if is_symbol_member(member, "asyncIterator") {
+            self.symbol_async_iterator = true;
+        }
+        member.visit_children_with(self);
+    }
+    fn visit_ident(&mut self, ident: &Ident) {
+        match ident.sym.as_ref() {
+            "TypeError" => self.type_error = true,
+            "Promise" => self.promise = true,
+            _ => {}
+        }
+    }
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if let Callee::Expr(callee) = &call.callee {
+            if is_member_call(callee, "call") && call.args.len() == 1 {
+                self.method_call = true;
+            }
+        }
+        call.visit_children_with(self);
+    }
+}
 fn is_async_to_generator_fn(func: &Function) -> bool {
     if func.params.len() != 1 {
         return false;

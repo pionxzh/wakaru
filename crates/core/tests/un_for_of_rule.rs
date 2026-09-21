@@ -1901,3 +1901,82 @@ for (const iterator = _createForOfIteratorHelperLoose(items); !(step = iterator(
 "#;
     assert_eq_normalized(&render(input), expected);
 }
+
+#[test]
+fn for_of_renames_element_that_shadows_the_iterable() {
+    // Terser reuses the parameter name for the loop element. Lifting `e` into
+    // the loop head would evaluate the iterable `e` inside the new binding's
+    // TDZ (`for (const e of e)` throws), so the element is renamed instead.
+    let input = r#"
+export function f(e) {
+  var normal = true, didError = false, iteratorError;
+  try {
+    for (var iterator = e[Symbol.iterator](), step; !(normal = (step = iterator.next()).done); normal = true) {
+      const e = step.value;
+      use(e);
+    }
+  } catch (err) {
+    didError = true;
+    iteratorError = err;
+  } finally {
+    try {
+      if (!normal && iterator.return != null) iterator.return();
+    } finally {
+      if (didError) throw iteratorError;
+    }
+  }
+}
+"#;
+    let expected = r#"
+export function f(e) {
+  for (const e_1 of e) {
+    use(e_1);
+  }
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn for_of_from_indexed_loop_renames_element_that_shadows_the_iterable() {
+    let input = r#"
+export function g(e, e_1) {
+  for (let i = 0, arr = e; i < arr.length; i++) {
+    const e = arr[i];
+    use(e, e_1);
+  }
+}
+"#;
+    // `e_1` is already taken inside the loop, so the fresh name skips it.
+    let expected = r#"
+export function g(e, e_1) {
+  for (const e_2 of e) {
+    use(e_2, e_1);
+  }
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn for_of_keeps_var_element_that_shares_the_iterable_name() {
+    // A `var` element is hoisted to the function scope: the lowered loop
+    // already reassigned the parameter, so `for (var e of e)` is equivalent
+    // and no rename is needed.
+    let input = r#"
+export function g(e) {
+  for (var i = 0, arr = e; i < arr.length; i++) {
+    var e = arr[i];
+    use(e);
+  }
+}
+"#;
+    let expected = r#"
+export function g(e) {
+  for (var e of e) {
+    use(e);
+  }
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
