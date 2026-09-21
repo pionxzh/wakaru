@@ -1,10 +1,10 @@
 {
-  "commit": "64597822e",
-  "date": "2026-09-21",
+  "commit": "6091a05f9",
+  "date": "2026-09-23",
   "aggregate": {
-    "yes": 2077,
-    "total": 2141,
-    "pct": 97
+    "yes": 2201,
+    "total": 2329,
+    "pct": 94.5
   },
   "matrices": [
     {
@@ -17,11 +17,11 @@
     },
     {
       "name": "async-await",
-      "yes": 505,
-      "no": 28,
+      "yes": 629,
+      "no": 92,
       "error": 0,
-      "total": 533,
-      "pct": 94.7
+      "total": 721,
+      "pct": 87.2
     },
     {
       "name": "class-accessor",

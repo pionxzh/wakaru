@@ -428,6 +428,135 @@ const snippets = [
       "await close_stream(stream)",
       "return output",
     ],
+    rejected: ["asyncIterator"],
+  },
+  // `for await` variants. Every lowerer replaces the loop with an async
+  // iterator protocol (Babel `_asyncIterator`, swc `_async_iterator`, esbuild
+  // `__forAwait`, TypeScript `__asyncValues`) wrapped in try/catch/finally, so
+  // each row also rejects a leaked `asyncIterator` helper body.
+  {
+    name: "async-for-await-simple",
+    source:
+      "async function consume_stream(stream) {\n  for await (const item of stream) {\n    await handle_item(item);\n  }\n}\n",
+    expected: [
+      "async function consume_stream(stream)",
+      "for await (const item of stream)",
+      "await handle_item(item)",
+    ],
+    rejected: ["asyncIterator"],
+  },
+  {
+    name: "async-for-await-collect-return",
+    source:
+      "async function collect_chunks(source) {\n  const chunks = [];\n  for await (const chunk of read_chunks(source)) {\n    chunks.push(chunk);\n  }\n  return chunks;\n}\n",
+    expected: [
+      "async function collect_chunks(source)",
+      "for await (const chunk of read_chunks(source))",
+      "chunks.push(chunk)",
+      "return chunks",
+    ],
+    rejected: ["asyncIterator"],
+  },
+  {
+    name: "async-for-await-destructuring",
+    source:
+      "async function index_records(records) {\n  const index = new Map();\n  for await (const { id, value } of records) {\n    index.set(id, value);\n  }\n  return index;\n}\n",
+    expected: [
+      "async function index_records(records)",
+      "for await (const { id, value } of records)",
+      "index.set(id, value)",
+      "return index",
+    ],
+    rejected: ["asyncIterator"],
+  },
+  {
+    // Early `return` inside the loop is the abrupt completion that the
+    // protocol's `return()` guard exists for. (A `continue` before it is not
+    // used here: Terser folds `if (x) continue; rest` into `if (!x) rest`.)
+    name: "async-for-await-early-return",
+    source:
+      "async function find_match(stream, predicate) {\n  for await (const entry of stream) {\n    if (await predicate(entry)) return entry;\n  }\n  return null;\n}\n",
+    expected: [
+      "async function find_match(stream, predicate)",
+      "for await (const entry of stream)",
+      "await predicate(entry)",
+      "return entry",
+      "return null",
+    ],
+    rejected: ["asyncIterator"],
+  },
+  {
+    name: "async-for-await-arrow",
+    // Referenced twice so Terser keeps the arrow as a binding instead of
+    // inlining the single use into the call.
+    source:
+      "const total_size = async (files) => {\n  let size = 0;\n  for await (const file of files) {\n    size += file.size;\n  }\n  return size;\n};\nuse(total_size, total_size);\n",
+    expected: [
+      "const total_size = async (files)",
+      "for await (const file of files)",
+      "size += file.size",
+      "return size",
+    ],
+    // Terser inlines the single-use element (`size += _step.value.size`), so
+    // the recovered loop can only bind the protocol's step name.
+    expectedAny: [
+      [
+        "const total_size = async (files)",
+        "for await (const file of files)",
+        "size += file.size",
+        "return size",
+      ],
+      [
+        "const total_size = async (files)",
+        "for await (const ",
+        " of files)",
+        "size += ",
+        ".size",
+        "return size",
+      ],
+      // swc names the lowered arrow after its binding, so recovery keeps a
+      // named async function expression.
+      [
+        "const total_size = async function total_size(files)",
+        "for await (const file of files)",
+        "size += file.size",
+        "return size",
+      ],
+    ],
+    acceptForms: [
+      "const total_size = async function total_size(files) {\n  let size = 0;\n  for await (const file of files) {\n    size += file.size;\n  }\n  return size;\n};\nuse(total_size, total_size);\n",
+    ],
+    rejected: ["asyncIterator"],
+  },
+  {
+    name: "async-for-await-nested-for-of",
+    source:
+      "async function flatten_batches(batches) {\n  const items = [];\n  for await (const batch of batches) {\n    for (const item of batch) {\n      items.push(item);\n    }\n  }\n  return items;\n}\n",
+    expected: [
+      "async function flatten_batches(batches)",
+      "for await (const batch of batches)",
+      "for (const item of batch)",
+      "items.push(item)",
+      "return items",
+    ],
+    rejected: ["asyncIterator"],
+  },
+  {
+    name: "async-for-await-try-catch",
+    source:
+      "async function safe_consume(stream) {\n  try {\n    for await (const item of stream) {\n      await process_item(item);\n    }\n  } catch (error) {\n    report_error(error);\n  }\n}\n",
+    // esbuild renames the user's catch parameter (`error2`) when its own
+    // `error` temporary lands in the same function, so only the shape is
+    // checked here; the mangle comparison covers the structure.
+    expected: [
+      "async function safe_consume(stream)",
+      "try",
+      "for await (const item of stream)",
+      "await process_item(item)",
+      "catch (",
+      "report_error(",
+    ],
+    rejected: ["asyncIterator"],
   },
   {
     name: "async-arrow-object-rest",

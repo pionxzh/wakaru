@@ -2,6 +2,8 @@
 
 This matrix generates async function, async arrow, async IIFE, double-await,
 try/catch/finally, loop control flow (with and without internal continue),
+`for await` (plain, early `return`, `break` inside `try/finally`, destructured
+element, nested sync `for…of`, inside `try/catch`, in an async arrow),
 destructuring/default, object-rest, nested async callback, and generator
 delegation snippets through Babel, TypeScript, SWC, and esbuild, then runs
 wakaru over each generated shape.
@@ -25,15 +27,25 @@ now correctly show as `no`. Remaining `no` rows fall into four honest buckets:
 - **state-machine** — wakaru leaves a Terser-compressed regenerator runtime intact.
 - **degraded** — a helper artifact leaks (`__rest` inlined, `const x = undefined`,
   `push.apply(...)` not recovered).
-- **control-flow** — complex `for await` plus `break` inside `try/finally`
-  remains native or lowered (including Babel's `_asyncIterator` protocol
-  lowering), or leaks generator state opcodes instead of being reconstructed
-  as one structured loop.
+- **control-flow** — the regenerator machines (Babel `regenerator` mode and
+  preset-env) exit a `for await` body with an abrupt-completion opcode inside
+  the try region (`_context.a(3, N)` for `break`), which the decoder does not
+  structure, so every regenerator `for await` row fails; one Terser shape of
+  the swc `_ts_generator` machine nests a yield opcode two ternaries deep in
+  a single `return`, which also stays a machine. The `__generator` machines
+  (tsc-es5, swc-es5) rebuild loops inside try regions, so their `for await`
+  rows recover, including the Terser variants.
+- **nested loop** — a sync `for…of` inside the recovered `for await` body
+  keeps its indexed form: the machine hoists the index and array temporaries
+  to the function scope and assigns them in place, a shape the for-of
+  recovery does not match.
 - **hoisted destructuring** — after regenerator recovery of the Babel 7.8 and
   7.13 Terser rows, the destructuring stays in assignment form with
   `_slicedToArray(temp = defaulted, n)` on an inline-assigned temp, and the
   `input == null ? await load() : input` pick stays an `if`/`else` temp
-  assignment instead of folding to `??`.
+  assignment instead of folding to `??`. A destructured `for await` element
+  through a `__generator` machine (tsc-es5, swc-es5) binds the value
+  temporary and keeps the hoisted member reads (`id = _d.id`) in the body.
 
 The matrix's `error` count is separate from those Wakaru recovery failures.
 It counts producer or harness transform failures, for which Wakaru is not
@@ -57,6 +69,13 @@ Each Babel/TypeScript/SWC/esbuild output is checked in three Terser variants:
 The matrix also includes standalone source-through-Terser rows for both Terser
 variants, because some recoverable shapes only appear after compiler or source
 output is minified.
+
+Each `for await` row also rejects `asyncIterator` in the recovered output, so
+a recovered loop that leaves the adapter helper behind (`_asyncIterator`,
+`__forAwait`, `__asyncValues` all mention it) is reported as `no`. Where Terser
+inlines the single-use element (`size += _step.value.size`) the recovered loop
+binds the protocol's step name; the `async-for-await-arrow` row accepts that
+form through `expectedAny`.
 
 The `class-async-method` snippet also includes a dedicated Babel preset-env IE11
 profile. Its Terser compression+mangle variant reproduces Babel's lazy async
