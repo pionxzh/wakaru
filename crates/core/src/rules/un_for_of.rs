@@ -17,9 +17,11 @@ use crate::facts::{ModuleFactsMap, TypeScriptHelperKind};
 
 use super::eval_utils::{js_source_mentions_binding, module_has_with_stmt, DirectEvalAnalyzer};
 use super::helper_matcher::{binding_key, static_member_prop_name, BindingKey};
+use super::rename_utils::{rename_bindings, BindingRename};
 use super::transpiler_helper_utils::{
     tslib_member_ts_helper_kind, tslib_require_ts_helper_kind, LocalHelperContext, TsHelperKind,
 };
+use super::un_for_await;
 use super::RewriteLevel;
 
 use crate::utils::paren::strip_parens;
@@ -102,18 +104,42 @@ impl<'a> UnForOf<'a> {
         );
         let previous = std::mem::replace(&mut self.helper_context, helper_context);
         module.visit_mut_children_with(self);
-        self.helper_context = previous;
-        local_helpers.remove_unused_inline_ts_helpers(module, &[TsHelperKind::Values]);
+        let helper_context = std::mem::replace(&mut self.helper_context, previous);
+        // Dependency-aware cleanup first: it walks the top-level reference
+        // graph from the adapter helper, so the helper must still be declared.
+        if helper_context.rewrote_async_iterator_loop.get() {
+            un_for_await::remove_consumed_async_iterator_helpers(
+                module,
+                local_helpers,
+                &helper_context,
+            );
+        }
+        local_helpers.remove_unused_inline_ts_helpers(
+            module,
+            &[TsHelperKind::Values, TsHelperKind::AsyncValues],
+        );
     }
 }
 
 #[derive(Clone, Default)]
-struct ForOfHelperContext {
+pub(super) struct ForOfHelperContext {
     values_helpers: HashSet<BindingKey>,
+    /// tslib `__asyncValues` bindings (inline, imported, or required).
+    pub(super) async_values_helpers: HashSet<BindingKey>,
+    /// Babel `_asyncIterator` / SWC `_async_iterator` callee identities live in
+    /// the shared helper context; kept whole so member callee forms resolve.
+    pub(super) local_helpers: LocalHelperContext,
+    /// esbuild `__forAwait` adapters and the `__knownSymbol` lookup they call,
+    /// matched by body shape (the names are mangled in minified output).
+    pub(super) esbuild_for_await_helpers: HashSet<BindingKey>,
+    pub(super) esbuild_known_symbol_helpers: HashSet<BindingKey>,
+    /// Set when an async iterator protocol was folded into `for await`, so the
+    /// consumed helper declarations are removed once the walk is done.
+    pub(super) rewrote_async_iterator_loop: std::cell::Cell<bool>,
     tslib_namespaces: HashSet<BindingKey>,
     cross_module_values_namespaces: HashMap<BindingKey, HashSet<String>>,
     closure_jscomp_namespaces: HashSet<BindingKey>,
-    binding_uses: BindingUseIndex,
+    pub(super) binding_uses: BindingUseIndex,
     unresolved_mark: Option<Mark>,
     /// Module-wide `with` / unknown direct `eval`, plus known eval sources.
     /// Used when dropping a function-scoped (`var`) for-of left.
@@ -137,8 +163,15 @@ impl ForOfHelperContext {
         values_helpers.extend(cross_module_values.direct);
         let mut eval = DirectEvalAnalyzer::default();
         module.visit_with(&mut eval);
+        let (esbuild_for_await_helpers, esbuild_known_symbol_helpers) =
+            un_for_await::collect_esbuild_for_await_helpers(module);
         Self {
             values_helpers,
+            async_values_helpers: local_helpers.ts_helpers_of_kind(TsHelperKind::AsyncValues),
+            local_helpers: local_helpers.clone(),
+            esbuild_for_await_helpers,
+            esbuild_known_symbol_helpers,
+            rewrote_async_iterator_loop: std::cell::Cell::new(false),
             tslib_namespaces: local_helpers.tslib_namespaces().clone(),
             cross_module_values_namespaces: cross_module_values.namespaces,
             closure_jscomp_namespaces: collect_closure_jscomp_namespaces(module),
@@ -177,6 +210,22 @@ impl ForOfHelperContext {
                     || tslib_require_ts_helper_kind(expr, self.unresolved_mark)
                         == Some(TsHelperKind::Values)
                     || is_cross_module_values_member(expr, &self.cross_module_values_namespaces)
+            }
+            _ => false,
+        }
+    }
+
+    /// tslib `__asyncValues(iterable)` callee: inline declaration, tslib
+    /// import specifier, or a `tslib.__asyncValues` member on a proven
+    /// namespace. Cross-module facts are not consulted for the async helper.
+    pub(super) fn is_ts_async_values_callee_expr(&self, expr: &Expr) -> bool {
+        match strip_parens(expr) {
+            Expr::Ident(id) => self.async_values_helpers.contains(&binding_key(id)),
+            Expr::Member(_) => {
+                tslib_member_ts_helper_kind(expr, &self.tslib_namespaces)
+                    == Some(TsHelperKind::AsyncValues)
+                    || tslib_require_ts_helper_kind(expr, self.unresolved_mark)
+                        == Some(TsHelperKind::AsyncValues)
             }
             _ => false,
         }
@@ -559,6 +608,7 @@ fn process_stmt_vec(stmts: &mut Vec<Stmt>, helper_context: &ForOfHelperContext) 
     if !has_for_of_sequence_candidates(stmts) {
         return;
     }
+    un_for_await::rewrite_async_iterator_loops(stmts, helper_context);
     let old = std::mem::take(stmts);
     let mut i = 0;
     while i < old.len() {
@@ -736,6 +786,7 @@ fn build_closure_iterator_for_of(
         result_ident.clone(),
         span,
         helper_context,
+        false,
     )
 }
 
@@ -842,6 +893,7 @@ fn try_convert_iterator_helper_sequence(
         item_ident,
         stmts[0].span(),
         helper_context,
+        false,
     )?;
     Some(SequenceRewrite {
         consumed_stmts,
@@ -873,6 +925,7 @@ fn try_convert_iterator_helper_decl_first_sequence(
         item_ident,
         stmts[0].span(),
         helper_context,
+        false,
     )?;
     Some(SequenceRewrite {
         consumed_stmts: 3,
@@ -918,6 +971,7 @@ fn try_convert_loose_iterator_sequence(
         item_ident,
         stmts[0].span(),
         helper_context,
+        false,
     )?;
     Some(SequenceRewrite {
         consumed_stmts: 2,
@@ -947,6 +1001,7 @@ fn try_convert_ts_values_sequence(
         helper_loop.result_ident,
         stmts[0].span(),
         helper_context,
+        false,
     )?;
     Some(SequenceRewrite {
         consumed_stmts: 3,
@@ -991,6 +1046,7 @@ fn try_convert_swc_iterator_sequence(
         helper_loop.result_ident,
         stmts[0].span(),
         helper_context,
+        false,
     )?;
     Some(SequenceRewrite {
         consumed_stmts: 4,
@@ -1133,12 +1189,13 @@ fn extract_swc_iterator_loop(try_stmt: &TryStmt, normal_ident: &Ident) -> Option
     })
 }
 
-fn build_helper_for_of(
+pub(super) fn build_helper_for_of(
     mut body: BlockStmt,
     iterable: Box<Expr>,
     item_ident: Ident,
     span: Span,
     helper_context: &ForOfHelperContext,
+    is_await: bool,
 ) -> Option<ForOfStmt> {
     let mut element = extract_iterator_value_element(&body.stmts, &item_ident);
     if element.is_none() {
@@ -1234,11 +1291,12 @@ fn build_helper_for_of(
     } else {
         VarDeclKind::Const
     };
+    rename_lifted_bindings_shadowing_iterable(&iterable, kind, &mut element, &mut remaining_body)?;
 
     let for_span = if span.lo.0 != 0 { span } else { DUMMY_SP };
     Some(ForOfStmt {
         span: for_span,
-        is_await: false,
+        is_await,
         left: ForHead::VarDecl(Box::new(VarDecl {
             span: DUMMY_SP,
             ctxt: Default::default(),
@@ -1398,7 +1456,7 @@ fn single_for_stmt(block: &BlockStmt) -> Option<&swc_core::ecma::ast::ForStmt> {
     Some(for_stmt)
 }
 
-fn empty_single_var_ident(stmt: &Stmt) -> Option<Ident> {
+pub(super) fn empty_single_var_ident(stmt: &Stmt) -> Option<Ident> {
     let decl = stmt_as_single_var_decl(stmt)?;
     let declarator = &decl.decls[0];
     if declarator.init.is_some() {
@@ -1407,7 +1465,7 @@ fn empty_single_var_ident(stmt: &Stmt) -> Option<Ident> {
     Some(pat_as_ident(&declarator.name)?.id.clone())
 }
 
-fn single_var_ident_with_bool(stmt: &Stmt, value: bool) -> Option<Ident> {
+pub(super) fn single_var_ident_with_bool(stmt: &Stmt, value: bool) -> Option<Ident> {
     let decl = stmt_as_single_var_decl(stmt)?;
     let declarator = &decl.decls[0];
     if !declarator.init.as_deref().is_some_and(
@@ -1418,14 +1476,14 @@ fn single_var_ident_with_bool(stmt: &Stmt, value: bool) -> Option<Ident> {
     Some(pat_as_ident(&declarator.name)?.id.clone())
 }
 
-fn pat_as_ident(pat: &Pat) -> Option<&BindingIdent> {
+pub(super) fn pat_as_ident(pat: &Pat) -> Option<&BindingIdent> {
     let Pat::Ident(ident) = pat else {
         return None;
     };
     Some(ident)
 }
 
-fn stmt_as_try(stmt: &Stmt) -> Option<&TryStmt> {
+pub(super) fn stmt_as_try(stmt: &Stmt) -> Option<&TryStmt> {
     let Stmt::Try(try_stmt) = stmt else {
         return None;
     };
@@ -1536,7 +1594,7 @@ fn is_not_done_test(expr: &Expr, result_ident: &Ident) -> bool {
     is_ident_key(done_obj, result_ident)
 }
 
-fn extract_done_obj(expr: &Expr) -> Option<&Expr> {
+pub(super) fn extract_done_obj(expr: &Expr) -> Option<&Expr> {
     let Expr::Member(MemberExpr { obj, prop, .. }) = expr else {
         return None;
     };
@@ -1549,7 +1607,7 @@ fn extract_done_obj(expr: &Expr) -> Option<&Expr> {
     Some(strip_parens(obj))
 }
 
-fn is_assign_ident(assign: &AssignExpr, ident: &Ident) -> bool {
+pub(super) fn is_assign_ident(assign: &AssignExpr, ident: &Ident) -> bool {
     if assign.op != AssignOp::Assign {
         return false;
     }
@@ -1559,7 +1617,7 @@ fn is_assign_ident(assign: &AssignExpr, ident: &Ident) -> bool {
     )
 }
 
-fn is_iterator_next_call(expr: &Expr, iterator_ident: &Ident) -> bool {
+pub(super) fn is_iterator_next_call(expr: &Expr, iterator_ident: &Ident) -> bool {
     is_helper_method_call(expr, iterator_ident, "next")
 }
 
@@ -1570,7 +1628,7 @@ fn is_iterator_next_update(expr: &Expr, result_ident: &Ident, iterator_ident: &I
     is_assign_ident(assign, result_ident) && is_iterator_next_call(&assign.right, iterator_ident)
 }
 
-fn is_assign_bool(expr: &Expr, ident: &Ident, value: bool) -> bool {
+pub(super) fn is_assign_bool(expr: &Expr, ident: &Ident, value: bool) -> bool {
     let Expr::Assign(assign) = expr else {
         return false;
     };
@@ -1578,7 +1636,7 @@ fn is_assign_bool(expr: &Expr, ident: &Ident, value: bool) -> bool {
         && matches!(&*assign.right, Expr::Lit(Lit::Bool(bool_lit)) if bool_lit.value == value)
 }
 
-fn is_helper_method_call(expr: &Expr, helper_ident: &Ident, method: &str) -> bool {
+pub(super) fn is_helper_method_call(expr: &Expr, helper_ident: &Ident, method: &str) -> bool {
     let Expr::Call(CallExpr { callee, args, .. }) = expr else {
         return false;
     };
@@ -1672,7 +1730,7 @@ fn swc_catch_matches(try_stmt: &TryStmt, did_error_ident: &Ident, error_ident: &
     is_assign_ident(assign, error_ident) && is_ident_key(&assign.right, &param.id)
 }
 
-fn is_value_member(expr: &Expr, item_ident: &Ident) -> bool {
+pub(super) fn is_value_member(expr: &Expr, item_ident: &Ident) -> bool {
     let Expr::Member(MemberExpr { obj, prop, .. }) = expr else {
         return false;
     };
@@ -1926,6 +1984,13 @@ fn try_convert_for_of(stmt: &Stmt, helper_context: &ForOfHelperContext) -> Optio
     } else {
         VarDeclKind::Const
     };
+    let mut remaining_body = remaining_body.to_vec();
+    rename_lifted_bindings_shadowing_iterable(
+        &iterable,
+        elem_kind,
+        &mut element,
+        &mut remaining_body,
+    )?;
 
     // --- Build for...of ---
     let for_of_left = ForHead::VarDecl(Box::new(VarDecl {
@@ -1944,7 +2009,7 @@ fn try_convert_for_of(stmt: &Stmt, helper_context: &ForOfHelperContext) -> Optio
     let new_body = Stmt::Block(swc_core::ecma::ast::BlockStmt {
         span: DUMMY_SP,
         ctxt: Default::default(),
-        stmts: remaining_body.to_vec(),
+        stmts: remaining_body,
     });
 
     Some(ForOfStmt {
@@ -2208,6 +2273,98 @@ fn take_index_slot(stmt: &Stmt, temp: &Ident, expected: f64) -> Option<IndexSlot
 /// Direct `eval` / `with` in `stmts` can observe `ident` by printed name.
 /// Unknown eval sources and any `with` fail closed; a known string blocks
 /// only when it mentions the binding (same contract as `dead_decls`).
+/// A lexical element lifted into the loop head is in TDZ while the iterable
+/// is evaluated, so `for (const e of e)` throws where the lowered loop read
+/// the enclosing `e`. Rename the lifted bindings that share a printed name
+/// with the iterable to a fresh name inside the loop. `var` is hoisted and
+/// already resolved to the same function-scoped binding, so it is left alone.
+/// Fails closed when direct `eval` or `with` in the body could observe the
+/// original name.
+fn rename_lifted_bindings_shadowing_iterable(
+    iterable: &Expr,
+    kind: VarDeclKind,
+    element: &mut LoopElement,
+    body: &mut [Stmt],
+) -> Option<()> {
+    if kind == VarDeclKind::Var {
+        return Some(());
+    }
+    let colliding: Vec<Ident> = element
+        .bindings
+        .iter()
+        .filter(|id| {
+            let names: HashSet<Atom> = [id.sym.clone()].into_iter().collect();
+            expr_observes_printed_names(iterable, &names)
+        })
+        .cloned()
+        .collect();
+    if colliding.is_empty() {
+        return Some(());
+    }
+    if colliding
+        .iter()
+        .any(|id| dynamic_scope_observes_binding(body, id))
+    {
+        return None;
+    }
+
+    let mut used = HashSet::default();
+    collect_printed_names(iterable, &mut used);
+    for stmt in body.iter() {
+        collect_printed_names(stmt, &mut used);
+    }
+    collect_printed_names(&element.pat, &mut used);
+    let renames: Vec<BindingRename> = colliding
+        .iter()
+        .map(|id| BindingRename {
+            old: (id.sym.clone(), id.ctxt),
+            new: fresh_printed_name(&id.sym, &mut used),
+        })
+        .collect();
+    rename_bindings(&mut element.pat, &renames);
+    for stmt in body.iter_mut() {
+        rename_bindings(stmt, &renames);
+    }
+    for binding in element.bindings.iter_mut() {
+        if let Some(rename) = renames
+            .iter()
+            .find(|rename| rename.old.0 == binding.sym && rename.old.1 == binding.ctxt)
+        {
+            binding.sym = rename.new.clone();
+        }
+    }
+    Some(())
+}
+
+fn collect_printed_names<N>(node: &N, names: &mut HashSet<Atom>)
+where
+    N: for<'a> VisitWith<PrintedNameCollector<'a>>,
+{
+    let mut collector = PrintedNameCollector { names };
+    node.visit_with(&mut collector);
+}
+
+struct PrintedNameCollector<'a> {
+    names: &'a mut HashSet<Atom>,
+}
+
+impl Visit for PrintedNameCollector<'_> {
+    fn visit_ident(&mut self, ident: &Ident) {
+        self.names.insert(ident.sym.clone());
+    }
+}
+
+fn fresh_printed_name(base: &Atom, used: &mut HashSet<Atom>) -> Atom {
+    for suffix in 1usize.. {
+        let candidate: Atom = format!("{base}_{suffix}").into();
+        if !used.contains(&candidate) {
+            used.insert(candidate.clone());
+            return candidate;
+        }
+    }
+    unreachable!("an unused suffix always exists")
+}
+
 fn dynamic_scope_observes_binding(stmts: &[Stmt], ident: &Ident) -> bool {
     struct WithFinder {
         found: bool,
@@ -2409,7 +2566,7 @@ fn try_fold_for_of_entry_slots(for_of: &mut ForOfStmt, helper_context: &ForOfHel
     });
 }
 
-fn stmt_as_single_var_decl(stmt: &Stmt) -> Option<&VarDecl> {
+pub(super) fn stmt_as_single_var_decl(stmt: &Stmt) -> Option<&VarDecl> {
     let Stmt::Decl(Decl::Var(decl)) = stmt else {
         return None;
     };
@@ -2455,7 +2612,7 @@ fn is_ident(expr: &Expr, sym: &Atom) -> bool {
     matches!(expr, Expr::Ident(id) if &id.sym == sym)
 }
 
-fn is_ident_key(expr: &Expr, ident: &Ident) -> bool {
+pub(super) fn is_ident_key(expr: &Expr, ident: &Ident) -> bool {
     matches!(expr, Expr::Ident(id) if id.sym == ident.sym && id.ctxt == ident.ctxt)
 }
 
@@ -2467,7 +2624,7 @@ fn same_ident_expr(left: &Expr, right: &Expr) -> bool {
 }
 
 /// Check if a statement references a specific binding (by sym + ctxt).
-fn stmt_uses_ident(stmt: &Stmt, target: &Ident) -> bool {
+pub(super) fn stmt_uses_ident(stmt: &Stmt, target: &Ident) -> bool {
     use swc_core::ecma::visit::Visit;
 
     struct IdentFinder {
@@ -2494,7 +2651,7 @@ fn stmt_uses_ident(stmt: &Stmt, target: &Ident) -> bool {
 }
 
 /// Check if a statement references the exact identifier binding.
-fn stmt_uses_ident_key(stmt: &Stmt, ident: &Ident) -> bool {
+pub(super) fn stmt_uses_ident_key(stmt: &Stmt, ident: &Ident) -> bool {
     use swc_core::ecma::visit::Visit;
 
     struct IdentFinder {

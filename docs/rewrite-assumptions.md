@@ -131,6 +131,31 @@ these default groups and compressed indexed returns. These recoveries use the
 existing source-recovery policy; helper identity and complete-pattern checks
 remain required.
 
+### `async_iterator_value_await`
+
+The program does not depend on the extra `await` that Babel 7.8–7.13 apply to
+each iteration value of a lowered `for await`.
+
+Every lowerer replaces `for await (const item of iterable)` with an adapter call
+(`_asyncIterator`, `_async_iterator`, `__forAwait`, `__asyncValues`) and a
+`try`/`catch`/`finally` protocol that calls the iterator's `return()` on an
+abrupt exit and rethrows the body's error after it. Native `for await` performs
+the same `IteratorClose` and error propagation, so folding the protocol back is
+not an assumption. Babel 7.8–7.13 additionally emit
+`value = await step.value` in the loop head; native `for await` awaits only the
+result object of `next()`, not its `value`. For an async iterator that yields
+promises as values, the lowered loop observes the settled value while the
+recovered loop observes the promise. Spec-conformant async iterators do not
+yield promises, and the `AsyncFromSyncIterator` wrapper of later Babel
+versions and of the runtime already awaits sync iterator values, so this is a
+source-recovery difference only for that producer range.
+
+Affects: `UnForOf` (`for await` recovery from the Babel 7.8–7.13 protocol).
+The other protocols carry no extra `await` and are recovered without this
+assumption.
+
+Level: `standard` and above, with `UnForOf`.
+
 ### `no_document_all`
 
 The input does not depend on the legacy `document.all` falsy-object behavior.

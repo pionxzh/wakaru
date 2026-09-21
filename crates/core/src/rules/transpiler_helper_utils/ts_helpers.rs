@@ -246,6 +246,7 @@ fn ts_helper_name_kind(name: &str) -> Option<TsHelperKind> {
         "__awaiter" => Some(TsHelperKind::Awaiter),
         "__generator" => Some(TsHelperKind::Generator),
         "__values" | "_ts_values" => Some(TsHelperKind::Values),
+        "__asyncValues" => Some(TsHelperKind::AsyncValues),
         "__assign" => Some(TsHelperKind::Assign),
         "__rest" => Some(TsHelperKind::Rest),
         "__extends" => Some(TsHelperKind::Extends),
@@ -659,6 +660,7 @@ fn ts_inline_helper_fallback_matches(expr: &Expr, kind: TsHelperKind) -> bool {
             param_len >= 2 && (signals.label_prop || signals.trys_prop || signals.ops_prop)
         }
         TsHelperKind::Values => ts_values_body_matches(param_len, body),
+        TsHelperKind::AsyncValues => ts_async_values_body_matches(param_len, body),
         TsHelperKind::Assign => {
             signals.object_assign || (signals.arguments_ref && signals.has_own_property)
         }
@@ -733,6 +735,7 @@ struct TsHelperBodySignals {
     prototype_prop: bool,
     set_module_default_call: bool,
     symbol_iterator: bool,
+    symbol_async_iterator: bool,
     trys_prop: bool,
     type_error: bool,
 }
@@ -776,6 +779,9 @@ fn collect_ts_helper_signals(stmts: &[Stmt], descend_into_functions: bool) -> Ts
         fn visit_member_expr(&mut self, member: &MemberExpr) {
             if is_symbol_member(member, "iterator") {
                 self.signals.symbol_iterator = true;
+            }
+            if is_symbol_member(member, "asyncIterator") {
+                self.signals.symbol_async_iterator = true;
             }
             if is_object_member(member, "assign") {
                 self.signals.object_assign = true;
@@ -909,12 +915,13 @@ fn ts_private_helper_name_kind(name: &str, function: &Function) -> Option<TsHelp
     let kind = match name {
         "_ts_generator" => TsHelperKind::Generator,
         "_ts_values" | "__values" => TsHelperKind::Values,
+        "__asyncValues" => TsHelperKind::AsyncValues,
         "__classPrivateFieldGet" => TsHelperKind::ClassPrivateFieldGet,
         "__classPrivateFieldSet" => TsHelperKind::ClassPrivateFieldSet,
         _ => return None,
     };
     match kind {
-        TsHelperKind::Generator | TsHelperKind::Values => {
+        TsHelperKind::Generator | TsHelperKind::Values | TsHelperKind::AsyncValues => {
             ts_function_matches_kind(function, kind).then_some(kind)
         }
         _ => is_tsc_private_helper_fn(function, kind).then_some(kind),
@@ -930,6 +937,8 @@ fn ts_generated_fn_helper_kind(ident: &Ident, function: &Function) -> Option<TsH
         // Minifiers strip the `_ts_values` / `__values` name, but the body shape
         // (single iterable param, `Symbol.iterator`, `TypeError`) is preserved.
         Some(TsHelperKind::Values)
+    } else if ts_async_values_function_matches(function) {
+        Some(TsHelperKind::AsyncValues)
     } else {
         None
     }
@@ -939,7 +948,13 @@ fn ts_generated_values_callable_kind(ident: &Ident, expr: &Expr) -> Option<TsHel
         return None;
     }
     let (param_len, body) = ts_helper_callable_body(expr)?;
-    ts_values_body_matches(param_len, body).then_some(TsHelperKind::Values)
+    if ts_values_body_matches(param_len, body) {
+        Some(TsHelperKind::Values)
+    } else if ts_async_values_body_matches(param_len, body) {
+        Some(TsHelperKind::AsyncValues)
+    } else {
+        None
+    }
 }
 
 /// Fact extraction may see minified tslib helpers as direct arrow/function
@@ -960,6 +975,8 @@ fn ts_generated_fact_callable_kind(ident: &Ident, expr: &Expr) -> Option<TsHelpe
         Some(TsHelperKind::Generator)
     } else if ts_values_body_matches(param_len, body) {
         Some(TsHelperKind::Values)
+    } else if ts_async_values_body_matches(param_len, body) {
+        Some(TsHelperKind::AsyncValues)
     } else {
         None
     }
@@ -974,6 +991,7 @@ fn ts_function_matches_kind(function: &Function, kind: TsHelperKind) -> bool {
     match kind {
         TsHelperKind::Generator => ts_generator_state_function_matches(function),
         TsHelperKind::Values => ts_values_function_matches(function),
+        TsHelperKind::AsyncValues => ts_async_values_function_matches(function),
         _ => false,
     }
 }
@@ -982,6 +1000,26 @@ fn ts_values_function_matches(function: &Function) -> bool {
         return false;
     };
     ts_values_body_matches(function.params.len(), &body.stmts)
+}
+fn ts_async_values_function_matches(function: &Function) -> bool {
+    let Some(body) = &function.body else {
+        return false;
+    };
+    ts_async_values_body_matches(function.params.len(), &body.stmts)
+}
+/// `__asyncValues`: a single iterable param that reads `Symbol.asyncIterator`,
+/// throws `TypeError` when the symbol is missing, and wraps a sync iterator in
+/// a `Promise`-settling adapter (the nested `verb`/`settle` functions). The
+/// `Promise` signal separates it from Babel's `_asyncIterator`, whose body
+/// shares the first two signals and delegates wrapping to a separate helper.
+/// Its sync fallback also reads `Symbol.iterator`, so `ts_values_body_matches`
+/// excludes this shape.
+fn ts_async_values_body_matches(param_len: usize, body: &[Stmt]) -> bool {
+    if param_len != 1 {
+        return false;
+    }
+    let own = collect_ts_helper_own_body_signals(body);
+    own.symbol_async_iterator && own.type_error && collect_ts_helper_body_signals(body).promise
 }
 /// `__values` / `_ts_values`: a single iterable param, grabs `Symbol.iterator`,
 /// and throws `TypeError` when the value is not iterable. Both signals sit in
@@ -993,7 +1031,7 @@ fn ts_values_body_matches(param_len: usize, body: &[Stmt]) -> bool {
         return false;
     }
     let signals = collect_ts_helper_own_body_signals(body);
-    signals.symbol_iterator && signals.type_error
+    signals.symbol_iterator && signals.type_error && !signals.symbol_async_iterator
 }
 fn ts_generator_state_function_matches(function: &Function) -> bool {
     let Some(body) = &function.body else {

@@ -61,6 +61,7 @@ crates/
         match_context.rs            — binding-aware slots for helper body matchers
         helper_matcher.rs           — shared helper binding/lifecycle primitives
         rename_utils.rs             — shared binding rename utilities
+        un_for_await.rs             — `for await` protocol matcher run by UnForOf (not a registered rule)
         *.rs                        — one file per transformation rule
       unpacker/
         mod.rs                      — unpack_bundle() dispatch
