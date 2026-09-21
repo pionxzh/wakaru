@@ -2187,6 +2187,7 @@ fn decode_babel_state_machine(
 
     let mut result = StateMachineProgram::from_labeled_stmts(output, trys)
         .with_catch_bindings(catch_bindings)
+        .with_index_loops(IndexLoopContinueMode::SingleBodyJumpTarget)
         .recover_conditional_assignments()
         .recover_conditional_branches(OpcodeReturnScan::IncludeNestedFunctions)
         // MidMachine joins are unsound here: a regenerator yield resumes at the

@@ -416,6 +416,22 @@ rationale, or level gating appear.
   `__esModule` patterns UnEsm needs for getter detection). Recovery exposes
   new shapes for the late UnObjectRest, UnArgumentSpread, and
   UnWebpackInterop passes.
+  Both it and UnRegenerator rebuild control flow through
+  `rules/state_machine.rs`: try regions nest (a region inside another
+  region's try, catch, or finally part is rebuilt inside that part), and
+  `if (!test) goto END; body; update; goto HEAD` runs become `for` loops in
+  every flattened label range, including try parts and folded branches. Loop
+  recovery is label-aware: statements at or after the back-edge target that
+  precede the guard are the loop head and move into the body ahead of an
+  `if (test) break;` (Terser splits a `sent()` consumer from its guard, which
+  puts the awaited `next()` there), and a folded branch only rebuilds loops
+  whose back-edge target lies strictly inside the branch, so a loop's own
+  exit guard is never folded into an `if` around it. A bare back-edge with
+  no exit guard is a `for (;;)` loop over the statements since its target,
+  including a back-edge to label 0 (a loop at the top of the function). An
+  early `return` nested in a branch (`if (c) return [2, value]`) decodes in
+  place, since the value-return opcode carries no label semantics. A decode
+  that still leaves a jump opcode fails closed and keeps the machine.
 
 ### Modernization
 

@@ -3116,3 +3116,394 @@ R([]);
 "#;
     assert_eq_normalized(&apply_without_helpers(input), input);
 }
+
+// ── for await through the __generator machine ───────────────────────────────
+
+#[test]
+fn ts_es5_for_await_recovers_through_the_state_machine() {
+    // TypeScript ES5 output for `for await (const item of stream) { await
+    // handle_item(item); }`: the loop is a back-edge inside a try region of the
+    // `__generator` machine, and its protocol is folded by UnForOf afterwards.
+    let input = r#"
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
+var __generator = (this && this.__generator) || function (thisArg, body) {
+    var _ = { label: 0, sent: function() { if (t[0] & 1) throw t[1]; return t[1]; }, trys: [], ops: [] }, f, y, t, g = Object.create((typeof Iterator === "function" ? Iterator : Object).prototype);
+    return g.next = verb(0), g["throw"] = verb(1), g["return"] = verb(2), typeof Symbol === "function" && (g[Symbol.iterator] = function() { return this; }), g;
+    function verb(n) { return function (v) { return step([n, v]); }; }
+    function step(op) {
+        if (f) throw new TypeError("Generator is already executing.");
+        while (g && (g = 0, op[0] && (_ = 0)), _) try {
+            if (f = 1, y && (t = op[0] & 2 ? y["return"] : op[0] ? y["throw"] || ((t = y["return"]) && t.call(y), 0) : y.next) && !(t = t.call(y, op[1])).done) return t;
+            if (y = 0, t) op = [op[0] & 2, t.value];
+            switch (op[0]) {
+                case 0: case 1: t = op; break;
+                case 4: _.label++; return { value: op[1], done: false };
+                case 5: _.label++; y = op[1]; op = [0]; continue;
+                case 7: op = _.ops.pop(); _.trys.pop(); continue;
+                default:
+                    if (!(t = _.trys, t = t.length > 0 && t[t.length - 1]) && (op[0] === 6 || op[0] === 2)) { _ = 0; continue; }
+                    if (op[0] === 3 && (!t || (op[1] > t[0] && op[1] < t[3]))) { _.label = op[1]; break; }
+                    if (op[0] === 6 && _.label < t[1]) { _.label = t[1]; t = op; break; }
+                    if (t && _.label < t[2]) { _.label = t[2]; _.ops.push(op); break; }
+                    if (t[2]) _.ops.pop();
+                    _.trys.pop(); continue;
+            }
+            op = body.call(thisArg, _);
+        } catch (e) { op = [6, e]; y = 0; } finally { f = t = 0; }
+        if (op[0] & 5) throw op[1]; return { value: op[0] ? op[1] : void 0, done: true };
+    }
+};
+var __asyncValues = (this && this.__asyncValues) || function (o) {
+    if (!Symbol.asyncIterator) throw new TypeError("Symbol.asyncIterator is not defined.");
+    var m = o[Symbol.asyncIterator], i;
+    return m ? m.call(o) : (o = typeof __values === "function" ? __values(o) : o[Symbol.iterator](), i = {}, verb("next"), verb("throw"), verb("return"), i[Symbol.asyncIterator] = function () { return this; }, i);
+    function verb(n) { i[n] = o[n] && function (v) { return new Promise(function (resolve, reject) { v = o[n](v), settle(resolve, reject, v.done, v.value); }); }; }
+    function settle(resolve, reject, d, v) { Promise.resolve(v).then(function(v) { resolve({ value: v, done: d }); }, reject); }
+};
+function consume_stream(stream) {
+    return __awaiter(this, void 0, void 0, function () {
+        var item, e_1_1;
+        var _a, stream_1, stream_1_1;
+        var _b, e_1, _c, _d;
+        return __generator(this, function (_e) {
+            switch (_e.label) {
+                case 0:
+                    _e.trys.push([0, 6, 7, 12]);
+                    _a = true, stream_1 = __asyncValues(stream);
+                    _e.label = 1;
+                case 1: return [4 /*yield*/, stream_1.next()];
+                case 2:
+                    if (!(stream_1_1 = _e.sent(), _b = stream_1_1.done, !_b)) return [3 /*break*/, 5];
+                    _d = stream_1_1.value;
+                    _a = false;
+                    item = _d;
+                    return [4 /*yield*/, handle_item(item)];
+                case 3:
+                    _e.sent();
+                    _e.label = 4;
+                case 4:
+                    _a = true;
+                    return [3 /*break*/, 1];
+                case 5: return [3 /*break*/, 12];
+                case 6:
+                    e_1_1 = _e.sent();
+                    e_1 = { error: e_1_1 };
+                    return [3 /*break*/, 12];
+                case 7:
+                    _e.trys.push([7, , 10, 11]);
+                    if (!(!_a && !_b && (_c = stream_1.return))) return [3 /*break*/, 9];
+                    return [4 /*yield*/, _c.call(stream_1)];
+                case 8:
+                    _e.sent();
+                    _e.label = 9;
+                case 9: return [3 /*break*/, 11];
+                case 10:
+                    if (e_1) throw e_1.error;
+                    return [7 /*endfinally*/];
+                case 11: return [7 /*endfinally*/];
+                case 12: return [2 /*return*/];
+            }
+        });
+    });
+}
+"#;
+    let expected = r#"
+async function consume_stream(stream) {
+  for await (const item of stream) {
+    await handle_item(item);
+  }
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn compressed_ts_for_await_folds_the_head_statement_form() {
+    // Terser splits the `sent()` consumer from the guard, so the decoded loop
+    // head is a statement of its own (`l = await i.next()`) at the back-edge
+    // target. It must run every iteration, and the protocol still folds into
+    // `for await` from that head-statement form.
+    let input = r#"
+var e=this&&this.__awaiter||function(e,t,n,r){function o(e){return e instanceof n?e:new n(function(t){t(e)})}return new(n||(n=Promise))(function(n,a){function u(e){try{s(r.next(e))}catch(e){a(e)}}function c(e){try{s(r.throw(e))}catch(e){a(e)}}function s(e){e.done?n(e.value):o(e.value).then(u,c)}s((r=r.apply(e,t||[])).next())})},t=this&&this.__generator||function(e,t){var n={label:0,sent:function(){if(1&a[0])throw a[1];return a[1]},trys:[],ops:[]},r,o,a,u=Object.create(("function"==typeof Iterator?Iterator:Object).prototype);return u.next=c(0),u.throw=c(1),u.return=c(2),"function"==typeof Symbol&&(u[Symbol.iterator]=function(){return this}),u;function c(e){return function(t){return s([e,t])}}function s(c){if(r)throw new TypeError("Generator is already executing.");for(;u&&(u=0,c[0]&&(n=0)),n;)try{if(r=1,o&&(a=2&c[0]?o.return:c[0]?o.throw||((a=o.return)&&a.call(o),0):o.next)&&!(a=a.call(o,c[1])).done)return a;switch(o=0,a&&(c=[2&c[0],a.value]),c[0]){case 0:case 1:a=c;break;case 4:return n.label++,{value:c[1],done:!1};case 5:n.label++,o=c[1],c=[0];continue;case 7:c=n.ops.pop(),n.trys.pop();continue;default:if(!(a=n.trys,(a=a.length>0&&a[a.length-1])||6!==c[0]&&2!==c[0])){n=0;continue}if(3===c[0]&&(!a||c[1]>a[0]&&c[1]<a[3])){n.label=c[1];break}if(6===c[0]&&n.label<a[1]){n.label=a[1],a=c;break}if(a&&n.label<a[2]){n.label=a[2],n.ops.push(c);break}a[2]&&n.ops.pop(),n.trys.pop();continue}c=t.call(e,n)}catch(e){c=[6,e],o=0}finally{r=a=0}if(5&c[0])throw c[1];return{value:c[0]?c[1]:void 0,done:!0}}},n=this&&this.__asyncValues||function(e){if(!Symbol.asyncIterator)throw new TypeError("Symbol.asyncIterator is not defined.");var t=e[Symbol.asyncIterator],n;return t?t.call(e):(e="function"==typeof __values?__values(e):e[Symbol.iterator](),n={},r("next"),r("throw"),r("return"),n[Symbol.asyncIterator]=function(){return this},n);function r(t){n[t]=e[t]&&function(n){return new Promise(function(r,a){o(r,a,(n=e[t](n)).done,n.value)})}}function o(e,t,n,r){Promise.resolve(r).then(function(t){e({value:t,done:n})},t)}};function r(r){return e(this,void 0,void 0,function(){var e,o,a,u,c,s,i,l,f,h,y,p;return t(this,function(t){switch(t.label){case 0:e=[],t.label=1;case 1:t.trys.push([1,,15,17]),t.label=2;case 2:t.trys.push([2,8,9,14]),s=!0,i=n(r),t.label=3;case 3:return[4,i.next()];case 4:return l=t.sent(),(f=l.done)?[3,7]:(p=l.value,s=!1,(o=p).done?[3,7]:(u=(a=e).push,[4,normalize_item(o)]));case 5:u.apply(a,[t.sent()]),t.label=6;case 6:return s=!0,[3,3];case 7:return[3,14];case 8:return c=t.sent(),h={error:c},[3,14];case 9:return t.trys.push([9,,12,13]),s||f||!(y=i.return)?[3,11]:[4,y.call(i)];case 10:t.sent(),t.label=11;case 11:return[3,13];case 12:if(h)throw h.error;return[7];case 13:return[7];case 14:return[3,17];case 15:return[4,close_stream(r)];case 16:return t.sent(),[7];case 17:return[2,e]}})})}
+"#;
+    let expected = r#"
+async function r(r) {
+  const e = [];
+  try {
+    for await (const o of r) {
+      if (o.done) break;
+      e.push(await normalize_item(o));
+    }
+  } finally {
+    await close_stream(r);
+  }
+  return e;
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+// ── early return inside a loop body ─────────────────────────────────────────
+
+#[test]
+fn ts_es5_infinite_loop_with_early_return_keeps_the_loop() {
+    // `for (;;) { const r = await it.next(); if (await check(r)) return r; }`:
+    // the `return` is a value-return opcode nested in the branch, and the
+    // back-edge targets the machine entry (label 0). Both used to defeat the
+    // decode; dropping the back-edge alone would run the body once.
+    let input = r#"
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
+var __generator = (this && this.__generator) || function (thisArg, body) {
+    var _ = { label: 0, sent: function() { if (t[0] & 1) throw t[1]; return t[1]; }, trys: [], ops: [] }, f, y, t, g = Object.create((typeof Iterator === "function" ? Iterator : Object).prototype);
+    return g.next = verb(0), g["throw"] = verb(1), g["return"] = verb(2), typeof Symbol === "function" && (g[Symbol.iterator] = function() { return this; }), g;
+    function verb(n) { return function (v) { return step([n, v]); }; }
+    function step(op) {
+        if (f) throw new TypeError("Generator is already executing.");
+        while (g && (g = 0, op[0] && (_ = 0)), _) try {
+            if (f = 1, y && (t = op[0] & 2 ? y["return"] : op[0] ? y["throw"] || ((t = y["return"]) && t.call(y), 0) : y.next) && !(t = t.call(y, op[1])).done) return t;
+            if (y = 0, t) op = [op[0] & 2, t.value];
+            switch (op[0]) {
+                case 0: case 1: t = op; break;
+                case 4: _.label++; return { value: op[1], done: false };
+                case 5: _.label++; y = op[1]; op = [0]; continue;
+                case 7: op = _.ops.pop(); _.trys.pop(); continue;
+                default:
+                    if (!(t = _.trys, t = t.length > 0 && t[t.length - 1]) && (op[0] === 6 || op[0] === 2)) { _ = 0; continue; }
+                    if (op[0] === 3 && (!t || (op[1] > t[0] && op[1] < t[3]))) { _.label = op[1]; break; }
+                    if (op[0] === 6 && _.label < t[1]) { _.label = t[1]; t = op; break; }
+                    if (t && _.label < t[2]) { _.label = t[2]; _.ops.push(op); break; }
+                    if (t[2]) _.ops.pop();
+                    _.trys.pop(); continue;
+            }
+            op = body.call(thisArg, _);
+        } catch (e) { op = [6, e]; y = 0; } finally { f = t = 0; }
+        if (op[0] & 5) throw op[1]; return { value: op[0] ? op[1] : void 0, done: true };
+    }
+};
+function f(it, check) {
+    return __awaiter(this, void 0, void 0, function () {
+        var r;
+        return __generator(this, function (_a) {
+            switch (_a.label) {
+                case 0: return [4 /*yield*/, it.next()];
+                case 1:
+                    r = _a.sent();
+                    return [4 /*yield*/, check(r)];
+                case 2:
+                    if (_a.sent())
+                        return [2 /*return*/, r];
+                    _a.label = 3;
+                case 3: return [3 /*break*/, 0];
+                case 4: return [2 /*return*/];
+            }
+        });
+    });
+}
+"#;
+    let expected = r#"
+async function f(it, check) {
+  let r;
+  for (;;) {
+    r = await it.next();
+    if (await check(r)) {
+      return r;
+    }
+  }
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn ts_es5_infinite_loop_with_early_return_inside_try_finally() {
+    let input = r#"
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
+var __generator = (this && this.__generator) || function (thisArg, body) {
+    var _ = { label: 0, sent: function() { if (t[0] & 1) throw t[1]; return t[1]; }, trys: [], ops: [] }, f, y, t, g = Object.create((typeof Iterator === "function" ? Iterator : Object).prototype);
+    return g.next = verb(0), g["throw"] = verb(1), g["return"] = verb(2), typeof Symbol === "function" && (g[Symbol.iterator] = function() { return this; }), g;
+    function verb(n) { return function (v) { return step([n, v]); }; }
+    function step(op) {
+        if (f) throw new TypeError("Generator is already executing.");
+        while (g && (g = 0, op[0] && (_ = 0)), _) try {
+            if (f = 1, y && (t = op[0] & 2 ? y["return"] : op[0] ? y["throw"] || ((t = y["return"]) && t.call(y), 0) : y.next) && !(t = t.call(y, op[1])).done) return t;
+            if (y = 0, t) op = [op[0] & 2, t.value];
+            switch (op[0]) {
+                case 0: case 1: t = op; break;
+                case 4: _.label++; return { value: op[1], done: false };
+                case 5: _.label++; y = op[1]; op = [0]; continue;
+                case 7: op = _.ops.pop(); _.trys.pop(); continue;
+                default:
+                    if (!(t = _.trys, t = t.length > 0 && t[t.length - 1]) && (op[0] === 6 || op[0] === 2)) { _ = 0; continue; }
+                    if (op[0] === 3 && (!t || (op[1] > t[0] && op[1] < t[3]))) { _.label = op[1]; break; }
+                    if (op[0] === 6 && _.label < t[1]) { _.label = t[1]; t = op; break; }
+                    if (t && _.label < t[2]) { _.label = t[2]; _.ops.push(op); break; }
+                    if (t[2]) _.ops.pop();
+                    _.trys.pop(); continue;
+            }
+            op = body.call(thisArg, _);
+        } catch (e) { op = [6, e]; y = 0; } finally { f = t = 0; }
+        if (op[0] & 5) throw op[1]; return { value: op[0] ? op[1] : void 0, done: true };
+    }
+};
+function f(it, check) {
+    return __awaiter(this, void 0, void 0, function () {
+        var r;
+        return __generator(this, function (_a) {
+            switch (_a.label) {
+                case 0:
+                    _a.trys.push([0, , 6, 8]);
+                    _a.label = 1;
+                case 1: return [4 /*yield*/, it.next()];
+                case 2:
+                    r = _a.sent();
+                    return [4 /*yield*/, check(r)];
+                case 3:
+                    if (_a.sent())
+                        return [2 /*return*/, r];
+                    _a.label = 4;
+                case 4: return [3 /*break*/, 1];
+                case 5: return [3 /*break*/, 8];
+                case 6: return [4 /*yield*/, close(it)];
+                case 7:
+                    _a.sent();
+                    return [7 /*endfinally*/];
+                case 8: return [2 /*return*/];
+            }
+        });
+    });
+}
+"#;
+    let expected = r#"
+async function f(it, check) {
+  let r;
+  try {
+    for (;;) {
+      r = await it.next();
+      if (await check(r)) {
+        return r;
+      }
+    }
+  } finally {
+    await close(it);
+  }
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn ts_es5_indexed_loop_with_early_return_inside_try_finally() {
+    let input = r#"
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
+var __generator = (this && this.__generator) || function (thisArg, body) {
+    var _ = { label: 0, sent: function() { if (t[0] & 1) throw t[1]; return t[1]; }, trys: [], ops: [] }, f, y, t, g = Object.create((typeof Iterator === "function" ? Iterator : Object).prototype);
+    return g.next = verb(0), g["throw"] = verb(1), g["return"] = verb(2), typeof Symbol === "function" && (g[Symbol.iterator] = function() { return this; }), g;
+    function verb(n) { return function (v) { return step([n, v]); }; }
+    function step(op) {
+        if (f) throw new TypeError("Generator is already executing.");
+        while (g && (g = 0, op[0] && (_ = 0)), _) try {
+            if (f = 1, y && (t = op[0] & 2 ? y["return"] : op[0] ? y["throw"] || ((t = y["return"]) && t.call(y), 0) : y.next) && !(t = t.call(y, op[1])).done) return t;
+            if (y = 0, t) op = [op[0] & 2, t.value];
+            switch (op[0]) {
+                case 0: case 1: t = op; break;
+                case 4: _.label++; return { value: op[1], done: false };
+                case 5: _.label++; y = op[1]; op = [0]; continue;
+                case 7: op = _.ops.pop(); _.trys.pop(); continue;
+                default:
+                    if (!(t = _.trys, t = t.length > 0 && t[t.length - 1]) && (op[0] === 6 || op[0] === 2)) { _ = 0; continue; }
+                    if (op[0] === 3 && (!t || (op[1] > t[0] && op[1] < t[3]))) { _.label = op[1]; break; }
+                    if (op[0] === 6 && _.label < t[1]) { _.label = t[1]; t = op; break; }
+                    if (t && _.label < t[2]) { _.label = t[2]; _.ops.push(op); break; }
+                    if (t[2]) _.ops.pop();
+                    _.trys.pop(); continue;
+            }
+            op = body.call(thisArg, _);
+        } catch (e) { op = [6, e]; y = 0; } finally { f = t = 0; }
+        if (op[0] & 5) throw op[1]; return { value: op[0] ? op[1] : void 0, done: true };
+    }
+};
+function f(items, check) {
+    return __awaiter(this, void 0, void 0, function () {
+        var _i, items_1, r;
+        return __generator(this, function (_a) {
+            switch (_a.label) {
+                case 0:
+                    _a.trys.push([0, , 5, 7]);
+                    _i = 0, items_1 = items;
+                    _a.label = 1;
+                case 1:
+                    if (!(_i < items_1.length)) return [3 /*break*/, 4];
+                    r = items_1[_i];
+                    return [4 /*yield*/, check(r)];
+                case 2:
+                    if (_a.sent())
+                        return [2 /*return*/, r];
+                    _a.label = 3;
+                case 3:
+                    _i++;
+                    return [3 /*break*/, 1];
+                case 4: return [3 /*break*/, 7];
+                case 5: return [4 /*yield*/, close(items)];
+                case 6:
+                    _a.sent();
+                    return [7 /*endfinally*/];
+                case 7: return [2 /*return*/, null];
+            }
+        });
+    });
+}
+"#;
+    let expected = r#"
+async function f(items, check) {
+  let _i;
+  let items_1;
+  let r;
+  try {
+    _i = 0;
+    items_1 = items;
+    for (; _i < items_1.length; _i++) {
+      r = items_1[_i];
+      if (await check(r)) {
+        return r;
+      }
+    }
+  } finally {
+    await close(items);
+  }
+  return null;
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
