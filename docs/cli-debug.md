@@ -61,7 +61,11 @@ echo 'function f(a){return g(a)}' | wakaru debug normalize --rename
 ```
 
 Parses and reprints one source file for structure-oriented comparisons.
-`--rename` applies scope-correct deterministic alpha-renaming while preserving
+Syntax variants that print differently but mean the same thing are folded
+first: single-statement bodies of `if`/`else` and loops become blocks (an
+`else if` chain stays a chain) and a zero-argument `new X` becomes `new X()`,
+so a minifier's brace elision does not defeat the comparison. `--rename`
+applies scope-correct deterministic alpha-renaming while preserving
 free/global names, and `--format` runs the final formatter. The reproduction
 matrices use this command to compare differently mangled forms.
 

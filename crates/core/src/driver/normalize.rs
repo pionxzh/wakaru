@@ -16,10 +16,10 @@
 use crate::collections::HashSet;
 use anyhow::Result;
 
-use swc_core::common::{sync::Lrc, Mark, SourceMap, SyntaxContext, GLOBALS};
-use swc_core::ecma::ast::{Ident, Module};
+use swc_core::common::{sync::Lrc, Mark, SourceMap, SyntaxContext, DUMMY_SP, GLOBALS};
+use swc_core::ecma::ast::{BlockStmt, Ident, Module, NewExpr, Stmt};
 use swc_core::ecma::transforms::base::resolver;
-use swc_core::ecma::visit::{Visit, VisitMutWith, VisitWith};
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::io::{parse_js_with_recovery, print_js};
 use crate::rules::rename_utils::{rename_bindings_in_module, BindingId, BindingRename};
@@ -72,9 +72,61 @@ pub fn normalize(source: &str, options: &NormalizeOptions) -> Result<String> {
             let renames = canonical_binding_renames(&module, unresolved_mark);
             rename_bindings_in_module(&mut module, &renames);
         }
+        module.visit_mut_with(&mut SyntaxCanonicalizer);
 
         print_js(&module, cm)
     })
+}
+
+/// Fold syntax variants that print differently but mean the same thing, so a
+/// minifier's brace elision or dropped `new` parentheses does not defeat a
+/// structural comparison: single-statement bodies of `if`/`else` and loops
+/// become blocks (an `else if` chain stays a chain) and `new X` becomes
+/// `new X()`.
+struct SyntaxCanonicalizer;
+
+impl VisitMut for SyntaxCanonicalizer {
+    fn visit_mut_stmt(&mut self, stmt: &mut Stmt) {
+        stmt.visit_mut_children_with(self);
+        match stmt {
+            Stmt::If(if_stmt) => {
+                wrap_in_block(&mut if_stmt.cons);
+                if let Some(alt) = if_stmt.alt.as_mut() {
+                    if !matches!(**alt, Stmt::If(_)) {
+                        wrap_in_block(alt);
+                    }
+                }
+            }
+            Stmt::For(for_stmt) => wrap_in_block(&mut for_stmt.body),
+            Stmt::ForIn(for_in) => wrap_in_block(&mut for_in.body),
+            Stmt::ForOf(for_of) => wrap_in_block(&mut for_of.body),
+            Stmt::While(while_stmt) => wrap_in_block(&mut while_stmt.body),
+            Stmt::DoWhile(do_while) => wrap_in_block(&mut do_while.body),
+            _ => {}
+        }
+    }
+
+    fn visit_mut_new_expr(&mut self, new_expr: &mut NewExpr) {
+        new_expr.visit_mut_children_with(self);
+        if new_expr.args.is_none() {
+            new_expr.args = Some(Vec::new());
+        }
+    }
+}
+
+fn wrap_in_block(stmt: &mut Box<Stmt>) {
+    if matches!(**stmt, Stmt::Block(_)) {
+        return;
+    }
+    let inner = std::mem::replace(
+        &mut **stmt,
+        Stmt::Empty(swc_core::ecma::ast::EmptyStmt { span: DUMMY_SP }),
+    );
+    **stmt = Stmt::Block(BlockStmt {
+        span: DUMMY_SP,
+        ctxt: Default::default(),
+        stmts: vec![inner],
+    });
 }
 
 /// Build a position-based rename for every local binding, in first-encounter
@@ -178,6 +230,26 @@ mod tests {
         let a = "function f() { { let x = 1; use(x); } { let x = 2; use(x); } }";
         let b = "function f() { { let p = 1; use(p); } { let q = 2; use(q); } }";
         assert_eq!(renamed(a), renamed(b));
+    }
+
+    #[test]
+    fn brace_elision_and_bare_new_normalize_identically() {
+        // Terser drops single-statement braces and zero-argument `new`
+        // parentheses; both are syntax variants of the same program.
+        let braced = "function f(items) { const m = new Map(); for (const x of items) { if (x.done) { break; } else { m.set(x, 1); } } while (m.size) { m.clear(); } return m; }";
+        let bare = "function f(items) { const m = new Map; for (const x of items) if (x.done) break; else m.set(x, 1); while (m.size) m.clear(); return m; }";
+        assert_eq!(renamed(braced), renamed(bare));
+    }
+
+    #[test]
+    fn else_if_chains_stay_chains() {
+        // Wrapping the `else` branch of an `else if` in a block would turn a
+        // chain into a nested statement and make two identical chains differ
+        // only by how many were already braced.
+        let chain = "function f(x) { if (x) a(); else if (y) b(); else c(); }";
+        let braced = "function f(x) { if (x) { a(); } else if (y) { b(); } else { c(); } }";
+        assert_eq!(renamed(chain), renamed(braced));
+        assert!(renamed(chain).contains("else if"), "{}", renamed(chain));
     }
 
     #[test]
