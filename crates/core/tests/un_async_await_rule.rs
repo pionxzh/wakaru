@@ -3507,3 +3507,39 @@ async function f(items, check) {
 "#;
     assert_eq_normalized(&render(input), expected);
 }
+
+#[test]
+fn ts_es5_early_void_return_after_await_is_kept() {
+    // `if (a) { await g(); return; } h();`: the `return [2]` after the
+    // awaited call ends its branch early. Dropping it as the machine's end
+    // would let `h()` run on both branches.
+    let input = r#"
+function f(a) {
+  return __awaiter(this, void 0, void 0, function () {
+    return __generator(this, function (_b) {
+      switch (_b.label) {
+        case 0:
+          if (!a) return [3 /*break*/, 2];
+          return [4 /*yield*/, g()];
+        case 1:
+          _b.sent();
+          return [2 /*return*/];
+        case 2:
+          h();
+          return [2 /*return*/];
+      }
+    });
+  });
+}
+"#;
+    let expected = r#"
+async function f(a) {
+  if (a) {
+    await g();
+    return;
+  }
+  h();
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}

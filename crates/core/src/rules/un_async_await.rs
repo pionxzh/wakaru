@@ -996,7 +996,7 @@ fn decode_state_machine(
         let next_case_label = next_numeric_case_label(&cases, idx);
 
         let expanded = expand_terser_case_stmts(&case.cons);
-        for stmt in &expanded {
+        for (position, stmt) in expanded.iter().enumerate() {
             if let Some(region) = extract_trys_push(&state_param, stmt) {
                 trys.push(region);
                 continue;
@@ -1005,9 +1005,22 @@ fn decode_state_machine(
                 continue;
             }
 
-            if let Some(decoded) =
-                decode_return_opcode_with_backedge(stmt, helpers, idx, next_case_label, &trys)
-            {
+            // Only the last statement of the last case is the machine's
+            // implicit end; a void `return [2]` anywhere else is an early
+            // `return;` and must stay.
+            let void_return = if next_case_label.is_none() && position + 1 == expanded.len() {
+                VoidReturn::Drop
+            } else {
+                VoidReturn::Keep
+            };
+            if let Some(decoded) = decode_return_opcode_with_backedge(
+                stmt,
+                helpers,
+                idx,
+                next_case_label,
+                &trys,
+                void_return,
+            ) {
                 if let Some(s) = decoded {
                     flat.push((idx, s));
                 }
@@ -1417,10 +1430,18 @@ impl VisitMut for NestedValueReturnDecoder {
     }
 }
 
+/// What a void `return [2]` decodes to: the machine's implicit end is
+/// dropped, an explicit early `return;` is kept.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum VoidReturn {
+    Drop,
+    Keep,
+}
+
 /// Returns `Some(Some(stmt))` if an opcode-based return was decoded,
 /// `Some(None)` to drop the statement, or `None` if not a return opcode.
 fn decode_return_opcode(stmt: &Stmt, helpers: &AsyncHelperContext) -> Option<Option<Stmt>> {
-    decode_return_opcode_with_backedge(stmt, helpers, 0, None, &[])
+    decode_return_opcode_with_backedge(stmt, helpers, 0, None, &[], VoidReturn::Drop)
 }
 
 /// Like `decode_return_opcode`, but preserves non-fallthrough goto opcodes so
@@ -1431,6 +1452,7 @@ fn decode_return_opcode_with_backedge(
     current_case: usize,
     next_case_label: Option<usize>,
     trys: &[[Option<usize>; 4]],
+    void_return: VoidReturn,
 ) -> Option<Option<Stmt>> {
     let Stmt::Return(ret) = stmt else { return None };
     let arg = ret.arg.as_ref()?;
@@ -1455,13 +1477,13 @@ fn decode_return_opcode_with_backedge(
     match opcode {
         2 => {
             // return(value?)
-            let s = argument.map(|a| {
-                Stmt::Return(swc_core::ecma::ast::ReturnStmt {
-                    span: ret_span,
-                    arg: Some(a),
-                })
-            });
-            Some(s)
+            if argument.is_none() && void_return == VoidReturn::Drop {
+                return Some(None);
+            }
+            Some(Some(Stmt::Return(swc_core::ecma::ast::ReturnStmt {
+                span: ret_span,
+                arg: argument,
+            })))
         }
         3 => {
             // goto(label) -- preserve back-edges for loop recovery and
