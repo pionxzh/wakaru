@@ -1014,7 +1014,12 @@ fn decode_state_machine(
                 continue;
             }
 
-            flat.push((idx, stmt.clone()));
+            // `if (cond) return [2, value];` — an early `return` inside a
+            // branch. The value-return opcode has no label semantics, so it
+            // decodes in place; jumps and yields stay for the shared decoder.
+            let mut stmt = stmt.clone();
+            stmt.visit_mut_with(&mut NestedValueReturnDecoder);
+            flat.push((idx, stmt));
         }
     }
 
@@ -1107,6 +1112,7 @@ fn decode_state_machine(
 
     let mut recovered = StateMachineProgram::from_labeled_stmts(output, trys)
         .with_catch_bindings(catch_bindings)
+        .with_index_loops(IndexLoopContinueMode::AdjacentBackEdge)
         .recover_conditional_assignments()
         .recover_conditional_branches(OpcodeReturnScan::SkipNestedFunctions)
         .resolve_labeled_forward_jumps(
@@ -1381,6 +1387,36 @@ fn is_state_label_assign(state_param: &Ident, stmt: &Stmt) -> bool {
         && is_ident_prop(&left_expr.prop, "label")
 }
 
+/// Rewrites `return [2, value]` / `return [2]` nested inside a case
+/// statement's branches into plain returns. Nested functions keep their own
+/// returns.
+struct NestedValueReturnDecoder;
+
+impl VisitMut for NestedValueReturnDecoder {
+    fn visit_mut_function(&mut self, _: &mut Function) {}
+
+    fn visit_mut_arrow_expr(&mut self, _: &mut swc_core::ecma::ast::ArrowExpr) {}
+
+    fn visit_mut_return_stmt(&mut self, ret: &mut swc_core::ecma::ast::ReturnStmt) {
+        let Some(Expr::Array(arr)) = ret.arg.as_deref() else {
+            return;
+        };
+        let is_return_opcode = arr
+            .elems
+            .first()
+            .and_then(|elem| elem.as_ref())
+            .is_some_and(|elem| matches!(elem.expr.as_ref(), Expr::Lit(swc_core::ecma::ast::Lit::Num(n)) if n.value == 2.0));
+        if !is_return_opcode || arr.elems.len() > 2 {
+            return;
+        }
+        ret.arg = arr
+            .elems
+            .get(1)
+            .and_then(|elem| elem.as_ref())
+            .map(|elem| elem.expr.clone());
+    }
+}
+
 /// Returns `Some(Some(stmt))` if an opcode-based return was decoded,
 /// `Some(None)` to drop the statement, or `None` if not a return opcode.
 fn decode_return_opcode(stmt: &Stmt, helpers: &AsyncHelperContext) -> Option<Option<Stmt>> {
@@ -1437,9 +1473,11 @@ fn decode_return_opcode_with_backedge(
                     None
                 }
             }) {
-                if target > 0
-                    && (target < current_case
-                        || (target > current_case && Some(target) != next_case_label))
+                // A back-edge to label 0 is a loop whose head is the machine
+                // entry (`for (;;)` at the top of the function); dropping it
+                // would leave the body to run once.
+                if (target < current_case
+                    || (target > current_case && Some(target) != next_case_label))
                     && !is_try_region_exit(current_case, target, trys)
                 {
                     return Some(Some(stmt.clone()));

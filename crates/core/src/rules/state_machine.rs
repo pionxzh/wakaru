@@ -2,7 +2,6 @@ use crate::collections::HashSet;
 use std::ops::Range;
 
 use swc_core::atoms::Atom;
-use swc_core::common::util::take::Take;
 use swc_core::common::{Spanned, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignTarget, BlockStmt, BreakStmt, CatchClause, CondExpr,
@@ -64,6 +63,11 @@ pub(crate) struct StateMachineProgram {
     /// `None`, so the final reconstruction does not emit it a second time.
     try_regions: Vec<Option<TryRegion>>,
     catch_bindings: CatchBindings,
+    /// When set, `if (!test) goto END; body; update; goto HEAD` runs are
+    /// rebuilt as `for` loops wherever a label range is flattened: at the top
+    /// of the machine, inside a rebuilt try/catch/finally part, and inside a
+    /// folded branch. Set before the folds run so their bodies are covered.
+    index_loops: Option<IndexLoopContinueMode>,
 }
 
 /// The catch-clause binding each try region declares when the machine is
@@ -149,11 +153,17 @@ impl StateMachineProgram {
                 .collect(),
             try_regions: try_regions.into_iter().map(Some).collect(),
             catch_bindings: CatchBindings::default(),
+            index_loops: None,
         }
     }
 
     pub(crate) fn with_catch_bindings(mut self, catch_bindings: CatchBindings) -> Self {
         self.catch_bindings = catch_bindings;
+        self
+    }
+
+    pub(crate) fn with_index_loops(mut self, continue_mode: IndexLoopContinueMode) -> Self {
+        self.index_loops = Some(continue_mode);
         self
     }
 
@@ -168,6 +178,7 @@ impl StateMachineProgram {
             &mut self.catch_bindings,
             opcode_scan,
             join_mode,
+            self.index_loops,
         );
         self
     }
@@ -185,6 +196,7 @@ impl StateMachineProgram {
             &mut self.try_regions,
             &mut self.catch_bindings,
             opcode_scan,
+            self.index_loops,
         );
         self
     }
@@ -194,18 +206,27 @@ impl StateMachineProgram {
         let Self {
             blocks,
             mut catch_bindings,
+            index_loops,
             ..
         } = self;
         let label_stmts = label_stmts_from_blocks(blocks);
         let end = label_stmts.len();
-        reconstruct_label_range(&label_stmts, 0..end, &regions, &mut catch_bindings)
+        reconstruct_label_range(
+            &label_stmts,
+            0..end,
+            &regions,
+            &mut catch_bindings,
+            index_loops,
+            0,
+        )
     }
 
     pub(crate) fn into_reconstructed_stmts_with_index_loops(
         self,
         continue_mode: IndexLoopContinueMode,
     ) -> Vec<Stmt> {
-        recover_index_loops(self.into_reconstructed_stmts(), continue_mode)
+        self.with_index_loops(continue_mode)
+            .into_reconstructed_stmts()
     }
 }
 
@@ -331,22 +352,29 @@ fn reconstruct_branch_blocks(
     range: Range<usize>,
     regions: &[(usize, TryRegion)],
     catch_bindings: &mut CatchBindings,
+    index_loops: Option<IndexLoopContinueMode>,
 ) -> Option<Vec<Stmt>> {
     if blocks.iter().any(|block| !range.contains(&block.label)) {
         return None;
     }
-    if regions.is_empty() {
+    if regions.is_empty() && index_loops.is_none() {
         return Some(blocks.into_iter().flat_map(|block| block.stmts).collect());
     }
     let mut label_stmts: Vec<Vec<Stmt>> = vec![vec![]; range.end];
     for block in blocks {
         label_stmts[block.label].extend(block.stmts);
     }
+    // The fold's guard sits at `range.start`; a loop whose back-edge returns
+    // to that label is the loop this guard tests, not a loop inside the
+    // branch, so only loops headed strictly inside the branch are rebuilt.
+    let min_loop_head = range.start + 1;
     Some(reconstruct_label_range(
         &label_stmts,
         range,
         regions,
         catch_bindings,
+        index_loops,
+        min_loop_head,
     ))
 }
 
@@ -488,6 +516,7 @@ fn recover_conditional_branch_blocks(
     try_regions: &mut [Option<TryRegion>],
     catch_bindings: &mut CatchBindings,
     opcode_scan: OpcodeReturnScan,
+    index_loops: Option<IndexLoopContinueMode>,
 ) -> Vec<StateBlock> {
     let mut result = Vec::new();
     let mut index = 0usize;
@@ -498,6 +527,7 @@ fn recover_conditional_branch_blocks(
             try_regions,
             catch_bindings,
             opcode_scan,
+            index_loops,
         ) {
             result.push(block);
             index += consumed;
@@ -522,6 +552,7 @@ fn try_recover_conditional_branch(
     try_regions: &mut [Option<TryRegion>],
     catch_bindings: &mut CatchBindings,
     opcode_scan: OpcodeReturnScan,
+    index_loops: Option<IndexLoopContinueMode>,
 ) -> Option<(StateBlock, usize)> {
     let first_block = blocks.first()?;
     let start_label = first_block.label;
@@ -568,12 +599,14 @@ fn try_recover_conditional_branch(
         start_label..target,
         &fallthrough_regions,
         catch_bindings,
+        index_loops,
     )?;
     let target_stmts = reconstruct_branch_blocks(
         target_blocks,
         target..join_target,
         &target_regions,
         catch_bindings,
+        index_loops,
     )?;
 
     if fallthrough_stmts.is_empty() && target_stmts.is_empty() {
@@ -652,28 +685,140 @@ fn block_stmt(stmts: Vec<Stmt>) -> Stmt {
     })
 }
 
-fn recover_index_loops(mut stmts: Vec<Stmt>, continue_mode: IndexLoopContinueMode) -> Vec<Stmt> {
-    let mut result = Vec::new();
+/// Rebuild `if (!test) goto END; body; update; goto HEAD` runs as `for`
+/// loops over one flattened label range. Statements that precede the break
+/// test but sit at or after the back-edge target belong to the loop head (a
+/// `yield` merged into its `sent()` consumer lands there when the consumer is
+/// a separate statement): they move into the loop body ahead of the break
+/// test instead of staying outside the loop, where they would run once.
+fn recover_index_loops_labeled(
+    stmts: Vec<(usize, Stmt)>,
+    continue_mode: IndexLoopContinueMode,
+    min_loop_head: usize,
+) -> Vec<(usize, Stmt)> {
+    let plain: Vec<Stmt> = stmts.iter().map(|(_, stmt)| stmt.clone()).collect();
+    let mut result: Vec<(usize, Stmt)> = Vec::new();
     let mut index = 0usize;
 
     while index < stmts.len() {
-        if let Some((loop_stmt, consumed)) = try_recover_index_loop(&stmts[index..], continue_mode)
-        {
-            result.push(loop_stmt);
-            index += consumed;
-        } else {
-            result.push(stmts[index].take());
+        let recovered = try_recover_index_loop(&plain[index..], continue_mode)
+            .filter(|recovered| recovered.head.is_none_or(|head| head >= min_loop_head));
+        let Some(recovered) = recovered else {
+            if let Some(loop_stmt) =
+                try_recover_unconditional_loop(&mut result, &stmts[index], min_loop_head)
+            {
+                result.push(loop_stmt);
+            } else {
+                result.push(stmts[index].clone());
+            }
             index += 1;
+            continue;
+        };
+        let label = stmts[index].0;
+        let mut head_pre = Vec::new();
+        if let Some(head) = recovered.head {
+            while result.last().is_some_and(|(label, _)| *label >= head) {
+                head_pre.push(result.pop().expect("checked by last()"));
+            }
         }
+        head_pre.reverse();
+        let loop_label = head_pre.first().map_or(label, |(label, _)| *label);
+        let consumed = recovered.consumed;
+        result.push((
+            loop_label,
+            recovered.into_stmt(head_pre.into_iter().map(|(_, stmt)| stmt)),
+        ));
+        index += consumed;
     }
 
     result
 }
 
+/// A bare back-edge `goto HEAD` with no exit guard ahead of it is a
+/// `for (;;)` loop: the statements at or after `HEAD` that were already
+/// emitted are its body. A jump inside the body to the label right after the
+/// back-edge is a `break`; a jump back to `HEAD` is a `continue`; any other
+/// jump keeps the loop unrecovered.
+fn try_recover_unconditional_loop(
+    result: &mut Vec<(usize, Stmt)>,
+    back_edge: &(usize, Stmt),
+    min_loop_head: usize,
+) -> Option<(usize, Stmt)> {
+    let (label, stmt) = back_edge;
+    let head = return_jump_target(stmt)?;
+    if head > *label || head < min_loop_head {
+        return None;
+    }
+    let body_start = result
+        .iter()
+        .rposition(|(stmt_label, _)| *stmt_label < head)
+        .map_or(0, |position| position + 1);
+    if body_start == result.len() {
+        return None;
+    }
+    let mut body: Vec<Stmt> = result[body_start..]
+        .iter()
+        .map(|(_, stmt)| stmt.clone())
+        .collect();
+    convert_jump_returns(&mut body, label + 1, head)?;
+    let loop_label = result[body_start].0;
+    result.truncate(body_start);
+    Some((
+        loop_label,
+        Stmt::For(ForStmt {
+            span: DUMMY_SP,
+            init: None,
+            test: None,
+            update: None,
+            body: Box::new(Stmt::Block(BlockStmt {
+                span: DUMMY_SP,
+                ctxt: Default::default(),
+                stmts: body,
+            })),
+        }),
+    ))
+}
+
+struct RecoveredIndexLoop {
+    /// The loop test, already inverted from the break guard.
+    test: Box<Expr>,
+    /// The break guard as it stood in the machine, converted to `if (c) break;`.
+    break_guard: Stmt,
+    update: Box<Expr>,
+    body: Vec<Stmt>,
+    consumed: usize,
+    /// The back-edge target label, when the loop ends in a jump.
+    head: Option<usize>,
+}
+
+impl RecoveredIndexLoop {
+    fn into_stmt(self, head_pre: impl Iterator<Item = Stmt>) -> Stmt {
+        let mut head_pre: Vec<Stmt> = head_pre.collect();
+        let (test, body) = if head_pre.is_empty() {
+            (Some(self.test), self.body)
+        } else {
+            head_pre.push(self.break_guard);
+            head_pre.extend(self.body);
+            (None, head_pre)
+        };
+        Stmt::For(ForStmt {
+            span: DUMMY_SP,
+            init: None,
+            test,
+            update: Some(self.update),
+            body: Box::new(Stmt::Block(BlockStmt {
+                span: DUMMY_SP,
+                ctxt: Default::default(),
+                stmts: body,
+            })),
+        })
+    }
+}
+
 fn try_recover_index_loop(
     stmts: &[Stmt],
     continue_mode: IndexLoopContinueMode,
-) -> Option<(Stmt, usize)> {
+) -> Option<RecoveredIndexLoop> {
     let (test, break_target) = loop_break_test(stmts.first()?)?;
     let final_return_idx = find_loop_boundary(stmts)?;
     if final_return_idx < 3 {
@@ -690,26 +835,23 @@ fn try_recover_index_loop(
         continue_mode,
     )?;
     convert_jump_returns(&mut body_stmts, break_target, continue_target)?;
+    let mut break_guard = stmts[0].clone();
+    convert_jump_return(&mut break_guard, break_target, continue_target)?;
 
-    let consumed = if return_jump_target(&stmts[final_return_idx]).is_some() {
+    let head = return_jump_target(&stmts[final_return_idx]);
+    let consumed = if head.is_some() {
         final_return_idx + 1
     } else {
         update_idx + 1
     };
-    Some((
-        Stmt::For(ForStmt {
-            span: DUMMY_SP,
-            init: None,
-            test: Some(test),
-            update: Some(update),
-            body: Box::new(Stmt::Block(BlockStmt {
-                span: DUMMY_SP,
-                ctxt: Default::default(),
-                stmts: body_stmts,
-            })),
-        }),
+    Some(RecoveredIndexLoop {
+        test,
+        break_guard,
+        update,
+        body: body_stmts,
         consumed,
-    ))
+        head,
+    })
 }
 
 fn continue_target_for_loop(
@@ -897,17 +1039,44 @@ fn reconstruct_label_range(
     range: Range<usize>,
     regions: &[(usize, TryRegion)],
     catch_bindings: &mut CatchBindings,
+    index_loops: Option<IndexLoopContinueMode>,
+    min_loop_head: usize,
 ) -> Vec<Stmt> {
+    let labeled =
+        reconstruct_label_range_labeled(label_stmts, range, regions, catch_bindings, index_loops);
+    let labeled = match index_loops {
+        Some(continue_mode) => recover_index_loops_labeled(labeled, continue_mode, min_loop_head),
+        None => labeled,
+    };
+    labeled.into_iter().map(|(_, stmt)| stmt).collect()
+}
+
+/// [`reconstruct_label_range`] before loop recovery, keeping each statement's
+/// label so loop recovery can tell head statements from the code before the
+/// loop. A rebuilt try statement carries its region's start label.
+fn reconstruct_label_range_labeled(
+    label_stmts: &[Vec<Stmt>],
+    range: Range<usize>,
+    regions: &[(usize, TryRegion)],
+    catch_bindings: &mut CatchBindings,
+    index_loops: Option<IndexLoopContinueMode>,
+) -> Vec<(usize, Stmt)> {
     let n = range.end.min(label_stmts.len());
+    let start = range.start.min(n);
     if regions.is_empty() {
-        return label_stmts[range.start.min(n)..n]
+        return label_stmts[start..n]
             .iter()
-            .flatten()
-            .cloned()
+            .enumerate()
+            .flat_map(|(offset, stmts)| {
+                stmts
+                    .iter()
+                    .cloned()
+                    .map(move |stmt| (start + offset, stmt))
+            })
             .collect();
     }
 
-    let mut result: Vec<Stmt> = Vec::new();
+    let mut result: Vec<(usize, Stmt)> = Vec::new();
     let mut i = range.start;
 
     while i < n {
@@ -915,21 +1084,40 @@ fn reconstruct_label_range(
         if let Some(&(region_index, region)) = region {
             let [_try_start, catch_start, finally_start, next] = region;
 
-            let try_end = catch_start.or(finally_start).unwrap_or(n);
-            let try_stmts: Vec<Stmt> = label_stmts[i..try_end.min(n)]
-                .iter()
-                .flatten()
-                .cloned()
-                .collect();
+            // A region nested inside this one is rebuilt inside the part that
+            // holds it; flattening it would drop its `finally` guarantee.
+            let inner_regions = |part: Range<usize>| -> Vec<(usize, TryRegion)> {
+                regions
+                    .iter()
+                    .filter(|(index, inner)| {
+                        *index != region_index
+                            && inner[0].is_some_and(|start| part.contains(&start))
+                    })
+                    .copied()
+                    .collect()
+            };
+
+            let try_end = catch_start.or(finally_start).unwrap_or(n).min(n);
+            let try_stmts = reconstruct_label_range(
+                label_stmts,
+                i..try_end,
+                &inner_regions(i..try_end),
+                catch_bindings,
+                index_loops,
+                i,
+            );
 
             let catch_clause = if let Some(cs) = catch_start {
-                let catch_end = finally_start.or(next).unwrap_or(n);
+                let catch_end = finally_start.or(next).unwrap_or(n).min(n);
                 let cs = cs.min(n);
-                let catch_stmts: Vec<Stmt> = label_stmts[cs..catch_end.min(n)]
-                    .iter()
-                    .flatten()
-                    .cloned()
-                    .collect();
+                let catch_stmts = reconstruct_label_range(
+                    label_stmts,
+                    cs..catch_end,
+                    &inner_regions(cs..catch_end),
+                    catch_bindings,
+                    index_loops,
+                    cs,
+                );
                 let catch_span = catch_stmts.first().map_or(DUMMY_SP, |s| {
                     let sp = s.span();
                     if sp.lo.0 != 0 {
@@ -955,13 +1143,16 @@ fn reconstruct_label_range(
             };
 
             let finally_block = if let Some(fs) = finally_start {
-                let finally_end = next.unwrap_or(n);
+                let finally_end = next.unwrap_or(n).min(n);
                 let fs = fs.min(n);
-                let finally_stmts: Vec<Stmt> = label_stmts[fs..finally_end.min(n)]
-                    .iter()
-                    .flatten()
-                    .cloned()
-                    .collect();
+                let finally_stmts = reconstruct_label_range(
+                    label_stmts,
+                    fs..finally_end,
+                    &inner_regions(fs..finally_end),
+                    catch_bindings,
+                    index_loops,
+                    fs,
+                );
                 Some(BlockStmt {
                     span: DUMMY_SP,
                     ctxt: Default::default(),
@@ -979,16 +1170,19 @@ fn reconstruct_label_range(
                     DUMMY_SP
                 }
             });
-            result.push(Stmt::Try(Box::new(TryStmt {
-                span: try_span,
-                block: BlockStmt {
-                    span: DUMMY_SP,
-                    ctxt: Default::default(),
-                    stmts: try_stmts,
-                },
-                handler: catch_clause,
-                finalizer: finally_block,
-            })));
+            result.push((
+                i,
+                Stmt::Try(Box::new(TryStmt {
+                    span: try_span,
+                    block: BlockStmt {
+                        span: DUMMY_SP,
+                        ctxt: Default::default(),
+                        stmts: try_stmts,
+                    },
+                    handler: catch_clause,
+                    finalizer: finally_block,
+                })),
+            ));
 
             i = next.unwrap_or(n);
         } else {
@@ -998,7 +1192,7 @@ fn reconstruct_label_range(
                 i > start && i < end
             });
             if !in_region {
-                result.extend(label_stmts[i].iter().cloned());
+                result.extend(label_stmts[i].iter().cloned().map(|stmt| (i, stmt)));
             }
             i += 1;
         }
@@ -1017,6 +1211,7 @@ fn resolve_labeled_forward_jump_blocks(
     catch_bindings: &mut CatchBindings,
     opcode_scan: OpcodeReturnScan,
     join_mode: ForwardJumpJoin,
+    index_loops: Option<IndexLoopContinueMode>,
 ) -> Vec<StateBlock> {
     // Folding an inner guard can make an enclosing guard's body jump-free, so
     // iterate to a fixpoint. Each fold strictly reduces the block count, which
@@ -1029,6 +1224,7 @@ fn resolve_labeled_forward_jump_blocks(
             catch_bindings,
             opcode_scan,
             join_mode,
+            index_loops,
         );
         if blocks.len() == before {
             return blocks;
@@ -1042,6 +1238,7 @@ fn resolve_labeled_forward_jump_blocks_once(
     catch_bindings: &mut CatchBindings,
     opcode_scan: OpcodeReturnScan,
     join_mode: ForwardJumpJoin,
+    index_loops: Option<IndexLoopContinueMode>,
 ) -> Vec<StateBlock> {
     let mut result = Vec::new();
     let mut index = 0;
@@ -1052,6 +1249,7 @@ fn resolve_labeled_forward_jump_blocks_once(
             catch_bindings,
             opcode_scan,
             join_mode,
+            index_loops,
         ) {
             result.push(recovered);
             index += consumed;
@@ -1079,6 +1277,7 @@ fn try_resolve_labeled_forward_jump(
     catch_bindings: &mut CatchBindings,
     opcode_scan: OpcodeReturnScan,
     join_mode: ForwardJumpJoin,
+    index_loops: Option<IndexLoopContinueMode>,
 ) -> Option<(StateBlock, usize)> {
     let first_block = blocks.first()?;
     let start_label = first_block.label;
@@ -1134,6 +1333,7 @@ fn try_resolve_labeled_forward_jump(
         start_label..target,
         &body_regions,
         catch_bindings,
+        index_loops,
     )?;
     if body_stmts.is_empty() || stmts_contain_state_opcode_return(&body_stmts, opcode_scan) {
         return None;
@@ -1507,6 +1707,231 @@ mod tests {
         .into_reconstructed_stmts_with_index_loops(IndexLoopContinueMode::SingleBodyJumpTarget);
 
         assert_loop_body_continue(&recovered);
+    }
+
+    #[test]
+    fn program_recovers_index_loop_inside_try_region() {
+        // 0: init   1: if (done) goto 3   2: work; update; goto 1
+        // 4: cleanup                         region [0, , 4, 6]
+        let recovered = with_globals(|| {
+            StateMachineProgram::from_labeled_stmts(
+                vec![
+                    (0, expr_ident_stmt("init")),
+                    (1, if_jump("done", 3)),
+                    (2, expr_ident_stmt("work")),
+                    (2, expr_ident_stmt("update")),
+                    (2, jump_return(1)),
+                    (4, expr_ident_stmt("cleanup")),
+                ],
+                vec![[Some(0), None, Some(4), Some(6)]],
+            )
+            .into_reconstructed_stmts_with_index_loops(IndexLoopContinueMode::AdjacentBackEdge)
+        });
+
+        assert_eq!(recovered.len(), 1, "{recovered:#?}");
+        let Stmt::Try(try_stmt) = &recovered[0] else {
+            panic!("expected try statement, got {recovered:#?}");
+        };
+        assert_eq!(try_stmt.block.stmts.len(), 2, "{:#?}", try_stmt.block.stmts);
+        let Stmt::For(for_stmt) = &try_stmt.block.stmts[1] else {
+            panic!("expected loop inside try, got {:#?}", try_stmt.block.stmts);
+        };
+        let Stmt::Block(body) = for_stmt.body.as_ref() else {
+            panic!("expected loop body block");
+        };
+        assert_eq!(body.stmts.len(), 1);
+        assert!(for_stmt.update.is_some());
+        assert!(!stmts_contain_state_opcode_return(
+            &recovered,
+            OpcodeReturnScan::SkipNestedFunctions
+        ));
+    }
+
+    #[test]
+    fn program_keeps_loop_head_statements_inside_the_loop() {
+        // 0: init   3: fetch   4: if (done) goto 7; work   6: update; goto 3
+        // 7: after. `fetch` sits at the back-edge target, so it is the loop
+        // head and must run every iteration, ahead of the break guard.
+        let recovered = StateMachineProgram::from_labeled_stmts(
+            vec![
+                (0, expr_ident_stmt("init")),
+                (3, expr_ident_stmt("fetch")),
+                (4, if_jump("done", 7)),
+                (4, expr_ident_stmt("work")),
+                (6, expr_ident_stmt("update")),
+                (6, jump_return(3)),
+                (7, expr_ident_stmt("after")),
+            ],
+            vec![],
+        )
+        .into_reconstructed_stmts_with_index_loops(IndexLoopContinueMode::AdjacentBackEdge);
+
+        assert_eq!(recovered.len(), 3, "{recovered:#?}");
+        let Stmt::For(for_stmt) = &recovered[1] else {
+            panic!("expected loop, got {recovered:#?}");
+        };
+        assert!(
+            for_stmt.test.is_none(),
+            "head statements need the guard in the body"
+        );
+        assert!(for_stmt.update.is_some());
+        let Stmt::Block(body) = for_stmt.body.as_ref() else {
+            panic!("expected loop body block");
+        };
+        assert_eq!(body.stmts.len(), 3, "{:#?}", body.stmts);
+        assert!(matches!(&body.stmts[0], Stmt::Expr(_)), "fetch first");
+        let Stmt::If(guard) = &body.stmts[1] else {
+            panic!("expected break guard, got {:#?}", body.stmts);
+        };
+        assert!(matches!(guard.cons.as_ref(), Stmt::Break(_)));
+        assert!(!stmts_contain_state_opcode_return(
+            &recovered,
+            OpcodeReturnScan::SkipNestedFunctions
+        ));
+    }
+
+    #[test]
+    fn program_does_not_fold_a_loop_test_guard_into_a_branch() {
+        // 0: if (done) goto 4   1: work   2: update; goto 0   4: after
+        // The guard at 0 is the loop's exit test; folding it as `if (!done)
+        // { for (;;) … }` would evaluate the test once.
+        let recovered = with_globals(|| {
+            StateMachineProgram::from_labeled_stmts(
+                vec![
+                    (0, if_jump("done", 4)),
+                    (1, expr_ident_stmt("work")),
+                    (2, expr_ident_stmt("update")),
+                    (2, jump_return(0)),
+                    (4, expr_ident_stmt("after")),
+                ],
+                vec![],
+            )
+            .with_index_loops(IndexLoopContinueMode::AdjacentBackEdge)
+            .resolve_labeled_forward_jumps(
+                OpcodeReturnScan::SkipNestedFunctions,
+                ForwardJumpJoin::MidMachine,
+            )
+            .into_reconstructed_stmts()
+        });
+
+        assert_eq!(recovered.len(), 2, "{recovered:#?}");
+        let Stmt::For(for_stmt) = &recovered[0] else {
+            panic!("expected the loop at the top, got {recovered:#?}");
+        };
+        assert!(for_stmt.test.is_some(), "the guard is the loop test");
+    }
+
+    #[test]
+    fn program_recovers_unconditional_loop_from_bare_back_edge() {
+        // 0: init   1: fetch   2: if (done) return value   3: goto 1   4: after
+        let recovered = with_globals(|| {
+            let mut guard = if_jump("done", 9);
+            if let Stmt::If(if_stmt) = &mut guard {
+                *if_stmt.cons = Stmt::Return(swc_core::ecma::ast::ReturnStmt {
+                    span: DUMMY_SP,
+                    arg: Some(ident_expr("value")),
+                });
+            }
+            StateMachineProgram::from_labeled_stmts(
+                vec![
+                    (0, expr_ident_stmt("init")),
+                    (1, expr_ident_stmt("fetch")),
+                    (2, guard),
+                    (3, jump_return(1)),
+                    (4, expr_ident_stmt("after")),
+                ],
+                vec![],
+            )
+            .into_reconstructed_stmts_with_index_loops(IndexLoopContinueMode::AdjacentBackEdge)
+        });
+
+        assert_eq!(recovered.len(), 3, "{recovered:#?}");
+        let Stmt::For(for_stmt) = &recovered[1] else {
+            panic!("expected `for (;;)`, got {recovered:#?}");
+        };
+        assert!(for_stmt.test.is_none() && for_stmt.update.is_none());
+        let Stmt::Block(body) = for_stmt.body.as_ref() else {
+            panic!("expected loop body block");
+        };
+        assert_eq!(body.stmts.len(), 2, "{:#?}", body.stmts);
+        assert!(!stmts_contain_state_opcode_return(
+            &recovered,
+            OpcodeReturnScan::SkipNestedFunctions
+        ));
+    }
+
+    #[test]
+    fn program_rebuilds_try_region_nested_in_finally() {
+        // try { a } finally { try { b } finally { c } }
+        // 0: a   2: b   3: c      regions [0, , 2, 4] and [2, , 3, 4]
+        let recovered = with_globals(|| {
+            StateMachineProgram::from_labeled_stmts(
+                vec![
+                    (0, expr_ident_stmt("a")),
+                    (2, expr_ident_stmt("b")),
+                    (3, expr_ident_stmt("c")),
+                ],
+                vec![
+                    [Some(0), None, Some(2), Some(4)],
+                    [Some(2), None, Some(3), Some(4)],
+                ],
+            )
+            .into_reconstructed_stmts()
+        });
+
+        assert_eq!(recovered.len(), 1, "{recovered:#?}");
+        let Stmt::Try(outer) = &recovered[0] else {
+            panic!("expected outer try, got {recovered:#?}");
+        };
+        assert_eq!(outer.block.stmts.len(), 1);
+        let Some(finalizer) = &outer.finalizer else {
+            panic!("expected outer finally");
+        };
+        assert_eq!(finalizer.stmts.len(), 1, "{:#?}", finalizer.stmts);
+        let Stmt::Try(inner) = &finalizer.stmts[0] else {
+            panic!(
+                "expected inner try inside finally, got {:#?}",
+                finalizer.stmts
+            );
+        };
+        assert_eq!(inner.block.stmts.len(), 1);
+        assert_eq!(inner.finalizer.as_ref().map(|f| f.stmts.len()), Some(1));
+    }
+
+    #[test]
+    fn program_rebuilds_try_region_nested_in_try_block() {
+        // try { try { a } catch { b } } finally { c }
+        // 0: a   1: b   2: c      regions [0, , 2, 3] and [0, 1, , 2]
+        let recovered = with_globals(|| {
+            StateMachineProgram::from_labeled_stmts(
+                vec![
+                    (0, expr_ident_stmt("a")),
+                    (1, expr_ident_stmt("b")),
+                    (2, expr_ident_stmt("c")),
+                ],
+                vec![
+                    [Some(0), None, Some(2), Some(3)],
+                    [Some(0), Some(1), None, Some(2)],
+                ],
+            )
+            .into_reconstructed_stmts()
+        });
+
+        assert_eq!(recovered.len(), 1, "{recovered:#?}");
+        let Stmt::Try(outer) = &recovered[0] else {
+            panic!("expected outer try, got {recovered:#?}");
+        };
+        assert!(outer.handler.is_none());
+        assert_eq!(outer.finalizer.as_ref().map(|f| f.stmts.len()), Some(1));
+        assert_eq!(outer.block.stmts.len(), 1, "{:#?}", outer.block.stmts);
+        let Stmt::Try(inner) = &outer.block.stmts[0] else {
+            panic!(
+                "expected inner try inside the try block, got {:#?}",
+                outer.block.stmts
+            );
+        };
+        assert!(inner.handler.is_some());
+        assert!(inner.finalizer.is_none());
     }
 
     fn assert_loop_body_continue(recovered: &[Stmt]) {
