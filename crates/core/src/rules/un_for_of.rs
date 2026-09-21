@@ -136,6 +136,10 @@ pub(super) struct ForOfHelperContext {
     /// Set when an async iterator protocol was folded into `for await`, so the
     /// consumed helper declarations are removed once the walk is done.
     pub(super) rewrote_async_iterator_loop: std::cell::Cell<bool>,
+    /// Protocol temporaries proven private to a folded `for await` whose
+    /// declarations live in an enclosing statement list (state-machine
+    /// decoders hoist them); that list drops them when it is processed.
+    pub(super) orphaned_protocol_temps: std::cell::RefCell<HashSet<BindingKey>>,
     tslib_namespaces: HashSet<BindingKey>,
     cross_module_values_namespaces: HashMap<BindingKey, HashSet<String>>,
     closure_jscomp_namespaces: HashSet<BindingKey>,
@@ -172,6 +176,7 @@ impl ForOfHelperContext {
             esbuild_for_await_helpers,
             esbuild_known_symbol_helpers,
             rewrote_async_iterator_loop: std::cell::Cell::new(false),
+            orphaned_protocol_temps: std::cell::RefCell::new(HashSet::default()),
             tslib_namespaces: local_helpers.tslib_namespaces().clone(),
             cross_module_values_namespaces: cross_module_values.namespaces,
             closure_jscomp_namespaces: collect_closure_jscomp_namespaces(module),
@@ -605,6 +610,7 @@ fn has_for_of_sequence_candidates(stmts: &[Stmt]) -> bool {
 }
 
 fn process_stmt_vec(stmts: &mut Vec<Stmt>, helper_context: &ForOfHelperContext) {
+    un_for_await::remove_orphaned_temp_declarations(stmts, helper_context);
     if !has_for_of_sequence_candidates(stmts) {
         return;
     }
@@ -1809,10 +1815,14 @@ fn replace_iterator_value_refs(block: &mut BlockStmt, item_ident: &Ident) {
 
     impl VisitMut for Replacer {
         fn visit_mut_expr(&mut self, expr: &mut Expr) {
-            expr.visit_mut_children_with(self);
+            // Match before descending: once `step.value` has become `step`,
+            // an enclosing `.value` read (`step.value.value`, the element's
+            // own `value` property) would otherwise match a second time.
             if is_value_member(expr, &self.ident) {
                 *expr = Expr::Ident(self.ident.clone());
+                return;
             }
+            expr.visit_mut_children_with(self);
         }
     }
 
