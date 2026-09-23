@@ -160,6 +160,9 @@ fn try_convert_async_iterator_try(
         !expr_mentions_binding(&shape.iterable, element)
             && uses_are_within(ctx, element, std::slice::from_ref(&stmts[index]))
             && !nested_function_mentions_binding(&body.stmts, element)
+            // The hoisted element is a source binding: `with` or direct `eval`
+            // can read it after the loop, so keep the outer binding then.
+            && !ctx.dynamic_scope_can_observe_name(&element.sym)
     });
     if element_is_private {
         protocol_idents.extend(hoisted_element.iter().cloned());
@@ -268,8 +271,10 @@ struct HoistedElement {
 ///   builder, consuming `_d`;
 /// - `_d = step.value; use(item = _d)` (Terser inlined the alias into the
 ///   first statement) binds `item` and drops the assignment expression when
-///   that assignment is the only read of `_d` and the only mention of `item`
-///   in that statement;
+///   that assignment is the only read of `_d`, runs whenever the statement
+///   does (not in a branch, short-circuited operand, optional chain, nested
+///   function, or class), and precedes every other mention of `item` in that
+///   statement;
 /// - `_d = step.value;` followed by member reads of `_d` binds `_d` itself.
 ///
 /// `step` must not be read anywhere else in the body.
@@ -344,24 +349,26 @@ fn take_hoisted_element(body: &mut BlockStmt, step: &Ident) -> HoistedElement {
 }
 
 /// When the body's first statement holds `alias = element` as an expression,
-/// `element` is read nowhere else in the body, and that assignment is the
-/// first mention of `alias` in the statement's evaluation order, replace the
-/// assignment with `alias` and return it: binding `alias` in the loop head
-/// gives the statement the same value, and every later read of `alias` in
-/// the body already saw the assigned value.
+/// `element` is read nowhere else in the body, the assignment always runs
+/// when the statement does, and it is the first mention of `alias` in the
+/// statement's evaluation order, replace the assignment with `alias` and
+/// return it: binding `alias` in the loop head gives the statement the same
+/// value, and every later read of `alias` in the body already saw the
+/// assigned value.
 fn fold_inline_alias(body: &mut BlockStmt, element: &Ident) -> Option<Ident> {
     let first = body.stmts.first()?;
     let mut finder = InlineAliasFinder {
         element: binding_key(element),
         mentions: Vec::new(),
         alias_assignments: Vec::new(),
-        function_depth: 0,
-        nested_alias_assignment: false,
+        guard_depth: 0,
+        guarded_alias_assignment: false,
     };
     first.visit_with(&mut finder);
-    // An assignment inside a nested function runs when that function is
-    // called, not in this statement's evaluation order.
-    if finder.nested_alias_assignment {
+    // A conditional assignment may leave `alias` holding an earlier value, and
+    // one inside a nested function or class runs later, if at all; binding
+    // `alias` every iteration would change both.
+    if finder.guarded_alias_assignment {
         return None;
     }
     let [(alias, target_position)] = finder.alias_assignments.as_slice() else {
@@ -406,10 +413,26 @@ struct InlineAliasFinder {
     element: BindingKey,
     mentions: Vec<BindingKey>,
     alias_assignments: Vec<(Ident, usize)>,
-    /// Depth of nested functions around the node being visited.
-    function_depth: usize,
-    /// An `alias = element` assignment sits inside a nested function.
-    nested_alias_assignment: bool,
+    /// Depth of regions around the node being visited that may not run, or
+    /// run later, when the statement runs: nested functions and classes,
+    /// conditional branches, short-circuited operands, and optional chains.
+    guard_depth: usize,
+    /// An `alias = element` assignment sits inside such a region.
+    guarded_alias_assignment: bool,
+}
+
+impl InlineAliasFinder {
+    fn guarded<N: VisitWith<Self> + ?Sized>(&mut self, node: &N) {
+        self.guard_depth += 1;
+        node.visit_with(self);
+        self.guard_depth -= 1;
+    }
+
+    fn guarded_children(&mut self, stmt: &Stmt) {
+        self.guard_depth += 1;
+        stmt.visit_children_with(self);
+        self.guard_depth -= 1;
+    }
 }
 
 impl Visit for InlineAliasFinder {
@@ -418,29 +441,90 @@ impl Visit for InlineAliasFinder {
     }
 
     fn visit_function(&mut self, function: &swc_core::ecma::ast::Function) {
-        self.function_depth += 1;
+        self.guard_depth += 1;
         function.visit_children_with(self);
-        self.function_depth -= 1;
+        self.guard_depth -= 1;
     }
 
     fn visit_arrow_expr(&mut self, arrow: &swc_core::ecma::ast::ArrowExpr) {
-        self.function_depth += 1;
+        self.guard_depth += 1;
         arrow.visit_children_with(self);
-        self.function_depth -= 1;
+        self.guard_depth -= 1;
+    }
+
+    fn visit_class(&mut self, class: &swc_core::ecma::ast::Class) {
+        self.guard_depth += 1;
+        class.visit_children_with(self);
+        self.guard_depth -= 1;
+    }
+
+    fn visit_cond_expr(&mut self, cond: &swc_core::ecma::ast::CondExpr) {
+        cond.test.visit_with(self);
+        self.guarded(&*cond.cons);
+        self.guarded(&*cond.alt);
+    }
+
+    fn visit_bin_expr(&mut self, bin: &BinExpr) {
+        bin.left.visit_with(self);
+        if matches!(
+            bin.op,
+            BinaryOp::LogicalAnd | BinaryOp::LogicalOr | BinaryOp::NullishCoalescing
+        ) {
+            self.guarded(&*bin.right);
+        } else {
+            bin.right.visit_with(self);
+        }
+    }
+
+    fn visit_opt_chain_expr(&mut self, chain: &swc_core::ecma::ast::OptChainExpr) {
+        self.guard_depth += 1;
+        chain.visit_children_with(self);
+        self.guard_depth -= 1;
+    }
+
+    fn visit_stmt(&mut self, stmt: &Stmt) {
+        match stmt {
+            Stmt::Expr(_) | Stmt::Decl(Decl::Var(_)) | Stmt::Return(_) | Stmt::Throw(_) => {
+                stmt.visit_children_with(self);
+            }
+            Stmt::If(if_stmt) => {
+                if_stmt.test.visit_with(self);
+                self.guarded(&*if_stmt.cons);
+                if let Some(alt) = &if_stmt.alt {
+                    self.guarded(&**alt);
+                }
+            }
+            Stmt::Switch(switch) => {
+                switch.discriminant.visit_with(self);
+                self.guarded(&switch.cases);
+            }
+            // Loops, `try`, labels, and blocks: only the leading part of each
+            // always runs; treat the whole statement as guarded.
+            _ => self.guarded_children(stmt),
+        }
     }
 
     fn visit_assign_expr(&mut self, assign: &AssignExpr) {
         if let Some(target) = assign_target_ident(assign) {
-            if matches!(strip_parens(&assign.right), Expr::Ident(id)
-                if id.sym == self.element.0 && id.ctxt == self.element.1)
+            if assign.op == AssignOp::Assign
+                && matches!(strip_parens(&assign.right), Expr::Ident(id)
+                    if id.sym == self.element.0 && id.ctxt == self.element.1)
             {
-                if self.function_depth > 0 {
-                    self.nested_alias_assignment = true;
+                if self.guard_depth > 0 {
+                    self.guarded_alias_assignment = true;
                 }
                 self.alias_assignments.push((target, self.mentions.len()));
             }
         }
-        assign.visit_children_with(self);
+        assign.left.visit_with(self);
+        if matches!(
+            assign.op,
+            AssignOp::AndAssign | AssignOp::OrAssign | AssignOp::NullishAssign
+        ) {
+            self.guarded(&*assign.right);
+        } else {
+            assign.right.visit_with(self);
+        }
     }
 }
 
@@ -1553,7 +1637,7 @@ fn expr_mentions_binding(expr: &Expr, ident: &Ident) -> bool {
     finder.found
 }
 
-/// `ident` is mentioned inside a function or arrow nested in `stmts`.
+/// `ident` is mentioned inside a function, arrow, or class nested in `stmts`.
 fn nested_function_mentions_binding(stmts: &[Stmt], ident: &Ident) -> bool {
     struct NestedMentionFinder {
         key: BindingKey,
@@ -1577,6 +1661,14 @@ fn nested_function_mentions_binding(stmts: &[Stmt], ident: &Ident) -> bool {
         fn visit_arrow_expr(&mut self, arrow: &swc_core::ecma::ast::ArrowExpr) {
             self.function_depth += 1;
             arrow.visit_children_with(self);
+            self.function_depth -= 1;
+        }
+
+        // Field initializers run when an instance is constructed, possibly
+        // after the loop; the whole class body counts, which fails closed.
+        fn visit_class(&mut self, class: &swc_core::ecma::ast::Class) {
+            self.function_depth += 1;
+            class.visit_children_with(self);
             self.function_depth -= 1;
         }
     }
