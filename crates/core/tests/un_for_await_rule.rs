@@ -944,3 +944,239 @@ async function walk(stream, table) {
     let output = render(&input);
     assert!(output.contains("table[entry] = entry ="), "{output}");
 }
+
+#[test]
+fn for_await_keeps_a_protocol_iterator_read_in_the_body() {
+    // The body calls the iterator's `return()` itself, so the iterator
+    // temporary is not the protocol's alone and its declaration must stay.
+    let input = with_helper(
+        OLD_BABEL_ASYNC_ITERATOR,
+        r#"
+export async function consume(stream) {
+  var _iteratorAbruptCompletion = false;
+  var _didIteratorError = false;
+  var _iteratorError;
+  try {
+    for (var _iterator = _asyncIterator(stream), _step; _iteratorAbruptCompletion = !(_step = await _iterator.next()).done; _iteratorAbruptCompletion = false) {
+      const item = _step.value;
+      if (item.stop) {
+        await _iterator.return();
+      }
+      await handle(item);
+    }
+  } catch (err) {
+    _didIteratorError = true;
+    _iteratorError = err;
+  } finally {
+    try {
+      if (_iteratorAbruptCompletion && _iterator.return != null) {
+        await _iterator.return();
+      }
+    } finally {
+      if (_didIteratorError) {
+        throw _iteratorError;
+      }
+    }
+  }
+}
+"#,
+    );
+    let output = render(&input);
+    assert!(!output.contains("for await"), "{output}");
+    assert!(
+        output.contains("_iterator = _asyncIterator(stream)"),
+        "{output}"
+    );
+}
+
+#[test]
+fn for_await_keeps_a_flag_declared_in_the_try_that_the_body_reads() {
+    // A boolean-initialized declaration ahead of the loop looks like a
+    // protocol flag, but the body reads and writes it; consuming its
+    // declaration would leave the body referencing an undeclared name.
+    let input = with_helper(
+        OLD_BABEL_ASYNC_ITERATOR,
+        r#"
+export async function consume(stream) {
+  var _iteratorAbruptCompletion = false;
+  var _didIteratorError = false;
+  var _iteratorError;
+  try {
+    var first = true;
+    for (var _iterator = _asyncIterator(stream), _step; _iteratorAbruptCompletion = !(_step = await _iterator.next()).done; _iteratorAbruptCompletion = false) {
+      const item = _step.value;
+      if (first) {
+        first = false;
+        onFirst(item);
+      } else {
+        onRest(item);
+      }
+    }
+  } catch (err) {
+    _didIteratorError = true;
+    _iteratorError = err;
+  } finally {
+    try {
+      if (_iteratorAbruptCompletion && _iterator.return != null) {
+        await _iterator.return();
+      }
+    } finally {
+      if (_didIteratorError) {
+        throw _iteratorError;
+      }
+    }
+  }
+}
+"#,
+    );
+    let output = render(&input);
+    assert!(!output.contains("for await"), "{output}");
+    assert!(output.contains("first = true"), "{output}");
+}
+
+#[test]
+fn for_await_keeps_an_uninitialized_temp_declared_in_the_try_that_the_body_writes() {
+    let input = with_helper(
+        TS_ASYNC_VALUES,
+        r#"
+export async function consume(stream) {
+  var e_1, _a;
+  try {
+    var count;
+    for (var stream_1 = __asyncValues(stream), stream_1_1; stream_1_1 = await stream_1.next(), !stream_1_1.done;) {
+      const item = stream_1_1.value;
+      count = (count || 0) + 1;
+      await handle(item, count);
+    }
+  } catch (e_1_1) {
+    e_1 = { error: e_1_1 };
+  } finally {
+    try {
+      if (stream_1_1 && !stream_1_1.done && (_a = stream_1.return)) await _a.call(stream_1);
+    } finally {
+      if (e_1) throw e_1.error;
+    }
+  }
+}
+"#,
+    );
+    let output = render(&input);
+    assert!(!output.contains("for await"), "{output}");
+    assert!(
+        output.contains("let count;") || output.contains("var count;"),
+        "{output}"
+    );
+}
+
+#[test]
+fn for_await_assigns_a_hoisted_element_captured_by_a_closure() {
+    // Every lexical use of `item` sits inside the protocol, but the closures
+    // read it after the loop: a per-iteration `const` would give each thunk
+    // its own element where the hoisted binding gives them all the last one.
+    let input = with_helper(
+        TS_ASYNC_VALUES,
+        r#"
+export async function collect(stream) {
+  let item;
+  let _a;
+  let stream_1;
+  let stream_1_1;
+  let _b;
+  let e_1;
+  let _c;
+  let _d;
+  const thunks = [];
+  try {
+    _a = true;
+    stream_1 = __asyncValues(stream);
+    for (; stream_1_1 = await stream_1.next(), _b = stream_1_1.done, !_b; _a = true) {
+      _d = stream_1_1.value;
+      _a = false;
+      item = _d;
+      thunks.push(() => item);
+    }
+  } catch (error) {
+    e_1 = { error };
+  } finally {
+    try {
+      if (!_a && !_b && (_c = stream_1.return)) {
+        await _c.call(stream_1);
+      }
+    } finally {
+      if (e_1) {
+        throw e_1.error;
+      }
+    }
+  }
+  return thunks;
+}
+"#,
+    );
+    let expected = r#"
+export async function collect(stream) {
+  let item;
+  const thunks = [];
+  for await (item of stream) {
+    thunks.push(() => item);
+  }
+  return thunks;
+}
+"#;
+    assert_eq_normalized(&render(&input), expected);
+}
+
+#[test]
+fn for_await_keeps_an_inlined_alias_assigned_inside_a_nested_function() {
+    // The alias assignment runs when the thunk is called, not when the
+    // statement executes, so it is not the element binding of this iteration.
+    let input = with_helper(
+        TS_ASYNC_VALUES,
+        r#"
+export async function collect(stream) {
+  let item;
+  let _a;
+  let stream_1;
+  let stream_1_1;
+  let _b;
+  let e_1;
+  let _c;
+  let _d;
+  const thunks = [];
+  try {
+    _a = true;
+    stream_1 = __asyncValues(stream);
+    for (; stream_1_1 = await stream_1.next(), _b = stream_1_1.done, !_b; _a = true) {
+      _d = stream_1_1.value;
+      _a = false;
+      thunks.push(() => (item = _d));
+    }
+  } catch (error) {
+    e_1 = { error };
+  } finally {
+    try {
+      if (!_a && !_b && (_c = stream_1.return)) {
+        await _c.call(stream_1);
+      }
+    } finally {
+      if (e_1) {
+        throw e_1.error;
+      }
+    }
+  }
+  return thunks;
+}
+"#,
+    );
+    let expected = r#"
+export async function collect(stream) {
+  let item;
+  let _d;
+  const thunks = [];
+  for await (_d of stream) {
+    thunks.push(() => item = _d);
+  }
+  return thunks;
+}
+"#;
+    assert_eq_normalized(&render(&input), expected);
+}
