@@ -154,12 +154,35 @@ fn try_convert_async_iterator_try(
         consumed_temps,
     } = take_hoisted_element(&mut body, &shape.step);
     protocol_idents.extend(consumed_temps);
+    // A closure in the body can read the hoisted element after the loop, so a
+    // per-iteration binding would change what it sees; assign in place then.
     let element_is_private = hoisted_element.as_ref().is_some_and(|element| {
         !expr_mentions_binding(&shape.iterable, element)
             && uses_are_within(ctx, element, std::slice::from_ref(&stmts[index]))
+            && !nested_function_mentions_binding(&body.stmts, element)
     });
     if element_is_private {
         protocol_idents.extend(hoisted_element.iter().cloned());
+    }
+
+    // The privacy check below proves nothing outside the try reads a protocol
+    // temporary; the body must not read one either, since its declaration goes
+    // with the protocol. The step (folded into the element by the builder) and
+    // the element itself are the only temporaries the body may mention.
+    let body_may_mention = |ident: &Ident| {
+        same_binding(ident, &shape.step)
+            || hoisted_element
+                .as_ref()
+                .is_some_and(|element| same_binding(element, ident))
+    };
+    if protocol_idents.iter().any(|ident| {
+        !body_may_mention(ident)
+            && body
+                .stmts
+                .iter()
+                .any(|stmt| stmt_mentions_binding(stmt, ident))
+    }) {
+        return None;
     }
 
     // Flag declarations and initial assignments before the try statement.
@@ -332,8 +355,15 @@ fn fold_inline_alias(body: &mut BlockStmt, element: &Ident) -> Option<Ident> {
         element: binding_key(element),
         mentions: Vec::new(),
         alias_assignments: Vec::new(),
+        function_depth: 0,
+        nested_alias_assignment: false,
     };
     first.visit_with(&mut finder);
+    // An assignment inside a nested function runs when that function is
+    // called, not in this statement's evaluation order.
+    if finder.nested_alias_assignment {
+        return None;
+    }
     let [(alias, target_position)] = finder.alias_assignments.as_slice() else {
         return None;
     };
@@ -376,6 +406,10 @@ struct InlineAliasFinder {
     element: BindingKey,
     mentions: Vec<BindingKey>,
     alias_assignments: Vec<(Ident, usize)>,
+    /// Depth of nested functions around the node being visited.
+    function_depth: usize,
+    /// An `alias = element` assignment sits inside a nested function.
+    nested_alias_assignment: bool,
 }
 
 impl Visit for InlineAliasFinder {
@@ -383,11 +417,26 @@ impl Visit for InlineAliasFinder {
         self.mentions.push(binding_key(ident));
     }
 
+    fn visit_function(&mut self, function: &swc_core::ecma::ast::Function) {
+        self.function_depth += 1;
+        function.visit_children_with(self);
+        self.function_depth -= 1;
+    }
+
+    fn visit_arrow_expr(&mut self, arrow: &swc_core::ecma::ast::ArrowExpr) {
+        self.function_depth += 1;
+        arrow.visit_children_with(self);
+        self.function_depth -= 1;
+    }
+
     fn visit_assign_expr(&mut self, assign: &AssignExpr) {
         if let Some(target) = assign_target_ident(assign) {
             if matches!(strip_parens(&assign.right), Expr::Ident(id)
                 if id.sym == self.element.0 && id.ctxt == self.element.1)
             {
+                if self.function_depth > 0 {
+                    self.nested_alias_assignment = true;
+                }
                 self.alias_assignments.push((target, self.mentions.len()));
             }
         }
@@ -401,6 +450,10 @@ struct InlineAliasReplacer {
 }
 
 impl VisitMut for InlineAliasReplacer {
+    fn visit_mut_function(&mut self, _: &mut swc_core::ecma::ast::Function) {}
+
+    fn visit_mut_arrow_expr(&mut self, _: &mut swc_core::ecma::ast::ArrowExpr) {}
+
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         if let Expr::Assign(assign) = expr {
             let is_alias_assign = assign_target_ident(assign)
@@ -1497,6 +1550,45 @@ fn expr_mentions_binding(expr: &Expr, ident: &Ident) -> bool {
         found: false,
     };
     expr.visit_with(&mut finder);
+    finder.found
+}
+
+/// `ident` is mentioned inside a function or arrow nested in `stmts`.
+fn nested_function_mentions_binding(stmts: &[Stmt], ident: &Ident) -> bool {
+    struct NestedMentionFinder {
+        key: BindingKey,
+        function_depth: usize,
+        found: bool,
+    }
+
+    impl Visit for NestedMentionFinder {
+        fn visit_ident(&mut self, ident: &Ident) {
+            if self.function_depth > 0 && ident.sym == self.key.0 && ident.ctxt == self.key.1 {
+                self.found = true;
+            }
+        }
+
+        fn visit_function(&mut self, function: &swc_core::ecma::ast::Function) {
+            self.function_depth += 1;
+            function.visit_children_with(self);
+            self.function_depth -= 1;
+        }
+
+        fn visit_arrow_expr(&mut self, arrow: &swc_core::ecma::ast::ArrowExpr) {
+            self.function_depth += 1;
+            arrow.visit_children_with(self);
+            self.function_depth -= 1;
+        }
+    }
+
+    let mut finder = NestedMentionFinder {
+        key: binding_key(ident),
+        function_depth: 0,
+        found: false,
+    };
+    for stmt in stmts {
+        stmt.visit_with(&mut finder);
+    }
     finder.found
 }
 
