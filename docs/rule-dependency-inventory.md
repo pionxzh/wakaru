@@ -275,9 +275,13 @@ rationale, or level gating appear.
   An arbitrary concat argument becomes a spread only at `aggressive`, under
   `concat_arguments_are_arrays`; scalars, strings, and general iterables do
   not share concat's spread semantics. At `standard`, the later
-  **UnArrayConcatSpreadRest** pass admits only existing rest parameters or
-  canonical Babel/TypeScript `arguments`-copy arrays, and only when every use
-  after initialization is an eligible concat operand. It runs before
+  **UnArrayConcatSpreadRest** pass admits only existing rest parameters,
+  canonical Babel/TypeScript `arguments`-copy arrays, and bindings initialized
+  with a hole-free array literal, and only when every use after initialization
+  is an intrinsic-concat operand (an argument of an Array receiver, or the
+  receiver of its own `.concat`). Calls to functions whose whole body returns
+  a hole-free array literal count as Arrays when every use of the function is
+  a direct call. It runs before
   UnEs6Class, followed by a second UnSpreadArrayLiteral pass, so a proven
   `[this].concat(args)` can expose `Base.call.apply(Base, [this, ...args])`
   without restoring the unsafe general heuristic.

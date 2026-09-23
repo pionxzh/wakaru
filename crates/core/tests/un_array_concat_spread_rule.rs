@@ -367,10 +367,270 @@ const x = [a].concat(b, [c]);
 
 #[test]
 fn ident_named_arr_is_not_array_proof() {
-    // Do not treat a name, or an earlier `= []`, as proof the concat arg is an array.
+    // A name, or an earlier `= []`, is not proof by itself: `fill` may replace
+    // or mutate the array. Only use analysis over every reference proves it.
     let input = r#"
 const arr = [];
+fill(arr);
 const x = [].concat(arr);
 "#;
     assert_eq_normalized(&render(input), input);
+}
+
+#[test]
+fn local_array_literal_binding_becomes_spread_at_standard() {
+    let input = r#"
+function f() {
+  var parts = [a, b];
+  return [head].concat(parts, [tail]);
+}
+"#;
+    let expected = r#"
+function f() {
+  var parts = [a, b];
+  return [head, ...parts, tail];
+}
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), expected);
+}
+
+#[test]
+fn module_array_literal_bindings_become_spreads_at_standard() {
+    let input = r#"
+const first = [a];
+const second = [b, c];
+const all = [].concat(first, second, [d]);
+"#;
+    let expected = r#"
+const first = [a];
+const second = [b, c];
+const all = [...first, ...second, d];
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), expected);
+}
+
+#[test]
+fn proven_array_receiver_becomes_spread_at_standard() {
+    let input = r#"
+const base = [a, b];
+const x = base.concat([c]);
+const y = base.concat(base);
+"#;
+    let expected = r#"
+const base = [a, b];
+const x = [...base, c];
+const y = [...base, ...base];
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), expected);
+}
+
+#[test]
+fn array_literal_arrow_call_becomes_spread_at_standard() {
+    let input = r#"
+function config() {
+  const sizes = () => [small, large];
+  const units = function () {
+    return [px, rem];
+  };
+  return {
+    a: [].concat(sizes(), [auto]),
+    b: [].concat(units(), sizes()),
+    c: sizes(),
+  };
+}
+"#;
+    let expected = r#"
+function config() {
+  const sizes = () => [small, large];
+  const units = function () {
+    return [px, rem];
+  };
+  return {
+    a: [...sizes(), auto],
+    b: [...units(), ...sizes()],
+    c: sizes(),
+  };
+}
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), expected);
+}
+
+#[test]
+fn array_literal_function_declaration_call_becomes_spread_at_standard() {
+    let input = r#"
+const x = [].concat(sizes(), [auto]);
+function sizes() {
+  return [small, large];
+}
+"#;
+    let expected = r#"
+const x = [...sizes(), auto];
+function sizes() {
+  return [small, large];
+}
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), expected);
+}
+
+#[test]
+fn mutated_array_literal_binding_stays_concat() {
+    let input = r#"
+function f() {
+  var parts = [a];
+  parts.push(b);
+  return [head].concat(parts);
+}
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), input);
+}
+
+#[test]
+fn escaped_array_literal_binding_stays_concat() {
+    let input = r#"
+const parts = [a];
+observe(parts);
+const x = [head].concat(parts);
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), input);
+}
+
+#[test]
+fn reassigned_array_literal_binding_stays_concat() {
+    let input = r#"
+let parts = [a];
+parts = other;
+const x = [head].concat(parts);
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), input);
+}
+
+#[test]
+fn holey_array_literal_binding_stays_concat() {
+    // concat keeps the hole; spread reads it as undefined.
+    let input = r#"
+const parts = [a, , b];
+const x = [head].concat(parts);
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), input);
+}
+
+#[test]
+fn object_literal_binding_stays_concat() {
+    // concat appends an object as one element; spread would throw.
+    let input = r#"
+const mode = { begin: a };
+const x = [].concat(mode, [b]);
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), input);
+}
+
+#[test]
+fn var_array_read_by_hoisted_function_before_init_stays_concat() {
+    // g() runs before `parts` is assigned: concat yields [undefined], spread throws.
+    let input = r#"
+function f() {
+  g();
+  var parts = [a];
+  function g() {
+    return [].concat(parts);
+  }
+}
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), input);
+}
+
+#[test]
+fn array_literal_binding_passed_to_unknown_concat_stays_concat() {
+    // other.concat may be user code that keeps a reference to parts.
+    let input = r#"
+const parts = [a];
+const x = other.concat(parts);
+const y = [].concat(parts);
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), input);
+}
+
+#[test]
+fn array_literal_binding_passed_to_unproven_receiver_stays_concat() {
+    let input = r#"
+const parts = [a];
+const base = [b];
+base.push(c);
+const x = base.concat(parts);
+const y = [].concat(parts);
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), input);
+}
+
+#[test]
+fn mapped_parameter_array_binding_stays_concat() {
+    // In sloppy mode, arguments[0] aliases the redeclared parameter.
+    let input = r#"
+function f(parts) {
+  var parts = [a];
+  arguments[0] = other;
+  return [].concat(parts);
+}
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), input);
+}
+
+#[test]
+fn async_arrow_call_stays_concat() {
+    let input = r#"
+const load = async () => [a];
+const x = [].concat(load());
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), input);
+}
+
+#[test]
+fn reassigned_array_factory_stays_concat() {
+    let input = r#"
+var sizes = () => [a];
+sizes = other;
+const x = [].concat(sizes());
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), input);
+}
+
+#[test]
+fn array_factory_with_extra_statements_stays_concat() {
+    let input = r#"
+const sizes = function () {
+  log();
+  return [a];
+};
+const x = [].concat(sizes());
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), input);
+}
+
+#[test]
+fn array_literal_binding_with_eval_stays_concat() {
+    let input = r#"
+function f() {
+  var parts = [a];
+  eval(code);
+  return [].concat(parts);
+}
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), input);
+}
+
+#[test]
+fn chained_proven_concat_becomes_one_spread_array_at_standard() {
+    let input = r#"
+const a = [x];
+const b = [y];
+const c = [z];
+const all = a.concat(b).concat(c);
+"#;
+    let expected = r#"
+const a = [x];
+const b = [y];
+const c = [z];
+const all = [...a, ...b, ...c];
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), expected);
 }

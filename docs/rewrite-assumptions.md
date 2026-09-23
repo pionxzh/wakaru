@@ -359,12 +359,15 @@ concat shape after assuming their spread inputs are arrays, but the resulting
 AST no longer carries that producer setting.
 
 Affects: `UnArrayConcatSpread` for arguments whose array identity is not proven.
-Array literals are known directly. Existing rest parameters and canonical
-Babel/TypeScript `arguments`-copy arrays use a separate binding proof and do
-not depend on this assumption.
+Array literals are known directly. A separate binding proof covers rest
+parameters, canonical Babel/TypeScript `arguments`-copy arrays, bindings
+initialized with a hole-free array literal, and calls to functions whose whole
+body returns one. Every other use of a proven value binding must be an
+intrinsic-concat operand, and every use of a proven function a direct call, so
+these forms do not depend on this assumption.
 
 Level: `aggressive` only. `minimal` and `standard` preserve unknown concat
-arguments; `standard` may still recover the proof-backed rest-array forms.
+arguments; `standard` may still recover the proof-backed forms.
 
 ### `set_computed_properties`
 
