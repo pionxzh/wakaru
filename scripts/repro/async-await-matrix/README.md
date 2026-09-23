@@ -27,14 +27,20 @@ now correctly show as `no`. Remaining `no` rows fall into four honest buckets:
 - **state-machine** — wakaru leaves a Terser-compressed regenerator runtime intact.
 - **degraded** — a helper artifact leaks (`__rest` inlined, `const x = undefined`,
   `push.apply(...)` not recovered).
-- **control-flow** — the regenerator machines (Babel `regenerator` mode and
-  preset-env) exit a `for await` body with an abrupt-completion opcode inside
-  the try region (`_context.a(3, N)` for `break`), which the decoder does not
-  structure, so every regenerator `for await` row fails; one Terser shape of
-  the swc `_ts_generator` machine nests a yield opcode two ternaries deep in
-  a single `return`, which also stays a machine. The `__generator` machines
-  (tsc-es5, swc-es5) rebuild loops inside try regions, so their `for await`
-  rows recover, including the Terser variants.
+- **control-flow** — every `for await` row through a regenerator machine
+  (Babel `regenerator` mode and preset-env) stays a machine. The decoder
+  rebuilds the loop and both try regions. The protocol's close guard
+  (`if (abrupt && it.return != null)`) sits in the try block nested inside
+  the `finally`, and it jumps forward to that block's `finally` label. The
+  regenerator decoder joins forward jumps only at the end of the machine,
+  so this jump stays an opcode and the decode fails closed. A `break` in the
+  loop adds a second block: it exits through an abrupt-completion opcode
+  inside the try region (`_context.a(3, N)`), which the decoder does not
+  structure either. One Terser shape of the swc `_ts_generator` machine
+  nests a yield opcode two ternaries deep in a single `return`, which also
+  stays a machine. The `__generator` machines (tsc-es5, swc-es5) join
+  forward jumps mid-machine and rebuild loops inside try regions, so their
+  `for await` rows recover, including the Terser variants.
 - **nested loop** — a sync `for…of` inside the recovered `for await` body
   keeps its indexed form: the machine hoists the index and array temporaries
   to the function scope and assigns them in place, a shape the for-of
