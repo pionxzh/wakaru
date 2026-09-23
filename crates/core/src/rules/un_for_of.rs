@@ -190,7 +190,7 @@ impl ForOfHelperContext {
 
     /// A `var` for-of left is visible to `with` and direct `eval` anywhere
     /// in the module. Known eval sources only block when they mention `name`.
-    fn dynamic_scope_can_observe_name(&self, name: &Atom) -> bool {
+    pub(super) fn dynamic_scope_can_observe_name(&self, name: &Atom) -> bool {
         self.module_has_with
             || self.unknown_direct_eval
             || self

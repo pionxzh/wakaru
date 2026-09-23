@@ -34,6 +34,29 @@ var __asyncValues = (this && this.__asyncValues) || function (o) {
 };
 "#;
 
+const ESBUILD_ASYNC: &str = r#"
+var __async = (__this, __arguments, generator) => {
+  return new Promise((resolve, reject) => {
+    var fulfilled = (value) => {
+      try {
+        step(generator.next(value));
+      } catch (e) {
+        reject(e);
+      }
+    };
+    var rejected = (value) => {
+      try {
+        step(generator.throw(value));
+      } catch (e) {
+        reject(e);
+      }
+    };
+    var step = (x) => x.done ? resolve(x.value) : Promise.resolve(x.value).then(fulfilled, rejected);
+    step((generator = generator.apply(__this, __arguments)).next());
+  });
+};
+"#;
+
 fn with_helper(helper: &str, body: &str) -> String {
     format!("{helper}\n{body}")
 }
@@ -1176,6 +1199,262 @@ export async function collect(stream) {
     thunks.push(() => item = _d);
   }
   return thunks;
+}
+"#;
+    assert_eq_normalized(&render(&input), expected);
+}
+
+#[test]
+fn for_await_keeps_a_hoisted_element_that_direct_eval_can_read() {
+    // esbuild es2015 output of `let item; for await (item of stream) { … }
+    // return eval(code);`. The element is a source binding the eval can read
+    // after the loop, so the loop assigns it in place.
+    let input = with_helper(
+        ESBUILD_FOR_AWAIT,
+        &format!(
+            "{ESBUILD_ASYNC}\n{}",
+            r#"
+function last_item(stream, code) {
+  return __async(this, null, function* () {
+    let item;
+    try {
+      for (var iter = __forAwait(stream), more, temp, error; more = !(temp = yield iter.next()).done; more = false) {
+        item = temp.value;
+        handle(item);
+      }
+    } catch (temp) {
+      error = [temp];
+    } finally {
+      try {
+        more && (temp = iter.return) && (yield temp.call(iter));
+      } finally {
+        if (error)
+          throw error[0];
+      }
+    }
+    return eval(code);
+  });
+}
+"#
+        ),
+    );
+    let expected = r#"
+async function last_item(stream, code) {
+  let item;
+  for await (item of stream) {
+    handle(item);
+  }
+  return eval(code);
+}
+"#;
+    assert_eq_normalized(&render(&input), expected);
+}
+
+#[test]
+fn for_await_binds_a_hoisted_element_that_a_known_eval_source_does_not_name() {
+    let input = with_helper(
+        ESBUILD_FOR_AWAIT,
+        &format!(
+            "{ESBUILD_ASYNC}\n{}",
+            r#"
+function last_item(stream, code) {
+  return __async(this, null, function* () {
+    let item;
+    try {
+      for (var iter = __forAwait(stream), more, temp, error; more = !(temp = yield iter.next()).done; more = false) {
+        item = temp.value;
+        handle(item);
+      }
+    } catch (temp) {
+      error = [temp];
+    } finally {
+      try {
+        more && (temp = iter.return) && (yield temp.call(iter));
+      } finally {
+        if (error)
+          throw error[0];
+      }
+    }
+    return eval("other");
+  });
+}
+"#
+        ),
+    );
+    let expected = r#"
+async function last_item(stream, code) {
+  for await (const item of stream) {
+    handle(item);
+  }
+  return eval("other");
+}
+"#;
+    assert_eq_normalized(&render(&input), expected);
+}
+
+#[test]
+fn for_await_keeps_an_inlined_alias_assigned_under_a_logical_operator() {
+    // `last` is assigned only when `flag` holds; `use(last)` must keep
+    // seeing the earlier value otherwise.
+    let input = with_helper(
+        TS_ASYNC_VALUES,
+        r#"
+export async function collect(stream, flag) {
+  let last;
+  let _a;
+  let stream_1;
+  let stream_1_1;
+  let _b;
+  let e_1;
+  let _c;
+  let _d;
+  try {
+    _a = true;
+    stream_1 = __asyncValues(stream);
+    for (; stream_1_1 = await stream_1.next(), _b = stream_1_1.done, !_b; _a = true) {
+      _d = stream_1_1.value;
+      _a = false;
+      flag && (last = _d);
+      use(last);
+    }
+  } catch (error) {
+    e_1 = { error };
+  } finally {
+    try {
+      if (!_a && !_b && (_c = stream_1.return)) {
+        await _c.call(stream_1);
+      }
+    } finally {
+      if (e_1) {
+        throw e_1.error;
+      }
+    }
+  }
+}
+"#,
+    );
+    let expected = r#"
+export async function collect(stream, flag) {
+  let last;
+  for await (const _d of stream) {
+    if (flag) {
+      last = _d;
+    }
+    use(last);
+  }
+}
+"#;
+    assert_eq_normalized(&render(&input), expected);
+}
+
+#[test]
+fn for_await_keeps_an_inlined_alias_assigned_in_an_if_branch() {
+    let input = with_helper(
+        TS_ASYNC_VALUES,
+        r#"
+export async function collect(stream, flag) {
+  let last;
+  let _a;
+  let stream_1;
+  let stream_1_1;
+  let _b;
+  let e_1;
+  let _c;
+  let _d;
+  try {
+    _a = true;
+    stream_1 = __asyncValues(stream);
+    for (; stream_1_1 = await stream_1.next(), _b = stream_1_1.done, !_b; _a = true) {
+      _d = stream_1_1.value;
+      _a = false;
+      if (flag) last = _d;
+      use(last);
+    }
+  } catch (error) {
+    e_1 = { error };
+  } finally {
+    try {
+      if (!_a && !_b && (_c = stream_1.return)) {
+        await _c.call(stream_1);
+      }
+    } finally {
+      if (e_1) {
+        throw e_1.error;
+      }
+    }
+  }
+}
+"#,
+    );
+    let expected = r#"
+export async function collect(stream, flag) {
+  let last;
+  for await (const _d of stream) {
+    if (flag) {
+      last = _d;
+    }
+    use(last);
+  }
+}
+"#;
+    assert_eq_normalized(&render(&input), expected);
+}
+
+#[test]
+fn for_await_assigns_a_hoisted_element_captured_by_a_class_field() {
+    // A field initializer reads `item` when an instance is constructed, which
+    // may be after the loop; the hoisted binding then holds the last element.
+    let input = with_helper(
+        TS_ASYNC_VALUES,
+        r#"
+export async function collect(stream) {
+  let item;
+  let _a;
+  let stream_1;
+  let stream_1_1;
+  let _b;
+  let e_1;
+  let _c;
+  let _d;
+  const classes = [];
+  try {
+    _a = true;
+    stream_1 = __asyncValues(stream);
+    for (; stream_1_1 = await stream_1.next(), _b = stream_1_1.done, !_b; _a = true) {
+      _d = stream_1_1.value;
+      _a = false;
+      item = _d;
+      classes.push(class {
+        value = item;
+      });
+    }
+  } catch (error) {
+    e_1 = { error };
+  } finally {
+    try {
+      if (!_a && !_b && (_c = stream_1.return)) {
+        await _c.call(stream_1);
+      }
+    } finally {
+      if (e_1) {
+        throw e_1.error;
+      }
+    }
+  }
+  return classes;
+}
+"#,
+    );
+    let expected = r#"
+export async function collect(stream) {
+  let item;
+  const classes = [];
+  for await (item of stream) {
+    classes.push(class {
+      value = item;
+    });
+  }
+  return classes;
 }
 "#;
     assert_eq_normalized(&render(&input), expected);
