@@ -4,10 +4,11 @@ use swc_core::atoms::Atom;
 use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignTarget, BinaryOp, BlockStmt, Callee, ClassExpr, Constructor, Decl,
-    Expr, ExprStmt, FnExpr, ForHead, ForInStmt, ForOfStmt, ForStmt, Function, GetterProp, Ident,
-    IfStmt, ImportSpecifier, Invalid, Lit, MemberExpr, ModuleDecl, ModuleItem, ParenExpr, Pat,
-    ReturnStmt, SeqExpr, SetterProp, SimpleAssignTarget, Stmt, SwitchStmt, ThrowStmt, UnaryExpr,
-    UnaryOp, VarDecl, VarDeclKind, VarDeclOrExpr, VarDeclarator, YieldExpr,
+    Expr, ExprOrSpread, ExprStmt, FnExpr, ForHead, ForInStmt, ForOfStmt, ForStmt, Function,
+    GetterProp, Ident, IfStmt, ImportSpecifier, Invalid, Lit, MemberExpr, MemberProp, ModuleDecl,
+    ModuleItem, OptChainBase, ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SeqExpr,
+    SetterProp, SimpleAssignTarget, Stmt, SwitchStmt, ThrowStmt, UnaryExpr, UnaryOp, VarDecl,
+    VarDeclKind, VarDeclOrExpr, VarDeclarator, YieldExpr,
 };
 use swc_core::ecma::utils::{ExprCtx, ExprExt};
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -251,6 +252,12 @@ fn is_pure_no_op_stmt(
         return false;
     }
     let unresolved_ctxt = SyntaxContext::empty().apply_mark(unresolved_mark);
+    // `Math.random()` advances the global PRNG. SWC treats every unresolved
+    // `Math.*` method as a pure callee, so a discarded call would be deleted
+    // and later samples would shift. A reference that is not called stays removable.
+    if expr_calls_global_math_random(expr, unresolved_ctxt) {
+        return false;
+    }
     let ctx = ExprCtx {
         unresolved_ctxt,
         is_unresolved_ref_safe: false,
@@ -258,6 +265,138 @@ fn is_pure_no_op_stmt(
         remaining_depth: 4,
     };
     !expr.may_have_side_effects(ctx)
+}
+
+/// True when evaluating `expr` invokes unresolved `Math.random`.
+/// Function, arrow, and class bodies are not evaluated by the surrounding expression.
+fn expr_calls_global_math_random(expr: &Expr, unresolved_ctxt: SyntaxContext) -> bool {
+    match expr {
+        Expr::Fn(_) | Expr::Arrow(_) | Expr::Class(_) => false,
+        Expr::Paren(paren) => expr_calls_global_math_random(&paren.expr, unresolved_ctxt),
+        Expr::Unary(unary) => expr_calls_global_math_random(&unary.arg, unresolved_ctxt),
+        Expr::Bin(bin) => {
+            expr_calls_global_math_random(&bin.left, unresolved_ctxt)
+                || expr_calls_global_math_random(&bin.right, unresolved_ctxt)
+        }
+        Expr::Seq(seq) => seq
+            .exprs
+            .iter()
+            .any(|item| expr_calls_global_math_random(item, unresolved_ctxt)),
+        Expr::Cond(cond) => {
+            expr_calls_global_math_random(&cond.test, unresolved_ctxt)
+                || expr_calls_global_math_random(&cond.cons, unresolved_ctxt)
+                || expr_calls_global_math_random(&cond.alt, unresolved_ctxt)
+        }
+        Expr::Call(call) => call_invokes_global_math_random(
+            call.callee.as_expr().map(|callee| callee.as_ref()),
+            &call.args,
+            unresolved_ctxt,
+        ),
+        Expr::OptChain(opt) => match opt.base.as_ref() {
+            OptChainBase::Call(call) => call_invokes_global_math_random(
+                Some(call.callee.as_ref()),
+                &call.args,
+                unresolved_ctxt,
+            ),
+            OptChainBase::Member(member) => {
+                expr_calls_global_math_random(&member.obj, unresolved_ctxt)
+                    || computed_prop_calls_global_math_random(&member.prop, unresolved_ctxt)
+            }
+        },
+        Expr::Member(member) => {
+            expr_calls_global_math_random(&member.obj, unresolved_ctxt)
+                || computed_prop_calls_global_math_random(&member.prop, unresolved_ctxt)
+        }
+        // SWC treats these as pure when every nested value is a pure callee,
+        // including Math.random(). Evaluating them still samples.
+        Expr::Array(array) => array
+            .elems
+            .iter()
+            .flatten()
+            .any(|elem| expr_calls_global_math_random(&elem.expr, unresolved_ctxt)),
+        Expr::Object(object) => object.props.iter().any(|prop| match prop {
+            PropOrSpread::Spread(spread) => {
+                expr_calls_global_math_random(&spread.expr, unresolved_ctxt)
+            }
+            PropOrSpread::Prop(prop) => match prop.as_ref() {
+                Prop::KeyValue(kv) => {
+                    prop_name_calls_global_math_random(&kv.key, unresolved_ctxt)
+                        || expr_calls_global_math_random(&kv.value, unresolved_ctxt)
+                }
+                Prop::Getter(getter) => {
+                    prop_name_calls_global_math_random(&getter.key, unresolved_ctxt)
+                }
+                Prop::Setter(setter) => {
+                    prop_name_calls_global_math_random(&setter.key, unresolved_ctxt)
+                }
+                Prop::Method(method) => {
+                    prop_name_calls_global_math_random(&method.key, unresolved_ctxt)
+                }
+                Prop::Shorthand(_) | Prop::Assign(_) => false,
+            },
+        }),
+        Expr::New(new_expr) => {
+            expr_calls_global_math_random(&new_expr.callee, unresolved_ctxt)
+                || new_expr
+                    .args
+                    .iter()
+                    .flatten()
+                    .any(|arg| expr_calls_global_math_random(&arg.expr, unresolved_ctxt))
+        }
+        _ => false,
+    }
+}
+
+fn call_invokes_global_math_random(
+    callee: Option<&Expr>,
+    args: &[ExprOrSpread],
+    unresolved_ctxt: SyntaxContext,
+) -> bool {
+    if callee
+        .is_some_and(|callee| is_global_math_random_callee(strip_parens(callee), unresolved_ctxt))
+    {
+        return true;
+    }
+    callee.is_some_and(|callee| expr_calls_global_math_random(callee, unresolved_ctxt))
+        || args
+            .iter()
+            .any(|arg| expr_calls_global_math_random(&arg.expr, unresolved_ctxt))
+}
+
+fn prop_name_calls_global_math_random(name: &PropName, unresolved_ctxt: SyntaxContext) -> bool {
+    match name {
+        PropName::Computed(computed) => {
+            expr_calls_global_math_random(&computed.expr, unresolved_ctxt)
+        }
+        _ => false,
+    }
+}
+
+fn computed_prop_calls_global_math_random(
+    prop: &MemberProp,
+    unresolved_ctxt: SyntaxContext,
+) -> bool {
+    match prop {
+        MemberProp::Computed(computed) => {
+            expr_calls_global_math_random(&computed.expr, unresolved_ctxt)
+        }
+        _ => false,
+    }
+}
+
+fn is_global_math_random_callee(expr: &Expr, unresolved_ctxt: SyntaxContext) -> bool {
+    let Expr::Member(member) = expr else {
+        return false;
+    };
+    let Expr::Ident(obj) = member.obj.as_ref() else {
+        return false;
+    };
+    let MemberProp::Ident(prop) = &member.prop else {
+        return false;
+    };
+    obj.sym.as_ref() == "Math"
+        && prop.sym.as_ref() == "random"
+        && (obj.ctxt == unresolved_ctxt || obj.ctxt == SyntaxContext::empty())
 }
 
 fn is_observable_typeof(expr: &Expr, unresolved_mark: Mark) -> bool {

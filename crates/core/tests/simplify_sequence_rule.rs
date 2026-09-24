@@ -1079,3 +1079,168 @@ function run() {
     let output = apply(input);
     assert_eq_normalized(&output, input);
 }
+
+#[test]
+fn keeps_math_random_call_split_from_sequence() {
+    // Math.random() advances the global PRNG even when its value is unused.
+    // Splitting the comma list must not drop that call, and must not reorder
+    // the later push.
+    let input = r#"
+function refresh() {
+  before(), Math.round(2 * Math.random()), this.items.push(1);
+}
+"#;
+    let expected = r#"
+function refresh() {
+  before();
+  Math.round(2 * Math.random());
+  this.items.push(1);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+    assert!(!output.contains("import "));
+    assert!(!output.contains("export "));
+}
+
+#[test]
+fn keeps_bare_math_random_statement() {
+    let input = r#"
+Math.random();
+void Math.random();
+Math.random?.();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn keeps_global_math_random_when_inner_binding_shadows_math() {
+    // Binding identity is (sym, ctxt). A parameter or inner `var Math` is not
+    // the global PRNG, and must not be rewritten. The unresolved calls stay.
+    let input = r#"
+function f(Math) {
+  Math.random();
+}
+function outer() {
+  Math.random();
+  function inner() {
+    var Math = {
+      random() {
+        return 0;
+      }
+    };
+    Math.random();
+  }
+}
+Math.random();
+"#;
+    let expected = r#"
+function f(Math) {
+  Math.random();
+}
+function outer() {
+  Math.random();
+  function inner() {
+    var Math = {
+      random () {
+        return 0;
+      }
+    };
+    Math.random();
+  }
+}
+Math.random();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn drops_math_round_of_literal_and_non_calls() {
+    // Other Math methods, and a reference that does not call Math.random,
+    // stay removable. Directives stay.
+    let input = r#"
+"use strict";
+Math.round(2);
+void 0;
+void Math.min;
+void Math.random;
+Math.round(Math.random);
+return 1;
+"#;
+    let expected = r#"
+"use strict";
+return 1;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn drops_unevaluated_math_random_inside_closure() {
+    // The arrow and the function expression are not invoked, so evaluating
+    // the statement does not sample.
+    let input = r#"
+void (() => Math.random());
+void function() {
+  Math.random();
+};
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, "");
+}
+
+#[test]
+fn keeps_math_random_inside_array_object_and_pure_new() {
+    // SWC recurses into these positions and still treats Math.random() as pure.
+    // The member form is written without parens. The printer adds them;
+    // the object is still the member's object, not a paren-wrapped no-op.
+    let input = r#"
+[Math.random()];
+void [Math.random()];
+Math.round([Math.random()]);
+Math.max(...[Math.random()]);
+[{ a: Math.random() }];
+void { a: Math.random() };
+void { [Math.random()]: 1 };
+void { a: Math.random() }.a;
+void new function() {}(Math.random());
+"#;
+    let expected = r#"
+[Math.random()];
+void [Math.random()];
+Math.round([Math.random()]);
+Math.max(...[Math.random()]);
+[{ a: Math.random() }];
+void { a: Math.random() };
+void { [Math.random()]: 1 };
+void ({ a: Math.random() }).a;
+void new function() {}(Math.random());
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn keeps_unresolved_math_random_alias_and_computed_call_unchanged() {
+    // An alias and a computed key are not the unresolved `Math.random` member.
+    // Leave them as calls; do not invent a binding or rewrite the callee.
+    let input = r#"
+M.random();
+Math["random"]();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn keeps_identifier_new_and_object_literal_statements() {
+    let input = r#"
+missing;
+new Foo();
+({ a: 1 });
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
