@@ -676,6 +676,13 @@ define_rule_registry! {
     ("ObjShorthand", Modernization, run_obj_shorthand, always_enabled),
     ("ObjMethodShorthand", Modernization, run_obj_method_shorthand, always_enabled),
     ("UnPrototypeClass", Modernization, run_un_prototype_class, always_enabled),
+    // UnEs6Class and UnPrototypeClass clone constructor bodies, including a
+    // Babel classCallCheck that must stay while the constructor is still a
+    // function. Strip it only after both recoveries have committed to class
+    // syntax, then drop helpers with no remaining references.
+    ("UnClassCallCheck2", Modernization, run_un_class_call_check, always_enabled, requires: [
+        "UnPrototypeClass"
+    ]),
     ("Exponent", Modernization, run_exponent, always_enabled),
     ("ArgRest", Modernization, run_arg_rest, always_enabled),
     ("UnRestArrayCopy", Modernization, run_un_rest_array_copy, always_enabled),

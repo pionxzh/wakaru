@@ -92,8 +92,8 @@ recovery.
 Other hard chains (consumer directly matches the producer's output shape):
 
 ```
-UnClassCallCheck ───┬→ UnEs6Class ──→ UnClassFields
-UnPossibleConstructorReturn ↗
+UnPossibleConstructorReturn → UnEs6Class ──→ UnClassFields
+UnPrototypeClass ───────────→ UnClassCallCheck2
 ArgRest ────────────→ UnRestArrayCopy
 ArrowFunction ──────→ ArrowReturn
 UnWebpackDefineGetters → UnWebpackObjectGetters
@@ -180,8 +180,12 @@ rationale, or level gating appear.
   [helper-detection.md](helper-detection.md).
 - **UnObjectRest** — heuristic: a backward scan absorbs property accesses
   into the rest pattern; needs flat statements and dot notation.
-- **UnClassCallCheck / UnPossibleConstructorReturn** — remove guard calls and
-  return indirection so UnEs6Class sees clean constructor bodies.
+- **UnClassCallCheck / UnPossibleConstructorReturn** — UnPossibleConstructorReturn
+  removes return indirection so UnEs6Class sees constructor bodies.
+  UnClassCallCheck removes a classCallCheck call only when it already sits in
+  class syntax. Plain functions keep the no-`new` throw. UnClassCallCheck2
+  runs after UnPrototypeClass and strips guards that class recovery copied
+  into a constructor.
 
 ### Structural restoration
 
@@ -405,8 +409,12 @@ rationale, or level gating appear.
 - **UnJsx** — detects pragma imports via `unresolved_mark`. Dynamic-tag alias
   synthesis (creating `const Component = expr` for non-identifier tags)
   requires `aggressive`, or `standard` with strong JSX shape evidence.
-- **UnEs6Class** — needs UnClassCallCheck, UnPossibleConstructorReturn, and
-  UnIife (class IIFE wrappers). Static *method* assignment recovery is part
+- **UnEs6Class** — needs UnPossibleConstructorReturn and
+  UnIife (class IIFE wrappers). It clones constructor bodies, so a
+  classCallCheck statement inside the constructor survives recovery and is
+  removed by UnClassCallCheck2 once the result is class syntax. A guard whose
+  second argument is the inner constructor is removed at commit time so that
+  reference does not reject recovery. Static *method* assignment recovery is part
   of class restoration; static *data field* recovery
   (`Ctor.x = value` → `static x = value`) requires `standard+` and is
   skipped for derived classes — inherited static setters make assignment

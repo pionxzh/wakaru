@@ -12,8 +12,8 @@ use swc_core::ecma::ast::{
     Constructor, Decl, ExportDecl, Expr, ExprOrSpread, ExprStmt, FnExpr, Function, FunctionBody,
     Ident, IdentName, ImportSpecifier, Lit, MemberExpr, MemberProp, MethodKind, ModuleDecl,
     ModuleExportName, ModuleItem, Param, ParamOrTsParamProp, Pat, PropName, SeqExpr,
-    SimpleAssignTarget, Stmt, Super, SuperProp, SuperPropExpr, ThisExpr, VarDecl, VarDeclKind,
-    VarDeclarator,
+    SimpleAssignTarget, Stmt, Super, SuperProp, SuperPropExpr, ThisExpr, UnaryOp, VarDecl,
+    VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::utils::find_pat_ids;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -29,9 +29,10 @@ use super::helper_matcher::{
     binding_key, remove_import_specifiers_by_binding, remove_unused_helper_declarations, BindingKey,
 };
 use super::transpiler_helper_utils::{
-    detect_helper_from_path, is_call_super_fn, is_inherits_fn, is_set_prototype_of_fn,
-    is_tslib_path, is_tslib_require_expr_with_mark, tslib_member_ts_helper_kind,
-    tslib_require_ts_helper_kind_with_mark, LocalHelperContext, TranspilerHelperKind, TsHelperKind,
+    classify_inline_callable, detect_helper_from_path, is_call_super_fn, is_inherits_fn,
+    is_set_prototype_of_fn, is_tslib_path, is_tslib_require_expr_with_mark,
+    tslib_member_ts_helper_kind, tslib_require_ts_helper_kind_with_mark, LocalHelperContext,
+    TranspilerHelperKind, TsHelperKind,
 };
 use super::RewriteLevel;
 use crate::utils::paren::strip_parens;
@@ -163,6 +164,9 @@ struct Es6ClassHelperContext {
     set_prototype_of_helpers: HashSet<BindingKey>,
     create_class_helpers: HashSet<BindingKey>,
     call_super_helpers: HashSet<BindingKey>,
+    /// Babel `_classCallCheck` bindings. Used only to drop a guard that names
+    /// the inner constructor once this IIFE is already going to become a class.
+    class_call_check_helpers: HashSet<BindingKey>,
 }
 
 impl Es6ClassHelperContext {
@@ -198,6 +202,10 @@ impl Es6ClassHelperContext {
             set_prototype_of_helpers: collect_set_prototype_of_helpers_from_items(items),
             create_class_helpers,
             call_super_helpers,
+            class_call_check_helpers: local_helpers
+                .helpers_of_kind(TranspilerHelperKind::ClassCallCheck)
+                .into_keys()
+                .collect(),
         }
     }
 
@@ -219,6 +227,7 @@ impl Es6ClassHelperContext {
             set_prototype_of_helpers: collect_set_prototype_of_helpers_from_items(items),
             create_class_helpers: collect_create_class_helpers_from_items(items, unresolved_mark),
             call_super_helpers: collect_call_super_helpers_from_items(items),
+            class_call_check_helpers: HashSet::default(),
         }
     }
 
@@ -240,6 +249,7 @@ impl Es6ClassHelperContext {
             set_prototype_of_helpers: collect_set_prototype_of_helpers_from_stmts(stmts),
             create_class_helpers: collect_create_class_helpers_from_stmts(stmts, unresolved_mark),
             call_super_helpers: collect_call_super_helpers_from_stmts(stmts),
+            class_call_check_helpers: HashSet::default(),
         }
     }
 
@@ -256,6 +266,8 @@ impl Es6ClassHelperContext {
             .extend(other.create_class_helpers.iter().cloned());
         self.call_super_helpers
             .extend(other.call_super_helpers.iter().cloned());
+        self.class_call_check_helpers
+            .extend(other.class_call_check_helpers.iter().cloned());
     }
 }
 
@@ -361,6 +373,7 @@ impl VisitMut for UnEs6ClassInner {
                             &scoped_inner.helpers.tslib_namespaces,
                             &scoped_inner.helpers.create_class_helpers,
                             &scoped_inner.helpers.call_super_helpers,
+                            &scoped_inner.helpers.class_call_check_helpers,
                             &scoped_inner.helpers.set_prototype_of_helpers,
                             &scoped_inner.helpers.ts_extends_helpers,
                             scoped_inner.inheritance_uses.as_deref(),
@@ -414,6 +427,7 @@ impl VisitMut for UnEs6ClassInner {
                             &self.helpers.tslib_namespaces,
                             &self.helpers.create_class_helpers,
                             &self.helpers.call_super_helpers,
+                            &self.helpers.class_call_check_helpers,
                             &self.helpers.set_prototype_of_helpers,
                             &self.helpers.ts_extends_helpers,
                             self.inheritance_uses.as_deref(),
@@ -439,6 +453,7 @@ impl VisitMut for UnEs6ClassInner {
                             &self.helpers.tslib_namespaces,
                             &self.helpers.create_class_helpers,
                             &self.helpers.call_super_helpers,
+                            &self.helpers.class_call_check_helpers,
                             &self.helpers.set_prototype_of_helpers,
                             &self.helpers.ts_extends_helpers,
                             self.inheritance_uses.as_deref(),
@@ -1122,6 +1137,7 @@ fn try_iife_to_class(
     tslib_namespaces: &HashSet<BindingKey>,
     create_class_helpers: &HashSet<BindingKey>,
     call_super_helpers: &HashSet<BindingKey>,
+    class_call_check_helpers: &HashSet<BindingKey>,
     set_prototype_of_helpers: &HashSet<BindingKey>,
     ts_extends_helpers: &HashSet<BindingKey>,
     inheritance_uses: Option<&BindingUseIndex>,
@@ -1226,6 +1242,21 @@ fn try_iife_to_class(
         rewrite_level >= RewriteLevel::Standard,
         unresolved_mark,
     )?;
+    // The inner constructor name is often not the outer binding (`t` vs `Foo`).
+    // A remaining `_classCallCheck(this, t)` is a reference to `t`, and that
+    // reference would reject recovery. Drop only that committed guard.
+    strip_inner_ctor_class_call_checks(
+        &mut class_body,
+        class_call_check_helpers,
+        &binding_key(inner_ctor_ident),
+    );
+    let derived = super_class.is_some();
+    class_body.retain(|member| match member {
+        ClassMember::Constructor(ctor) => {
+            !super::un_class_call_check::constructor_omittable_after_guard_removal(ctor, derived)
+        }
+        _ => true,
+    });
     // native_class_inheritance: only the proven TypeScript default-constructor
     // frame can consume its null guard and recover native super dispatch.
     if rewrite_level >= RewriteLevel::Standard
@@ -3158,6 +3189,64 @@ fn is_not_null_check(expr: &Expr, name: &str) -> bool {
 // ============================================================
 // Builder helpers
 // ============================================================
+
+/// Drop a classCallCheck whose second argument is the inner constructor.
+/// That reference would make recovery refuse a class whose outer name differs
+/// (`var Foo` / `function t`). Other calls stay.
+fn strip_inner_ctor_class_call_checks(
+    members: &mut Vec<ClassMember>,
+    helpers: &HashSet<BindingKey>,
+    ctor: &BindingKey,
+) {
+    for member in members.iter_mut() {
+        let ClassMember::Constructor(constructor) = member else {
+            continue;
+        };
+        let Some(body) = constructor.body.as_mut() else {
+            continue;
+        };
+        body.stmts
+            .retain(|stmt| !stmt_is_inner_ctor_class_call_check(stmt, helpers, ctor));
+    }
+}
+
+fn stmt_is_inner_ctor_class_call_check(
+    stmt: &Stmt,
+    helpers: &HashSet<BindingKey>,
+    ctor: &BindingKey,
+) -> bool {
+    let Stmt::Expr(expr_stmt) = stmt else {
+        return false;
+    };
+    let expr = expr_stmt.expr.as_ref();
+    let call_expr = match expr {
+        Expr::Unary(unary) if unary.op == UnaryOp::Bang => unary.arg.as_ref(),
+        other => other,
+    };
+    let Expr::Call(call) = call_expr else {
+        return false;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    let is_helper = match callee.as_ref() {
+        Expr::Ident(id) => helpers.contains(&binding_key(id)),
+        other => {
+            classify_inline_callable(strip_parens(other))
+                == Some(TranspilerHelperKind::ClassCallCheck)
+        }
+    };
+    if !is_helper || call.args.len() != 2 || call.args.iter().any(|arg| arg.spread.is_some()) {
+        return false;
+    }
+    if !matches!(call.args[0].expr.as_ref(), Expr::This(..)) {
+        return false;
+    }
+    let Expr::Ident(arg) = call.args[1].expr.as_ref() else {
+        return false;
+    };
+    &binding_key(arg) == ctor
+}
 
 fn build_constructor(
     function: &Function,
