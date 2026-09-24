@@ -1068,3 +1068,217 @@ a((x = this.y) => {
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
+
+#[test]
+fn create_class_function_argument_stays_constructible() {
+    // Babel createClass reads and writes Constructor.prototype. The first
+    // argument must stay an ordinary function; nested callbacks may still be arrows.
+    let input = r#"
+import { createClass } from "./helpers.js";
+let Ctor;
+Ctor = createClass(function() {
+    return values.map(function(value) {
+        return value;
+    });
+}, [{ key: "instance", get() { return this._inst; } }]);
+Ctor._inst = new Ctor();
+"#;
+    let expected = r#"
+import { createClass } from "./helpers.js";
+let Ctor;
+Ctor = createClass(function() {
+    return values.map(value => {
+        return value;
+    });
+}, [{ key: "instance", get() { return this._inst; } }]);
+Ctor._inst = new Ctor();
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn create_class_assigned_function_stays_constructible() {
+    let input = r#"
+import { createClass } from "./helpers.js";
+function define() {
+    let e;
+    createClass(e = function() {}, [{ key: "instance", get() { return this._inst; } }]);
+    return e;
+}
+const Ctor = define();
+Ctor._inst = new Ctor();
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn create_class_paren_function_argument_stays_constructible() {
+    let input = r#"
+import { createClass } from "./helpers.js";
+createClass((function() {}), []);
+"#;
+    let expected = r#"
+import { createClass } from "./helpers.js";
+createClass(function() {}, []);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn create_class_sequence_assignment_stays_constructible() {
+    let input = r#"
+import { createClass } from "./helpers.js";
+function define() {
+    let e;
+    createClass((0, e = function() {}), []);
+    return e;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn create_class_async_constructor_argument_can_convert() {
+    // Async functions have no [[Construct]]. Sensitivity must not freeze them.
+    let input = r#"
+import { createClass } from "./helpers.js";
+createClass(async function() { return 1; }, []);
+"#;
+    let expected = r#"
+import { createClass } from "./helpers.js";
+createClass(async () => { return 1; }, []);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn create_class_later_arguments_still_convert() {
+    let input = r#"
+import { createClass } from "./helpers.js";
+createClass(Ctor, function(value) { return value; });
+"#;
+    let expected = r#"
+import { createClass } from "./helpers.js";
+createClass(Ctor, value => { return value; });
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn create_class_nested_call_argument_still_converts() {
+    let input = r#"
+import { createClass } from "./helpers.js";
+createClass(helper(function() { return 1; }), []);
+"#;
+    let expected = r#"
+import { createClass } from "./helpers.js";
+createClass(helper(() => { return 1; }), []);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn other_call_first_argument_still_converts() {
+    let input = r#"
+import { define } from "./helpers.js";
+define(function() { return 1; });
+"#;
+    let expected = r#"
+import { define } from "./helpers.js";
+define(() => { return 1; });
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn create_class_imported_alias_stays_constructible() {
+    // UnImportRename runs after ArrowFunction, so the callee is still the alias.
+    let input = r#"
+import { createClass as defineCtor } from "./helpers.js";
+function define() {
+    let e;
+    defineCtor(e = function() {}, []);
+    return e;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn create_class_short_name_without_import_stays_constructible() {
+    let input = r#"
+createClass(function() {}, []);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn other_helper_assignment_still_converts() {
+    let input = r#"
+import { define } from "./helpers.js";
+let e;
+define(e = function() { return 1; });
+"#;
+    let expected = r#"
+import { define } from "./helpers.js";
+let e;
+define(e = () => { return 1; });
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn create_class_alias_inner_shadow_still_converts() {
+    // Binding identity is (sym, ctxt). The parameter is not the import.
+    let input = r#"
+import { createClass as t } from "./helpers.js";
+function wrap(t) {
+    t(function() { return 1; });
+}
+"#;
+    let expected = r#"
+import { createClass as t } from "./helpers.js";
+function wrap(t) {
+    t(() => { return 1; });
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn imported_alias_of_other_helper_still_converts() {
+    let input = r#"
+import { define as defineCtor } from "./helpers.js";
+defineCtor(function() { return 1; });
+"#;
+    let expected = r#"
+import { define as defineCtor } from "./helpers.js";
+defineCtor(() => { return 1; });
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn create_class_member_call_first_argument_still_converts() {
+    // Only an identifier callee named createClass is the Babel helper.
+    let input = r#"
+helpers.createClass(function() { return 1; }, []);
+"#;
+    let expected = r#"
+helpers.createClass(() => { return 1; }, []);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn plain_empty_function_still_converts() {
+    let input = r#"
+const f = function() {};
+f();
+"#;
+    let expected = r#"
+const f = () => {};
+f();
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}

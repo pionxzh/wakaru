@@ -3,9 +3,9 @@ use crate::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
     AssignExpr, AssignOp, AssignTarget, AssignTargetPat, BinExpr, BinaryOp, CallExpr, Callee,
-    Class, Decl, ExportNamedSpecifier, ExportSpecifier, Expr, Id, Ident, Lit, MemberProp, Module,
-    ModuleDecl, ModuleExportName, ModuleItem, NewExpr, ObjectPat, ObjectPatProp, Pat, PropName,
-    SimpleAssignTarget, VarDeclarator,
+    Class, Decl, ExportNamedSpecifier, ExportSpecifier, Expr, Id, Ident, ImportSpecifier, Lit,
+    MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, NewExpr, ObjectPat,
+    ObjectPatProp, Pat, PropName, SimpleAssignTarget, VarDeclarator,
 };
 use swc_core::ecma::utils::find_pat_ids;
 use swc_core::ecma::visit::{Visit, VisitWith};
@@ -88,6 +88,90 @@ pub(crate) fn assign_target_value_key(target: &AssignTarget) -> Option<ValueKey>
         SimpleAssignTarget::Ident(binding) => Some(ValueKey::binding(&binding.id)),
         SimpleAssignTarget::Member(member) => expr_value_key(&Expr::Member(member.clone())),
         _ => None,
+    }
+}
+
+/// Locals bound to Babel's `createClass` export. `UnImportRename` runs after
+/// `ArrowFunction`, so the call is still `t(...)` for `import { createClass as t }`.
+pub(crate) fn create_class_locals(module: &Module) -> HashSet<Id> {
+    let mut locals = HashSet::default();
+    for item in &module.body {
+        let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+            continue;
+        };
+        for specifier in &import.specifiers {
+            let ImportSpecifier::Named(named) = specifier else {
+                continue;
+            };
+            let imported = match &named.imported {
+                Some(ModuleExportName::Ident(ident)) => ident.sym.as_ref(),
+                Some(ModuleExportName::Str(_)) => continue,
+                None => named.local.sym.as_ref(),
+            };
+            if imported == "createClass" {
+                locals.insert((named.local.sym.clone(), named.local.ctxt));
+            }
+        }
+    }
+    locals
+}
+
+/// Babel `createClass(Constructor, proto, statics)` requires a constructable
+/// first argument. Match an identifier callee named `createClass`, or the
+/// local of `import { createClass as t }`. Member calls stay untouched.
+pub(crate) fn is_create_class_call(call: &CallExpr, create_class_locals: &HashSet<Id>) -> bool {
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    let mut expr = callee.as_ref();
+    while let Expr::Paren(paren) = expr {
+        expr = &paren.expr;
+    }
+    match expr {
+        Expr::Ident(ident) if ident.sym == "createClass" => true,
+        Expr::Ident(ident) => create_class_locals.contains(&(ident.sym.clone(), ident.ctxt)),
+        _ => false,
+    }
+}
+
+/// The binding written by `createClass(e = …)` when that assignment is the
+/// constructor value (parentheses or a sequence result). Other arguments and
+/// other callees do not enter the sensitive set.
+fn create_class_assigned_constructor(
+    call: &CallExpr,
+    create_class_locals: &HashSet<Id>,
+) -> Option<ValueKey> {
+    if !is_create_class_call(call, create_class_locals) {
+        return None;
+    }
+    let arg = call.args.first()?;
+    if arg.spread.is_some() {
+        return None;
+    }
+    let expr = constructor_value_expr(&arg.expr);
+    let Expr::Assign(assign) = expr else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) = &assign.left else {
+        return None;
+    };
+    Some(ValueKey::binding(&binding.id))
+}
+
+/// Parentheses and the last sequence operand. Conditional, logical, and
+/// `.bind` wrappers are preserved by the visitor, not by this seed.
+fn constructor_value_expr(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Paren(paren) => constructor_value_expr(&paren.expr),
+        Expr::Seq(sequence) => sequence
+            .exprs
+            .last()
+            .map(|last| constructor_value_expr(last))
+            .unwrap_or(expr),
+        _ => expr,
     }
 }
 
@@ -355,6 +439,7 @@ fn value_sources(expr: &Expr) -> Vec<ValueKey> {
 struct ConstructorSensitiveUseCollector {
     sensitive: HashSet<ValueKey>,
     aliases: Vec<(ValueKey, ValueKey)>,
+    create_class_locals: HashSet<Id>,
 }
 
 impl ConstructorSensitiveUseCollector {
@@ -498,6 +583,11 @@ impl Visit for ConstructorSensitiveUseCollector {
                 self.mark_expr(&new_target.expr);
             }
         }
+        // Seed before alias propagation. `createClass(e = function(){})` writes
+        // an inner local; export roots and `new` in another module cannot see it.
+        if let Some(key) = create_class_assigned_constructor(call, &self.create_class_locals) {
+            self.sensitive.insert(key);
+        }
         call.visit_children_with(self);
     }
 }
@@ -513,7 +603,10 @@ fn collect_constructor_sensitive_values_with_roots(
     module: &Module,
     roots: impl IntoIterator<Item = ValueKey>,
 ) -> HashSet<ValueKey> {
-    let mut collector = ConstructorSensitiveUseCollector::default();
+    let mut collector = ConstructorSensitiveUseCollector {
+        create_class_locals: create_class_locals(module),
+        ..ConstructorSensitiveUseCollector::default()
+    };
     module.visit_with(&mut collector);
     collector.sensitive.extend(roots);
 

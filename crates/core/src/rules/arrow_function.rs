@@ -1,6 +1,7 @@
 use crate::collections::HashSet;
 use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
+use swc_core::ecma::ast::Id;
 
 use swc_core::ecma::ast::{
     ArrowExpr, ArrowFunctionBody, AssignExpr, AssignTarget, BinExpr, BinaryOp, CallExpr, Callee,
@@ -10,8 +11,9 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::constructor_sensitivity::{
-    assign_target_value_key, collect_constructor_sensitive_values, is_bind_call, is_construct_call,
-    pat_value_key, static_member_name, visit_mut_assign_target_pat_constructor_sensitive_defaults,
+    assign_target_value_key, collect_constructor_sensitive_values, create_class_locals,
+    is_bind_call, is_construct_call, is_create_class_call, pat_value_key, static_member_name,
+    visit_mut_assign_target_pat_constructor_sensitive_defaults,
     visit_mut_pat_constructor_sensitive_defaults, ValueKey,
 };
 use super::decl_utils::has_duplicate_param_names;
@@ -22,14 +24,17 @@ pub struct ArrowFunction;
 impl VisitMut for ArrowFunction {
     fn visit_mut_module(&mut self, module: &mut Module) {
         let constructor_sensitive_values = collect_constructor_sensitive_values(module);
+        let create_class_locals = create_class_locals(module);
         module.visit_mut_with(&mut ArrowFunctionConverter {
             constructor_sensitive_values: &constructor_sensitive_values,
+            create_class_locals: &create_class_locals,
         });
     }
 }
 
 struct ArrowFunctionConverter<'a> {
     constructor_sensitive_values: &'a HashSet<ValueKey>,
+    create_class_locals: &'a HashSet<Id>,
 }
 
 impl VisitMut for ArrowFunctionConverter<'_> {
@@ -107,6 +112,23 @@ impl VisitMut for ArrowFunctionConverter<'_> {
 
     fn visit_mut_call_expr(&mut self, call: &mut CallExpr) {
         call.callee.visit_mut_with(self);
+
+        if is_create_class_call(call, self.create_class_locals) {
+            // createClass reads and writes Constructor.prototype, so the first
+            // argument stays constructable. Later arguments use the normal visit.
+            let mut args = call.args.iter_mut();
+            if let Some(first) = args.next() {
+                if first.spread.is_none() {
+                    visit_constructor_value_without_converting(&mut first.expr, self);
+                } else {
+                    first.visit_mut_with(self);
+                }
+            }
+            for arg in args {
+                arg.visit_mut_with(self);
+            }
+            return;
+        }
 
         let construct_call = is_construct_call(call);
         for (index, arg) in call.args.iter_mut().enumerate() {
