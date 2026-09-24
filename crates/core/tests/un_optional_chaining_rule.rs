@@ -1166,6 +1166,166 @@ const x = (n = obj) == null ? undefined : n.value;
     assert_eq_normalized(&output, input);
 }
 
+#[test]
+fn keeps_loose_assignment_when_computed_key_reads_temp() {
+    // Babel loose `getList()?.[getList().length - 1]` memoizes the call.
+    // The third value-position read is the index, not another object slot.
+    let input = r#"
+var e, t;
+t = (null == (e = getList()) ? void 0 : e[e.length - 1]) || null;
+"#;
+    let expected = r#"
+var e, t;
+t = (e = getList())?.[e.length - 1] || null;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+    assert!(!output.contains("import ") && !output.contains("export "));
+}
+
+#[test]
+fn keeps_loose_assignment_when_call_argument_reads_temp() {
+    let input = r#"
+var e;
+const x = (e = obj) == null ? void 0 : e.foo(e);
+"#;
+    let expected = r#"
+var e;
+const x = (e = obj)?.foo(e);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn keeps_loose_assignment_when_nested_computed_key_reads_temp() {
+    let input = r#"
+var e;
+const x = (e = getList()) == null ? void 0 : e.foo[e.length - 1];
+"#;
+    let expected = r#"
+var e;
+const x = (e = getList())?.foo[e.length - 1];
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+    assert!(!output.contains("getList()?.foo[e.length"));
+}
+
+#[test]
+fn still_drops_loose_temp_when_only_the_object_slot_reads_it() {
+    let input = r#"
+var e;
+const x = (e = obj.foo) == null ? void 0 : e.bar;
+"#;
+    let expected = r#"
+const x = obj.foo?.bar;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn still_drops_strict_temp_when_only_the_object_slot_reads_it() {
+    let input = r#"
+var e;
+const x = (e = expr) === null || e === void 0 ? void 0 : e.prop;
+"#;
+    let expected = r#"
+const x = expr?.prop;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn still_drops_loose_temp_when_computed_key_does_not_read_it() {
+    let input = r#"
+var e;
+const x = (e = obj) == null ? void 0 : e[i];
+"#;
+    let expected = r#"
+const x = obj?.[i];
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn does_not_optional_call_unassigned_temp_argument() {
+    let input = r#"
+var e;
+const x = (e = fn) == null ? void 0 : e(e);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+    assert!(!output.contains("fn?."));
+}
+
+#[test]
+fn preserves_strict_computed_key_that_reads_temp() {
+    // The strict proof counts four references. An index read is a fifth, so
+    // the ternary stays. Do not widen that count to accept this shape.
+    let input = r#"
+var e;
+const x = (e = getList()) === null || e === void 0 ? void 0 : e[e.length - 1];
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+    assert!(!output.contains("getList()?."));
+}
+
+#[test]
+fn preserves_loose_computed_temp_when_it_is_observed_later() {
+    let input = r#"
+var e;
+const x = null == (e = getList()) ? void 0 : e[e.length - 1];
+use(e);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn preserves_loose_computed_temp_when_declaration_is_initialized() {
+    let input = r#"
+let e = 0;
+const x = null == (e = getList()) ? void 0 : e[e.length - 1];
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn minimal_preserves_loose_computed_temp_assignment() {
+    // Loose `== null` is not `?.` when `document.all` is observable.
+    let input = r#"
+var e;
+const x = null == (e = getList()) ? void 0 : e[e.length - 1];
+"#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn shadow_param_is_not_the_loose_assignment_temp() {
+    let input = r#"
+var e;
+function read(e) {
+    return e;
+}
+const x = (e = obj.foo) == null ? void 0 : e.bar;
+"#;
+    let expected = r#"
+function read(e) {
+    return e;
+}
+const x = obj.foo?.bar;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
 // --- logical AND boolean-context recovery ---
 
 #[test]

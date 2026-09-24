@@ -3,8 +3,8 @@ use crate::collections::{HashMap, HashSet};
 use swc_core::common::{Mark, Span, Spanned, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignOp, AssignTarget, BinExpr, BinaryOp, CallExpr, Callee, CondExpr, Expr, Ident, IfStmt,
-    Lit, MemberExpr, MemberProp, Module, OptCall, OptChainBase, OptChainExpr, SimpleAssignTarget,
-    Stmt, UnaryExpr, UnaryOp,
+    Lit, MemberExpr, MemberProp, Module, OptCall, OptChainBase, OptChainExpr, ParenExpr,
+    SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -1777,6 +1777,111 @@ fn try_loose_eq_optional_chain(
     }
 }
 
+/// True when `access` reads `tmp` somewhere `make_optional_chain_replacing`
+/// will clone instead of replace. Replaced object slots (and a bare callee
+/// that this rule does not rewrite) do not count.
+fn access_reads_temp_outside_replaced_object_slot(access: &Expr, tmp: &Expr) -> bool {
+    let Expr::Ident(binding) = strip_parens(tmp) else {
+        return false;
+    };
+    reads_outside_replaced_object_slot(strip_parens(access), binding)
+}
+
+fn reads_outside_replaced_object_slot(expr: &Expr, binding: &Ident) -> bool {
+    match expr {
+        Expr::Paren(paren) => reads_outside_replaced_object_slot(&paren.expr, binding),
+        Expr::Member(MemberExpr { obj, prop, .. }) => {
+            if expr_is_binding(obj, binding) {
+                member_prop_mentions_binding(prop, binding)
+            } else {
+                reads_outside_replaced_object_slot(obj, binding)
+                    || member_prop_mentions_binding(prop, binding)
+            }
+        }
+        Expr::Call(CallExpr {
+            callee: Callee::Expr(callee),
+            args,
+            ..
+        }) => call_reads_outside_replaced_object_slot(callee, args, binding),
+        Expr::Cond(CondExpr {
+            test, cons, alt, ..
+        }) => {
+            reads_outside_replaced_object_slot(test, binding)
+                || reads_outside_replaced_object_slot(cons, binding)
+                || reads_outside_replaced_object_slot(alt, binding)
+        }
+        Expr::Bin(BinExpr { left, right, .. }) => {
+            reads_outside_replaced_object_slot(left, binding)
+                || reads_outside_replaced_object_slot(right, binding)
+        }
+        Expr::Unary(unary) => reads_outside_replaced_object_slot(&unary.arg, binding),
+        Expr::OptChain(OptChainExpr { base, .. }) => match base.as_ref() {
+            OptChainBase::Member(MemberExpr { obj, prop, .. }) => {
+                if expr_is_binding(obj, binding) {
+                    member_prop_mentions_binding(prop, binding)
+                } else {
+                    reads_outside_replaced_object_slot(obj, binding)
+                        || member_prop_mentions_binding(prop, binding)
+                }
+            }
+            OptChainBase::Call(OptCall { callee, args, .. }) => {
+                call_reads_outside_replaced_object_slot(callee, args, binding)
+            }
+        },
+        other => binding_mentioned(other, binding),
+    }
+}
+
+fn call_reads_outside_replaced_object_slot(
+    callee: &Expr,
+    args: &[swc_core::ecma::ast::ExprOrSpread],
+    binding: &Ident,
+) -> bool {
+    let callee_outside = match strip_parens(callee) {
+        Expr::Member(MemberExpr { obj, prop, .. }) if expr_is_binding(obj, binding) => {
+            member_prop_mentions_binding(prop, binding)
+        }
+        Expr::Member(MemberExpr { obj, prop, .. }) => {
+            reads_outside_replaced_object_slot(obj, binding)
+                || member_prop_mentions_binding(prop, binding)
+        }
+        other if expr_is_binding(other, binding) => false,
+        other => reads_outside_replaced_object_slot(other, binding),
+    };
+    callee_outside || args.iter().any(|arg| binding_mentioned(&arg.expr, binding))
+}
+
+fn expr_is_binding(expr: &Expr, binding: &Ident) -> bool {
+    matches!(strip_parens(expr), Expr::Ident(id) if same_binding(id, binding))
+}
+
+fn member_prop_mentions_binding(prop: &MemberProp, binding: &Ident) -> bool {
+    match prop {
+        MemberProp::Computed(computed) => binding_mentioned(&computed.expr, binding),
+        MemberProp::Ident(_) | MemberProp::PrivateName(_) => false,
+    }
+}
+
+fn binding_mentioned(expr: &Expr, binding: &Ident) -> bool {
+    struct Finder<'a> {
+        binding: &'a Ident,
+        found: bool,
+    }
+    impl Visit for Finder<'_> {
+        fn visit_ident(&mut self, ident: &Ident) {
+            if same_binding(ident, self.binding) {
+                self.found = true;
+            }
+        }
+    }
+    let mut finder = Finder {
+        binding,
+        found: false,
+    };
+    expr.visit_with(&mut finder);
+    finder.found
+}
+
 fn try_loose_chain_with_assign(
     checked: Expr,
     access: &Expr,
@@ -1806,6 +1911,18 @@ fn try_loose_chain_with_assign(
         );
         if !temp_proven {
             return None;
+        }
+        // `e[e.length - 1]` and `e.foo(e)` still read the temp after the object
+        // slot is replaced. `make_optional_chain_replacing` clones that property
+        // or argument, so the chain base has to stay the assignment. A temp that
+        // is only the object slot still goes through the preferred path below
+        // and drops the dead write. A bare `e(e)` is not rewritten here.
+        if access_reads_temp_outside_replaced_object_slot(access, &tmp_ident_expr) {
+            let base = Expr::Paren(ParenExpr {
+                span: DUMMY_SP,
+                expr: Box::new(strip_parens(&checked).clone()),
+            });
+            return make_optional_chain_replacing(&tmp_ident_expr, &base, access, unresolved_mark);
         }
         if let Some(chain) = make_optional_chain_replacing_preferred(
             &tmp_ident_expr,
