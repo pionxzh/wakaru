@@ -210,8 +210,31 @@ fn try_convert_split_memoized_apply(
         return None;
     }
 
+    // 改写后的调用对象就是这条成员表达式。方法临时量若写在对象或计算属性里，
+    // 删掉 `let method` 会留下未声明赋值。
+    if ident_is_used_in_stmts_excluding_bindings(
+        &method_temp,
+        &[Stmt::Expr(ExprStmt {
+            span: DUMMY_SP,
+            expr: Box::new(Expr::Member(memoized_member.clone())),
+        })],
+    ) {
+        return None;
+    }
+
     let first_arg = apply_call.args[0].expr.as_ref();
-    let mut removable_bindings = vec![method_temp.clone()];
+    // 参数会原样进新调用。方法临时量的赋值语句会被删掉，
+    // 所以参数里再读它时必须整段留下，不能先删声明。
+    if ident_is_used_in_stmts_excluding_bindings(
+        &method_temp,
+        &[Stmt::Expr(ExprStmt {
+            span: DUMMY_SP,
+            expr: apply_call.args[1].expr.clone(),
+        })],
+    ) {
+        return None;
+    }
+    let removable_bindings = vec![method_temp.clone()];
     // The direct-receiver arm mirrors the bare same-receiver form: only an
     // identifier or `this` receiver may be read twice by the input and once
     // by the output without changing a getter's evaluation count. Member
@@ -221,8 +244,15 @@ fn try_convert_split_memoized_apply(
     {
         memoized_member.obj.clone()
     } else {
+        // 赋值留在改写后的调用对象上。后面的使用检查只看 apply 之后的语句，
+        // 看不到这次写入，所以不能把左值放进可删列表，否则会删掉 `let x`
+        // 却仍写出 `(x = expr)`。
         let receiver_temp = ident_expr(first_arg)?;
-        removable_bindings.push(receiver_temp.clone());
+        // `method = (method = output).push` 会先把 method 写成 output，
+        // 再写成函数。apply 的 this 是函数，不是 output。同绑定必须留下。
+        if same_ident(receiver_temp, &method_temp) {
+            return None;
+        }
         memoized_receiver_source(&memoized_member.obj, first_arg)?
     };
 
@@ -358,7 +388,9 @@ fn memoized_receiver_source(receiver_expr: &Expr, first_arg: &Expr) -> Option<Bo
     {
         return None;
     }
-    Some(assign.right.clone())
+    // 调用对象先求值，再求值参数。只交回右值会丢掉 `(x = expr)`，
+    // 后面再读 `x` 时它仍是未初始化绑定。整次赋值必须留在成员对象上。
+    Some(Box::new(Expr::Assign(assign.clone())))
 }
 
 fn make_spread_call_with_member_receiver(mut call: CallExpr, receiver: Box<Expr>) -> Expr {
