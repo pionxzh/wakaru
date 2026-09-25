@@ -16,6 +16,7 @@ use super::dead_decls::{
 use super::decl_utils::{binding_id, BindingId};
 use super::expr_utils::{exprs_structurally_equal, is_unresolved_undefined};
 use super::{RewriteLevel, RewritePolicy};
+use crate::analysis::binding_uses::{BindingUseIndex, UseKind};
 
 use crate::utils::paren::strip_parens;
 
@@ -60,7 +61,9 @@ impl VisitMut for UnOptionalChaining {
             self.policy,
             &self.uninitialized_bindings,
             &self.binding_references,
-        ) {
+        )
+        .filter(|result| expr_rewrite_is_sound(expr, result))
+        {
             self.record_consumed_expr_bindings(expr, &result);
             replace_expr_preserving_span(expr, result);
             expr.visit_mut_children_with(self);
@@ -73,11 +76,15 @@ impl VisitMut for UnOptionalChaining {
             self.policy,
             &self.uninitialized_bindings,
             &self.binding_references,
-        ) {
+        )
+        .filter(|result| expr_rewrite_is_sound(expr, result))
+        {
             self.record_consumed_expr_bindings(expr, &result);
             replace_expr_preserving_span(expr, result);
             expr.visit_mut_children_with(self);
-            if let Some(result) = try_optional_call_cleanup(expr) {
+            if let Some(result) =
+                try_optional_call_cleanup(expr).filter(|result| expr_rewrite_is_sound(expr, result))
+            {
                 self.record_consumed_expr_bindings(expr, &result);
                 replace_expr_preserving_span(expr, result);
             }
@@ -86,7 +93,9 @@ impl VisitMut for UnOptionalChaining {
 
         expr.visit_mut_children_with(self);
 
-        if let Some(result) = try_optional_call_cleanup(expr) {
+        if let Some(result) =
+            try_optional_call_cleanup(expr).filter(|result| expr_rewrite_is_sound(expr, result))
+        {
             self.record_consumed_expr_bindings(expr, &result);
             replace_expr_preserving_span(expr, result);
             return;
@@ -98,7 +107,9 @@ impl VisitMut for UnOptionalChaining {
             self.policy,
             &self.uninitialized_bindings,
             &self.binding_references,
-        ) {
+        )
+        .filter(|result| expr_rewrite_is_sound(expr, result))
+        {
             self.record_consumed_expr_bindings(expr, &result);
             replace_expr_preserving_span(expr, result);
         }
@@ -114,7 +125,9 @@ impl VisitMut for UnOptionalChaining {
                 self.policy,
                 &self.uninitialized_bindings,
                 &self.binding_references,
-            ) {
+            )
+            .filter(|result| expr_rewrite_is_sound(&if_stmt.test, result))
+            {
                 self.record_consumed_expr_bindings(if_stmt.test.as_ref(), &result);
                 *if_stmt.test = result;
             }
@@ -122,17 +135,56 @@ impl VisitMut for UnOptionalChaining {
 
         if let Some(result) =
             try_optional_call_short_circuit_stmt(stmt, self.unresolved_mark, self.policy)
+                .filter(|result| stmt_rewrite_is_sound(stmt, result))
         {
             self.record_consumed_stmt_bindings(stmt, &result);
             *stmt = result;
             return;
         }
 
-        if let Some(result) = try_optional_call_if_stmt(stmt, self.unresolved_mark) {
+        if let Some(result) = try_optional_call_if_stmt(stmt, self.unresolved_mark)
+            .filter(|result| stmt_rewrite_is_sound(stmt, result))
+        {
             self.record_consumed_stmt_bindings(stmt, &result);
             *stmt = result;
         }
     }
+}
+
+/// A rewrite is sound only if it reads no binding whose write it dropped.
+/// Each temp proof shows the temp is confined to the matched input, but the
+/// builders replace only a temp's object slots and clone computed keys and
+/// arguments, so a read can outlive its dropped assignment
+/// (`a()?.b?.[t.length]` with `t` never written). Rejecting keeps the input.
+fn expr_rewrite_is_sound(before: &Expr, after: &Expr) -> bool {
+    !reads_dropped_write(
+        &BindingUseIndex::collect_expr(before),
+        &BindingUseIndex::collect_expr(after),
+    )
+}
+
+fn stmt_rewrite_is_sound(before: &Stmt, after: &Stmt) -> bool {
+    !reads_dropped_write(
+        &BindingUseIndex::collect_stmts(std::slice::from_ref(before)),
+        &BindingUseIndex::collect_stmts(std::slice::from_ref(after)),
+    )
+}
+
+fn reads_dropped_write(before: &BindingUseIndex, after: &BindingUseIndex) -> bool {
+    let writes = |index: &BindingUseIndex, binding: &BindingId| {
+        index
+            .use_sites(binding)
+            .iter()
+            .filter(|site| matches!(site.kind, UseKind::Write | UseKind::ReadWrite))
+            .count()
+    };
+    after.referenced_bindings().iter().any(|binding| {
+        writes(after, binding) < writes(before, binding)
+            && after
+                .use_sites(binding)
+                .iter()
+                .any(|site| site.kind != UseKind::Write)
+    })
 }
 
 /// Replace `*expr` with `result`, copying the original expression's span onto
@@ -1777,111 +1829,6 @@ fn try_loose_eq_optional_chain(
     }
 }
 
-/// True when `access` reads `tmp` somewhere `make_optional_chain_replacing`
-/// will clone instead of replace. Replaced object slots (and a bare callee
-/// that this rule does not rewrite) do not count.
-fn access_reads_temp_outside_replaced_object_slot(access: &Expr, tmp: &Expr) -> bool {
-    let Expr::Ident(binding) = strip_parens(tmp) else {
-        return false;
-    };
-    reads_outside_replaced_object_slot(strip_parens(access), binding)
-}
-
-fn reads_outside_replaced_object_slot(expr: &Expr, binding: &Ident) -> bool {
-    match expr {
-        Expr::Paren(paren) => reads_outside_replaced_object_slot(&paren.expr, binding),
-        Expr::Member(MemberExpr { obj, prop, .. }) => {
-            if expr_is_binding(obj, binding) {
-                member_prop_mentions_binding(prop, binding)
-            } else {
-                reads_outside_replaced_object_slot(obj, binding)
-                    || member_prop_mentions_binding(prop, binding)
-            }
-        }
-        Expr::Call(CallExpr {
-            callee: Callee::Expr(callee),
-            args,
-            ..
-        }) => call_reads_outside_replaced_object_slot(callee, args, binding),
-        Expr::Cond(CondExpr {
-            test, cons, alt, ..
-        }) => {
-            reads_outside_replaced_object_slot(test, binding)
-                || reads_outside_replaced_object_slot(cons, binding)
-                || reads_outside_replaced_object_slot(alt, binding)
-        }
-        Expr::Bin(BinExpr { left, right, .. }) => {
-            reads_outside_replaced_object_slot(left, binding)
-                || reads_outside_replaced_object_slot(right, binding)
-        }
-        Expr::Unary(unary) => reads_outside_replaced_object_slot(&unary.arg, binding),
-        Expr::OptChain(OptChainExpr { base, .. }) => match base.as_ref() {
-            OptChainBase::Member(MemberExpr { obj, prop, .. }) => {
-                if expr_is_binding(obj, binding) {
-                    member_prop_mentions_binding(prop, binding)
-                } else {
-                    reads_outside_replaced_object_slot(obj, binding)
-                        || member_prop_mentions_binding(prop, binding)
-                }
-            }
-            OptChainBase::Call(OptCall { callee, args, .. }) => {
-                call_reads_outside_replaced_object_slot(callee, args, binding)
-            }
-        },
-        other => binding_mentioned(other, binding),
-    }
-}
-
-fn call_reads_outside_replaced_object_slot(
-    callee: &Expr,
-    args: &[swc_core::ecma::ast::ExprOrSpread],
-    binding: &Ident,
-) -> bool {
-    let callee_outside = match strip_parens(callee) {
-        Expr::Member(MemberExpr { obj, prop, .. }) if expr_is_binding(obj, binding) => {
-            member_prop_mentions_binding(prop, binding)
-        }
-        Expr::Member(MemberExpr { obj, prop, .. }) => {
-            reads_outside_replaced_object_slot(obj, binding)
-                || member_prop_mentions_binding(prop, binding)
-        }
-        other if expr_is_binding(other, binding) => false,
-        other => reads_outside_replaced_object_slot(other, binding),
-    };
-    callee_outside || args.iter().any(|arg| binding_mentioned(&arg.expr, binding))
-}
-
-fn expr_is_binding(expr: &Expr, binding: &Ident) -> bool {
-    matches!(strip_parens(expr), Expr::Ident(id) if same_binding(id, binding))
-}
-
-fn member_prop_mentions_binding(prop: &MemberProp, binding: &Ident) -> bool {
-    match prop {
-        MemberProp::Computed(computed) => binding_mentioned(&computed.expr, binding),
-        MemberProp::Ident(_) | MemberProp::PrivateName(_) => false,
-    }
-}
-
-fn binding_mentioned(expr: &Expr, binding: &Ident) -> bool {
-    struct Finder<'a> {
-        binding: &'a Ident,
-        found: bool,
-    }
-    impl Visit for Finder<'_> {
-        fn visit_ident(&mut self, ident: &Ident) {
-            if same_binding(ident, self.binding) {
-                self.found = true;
-            }
-        }
-    }
-    let mut finder = Finder {
-        binding,
-        found: false,
-    };
-    expr.visit_with(&mut finder);
-    finder.found
-}
-
 fn try_loose_chain_with_assign(
     checked: Expr,
     access: &Expr,
@@ -1912,40 +1859,43 @@ fn try_loose_chain_with_assign(
         if !temp_proven {
             return None;
         }
-        // `e[e.length - 1]` and `e.foo(e)` still read the temp after the object
-        // slot is replaced. `make_optional_chain_replacing` clones that property
-        // or argument, so the chain base has to stay the assignment. A temp that
-        // is only the object slot still goes through the preferred path below
-        // and drops the dead write. A bare `e(e)` is not rewritten here.
-        if access_reads_temp_outside_replaced_object_slot(access, &tmp_ident_expr) {
-            let base = Expr::Paren(ParenExpr {
-                span: DUMMY_SP,
-                expr: Box::new(strip_parens(&checked).clone()),
-            });
-            return make_optional_chain_replacing(&tmp_ident_expr, &base, access, unresolved_mark);
-        }
-        if let Some(chain) = make_optional_chain_replacing_preferred(
-            &tmp_ident_expr,
-            real_rhs,
-            recovered_real_rhs.as_ref(),
-            access,
-            unresolved_mark,
-        ) {
+        let build = |rhs: &Expr, recovered_rhs: Option<&Expr>| {
+            if let Some(chain) = make_optional_chain_replacing_preferred(
+                &tmp_ident_expr,
+                rhs,
+                recovered_rhs,
+                access,
+                unresolved_mark,
+            ) {
+                return Some(chain);
+            }
+            if policy.assumptions.pure_getters {
+                if let Some(recovered_access) =
+                    recover_loose_repeated_optional_call_chain(access, unresolved_mark)
+                {
+                    return make_optional_chain_replacing(
+                        &tmp_ident_expr,
+                        rhs,
+                        &recovered_access,
+                        unresolved_mark,
+                    );
+                }
+            }
+            None
+        };
+        let chain = build(real_rhs, recovered_real_rhs.as_ref())?;
+        // Only the temp's object slots are replaced; a computed key or an
+        // argument (`e[e.length - 1]`, `e.foo(e)`) is cloned and still reads
+        // it. Then the base keeps the assignment, which runs before the rest
+        // of the chain: `(e = expr)?.[e.length - 1]`.
+        if !count_binding_references_in_exprs(&[&chain]).contains_key(&binding_id(&tmp)) {
             return Some(chain);
         }
-        if policy.assumptions.pure_getters {
-            if let Some(recovered_access) =
-                recover_loose_repeated_optional_call_chain(access, unresolved_mark)
-            {
-                return make_optional_chain_replacing(
-                    &tmp_ident_expr,
-                    real_rhs,
-                    &recovered_access,
-                    unresolved_mark,
-                );
-            }
-        }
-        None
+        let assigned_base = Expr::Paren(ParenExpr {
+            span: DUMMY_SP,
+            expr: Box::new(strip_parens(&checked).clone()),
+        });
+        build(&assigned_base, None)
     } else {
         make_optional_chain(checked, access)
     }
