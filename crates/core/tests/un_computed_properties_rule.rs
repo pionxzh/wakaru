@@ -586,3 +586,15 @@ function build() {
 "#;
     assert_eq_normalized(&render(input), expected.trim());
 }
+
+#[test]
+fn skips_a_temp_shared_by_two_lowerings() {
+    // Each fold must account for every use of `_n`; with two sites neither
+    // rewrite holds all of them, so both stay and so does the declaration.
+    let input = r#"
+var _n;
+var a = (_n = {}, _n[k] = 1, _n);
+var b = (_n = {}, _n[j] = 2, _n);
+"#;
+    assert_eq_normalized(&standard(input), input.trim());
+}

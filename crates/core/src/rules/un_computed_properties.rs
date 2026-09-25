@@ -71,7 +71,7 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::binding_facts::TempIsolation;
-use super::dead_decls::{extend_consumed_uninitialized_expr, remove_consumed_uninitialized_decls};
+use super::dead_decls::remove_consumed_uninitialized_decls;
 use super::decl_utils::{binding_id, ident_matches_binding, BindingId};
 use super::helper_matcher::count_binding_refs;
 use super::RewriteLevel;
@@ -120,13 +120,13 @@ impl VisitMut for UnComputedProperties {
         let Some(folded) = self.try_fold_sequence(expr) else {
             return;
         };
-
-        extend_consumed_uninitialized_expr(
-            &mut self.consumed_uninitialized_bindings,
+        if !self.isolation.accept_expr_rewrite(
             expr,
             &folded,
-            &self.isolation,
-        );
+            &mut self.consumed_uninitialized_bindings,
+        ) {
+            return;
+        }
         *expr = folded;
     }
 }
