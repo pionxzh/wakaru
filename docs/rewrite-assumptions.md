@@ -687,14 +687,22 @@ console.log(_tmp);
 This is a hard rule, not a level-gated policy. It prevents the assumption
 system from becoming a mechanism to skip safety checks.
 
-`TempIsolation` in `rules/binding_facts.rs` implements this proof. The rule
-counts the uses its pattern consumes. The helper checks that the module has
-no other use and that the only declaration is an uninitialized declarator a
-pattern may assign. That excludes parameters, which sloppy-mode `arguments`
-aliases, and a `let` written in its TDZ. It also excludes an exported
-declaration, which importers can read, and an ambient `declare var`, which
-creates no binding. New temp proofs should use it instead of comparing
-reference counts directly.
+`TempIsolation` in `rules/binding_facts.rs` implements this proof. A temp is
+isolated when the module has no other use of it and its only declaration is
+an uninitialized declarator a pattern may assign. That excludes parameters,
+which sloppy-mode `arguments` aliases, and a `let` written in its TDZ. It
+also excludes an exported declaration, which importers can read, and an
+ambient `declare var`, which creates no binding.
+
+Every rule that can drop a temp's write passes each rewrite through
+`TempIsolation::accept_expr_rewrite` (or `accept_stmts_rewrite`) at its
+choke point. The rewrite is rejected if it drops a write to a binding that
+is not isolated to the rewritten input, or if its output still reads that
+binding. This covers code paths that have no pattern proof of their own. An
+accepted rewrite reports which declarations became dead, for
+`remove_consumed_uninitialized_decls`, and updates the use counts for later
+rewrites. A pattern's own count check, where it has one, is an early exit and
+a shape policy. It does not replace this check.
 
 `SmartInline` applies a separate, position-independent proof to generic
 single-read `const` aliases. It only removes generated-looking names used in
