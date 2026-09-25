@@ -57,7 +57,7 @@ impl VisitMut for UnOptionalChaining {
             self.policy,
             &self.isolation,
         )
-        .filter(|result| expr_rewrite_is_sound(expr, result))
+        .filter(|result| expr_rewrite_is_sound(expr, result, &self.isolation))
         {
             self.record_consumed_expr_bindings(expr, &result);
             replace_expr_preserving_span(expr, result);
@@ -67,13 +67,13 @@ impl VisitMut for UnOptionalChaining {
 
         if let Some(result) =
             try_optional_chaining(expr, self.unresolved_mark, self.policy, &self.isolation)
-                .filter(|result| expr_rewrite_is_sound(expr, result))
+                .filter(|result| expr_rewrite_is_sound(expr, result, &self.isolation))
         {
             self.record_consumed_expr_bindings(expr, &result);
             replace_expr_preserving_span(expr, result);
             expr.visit_mut_children_with(self);
-            if let Some(result) =
-                try_optional_call_cleanup(expr).filter(|result| expr_rewrite_is_sound(expr, result))
+            if let Some(result) = try_optional_call_cleanup(expr)
+                .filter(|result| expr_rewrite_is_sound(expr, result, &self.isolation))
             {
                 self.record_consumed_expr_bindings(expr, &result);
                 replace_expr_preserving_span(expr, result);
@@ -83,8 +83,8 @@ impl VisitMut for UnOptionalChaining {
 
         expr.visit_mut_children_with(self);
 
-        if let Some(result) =
-            try_optional_call_cleanup(expr).filter(|result| expr_rewrite_is_sound(expr, result))
+        if let Some(result) = try_optional_call_cleanup(expr)
+            .filter(|result| expr_rewrite_is_sound(expr, result, &self.isolation))
         {
             self.record_consumed_expr_bindings(expr, &result);
             replace_expr_preserving_span(expr, result);
@@ -93,7 +93,7 @@ impl VisitMut for UnOptionalChaining {
 
         if let Some(result) =
             try_optional_chaining(expr, self.unresolved_mark, self.policy, &self.isolation)
-                .filter(|result| expr_rewrite_is_sound(expr, result))
+                .filter(|result| expr_rewrite_is_sound(expr, result, &self.isolation))
         {
             self.record_consumed_expr_bindings(expr, &result);
             replace_expr_preserving_span(expr, result);
@@ -110,7 +110,7 @@ impl VisitMut for UnOptionalChaining {
                 self.policy,
                 &self.isolation,
             )
-            .filter(|result| expr_rewrite_is_sound(&if_stmt.test, result))
+            .filter(|result| expr_rewrite_is_sound(&if_stmt.test, result, &self.isolation))
             {
                 self.record_consumed_expr_bindings(if_stmt.test.as_ref(), &result);
                 *if_stmt.test = result;
@@ -119,7 +119,7 @@ impl VisitMut for UnOptionalChaining {
 
         if let Some(result) =
             try_optional_call_short_circuit_stmt(stmt, self.unresolved_mark, self.policy)
-                .filter(|result| stmt_rewrite_is_sound(stmt, result))
+                .filter(|result| stmt_rewrite_is_sound(stmt, result, &self.isolation))
         {
             self.record_consumed_stmt_bindings(stmt, &result);
             *stmt = result;
@@ -127,7 +127,7 @@ impl VisitMut for UnOptionalChaining {
         }
 
         if let Some(result) = try_optional_call_if_stmt(stmt, self.unresolved_mark)
-            .filter(|result| stmt_rewrite_is_sound(stmt, result))
+            .filter(|result| stmt_rewrite_is_sound(stmt, result, &self.isolation))
         {
             self.record_consumed_stmt_bindings(stmt, &result);
             *stmt = result;
@@ -135,26 +135,36 @@ impl VisitMut for UnOptionalChaining {
     }
 }
 
-/// A rewrite is sound only if it reads no binding whose write it dropped.
-/// Each temp proof shows the temp is confined to the matched input, but the
-/// builders replace only a temp's object slots and clone computed keys and
-/// arguments, so a read can outlive its dropped assignment
+/// A rewrite may drop a binding's write only if that binding is a temp
+/// isolated to the rewritten input and the output no longer reads it.
+///
+/// Each temp proof covers the temp the pattern names, but other paths drop
+/// writes too: recovering a lowered inner chain turns
+/// `null == (t = a()) ? void 0 : t.b` into `a()?.b` without proving `t`. And
+/// the builders replace only a temp's object slots and clone computed keys
+/// and arguments, so a read can outlive its dropped assignment
 /// (`a()?.b?.[t.length]` with `t` never written). Rejecting keeps the input.
-fn expr_rewrite_is_sound(before: &Expr, after: &Expr) -> bool {
-    !reads_dropped_write(
+fn expr_rewrite_is_sound(before: &Expr, after: &Expr, isolation: &TempIsolation) -> bool {
+    drops_only_isolated_writes(
         &BindingUseIndex::collect_expr(before),
         &BindingUseIndex::collect_expr(after),
+        isolation,
     )
 }
 
-fn stmt_rewrite_is_sound(before: &Stmt, after: &Stmt) -> bool {
-    !reads_dropped_write(
+fn stmt_rewrite_is_sound(before: &Stmt, after: &Stmt, isolation: &TempIsolation) -> bool {
+    drops_only_isolated_writes(
         &BindingUseIndex::collect_stmts(std::slice::from_ref(before)),
         &BindingUseIndex::collect_stmts(std::slice::from_ref(after)),
+        isolation,
     )
 }
 
-fn reads_dropped_write(before: &BindingUseIndex, after: &BindingUseIndex) -> bool {
+fn drops_only_isolated_writes(
+    before: &BindingUseIndex,
+    after: &BindingUseIndex,
+    isolation: &TempIsolation,
+) -> bool {
     let writes = |index: &BindingUseIndex, binding: &BindingId| {
         index
             .use_sites(binding)
@@ -162,12 +172,13 @@ fn reads_dropped_write(before: &BindingUseIndex, after: &BindingUseIndex) -> boo
             .filter(|site| matches!(site.kind, UseKind::Write | UseKind::ReadWrite))
             .count()
     };
-    after.referenced_bindings().iter().any(|binding| {
-        writes(after, binding) < writes(before, binding)
-            && after
-                .use_sites(binding)
-                .iter()
-                .any(|site| site.kind != UseKind::Write)
+    before.referenced_bindings().iter().all(|binding| {
+        writes(after, binding) >= writes(before, binding)
+            || (isolation.is_isolated(binding, before.use_count(binding))
+                && after
+                    .use_sites(binding)
+                    .iter()
+                    .all(|site| site.kind == UseKind::Write))
     })
 }
 
@@ -199,6 +210,10 @@ impl UnOptionalChaining {
             after,
             &self.isolation,
         );
+        self.isolation.record_rewrite(
+            &BindingUseIndex::collect_expr(before),
+            &BindingUseIndex::collect_expr(after),
+        );
     }
 
     fn record_consumed_stmt_bindings(&mut self, before: &Stmt, after: &Stmt) {
@@ -207,6 +222,10 @@ impl UnOptionalChaining {
             before,
             after,
             &self.isolation,
+        );
+        self.isolation.record_rewrite(
+            &BindingUseIndex::collect_stmts(std::slice::from_ref(before)),
+            &BindingUseIndex::collect_stmts(std::slice::from_ref(after)),
         );
     }
 }

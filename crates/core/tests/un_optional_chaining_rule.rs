@@ -123,6 +123,7 @@ function f(undefined) {
 #[test]
 fn standard_transforms_guarded_babel_optional_call_statement() {
     let input = r#"
+var _, K;
 if (!((_ = (K = this.handle) === null || K === void 0 ? void 0 : K.close) === null || _ === void 0)) {
   _.call(K);
 }
@@ -132,6 +133,39 @@ this.handle?.close?.();
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn preserves_guarded_optional_call_statement_with_undeclared_temps() {
+    // Without declarations, `_` and `K` are globals (or a ReferenceError in
+    // strict code), so their writes cannot be dropped.
+    let input = r#"
+if (!((_ = (K = this.handle) === null || K === void 0 ? void 0 : K.close) === null || _ === void 0)) {
+  _.call(K);
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn preserves_loose_nested_chain_when_inner_temp_is_read_later() {
+    // Recovering the inner chain drops `t = a()`, but `t` is read afterwards.
+    let input = r#"
+var e, t;
+const x = null == (e = null == (t = a()) ? void 0 : t.b) ? void 0 : e.c;
+use(t);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn preserves_loose_nested_chain_when_inner_temp_is_exported() {
+    let input = r#"
+var e;
+export var t;
+export const x = null == (e = null == (t = a()) ? void 0 : t.b) ? void 0 : e.c;
+"#;
+    assert_eq_normalized(&apply(input), input);
 }
 
 #[test]
@@ -147,7 +181,7 @@ if (!((_a = te?.getRootNode) === null || _a === void 0)) {
 
 #[test]
 fn standard_transforms_short_circuit_babel_optional_call_statement() {
-    let input = r#"(_ = (K = this.handle) === null || K === void 0 ? void 0 : K.close) === null || _ === void 0 || _.call(K)"#;
+    let input = r#"var _, K; (_ = (K = this.handle) === null || K === void 0 ? void 0 : K.close) === null || _ === void 0 || _.call(K)"#;
     let expected = r#"this.handle?.close?.()"#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
@@ -900,7 +934,6 @@ var _obj_foo_method, _obj_foo, _obj;
 const out = (_obj = obj) === null || _obj === void 0 ? void 0 : (_obj_foo = _obj.foo) === null || _obj_foo === void 0 ? void 0 : (_obj_foo_method = _obj_foo.method) === null || _obj_foo_method === void 0 ? void 0 : _obj_foo_method.call(_obj_foo, arg);
 "#;
     let expected = r#"
-var _obj_foo;
 const out = obj?.foo?.method?.(arg);
 "#;
     let output = apply(input);

@@ -41,6 +41,10 @@ pub(crate) fn collect_binding_facts(module: &Module) -> BindingFacts {
 /// Counting uses across several sites of one binding is valid only when
 /// each site reads nothing but its own write.
 ///
+/// Counts come from the module as collected. A rule whose later matches see
+/// the output of earlier rewrites reports each accepted rewrite through
+/// [`TempIsolation::record_rewrite`], so the counts follow the current module.
+///
 /// Dynamic scope is the caller's concern: an isolated compiler temp need
 /// not bail on `with` or direct `eval`, but removing its declaration does
 /// (`remove_consumed_uninitialized_decls` handles that).
@@ -48,6 +52,8 @@ pub(crate) fn collect_binding_facts(module: &Module) -> BindingFacts {
 pub(crate) struct TempIsolation {
     uses: BindingUseIndex,
     assignable: HashSet<BindingId>,
+    /// Net uses per binding that recorded rewrites removed.
+    removed_uses: HashMap<BindingId, isize>,
 }
 
 impl TempIsolation {
@@ -64,14 +70,35 @@ impl TempIsolation {
                 assignable.remove(&binding);
             }
         }
-        Self { uses, assignable }
+        Self {
+            uses,
+            assignable,
+            removed_uses: HashMap::default(),
+        }
     }
 
     /// Whether `consumed_uses` accounts for every use of `binding`.
     pub(crate) fn is_isolated(&self, binding: &BindingId, consumed_uses: usize) -> bool {
         self.assignable.contains(binding)
             && self.uses.has_single_declaration(binding)
-            && self.uses.use_count(binding) == consumed_uses
+            && self.current_use_count(binding) == consumed_uses as isize
+    }
+
+    /// Account for a rewrite that replaced a node with `before`'s uses by one
+    /// with `after`'s.
+    pub(crate) fn record_rewrite(&mut self, before: &BindingUseIndex, after: &BindingUseIndex) {
+        let mut bindings = before.referenced_bindings();
+        bindings.extend(after.referenced_bindings());
+        for binding in bindings {
+            let delta = before.use_count(&binding) as isize - after.use_count(&binding) as isize;
+            if delta != 0 {
+                *self.removed_uses.entry(binding).or_default() += delta;
+            }
+        }
+    }
+
+    fn current_use_count(&self, binding: &BindingId) -> isize {
+        self.uses.use_count(binding) as isize - self.removed_uses.get(binding).copied().unwrap_or(0)
     }
 
     /// Whether every use of each of `bindings` sits in `pattern`.
@@ -232,6 +259,26 @@ mod tests {
             let isolation = TempIsolation::collect(&module);
             let stmts = expr_stmts(&module);
             assert!(!isolation.are_isolated_to([&binding(&module, "t")], &[&stmts[0]]));
+        });
+    }
+
+    #[test]
+    fn recorded_rewrites_update_the_use_count() {
+        GLOBALS.set(&Default::default(), || {
+            // The first statement stands for an earlier rewrite's input, the
+            // second for its output.
+            let module = resolved("var t; (t = a()).b(t).c(t); (t = a()).b(t); use(t);");
+            let stmts = expr_stmts(&module);
+            let t = binding(&module, "t");
+            let mut isolation = TempIsolation::collect(&module);
+            assert!(!isolation.is_isolated(&t, 2));
+            isolation.record_rewrite(
+                &BindingUseIndex::collect_expr(&stmts[0]),
+                &BindingUseIndex::collect_expr(&stmts[1]),
+            );
+            // One use removed: 6 collected, 5 now.
+            assert!(isolation.is_isolated(&t, 5));
+            assert!(!isolation.is_isolated(&t, 6));
         });
     }
 
