@@ -262,6 +262,9 @@ rationale, or level gating appear.
   `obj.fn.apply(null, args)` is *intentionally skipped* — rewriting it to
   `fn(...args)` is not semantics-preserving without cross-module proof that
   the member is a plain imported function (candidate fact reader).
+  A memoized receiver `(t = expr).fn.apply(t, args)` keeps `(t = expr)` on
+  the callee object unless a module-wide use count proves every use of `t`
+  belongs to such a pattern; only then does it become `expr.fn(...args)`.
 - **UnTemplateLiteral** — level gating is per path, not per rule (the rule is
   always enabled because tagged-template helper recovery is provenance-checked
   and runs at every level). The `+`-chain path (`string_coercion_hint`) and the
