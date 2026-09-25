@@ -1353,6 +1353,23 @@ exports.foo = 1;
 }
 
 #[test]
+fn global_value_export_declares_a_local_binding() {
+    // `export { window as WIN }` would name a binding the module never
+    // declares. The CommonJS write copies the value, so a const does too.
+    let input = r#"
+exports.WIN = window;
+exports.EventTarget = EventTarget;
+"#;
+    let expected = r#"
+export const WIN = window;
+const _EventTarget = EventTarget;
+export { _EventTarget as EventTarget };
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn void_of_a_call_is_not_an_export_sentinel() {
     // Only `void <literal>` is a placeholder. `void f()` still calls `f`, and
     // as the last write it is the export's real value.

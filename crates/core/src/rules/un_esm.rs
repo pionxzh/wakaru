@@ -733,10 +733,14 @@ impl VisitMut for UnEsm {
                             &hoisted_bindings,
                         ));
                     } else {
+                        // A global has no module binding to re-export, so
+                        // copy its value like the CommonJS write did.
+                        let snapshot_ident = snapshot_export_indices.contains(&idx)
+                            || exports_unresolved_ident(&kind, self.unresolved_mark);
                         new_body.extend(build_export_items(
                             span,
                             kind,
-                            snapshot_export_indices.contains(&idx),
+                            snapshot_ident,
                             &mut used_export_binding_names,
                             &unresolved_reference_names,
                             &all_declared_names,
@@ -3862,6 +3866,20 @@ fn make_import_decl(src: &str, specifiers: Vec<ImportSpecifier>) -> ImportDecl {
         with: None,
         phase: Default::default(),
     }
+}
+
+/// `exports.name = global` with a plain (non-getter) write of an unresolved
+/// identifier.
+fn exports_unresolved_ident(kind: &CjsExportKind, unresolved_mark: Mark) -> bool {
+    matches!(
+        kind,
+        CjsExportKind::Named {
+            expr,
+            is_void: false,
+            is_live: false,
+            ..
+        } if matches!(&**expr, Expr::Ident(id) if id.ctxt.outer() == unresolved_mark)
+    )
 }
 
 fn build_export_items(
