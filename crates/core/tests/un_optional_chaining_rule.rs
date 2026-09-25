@@ -1168,8 +1168,8 @@ const x = (n = obj) == null ? undefined : n.value;
 
 #[test]
 fn keeps_loose_assignment_when_computed_key_reads_temp() {
-    // Babel loose `getList()?.[getList().length - 1]` memoizes the call.
-    // The third value-position read is the index, not another object slot.
+    // Babel loose lowers `list?.[list.length - 1]`; a minifier then folds
+    // `list = getList()` into the null check. The index reads the temp too.
     let input = r#"
 var e, t;
 t = (null == (e = getList()) ? void 0 : e[e.length - 1]) || null;
@@ -1324,6 +1324,39 @@ const x = obj.foo?.bar;
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn preserves_loose_nested_chain_when_final_key_reads_inner_temp() {
+    // The inner chain `t.b` would become `a()?.b` and drop `t = a()`, but the
+    // final key still reads `t`.
+    let input = r#"
+var e, t;
+const x = null == (e = null == (t = a()) ? void 0 : t.b) ? void 0 : e[t.length];
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn preserves_flattened_strict_chain_when_key_reads_reused_temp() {
+    // `_a` holds `_a.b` at the key; dropping either write changes the index.
+    let input = r#"
+var _a;
+const x = (_a = a()) === null || _a === void 0 || (_a = _a.b) === null || _a === void 0 ? void 0 : _a[_a.length];
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn preserves_flattened_strict_chain_when_argument_reads_outer_temp() {
+    let input = r#"
+var _a, _b;
+const x = (_a = a()) === null || _a === void 0 || (_b = _a.b) === null || _b === void 0 ? void 0 : _b.c(_a);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
 }
 
 // --- logical AND boolean-context recovery ---
