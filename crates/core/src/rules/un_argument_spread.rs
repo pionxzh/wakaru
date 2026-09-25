@@ -5,6 +5,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use super::binding_facts::TempIsolation;
 use super::decl_utils::{
     can_remove_prior_uninitialized_decls, remove_prior_uninitialized_decls, same_ident,
     UninitializedDeclKind,
@@ -13,7 +14,7 @@ use super::eval_utils::has_dynamic_scope_construct;
 use super::expr_utils::{exprs_structurally_equal, is_unresolved_undefined};
 use super::RewriteLevel;
 
-use crate::analysis::binding_uses::{BindingId, BindingUseIndex};
+use crate::analysis::binding_uses::BindingId;
 use crate::collections::{HashMap, HashSet};
 use crate::utils::paren::strip_parens;
 
@@ -334,11 +335,10 @@ struct SplitMemoizedApplyRewrite {
 
 /// Collect the memoized-apply temps whose assignment can be dropped: every
 /// use is one this rule's patterns consume (the write and the `thisArg`
-/// read, or the method temp's write and `.apply` read), and the binding's
-/// only declaration is an uninitialized `var`/`let` declarator the patterns
-/// may assign (a `let` in its TDZ there would throw, which dropping the
-/// write would hide). A parameter is excluded because sloppy-mode
-/// `arguments` aliases it.
+/// read, or the method temp's write and `.apply` read), under the
+/// declaration conditions of [`TempIsolation`]. The split form removes the
+/// temps' declarations itself, so a module with `with` or direct `eval`
+/// proves nothing.
 fn collect_isolated_temps(module: &Module) -> HashSet<BindingId> {
     let mut counter = PatternUseCounter::default();
     module.visit_with(&mut counter);
@@ -346,16 +346,11 @@ fn collect_isolated_temps(module: &Module) -> HashSet<BindingId> {
         return HashSet::default();
     }
 
-    let index = BindingUseIndex::collect(module);
-    let assignable = index.assignable_uninitialized_bindings();
+    let isolation = TempIsolation::collect(module);
     counter
         .uses
         .into_iter()
-        .filter(|(binding, pattern_uses)| {
-            assignable.contains(binding)
-                && index.has_single_declaration(binding)
-                && index.use_count(binding) == *pattern_uses
-        })
+        .filter(|(binding, pattern_uses)| isolation.is_isolated(binding, *pattern_uses))
         .map(|(binding, _)| binding)
         .collect()
 }

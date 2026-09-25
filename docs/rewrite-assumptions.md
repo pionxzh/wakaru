@@ -687,6 +687,13 @@ console.log(_tmp);
 This is a hard rule, not a level-gated policy. It prevents the assumption
 system from becoming a mechanism to skip safety checks.
 
+`TempIsolation` in `rules/binding_facts.rs` implements this proof. The rule
+counts the uses its pattern consumes. The helper checks that the module has
+no other use and that the only declaration is an uninitialized declarator a
+pattern may assign. That excludes parameters, which sloppy-mode `arguments`
+aliases, and a `let` written in its TDZ. New temp proofs should use it
+instead of comparing reference counts directly.
+
 `SmartInline` applies a separate, position-independent proof to generic
 single-read `const` aliases. It only removes generated-looking names used in
 the immediately following statement whose identifier source is definitely
