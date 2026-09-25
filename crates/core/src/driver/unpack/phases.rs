@@ -20,7 +20,6 @@ use super::super::types::{
     DecompileOptions, PreparedInputId, PreparedModuleOutput, PreparedModuleProvenance,
     PreparedUnpackOutput, UnpackWarning, UnpackWarningKind,
 };
-use super::super::unpack_cleanup::{dedup_duplicate_exports, prune_stale_local_named_exports};
 use super::super::unpack_cycles::collect_import_cycle_warnings;
 use super::dead_module::{collect_import_report, eliminate_dead_helper_modules, ImportReport};
 use super::filename_recovery::{
@@ -686,8 +685,6 @@ pub(super) fn unpack_multi_module_with_plan(
             module.visit_mut_with(&mut UnOptionalChaining::new(unresolved_mark, options.level));
             module.visit_mut_with(&mut UnConditionalsAssignmentOnly);
             module.visit_mut_with(&mut UnConditionals);
-            prune_stale_local_named_exports(&mut module);
-            dedup_duplicate_exports(&mut module);
 
             // Source-map-enhanced passes
             if let Some(sm) = sm_ref {
@@ -1213,32 +1210,28 @@ for (var key in current) globalThis[key] = current[key];"#,
     }
 
     #[test]
-    fn late_cleanup_removes_newly_dead_recovered_import_specifier() {
-        // `dedup_duplicate_exports` runs after the late rule range and drops
-        // the second `x` export, which held the only read of `a`.
+    fn export_of_a_block_nested_var_survives_unpack() {
+        // `var p` inside the block is a module-scope binding, so the export
+        // names a declared local.
         let modules = vec![UnpackedModule {
             id: "entry".to_string(),
             is_entry: true,
-            code: r#"import { a } from "./module.js";
-export const x = 1;
-export { a as x };
+            code: r#"if (globalThis.flag) {
+    var p = 1;
+}
+export { p as t };
 "#
             .to_string(),
             filename: "entry.js".to_string(),
             ..Default::default()
         }];
 
-        let output = unpack_multi_module(
-            modules,
-            DecompileOptions {
-                dce_mode: DceMode::TransformOnly,
-                ..Default::default()
-            },
-        )
-        .expect("fixture should decompile");
-        assert_eq!(
-            output.modules[0].code,
-            "import \"./module.js\";\nexport const x = 1;\n"
+        let output = unpack_multi_module(modules, DecompileOptions::default())
+            .expect("fixture should decompile");
+        let code = &output.modules[0].code;
+        assert!(
+            code.contains("export { p as t };"),
+            "the export should be kept:\n{code}"
         );
     }
 

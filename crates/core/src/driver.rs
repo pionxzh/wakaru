@@ -9,7 +9,6 @@ mod single_file;
 mod trace;
 mod types;
 mod unpack;
-mod unpack_cleanup;
 mod unpack_cycles;
 
 pub use crate::unpacker::BundleFormat;
