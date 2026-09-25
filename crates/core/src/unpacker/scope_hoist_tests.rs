@@ -1211,6 +1211,77 @@ fn chunk_references_to_imported_bindings_keep_imports() {
 }
 
 #[test]
+fn destructuring_var_export_covers_every_bound_name() {
+    // `b5` consumes names bound by both declarator shapes. Promoting
+    // the declaration must count the destructured names as exported.
+    let input = r#"
+            function a1() { return 1; }
+            function a2() { return a1() + 1; }
+            function a3() { return a2() + 1; }
+            function a4() { return a3() + 1; }
+            var make = mark("make"), { forEach: each, slice: cut } = Array.prototype;
+
+            function b1() { return 10; }
+            function b2() { return b1() + 1; }
+            function b3() { return b2() + 1; }
+            function b4() { return b3() + 1; }
+            function b5() { return b4() + make + each.length + cut.length; }
+            console.log(a4());
+        "#;
+
+    let modules = split(input).expect("should split");
+    let entry = &modules
+        .iter()
+        .find(|(_, _, is_entry)| *is_entry)
+        .expect("should have entry")
+        .1;
+    assert!(
+        entry.contains(
+            "export var make = mark(\"make\"), { forEach: each, slice: cut } = Array.prototype;"
+        ),
+        "the declaration should be exported inline:\n{entry}"
+    );
+    assert!(
+        !entry.contains("export {"),
+        "no name should be exported a second time:\n{entry}"
+    );
+}
+
+#[test]
+fn partially_exported_destructuring_declarator_stays_local() {
+    // Only `each` is consumed; exporting the declarator would also export
+    // `cut`, so it stays a local declaration with a trailing export.
+    let input = r#"
+            function a1() { return 1; }
+            function a2() { return a1() + 1; }
+            function a3() { return a2() + 1; }
+            function a4() { return a3() + 1; }
+            var { forEach: each, slice: cut } = Array.prototype;
+            cut.call([]);
+
+            function b1() { return 10; }
+            function b2() { return b1() + 1; }
+            function b3() { return b2() + 1; }
+            function b4() { return b3() + 1; }
+            function b5() { return b4() + each.length; }
+            console.log(a4());
+        "#;
+
+    let modules = split(input).expect("should split");
+    let entry = &modules
+        .iter()
+        .find(|(_, _, is_entry)| *is_entry)
+        .expect("should have entry")
+        .1;
+    assert!(
+        entry.contains("var { forEach: each, slice: cut } = Array.prototype;")
+            && !entry.contains("export var {")
+            && entry.contains("export { each };"),
+        "only the consumed name should be exported:\n{entry}"
+    );
+}
+
+#[test]
 fn partial_var_export_preserves_declarator_order() {
     // The b-group consumes `exported` from the entry without the entry
     // referencing the b-group back: an entry-side consumer of b5 would form

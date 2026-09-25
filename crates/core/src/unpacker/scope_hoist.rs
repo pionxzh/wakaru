@@ -2959,27 +2959,34 @@ fn try_promote_export(item: &ModuleItem, exported: &HashSet<Atom>) -> ExportProm
     }
     match item {
         // `const x = ..., y = ...` — check if all or some declarators are exported.
+        // A declarator is exported only when every name it binds is, so a
+        // destructuring pattern never exports a name no cluster asked for.
         ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) => {
-            let decl_names: Vec<Atom> = var_decl
+            let declarator_names: Vec<Vec<Atom>> = var_decl
                 .decls
                 .iter()
-                .filter_map(|d| {
-                    if let Pat::Ident(bi) = &d.name {
-                        Some(bi.id.sym.clone())
-                    } else {
-                        Option::None
-                    }
+                .map(|decl| {
+                    let mut names = HashSet::default();
+                    collect_pat_bindings(&decl.name, &mut names);
+                    let mut names = names.into_iter().collect::<Vec<_>>();
+                    names.sort();
+                    names
                 })
                 .collect();
-            let export_names: Vec<Atom> = decl_names
+            let is_exported: Vec<bool> = declarator_names
                 .iter()
-                .filter(|n| exported.contains(*n))
-                .cloned()
+                .map(|names| !names.is_empty() && names.iter().all(|name| exported.contains(name)))
+                .collect();
+            let export_names: Vec<Atom> = declarator_names
+                .iter()
+                .zip(&is_exported)
+                .filter(|(_, exported)| **exported)
+                .flat_map(|(names, _)| names.iter().cloned())
                 .collect();
             if export_names.is_empty() {
                 return ExportPromotion::None;
             }
-            if export_names.len() == decl_names.len() {
+            if is_exported.iter().all(|exported| *exported) {
                 // All declarators exported → `export const x = ..., y = ...`
                 let new_item = ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
                     span: Default::default(),
@@ -2988,14 +2995,11 @@ fn try_promote_export(item: &ModuleItem, exported: &HashSet<Atom>) -> ExportProm
                 ExportPromotion::Promoted(new_item, export_names)
             } else {
                 // Partial — split without reordering initializer evaluation.
-                let export_set: HashSet<&Atom> = export_names.iter().collect();
                 let mut items = Vec::new();
-                for decl in &var_decl.decls {
-                    let is_exported =
-                        matches!(&decl.name, Pat::Ident(bi) if export_set.contains(&bi.id.sym));
+                for (decl, is_exported) in var_decl.decls.iter().zip(&is_exported) {
                     let mut split_decl = var_decl.clone();
                     split_decl.decls = vec![decl.clone()];
-                    if is_exported {
+                    if *is_exported {
                         items.push(ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
                             span: Default::default(),
                             decl: Decl::Var(split_decl),
