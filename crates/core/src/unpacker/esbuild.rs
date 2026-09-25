@@ -5217,21 +5217,38 @@ fn removable_export_helper_dependency_indices(
         }
     }
 
-    let mut ignored_consumers = closure.clone();
-    ignored_consumers.extend(boundaries.iter().map(|boundary| boundary.export_call_index));
-
-    closure
+    let boundary_export_calls: HashSet<usize> = boundaries
+        .iter()
+        .map(|boundary| boundary.export_call_index)
+        .collect();
+    let mut removable: HashSet<usize> = closure
         .into_iter()
-        .filter(|&index| {
-            is_removable_export_helper_dependency_item(&items[index])
-                && item_infos[index].declared.iter().all(|binding| {
-                    !item_infos.iter().enumerate().any(|(consumer_index, info)| {
-                        !ignored_consumers.contains(&consumer_index)
+        .filter(|&index| is_removable_export_helper_dependency_item(&items[index]))
+        .collect();
+    // Removal ignores reads from other removed items only. An item that stays
+    // (such as a helper a chunk also exports) keeps everything it reads.
+    loop {
+        let kept: Vec<usize> = removable
+            .iter()
+            .copied()
+            .filter(|&index| {
+                item_infos[index].declared.iter().any(|binding| {
+                    item_infos.iter().enumerate().any(|(consumer_index, info)| {
+                        !removable.contains(&consumer_index)
+                            && !boundary_export_calls.contains(&consumer_index)
                             && info.references.contains(binding)
                     })
                 })
-        })
-        .collect()
+            })
+            .collect();
+        if kept.is_empty() {
+            break;
+        }
+        for index in kept {
+            removable.remove(&index);
+        }
+    }
+    removable
 }
 
 fn is_removable_export_helper_dependency_item(item: &ModuleItem) -> bool {

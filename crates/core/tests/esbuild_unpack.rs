@@ -437,6 +437,36 @@ export{v as a,b as d};
 }
 
 #[test]
+fn exported_export_helper_keeps_its_dependencies() {
+    // `__export` stays because the chunk exports it, so the property-define
+    // alias it calls must stay too.
+    let bundle = r#"
+var o=Object.defineProperty;
+var c=(l,e)=>{for(var r in e)o(l,r,{get:e[r],enumerable:!0})};
+var ns={};c(ns,{one:()=>one,two:()=>two});var one=1;function two(){return 2}
+var ns2={};c(ns2,{three:()=>three});var three=3;
+console.log(ns,ns2);
+export{c as b,ns as c,ns2 as d};
+"#;
+
+    let raw_pairs = expect_unpack_raw(bundle);
+    let raw_entry = entry_code(&raw_pairs);
+    assert!(
+        raw_entry.contains("var o = Object.defineProperty;") && raw_entry.contains("c as b"),
+        "the exported helper should keep its dependency:\n{raw_entry}"
+    );
+    assert_eq!(validate_output_modules(&raw_pairs), vec![]);
+
+    let normal_pairs = expect_unpack(bundle, "bundle.js");
+    let normal_entry = entry_code(&normal_pairs);
+    assert!(
+        exports_name(normal_entry, "b"),
+        "cleanup must keep the helper export:\n{normal_entry}"
+    );
+    assert_eq!(validate_output_modules(&normal_pairs), vec![]);
+}
+
+#[test]
 fn scope_module_imports_bindings_referenced_only_by_export_getters() {
     let bundle = r#"
 var defProp = Object.defineProperty;
