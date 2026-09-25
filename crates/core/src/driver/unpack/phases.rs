@@ -45,9 +45,9 @@ use crate::reexport_consolidation::run_reexport_consolidation;
 use crate::rules::eval_utils::DirectEvalAnalyzer;
 use crate::rules::expr_utils::is_unresolved_ident;
 use crate::rules::{
-    apply_rules, apply_rules_to_recovered_module, contains_local_self_require, DeadImports,
-    ImportDedup, RewriteLevel, RulePipelineOptions, SimplifySequence, UnAssignmentMerging,
-    UnConditionals, UnConditionalsAssignmentOnly, UnImportRename, UnOptionalChaining,
+    apply_rules, apply_rules_to_recovered_module, contains_local_self_require, ImportDedup,
+    RewriteLevel, RulePipelineOptions, SimplifySequence, UnAssignmentMerging, UnConditionals,
+    UnConditionalsAssignmentOnly, UnImportRename, UnOptionalChaining,
 };
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
 use crate::synthetic_import_cleanup::downgrade_unused_synthetic_imports;
@@ -644,16 +644,6 @@ pub(super) fn unpack_multi_module_with_plan(
             run_reexport_consolidation(&mut module, facts_ref, Some(&unpacked.module.filename));
             run_namespace_decomposition(&mut module, facts_ref, Some(&unpacked.module.filename));
             downgrade_unused_synthetic_imports(&mut module);
-            // Preserve specifiers that were already dead at the barrier, then
-            // reuse this visitor after the standalone late cleanup to remove
-            // only specifiers whose last use those rewrites eliminated.
-            let mut final_recovered_import_cleanup = match options.dce_mode {
-                crate::DceMode::Off => None,
-                crate::DceMode::TransformOnly => {
-                    Some(DeadImports::preserve_currently_dead(&module))
-                }
-                crate::DceMode::Full => Some(DeadImports::full()),
-            };
             // Late helper-through-UnReturn range.
             apply_rules_to_recovered_module(
                 &mut module,
@@ -693,9 +683,6 @@ pub(super) fn unpack_multi_module_with_plan(
                 module.visit_mut_with(&mut UnImportRename::new(unresolved_mark));
             }
 
-            if let Some(cleanup) = &mut final_recovered_import_cleanup {
-                module.visit_mut_with(cleanup);
-            }
             // A module that still carries a function-level return at module
             // scope after a declined restoration would not parse as ESM.
             // Preserve the extracted body and report the module as failed
