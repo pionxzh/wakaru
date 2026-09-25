@@ -12,34 +12,15 @@ pub(crate) struct BindingFacts {
     /// Every declarator without an initializer, any kind. Dead-declaration
     /// removal uses this.
     pub(crate) uninitialized: HashSet<BindingId>,
-    /// Uninitialized declarators a pattern may assign without observable
-    /// difference: hoisted `var _a;` (the compiler-temp shape) and `let _a;`
-    /// that straight-line control flow definitely initializes before every
-    /// use (what `VarDeclToLetConst` makes of the former before the cleanup
-    /// passes) — see `BindingUseIndex::assignable_uninitialized_bindings`. A
-    /// `let n;` declared after the pattern, or in a `switch` case another case
-    /// can skip, is in its TDZ when the pattern assigns it; deleting the
-    /// assignment would drop that ReferenceError.
-    pub(crate) assignable_uninitialized: HashSet<BindingId>,
     pub(crate) references: HashMap<BindingId, usize>,
 }
 
 pub(crate) fn collect_binding_facts(module: &Module) -> BindingFacts {
-    collect_binding_facts_and_temps(module).0
-}
-
-/// [`collect_binding_facts`] plus a [`TempIsolation`] built from the same
-/// traversal.
-pub(crate) fn collect_binding_facts_and_temps(module: &Module) -> (BindingFacts, TempIsolation) {
-    let uses = BindingUseIndex::collect(module);
-    let assignable = uses.assignable_uninitialized_bindings();
-    let facts = BindingFacts {
-        uninitialized: uses.uninitialized_bindings(),
-        assignable_uninitialized: assignable.clone(),
+    let index = BindingUseIndex::collect(module);
+    BindingFacts {
+        uninitialized: index.uninitialized_bindings(),
         references: BindingUseIndex::collect_legacy_reference_counts(module),
-    };
-    let temps = TempIsolation::from_parts(module, uses, assignable);
-    (facts, temps)
+    }
 }
 
 /// The proof that a compiler temp is confined to a matched pattern, so a
@@ -72,15 +53,7 @@ pub(crate) struct TempIsolation {
 impl TempIsolation {
     pub(crate) fn collect(module: &Module) -> Self {
         let uses = BindingUseIndex::collect(module);
-        let assignable = uses.assignable_uninitialized_bindings();
-        Self::from_parts(module, uses, assignable)
-    }
-
-    fn from_parts(
-        module: &Module,
-        uses: BindingUseIndex,
-        mut assignable: HashSet<BindingId>,
-    ) -> Self {
+        let mut assignable = uses.assignable_uninitialized_bindings();
         if !assignable.is_empty() {
             for binding in collect_exported_binding_ids(module) {
                 assignable.remove(&binding);
@@ -271,16 +244,6 @@ mod tests {
             assert!(isolation.is_isolated(&t, 2));
             assert!(!isolation.is_isolated(&t, 1));
             assert!(!isolation.is_isolated(&t, 3));
-        });
-    }
-
-    #[test]
-    fn shared_traversal_matches_standalone_collect() {
-        GLOBALS.set(&Default::default(), || {
-            let module = resolved("var t; (t = a()).b(t);");
-            let (_, shared) = collect_binding_facts_and_temps(&module);
-            let t = binding(&module, "t");
-            assert!(shared.is_isolated(&t, 2));
         });
     }
 }

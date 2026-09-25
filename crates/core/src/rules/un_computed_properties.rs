@@ -61,7 +61,7 @@
 //! this transform as a loose assumption for exactly that reason, so the rule is
 //! gated to `standard` and above.
 
-use crate::collections::{HashMap, HashSet};
+use crate::collections::HashSet;
 
 use swc_core::common::Spanned;
 use swc_core::ecma::ast::{
@@ -70,7 +70,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
-use super::binding_facts::{collect_binding_facts_and_temps, TempIsolation};
+use super::binding_facts::TempIsolation;
 use super::dead_decls::{extend_consumed_uninitialized_expr, remove_consumed_uninitialized_decls};
 use super::decl_utils::{binding_id, ident_matches_binding, BindingId};
 use super::helper_matcher::count_binding_refs;
@@ -82,8 +82,6 @@ const PROTO: &str = "__proto__";
 
 pub struct UnComputedProperties {
     rewrite_level: RewriteLevel,
-    assignable_uninitialized: HashSet<BindingId>,
-    binding_references: HashMap<BindingId, usize>,
     isolation: TempIsolation,
     consumed_uninitialized_bindings: HashSet<BindingId>,
 }
@@ -92,8 +90,6 @@ impl UnComputedProperties {
     pub fn new(rewrite_level: RewriteLevel) -> Self {
         Self {
             rewrite_level,
-            assignable_uninitialized: HashSet::default(),
-            binding_references: HashMap::default(),
             isolation: TempIsolation::default(),
             consumed_uninitialized_bindings: HashSet::default(),
         }
@@ -106,10 +102,7 @@ impl VisitMut for UnComputedProperties {
             return;
         }
 
-        let (facts, isolation) = collect_binding_facts_and_temps(module);
-        self.assignable_uninitialized = facts.assignable_uninitialized;
-        self.binding_references = facts.references;
-        self.isolation = isolation;
+        self.isolation = TempIsolation::collect(module);
         self.consumed_uninitialized_bindings.clear();
 
         module.visit_mut_children_with(self);
@@ -132,8 +125,7 @@ impl VisitMut for UnComputedProperties {
             &mut self.consumed_uninitialized_bindings,
             expr,
             &folded,
-            &self.assignable_uninitialized,
-            &self.binding_references,
+            &self.isolation,
         );
         *expr = folded;
     }

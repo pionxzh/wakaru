@@ -8,13 +8,14 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use super::binding_facts::collect_binding_facts;
+use super::binding_facts::{collect_binding_facts, TempIsolation};
 use super::decl_utils::{binding_id, BindingId};
 use super::eval_utils::{
     direct_eval_call_source, js_source_mentions_binding, module_has_with_stmt, DirectEvalAnalyzer,
     EvalCallSource,
 };
 use super::helper_matcher::BindingKey;
+use crate::analysis::binding_uses::BindingUseIndex;
 use crate::utils::paren::strip_parens;
 
 pub struct DeadDecls {
@@ -150,71 +151,48 @@ pub(crate) fn remove_consumed_uninitialized_decls(
     module.visit_mut_with(&mut UninitializedDeclStripper { dead: &removable });
 }
 
+/// Record the temps a rewrite from `before` to `after` consumed: the rewrite
+/// removed every use, and those uses were all the module had, so the
+/// declaration is dead once the rewrite lands.
 pub(crate) fn extend_consumed_uninitialized_expr(
     consumed: &mut HashSet<BindingId>,
     before: &Expr,
     after: &Expr,
-    uninitialized_bindings: &HashSet<BindingId>,
-    binding_references: &HashMap<BindingId, usize>,
+    isolation: &TempIsolation,
 ) {
-    let before_refs = collect_uninitialized_refs(before, uninitialized_bindings);
-    let after_refs = collect_uninitialized_refs(after, uninitialized_bindings);
-    extend_consumed_uninitialized_refs(consumed, before_refs, after_refs, binding_references);
+    extend_consumed_uninitialized(
+        consumed,
+        &BindingUseIndex::collect_expr(before),
+        &BindingUseIndex::collect_expr(after),
+        isolation,
+    );
 }
 
 pub(crate) fn extend_consumed_uninitialized_stmt(
     consumed: &mut HashSet<BindingId>,
     before: &Stmt,
     after: &Stmt,
-    uninitialized_bindings: &HashSet<BindingId>,
-    binding_references: &HashMap<BindingId, usize>,
+    isolation: &TempIsolation,
 ) {
-    let before_refs = collect_uninitialized_refs(before, uninitialized_bindings);
-    let after_refs = collect_uninitialized_refs(after, uninitialized_bindings);
-    extend_consumed_uninitialized_refs(consumed, before_refs, after_refs, binding_references);
+    extend_consumed_uninitialized(
+        consumed,
+        &BindingUseIndex::collect_stmts(std::slice::from_ref(before)),
+        &BindingUseIndex::collect_stmts(std::slice::from_ref(after)),
+        isolation,
+    );
 }
 
-fn extend_consumed_uninitialized_refs(
+fn extend_consumed_uninitialized(
     consumed: &mut HashSet<BindingId>,
-    before_refs: HashMap<BindingId, usize>,
-    after_refs: HashMap<BindingId, usize>,
-    binding_references: &HashMap<BindingId, usize>,
+    before: &BindingUseIndex,
+    after: &BindingUseIndex,
+    isolation: &TempIsolation,
 ) {
-    for (binding, before_count) in before_refs {
-        if after_refs.get(&binding).copied().unwrap_or(0) != 0 {
-            continue;
-        }
-        if binding_references.get(&binding).copied() == Some(before_count + 1) {
+    for binding in before.referenced_bindings() {
+        if after.use_count(&binding) == 0
+            && isolation.is_isolated(&binding, before.use_count(&binding))
+        {
             consumed.insert(binding);
-        }
-    }
-}
-
-fn collect_uninitialized_refs<'a, N>(
-    node: &N,
-    uninitialized_bindings: &'a HashSet<BindingId>,
-) -> HashMap<BindingId, usize>
-where
-    N: VisitWith<UninitializedRefCollector<'a>>,
-{
-    let mut collector = UninitializedRefCollector {
-        uninitialized_bindings,
-        references: HashMap::default(),
-    };
-    node.visit_with(&mut collector);
-    collector.references
-}
-
-struct UninitializedRefCollector<'a> {
-    uninitialized_bindings: &'a HashSet<BindingId>,
-    references: HashMap<BindingId, usize>,
-}
-
-impl Visit for UninitializedRefCollector<'_> {
-    fn visit_ident(&mut self, ident: &Ident) {
-        let binding = binding_id(ident);
-        if self.uninitialized_bindings.contains(&binding) {
-            *self.references.entry(binding).or_insert(0) += 1;
         }
     }
 }
@@ -716,4 +694,72 @@ fn is_undefined_initializer(expr: &Expr) -> bool {
                 if unary.op == swc_core::ecma::ast::UnaryOp::Void
                     && matches!(strip_parens(&unary.arg), Expr::Lit(Lit::Num(_)))
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use swc_core::common::{sync::Lrc, FileName, SourceMap, GLOBALS};
+    use swc_core::ecma::ast::ExprStmt;
+    use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
+    use swc_core::ecma::transforms::base::resolver;
+
+    fn resolved(source: &str) -> Module {
+        let cm: Lrc<SourceMap> = Default::default();
+        let fm = cm.new_source_file(
+            FileName::Custom("test.js".into()).into(),
+            source.to_string(),
+        );
+        let lexer = Lexer::new(
+            Syntax::Es(EsSyntax::default()),
+            Default::default(),
+            StringInput::from(&*fm),
+            None,
+        );
+        let mut module = Parser::new_from(lexer)
+            .parse_module()
+            .expect("source should parse");
+        module.visit_mut_with(&mut resolver(Default::default(), Default::default(), false));
+        module
+    }
+
+    /// Treat the first expression statement as the rewrite's input and the
+    /// second as its output, and return the temps the rewrite consumed.
+    fn consumed_names(source: &str) -> Vec<String> {
+        GLOBALS.set(&Default::default(), || {
+            struct Collector(Vec<Expr>);
+            impl Visit for Collector {
+                fn visit_expr_stmt(&mut self, stmt: &ExprStmt) {
+                    self.0.push((*stmt.expr).clone());
+                }
+            }
+            let module = resolved(source);
+            let mut stmts = Collector(Vec::new());
+            module.visit_with(&mut stmts);
+            let isolation = TempIsolation::collect(&module);
+            let mut consumed = HashSet::default();
+            extend_consumed_uninitialized_expr(&mut consumed, &stmts.0[0], &stmts.0[1], &isolation);
+            let mut names: Vec<String> = consumed
+                .into_iter()
+                .map(|(sym, _)| sym.to_string())
+                .collect();
+            names.sort();
+            names
+        })
+    }
+
+    #[test]
+    fn records_a_temp_whose_every_use_the_rewrite_removed() {
+        assert_eq!(consumed_names("var t; (t = a()).b(t); a().b();"), ["t"]);
+    }
+
+    #[test]
+    fn skips_a_temp_used_outside_the_rewrite() {
+        assert!(consumed_names("var t; (t = a()).b(t); a().b(); use(t);").is_empty());
+    }
+
+    #[test]
+    fn skips_an_exported_temp() {
+        assert!(consumed_names("export var t; (t = a()).b(t); a().b();").is_empty());
+    }
 }

@@ -8,7 +8,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
-use super::binding_facts::{collect_binding_facts_and_temps, TempIsolation};
+use super::binding_facts::TempIsolation;
 use super::dead_decls::{
     extend_consumed_uninitialized_expr, extend_consumed_uninitialized_stmt,
     remove_consumed_uninitialized_decls,
@@ -23,8 +23,6 @@ use crate::utils::paren::strip_parens;
 pub struct UnOptionalChaining {
     unresolved_mark: Mark,
     policy: RewritePolicy,
-    uninitialized_bindings: HashSet<BindingId>,
-    binding_references: HashMap<BindingId, usize>,
     consumed_uninitialized_bindings: HashSet<BindingId>,
     isolation: TempIsolation,
 }
@@ -34,8 +32,6 @@ impl UnOptionalChaining {
         Self {
             unresolved_mark,
             policy: RewritePolicy::from_level(level),
-            uninitialized_bindings: HashSet::default(),
-            binding_references: HashMap::default(),
             consumed_uninitialized_bindings: HashSet::default(),
             isolation: TempIsolation::default(),
         }
@@ -44,14 +40,11 @@ impl UnOptionalChaining {
 
 impl VisitMut for UnOptionalChaining {
     fn visit_mut_module(&mut self, module: &mut Module) {
-        let (facts, isolation) = collect_binding_facts_and_temps(module);
-        // Hoisted `var _a;` temps, or `let _a;` declared before every use in
-        // the same function (VarDeclToLetConst's rewrite of the former); an
+        // Temps are hoisted `var _a;`, or `let _a;` declared before every use
+        // in the same function (VarDeclToLetConst's rewrite of the former); an
         // uninitialized `let` elsewhere may be in its TDZ where the pattern
-        // assigns it.
-        self.uninitialized_bindings = facts.assignable_uninitialized;
-        self.binding_references = facts.references;
-        self.isolation = isolation;
+        // assigns it, and `TempIsolation` rejects it.
+        self.isolation = TempIsolation::collect(module);
         self.consumed_uninitialized_bindings.clear();
         module.visit_mut_children_with(self);
         remove_consumed_uninitialized_decls(module, &self.consumed_uninitialized_bindings);
@@ -204,8 +197,7 @@ impl UnOptionalChaining {
             &mut self.consumed_uninitialized_bindings,
             before,
             after,
-            &self.uninitialized_bindings,
-            &self.binding_references,
+            &self.isolation,
         );
     }
 
@@ -214,8 +206,7 @@ impl UnOptionalChaining {
             &mut self.consumed_uninitialized_bindings,
             before,
             after,
-            &self.uninitialized_bindings,
-            &self.binding_references,
+            &self.isolation,
         );
     }
 }
