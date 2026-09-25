@@ -193,7 +193,6 @@ var _app_info;
 const out = (_app_info = app_info).build.apply(_app_info, [prefix, ...items, tail]);
 "#;
     let expected = r#"
-var _app_info;
 const out = app_info.build(...[prefix, ...items, tail]);
 "#;
     let output = apply(input);
@@ -452,8 +451,9 @@ function collect(output, args) {
 }
 
 #[test]
-fn preserves_split_memoized_apply_when_method_temp_is_written_in_computed_prop() {
-    // The computed key writes `method` inside the member the rewrite keeps.
+fn keeps_a_method_temp_write_inside_the_computed_key() {
+    // The key's write to `method` stays in the kept member, so its declaration
+    // stays too; nothing reads `method` afterwards.
     let input = r#"
 function collect(output, args) {
   let method;
@@ -462,7 +462,13 @@ function collect(output, args) {
   method.apply(receiver, args);
 }
 "#;
-    assert_eq_normalized(&apply(input), input);
+    let expected = r#"
+function collect(output, args) {
+  let method;
+  output[method = "push"](...args);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
 }
 
 #[test]
@@ -475,7 +481,6 @@ function add(items) {
 "#;
     let expected = r#"
 function add(items) {
-  var _this$list;
   this.list.push(...items);
 }
 "#;
@@ -483,7 +488,9 @@ function add(items) {
 }
 
 #[test]
-fn drops_memoized_receiver_temp_reused_only_by_patterns() {
+fn keeps_memoized_receiver_assignments_when_the_temp_is_reused() {
+    // Each rewrite must account for every use of `_a`; with two sites neither
+    // holds all of them, so both keep the assignment.
     let input = r#"
 function add(x, y) {
   var _a;
@@ -494,8 +501,8 @@ function add(x, y) {
     let expected = r#"
 function add(x, y) {
   var _a;
-  this.a.push(...x);
-  this.b.push(...y);
+  (_a = this.a).push(...x);
+  (_a = this.b).push(...y);
 }
 "#;
     assert_eq_normalized(&apply(input), expected);
@@ -559,7 +566,9 @@ function add(items) {
 }
 
 #[test]
-fn keeps_assignment_when_module_has_direct_eval() {
+fn keeps_only_the_eval_visible_declaration_of_a_dropped_temp() {
+    // Dynamic Scope Limits: an isolated compiler temp does not bail on direct
+    // `eval`, but its declaration stays for eval to resolve.
     let input = r#"
 function add(items) {
   var t;
@@ -570,7 +579,7 @@ function add(items) {
     let expected = r#"
 function add(items) {
   var t;
-  (t = get()).push(...items);
+  get().push(...items);
   return eval("t");
 }
 "#;
@@ -640,6 +649,27 @@ export var t;
     let expected = r#"
 export var t;
 (t = get()).push(...items);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn converts_split_memoized_apply_with_temps_declared_in_an_outer_block() {
+    let input = r#"
+function collect(output, args) {
+  var method, receiver;
+  if (ready) {
+    method = (receiver = output).push;
+    method.apply(receiver, args);
+  }
+}
+"#;
+    let expected = r#"
+function collect(output, args) {
+  if (ready) {
+    output.push(...args);
+  }
+}
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
