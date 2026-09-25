@@ -962,6 +962,23 @@ impl Visit for RefCollector<'_> {
         }
         prop.value.visit_with(self);
     }
+
+    // Import specifiers declare locals; their imported names belong to the
+    // source module.
+    fn visit_import_decl(&mut self, _: &ImportDecl) {}
+
+    // Only a local `orig` is a reference. An exported name, and every name in
+    // `export { ... } from "..."`, is not a binding of this module.
+    fn visit_named_export(&mut self, export: &NamedExport) {
+        if export.src.is_some() {
+            return;
+        }
+        for specifier in &export.specifiers {
+            if let ExportSpecifier::Named(named) = specifier {
+                named.orig.visit_with(self);
+            }
+        }
+    }
 }
 
 fn collect_pat_bindings(pat: &Pat, bindings: &mut HashSet<Atom>) {

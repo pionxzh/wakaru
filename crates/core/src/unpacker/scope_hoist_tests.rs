@@ -1847,3 +1847,52 @@ fn nested_inspect_keeps_component_cap_merges() {
         direct_writer.code
     );
 }
+
+fn exported_name_collision_fixture(helper_export: &str) -> String {
+    [
+        r#"
+            function b(list, item) { return list.concat([item]); }
+            console.log(b([], 0));
+            function q1() { return 1; }
+            function q2() { return q1() + 1; }
+            function q3() { return q2() * 2; }
+            function q4() { return q3() + 5; }
+            function qM() { return q4(); }
+            function c1(x) { return b(x, 1); }
+            function c2(x) { return b(c1(x), 2); }
+            function c3(x) { return b(c2(x), 3); }
+            function c4(x) { return b(c3(x), 4); }
+            function c5(x) { return b(c4(x), 5); }
+        "#,
+        helper_export,
+    ]
+    .join("\n")
+}
+
+fn module_code<'a>(modules: &'a [(String, String, bool)], filename: &str) -> &'a str {
+    &modules
+        .iter()
+        .find(|(name, _, _)| name == filename)
+        .unwrap_or_else(|| panic!("missing {filename} in {modules:#?}"))
+        .1
+}
+
+#[test]
+fn export_and_import_names_are_not_local_references() {
+    // `q2`, `q3`, and `q4` below name bindings of other modules or the
+    // exported name, never the chunk's locals, so the entry imports only `qM`.
+    let modules = split(&exported_name_collision_fixture(
+        r#"
+            import { q2 as other } from "./dep.js";
+            export { qM as q3 };
+            export { q4 as again } from "./dep.js";
+            console.log(other);
+        "#,
+    ))
+    .expect("should split");
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        entry.contains("import { qM } from \"./chunk_q1.js\";"),
+        "entry should import only `qM` from the chunk:\n{entry}"
+    );
+}
