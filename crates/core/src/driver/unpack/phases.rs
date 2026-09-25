@@ -1213,6 +1213,36 @@ for (var key in current) globalThis[key] = current[key];"#,
     }
 
     #[test]
+    fn late_cleanup_removes_newly_dead_recovered_import_specifier() {
+        // `dedup_duplicate_exports` runs after the late rule range and drops
+        // the second `x` export, which held the only read of `a`.
+        let modules = vec![UnpackedModule {
+            id: "entry".to_string(),
+            is_entry: true,
+            code: r#"import { a } from "./module.js";
+export const x = 1;
+export { a as x };
+"#
+            .to_string(),
+            filename: "entry.js".to_string(),
+            ..Default::default()
+        }];
+
+        let output = unpack_multi_module(
+            modules,
+            DecompileOptions {
+                dce_mode: DceMode::TransformOnly,
+                ..Default::default()
+            },
+        )
+        .expect("fixture should decompile");
+        assert_eq!(
+            output.modules[0].code,
+            "import \"./module.js\";\nexport const x = 1;\n"
+        );
+    }
+
+    #[test]
     fn late_cleanup_preserves_pre_existing_dead_recovered_import_specifier() {
         let modules = vec![UnpackedModule {
             id: "entry".to_string(),
