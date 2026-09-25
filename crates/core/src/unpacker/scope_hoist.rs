@@ -12,8 +12,8 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use crate::rules::rename_utils::collect_module_names;
 
 use super::emit_esm::{
-    dedup_filename, emit_items, make_named_export_stmt, make_named_import_stmt,
-    try_promote_fn_class_export, FilenameDedupStyle,
+    dedup_filename, emit_items, make_named_export_stmt, make_named_export_stmt_with_aliases,
+    make_named_import_stmt_with_aliases, try_promote_fn_class_export, FilenameDedupStyle,
 };
 use super::{
     has_strict_mode_syntax_hazard, module_item_declared_names, spans_byte_ranges, BundleFormat,
@@ -2631,6 +2631,11 @@ fn emit_clusters(
         .collect();
 
     let mut symbol_links = build_cluster_symbol_links(&cluster_declared, &cluster_link_referenced);
+    let link_export_names: Vec<LinkExportNames> = clusters
+        .iter()
+        .zip(&symbol_links.exports_by_producer)
+        .map(|(cluster, linked)| plan_link_export_names(body, cluster, linked))
+        .collect();
 
     // Assign final filenames first so synthesized imports point at the same
     // paths the caller will write. Chunk names are derived from minified
@@ -2662,11 +2667,25 @@ fn emit_clusters(
 
         // Synthesize imports from the indexed cross-cluster symbol links.
         for (producer_index, needed) in &symbol_links.imports_by_consumer[ci] {
-            module_items.push(make_named_import_stmt(needed, &filenames[*producer_index]));
+            let aliases = &link_export_names[*producer_index].aliases;
+            let names: Vec<(Atom, Atom)> = needed
+                .iter()
+                .map(|local| (aliases.get(local).unwrap_or(local).clone(), local.clone()))
+                .collect();
+            module_items.push(make_named_import_stmt_with_aliases(
+                &names,
+                &filenames[*producer_index],
+            ));
         }
 
-        // Collect which names this cluster should export.
+        // Collect which names this cluster should export. Names the cluster's
+        // own export statements already cover, or would collide with, are
+        // handled by the link export plan instead.
+        let link_exports = &link_export_names[ci];
         let mut exported = std::mem::take(&mut symbol_links.exports_by_producer[ci]);
+        exported.retain(|name| {
+            !link_exports.existing.contains(name) && !link_exports.aliases.contains_key(name)
+        });
 
         // Original body items, with exported declarations promoted to
         // `export function ...` / `export const ...` / `export class ...`.
@@ -2708,6 +2727,15 @@ fn emit_clusters(
         if !leftover_exports.is_empty() {
             leftover_exports.sort();
             module_items.push(make_named_export_stmt(&leftover_exports));
+        }
+        if !link_exports.aliases.is_empty() {
+            let mut aliased = link_exports
+                .aliases
+                .iter()
+                .map(|(local, exported)| (local.clone(), exported.clone()))
+                .collect::<Vec<_>>();
+            aliased.sort();
+            module_items.push(make_named_export_stmt_with_aliases(&aliased));
         }
 
         if !default_interop_bindings.is_empty() {
@@ -2776,6 +2804,97 @@ fn emit_clusters(
     }
 
     Some(modules)
+}
+
+/// How a producer cluster exposes the locals other clusters import from it
+/// when its own export statements already use some of those names.
+#[derive(Default)]
+struct LinkExportNames {
+    /// Locals the cluster already exports under their own name.
+    existing: HashSet<Atom>,
+    /// Locals whose name another export of the cluster already uses (such as
+    /// `export { qM as b }` beside a local `b`), mapped to an unused export
+    /// name.
+    aliases: HashMap<Atom, Atom>,
+}
+
+fn plan_link_export_names(
+    body: &[ModuleItem],
+    cluster: &Cluster,
+    linked: &HashSet<Atom>,
+) -> LinkExportNames {
+    let mut plan = LinkExportNames::default();
+    if linked.is_empty() {
+        return plan;
+    }
+    // Exported name -> the local it exports, when it exports a local.
+    let mut used: HashMap<Atom, Option<Atom>> = HashMap::default();
+    for &i in &cluster.item_indices {
+        collect_export_names(&body[i], &mut used);
+    }
+    let mut reserved: HashSet<Atom> = used.keys().chain(linked).cloned().collect();
+    let mut locals = linked.iter().collect::<Vec<_>>();
+    locals.sort();
+    for local in locals {
+        match used.get(local) {
+            None => {}
+            Some(Some(exported_local)) if exported_local == local => {
+                plan.existing.insert(local.clone());
+            }
+            Some(_) => {
+                let alias = (2..)
+                    .map(|suffix| Atom::from(format!("{local}${suffix}")))
+                    .find(|candidate| reserved.insert(candidate.clone()))
+                    .expect("open-ended suffix search must find an unused export name");
+                plan.aliases.insert(local.clone(), alias);
+            }
+        }
+    }
+    plan
+}
+
+fn collect_export_names(item: &ModuleItem, used: &mut HashMap<Atom, Option<Atom>>) {
+    let ModuleItem::ModuleDecl(decl) = item else {
+        return;
+    };
+    match decl {
+        ModuleDecl::ExportDecl(_) => {
+            for name in module_item_declared_names(item) {
+                used.insert(name.clone(), Some(name));
+            }
+        }
+        ModuleDecl::ExportDefaultDecl(_) | ModuleDecl::ExportDefaultExpr(_) => {
+            used.insert("default".into(), None);
+        }
+        ModuleDecl::ExportNamed(export) => {
+            for specifier in &export.specifiers {
+                match specifier {
+                    ExportSpecifier::Named(named) => {
+                        let exported = named.exported.as_ref().unwrap_or(&named.orig);
+                        let local = match (&export.src, &named.orig) {
+                            (None, ModuleExportName::Ident(orig)) => Some(orig.sym.clone()),
+                            _ => None,
+                        };
+                        used.insert(module_export_name_atom(exported), local);
+                    }
+                    ExportSpecifier::Namespace(namespace) => {
+                        used.insert(module_export_name_atom(&namespace.name), None);
+                    }
+                    ExportSpecifier::Default(default) => {
+                        used.insert(default.exported.sym.clone(), None);
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn module_export_name_atom(name: &ModuleExportName) -> Atom {
+    match name {
+        ModuleExportName::Ident(ident) => ident.sym.clone(),
+        ModuleExportName::Str(str_lit) => str_lit.value.as_str().unwrap_or("").into(),
+    }
 }
 
 fn collect_import_decls(body: &[ModuleItem]) -> Vec<ImportDecl> {

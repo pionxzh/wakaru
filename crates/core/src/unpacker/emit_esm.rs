@@ -138,17 +138,32 @@ pub(crate) fn make_named_import_stmt_with_aliases(
 
 /// `export { a, b };`
 pub(crate) fn make_named_export_stmt(names: &[Atom]) -> ModuleItem {
+    let names: Vec<(Atom, Atom)> = names
+        .iter()
+        .map(|name| (name.clone(), name.clone()))
+        .collect();
+    make_named_export_stmt_with_aliases(&names)
+}
+
+/// `export { local as exported, ... };`
+pub(crate) fn make_named_export_stmt_with_aliases(names: &[(Atom, Atom)]) -> ModuleItem {
     let specifiers = names
         .iter()
-        .map(|name| {
+        .map(|(local, exported)| {
             ExportSpecifier::Named(ExportNamedSpecifier {
                 span: Default::default(),
                 orig: ModuleExportName::Ident(Ident::new(
-                    name.clone(),
+                    local.clone(),
                     Default::default(),
                     Default::default(),
                 )),
-                exported: None,
+                exported: (exported != local).then(|| {
+                    ModuleExportName::Ident(Ident::new(
+                        exported.clone(),
+                        Default::default(),
+                        Default::default(),
+                    ))
+                }),
                 is_type_only: false,
             })
         })

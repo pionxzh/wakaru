@@ -1878,6 +1878,44 @@ fn module_code<'a>(modules: &'a [(String, String, bool)], filename: &str) -> &'a
 }
 
 #[test]
+fn synthesized_export_avoids_an_export_name_the_module_already_uses() {
+    // `b` is exported as `qM`, so the chunk that needs the local `b` must
+    // import it under a different export name.
+    let modules =
+        split(&exported_name_collision_fixture("export { qM as b };")).expect("should split");
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        entry.contains("export { qM as b };") && entry.contains("export { b as b$2 };"),
+        "entry should keep its own `b` export and add an alias:\n{entry}"
+    );
+    assert!(
+        !entry.contains("export function b"),
+        "entry must not export the helper as `b`:\n{entry}"
+    );
+    let consumer = module_code(&modules, "chunk_c1.js");
+    assert!(
+        consumer.contains("import { b$2 as b } from \"./entry.js\";"),
+        "consumer should import the helper through the alias:\n{consumer}"
+    );
+}
+
+#[test]
+fn synthesized_export_reuses_an_existing_export_of_the_same_binding() {
+    let modules = split(&exported_name_collision_fixture("export { b };")).expect("should split");
+    let entry = module_code(&modules, "entry.js");
+    assert_eq!(
+        entry.matches("export").count(),
+        1,
+        "entry should export `b` once:\n{entry}"
+    );
+    let consumer = module_code(&modules, "chunk_c1.js");
+    assert!(
+        consumer.contains("import { b } from \"./entry.js\";"),
+        "consumer should import the existing export:\n{consumer}"
+    );
+}
+
+#[test]
 fn export_and_import_names_are_not_local_references() {
     // `q2`, `q3`, and `q4` below name bindings of other modules or the
     // exported name, never the chunk's locals, so the entry imports only `qM`.
