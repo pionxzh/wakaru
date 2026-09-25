@@ -1525,3 +1525,13 @@ function f(obj) {
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
+
+#[test]
+fn preserves_exported_temp_assignment() {
+    // Importers read the live `_a` binding, so its write is observable.
+    let input = r#"
+export var _a;
+export const x = (_a = o) === null || _a === void 0 ? void 0 : _a.b;
+"#;
+    assert_eq_normalized(&apply(input), input);
+}

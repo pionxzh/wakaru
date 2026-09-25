@@ -629,3 +629,17 @@ root.child.method.apply(root.child, [1, 2]);
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
+
+#[test]
+fn keeps_assignment_when_receiver_temp_is_exported() {
+    // Importers read the live `t` binding, so its write is observable.
+    let input = r#"
+export var t;
+(t = get()).push.apply(t, items);
+"#;
+    let expected = r#"
+export var t;
+(t = get()).push(...items);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}

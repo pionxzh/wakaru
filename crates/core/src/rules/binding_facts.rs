@@ -1,10 +1,12 @@
 use crate::collections::{HashMap, HashSet};
 
-use swc_core::ecma::ast::{Expr, Module};
+use swc_core::ecma::ast::{Expr, Module, Pat, VarDecl};
+use swc_core::ecma::visit::{Visit, VisitWith};
 
 use crate::analysis::binding_uses::BindingUseIndex;
 
-use super::decl_utils::BindingId;
+use super::decl_utils::{binding_id, BindingId};
+use super::rename_utils::collect_exported_binding_ids;
 
 pub(crate) struct BindingFacts {
     /// Every declarator without an initializer, any kind. Dead-declaration
@@ -36,7 +38,8 @@ pub(crate) fn collect_binding_facts_and_temps(module: &Module) -> (BindingFacts,
         assignable_uninitialized: assignable.clone(),
         references: BindingUseIndex::collect_legacy_reference_counts(module),
     };
-    (facts, TempIsolation { uses, assignable })
+    let temps = TempIsolation::from_parts(module, uses, assignable);
+    (facts, temps)
 }
 
 /// The proof that a compiler temp is confined to a matched pattern, so a
@@ -49,7 +52,10 @@ pub(crate) fn collect_binding_facts_and_temps(module: &Module) -> (BindingFacts,
 ///   assign ([`BindingUseIndex::assignable_uninitialized_bindings`]). That
 ///   excludes parameters, which sloppy-mode `arguments` aliases, and a
 ///   `let` a pattern could write in its TDZ, whose ReferenceError dropping
-///   the write would hide.
+///   the write would hide;
+/// - the declaration is not exported (importers read the live binding) and
+///   not ambient (`declare var` creates no binding, so the write reaches a
+///   global).
 ///
 /// Counting uses across several sites of one binding is valid only when
 /// each site reads nothing but its own write.
@@ -67,6 +73,24 @@ impl TempIsolation {
     pub(crate) fn collect(module: &Module) -> Self {
         let uses = BindingUseIndex::collect(module);
         let assignable = uses.assignable_uninitialized_bindings();
+        Self::from_parts(module, uses, assignable)
+    }
+
+    fn from_parts(
+        module: &Module,
+        uses: BindingUseIndex,
+        mut assignable: HashSet<BindingId>,
+    ) -> Self {
+        if !assignable.is_empty() {
+            for binding in collect_exported_binding_ids(module) {
+                assignable.remove(&binding);
+            }
+            let mut ambient = AmbientVarCollector::default();
+            module.visit_with(&mut ambient);
+            for binding in ambient.bindings {
+                assignable.remove(&binding);
+            }
+        }
         Self { uses, assignable }
     }
 
@@ -97,27 +121,45 @@ impl TempIsolation {
     }
 }
 
+/// The bindings `declare var` / `declare let` introduce.
+#[derive(Default)]
+struct AmbientVarCollector {
+    bindings: Vec<BindingId>,
+}
+
+impl Visit for AmbientVarCollector {
+    fn visit_var_decl(&mut self, var: &VarDecl) {
+        if var.declare {
+            for declarator in &var.decls {
+                if let Pat::Ident(binding) = &declarator.name {
+                    self.bindings.push(binding_id(&binding.id));
+                }
+            }
+        }
+        var.visit_children_with(self);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use swc_core::common::{sync::Lrc, FileName, SourceMap, GLOBALS};
     use swc_core::ecma::ast::ExprStmt;
-    use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
+    use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax, TsSyntax};
     use swc_core::ecma::transforms::base::resolver;
     use swc_core::ecma::visit::{Visit, VisitMutWith, VisitWith};
 
     fn resolved(source: &str) -> Module {
+        resolved_with(source, Syntax::Es(EsSyntax::default()))
+    }
+
+    fn resolved_with(source: &str, syntax: Syntax) -> Module {
         let cm: Lrc<SourceMap> = Default::default();
         let fm = cm.new_source_file(
             FileName::Custom("test.js".into()).into(),
             source.to_string(),
         );
-        let lexer = Lexer::new(
-            Syntax::Es(EsSyntax::default()),
-            Default::default(),
-            StringInput::from(&*fm),
-            None,
-        );
+        let lexer = Lexer::new(syntax, Default::default(), StringInput::from(&*fm), None);
         let mut module = Parser::new_from(lexer)
             .parse_module()
             .expect("source should parse");
@@ -198,6 +240,26 @@ mod tests {
     #[test]
     fn redeclared_temp_is_not_isolated() {
         assert!(!t_isolated_to_first_stmt("var t; var t; (t = a()).b(t);"));
+    }
+
+    #[test]
+    fn exported_temp_is_not_isolated() {
+        // Importers read the live binding.
+        assert!(!t_isolated_to_first_stmt("export var t; (t = a()).b(t);"));
+    }
+
+    #[test]
+    fn ambient_temp_is_not_isolated() {
+        // `declare var` creates no binding, so the write reaches a global.
+        GLOBALS.set(&Default::default(), || {
+            let module = resolved_with(
+                "declare var t; (t = a()).b(t);",
+                Syntax::Typescript(TsSyntax::default()),
+            );
+            let isolation = TempIsolation::collect(&module);
+            let stmts = expr_stmts(&module);
+            assert!(!isolation.are_isolated_to([&binding(&module, "t")], &[&stmts[0]]));
+        });
     }
 
     #[test]

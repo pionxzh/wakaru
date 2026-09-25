@@ -579,3 +579,13 @@ const x = (n = foo) != null ? n : "bar";
     let output = apply(input);
     assert!(output.contains(r#"foo ?? "bar""#), "{output}");
 }
+
+#[test]
+fn preserves_exported_coalescing_temp() {
+    // Importers read the live `n` binding, so its write is observable.
+    let input = r#"
+export var n;
+export const x = (n = foo) !== null && n !== void 0 ? n : "bar";
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
