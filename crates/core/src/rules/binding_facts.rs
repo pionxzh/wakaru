@@ -1,9 +1,9 @@
 use crate::collections::{HashMap, HashSet};
 
-use swc_core::ecma::ast::{Expr, Module, Pat, VarDecl};
+use swc_core::ecma::ast::{Expr, Module, Pat, Stmt, VarDecl};
 use swc_core::ecma::visit::{Visit, VisitWith};
 
-use crate::analysis::binding_uses::BindingUseIndex;
+use crate::analysis::binding_uses::{BindingUseIndex, UseKind};
 
 use super::decl_utils::{binding_id, BindingId};
 use super::rename_utils::collect_exported_binding_ids;
@@ -38,12 +38,13 @@ pub(crate) fn collect_binding_facts(module: &Module) -> BindingFacts {
 ///   not ambient (`declare var` creates no binding, so the write reaches a
 ///   global).
 ///
-/// Counting uses across several sites of one binding is valid only when
-/// each site reads nothing but its own write.
-///
-/// Counts come from the module as collected. A rule whose later matches see
-/// the output of earlier rewrites reports each accepted rewrite through
-/// [`TempIsolation::record_rewrite`], so the counts follow the current module.
+/// Every rewrite that may drop a temp's write goes through
+/// [`TempIsolation::accept_expr_rewrite`] (or the statement form) at the
+/// rule's choke point. That enforces the rule above for every code path,
+/// records which declarations the rewrite made dead, and keeps the counts in
+/// step with the current module, so a temp consumed by several nested
+/// rewrites is still proven. Pattern proofs stay as early exits and as shape
+/// policy.
 ///
 /// Dynamic scope is the caller's concern: an isolated compiler temp need
 /// not bail on `with` or direct `eval`, but removing its declaration does
@@ -84,9 +85,80 @@ impl TempIsolation {
             && self.current_use_count(binding) == consumed_uses as isize
     }
 
+    /// Check a rewrite of `before` into `after` at the rule's choke point.
+    ///
+    /// It is accepted only if every binding whose writes it drops is a temp
+    /// isolated to `before` and not read by `after`; a pattern proof alone
+    /// does not cover writes another code path drops, or reads a builder
+    /// copies into the output. On acceptance, temps whose every use the
+    /// rewrite removed are added to `consumed` (their declarations are dead)
+    /// and the counts are updated for later rewrites. On rejection nothing
+    /// changes.
+    pub(crate) fn accept_expr_rewrite(
+        &mut self,
+        before: &Expr,
+        after: &Expr,
+        consumed: &mut HashSet<BindingId>,
+    ) -> bool {
+        self.accept_rewrite(
+            &BindingUseIndex::collect_expr(before),
+            &BindingUseIndex::collect_expr(after),
+            consumed,
+        )
+    }
+
+    /// [`accept_expr_rewrite`](Self::accept_expr_rewrite) for statements.
+    pub(crate) fn accept_stmts_rewrite(
+        &mut self,
+        before: &[Stmt],
+        after: &[Stmt],
+        consumed: &mut HashSet<BindingId>,
+    ) -> bool {
+        self.accept_rewrite(
+            &BindingUseIndex::collect_stmts(before),
+            &BindingUseIndex::collect_stmts(after),
+            consumed,
+        )
+    }
+
+    fn accept_rewrite(
+        &mut self,
+        before: &BindingUseIndex,
+        after: &BindingUseIndex,
+        consumed: &mut HashSet<BindingId>,
+    ) -> bool {
+        let writes = |index: &BindingUseIndex, binding: &BindingId| {
+            index
+                .use_sites(binding)
+                .iter()
+                .filter(|site| matches!(site.kind, UseKind::Write | UseKind::ReadWrite))
+                .count()
+        };
+        let before_bindings = before.referenced_bindings();
+        let mut newly_consumed = Vec::new();
+        for binding in &before_bindings {
+            let isolated = self.is_isolated(binding, before.use_count(binding));
+            if writes(after, binding) < writes(before, binding) {
+                let read_after = after
+                    .use_sites(binding)
+                    .iter()
+                    .any(|site| site.kind != UseKind::Write);
+                if !isolated || read_after {
+                    return false;
+                }
+            }
+            if isolated && after.use_count(binding) == 0 {
+                newly_consumed.push(binding.clone());
+            }
+        }
+        consumed.extend(newly_consumed);
+        self.record_rewrite(before, after);
+        true
+    }
+
     /// Account for a rewrite that replaced a node with `before`'s uses by one
     /// with `after`'s.
-    pub(crate) fn record_rewrite(&mut self, before: &BindingUseIndex, after: &BindingUseIndex) {
+    fn record_rewrite(&mut self, before: &BindingUseIndex, after: &BindingUseIndex) {
         let mut bindings = before.referenced_bindings();
         bindings.extend(after.referenced_bindings());
         for binding in bindings {
@@ -259,6 +331,113 @@ mod tests {
             let isolation = TempIsolation::collect(&module);
             let stmts = expr_stmts(&module);
             assert!(!isolation.are_isolated_to([&binding(&module, "t")], &[&stmts[0]]));
+        });
+    }
+
+    /// Run `accept_expr_rewrite` with the first expression statement as the
+    /// input and `after` built from it; return the verdict and the consumed
+    /// temps' names.
+    fn accept(source: &str, after: impl Fn(&Expr) -> Expr) -> (bool, Vec<String>) {
+        GLOBALS.set(&Default::default(), || {
+            let module = resolved(source);
+            let before = expr_stmts(&module).remove(0);
+            let mut isolation = TempIsolation::collect(&module);
+            let mut consumed = HashSet::default();
+            let accepted = isolation.accept_expr_rewrite(&before, &after(&before), &mut consumed);
+            let mut names: Vec<String> = consumed
+                .into_iter()
+                .map(|(sym, _)| sym.to_string())
+                .collect();
+            names.sort();
+            (accepted, names)
+        })
+    }
+
+    /// The call's receiver object without the `(t = ...)` wrapper, i.e. the
+    /// rewrite `(t = a()).b(t)` → `a().b()`.
+    fn drop_temp(before: &Expr) -> Expr {
+        let Expr::Call(call) = before else {
+            panic!("call expected")
+        };
+        let swc_core::ecma::ast::Callee::Expr(callee) = &call.callee else {
+            panic!()
+        };
+        let Expr::Member(member) = callee.as_ref() else {
+            panic!()
+        };
+        let Expr::Paren(paren) = member.obj.as_ref() else {
+            panic!()
+        };
+        let Expr::Assign(assign) = paren.expr.as_ref() else {
+            panic!()
+        };
+        let mut call = call.clone();
+        let mut member = member.clone();
+        member.obj = assign.right.clone();
+        call.callee = swc_core::ecma::ast::Callee::Expr(Box::new(Expr::Member(member)));
+        call.args.clear();
+        Expr::Call(call)
+    }
+
+    /// Like `drop_temp`, but keeps the `t` argument: `a().b(t)`.
+    fn drop_temp_keep_read(before: &Expr) -> Expr {
+        let Expr::Call(original) = before else {
+            panic!("call expected")
+        };
+        let Expr::Call(mut call) = drop_temp(before) else {
+            unreachable!()
+        };
+        call.args = original.args.clone();
+        Expr::Call(call)
+    }
+
+    #[test]
+    fn accepts_dropping_an_isolated_temp_and_consumes_it() {
+        assert_eq!(
+            accept("var t; (t = a()).b(t);", drop_temp),
+            (true, vec!["t".to_string()])
+        );
+    }
+
+    #[test]
+    fn rejects_dropping_a_temp_read_elsewhere() {
+        assert_eq!(
+            accept("var t; (t = a()).b(t); use(t);", drop_temp),
+            (false, vec![])
+        );
+    }
+
+    #[test]
+    fn rejects_dropping_an_undeclared_temp() {
+        assert_eq!(accept("(t = a()).b(t);", drop_temp), (false, vec![]));
+    }
+
+    #[test]
+    fn rejects_an_output_that_reads_the_dropped_temp() {
+        assert_eq!(
+            accept("var t; (t = a()).b(t);", drop_temp_keep_read),
+            (false, vec![])
+        );
+    }
+
+    #[test]
+    fn accepts_a_rewrite_that_drops_no_write() {
+        assert_eq!(
+            accept("(t = a()).b(t); use(t);", Expr::clone),
+            (true, vec![])
+        );
+    }
+
+    #[test]
+    fn rejection_leaves_the_counts_unchanged() {
+        GLOBALS.set(&Default::default(), || {
+            let module = resolved("var t; (t = a()).b(t); use(t);");
+            let before = expr_stmts(&module).remove(0);
+            let t = binding(&module, "t");
+            let mut isolation = TempIsolation::collect(&module);
+            let mut consumed = HashSet::default();
+            assert!(!isolation.accept_expr_rewrite(&before, &drop_temp(&before), &mut consumed));
+            assert!(isolation.is_isolated(&t, 3));
         });
     }
 

@@ -168,20 +168,6 @@ pub(crate) fn extend_consumed_uninitialized_expr(
     );
 }
 
-pub(crate) fn extend_consumed_uninitialized_stmt(
-    consumed: &mut HashSet<BindingId>,
-    before: &Stmt,
-    after: &Stmt,
-    isolation: &TempIsolation,
-) {
-    extend_consumed_uninitialized(
-        consumed,
-        &BindingUseIndex::collect_stmts(std::slice::from_ref(before)),
-        &BindingUseIndex::collect_stmts(std::slice::from_ref(after)),
-        isolation,
-    );
-}
-
 fn extend_consumed_uninitialized(
     consumed: &mut HashSet<BindingId>,
     before: &BindingUseIndex,
