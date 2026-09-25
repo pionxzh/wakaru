@@ -1,22 +1,30 @@
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignOp, AssignTarget, CallExpr, Callee, Expr, ExprOrSpread, ExprStmt, Ident, Lit, MemberExpr,
-    MemberProp, SimpleAssignTarget, Stmt,
+    AssignExpr, AssignOp, AssignTarget, CallExpr, Callee, Expr, ExprOrSpread, ExprStmt, Ident, Lit,
+    MemberExpr, MemberProp, Module, SimpleAssignTarget, Stmt,
 };
-use swc_core::ecma::visit::{VisitMut, VisitMutWith};
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::decl_utils::{
-    can_remove_prior_uninitialized_decls, ident_is_used_in_stmts_excluding_bindings,
-    remove_prior_uninitialized_decls, same_ident, UninitializedDeclKind,
+    can_remove_prior_uninitialized_decls, remove_prior_uninitialized_decls, same_ident,
+    UninitializedDeclKind,
 };
+use super::eval_utils::has_dynamic_scope_construct;
 use super::expr_utils::{exprs_structurally_equal, is_unresolved_undefined};
 use super::RewriteLevel;
 
+use crate::analysis::binding_uses::{BindingId, BindingUseIndex};
+use crate::collections::{HashMap, HashSet};
 use crate::utils::paren::strip_parens;
 
 pub struct UnArgumentSpread {
     unresolved_mark: Mark,
     level: RewriteLevel,
+    /// Memoized-apply temps whose every use is the write and the `thisArg`
+    /// read of a pattern this rule matches. Only these lose their
+    /// assignment; any other temp keeps `(t = expr)` on the callee object,
+    /// where it still runs before the arguments.
+    isolated_temps: HashSet<BindingId>,
 }
 
 impl UnArgumentSpread {
@@ -24,7 +32,13 @@ impl UnArgumentSpread {
         Self {
             unresolved_mark,
             level,
+            isolated_temps: HashSet::default(),
         }
+    }
+
+    fn is_isolated_temp(&self, ident: &Ident) -> bool {
+        self.isolated_temps
+            .contains(&(ident.sym.clone(), ident.ctxt))
     }
 }
 
@@ -35,6 +49,13 @@ impl Default for UnArgumentSpread {
 }
 
 impl VisitMut for UnArgumentSpread {
+    fn visit_mut_module(&mut self, module: &mut Module) {
+        if self.level >= RewriteLevel::Standard {
+            self.isolated_temps = collect_isolated_temps(module);
+        }
+        module.visit_mut_children_with(self);
+    }
+
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
         stmts.visit_mut_children_with(self);
 
@@ -46,11 +67,11 @@ impl VisitMut for UnArgumentSpread {
         let mut index = 0;
         while index < old.len() {
             if index + 1 < old.len() {
-                if let Some(rewrite) = try_convert_split_memoized_apply(
-                    &old[index],
-                    &old[index + 1],
-                    &old[index + 2..],
-                ) {
+                if let Some(rewrite) =
+                    try_convert_split_memoized_apply(&old[index], &old[index + 1], |temp| {
+                        self.is_isolated_temp(temp)
+                    })
+                {
                     if can_remove_prior_uninitialized_decls(
                         stmts,
                         &rewrite.removable_bindings,
@@ -102,14 +123,20 @@ impl VisitMut for UnArgumentSpread {
             return;
         };
 
-        match try_convert_apply(call, self.unresolved_mark) {
+        match try_convert_apply(call, self.unresolved_mark, |temp| {
+            self.is_isolated_temp(temp)
+        }) {
             Ok(new_expr) => *expr = new_expr,
             Err(original_call) => *expr = Expr::Call(original_call),
         }
     }
 }
 
-fn try_convert_apply(call: CallExpr, unresolved_mark: Mark) -> Result<Expr, CallExpr> {
+fn try_convert_apply(
+    call: CallExpr,
+    unresolved_mark: Mark,
+    is_isolated_temp: impl Fn(&Ident) -> bool,
+) -> Result<Expr, CallExpr> {
     // callee must be a member expression ending in `.apply`
     let callee_member = match &call.callee {
         Callee::Expr(e) => match e.as_ref() {
@@ -160,7 +187,8 @@ fn try_convert_apply(call: CallExpr, unresolved_mark: Mark) -> Result<Expr, Call
         {
             return Ok(make_spread_call(call));
         }
-        if let Some(receiver) = memoized_receiver_source(&callee_member_obj.obj, first_arg) {
+        if let Some(assign) = memoized_receiver_assign(&callee_member_obj.obj, first_arg) {
+            let receiver = memoized_receiver(assign, &is_isolated_temp);
             return Ok(make_spread_call_with_member_receiver(call, receiver));
         }
         // obj.fn.apply(null/undefined, ...) — Babel spread artifact for standalone
@@ -181,12 +209,29 @@ fn try_convert_apply(call: CallExpr, unresolved_mark: Mark) -> Result<Expr, Call
     Err(call)
 }
 
-fn try_convert_split_memoized_apply(
-    method_stmt: &Stmt,
-    apply_stmt: &Stmt,
-    rest: &[Stmt],
-) -> Option<SplitMemoizedApplyRewrite> {
-    let (method_temp, memoized_member) = memoized_method_assignment(method_stmt)?;
+/// A matched `method = <receiver>.prop; method.apply(thisArg, args)` pair.
+struct SplitMemoizedApply<'a> {
+    method_temp: Ident,
+    member: &'a MemberExpr,
+    apply_call: &'a CallExpr,
+    receiver: SplitReceiver<'a>,
+}
+
+enum SplitReceiver<'a> {
+    /// `method = obj.prop; method.apply(obj, args)` with an identifier or
+    /// `this` receiver, which may be read twice by the input and once by the
+    /// output without changing a getter's evaluation count. Member receivers
+    /// arrive memoized into a temp and take the other arm.
+    Direct,
+    /// `method = (receiver = expr).prop; method.apply(receiver, args)`.
+    Memoized(&'a AssignExpr),
+}
+
+fn match_split_memoized_apply<'a>(
+    method_stmt: &'a Stmt,
+    apply_stmt: &'a Stmt,
+) -> Option<SplitMemoizedApply<'a>> {
+    let (method_temp, member) = memoized_method_assignment(method_stmt)?;
     let apply_call = expr_stmt_call(apply_stmt)?;
 
     if apply_call.args.len() != 2
@@ -210,64 +255,61 @@ fn try_convert_split_memoized_apply(
         return None;
     }
 
-    // 改写后的调用对象就是这条成员表达式。方法临时量若写在对象或计算属性里，
-    // 删掉 `let method` 会留下未声明赋值。
-    if ident_is_used_in_stmts_excluding_bindings(
-        &method_temp,
-        &[Stmt::Expr(ExprStmt {
-            span: DUMMY_SP,
-            expr: Box::new(Expr::Member(memoized_member.clone())),
-        })],
-    ) {
-        return None;
-    }
-
     let first_arg = apply_call.args[0].expr.as_ref();
-    // 参数会原样进新调用。方法临时量的赋值语句会被删掉，
-    // 所以参数里再读它时必须整段留下，不能先删声明。
-    if ident_is_used_in_stmts_excluding_bindings(
-        &method_temp,
-        &[Stmt::Expr(ExprStmt {
-            span: DUMMY_SP,
-            expr: apply_call.args[1].expr.clone(),
-        })],
-    ) {
-        return None;
-    }
-    let removable_bindings = vec![method_temp.clone()];
-    // The direct-receiver arm mirrors the bare same-receiver form: only an
-    // identifier or `this` receiver may be read twice by the input and once
-    // by the output without changing a getter's evaluation count. Member
-    // receivers arrive memoized into a temp and take the arm below.
     let receiver = if matches!(first_arg, Expr::Ident(_) | Expr::This(_))
-        && exprs_structurally_equal(first_arg, &memoized_member.obj)
+        && exprs_structurally_equal(first_arg, &member.obj)
     {
-        memoized_member.obj.clone()
+        SplitReceiver::Direct
     } else {
-        // 赋值留在改写后的调用对象上。后面的使用检查只看 apply 之后的语句，
-        // 看不到这次写入，所以不能把左值放进可删列表，否则会删掉 `let x`
-        // 却仍写出 `(x = expr)`。
-        let receiver_temp = ident_expr(first_arg)?;
-        // `method = (method = output).push` 会先把 method 写成 output，
-        // 再写成函数。apply 的 this 是函数，不是 output。同绑定必须留下。
-        if same_ident(receiver_temp, &method_temp) {
+        let assign = memoized_receiver_assign(&member.obj, first_arg)?;
+        // `method = (method = output).push` writes the function over the
+        // receiver, so `thisArg` is the function, not `output`.
+        if memoized_assign_target(assign).is_some_and(|target| same_ident(target, &method_temp)) {
             return None;
         }
-        memoized_receiver_source(&memoized_member.obj, first_arg)?
+        SplitReceiver::Memoized(assign)
     };
 
-    if removable_bindings
-        .iter()
-        .any(|binding| ident_is_used_in_stmts_excluding_bindings(binding, rest))
-    {
+    Some(SplitMemoizedApply {
+        method_temp,
+        member,
+        apply_call,
+        receiver,
+    })
+}
+
+fn try_convert_split_memoized_apply(
+    method_stmt: &Stmt,
+    apply_stmt: &Stmt,
+    is_isolated_temp: impl Fn(&Ident) -> bool,
+) -> Option<SplitMemoizedApplyRewrite> {
+    let matched = match_split_memoized_apply(method_stmt, apply_stmt)?;
+
+    // The method statement is deleted, so the method temp must have no use
+    // outside the pair: not in the arguments, not inside the kept member,
+    // and nowhere else in the module.
+    if !is_isolated_temp(&matched.method_temp) {
         return None;
     }
+    let mut removable_bindings = vec![matched.method_temp.clone()];
 
+    let receiver = match matched.receiver {
+        SplitReceiver::Direct => matched.member.obj.clone(),
+        SplitReceiver::Memoized(assign) => {
+            let receiver = memoized_receiver(assign, &is_isolated_temp);
+            if !matches!(receiver.as_ref(), Expr::Assign(_)) {
+                removable_bindings.extend(memoized_assign_target(assign).cloned());
+            }
+            receiver
+        }
+    };
+
+    let apply_call = matched.apply_call;
     let mut args = args_from_apply_arg(apply_call.args[1].expr.clone());
     let callee = Expr::Member(MemberExpr {
-        span: memoized_member.span,
+        span: matched.member.span,
         obj: receiver,
-        prop: memoized_member.prop.clone(),
+        prop: matched.member.prop.clone(),
     });
 
     Some(SplitMemoizedApplyRewrite {
@@ -288,6 +330,98 @@ fn try_convert_split_memoized_apply(
 struct SplitMemoizedApplyRewrite {
     stmt: Stmt,
     removable_bindings: Vec<Ident>,
+}
+
+/// Collect the memoized-apply temps whose assignment can be dropped: every
+/// use is one this rule's patterns consume (the write and the `thisArg`
+/// read, or the method temp's write and `.apply` read), and the binding's
+/// only declaration is an uninitialized `var`/`let` declarator the patterns
+/// may assign (a `let` in its TDZ there would throw, which dropping the
+/// write would hide). A parameter is excluded because sloppy-mode
+/// `arguments` aliases it.
+fn collect_isolated_temps(module: &Module) -> HashSet<BindingId> {
+    let mut counter = PatternUseCounter::default();
+    module.visit_with(&mut counter);
+    if counter.uses.is_empty() || has_dynamic_scope_construct(module) {
+        return HashSet::default();
+    }
+
+    let index = BindingUseIndex::collect(module);
+    let assignable = index.assignable_uninitialized_bindings();
+    counter
+        .uses
+        .into_iter()
+        .filter(|(binding, pattern_uses)| {
+            assignable.contains(binding)
+                && index.has_single_declaration(binding)
+                && index.use_count(binding) == *pattern_uses
+        })
+        .map(|(binding, _)| binding)
+        .collect()
+}
+
+/// Counts the temp uses each matched pattern would consume. Each counted
+/// write is read only by its own pattern, so a binding whose total use
+/// count equals this count has no reader outside the patterns.
+#[derive(Default)]
+struct PatternUseCounter {
+    uses: HashMap<BindingId, usize>,
+}
+
+impl PatternUseCounter {
+    fn add(&mut self, ident: &Ident, count: usize) {
+        *self
+            .uses
+            .entry((ident.sym.clone(), ident.ctxt))
+            .or_default() += count;
+    }
+}
+
+impl Visit for PatternUseCounter {
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if let Some(assign) = expr_memoized_apply_assign(call) {
+            if let Some(target) = memoized_assign_target(assign) {
+                self.add(target, 2);
+            }
+        }
+        call.visit_children_with(self);
+    }
+
+    fn visit_stmts(&mut self, stmts: &[Stmt]) {
+        for pair in stmts.windows(2) {
+            let Some(matched) = match_split_memoized_apply(&pair[0], &pair[1]) else {
+                continue;
+            };
+            self.add(&matched.method_temp, 2);
+            if let SplitReceiver::Memoized(assign) = matched.receiver {
+                if let Some(target) = memoized_assign_target(assign) {
+                    self.add(target, 2);
+                }
+            }
+        }
+        stmts.visit_children_with(self);
+    }
+}
+
+/// The `(t = expr)` of `(t = expr).fn.apply(t, args)`, the shape
+/// `try_convert_apply` rewrites through `memoized_receiver_assign`.
+fn expr_memoized_apply_assign(call: &CallExpr) -> Option<&AssignExpr> {
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Member(apply_member) = callee.as_ref() else {
+        return None;
+    };
+    if !matches!(&apply_member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "apply") {
+        return None;
+    }
+    if call.args.len() != 2 || call.args[0].spread.is_some() || call.args[1].spread.is_some() {
+        return None;
+    }
+    let Expr::Member(fn_member) = apply_member.obj.as_ref() else {
+        return None;
+    };
+    memoized_receiver_assign(&fn_member.obj, &call.args[0].expr)
 }
 
 fn memoized_method_assignment(stmt: &Stmt) -> Option<(Ident, &MemberExpr)> {
@@ -317,13 +451,6 @@ fn expr_stmt_call(stmt: &Stmt) -> Option<&CallExpr> {
         return None;
     };
     Some(call)
-}
-
-fn ident_expr(expr: &Expr) -> Option<&Ident> {
-    match expr {
-        Expr::Ident(ident) => Some(ident),
-        _ => None,
-    }
 }
 
 fn args_from_apply_arg(arg: Box<Expr>) -> Vec<ExprOrSpread> {
@@ -373,7 +500,10 @@ fn make_spread_call(call: CallExpr) -> Expr {
     })
 }
 
-fn memoized_receiver_source(receiver_expr: &Expr, first_arg: &Expr) -> Option<Box<Expr>> {
+fn memoized_receiver_assign<'a>(
+    receiver_expr: &'a Expr,
+    first_arg: &Expr,
+) -> Option<&'a AssignExpr> {
     let receiver_expr = strip_parens(receiver_expr);
     let Expr::Assign(assign) = receiver_expr else {
         return None;
@@ -381,16 +511,30 @@ fn memoized_receiver_source(receiver_expr: &Expr, first_arg: &Expr) -> Option<Bo
     if assign.op != AssignOp::Assign {
         return None;
     }
-    let AssignTarget::Simple(SimpleAssignTarget::Ident(target)) = &assign.left else {
-        return None;
-    };
-    if !matches!(first_arg, Expr::Ident(id) if id.sym == target.id.sym && id.ctxt == target.id.ctxt)
-    {
+    let target = memoized_assign_target(assign)?;
+    if !matches!(first_arg, Expr::Ident(id) if id.sym == target.sym && id.ctxt == target.ctxt) {
         return None;
     }
-    // 调用对象先求值，再求值参数。只交回右值会丢掉 `(x = expr)`，
-    // 后面再读 `x` 时它仍是未初始化绑定。整次赋值必须留在成员对象上。
-    Some(Box::new(Expr::Assign(assign.clone())))
+    Some(assign)
+}
+
+fn memoized_assign_target(assign: &AssignExpr) -> Option<&Ident> {
+    match &assign.left {
+        AssignTarget::Simple(SimpleAssignTarget::Ident(target)) => Some(&target.id),
+        _ => None,
+    }
+}
+
+/// The callee object for a memoized receiver. The callee object is
+/// evaluated before the arguments, so keeping the whole assignment there
+/// preserves the write for readers in the arguments or later code; it is
+/// dropped only for a temp nothing else reads.
+fn memoized_receiver(assign: &AssignExpr, is_isolated_temp: impl Fn(&Ident) -> bool) -> Box<Expr> {
+    if memoized_assign_target(assign).is_some_and(is_isolated_temp) {
+        assign.right.clone()
+    } else {
+        Box::new(Expr::Assign(assign.clone()))
+    }
 }
 
 fn make_spread_call_with_member_receiver(mut call: CallExpr, receiver: Box<Expr>) -> Expr {

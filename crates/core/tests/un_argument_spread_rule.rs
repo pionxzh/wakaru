@@ -194,7 +194,7 @@ const out = (_app_info = app_info).build.apply(_app_info, [prefix, ...items, tai
 "#;
     let expected = r#"
 var _app_info;
-const out = (_app_info = app_info).build(...[prefix, ...items, tail]);
+const out = app_info.build(...[prefix, ...items, tail]);
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
@@ -212,8 +212,7 @@ async function collect(output, item) {
 "#;
     let expected = r#"
 async function collect(output, item) {
-  let receiver;
-  (receiver = output).push(await fetch_item(item.id));
+  output.push(await fetch_item(item.id));
 }
 "#;
     let output = apply(input);
@@ -359,7 +358,7 @@ recover(t);
 
 #[test]
 fn keeps_assignment_when_receiver_is_read_inside_arguments() {
-    // 调用对象先求值，参数里的 `l` 必须已经是 `list[i]`。
+    // The callee object runs before the arguments, so `l` there is `list[i]`.
     let input = r#"
 let l;
 (l = list[i]).run.apply(l, [head, l].concat(rest));
@@ -373,7 +372,7 @@ let l;
 
 #[test]
 fn keeps_assignment_when_comma_value_is_the_receiver() {
-    // 逗号留在表达式里，返回值是赋值后的对象，不是调用结果。
+    // The sequence stays an expression and yields the assigned object.
     let input = r#"
 function init(t) {
   return (t = superGet()).init.apply(t, arguments), t;
@@ -397,7 +396,7 @@ fn preserves_memoized_apply_with_compound_assignment() {
 
 #[test]
 fn preserves_apply_when_call_receiver_would_be_evaluated_twice() {
-    // `make()` 在输入里求值两次；展开会少一次调用。
+    // The input calls `make()` twice; the spread form would call it once.
     let input = r#"
 make().push.apply(make(), args);
 "#;
@@ -427,7 +426,7 @@ function collect(output, args) {
 
 #[test]
 fn preserves_split_memoized_apply_when_method_temp_is_read_in_arguments() {
-    // 参数里的 method 依赖被删掉的赋值语句，不能展开。
+    // `method` in the arguments reads the assignment the rewrite deletes.
     let input = r#"
 function collect(output) {
   let method;
@@ -441,7 +440,7 @@ function collect(output) {
 
 #[test]
 fn preserves_split_memoized_apply_when_method_and_receiver_are_the_same_binding() {
-    // 外层赋值把 method 写成函数；apply 的 this 是函数，不是 output。
+    // The outer write makes `method` the function, so `thisArg` is not `output`.
     let input = r#"
 function collect(output, args) {
   let method;
@@ -454,13 +453,163 @@ function collect(output, args) {
 
 #[test]
 fn preserves_split_memoized_apply_when_method_temp_is_written_in_computed_prop() {
-    // 计算属性里的赋值会留在新调用上，不能删掉 method 的声明。
+    // The computed key writes `method` inside the member the rewrite keeps.
     let input = r#"
 function collect(output, args) {
   let method;
   let receiver;
   method = (receiver = output)[method = "push"];
   method.apply(receiver, args);
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn drops_isolated_memoized_receiver_temp() {
+    let input = r#"
+function add(items) {
+  var _this$list;
+  (_this$list = this.list).push.apply(_this$list, items);
+}
+"#;
+    let expected = r#"
+function add(items) {
+  var _this$list;
+  this.list.push(...items);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn drops_memoized_receiver_temp_reused_only_by_patterns() {
+    let input = r#"
+function add(x, y) {
+  var _a;
+  (_a = this.a).push.apply(_a, x);
+  (_a = this.b).push.apply(_a, y);
+}
+"#;
+    let expected = r#"
+function add(x, y) {
+  var _a;
+  this.a.push(...x);
+  this.b.push(...y);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn keeps_reused_memoized_receiver_assignments_when_one_read_escapes() {
+    let input = r#"
+function add(x, y) {
+  var _a;
+  (_a = this.a).push.apply(_a, x);
+  (_a = this.b).push.apply(_a, y);
+  return _a;
+}
+"#;
+    let expected = r#"
+function add(x, y) {
+  var _a;
+  (_a = this.a).push(...x);
+  (_a = this.b).push(...y);
+  return _a;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn keeps_assignment_when_receiver_temp_is_a_parameter() {
+    // Sloppy-mode `arguments` aliases the parameter, so its write is observable.
+    let input = r#"
+function add(t, items) {
+  (t = get()).push.apply(t, items);
+  return arguments[0];
+}
+"#;
+    let expected = r#"
+function add(t, items) {
+  (t = get()).push(...items);
+  return arguments[0];
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn keeps_assignment_when_let_temp_is_in_its_tdz() {
+    // The write throws before `let t` runs; dropping it would hide that.
+    let input = r#"
+function add(items) {
+  (t = get()).push.apply(t, items);
+  let t;
+}
+"#;
+    let expected = r#"
+function add(items) {
+  (t = get()).push(...items);
+  let t;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn keeps_assignment_when_module_has_direct_eval() {
+    let input = r#"
+function add(items) {
+  var t;
+  (t = get()).push.apply(t, items);
+  return eval("t");
+}
+"#;
+    let expected = r#"
+function add(items) {
+  var t;
+  (t = get()).push(...items);
+  return eval("t");
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn keeps_split_receiver_assignment_when_an_earlier_closure_reads_it() {
+    let input = r#"
+function collect(output, args) {
+  let method;
+  let receiver;
+  const peek = () => receiver;
+  method = (receiver = output).push;
+  method.apply(receiver, args);
+  return peek();
+}
+"#;
+    let expected = r#"
+function collect(output, args) {
+  let receiver;
+  const peek = () => receiver;
+  (receiver = output).push(...args);
+  return peek();
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn preserves_split_memoized_apply_when_an_earlier_closure_reads_method_temp() {
+    let input = r#"
+function collect(output, args) {
+  let method;
+  let receiver;
+  const peek = () => method;
+  method = (receiver = output).push;
+  method.apply(receiver, args);
+  return peek();
 }
 "#;
     assert_eq_normalized(&apply(input), input);

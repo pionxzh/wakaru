@@ -347,10 +347,6 @@ pub(crate) fn remove_prior_uninitialized_decls_by<F>(
     stmts.retain(|stmt| !matches!(stmt, Stmt::Decl(Decl::Var(var)) if var.decls.is_empty()));
 }
 
-pub(crate) fn ident_is_used_in_stmts_excluding_bindings(target: &Ident, stmts: &[Stmt]) -> bool {
-    ident_is_used_in_stmts_excluding_bindings_by(target, stmts, same_ident)
-}
-
 pub(crate) fn ident_is_used_in_stmts_excluding_bindings_by<F>(
     target: &Ident,
     stmts: &[Stmt],
