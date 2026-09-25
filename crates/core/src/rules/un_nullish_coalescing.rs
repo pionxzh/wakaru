@@ -9,7 +9,7 @@ use swc_core::ecma::utils::ExprFactory;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::binding_facts::TempIsolation;
-use super::dead_decls::{extend_consumed_uninitialized_expr, remove_consumed_uninitialized_decls};
+use super::dead_decls::remove_consumed_uninitialized_decls;
 use super::decl_utils::BindingId;
 pub(crate) use super::expr_utils::{exprs_structurally_equal, is_unresolved_undefined};
 use super::{RewriteLevel, RewritePolicy};
@@ -50,14 +50,16 @@ impl VisitMut for UnNullishCoalescing {
         expr.visit_mut_children_with(self);
 
         if let Some(mut result) =
-            try_nullish_coalescing(expr, self.unresolved_mark, self.policy, &self.isolation)
+            try_nullish_coalescing(expr, self.unresolved_mark, self.policy, &self.isolation).filter(
+                |result| {
+                    self.isolation.accept_expr_rewrite(
+                        expr,
+                        result,
+                        &mut self.consumed_uninitialized_bindings,
+                    )
+                },
+            )
         {
-            extend_consumed_uninitialized_expr(
-                &mut self.consumed_uninitialized_bindings,
-                expr,
-                &result,
-                &self.isolation,
-            );
             if let Expr::Bin(bin) = &mut result {
                 bin.span = expr.span();
             }

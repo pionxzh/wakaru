@@ -589,3 +589,27 @@ export const x = (n = foo) !== null && n !== void 0 ? n : "bar";
 "#;
     assert_eq_normalized(&apply(input), input);
 }
+
+#[test]
+fn removes_the_declaration_of_a_consumed_temp() {
+    let input = r#"
+var n;
+const x = (n = foo) !== null && n !== void 0 ? n : "bar";
+"#;
+    let expected = r#"
+const x = foo ?? "bar";
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn keeps_the_declaration_when_one_of_two_sites_is_not_rewritten() {
+    // The second site reads `n` outside a pattern, so neither site may drop
+    // its write and the declaration stays.
+    let input = r#"
+var n;
+const x = (n = foo) !== null && n !== void 0 ? n : "bar";
+const y = n;
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
