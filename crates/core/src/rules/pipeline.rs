@@ -422,14 +422,20 @@ runner!(
     ClassExpressionToDeclaration
 );
 runner!(run_obj_shorthand, ObjShorthand);
-runner!(run_obj_method_shorthand, ObjMethodShorthand);
+fn run_obj_method_shorthand(module: &mut Module, ctx: RuleRunContext<'_>) {
+    let local_helpers = ctx.local_helpers(module);
+    ObjMethodShorthand::run_with_helpers(module, ctx.unresolved_mark, local_helpers.as_ref());
+}
 runner!(run_un_prototype_class, UnPrototypeClass);
 runner!(run_exponent, |ctx| Exponent::new(ctx.unresolved_mark));
 runner!(run_arg_rest, |ctx| ArgRest::new(ctx.rewrite_level));
 runner!(run_un_rest_array_copy, |ctx| UnRestArrayCopy::new(
     ctx.unresolved_mark
 ));
-runner!(run_arrow_function, ArrowFunction);
+fn run_arrow_function(module: &mut Module, ctx: RuleRunContext<'_>) {
+    let local_helpers = ctx.local_helpers(module);
+    ArrowFunction::run_with_helpers(module, ctx.unresolved_mark, local_helpers.as_ref());
+}
 runner!(run_un_namespace, UnNamespace);
 runner!(run_arrow_return, ArrowReturn);
 fn run_un_for_of(module: &mut Module, ctx: RuleRunContext<'_>) {

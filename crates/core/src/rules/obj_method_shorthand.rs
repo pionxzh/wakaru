@@ -1,5 +1,6 @@
 use crate::collections::HashSet;
 
+use swc_core::common::Mark;
 use swc_core::ecma::ast::{
     AssignExpr, AssignTarget, BinaryOp, Expr, MethodProp, Module, ObjectLit, Prop, PropName,
     PropOrSpread, VarDeclarator,
@@ -11,18 +12,38 @@ use super::constructor_sensitivity::{
     collect_constructor_sensitive_values, is_value_preserving_assign_op,
     pat_has_constructor_sensitive_value, pat_value_key, static_prop_name,
     visit_mut_assign_target_pat_constructor_sensitive_defaults,
-    visit_mut_pat_constructor_sensitive_defaults, ValueKey,
+    visit_mut_pat_constructor_sensitive_defaults, CreateClassHelpers, ValueKey,
 };
 use super::decl_utils::has_duplicate_param_names;
+use super::transpiler_helper_utils::LocalHelperContext;
 
-pub struct ObjMethodShorthand;
+pub struct ObjMethodShorthand {
+    unresolved_mark: Mark,
+}
 
-impl VisitMut for ObjMethodShorthand {
-    fn visit_mut_module(&mut self, module: &mut Module) {
-        let constructor_sensitive_values = collect_constructor_sensitive_values(module);
+impl ObjMethodShorthand {
+    pub fn new(unresolved_mark: Mark) -> Self {
+        Self { unresolved_mark }
+    }
+
+    pub(crate) fn run_with_helpers(
+        module: &mut Module,
+        unresolved_mark: Mark,
+        local_helpers: &LocalHelperContext,
+    ) {
+        let create_class = CreateClassHelpers::collect(module, unresolved_mark, local_helpers);
+        let constructor_sensitive_values =
+            collect_constructor_sensitive_values(module, &create_class);
         module.visit_mut_with(&mut ObjMethodShorthandConverter {
             constructor_sensitive_values: &constructor_sensitive_values,
         });
+    }
+}
+
+impl VisitMut for ObjMethodShorthand {
+    fn visit_mut_module(&mut self, module: &mut Module) {
+        let local_helpers = LocalHelperContext::collect_with_mark(module, self.unresolved_mark);
+        Self::run_with_helpers(module, self.unresolved_mark, &local_helpers);
     }
 }
 

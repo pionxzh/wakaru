@@ -463,9 +463,11 @@ rationale, or level gating appear.
 - **ObjMethodShorthand / ArrowFunction** — both consult the shared
   constructor-sensitive value analysis before replacing ordinary function
   values with non-constructible method or arrow syntax. The analysis recognizes
-  `new`, `Reflect.construct`, `extends`, `instanceof`, and `.prototype`, then
-  propagates requirements backward through exact static-member aliases. Plain
-  binding aliases also carry member suffixes (`alias = namespace; new alias.C()`
+  `new`, `Reflect.construct`, `extends`, `instanceof`, `.prototype`, and the
+  first argument of a proven `createClass` helper (runtime-path import,
+  same-module helper body, or unresolved `_createClass`), then propagates
+  requirements backward through exact static-member aliases. Plain binding
+  aliases also carry member suffixes (`alias = namespace; new alias.C()`
   protects `namespace.C`) without recursively extending cyclic member paths.
   Both the use-site marking and the alias graph walk the same value wrapper
   shapes the converters protect syntactically — parentheses, sequence results,
@@ -484,7 +486,8 @@ rationale, or level gating appear.
 - **ArrowFunction → ArrowReturn** — hard chain. ArrowFunction is `standard+`
   even though it checks known blockers (`this`, `arguments`, named function
   expressions, `new.target`, and ordinary-function values required by `new`,
-  `Reflect.construct`, `extends`, `instanceof`, or `.prototype` observation).
+  `Reflect.construct`, `extends`, `instanceof`, `.prototype` observation, or
+  a `createClass` helper's first argument).
   The `this`/`arguments`/`new.target`/direct-eval checks cover parameter
   initializers and destructuring defaults as well as the body; both run in
   the function's own activation.

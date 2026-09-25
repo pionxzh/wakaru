@@ -838,7 +838,7 @@ fn recover_late_esm_from_factory_iifes(
     current_filename: &str,
     options: LateEsmRecoveryOptions,
 ) {
-    module.visit_mut_with(&mut ArrowFunction);
+    module.visit_mut_with(&mut ArrowFunction::new(unresolved_mark));
     module.visit_mut_with(&mut ArrowReturn);
     module.visit_mut_with(&mut UnIife::new(level));
     let pipeline_options = RulePipelineOptions::between("UnCurlyBraces", "UnEsm")

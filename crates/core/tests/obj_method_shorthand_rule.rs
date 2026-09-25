@@ -4,7 +4,7 @@ use common::{assert_eq_normalized, render_rule};
 use wakaru_core::rules::ObjMethodShorthand;
 
 fn apply(input: &str) -> String {
-    render_rule(input, |_| ObjMethodShorthand)
+    render_rule(input, ObjMethodShorthand::new)
 }
 
 #[test]
@@ -39,6 +39,19 @@ new namespace.Constructor(input);
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn create_class_argument_property_stays_function_value() {
+    // createClass defines methods on its first argument's prototype.
+    let input = r#"
+function e(r, e, n) {
+    return e && t(r.prototype, e), n && t(r, n), Object.defineProperty(r, "prototype", { writable: !1 }), r;
+}
+const ns = {C: function() {}};
+e(ns.C, []);
+"#;
+    assert_eq_normalized(&apply(input), input);
 }
 
 #[test]

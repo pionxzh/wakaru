@@ -4,7 +4,7 @@ use common::{assert_eq_normalized, render_pipeline, render_rule};
 use wakaru_core::rules::ArrowFunction;
 
 fn apply(input: &str) -> String {
-    render_rule(input, |_| ArrowFunction)
+    render_rule(input, ArrowFunction::new)
 }
 
 fn apply_pipeline(input: &str) -> String {
@@ -1069,216 +1069,195 @@ a((x = this.y) => {
     assert_eq_normalized(&apply(input), expected);
 }
 
+// Babel's createClass helper after Terser: it defines methods on the first
+// argument's prototype and returns it, and the result is constructed later.
+const MINIFIED_CREATE_CLASS: &str = r#"
+function t(r, t) {
+    for (var e = 0; e < t.length; e++) {
+        var o = t[e];
+        Object.defineProperty(r, o.key, o);
+    }
+}
+function e(r, e, n) {
+    return e && t(r.prototype, e), n && t(r, n), Object.defineProperty(r, "prototype", { writable: !1 }), r;
+}
+"#;
+
+fn with_minified_create_class(code: &str) -> String {
+    format!("{MINIFIED_CREATE_CLASS}{code}")
+}
+
 #[test]
-fn create_class_function_argument_stays_constructible() {
-    // Babel createClass reads and writes Constructor.prototype. The first
-    // argument must stay an ordinary function; nested callbacks may still be arrows.
-    let input = r#"
-import { createClass } from "./helpers.js";
-let Ctor;
-Ctor = createClass(function() {
+fn minified_create_class_argument_stays_constructible() {
+    let input = with_minified_create_class(
+        r#"
+var i = e(function() {
     return values.map(function(value) {
         return value;
     });
-}, [{ key: "instance", get() { return this._inst; } }]);
-Ctor._inst = new Ctor();
-"#;
-    let expected = r#"
-import { createClass } from "./helpers.js";
-let Ctor;
-Ctor = createClass(function() {
-    return values.map(value => {
+}, [{ key: "m", get: function() { return 1; } }]);
+use(new i().m);
+"#,
+    );
+    let expected = with_minified_create_class(
+        r#"
+var i = e(function() {
+    return values.map((value) => {
         return value;
     });
-}, [{ key: "instance", get() { return this._inst; } }]);
-Ctor._inst = new Ctor();
-"#;
-    assert_eq_normalized(&apply(input), expected);
+}, [{ key: "m", get: function() { return 1; } }]);
+use(new i().m);
+"#,
+    );
+    assert_eq_normalized(&apply(&input), &expected);
 }
 
 #[test]
-fn create_class_assigned_function_stays_constructible() {
-    let input = r#"
-import { createClass } from "./helpers.js";
+fn create_class_assigned_argument_stays_constructible() {
+    let input = with_minified_create_class(
+        r#"
 function define() {
-    let e;
-    createClass(e = function() {}, [{ key: "instance", get() { return this._inst; } }]);
-    return e;
+    let c;
+    let d;
+    e(c = function() {}, []);
+    e((0, d = function() {}), []);
+    return [c, d];
 }
-const Ctor = define();
-Ctor._inst = new Ctor();
+"#,
+    );
+    assert_eq_normalized(&apply(&input), &input);
+}
+
+#[test]
+fn create_class_argument_binding_stays_constructible() {
+    let input = with_minified_create_class(
+        r#"
+var c = function() {};
+e(c, []);
+"#,
+    );
+    assert_eq_normalized(&apply(&input), &input);
+}
+
+#[test]
+fn inline_babel_create_class_argument_stays_constructible() {
+    let input = r#"
+function _createClass(Constructor, protoProps, staticProps) {
+    if (protoProps) _defineProperties(Constructor.prototype, protoProps);
+    if (staticProps) _defineProperties(Constructor, staticProps);
+    Object.defineProperty(Constructor, "prototype", { writable: false });
+    return Constructor;
+}
+var Foo = _createClass(function() {});
 "#;
     assert_eq_normalized(&apply(input), input);
 }
 
 #[test]
-fn create_class_paren_function_argument_stays_constructible() {
+fn runtime_create_class_argument_stays_constructible() {
     let input = r#"
-import { createClass } from "./helpers.js";
-createClass((function() {}), []);
-"#;
-    let expected = r#"
-import { createClass } from "./helpers.js";
-createClass(function() {}, []);
-"#;
-    assert_eq_normalized(&apply(input), expected);
-}
-
-#[test]
-fn create_class_sequence_assignment_stays_constructible() {
-    let input = r#"
-import { createClass } from "./helpers.js";
-function define() {
-    let e;
-    createClass((0, e = function() {}), []);
-    return e;
-}
+import _createClass from "@babel/runtime/helpers/createClass";
+import { _ as _create_class } from "@swc/helpers/_/_create_class";
+var Foo = _createClass(function() {}, []);
+var Bar = _create_class(function() {}, []);
 "#;
     assert_eq_normalized(&apply(input), input);
 }
 
 #[test]
-fn create_class_async_constructor_argument_can_convert() {
-    // Async functions have no [[Construct]]. Sensitivity must not freeze them.
+fn unresolved_create_class_argument_stays_constructible() {
     let input = r#"
-import { createClass } from "./helpers.js";
-createClass(async function() { return 1; }, []);
+var Foo = _createClass(function() {}, []);
 "#;
-    let expected = r#"
-import { createClass } from "./helpers.js";
-createClass(async () => { return 1; }, []);
-"#;
-    assert_eq_normalized(&apply(input), expected);
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn create_class_async_argument_still_converts() {
+    // An async function has no [[Construct]], so the arrow loses nothing.
+    let input = with_minified_create_class(
+        r#"
+e(async function() { return 1; }, []);
+"#,
+    );
+    let expected = with_minified_create_class(
+        r#"
+e(async () => { return 1; }, []);
+"#,
+    );
+    assert_eq_normalized(&apply(&input), &expected);
 }
 
 #[test]
 fn create_class_later_arguments_still_convert() {
+    let input = with_minified_create_class(
+        r#"
+e(Ctor, function(value) { return value; });
+"#,
+    );
+    let expected = with_minified_create_class(
+        r#"
+e(Ctor, (value) => { return value; });
+"#,
+    );
+    assert_eq_normalized(&apply(&input), &expected);
+}
+
+#[test]
+fn unproven_create_class_name_still_converts() {
+    // The name alone does not prove the helper: this one returns its argument
+    // without touching a prototype.
     let input = r#"
-import { createClass } from "./helpers.js";
-createClass(Ctor, function(value) { return value; });
+function createClass(f) {
+    return f;
+}
+createClass(function() { return 1; });
 "#;
     let expected = r#"
-import { createClass } from "./helpers.js";
-createClass(Ctor, value => { return value; });
+function createClass(f) {
+    return f;
+}
+createClass(() => { return 1; });
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
 
 #[test]
-fn create_class_nested_call_argument_still_converts() {
-    let input = r#"
-import { createClass } from "./helpers.js";
-createClass(helper(function() { return 1; }), []);
-"#;
-    let expected = r#"
-import { createClass } from "./helpers.js";
-createClass(helper(() => { return 1; }), []);
-"#;
-    assert_eq_normalized(&apply(input), expected);
+fn shadowed_create_class_binding_still_converts() {
+    let input = with_minified_create_class(
+        r#"
+function wrap(e) {
+    e(function() { return 1; });
+}
+"#,
+    );
+    let expected = with_minified_create_class(
+        r#"
+function wrap(e) {
+    e(() => { return 1; });
+}
+"#,
+    );
+    assert_eq_normalized(&apply(&input), &expected);
 }
 
 #[test]
-fn other_call_first_argument_still_converts() {
+fn minified_no_class_calls_create_class_stays_constructible_in_pipeline() {
+    // Babel `noClassCalls` omits classCallCheck and Terser drops the unused
+    // constructor name, leaving an anonymous function as the first argument.
     let input = r#"
-import { define } from "./helpers.js";
-define(function() { return 1; });
+function t(t,r){for(var e=0;e<r.length;e++){var n=r[e];n.enumerable=n.enumerable||!1,n.configurable=!0,"value"in n&&(n.writable=!0),Object.defineProperty(t,n.key,n)}}
+function r(r,e,n){return e&&t(r.prototype,e),n&&t(r,n),Object.defineProperty(r,"prototype",{writable:!1}),r}
+var e=r(function(){},[{key:"m",value:function(){return 1}}]);
+export function run(){return(new e).m()}
 "#;
-    let expected = r#"
-import { define } from "./helpers.js";
-define(() => { return 1; });
-"#;
-    assert_eq_normalized(&apply(input), expected);
-}
-
-#[test]
-fn create_class_imported_alias_stays_constructible() {
-    // UnImportRename runs after ArrowFunction, so the callee is still the alias.
-    let input = r#"
-import { createClass as defineCtor } from "./helpers.js";
-function define() {
-    let e;
-    defineCtor(e = function() {}, []);
-    return e;
-}
-"#;
-    assert_eq_normalized(&apply(input), input);
-}
-
-#[test]
-fn create_class_short_name_without_import_stays_constructible() {
-    let input = r#"
-createClass(function() {}, []);
-"#;
-    assert_eq_normalized(&apply(input), input);
-}
-
-#[test]
-fn other_helper_assignment_still_converts() {
-    let input = r#"
-import { define } from "./helpers.js";
-let e;
-define(e = function() { return 1; });
-"#;
-    let expected = r#"
-import { define } from "./helpers.js";
-let e;
-define(e = () => { return 1; });
-"#;
-    assert_eq_normalized(&apply(input), expected);
-}
-
-#[test]
-fn create_class_alias_inner_shadow_still_converts() {
-    // Binding identity is (sym, ctxt). The parameter is not the import.
-    let input = r#"
-import { createClass as t } from "./helpers.js";
-function wrap(t) {
-    t(function() { return 1; });
-}
-"#;
-    let expected = r#"
-import { createClass as t } from "./helpers.js";
-function wrap(t) {
-    t(() => { return 1; });
-}
-"#;
-    assert_eq_normalized(&apply(input), expected);
-}
-
-#[test]
-fn imported_alias_of_other_helper_still_converts() {
-    let input = r#"
-import { define as defineCtor } from "./helpers.js";
-defineCtor(function() { return 1; });
-"#;
-    let expected = r#"
-import { define as defineCtor } from "./helpers.js";
-defineCtor(() => { return 1; });
-"#;
-    assert_eq_normalized(&apply(input), expected);
-}
-
-#[test]
-fn create_class_member_call_first_argument_still_converts() {
-    // Only an identifier callee named createClass is the Babel helper.
-    let input = r#"
-helpers.createClass(function() { return 1; }, []);
-"#;
-    let expected = r#"
-helpers.createClass(() => { return 1; }, []);
-"#;
-    assert_eq_normalized(&apply(input), expected);
-}
-
-#[test]
-fn plain_empty_function_still_converts() {
-    let input = r#"
-const f = function() {};
-f();
-"#;
-    let expected = r#"
-const f = () => {};
-f();
-"#;
-    assert_eq_normalized(&apply(input), expected);
+    let output = apply_pipeline(input);
+    assert!(
+        output.contains("(function() {}"),
+        "createClass argument must stay constructible:\n{output}"
+    );
+    assert!(
+        !output.contains("(() => {}"),
+        "createClass argument must not become an arrow:\n{output}"
+    );
 }

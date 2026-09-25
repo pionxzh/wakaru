@@ -780,6 +780,24 @@ fn collect_create_class_helpers_from_stmts(
     helpers
 }
 
+/// `_createClass` bindings from runtime-path imports and same-module helper
+/// bodies, the same sources `UnEs6Class` recovers classes from.
+pub(crate) fn collect_create_class_helper_bindings(
+    module: &swc_core::ecma::ast::Module,
+    unresolved_mark: Mark,
+    local_helpers: &LocalHelperContext,
+) -> HashSet<BindingKey> {
+    let mut helpers: HashSet<BindingKey> = local_helpers
+        .helpers_of_kind(TranspilerHelperKind::CreateClass)
+        .into_keys()
+        .collect();
+    helpers.extend(collect_create_class_helpers_from_items(
+        &module.body,
+        unresolved_mark,
+    ));
+    helpers
+}
+
 /// Collect names of _createClass helpers from module items.
 fn collect_create_class_helpers_from_items(
     items: &[ModuleItem],

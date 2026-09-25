@@ -1,16 +1,22 @@
 use crate::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
+use swc_core::common::Mark;
 use swc_core::ecma::ast::{
     AssignExpr, AssignOp, AssignTarget, AssignTargetPat, BinExpr, BinaryOp, CallExpr, Callee,
-    Class, Decl, ExportNamedSpecifier, ExportSpecifier, Expr, Id, Ident, ImportSpecifier, Lit,
-    MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, NewExpr, ObjectPat,
-    ObjectPatProp, Pat, PropName, SimpleAssignTarget, VarDeclarator,
+    Class, Decl, ExportNamedSpecifier, ExportSpecifier, Expr, Id, Ident, Lit, MemberProp, Module,
+    ModuleDecl, ModuleExportName, ModuleItem, NewExpr, ObjectPat, ObjectPatProp, Pat, PropName,
+    SimpleAssignTarget, VarDeclarator,
 };
 use swc_core::ecma::utils::find_pat_ids;
 use swc_core::ecma::visit::{Visit, VisitWith};
 
+use super::expr_utils::is_unresolved_ident;
+use super::helper_matcher::BindingKey;
+use super::transpiler_helper_utils::LocalHelperContext;
+use super::un_es6_class::collect_create_class_helper_bindings;
 use crate::analysis::binding_uses::BindingId;
+use crate::utils::paren::strip_parens;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct ValueKey {
@@ -91,87 +97,37 @@ pub(crate) fn assign_target_value_key(target: &AssignTarget) -> Option<ValueKey>
     }
 }
 
-/// Locals bound to Babel's `createClass` export. `UnImportRename` runs after
-/// `ArrowFunction`, so the call is still `t(...)` for `import { createClass as t }`.
-pub(crate) fn create_class_locals(module: &Module) -> HashSet<Id> {
-    let mut locals = HashSet::default();
-    for item in &module.body {
-        let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
-            continue;
-        };
-        for specifier in &import.specifiers {
-            let ImportSpecifier::Named(named) = specifier else {
-                continue;
-            };
-            let imported = match &named.imported {
-                Some(ModuleExportName::Ident(ident)) => ident.sym.as_ref(),
-                Some(ModuleExportName::Str(_)) => continue,
-                None => named.local.sym.as_ref(),
-            };
-            if imported == "createClass" {
-                locals.insert((named.local.sym.clone(), named.local.ctxt));
-            }
+/// Callees proven to be a Babel/SWC `createClass` helper: a runtime-path
+/// import, a same-module function whose body matches the helper, or an
+/// unresolved `_createClass`. The helper writes `Constructor.prototype` and
+/// its result is constructed later, so its first argument is a constructor use
+/// like the target of `Reflect.construct`.
+pub(crate) struct CreateClassHelpers {
+    bindings: HashSet<BindingKey>,
+    unresolved_mark: Mark,
+}
+
+impl CreateClassHelpers {
+    pub(crate) fn collect(
+        module: &Module,
+        unresolved_mark: Mark,
+        local_helpers: &LocalHelperContext,
+    ) -> Self {
+        Self {
+            bindings: collect_create_class_helper_bindings(module, unresolved_mark, local_helpers),
+            unresolved_mark,
         }
     }
-    locals
-}
 
-/// Babel `createClass(Constructor, proto, statics)` requires a constructable
-/// first argument. Match an identifier callee named `createClass`, or the
-/// local of `import { createClass as t }`. Member calls stay untouched.
-pub(crate) fn is_create_class_call(call: &CallExpr, create_class_locals: &HashSet<Id>) -> bool {
-    let Callee::Expr(callee) = &call.callee else {
-        return false;
-    };
-    let mut expr = callee.as_ref();
-    while let Expr::Paren(paren) = expr {
-        expr = &paren.expr;
-    }
-    match expr {
-        Expr::Ident(ident) if ident.sym == "createClass" => true,
-        Expr::Ident(ident) => create_class_locals.contains(&(ident.sym.clone(), ident.ctxt)),
-        _ => false,
-    }
-}
-
-/// The binding written by `createClass(e = …)` when that assignment is the
-/// constructor value (parentheses or a sequence result). Other arguments and
-/// other callees do not enter the sensitive set.
-fn create_class_assigned_constructor(
-    call: &CallExpr,
-    create_class_locals: &HashSet<Id>,
-) -> Option<ValueKey> {
-    if !is_create_class_call(call, create_class_locals) {
-        return None;
-    }
-    let arg = call.args.first()?;
-    if arg.spread.is_some() {
-        return None;
-    }
-    let expr = constructor_value_expr(&arg.expr);
-    let Expr::Assign(assign) = expr else {
-        return None;
-    };
-    if assign.op != AssignOp::Assign {
-        return None;
-    }
-    let AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) = &assign.left else {
-        return None;
-    };
-    Some(ValueKey::binding(&binding.id))
-}
-
-/// Parentheses and the last sequence operand. Conditional, logical, and
-/// `.bind` wrappers are preserved by the visitor, not by this seed.
-fn constructor_value_expr(expr: &Expr) -> &Expr {
-    match expr {
-        Expr::Paren(paren) => constructor_value_expr(&paren.expr),
-        Expr::Seq(sequence) => sequence
-            .exprs
-            .last()
-            .map(|last| constructor_value_expr(last))
-            .unwrap_or(expr),
-        _ => expr,
+    pub(crate) fn is_call(&self, call: &CallExpr) -> bool {
+        let Callee::Expr(callee) = &call.callee else {
+            return false;
+        };
+        let Expr::Ident(id) = strip_parens(callee) else {
+            return false;
+        };
+        self.bindings.contains(&(id.sym.clone(), id.ctxt))
+            || is_unresolved_ident(id, "_createClass", self.unresolved_mark)
     }
 }
 
@@ -435,14 +391,13 @@ fn value_sources(expr: &Expr) -> Vec<ValueKey> {
     sources
 }
 
-#[derive(Default)]
-struct ConstructorSensitiveUseCollector {
+struct ConstructorSensitiveUseCollector<'a> {
     sensitive: HashSet<ValueKey>,
     aliases: Vec<(ValueKey, ValueKey)>,
-    create_class_locals: HashSet<Id>,
+    create_class: &'a CreateClassHelpers,
 }
 
-impl ConstructorSensitiveUseCollector {
+impl ConstructorSensitiveUseCollector<'_> {
     fn mark_expr(&mut self, expr: &Expr) {
         for key in value_sources(expr) {
             self.sensitive.insert(key);
@@ -517,7 +472,7 @@ impl ConstructorSensitiveUseCollector {
     }
 }
 
-impl Visit for ConstructorSensitiveUseCollector {
+impl Visit for ConstructorSensitiveUseCollector<'_> {
     fn visit_var_declarator(&mut self, decl: &VarDeclarator) {
         if let Some(init) = decl.init.as_deref() {
             let sources = value_sources(init);
@@ -583,29 +538,38 @@ impl Visit for ConstructorSensitiveUseCollector {
                 self.mark_expr(&new_target.expr);
             }
         }
-        // Seed before alias propagation. `createClass(e = function(){})` writes
-        // an inner local; export roots and `new` in another module cannot see it.
-        if let Some(key) = create_class_assigned_constructor(call, &self.create_class_locals) {
-            self.sensitive.insert(key);
+        if self.create_class.is_call(call) {
+            if let Some(target) = call.args.first() {
+                self.mark_expr(&target.expr);
+            }
         }
         call.visit_children_with(self);
     }
 }
 
-pub(crate) fn collect_constructor_sensitive_values(module: &Module) -> HashSet<ValueKey> {
+pub(crate) fn collect_constructor_sensitive_values(
+    module: &Module,
+    create_class: &CreateClassHelpers,
+) -> HashSet<ValueKey> {
     // Named exports can be constructed by another module. Seed their local
     // bindings before alias propagation because intra-module `new` /
     // `.prototype` analysis cannot see those consumers.
-    collect_constructor_sensitive_values_with_roots(module, collect_named_exported_locals(module))
+    collect_constructor_sensitive_values_with_roots(
+        module,
+        create_class,
+        collect_named_exported_locals(module),
+    )
 }
 
 fn collect_constructor_sensitive_values_with_roots(
     module: &Module,
+    create_class: &CreateClassHelpers,
     roots: impl IntoIterator<Item = ValueKey>,
 ) -> HashSet<ValueKey> {
     let mut collector = ConstructorSensitiveUseCollector {
-        create_class_locals: create_class_locals(module),
-        ..ConstructorSensitiveUseCollector::default()
+        sensitive: HashSet::default(),
+        aliases: Vec::new(),
+        create_class,
     };
     module.visit_with(&mut collector);
     collector.sensitive.extend(roots);
