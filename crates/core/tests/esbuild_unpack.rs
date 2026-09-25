@@ -395,6 +395,47 @@ fn exported_dynamic_require_helper_keeps_cross_cluster_link() {
     assert_exported_runtime_helper_keeps_cross_cluster_link("r", "dynamicRequireRuntime");
 }
 
+fn entry_code(pairs: &[(String, String)]) -> &str {
+    &pairs
+        .iter()
+        .find(|(name, _)| name == "entry.js")
+        .unwrap_or_else(|| panic!("missing entry.js: {pairs:#?}"))
+        .1
+}
+
+fn exports_name(code: &str, name: &str) -> bool {
+    code.contains(&format!(" as {name},"))
+        || code.contains(&format!(" as {name} }}"))
+        || code.contains(&format!("export const {name} ="))
+}
+
+#[test]
+fn exported_commonjs_helper_keeps_its_declaration() {
+    // A code-splitting chunk shares its `__commonJS` helper with other chunks.
+    let bundle = r#"
+var v=(l,e)=>()=>(e||l((e={exports:{}}).exports,e),e.exports);
+var b=v((g,u)=>{u.exports={value:42}});
+console.log(b().value);
+export{v as a,b as d};
+"#;
+
+    let raw_pairs = expect_unpack_raw(bundle);
+    let raw_entry = entry_code(&raw_pairs);
+    assert!(
+        raw_entry.contains("var v = ") && raw_entry.contains("v as a"),
+        "the exported helper should keep its declaration:\n{raw_entry}"
+    );
+    assert_eq!(validate_output_modules(&raw_pairs), vec![]);
+
+    let normal_pairs = expect_unpack(bundle, "bundle.js");
+    let normal_entry = entry_code(&normal_pairs);
+    assert!(
+        exports_name(normal_entry, "a"),
+        "cleanup must keep the helper export:\n{normal_entry}"
+    );
+    assert_eq!(validate_output_modules(&normal_pairs), vec![]);
+}
+
 #[test]
 fn scope_module_imports_bindings_referenced_only_by_export_getters() {
     let bundle = r#"

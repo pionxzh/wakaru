@@ -335,13 +335,22 @@ fn detect_from_prepared_factories(
     // Phase 4: everything that is not a helper decl or factory decl becomes the entry.
     // Mixed declarations can contain useful sibling helpers, for example
     // `var wrap = ..., __esm = ...`; filter at declarator granularity.
+    // A code-splitting chunk can export its runtime helpers to other chunks
+    // (`export { __commonJS as a }`); those declarations stay in the entry so
+    // the export keeps a binding.
+    let exported_helper_syms = locally_exported_atoms(&module.body);
+    let entry_dropped_syms: HashSet<Atom> = helper_factory_syms
+        .iter()
+        .filter(|sym| factory_syms.contains(*sym) || !exported_helper_syms.contains(*sym))
+        .cloned()
+        .collect();
     let mut drop_unowned_helper_sibling_indices = HashSet::default();
     let mut entry_items = Vec::new();
     let mut analysis_entry_items = Vec::new();
     for (source_item, analysis_item) in module.body.iter().zip(&analysis_module.body) {
-        let source_filtered = filter_helper_factory_declarators(source_item, &helper_factory_syms);
+        let source_filtered = filter_helper_factory_declarators(source_item, &entry_dropped_syms);
         let analysis_filtered =
-            filter_helper_factory_declarators(analysis_item, &helper_factory_syms);
+            filter_helper_factory_declarators(analysis_item, &entry_dropped_syms);
         if source_filtered.is_some() != analysis_filtered.is_some() {
             continue;
         }
@@ -351,7 +360,7 @@ fn detect_from_prepared_factories(
         let Some(analysis_filtered) = analysis_filtered else {
             continue;
         };
-        if item_has_helper_factory_declarator(analysis_item, &helper_factory_syms) {
+        if item_has_helper_factory_declarator(analysis_item, &entry_dropped_syms) {
             drop_unowned_helper_sibling_indices.insert(entry_items.len());
         }
         entry_items.push(source_filtered);
@@ -2832,6 +2841,32 @@ fn filter_helper_factory_declarators(
     } else {
         Some(ModuleItem::Stmt(Stmt::Decl(Decl::Var(filtered))))
     }
+}
+
+/// Local bindings named by `export { local as name }` (no `from`) or
+/// `export default local`.
+fn locally_exported_atoms(body: &[ModuleItem]) -> HashSet<Atom> {
+    let mut atoms = HashSet::default();
+    for item in body {
+        match item {
+            ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(export)) if export.src.is_none() => {
+                for specifier in &export.specifiers {
+                    if let ExportSpecifier::Named(named) = specifier {
+                        if let ModuleExportName::Ident(orig) = &named.orig {
+                            atoms.insert(orig.sym.clone());
+                        }
+                    }
+                }
+            }
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(export)) => {
+                if let Expr::Ident(ident) = strip_parens(&export.expr) {
+                    atoms.insert(ident.sym.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+    atoms
 }
 
 fn item_has_helper_factory_declarator(
