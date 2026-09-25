@@ -527,6 +527,5 @@ wakaru-cli`) like every other matrix run.
 
 ## Test Pitfalls
 
-- Don't use bare literal expression statements as test inputs (e.g. `65536;`) -- `SimplifySequence` drops them as dead code. Use `const x = 65536;` instead.
 - When a test uses `render()` (full pipeline), other rules may transform the input before your rule runs. If your test fails unexpectedly, use `render_rule()` to isolate, or `render_pipeline_until()` to stop at a specific point. See [debugging.md](debugging.md) for more investigation workflows.
 - `stmts_reference_ident` in `un_parameters.rs` matches by **emitted name** (ignoring SyntaxContext). A parameter named `e` will collide with any `e` in a nested function. This is intentional (prevents invalid parameter lists after rewriting) but can cause fold functions to bail out unexpectedly when an alias is inlined to a short parameter name.

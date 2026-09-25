@@ -668,10 +668,9 @@ pub(super) fn unpack_multi_module_with_plan(
             // Later rules can expose sequence expressions. The old unpack
             // path cleaned those by running a second full module pipeline;
             // keep only the syntax cleanup needed after the split.
-            module.visit_mut_with(&mut SimplifySequence::new_with_import_semantics(
+            module.visit_mut_with(&mut SimplifySequence::new_with_level(
                 unresolved_mark,
                 options.level,
-                false,
             ));
             module.visit_mut_with(&mut UnAssignmentMerging::new(unresolved_mark));
             // UnIife2 can expose webpack export helpers that were hidden in
@@ -1211,58 +1210,6 @@ for (var key in current) globalThis[key] = current[key];"#,
             !spans.iter().any(|name| name == "phase2: parse"),
             "normal unpack should reuse the Phase 1 AST"
         );
-    }
-
-    #[test]
-    fn recovered_imports_do_not_gain_source_link_check_semantics() {
-        let output = GLOBALS.set(&Default::default(), || {
-            let cm: Lrc<SourceMap> = Default::default();
-            let mut module = parse_js(
-                r#"import { recovered } from "./module.js"; void recovered;"#,
-                "module.js",
-                cm.clone(),
-            )
-            .expect("fixture should parse");
-            let unresolved_mark = Mark::new();
-            let top_level_mark = Mark::new();
-            module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
-
-            apply_rules_to_recovered_module(
-                &mut module,
-                unresolved_mark,
-                RulePipelineOptions::default().with_dce_mode(DceMode::TransformOnly),
-            );
-            apply_fixer(&mut module).expect("fixture should fix");
-            print_js(&module, cm).expect("fixture should print")
-        });
-
-        assert_eq!(output, "import \"./module.js\";\n");
-    }
-
-    #[test]
-    fn late_cleanup_removes_newly_dead_recovered_import_specifier() {
-        let modules = vec![UnpackedModule {
-            id: "entry".to_string(),
-            is_entry: true,
-            code: r#"import { recovered } from "./module.js";
-(function() {
-    return void recovered;
-})();
-"#
-            .to_string(),
-            filename: "entry.js".to_string(),
-            ..Default::default()
-        }];
-
-        let output = unpack_multi_module(
-            modules,
-            DecompileOptions {
-                dce_mode: DceMode::TransformOnly,
-                ..Default::default()
-            },
-        )
-        .expect("fixture should decompile");
-        assert_eq!(output.modules[0].code, "import \"./module.js\";\n");
     }
 
     #[test]

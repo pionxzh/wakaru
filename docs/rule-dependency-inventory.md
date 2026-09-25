@@ -141,9 +141,11 @@ rationale, or level gating appear.
   than duplicating that logic. Level-gated to `standard` (assumption
   `set_computed_properties`).
 - **SimplifySequence** — runs first among the rules that assume flat input;
-  nearly everything downstream assumes flat statement lists. Drops provably side-effect-free bare expressions
-  (guarded by `unresolved_mark` for call purity). Test pitfall: a bare
-  literal statement (`65536;`) is dropped as dead — use `const x = 65536;`.
+  nearly everything downstream assumes flat statement lists. It keeps every
+  split statement, including one that does nothing: an expression that was
+  already dead in the input stays dead in the output. A rule that would leave
+  a bare value behind when it removes a statement must drop that value
+  itself, where it can tell the value came from its own rewrite.
 - **FlipComparisons** — normalizes literals to the right-hand side.
   UnParameters pattern-matches `arg === undefined` with the literal on the
   right.

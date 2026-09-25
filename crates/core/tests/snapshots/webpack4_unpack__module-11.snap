@@ -136,6 +136,7 @@ function c(e, t) {
 export function combineReducers(e) {
     for(var t = Object.keys(e), n = {}, r = 0; r < t.length; r++){
         const i = t[r];
+        0;
         if (typeof e[i] === "function") {
             n[i] = e[i];
         }

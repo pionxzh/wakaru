@@ -66,7 +66,6 @@ struct RuleRunContext<'a> {
     unresolved_mark: Mark,
     rewrite_level: RewriteLevel,
     dce_mode: DceMode,
-    source_import_reads_are_observable: bool,
     module_facts: Option<&'a ModuleFactsMap>,
     current_filename: Option<&'a str>,
     local_helpers: Rc<RefCell<Option<Rc<LocalHelperContext>>>>,
@@ -163,11 +162,7 @@ runner!(run_un_computed_properties, |ctx| {
     UnComputedProperties::new(ctx.rewrite_level)
 });
 runner!(run_simplify_sequence, |ctx| {
-    SimplifySequence::new_with_import_semantics(
-        ctx.unresolved_mark,
-        ctx.rewrite_level,
-        ctx.source_import_reads_are_observable,
-    )
+    SimplifySequence::new_with_level(ctx.unresolved_mark, ctx.rewrite_level)
 });
 runner!(run_flip_comparisons, |ctx| FlipComparisons::new(
     ctx.unresolved_mark
@@ -911,7 +906,6 @@ fn apply_rules_impl(
         unresolved_mark,
         rewrite_level: options.rewrite_level,
         dce_mode: options.dce_mode,
-        source_import_reads_are_observable: preserve_input_import_link_checks,
         module_facts: options.module_facts,
         current_filename: options.current_filename,
         local_helpers: Rc::new(RefCell::new(None)),
@@ -1069,7 +1063,6 @@ mod tests {
                 unresolved_mark,
                 rewrite_level: RewriteLevel::Standard,
                 dce_mode: DceMode::Full,
-                source_import_reads_are_observable: true,
                 module_facts: None,
                 current_filename: None,
                 local_helpers: Rc::new(RefCell::new(Some(Rc::new(LocalHelperContext::default())))),
