@@ -557,6 +557,44 @@ class Bar {
     );
 }
 
+#[test]
+fn class_syntax_guard_is_removed_before_field_recovery() {
+    // UnClassFields lifts only leading constructor initializers, so a guard
+    // already in class syntax must be gone before it runs.
+    let input = r#"
+function _classCallCheck(instance, Constructor) {
+    if (!(instance instanceof Constructor)) {
+        throw new TypeError("Cannot call a class as a function");
+    }
+}
+function _defineProperty(obj, key, value) {
+    if (key in obj) {
+        Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true });
+    } else {
+        obj[key] = value;
+    }
+    return obj;
+}
+class Foo {
+    constructor() {
+        _classCallCheck(this, Foo);
+        _defineProperty(this, "x", 1);
+    }
+    m() { return this.x; }
+}
+use(new Foo().m());
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("x = 1;"),
+        "field must be recovered:\n{output}"
+    );
+    assert!(
+        !output.contains("constructor") && !output.contains("_classCallCheck"),
+        "guard and constructor must be gone:\n{output}"
+    );
+}
+
 fn render_ts(source: &str) -> String {
     wakaru_core::decompile(
         source,

@@ -12,8 +12,8 @@ use swc_core::ecma::ast::{
     Constructor, Decl, ExportDecl, Expr, ExprOrSpread, ExprStmt, FnExpr, Function, FunctionBody,
     Ident, IdentName, ImportSpecifier, Lit, MemberExpr, MemberProp, MethodKind, ModuleDecl,
     ModuleExportName, ModuleItem, Param, ParamOrTsParamProp, Pat, PropName, SeqExpr,
-    SimpleAssignTarget, Stmt, Super, SuperProp, SuperPropExpr, ThisExpr, UnaryOp, VarDecl,
-    VarDeclKind, VarDeclarator,
+    SimpleAssignTarget, Stmt, Super, SuperProp, SuperPropExpr, ThisExpr, VarDecl, VarDeclKind,
+    VarDeclarator,
 };
 use swc_core::ecma::utils::find_pat_ids;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -29,10 +29,12 @@ use super::helper_matcher::{
     binding_key, remove_import_specifiers_by_binding, remove_unused_helper_declarations, BindingKey,
 };
 use super::transpiler_helper_utils::{
-    classify_inline_callable, detect_helper_from_path, is_call_super_fn, is_inherits_fn,
-    is_set_prototype_of_fn, is_tslib_path, is_tslib_require_expr_with_mark,
-    tslib_member_ts_helper_kind, tslib_require_ts_helper_kind_with_mark, LocalHelperContext,
-    TranspilerHelperKind, TsHelperKind,
+    detect_helper_from_path, is_call_super_fn, is_inherits_fn, is_set_prototype_of_fn,
+    is_tslib_path, is_tslib_require_expr_with_mark, tslib_member_ts_helper_kind,
+    tslib_require_ts_helper_kind_with_mark, LocalHelperContext, TranspilerHelperKind, TsHelperKind,
+};
+use super::un_class_call_check::{
+    class_call_check_target, constructor_omittable_after_guard_removal,
 };
 use super::RewriteLevel;
 use crate::utils::paren::strip_parens;
@@ -1245,18 +1247,19 @@ fn try_iife_to_class(
     // The inner constructor name is often not the outer binding (`t` vs `Foo`).
     // A remaining `_classCallCheck(this, t)` is a reference to `t`, and that
     // reference would reject recovery. Drop only that committed guard.
-    strip_inner_ctor_class_call_checks(
+    if strip_inner_ctor_class_call_checks(
         &mut class_body,
         class_call_check_helpers,
         &binding_key(inner_ctor_ident),
-    );
-    let derived = super_class.is_some();
-    class_body.retain(|member| match member {
-        ClassMember::Constructor(ctor) => {
-            !super::un_class_call_check::constructor_omittable_after_guard_removal(ctor, derived)
-        }
-        _ => true,
-    });
+    ) {
+        let derived = super_class.is_some();
+        class_body.retain(|member| match member {
+            ClassMember::Constructor(ctor) => {
+                !constructor_omittable_after_guard_removal(ctor, derived)
+            }
+            _ => true,
+        });
+    }
     // native_class_inheritance: only the proven TypeScript default-constructor
     // frame can consume its null guard and recover native super dispatch.
     if rewrite_level >= RewriteLevel::Standard
@@ -3192,12 +3195,14 @@ fn is_not_null_check(expr: &Expr, name: &str) -> bool {
 
 /// Drop a classCallCheck whose second argument is the inner constructor.
 /// That reference would make recovery refuse a class whose outer name differs
-/// (`var Foo` / `function t`). Other calls stay.
+/// (`var Foo` / `function t`). Other calls stay. Returns whether one was
+/// dropped.
 fn strip_inner_ctor_class_call_checks(
-    members: &mut Vec<ClassMember>,
+    members: &mut [ClassMember],
     helpers: &HashSet<BindingKey>,
     ctor: &BindingKey,
-) {
+) -> bool {
+    let mut stripped = false;
     for member in members.iter_mut() {
         let ClassMember::Constructor(constructor) = member else {
             continue;
@@ -3205,47 +3210,14 @@ fn strip_inner_ctor_class_call_checks(
         let Some(body) = constructor.body.as_mut() else {
             continue;
         };
-        body.stmts
-            .retain(|stmt| !stmt_is_inner_ctor_class_call_check(stmt, helpers, ctor));
+        let before = body.stmts.len();
+        body.stmts.retain(|stmt| {
+            class_call_check_target(stmt, |id| helpers.contains(&binding_key(id)))
+                .is_none_or(|target| binding_key(target) != *ctor)
+        });
+        stripped |= body.stmts.len() < before;
     }
-}
-
-fn stmt_is_inner_ctor_class_call_check(
-    stmt: &Stmt,
-    helpers: &HashSet<BindingKey>,
-    ctor: &BindingKey,
-) -> bool {
-    let Stmt::Expr(expr_stmt) = stmt else {
-        return false;
-    };
-    let expr = expr_stmt.expr.as_ref();
-    let call_expr = match expr {
-        Expr::Unary(unary) if unary.op == UnaryOp::Bang => unary.arg.as_ref(),
-        other => other,
-    };
-    let Expr::Call(call) = call_expr else {
-        return false;
-    };
-    let Callee::Expr(callee) = &call.callee else {
-        return false;
-    };
-    let is_helper = match callee.as_ref() {
-        Expr::Ident(id) => helpers.contains(&binding_key(id)),
-        other => {
-            classify_inline_callable(strip_parens(other))
-                == Some(TranspilerHelperKind::ClassCallCheck)
-        }
-    };
-    if !is_helper || call.args.len() != 2 || call.args.iter().any(|arg| arg.spread.is_some()) {
-        return false;
-    }
-    if !matches!(call.args[0].expr.as_ref(), Expr::This(..)) {
-        return false;
-    }
-    let Expr::Ident(arg) = call.args[1].expr.as_ref() else {
-        return false;
-    };
-    &binding_key(arg) == ctor
+    stripped
 }
 
 fn build_constructor(

@@ -183,7 +183,8 @@ rationale, or level gating appear.
 - **UnClassCallCheck / UnPossibleConstructorReturn** — UnPossibleConstructorReturn
   removes return indirection so UnEs6Class sees constructor bodies.
   UnClassCallCheck removes a classCallCheck call only when it already sits in
-  class syntax. Plain functions keep the no-`new` throw. UnClassCallCheck2
+  class syntax, so UnClassFields sees field initializers first. Plain
+  functions keep the no-`new` throw. UnClassCallCheck2
   runs after UnPrototypeClass and strips guards that class recovery copied
   into a constructor.
 

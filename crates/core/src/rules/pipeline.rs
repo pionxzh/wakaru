@@ -565,6 +565,8 @@ define_rule_registry! {
         "UnBracketNotation"
     ]),
     ("UnSlicedToArray", Helpers, run_un_sliced_to_array, always_enabled),
+    // Strips guards already in class syntax so UnClassFields sees field
+    // initializers first. Guards in functions wait for UnClassCallCheck2.
     ("UnClassCallCheck", Helpers, run_un_class_call_check, always_enabled),
     ("UnPossibleConstructorReturn", Helpers, run_un_possible_constructor_return, always_enabled),
     ("UnTypeofPolyfill", Helpers, run_un_typeof_polyfill, always_enabled),
