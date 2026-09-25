@@ -1367,6 +1367,87 @@ export const foo = sideEffect2();
 }
 
 #[test]
+fn dropped_default_sentinel_leaves_no_statement() {
+    // Babel declares the default export with a `void 0` placeholder before
+    // assigning the real value. Evaluating the placeholder has no effect.
+    let input = r#"
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.default = void 0;
+var _default = function (a) { return a; };
+exports.default = _default;
+module.exports = exports.default;
+"#;
+    let expected = r#"
+"use strict";
+const _default = (a)=>a;
+export default _default;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn dropped_sequence_default_sentinel_leaves_no_statement() {
+    let input = r#"
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: !0 }), exports.default = void 0, exports.default = (a)=>a.b, module.exports = exports.default;
+"#;
+    let expected = r#"
+"use strict";
+export default ((a)=>a.b);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn dropped_module_exports_of_hoisted_binding_leaves_no_statement() {
+    // Reading a function or `var` binding cannot throw, so the dropped
+    // `module.exports = r` needs no leftover read.
+    let input = r#"
+function r(a) { return a; }
+var s = 1;
+module.exports = r;
+module.exports.default = r;
+exports.value = s;
+exports.value = 2;
+"#;
+    let expected = r#"
+function r(a) {
+    return a;
+}
+const s = 1;
+export default r;
+export const value = 2;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn dropped_export_keeps_read_that_can_throw() {
+    // A lexical binding read can throw before initialization, and an
+    // unresolved read can throw a ReferenceError. Keep both reads.
+    let input = r#"
+module.exports = early;
+let early = 1;
+module.exports.default = early;
+exports.other = missing;
+exports.other = 2;
+"#;
+    let expected = r#"
+early;
+let early = 1;
+export default early;
+missing;
+export const other = 2;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn non_top_level_require_unchanged() {
     // VarDeclToLetConst converts var to const since bar is never reassigned.
     let input = r#"

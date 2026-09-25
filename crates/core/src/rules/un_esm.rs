@@ -265,6 +265,7 @@ impl VisitMut for UnEsm {
                 Default::default()
             };
 
+        let hoisted_bindings = collect_hoisted_top_level_bindings(module);
         let items = std::mem::take(&mut module.body);
 
         // Phase 1: classify
@@ -725,7 +726,12 @@ impl VisitMut for UnEsm {
                 Classified::CjsRequire(_) => {}     // skip, replaced by import
                 Classified::CjsExport { span, kind } => {
                     if drop_set.contains(&idx) {
-                        new_body.extend(build_dropped_export_side_effect_items(span, kind));
+                        new_body.extend(build_dropped_export_side_effect_items(
+                            span,
+                            kind,
+                            self.unresolved_mark,
+                            &hoisted_bindings,
+                        ));
                     } else {
                         new_body.extend(build_export_items(
                             span,
@@ -4070,7 +4076,12 @@ fn build_named_export_snapshot(
     ]
 }
 
-fn build_dropped_export_side_effect_items(span: Span, kind: CjsExportKind) -> Vec<ModuleItem> {
+fn build_dropped_export_side_effect_items(
+    span: Span,
+    kind: CjsExportKind,
+    unresolved_mark: Mark,
+    hoisted_bindings: &HashSet<BindingId>,
+) -> Vec<ModuleItem> {
     let expr = match kind {
         CjsExportKind::ModuleExportsDefault { expr }
         | CjsExportKind::NamedDefault { expr }
@@ -4085,8 +4096,62 @@ fn build_dropped_export_side_effect_items(span: Span, kind: CjsExportKind) -> Ve
         | CjsExportKind::DefaultMirror
         | CjsExportKind::SelfRef => return vec![],
     };
+    if dropped_export_value_is_inert(&expr, unresolved_mark, hoisted_bindings) {
+        return vec![];
+    }
 
     vec![ModuleItem::Stmt(Stmt::Expr(ExprStmt { span, expr }))]
+}
+
+/// True when evaluating a dropped export's value can neither run code nor
+/// throw, so the dropped assignment needs no leftover statement. Babel's
+/// `exports.default = void 0` placeholder and the first of
+/// `module.exports = f; module.exports.default = f;` take this path.
+fn dropped_export_value_is_inert(
+    expr: &Expr,
+    unresolved_mark: Mark,
+    hoisted_bindings: &HashSet<BindingId>,
+) -> bool {
+    match strip_parens(expr) {
+        Expr::Lit(_) => true,
+        Expr::Unary(UnaryExpr {
+            op: UnaryOp::Void,
+            arg,
+            ..
+        }) => matches!(strip_parens(arg), Expr::Lit(_)),
+        // A lexical binding can throw before initialization and an
+        // unresolved name can throw a ReferenceError. Function and `var`
+        // bindings are hoisted, so reading them cannot throw.
+        Expr::Ident(id) => {
+            is_undefined_ident(id, unresolved_mark)
+                || hoisted_bindings.contains(&(id.sym.clone(), id.ctxt))
+        }
+        _ => false,
+    }
+}
+
+/// Top-level function and `var` bindings, whose reads cannot throw.
+fn collect_hoisted_top_level_bindings(module: &Module) -> HashSet<BindingId> {
+    let mut bindings = HashSet::default();
+    for item in &module.body {
+        let decl = match item {
+            ModuleItem::Stmt(Stmt::Decl(decl)) => decl,
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => &export.decl,
+            _ => continue,
+        };
+        match decl {
+            Decl::Fn(function) => {
+                bindings.insert((function.ident.sym.clone(), function.ident.ctxt));
+            }
+            Decl::Var(var) if var.kind == VarDeclKind::Var => {
+                for declarator in &var.decls {
+                    bindings.extend(find_pat_ids::<_, Id>(&declarator.name));
+                }
+            }
+            _ => {}
+        }
+    }
+    bindings
 }
 
 // ============================================================
