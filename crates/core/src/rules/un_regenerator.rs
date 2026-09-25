@@ -1985,6 +1985,13 @@ fn decode_babel_state_machine(
                     i += 1;
                     continue;
                 }
+                // A minifier drops the unused temp of `_t = _ctx.v` and keeps
+                // the bare read. It hands over the caught value and is not
+                // part of the catch body.
+                if is_discarded_catch_value_read(state_param, stmt) {
+                    i += 1;
+                    continue;
+                }
             }
 
             let mut stmt = stmt.clone();
@@ -3007,6 +3014,13 @@ fn extract_catch_value_alias(state_param: &Ident, stmt: &Stmt) -> Option<CatchVa
     }
 
     None
+}
+
+fn is_discarded_catch_value_read(state_param: &Ident, stmt: &Stmt) -> bool {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return false;
+    };
+    matches!(expr.as_ref(), Expr::Member(_)) && is_sent_access(state_param, expr)
 }
 
 fn is_state_catch_call(state_param: &Ident, expr: &Expr) -> bool {

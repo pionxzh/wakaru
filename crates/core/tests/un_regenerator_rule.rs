@@ -3635,3 +3635,47 @@ export { __async };
     assert!(output.contains("var __async ="), "{output}");
     assert!(output.contains("export { __async }"), "{output}");
 }
+
+#[test]
+fn generator_drops_discarded_catch_value_read() {
+    // Babel 7.28 stores the caught value in `_t`. When the catch body never
+    // uses it, Terser drops the unused temp and keeps a bare `_context.v`
+    // read. That read is how the machine hands over the error, not a
+    // statement of the original catch body.
+    let input = r#"
+var _marked = _regenerator().m(toggle);
+function toggle(p) {
+  var t;
+  return _regenerator().w(function (_context) {
+    while (1) switch (_context.p = _context.n) {
+      case 0:
+        t = p.paused;
+        _context.p = 1;
+        _context.n = 2;
+        return p.play();
+      case 2:
+        _context.n = 4;
+        break;
+      case 3:
+        _context.p = 3;
+        _context.v;
+      case 4:
+        if (t) p.pause();
+      case 5:
+        return _context.a(2);
+    }
+  }, _marked, null, [[1, 3]]);
+}
+"#;
+    let expected = r#"
+function* toggle(p) {
+  var t;
+  t = p.paused;
+  try {
+    yield p.play();
+  } catch (error) {}
+  if (t) p.pause();
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
