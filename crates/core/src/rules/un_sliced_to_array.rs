@@ -1395,10 +1395,20 @@ fn try_fold_sliced_to_array_ref_assignment_stmt_group(
     else {
         return false;
     };
-    if ident_used_in_stmts(&stmts[start + 1 + length..], &extraction.ref_binding.id) {
+    // A lowered destructuring assignment statement ends its sequence with the
+    // temp, the value of the assignment expression. The statement discards it.
+    let mut consumed = length;
+    if stmts.get(start + 1 + length).is_some_and(|stmt| {
+        matches!(stmt, Stmt::Expr(ExprStmt { expr, .. })
+            if matches!(expr.as_ref(), Expr::Ident(ident)
+                if same_sliced_ref_ident(ident, &extraction.ref_binding.id)))
+    }) {
+        consumed += 1;
+    }
+    if ident_used_in_stmts(&stmts[start + 1 + consumed..], &extraction.ref_binding.id) {
         return false;
     }
-    if sliced_source_ref_is_used_in_stmts(&stmts[start + 1 + length..], &extraction) {
+    if sliced_source_ref_is_used_in_stmts(&stmts[start + 1 + consumed..], &extraction) {
         return false;
     }
 
@@ -1439,7 +1449,7 @@ fn try_fold_sliced_to_array_ref_assignment_stmt_group(
             definite: false,
         }],
     })));
-    stmts.drain(start + 1..start + 1 + length);
+    stmts.drain(start + 1..start + 1 + consumed);
     remove_prior_uninitialized_decls_by(
         stmts,
         start,

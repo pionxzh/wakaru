@@ -297,6 +297,55 @@ function Component() {
 }
 
 #[test]
+fn folds_helper_ref_assignment_with_trailing_ref_value() {
+    // swc lowers the statement `[a, b] = f()` to a sequence that ends with
+    // `ref`, the value of the assignment expression. The statement discards
+    // that value, so the trailing read belongs to the lowered form.
+    let input = r#"
+import { _ as _sliced_to_array } from "@swc/helpers/_/_sliced_to_array";
+function Component() {
+    var current;
+    var setCurrent;
+    var ref;
+    ref = _sliced_to_array(useState(value), 2);
+    current = ref[0];
+    setCurrent = ref[1];
+    ref;
+    use(current, setCurrent);
+}
+"#;
+    let expected = r#"
+function Component() {
+    var [current, setCurrent] = useState(value);
+    use(current, setCurrent);
+}
+"#;
+    assert_eq_normalized(
+        &common::render_rule(input, |_| UnSlicedToArray::new()),
+        expected,
+    );
+}
+
+#[test]
+fn keeps_helper_ref_assignment_when_ref_is_read_after_its_value() {
+    let input = r#"
+import { _ as _sliced_to_array } from "@swc/helpers/_/_sliced_to_array";
+function Component() {
+    var current;
+    var setCurrent;
+    var ref;
+    ref = _sliced_to_array(useState(value), 2);
+    current = ref[0];
+    setCurrent = ref[1];
+    ref;
+    use(ref);
+}
+"#;
+    let output = common::render_rule(input, |_| UnSlicedToArray::new());
+    assert!(output.contains("ref = _sliced_to_array("), "{output}");
+}
+
+#[test]
 fn unwraps_tslib_namespace_read_require() {
     let input = r#"
 var tslib_1 = require("tslib");
