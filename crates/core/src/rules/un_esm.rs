@@ -7468,10 +7468,13 @@ fn is_ident_prop(prop: &MemberProp) -> Option<Atom> {
     }
 }
 
-/// Check if expr is `void N` or `undefined`
+/// Check if expr is `void <literal>` or `undefined`. `void f()` still calls
+/// `f`, so it is not a placeholder.
 fn is_void_or_undefined(expr: &Expr, unresolved_mark: Mark) -> bool {
     match expr {
-        Expr::Unary(unary) if unary.op == UnaryOp::Void => true,
+        Expr::Unary(unary) if unary.op == UnaryOp::Void => {
+            matches!(strip_parens(&unary.arg), Expr::Lit(_))
+        }
         Expr::Ident(id) if is_undefined_ident(id, unresolved_mark) => true,
         _ => false,
     }

@@ -1353,6 +1353,24 @@ exports.foo = 1;
 }
 
 #[test]
+fn void_of_a_call_is_not_an_export_sentinel() {
+    // Only `void <literal>` is a placeholder. `void f()` still calls `f`, and
+    // as the last write it is the export's real value.
+    let input = r#"
+exports.foo = void first();
+exports.foo = 1;
+exports.bar = void second();
+"#;
+    let expected = r#"
+void first();
+export const foo = 1;
+export const bar = void second();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn export_dedup_preserves_dropped_rhs_evaluation() {
     let input = r#"
 exports.foo = sideEffect1();
