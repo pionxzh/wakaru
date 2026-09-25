@@ -8,7 +8,7 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::utils::ExprFactory;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
-use super::binding_facts::collect_binding_facts;
+use super::binding_facts::{collect_binding_facts_and_temps, TempIsolation};
 use super::dead_decls::{extend_consumed_uninitialized_expr, remove_consumed_uninitialized_decls};
 use super::decl_utils::BindingId;
 pub(crate) use super::expr_utils::{exprs_structurally_equal, is_unresolved_undefined};
@@ -22,6 +22,7 @@ pub struct UnNullishCoalescing {
     uninitialized_bindings: HashSet<BindingId>,
     binding_references: HashMap<BindingId, usize>,
     consumed_uninitialized_bindings: HashSet<BindingId>,
+    isolation: TempIsolation,
 }
 
 impl UnNullishCoalescing {
@@ -32,19 +33,21 @@ impl UnNullishCoalescing {
             uninitialized_bindings: HashSet::default(),
             binding_references: HashMap::default(),
             consumed_uninitialized_bindings: HashSet::default(),
+            isolation: TempIsolation::default(),
         }
     }
 }
 
 impl VisitMut for UnNullishCoalescing {
     fn visit_mut_module(&mut self, module: &mut Module) {
-        let facts = collect_binding_facts(module);
+        let (facts, isolation) = collect_binding_facts_and_temps(module);
         // Hoisted `var _a;` temps, or `let _a;` declared before every use in
         // the same function (VarDeclToLetConst's rewrite of the former); an
         // uninitialized `let` elsewhere may be in its TDZ where the pattern
         // assigns it.
         self.uninitialized_bindings = facts.assignable_uninitialized;
         self.binding_references = facts.references;
+        self.isolation = isolation;
         self.consumed_uninitialized_bindings.clear();
         module.visit_mut_children_with(self);
         remove_consumed_uninitialized_decls(module, &self.consumed_uninitialized_bindings);
@@ -53,13 +56,9 @@ impl VisitMut for UnNullishCoalescing {
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         expr.visit_mut_children_with(self);
 
-        if let Some(mut result) = try_nullish_coalescing(
-            expr,
-            self.unresolved_mark,
-            self.policy,
-            &self.uninitialized_bindings,
-            &self.binding_references,
-        ) {
+        if let Some(mut result) =
+            try_nullish_coalescing(expr, self.unresolved_mark, self.policy, &self.isolation)
+        {
             extend_consumed_uninitialized_expr(
                 &mut self.consumed_uninitialized_bindings,
                 expr,
@@ -79,8 +78,7 @@ fn try_nullish_coalescing(
     expr: &Expr,
     unresolved_mark: Mark,
     policy: RewritePolicy,
-    uninitialized_bindings: &HashSet<BindingId>,
-    binding_references: &HashMap<BindingId, usize>,
+    isolation: &TempIsolation,
 ) -> Option<Expr> {
     // Temp-backed computed member shape:
     // `(_obj = getObj())[_key = getKey()] ?? (_obj[_key] = fallback)`
@@ -88,11 +86,7 @@ fn try_nullish_coalescing(
     //
     // The isolated compiler temps preserve the single evaluation of both the
     // object and key, so this recovery is safe at every rewrite level.
-    if let Some(result) = try_temp_backed_computed_member_nullish_assignment(
-        expr,
-        uninitialized_bindings,
-        binding_references,
-    ) {
+    if let Some(result) = try_temp_backed_computed_member_nullish_assignment(expr, isolation) {
         return Some(result);
     }
 
@@ -103,13 +97,7 @@ fn try_nullish_coalescing(
 
     // Pattern C: `(tmp = X) === null || tmp === undefined || tmp` → `X ?? true`
     // (||‐chain encoding of nullish coalescing with boolean `true` default)
-    if let Some(result) = try_pattern_c_coalescing(
-        expr,
-        unresolved_mark,
-        policy,
-        uninitialized_bindings,
-        binding_references,
-    ) {
+    if let Some(result) = try_pattern_c_coalescing(expr, unresolved_mark, policy, isolation) {
         return Some(result);
     }
 
@@ -120,33 +108,18 @@ fn try_nullish_coalescing(
     // Pattern D: `x != null ? x : fallback` / `x == null ? fallback : x`
     // Temp-var form: `(tmp = expr) != null ? tmp : fallback` -> `expr ?? fallback`
     if policy.assumptions.no_document_all {
-        if let Some(result) = try_loose_pattern_coalescing(
-            cond_expr,
-            unresolved_mark,
-            uninitialized_bindings,
-            binding_references,
-        ) {
+        if let Some(result) = try_loose_pattern_coalescing(cond_expr, unresolved_mark, isolation) {
             return Some(result);
         }
     }
 
     // Pattern B: `x === null || x === void 0 ? fallback : x`
-    if let Some(result) = try_pattern_b_coalescing(
-        cond_expr,
-        unresolved_mark,
-        uninitialized_bindings,
-        binding_references,
-    ) {
+    if let Some(result) = try_pattern_b_coalescing(cond_expr, unresolved_mark, isolation) {
         return Some(result);
     }
 
     // Pattern A: `x !== null && x !== void 0 ? x : fallback`
-    if let Some(result) = try_pattern_a_coalescing(
-        cond_expr,
-        unresolved_mark,
-        uninitialized_bindings,
-        binding_references,
-    ) {
+    if let Some(result) = try_pattern_a_coalescing(cond_expr, unresolved_mark, isolation) {
         return Some(result);
     }
 
@@ -155,8 +128,7 @@ fn try_nullish_coalescing(
 
 fn try_temp_backed_computed_member_nullish_assignment(
     expr: &Expr,
-    uninitialized_bindings: &HashSet<BindingId>,
-    binding_references: &HashMap<BindingId, usize>,
+    isolation: &TempIsolation,
 ) -> Option<Expr> {
     let Expr::Bin(BinExpr {
         op: BinaryOp::NullishCoalescing,
@@ -196,21 +168,11 @@ fn try_temp_backed_computed_member_nullish_assignment(
         return None;
     }
 
-    // Each temp must occur only in its declaration and the two positions in
-    // this pattern (the read-side assignment and write-side identifier).
-    if !is_safe_temp_with_total_refs(
-        &object_sym,
-        object_ctxt,
-        uninitialized_bindings,
-        binding_references,
-        3,
-    ) || !is_safe_temp_with_total_refs(
-        &key_sym,
-        key_ctxt,
-        uninitialized_bindings,
-        binding_references,
-        3,
-    ) {
+    // Each temp's only uses must be the two positions in this pattern: the
+    // read-side assignment and the write-side identifier.
+    if !isolation.is_isolated(&(object_sym.clone(), object_ctxt), 2)
+        || !isolation.is_isolated(&(key_sym.clone(), key_ctxt), 2)
+    {
         return None;
     }
 
@@ -329,8 +291,7 @@ fn assign_target_to_expr(target: &AssignTarget) -> Option<Expr> {
 fn try_loose_pattern_coalescing(
     cond: &CondExpr,
     unresolved_mark: Mark,
-    uninitialized_bindings: &HashSet<BindingId>,
-    binding_references: &HashMap<BindingId, usize>,
+    isolation: &TempIsolation,
 ) -> Option<Expr> {
     let Expr::Bin(BinExpr {
         op, left, right, ..
@@ -342,23 +303,11 @@ fn try_loose_pattern_coalescing(
     match op {
         BinaryOp::NotEq => {
             let checked = extract_loose_null_operand(left, right, unresolved_mark)?;
-            try_loose_pattern_parts(
-                checked,
-                &cond.cons,
-                cond.alt.clone(),
-                uninitialized_bindings,
-                binding_references,
-            )
+            try_loose_pattern_parts(checked, &cond.cons, cond.alt.clone(), isolation)
         }
         BinaryOp::EqEq => {
             let checked = extract_loose_null_operand(left, right, unresolved_mark)?;
-            try_loose_pattern_parts(
-                checked,
-                &cond.alt,
-                cond.cons.clone(),
-                uninitialized_bindings,
-                binding_references,
-            )
+            try_loose_pattern_parts(checked, &cond.alt, cond.cons.clone(), isolation)
         }
         _ => None,
     }
@@ -368,21 +317,15 @@ fn try_loose_pattern_parts(
     checked: Box<Expr>,
     value_branch: &Expr,
     fallback: Box<Expr>,
-    uninitialized_bindings: &HashSet<BindingId>,
-    binding_references: &HashMap<BindingId, usize>,
+    isolation: &TempIsolation,
 ) -> Option<Expr> {
     if let Some((tmp_sym, tmp_ctxt, real_rhs)) = extract_assign_parts(&checked) {
         let tmp = Box::new(Expr::Ident(Ident::new(tmp_sym.clone(), DUMMY_SP, tmp_ctxt)));
         if !exprs_structurally_equal(value_branch, &tmp) {
             return None;
         }
-        if !is_safe_temp_with_total_refs(
-            &tmp_sym,
-            tmp_ctxt,
-            uninitialized_bindings,
-            binding_references,
-            3,
-        ) {
+        // Loose lowering uses the temp twice: the assignment and the value.
+        if !isolation.is_isolated(&(tmp_sym.clone(), tmp_ctxt), 2) {
             return None;
         }
         return Some(make_nullish_coalescing(real_rhs.clone(), fallback));
@@ -400,8 +343,7 @@ fn try_loose_pattern_parts(
 fn try_pattern_a_coalescing(
     cond: &CondExpr,
     unresolved_mark: Mark,
-    uninitialized_bindings: &HashSet<BindingId>,
-    binding_references: &HashMap<BindingId, usize>,
+    isolation: &TempIsolation,
 ) -> Option<Expr> {
     let NullCheckResult { value, real_value } =
         extract_not_null_check(&cond.test, unresolved_mark)?;
@@ -410,12 +352,7 @@ fn try_pattern_a_coalescing(
     if let Some(real) = real_value {
         if exprs_structurally_equal(&cond.cons, &value) {
             if let Expr::Ident(ref tmp_ident) = *value {
-                if !is_safe_temp(
-                    &tmp_ident.sym,
-                    tmp_ident.ctxt,
-                    uninitialized_bindings,
-                    binding_references,
-                ) {
+                if !is_safe_temp(&tmp_ident.sym, tmp_ident.ctxt, isolation) {
                     return None;
                 }
             }
@@ -437,8 +374,7 @@ fn try_pattern_a_coalescing(
 fn try_pattern_b_coalescing(
     cond: &CondExpr,
     unresolved_mark: Mark,
-    uninitialized_bindings: &HashSet<BindingId>,
-    binding_references: &HashMap<BindingId, usize>,
+    isolation: &TempIsolation,
 ) -> Option<Expr> {
     let NullCheckResult { value, real_value } = extract_null_check(&cond.test, unresolved_mark)?;
 
@@ -446,12 +382,7 @@ fn try_pattern_b_coalescing(
     if let Some(real) = real_value {
         if exprs_structurally_equal(&cond.alt, &value) {
             if let Expr::Ident(ref tmp_ident) = *value {
-                if !is_safe_temp(
-                    &tmp_ident.sym,
-                    tmp_ident.ctxt,
-                    uninitialized_bindings,
-                    binding_references,
-                ) {
+                if !is_safe_temp(&tmp_ident.sym, tmp_ident.ctxt, isolation) {
                     return None;
                 }
             }
@@ -486,8 +417,7 @@ fn try_pattern_c_coalescing(
     expr: &Expr,
     unresolved_mark: Mark,
     policy: RewritePolicy,
-    uninitialized_bindings: &HashSet<BindingId>,
-    binding_references: &HashMap<BindingId, usize>,
+    isolation: &TempIsolation,
 ) -> Option<Expr> {
     // Shape: `(A || B) || C` where A = null-check, B = undefined-check, C = value
     let Expr::Bin(BinExpr {
@@ -524,12 +454,7 @@ fn try_pattern_c_coalescing(
                 // tail must also be `tmp`
                 if let Expr::Ident(ti) = tail.as_ref() {
                     if ti.sym == tmp_sym && ti.ctxt == tmp_ctxt {
-                        if !is_safe_temp(
-                            &tmp_sym,
-                            tmp_ctxt,
-                            uninitialized_bindings,
-                            binding_references,
-                        ) {
+                        if !is_safe_temp(&tmp_sym, tmp_ctxt, isolation) {
                             return None;
                         }
                         return Some(make_nullish_coalescing(
@@ -776,10 +701,8 @@ fn make_nullish_coalescing(value: Box<Expr>, fallback: Box<Expr>) -> Expr {
     (*value).make_bin(BinaryOp::NullishCoalescing, *fallback)
 }
 
-/// Check that a temp variable has a known uninitialized declaration (`var tmp;`
-/// or `let tmp;`) and is only referenced within the pattern itself plus that
-/// declaration. The temp appears 3 times in the pattern (assignment target +
-/// 2 uses) and 1 time in the declaration, for a total of 4.
+/// A declared temp whose uses are exactly the three a coalescing pattern
+/// consumes: the assignment and two reads.
 ///
 /// Without a known declaration the temp is either an undeclared global (sloppy
 /// mode: erasing the assignment drops a global side effect) or an unresolved
@@ -788,25 +711,9 @@ fn make_nullish_coalescing(value: Box<Expr>, fallback: Box<Expr>) -> Expr {
 fn is_safe_temp(
     sym: &swc_core::atoms::Atom,
     ctxt: SyntaxContext,
-    uninitialized_bindings: &HashSet<BindingId>,
-    binding_references: &HashMap<BindingId, usize>,
+    isolation: &TempIsolation,
 ) -> bool {
-    is_safe_temp_with_total_refs(sym, ctxt, uninitialized_bindings, binding_references, 4)
-}
-
-fn is_safe_temp_with_total_refs(
-    sym: &swc_core::atoms::Atom,
-    ctxt: SyntaxContext,
-    uninitialized_bindings: &HashSet<BindingId>,
-    binding_references: &HashMap<BindingId, usize>,
-    expected_total_refs: usize,
-) -> bool {
-    let binding_id = (sym.clone(), ctxt);
-    if !uninitialized_bindings.contains(&binding_id) {
-        return false;
-    }
-    let total_refs = binding_references.get(&binding_id).copied().unwrap_or(0);
-    total_refs == expected_total_refs
+    isolation.is_isolated(&(sym.clone(), ctxt), 3)
 }
 
 #[cfg(test)]

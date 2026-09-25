@@ -547,3 +547,35 @@ use(x);
 "#;
     assert_eq_normalized(&apply(input), input);
 }
+
+#[test]
+fn preserves_parameter_used_as_coalescing_temp() {
+    // Sloppy-mode `arguments` aliases the parameter, so its write is observable.
+    let input = r#"
+function read(n) {
+  const x = (n = foo) !== null && n !== void 0 ? n : "bar";
+  return [x, arguments[0]];
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn preserves_redeclared_coalescing_temp() {
+    let input = r#"
+var n;
+var n;
+const x = (n = foo) !== null && n !== void 0 ? n : "bar";
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn transforms_loose_coalescing_temp_used_only_in_pattern() {
+    let input = r#"
+var n;
+const x = (n = foo) != null ? n : "bar";
+"#;
+    let output = apply(input);
+    assert!(output.contains(r#"foo ?? "bar""#), "{output}");
+}
