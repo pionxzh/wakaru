@@ -1,8 +1,8 @@
 use crate::collections::{HashMap, HashSet};
 
 use swc_core::ecma::ast::{
-    ArrowFunctionBody, BindingIdent, CallExpr, Callee, Class, Expr, Function, ModuleItem, Pat,
-    ReturnStmt, Stmt, VarDeclarator,
+    ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BindingIdent, CallExpr, Callee, Class,
+    Expr, Function, ModuleItem, Pat, ReturnStmt, SimpleAssignTarget, Stmt, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -117,13 +117,7 @@ impl CallabilityCollector {
         }
     }
 
-    fn record_iife_result_alias(&mut self, declarator: &VarDeclarator) {
-        let Pat::Ident(target) = &declarator.name else {
-            return;
-        };
-        let Some(init) = declarator.init.as_deref() else {
-            return;
-        };
+    fn record_iife_result_alias(&mut self, target: BindingKey, init: &Expr) {
         let Expr::Call(call) = strip_parens(init) else {
             return;
         };
@@ -150,7 +144,6 @@ impl CallabilityCollector {
             _ => return,
         }
 
-        let target = binding_key(&target.id);
         self.aliases.extend(
             returns
                 .bindings
@@ -162,8 +155,19 @@ impl CallabilityCollector {
 
 impl Visit for CallabilityCollector {
     fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
-        self.record_iife_result_alias(declarator);
+        if let (Some(target), Some(init)) = (pat_binding_key(&declarator.name), &declarator.init) {
+            self.record_iife_result_alias(target, init);
+        }
         declarator.visit_children_with(self);
+    }
+
+    fn visit_assign_expr(&mut self, assignment: &AssignExpr) {
+        if assignment.op == AssignOp::Assign {
+            if let AssignTarget::Simple(SimpleAssignTarget::Ident(target)) = &assignment.left {
+                self.record_iife_result_alias(binding_key(&target.id), &assignment.right);
+            }
+        }
+        assignment.visit_children_with(self);
     }
 
     fn visit_call_expr(&mut self, call: &CallExpr) {

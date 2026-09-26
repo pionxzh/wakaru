@@ -1299,3 +1299,19 @@ Object.defineProperty(Foo.prototype, "self", {
 "#;
     assert_eq_normalized(&apply_resolved(input), expected);
 }
+
+#[test]
+fn assigned_iife_result_keeps_returned_constructor_callable() {
+    let input = r#"
+var Constructor;
+Constructor = function() {
+    function Inner(value) { this.value = value; }
+    Inner.prototype.read = function() { return this.value; };
+    return Inner;
+}();
+(function(ctor) { return ctor.apply({}, [3]); })(Constructor);
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+    let output = common::render_pipeline(input);
+    assert!(!output.contains("class Inner"), "{output}");
+}
