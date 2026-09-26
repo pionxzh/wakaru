@@ -12,8 +12,8 @@ use swc_core::ecma::ast::{
     Constructor, Decl, ExportDecl, Expr, ExprOrSpread, ExprStmt, FnExpr, Function, FunctionBody,
     Ident, IdentName, ImportSpecifier, Lit, MemberExpr, MemberProp, MethodKind, ModuleDecl,
     ModuleExportName, ModuleItem, Param, ParamOrTsParamProp, Pat, PropName, SeqExpr,
-    SimpleAssignTarget, Stmt, Super, SuperProp, SuperPropExpr, ThisExpr, VarDecl, VarDeclKind,
-    VarDeclarator,
+    SimpleAssignTarget, Stmt, Super, SuperProp, SuperPropExpr, ThisExpr, UpdateOp, VarDecl,
+    VarDeclKind, VarDeclOrExpr, VarDeclarator,
 };
 use swc_core::ecma::utils::find_pat_ids;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -1742,6 +1742,11 @@ fn parse_class_body(
     // (inline _inherits pattern), we still need to rewrite super calls.
     let needs_super_rewrite = super_param.is_some() || has_super;
 
+    // Minified `_createClass(t, e)` with `_defineProperties` inlined:
+    // `e = [...]; (function(e, t) { for … })(t.prototype, e);`
+    let methods_temps = inline_define_properties_temps(stmts, unresolved_mark);
+    let mut pending_methods: Vec<(BindingKey, &Expr)> = Vec::new();
+
     let mut in_directive_prologue = true;
     for (stmt_index, stmt) in stmts.iter().enumerate() {
         if in_directive_prologue && is_use_strict_directive(stmt) {
@@ -1919,6 +1924,26 @@ fn parse_class_body(
                 ) {
                     continue;
                 }
+                if try_parse_inline_define_properties(
+                    call,
+                    inner_ctor_name,
+                    &mut pending_methods,
+                    &mut members,
+                    unresolved_mark,
+                ) {
+                    continue;
+                }
+            }
+
+            // `e = [{ key: "method", value: fn }]` feeding a later inlined loop
+            if let Some((key, methods)) = methods_temp_assignment(expr, &methods_temps) {
+                pending_methods.push((key, methods));
+                continue;
+            }
+
+            // `Object.defineProperty(t, "prototype", { writable: false })`
+            if is_prototype_seal(expr, inner_ctor_name, unresolved_mark) {
+                continue;
             }
 
             return None;
@@ -1928,6 +1953,9 @@ fn parse_class_body(
         if let Stmt::Decl(Decl::Var(var_decl)) = stmt {
             if let Some(alias) = try_parse_proto_alias(var_decl, inner_ctor_name) {
                 proto_alias = Some(alias);
+                continue;
+            }
+            if declares_only_methods_temps(var_decl, &methods_temps) {
                 continue;
             }
             return None;
@@ -1940,6 +1968,11 @@ fn parse_class_body(
             }
         }
 
+        return None;
+    }
+
+    // A methods array the loop never consumed is not a class member.
+    if !pending_methods.is_empty() {
         return None;
     }
 
@@ -2685,24 +2718,412 @@ fn try_parse_create_class(
     }
 
     // Instance methods
-    if !parse_create_class_array(&call.args[1], false, members) {
+    if !parse_create_class_array(&call.args[1].expr, false, members) {
         return false;
     }
 
     // Static methods (optional 3rd arg)
-    if call.args.len() == 3 && !parse_create_class_array(&call.args[2], true, members) {
+    if call.args.len() == 3 && !parse_create_class_array(&call.args[2].expr, true, members) {
         return false;
     }
 
     true
 }
 
-fn parse_create_class_array(
-    arg: &ExprOrSpread,
-    is_static: bool,
+/// Parse the lowered `_defineProperties` loop that a minifier inlined into
+/// the class wrapper as an IIFE:
+///
+/// ```js
+/// (function(e, t) {
+///     for (var n = 0; n < t.length; n++) {
+///         var r = t[n];
+///         r.enumerable = r.enumerable || false;
+///         r.configurable = true;
+///         if ("value" in r) r.writable = true;
+///         Object.defineProperty(e, r.key, r);
+///     }
+/// })(t.prototype, [{ key: "method", value: fn }]);
+/// ```
+///
+/// The first argument is `t.prototype` for instance members or `t` for
+/// static members. The second is the methods array, inline or a temporary
+/// assigned earlier in the wrapper (consumed from `pending_methods`).
+fn try_parse_inline_define_properties(
+    call: &CallExpr,
+    ctor_name: &str,
+    pending_methods: &mut Vec<(BindingKey, &Expr)>,
     members: &mut Vec<ClassMember>,
+    unresolved_mark: Mark,
 ) -> bool {
-    let arr_expr = strip_parens(&arg.expr);
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    if !is_define_properties_loop_fn(strip_parens(callee), unresolved_mark) {
+        return false;
+    }
+    let [target, methods] = call.args.as_slice() else {
+        return false;
+    };
+    if target.spread.is_some() || methods.spread.is_some() {
+        return false;
+    }
+    let is_static = match strip_parens(&target.expr) {
+        Expr::Ident(id) if id.sym.as_ref() == ctor_name => true,
+        expr if is_prototype_member_expr(expr, ctor_name) => false,
+        _ => return false,
+    };
+    let methods = match strip_parens(&methods.expr) {
+        Expr::Ident(id) => {
+            let key = binding_key(id);
+            let Some(index) = pending_methods.iter().position(|(temp, _)| *temp == key) else {
+                return false;
+            };
+            pending_methods.remove(index).1
+        }
+        expr => expr,
+    };
+    parse_create_class_array(methods, is_static, members)
+}
+
+/// Whether `expr` is a two-parameter function whose whole body is the Babel
+/// `_defineProperties` loop, including every descriptor default. The defaults
+/// are what make the defined properties match class members (non-enumerable,
+/// configurable, writable), so a loop missing one is not accepted.
+fn is_define_properties_loop_fn(expr: &Expr, unresolved_mark: Mark) -> bool {
+    let (params, body): (Vec<&Pat>, &[Stmt]) = match expr {
+        Expr::Fn(fn_expr) => {
+            let function = &fn_expr.function;
+            if function.is_async || function.is_generator {
+                return false;
+            }
+            let Some(body) = &function.body else {
+                return false;
+            };
+            (
+                function.params.iter().map(|p| &p.pat).collect(),
+                &body.stmts,
+            )
+        }
+        Expr::Arrow(arrow) => {
+            if arrow.is_async || arrow.is_generator {
+                return false;
+            }
+            let ArrowFunctionBody::FunctionBody(body) = &*arrow.body else {
+                return false;
+            };
+            (arrow.params.iter().collect(), &body.stmts)
+        }
+        _ => return false,
+    };
+    let [Pat::Ident(target), Pat::Ident(props)] = params.as_slice() else {
+        return false;
+    };
+    let [Stmt::For(for_stmt)] = body else {
+        return false;
+    };
+
+    // `for (var n = 0; n < props.length; n++)`
+    let Some(VarDeclOrExpr::VarDecl(init)) = &for_stmt.init else {
+        return false;
+    };
+    let [VarDeclarator {
+        name: Pat::Ident(index),
+        init: Some(index_init),
+        ..
+    }] = init.decls.as_slice()
+    else {
+        return false;
+    };
+    if !matches!(strip_parens(index_init), Expr::Lit(Lit::Num(n)) if n.value == 0.0) {
+        return false;
+    }
+    let Some(Expr::Bin(test)) = for_stmt.test.as_deref() else {
+        return false;
+    };
+    if test.op != BinaryOp::Lt
+        || !is_same_ident(&test.left, &index.id)
+        || !is_member_named(&test.right, &props.id, "length")
+    {
+        return false;
+    }
+    let Some(Expr::Update(update)) = for_stmt.update.as_deref() else {
+        return false;
+    };
+    if update.op != UpdateOp::PlusPlus || !is_same_ident(&update.arg, &index.id) {
+        return false;
+    }
+
+    // `{ var r = props[n]; <defaults>; Object.defineProperty(target, r.key, r); }`
+    let Stmt::Block(loop_body) = for_stmt.body.as_ref() else {
+        return false;
+    };
+    let [Stmt::Decl(Decl::Var(descriptor_decl)), defaults @ .., Stmt::Expr(define)] =
+        loop_body.stmts.as_slice()
+    else {
+        return false;
+    };
+    let [VarDeclarator {
+        name: Pat::Ident(descriptor),
+        init: Some(descriptor_init),
+        ..
+    }] = descriptor_decl.decls.as_slice()
+    else {
+        return false;
+    };
+    let descriptor = &descriptor.id;
+    match strip_parens(descriptor_init) {
+        Expr::Member(MemberExpr {
+            obj,
+            prop: MemberProp::Computed(ComputedPropName { expr: key, .. }),
+            ..
+        }) if is_same_ident(obj, &props.id) && is_same_ident(key, &index.id) => {}
+        _ => return false,
+    }
+
+    let (mut enumerable, mut configurable, mut writable) = (false, false, false);
+    for stmt in defaults {
+        let flag = match stmt {
+            Stmt::Expr(ExprStmt { expr, .. }) => match strip_parens(expr) {
+                // `"value" in r && (r.writable = true)`
+                Expr::Bin(bin) if bin.op == BinaryOp::LogicalAnd => {
+                    if !is_value_in_descriptor(&bin.left, descriptor)
+                        || !is_descriptor_true_assign(&bin.right, descriptor, "writable")
+                    {
+                        return false;
+                    }
+                    &mut writable
+                }
+                expr if is_descriptor_true_assign(expr, descriptor, "configurable") => {
+                    &mut configurable
+                }
+                // `r.enumerable = r.enumerable || false`
+                Expr::Assign(assign)
+                    if assign.op == AssignOp::Assign
+                        && is_descriptor_member_target(&assign.left, descriptor, "enumerable") =>
+                {
+                    let Expr::Bin(value) = strip_parens(&assign.right) else {
+                        return false;
+                    };
+                    if value.op != BinaryOp::LogicalOr
+                        || !is_member_named(&value.left, descriptor, "enumerable")
+                        || !is_bool_literal(&value.right, false)
+                    {
+                        return false;
+                    }
+                    &mut enumerable
+                }
+                _ => return false,
+            },
+            // `if ("value" in r) r.writable = true;`
+            Stmt::If(if_stmt) if if_stmt.alt.is_none() => {
+                let assign = match if_stmt.cons.as_ref() {
+                    Stmt::Block(block) => match block.stmts.as_slice() {
+                        [Stmt::Expr(ExprStmt { expr, .. })] => expr,
+                        _ => return false,
+                    },
+                    Stmt::Expr(ExprStmt { expr, .. }) => expr,
+                    _ => return false,
+                };
+                if !is_value_in_descriptor(&if_stmt.test, descriptor)
+                    || !is_descriptor_true_assign(assign, descriptor, "writable")
+                {
+                    return false;
+                }
+                &mut writable
+            }
+            _ => return false,
+        };
+        if std::mem::replace(flag, true) {
+            return false;
+        }
+    }
+    if !(enumerable && configurable && writable) {
+        return false;
+    }
+
+    let Expr::Call(define) = strip_parens(&define.expr) else {
+        return false;
+    };
+    is_object_define_property_callee(&define.callee, unresolved_mark)
+        && matches!(
+            define.args.as_slice(),
+            [a, b, c] if a.spread.is_none()
+                && b.spread.is_none()
+                && c.spread.is_none()
+                && is_same_ident(&a.expr, &target.id)
+                && is_member_named(&b.expr, descriptor, "key")
+                && is_same_ident(&c.expr, descriptor)
+        )
+}
+
+fn is_same_ident(expr: &Expr, target: &Ident) -> bool {
+    matches!(strip_parens(expr), Expr::Ident(id) if id.sym == target.sym && id.ctxt == target.ctxt)
+}
+
+/// `obj.name` where `obj` is `target`.
+fn is_member_named(expr: &Expr, target: &Ident, name: &str) -> bool {
+    matches!(
+        strip_parens(expr),
+        Expr::Member(MemberExpr { obj, prop: MemberProp::Ident(prop), .. })
+            if prop.sym.as_ref() == name && is_same_ident(obj, target)
+    )
+}
+
+fn is_descriptor_member_target(target: &AssignTarget, descriptor: &Ident, name: &str) -> bool {
+    matches!(
+        target,
+        AssignTarget::Simple(SimpleAssignTarget::Member(MemberExpr { obj, prop: MemberProp::Ident(prop), .. }))
+            if prop.sym.as_ref() == name && is_same_ident(obj, descriptor)
+    )
+}
+
+/// `r.<name> = true`
+fn is_descriptor_true_assign(expr: &Expr, descriptor: &Ident, name: &str) -> bool {
+    matches!(
+        strip_parens(expr),
+        Expr::Assign(assign)
+            if assign.op == AssignOp::Assign
+                && is_descriptor_member_target(&assign.left, descriptor, name)
+                && is_bool_literal(&assign.right, true)
+    )
+}
+
+/// `"value" in r`
+fn is_value_in_descriptor(expr: &Expr, descriptor: &Ident) -> bool {
+    matches!(
+        strip_parens(expr),
+        Expr::Bin(bin)
+            if bin.op == BinaryOp::In
+                && matches!(strip_parens(&bin.left), Expr::Lit(Lit::Str(s)) if s.value.as_str() == Some("value"))
+                && is_same_ident(&bin.right, descriptor)
+    )
+}
+
+/// Wrapper-local bindings that only carry a methods array into an inlined
+/// `_defineProperties` loop: declared without an initializer by a wrapper
+/// `var`, assigned once, passed once as the loop's second argument, and
+/// referenced nowhere else in the wrapper.
+fn inline_define_properties_temps(stmts: &[Stmt], unresolved_mark: Mark) -> HashSet<BindingKey> {
+    struct UseCounter<'a> {
+        key: &'a BindingKey,
+        count: usize,
+    }
+    impl Visit for UseCounter<'_> {
+        fn visit_ident(&mut self, id: &Ident) {
+            if id.sym == self.key.0 && id.ctxt == self.key.1 {
+                self.count += 1;
+            }
+        }
+    }
+
+    let mut temps = HashSet::default();
+    for stmt in stmts {
+        let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+            continue;
+        };
+        let Expr::Call(call) = strip_parens(expr) else {
+            continue;
+        };
+        let Callee::Expr(callee) = &call.callee else {
+            continue;
+        };
+        let Some(Expr::Ident(temp)) = call.args.get(1).map(|arg| strip_parens(&arg.expr)) else {
+            continue;
+        };
+        if !is_define_properties_loop_fn(strip_parens(callee), unresolved_mark) {
+            continue;
+        }
+        let key = binding_key(temp);
+        let declared = stmts.iter().any(|stmt| {
+            matches!(stmt, Stmt::Decl(Decl::Var(var)) if var.decls.iter().any(|decl| {
+                decl.init.is_none()
+                    && matches!(&decl.name, Pat::Ident(id) if id.sym == key.0 && id.ctxt == key.1)
+            }))
+        });
+        let assigned = stmts
+            .iter()
+            .filter(|stmt| {
+                matches!(stmt, Stmt::Expr(ExprStmt { expr, .. })
+                    if methods_temp_assignment_parts(expr).is_some_and(|(id, _)| binding_key(id) == key))
+            })
+            .count();
+        let mut counter = UseCounter {
+            key: &key,
+            count: 0,
+        };
+        stmts.visit_with(&mut counter);
+        // Declaration, assignment, and loop argument.
+        if declared && assigned == 1 && counter.count == 3 {
+            temps.insert(key);
+        }
+    }
+    temps
+}
+
+/// `e = [ ... ]`
+fn methods_temp_assignment_parts(expr: &Expr) -> Option<(&Ident, &Expr)> {
+    let Expr::Assign(assign) = strip_parens(expr) else {
+        return None;
+    };
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(temp)) = &assign.left else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign || !matches!(strip_parens(&assign.right), Expr::Array(_)) {
+        return None;
+    }
+    Some((&temp.id, &assign.right))
+}
+
+fn methods_temp_assignment<'a>(
+    expr: &'a Expr,
+    temps: &HashSet<BindingKey>,
+) -> Option<(BindingKey, &'a Expr)> {
+    let (temp, methods) = methods_temp_assignment_parts(expr)?;
+    let key = binding_key(temp);
+    temps.contains(&key).then_some((key, methods))
+}
+
+fn declares_only_methods_temps(var_decl: &VarDecl, temps: &HashSet<BindingKey>) -> bool {
+    var_decl.decls.iter().all(|decl| {
+        decl.init.is_none()
+            && matches!(&decl.name, Pat::Ident(id) if temps.contains(&binding_key(&id.id)))
+    })
+}
+
+/// `Object.defineProperty(t, "prototype", { writable: false })`, which Babel
+/// 7.16+ `_createClass` emits. A class's own `prototype` property is already
+/// non-writable.
+fn is_prototype_seal(expr: &Expr, ctor_name: &str, unresolved_mark: Mark) -> bool {
+    let Expr::Call(call) = strip_parens(expr) else {
+        return false;
+    };
+    if !is_object_define_property_callee(&call.callee, unresolved_mark) {
+        return false;
+    }
+    let [target, key, descriptor] = call.args.as_slice() else {
+        return false;
+    };
+    if target.spread.is_some() || key.spread.is_some() || descriptor.spread.is_some() {
+        return false;
+    }
+    if !matches!(strip_parens(&target.expr), Expr::Ident(id) if id.sym.as_ref() == ctor_name) {
+        return false;
+    }
+    if !matches!(strip_parens(&key.expr), Expr::Lit(Lit::Str(s)) if s.value.as_str() == Some("prototype"))
+    {
+        return false;
+    }
+    let Expr::Object(obj) = strip_parens(&descriptor.expr) else {
+        return false;
+    };
+    matches!(obj.props.as_slice(), [swc_core::ecma::ast::PropOrSpread::Prop(prop)]
+        if matches!(prop.as_ref(), swc_core::ecma::ast::Prop::KeyValue(kv)
+            if prop_name_atom(&kv.key).is_some_and(|name| name.as_ref() == "writable")
+                && is_bool_literal(&kv.value, false)))
+}
+
+fn parse_create_class_array(arg: &Expr, is_static: bool, members: &mut Vec<ClassMember>) -> bool {
+    let arr_expr = strip_parens(arg);
     // Allow `null` for the static array (Babel sometimes passes null)
     if matches!(arr_expr, Expr::Lit(swc_core::ecma::ast::Lit::Null(_))) {
         return true;

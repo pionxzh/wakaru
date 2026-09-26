@@ -3386,3 +3386,159 @@ function outer() {{
     assert!(output.contains("class First"), "{output}");
     assert!(!output.contains("var _createClass ="), "{output}");
 }
+
+// ── Inlined `_defineProperties` loop IIFE in the class wrapper ──────────────
+
+/// The lowered `_defineProperties` loop as the minifier inlines it into the
+/// class wrapper, with `{TARGET}` and `{PROPS}` as its call arguments.
+const DEFINE_PROPERTIES_LOOP_IIFE: &str = r#"(function(e, t) {
+        for (var n = 0; n < t.length; n++) {
+            var r = t[n];
+            r.enumerable = r.enumerable || false;
+            r.configurable = true;
+            if ("value" in r) {
+                r.writable = true;
+            }
+            Object.defineProperty(e, r.key, r);
+        }
+    })({TARGET}, {PROPS});"#;
+
+fn define_properties_loop_iife(target: &str, props: &str) -> String {
+    DEFINE_PROPERTIES_LOOP_IIFE
+        .replace("{TARGET}", target)
+        .replace("{PROPS}", props)
+}
+
+#[test]
+fn inline_define_properties_loop_with_methods_temp_is_recovered() {
+    let input = format!(
+        r#"
+var Store = function() {{
+    var e;
+    function t(n) {{
+        this.items = n;
+    }}
+    e = [
+        {{ key: "get", value: function(e) {{ return this.items[e]; }} }},
+        {{ key: "size", get: function() {{ return this.items.length; }} }}
+    ];
+    {}
+    return t;
+}}();
+"#,
+        define_properties_loop_iife("t.prototype", "e")
+    );
+    let expected = r#"
+class Store {
+    constructor(n) {
+        this.items = n;
+    }
+    get(e) { return this.items[e]; }
+    get size() { return this.items.length; }
+}
+"#;
+    assert_eq_normalized(&apply(&input), expected);
+}
+
+#[test]
+fn inline_define_properties_loop_on_constructor_defines_static_members() {
+    // Babel 7.16+ `_createClass` also seals `prototype`; a class's own
+    // `prototype` is already non-writable, so the seal is part of the class.
+    let input = format!(
+        r#"
+var Parser = function() {{
+    function e() {{}}
+    {}
+    Object.defineProperty(e, "prototype", {{ writable: false }});
+    return e;
+}}();
+"#,
+        define_properties_loop_iife("e", r#"[{ key: "MAP", get: function() { return 1; } }]"#)
+    );
+    let expected = r#"
+class Parser {
+    static get MAP() { return 1; }
+}
+"#;
+    assert_eq_normalized(&apply(&input), expected);
+}
+
+#[test]
+fn inline_define_properties_loop_without_configurable_default_stays_iife() {
+    // Without `configurable = true` the loop defines non-configurable
+    // properties, which class methods are not.
+    let input = r#"
+var Store = function() {
+    function t() {}
+    (function(e, t) {
+        for (var n = 0; n < t.length; n++) {
+            var r = t[n];
+            r.enumerable = r.enumerable || false;
+            if ("value" in r) {
+                r.writable = true;
+            }
+            Object.defineProperty(e, r.key, r);
+        }
+    })(t.prototype, [{ key: "get", value: function() { return 1; } }]);
+    return t;
+}();
+"#;
+    let output = apply(input);
+    assert!(!output.contains("class Store"), "{output}");
+    assert!(
+        output.contains("Object.defineProperty(e, r.key, r)"),
+        "{output}"
+    );
+}
+
+#[test]
+fn inline_define_properties_loop_with_escaping_methods_temp_stays_iife() {
+    // `e` is read again after the loop, so the array is not a temporary the
+    // class conversion may drop.
+    let input = format!(
+        r#"
+var Store = function() {{
+    var e;
+    function t() {{}}
+    e = [{{ key: "get", value: function() {{ return 1; }} }}];
+    {}
+    t.methods = e;
+    return t;
+}}();
+"#,
+        define_properties_loop_iife("t.prototype", "e")
+    );
+    let output = apply(&input);
+    assert!(!output.contains("class Store"), "{output}");
+    assert!(output.contains("t.methods = e"), "{output}");
+}
+
+#[test]
+fn inline_define_properties_loop_on_another_prototype_stays_iife() {
+    let input = format!(
+        r#"
+var Store = function() {{
+    function t() {{}}
+    {}
+    return t;
+}}();
+"#,
+        define_properties_loop_iife(
+            "Other.prototype",
+            r#"[{ key: "get", value: function() { return 1; } }]"#
+        )
+    );
+    let output = apply(&input);
+    assert!(!output.contains("class Store"), "{output}");
+    assert!(output.contains("Other.prototype"), "{output}");
+}
+
+#[test]
+fn minified_inline_define_properties_loop_recovers_through_pipeline() {
+    let input = r#"var Store=function(){var e;function t(n){!function(e,t){if(!(e instanceof t))throw new TypeError("Cannot call a class as a function")}(this,t),this.items=n}return e=[{key:"get",value:function(e){return this.items[e]}}],function(e,t){for(var n=0;n<t.length;n++){var r=t[n];r.enumerable=r.enumerable||!1,r.configurable=!0,"value"in r&&(r.writable=!0),Object.defineProperty(e,r.key,r)}}(t.prototype,e),t}();use(Store);"#;
+    let output = render(input);
+    assert!(output.contains("class Store"), "{output}");
+    assert!(output.contains("get(e)"), "{output}");
+    assert!(!output.contains("defineProperty"), "{output}");
+    assert!(!output.contains("Cannot call a class"), "{output}");
+}
