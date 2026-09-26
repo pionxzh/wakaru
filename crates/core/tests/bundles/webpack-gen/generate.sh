@@ -156,6 +156,11 @@ npx --yes -p webpack@5.109.0 -p webpack-cli@5.1.4 \
   -p minimizer-webpack-plugin@5.6.1 -p terser@5.49.0 \
   webpack --config webpack5-variable-factory-min.config.cjs 2>/dev/null
 
+echo "  wp5-amd-return-min: Direct and conditional API exports through AMD factories (5.109.0)"
+npx --yes -p webpack@5.109.0 -p webpack-cli@5.1.4 \
+  -p minimizer-webpack-plugin@5.6.1 -p terser@5.49.0 \
+  webpack --config webpack5-amd-return-min.config.cjs 2>/dev/null
+
 echo "=== Vercel ncc (0.44.1) ==="
 
 echo "  wp5-ncc:           Node CJS bundle with inline webpack startup"

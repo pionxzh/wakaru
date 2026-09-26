@@ -6,6 +6,8 @@
 //! proof, so these rewrites are enabled only by detector-owned module metadata
 //! and never run for raw output.
 
+mod amd_return;
+
 use crate::collections::HashSet;
 
 use swc_core::atoms::Atom;
@@ -39,8 +41,14 @@ pub(super) fn normalize_webpack_commonjs_runtime(
     if restore_variable_factory_call(module, unresolved_mark) {
         return;
     }
+    if !restore_immediate_factory_export(module, unresolved_mark) {
+        amd_return::restore(module, unresolved_mark);
+    }
+}
+
+fn restore_immediate_factory_export(module: &mut Module, unresolved_mark: Mark) -> bool {
     if !has_supported_module_shell(module) {
-        return;
+        return false;
     }
 
     let mut functions = FunctionBindingCollector::default();
@@ -59,7 +67,7 @@ pub(super) fn normalize_webpack_commonjs_runtime(
     };
     candidate.visit_mut_with(&mut normalizer);
     if normalizer.matches != 1 {
-        return;
+        return false;
     }
 
     let mut runtime_references = RuntimeCommonJsReferenceFinder {
@@ -68,7 +76,7 @@ pub(super) fn normalize_webpack_commonjs_runtime(
     };
     candidate.visit_with(&mut runtime_references);
     if runtime_references.found {
-        return;
+        return false;
     }
 
     candidate
@@ -83,6 +91,7 @@ pub(super) fn normalize_webpack_commonjs_runtime(
             },
         )));
     *module = candidate;
+    true
 }
 
 /// Restore a generated UMD factory invocation without evaluating or lifting
@@ -1217,6 +1226,82 @@ mod tests {
     }
 
     #[test]
+    fn amd_return_factory_keeps_conditional_initialization_and_undefined() {
+        for method in [
+            "apply(exports, [])",
+            "call(exports, require, exports, module)",
+        ] {
+            let source = format!("var result; (function(host) {{ if (host) {{ var api = choose(); module.exports && (module.exports = api); void 0 === (result = (function() {{ return api; }}).{method}) || (module.exports = result); }} }})(host);");
+            let output = normalize(&source, true);
+            assert!(output.contains("= {}"), "{output}");
+            assert!(output.contains("if (host)"), "{output}");
+            assert!(output.contains("result = api"), "{output}");
+            assert!(output.contains("void 0 ==="), "{output}");
+            assert_eq!(output.matches("module.exports").count(), 1, "{output}");
+            assert!(!output.contains(".call(exports"), "{output}");
+            assert!(!output.contains(".apply(exports"), "{output}");
+        }
+    }
+
+    #[test]
+    fn amd_return_factory_uses_resolver_identity_and_fresh_capture_names() {
+        let source = "var result, _webpackDefault = 7; (function() { var api; void 0 === (result = (function() { return api; }).apply(exports, [])) || (module.exports = result); observe(_webpackDefault); })();";
+        let output = normalize(source, true);
+        assert!(output.contains("var _webpackDefault_1 = {}"), "{output}");
+        assert!(output.contains("observe(_webpackDefault)"), "{output}");
+        assert!(output.contains("result = api"), "{output}");
+        let shadowed = "var result; (function(module, exports) { var api; void 0 === (result = (function() { return api; }).apply(exports, [])) || (module.exports = result); })(object, object.exports);";
+        assert_eq!(normalize(shadowed, true), normalize(shadowed, false));
+        let local_module = "var result; (function() { var api; (function(module) { module.exports = 7; })(object); void 0 === (result = (function() { return api; }).apply(exports, [])) || (module.exports = result); })();";
+        let output = normalize(local_module, true);
+        assert!(output.contains("module.exports = 7"), "{output}");
+        assert!(output.contains("result = api"), "{output}");
+    }
+
+    #[test]
+    fn amd_return_factory_preserves_unaccounted_runtime_uses() {
+        let base = "var result; (function() { var api = function() {}; EXTRA void 0 === (result = (function() { return api; }).apply(exports, [])) || (module.exports = result); }).call(this);";
+        for extra in [
+            "use(module);",
+            "exports.extra = 1;",
+            "module = other;",
+            "later(function() { module.exports = other; });",
+            "later(() => { module.exports = other; });",
+            "eval(code);",
+            "with (object) { effect(); }",
+            "use(this);",
+            "module.exports();",
+            "module.exports`tag`;",
+            "delete module.exports;",
+        ] {
+            let source = base.replace("EXTRA", extra);
+            assert_eq!(
+                normalize(&source, true),
+                normalize(&source, false),
+                "{source}"
+            );
+        }
+        for factory in [
+            "function() { return this; }",
+            "function() { return arguments; }",
+            "function api() { return api; }",
+            "function(x = effect()) { return api; }",
+            "async function() { return api; }",
+            "function*() { return api; }",
+            "function() { effect(); return api; }",
+        ] {
+            let source = base
+                .replace("EXTRA", "")
+                .replace("function() { return api; }", factory);
+            assert_eq!(
+                normalize(&source, true),
+                normalize(&source, false),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
     fn variable_factory_call_keeps_observed_invocation_context() {
         for body in [
             "return this;",
@@ -1767,7 +1852,7 @@ let result;
     }
 
     #[test]
-    fn reassigned_function_return_fails_closed() {
+    fn reassigned_factory_return_keeps_the_undefined_guard() {
         let output = normalize(
             r#"
 !function() {
@@ -1780,7 +1865,10 @@ let result;
 "#,
             true,
         );
-        assert!(output.contains(".apply(exports"), "{output}");
-        assert!(output.contains("module.exports"), "{output}");
+        assert!(output.contains("createValue = maybeValue"), "{output}");
+        assert!(output.contains("result = createValue"), "{output}");
+        assert!(output.contains("void 0 ==="), "{output}");
+        assert!(output.contains("var _webpackDefault = {}"), "{output}");
+        assert!(!output.contains(".apply(exports"), "{output}");
     }
 }

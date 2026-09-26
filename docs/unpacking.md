@@ -324,6 +324,20 @@ arguments and its anonymous, parameterless body does not observe that invocation
 context. The call stays in place; its undefined-result guard and initial empty
 export object are preserved. Reassignment, escape, direct eval, `with`, and
 other unmodeled CommonJS runtime references keep the original form.
+Generated AMD callbacks whose complete body returns a captured local binding
+can also lose their `.call(exports, require, exports, module)` or
+`.apply(exports, [])` shell. The binding read remains at the original call site,
+and the undefined-result guard is retained; no stable-function or non-undefined
+inference is required. When this eliminates the complete `exports`/`require`
+surface, initialization-time `module.exports` reads and whole-value writes can
+use one fresh local initialized to `{}`. Conditional paths, repeated writes,
+and immediately invoked bodies stay in place, followed by one ordinary CJS
+assignment for the existing ESM recovery pipeline. Deferred runtime references,
+module-object escape/reassignment, dynamic scope, and slot calls/tags/deletes
+reject the candidate. An enclosing `.call(this)` is removed only for an
+anonymous synchronous parameterless function that cannot observe its invocation
+context. This is not general CommonJS runtime emulation or a mixed-format
+output mode.
 Recursively split children inherit neither detector fact.
 Detector output may also carry a private per-module failure sidecar. The normal
 driver turns it into an operational diagnostic plus

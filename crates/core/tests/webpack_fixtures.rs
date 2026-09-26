@@ -387,6 +387,32 @@ fn wp5_variable_factory_call_recovers_the_default() {
     }
 }
 
+#[test]
+fn wp5_amd_return_factories_preserve_both_export_paths() {
+    let path = "wp5-amd-return-min/bundle.js";
+    let raw = unpack_raw(&fixture(path), &DecompileOptions::default()).unwrap();
+    assert!(raw
+        .modules
+        .iter()
+        .any(|(_, code)| code.contains(".apply(exports, [])")));
+    assert!(raw
+        .modules
+        .iter()
+        .any(|(_, code)| code.contains(".call(exports, require, exports, module)")));
+    for maps in [false, true] {
+        let pairs = unpack_fixture_with_options(path, maps);
+        assert_eq!(pairs.len(), 4);
+        assert_eq!(validate_output_modules(&pairs), vec![]);
+        assert_eq!(
+            pairs
+                .iter()
+                .filter(|(_, code)| code.contains("export default"))
+                .count(),
+            4
+        );
+    }
+}
+
 fn assert_inner_umd_defaults(path: &str) {
     let source = fixture(path);
     let raw = unpack_raw(
