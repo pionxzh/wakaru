@@ -52,9 +52,10 @@ decompiled code back to the input. Unlike input maps, this works with
 `--unpack`: each module's map points into the bundle.
 
 Code that Wakaru adds, such as recovered `import` and `export` statements,
-has no position in the input and stays unmapped. Unpack maps leave the
-bundle's text out of the map, so keep the bundle next to the output when you
-open the maps in a tool.
+has no position in the input and stays unmapped. Each map refers to its
+input by a path relative to the map file. Unpack maps leave the bundle's
+text out of the map, so keep the bundle where it was when you open the maps
+in a tool.
 
 ## See the mapping visually
 

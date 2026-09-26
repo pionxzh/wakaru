@@ -743,6 +743,89 @@ fn vue_sfc_unpack_writes_source_maps_only_for_js_artifacts() {
     fs::remove_dir_all(&dir).expect("remove temp dir");
 }
 
+fn map_sources_resolved_from(map_path: &Path) -> Vec<PathBuf> {
+    let map_json = fs::read_to_string(map_path).expect("read source map");
+    let map = sourcemap::SourceMap::from_reader(map_json.as_bytes()).expect("parse source map");
+    map.sources()
+        .map(|source| {
+            assert!(
+                !Path::new(source).is_absolute(),
+                "source should be relative to the map: {source}"
+            );
+            fs::canonicalize(map_path.parent().unwrap().join(source))
+                .unwrap_or_else(|e| panic!("{source} should resolve from the map: {e}"))
+        })
+        .collect()
+}
+
+#[test]
+fn single_file_source_map_names_the_input_relative_to_the_map() {
+    let dir = temp_test_dir("single-file-map-sources");
+    fs::create_dir_all(dir.join("in")).expect("create input dir");
+    fs::create_dir_all(dir.join("out")).expect("create output dir");
+    let input_path = dir.join("in/input.js");
+    let output_path = dir.join("out/output.js");
+    fs::write(&input_path, "var a = 1; console.log(a);").expect("write input");
+
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input_path.to_str().expect("input path should be utf8"),
+        "--emit-source-map",
+        "-o",
+        output_path.to_str().expect("output path should be utf8"),
+    ])
+    .expect("cli should parse");
+    run_default(cli).expect("decompile should succeed");
+
+    assert_eq!(
+        map_sources_resolved_from(&append_map_extension(&output_path)),
+        vec![fs::canonicalize(&input_path).unwrap()]
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn unpack_source_maps_name_the_bundle_relative_to_each_map() {
+    let dir = temp_test_dir("unpack-map-sources");
+    let out_dir = dir.join("out");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input_path = dir.join("bundle.js");
+    fs::write(&input_path, webpack5_vue_sfc_bundle_source()).expect("write bundle");
+
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input_path.to_str().expect("input path should be utf8"),
+        "--unpack",
+        "--emit-source-map",
+        "-o",
+        out_dir.to_str().expect("output path should be utf8"),
+    ])
+    .expect("unpack cli should parse");
+    run_default(cli).expect("unpack should succeed");
+
+    let nested_map = out_dir.join("src/App.vue.js.map");
+    assert!(nested_map.exists(), "a module below out/ should get a map");
+    assert_eq!(
+        map_sources_resolved_from(&nested_map),
+        vec![fs::canonicalize(&input_path).unwrap()]
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn relative_path_climbs_to_the_common_ancestor() {
+    assert_eq!(
+        relative_path(Path::new("/a/out/src"), Path::new("/a/bundle.js")).as_deref(),
+        Some("../../bundle.js")
+    );
+    assert_eq!(
+        relative_path(Path::new("/a"), Path::new("/a/in/x.js")).as_deref(),
+        Some("in/x.js")
+    );
+}
+
 #[test]
 fn parses_json_flag() {
     let cli =

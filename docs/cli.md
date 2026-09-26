@@ -194,7 +194,9 @@ from. Code the unpacker or the rules synthesized (imports, exports, runtime
 glue) has no input position and stays unmapped. Unpack maps do not embed the
 bundle in `sourcesContent`, because every module's map would repeat it;
 single-file maps embed the input. Columns count UTF-16 code units, as the
-source map format requires.
+source map format requires. Each map names its input by a path relative to
+the map file, which is how source map consumers resolve `sources`; an input
+without a file on disk (stdin, a Bun executable member) keeps its name.
 
 ## Vue SFC recovery
 

@@ -479,16 +479,20 @@ fn run_unpack(cli: Cli) -> Result<()> {
             .iter()
             .map(|(f, m)| (f.as_str(), m.as_str()))
             .collect();
-        for (artifact, (out_path, _)) in artifacts.iter().zip(resolved.iter()) {
-            if let Some(map_json) = artifact
+        let span = tracing::info_span!("cli_write_source_maps");
+        let _enter = span.enter();
+        artifacts.par_iter().zip(resolved.par_iter()).try_for_each(
+            |(artifact, (out_path, _))| match artifact
                 .source_map_filename
                 .as_deref()
                 .and_then(|filename| srcmap_map.get(filename))
             {
-                let map_path = append_map_extension(out_path);
-                write_file(&map_path, map_json)?;
-            }
-        }
+                Some(map_json) => {
+                    write_output_source_map(&append_map_extension(out_path), map_json)
+                }
+                None => Ok(()),
+            },
+        )?;
     }
 
     if cli.provenance {
@@ -683,9 +687,7 @@ fn run_single(cli: Cli) -> Result<()> {
             fs::write(path, &code)
                 .with_context(|| format!("failed to write {}", path.display()))?;
             if let Some(ref map_json) = output.source_map {
-                let map_path = append_map_extension(path);
-                fs::write(&map_path, map_json)
-                    .with_context(|| format!("failed to write {}", map_path.display()))?;
+                write_output_source_map(&append_map_extension(path), map_json)?;
             }
             if let (Some(sidecar_path), Some(sidecar_code)) =
                 (vue_sidecar_path.as_ref(), vue_sidecar.as_ref())
@@ -722,9 +724,7 @@ fn run_single(cli: Cli) -> Result<()> {
                 fs::write(&path, &code)
                     .with_context(|| format!("failed to write {}", path.display()))?;
                 if let Some(ref map_json) = output.source_map {
-                    let map_path = append_map_extension(&path);
-                    fs::write(&map_path, map_json)
-                        .with_context(|| format!("failed to write {}", map_path.display()))?;
+                    write_output_source_map(&append_map_extension(&path), map_json)?;
                 }
                 if let (Some(sidecar_path), Some(sidecar_code)) =
                     (vue_sidecar_path.as_ref(), vue_sidecar.as_ref())
@@ -1573,6 +1573,87 @@ fn append_map_extension(path: &Path) -> PathBuf {
     let mut map_name = path.as_os_str().to_owned();
     map_name.push(".map");
     PathBuf::from(map_name)
+}
+
+/// Write an output source map next to its JavaScript file.
+///
+/// Source map consumers resolve `sources` against the map's own location,
+/// while the engine names inputs as the CLI received them (relative to the
+/// working directory). Rewrite each source that names a file on disk to a
+/// path relative to the map; others (stdin, executable members) stay as-is.
+fn write_output_source_map(map_path: &Path, map_json: &str) -> Result<()> {
+    write_file(map_path, &relativize_map_sources(map_path, map_json))
+}
+
+fn relativize_map_sources(map_path: &Path, map_json: &str) -> String {
+    #[derive(serde::Deserialize)]
+    struct MapSources {
+        sources: Vec<String>,
+    }
+
+    // Only `sources` changes; leave the rest (including the large
+    // `mappings` string) untouched instead of decoding and re-encoding it.
+    let Ok(MapSources { sources }) = serde_json::from_str::<MapSources>(map_json) else {
+        return map_json.to_string();
+    };
+    let map_dir = match map_path.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => dir,
+        _ => Path::new("."),
+    };
+    let Ok(map_dir) = fs::canonicalize(map_dir) else {
+        return map_json.to_string();
+    };
+    let relativized: Vec<String> = sources
+        .iter()
+        .map(|source| {
+            let source_path = Path::new(source);
+            source_path
+                .is_file()
+                .then(|| fs::canonicalize(source_path).ok())
+                .flatten()
+                .and_then(|source| relative_path(&map_dir, &source))
+                .unwrap_or_else(|| source.clone())
+        })
+        .collect();
+    if relativized == sources {
+        return map_json.to_string();
+    }
+    let (Ok(old), Ok(new)) = (
+        serde_json::to_string(&sources),
+        serde_json::to_string(&relativized),
+    ) else {
+        return map_json.to_string();
+    };
+    // The engine writes compact JSON, so the array appears exactly as serde
+    // serializes it.
+    map_json.replacen(
+        &format!("\"sources\":{old}"),
+        &format!("\"sources\":{new}"),
+        1,
+    )
+}
+
+/// Slash-separated path from `from_dir` to `to`, both absolute. `None` when
+/// they share no root (for example different Windows drives).
+fn relative_path(from_dir: &Path, to: &Path) -> Option<String> {
+    let from: Vec<_> = from_dir.components().collect();
+    let to: Vec<_> = to.components().collect();
+    let common = from
+        .iter()
+        .zip(&to)
+        .take_while(|(from, to)| from == to)
+        .count();
+    if common == 0 {
+        return None;
+    }
+    let parts: Vec<String> = std::iter::repeat_n("..".to_string(), from.len() - common)
+        .chain(
+            to[common..]
+                .iter()
+                .map(|part| part.as_os_str().to_string_lossy().into_owned()),
+        )
+        .collect();
+    Some(parts.join("/"))
 }
 
 fn ensure_output_file(path: &Path, force: bool) -> Result<()> {
