@@ -12,7 +12,9 @@ use swc_core::ecma::ast::{
     SimpleAssignTarget, StaticBlock, Stmt, Str, ThisExpr, UnaryExpr, UnaryOp, VarDecl, VarDeclKind,
     VarDeclarator,
 };
-use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
+use swc_core::ecma::codegen::Config;
+#[cfg(test)]
+use swc_core::ecma::codegen::{text_writer::JsWriter, Emitter};
 
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::utils::replace_ident;
@@ -23,8 +25,9 @@ use crate::rules::eval_utils::DirectEvalAnalyzer;
 use crate::rules::rename_utils::BindingRename;
 use crate::unpacker::webpack_common::FactoryNormalizationError;
 use crate::unpacker::{
-    deconflict_runtime_binding_renames, source_fallback_for_stmts, span_byte_range, BundleFormat,
-    DetectedBundle, DetectedModuleFailure, UnpackResult, UnpackedModule,
+    deconflict_runtime_binding_renames, emit_module_with_positions, source_slice_for_stmts,
+    span_byte_range, BundleFormat, DetectedBundle, DetectedModuleFailure, MappedCode,
+    SourcePositions, UnpackResult, UnpackedModule,
 };
 use crate::utils::paren::strip_parens;
 use crate::utils::swc_safety::apply_fixer;
@@ -380,16 +383,22 @@ pub fn detect_and_extract(source: &str) -> Option<UnpackResult> {
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
         let module = super::parse_es_module(source, "webpack4.js", cm.clone()).ok()?;
-        detect_from_module(&module, cm)?.materialize().ok()
+        detect_from_module(&module, cm, SourcePositions::Discard)?
+            .materialize()
+            .ok()
     })
 }
 
-pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<DetectedBundle> {
+pub(super) fn detect_from_module(
+    module: &Module,
+    cm: Lrc<SourceMap>,
+    positions: SourcePositions,
+) -> Option<DetectedBundle> {
     for item in &module.body {
         let ModuleItem::Stmt(stmt) = item else {
             continue;
         };
-        if let Some(result) = try_extract_from_stmt(stmt, cm.clone()) {
+        if let Some(result) = try_extract_from_stmt(stmt, cm.clone(), positions) {
             return Some(result);
         }
     }
@@ -397,7 +406,11 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
 }
 
 /// Try to extract from a top-level statement that might be a webpack4 IIFE.
-fn try_extract_from_stmt(stmt: &Stmt, cm: Lrc<SourceMap>) -> Option<DetectedBundle> {
+fn try_extract_from_stmt(
+    stmt: &Stmt,
+    cm: Lrc<SourceMap>,
+    positions: SourcePositions,
+) -> Option<DetectedBundle> {
     let call = match stmt {
         // `!function(...){...}([...])` — UnaryExpr with !
         Stmt::Expr(ExprStmt { expr, .. }) => match &**expr {
@@ -407,7 +420,7 @@ fn try_extract_from_stmt(stmt: &Stmt, cm: Lrc<SourceMap>) -> Option<DetectedBund
         _ => return None,
     };
 
-    extract_webpack4_modules(call, cm)
+    extract_webpack4_modules(call, cm, positions)
 }
 
 fn extract_call_from_expr(expr: &Expr) -> Option<&CallExpr> {
@@ -418,7 +431,11 @@ fn extract_call_from_expr(expr: &Expr) -> Option<&CallExpr> {
 }
 
 /// Given a CallExpr that should be `bootstrapFn([...])` or `bootstrapFn({...})`, extract modules.
-fn extract_webpack4_modules(call: &CallExpr, cm: Lrc<SourceMap>) -> Option<DetectedBundle> {
+fn extract_webpack4_modules(
+    call: &CallExpr,
+    cm: Lrc<SourceMap>,
+    positions: SourcePositions,
+) -> Option<DetectedBundle> {
     // Callee must be a FnExpr (the bootstrap function), possibly wrapped in parens
     let Callee::Expr(callee_expr) = &call.callee else {
         return None;
@@ -437,12 +454,16 @@ fn extract_webpack4_modules(call: &CallExpr, cm: Lrc<SourceMap>) -> Option<Detec
     // Dense numeric ids starting above zero render as `Array(n).concat([...])`
     // with element indices offset by n.
     match &*call.args[0].expr {
-        Expr::Array(array_lit) => extract_webpack4_array_modules(array_lit, 0, bootstrap_fn, cm),
-        Expr::Object(object_lit) => extract_webpack4_object_modules(object_lit, bootstrap_fn, cm),
+        Expr::Array(array_lit) => {
+            extract_webpack4_array_modules(array_lit, 0, bootstrap_fn, cm, positions)
+        }
+        Expr::Object(object_lit) => {
+            extract_webpack4_object_modules(object_lit, bootstrap_fn, cm, positions)
+        }
         Expr::Call(concat_call) => {
             let (array_lit, id_offset) =
                 crate::unpacker::webpack_common::split_array_concat(concat_call)?;
-            extract_webpack4_array_modules(array_lit, id_offset, bootstrap_fn, cm)
+            extract_webpack4_array_modules(array_lit, id_offset, bootstrap_fn, cm, positions)
         }
         _ => None,
     }
@@ -462,6 +483,7 @@ fn prepare_webpack4_modules(
     descriptors: &[Webpack4ModuleDescriptor<'_>],
     all_numeric: bool,
     cm: Lrc<SourceMap>,
+    positions: SourcePositions,
 ) -> Option<DetectedBundle> {
     let mut opaque_filenames = HashSet::default();
 
@@ -546,7 +568,15 @@ fn prepare_webpack4_modules(
             // skipping that module would leave rewritten callers pointing at
             // an output file that was never emitted.
             apply_fixer(&mut module).ok()?;
-            emitted.push(Some(emit_module(&module, cm.clone()).ok()?));
+            emitted.push(Some(
+                emit_module_with_positions(
+                    &module,
+                    cm.clone(),
+                    Config::default().with_minify(false),
+                    positions,
+                )
+                .ok()?,
+            ));
         }
 
         if !newly_opaque.is_empty() {
@@ -569,15 +599,17 @@ fn prepare_webpack4_modules(
             .collect();
         let mut modules = Vec::with_capacity(descriptors.len());
         for (descriptor, emitted) in descriptors.iter().zip(emitted) {
-            let code = if opaque_filenames.contains(&descriptor.filename) {
-                let body = descriptor.factory.function.body.as_ref()?;
-                source_fallback_for_stmts(&cm, &body.stmts)
-            } else {
-                let Some(code) = emitted else {
-                    continue;
+            let (code, generated_source_map, verbatim_source_offset) =
+                if opaque_filenames.contains(&descriptor.filename) {
+                    let body = descriptor.factory.function.body.as_ref()?;
+                    let (code, start) = source_slice_for_stmts(&cm, &body.stmts);
+                    (code, Vec::new(), start)
+                } else {
+                    let Some(MappedCode { code, points }) = emitted else {
+                        continue;
+                    };
+                    (code, points, None)
                 };
-                code
-            };
             modules.push(UnpackedModule {
                 id: descriptor.id.clone(),
                 is_entry: descriptor.is_entry,
@@ -588,7 +620,9 @@ fn prepare_webpack4_modules(
                     .collect(),
                 inspection_context_ranges: Vec::new(),
                 source_input: String::new(),
-                generated_source_map: Vec::new(),
+                generated_source_map,
+                verbatim_source_offset,
+                mapped_in_every_mode: false,
             });
         }
         if modules.is_empty() {
@@ -623,6 +657,7 @@ fn extract_webpack4_array_modules(
     id_offset: usize,
     bootstrap_fn: &FnExpr,
     cm: Lrc<SourceMap>,
+    positions: SourcePositions,
 ) -> Option<DetectedBundle> {
     // Array must have at least one element
     if array_lit.elems.is_empty() {
@@ -685,7 +720,7 @@ fn extract_webpack4_array_modules(
             })
         })
         .collect::<Vec<_>>();
-    prepare_webpack4_modules(&descriptors, true, cm)
+    prepare_webpack4_modules(&descriptors, true, cm, positions)
 }
 
 /// Extract modules from the object-form: `bootstrapFn({"./src/index.js": fn, ...})`
@@ -693,6 +728,7 @@ fn extract_webpack4_object_modules(
     object_lit: &ObjectLit,
     bootstrap_fn: &FnExpr,
     cm: Lrc<SourceMap>,
+    positions: SourcePositions,
 ) -> Option<DetectedBundle> {
     if object_lit.props.is_empty() {
         return None;
@@ -786,7 +822,7 @@ fn extract_webpack4_object_modules(
             }
         })
         .collect::<Vec<_>>();
-    prepare_webpack4_modules(&descriptors, all_numeric, cm)
+    prepare_webpack4_modules(&descriptors, all_numeric, cm, positions)
 }
 
 /// Extract the public string id plus its runtime number when the object key is
@@ -1901,6 +1937,7 @@ impl<'a> Visit for ParamRefCounter<'a> {
     }
 }
 
+#[cfg(test)]
 fn emit_module(module: &Module, cm: Lrc<SourceMap>) -> anyhow::Result<String> {
     use anyhow::anyhow;
     let mut output = Vec::new();

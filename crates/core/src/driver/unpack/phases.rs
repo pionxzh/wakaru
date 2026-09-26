@@ -1,6 +1,8 @@
 //! Two-phase multi-module pipeline: fact collection (Phase 1) and output
 //! decompilation with the cross-module late pass (Phase 2).
 
+use std::sync::Arc;
+
 use anyhow::{bail, Result};
 use swc_core::common::{sync::Lrc, Globals, Mark, SourceMap, SyntaxContext, DUMMY_SP, GLOBALS};
 use swc_core::ecma::ast::{
@@ -29,6 +31,7 @@ use super::merge::{
     apply_filename_rewrites, apply_numeric_rewrites, NumericRewritePlan, PreparedUnpackModule,
 };
 use super::schedule::par_map_largest_first;
+use super::source_index::{build_composed_output_sourcemap, InputOrigin};
 use super::webpack_commonjs_runtime::normalize_webpack_commonjs_runtime;
 use super::{recover_late_esm_from_factory_iifes, LateEsmRecoveryOptions};
 use crate::commonjs_default_object_composition::{
@@ -54,7 +57,7 @@ use crate::synthetic_import_cleanup::downgrade_unused_synthetic_imports;
 use crate::unpacker::{
     arrow_iife_call, module_stmts_have_function_level_special_bindings,
     stmts_have_function_level_return, stmts_have_function_level_special_bindings,
-    DetectedModuleFailure,
+    DetectedModuleFailure, InputOffsets,
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -273,13 +276,14 @@ pub(super) fn unpack_multi_module(
         .into_iter()
         .map(PreparedUnpackModule::plain)
         .collect();
-    unpack_multi_module_with_plan(modules, NumericRewritePlan::default(), options)
+    unpack_multi_module_with_plan(modules, NumericRewritePlan::default(), options, &[])
 }
 
 pub(super) fn unpack_multi_module_with_plan(
     mut modules: Vec<PreparedUnpackModule>,
     numeric_rewrite_plan: NumericRewritePlan,
     options: DecompileOptions,
+    origins: &[Option<Arc<InputOrigin>>],
 ) -> Result<PreparedUnpackOutput> {
     if options.sourcemap.is_some() {
         bail!(
@@ -757,7 +761,21 @@ pub(super) fn unpack_multi_module_with_plan(
                     let _enter = span.enter();
                     print_js_with_srcmap(&module, cm.clone())?
                 };
-                let map_json = build_output_sourcemap(&srcmap_buf, &cm, final_filename)?;
+                let origin = unpacked
+                    .input
+                    .and_then(|input| origins.get(input.index())?.as_deref());
+                let map_json = match origin {
+                    // A module without input offsets (fully synthesized) still
+                    // maps into its origin: every position is left unmapped.
+                    Some(origin) => build_composed_output_sourcemap(
+                        &srcmap_buf,
+                        &cm,
+                        final_filename,
+                        InputOffsets::of(&unpacked.module).unwrap_or(InputOffsets::Printed(&[])),
+                        origin,
+                    )?,
+                    None => build_output_sourcemap(&srcmap_buf, &cm, final_filename)?,
+                };
                 (code, Some(map_json))
             } else {
                 let code = {
@@ -1278,6 +1296,7 @@ export { p as t };
                 diagnostics: true,
                 ..Default::default()
             },
+            &[],
         )
         .expect("scope split cycle should decompile");
 

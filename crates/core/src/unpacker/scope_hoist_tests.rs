@@ -734,6 +734,7 @@ fn inspection_bounds_cross_item_write_components() {
         &at_limit,
         ScopeHoistRenderMode::Inspect,
         ScopeHoistSource::NestedModule,
+        crate::unpacker::SourcePositions::Discard,
     )
     .expect("the at-limit fixture should split");
     let at_limit_writer = at_limit
@@ -755,6 +756,7 @@ fn inspection_bounds_cross_item_write_components() {
         &above_limit,
         ScopeHoistRenderMode::Inspect,
         ScopeHoistSource::NestedModule,
+        crate::unpacker::SourcePositions::Discard,
     )
     .expect("the above-limit fixture should split");
     let inspection_writer = inspection
@@ -836,6 +838,7 @@ fn inspection_retains_bounded_leaf_writes_inside_a_hub_component() {
         &input,
         ScopeHoistRenderMode::Inspect,
         ScopeHoistSource::NestedModule,
+        crate::unpacker::SourcePositions::Discard,
     )
     .expect("the hub fixture should split");
 
@@ -966,6 +969,7 @@ fn inspection_backs_off_when_leaf_writes_promote_singletons_to_modules() {
         &input,
         ScopeHoistRenderMode::Inspect,
         ScopeHoistSource::NestedModule,
+        crate::unpacker::SourcePositions::Discard,
     )
     .expect("the independent pair should preserve a split after backoff");
     assert_eq!(
@@ -1332,6 +1336,7 @@ fn executable_partition_does_not_create_a_global_singleton_cycle() {
         &input,
         ScopeHoistRenderMode::Inspect,
         ScopeHoistSource::DirectAsset,
+        crate::unpacker::SourcePositions::Discard,
     )
     .expect("inspection mode should split independent regions");
     let executable = split_scope_hoisted(&input).expect("executable mode should split");
@@ -1448,6 +1453,7 @@ fn inspection_rendering_keeps_synthetic_clusters_separate() {
         input,
         ScopeHoistRenderMode::Inspect,
         ScopeHoistSource::DirectAsset,
+        crate::unpacker::SourcePositions::Discard,
     )
     .expect("inspection mode should split");
     assert_eq!(result.modules.len(), 6, "cycle should remain split");
@@ -1838,6 +1844,7 @@ fn direct_inspect_skips_distant_cross_write_merges() {
         distant_write_hub_fixture(),
         ScopeHoistRenderMode::Inspect,
         ScopeHoistSource::DirectAsset,
+        crate::unpacker::SourcePositions::Discard,
     )
     .expect("inspect mode should split the hub fixture");
     let owner = result
@@ -1863,6 +1870,7 @@ fn direct_inspect_keeps_adjacent_cross_write_merges() {
         distant_write_hub_fixture(),
         ScopeHoistRenderMode::Inspect,
         ScopeHoistSource::DirectAsset,
+        crate::unpacker::SourcePositions::Discard,
     )
     .expect("inspect mode should split the hub fixture");
     let hub = result
@@ -1888,6 +1896,7 @@ fn nested_inspect_keeps_component_cap_merges() {
         &input,
         ScopeHoistRenderMode::Inspect,
         ScopeHoistSource::NestedModule,
+        crate::unpacker::SourcePositions::Discard,
     )
     .expect("the fixture should split on the nested path");
     let nested_writer = nested
@@ -1905,6 +1914,7 @@ fn nested_inspect_keeps_component_cap_merges() {
         &input,
         ScopeHoistRenderMode::Inspect,
         ScopeHoistSource::DirectAsset,
+        crate::unpacker::SourcePositions::Discard,
     )
     .expect("the fixture should split on the direct path");
     let direct_writer = direct

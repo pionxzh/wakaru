@@ -116,6 +116,8 @@ pub(super) fn detect_from_module(
             inspection_context_ranges: Vec::new(),
             source_input: String::new(),
             generated_source_map: emitted.source_map,
+            verbatim_source_offset: None,
+            mapped_in_every_mode: true,
         });
     }
 

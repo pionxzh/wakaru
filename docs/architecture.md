@@ -317,7 +317,8 @@ same `Globals`/`SyntaxContext` lineage across the barrier. If Phase 1 cannot
 prepare an AST, Phase 2 retains the best-effort parser fallback. Output
 source-map mode also deliberately materializes prepared detector ASTs and uses
 the parser path because its mappings depend on parser-owned per-module source
-coordinates.
+coordinates. Those mappings compose with extraction-time points to reach
+the input; see [unpacking.md](unpacking.md#output-source-maps).
 
 The internal detector handoff is a single aligned payload boundary rather than
 a format branch in either phase: each module has source text and may also have a

@@ -44,16 +44,17 @@ the split modules no longer line up with the bundle's coordinates.
 
 ```bash
 npx wakaru input.js --emit-source-map -o output.js
+npx wakaru bundle.js --unpack --emit-source-map -o out/
 ```
 
 `--emit-source-map` writes a `.map` next to each output file, mapping the
-decompiled code back to the input.
+decompiled code back to the input. Unlike input maps, this works with
+`--unpack`: each module's map points into the bundle.
 
-With `--unpack`, the maps do not reach the bundle. Each module's map points
-to the module code as the unpacker extracted it. That code is embedded in
-the map. To find where a module came from in
-the bundle, use [`--provenance`](/reference/cli#module-provenance), which
-records its byte ranges.
+Code that Wakaru adds, such as recovered `import` and `export` statements,
+has no position in the input and stays unmapped. Unpack maps leave the
+bundle's text out of the map, so keep the bundle next to the output when you
+open the maps in a tool.
 
 ## See the mapping visually
 

@@ -55,9 +55,8 @@ wakaru bundle.js --unpack --provenance -o out/
 Each entry maps an emitted filename to its `input`, extraction `ranges`, and
 `extraction` strategy. Ranges are zero-based byte offsets with an exclusive
 end, `[start, end)`. They identify the input regions used to recover a module,
-not a position-by-position mapping of the rewritten code. No option maps
-unpacked output positions back to bundle positions; see
-[Source maps](#source-maps).
+not a position-by-position mapping of the rewritten code. Use
+`--emit-source-map` for output position mappings.
 
 ## Extract every file from a Bun single-file executable
 
@@ -186,16 +185,16 @@ have new generated coordinates, so applying the bundle-level map could assign
 incorrect or duplicate binding names.
 
 `--emit-source-map` writes a `.map` file alongside each decompiled JavaScript
-output file. Vue SFC sidecars from `--vue-sfc` do not get source maps.
+output file, mapping the output back to the input. Vue SFC sidecars from
+`--vue-sfc` do not get source maps. Unlike input `--source-map`, this option is
+supported with `--unpack`.
 
-- In single-file mode, the map points back to the input file.
-- With `--unpack`, each module's map points to that module's extracted code,
-  not to the bundle. The extracted code is the text the unpacker handed to the
-  rewrite rules, not a byte copy of the bundle: for example, factory
-  parameters may already be normalized and module references rewritten to the
-  new filenames. The map embeds it in
-  `sourcesContent` under the output's own filename. Use `--provenance` for the
-  bundle byte ranges each module came from.
+With `--unpack`, each module's map points into the bundle it was extracted
+from. Code the unpacker or the rules synthesized (imports, exports, runtime
+glue) has no input position and stays unmapped. Unpack maps do not embed the
+bundle in `sourcesContent`, because every module's map would repeat it;
+single-file maps embed the input. Columns count UTF-16 code units, as the
+source map format requires.
 
 ## Vue SFC recovery
 

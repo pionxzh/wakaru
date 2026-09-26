@@ -14,14 +14,24 @@ use swc_core::ecma::visit::VisitMutWith;
 use super::super::io::parse_js;
 use super::{recover_late_esm_from_factory_iifes, LateEsmRecoveryOptions};
 use crate::rules::{apply_rules, RewriteLevel, RulePipelineOptions};
-use crate::unpacker::{scope_hoist, GeneratedSourceMapPoint, UnpackResult, UnpackedModule};
+use crate::unpacker::{
+    scope_hoist, GeneratedSourceMapPoint, InputOffsets, SourcePositions, UnpackResult,
+    UnpackedModule,
+};
 
 pub(super) fn maybe_split_scope_hoisted_modules(
     result: UnpackResult,
     enabled: bool,
     render_mode: scope_hoist::ScopeHoistRenderMode,
+    positions: SourcePositions,
 ) -> UnpackResult {
-    maybe_split_scope_hoisted_modules_excluding(result, enabled, render_mode, &HashSet::default())
+    maybe_split_scope_hoisted_modules_excluding(
+        result,
+        enabled,
+        render_mode,
+        &HashSet::default(),
+        positions,
+    )
 }
 
 pub(super) fn maybe_split_scope_hoisted_modules_excluding(
@@ -29,6 +39,7 @@ pub(super) fn maybe_split_scope_hoisted_modules_excluding(
     enabled: bool,
     render_mode: scope_hoist::ScopeHoistRenderMode,
     excluded_filenames: &HashSet<String>,
+    positions: SourcePositions,
 ) -> UnpackResult {
     if !enabled {
         return result;
@@ -47,7 +58,7 @@ pub(super) fn maybe_split_scope_hoisted_modules_excluding(
             modules.push(module);
             continue;
         }
-        match split_nested_scope_hoisted_module(&module, render_mode) {
+        match split_nested_scope_hoisted_module(&module, render_mode, positions) {
             Some(split) => {
                 let parent_filename = module.filename.clone();
                 let split_modules = namespace_scope_hoisted_split(&module, split.modules);
@@ -79,20 +90,22 @@ pub(super) fn maybe_split_scope_hoisted_modules_excluding(
 fn split_nested_scope_hoisted_module(
     module: &UnpackedModule,
     render_mode: scope_hoist::ScopeHoistRenderMode,
+    positions: SourcePositions,
 ) -> Option<UnpackResult> {
     let raw_split = scope_hoist::split_scope_hoisted_with_mode(
         &module.code,
         render_mode,
         scope_hoist::ScopeHoistSource::NestedModule,
+        positions,
     );
     if raw_split.as_ref().is_some_and(is_usable_nested_split) {
         return raw_split;
     }
-    if module.generated_source_map.is_empty() {
+    if !module.mapped_in_every_mode {
         return None;
     }
 
-    split_esm_recovered_scope_hoisted_module(&module.code, &module.filename, render_mode)
+    split_esm_recovered_scope_hoisted_module(&module.code, &module.filename, render_mode, positions)
         .filter(is_usable_nested_split)
 }
 
@@ -112,6 +125,7 @@ fn split_esm_recovered_scope_hoisted_module(
     source: &str,
     filename: &str,
     render_mode: scope_hoist::ScopeHoistRenderMode,
+    positions: SourcePositions,
 ) -> Option<UnpackResult> {
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
@@ -139,6 +153,7 @@ fn split_esm_recovered_scope_hoisted_module(
             cm,
             render_mode,
             scope_hoist::ScopeHoistSource::NestedModule,
+            positions,
         )
     })
 }
@@ -157,7 +172,7 @@ fn namespace_scope_hoisted_split(
 
     let mut modules = Vec::with_capacity(split_modules.len());
     for mut module in split_modules {
-        let has_generated_map = !parent.generated_source_map.is_empty();
+        let has_generated_map = parent.mapped_in_every_mode;
         let source_ranges = if has_generated_map {
             map_generated_ranges_to_source(&parent.generated_source_map, &module.source_ranges)
                 .unwrap_or_default()
@@ -179,19 +194,23 @@ fn namespace_scope_hoisted_split(
         module.source_ranges = source_ranges;
         module.inspection_context_ranges = inspection_context_ranges;
         module.source_input = parent.source_input.clone();
-        module.generated_source_map.clear();
-        if module.is_entry {
+        // The child's points target the parent's code; carry them through the
+        // parent's own offsets to the input.
+        module.generated_source_map = InputOffsets::of(parent)
+            .map(|offsets| offsets.compose(&module.generated_source_map))
+            .unwrap_or_default();
+        module.verbatim_source_offset = None;
+        let edits = if module.is_entry {
             module.id = parent.id.clone();
             module.is_entry = parent.is_entry;
             module.filename = parent.filename.clone();
-            module.code =
-                rewrite_scope_entry_imports(module.code, &entry_import_dir, &child_filenames);
+            scope_entry_import_edits(&module.code, &entry_import_dir, &child_filenames)
         } else {
             module.id = format!("{}/{}", parent.id, module.id);
             module.filename = public_path_child_filename(&parent.filename, &module.filename);
-            module.code =
-                rewrite_scope_child_imports(module.code, &parent_basename, &child_filenames);
-        }
+            scope_child_import_edits(&module.code, &parent_basename, &child_filenames)
+        };
+        apply_text_edits(&mut module, edits);
         modules.push(module);
     }
     modules
@@ -284,25 +303,50 @@ fn split_parent_path_parts(filename: &str) -> (String, String, String) {
     (parent, stem, basename.to_string())
 }
 
-fn rewrite_scope_entry_imports(
-    mut code: String,
+/// Replace `start..end` ranges (sorted, non-overlapping) and keep the
+/// module's points aligned: points after an edit shift, points inside drop.
+fn apply_text_edits(module: &mut UnpackedModule, edits: Vec<(usize, usize, String)>) {
+    for (start, end, replacement) in edits.into_iter().rev() {
+        let delta = replacement.len() as i64 - (end - start) as i64;
+        module.code.replace_range(start..end, &replacement);
+        module.generated_source_map.retain_mut(|point| {
+            let offset = point.generated_offset as usize;
+            if offset < start {
+                true
+            } else if offset < end {
+                offset == start
+            } else {
+                point.generated_offset = (offset as i64 + delta) as u32;
+                true
+            }
+        });
+    }
+}
+
+fn scope_entry_import_edits(
+    code: &str,
     entry_import_dir: &str,
     child_filenames: &HashSet<String>,
-) -> String {
+) -> Vec<(usize, usize, String)> {
+    let mut edits = Vec::new();
     for child_filename in child_filenames {
         let old = format!("from \"./{child_filename}\"");
         let new = format!("from \"./{entry_import_dir}/{child_filename}\"");
-        code = code.replace(&old, &new);
+        edits.extend(
+            code.match_indices(&old)
+                .map(|(start, _)| (start, start + old.len(), new.clone())),
+        );
     }
-    code
+    edits.sort_by_key(|&(start, ..)| start);
+    edits
 }
 
-fn rewrite_scope_child_imports(
-    mut code: String,
+fn scope_child_import_edits(
+    code: &str,
     parent_basename: &str,
     child_filenames: &HashSet<String>,
-) -> String {
-    let replacements = scan_static_relative_imports(&code)
+) -> Vec<(usize, usize, String)> {
+    scan_static_relative_imports(code)
         .into_iter()
         .filter_map(|import| {
             if import.specifier == "./entry.js" {
@@ -315,12 +359,7 @@ fn rewrite_scope_child_imports(
             }
             Some((import.start, import.end, format!("../{child_or_sibling}")))
         })
-        .collect::<Vec<_>>();
-
-    for (start, end, replacement) in replacements.into_iter().rev() {
-        code.replace_range(start..end, &replacement);
-    }
-    code
+        .collect()
 }
 
 fn scope_split_imports_resolve(
@@ -544,6 +583,42 @@ mod tests {
     use crate::unpacker::BundleFormat;
 
     #[test]
+    fn text_edits_shift_later_points_and_drop_replaced_ones() {
+        let mut module = UnpackedModule {
+            code: "import a from \"./x.js\";\nuse(a);".to_string(),
+            generated_source_map: vec![
+                GeneratedSourceMapPoint {
+                    generated_offset: 0,
+                    source_offset: 100,
+                },
+                GeneratedSourceMapPoint {
+                    generated_offset: 14,
+                    source_offset: 114,
+                },
+                GeneratedSourceMapPoint {
+                    generated_offset: 17,
+                    source_offset: 117,
+                },
+                GeneratedSourceMapPoint {
+                    generated_offset: 24,
+                    source_offset: 124,
+                },
+            ],
+            ..Default::default()
+        };
+        apply_text_edits(&mut module, vec![(14, 22, "\"../x.js\"".to_string())]);
+        assert_eq!(module.code, "import a from \"../x.js\";\nuse(a);");
+        let offsets: Vec<_> = module
+            .generated_source_map
+            .iter()
+            .map(|point| (point.generated_offset, point.source_offset))
+            .collect();
+        // The specifier start keeps its point, 17 fell inside the replaced
+        // text, and 24 (`use`) moved by the one added byte.
+        assert_eq!(offsets, vec![(0, 100), (14, 114), (25, 124)]);
+    }
+
+    #[test]
     fn disabled_nested_scope_split_preserves_detected_module() {
         let result = UnpackResult {
             modules: vec![UnpackedModule {
@@ -562,6 +637,7 @@ mod tests {
             result,
             false,
             scope_hoist::ScopeHoistRenderMode::Executable,
+            SourcePositions::Discard,
         );
 
         assert_eq!(output.modules.len(), 1);
@@ -589,6 +665,7 @@ mod tests {
             result,
             true,
             scope_hoist::ScopeHoistRenderMode::Executable,
+            SourcePositions::Discard,
         );
         let names: HashSet<_> = output
             .modules
@@ -631,6 +708,7 @@ mod tests {
                 },
                 true,
                 render_mode,
+                crate::unpacker::SourcePositions::Discard,
             )
         };
 
@@ -753,6 +831,7 @@ export const value = init + 1;
             id: "100".to_string(),
             filename: "module-100.js".to_string(),
             source_input: "bundle.js".to_string(),
+            mapped_in_every_mode: true,
             generated_source_map: vec![
                 GeneratedSourceMapPoint {
                     generated_offset: 0,

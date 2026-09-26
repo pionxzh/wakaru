@@ -124,6 +124,7 @@ impl UnpackJob {
             matches!(self.options.modules(), ModuleMode::Decompile(_))
                 && unmatched == UnmatchedInput::Process,
             core_scope_hoist_policy(&self.options),
+            self.options.output_source_maps(),
         )
         .map_err(|error| {
             let kind = from_core_driver_error(error.kind());

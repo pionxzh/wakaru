@@ -345,6 +345,41 @@ driver turns it into an operational diagnostic plus
 detector APIs may discard this metadata because raw output has no graph-quality
 contract.
 
+## Output source maps
+
+`--emit-source-map` maps each unpacked module back into its input. Phase 2
+re-parses every module's extracted text, so the Phase 2 emitter only knows
+positions in that intermediate text. The missing hop comes from extraction:
+
+- Extractors that print a module record emitter points (extracted offset →
+  input offset) when the driver passes `SourcePositions::Record`. Pieces
+  assembled by string concatenation go through `MappedCode`, which shifts
+  each piece's points by the length before it; synthesized glue text has no
+  points.
+- A module whose code is a verbatim slice of the input (plain inputs, opaque
+  webpack factories, whole-source fallbacks, unlowerable SystemJS registers)
+  records the slice start in `verbatim_source_offset` instead.
+- Nested scope-split children compose their points through the parent's
+  offsets (`InputOffsets::compose`). The import-specifier rewrites that
+  follow the split are applied as edits that shift later points and drop
+  points inside the replaced text.
+- A SystemJS dynamic-export register re-unpacks a printed inner bundle. That
+  outer hop is recorded in every mode so prepared inner modules' points
+  always target the real input.
+
+Phase 2 maps each emitter position through those offsets and converts the
+input offset with a per-input UTF-16 line index. Only exact points map;
+anything without one stays unmapped. The line index is built only when maps
+are requested. Unpack maps name the input and omit `sourcesContent`, which
+would repeat the whole input in every module's map.
+
+Requesting maps must not change the unpacked code or provenance. Nested
+scope splitting therefore keys its ESM-recovered attempt and child
+provenance on `UnpackedModule::mapped_in_every_mode` (points recorded by
+prepared-module materialization and Closure emission, which happen in every
+mode), never on whether points are present. Recording points costs emitter
+bookkeeping per token, which is why extraction discards them by default.
+
 ## Production-build scope
 
 Development builds are a non-goal. Wakaru targets shipped, production

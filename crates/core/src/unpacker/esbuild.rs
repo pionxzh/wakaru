@@ -20,12 +20,12 @@ use swc_core::ecma::visit::{Visit, VisitMutWith, VisitWith};
 use crate::module_path::relative_import_specifier;
 use crate::rules::rename_utils::{rename_bindings, BindingRename};
 use crate::unpacker::emit_esm::{
-    self, emit_module, make_named_export_stmt, make_named_import_stmt,
-    make_named_import_stmt_with_aliases, try_promote_fn_class_export, FilenameDedupStyle,
+    self, make_named_export_stmt, make_named_import_stmt, make_named_import_stmt_with_aliases,
+    try_promote_fn_class_export, FilenameDedupStyle,
 };
 use crate::unpacker::{
     module_item_declared_binding_ids, span_byte_range, spans_byte_ranges, BindingId, BundleFormat,
-    UnpackResult, UnpackedModule,
+    MappedCode, SourcePositions, UnpackResult, UnpackedModule,
 };
 use crate::utils::paren::strip_parens;
 
@@ -33,6 +33,7 @@ pub(super) fn detect_from_module_with_source(
     module: &Module,
     source: Option<&str>,
     cm: Lrc<SourceMap>,
+    positions: SourcePositions,
 ) -> Option<UnpackResult> {
     // Phase 1: cheap structural pre-checks on the unresolved module.
     // Both scans are O(top-level items) with no cloning or resolution.
@@ -78,13 +79,21 @@ pub(super) fn detect_from_module_with_source(
         )
     };
 
-    detect_from_prepared_factories(module, analysis_module, commonjs_helper_syms, factories, cm)
+    detect_from_prepared_factories(
+        module,
+        analysis_module,
+        commonjs_helper_syms,
+        factories,
+        cm,
+        positions,
+    )
 }
 
 pub(super) fn detect_from_owned_factory_module_with_source(
     mut module: Module,
     source: Option<&str>,
     cm: Lrc<SourceMap>,
+    positions: SourcePositions,
 ) -> Result<UnpackResult, Module> {
     let helper_syms = collect_helper_syms(&module);
     if helper_syms.is_empty() || !has_factory_detection_evidence(&module, &helper_syms) {
@@ -117,6 +126,7 @@ pub(super) fn detect_from_owned_factory_module_with_source(
         commonjs_helper_syms,
         factories,
         cm,
+        positions,
     )
     .expect("owned factory evidence must produce an esbuild/Bun bundle"))
 }
@@ -127,6 +137,7 @@ fn detect_from_prepared_factories(
     commonjs_helper_syms: HashSet<Atom>,
     factories: Vec<Factory>,
     cm: Lrc<SourceMap>,
+    positions: SourcePositions,
 ) -> Option<UnpackResult> {
     let helper_syms: HashSet<Atom> = factories
         .iter()
@@ -392,6 +403,7 @@ fn detect_from_prepared_factories(
                 factory_preassigned_bindings: &factory_preassigned_bindings,
                 factory_importable_bindings: &factory_importable_bindings,
                 drop_unowned_helper_sibling_indices: &drop_unowned_helper_sibling_indices,
+                positions,
             },
         )
     };
@@ -1229,20 +1241,21 @@ fn detect_from_prepared_factories(
                     &factory_owned_bindings,
                 ))
                 .collect();
-            let extra_code = emit_items(body_items, module.filename.clone(), cm.clone());
+            let extra_code = emit_items(body_items, module.filename.clone(), cm.clone(), positions);
             module.code.push('\n');
-            module.code.push_str(&extra_code);
+            module.append_mapped(extra_code);
             let mut reserved_helper_atoms = merged_local_atoms;
             reserved_helper_atoms
                 .extend(merged_init_bodies.iter().map(|(name, _, _)| name.clone()));
             for (name, cjs_params, stmts) in merged_init_bodies {
-                module.code.push_str(&emit_factory_function_code(
+                module.append_mapped(emit_factory_function_code(
                     &name,
                     cjs_params.as_ref(),
                     stmts,
                     &mut reserved_helper_atoms,
                     module.filename.clone(),
                     cm.clone(),
+                    positions,
                 ));
             }
         }
@@ -1428,14 +1441,19 @@ fn detect_from_prepared_factories(
         write_names.sort();
         write_names.dedup();
 
-        let mut code = String::new();
+        let mut code = MappedCode::default();
         // Other modules may import and call this synthetic init function while
         // this module is still evaluating through an ESM cycle. Keep the
         // module-local storage it mutates before the exported callable wrapper,
         // otherwise later VarDeclToLetConst can turn trailing `var` storage
         // into TDZ-sensitive `let` declarations.
         if !body_items.is_empty() {
-            code.push_str(&emit_items(body_items, group_filename.clone(), cm.clone()));
+            code.push_mapped(emit_items(
+                body_items,
+                group_filename.clone(),
+                cm.clone(),
+                positions,
+            ));
         }
         if !write_names.is_empty() {
             let names = write_names
@@ -1448,24 +1466,27 @@ fn detect_from_prepared_factories(
         for mut factory in factories {
             rename_bindings(&mut factory.body_stmts, &import_renames);
             let factory_body_stmts = std::mem::take(&mut factory.body_stmts);
-            code.push_str(&emit_factory_function_code(
+            code.push_mapped(emit_factory_function_code(
                 &factory.var_name,
                 factory.cjs_params.as_ref(),
                 factory_body_stmts,
                 &mut reserved_helper_atoms,
                 group_filename.clone(),
                 cm.clone(),
+                positions,
             ));
         }
         modules.push(UnpackedModule {
             id: group_id,
             is_entry: false,
-            code,
+            code: code.code,
             filename: group_filename,
             source_ranges: group_source_ranges,
             inspection_context_ranges: Vec::new(),
             source_input: String::new(),
-            generated_source_map: Vec::new(),
+            generated_source_map: code.points,
+            verbatim_source_offset: None,
+            mapped_in_every_mode: false,
         });
     }
 
@@ -1488,6 +1509,8 @@ fn detect_from_prepared_factories(
             inspection_context_ranges: Vec::new(),
             source_input: String::new(),
             generated_source_map: Vec::new(),
+            verbatim_source_offset: None,
+            mapped_in_every_mode: false,
         });
     }
 
@@ -1591,16 +1614,18 @@ fn detect_from_prepared_factories(
             body: remaining_entry,
             shebang: None,
         };
-        let code = emit_module(entry_module, "entry.js".to_string(), cm);
+        let code = emit_esm::emit_module(entry_module, "entry.js".to_string(), cm, positions);
         modules.push(UnpackedModule {
             id: "entry".to_string(),
             is_entry: true,
-            code,
+            code: code.code,
             filename: "entry.js".to_string(),
             source_ranges: entry_ranges,
             inspection_context_ranges: Vec::new(),
             source_input: String::new(),
-            generated_source_map: Vec::new(),
+            generated_source_map: code.points,
+            verbatim_source_offset: None,
+            mapped_in_every_mode: false,
         });
     }
 
@@ -1910,7 +1935,8 @@ fn emit_factory_function_code(
     reserved: &mut HashSet<Atom>,
     filename: String,
     cm: Lrc<SourceMap>,
-) -> String {
+    positions: SourcePositions,
+) -> MappedCode {
     // The helper is read inside the callable, so a body local, parameter, or
     // free reference with the same name would shadow it. Reserve every
     // identifier the body mentions; over-reserving only costs a suffix.
@@ -1919,28 +1945,35 @@ fn emit_factory_function_code(
         stmts.into_iter().map(ModuleItem::Stmt).collect(),
         filename,
         cm,
+        positions,
     );
+    let mut code = MappedCode::default();
     let Some(cjs_params) = cjs_params else {
         let guard = reserve_import_atom(&format!("__wakaru_{name}_initialized").into(), reserved);
-        return format!("var {guard} = false;\nexport function {name}() {{\nif ({guard}) return;\n{guard} = true;\n{body}\n}}\n");
+        code.push_str(&format!(
+            "var {guard} = false;\nexport function {name}() {{\nif ({guard}) return;\n{guard} = true;\n"
+        ));
+        code.push_mapped(body);
+        code.push_str("\n}\n");
+        return code;
     };
     let cache = reserve_import_atom(&format!("__wakaru_{name}_cache").into(), reserved);
     let exports = &cjs_params.exports;
-    let mut code = format!("var {cache};\nexport function {name}() {{\n");
+    code.push_str(&format!("var {cache};\nexport function {name}() {{\n"));
     match &cjs_params.module {
         Some(module) => {
             code.push_str(&format!("if ({cache}) return {cache}.exports;\n"));
             code.push_str(&format!("var {exports} = {{}};\n"));
             code.push_str(&format!("var {module} = {{ exports: {exports} }};\n"));
             code.push_str(&format!("{cache} = {module};\n"));
-            code.push_str(&body);
+            code.push_mapped(body);
             code.push_str(&format!("\nreturn {module}.exports;\n}}\n"));
         }
         None => {
             code.push_str(&format!("if ({cache}) return {cache};\n"));
             code.push_str(&format!("var {exports} = {{}};\n"));
             code.push_str(&format!("{cache} = {exports};\n"));
-            code.push_str(&body);
+            code.push_mapped(body);
             code.push_str(&format!("\nreturn {exports};\n}}\n"));
         }
     }
@@ -2954,6 +2987,7 @@ struct ScopeExtractionRefs<'a> {
     factory_preassigned_bindings: &'a HashMap<BindingId, String>,
     factory_importable_bindings: &'a HashMap<BindingId, String>,
     drop_unowned_helper_sibling_indices: &'a HashSet<usize>,
+    positions: SourcePositions,
 }
 
 fn merge_conflicting_factory_scope_metas(
@@ -4626,7 +4660,12 @@ fn emit_scope_modules(
         }
 
         rename_bindings(&mut module_items, &import_renames);
-        let mut code = emit_items(module_items, meta.filename.clone(), cm.clone());
+        let mut code = emit_items(
+            module_items,
+            meta.filename.clone(),
+            cm.clone(),
+            refs.positions,
+        );
         for namespace in &meta.namespaces {
             if !effective_exports[mi].contains(&namespace.namespace_binding.0) {
                 continue;
@@ -4637,22 +4676,25 @@ fn emit_scope_modules(
                 &namespace.namespace_binding.0,
                 &namespace.export_entries,
             ));
-            code.push('\n');
-            code.push_str(&emit_items(
+            code.push_str("\n");
+            code.push_mapped(emit_items(
                 namespace_items,
                 meta.filename.clone(),
                 cm.clone(),
+                refs.positions,
             ));
         }
         modules.push(UnpackedModule {
             id: meta.id.clone(),
             is_entry: false,
-            code,
+            code: code.code,
             filename: meta.filename.clone(),
             source_ranges: spans_byte_ranges(&cm, body_spans.into_iter()),
             inspection_context_ranges: Vec::new(),
             source_input: String::new(),
-            generated_source_map: Vec::new(),
+            generated_source_map: code.points,
+            verbatim_source_offset: None,
+            mapped_in_every_mode: false,
         });
     }
 
@@ -6384,10 +6426,15 @@ fn dedup_filename(filename: &str, seen: &mut HashSet<String>) -> String {
     emit_esm::dedup_filename(filename, seen, FilenameDedupStyle::Flat)
 }
 
-fn emit_items(items: Vec<ModuleItem>, filename: String, cm: Lrc<SourceMap>) -> String {
+fn emit_items(
+    items: Vec<ModuleItem>,
+    filename: String,
+    cm: Lrc<SourceMap>,
+    positions: SourcePositions,
+) -> MappedCode {
     let span = tracing::info_span!("esbuild: emit_items", count = items.len());
     let _enter = span.enter();
-    emit_esm::emit_items(items, filename, cm)
+    emit_esm::emit_items(items, filename, cm, positions)
 }
 
 #[cfg(test)]
@@ -6415,10 +6462,20 @@ mod tests {
             "fixture must pass the owned detector's preflight"
         );
 
-        let borrowed = detect_from_module_with_source(&module, Some(source), cm.clone())
-            .expect("borrowed detector should accept fixture");
-        let owned = detect_from_owned_factory_module_with_source(module, Some(source), cm)
-            .expect("owned detector should accept every preflight-approved fixture");
+        let borrowed = detect_from_module_with_source(
+            &module,
+            Some(source),
+            cm.clone(),
+            crate::unpacker::SourcePositions::Discard,
+        )
+        .expect("borrowed detector should accept fixture");
+        let owned = detect_from_owned_factory_module_with_source(
+            module,
+            Some(source),
+            cm,
+            crate::unpacker::SourcePositions::Discard,
+        )
+        .expect("owned detector should accept every preflight-approved fixture");
         let module_pairs = |result: UnpackResult| {
             result
                 .modules
@@ -6702,6 +6759,7 @@ console.log(value());
                 rejected_module,
                 Some(rejected_source),
                 rejected_cm.clone(),
+                crate::unpacker::SourcePositions::Discard,
             ) {
                 Ok(_) => panic!("one non-CommonJS factory is insufficient evidence"),
                 Err(rejected) => rejected,
@@ -6879,7 +6937,13 @@ use(JA, KA);
             )]);
 
             let repaired = repair_module_imports(module.body, "entry.js", &binding_to_filename);
-            let output = emit_items(repaired, "entry.js".to_string(), cm);
+            let output = emit_items(
+                repaired,
+                "entry.js".to_string(),
+                cm,
+                SourcePositions::Discard,
+            )
+            .code;
 
             assert!(
                 output.contains("import { state } from \"./owner.js\""),

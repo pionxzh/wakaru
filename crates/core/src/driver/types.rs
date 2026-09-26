@@ -42,9 +42,9 @@ pub struct DecompileOptions {
     /// Run post-transform diagnostic checks (lexical use-before-declaration,
     /// output parse verification). Results are returned as warnings.
     pub diagnostics: bool,
-    /// Generate a v3 source map for each decompiled output. Single-file maps
-    /// point back to the input; unpack maps point to each module's extracted
-    /// code (embedded in `sourcesContent`), not to the bundle.
+    /// Generate a v3 source map for each decompiled output, mapping it back to
+    /// the input. Unpack maps point into the input each module was extracted
+    /// from and omit `sourcesContent`; single-file maps embed the input.
     pub emit_source_map: bool,
 }
 

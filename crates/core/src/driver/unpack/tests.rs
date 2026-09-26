@@ -218,6 +218,7 @@ fn unprocessed_plain_input_skips_resolver_preparation() {
 #[test]
 fn prepared_raw_scope_split_keeps_runnable_normalization() {
     let input = PreparedUnpackInput {
+        origin: None,
         filename: "bundle.js".to_string(),
         source: None,
         detection: PreparedInputDetection::ScopeHoisted,
@@ -231,6 +232,8 @@ fn prepared_raw_scope_split_keeps_runnable_normalization() {
                 inspection_context_ranges: Vec::new(),
                 source_input: String::new(),
                 generated_source_map: Vec::new(),
+                verbatim_source_offset: None,
+                mapped_in_every_mode: false,
                 code: "if (ready) run();".to_string(),
             }],
             report_import_cycle_warnings: false,
@@ -255,6 +258,7 @@ fn prepared_raw_scope_split_keeps_runnable_normalization() {
 fn unprovable_public_boundary_falls_back_to_one_processed_module() {
     let source = "export const intact = 1;";
     let uncertain = PreparedUnpackInput {
+        origin: None,
         filename: "uncertain.js".to_string(),
         source: Some(source.to_string()),
         detection: PreparedInputDetection::ScopeHoisted,

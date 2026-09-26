@@ -14,14 +14,21 @@ use swc_core::ecma::ast::{
     ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt, Str,
     UnaryOp, VarDecl, VarDeclarator,
 };
-use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
+use swc_core::ecma::codegen::Config;
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::js_names::{is_reserved_binding_name, is_valid_identifier_name};
-use crate::unpacker::{span_byte_range, BundleFormat, UnpackResult, UnpackedModule};
+use crate::unpacker::{
+    emit_module_with_positions, span_byte_range, BundleFormat, GeneratedSourceMapPoint,
+    InputOffsets, MappedCode, SourcePositions, UnpackResult, UnpackedModule,
+};
 
-pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
+pub(super) fn detect_from_module(
+    module: &Module,
+    cm: Lrc<SourceMap>,
+    positions: SourcePositions,
+) -> Option<UnpackResult> {
     let mut registers = Vec::new();
 
     for item in &module.body {
@@ -54,7 +61,8 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
     let mut modules = Vec::new();
     for (idx, register) in registers.into_iter().enumerate() {
         let register_range = span_byte_range(&cm, register.span);
-        if let Some(mut result) = try_unpack_dynamic_export_bundle(&register, cm.clone()) {
+        if let Some(mut result) = try_unpack_dynamic_export_bundle(&register, cm.clone(), positions)
+        {
             // The nested bundle was re-parsed from emitted code, so its
             // spans are meaningless here; attribute the whole register call.
             for module in &mut result.modules {
@@ -65,17 +73,20 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
         }
 
         let filename = filename_for_register(register.name.as_deref(), idx, multiple, &mut seen);
-        let code = emit_system_module(&register, filename.clone(), cm.clone(), multiple)?;
+        let emitted =
+            emit_system_module(&register, filename.clone(), cm.clone(), multiple, positions)?;
         let is_entry = idx == 0;
         modules.push(UnpackedModule {
             id: register.name.unwrap_or_else(|| idx.to_string()),
             is_entry,
-            code,
+            code: emitted.code,
             filename,
             source_ranges: register_range.into_iter().collect(),
             inspection_context_ranges: Vec::new(),
             source_input: String::new(),
-            generated_source_map: Vec::new(),
+            generated_source_map: emitted.points,
+            verbatim_source_offset: emitted.verbatim_source_offset,
+            mapped_in_every_mode: false,
         });
     }
 
@@ -85,14 +96,30 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
 fn try_unpack_dynamic_export_bundle(
     register: &SystemRegister,
     cm: Lrc<SourceMap>,
+    positions: SourcePositions,
 ) -> Option<UnpackResult> {
     let export_sym = param_sym(&register.declare, 0)?;
     let body = register.declare.body.as_ref()?;
     let descriptor = extract_register_descriptor(body)?;
     let execute_body = descriptor.execute.body.as_ref()?;
     let expr = dynamic_export_expr(execute_body, &export_sym)?;
-    let source = emit_expr_module(expr, cm).ok()?;
-    crate::unpacker::try_unpack_bundle(&source).ok().flatten()
+    // Always record the outer hop: prepared inner modules carry points in
+    // every mode, and they must target this input, not the inner text.
+    let inner = emit_expr_module(expr, cm, SourcePositions::Record).ok()?;
+    let mut result =
+        crate::unpacker::try_unpack_bundle_with_positions(&inner.code, positions).ok()??;
+    let outer = InputOffsets::Printed(&inner.points);
+    for module in &mut result.modules {
+        let points = match InputOffsets::of(module) {
+            Some(InputOffsets::Printed(points)) => outer.compose(points),
+            // A verbatim inner slice maps every offset; the printed outer
+            // hop only maps exact points, so the slice cannot be carried.
+            Some(InputOffsets::Verbatim(_)) | None => Vec::new(),
+        };
+        module.generated_source_map = points;
+        module.verbatim_source_offset = None;
+    }
+    Some(result)
 }
 
 fn dynamic_export_expr<'a>(body: &'a FunctionBody, export_sym: &Atom) -> Option<&'a Expr> {
@@ -342,7 +369,8 @@ fn emit_system_module(
     filename: String,
     cm: Lrc<SourceMap>,
     multiple: bool,
-) -> Option<String> {
+    positions: SourcePositions,
+) -> Option<EmittedRegister> {
     // Missing `_export` is optional. A present but unreadable first param
     // (rest / destructure / default) stays fail-closed.
     let export_sym = match register.declare.params.first() {
@@ -508,15 +536,29 @@ fn emit_system_module(
         body: items,
         shebang: None,
     };
-    emit_module(&module, filename, cm).ok()
+    let MappedCode { code, points } = emit_module(&module, filename, cm, positions).ok()?;
+    Some(EmittedRegister {
+        code,
+        points,
+        verbatim_source_offset: None,
+    })
 }
 
-fn original_register_code(register: &SystemRegister, cm: &SourceMap) -> Option<String> {
+struct EmittedRegister {
+    code: String,
+    points: Vec<GeneratedSourceMapPoint>,
+    verbatim_source_offset: Option<u32>,
+}
+
+fn original_register_code(register: &SystemRegister, cm: &SourceMap) -> Option<EmittedRegister> {
     let (start, end) = span_byte_range(cm, register.span)?;
     let file = cm.lookup_byte_offset(register.span.lo).sf;
-    file.src
-        .get(start as usize..end as usize)
-        .map(str::to_string)
+    let code = file.src.get(start as usize..end as usize)?.to_string();
+    Some(EmittedRegister {
+        code,
+        points: Vec::new(),
+        verbatim_source_offset: Some(start),
+    })
 }
 
 struct RegisterDescriptor {
@@ -3271,27 +3313,27 @@ fn is_valid_ident_name(name: &str) -> bool {
         && chars.all(|c| c == '_' || c == '$' || c.is_ascii_alphanumeric())
 }
 
-fn emit_module(module: &Module, filename: String, cm: Lrc<SourceMap>) -> anyhow::Result<String> {
+fn emit_module(
+    module: &Module,
+    filename: String,
+    cm: Lrc<SourceMap>,
+    positions: SourcePositions,
+) -> anyhow::Result<MappedCode> {
     let _fm = cm.new_source_file(
         swc_core::common::FileName::Custom(filename).into(),
         String::new(),
     );
-    let mut output = Vec::new();
-    {
-        let mut emitter = Emitter {
-            cfg: Config::default()
-                .with_minify(false)
-                .with_target(EsVersion::EsNext),
-            cm: cm.clone(),
-            comments: None,
-            wr: JsWriter::new(cm.clone(), "\n", &mut output, None),
-        };
-        emitter.emit_module(module)?;
-    }
-    String::from_utf8(output).map_err(|e| anyhow::anyhow!("{e}"))
+    let cfg = Config::default()
+        .with_minify(false)
+        .with_target(EsVersion::EsNext);
+    emit_module_with_positions(module, cm, cfg, positions)
 }
 
-fn emit_expr_module(expr: &Expr, cm: Lrc<SourceMap>) -> anyhow::Result<String> {
+fn emit_expr_module(
+    expr: &Expr,
+    cm: Lrc<SourceMap>,
+    positions: SourcePositions,
+) -> anyhow::Result<MappedCode> {
     let module = Module {
         span: DUMMY_SP,
         body: vec![ModuleItem::Stmt(Stmt::Expr(ExprStmt {
@@ -3300,7 +3342,12 @@ fn emit_expr_module(expr: &Expr, cm: Lrc<SourceMap>) -> anyhow::Result<String> {
         }))],
         shebang: None,
     };
-    emit_module(&module, "systemjs-inner-bundle.js".to_string(), cm)
+    emit_module(
+        &module,
+        "systemjs-inner-bundle.js".to_string(),
+        cm,
+        positions,
+    )
 }
 
 #[cfg(test)]
@@ -3310,7 +3357,8 @@ mod tests {
     fn unpack(source: &str) -> UnpackResult {
         let cm: Lrc<SourceMap> = Default::default();
         let module = crate::unpacker::parse_es_module(source, "system.js", cm.clone()).unwrap();
-        detect_from_module(&module, cm).expect("should detect System.register")
+        detect_from_module(&module, cm, crate::unpacker::SourcePositions::Discard)
+            .expect("should detect System.register")
     }
 
     #[test]

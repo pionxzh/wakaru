@@ -161,6 +161,8 @@ pub(super) fn detect_from_module_prepared(
             inspection_context_ranges: Vec::new(),
             source_input: String::new(),
             generated_source_map: Vec::new(),
+            verbatim_source_offset: None,
+            mapped_in_every_mode: false,
         });
         prepared.push(Some(prepared_module));
     }

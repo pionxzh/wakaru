@@ -17,7 +17,7 @@ use super::emit_esm::{
 };
 use super::{
     has_strict_mode_syntax_hazard, module_item_declared_names, spans_byte_ranges, BundleFormat,
-    UnpackResult, UnpackedModule,
+    SourcePositions, UnpackResult, UnpackedModule,
 };
 
 const MIN_DECLARATIONS: usize = 10;
@@ -125,6 +125,7 @@ pub fn split_scope_hoisted(source: &str) -> Option<UnpackResult> {
         source,
         ScopeHoistRenderMode::Executable,
         ScopeHoistSource::DirectAsset,
+        SourcePositions::Discard,
     )
 }
 
@@ -132,6 +133,7 @@ pub(crate) fn split_scope_hoisted_with_mode(
     source: &str,
     render_mode: ScopeHoistRenderMode,
     origin: ScopeHoistSource,
+    positions: SourcePositions,
 ) -> Option<UnpackResult> {
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
@@ -140,7 +142,7 @@ pub(crate) fn split_scope_hoisted_with_mode(
         if !recoverable_parse_errors.is_empty() {
             return None;
         }
-        split_from_module(&module, cm, render_mode, origin)
+        split_from_module(&module, cm, render_mode, origin, positions)
     })
 }
 
@@ -149,8 +151,9 @@ pub(crate) fn split_scope_hoisted_module_with_mode(
     cm: Lrc<SourceMap>,
     render_mode: ScopeHoistRenderMode,
     origin: ScopeHoistSource,
+    positions: SourcePositions,
 ) -> Option<UnpackResult> {
-    split_from_module(module, cm, render_mode, origin)
+    split_from_module(module, cm, render_mode, origin, positions)
 }
 
 /// Analyze the same direct top-level source consumed by the heuristic
@@ -306,6 +309,7 @@ fn split_from_module(
     cm: Lrc<SourceMap>,
     render_mode: ScopeHoistRenderMode,
     origin: ScopeHoistSource,
+    positions: SourcePositions,
 ) -> Option<UnpackResult> {
     if has_strict_mode_syntax_hazard(module) {
         return None;
@@ -317,7 +321,7 @@ fn split_from_module(
     let body = iife_body.as_deref().unwrap_or(&module.body);
 
     let plan = analyze_scope_hoist(body, render_mode, origin)?;
-    render_scope_hoist_plan(body, plan, cm, render_mode)
+    render_scope_hoist_plan(body, plan, cm, render_mode, positions)
 }
 
 struct ScopeHoistPlan {
@@ -395,6 +399,7 @@ fn render_scope_hoist_plan(
     plan: ScopeHoistPlan,
     cm: Lrc<SourceMap>,
     render_mode: ScopeHoistRenderMode,
+    positions: SourcePositions,
 ) -> Option<UnpackResult> {
     let ScopeHoistPlan {
         items,
@@ -448,6 +453,7 @@ fn render_scope_hoist_plan(
         clusters,
         inspection_context_by_item.as_deref(),
         cm,
+        positions,
     )?;
     Some(UnpackResult::without_cycle_warnings(
         modules,
@@ -2527,6 +2533,7 @@ fn emit_clusters(
     clusters: Vec<Cluster>,
     inspection_context_by_item: Option<&[usize]>,
     cm: Lrc<SourceMap>,
+    positions: SourcePositions,
 ) -> Option<Vec<UnpackedModule>> {
     let dynamic_require_helpers = collect_dynamic_require_helpers(body);
     let esbuild_to_esm_helpers = collect_esbuild_to_esm_helpers(body);
@@ -2783,11 +2790,11 @@ fn emit_clusters(
             derive_chunk_name(items, cluster)
         };
 
-        let code = emit_items(module_items, filenames[ci].clone(), cm.clone());
+        let code = emit_items(module_items, filenames[ci].clone(), cm.clone(), positions);
         modules.push(UnpackedModule {
             id,
             is_entry: cluster.is_entry,
-            code,
+            code: code.code,
             filename: filenames[ci].clone(),
             source_ranges: spans_byte_ranges(
                 &cm,
@@ -2799,7 +2806,9 @@ fn emit_clusters(
                 .and_then(|context| context_ranges.get(&context).cloned())
                 .unwrap_or_default(),
             source_input: String::new(),
-            generated_source_map: Vec::new(),
+            generated_source_map: code.points,
+            verbatim_source_offset: None,
+            mapped_in_every_mode: false,
         });
     }
 

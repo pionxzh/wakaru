@@ -84,15 +84,134 @@ pub struct UnpackedModule {
     /// driver fills it in for multi-source unpacks.
     pub source_input: String,
     /// Mapping points from this module's emitted code back to the original
-    /// input source. Used internally to compose provenance when this emitted
-    /// module is split again.
+    /// input source. Output source maps compose through them, and nested
+    /// scope splitting uses them for provenance when `mapped_in_every_mode`.
     pub generated_source_map: Vec<GeneratedSourceMapPoint>,
+    /// `generated_source_map` came from an emission that records points in
+    /// every mode (prepared-module materialization, Closure segments), not
+    /// only under [`SourcePositions::Record`]. Nested scope splitting keys on
+    /// this instead of the points being present, so requesting output source
+    /// maps cannot change the unpacked code or its provenance.
+    pub mapped_in_every_mode: bool,
+    /// Set when `code` is a byte-for-byte copy of the input starting at this
+    /// offset, so every code offset maps to the input by a constant shift.
+    pub verbatim_source_offset: Option<u32>,
+}
+
+/// Whether extraction records where printed code came from in the input
+/// (`UnpackedModule::generated_source_map`). Only output source maps need
+/// it, and recording costs emitter bookkeeping for every token.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SourcePositions {
+    #[default]
+    Discard,
+    Record,
+}
+
+impl SourcePositions {
+    pub fn from_output_source_maps(enabled: bool) -> Self {
+        if enabled {
+            Self::Record
+        } else {
+            Self::Discard
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GeneratedSourceMapPoint {
     pub generated_offset: u32,
     pub source_offset: u32,
+}
+
+/// Extracted module text assembled from printed pieces, keeping each
+/// piece's input mapping points aligned with its position in the whole text.
+#[derive(Default)]
+pub(crate) struct MappedCode {
+    pub(crate) code: String,
+    pub(crate) points: Vec<GeneratedSourceMapPoint>,
+}
+
+impl UnpackedModule {
+    /// Append printed text to `code`, shifting its points into place.
+    pub(crate) fn append_mapped(&mut self, piece: MappedCode) {
+        append_shifted(&mut self.code, &mut self.generated_source_map, piece);
+    }
+}
+
+impl MappedCode {
+    /// Append text that has no input position (synthesized glue).
+    pub(crate) fn push_str(&mut self, text: &str) {
+        self.code.push_str(text);
+    }
+
+    /// Append printed text with points relative to its own start.
+    pub(crate) fn push_mapped(&mut self, piece: MappedCode) {
+        append_shifted(&mut self.code, &mut self.points, piece);
+    }
+}
+
+/// Where an intermediate text's offsets land in the input.
+#[derive(Clone, Copy)]
+pub(crate) enum InputOffsets<'a> {
+    /// The text is a byte-for-byte copy of the input starting here.
+    Verbatim(u32),
+    /// The text was printed; only offsets with an exact point are known.
+    Printed(&'a [GeneratedSourceMapPoint]),
+}
+
+impl<'a> InputOffsets<'a> {
+    pub(crate) fn of(module: &'a UnpackedModule) -> Option<Self> {
+        match module.verbatim_source_offset {
+            Some(start) => Some(Self::Verbatim(start)),
+            None if module.generated_source_map.is_empty() => None,
+            None => Some(Self::Printed(&module.generated_source_map)),
+        }
+    }
+
+    pub(crate) fn input_offset(&self, offset: u32) -> Option<u32> {
+        match *self {
+            Self::Verbatim(start) => start.checked_add(offset),
+            Self::Printed(points) => {
+                let index = points.partition_point(|point| point.generated_offset < offset);
+                points
+                    .get(index)
+                    .filter(|point| point.generated_offset == offset)
+                    .map(|point| point.source_offset)
+            }
+        }
+    }
+
+    /// Carry points that target this intermediate text on to the input,
+    /// dropping any whose target has no known input offset.
+    pub(crate) fn compose(
+        &self,
+        points: &[GeneratedSourceMapPoint],
+    ) -> Vec<GeneratedSourceMapPoint> {
+        points
+            .iter()
+            .filter_map(|point| {
+                Some(GeneratedSourceMapPoint {
+                    generated_offset: point.generated_offset,
+                    source_offset: self.input_offset(point.source_offset)?,
+                })
+            })
+            .collect()
+    }
+}
+
+fn append_shifted(code: &mut String, points: &mut Vec<GeneratedSourceMapPoint>, piece: MappedCode) {
+    let base = code.len() as u32;
+    points.extend(
+        piece
+            .points
+            .into_iter()
+            .map(|point| GeneratedSourceMapPoint {
+                generated_offset: point.generated_offset + base,
+                source_offset: point.source_offset,
+            }),
+    );
+    code.push_str(&piece.code);
 }
 
 /// Convert an AST span to a 0-based byte range into the parsed source.
@@ -128,18 +247,27 @@ pub(crate) fn spans_byte_ranges(
 }
 
 pub(crate) fn source_fallback_for_stmts(cm: &SourceMap, statements: &[Stmt]) -> String {
+    source_slice_for_stmts(cm, statements).0
+}
+
+/// Like [`source_fallback_for_stmts`], also returning the input byte offset the
+/// copied text starts at.
+pub(crate) fn source_slice_for_stmts(cm: &SourceMap, statements: &[Stmt]) -> (String, Option<u32>) {
     let (Some(first), Some(last)) = (statements.first(), statements.last()) else {
-        return String::new();
+        return (String::new(), None);
     };
     let first_span = first.span();
     let last_span = last.span();
     if first_span.lo.0 == 0 || last_span.hi.0 == 0 || first_span.lo > last_span.hi {
-        return String::new();
+        return (String::new(), None);
     }
     let file = cm.lookup_byte_offset(first_span.lo).sf;
     let start = first_span.lo.0.saturating_sub(file.start_pos.0) as usize;
     let end = last_span.hi.0.saturating_sub(file.start_pos.0) as usize;
-    file.src.get(start..end).unwrap_or_default().to_string()
+    match file.src.get(start..end) {
+        Some(text) => (text.to_string(), Some(start as u32)),
+        None => (String::new(), None),
+    }
 }
 
 /// Whether lifting `statements` out of their current function boundary would
@@ -745,6 +873,7 @@ impl DetectedBundle {
             let (code, generated_source_map) = prepared.materialize(cm.clone())?;
             module.code = code;
             module.generated_source_map = generated_source_map;
+            module.mapped_in_every_mode = true;
         }
         Ok(self)
     }
@@ -799,6 +928,33 @@ impl PreparedModuleAst {
             emit_module_with_source_map(&module, cm)
         })
     }
+}
+
+/// Print an extracted module, recording input points only when `positions`
+/// asks for them.
+pub(crate) fn emit_module_with_positions(
+    module: &Module,
+    cm: Lrc<SourceMap>,
+    cfg: Config,
+    positions: SourcePositions,
+) -> anyhow::Result<MappedCode> {
+    let mut output = Vec::new();
+    let mut srcmap_buf = Vec::new();
+    {
+        let srcmap = (positions == SourcePositions::Record).then_some(&mut srcmap_buf);
+        let mut emitter = Emitter {
+            cfg,
+            cm: cm.clone(),
+            comments: None,
+            wr: JsWriter::new(cm.clone(), "\n", &mut output, srcmap),
+        };
+        emitter
+            .emit_module(module)
+            .map_err(|error| anyhow::anyhow!("emit error: {error:?}"))?;
+    }
+    let code = String::from_utf8(output).map_err(|error| anyhow::anyhow!("utf8 error: {error}"))?;
+    let points = generated_source_map_points(&code, &cm, &srcmap_buf);
+    Ok(MappedCode { code, points })
 }
 
 pub(crate) fn emit_module_with_source_map(
@@ -878,7 +1034,14 @@ pub fn unpack_bundle(source: &str) -> Option<UnpackResult> {
 }
 
 pub fn try_unpack_bundle(source: &str) -> anyhow::Result<Option<UnpackResult>> {
-    try_prepare_bundle(source)?
+    try_unpack_bundle_with_positions(source, SourcePositions::Discard)
+}
+
+pub(crate) fn try_unpack_bundle_with_positions(
+    source: &str,
+    positions: SourcePositions,
+) -> anyhow::Result<Option<UnpackResult>> {
+    try_prepare_bundle(source, positions)?
         .map(DetectedBundle::materialize)
         .transpose()
 }
@@ -888,7 +1051,10 @@ pub(crate) enum PreparedSource {
     Plain(Option<PreparedModuleAst>),
 }
 
-pub(crate) fn try_prepare_bundle(source: &str) -> anyhow::Result<Option<DetectedBundle>> {
+pub(crate) fn try_prepare_bundle(
+    source: &str,
+    positions: SourcePositions,
+) -> anyhow::Result<Option<DetectedBundle>> {
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
         let (mut module, recoverable_parse_errors) = {
@@ -899,7 +1065,13 @@ pub(crate) fn try_prepare_bundle(source: &str) -> anyhow::Result<Option<Detected
         if !recoverable_parse_errors.is_empty() || has_strict_mode_syntax_hazard(&module) {
             return Ok(None);
         }
-        Ok(detect_parsed_source(&mut module, cm, source, false))
+        Ok(detect_parsed_source(
+            &mut module,
+            cm,
+            source,
+            false,
+            positions,
+        ))
     })
 }
 
@@ -907,6 +1079,7 @@ pub(crate) fn try_prepare_source(
     source: &str,
     filename: &str,
     prepare_plain_ast: bool,
+    positions: SourcePositions,
 ) -> anyhow::Result<PreparedSource> {
     enum PreparedSourceParts {
         Bundle(Box<DetectedBundle>),
@@ -928,7 +1101,7 @@ pub(crate) fn try_prepare_source(
         };
 
         if recoverable_parse_errors.is_empty() && !has_strict_mode_syntax_hazard(&module) {
-            if let Some(result) = detect_parsed_source(&mut module, cm, source, false) {
+            if let Some(result) = detect_parsed_source(&mut module, cm, source, false, positions) {
                 return Ok(PreparedSourceParts::Bundle(Box::new(result)));
             }
         }
@@ -974,13 +1147,14 @@ fn detect_parsed_source(
     cm: Lrc<SourceMap>,
     source: &str,
     collect_chunk_enumeration: bool,
+    positions: SourcePositions,
 ) -> Option<DetectedBundle> {
     let input_has_esm_declarations = module
         .body
         .iter()
         .any(|item| matches!(item, ModuleItem::ModuleDecl(_)));
     let chunk_ids = webpack5::detect_chunk_ids_from_module(module);
-    if let Some(mut result) = detect_bundle_candidate(module, cm.clone(), source, true) {
+    if let Some(mut result) = detect_bundle_candidate(module, cm.clone(), source, true, positions) {
         result.chunk_ids = chunk_ids;
         result.input_has_esm_declarations = input_has_esm_declarations;
         if collect_chunk_enumeration {
@@ -995,7 +1169,7 @@ fn detect_parsed_source(
     }
 
     if let Some(mut result) = wrappers::try_detect_bun_compile_candidate(module, |candidate| {
-        detect_owned_bun_candidate(candidate, cm.clone(), source)
+        detect_owned_bun_candidate(candidate, cm.clone(), source, positions)
     }) {
         result.chunk_ids = chunk_ids;
         result.input_has_esm_declarations = input_has_esm_declarations;
@@ -1004,7 +1178,9 @@ fn detect_parsed_source(
 
     let unwrapped_candidates = wrappers::collect_unwrap_candidates(module);
     for mut candidate in unwrapped_candidates {
-        if let Some(mut result) = detect_bundle_candidate(&candidate, cm.clone(), source, false) {
+        if let Some(mut result) =
+            detect_bundle_candidate(&candidate, cm.clone(), source, false, positions)
+        {
             result.chunk_ids = chunk_ids;
             result.input_has_esm_declarations = input_has_esm_declarations;
             if collect_chunk_enumeration {
@@ -1022,7 +1198,7 @@ fn detect_parsed_source(
     let result = {
         let span = tracing::info_span!("detect_amd");
         let _enter = span.enter();
-        amd::detect_from_module(module, cm)
+        amd::detect_from_module(module, cm, positions)
     };
     result.map(|result| {
         let mut detected = DetectedBundle::from_result(result);
@@ -1044,17 +1220,22 @@ fn detect_bundle_candidate(
     cm: Lrc<SourceMap>,
     source: &str,
     allow_runtime_entry: bool,
+    positions: SourcePositions,
 ) -> Option<DetectedBundle> {
-    if let Some(result) =
-        detect_bundle_candidate_before_esbuild(module, cm.clone(), source, allow_runtime_entry)
-    {
+    if let Some(result) = detect_bundle_candidate_before_esbuild(
+        module,
+        cm.clone(),
+        source,
+        allow_runtime_entry,
+        positions,
+    ) {
         return Some(result);
     }
 
     let result = {
         let span = tracing::info_span!("detect_esbuild");
         let _enter = span.enter();
-        esbuild::detect_from_module_with_source(module, Some(source), cm.clone())
+        esbuild::detect_from_module_with_source(module, Some(source), cm.clone(), positions)
     };
     if result.is_some() {
         return result.map(DetectedBundle::from_result);
@@ -1069,9 +1250,10 @@ fn detect_owned_bun_candidate(
     candidate: Module,
     cm: Lrc<SourceMap>,
     source: &str,
+    positions: SourcePositions,
 ) -> Result<DetectedBundle, Module> {
     if let Some(result) =
-        detect_bundle_candidate_before_esbuild(&candidate, cm.clone(), source, false)
+        detect_bundle_candidate_before_esbuild(&candidate, cm.clone(), source, false, positions)
     {
         return Ok(result);
     }
@@ -1080,6 +1262,7 @@ fn detect_owned_bun_candidate(
         candidate,
         Some(source),
         cm.clone(),
+        positions,
     ) {
         Ok(result) => return Ok(DetectedBundle::from_result(result)),
         Err(candidate) => candidate,
@@ -1088,7 +1271,7 @@ fn detect_owned_bun_candidate(
     let result = {
         let span = tracing::info_span!("detect_esbuild");
         let _enter = span.enter();
-        esbuild::detect_from_module_with_source(&candidate, Some(source), cm.clone())
+        esbuild::detect_from_module_with_source(&candidate, Some(source), cm.clone(), positions)
     };
     if let Some(result) = result {
         return Ok(DetectedBundle::from_result(result));
@@ -1107,11 +1290,12 @@ fn detect_bundle_candidate_before_esbuild(
     cm: Lrc<SourceMap>,
     source: &str,
     allow_runtime_entry: bool,
+    positions: SourcePositions,
 ) -> Option<DetectedBundle> {
     let result = {
         let span = tracing::info_span!("detect_webpack5");
         let _enter = span.enter();
-        webpack5::detect_from_module_prepared(module, cm.clone())
+        webpack5::detect_from_module_prepared(module, cm.clone(), positions)
     };
     if result.is_some() {
         return result;
@@ -1131,7 +1315,7 @@ fn detect_bundle_candidate_before_esbuild(
     let result = {
         let span = tracing::info_span!("detect_webpack4");
         let _enter = span.enter();
-        webpack4::detect_from_module(module, cm.clone())
+        webpack4::detect_from_module(module, cm.clone(), positions)
     };
     if result.is_some() {
         return result;
@@ -1167,7 +1351,7 @@ fn detect_bundle_candidate_before_esbuild(
     let result = {
         let span = tracing::info_span!("detect_systemjs");
         let _enter = span.enter();
-        systemjs::detect_from_module(module, cm.clone())
+        systemjs::detect_from_module(module, cm.clone(), positions)
     };
     if result.is_some() {
         return result.map(DetectedBundle::from_result);
@@ -1195,7 +1379,8 @@ pub fn enumerate_chunks(source: &str, filename: &str) -> anyhow::Result<ChunkEnu
         let cm: Lrc<SourceMap> = Default::default();
         let (mut module, _) = parse_es_module_with_recovery(source, filename, cm.clone())?;
         let relative_imports = chunk_enumeration::collect_relative_import_specifiers(&module);
-        let mut detected = detect_parsed_source(&mut module, cm, source, true);
+        let mut detected =
+            detect_parsed_source(&mut module, cm, source, true, SourcePositions::Discard);
         let detected_format = detected.as_ref().map(|detected| detected.result.format);
         let webpack = detected
             .as_mut()
@@ -1324,6 +1509,71 @@ pub fn unpack_webpack4_raw(source: &str) -> Option<UnpackResult> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn point(generated_offset: u32, source_offset: u32) -> GeneratedSourceMapPoint {
+        GeneratedSourceMapPoint {
+            generated_offset,
+            source_offset,
+        }
+    }
+
+    #[test]
+    fn printed_input_offsets_map_only_exact_points() {
+        let points = [point(0, 40), point(6, 52)];
+        let offsets = InputOffsets::Printed(&points);
+        assert_eq!(offsets.input_offset(6), Some(52));
+        assert_eq!(offsets.input_offset(3), None);
+        assert_eq!(InputOffsets::Verbatim(40).input_offset(3), Some(43));
+    }
+
+    #[test]
+    fn composing_input_offsets_drops_points_without_an_input_target() {
+        let parent = [point(0, 100), point(10, 150)];
+        let child = [point(0, 10), point(4, 5), point(9, 0)];
+        assert_eq!(
+            InputOffsets::Printed(&parent).compose(&child),
+            vec![point(0, 150), point(9, 100)]
+        );
+        assert_eq!(
+            InputOffsets::Verbatim(7).compose(&child),
+            vec![point(0, 17), point(4, 12), point(9, 7)]
+        );
+    }
+
+    #[test]
+    fn appending_mapped_code_shifts_points_past_the_prefix() {
+        let mut code = MappedCode::default();
+        code.push_str("glue;\n");
+        code.push_mapped(MappedCode {
+            code: "a();".to_string(),
+            points: vec![point(0, 30)],
+        });
+        assert_eq!(code.code, "glue;\na();");
+        assert_eq!(code.points, vec![point(6, 30)]);
+    }
+
+    #[test]
+    fn emitting_records_input_points_only_on_request() {
+        GLOBALS.set(&Default::default(), || {
+            let cm: Lrc<SourceMap> = Default::default();
+            let source = "var  answer =  42;";
+            let module = parse_es_module(source, "input.js", cm.clone()).expect("parse");
+            let cfg = || Config::default().with_minify(false);
+            let discarded =
+                emit_module_with_positions(&module, cm.clone(), cfg(), SourcePositions::Discard)
+                    .expect("emit");
+            assert!(discarded.points.is_empty());
+            let recorded = emit_module_with_positions(&module, cm, cfg(), SourcePositions::Record)
+                .expect("emit");
+            assert_eq!(recorded.code, discarded.code);
+            let answer = recorded.code.find("answer").unwrap() as u32;
+            let offsets = InputOffsets::Printed(&recorded.points);
+            assert_eq!(
+                offsets.input_offset(answer),
+                Some(source.find("answer").unwrap() as u32)
+            );
+        });
+    }
 
     #[test]
     fn resolve_prepared_module_rederives_every_context() {

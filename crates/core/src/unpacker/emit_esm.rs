@@ -2,13 +2,14 @@
 //!
 //! The esbuild unpacker and the heuristic scope-hoist splitter both end in
 //! the same place: per-module groups of `ModuleItem`s that need synthesized
-//! `import`/`export` statements and plain (map-less) code generation. This
+//! `import`/`export` statements and code generation. This
 //! module holds the pieces that are genuinely identical between them, plus
 //! the case-insensitive filename-dedup probing that the merge driver and
-//! SystemJS unpacker also share. Emission that needs source maps goes
-//! through `emit_module_with_source_map` in `unpacker/mod.rs` instead.
+//! SystemJS unpacker also share.
 
 use crate::collections::HashSet;
+
+use super::{emit_module_with_positions, MappedCode, SourcePositions};
 
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, FileName, SourceMap};
@@ -17,7 +18,9 @@ use swc_core::ecma::ast::{
     ImportNamedSpecifier, ImportSpecifier, Module, ModuleDecl, ModuleExportName, ModuleItem,
     NamedExport, Stmt, Str,
 };
-use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
+use swc_core::ecma::codegen::Config;
+#[cfg(test)]
+use swc_core::ecma::codegen::{text_writer::JsWriter, Emitter};
 
 /// How [`dedup_filename`] derives the `{stem}_{n}.{ext}` probe candidates.
 /// The historical call sites used two subtly different schemes; both are
@@ -218,20 +221,32 @@ pub(crate) fn try_promote_fn_class_export(
 }
 
 /// Wrap `items` in a fresh module and emit it under `filename`.
-pub(crate) fn emit_items(items: Vec<ModuleItem>, filename: String, cm: Lrc<SourceMap>) -> String {
+pub(crate) fn emit_items(
+    items: Vec<ModuleItem>,
+    filename: String,
+    cm: Lrc<SourceMap>,
+    positions: SourcePositions,
+) -> MappedCode {
     let module = Module {
         span: Default::default(),
         body: items,
         shebang: None,
     };
-    emit_module(module, filename, cm)
+    emit_module(module, filename, cm, positions)
 }
 
-pub(crate) fn emit_module(module: Module, filename: String, cm: Lrc<SourceMap>) -> String {
+pub(crate) fn emit_module(
+    module: Module,
+    filename: String,
+    cm: Lrc<SourceMap>,
+    positions: SourcePositions,
+) -> MappedCode {
     let _fm = cm.new_source_file(FileName::Custom(filename).into(), String::new());
-    emit_module_raw(&module, cm).unwrap_or_default()
+    emit_module_with_positions(&module, cm, Config::default().with_minify(false), positions)
+        .unwrap_or_default()
 }
 
+#[cfg(test)]
 pub(crate) fn emit_module_raw(module: &Module, cm: Lrc<SourceMap>) -> anyhow::Result<String> {
     let mut output = Vec::new();
     {

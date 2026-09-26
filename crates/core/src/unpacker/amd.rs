@@ -3,14 +3,15 @@ use crate::collections::HashMap;
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, SourceMap, Span, Spanned, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::*;
-use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
+use swc_core::ecma::codegen::Config;
 
 use crate::module_path::relative_import_specifier;
 use crate::unpacker::wrappers::body_looks_like_umd_wrapper;
 use crate::unpacker::{
-    arrow_iife_call_with_async, expr_has_function_level_special_bindings, function_level_returns,
-    sanitize_relative_path, span_byte_range, stmts_have_function_level_special_bindings,
-    BundleFormat, UnpackResult, UnpackedModule,
+    arrow_iife_call_with_async, emit_module_with_positions,
+    expr_has_function_level_special_bindings, function_level_returns, sanitize_relative_path,
+    span_byte_range, stmts_have_function_level_special_bindings, BundleFormat, MappedCode,
+    SourcePositions, UnpackResult, UnpackedModule,
 };
 use crate::utils::paren::strip_parens;
 use crate::utils::swc_safety::apply_fixer;
@@ -23,7 +24,11 @@ struct AmdDefine<'a> {
     span: Span,
 }
 
-pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
+pub(super) fn detect_from_module(
+    module: &Module,
+    cm: Lrc<SourceMap>,
+    positions: SourcePositions,
+) -> Option<UnpackResult> {
     let mut defines = Vec::new();
     let mut only_defines = true;
     for item in &module.body {
@@ -44,10 +49,10 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
     }
 
     if !defines.is_empty() && only_defines {
-        return emit_define_modules(defines, cm);
+        return emit_define_modules(defines, cm, positions);
     }
 
-    emit_plain_umd_module(module, cm)
+    emit_plain_umd_module(module, cm, positions)
 }
 
 fn parse_define_call(expr: &Expr) -> Option<AmdDefine<'_>> {
@@ -113,7 +118,11 @@ fn string_lit_value(expr: &Expr) -> Option<String> {
     }
 }
 
-fn emit_define_modules(defines: Vec<AmdDefine<'_>>, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
+fn emit_define_modules(
+    defines: Vec<AmdDefine<'_>>,
+    cm: Lrc<SourceMap>,
+    positions: SourcePositions,
+) -> Option<UnpackResult> {
     let named_count = defines.iter().filter(|define| !define.is_anonymous).count();
     let allow_anonymous = defines.len() == 1 && named_count == 0;
     if named_count == 0 && !allow_anonymous {
@@ -144,22 +153,29 @@ fn emit_define_modules(defines: Vec<AmdDefine<'_>>, cm: Lrc<SourceMap>) -> Optio
             &define.id,
             &id_to_filename,
         )?;
+        let emitted = emit_module(module, cm.clone(), positions).ok()?;
         modules.push(UnpackedModule {
             id: define.id.clone(),
             is_entry: index == last_index,
-            code: emit_module(module, cm.clone()).ok()?,
+            code: emitted.code,
             filename,
             source_ranges: span_byte_range(&cm, define.span).into_iter().collect(),
             inspection_context_ranges: Vec::new(),
             source_input: String::new(),
-            generated_source_map: Vec::new(),
+            generated_source_map: emitted.points,
+            verbatim_source_offset: None,
+            mapped_in_every_mode: false,
         });
     }
 
     Some(UnpackResult::new(modules, BundleFormat::Amd))
 }
 
-fn emit_plain_umd_module(module: &Module, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
+fn emit_plain_umd_module(
+    module: &Module,
+    cm: Lrc<SourceMap>,
+    positions: SourcePositions,
+) -> Option<UnpackResult> {
     let mut factory = None;
     for item in &module.body {
         match item {
@@ -179,16 +195,19 @@ fn emit_plain_umd_module(module: &Module, cm: Lrc<SourceMap>) -> Option<UnpackRe
     let (factory, wrapper_span) = factory?;
 
     let synthetic = factory_to_module(factory, &[], "module.js", "module", &HashMap::default())?;
+    let emitted = emit_module(synthetic, cm.clone(), positions).ok()?;
     Some(UnpackResult::new(
         vec![UnpackedModule {
             id: "module".to_string(),
             is_entry: true,
-            code: emit_module(synthetic, cm.clone()).ok()?,
+            code: emitted.code,
             filename: "module.js".to_string(),
             source_ranges: span_byte_range(&cm, wrapper_span).into_iter().collect(),
             inspection_context_ranges: Vec::new(),
             source_input: String::new(),
-            generated_source_map: Vec::new(),
+            generated_source_map: emitted.points,
+            verbatim_source_offset: None,
+            mapped_in_every_mode: false,
         }],
         BundleFormat::Amd,
     ))
@@ -551,17 +570,11 @@ fn resolve_amd_id(from_id: &str, dep: &str) -> String {
     parts.join("/")
 }
 
-fn emit_module(mut module: Module, cm: Lrc<SourceMap>) -> anyhow::Result<String> {
+fn emit_module(
+    mut module: Module,
+    cm: Lrc<SourceMap>,
+    positions: SourcePositions,
+) -> anyhow::Result<MappedCode> {
     apply_fixer(&mut module)?;
-    let mut output = Vec::new();
-    {
-        let mut emitter = Emitter {
-            cfg: Config::default(),
-            comments: None,
-            cm: cm.clone(),
-            wr: JsWriter::new(cm, "\n", &mut output, None),
-        };
-        emitter.emit_module(&module)?;
-    }
-    Ok(String::from_utf8(output)?)
+    emit_module_with_positions(&module, cm, Config::default(), positions)
 }

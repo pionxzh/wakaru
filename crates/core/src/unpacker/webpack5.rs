@@ -10,6 +10,7 @@ use swc_core::ecma::ast::{
     MemberProp, Module, ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread, SeqExpr,
     SimpleAssignTarget, Stmt, Str, UnaryExpr, UnaryOp, VarDecl, VarDeclarator,
 };
+use swc_core::ecma::codegen::Config;
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::utils::replace_ident;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -23,9 +24,9 @@ use crate::unpacker::webpack_common::{
     numeric_id_from_expr, split_array_concat, FactoryNormalizationError,
 };
 use crate::unpacker::{
-    deconflict_runtime_binding_renames, emit_module_with_source_map, source_fallback_for_stmts,
-    spans_byte_ranges, BundleFormat, DetectedBundle, DetectedModuleFailure, PreparedModuleAst,
-    UnpackResult, UnpackedModule,
+    deconflict_runtime_binding_renames, emit_module_with_positions, source_fallback_for_stmts,
+    spans_byte_ranges, BundleFormat, DetectedBundle, DetectedModuleFailure, MappedCode,
+    PreparedModuleAst, SourcePositions, UnpackResult, UnpackedModule,
 };
 use crate::utils::paren::strip_parens;
 use crate::utils::swc_safety::apply_fixer;
@@ -259,13 +260,16 @@ pub fn detect_and_extract(source: &str) -> Option<UnpackResult> {
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
         let module = super::parse_es_module(source, "webpack5.js", cm.clone()).ok()?;
-        detect_from_module_prepared(&module, cm)?.materialize().ok()
+        detect_from_module_prepared(&module, cm, SourcePositions::Discard)?
+            .materialize()
+            .ok()
     })
 }
 
 pub(super) fn detect_from_module_prepared(
     module: &Module,
     cm: Lrc<SourceMap>,
+    positions: SourcePositions,
 ) -> Option<DetectedBundle> {
     let span = tracing::info_span!("webpack5: detect_from_module");
     let _enter = span.enter();
@@ -276,13 +280,13 @@ pub(super) fn detect_from_module_prepared(
         let Some(bootstrap_body) = extract_iife_body(expr) else {
             continue;
         };
-        if let Some(result) = extract_webpack5_modules(bootstrap_body, cm.clone()) {
+        if let Some(result) = extract_webpack5_modules(bootstrap_body, cm.clone(), positions) {
             return Some(result);
         }
     }
     // Fallback: `output.iife: false` and `experiments.outputModule` emit the
     // bootstrap statements at the top level instead of inside an IIFE.
-    detect_webpack5_top_level(module, cm)
+    detect_webpack5_top_level(module, cm, positions)
 }
 
 /// Detect an unwrapped webpack 5 bootstrap (no IIFE): the modules container,
@@ -295,7 +299,11 @@ pub(super) fn detect_from_module_prepared(
 /// pipeline does not yet do, so a bundle with any top-level `ModuleDecl` is
 /// left untouched rather than extracted into an entry that silently loses its
 /// exports.
-fn detect_webpack5_top_level(module: &Module, cm: Lrc<SourceMap>) -> Option<DetectedBundle> {
+fn detect_webpack5_top_level(
+    module: &Module,
+    cm: Lrc<SourceMap>,
+    positions: SourcePositions,
+) -> Option<DetectedBundle> {
     // This fallback runs for every input the IIFE scan rejects, so decide by
     // reference before cloning anything: bail on any top-level ModuleDecl and
     // find the modules container in the same pass.
@@ -333,7 +341,7 @@ fn detect_webpack5_top_level(module: &Module, cm: Lrc<SourceMap>) -> Option<Dete
         span: DUMMY_SP,
         stmts,
     };
-    extract_webpack5_modules_with_plan(&bootstrap_body, cm, Some(require_plan))
+    extract_webpack5_modules_with_plan(&bootstrap_body, cm, Some(require_plan), positions)
 }
 
 pub(super) fn detect_runtime_entry_from_module(
@@ -358,6 +366,8 @@ pub(super) fn detect_runtime_entry_from_module(
                     inspection_context_ranges: Vec::new(),
                     source_input: String::new(),
                     generated_source_map: Vec::new(),
+                    verbatim_source_offset: Some(0),
+                    mapped_in_every_mode: false,
                 }],
                 BundleFormat::Webpack5,
             ));
@@ -1604,6 +1614,8 @@ fn extract_modules_from_container(
             inspection_context_ranges: Vec::new(),
             source_input: String::new(),
             generated_source_map: Vec::new(),
+            verbatim_source_offset: None,
+            mapped_in_every_mode: false,
         });
     }
 
@@ -1621,8 +1633,9 @@ fn extract_modules_from_container(
 fn extract_webpack5_modules(
     bootstrap_body: &swc_core::ecma::ast::FunctionBody,
     cm: Lrc<SourceMap>,
+    positions: SourcePositions,
 ) -> Option<DetectedBundle> {
-    extract_webpack5_modules_with_plan(bootstrap_body, cm, None)
+    extract_webpack5_modules_with_plan(bootstrap_body, cm, None, positions)
 }
 
 /// `require_plan`, when the caller already gated the region, is reused for
@@ -1632,6 +1645,7 @@ fn extract_webpack5_modules_with_plan(
     bootstrap_body: &swc_core::ecma::ast::FunctionBody,
     cm: Lrc<SourceMap>,
     mut require_plan: Option<RequireFnPlan>,
+    positions: SourcePositions,
 ) -> Option<DetectedBundle> {
     let span = tracing::info_span!("webpack5: extract_modules");
     let _enter = span.enter();
@@ -1700,6 +1714,8 @@ fn extract_webpack5_modules_with_plan(
                 inspection_context_ranges: Vec::new(),
                 source_input: String::new(),
                 generated_source_map: Vec::new(),
+                verbatim_source_offset: None,
+                mapped_in_every_mode: false,
             });
         }
     }
@@ -1730,6 +1746,7 @@ fn extract_webpack5_modules_with_plan(
             str_id_to_filename,
             require_sym,
             Some(Atom::from("__webpack_exports__")),
+            positions,
         );
         append_synthetic_entry(&mut modules, &mut prepared, entry_ranges, code)
     } else if let Some(entry) = extract_ncc_inline_entry(bootstrap_body) {
@@ -1741,6 +1758,7 @@ fn extract_webpack5_modules_with_plan(
             str_id_to_filename,
             entry.require_sym,
             None,
+            positions,
         );
         append_synthetic_entry(&mut modules, &mut prepared, entry_ranges, code)
     } else {
@@ -1772,6 +1790,7 @@ fn extract_webpack5_modules_with_plan(
                 str_id_to_filename,
                 startup.require_sym,
                 startup.exports_sym,
+                positions,
             );
             append_synthetic_entry(&mut modules, &mut prepared, entry_ranges, code);
         }
@@ -1800,9 +1819,13 @@ fn append_synthetic_entry(
     modules: &mut Vec<UnpackedModule>,
     prepared: &mut Vec<Option<PreparedModuleAst>>,
     source_ranges: Vec<(u32, u32)>,
-    code: Option<String>,
+    code: Option<MappedCode>,
 ) -> bool {
-    let Some(code) = code else {
+    let Some(MappedCode {
+        code,
+        points: generated_source_map,
+    }) = code
+    else {
         return false;
     };
     modules.push(UnpackedModule {
@@ -1813,7 +1836,9 @@ fn append_synthetic_entry(
         source_ranges,
         inspection_context_ranges: Vec::new(),
         source_input: String::new(),
-        generated_source_map: Vec::new(),
+        generated_source_map,
+        verbatim_source_offset: None,
+        mapped_in_every_mode: false,
     });
     prepared.push(None);
     true
@@ -1826,7 +1851,8 @@ fn emit_webpack5_entry_module(
     str_id_to_filename: &HashMap<String, String>,
     require_sym: Atom,
     exports_sym: Option<Atom>,
-) -> Option<String> {
+    positions: SourcePositions,
+) -> Option<MappedCode> {
     let (mut synthetic_module, _) = normalize_extracted_webpack_entry_module(
         body_stmts,
         id_to_filename,
@@ -1835,7 +1861,13 @@ fn emit_webpack5_entry_module(
         exports_sym,
     );
     apply_fixer(&mut synthetic_module).ok()?;
-    emit_module(&synthetic_module, cm).ok()
+    emit_module_with_positions(
+        &synthetic_module,
+        cm,
+        Config::default().with_minify(false),
+        positions,
+    )
+    .ok()
 }
 
 /// Normalize a webpack5 runtime entry body into a standalone module.
@@ -3666,10 +3698,6 @@ fn build_module_from_stmts(stmts: Vec<Stmt>) -> Module {
         body: stmts.into_iter().map(ModuleItem::Stmt).collect(),
         shebang: None,
     }
-}
-
-fn emit_module(module: &Module, cm: Lrc<SourceMap>) -> anyhow::Result<String> {
-    emit_module_with_source_map(module, cm).map(|(code, _)| code)
 }
 
 #[cfg(test)]
