@@ -490,6 +490,10 @@ rationale, or level gating appear.
   defaults and destructured object-literal values stay ordinary functions.
   Logical-assignment object values receive the same contextual member keys as
   plain assignments.
+  ArrowFunction also pairs arguments of literal function/arrow callees with
+  simple resolved parameters when no spread obscures their positions. Inline
+  function arguments passed to constructor-sensitive parameters stay ordinary
+  functions; unrelated callback arguments remain eligible for arrow recovery.
   ObjMethodShorthand is always enabled; its other eligibility checks remain
   unchanged.
 - **Function-to-class callability guards** — IIFE return aliases are recorded

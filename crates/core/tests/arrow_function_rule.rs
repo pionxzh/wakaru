@@ -1261,3 +1261,36 @@ export function run(){return(new e).m()}
         "createClass argument must not become an arrow:\n{output}"
     );
 }
+
+#[test]
+fn immediate_call_argument_remains_constructible() {
+    for input in [
+        "(function(Ctor) { return new Ctor(); })(function() {});",
+        "((Ctor) => { return new Ctor(); })(function() {});",
+        "(function(Ctor) { var Alias = Ctor; return new Alias(); })(function() {});",
+        "(function(Ctor) { return new Ctor(); })(ready ? function() {} : fallback);",
+    ] {
+        let output = apply(input);
+        assert!(output.contains("function()"), "{output}");
+    }
+    let input = "export function create(Base, args) { return (function(ctor, values, Temporary) { Temporary.prototype = ctor.prototype; var instance = new Temporary(); var result = ctor.apply(instance, values); return Object(result) === result ? result : instance; })(Base, args, function() {}); }";
+    let output = apply_pipeline(input);
+    assert!(output.contains("function()"), "{output}");
+}
+
+#[test]
+fn immediate_call_constructor_argument_does_not_freeze_sibling_callbacks() {
+    let input = "(function(Ctor, callback) { callback(); return new Ctor(); })(function() {}, function() { return 1; });";
+    let output = apply(input);
+    assert_eq!(output.matches("function()").count(), 1, "{output}");
+    assert!(output.contains("return 1"), "{output}");
+    assert!(output.contains("=>"), "{output}");
+}
+
+#[test]
+fn immediate_call_constructor_pairing_respects_shadowed_parameters() {
+    let input = "(function(Ctor) { function nested(Ctor) { return new Ctor(); } return Ctor(); })(function() { return 1; });";
+    let output = apply(input);
+    assert!(!output.contains("function()"), "{output}");
+    assert!(output.contains("function nested(Ctor)"), "{output}");
+}

@@ -131,12 +131,41 @@ impl VisitMut for ArrowFunctionConverter<'_> {
         call.callee.visit_mut_with(self);
 
         let construct_call = is_construct_call(call);
+        // A literal callee provides an exact parameter/argument pairing. Reuse
+        // the module's resolver-based constructor evidence; no named-function
+        // call graph is needed. Spreads do not have fixed positional pairing.
+        let sensitive_parameters: Vec<bool> = if call.args.iter().all(|arg| arg.spread.is_none()) {
+            let sensitive = |pat: &Pat| {
+                pat_value_key(pat)
+                    .is_some_and(|key| self.constructor_sensitive_values.contains(&key))
+            };
+            match &call.callee {
+                Callee::Expr(callee) => match crate::utils::paren::strip_parens(callee) {
+                    Expr::Fn(function) => function
+                        .function
+                        .params
+                        .iter()
+                        .map(|param| sensitive(&param.pat))
+                        .collect(),
+                    Expr::Arrow(arrow) => arrow.params.iter().map(sensitive).collect(),
+                    _ => Vec::new(),
+                },
+                _ => Vec::new(),
+            }
+        } else {
+            Vec::new()
+        };
         let create_class_call = self.create_class.is_call(call);
         for (index, arg) in call.args.iter_mut().enumerate() {
-            if (construct_call && (index == 0 || index == 2)) || (create_class_call && index == 0) {
+            if (construct_call && (index == 0 || index == 2))
+                || (create_class_call && index == 0)
+                || sensitive_parameters.get(index) == Some(&true)
+            {
                 // Reflect.construct requires both target and newTarget to be
                 // constructible. createClass defines methods on its first
-                // argument's prototype, and callers construct the result.
+                // argument's prototype, and callers construct the result. A
+                // known constructor parameter of a literal callee needs the
+                // same preservation.
                 visit_constructor_value_without_converting(&mut arg.expr, self);
             } else {
                 arg.visit_mut_with(self);
