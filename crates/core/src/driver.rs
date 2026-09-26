@@ -2,6 +2,7 @@ mod diagnostics;
 mod discovery;
 mod error;
 mod io;
+mod line_index;
 mod normalize;
 mod output;
 mod output_finalize;

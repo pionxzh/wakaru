@@ -10,6 +10,8 @@ use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax
 
 pub(crate) use crate::utils::swc_safety::apply_fixer;
 
+use super::line_index::LineIndex;
+
 #[derive(Debug, Clone)]
 pub(super) struct ParsedModule {
     pub module: Module,
@@ -197,26 +199,35 @@ pub(super) fn build_output_sourcemap(
     output_filename: &str,
 ) -> Result<String> {
     let mut builder = sourcemap::SourceMapBuilder::new(Some(output_filename));
+    let mut line_indexes: crate::collections::HashMap<BytePos, LineIndex> =
+        crate::collections::HashMap::default();
 
     for &(byte_pos, ref out_loc) in mappings {
         // DUMMY_SP positions (BytePos(0)) have no meaningful source location.
         if byte_pos.0 == 0 {
             continue;
         }
-        let loc = cm.lookup_char_pos(byte_pos);
-        let source_name = match &*loc.file.name {
+        let file = cm.lookup_byte_offset(byte_pos);
+        let source_name = match &*file.sf.name {
             FileName::Custom(name) => name.as_str(),
             _ => continue,
         };
+        let Some((line, col)) = line_indexes
+            .entry(file.sf.start_pos)
+            .or_insert_with(|| LineIndex::new(&file.sf.src))
+            .position(file.pos.0)
+        else {
+            continue;
+        };
         let src_id = builder.add_source(source_name);
-        if !loc.file.src.is_empty() {
-            builder.set_source_contents(src_id, Some(loc.file.src.as_ref()));
+        if !file.sf.src.is_empty() {
+            builder.set_source_contents(src_id, Some(file.sf.src.as_ref()));
         }
         builder.add_raw(
             out_loc.line,
             out_loc.col,
-            (loc.line - 1) as u32,
-            loc.col_display as u32,
+            line,
+            col,
             Some(src_id),
             None,
             false,

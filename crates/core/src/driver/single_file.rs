@@ -535,4 +535,40 @@ mod tests {
         assert!(has_line_0, "should have tokens mapping to input line 0");
         assert!(has_line_1, "should have tokens mapping to input line 1");
     }
+
+    #[test]
+    fn emit_source_map_counts_input_columns_in_utf16_units() {
+        // "中文字" is 9 UTF-8 bytes, 3 UTF-16 units, and 6 display columns.
+        let input = "var s = \"中文字\", t = foo(s);";
+        let output = decompile(
+            input,
+            DecompileOptions {
+                filename: "wide.js".to_string(),
+                emit_source_map: true,
+                ..Default::default()
+            },
+        )
+        .expect("decompile should succeed");
+        let map_json = output.source_map.expect("source map should be generated");
+        let sm = sourcemap::SourceMap::from_reader(map_json.as_bytes())
+            .expect("source map JSON should parse");
+
+        let foo_line = output
+            .code
+            .lines()
+            .position(|line| line.contains("foo(s)"))
+            .expect("output should keep the call") as u32;
+        let foo_col = output
+            .code
+            .lines()
+            .nth(foo_line as usize)
+            .unwrap()
+            .find("foo")
+            .unwrap() as u32;
+        let token = sm
+            .lookup_token(foo_line, foo_col)
+            .expect("the call should be mapped");
+        let utf16_col = input[..input.find("foo").unwrap()].encode_utf16().count() as u32;
+        assert_eq!((token.get_src_line(), token.get_src_col()), (0, utf16_col));
+    }
 }
