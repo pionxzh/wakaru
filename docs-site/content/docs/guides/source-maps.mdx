@@ -50,8 +50,8 @@ npx wakaru input.js --emit-source-map -o output.js
 decompiled code back to the input.
 
 With `--unpack`, the maps do not reach the bundle. Each module's map points
-to the module code as the unpacker extracted it, before the rewrite rules
-ran. That code is embedded in the map. To find where a module came from in
+to the module code as the unpacker extracted it. That code is embedded in
+the map. To find where a module came from in
 the bundle, use [`--provenance`](/reference/cli#module-provenance), which
 records its byte ranges.
 
