@@ -51,7 +51,7 @@ is included, and the end byte is excluded. These are extraction regions,
 not line-by-line mappings of the rewritten output.
 
 See [Read an unpacked bundle](/guides/read-an-unpacked-bundle#check-the-original-bundle)
-for an example, or use [source maps](/guides/source-maps) to trace output positions.
+for an example. Unpack output has no position-level map back to the bundle.
 
 ## Bun single-file executables
 
@@ -91,8 +91,10 @@ wakaru extract input.js.map -o src/
 
 - `--source-map` uses an input map for identifier recovery and import
   deduplication (single-file mode only).
-- `--emit-source-map` writes a `.map` alongside each output file, mapping
-  output back to input. Works with `--unpack`.
+- `--emit-source-map` writes a `.map` alongside each output file. In
+  single-file mode it maps output back to the input. With `--unpack`, each
+  map points to the module's extracted code (embedded in the map), not to
+  the bundle.
 - `wakaru extract` writes the files embedded in a map's `sourcesContent` to
   disk. When the map carries original sources, this recovers them directly.
 

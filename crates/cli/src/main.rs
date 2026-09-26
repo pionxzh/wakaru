@@ -151,8 +151,9 @@ struct Cli {
     formatter: bool,
 
     /// Emit a source map (.map) alongside each decompiled JavaScript output
-    /// file, mapping the output back to the input. Requires -o/--output.
-    /// Vue SFC sidecars are not mapped.
+    /// file. Single-file maps point back to the input; with --unpack, each
+    /// map points to the module's extracted code, not to the bundle.
+    /// Requires -o/--output. Vue SFC sidecars are not mapped.
     #[arg(long = "emit-source-map")]
     emit_source_map: bool,
 
