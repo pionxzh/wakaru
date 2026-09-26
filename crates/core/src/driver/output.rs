@@ -22,8 +22,16 @@ use anyhow::{bail, Result};
 /// (e.g. Windows drive letters). `.` components are dropped. An empty result is
 /// also rejected.
 pub fn safe_relative_module_path(filename: &str) -> Result<PathBuf> {
+    let normalized = filename.replace('\\', "/");
+    let bytes = normalized.as_bytes();
+    if normalized.starts_with('/')
+        || matches!(bytes, [drive, b':', ..] if drive.is_ascii_alphabetic())
+    {
+        bail!("unsafe module filename {filename:?}: path escapes output directory");
+    }
+
     let mut relative = PathBuf::new();
-    for component in Path::new(filename).components() {
+    for component in Path::new(&normalized).components() {
         match component {
             Component::Normal(part) => relative.push(part),
             Component::CurDir => {}
@@ -88,6 +96,27 @@ mod tests {
         );
         let err = safe_relative_module_path(&absolute).expect_err("absolute should reject");
         assert!(err.to_string().contains("path escapes output directory"));
+    }
+
+    #[test]
+    fn safe_relative_module_path_rejects_foreign_platform_escapes() {
+        for filename in [
+            "..\\escape.js",
+            "C:\\tmp\\escape.js",
+            "C:escape.js",
+            "\\\\server\\share\\escape.js",
+        ] {
+            let err = safe_relative_module_path(filename)
+                .expect_err("foreign-platform escape should reject");
+            assert!(err.to_string().contains("path escapes output directory"));
+        }
+    }
+
+    #[test]
+    fn safe_relative_module_path_normalizes_foreign_separators() {
+        let path = safe_relative_module_path("src\\feature\\index.js")
+            .expect("portable relative path should be safe");
+        assert_eq!(path, PathBuf::from("src").join("feature").join("index.js"));
     }
 
     #[test]

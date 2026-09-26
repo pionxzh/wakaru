@@ -10,8 +10,9 @@ rules fit in the pipeline.
 A barrier-and-read mechanism that lets Phase 2 rules read provider shape from
 **other** modules in the same bundle. Most facts describe normalized ESM
 imports/exports. Deliberately narrow pre-`UnEsm` facts preserve CommonJS
-provider shape that `UnEsm` would otherwise erase: the proven identity and
-statically declared properties of an object assigned directly to
+transport and provider shape that `UnEsm` would otherwise erase: stable
+top-level bindings initialized from the complete `require()` value, the proven
+identity and statically declared properties of an object assigned directly to
 `module.exports`, whether that assignment is the module's only CommonJS
 runtime use, an exact ordered default-object composition shell, and positively
 observed properties attached to a stable callable before it becomes
@@ -26,13 +27,14 @@ shared state, merging them at a barrier, and reading back immutable facts.
 We do not need that. After `UnEsm` runs, ESM `import`/`export` declarations are
 already a normalized, AST-level representation of module shape. That AST *is*
 the fact. The exceptions are syntactic facts collected from the resolved input
-before the rule range reaches `UnEsm`: whether raw `module.exports` receives an
-object literal (or a stable local alias to one), and whether a stable top-level
-function has static properties assigned unconditionally before that exact
-binding becomes `module.exports`. `UnEsm` otherwise erases the important
-distinction between these CommonJS values and ESM named exports. All collectors
-remain pure functions of one module — no rule-written observations and no
-merge step.
+before the rule range reaches `UnEsm`: whether a stable top-level binding
+receives the complete value from a static unresolved `require()`, whether raw
+`module.exports` receives an object literal (or a stable local alias to one),
+and whether a stable top-level function has static properties assigned
+unconditionally before that exact binding becomes `module.exports`. `UnEsm`
+otherwise erases the important distinction between a whole CommonJS transport
+edge, an ESM default import, and ESM named exports. All collectors remain pure
+functions of one module — no rule-written observations and no merge step.
 
 ## Shape
 
@@ -43,9 +45,10 @@ them (`crates/core/src/driver/unpack/phases.rs`):
 Phase 1 (per module, parallel):
     obtain resolved AST (prepared detector AST, or parse → resolver)
     normalize exact detector-proven webpack runtime branches
-    collect raw CommonJS default-object / callable-property facts
+    collect raw CommonJS whole-value-import / default-object / callable-property facts
     rule range through UnEsm
     clone barrier AST → recover webpack factory IIFE ESM shapes
+                      → skip readability-only binding renames
     collect_module_facts(&facts_clone)                ← pure AST → facts
     retain original barrier AST + Globals + unresolved mark
 
@@ -70,6 +73,13 @@ workers have gone idle, so it becomes the critical path of the phase.
 Dispatching in descending size order is the longest-processing-time-first
 heuristic; results are placed back in input order, so output never depends on
 scheduling.
+
+The facts clone deliberately does not run `SmartRename` or `UnExportRename`.
+Those passes improve emitted names but are unnecessary for transport proof and
+would sever the local-binding spelling shared with an optional pre-rewrite
+evidence view. Public export names are still recorded independently, so a fact
+can retain `exported: VBU, local: Ea` even when final JavaScript later prints
+`export function VBU(...)`.
 
 The normal no-source-map path runs the through-`UnEsm` range once. The retained
 AST crosses the barrier together with the exact `Globals` and unresolved mark
@@ -96,9 +106,10 @@ distinguishable from an authored ESM dependency downstream.
 `crates/core/src/facts.rs`:
 
 - `ImportFact { local, source, kind: Default | Namespace | Named(imported) }`
+- `CommonJsWholeValueImportFact { local, source }`
 - `ExportFact { exported, local, kind: Default | Named }`
 - `HelperExportFact { exported, local, kind }`
-- `ModuleFacts { imports, exports, helper_exports,
+- `ModuleFacts { imports, commonjs_whole_value_imports, exports, helper_exports,
   commonjs_default_object, commonjs_default_attached_properties,
   has_export_all, ts_helper_exports,
   ts_helper_namespace_factory_exports, passthrough_target }`
@@ -106,6 +117,12 @@ distinguishable from an authored ESM dependency downstream.
   (handles `./foo`, `foo`, `foo.js` variants)
 
 Extraction (`collect_module_facts`) reads the post-Stage-2 AST. Before Stage 2,
+`collect_commonjs_whole_value_imports` records only stable top-level identifier
+bindings initialized directly from a one-argument, static, unresolved
+`require(source)` call. Property reads such as `require(source).default`,
+reassigned bindings, destructuring, dynamic sources, and nested calls are not
+whole-value facts.
+
 `collect_commonjs_default_object` records only direct unresolved
 `module.exports = {...}` assignments and stable top-level object aliases. Its
 `Option<CommonJsDefaultObjectFact>` distinguishes an unknown value from a
@@ -187,6 +204,13 @@ CommonJS references, computed or multiple candidates, mismatched locals
 values, and nested switches. Direct eval disables both recoveries. Synthetic
 recursive children do not inherit the key facts, and `--raw` continues to
 expose the detector's extracted factory body unchanged.
+
+When a root artifact analyzer requests pre-rewrite module views, the driver
+also retains an immutable snapshot of these same generic facts. It filters the
+snapshot to modules whose evidence view survived and remaps module keys and
+relative sources into the final filename namespace. This snapshot is an
+integration handoff, not a second fact phase; normal Phase 2 rules continue to
+read the provisional-name map at the barrier.
 
 Helper export facts are still pure AST facts. They only record helper identity
 when the exported local binding matches a known helper body shape or runtime
@@ -313,6 +337,14 @@ fact available to consumers.
   scope-hoisted CommonJS wrappers, a separate provider-side fact proves that
   the imported zero-argument factory returns the registered helper namespace;
   consumer-side property spelling alone is never sufficient.
+- **Framework artifact workspaces** — may adapt the retained root snapshot into
+  binding-equivalence edges between pre-rewrite module views. For example, a
+  recovered namespace import, or a proven whole-value CommonJS import, plus a
+  target export can establish `core.VBU ≡ Ea`. An ESM default import establishes
+  only the provider's default identity; it never inherits same-named namespace
+  members. The fact system supplies only transport identity; the
+  framework analyzer decides whether `Ea` has any Angular, Vue, or other
+  semantic role.
 
 ## Adding a new fact-reading rule
 
@@ -355,8 +387,9 @@ normal constructor.
 - No shared mutable state between rules in the same phase.
 - No multi-round merging.
 - No speculative facts ("this might be an X"). A fact holds iff the normalized
-  post-Stage-2 AST says it does, or the narrow pre-`UnEsm` collector proves the
-  exact raw CommonJS assignment shape.
+  post-Stage-2 AST says it does, or a narrow pre-`UnEsm` collector proves an
+  exact raw CommonJS transport or assignment shape.
+- No framework roles or evidence conclusions in `ModuleFactsMap`.
 
 Rules that need heavier semantic conclusions (e.g. "this namespace projection
 is always equivalent to a direct import binding") should derive them inside the

@@ -55,6 +55,20 @@ pub struct ImportFact {
     pub kind: ImportKind,
 }
 
+/// A stable top-level binding initialized from the complete value returned by
+/// unresolved CommonJS `require(source)` before `UnEsm`.
+///
+/// This is distinct from a reconstructed default import: the CommonJS value
+/// can expose the provider's named surface through static member reads, while
+/// an authored ESM default import refers only to the provider's default value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommonJsWholeValueImportFact {
+    /// The local binding receiving the complete `require()` value.
+    pub local: Atom,
+    /// The statically known module specifier.
+    pub source: Atom,
+}
+
 /// How a binding was exported.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExportKind {
@@ -171,6 +185,9 @@ pub struct CommonJsDefaultObjectFact {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ModuleFacts {
     pub imports: Vec<ImportFact>,
+    /// Stable whole-value CommonJS import edges captured before `UnEsm`
+    /// rewrites them into provisional ESM syntax.
+    pub commonjs_whole_value_imports: Vec<CommonJsWholeValueImportFact>,
     pub exports: Vec<ExportFact>,
     pub helper_exports: Vec<HelperExportFact>,
     pub default_object_helper_exports: Vec<HelperExportFact>,
@@ -452,6 +469,7 @@ impl fmt::Display for TypeScriptHelperExportFact {
 impl fmt::Display for ModuleFacts {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.imports.is_empty()
+            && self.commonjs_whole_value_imports.is_empty()
             && self.exports.is_empty()
             && self.helper_exports.is_empty()
             && self.default_object_helper_exports.is_empty()
@@ -469,7 +487,19 @@ impl fmt::Display for ModuleFacts {
             }
             write!(f, "{import}")?;
         }
-        if !self.imports.is_empty() && !self.exports.is_empty() {
+        for (i, import) in self.commonjs_whole_value_imports.iter().enumerate() {
+            if i > 0 || !self.imports.is_empty() {
+                writeln!(f)?;
+            }
+            write!(
+                f,
+                "CommonJS whole-value import {} from \"{}\"",
+                import.local, import.source
+            )?;
+        }
+        if (!self.imports.is_empty() || !self.commonjs_whole_value_imports.is_empty())
+            && !self.exports.is_empty()
+        {
             writeln!(f)?;
         }
         for (i, export) in self.exports.iter().enumerate() {
@@ -478,7 +508,10 @@ impl fmt::Display for ModuleFacts {
             }
             write!(f, "{export}")?;
         }
-        if (!self.imports.is_empty() || !self.exports.is_empty()) && !self.helper_exports.is_empty()
+        if (!self.imports.is_empty()
+            || !self.commonjs_whole_value_imports.is_empty()
+            || !self.exports.is_empty())
+            && !self.helper_exports.is_empty()
         {
             writeln!(f)?;
         }
@@ -488,7 +521,10 @@ impl fmt::Display for ModuleFacts {
             }
             write!(f, "{helper}")?;
         }
-        if (!self.imports.is_empty() || !self.exports.is_empty() || !self.helper_exports.is_empty())
+        if (!self.imports.is_empty()
+            || !self.commonjs_whole_value_imports.is_empty()
+            || !self.exports.is_empty()
+            || !self.helper_exports.is_empty())
             && !self.default_object_helper_exports.is_empty()
         {
             writeln!(f)?;
@@ -500,6 +536,7 @@ impl fmt::Display for ModuleFacts {
             write!(f, "default object {helper}")?;
         }
         if (!self.imports.is_empty()
+            || !self.commonjs_whole_value_imports.is_empty()
             || !self.exports.is_empty()
             || !self.helper_exports.is_empty()
             || !self.default_object_helper_exports.is_empty())
@@ -515,6 +552,7 @@ impl fmt::Display for ModuleFacts {
         }
         if !self.ts_helper_namespace_factory_exports.is_empty() {
             if !self.imports.is_empty()
+                || !self.commonjs_whole_value_imports.is_empty()
                 || !self.exports.is_empty()
                 || !self.helper_exports.is_empty()
                 || !self.default_object_helper_exports.is_empty()
@@ -530,6 +568,7 @@ impl fmt::Display for ModuleFacts {
             }
         }
         let has_prior = !self.imports.is_empty()
+            || !self.commonjs_whole_value_imports.is_empty()
             || !self.exports.is_empty()
             || !self.helper_exports.is_empty()
             || !self.default_object_helper_exports.is_empty()
@@ -731,6 +770,55 @@ pub fn collect_module_facts(module: &Module) -> ModuleFacts {
         || !facts.default_object_helper_exports.is_empty()
         || !facts.ts_helper_exports.is_empty();
     facts
+}
+
+/// Collect stable top-level whole-value CommonJS import edges before `UnEsm`
+/// erases their distinction from ESM default imports.
+pub fn collect_commonjs_whole_value_imports(
+    module: &Module,
+    unresolved_mark: Mark,
+) -> Vec<CommonJsWholeValueImportFact> {
+    let uses = BindingUseIndex::collect(module);
+    let mut imports = Vec::new();
+
+    for item in &module.body {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            continue;
+        };
+        for declarator in &var.decls {
+            let Pat::Ident(binding) = &declarator.name else {
+                continue;
+            };
+            if uses.has_direct_write(&(binding.id.sym.clone(), binding.id.ctxt)) {
+                continue;
+            }
+            let Some(Expr::Call(call)) = declarator.init.as_deref().map(strip_parens) else {
+                continue;
+            };
+            let Callee::Expr(callee) = &call.callee else {
+                continue;
+            };
+            if !matches!(strip_parens(callee), Expr::Ident(require)
+                if is_unresolved_ident(require, "require", unresolved_mark))
+                || call.args.len() != 1
+                || call.args[0].spread.is_some()
+            {
+                continue;
+            }
+            let Expr::Lit(Lit::Str(source)) = strip_parens(call.args[0].expr.as_ref()) else {
+                continue;
+            };
+            let Some(source) = source.value.as_str() else {
+                continue;
+            };
+            imports.push(CommonJsWholeValueImportFact {
+                local: binding.id.sym.clone(),
+                source: source.into(),
+            });
+        }
+    }
+
+    imports
 }
 
 fn collect_ts_helper_namespace_factory_exports(module: &Module) -> Vec<Atom> {

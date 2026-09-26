@@ -51,7 +51,7 @@ is included, and the end byte is excluded. These are extraction regions,
 not line-by-line mappings of the rewritten output.
 
 See [Read an unpacked bundle](/guides/read-an-unpacked-bundle#check-the-original-bundle)
-for an example, or use [source maps](/guides/source-maps) to trace output positions.
+for an example. Unpack output has no position-level map back to the bundle.
 
 ## Bun single-file executables
 
@@ -91,8 +91,10 @@ wakaru extract input.js.map -o src/
 
 - `--source-map` uses an input map for identifier recovery and import
   deduplication (single-file mode only).
-- `--emit-source-map` writes a `.map` alongside each output file, mapping
-  output back to input. Works with `--unpack`.
+- `--emit-source-map` writes a `.map` alongside each output file. In
+  single-file mode it maps output back to the input. With `--unpack`, each
+  map points to the module's extracted code (embedded in the map), not to
+  the bundle.
 - `wakaru extract` writes the files embedded in a map's `sourcesContent` to
   disk. When the map carries original sources, this recovers them directly.
 
@@ -108,6 +110,24 @@ Best-effort Vue 3 render recovery. With a non-`.vue` output path, Wakaru
 writes normal JavaScript and adds a sibling `.vue` sidecar when recovery
 succeeds. Without `-o`, stdout remains JavaScript.
 
+## Angular Ivy recovery (experimental)
+
+```bash
+wakaru compiled.js --angular
+wakaru compiled.js --angular -o compiled.angular.ts
+wakaru bundle.js --unpack --angular -o out/
+wakaru dist/ --unpack --angular -o out/
+```
+
+Recovers readable TypeScript module artifacts from production Angular AOT
+output. Each artifact keeps sibling components together and puts recovered
+templates and styles inline. In unpack mode, JavaScript output is preserved
+and matching modules get an additional `.angular.ts` artifact.
+
+Unsupported Ivy regions remain explicit in partial artifacts. Add
+`--diagnostics` to audit recovered, unsupported, and malformed runtime calls.
+`--angular` cannot be combined with `--raw` or `--vue-sfc`.
+
 ## Output options
 
 ```bash
@@ -117,7 +137,9 @@ wakaru bundle.js --unpack --json -o out/   # machine-readable JSON to stdout
 
 `--json` includes warnings and errors in the JSON object. In unpack mode,
 each module also gets an artifact `kind` and `status`. Useful for CI and
-tooling.
+tooling. Angular artifacts use `angular_module` with a
+`recovered_angular_module` or `partial_angular_module` status. Their paired
+JavaScript uses `angular_module_source_js`.
 
 ## Diagnostics
 

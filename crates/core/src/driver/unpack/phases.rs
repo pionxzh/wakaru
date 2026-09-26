@@ -10,6 +10,7 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::{Visit, VisitMutWith, VisitWith};
 
+use super::super::binding_correspondence::TopLevelBindingSnapshot;
 use super::super::diagnostics::{collect_input_parse_warnings, collect_output_diagnostics};
 use super::super::io::{
     apply_fixer, build_output_sourcemap, parse_js, parse_js_with_recovery, print_js,
@@ -17,13 +18,15 @@ use super::super::io::{
 };
 use super::super::output_finalize::strip_redundant_module_use_strict;
 use super::super::types::{
-    DecompileOptions, PreparedInputId, PreparedModuleOutput, PreparedModuleProvenance,
-    PreparedUnpackOutput, UnpackWarning, UnpackWarningKind,
+    BindingCorrespondence, CapturedUnpackOutput, DecompileOptions, PreparedInputId,
+    PreparedModuleOutput, PreparedModuleProvenance, PreparedUnpackOutput, UnpackWarning,
+    UnpackWarningKind,
 };
 use super::super::unpack_cycles::collect_import_cycle_warnings;
 use super::dead_module::{collect_import_report, eliminate_dead_helper_modules, ImportReport};
 use super::filename_recovery::{
     build_rename_map, harvest_suggested_filename, rewrite_import_sources,
+    rewrite_module_fact_sources,
 };
 use super::merge::{
     apply_filename_rewrites, apply_numeric_rewrites, NumericRewritePlan, PreparedUnpackModule,
@@ -36,7 +39,7 @@ use crate::commonjs_default_object_composition::{
 };
 use crate::facts::{
     collect_commonjs_default_attached_properties, collect_commonjs_default_object,
-    collect_module_facts, ModuleFactsMap,
+    collect_commonjs_whole_value_imports, collect_module_facts, ModuleFactsMap,
 };
 use crate::namespace_decomposition::run_namespace_decomposition;
 use crate::provider_import_repair::run_provider_import_repair;
@@ -133,6 +136,8 @@ struct Phase1Module {
     filename: String,
     facts: crate::facts::ModuleFacts,
     prepared: Option<Phase1PreparedModule>,
+    pre_rewrite_source: Option<String>,
+    binding_snapshot: Option<TopLevelBindingSnapshot>,
     warning: Option<UnpackWarning>,
     input_parse_warnings: Vec<UnpackWarning>,
     /// Original source filename recovered from provenance markers (Sentry
@@ -276,11 +281,22 @@ pub(super) fn unpack_multi_module(
     unpack_multi_module_with_plan(modules, NumericRewritePlan::default(), options)
 }
 
+#[cfg(test)]
 pub(super) fn unpack_multi_module_with_plan(
-    mut modules: Vec<PreparedUnpackModule>,
+    modules: Vec<PreparedUnpackModule>,
     numeric_rewrite_plan: NumericRewritePlan,
     options: DecompileOptions,
 ) -> Result<PreparedUnpackOutput> {
+    unpack_multi_module_with_plan_and_capture(modules, numeric_rewrite_plan, options, false)
+        .map(|captured| captured.output)
+}
+
+pub(super) fn unpack_multi_module_with_plan_and_capture(
+    mut modules: Vec<PreparedUnpackModule>,
+    numeric_rewrite_plan: NumericRewritePlan,
+    options: DecompileOptions,
+    capture_pre_rewrite: bool,
+) -> Result<CapturedUnpackOutput> {
     if options.sourcemap.is_some() {
         bail!(
             "input source maps are not supported with unpacking because extracted module coordinates differ from bundle coordinates; use --emit-source-map for output maps"
@@ -355,6 +371,8 @@ pub(super) fn unpack_multi_module_with_plan(
                 filename: unpacked.module.filename.clone(),
                 facts: crate::facts::ModuleFacts::default(),
                 prepared: None,
+                pre_rewrite_source: None,
+                binding_snapshot: None,
                 warning: Some(detector_failure_warning(&unpacked.module.filename, failure)),
                 input_parse_warnings: Vec::new(),
                 suggested_filename: None,
@@ -382,7 +400,15 @@ pub(super) fn unpack_multi_module_with_plan(
             }
             None => (Globals::new(), None, Vec::new()),
         };
-        let (facts, prepared_parts, warning, suggested_filename) = GLOBALS.set(&globals, || {
+        let (
+            facts,
+            prepared_parts,
+            pre_rewrite_source,
+            binding_snapshot,
+            warning,
+            suggested_filename,
+        ) =
+            GLOBALS.set(&globals, || {
             let (mut module, unresolved_mark) = match prepared_input {
                 Some((mut module, _detector_mark)) => {
                     // The detector's contexts describe its own surgery; give
@@ -406,6 +432,8 @@ pub(super) fn unpack_multi_module_with_plan(
                             Err(e) => {
                                 return (
                                     crate::facts::ModuleFacts::default(),
+                                    None,
+                                    None,
                                     None,
                                     Some(UnpackWarning::new(
                                         unpacked.module.filename.clone(),
@@ -471,6 +499,17 @@ pub(super) fn unpack_multi_module_with_plan(
                 collect_commonjs_default_object(&module, unresolved_mark);
             let commonjs_default_attached_properties =
                 collect_commonjs_default_attached_properties(&module, unresolved_mark);
+            let commonjs_whole_value_imports =
+                collect_commonjs_whole_value_imports(&module, unresolved_mark);
+            let binding_snapshot =
+                capture_pre_rewrite.then(|| TopLevelBindingSnapshot::collect(&module));
+            let pre_rewrite_source = capture_pre_rewrite.then(|| {
+                let mut evidence_module = module.clone();
+                let cm: Lrc<SourceMap> = Default::default();
+                apply_fixer(&mut evidence_module)
+                    .and_then(|_| print_js(&evidence_module, cm))
+                    .unwrap_or_else(|_| unpacked.module.code.clone())
+            });
             {
                 let span = tracing::info_span!("phase1: rules");
                 let _enter = span.enter();
@@ -489,6 +528,13 @@ pub(super) fn unpack_multi_module_with_plan(
             // `module`. When the AST will be reused (no-sourcemap path), clone
             // before recovering for facts. When it won't be reused (sourcemap
             // path discards `module`), recover in place and skip the clone.
+            // Readability-only renames are intentionally disabled here: export
+            // names are separate fact fields, while local names must stay in
+            // the binding domain shared with the optional evidence view.
+            let fact_recovery_options = LateEsmRecoveryOptions {
+                smart_rename: false,
+                export_rename: false,
+            };
             let (mut facts, prepared) = if can_reuse_phase1_ast {
                 let mut facts_module = module.clone();
                 {
@@ -499,7 +545,7 @@ pub(super) fn unpack_multi_module_with_plan(
                         unresolved_mark,
                         RewriteLevel::Standard,
                         &unpacked.module.filename,
-                        LateEsmRecoveryOptions::default(),
+                        fact_recovery_options,
                     );
                 }
                 let facts = collect_module_facts(&facts_module);
@@ -513,7 +559,7 @@ pub(super) fn unpack_multi_module_with_plan(
                         unresolved_mark,
                         RewriteLevel::Standard,
                         &unpacked.module.filename,
-                        LateEsmRecoveryOptions::default(),
+                        fact_recovery_options,
                     );
                 }
                 let facts = collect_module_facts(&module);
@@ -522,7 +568,15 @@ pub(super) fn unpack_multi_module_with_plan(
             facts.commonjs_default_object = commonjs_default_object;
             facts.commonjs_default_attached_properties =
                 commonjs_default_attached_properties;
-            (facts, prepared, None, suggested_filename)
+            facts.commonjs_whole_value_imports = commonjs_whole_value_imports;
+            (
+                facts,
+                prepared,
+                pre_rewrite_source,
+                binding_snapshot,
+                None,
+                suggested_filename,
+            )
         });
         let prepared = prepared_parts.map(|(module, unresolved_mark)| Phase1PreparedModule {
             globals,
@@ -533,6 +587,8 @@ pub(super) fn unpack_multi_module_with_plan(
             filename: unpacked.module.filename.clone(),
             facts,
             prepared,
+            pre_rewrite_source,
+            binding_snapshot,
             warning,
             input_parse_warnings,
             suggested_filename,
@@ -552,6 +608,8 @@ pub(super) fn unpack_multi_module_with_plan(
     let mut module_facts = ModuleFactsMap::new();
     let mut prepared_modules = Vec::with_capacity(phase1.len());
     let mut prepared_parse_warnings = Vec::with_capacity(phase1.len());
+    let mut binding_snapshots = Vec::with_capacity(phase1.len());
+    let mut pre_rewrite_by_provisional = crate::collections::HashMap::default();
     let mut warnings = Vec::new();
     let mut rename_entries = Vec::with_capacity(phase1.len());
     for phase1_module in phase1 {
@@ -560,8 +618,12 @@ pub(super) fn unpack_multi_module_with_plan(
             phase1_module.suggested_filename,
         ));
         module_facts.insert(&phase1_module.filename, phase1_module.facts);
+        if let Some(source) = phase1_module.pre_rewrite_source {
+            pre_rewrite_by_provisional.insert(phase1_module.filename.clone(), source);
+        }
         prepared_modules.push(phase1_module.prepared);
         prepared_parse_warnings.push(phase1_module.input_parse_warnings);
+        binding_snapshots.push(phase1_module.binding_snapshot);
         if let Some(w) = phase1_module.warning {
             warnings.push(w);
         }
@@ -591,13 +653,17 @@ pub(super) fn unpack_multi_module_with_plan(
         .into_iter()
         .zip(prepared_modules)
         .zip(prepared_parse_warnings)
-        .map(|((module, prepared), warnings)| (module, prepared, warnings))
+        .zip(binding_snapshots)
+        .map(|(((module, prepared), warnings), binding_snapshot)| {
+            (module, prepared, warnings, binding_snapshot)
+        })
         .collect();
 
-    let decompile_module = |(unpacked, prepared, prepared_parse_warnings): (
+    let decompile_module = |(unpacked, prepared, prepared_parse_warnings, binding_snapshot): (
         PreparedUnpackModule,
         Option<Phase1PreparedModule>,
         Vec<UnpackWarning>,
+        Option<TopLevelBindingSnapshot>,
     )|
      -> (
         String,
@@ -605,6 +671,7 @@ pub(super) fn unpack_multi_module_with_plan(
         Vec<UnpackWarning>,
         Option<ImportReport>,
         Option<String>,
+        Vec<BindingCorrespondence>,
     ) {
         if unpacked.detector_failure.is_some() {
             return (
@@ -613,17 +680,20 @@ pub(super) fn unpack_multi_module_with_plan(
                 Vec::new(),
                 None,
                 None,
+                Vec::new(),
             );
         }
         let run_phase2_tail = |mut module: Module,
                                cm: Lrc<SourceMap>,
                                unresolved_mark: Mark,
-                               input_parse_warnings: Vec<UnpackWarning>|
+                               input_parse_warnings: Vec<UnpackWarning>,
+                               binding_snapshot: Option<&TopLevelBindingSnapshot>|
          -> Result<(
             String,
             Option<String>,
             Vec<UnpackWarning>,
             Option<ImportReport>,
+            Vec<BindingCorrespondence>,
         )> {
             let rules_span = tracing::info_span!("phase2: rules");
             let rules_enter = rules_span.enter();
@@ -698,7 +768,13 @@ pub(super) fn unpack_multi_module_with_plan(
                     UnpackWarningKind::DecompileFailed,
                     "lifted function boundary could not be restored around a module-scope return; preserving the extracted body",
                 ));
-                return Ok((unpacked.module.code.clone(), None, fallback_warnings, None));
+                return Ok((
+                    unpacked.module.code.clone(),
+                    None,
+                    fallback_warnings,
+                    None,
+                    Vec::new(),
+                ));
             }
             drop(rules_enter);
             drop(rules_span);
@@ -728,6 +804,9 @@ pub(super) fn unpack_multi_module_with_plan(
             // this parallel phase. Do not use such an import as the only
             // Module proof when that later mutation is enabled.
             strip_redundant_module_use_strict(&mut module, final_filename, !eliminate_dead_modules);
+            let binding_correspondences = binding_snapshot
+                .map(|snapshot| snapshot.correspondences(&module))
+                .unwrap_or_default();
 
             // Collect the dead-module-elimination report after output
             // finalization so redundant module directives do not make an
@@ -772,7 +851,13 @@ pub(super) fn unpack_multi_module_with_plan(
                 diag_warnings.extend(collect_output_diagnostics(&code, &unpacked.module.filename));
             }
 
-            Ok((code, srcmap_json, diag_warnings, report))
+            Ok((
+                code,
+                srcmap_json,
+                diag_warnings,
+                report,
+                binding_correspondences,
+            ))
         };
 
         let result = if let Some(prepared) = prepared {
@@ -783,7 +868,13 @@ pub(super) fn unpack_multi_module_with_plan(
             } = prepared;
             GLOBALS.set(&globals, || {
                 let cm: Lrc<SourceMap> = Default::default();
-                run_phase2_tail(module, cm, unresolved_mark, prepared_parse_warnings)
+                run_phase2_tail(
+                    module,
+                    cm,
+                    unresolved_mark,
+                    prepared_parse_warnings,
+                    binding_snapshot.as_ref(),
+                )
             })
         } else {
             GLOBALS.set(&Default::default(), || {
@@ -845,17 +936,30 @@ pub(super) fn unpack_multi_module_with_plan(
                 }
 
                 let input_parse_warnings = collect_input_parse_warnings(&parsed.recoverable_errors);
-                run_phase2_tail(module, cm, unresolved_mark, input_parse_warnings)
+                run_phase2_tail(
+                    module,
+                    cm,
+                    unresolved_mark,
+                    input_parse_warnings,
+                    binding_snapshot.as_ref(),
+                )
             })
         };
 
         match result {
-            Ok((code, srcmap_json, diag_warnings, report)) => {
+            Ok((code, srcmap_json, diag_warnings, report, binding_correspondences)) => {
                 let out_filename = rename_ref
                     .get(&unpacked.module.filename)
                     .cloned()
                     .unwrap_or(unpacked.module.filename);
-                (out_filename, code, diag_warnings, report, srcmap_json)
+                (
+                    out_filename,
+                    code,
+                    diag_warnings,
+                    report,
+                    srcmap_json,
+                    binding_correspondences,
+                )
             }
             Err(e) => (
                 unpacked.module.filename.clone(),
@@ -867,6 +971,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 )],
                 None,
                 None,
+                Vec::new(),
             ),
         }
     };
@@ -876,10 +981,11 @@ pub(super) fn unpack_multi_module_with_plan(
         let _enter = span.enter();
         par_map_largest_first(
             phase2_inputs,
-            |(unpacked, _, _): &(
+            |(unpacked, _, _, _): &(
                 PreparedUnpackModule,
                 Option<Phase1PreparedModule>,
                 Vec<UnpackWarning>,
+                Option<TopLevelBindingSnapshot>,
             )| unpacked.module.code.len(),
             decompile_module,
         )
@@ -888,14 +994,20 @@ pub(super) fn unpack_multi_module_with_plan(
     // Separate source maps from the tuples before dead-module elimination.
     let mut srcmap_by_filename: crate::collections::HashMap<String, String> =
         crate::collections::HashMap::default();
+    let mut binding_correspondences_by_filename =
+        crate::collections::HashMap::<String, Vec<BindingCorrespondence>>::default();
     let triples_for_dead: Vec<(String, String, Vec<UnpackWarning>, Option<ImportReport>)> = triples
         .into_iter()
-        .map(|(filename, code, warns, report, srcmap)| {
-            if let Some(map_json) = srcmap {
-                srcmap_by_filename.insert(filename.clone(), map_json);
-            }
-            (filename, code, warns, report)
-        })
+        .map(
+            |(filename, code, warns, report, srcmap, binding_correspondences)| {
+                if let Some(map_json) = srcmap {
+                    srcmap_by_filename.insert(filename.clone(), map_json);
+                }
+                binding_correspondences_by_filename
+                    .insert(filename.clone(), binding_correspondences);
+                (filename, code, warns, report)
+            },
+        )
         .collect();
 
     let mut modules = Vec::with_capacity(triples_for_dead.len());
@@ -920,6 +1032,40 @@ pub(super) fn unpack_multi_module_with_plan(
         .iter()
         .map(|(prov, renamed)| (renamed.as_str(), prov.as_str()))
         .collect();
+    let mut pre_rewrite_modules = Vec::new();
+    let mut binding_correspondences = crate::collections::HashMap::default();
+    let mut captured_module_facts = ModuleFactsMap::new();
+    for (final_filename, _) in &modules {
+        let provisional = reverse_rename
+            .get(final_filename.as_str())
+            .copied()
+            .unwrap_or(final_filename.as_str());
+        let Some(source) = pre_rewrite_by_provisional.get(provisional) else {
+            continue;
+        };
+        let remapped = if rename_map.is_empty() {
+            Some(source.clone())
+        } else {
+            remap_captured_import_sources(source, provisional, &rename_map).ok()
+        };
+        // A missing evidence entry makes artifact recovery fall back to the
+        // final rewritten module. Retaining an unremapped entry would be worse:
+        // it could prove a stale cross-module edge under the recovered name.
+        if let Some(source) = remapped {
+            pre_rewrite_modules.push((final_filename.clone(), source));
+            if let Some(correspondences) =
+                binding_correspondences_by_filename.remove(final_filename)
+            {
+                binding_correspondences.insert(final_filename.clone(), correspondences);
+            }
+            if let Some(mut facts) = module_facts.get(provisional).cloned() {
+                if !rename_map.is_empty() {
+                    rewrite_module_fact_sources(&mut facts, provisional, &rename_map);
+                }
+                captured_module_facts.insert(final_filename, facts);
+            }
+        }
+    }
     let modules = modules
         .into_iter()
         .map(|(final_filename, code)| {
@@ -945,13 +1091,39 @@ pub(super) fn unpack_multi_module_with_plan(
         })
         .collect();
 
-    Ok(PreparedUnpackOutput {
-        modules,
-        warnings,
-        detected_formats: Vec::new(),
+    Ok(CapturedUnpackOutput {
+        pre_rewrite_modules,
+        binding_correspondences,
+        module_facts: captured_module_facts,
+        output: PreparedUnpackOutput {
+            modules,
+            warnings,
+            detected_formats: Vec::new(),
+        },
     })
 }
 
+fn remap_captured_import_sources(
+    source: &str,
+    provisional_filename: &str,
+    rename_map: &crate::collections::HashMap<String, String>,
+) -> Result<String> {
+    let globals = Globals::new();
+    GLOBALS.set(&globals, || {
+        let cm: Lrc<SourceMap> = Default::default();
+        let mut module = parse_js(source, provisional_filename, cm.clone())?;
+        let unresolved_mark = Mark::new();
+        module.visit_mut_with(&mut resolver(unresolved_mark, Mark::new(), false));
+        rewrite_import_sources(
+            &mut module,
+            provisional_filename,
+            rename_map,
+            unresolved_mark,
+        );
+        apply_fixer(&mut module)?;
+        print_js(&module, cm)
+    })
+}
 #[cfg(test)]
 mod tests {
     use super::*;

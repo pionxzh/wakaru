@@ -10,7 +10,7 @@ Choose the operation that matches what you want to recover or trace:
 | --- | --- |
 | Get the original source files back | [Extract the sources](#recover-the-original-sources) with `wakaru extract` |
 | Improve variable names in decompiled code | [Provide an input map](#recover-names-with-an-input-map) with `--source-map` |
-| Trace recovered code back to its input | [Emit an output map](#emit-a-map-for-the-output) with `--emit-source-map` |
+| Trace decompiled code back to its input file | [Emit an output map](#emit-a-map-for-the-output) with `--emit-source-map` |
 
 If you have a source map, try extracting the original files first. You may
 not need to decompile anything. If you only want to trace Wakaru's output,
@@ -44,12 +44,16 @@ the split modules no longer line up with the bundle's coordinates.
 
 ```bash
 npx wakaru input.js --emit-source-map -o output.js
-npx wakaru bundle.js --unpack --emit-source-map -o out/
 ```
 
 `--emit-source-map` writes a `.map` next to each output file, mapping the
-decompiled code back to the input. Unlike input maps, this works with
-`--unpack`.
+decompiled code back to the input.
+
+With `--unpack`, the maps do not reach the bundle. Each module's map points
+to the module code as the unpacker extracted it, before the rewrite rules
+ran. That code is embedded in the map. To find where a module came from in
+the bundle, use [`--provenance`](/reference/cli#module-provenance), which
+records its byte ranges.
 
 ## See the mapping visually
 
