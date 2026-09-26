@@ -2200,7 +2200,7 @@ fn decode_babel_state_machine(
         // MidMachine joins are unsound here: a regenerator yield resumes at the
         // `_ctx.next` label set before it, not the lexically next case, so
         // folding up to a join can keep blocks the original machine skips
-        // (see bail_on_nested_control_flow).
+        // (see the `bail_on_nested_control_flow` test in un_regenerator_rule.rs).
         .resolve_labeled_forward_jumps(
             OpcodeReturnScan::IncludeNestedFunctions,
             ForwardJumpJoin::EndOfMachine,
