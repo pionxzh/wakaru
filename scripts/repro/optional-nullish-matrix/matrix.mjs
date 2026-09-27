@@ -139,11 +139,11 @@ const babelProfiles = [
     modes: ["spec", "noDocumentAll", "loose"],
   },
   {
-    name: "babel-8-rc",
-    core: "8.0.0-rc.5",
-    optionalPlugin: ["@babel/plugin-transform-optional-chaining", "8.0.0-rc.5"],
-    nullishPlugin: ["@babel/plugin-transform-nullish-coalescing-operator", "8.0.0-rc.5"],
-    logicalAssignmentPlugin: ["@babel/plugin-transform-logical-assignment-operators", "8.0.0-rc.5"],
+    name: "babel-8",
+    core: "8.0.6",
+    optionalPlugin: ["@babel/plugin-transform-optional-chaining", "8.0.5"],
+    nullishPlugin: ["@babel/plugin-transform-nullish-coalescing-operator", "8.0.1"],
+    logicalAssignmentPlugin: ["@babel/plugin-transform-logical-assignment-operators", "8.0.1"],
     modes: ["spec", "noDocumentAll", "loose"],
   },
 ];

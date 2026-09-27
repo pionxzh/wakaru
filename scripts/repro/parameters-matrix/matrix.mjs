@@ -100,10 +100,10 @@ const babelProfiles = [
     modes: ["spec", "loose", "iterableIsArray"],
   },
   {
-    name: "babel-8-rc",
-    core: "8.0.0-rc.5",
-    destructuringPlugin: ["@babel/plugin-transform-destructuring", "8.0.0-rc.5"],
-    parametersPlugin: ["@babel/plugin-transform-parameters", "8.0.0-rc.5"],
+    name: "babel-8",
+    core: "8.0.6",
+    destructuringPlugin: ["@babel/plugin-transform-destructuring", "8.0.5"],
+    parametersPlugin: ["@babel/plugin-transform-parameters", "8.0.5"],
     modes: ["spec", "loose", "iterableIsArray"],
   },
 ];

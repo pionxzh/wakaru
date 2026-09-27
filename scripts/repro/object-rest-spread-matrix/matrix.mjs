@@ -115,9 +115,9 @@ const babelProfiles = [
     modes: ["spec", "loose", "useBuiltIns"],
   },
   {
-    name: "babel-8-rc",
-    core: "8.0.0-rc.5",
-    plugin: ["@babel/plugin-transform-object-rest-spread", "8.0.0-rc.5"],
+    name: "babel-8",
+    core: "8.0.6",
+    plugin: ["@babel/plugin-transform-object-rest-spread", "8.0.1"],
     modes: ["spec", "loose", "useBuiltIns"],
   },
 ];

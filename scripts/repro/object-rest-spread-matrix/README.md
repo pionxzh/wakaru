@@ -2,7 +2,7 @@
 
 This harness checks how common tools lower object rest and object spread
 snippets, then runs wakaru on the lowered output. Babel is tested across early
-proposal plugins, current transform plugins, and the Babel 8 RC line, with spec,
+proposal plugins, current transform plugins, and Babel 8, with spec,
 loose, and `useBuiltIns` variants where supported.
 
 The matrix also includes standalone Terser rows and Babel/TypeScript/SWC/esbuild

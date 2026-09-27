@@ -797,12 +797,12 @@ const babelProfiles = [
     destructuringPlugin: ["@babel/plugin-transform-destructuring", "7.28.5"],
   },
   {
-    name: "babel-8-rc",
-    core: "8.0.0-rc.5",
-    asyncPlugin: ["@babel/plugin-transform-async-to-generator", "8.0.0-rc.5"],
-    regeneratorPlugin: ["@babel/plugin-transform-regenerator", "8.0.0-rc.5"],
-    asyncGeneratorPlugin: ["@babel/plugin-transform-async-generator-functions", "8.0.0-rc.5"],
-    destructuringPlugin: ["@babel/plugin-transform-destructuring", "8.0.0-rc.5"],
+    name: "babel-8",
+    core: "8.0.6",
+    asyncPlugin: ["@babel/plugin-transform-async-to-generator", "8.0.1"],
+    regeneratorPlugin: ["@babel/plugin-transform-regenerator", "8.0.6"],
+    asyncGeneratorPlugin: ["@babel/plugin-transform-async-generator-functions", "8.0.6"],
+    destructuringPlugin: ["@babel/plugin-transform-destructuring", "8.0.5"],
   },
 ];
 
