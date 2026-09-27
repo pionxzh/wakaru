@@ -73,7 +73,7 @@ const allSources = snippets.map((s) => s.source);
 
 // Custom tsc batch with downlevelIteration option
 function tscDownlevelBatch(sources, downlevelIteration) {
-  const toolDir = ensureNodeTool("typescript", ["typescript@5"]);
+  const toolDir = ensureNodeTool("typescript-5.9.3", ["typescript@5.9.3"]);
   const helperSource = `
 const fs = require("node:fs");
 const ts = require("typescript");

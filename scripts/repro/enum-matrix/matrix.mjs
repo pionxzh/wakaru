@@ -3,7 +3,7 @@
 import { runNodeBatchSync } from "../lib/tool-process.mjs";
 
 import {
-  runMatrix, batchRunner, withTerserVariants, ensureNodeTool, standardLowerers,
+  runMatrix, batchRunner, withTerserVariants, ensureNodeTool, ensureSwcTool, standardLowerers,
 } from "../lib/runner.mjs";
 import { mangleValidator } from "../lib/compare.mjs";
 
@@ -179,7 +179,7 @@ process.stdout.write(JSON.stringify(results));
 
 // Custom SWC batch for TypeScript (parser: { syntax: "typescript" }, filename: "input.ts")
 function swcTsBatch(sources) {
-  const toolDir = ensureNodeTool("swc", ["@swc/core@1"]);
+  const toolDir = ensureSwcTool();
   const helperSource = `
 const fs = require("node:fs");
 const swc = require("@swc/core");

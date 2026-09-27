@@ -3,7 +3,7 @@
 import { runNodeBatchSync } from "../lib/tool-process.mjs";
 
 import {
-  runMatrix, batchRunner, ensureNodeTool, babelPresetEnvBatch,
+  runMatrix, batchRunner, ensureSwcTool, babelPresetEnvBatch,
 } from "../lib/runner.mjs";
 import { mangleValidator } from "../lib/compare.mjs";
 
@@ -368,7 +368,7 @@ for (const lower of babelLowerers) {
 
 // SWC minifier batch
 function swcMinifyBatch(sources, options) {
-  const toolDir = ensureNodeTool("swc", ["@swc/core@1"]);
+  const toolDir = ensureSwcTool();
   const helperSource = `
 const fs = require("node:fs");
 const swc = require("@swc/core");

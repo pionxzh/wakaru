@@ -4,7 +4,7 @@ import { runNodeBatchSync } from "../lib/tool-process.mjs";
 
 import {
   runMatrix, batchRunner, terserBatch, withTerserVariants,
-  ensureNodeTool, standardLowerers,
+  ensureNodeTool, ensureTerserTool, standardLowerers,
 } from "../lib/runner.mjs";
 import { mangleValidator } from "../lib/compare.mjs";
 
@@ -251,7 +251,7 @@ const allSources = snippets.map((s) => s.source);
 
 // Custom terser-inline transformer for array-destructure-tuple snippet
 function terserInlineBatch(sources) {
-  const toolDir = ensureNodeTool("terser", ["terser@5"]);
+  const toolDir = ensureTerserTool();
   const helperSource = `
 import fs from "node:fs";
 import { minify } from "terser";

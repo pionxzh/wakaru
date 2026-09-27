@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { babelPresetEnvBatch, parseExactSpec, resolutionCutoff, swcBatch } from "./runner.mjs";
+import { babelPresetEnvBatch, ensureNodeTool, parseExactSpec, resolutionCutoff, swcBatch } from "./runner.mjs";
 
 test("concurrent SWC minifier profiles retain their external-helper setting", async () => {
   const source = "export async function load(value) { return await value; }";
@@ -26,6 +26,10 @@ test("exact package specs parse; ranges and tags do not", () => {
   assert.equal(parseExactSpec("terser@^5.31.0"), null);
   assert.equal(parseExactSpec("rollup@latest"), null);
   assert.equal(parseExactSpec("typescript"), null);
+});
+
+test("repro tools reject a version range before installing", () => {
+  assert.throws(() => ensureNodeTool("range-probe", ["terser@5"]), /terser@5 is not an exact version/);
 });
 
 test("the resolution cutoff is one day after the newest publish time", () => {

@@ -739,22 +739,37 @@ export function ensureNodeTool(name, packages) {
   if (refresh) {
     refreshedNodeTools.add(dir);
   }
-  const specs = packages.map(parseExactSpec);
-  const pinned = specs.every(Boolean);
-  const markerText = packages.join("\n") + (pinned ? `\nresolved: ${RESOLUTION_WINDOW_DAYS} day(s) after newest publish` : "");
+  const specs = packages.map((spec) => {
+    const parsed = parseExactSpec(spec);
+    if (!parsed) throw new Error(`repro tool ${name}: ${spec} is not an exact version`);
+    return parsed;
+  });
+  const markerText = packages.join("\n") + `\nresolved: ${RESOLUTION_WINDOW_DAYS} day(s) after newest publish`;
   return installNodeTool(dir, markerText, (staging) => {
     writeFileSync(join(staging, "package.json"), JSON.stringify({ private: true, type: "commonjs" }, null, 2));
-    const before = pinned ? ["--before", resolutionCutoff(specs.map(publishTime))] : [];
+    const before = ["--before", resolutionCutoff(specs.map(publishTime))];
     runCommandScript("npm", ["install", "--silent", "--no-audit", "--no-fund", ...before, ...packages], { cwd: staging });
   }, { refresh });
+}
+
+// Shared by several matrices; one pin keeps their rows on the same release.
+export const SWC_CORE_VERSION = "1.16.2";
+export const TERSER_VERSION = "5.51.2";
+
+export function ensureSwcTool() {
+  return ensureNodeTool(`swc-${SWC_CORE_VERSION}`, [`@swc/core@${SWC_CORE_VERSION}`]);
+}
+
+export function ensureTerserTool() {
+  return ensureNodeTool(`terser-${TERSER_VERSION}`, [`terser@${TERSER_VERSION}`]);
 }
 
 // A pinned version still pulls every dependency through `^` ranges, so npm
 // installs the newest compatible release of each: a pinned `@babel/core` or
 // `@babel/preset-env` then lowers with the latest plugins and helper bodies,
-// a combination no project that installed the pinned release ever ran. When
-// every spec is an exact version, resolve the tree as of a cutoff after the
-// newest spec's publish time instead. The window admits same-day patch
+// a combination no project that installed the pinned release ever ran. Every
+// spec must be an exact version, and the tree resolves as of a cutoff after
+// the newest spec's publish time instead. The window admits same-day patch
 // releases, such as `@babel/runtime@7.12.18`, published an hour after
 // 7.12.17 to fix exports that break under Node 17+.
 const RESOLUTION_WINDOW_DAYS = 1;
@@ -921,9 +936,8 @@ process.stdout.write(JSON.stringify(results));
 export function tscBatch(sources, options = {}) {
   const target = options.target ?? "ES5";
   const module = options.module ?? "ESNext";
-  const version = options.version ?? "5";
-  const toolName = version === "5" ? "typescript" : `typescript-${version}`;
-  const toolDir = ensureNodeTool(toolName, [`typescript@${version}`]);
+  const version = options.version ?? "5.9.3";
+  const toolDir = ensureNodeTool(`typescript-${version}`, [`typescript@${version}`]);
   const helperSource = `
 const fs = require("node:fs");
 const ts = require("typescript");
@@ -965,7 +979,7 @@ export function swcBatch(sources, options = {}) {
   const target = options.target ?? "es5";
   const minify = options.minify ?? false;
   const externalHelpers = options.externalHelpers ?? false;
-  const toolDir = ensureNodeTool("swc", ["@swc/core@1"]);
+  const toolDir = ensureSwcTool();
   const variant = minify ? "minify" : externalHelpers ? "external" : "base";
   const jscExtra =
     (externalHelpers ? ", externalHelpers: true" : "") +
@@ -1023,7 +1037,7 @@ process.stdout.write(JSON.stringify(results));
 
 export function terserBatch(sources, options = {}) {
   const mangle = options.mangle ?? false;
-  const toolDir = ensureNodeTool("terser", ["terser@5"]);
+  const toolDir = ensureTerserTool();
   const suffix = mangle ? "mangle-batch" : "batch";
   const helperSource = `
 import fs from "node:fs";

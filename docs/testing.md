@@ -457,13 +457,14 @@ and renames it into place; a complete install is never deleted from under a
 process that already returned it. Transient `<tool>.staging-*` and
 `<tool>.stale-*` siblings belong to a running installer.
 
-When every package spec is an exact version, `ensureNodeTool` installs with
-`npm --before` set to one day after the newest spec's publish time. The
-dependency tree then matches what a project installing that release got,
-instead of the pinned package plus the newest version of every dependency.
-This matters for Babel, whose helper bodies and plugins live in separate
-packages behind `^` ranges. Specs with a range or tag (`@swc/core@1`) still
-resolve to the newest match at install time.
+`ensureNodeTool` accepts only exact versions (`@swc/core@1.16.2`, not
+`@swc/core@1`) and installs with `npm --before` set to one day after the
+newest spec's publish time. The dependency tree then matches what a project
+installing that release got, instead of the pinned package plus the newest
+version of every dependency. This matters for Babel, whose helper bodies and
+plugins live in separate packages behind `^` ranges. Bumping a tool is an
+explicit version change; SWC and Terser, which several matrices share, are
+pinned once in `lib/runner.mjs` (`ensureSwcTool`, `ensureTerserTool`).
 
 This isolates launcher execution, not dependency installation. Populate caches
 before concurrent runs and avoid refreshing/reinstalling a tool while another

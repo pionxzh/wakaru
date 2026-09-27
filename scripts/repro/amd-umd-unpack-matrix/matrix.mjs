@@ -167,7 +167,7 @@ define(["utils/math"], function(math) {
 }
 
 function buildRollup(dir, format) {
-  const toolDir = ensureNodeTool("rollup-4", ["rollup@4"]);
+  const toolDir = ensureNodeTool("rollup-4.63.5", ["rollup@4.63.5"]);
   const sourceRoot = join(dir, "src");
   mkdirSync(sourceRoot, { recursive: true });
   writeFileSync(
@@ -200,7 +200,7 @@ export { add };
 }
 
 function buildRollupAnonymousExternal(dir) {
-  const toolDir = ensureNodeTool("rollup-4", ["rollup@4"]);
+  const toolDir = ensureNodeTool("rollup-4.63.5", ["rollup@4.63.5"]);
   const sourceRoot = join(dir, "src");
   mkdirSync(sourceRoot, { recursive: true });
   writeFileSync(
