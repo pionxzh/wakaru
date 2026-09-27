@@ -188,6 +188,41 @@ pub(super) fn print_js_with_srcmap(
     Ok((code, srcmap_buf))
 }
 
+/// Add resolved mappings `(output position, input line, input column,
+/// source id)`, keeping one per output position.
+///
+/// The emitter records a node's span start before its children's, so a
+/// parent and its first child land on the same output column. When a rule
+/// moved code (a flipped comparison, an unwrapped `(0, x.y)` callee), their
+/// input positions differ, and consumers disagree on which duplicate wins.
+/// The last one belongs to the innermost node, the token actually printed
+/// there. The emitter only writes forward, so duplicates are adjacent.
+/// Callers filter out unmapped entries first, so a dropped entry never
+/// displaces a mapped one.
+pub(super) fn add_innermost_mappings(
+    builder: &mut sourcemap::SourceMapBuilder,
+    mappings: impl IntoIterator<Item = (LineCol, u32, u32, u32)>,
+) {
+    let mut mappings = mappings.into_iter().peekable();
+    while let Some((out_loc, line, col, src_id)) = mappings.next() {
+        if mappings
+            .peek()
+            .is_some_and(|(next, ..)| (next.line, next.col) == (out_loc.line, out_loc.col))
+        {
+            continue;
+        }
+        builder.add_raw(
+            out_loc.line,
+            out_loc.col,
+            line,
+            col,
+            Some(src_id),
+            None,
+            false,
+        );
+    }
+}
+
 /// Build a v3 source map JSON string from the raw emitter mappings.
 ///
 /// `mappings` are `(input_byte_pos, output_line_col)` entries collected by
@@ -204,6 +239,7 @@ pub(super) fn build_output_sourcemap(
     // input on every call.
     let mut files: crate::collections::HashMap<BytePos, (LineIndex, u32)> =
         crate::collections::HashMap::default();
+    let mut resolved = Vec::with_capacity(mappings.len());
 
     for &(byte_pos, ref out_loc) in mappings {
         // DUMMY_SP positions (BytePos(0)) have no meaningful source location.
@@ -225,17 +261,9 @@ pub(super) fn build_output_sourcemap(
         let Some((line, col)) = line_index.position(file.pos.0) else {
             continue;
         };
-        let src_id = *src_id;
-        builder.add_raw(
-            out_loc.line,
-            out_loc.col,
-            line,
-            col,
-            Some(src_id),
-            None,
-            false,
-        );
+        resolved.push((*out_loc, line, col, *src_id));
     }
+    add_innermost_mappings(&mut builder, resolved);
 
     let srcmap = builder.into_sourcemap();
     let mut buf = Vec::new();

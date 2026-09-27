@@ -8,6 +8,7 @@
 use anyhow::{anyhow, Result};
 use swc_core::common::{BytePos, LineCol, SourceMap};
 
+use super::super::io::add_innermost_mappings;
 use super::super::line_index::LineIndex;
 use crate::unpacker::InputOffsets;
 
@@ -44,27 +45,17 @@ pub(crate) fn build_composed_output_sourcemap(
 ) -> Result<String> {
     let mut builder = sourcemap::SourceMapBuilder::new(Some(output_filename));
     let src_id = builder.add_source(&origin.name);
-    for &(byte_pos, ref out_loc) in mappings {
+    let resolved = mappings.iter().filter_map(|&(byte_pos, out_loc)| {
         if byte_pos.0 == 0 {
-            continue;
+            return None;
         }
         let extracted_offset = cm.lookup_byte_offset(byte_pos).pos.0;
-        let Some((line, col)) = offsets
+        let (line, col) = offsets
             .input_offset(extracted_offset)
-            .and_then(|input_offset| origin.lines.position(input_offset))
-        else {
-            continue;
-        };
-        builder.add_raw(
-            out_loc.line,
-            out_loc.col,
-            line,
-            col,
-            Some(src_id),
-            None,
-            false,
-        );
-    }
+            .and_then(|input_offset| origin.lines.position(input_offset))?;
+        Some((out_loc, line, col, src_id))
+    });
+    add_innermost_mappings(&mut builder, resolved);
     let mut buf = Vec::new();
     builder
         .into_sourcemap()

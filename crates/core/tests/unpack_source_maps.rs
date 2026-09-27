@@ -82,6 +82,17 @@ fn check_maps_point_into_input(
             "{filename}: map must name the input"
         );
         assert_eq!(map.get_source_contents(0), None, "{filename}");
+        let mut positions: Vec<_> = map
+            .tokens()
+            .map(|token| (token.get_dst_line(), token.get_dst_col()))
+            .collect();
+        let total = positions.len();
+        positions.dedup();
+        assert_eq!(
+            positions.len(),
+            total,
+            "{filename}: one mapping per output position"
+        );
         for token in map.tokens() {
             check.mapped_tokens += 1;
             let output = token_at(code, token.get_dst_line(), token.get_dst_col());

@@ -369,7 +369,9 @@ positions in that intermediate text. The missing hop comes from extraction:
 
 Phase 2 maps each emitter position through those offsets and converts the
 input offset with a per-input UTF-16 line index. Only exact points map;
-anything without one stays unmapped. The line index is built only when maps
+anything without one stays unmapped. Each output position keeps a single
+mapping, the innermost node's (the single-file builder shares this rule;
+see `add_innermost_mappings`). The line index is built only when maps
 are requested. Unpack maps name the input and omit `sourcesContent`, which
 would repeat the whole input in every module's map.
 

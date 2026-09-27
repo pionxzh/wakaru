@@ -57,8 +57,17 @@ pub(crate) fn remap_source_map(
             Some((line, col, raw))
         })
         .collect();
-    // The table is monotonic, so this only settles ties.
+    // The table is monotonic, so this only settles ties. Removed code can
+    // merge two positions (`f((a))` → `f(a)`); as in the emitter's own maps,
+    // the later mapping belongs to the innermost token and wins.
     tokens.sort_by_key(|&(line, col, _)| (line, col));
+    tokens.dedup_by(|next, kept| {
+        let same = (next.0, next.1) == (kept.0, kept.1);
+        if same {
+            *kept = *next;
+        }
+        same
+    });
     for (line, col, raw) in tokens {
         builder.add_raw(
             line,
@@ -347,6 +356,34 @@ mod tests {
             spans,
             ["x", "=", "`", "a", "${", "b", "}", "cd", "${", "e", "}", "f", "`", ";"]
         );
+    }
+
+    #[test]
+    fn remap_keeps_the_innermost_mapping_where_removed_code_merges_positions() {
+        let before = "f((a));\n";
+        let after = "f(a);\n";
+        let mut builder = sourcemap::SourceMapBuilder::new(None);
+        let src = builder.add_source("input.js");
+        // The inner parenthesis and `a` start one column apart before
+        // formatting and at the same column after it.
+        builder.add_raw(0, 2, 0, 20, Some(src), None, false);
+        builder.add_raw(0, 3, 0, 30, Some(src), None, false);
+        let mut json = Vec::new();
+        builder.into_sourcemap().to_writer(&mut json).unwrap();
+
+        let remapped = remap_source_map(
+            before,
+            after,
+            oxc_span::SourceType::jsx(),
+            std::str::from_utf8(&json).unwrap(),
+        )
+        .expect("streams should align");
+        let map = sourcemap::SourceMap::from_slice(remapped.as_bytes()).unwrap();
+        let tokens: Vec<_> = map
+            .tokens()
+            .map(|t| (t.get_dst_line(), t.get_dst_col(), t.get_src_col()))
+            .collect();
+        assert_eq!(tokens, vec![(0, 2, 30)]);
     }
 
     #[test]

@@ -537,6 +537,53 @@ mod tests {
     }
 
     #[test]
+    fn emit_source_map_keeps_the_innermost_mapping_per_output_position() {
+        // Flipping the comparison moves `a.length` ahead of `1`, while the
+        // binary expression keeps its span starting at `1`.
+        let input = "function f(a){if(1===a.length)return a}";
+        let output = decompile(
+            input,
+            DecompileOptions {
+                filename: "flip.js".to_string(),
+                emit_source_map: true,
+                ..Default::default()
+            },
+        )
+        .expect("decompile should succeed");
+        let map_json = output.source_map.expect("source map should be generated");
+        let sm = sourcemap::SourceMap::from_reader(map_json.as_bytes())
+            .expect("source map JSON should parse");
+
+        let mut positions: Vec<_> = sm
+            .tokens()
+            .map(|t| (t.get_dst_line(), t.get_dst_col()))
+            .collect();
+        let total = positions.len();
+        positions.dedup();
+        assert_eq!(positions.len(), total, "one mapping per output position");
+
+        let (line, text) = output
+            .code
+            .lines()
+            .enumerate()
+            .find(|(_, line)| line.contains("a.length === 1"))
+            .expect("comparison should be flipped");
+        let col = text.find("a.length").expect("flipped operand") as u32;
+        let token = sm
+            .lookup_token(line as u32, col)
+            .expect("flipped operand should be mapped");
+        assert_eq!(
+            (token.get_dst_line(), token.get_dst_col()),
+            (line as u32, col)
+        );
+        assert_eq!(
+            (token.get_src_line(), token.get_src_col()),
+            (0, input.find("a.length").unwrap() as u32),
+            "the operand should map to itself, not to the constant it was swapped with"
+        );
+    }
+
+    #[test]
     fn emit_source_map_counts_input_columns_in_utf16_units() {
         // "中文字" is 9 UTF-8 bytes, 3 UTF-16 units, and 6 display columns.
         let input = "var s = \"中文字\", t = foo(s);";
