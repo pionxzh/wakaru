@@ -383,6 +383,7 @@ fn apply(input: &str) -> String {
 | `render(source)` | Full decompile pipeline (all rules) |
 | `render_rule(source, builder)` | Single rule in isolation (resolver + one rule + fixer) |
 | `render_rule_with_filename(source, filename, builder)` | Same as `render_rule` but with custom filename (for `.ts`/`.tsx` parsing) |
+| `inspect_rule_output(source, builder, inspect)` | Single rule, then inspect the module instead of emitting; `SpanText::starting_at(span)` resolves a node's span to input text (for span-propagation tests) |
 | `render_pipeline_until(source, stop_after)` | Pipeline up to a specific rule (inclusive) |
 | `render_pipeline_between(source, start, stop)` | Pipeline from `start` through `stop` (inclusive) |
 | `trace_pipeline(source, options)` | Collect `RuleTraceEvent`s for debugging |

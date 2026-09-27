@@ -520,24 +520,24 @@ fn convert_alt_branch_to_stmt(expr: Expr) -> Stmt {
         Expr::Cond(inner) => convert_cond_to_if(inner.span, *inner.test, inner.cons, inner.alt),
         // Logical AND in alt → convert to if statement (not wrapped in block)
         Expr::Bin(BinExpr {
+            span,
             op: BinaryOp::LogicalAnd,
             left,
             right,
-            ..
         }) if is_action_expr(&right) => Stmt::If(IfStmt {
-            span: DUMMY_SP,
+            span,
             test: left,
             cons: Box::new(expr_to_block_stmt(*right)),
             alt: None,
         }),
         // Logical OR in alt → convert to if statement
         Expr::Bin(BinExpr {
+            span,
             op: BinaryOp::LogicalOr,
             left,
             right,
-            ..
         }) if is_action_expr(&right) => Stmt::If(IfStmt {
-            span: DUMMY_SP,
+            span,
             test: negate_expr(*left),
             cons: Box::new(expr_to_block_stmt(*right)),
             alt: None,
@@ -607,11 +607,20 @@ fn try_split_return_ternary(expr: Expr, return_span: Span) -> Option<Vec<Stmt>> 
     }
 
     let mut stmts = Vec::new();
-    build_return_chain(*cond.test, cond.cons, cond.alt, &mut stmts, return_span);
+    build_return_chain(
+        cond.span,
+        *cond.test,
+        cond.cons,
+        cond.alt,
+        &mut stmts,
+        return_span,
+    );
     Some(stmts)
 }
 
+/// `cond_span` is the span of the ternary this `if` replaces.
 fn build_return_chain(
+    cond_span: Span,
     test: Expr,
     cons: Box<Expr>,
     alt: Box<Expr>,
@@ -620,7 +629,7 @@ fn build_return_chain(
 ) {
     // if (test) { return cons; }
     stmts.push(Stmt::If(IfStmt {
-        span: DUMMY_SP,
+        span: cond_span,
         test: Box::new(test),
         cons: Box::new(Stmt::Block(BlockStmt {
             span: DUMMY_SP,
@@ -633,7 +642,14 @@ fn build_return_chain(
     // Recurse or emit final return
     match *alt {
         Expr::Cond(next_cond) => {
-            build_return_chain(*next_cond.test, next_cond.cons, next_cond.alt, stmts, span);
+            build_return_chain(
+                next_cond.span,
+                *next_cond.test,
+                next_cond.cons,
+                next_cond.alt,
+                stmts,
+                span,
+            );
         }
         other => {
             stmts.push(Stmt::Return(ReturnStmt {

@@ -1,6 +1,8 @@
 mod common;
 
-use common::{assert_eq_normalized, render_rule};
+use common::{assert_eq_normalized, inspect_rule_output, render_rule};
+use swc_core::ecma::ast::IfStmt;
+use swc_core::ecma::visit::{Visit, VisitWith};
 use wakaru_core::rules::{
     UnConditionals, UnConditionalsAssignmentOnly, UnConditionalsExprStmtOnly,
 };
@@ -541,4 +543,51 @@ if (a) {
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+/// The input text each `if` statement's span starts at, in source order.
+fn if_span_starts(input: &str) -> Vec<Option<String>> {
+    struct Ifs(Vec<swc_core::common::Span>);
+    impl Visit for Ifs {
+        fn visit_if_stmt(&mut self, node: &IfStmt) {
+            self.0.push(node.span);
+            node.visit_children_with(self);
+        }
+    }
+    inspect_rule_output(
+        input,
+        |_| UnConditionals,
+        |module, text| {
+            let mut ifs = Ifs(Vec::new());
+            module.visit_with(&mut ifs);
+            ifs.0
+                .into_iter()
+                .map(|span| {
+                    text.starting_at(span)
+                        .map(|rest| rest.chars().take(8).collect())
+                })
+                .collect()
+        },
+    )
+}
+
+#[test]
+fn else_if_from_a_logical_alternate_keeps_its_input_span() {
+    assert_eq!(
+        if_span_starts("x ? a() : y && b(); z ? c() : w || d();"),
+        [
+            Some("x ? a() ".to_string()),
+            Some("y && b()".to_string()),
+            Some("z ? c() ".to_string()),
+            Some("w || d()".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn split_return_ternary_ifs_keep_their_ternary_spans() {
+    assert_eq!(
+        if_span_starts("function f() { return a ? 1 : b ? 2 : 3; }"),
+        [Some("a ? 1 : ".to_string()), Some("b ? 2 : ".to_string())]
+    );
 }
