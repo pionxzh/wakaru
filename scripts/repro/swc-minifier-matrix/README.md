@@ -41,9 +41,17 @@ version also pins `@babel/helpers`: `@babel/core` accepts any newer
 `_defineProperties` routes keys through `_toPropertyKey`) come from that
 package, not from core.
 
-Some rows are informational. Constant folding and full inlining can erase the
-original structure, so those rows document what Wakaru currently emits rather
-than implying a reversible source recovery is expected.
+The class rows skip the `inline-iife` profile. It turns every other compress
+default off, so constant folding and dead-code removal never finish the
+`_createClass` expansion (`if (protoProps) _defineProperties(...)` stays). SWC's
+default compress options fold that half-inlined shape away (the `all` profile).
+
+Some rows are informational (`informational: true`). Constant folding and full
+inlining can erase the original structure, so those rows document what Wakaru
+currently emits rather than implying a reversible source recovery is expected.
+They report `info-yes` or `info-miss` and stay out of the recovery rate either
+way; `collect-stats.mjs` records their count as `info`. An execution
+divergence on an informational row still reports `no`.
 
 ## Promoting Findings
 

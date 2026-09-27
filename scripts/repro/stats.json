@@ -1,10 +1,10 @@
 {
-  "commit": "f5353db44",
+  "commit": "9ec927359",
   "date": "2026-09-27",
   "aggregate": {
-    "yes": 2203,
-    "total": 2341,
-    "pct": 94.1
+    "yes": 2196,
+    "total": 2326,
+    "pct": 94.4
   },
   "matrices": [
     {
@@ -12,6 +12,7 @@
       "yes": 218,
       "no": 21,
       "error": 0,
+      "info": 0,
       "total": 239,
       "pct": 91.2
     },
@@ -20,6 +21,7 @@
       "yes": 629,
       "no": 92,
       "error": 0,
+      "info": 0,
       "total": 721,
       "pct": 87.2
     },
@@ -28,6 +30,7 @@
       "yes": 32,
       "no": 0,
       "error": 0,
+      "info": 0,
       "total": 32,
       "pct": 100
     },
@@ -36,6 +39,7 @@
       "yes": 15,
       "no": 0,
       "error": 0,
+      "info": 0,
       "total": 15,
       "pct": 100
     },
@@ -44,6 +48,7 @@
       "yes": 25,
       "no": 0,
       "error": 0,
+      "info": 0,
       "total": 25,
       "pct": 100
     },
@@ -52,6 +57,7 @@
       "yes": 93,
       "no": 0,
       "error": 0,
+      "info": 0,
       "total": 93,
       "pct": 100
     },
@@ -60,6 +66,7 @@
       "yes": 92,
       "no": 0,
       "error": 0,
+      "info": 0,
       "total": 92,
       "pct": 100
     },
@@ -68,6 +75,7 @@
       "yes": 198,
       "no": 0,
       "error": 0,
+      "info": 0,
       "total": 198,
       "pct": 100
     },
@@ -76,6 +84,7 @@
       "yes": 429,
       "no": 13,
       "error": 0,
+      "info": 0,
       "total": 442,
       "pct": 97.1
     },
@@ -84,22 +93,25 @@
       "yes": 110,
       "no": 0,
       "error": 0,
+      "info": 0,
       "total": 110,
       "pct": 100
     },
     {
       "name": "swc-minifier",
-      "yes": 39,
-      "no": 12,
+      "yes": 32,
+      "no": 4,
       "error": 0,
-      "total": 51,
-      "pct": 76.5
+      "info": 9,
+      "total": 36,
+      "pct": 88.9
     },
     {
       "name": "template-literal",
       "yes": 158,
       "no": 0,
       "error": 0,
+      "info": 0,
       "total": 158,
       "pct": 100
     },
@@ -108,6 +120,7 @@
       "yes": 165,
       "no": 0,
       "error": 0,
+      "info": 0,
       "total": 165,
       "pct": 100
     }

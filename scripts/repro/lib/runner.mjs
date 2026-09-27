@@ -80,6 +80,7 @@ async function runMatrixAsync(config) {
   let countYes = 0;
   let countNo = 0;
   let countError = 0;
+  let countInfo = 0;
 
   try {
     // Prewarm all transformer batches concurrently before any shape collection
@@ -149,9 +150,17 @@ async function runMatrixAsync(config) {
         if (!result.recovered && result.failure) {
           failures.push(result.failure);
         }
-        const status = result.status ?? (result.recovered ? "yes" : "no");
+        let status = result.status ?? (result.recovered ? "yes" : "no");
+        // Informational rows record what Wakaru emits for a shape whose
+        // source structure the lowering may erase; they stay out of the
+        // recovery rate either way. Diverged behavior is a bug, not an
+        // observation, so it still counts as `no`.
+        if (snippet.informational && !result.diverged && (status === "yes" || status === "no")) {
+          status = status === "yes" ? "info-yes" : "info-miss";
+        }
         if (status === "yes") countYes++;
         else if (status === "no") countNo++;
+        else if (status.startsWith("info-")) countInfo++;
         else countError++;
         rows.push({
           snippet: snippet.name,
@@ -180,7 +189,7 @@ async function runMatrixAsync(config) {
         {
           name,
           level: rewriteLevel,
-          summary: { yes: countYes, no: countNo, error: countError, pct: total > 0 ? +((countYes / total) * 100).toFixed(1) : 0 },
+          summary: { yes: countYes, no: countNo, error: countError, info: countInfo, pct: total > 0 ? +((countYes / total) * 100).toFixed(1) : 0 },
           rows,
         },
         null,
@@ -229,6 +238,7 @@ async function runMatrixAsync(config) {
     console.log(
       `# ${countYes} yes / ${countNo} no` +
         (countError > 0 ? ` / ${countError} error` : "") +
+        (countInfo > 0 ? ` / ${countInfo} informational` : "") +
         ` (${pct}%)`,
     );
   } finally {
@@ -364,6 +374,7 @@ function runShape(
     }
     return {
       recovered: false,
+      diverged: true,
       notes: `behavior diverged: ${verdict.reason}`,
       code: recovered,
       lowered: shape.lowered,

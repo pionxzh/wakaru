@@ -80,11 +80,12 @@ function runMatrix(name) {
       yes: data.summary.yes,
       no: data.summary.no,
       error: data.summary.error ?? 0,
+      info: data.summary.info ?? 0,
       total: data.summary.yes + data.summary.no,
       pct: data.summary.pct,
     };
     const errorSamples = (data.rows ?? [])
-      .filter((row) => row.status !== "yes" && row.status !== "no")
+      .filter((row) => row.status !== "yes" && row.status !== "no" && !row.status.startsWith("info-"))
       .slice(0, 3)
       .map((row) => ({
         snippet: row.snippet,
@@ -149,7 +150,7 @@ function printStatsDiff(recorded, measured) {
       continue;
     }
 
-    const diffs = ["yes", "no", "error", "total", "pct"]
+    const diffs = ["yes", "no", "error", "info", "total", "pct"]
       .filter((field) => (before[field] ?? 0) !== (after[field] ?? 0))
       .map((field) => `${field}: ${formatValue(before[field] ?? 0)} -> ${formatValue(after[field] ?? 0)}`);
     if (diffs.length > 0) {

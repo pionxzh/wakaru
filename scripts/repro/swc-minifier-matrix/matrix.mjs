@@ -354,6 +354,11 @@ for (const lower of babelLowerers) {
       ...snippet,
       name: `babel-${lower.core}-${snippet.name}`,
       bucket: "inline-iife",
+      // `inline-iife` turns every other compress default off, so constant
+      // folding and dead-code removal never finish the `_createClass`
+      // expansion (`if (protoProps) _defineProperties(...)` stays). The
+      // default compress options (the `all` profile) fold it away.
+      skipProfiles: ["inline-iife"],
       // Same source per Babel version; the comment keeps batch keys distinct.
       source: `// babel ${lower.core}${snippet.source}`,
       lower,
