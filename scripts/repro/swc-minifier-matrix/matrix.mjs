@@ -295,8 +295,8 @@ export const view = UserCard(props);
 // that shape class recovery handles. Babel 7.12 predates `_toPropertyKey` in
 // `_defineProperties`; 7.29 routes each key through it.
 const babelLowerers = [
-  { core: "7.12.17", preset: "7.12.17", helpers: "7.12.17" },
-  { core: "7.29.7", preset: "7.29.7", helpers: "7.29.7" },
+  { core: "7.12.17", preset: "7.12.17" },
+  { core: "7.29.7", preset: "7.29.7" },
 ];
 const classSnippets = [
   {

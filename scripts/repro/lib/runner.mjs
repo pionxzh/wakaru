@@ -739,10 +739,41 @@ export function ensureNodeTool(name, packages) {
   if (refresh) {
     refreshedNodeTools.add(dir);
   }
-  return installNodeTool(dir, packages.join("\n"), (staging) => {
+  const specs = packages.map(parseExactSpec);
+  const pinned = specs.every(Boolean);
+  const markerText = packages.join("\n") + (pinned ? `\nresolved: ${RESOLUTION_WINDOW_DAYS} day(s) after newest publish` : "");
+  return installNodeTool(dir, markerText, (staging) => {
     writeFileSync(join(staging, "package.json"), JSON.stringify({ private: true, type: "commonjs" }, null, 2));
-    runCommandScript("npm", ["install", "--silent", "--no-audit", "--no-fund", ...packages], { cwd: staging });
+    const before = pinned ? ["--before", resolutionCutoff(specs.map(publishTime))] : [];
+    runCommandScript("npm", ["install", "--silent", "--no-audit", "--no-fund", ...before, ...packages], { cwd: staging });
   }, { refresh });
+}
+
+// A pinned version still pulls every dependency through `^` ranges, so npm
+// installs the newest compatible release of each: a pinned `@babel/core` or
+// `@babel/preset-env` then lowers with the latest plugins and helper bodies,
+// a combination no project that installed the pinned release ever ran. When
+// every spec is an exact version, resolve the tree as of a cutoff after the
+// newest spec's publish time instead. The window admits same-day patch
+// releases, such as `@babel/runtime@7.12.18`, published an hour after
+// 7.12.17 to fix exports that break under Node 17+.
+const RESOLUTION_WINDOW_DAYS = 1;
+
+export function parseExactSpec(spec) {
+  const match = /^((?:@[^/@]+\/)?[^/@]+)@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/.exec(spec);
+  return match ? { name: match[1], version: match[2] } : null;
+}
+
+export function resolutionCutoff(publishTimes) {
+  const newest = Math.max(...publishTimes.map((time) => Date.parse(time)));
+  return new Date(newest + RESOLUTION_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
+}
+
+function publishTime({ name, version }) {
+  const times = JSON.parse(runCommandScript("npm", ["view", name, "time", "--json"]));
+  const time = times[version];
+  if (!time) throw new Error(`npm has no publish time for ${name}@${version}`);
+  return time;
 }
 
 export function ensureLockedNodeTool(name, manifestDir) {
@@ -858,15 +889,10 @@ export function babelPresetEnvBatch(sources, options = {}) {
   const coreVersion = options.core ?? "7.29.7";
   const presetVersion = options.preset ?? "7.29.7";
   const targets = options.targets ?? { ie: "11" };
-  // `@babel/core` depends on `@babel/helpers@^7.x`, so without a pin every
-  // older core emits the newest helper bodies.
-  const helpersVersion = options.helpers;
-  const packages = [`@babel/core@${coreVersion}`, `@babel/preset-env@${presetVersion}`];
-  if (helpersVersion) packages.push(`@babel/helpers@${helpersVersion}`);
-  const toolDir = ensureNodeTool(
-    `babel-${coreVersion}-preset-env${helpersVersion ? `-helpers-${helpersVersion}` : ""}`,
-    packages,
-  );
+  const toolDir = ensureNodeTool(`babel-${coreVersion}-preset-env`, [
+    `@babel/core@${coreVersion}`,
+    `@babel/preset-env@${presetVersion}`,
+  ]);
   const helperSource = `
 import fs from "node:fs";
 const babelModule = await import("@babel/core");

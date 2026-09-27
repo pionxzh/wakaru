@@ -35,11 +35,12 @@ shape is preserved while duplicate tool outputs are collapsed.
 The `babel-<version>-class-*` rows lower ES classes with Babel `preset-env`
 (IE 11) first, then minify Babel's output with each SWC profile. SWC inlines
 the single-use `_createClass`, `_defineProperties`, and `_classCallCheck`
-helpers into the class, which is the shape these rows track. Each Babel
-version also pins `@babel/helpers`: `@babel/core` accepts any newer
-`@babel/helpers`, and the helper bodies (for example, whether
-`_defineProperties` routes keys through `_toPropertyKey`) come from that
-package, not from core.
+helpers into the class, which is the shape these rows track. The helper
+bodies (for example, whether `_defineProperties` routes keys through
+`_toPropertyKey`) come from `@babel/helpers` and the class plugin, not from
+core. The shared tool installer resolves each pinned Babel release's
+dependencies as of its publish date, so each row lowers with that release's
+own helpers and plugins.
 
 The class rows skip the `inline-iife` profile. It turns every other compress
 default off, so constant folding and dead-code removal never finish the
