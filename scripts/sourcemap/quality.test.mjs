@@ -1,8 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { analyzeMap, kindGroup, mergeResults, tokenKind } from "./quality.mjs";
+import { analyzeMap, kindGroup, mergeResults, tokenKind, tokenValue } from "./quality.mjs";
 
-const token = (kind, value, line, col) => ({ kind, value, line, col });
+const token = (kind, value, line, col, endLine = line, endCol = col + String(value).length) => ({
+  kind,
+  value,
+  line,
+  col,
+  endLine,
+  endCol,
+});
 const segment = (genLine, genCol, srcLine, srcCol) => ({ genLine, genCol, srcLine, srcCol });
 
 test("tokenKind separates identifiers, keywords, literals, and punctuation", () => {
@@ -15,6 +22,24 @@ test("tokenKind separates identifiers, keywords, literals, and punctuation", () 
   assert.equal(kindGroup("punct:("), "punct");
   assert.equal(kindGroup("kw:if"), "kw");
   assert.equal(kindGroup("ident"), "ident");
+});
+
+test("tokenValue makes identical regexps compare equal", () => {
+  // acorn gives each regexp token its own object value.
+  const regexp = () => ({ pattern: "\\s+", flags: "g", value: /\s+/g });
+  assert.equal(tokenValue({ label: "regexp", value: regexp() }), tokenValue({ label: "regexp", value: regexp() }));
+  assert.notEqual(
+    tokenValue({ label: "regexp", value: regexp() }),
+    tokenValue({ label: "regexp", value: { pattern: "\\s+", flags: "", value: /\s+/ } }),
+  );
+  assert.equal(tokenValue({ label: "name", value: "a" }), "a");
+
+  const result = analyzeMap({
+    outputTokens: [token("regexp", tokenValue({ label: "regexp", value: regexp() }), 0, 0)],
+    inputTokens: [token("regexp", tokenValue({ label: "regexp", value: regexp() }), 0, 4)],
+    segments: [segment(0, 0, 0, 4)],
+  });
+  assert.equal(result.compared.same, 1);
 });
 
 test("analyzeMap classifies mapped tokens against the input", () => {
@@ -43,7 +68,7 @@ test("analyzeMap classifies mapped tokens against the input", () => {
 
   assert.equal(result.mapped, 3);
   assert.equal(result.resolvable, 5);
-  assert.deepEqual(result.compared, { same: 0, renamed: 1, different: 2, offToken: 0 });
+  assert.deepEqual(result.compared, { same: 0, renamed: 1, different: 2, tokenEnd: 0, offToken: 0 });
   assert.deepEqual(result.byKind.punct, { total: 2, mapped: 0 });
   assert.deepEqual(
     result.pairs.map(({ key, count }) => [key, count]),
@@ -64,10 +89,10 @@ test("analyzeMap reports duplicates and resolves them by the chosen pick", () =>
 
   const first = analyzeMap({ outputTokens, inputTokens, segments });
   assert.equal(first.duplicatePositions, 1);
-  assert.deepEqual(first.compared, { same: 0, renamed: 0, different: 1, offToken: 0 });
+  assert.deepEqual(first.compared, { same: 0, renamed: 0, different: 1, tokenEnd: 0, offToken: 0 });
 
   const last = analyzeMap({ outputTokens, inputTokens, segments }, { pick: "last" });
-  assert.deepEqual(last.compared, { same: 1, renamed: 0, different: 0, offToken: 0 });
+  assert.deepEqual(last.compared, { same: 1, renamed: 0, different: 0, tokenEnd: 0, offToken: 0 });
 });
 
 test("analyzeMap flags mappings that land off every input token", () => {
@@ -78,6 +103,39 @@ test("analyzeMap flags mappings that land off every input token", () => {
   });
   assert.equal(result.compared.offToken, 1);
   assert.equal(result.pairs[0].key, "ident <- (no token)");
+});
+
+test("analyzeMap separates mappings at the end of an input token", () => {
+  // input:  f(a.b\n)     output: f(a.b);
+  // The output `;` maps to the end of `b`, where no input token starts.
+  const inputTokens = [
+    token("ident", "f", 0, 0),
+    token("punct:(", "(", 0, 1),
+    token("ident", "a", 0, 2),
+    token("punct:.", ".", 0, 3),
+    token("ident", "b", 0, 4),
+    token("punct:)", ")", 1, 0),
+  ];
+  const result = analyzeMap({
+    outputTokens: [token("ident", "b", 0, 4), token("punct:)", ")", 0, 5), token("punct:;", ";", 0, 6)],
+    inputTokens,
+    segments: [segment(0, 4, 0, 4), segment(0, 5, 1, 0), segment(0, 6, 0, 5)],
+  });
+  assert.deepEqual(result.compared, { same: 2, renamed: 0, different: 0, tokenEnd: 1, offToken: 0 });
+  assert.deepEqual(
+    result.pairs.map(({ key, count }) => [key, count]),
+    [["punct:; <- (end of ident)", 1]],
+  );
+});
+
+test("analyzeMap counts a position that ends one token and starts another as a start", () => {
+  // input: a)   `a` ends where `)` starts.
+  const result = analyzeMap({
+    outputTokens: [token("punct:)", ")", 0, 0)],
+    inputTokens: [token("ident", "a", 0, 0), token("punct:)", ")", 0, 1)],
+    segments: [segment(0, 0, 0, 1)],
+  });
+  assert.deepEqual(result.compared, { same: 1, renamed: 0, different: 0, tokenEnd: 0, offToken: 0 });
 });
 
 test("mergeResults sums counts and merges pairs across files", () => {
@@ -95,7 +153,7 @@ test("mergeResults sums counts and merges pairs across files", () => {
 
   assert.equal(total.outputTokens, 3);
   assert.equal(total.mapped, 3);
-  assert.deepEqual(total.compared, { same: 1, renamed: 0, different: 2, offToken: 0 });
+  assert.deepEqual(total.compared, { same: 1, renamed: 0, different: 2, tokenEnd: 0, offToken: 0 });
   assert.deepEqual(total.byKind.kw, { total: 2, mapped: 2 });
   assert.equal(total.pairs.length, 1);
   assert.equal(total.pairs[0].count, 2);

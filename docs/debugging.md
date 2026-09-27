@@ -125,12 +125,17 @@ It reports which output tokens carry a mapping at their start (overall and
 by token kind), how many a lookup resolves, how many output positions carry
 duplicate segments, and, for each mapped token, whether the input token at
 the mapped position is the same token, an identifier under another name,
-another token, or no token start at all.
+another token, the end of an input token, or none of these.
 
 Reading the result:
 
 - **No input token** points at a broken offset (a wrong line index, column
   unit, or composition hop). It should stay at or near zero.
+- **Input token end** is closing punctuation mapped to the end of the node
+  before it, such as the `)` in `f(a.b)` mapped to the end of `a.b` when the
+  input puts the `)` on a later line. The emitter maps these from a node's
+  end position, so they are expected. A position where one token ends and
+  the next starts counts as a start.
 - **Other token** is mostly faithful rewrites: `const <- var`,
   `true <- !`, an `if` mapped to the expression it replaced, a template
   mapped to a `.concat` call. Scan the listed pairs for ones that cannot be a

@@ -23,7 +23,7 @@ import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join, relative } from "node:path";
 import { ensureNodeTool } from "../repro/lib/runner.mjs";
-import { analyzeMap, mergeResults, tokenKind } from "./quality.mjs";
+import { analyzeMap, mergeResults, tokenKind, tokenValue } from "./quality.mjs";
 
 const TOOL_PACKAGES = ["acorn@8.18.0", "acorn-jsx@5.3.2", "@jridgewell/trace-mapping@0.3.31"];
 
@@ -77,9 +77,11 @@ function tokenize(Parser, code) {
         if (label === "jsxText" && !token.value.trim()) return;
         tokens.push({
           kind: tokenKind({ label, keyword: token.type.keyword, value: token.value }),
-          value: token.value,
+          value: tokenValue({ label, value: token.value }),
           line: token.loc.start.line - 1,
           col: token.loc.start.column,
+          endLine: token.loc.end.line - 1,
+          endCol: token.loc.end.column,
         });
       },
     });
@@ -170,10 +172,11 @@ function main() {
     console.log(`  ${group.padEnd(8)} ${pct(stats.mapped, stats.total).padStart(6)} of ${stats.total}`);
   }
   console.log(`mapped tokens (${options.pick} segment per position):`);
-  console.log(`  same token     ${pct(total.compared.same, checked)}`);
-  console.log(`  renamed ident  ${pct(total.compared.renamed, checked)}`);
-  console.log(`  other token    ${pct(total.compared.different, checked)}`);
-  console.log(`  no input token ${pct(total.compared.offToken, checked)}`);
+  console.log(`  same token      ${pct(total.compared.same, checked)}`);
+  console.log(`  renamed ident   ${pct(total.compared.renamed, checked)}`);
+  console.log(`  other token     ${pct(total.compared.different, checked)}`);
+  console.log(`  input token end ${pct(total.compared.tokenEnd, checked)}`);
+  console.log(`  no input token  ${pct(total.compared.offToken, checked)}`);
   if (total.pairs.length) console.log("\nmost frequent non-matching pairs (output <- input):");
   for (const pair of total.pairs.slice(0, options.top)) {
     console.log(`  ${String(pair.count).padStart(7)}  ${pair.key}`);

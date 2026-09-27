@@ -1,7 +1,7 @@
 // Token-level quality measures for an output source map.
 //
 // Pure functions over plain data so they test without a parser: tokens are
-// `{ kind, value, line, col }` and segments `{ genLine, genCol, srcLine,
+// `{ kind, value, line, col, endLine, endCol }` and segments `{ genLine, genCol, srcLine,
 // srcCol }` with 0-based lines and UTF-16 columns (source map units).
 // `check.mjs` produces both from real files.
 
@@ -14,6 +14,13 @@ export function tokenKind({ label, keyword, value }) {
   if (label === "num" || label === "bigint") return "num";
   if (label === "regexp") return "regexp";
   return `punct:${value ?? label}`;
+}
+
+// A token value that compares with `===`. acorn gives a regexp token an
+// object value, so two identical regexps would never compare equal.
+export function tokenValue({ label, value }) {
+  if (label === "regexp") return `/${value.pattern}/${value.flags}`;
+  return value;
 }
 
 // Group a kind for the per-kind coverage table.
@@ -41,8 +48,11 @@ function segmentsByLine(segments) {
 // - `resolvable`: output tokens a greatest-lower-bound lookup resolves.
 // - `compared`: for mapped tokens, the input token at the mapped position is
 //   the same token (`same`), an identifier under another name (`renamed`),
-//   another token (`different`), or no token start at all (`offToken`,
-//   which points at a broken offset rather than a rewrite).
+//   another token (`different`), the end of an input token (`tokenEnd`,
+//   where emitters map closing punctuation to the end of the node before
+//   it), or neither (`offToken`, which points at a broken offset rather than
+//   a rewrite). A position that both ends one token and starts another
+//   counts as a start.
 // - `duplicatePositions`: generated positions carrying several segments.
 //   Consumers disagree on which one wins; `pick` chooses the first (as
 //   `@jridgewell/trace-mapping` does) or the last.
@@ -50,6 +60,7 @@ function segmentsByLine(segments) {
 //   positions, most frequent first.
 export function analyzeMap({ outputTokens, inputTokens, segments }, { pick = "first", examples = 3 } = {}) {
   const inputAt = new Map(inputTokens.map((token) => [`${token.line}:${token.col}`, token]));
+  const inputEndAt = new Map(inputTokens.map((token) => [`${token.endLine}:${token.endCol}`, token]));
   const lines = segmentsByLine(segments);
   const atPosition = new Map();
   for (const segment of segments) {
@@ -65,7 +76,7 @@ export function analyzeMap({ outputTokens, inputTokens, segments }, { pick = "fi
   }
 
   const byKind = {};
-  const compared = { same: 0, renamed: 0, different: 0, offToken: 0 };
+  const compared = { same: 0, renamed: 0, different: 0, tokenEnd: 0, offToken: 0 };
   const pairs = new Map();
   let mapped = 0;
   let resolvable = 0;
@@ -84,11 +95,18 @@ export function analyzeMap({ outputTokens, inputTokens, segments }, { pick = "fi
     kindStats.mapped += 1;
 
     const segment = pick === "last" ? here[here.length - 1] : here[0];
-    const original = inputAt.get(`${segment.srcLine}:${segment.srcCol}`);
+    const srcKey = `${segment.srcLine}:${segment.srcCol}`;
+    const original = inputAt.get(srcKey);
     let pairKey;
     if (!original) {
-      compared.offToken += 1;
-      pairKey = `${token.kind} <- (no token)`;
+      const ended = inputEndAt.get(srcKey);
+      if (ended) {
+        compared.tokenEnd += 1;
+        pairKey = `${token.kind} <- (end of ${ended.kind})`;
+      } else {
+        compared.offToken += 1;
+        pairKey = `${token.kind} <- (no token)`;
+      }
     } else if (original.kind === token.kind && original.value === token.value) {
       compared.same += 1;
       continue;
@@ -135,7 +153,7 @@ export function mergeResults(results, { examples = 3 } = {}) {
     resolvable: 0,
     duplicatePositions: 0,
     byKind: {},
-    compared: { same: 0, renamed: 0, different: 0, offToken: 0 },
+    compared: { same: 0, renamed: 0, different: 0, tokenEnd: 0, offToken: 0 },
     pairs: [],
   };
   const pairs = new Map();
