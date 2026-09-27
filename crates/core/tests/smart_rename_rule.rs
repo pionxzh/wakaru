@@ -856,6 +856,90 @@ function g(a, b) {
 }
 
 #[test]
+fn object_destructuring_param_with_default() {
+    let input = r#"
+function t({ left: o = 0, top: r = 0 } = {}) {
+    this.left = o;
+    this.top = r;
+}
+"#;
+    let expected = r#"
+function t({ left = 0, top = 0 } = {}) {
+    this.left = left;
+    this.top = top;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn object_destructuring_nested_patterns() {
+    let input = r#"
+function f(points) {
+    const { options: { border: s, grid: n }, data: { sets: d } = {} } = this;
+    const [{ x: a, y: b }] = points;
+    use(s, n, d, a, b);
+}
+"#;
+    let expected = r#"
+function f(points) {
+    const { options: { border, grid }, data: { sets } = {} } = this;
+    const [{ x, y }] = points;
+    use(border, grid, sets, x, y);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn object_destructuring_nested_patterns_in_one_declaration_get_distinct_names() {
+    let input = r#"
+function f() {
+    const [{ x: t, y: n }, { x: r, y: i }] = this.getPoints();
+    use(t, n, r, i);
+}
+"#;
+    let expected = r#"
+function f() {
+    const [{ x, y }, { x: x_1, y: y_1 }] = this.getPoints();
+    use(x, y, x_1, y_1);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn object_destructuring_in_constructor() {
+    let input = r#"
+class A {
+    constructor({ id: e, viewBox: n } = {}) {
+        this.id = e;
+        this.viewBox = n;
+        const { dispatch: u } = this;
+        if (e) {
+            const { commit: c } = this;
+            use(u, c);
+        }
+    }
+}
+"#;
+    let expected = r#"
+class A {
+    constructor({ id, viewBox } = {}) {
+        this.id = id;
+        this.viewBox = viewBox;
+        const { dispatch } = this;
+        if (id) {
+            const { commit } = this;
+            use(dispatch, commit);
+        }
+    }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
 fn member_init_rename_basic() {
     // var w = zw.NOT_APPLICABLE → rename w to zw_NOT_APPLICABLE
     let input = r#"

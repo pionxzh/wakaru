@@ -6,12 +6,12 @@ use swc_core::atoms::Atom;
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrayPat, ArrowExpr, ArrowFunctionBody, AssignPatProp, BlockStmt, CallExpr, Callee, Class,
-    ClassDecl, ClassExpr, Decl, Expr, FnDecl, FnExpr, ForHead, ForInStmt, ForOfStmt, ForStmt,
-    Function, GetterProp, Ident, ImportDecl, ImportSpecifier, JSXAttr, JSXAttrName,
+    ClassDecl, ClassExpr, Constructor, Decl, Expr, FnDecl, FnExpr, ForHead, ForInStmt, ForOfStmt,
+    ForStmt, Function, GetterProp, Ident, ImportDecl, ImportSpecifier, JSXAttr, JSXAttrName,
     JSXAttrOrSpread, JSXAttrValue, JSXElementName, JSXExpr, JSXExprContainer, JSXMemberExpr,
     JSXObject, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem,
-    ObjectPat, ObjectPatProp, Param, Pat, Prop, PropName, Stmt, SwitchStmt, VarDecl, VarDeclKind,
-    VarDeclOrExpr,
+    ObjectPat, ObjectPatProp, ParamOrTsParamProp, Pat, Prop, PropName, Stmt, SwitchStmt, VarDecl,
+    VarDeclKind, VarDeclOrExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -87,6 +87,11 @@ impl VisitMut for SmartRename {
         func.visit_mut_children_with(self);
     }
 
+    fn visit_mut_constructor(&mut self, ctor: &mut Constructor) {
+        destructuring_rename_constructor(ctor);
+        ctor.visit_mut_children_with(self);
+    }
+
     fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
         react_rename_arrow_body(arrow, &self.pending_value_position_names);
         destructuring_rename_arrow(arrow);
@@ -145,6 +150,11 @@ impl VisitMut for SmartRenameSecondPass {
         member_init_rename_function(func);
         symbol_for_rename_function(func, self.unresolved_mark);
         func.visit_mut_children_with(self);
+    }
+
+    fn visit_mut_constructor(&mut self, ctor: &mut Constructor) {
+        destructuring_rename_constructor(ctor);
+        ctor.visit_mut_children_with(self);
     }
 
     fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
@@ -630,21 +640,29 @@ fn lower_first(input: &str) -> String {
 // Destructuring shorthand renames
 // ============================================================
 
+/// Whether `pat` holds a short object-pattern alias, including inside a
+/// defaulted pattern (`{ a: b } = {}`), an array pattern (`[{ a: b }]`), or a
+/// nested object pattern (`{ a: { b: c } }`).
 fn has_short_obj_pat_alias(pat: &Pat) -> bool {
-    let Pat::Object(obj_pat) = pat else {
-        return false;
-    };
-    obj_pat.props.iter().any(|prop| match prop {
-        ObjectPatProp::KeyValue(kv) => extract_binding_from_pat(&kv.value)
-            .is_some_and(|(sym, _)| is_likely_generated_alias(&sym)),
-        ObjectPatProp::Rest(rest) => extract_binding_from_pat(&rest.arg)
-            .is_some_and(|(sym, _)| is_likely_generated_alias(&sym)),
+    match pat {
+        Pat::Object(obj_pat) => obj_pat.props.iter().any(|prop| match prop {
+            ObjectPatProp::KeyValue(kv) => {
+                has_short_obj_pat_alias(&kv.value)
+                    || extract_binding_from_pat(&kv.value)
+                        .is_some_and(|(sym, _)| is_likely_generated_alias(&sym))
+            }
+            ObjectPatProp::Rest(rest) => extract_binding_from_pat(&rest.arg)
+                .is_some_and(|(sym, _)| is_likely_generated_alias(&sym)),
+            ObjectPatProp::Assign(_) => false,
+        }),
+        Pat::Array(array_pat) => array_pat
+            .elems
+            .iter()
+            .flatten()
+            .any(has_short_obj_pat_alias),
+        Pat::Assign(assign_pat) => has_short_obj_pat_alias(&assign_pat.left),
         _ => false,
-    })
-}
-
-fn has_destructuring_candidates_in_params(params: &[Param]) -> bool {
-    params.iter().any(|p| has_short_obj_pat_alias(&p.pat))
+    }
 }
 
 /// Whether any declaration in `stmts` — at the top level, in a nested block,
@@ -824,30 +842,9 @@ impl Visit for NestedObjPatRenameCollector<'_> {
 
 fn destructuring_rename_function(func: &mut Function) {
     let Some(body) = &func.body else { return };
-    if !has_destructuring_candidates_in_params(&func.params)
-        && !has_destructuring_candidates_in_stmts(&body.stmts)
-    {
-        return;
-    }
-    let mut all_names = collect_names_in_stmts(&body.stmts);
-    for p in &func.params {
-        collect_names_in_pat(&p.pat, &mut all_names);
-    }
-
-    // Collect renames from both params and body VarDecls.
-    // Feed param-rename targets into all_names so body renames don't
-    // pick names that would shadow a just-renamed parameter.
-    let mut renames = collect_obj_pat_renames_from_params(&func.params, &all_names);
-    for r in &renames {
-        all_names.insert(r.new.clone());
-    }
-    let body_renames = collect_obj_pat_renames_from_stmts(&body.stmts, &all_names);
-    renames.extend(body_renames);
-    body.stmts.visit_with(&mut NestedObjPatRenameCollector::new(
-        &mut all_names,
-        &mut renames,
-    ));
-
+    let param_pats: Vec<&Pat> = func.params.iter().map(|p| &p.pat).collect();
+    let renames =
+        collect_function_destructuring_renames(&param_pats, names_in(&func.params), &body.stmts);
     if renames.is_empty() {
         return;
     }
@@ -862,6 +859,71 @@ fn destructuring_rename_function(func: &mut Function) {
     if let Some(body) = &mut func.body {
         body.visit_mut_with(&mut shorthand);
     }
+}
+
+/// Constructors are not `Function` nodes, so `visit_mut_function` never sees
+/// them. TypeScript parameter properties are left alone: their name is also
+/// the property name.
+fn destructuring_rename_constructor(ctor: &mut Constructor) {
+    let Some(body) = &ctor.body else { return };
+    let param_pats: Vec<&Pat> = ctor
+        .params
+        .iter()
+        .filter_map(|p| match p {
+            ParamOrTsParamProp::Param(param) => Some(&param.pat),
+            ParamOrTsParamProp::TsParamProp(_) => None,
+        })
+        .collect();
+    let renames =
+        collect_function_destructuring_renames(&param_pats, names_in(&ctor.params), &body.stmts);
+    if renames.is_empty() {
+        return;
+    }
+    rename_bindings(&mut ctor.params, &renames);
+    if let Some(body) = &mut ctor.body {
+        rename_bindings(&mut body.stmts, &renames);
+    }
+    let mut shorthand = ObjectPatShorthandConverter;
+    ctor.params
+        .iter_mut()
+        .for_each(|p| p.visit_mut_with(&mut shorthand));
+    if let Some(body) = &mut ctor.body {
+        body.visit_mut_with(&mut shorthand);
+    }
+}
+
+/// Destructuring renames for a function-like body: parameters first, then
+/// top-level body declarations, then nested blocks and `for` heads.
+/// `param_names` holds every name in the parameter list.
+fn collect_function_destructuring_renames(
+    param_pats: &[&Pat],
+    param_names: HashSet<Atom>,
+    stmts: &[Stmt],
+) -> Vec<BindingRename> {
+    if !param_pats.iter().any(|p| has_short_obj_pat_alias(p))
+        && !has_destructuring_candidates_in_stmts(stmts)
+    {
+        return Vec::new();
+    }
+    let mut all_names = collect_names_in_stmts(stmts);
+    all_names.extend(param_names);
+
+    // Feed param-rename targets into all_names so body renames don't
+    // pick names that would shadow a just-renamed parameter.
+    let mut renames = Vec::new();
+    let mut used_names = all_names.clone();
+    for pat in param_pats {
+        collect_obj_pat_renames_from_pat(pat, &mut renames, &mut used_names);
+    }
+    for r in &renames {
+        all_names.insert(r.new.clone());
+    }
+    renames.extend(collect_obj_pat_renames_from_stmts(stmts, &all_names));
+    stmts.visit_with(&mut NestedObjPatRenameCollector::new(
+        &mut all_names,
+        &mut renames,
+    ));
+    renames
 }
 
 fn destructuring_rename_module_with(
@@ -963,18 +1025,6 @@ fn collect_obj_pat_renames_from_module(
     renames
 }
 
-fn collect_obj_pat_renames_from_params(
-    params: &[Param],
-    all_names: &HashSet<Atom>,
-) -> Vec<BindingRename> {
-    let mut renames = Vec::new();
-    let mut used_names = all_names.clone();
-    for p in params {
-        collect_obj_pat_renames_from_pat(&p.pat, &mut renames, &mut used_names);
-    }
-    renames
-}
-
 fn collect_obj_pat_renames_from_stmts(
     stmts: &[Stmt],
     all_names: &HashSet<Atom>,
@@ -1009,10 +1059,31 @@ fn collect_obj_pat_renames_from_pat(
     renames: &mut Vec<BindingRename>,
     used_names: &mut HashSet<Atom>,
 ) {
-    let Pat::Object(obj_pat) = pat else { return };
+    let obj_pat = match pat {
+        Pat::Object(obj_pat) => obj_pat,
+        Pat::Assign(assign_pat) => {
+            collect_obj_pat_renames_from_pat(&assign_pat.left, renames, used_names);
+            return;
+        }
+        Pat::Array(array_pat) => {
+            for elem in array_pat.elems.iter().flatten() {
+                collect_obj_pat_renames_from_pat(elem, renames, used_names);
+            }
+            return;
+        }
+        _ => return,
+    };
     for prop in &obj_pat.props {
         match prop {
             ObjectPatProp::KeyValue(kv) => {
+                let nested = match &*kv.value {
+                    Pat::Assign(assign_pat) => &*assign_pat.left,
+                    value => value,
+                };
+                if matches!(nested, Pat::Object(_) | Pat::Array(_)) {
+                    collect_obj_pat_renames_from_pat(nested, renames, used_names);
+                    continue;
+                }
                 let key_str = match &kv.key {
                     PropName::Ident(i) => i.sym.to_string(),
                     PropName::Str(s) => s.value.as_str().map(|s| s.to_string()).unwrap_or_default(),
