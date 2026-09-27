@@ -729,8 +729,10 @@ impl VisitMut for UsageRewriter<'_> {
         let MemberProp::Ident(prop) = &member.prop else {
             return;
         };
+        // The property's span keeps the output map on the input name; the
+        // member's span would start at a wrapping `(0, r.x)` instead.
         if let Some((local_name, local_ctxt)) = prop_map.get(&prop.sym) {
-            *expr = Expr::Ident(Ident::new(local_name.clone(), DUMMY_SP, *local_ctxt));
+            *expr = Expr::Ident(Ident::new(local_name.clone(), prop.span, *local_ctxt));
         }
     }
 
@@ -746,7 +748,11 @@ impl VisitMut for UsageRewriter<'_> {
             return;
         };
         if let Some((local_name, local_ctxt)) = prop_map.get(&member.prop.sym) {
-            *name = JSXElementName::Ident(Ident::new(local_name.clone(), DUMMY_SP, *local_ctxt));
+            *name = JSXElementName::Ident(Ident::new(
+                local_name.clone(),
+                member.prop.span,
+                *local_ctxt,
+            ));
         }
     }
 
