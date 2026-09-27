@@ -614,6 +614,23 @@ test("missingToolPackageSpecs checks package resolution instead of directory pre
   }
 });
 
+test("missingToolPackageSpecs reinstalls a resolvable package at another version", () => {
+  const root = mkdtempSync(join(tmpdir(), "wakaru-tools-unit-"));
+  try {
+    const packageDir = join(root, "node_modules", "terser");
+    mkdirSync(packageDir, { recursive: true });
+    writeFileSync(join(root, "package.json"), JSON.stringify({ private: true, type: "module" }));
+    writeFileSync(join(packageDir, "package.json"), JSON.stringify({ name: "terser", version: "5.31.0", main: "index.js" }));
+    writeFileSync(join(packageDir, "index.js"), "");
+
+    const pinned = { name: "terser", spec: "terser@5.31.6" };
+    assert.deepEqual(missingToolPackageSpecs(root, [pinned]), [pinned]);
+    assert.deepEqual(missingToolPackageSpecs(root, [{ name: "terser", spec: "terser@5.31.0" }]), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("isSloppyOnlyWakaruParseUnsupported detects sloppy-only strict parser rejects", () => {
   const error = new Error('failed to parse input.js: InvalidIdentInStrict("yield")');
 

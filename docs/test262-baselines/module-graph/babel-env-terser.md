@@ -23,13 +23,13 @@
 
 | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---:|---:|---:|---:|---:|---:|---:|
-| 755 | 599 | 156 | 39 | 46 | 514 | 0 |
+| 755 | 599 | 156 | 39 | 47 | 513 | 0 |
 
 ## Reasons
 
 | Status | Reason | Count |
 |---|---|---:|
-| rejected | transform-reject | 24 |
+| rejected | transform-reject | 25 |
 | rejected | transform-runtime | 19 |
 | rejected | transform-runtime-module-default-name | 3 |
 | skipped | fixture | 156 |

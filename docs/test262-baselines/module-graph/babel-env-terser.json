@@ -31,8 +31,8 @@
     "runnable": 599,
     "skipped": 156,
     "unsupported": 39,
-    "rejected": 46,
-    "passed": 514,
+    "rejected": 47,
+    "passed": 513,
     "failed": 0
   },
   "outcomes": [
@@ -467,6 +467,14 @@
       "kind": "fixture",
       "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
       "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/import-attributes/import-attribute-empty.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a8797ebce8eb07456756d3f1f20a8495043c0436037dd17e21d42c30773a0193",
+      "summary": "SyntaxError: unknown: Support for the experimental syntax 'importAttributes' isn't currently enabled (25:54):"
     },
     {
       "path": "test/language/module-code/import-attributes/import-attribute-key-identifiername.js",

@@ -277,6 +277,13 @@ Pinned producer packages are installed in separate subdirectories under the
 tool root. Keeping Terser, Babel, SWC, and esbuild isolated prevents npm from
 pruning and reinstalling one producer while another matrix job starts.
 
+Each install uses `npm --before` set to one day after the newest pinned
+package's publish time (the shared rule in `scripts/repro/lib/release-date.mjs`).
+Without it, `@babel/core@7.25.2` ran with the newest 7.x helpers, plugins, and
+parser, so CI's fresh install could move the Babel baseline without any
+change in the repo. A root installed under another rule, or holding a package
+at a version other than its pin, is reinstalled.
+
 Module graph baselines live under `docs/test262-baselines/module-graph/`:
 these add no-transform and Babel producer coverage to the canonical recursive
 modules slice. SWC and esbuild module graphs are already covered by their
