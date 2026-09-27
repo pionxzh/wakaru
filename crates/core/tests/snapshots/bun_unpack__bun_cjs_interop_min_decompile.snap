@@ -130,7 +130,7 @@ export async function main() {
         40,
         50
     ];
-    let total = t.reduce((n, r)=>a.add(n, r), 0);
+    let total = t.reduce((acc, item)=>a.add(acc, item), 0);
     let avg = a.multiply(total, 1 / t.length);
     let label = f(u("average value"), 10);
     _.info(`${label}: ${avg}`);

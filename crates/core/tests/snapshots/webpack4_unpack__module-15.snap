@@ -51,9 +51,9 @@ export const a = function(e, path_1 = {}, n) {
         path,
         url: path === "/" && b === "" ? "/" : b,
         isExact,
-        params: keys.reduce((e, t, n)=>{
-            e[t.name] = g[n];
-            return e;
+        params: keys.reduce((acc, key, index)=>{
+            acc[key.name] = g[index];
+            return acc;
         }, {})
     };
 };

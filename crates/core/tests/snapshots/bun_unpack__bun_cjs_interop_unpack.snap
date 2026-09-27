@@ -1,6 +1,5 @@
 ---
 source: crates/core/tests/bun_unpack.rs
-assertion_line: 110
 expression: combined
 ---
 // === src-cjs/math.js ===
@@ -149,7 +148,7 @@ async function main() {
         40,
         50
     ];
-    const total = items.reduce((sum, n)=>import_math.add(sum, n), 0);
+    const total = items.reduce((sum, item)=>import_math.add(sum, item), 0);
     const avg = import_math.multiply(total, 1 / items.length);
     const label = $truncate($capitalize("average value"), 10);
     log.info(`${label}: ${avg}`);

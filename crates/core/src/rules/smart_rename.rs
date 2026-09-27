@@ -3145,18 +3145,32 @@ impl Visit for CallSiteUseCollector<'_> {
 // ============================================================
 // Structural-role renames
 //
-// Some bindings have a role the language fixes, whatever the code around
-// them says:
+// Some bindings have a role the language or a standard method fixes,
+// whatever the code around them says:
 //
 //   try { ... } catch (e) { report(e); }   → catch (error)
 //   new Promise((e, t) => ...)             → (resolve, reject) => ...
+//   list.reduce((e, t, n) => ..., init)    → (acc, item, index) => ...
+//   for (...; t < rows.length; ...) { const n = rows[t]; }
+//                                          → const row = rows[t];
 //
-// Only short parameters are renamed, and only when the new name does not
-// already occur inside the catch clause or executor. A catch parameter must
-// also be read and never written; executor parameters are renamed even when
-// unused, since the name documents the position. `Promise` must be the
-// global. A nested scope keeps its short name when it reads the outer
-// binding that takes the same name, so the rename cannot capture it.
+// A reduce element is named `key` over `Object.keys(...)` (`entry` over
+// `Object.entries(...)`, also through `.sort()` and similar), the singular of
+// the receiver's name when the plural is unambiguous (`orders` → `order`),
+// and `item` otherwise. A loop element takes the singular of the array it
+// indexes with the loop counter; without an unambiguous singular it keeps
+// its name. Loop counters are left alone: single letters collide with
+// whatever else the minifier spelled, and a letter for a letter adds little.
+//
+// Only short bindings are renamed, and only when the new name does not
+// already occur inside the scope (catch clause, callback, or loop). A catch
+// parameter must be read. Catch, executor, reduce element and index, and
+// loop element bindings must not be written (minifiers reuse bindings as
+// scratch variables); an accumulator may be, that is its role. Executor
+// and reduce parameters are renamed even when unused, since the name
+// documents the position. `Promise` and `Object` must be the globals. A
+// nested scope keeps its short name when it reads an outer binding that
+// takes the same name, so the rename cannot capture it.
 // ============================================================
 
 fn role_rename_module(module: &mut Module, unresolved_mark: Mark) {
@@ -3171,42 +3185,63 @@ fn role_rename_module(module: &mut Module, unresolved_mark: Mark) {
     };
     module.visit_with(&mut collector);
 
-    let mut accepted: HashMap<&'static str, Vec<(usize, Atom)>> = HashMap::default();
+    let mut accepted: HashMap<Atom, Vec<(usize, Atom)>> = HashMap::default();
     let mut renames = Vec::new();
     for (idx, scope) in collector.scopes.iter().enumerate() {
-        for (bid, target, is_catch) in &scope.params {
-            let uses = collector.tracked.get(bid).copied().unwrap_or_default();
-            if uses.writes > 1 || (*is_catch && uses.refs == 0) {
+        for param in &scope.params {
+            let uses = collector
+                .tracked
+                .get(&param.binding)
+                .copied()
+                .unwrap_or_default();
+            if (param.forbid_writes && uses.writes > 1) || (param.require_read && uses.refs == 0) {
                 continue;
             }
-            if scope.names.contains(&Atom::from(*target)) {
+            if scope.names.contains(&param.target) {
                 continue;
             }
             // An inner scope that reads the outer binding would capture it
             // once both take the same name.
-            let taken = accepted.entry(target).or_default();
+            let taken = accepted.entry(param.target.clone()).or_default();
             let captures = taken.iter().any(|(other, old)| {
                 let other_scope = &collector.scopes[*other];
                 (scope.ancestors.contains(other) && scope.names.contains(old))
-                    || (other_scope.ancestors.contains(&idx) && other_scope.names.contains(&bid.0))
+                    || (other_scope.ancestors.contains(&idx)
+                        && other_scope.names.contains(&param.binding.0))
             });
             if captures {
                 continue;
             }
-            taken.push((idx, bid.0.clone()));
+            taken.push((idx, param.binding.0.clone()));
             renames.push(BindingRename {
-                old: bid.clone(),
-                new: Atom::from(*target),
+                old: param.binding.clone(),
+                new: param.target.clone(),
             });
         }
     }
     rename_bindings_in_module(module, &renames);
 }
 
+struct RoleParam {
+    binding: BindingId,
+    target: Atom,
+    require_read: bool,
+    forbid_writes: bool,
+}
+
+impl RoleParam {
+    fn new(binding: BindingId, target: &str) -> Self {
+        Self {
+            binding,
+            target: Atom::from(target),
+            require_read: false,
+            forbid_writes: true,
+        }
+    }
+}
+
 struct RoleScope {
-    /// Short parameters with their role name; the flag marks a catch
-    /// parameter.
-    params: Vec<(BindingId, &'static str, bool)>,
+    params: Vec<RoleParam>,
     /// Indices of enclosing role scopes.
     ancestors: Vec<usize>,
     /// Every identifier spelled inside the scope, parameters included.
@@ -3216,7 +3251,7 @@ struct RoleScope {
 #[derive(Clone, Copy, Default)]
 struct RoleParamUses {
     refs: usize,
-    /// Binding sites: the parameter itself plus every write.
+    /// Binding sites: the declaration plus every write.
     writes: usize,
 }
 
@@ -3234,9 +3269,15 @@ impl RoleCollector {
         }
     }
 
-    fn enter(&mut self, params: Vec<(BindingId, &'static str, bool)>) {
-        for (bid, _, _) in &params {
-            self.tracked.entry(bid.clone()).or_default();
+    /// Visits `node` inside a new role scope when there are parameters to
+    /// name, and plainly otherwise.
+    fn with_scope(&mut self, params: Vec<RoleParam>, visit: impl FnOnce(&mut Self)) {
+        if params.is_empty() {
+            visit(self);
+            return;
+        }
+        for param in &params {
+            self.tracked.entry(param.binding.clone()).or_default();
         }
         let idx = self.scopes.len();
         self.scopes.push(RoleScope {
@@ -3245,6 +3286,8 @@ impl RoleCollector {
             names: HashSet::default(),
         });
         self.stack.push(idx);
+        visit(self);
+        self.stack.pop();
     }
 
     fn short_param(pat: &Pat) -> Option<BindingId> {
@@ -3255,6 +3298,254 @@ impl RoleCollector {
             _ => None,
         }
     }
+
+    fn callback_params(expr: &Expr) -> Option<Vec<&Pat>> {
+        match expr.unwrap_parens() {
+            Expr::Arrow(arrow) => Some(arrow.params.iter().collect()),
+            Expr::Fn(f) => Some(f.function.params.iter().map(|p| &p.pat).collect()),
+            _ => None,
+        }
+    }
+
+    /// The element name an `Object` enumeration gives its array:
+    /// `Object.keys(x)` / `getOwnPropertyNames` → `key`, `Object.entries(x)`
+    /// → `entry`, with the global `Object`. Looks through calls that keep
+    /// the elements (`Object.keys(x).sort()`).
+    fn object_enumeration_element(&self, expr: &Expr) -> Option<&'static str> {
+        let Expr::Call(call) = expr.unwrap_parens() else {
+            return None;
+        };
+        let Callee::Expr(callee) = &call.callee else {
+            return None;
+        };
+        let Expr::Member(MemberExpr {
+            obj,
+            prop: MemberProp::Ident(prop),
+            ..
+        }) = callee.as_ref()
+        else {
+            return None;
+        };
+        if matches!(obj.as_ref(), Expr::Ident(id) if is_unresolved_ident(id, "Object", self.unresolved_mark))
+        {
+            return match prop.sym.as_ref() {
+                "keys" | "getOwnPropertyNames" => Some("key"),
+                "entries" => Some("entry"),
+                _ => None,
+            };
+        }
+        match prop.sym.as_ref() {
+            "sort" | "filter" | "slice" | "reverse" => self.object_enumeration_element(obj),
+            _ => None,
+        }
+    }
+
+    fn reduce_element_name(&self, receiver: &Expr) -> String {
+        if let Some(name) = self.object_enumeration_element(receiver) {
+            return name.to_string();
+        }
+        role_tail_name(receiver)
+            .and_then(|name| singular_name(&name))
+            .unwrap_or_else(|| "item".to_string())
+    }
+
+    /// Loop elements of `for (let t = 0; t < ARR.length; t++) { const n =
+    /// ARR[t]; }`, also through a cached `r = ARR.length` in the init.
+    fn loop_element_params(for_stmt: &ForStmt) -> Vec<RoleParam> {
+        let Some(VarDeclOrExpr::VarDecl(init)) = &for_stmt.init else {
+            return Vec::new();
+        };
+        let Some(Pat::Ident(counter)) = init.decls.first().map(|d| &d.name) else {
+            return Vec::new();
+        };
+        let counter_id = (counter.id.sym.clone(), counter.id.ctxt);
+        let is_counter = |e: &Expr| matches!(e.unwrap_parens(), Expr::Ident(id) if (id.sym.clone(), id.ctxt) == counter_id);
+        let Some(Expr::Bin(test)) = for_stmt.test.as_deref() else {
+            return Vec::new();
+        };
+        use swc_core::ecma::ast::BinaryOp;
+        if !matches!(
+            test.op,
+            BinaryOp::Lt | BinaryOp::LtEq | BinaryOp::Gt | BinaryOp::GtEq
+        ) {
+            return Vec::new();
+        }
+        let bound = if is_counter(&test.left) {
+            test.right.as_ref()
+        } else if is_counter(&test.right) {
+            test.left.as_ref()
+        } else {
+            return Vec::new();
+        };
+        let length_of = |e: &Expr| match e.unwrap_parens() {
+            Expr::Member(MemberExpr {
+                obj,
+                prop: MemberProp::Ident(prop),
+                ..
+            }) if prop.sym == "length" => Some(obj.as_ref().clone()),
+            _ => None,
+        };
+        let array = length_of(bound).or_else(|| {
+            let Expr::Ident(bound_id) = bound.unwrap_parens() else {
+                return None;
+            };
+            init.decls
+                .iter()
+                .find_map(|d| match (&d.name, d.init.as_deref()) {
+                    (Pat::Ident(b), Some(value))
+                        if b.id.sym == bound_id.sym && b.id.ctxt == bound_id.ctxt =>
+                    {
+                        length_of(value)
+                    }
+                    _ => None,
+                })
+        });
+        let Some(array) = array else {
+            return Vec::new();
+        };
+        if !is_plain_access_path(&array) {
+            return Vec::new();
+        }
+        let Some(target) = role_tail_name(&array)
+            .filter(|name| name != "arguments")
+            .and_then(|name| singular_name(&name))
+        else {
+            return Vec::new();
+        };
+        let Stmt::Block(body) = for_stmt.body.as_ref() else {
+            return Vec::new();
+        };
+        let mut params = Vec::new();
+        for stmt in &body.stmts {
+            let Stmt::Decl(Decl::Var(var)) = stmt else {
+                continue;
+            };
+            for decl in &var.decls {
+                let (Some(binding), Some(Expr::Member(member))) = (
+                    Self::short_param(&decl.name),
+                    decl.init.as_deref().map(Expr::unwrap_parens),
+                ) else {
+                    continue;
+                };
+                let MemberProp::Computed(index) = &member.prop else {
+                    continue;
+                };
+                if is_counter(&index.expr) && same_access_path(&member.obj, &array) {
+                    let mut param = RoleParam::new(binding, &target);
+                    param.require_read = true;
+                    params.push(param);
+                }
+            }
+        }
+        params
+    }
+}
+
+/// `a`, `a.b`, `a.b.c` — reads with no side effects to compare by shape.
+fn is_plain_access_path(expr: &Expr) -> bool {
+    match expr.unwrap_parens() {
+        Expr::Ident(_) | Expr::This(_) => true,
+        Expr::Member(MemberExpr {
+            obj,
+            prop: MemberProp::Ident(_),
+            ..
+        }) => is_plain_access_path(obj),
+        _ => false,
+    }
+}
+
+fn same_access_path(a: &Expr, b: &Expr) -> bool {
+    match (a.unwrap_parens(), b.unwrap_parens()) {
+        (Expr::Ident(x), Expr::Ident(y)) => x.sym == y.sym && x.ctxt == y.ctxt,
+        (Expr::This(_), Expr::This(_)) => true,
+        (
+            Expr::Member(MemberExpr {
+                obj: xo,
+                prop: MemberProp::Ident(xp),
+                ..
+            }),
+            Expr::Member(MemberExpr {
+                obj: yo,
+                prop: MemberProp::Ident(yp),
+                ..
+            }),
+        ) => xp.sym == yp.sym && same_access_path(xo, yo),
+        _ => false,
+    }
+}
+
+/// The name an access path ends in (`e.rows` → `rows`), without the
+/// minified stem Wakaru keeps on names it builds (`e_rows` → `rows`).
+fn role_tail_name(expr: &Expr) -> Option<String> {
+    let raw = match expr.unwrap_parens() {
+        Expr::Ident(id) => id.sym.to_string(),
+        Expr::Member(MemberExpr {
+            prop: MemberProp::Ident(prop),
+            ..
+        }) => prop.sym.to_string(),
+        _ => return None,
+    };
+    let name = if is_synthesized_prefixed_name(&raw) {
+        raw.split_once('_').map(|(_, rest)| rest.to_string())?
+    } else {
+        raw
+    };
+    Some(name)
+}
+
+/// Singular of a plural identifier, only when the plural is unambiguous.
+/// camelCase names change their last word (`nodeIndices` → `nodeIndex`).
+fn singular_name(name: &str) -> Option<String> {
+    let split = name
+        .char_indices()
+        .rev()
+        .find(|(_, c)| c.is_ascii_uppercase())
+        .map_or(0, |(i, _)| i);
+    let (head, word) = name.split_at(split);
+    let lower = word.to_ascii_lowercase();
+    let singular = match lower.as_str() {
+        "children" => "child".to_string(),
+        "people" => "person".to_string(),
+        "indices" => "index".to_string(),
+        "vertices" => "vertex".to_string(),
+        "matrices" => "matrix".to_string(),
+        "caches" => "cache".to_string(),
+        "leaves" => "leaf".to_string(),
+        "halves" => "half".to_string(),
+        "lives" => "life".to_string(),
+        "aliases" => "alias".to_string(),
+        "movies" => "movie".to_string(),
+        "cookies" => "cookie".to_string(),
+        // Ambiguous or not a plural.
+        "axes" | "series" | "species" | "news" | "analyses" => return None,
+        w if w.ends_with("uses") || w.ends_with("oes") => return None,
+        w if w.ends_with("ies") && w.len() > 4 => format!("{}y", &w[..w.len() - 3]),
+        w if ["ches", "shes", "xes", "sses", "zzes"]
+            .iter()
+            .any(|suffix| w.ends_with(suffix)) =>
+        {
+            w[..w.len() - 2].to_string()
+        }
+        w if w.ends_with('s') && !w.ends_with("ss") && !w.ends_with("us") && !w.ends_with("is") => {
+            w[..w.len() - 1].to_string()
+        }
+        _ => return None,
+    };
+    // Restore the word's leading capital (`SheetNames` → `SheetName`).
+    let singular = if word.starts_with(|c: char| c.is_ascii_uppercase()) {
+        let mut chars = singular.chars();
+        chars
+            .next()
+            .map(|c| c.to_ascii_uppercase().to_string() + chars.as_str())?
+    } else {
+        singular
+    };
+    let result = format!("{head}{singular}");
+    (!is_likely_generated_alias(&result)
+        && !looks_mangled(&result)
+        && is_valid_js_ident(&result)
+        && !is_reserved_binding_name(&result))
+    .then_some(result)
 }
 
 impl Visit for RoleCollector {
@@ -3285,13 +3576,18 @@ impl Visit for RoleCollector {
     }
 
     fn visit_catch_clause(&mut self, catch: &swc_core::ecma::ast::CatchClause) {
-        let Some(bid) = catch.param.as_ref().and_then(Self::short_param) else {
-            catch.visit_children_with(self);
-            return;
-        };
-        self.enter(vec![(bid, "error", true)]);
-        catch.visit_children_with(self);
-        self.stack.pop();
+        let params = catch
+            .param
+            .as_ref()
+            .and_then(Self::short_param)
+            .map(|binding| {
+                let mut param = RoleParam::new(binding, "error");
+                param.require_read = true;
+                param
+            })
+            .into_iter()
+            .collect();
+        self.with_scope(params, |this| catch.visit_children_with(this));
     }
 
     fn visit_new_expr(&mut self, new: &swc_core::ecma::ast::NewExpr) {
@@ -3300,12 +3596,7 @@ impl Visit for RoleCollector {
                 if first.spread.is_none()
                     && is_unresolved_ident(callee, "Promise", self.unresolved_mark) =>
             {
-                match first.expr.unwrap_parens() {
-                    Expr::Arrow(arrow) => Some(arrow.params.iter().collect::<Vec<_>>()),
-                    Expr::Fn(f) => Some(f.function.params.iter().map(|p| &p.pat).collect()),
-                    _ => None,
-                }
-                .map(|params| (params, first.expr.as_ref()))
+                Self::callback_params(&first.expr).map(|params| (params, first.expr.as_ref()))
             }
             _ => None,
         };
@@ -3313,22 +3604,62 @@ impl Visit for RoleCollector {
             new.visit_children_with(self);
             return;
         };
-        let roles: Vec<_> = params
+        let roles = params
             .iter()
             .zip(["resolve", "reject"])
-            .filter_map(|(pat, role)| Self::short_param(pat).map(|bid| (bid, role, false)))
+            .filter_map(|(pat, role)| Self::short_param(pat).map(|b| RoleParam::new(b, role)))
             .collect();
         new.callee.visit_with(self);
-        if roles.is_empty() {
-            executor.visit_with(self);
-        } else {
-            self.enter(roles);
-            executor.visit_with(self);
-            self.stack.pop();
-        }
+        self.with_scope(roles, |this| executor.visit_with(this));
         for arg in new.args.iter().flatten().skip(1) {
             arg.visit_with(self);
         }
+    }
+
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        let reduce = match (&call.callee, call.args.first()) {
+            (Callee::Expr(callee), Some(first)) if first.spread.is_none() => {
+                match callee.as_ref() {
+                    Expr::Member(MemberExpr {
+                        obj,
+                        prop: MemberProp::Ident(prop),
+                        ..
+                    }) if matches!(prop.sym.as_ref(), "reduce" | "reduceRight") => {
+                        Self::callback_params(&first.expr)
+                            .map(|params| (obj.as_ref(), params, first.expr.as_ref()))
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        let Some((receiver, params, callback)) = reduce else {
+            call.visit_children_with(self);
+            return;
+        };
+        let element = self.reduce_element_name(receiver);
+        let roles = params
+            .iter()
+            .zip(["acc", element.as_str(), "index"])
+            .enumerate()
+            .filter_map(|(position, (pat, role))| {
+                Self::short_param(pat).map(|b| {
+                    let mut param = RoleParam::new(b, role);
+                    param.forbid_writes = position != 0;
+                    param
+                })
+            })
+            .collect();
+        call.callee.visit_with(self);
+        self.with_scope(roles, |this| callback.visit_with(this));
+        for arg in call.args.iter().skip(1) {
+            arg.visit_with(self);
+        }
+    }
+
+    fn visit_for_stmt(&mut self, for_stmt: &ForStmt) {
+        let params = Self::loop_element_params(for_stmt);
+        self.with_scope(params, |this| for_stmt.visit_children_with(this));
     }
 }
 

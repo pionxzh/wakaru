@@ -136,9 +136,9 @@ export async function main() {
         var n;
         var r;
     });
-    const totalWords = summary.reduce((t, e)=>{
-        s = t;
-        n = e.wordCount;
+    const totalWords = summary.reduce((acc, item)=>{
+        s = acc;
+        n = item.wordCount;
         return s + n;
         var s;
         var n;

@@ -213,8 +213,8 @@ export function compose(...t_1) {
     if (t_1.length === 1) {
         return t_1[0];
     }
-    return t_1.reduce((e, t)=>function() {
-            return e(t(...arguments));
+    return t_1.reduce((acc, item)=>function() {
+            return acc(item(...arguments));
         });
 }
 export function applyMiddleware(...t) {

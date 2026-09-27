@@ -3045,6 +3045,124 @@ try { run(); } catch (e) { eval("report(e)"); }
     assert_eq_normalized(&apply(input), input);
 }
 
+#[test]
+fn role_renames_reduce_callback_parameters() {
+    let input = r#"
+const a = list.reduce((e, t, n) => e + t * n, 0);
+const b = Object.keys(map).reduce((e, t) => {
+    e[t] = 1;
+    return e;
+}, {});
+const c = state.orders.reduceRight(function (e, t) {
+    return e.concat(t.lines);
+}, []);
+const d = Object.keys(map).sort().reduce((e, t) => e + t, "");
+const f = Object.entries(map).reduce((e, t) => e + t[0], "");
+"#;
+    let expected = r#"
+const a = list.reduce((acc, item, index) => acc + item * index, 0);
+const b = Object.keys(map).reduce((acc, key) => {
+    acc[key] = 1;
+    return acc;
+}, {});
+const c = state.orders.reduceRight(function (acc, order) {
+    return acc.concat(order.lines);
+}, []);
+const d = Object.keys(map).sort().reduce((acc, key) => acc + key, "");
+const f = Object.entries(map).reduce((acc, entry) => acc + entry[0], "");
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn role_singularizes_only_unambiguous_plurals() {
+    let input = r#"
+a.entries.reduce((e, t) => e + t, 0);
+a.batches.reduce((e, t) => e + t, 0);
+a.nodeIndices.reduce((e, t) => e + t, 0);
+a.children.reduce((e, t) => e + t, 0);
+a.e_textures.reduce((e, t) => e + t, 0);
+a.statuses.reduce((e, t) => e + t, 0);
+a.axes.reduce((e, t) => e + t, 0);
+a.status.reduce((e, t) => e + t, 0);
+a.data.reduce((e, t) => e + t, 0);
+"#;
+    let expected = r#"
+a.entries.reduce((acc, entry) => acc + entry, 0);
+a.batches.reduce((acc, batch) => acc + batch, 0);
+a.nodeIndices.reduce((acc, nodeIndex) => acc + nodeIndex, 0);
+a.children.reduce((acc, child) => acc + child, 0);
+a.e_textures.reduce((acc, texture) => acc + texture, 0);
+a.statuses.reduce((acc, item) => acc + item, 0);
+a.axes.reduce((acc, item) => acc + item, 0);
+a.status.reduce((acc, item) => acc + item, 0);
+a.data.reduce((acc, item) => acc + item, 0);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn role_reduce_skips_taken_names_written_elements_and_capturing_nests() {
+    let input = r#"
+const a = list.reduce((e, t) => e + t + item, 0);
+const b = list.reduce((e, t) => {
+    t = t || 0;
+    return e + t;
+}, 0);
+const c = rows.reduce((e, t) => e + t.reduce((n, r) => n + r + e, 0), 0);
+"#;
+    let expected = r#"
+const a = list.reduce((acc, t) => acc + t + item, 0);
+const b = list.reduce((acc, t) => {
+    t = t || 0;
+    return acc + t;
+}, 0);
+const c = rows.reduce((acc, row) => acc + row.reduce((n, item) => n + item + acc, 0), 0);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn role_names_loop_element_after_the_array() {
+    let input = r#"
+for (let t = 0; t < e.rows.length; t++) {
+    const n = e.rows[t];
+    draw(n);
+}
+for (let t = 0, r = cells.length; t < r; t++) {
+    const n = cells[t];
+    paint(n, t);
+}
+for (let t = 0; t < arguments.length; t++) {
+    const n = arguments[t];
+    use(n);
+}
+for (let t = 0; t < items.length; t++) {
+    const n = items[t];
+    use(n, item);
+}
+"#;
+    let expected = r#"
+for (let t = 0; t < e.rows.length; t++) {
+    const row = e.rows[t];
+    draw(row);
+}
+for (let t = 0, r = cells.length; t < r; t++) {
+    const cell = cells[t];
+    paint(cell, t);
+}
+for (let t = 0; t < arguments.length; t++) {
+    const n = arguments[t];
+    use(n);
+}
+for (let t = 0; t < items.length; t++) {
+    const n = items[t];
+    use(n, item);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
 // ============================================================
 // SmartRenameSecondPass tests
 // ============================================================

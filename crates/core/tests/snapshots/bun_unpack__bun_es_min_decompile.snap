@@ -153,7 +153,7 @@ export async function main() {
             date: _(i.createdAt || new Date().toISOString()),
             wordCount: i.body ? i.body.split(" ").length : 0
         }));
-    let totalWords = summary.reduce((i, u)=>d(i, u.wordCount), 0);
+    let totalWords = summary.reduce((acc, item)=>d(acc, item.wordCount), 0);
     let avg = Math.round(x(totalWords, 1 / summary.length));
     p.info(`${summary.length} posts, avg ${avg} words`);
     let a = new m({
