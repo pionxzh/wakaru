@@ -216,11 +216,6 @@ body {
   background: var(--accent-hover);
 }
 
-.controls-switch:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
 .controls-switch:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: 2px;

@@ -90,7 +90,6 @@ export function App() {
   const [mappingEnabled, setMappingEnabled] = useState(
     INITIAL_SHARE_STATE?.mapping ?? false
   );
-  const formatterEnabled = formatter && !mappingEnabled;
   const [sourceMapJson, setSourceMapJson] = useState<string | undefined>();
   const [hoveredOutputLine, setHoveredOutputLine] = useState<number | null>(null);
   const [hoveredInputLine, setHoveredInputLine] = useState<number | null>(null);
@@ -110,7 +109,7 @@ export function App() {
   const latestInputRef = useRef({
     source: wakaruSource,
     level,
-    formatter: formatterEnabled,
+    formatter,
     vueSfc: vueSfcEnabled,
   });
   const shareStatusTimeoutRef = useRef<number | null>(null);
@@ -230,11 +229,11 @@ export function App() {
     latestInputRef.current = {
       source: wakaruSource,
       level,
-      formatter: formatterEnabled,
+      formatter,
       vueSfc: vueSfcEnabled,
     };
     inputVersionRef.current += 1;
-  }, [wakaruSource, level, formatterEnabled, vueSfcEnabled]);
+  }, [wakaruSource, level, formatter, vueSfcEnabled]);
 
   useEffect(() => {
     if (!wasmReady) return;
@@ -243,7 +242,7 @@ export function App() {
       void runDecompile();
     }, autoRunDelayRef.current);
     return () => window.clearTimeout(timeoutId);
-  }, [wakaruSource, level, formatterEnabled, vueSfcEnabled, wasmReady, runDecompile]);
+  }, [wakaruSource, level, formatter, vueSfcEnabled, wasmReady, runDecompile]);
 
   useEffect(() => {
     if (!isLoading) {
@@ -276,7 +275,7 @@ export function App() {
         mode,
         producer,
         level,
-        formatter: formatterEnabled,
+        formatter,
         mapping: mappingEnabled,
         vueSfc: vueSfcEnabled,
         version: VERSION_LABEL,
@@ -297,7 +296,7 @@ export function App() {
     } catch {
       showShareStatus("URL updated");
     }
-  }, [decompileSource, formatterEnabled, level, mappingEnabled, mode, producer, roundTripSource, showShareStatus, vueSfcEnabled]);
+  }, [decompileSource, formatter, level, mappingEnabled, mode, producer, roundTripSource, showShareStatus, vueSfcEnabled]);
 
   const handleVueSfcChange = useCallback((enabled: boolean) => {
     setVueSfcEnabled(enabled);
@@ -517,8 +516,7 @@ export function App() {
         mode={mode}
         producer={producer}
         level={level}
-        formatter={formatterEnabled}
-        formatterDisabled={mappingEnabled}
+        formatter={formatter}
         mapping={mappingEnabled}
         vueSfc={vueSfcEnabled}
         onModeChange={setMode}

@@ -23,7 +23,6 @@ interface ControlsProps {
   producer: Producer;
   level: Level;
   formatter: boolean;
-  formatterDisabled: boolean;
   mapping: boolean;
   vueSfc: boolean;
   onModeChange: (mode: PlaygroundMode) => void;
@@ -46,7 +45,6 @@ export function Controls({
   producer,
   level,
   formatter,
-  formatterDisabled,
   mapping,
   vueSfc,
   onModeChange,
@@ -141,7 +139,6 @@ export function Controls({
             type="button"
             role="switch"
             aria-checked={formatter}
-            disabled={formatterDisabled}
             onClick={() => onFormatterChange(!formatter)}
           >
             <span className="controls-switch-thumb" />
