@@ -1,4 +1,5 @@
 import { installNodeTool } from "./node-tool.mjs";
+import { parseExactSpec, releaseDateCutoff, RESOLUTION_WINDOW_DAYS } from "./release-date.mjs";
 import { runNodeBatch } from "./tool-process.mjs";
 import { createHash } from "node:crypto";
 import {
@@ -739,16 +740,13 @@ export function ensureNodeTool(name, packages) {
   if (refresh) {
     refreshedNodeTools.add(dir);
   }
-  const specs = packages.map((spec) => {
-    const parsed = parseExactSpec(spec);
-    if (!parsed) throw new Error(`repro tool ${name}: ${spec} is not an exact version`);
-    return parsed;
-  });
+  const inexact = packages.find((spec) => !parseExactSpec(spec));
+  if (inexact) throw new Error(`repro tool ${name}: ${inexact} is not an exact version`);
   const markerText = packages.join("\n") + `\nresolved: ${RESOLUTION_WINDOW_DAYS} day(s) after newest publish`;
   return installNodeTool(dir, markerText, (staging) => {
     writeFileSync(join(staging, "package.json"), JSON.stringify({ private: true, type: "commonjs" }, null, 2));
-    const before = ["--before", resolutionCutoff(specs.map(publishTime))];
-    runCommandScript("npm", ["install", "--silent", "--no-audit", "--no-fund", ...before, ...packages], { cwd: staging });
+    const cutoff = releaseDateCutoff(packages, (pkg) => runCommandScript("npm", ["view", pkg, "time", "--json"]));
+    runCommandScript("npm", ["install", "--silent", "--no-audit", "--no-fund", "--before", cutoff, ...packages], { cwd: staging });
   }, { refresh });
 }
 
@@ -762,33 +760,6 @@ export function ensureSwcTool() {
 
 export function ensureTerserTool() {
   return ensureNodeTool(`terser-${TERSER_VERSION}`, [`terser@${TERSER_VERSION}`]);
-}
-
-// A pinned version still pulls every dependency through `^` ranges, so npm
-// installs the newest compatible release of each: a pinned `@babel/core` or
-// `@babel/preset-env` then lowers with the latest plugins and helper bodies,
-// a combination no project that installed the pinned release ever ran. Every
-// spec must be an exact version, and the tree resolves as of a cutoff after
-// the newest spec's publish time instead. The window admits same-day patch
-// releases, such as `@babel/runtime@7.12.18`, published an hour after
-// 7.12.17 to fix exports that break under Node 17+.
-const RESOLUTION_WINDOW_DAYS = 1;
-
-export function parseExactSpec(spec) {
-  const match = /^((?:@[^/@]+\/)?[^/@]+)@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/.exec(spec);
-  return match ? { name: match[1], version: match[2] } : null;
-}
-
-export function resolutionCutoff(publishTimes) {
-  const newest = Math.max(...publishTimes.map((time) => Date.parse(time)));
-  return new Date(newest + RESOLUTION_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
-}
-
-function publishTime({ name, version }) {
-  const times = JSON.parse(runCommandScript("npm", ["view", name, "time", "--json"]));
-  const time = times[version];
-  if (!time) throw new Error(`npm has no publish time for ${name}@${version}`);
-  return time;
 }
 
 export function ensureLockedNodeTool(name, manifestDir) {

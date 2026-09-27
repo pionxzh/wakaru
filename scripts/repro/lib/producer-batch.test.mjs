@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { babelPresetEnvBatch, ensureNodeTool, parseExactSpec, resolutionCutoff, swcBatch } from "./runner.mjs";
+import { babelPresetEnvBatch, ensureNodeTool, swcBatch } from "./runner.mjs";
 
 test("concurrent SWC minifier profiles retain their external-helper setting", async () => {
   const source = "export async function load(value) { return await value; }";
@@ -18,25 +18,8 @@ test("concurrent SWC minifier profiles retain their external-helper setting", as
   }
 });
 
-test("exact package specs parse; ranges and tags do not", () => {
-  assert.deepEqual(parseExactSpec("@babel/core@7.12.17"), { name: "@babel/core", version: "7.12.17" });
-  assert.deepEqual(parseExactSpec("@babel/core@8.0.0-rc.5"), { name: "@babel/core", version: "8.0.0-rc.5" });
-  assert.deepEqual(parseExactSpec("typescript@5.9.3"), { name: "typescript", version: "5.9.3" });
-  assert.equal(parseExactSpec("@swc/core@1"), null);
-  assert.equal(parseExactSpec("terser@^5.31.0"), null);
-  assert.equal(parseExactSpec("rollup@latest"), null);
-  assert.equal(parseExactSpec("typescript"), null);
-});
-
 test("repro tools reject a version range before installing", () => {
   assert.throws(() => ensureNodeTool("range-probe", ["terser@5"]), /terser@5 is not an exact version/);
-});
-
-test("the resolution cutoff is one day after the newest publish time", () => {
-  assert.equal(
-    resolutionCutoff(["2021-02-18T15:13:13.075Z", "2021-02-18T15:13:48.386Z"]),
-    "2021-02-19T15:13:48.386Z",
-  );
 });
 
 test("a pinned Babel release lowers with its own plugins and helper bodies", async () => {
