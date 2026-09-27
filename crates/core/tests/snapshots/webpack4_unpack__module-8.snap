@@ -371,11 +371,11 @@ export function createBrowserHistory(e = {}) {
             C.confirmTransitionTo(o, "PUSH", getUserConfirmation, (e)=>{
                 if (e) {
                     const r = L(o);
-                    const { key: i, state: a } = o;
+                    const { key, state } = o;
                     if (n) {
                         window_history.pushState({
-                            key: i,
-                            state: a
+                            key,
+                            state
                         }, null, r);
                         if (forceRefresh) {
                             window.location.href = r;
@@ -400,11 +400,11 @@ export function createBrowserHistory(e = {}) {
             C.confirmTransitionTo(o, "REPLACE", getUserConfirmation, (e)=>{
                 if (e) {
                     const r = L(o);
-                    const { key: i, state: a } = o;
+                    const { key, state } = o;
                     if (n) {
                         window_history.replaceState({
-                            key: i,
-                            state: a
+                            key,
+                            state
                         }, null, r);
                         if (forceRefresh) {
                             window.location.replace(r);

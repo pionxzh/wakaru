@@ -5,11 +5,13 @@ use std::rc::Rc;
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrayPat, ArrowExpr, ArrowFunctionBody, AssignPatProp, CallExpr, Callee, ClassDecl, ClassExpr,
-    Decl, Expr, FnDecl, FnExpr, Function, GetterProp, Ident, ImportDecl, ImportSpecifier, JSXAttr,
-    JSXAttrName, JSXAttrOrSpread, JSXAttrValue, JSXElementName, JSXExpr, JSXExprContainer,
-    JSXMemberExpr, JSXObject, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleDecl,
-    ModuleItem, ObjectPat, ObjectPatProp, Param, Pat, Prop, PropName, Stmt, VarDecl, VarDeclKind,
+    ArrayPat, ArrowExpr, ArrowFunctionBody, AssignPatProp, BlockStmt, CallExpr, Callee, Class,
+    ClassDecl, ClassExpr, Decl, Expr, FnDecl, FnExpr, ForHead, ForInStmt, ForOfStmt, ForStmt,
+    Function, GetterProp, Ident, ImportDecl, ImportSpecifier, JSXAttr, JSXAttrName,
+    JSXAttrOrSpread, JSXAttrValue, JSXElementName, JSXExpr, JSXExprContainer, JSXMemberExpr,
+    JSXObject, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem,
+    ObjectPat, ObjectPatProp, Param, Pat, Prop, PropName, Stmt, SwitchStmt, VarDecl, VarDeclKind,
+    VarDeclOrExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -645,15 +647,179 @@ fn has_destructuring_candidates_in_params(params: &[Param]) -> bool {
     params.iter().any(|p| has_short_obj_pat_alias(&p.pat))
 }
 
+/// Whether any declaration in `stmts` — at the top level, in a nested block,
+/// or in a `for` head — has a short destructuring alias. Nested functions
+/// and classes are skipped; their own visit handles them.
 fn has_destructuring_candidates_in_stmts(stmts: &[Stmt]) -> bool {
-    stmts.iter().any(|stmt| {
-        let Stmt::Decl(Decl::Var(var)) = stmt else {
-            return false;
-        };
-        var.decls
+    let mut finder = ObjPatAliasFinder::default();
+    stmts.visit_with(&mut finder);
+    finder.found
+}
+
+#[derive(Default)]
+struct ObjPatAliasFinder {
+    found: bool,
+}
+
+impl Visit for ObjPatAliasFinder {
+    fn visit_function(&mut self, _: &Function) {}
+    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+    fn visit_class(&mut self, _: &Class) {}
+
+    fn visit_var_decl(&mut self, var: &VarDecl) {
+        if var
+            .decls
             .iter()
             .any(|decl| has_short_obj_pat_alias(&decl.name))
+        {
+            self.found = true;
+        }
+    }
+}
+
+fn direct_var_decls(stmts: &[Stmt]) -> impl Iterator<Item = &VarDecl> {
+    stmts.iter().filter_map(|stmt| match stmt {
+        Stmt::Decl(Decl::Var(var)) => Some(&**var),
+        _ => None,
     })
+}
+
+/// Collects destructuring renames for declarations below the top level of a
+/// function or module body: nested blocks (`if`/loop/`try`/`switch` bodies)
+/// and `for` heads. The caller handles top-level declarations first and
+/// passes their renames in; nested functions and classes are skipped.
+///
+/// A block-scoped binding can only capture names used inside its own scope,
+/// so its conflict set is the names in that scope plus every new name visible
+/// there: the caller's renames, enclosing scopes' renames, and nested `var`
+/// renames. Disjoint blocks can therefore reuse the same name. A nested `var`
+/// is function-scoped and checks the function-wide set instead. Every chosen
+/// name joins the function-wide set, so a later `var` avoids it too.
+struct NestedObjPatRenameCollector<'a> {
+    function_names: &'a mut HashSet<Atom>,
+    renames: &'a mut Vec<BindingRename>,
+    /// New names visible in the current scope; truncated on scope exit.
+    visible: Vec<Atom>,
+    /// New names of nested `var` renames; visible everywhere.
+    var_names: Vec<Atom>,
+}
+
+impl<'a> NestedObjPatRenameCollector<'a> {
+    fn new(function_names: &'a mut HashSet<Atom>, renames: &'a mut Vec<BindingRename>) -> Self {
+        for rename in renames.iter() {
+            function_names.insert(rename.new.clone());
+        }
+        let visible = renames.iter().map(|rename| rename.new.clone()).collect();
+        Self {
+            function_names,
+            renames,
+            visible,
+            var_names: Vec::new(),
+        }
+    }
+
+    fn collect_scope<'d>(
+        &mut self,
+        decls: impl Iterator<Item = &'d VarDecl>,
+        scope_names: impl FnOnce() -> HashSet<Atom>,
+    ) {
+        let mut block_scoped = Vec::new();
+        for var in decls {
+            if !var
+                .decls
+                .iter()
+                .any(|decl| has_short_obj_pat_alias(&decl.name))
+            {
+                continue;
+            }
+            if var.kind != VarDeclKind::Var {
+                block_scoped.push(var);
+                continue;
+            }
+            let start = self.renames.len();
+            for decl in &var.decls {
+                collect_obj_pat_renames_from_pat(&decl.name, self.renames, self.function_names);
+            }
+            self.var_names.extend(
+                self.renames[start..]
+                    .iter()
+                    .map(|rename| rename.new.clone()),
+            );
+        }
+        if block_scoped.is_empty() {
+            return;
+        }
+        let mut used = scope_names();
+        used.extend(self.visible.iter().cloned());
+        used.extend(self.var_names.iter().cloned());
+        let start = self.renames.len();
+        for var in block_scoped {
+            for decl in &var.decls {
+                collect_obj_pat_renames_from_pat(&decl.name, self.renames, &mut used);
+            }
+        }
+        for rename in &self.renames[start..] {
+            self.function_names.insert(rename.new.clone());
+            self.visible.push(rename.new.clone());
+        }
+    }
+}
+
+fn names_in<N: VisitWith<NameCollector> + ?Sized>(node: &N) -> HashSet<Atom> {
+    let mut collector = NameCollector::default();
+    node.visit_with(&mut collector);
+    collector.names
+}
+
+impl Visit for NestedObjPatRenameCollector<'_> {
+    fn visit_function(&mut self, _: &Function) {}
+    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+    fn visit_class(&mut self, _: &Class) {}
+
+    fn visit_block_stmt(&mut self, block: &BlockStmt) {
+        let mark = self.visible.len();
+        self.collect_scope(direct_var_decls(&block.stmts), || names_in(block));
+        block.visit_children_with(self);
+        self.visible.truncate(mark);
+    }
+
+    fn visit_switch_stmt(&mut self, switch: &SwitchStmt) {
+        let mark = self.visible.len();
+        let decls = switch
+            .cases
+            .iter()
+            .flat_map(|case| direct_var_decls(&case.cons));
+        self.collect_scope(decls, || names_in(switch));
+        switch.visit_children_with(self);
+        self.visible.truncate(mark);
+    }
+
+    fn visit_for_stmt(&mut self, for_stmt: &ForStmt) {
+        let mark = self.visible.len();
+        if let Some(VarDeclOrExpr::VarDecl(var)) = &for_stmt.init {
+            self.collect_scope(std::iter::once(&**var), || names_in(for_stmt));
+        }
+        for_stmt.visit_children_with(self);
+        self.visible.truncate(mark);
+    }
+
+    fn visit_for_of_stmt(&mut self, for_of: &ForOfStmt) {
+        let mark = self.visible.len();
+        if let ForHead::VarDecl(var) = &for_of.left {
+            self.collect_scope(std::iter::once(&**var), || names_in(for_of));
+        }
+        for_of.visit_children_with(self);
+        self.visible.truncate(mark);
+    }
+
+    fn visit_for_in_stmt(&mut self, for_in: &ForInStmt) {
+        let mark = self.visible.len();
+        if let ForHead::VarDecl(var) = &for_in.left {
+            self.collect_scope(std::iter::once(&**var), || names_in(for_in));
+        }
+        for_in.visit_children_with(self);
+        self.visible.truncate(mark);
+    }
 }
 
 fn destructuring_rename_function(func: &mut Function) {
@@ -677,6 +843,10 @@ fn destructuring_rename_function(func: &mut Function) {
     }
     let body_renames = collect_obj_pat_renames_from_stmts(&body.stmts, &all_names);
     renames.extend(body_renames);
+    body.stmts.visit_with(&mut NestedObjPatRenameCollector::new(
+        &mut all_names,
+        &mut renames,
+    ));
 
     if renames.is_empty() {
         return;
@@ -701,11 +871,14 @@ fn destructuring_rename_module_with(
 ) {
     let mut renames = collect_obj_pat_renames_from_module(&module.body, all_names);
     renames.retain(|rename| !exported_bindings.contains(&rename.old));
+    module
+        .body
+        .visit_with(&mut NestedObjPatRenameCollector::new(
+            all_names,
+            &mut renames,
+        ));
     if renames.is_empty() {
         return;
-    }
-    for r in &renames {
-        all_names.insert(r.new.clone());
     }
     rename_bindings_in_module(module, &renames);
     let mut shorthand = ObjectPatShorthandConverter;
@@ -739,6 +912,10 @@ fn destructuring_rename_arrow(arrow: &mut ArrowExpr) {
     }
     if let ArrowFunctionBody::FunctionBody(b) = arrow.body.as_ref() {
         renames.extend(collect_obj_pat_renames_from_stmts(&b.stmts, &all_names));
+        b.stmts.visit_with(&mut NestedObjPatRenameCollector::new(
+            &mut all_names,
+            &mut renames,
+        ));
     }
     if renames.is_empty() {
         return;

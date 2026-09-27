@@ -45,7 +45,7 @@ if (typeof window === "undefined" || typeof MessageChannel !== "function") {
     a = ()=>false;
     u = unstable_forceFrameRate = function() {};
 } else {
-    const { performance: d, Date: p, setTimeout: h, clearTimeout: m } = window;
+    const { performance, Date, setTimeout, clearTimeout } = window;
     if (typeof console !== "undefined") {
         const y = window.cancelAnimationFrame;
         if (typeof window.requestAnimationFrame !== "function") {
@@ -55,14 +55,14 @@ if (typeof window === "undefined" || typeof MessageChannel !== "function") {
             console.error("This browser doesn't support cancelAnimationFrame. Make sure that you load a polyfill in older browsers. https://fb.me/react-polyfills");
         }
     }
-    if (typeof d === "object" && typeof d.now === "function") {
+    if (typeof performance === "object" && typeof performance.now === "function") {
         unstable_now = function() {
-            return d.now();
+            return performance.now();
         };
     } else {
-        const v = p.now();
+        const v = Date.now();
         unstable_now = function() {
-            return p.now() - v;
+            return Date.now() - v;
         };
     }
     let b = false;
@@ -108,12 +108,12 @@ if (typeof window === "undefined" || typeof MessageChannel !== "function") {
         }
     };
     o = (e, n)=>{
-        w = h(()=>{
+        w = setTimeout(()=>{
             e(unstable_now());
         }, n);
     };
     i = ()=>{
-        m(w);
+        clearTimeout(w);
         w = -1;
     };
 }

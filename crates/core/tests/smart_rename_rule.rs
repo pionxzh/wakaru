@@ -616,6 +616,246 @@ class Foo {
 }
 
 #[test]
+fn object_destructuring_in_nested_blocks() {
+    let input = r#"
+function f(r, t) {
+    if (r) {
+        const { foo: o } = r;
+        use(o);
+    }
+    for (;;) {
+        let { bar: b } = t;
+        use(b);
+    }
+    try {
+        const { baz: z } = r;
+        use(z);
+    } catch (err) {
+        const { qux: q } = err;
+        use(q);
+    }
+    switch (t) {
+        case 1:
+            const { quux: x } = t;
+            use(x);
+    }
+}
+"#;
+    let expected = r#"
+function f(r, t) {
+    if (r) {
+        const { foo } = r;
+        use(foo);
+    }
+    for (;;) {
+        let { bar } = t;
+        use(bar);
+    }
+    try {
+        const { baz } = r;
+        use(baz);
+    } catch (err) {
+        const { qux } = err;
+        use(qux);
+    }
+    switch (t) {
+        case 1:
+            const { quux } = t;
+            use(quux);
+    }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn object_destructuring_in_for_heads() {
+    let input = r#"
+function f(items, obj) {
+    for (const { id: i, name: n } of items) {
+        use(i, n);
+    }
+    for (let { length: l } = obj; l > 0; l--) {
+        use(l);
+    }
+}
+"#;
+    let expected = r#"
+function f(items, obj) {
+    for (const { id, name } of items) {
+        use(id, name);
+    }
+    for (let { length } = obj; length > 0; length--) {
+        use(length);
+    }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn object_destructuring_in_arrow_nested_block() {
+    let input = r#"
+const f = (r) => {
+    if (r) {
+        const { foo: o } = r;
+        return o;
+    }
+};
+"#;
+    let expected = r#"
+const f = (r) => {
+    if (r) {
+        const { foo } = r;
+        return foo;
+    }
+};
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn object_destructuring_in_module_level_block() {
+    let input = r#"
+if (cond) {
+    const { foo: o } = obj;
+    use(o);
+}
+"#;
+    let expected = r#"
+if (cond) {
+    const { foo } = obj;
+    use(foo);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn object_destructuring_sibling_blocks_reuse_the_same_name() {
+    // Block-scoped bindings in disjoint blocks cannot capture each other.
+    let input = r#"
+function f(a, b) {
+    if (a) {
+        const { foo: o } = a;
+        use(o);
+    } else {
+        const { foo: i } = b;
+        use(i);
+    }
+}
+"#;
+    let expected = r#"
+function f(a, b) {
+    if (a) {
+        const { foo } = a;
+        use(foo);
+    } else {
+        const { foo } = b;
+        use(foo);
+    }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn object_destructuring_in_block_does_not_capture_outer_reference() {
+    let input = r#"
+function f(r, foo) {
+    if (r) {
+        const { foo: o } = r;
+        use(o, foo);
+    }
+}
+"#;
+    let expected = r#"
+function f(r, foo) {
+    if (r) {
+        const { foo: foo_1 } = r;
+        use(foo_1, foo);
+    }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn object_destructuring_in_inner_block_does_not_shadow_outer_block_rename() {
+    let input = r#"
+function f(a, b) {
+    if (a) {
+        const { foo: o } = a;
+        if (b) {
+            const { foo: i } = b;
+            use(o, i);
+        }
+    }
+}
+"#;
+    let expected = r#"
+function f(a, b) {
+    if (a) {
+        const { foo } = a;
+        if (b) {
+            const { foo: foo_1 } = b;
+            use(foo, foo_1);
+        }
+    }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn object_destructuring_in_block_does_not_shadow_nested_var_rename() {
+    // `var` in a nested block is function-scoped: its new name is visible in
+    // every block, so a block-scoped rename that sees a reference to it must
+    // not take the same name, in either source order.
+    let input = r#"
+function f(a, b) {
+    if (a) {
+        var { foo: o } = a;
+    }
+    if (b) {
+        const { foo: i } = b;
+        use(i, o);
+    }
+}
+function g(a, b) {
+    if (b) {
+        const { foo: i } = b;
+        use(i, o);
+    }
+    if (a) {
+        var { foo: o } = a;
+    }
+}
+"#;
+    let expected = r#"
+function f(a, b) {
+    if (a) {
+        var { foo } = a;
+    }
+    if (b) {
+        const { foo: foo_1 } = b;
+        use(foo_1, foo);
+    }
+}
+function g(a, b) {
+    if (b) {
+        const { foo } = b;
+        use(foo, foo_1);
+    }
+    if (a) {
+        var { foo: foo_1 } = a;
+    }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
 fn member_init_rename_basic() {
     // var w = zw.NOT_APPLICABLE → rename w to zw_NOT_APPLICABLE
     let input = r#"

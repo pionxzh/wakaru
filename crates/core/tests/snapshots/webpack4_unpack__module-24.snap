@@ -66,11 +66,11 @@ export class Link extends Component {
                 e.preventDefault();
                 const t = r.context.router.history;
                 const n = r.props;
-                const { replace: o, to: i } = n;
-                if (o) {
-                    t.replace(i);
+                const { replace, to } = n;
+                if (replace) {
+                    t.replace(to);
                 } else {
-                    t.push(i);
+                    t.push(to);
                 }
             }
         };
@@ -533,8 +533,8 @@ export class Switch extends Component {
         Children.forEach(children, (t)=>{
             if (r == null && isValidElement(t)) {
                 const i = t.props;
-                const { path: u, exact, strict, sensitive, from: f } = i;
-                const d = u || f;
+                const { path, exact, strict, sensitive, from } = i;
+                const d = path || from;
                 o = t;
                 r = a(n.pathname, {
                     path: d,

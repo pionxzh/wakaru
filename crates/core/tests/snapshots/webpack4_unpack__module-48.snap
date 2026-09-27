@@ -507,15 +507,15 @@ function ge(e) {
             const n = Object.getOwnPropertyDescriptor(e.constructor.prototype, t);
             let r = `${e[t]}`;
             if (!e.hasOwnProperty(t) && n !== undefined && typeof n.get === "function" && typeof n.set === "function") {
-                const { get: o, set: i } = n;
+                const { get, set } = n;
                 Object.defineProperty(e, t, {
                     configurable: true,
                     get () {
-                        return o.call(this);
+                        return get.call(this);
                     },
                     set (e) {
                         r = `${e}`;
-                        i.call(this, e);
+                        set.call(this, e);
                     }
                 });
                 Object.defineProperty(e, t, {
@@ -1012,14 +1012,14 @@ function rt(e, t, n) {
 let ot = null;
 function it(e) {
     if (e) {
-        const { _dispatchListeners: t, _dispatchInstances: n } = e;
-        if (Array.isArray(t)) {
-            for(let r = 0; r < t.length && !e.isPropagationStopped(); r++){
-                y(e, t[r], n[r]);
+        const { _dispatchListeners, _dispatchInstances } = e;
+        if (Array.isArray(_dispatchListeners)) {
+            for(let r = 0; r < _dispatchListeners.length && !e.isPropagationStopped(); r++){
+                y(e, _dispatchListeners[r], _dispatchInstances[r]);
             }
         } else {
-            if (t) {
-                y(e, t, n);
+            if (_dispatchListeners) {
+                y(e, _dispatchListeners, _dispatchInstances);
             }
         }
         e._dispatchListeners = null;
@@ -6048,8 +6048,8 @@ function ou(e, t) {
             return;
         case 1:
             if (256 & t.effectTag && e !== null) {
-                const { memoizedProps: n, memoizedState: r } = e;
-                t = (e = t.stateNode).getSnapshotBeforeUpdate(t.elementType === t.type ? n : Go(t.type, n), r);
+                const { memoizedProps, memoizedState } = e;
+                t = (e = t.stateNode).getSnapshotBeforeUpdate(t.elementType === t.type ? memoizedProps : Go(t.type, memoizedProps), memoizedState);
                 e.__reactInternalSnapshotBeforeUpdate = t;
             }
             return;
@@ -7204,8 +7204,8 @@ Add a <Suspense fallback=...> component higher in the tree to provide a loading 
                             break e;
                         case 1:
                             l = u;
-                            const { type: w, stateNode: E } = f;
-                            if ((64 & f.effectTag) == 0 && (typeof w.getDerivedStateFromError === "function" || E !== null && typeof E.componentDidCatch === "function" && (Ku === null || !Ku.has(E)))) {
+                            const { type, stateNode } = f;
+                            if ((64 & f.effectTag) == 0 && (typeof type.getDerivedStateFromError === "function" || stateNode !== null && typeof stateNode.componentDidCatch === "function" && (Ku === null || !Ku.has(stateNode)))) {
                                 f.effectTag |= 4096;
                                 f.expirationTime = t;
                                 fi(f, vu(f, l, t));
@@ -7274,12 +7274,12 @@ function gl(e) {
             if (Lu === 1 || Au.childExpirationTime !== 1) {
                 let n = 0;
                 for(let r = Au.child; r !== null;){
-                    const { expirationTime: o, childExpirationTime: i } = r;
-                    if (o > n) {
-                        n = o;
+                    const { expirationTime, childExpirationTime } = r;
+                    if (expirationTime > n) {
+                        n = expirationTime;
                     }
-                    if (i > n) {
-                        n = i;
+                    if (childExpirationTime > n) {
+                        n = childExpirationTime;
                     }
                     r = r.sibling;
                 }
