@@ -66,7 +66,7 @@ fn format_with_oxc(source: &str, filename: &str) -> Result<String, String> {
             .expect("constant line width should be valid"),
         ..oxc_formatter::JsFormatOptions::default()
     };
-    let formatted = oxc_formatter::format(&allocator, source, source_type, options, None)
+    let formatted = oxc_formatter::format(&allocator, source, source_type, options)
         .map_err(|err| format!("{err:?}"))?;
     formatted
         .print()
