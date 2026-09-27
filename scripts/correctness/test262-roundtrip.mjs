@@ -64,8 +64,8 @@ const supportedPipelines = new Set([
 const supportedLevels = new Set(["minimal", "standard", "aggressive"]);
 const terserPackages = [{ name: "terser", spec: "terser@5.31.6" }];
 const babelPackages = [
-  { name: "@babel/core", spec: "@babel/core@7.25.2" },
-  { name: "@babel/preset-env", spec: "@babel/preset-env@7.25.4" },
+  { name: "@babel/core", spec: "@babel/core@7.29.7" },
+  { name: "@babel/preset-env", spec: "@babel/preset-env@7.29.7" },
 ];
 const swcPackages = [{ name: "@swc/core", spec: "@swc/core@1.7.26" }];
 const esbuildPackages = [{ name: "esbuild", spec: "esbuild@0.23.1" }];
@@ -84,7 +84,7 @@ const producerDefinitions = {
     config: { compress: { passes: 2 }, mangle: { toplevel: true }, asciiOnly: true },
   },
   "babel-env-terser": {
-    version: "babel-7.25.2+preset-env-7.25.4+terser-5.31.6",
+    version: "babel-7.29.7+preset-env-7.29.7+terser-5.31.6",
     config: { babelTargets: { ie: "11" }, bugfixes: true, modules: false, terser: "light" },
   },
   "swc-minify": {

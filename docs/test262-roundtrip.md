@@ -279,8 +279,8 @@ pruning and reinstalling one producer while another matrix job starts.
 
 Each install uses `npm --before` set to one day after the newest pinned
 package's publish time (the shared rule in `scripts/repro/lib/release-date.mjs`).
-Without it, `@babel/core@7.25.2` ran with the newest 7.x helpers, plugins, and
-parser, so CI's fresh install could move the Babel baseline without any
+Without it, a pinned `@babel/core` ran with the newest 7.x helpers, plugins,
+and parser, so CI's fresh install could move the Babel baseline without any
 change in the repo. A root installed under another rule, or holding a package
 at a version other than its pin, is reinstalled.
 
