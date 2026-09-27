@@ -166,6 +166,28 @@ Review every snapshot diff before committing. A snapshot change is acceptable
 only when the output is semantically better or the test fixture expectation is
 intentionally changing.
 
+When a change should only rename bindings (a rename rule or naming heuristic),
+check that claim mechanically before reading the hunks.
+`wakaru debug normalize --rename` ([cli-debug.md](cli-debug.md#debug-normalize))
+alpha-renames local bindings deterministically and keeps free names, so two
+outputs that differ only in local names normalize to identical text. For
+reference outputs tracked in git, run it after regenerating them, while the
+working tree holds the new output and `HEAD` holds the reference:
+
+```bash
+W=path/to/wakaru   # the build under test
+git diff --name-only | while IFS= read -r f; do
+  old=$(git show "HEAD:$f" | "$W" debug normalize --rename -) &&
+  new=$("$W" debug normalize --rename "$f") &&
+  [ "$old" = "$new" ] || echo "not rename-only: $f"
+done
+```
+
+A file that fails to parse also prints, because `debug normalize` exits non-zero.
+Equivalence only rules out changes beyond names. Still read a sample to judge
+whether the new names are better; a rename can shadow a global such as `Date`
+without changing behavior.
+
 ## Sharing Verification Results
 
 Verification belongs to the tested source and environment, not to the person
