@@ -44,17 +44,17 @@ function i(e, t) {
             const partial = m != null && h != null && h !== m;
             const repeat = g === "+" || g === "*";
             const optional = g === "?" || g === "*";
-            const T = n[2] || l;
+            const delimiter = n[2] || l;
             const S = v || b;
             r.push({
                 name: y || i++,
                 prefix: m || "",
-                delimiter: T,
+                delimiter,
                 optional,
                 repeat,
                 partial,
                 asterisk: !!w,
-                pattern: S ? s(S) : w ? ".*" : `[^${c(T)}]+?`
+                pattern: S ? s(S) : w ? ".*" : `[^${c(delimiter)}]+?`
             });
         }
     }

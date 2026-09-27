@@ -40,13 +40,13 @@ export function createStore(e, t, n) {
             d = f.slice();
         }
     }
-    function m() {
+    function getState() {
         if (p) {
             throw new Error("You may not call store.getState() while the reducer is executing. The reducer has already received the state as an argument. Pass it down from the top reducer instead of reading it from the store.");
         }
         return s;
     }
-    function y(e) {
+    function subscribe(e) {
         if (typeof e !== "function") {
             throw new Error("Expected the listener to be a function.");
         }
@@ -94,8 +94,8 @@ export function createStore(e, t, n) {
     });
     return {
         dispatch: v,
-        subscribe: y,
-        getState: m,
+        subscribe,
+        getState,
         replaceReducer (e) {
             if (typeof e !== "function") {
                 throw new Error("Expected the nextReducer to be a function.");
@@ -106,7 +106,7 @@ export function createStore(e, t, n) {
             });
         },
         [a]: function() {
-            const t = y;
+            const t = subscribe;
             return {
                 subscribe (e) {
                     if ((e === undefined ? "undefined" : typeof e) !== "object" || e === null) {
@@ -114,7 +114,7 @@ export function createStore(e, t, n) {
                     }
                     function n() {
                         if (e.next) {
-                            e.next(m());
+                            e.next(getState());
                         }
                     }
                     n();

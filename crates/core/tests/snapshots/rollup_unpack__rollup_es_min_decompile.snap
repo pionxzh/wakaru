@@ -77,12 +77,12 @@ class c {
     }
     set(t, e) {
         const s = r.get(this);
-        const n = s[t];
+        const old = s[t];
         s[t] = e;
-        if (n !== e) {
+        if (old !== e) {
             this._notify(i, {
                 key: t,
-                old: n,
+                old,
                 value: e
             });
         }
@@ -123,11 +123,11 @@ function h(t) {
 const l = new n(s.INFO);
 export async function main() {
     l.info("Starting app");
-    const s = await (n = 1, h(`/users/${n}`));
+    const user = await (n = 1, h(`/users/${n}`));
     var n;
-    l.info(`User: ${t(s.name)}`);
+    l.info(`User: ${t(user.name)}`);
     let r;
-    const o = (await (r = s.id, h(`/users/${r}/posts`))).map((s)=>{
+    const summary = (await (r = user.id, h(`/users/${r}/posts`))).map((s)=>{
         return {
             title: (n = t(s.title), r = 50, n.length <= r ? n : `${n.slice(0, r - 3)}...`),
             date: e(s.createdAt || (new Date).toISOString()),
@@ -136,32 +136,32 @@ export async function main() {
         var n;
         var r;
     });
-    const a = o.reduce((t, e)=>{
+    const totalWords = summary.reduce((t, e)=>{
         s = t;
         n = e.wordCount;
         return s + n;
         var s;
         var n;
     }, 0);
-    const u = Math.round((f = a, g = 1 / o.length, f * g));
+    const avg = Math.round((f = totalWords, g = 1 / summary.length, f * g));
     var f;
     var g;
-    l.info(`${o.length} posts, avg ${u} words`);
+    l.info(`${summary.length} posts, avg ${avg} words`);
     const p = new c({
         count: 0,
-        user: s.name
+        user: user.name
     });
     p.subscribe((t, e)=>{
         if (t === i) {
             l.debug(`${e.key} = ${e.value}`);
         }
     });
-    p.set("count", a);
+    p.set("count", totalWords);
     return {
-        user: s,
-        summary: o,
-        totalWords: a,
-        avg: u
+        user,
+        summary,
+        totalWords,
+        avg
     };
 }
 main().then((t)=>console.log("Done:", t));

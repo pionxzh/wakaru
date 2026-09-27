@@ -118,12 +118,12 @@ class c {
         return this._data[t];
     }
     set(t, o) {
-        const e = this._data[t];
+        const old = this._data[t];
         this._data[t] = o;
-        if (e !== o) {
+        if (old !== o) {
             this._notify(v, {
                 key: t,
-                old: e,
+                old,
                 value: o
             });
         }
@@ -149,10 +149,10 @@ export async function main() {
         40,
         50
     ];
-    let o = t.reduce((n, r)=>a.add(n, r), 0);
-    let e = a.multiply(o, 1 / t.length);
-    let i = f(u("average value"), 10);
-    _.info(`${i}: ${e}`);
+    let total = t.reduce((n, r)=>a.add(n, r), 0);
+    let avg = a.multiply(total, 1 / t.length);
+    let label = f(u("average value"), 10);
+    _.info(`${label}: ${avg}`);
     let s = new g({
         count: 0
     });
@@ -161,10 +161,10 @@ export async function main() {
             _.info(`${r.key} = ${r.value}`);
         }
     });
-    s.set("count", o);
+    s.set("count", total);
     return {
-        total: o,
-        avg: e,
-        label: i
+        total,
+        avg,
+        label
     };
 }

@@ -5,13 +5,13 @@ expression: code
 import _r from "./module-14.js";
 const i = {};
 let _a = 0;
-export const a = function(e, t = {}, n) {
-    if (typeof t === "string") {
-        t = {
-            path: t
+export const a = function(e, path_1 = {}, n) {
+    if (typeof path_1 === "string") {
+        path_1 = {
+            path: path_1
         };
     }
-    const { path, exact = false, strict = false, sensitive = false } = t;
+    const { path, exact = false, strict = false, sensitive = false } = path_1;
     if (path == null) {
         return n;
     }
@@ -21,10 +21,10 @@ export const a = function(e, t = {}, n) {
         if (r[path_1]) {
             return r[path_1];
         }
-        const u = [];
+        const keys_1 = [];
         const l = {
-            re: _r(path_1, u, t),
-            keys: u
+            re: _r(path_1, keys_1, t),
+            keys: keys_1
         };
         if (_a < 10000) {
             r[path_1] = l;
@@ -43,14 +43,14 @@ export const a = function(e, t = {}, n) {
     }
     const b = v[0];
     const g = v.slice(1);
-    const w = e === b;
-    if (exact && !w) {
+    const isExact = e === b;
+    if (exact && !isExact) {
         return null;
     }
     return {
         path,
         url: path === "/" && b === "" ? "/" : b,
-        isExact: w,
+        isExact,
         params: keys.reduce((e, t, n)=>{
             e[t.name] = g[n];
             return e;

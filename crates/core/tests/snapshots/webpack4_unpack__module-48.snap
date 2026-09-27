@@ -562,12 +562,12 @@ function Ee(e, t) {
     });
 }
 function xe(e, t) {
-    let n = t.defaultValue ?? "";
+    let initialValue = t.defaultValue ?? "";
     const initialChecked = t.checked ?? t.defaultChecked;
-    n = ve(t.value ?? n);
+    initialValue = ve(t.value ?? initialValue);
     e._wrapperState = {
         initialChecked,
-        initialValue: n,
+        initialValue,
         controlled: t.type === "checkbox" || t.type === "radio" ? t.checked != null : t.value != null
     };
 }
@@ -1078,20 +1078,20 @@ function st(e) {
         ct.push(e);
     }
 }
-function ft(e, t, n, r) {
+function ft(topLevelType, nativeEvent, targetInst, eventSystemFlags) {
     if (ct.length) {
         const o = ct.pop();
-        o.topLevelType = e;
-        o.eventSystemFlags = r;
-        o.nativeEvent = t;
-        o.targetInst = n;
+        o.topLevelType = topLevelType;
+        o.eventSystemFlags = eventSystemFlags;
+        o.nativeEvent = nativeEvent;
+        o.targetInst = targetInst;
         return o;
     }
     return {
-        topLevelType: e,
-        eventSystemFlags: r,
-        nativeEvent: t,
-        targetInst: n,
+        topLevelType,
+        eventSystemFlags,
+        nativeEvent,
+        targetInst,
         ancestors: []
     };
 }
@@ -1118,7 +1118,7 @@ function dt(e) {
         if (!((e_targetInst = n.tag) !== 5 && e_targetInst !== 6)) {
             e.ancestors.push(n);
         }
-        n = Pn(r);
+        n = findFiberByHostInstance(r);
     }while (n)
     for(n = 0; n < e.ancestors.length; n++){
         e_targetInst = e.ancestors[n];
@@ -1226,7 +1226,7 @@ function _t(e, t, n, r, o, i) {
     return e;
 }
 function jt(e) {
-    let t = Pn(e.target);
+    let t = findFiberByHostInstance(e.target);
     if (t !== null) {
         const n = Je(t);
         if (n !== null) {
@@ -1392,24 +1392,24 @@ const zt = [
     "waiting",
     "waiting"
 ];
-function qt(e, t) {
+function qt(e, eventPriority) {
     for(let n = 0; n < e.length; n += 2){
         const r = e[n];
         const o = e[n + 1];
-        let i = `on${o[0].toUpperCase() + o.slice(1)}`;
-        i = {
+        let bubbled = `on${o[0].toUpperCase() + o.slice(1)}`;
+        bubbled = {
             phasedRegistrationNames: {
-                bubbled: i,
-                captured: `${i}Capture`
+                bubbled,
+                captured: `${bubbled}Capture`
             },
             dependencies: [
                 r
             ],
-            eventPriority: t
+            eventPriority
         };
-        Ft.set(r, t);
-        Dt.set(r, i);
-        It[o] = i;
+        Ft.set(r, eventPriority);
+        Dt.set(r, bubbled);
+        It[o] = bubbled;
     }
 }
 qt("blur blur cancel cancel click click close close contextmenu contextMenu copy copy cut cut auxclick auxClick dblclick doubleClick dragend dragEnd dragstart dragStart drop drop focus focus input input invalid invalid keydown keyDown keypress keyPress keyup keyUp mousedown mouseDown mouseup mouseUp paste paste pause pause play play pointercancel pointerCancel pointerdown pointerDown pointerup pointerUp ratechange rateChange reset reset seeked seeked submit submit touchcancel touchCancel touchend touchEnd touchstart touchStart volumechange volumeChange".split(" "), 0);
@@ -1504,7 +1504,7 @@ function Kt(e, t, n, r) {
     }
 }
 function Yt(e, t, n, r) {
-    if ((n = Pn(n = ut(r))) !== null) {
+    if ((n = findFiberByHostInstance(n = ut(r))) !== null) {
         const o = Je(n);
         if (o === null) {
             n = null;
@@ -1702,29 +1702,29 @@ function ln(e) {
 }
 function cn(e, t) {
     let n;
-    let r = ln(e);
-    for(e = 0; r;){
-        if (r.nodeType === 3) {
-            n = e + r.textContent.length;
+    let node = ln(e);
+    for(e = 0; node;){
+        if (node.nodeType === 3) {
+            n = e + node.textContent.length;
             if (e <= t && n >= t) {
                 return {
-                    node: r,
+                    node,
                     offset: t - e
                 };
             }
             e = n;
         }
         e: {
-            while(r){
-                if (r.nextSibling) {
-                    r = r.nextSibling;
+            while(node){
+                if (node.nextSibling) {
+                    node = node.nextSibling;
                     break e;
                 }
-                r = r.parentNode;
+                node = node.parentNode;
             }
-            r = undefined;
+            node = undefined;
         }
-        r = ln(r);
+        node = ln(node);
     }
 }
 function sn() {
@@ -1798,7 +1798,7 @@ const Tn = Math.random().toString(36).slice(2);
 const Sn = `__reactInternalInstance\$${Tn}`;
 const On = `__reactEventHandlers\$${Tn}`;
 const Cn = `__reactContainere\$${Tn}`;
-function Pn(e) {
+function findFiberByHostInstance(e) {
     let t = e[Sn];
     if (t) {
         return t;
@@ -1934,7 +1934,7 @@ function Hn() {
 function Wn() {
     return true;
 }
-function $n() {
+function isPersistent() {
     return false;
 }
 function Bn(e, t, n, r) {
@@ -1944,8 +1944,8 @@ function Bn(e, t, n, r) {
     for(const o in e = this.constructor.Interface){
         e.hasOwnProperty(o) && ((t = e[o]) ? this[o] = t(n) : o === "target" ? this.target = r : this[o] = n[o]);
     }
-    this.isDefaultPrevented = n.defaultPrevented ?? n.returnValue === false ? Wn : $n;
-    this.isPropagationStopped = $n;
+    this.isDefaultPrevented = n.defaultPrevented ?? n.returnValue === false ? Wn : isPersistent;
+    this.isPropagationStopped = isPersistent;
     return this;
 }
 function Vn(e, t, n, r) {
@@ -1997,7 +1997,7 @@ o(Bn.prototype, {
     persist () {
         this.isPersistent = Wn;
     },
-    isPersistent: $n,
+    isPersistent,
     destructor () {
         let e;
         const Interface = this.constructor.Interface;
@@ -2005,7 +2005,7 @@ o(Bn.prototype, {
             this[e] = null;
         }
         this.nativeEvent = this._targetInst = this.dispatchConfig = null;
-        this.isPropagationStopped = this.isDefaultPrevented = $n;
+        this.isPropagationStopped = this.isDefaultPrevented = isPersistent;
         this._dispatchInstances = this._dispatchListeners = null;
     }
 });
@@ -2278,7 +2278,7 @@ function vr(e, t) {
         return t;
     }
 }
-let br = false;
+let _isInputEventSupported = false;
 function gr() {
     if (pr) {
         pr.detachEvent("onpropertychange", wr);
@@ -2327,17 +2327,17 @@ function Tr(e, t) {
     }
 }
 if (O) {
-    br = lt("input") && (!document.documentMode || document.documentMode > 9);
+    _isInputEventSupported = lt("input") && (!document.documentMode || document.documentMode > 9);
 }
 const ChangeEventPlugin = {
     eventTypes: fr,
-    _isInputEventSupported: br,
+    _isInputEventSupported,
     extractEvents (e, t, n, r) {
         const o = t ? jn(t) : window;
         let i = o.nodeName && o.nodeName.toLowerCase();
         if (i === "select" || i === "input" && o.type === "file") var a = vr;
         else if (sr(o)) {
-            if (br) {
+            if (_isInputEventSupported) {
                 a = Tr;
             } else {
                 a = xr;
@@ -2484,7 +2484,7 @@ const EnterLeaveEventPlugin = {
         i = r.window === r ? r : (i = r.ownerDocument) ? i.defaultView || i.parentWindow : window;
         if (a) {
             a = t;
-            if ((t = (t = n.relatedTarget || n.toElement) ? Pn(t) : null) !== null && (t !== Je(t) || t.tag !== 5 && t.tag !== 6)) {
+            if ((t = (t = n.relatedTarget || n.toElement) ? findFiberByHostInstance(t) : null) !== null && (t !== Je(t) || t.tag !== 5 && t.tag !== 6)) {
                 t = null;
             }
         } else {
@@ -3217,14 +3217,14 @@ function oi(e, t) {
         e.firstContext = null;
     }
 }
-function ii(e, t) {
-    if (ei !== e && t !== false && t !== 0) {
+function ii(context, t) {
+    if (ei !== context && t !== false && t !== 0) {
         if (!(typeof t === "number" && t !== 1073741823)) {
-            ei = e;
+            ei = context;
             t = 1073741823;
         }
         t = {
-            context: e,
+            context,
             observedBits: t,
             next: null
         };
@@ -3242,7 +3242,7 @@ function ii(e, t) {
             Zo = Zo.next = t;
         }
     }
-    return e._currentValue;
+    return context._currentValue;
 }
 let ai = false;
 function ui(e) {
@@ -3266,15 +3266,15 @@ function li(e, t) {
         };
     }
 }
-function ci(e, suspenseConfig) {
-    return (e = {
-        expirationTime: e,
+function ci(expirationTime, suspenseConfig) {
+    return (expirationTime = {
+        expirationTime,
         suspenseConfig,
         tag: 0,
         payload: null,
         callback: null,
         next: null
-    }).next = e;
+    }).next = expirationTime;
 }
 function si(e, t) {
     if ((e = e.updateQueue) !== null) {
@@ -4354,7 +4354,7 @@ function ea(e) {
         n_dispatch
     ];
 }
-function ta(e) {
+function useState(e) {
     const t = Gi();
     if (typeof e === "function") {
         e = e();
@@ -4371,29 +4371,29 @@ function ta(e) {
         e
     ];
 }
-function na(e, t, n, r) {
-    e = {
-        tag: e,
-        create: t,
-        destroy: n,
-        deps: r,
+function na(tag, create, destroy, deps) {
+    tag = {
+        tag,
+        create,
+        destroy,
+        deps,
         next: null
     };
-    if ((t = Wi.updateQueue) === null) {
-        t = {
+    if ((create = Wi.updateQueue) === null) {
+        create = {
             lastEffect: null
         };
-        Wi.updateQueue = t;
-        t.lastEffect = e.next = e;
-    } else if ((n = t.lastEffect) === null) {
-        t.lastEffect = e.next = e;
+        Wi.updateQueue = create;
+        create.lastEffect = tag.next = tag;
+    } else if ((destroy = create.lastEffect) === null) {
+        create.lastEffect = tag.next = tag;
     } else {
-        r = n.next;
-        n.next = e;
-        e.next = r;
-        t.lastEffect = e;
+        deps = destroy.next;
+        destroy.next = tag;
+        tag.next = deps;
+        create.lastEffect = tag;
     }
-    return e;
+    return tag;
 }
 function useRef() {
     return Xi().memoizedState;
@@ -4499,13 +4499,13 @@ function ma(e, t, n) {
         }
     });
 }
-function ya(e, t, n) {
+function ya(e, t, action) {
     let r = nl();
     let Y_ReactCurrentBatchConfig_suspense = Y_ReactCurrentBatchConfig.suspense;
     Y_ReactCurrentBatchConfig_suspense = {
         expirationTime: r = rl(r, e, Y_ReactCurrentBatchConfig_suspense),
         suspenseConfig: Y_ReactCurrentBatchConfig_suspense,
-        action: n,
+        action,
         eagerReducer: null,
         eagerState: null,
         next: null
@@ -4527,7 +4527,7 @@ function ya(e, t, n) {
         if (e.expirationTime === 0 && (t_pending === null || t_pending.expirationTime === 0) && (t_pending = t.lastRenderedReducer) !== null) {
             try {
                 const a = t.lastRenderedState;
-                const u = t_pending(a, n);
+                const u = t_pending(a, action);
                 Y_ReactCurrentBatchConfig_suspense.eagerReducer = t_pending;
                 Y_ReactCurrentBatchConfig_suspense.eagerState = u;
                 if (Fr(u, a)) {
@@ -4599,11 +4599,11 @@ var ba = {
         };
         return Gi().memoizedState = e;
     },
-    useState: ta,
+    useState,
     useDebugValue,
     useResponder,
     useDeferredValue (e, t) {
-        const n = ta(e);
+        const n = useState(e);
         const r = n[0];
         const o = n[1];
         aa(()=>{
@@ -4621,7 +4621,7 @@ var ba = {
         return r;
     },
     useTransition (e) {
-        let t = ta(false);
+        let t = useState(false);
         const n = t[0];
         t = t[1];
         return [
@@ -5172,28 +5172,28 @@ function Qa(e, t) {
     }
     ri(e.return, t);
 }
-function Ka(e, t, n, r, o, i) {
+function Ka(e, isBackwards, tail, last, tailMode, lastEffect) {
     const e_memoizedState = e.memoizedState;
     if (e_memoizedState === null) {
         e.memoizedState = {
-            isBackwards: t,
+            isBackwards,
             rendering: null,
             renderingStartTime: 0,
-            last: r,
-            tail: n,
+            last,
+            tail,
             tailExpiration: 0,
-            tailMode: o,
-            lastEffect: i
+            tailMode,
+            lastEffect
         };
     } else {
-        e_memoizedState.isBackwards = t;
+        e_memoizedState.isBackwards = isBackwards;
         e_memoizedState.rendering = null;
         e_memoizedState.renderingStartTime = 0;
-        e_memoizedState.last = r;
-        e_memoizedState.tail = n;
+        e_memoizedState.last = last;
+        e_memoizedState.tail = tail;
         e_memoizedState.tailExpiration = 0;
-        e_memoizedState.tailMode = o;
-        e_memoizedState.lastEffect = i;
+        e_memoizedState.tailMode = tailMode;
+        e_memoizedState.lastEffect = lastEffect;
     }
 }
 function Ya(e, t, n) {
@@ -5852,11 +5852,11 @@ function Za(e) {
             return null;
     }
 }
-function eu(value, t) {
+function eu(value, source) {
     return {
         value,
-        source: t,
-        stack: ye(t)
+        source,
+        stack: ye(source)
     };
 }
 Ua = (e, t)=>{
@@ -7371,49 +7371,49 @@ function El(e) {
             Nu |= Su;
             Y_ReactCurrentOwner_1.current = null;
             yn = Bt;
-            let u = sn();
-            if (fn(u)) {
-                if ("selectionStart" in u) var l = {
-                    start: u.selectionStart,
-                    end: u.selectionEnd
+            let focusedElem = sn();
+            if (fn(focusedElem)) {
+                if ("selectionStart" in focusedElem) var selectionRange = {
+                    start: focusedElem.selectionStart,
+                    end: focusedElem.selectionEnd
                 };
                 else {
                     e: {
-                        let c = (l = (l = u.ownerDocument) && l.defaultView || window).getSelection && l.getSelection();
+                        let c = (selectionRange = (selectionRange = focusedElem.ownerDocument) && selectionRange.defaultView || window).getSelection && selectionRange.getSelection();
                         if (c && c.rangeCount !== 0) {
-                            l = c.anchorNode;
+                            selectionRange = c.anchorNode;
                             var s = c.anchorOffset;
                             var f = c.focusNode;
                             c = c.focusOffset;
                             try {
-                                l.nodeType;
+                                selectionRange.nodeType;
                                 f.nodeType;
                             } catch (e) {
-                                l = null;
+                                selectionRange = null;
                                 break e;
                             }
                             let d = 0;
-                            let p = -1;
-                            let h = -1;
+                            let start = -1;
+                            let end = -1;
                             let m = 0;
                             let y = 0;
-                            let v = u;
+                            let v = focusedElem;
                             let b = null;
                             t: while(true){
                                 let g;
-                                while(v !== l || s !== 0 && v.nodeType !== 3 || (p = d + s), v !== f || c !== 0 && v.nodeType !== 3 || (h = d + c), v.nodeType === 3 && (d += v.nodeValue.length), (g = v.firstChild) !== null){
+                                while(v !== selectionRange || s !== 0 && v.nodeType !== 3 || (start = d + s), v !== f || c !== 0 && v.nodeType !== 3 || (end = d + c), v.nodeType === 3 && (d += v.nodeValue.length), (g = v.firstChild) !== null){
                                     b = v;
                                     v = g;
                                 }
                                 while(true){
-                                    if (v === u) {
+                                    if (v === focusedElem) {
                                         break t;
                                     }
-                                    if (b === l && ++m === s) {
-                                        p = d;
+                                    if (b === selectionRange && ++m === s) {
+                                        start = d;
                                     }
                                     if (b === f && ++y === c) {
-                                        h = d;
+                                        end = d;
                                     }
                                     if ((g = v.nextSibling) !== null) {
                                         break;
@@ -7422,26 +7422,26 @@ function El(e) {
                                 }
                                 v = g;
                             }
-                            l = -1 === p || -1 === h ? null : {
-                                start: p,
-                                end: h
+                            selectionRange = -1 === start || -1 === end ? null : {
+                                start,
+                                end
                             };
                         } else {
-                            l = null;
+                            selectionRange = null;
                         }
                     }
                 }
-                l = l || {
+                selectionRange = selectionRange || {
                     start: 0,
                     end: 0
                 };
             } else {
-                l = null;
+                selectionRange = null;
             }
             vn = {
                 activeElementDetached: null,
-                focusedElem: u,
-                selectionRange: l
+                focusedElem,
+                selectionRange
             };
             Bt = false;
             Bu = o;
@@ -7459,8 +7459,8 @@ function El(e) {
             Bu = o;
             do {
                 try {
-                    u = e;
-                    for(l = t; Bu !== null;){
+                    focusedElem = e;
+                    for(selectionRange = t; Bu !== null;){
                         var w = Bu.effectTag;
                         if (16 & w) {
                             ze(Bu.stateNode, "");
@@ -7468,8 +7468,8 @@ function El(e) {
                         if (128 & w) {
                             var E = Bu.alternate;
                             if (E !== null) {
-                                var x = E.ref;
-                                x !== null && (typeof x === "function" ? x(null) : x.current = null);
+                                var element = E.ref;
+                                element !== null && (typeof element === "function" ? element(null) : element.current = null);
                             }
                         }
                         switch(1038 & w){
@@ -7493,7 +7493,7 @@ function El(e) {
                                 pu(Bu.alternate, Bu);
                                 break;
                             case 8:
-                                du(u, s = Bu, l);
+                                du(focusedElem, s = Bu, selectionRange);
                                 cu(s);
                         }
                         Bu = Bu.nextEffect;
@@ -7506,53 +7506,53 @@ function El(e) {
                     Bu = Bu.nextEffect;
                 }
             }while (Bu !== null)
-            x = vn;
+            element = vn;
             E = sn();
-            w = x.focusedElem;
-            l = x.selectionRange;
+            w = element.focusedElem;
+            selectionRange = element.selectionRange;
             if (E !== w && w && w.ownerDocument && function e(t, n) {
                 return !(!t || !n) && (t === n || (!t || t.nodeType !== 3) && (n && n.nodeType === 3 ? e(t, n.parentNode) : "contains" in t ? t.contains(n) : !!t.compareDocumentPosition && !!(16 & t.compareDocumentPosition(n))));
             }(w.ownerDocument.documentElement, w)) {
-                if (l !== null && fn(w)) {
-                    E = l.start;
-                    if ((x = l.end) === undefined) {
-                        x = E;
+                if (selectionRange !== null && fn(w)) {
+                    E = selectionRange.start;
+                    if ((element = selectionRange.end) === undefined) {
+                        element = E;
                     }
                     if ("selectionStart" in w) {
                         w.selectionStart = E;
-                        w.selectionEnd = Math.min(x, w.value.length);
-                    } else if ((x = (E = w.ownerDocument || document) && E.defaultView || window).getSelection) {
-                        x = x.getSelection();
+                        w.selectionEnd = Math.min(element, w.value.length);
+                    } else if ((element = (E = w.ownerDocument || document) && E.defaultView || window).getSelection) {
+                        element = element.getSelection();
                         s = w.textContent.length;
-                        u = Math.min(l.start, s);
-                        l = l.end === undefined ? u : Math.min(l.end, s);
-                        if (!x.extend && u > l) {
-                            s = l;
-                            l = u;
-                            u = s;
+                        focusedElem = Math.min(selectionRange.start, s);
+                        selectionRange = selectionRange.end === undefined ? focusedElem : Math.min(selectionRange.end, s);
+                        if (!element.extend && focusedElem > selectionRange) {
+                            s = selectionRange;
+                            selectionRange = focusedElem;
+                            focusedElem = s;
                         }
-                        s = cn(w, u);
-                        f = cn(w, l);
-                        if (s && f && (x.rangeCount !== 1 || x.anchorNode !== s.node || x.anchorOffset !== s.offset || x.focusNode !== f.node || x.focusOffset !== f.offset)) {
+                        s = cn(w, focusedElem);
+                        f = cn(w, selectionRange);
+                        if (s && f && (element.rangeCount !== 1 || element.anchorNode !== s.node || element.anchorOffset !== s.offset || element.focusNode !== f.node || element.focusOffset !== f.offset)) {
                             (E = E.createRange()).setStart(s.node, s.offset);
-                            x.removeAllRanges();
-                            if (u > l) {
-                                x.addRange(E);
-                                x.extend(f.node, f.offset);
+                            element.removeAllRanges();
+                            if (focusedElem > selectionRange) {
+                                element.addRange(E);
+                                element.extend(f.node, f.offset);
                             } else {
                                 E.setEnd(f.node, f.offset);
-                                x.addRange(E);
+                                element.addRange(E);
                             }
                         }
                     }
                 }
                 E = [];
-                for(x = w; x = x.parentNode;){
-                    if (x.nodeType === 1) {
+                for(element = w; element = element.parentNode;){
+                    if (element.nodeType === 1) {
                         E.push({
-                            element: x,
-                            left: x.scrollLeft,
-                            top: x.scrollTop
+                            element,
+                            left: element.scrollLeft,
+                            top: element.scrollTop
                         });
                     }
                 }
@@ -7560,8 +7560,8 @@ function El(e) {
                     w.focus();
                 }
                 for(w = 0; w < E.length; w++){
-                    (x = E[w]).element.scrollLeft = x.left;
-                    x.element.scrollTop = x.top;
+                    (element = E[w]).element.scrollLeft = element.left;
+                    element.element.scrollTop = element.top;
                 }
             }
             Bt = !!yn;
@@ -8645,7 +8645,7 @@ export const __SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED = {
         getCurrentFiber: null
     }));
 })({
-    findFiberByHostInstance: Pn,
+    findFiberByHostInstance,
     bundleType: 0,
     version: "16.14.0",
     rendererPackageName: "react-dom"

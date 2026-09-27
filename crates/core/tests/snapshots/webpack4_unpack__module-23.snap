@@ -133,10 +133,10 @@ export function connectAdvanced(e, { getDisplayName = (e)=>`ConnectAdvanced(${e}
     const I = {
         [M]: c
     };
-    return function(T1) {
-        _b(isValidElementType(T1), `You must pass a component to the function returned by ${methodName}. Instead received ${JSON.stringify(T1)}`);
-        const n = T1.displayName || T1.name || "Component";
-        const r = getDisplayName(n);
+    return function(WrappedComponent) {
+        _b(isValidElementType(WrappedComponent), `You must pass a component to the function returned by ${methodName}. Instead received ${JSON.stringify(WrappedComponent)}`);
+        const wrappedComponentName = WrappedComponent.displayName || WrappedComponent.name || "Component";
+        const displayName = getDisplayName(wrappedComponentName);
         const a = {
             ...rest,
             getDisplayName,
@@ -145,9 +145,9 @@ export function connectAdvanced(e, { getDisplayName = (e)=>`ConnectAdvanced(${e}
             shouldHandleStateChanges,
             storeKey,
             withRef,
-            displayName: r,
-            wrappedComponentName: n,
-            WrappedComponent: T1
+            displayName,
+            wrappedComponentName,
+            WrappedComponent
         };
         class u extends Component {
             constructor(e, t){
@@ -158,7 +158,7 @@ export function connectAdvanced(e, { getDisplayName = (e)=>`ConnectAdvanced(${e}
                 this.store = e[storeKey] || t[storeKey];
                 this.propsMode = Boolean(e[storeKey]);
                 this.setWrappedInstance = this.setWrappedInstance.bind(this);
-                _b(this.store, `Could not find "${storeKey}" in either the context or props of "${r}". Either wrap the root component in a <Provider>, or explicitly pass "${storeKey}" as a prop to "${r}".`);
+                _b(this.store, `Could not find "${storeKey}" in either the context or props of "${displayName}". Either wrap the root component in a <Provider>, or explicitly pass "${storeKey}" as a prop to "${displayName}".`);
                 this.initSelector();
                 this.initSubscription();
             }
@@ -269,19 +269,19 @@ export function connectAdvanced(e, { getDisplayName = (e)=>`ConnectAdvanced(${e}
                 if (selector.error) {
                     throw selector.error;
                 }
-                return <T1 {...this.addExtraProps(selector.props)}/>;
+                return <WrappedComponent {...this.addExtraProps(selector.props)}/>;
             }
         }
         if (T) {
             u.prototype.UNSAFE_componentWillReceiveProps = u.prototype.componentWillReceiveProps;
             delete u.prototype.componentWillReceiveProps;
         }
-        u.WrappedComponent = T1;
-        u.displayName = r;
+        u.WrappedComponent = WrappedComponent;
+        u.displayName = displayName;
         u.childContextTypes = I;
         u.contextTypes = L;
         u.propTypes = L;
-        return y(u, T1);
+        return y(u, WrappedComponent);
     };
 }
 const hasOwnProperty = Object.prototype.hasOwnProperty;

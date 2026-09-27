@@ -1715,16 +1715,16 @@ function L(e, s) {
     let expected = r#"
 const f = "proc first argument must be an iterator";
 use(f);
-function L(e, parentEffectId, label = "", h) {
+function L(effect, parentEffectId, label = "", h) {
     if (sagaMonitor) {
         sagaMonitor.effectTriggered({
             effectId: v,
             parentEffectId,
             label,
-            effect: e
+            effect
         });
     }
-    use(e, h);
+    use(effect, h);
 }
 "#;
     let output = render_pipeline_between(input, "UnParameters", "SmartRename");
@@ -1753,15 +1753,128 @@ function outer() {
 }
 
 #[test]
-fn value_position_skips_non_value_usage() {
-    // `r` is used as a call callee / member access target — NOT only value position.
+fn value_position_renames_binding_with_other_uses() {
     let input = r#"
 import r from "./m.js";
 r();
-const obj = { Foo: r };
+function g(e) {
+    const t = compute(e);
+    log(t);
+    return { total: t, Foo: r };
+}
+function h() {
+    function n() {}
+    n();
+    return { handler: n };
+}
 "#;
-    let output = apply(input);
-    assert_eq_normalized(&output, input);
+    let expected = r#"
+import Foo from "./m.js";
+Foo();
+function g(e) {
+    const total = compute(e);
+    log(total);
+    return { total, Foo };
+}
+function h() {
+    function handler() {}
+    handler();
+    return { handler };
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn value_position_sole_use_candidate_keeps_its_key_over_relaxed_candidate() {
+    // A binding with other uses must not take a key away from, or collide
+    // with, a binding whose only use is that value position.
+    let input = r#"
+function a(t) {
+    return { createHref: t };
+}
+function b(n) {
+    log(n);
+    return { createHref: n };
+}
+"#;
+    let expected = r#"
+function a(createHref) {
+    return { createHref };
+}
+function b(n) {
+    log(n);
+    return { createHref: n };
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn value_position_generic_and_dollar_keys_need_a_sole_use() {
+    // A generic or `$`-prefixed key names the slot, not the value; it is
+    // only trusted when the value position is the binding's only use.
+    let input = r#"
+function f(e) {
+    const t = g(e);
+    log(t);
+    const n = h(e);
+    log(n);
+    const r = k(e);
+    return { type: t, $set: n, key: r };
+}
+"#;
+    let expected = r#"
+function f(e) {
+    const t = g(e);
+    log(t);
+    const n = h(e);
+    log(n);
+    const key = k(e);
+    return { type: t, $set: n, key };
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn value_position_skips_destructured_and_class_bindings_with_other_uses() {
+    let input = r#"
+function f(e) {
+    const [t] = e;
+    log(t);
+    class n {}
+    log(new n());
+    return { total: t, widget: n };
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn value_position_skips_boolean_test_of_a_same_named_property() {
+    // `!!s.icon` is a flag about `icon`, not the icon itself.
+    let input = r#"
+function f(s) {
+    const t = !!s.icon;
+    const n = s.weight > 0;
+    const r = t && !!s.badge;
+    const i = !!s.flag;
+    use(t, n, r, i);
+    return { icon: t, weight: n, badge: r, visible: i };
+}
+"#;
+    let expected = r#"
+function f(s) {
+    const t = !!s.icon;
+    const n = s.weight > 0;
+    const r = t && !!s.badge;
+    const visible = !!s.flag;
+    use(t, n, r, visible);
+    return { icon: t, weight: n, badge: r, visible };
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
 }
 
 #[test]
@@ -1879,15 +1992,18 @@ use(handler);
 }
 
 #[test]
-fn value_position_skips_when_exported_by_name() {
-    // `export { r }` is an other use — disqualifies.
+fn value_position_rename_keeps_specifier_export_name() {
     let input = r#"
 const r = makeThing();
 export { r };
 const obj = { Foo: r };
 "#;
-    let output = apply(input);
-    assert_eq_normalized(&output, input);
+    let expected = r#"
+const Foo = makeThing();
+export { Foo as r };
+const obj = { Foo };
+"#;
+    assert_eq_normalized(&apply(input), expected);
 }
 
 #[test]

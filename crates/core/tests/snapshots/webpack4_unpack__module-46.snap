@@ -334,44 +334,44 @@ export const unstable_runWithPriority = function(e, t) {
         M = n;
     }
 };
-export const unstable_scheduleCallback = function(e, callback, a) {
+export const unstable_scheduleCallback = function(priorityLevel, callback, a) {
     const u = unstable_now();
     if (typeof a === "object" && a !== null) {
-        var l = a.delay;
-        l = typeof l === "number" && l > 0 ? u + l : u;
-        a = typeof a.timeout === "number" ? a.timeout : q(e);
+        var startTime = a.delay;
+        startTime = typeof startTime === "number" && startTime > 0 ? u + startTime : u;
+        a = typeof a.timeout === "number" ? a.timeout : q(priorityLevel);
     } else {
-        a = q(e);
-        l = u;
+        a = q(priorityLevel);
+        startTime = u;
     }
-    e = {
+    priorityLevel = {
         id: R++,
         callback,
-        priorityLevel: e,
-        startTime: l,
-        expirationTime: a = l + a,
+        priorityLevel,
+        startTime,
+        expirationTime: a = startTime + a,
         sortIndex: -1
     };
-    if (l > u) {
-        e.sortIndex = l;
-        S(j, e);
-        if (O(_) === null && e === O(j)) {
+    if (startTime > u) {
+        priorityLevel.sortIndex = startTime;
+        S(j, priorityLevel);
+        if (O(_) === null && priorityLevel === O(j)) {
             if (I) {
                 i();
             } else {
                 I = true;
             }
-            o(F, l - u);
+            o(F, startTime - u);
         }
     } else {
-        e.sortIndex = a;
-        S(_, e);
+        priorityLevel.sortIndex = a;
+        S(_, priorityLevel);
         if (!(L || A)) {
             L = true;
             r(z);
         }
     }
-    return e;
+    return priorityLevel;
 };
 export const unstable_shouldYield = function() {
     const e = unstable_now();

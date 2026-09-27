@@ -114,7 +114,7 @@ function d(e) {
     }
     return `/${e}`;
 }
-function p(e) {
+function encodePath(e) {
     if (e.charAt(0) === "/") {
         return e.substr(1);
     }
@@ -133,21 +133,21 @@ function m(e) {
     return e;
 }
 export function parsePath(e) {
-    let t = e || "/";
+    let pathname = e || "/";
     let n = "";
     let r = "";
-    const o = t.indexOf("#");
+    const o = pathname.indexOf("#");
     if (-1 !== o) {
-        r = t.substr(o);
-        t = t.substr(0, o);
+        r = pathname.substr(o);
+        pathname = pathname.substr(0, o);
     }
-    const i = t.indexOf("?");
+    const i = pathname.indexOf("?");
     if (-1 !== i) {
-        n = t.substr(i);
-        t = t.substr(0, i);
+        n = pathname.substr(i);
+        pathname = pathname.substr(0, i);
     }
     return {
-        pathname: t,
+        pathname,
         search: n === "?" ? "" : n,
         hash: r === "#" ? "" : r
     };
@@ -340,7 +340,7 @@ export function createBrowserHistory(e = {}) {
     var A = [
         M.key
     ];
-    function L(e) {
+    function createHref(e) {
         return y + createPath(e);
     }
     function I(e) {
@@ -365,12 +365,12 @@ export function createBrowserHistory(e = {}) {
         length: window_history.length,
         action: "POP",
         location: M,
-        createHref: L,
+        createHref,
         push (e, r) {
             const o = createLocation(e, r, O(), q.location);
             C.confirmTransitionTo(o, "PUSH", getUserConfirmation, (e)=>{
                 if (e) {
-                    const r = L(o);
+                    const r = createHref(o);
                     const { key, state } = o;
                     if (n) {
                         window_history.pushState({
@@ -399,7 +399,7 @@ export function createBrowserHistory(e = {}) {
             const o = createLocation(e, r, O(), q.location);
             C.confirmTransitionTo(o, "REPLACE", getUserConfirmation, (e)=>{
                 if (e) {
-                    const r = L(o);
+                    const r = createHref(o);
                     const { key, state } = o;
                     if (n) {
                         window_history.replaceState({
@@ -463,7 +463,7 @@ const P = {
             if (e.charAt(0) === "!") {
                 return e;
             }
-            return `!/${p(e)}`;
+            return `!/${encodePath(e)}`;
         },
         decodePath (e) {
             if (e.charAt(0) === "!") {
@@ -473,7 +473,7 @@ const P = {
         }
     },
     noslash: {
-        encodePath: p,
+        encodePath,
         decodePath: d
     },
     slash: {

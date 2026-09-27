@@ -2,7 +2,7 @@
 source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
-import r from "./module-29.js";
+import assign from "./module-29.js";
 const o = typeof Symbol === "function" && Symbol.for;
 const i = o ? Symbol.for("react.element") : 60103;
 const a = o ? Symbol.for("react.portal") : 60106;
@@ -60,9 +60,9 @@ Component.prototype.isReactComponent = {};
 E.prototype = Component.prototype;
 const k = PureComponent.prototype = new E;
 k.constructor = PureComponent;
-r(k, Component.prototype);
+assign(k, Component.prototype);
 k.isPureReactComponent = true;
-const T = {
+const ReactCurrentOwner = {
     current: null
 };
 const hasOwnProperty = Object.prototype.hasOwnProperty;
@@ -76,10 +76,10 @@ export function createElement(e, t, n) {
     let r;
     const o = {};
     let a = null;
-    let u = null;
+    let ref = null;
     if (t != null) {
         if (t.ref !== undefined) {
-            u = t.ref;
+            ref = t.ref;
         }
         if (t.key !== undefined) {
             a = `${t.key}`;
@@ -111,9 +111,9 @@ export function createElement(e, t, n) {
         $$typeof: i,
         type: e,
         key: a,
-        ref: u,
+        ref,
         props: o,
-        _owner: T.current
+        _owner: ReactCurrentOwner.current
     };
 }
 export function isValidElement(e) {
@@ -121,21 +121,21 @@ export function isValidElement(e) {
 }
 const _ = /\/+/g;
 const j = [];
-function R(e, t, n, r) {
+function R(result, keyPrefix, func, context) {
     if (j.length) {
         const o = j.pop();
-        o.result = e;
-        o.keyPrefix = t;
-        o.func = n;
-        o.context = r;
+        o.result = result;
+        o.keyPrefix = keyPrefix;
+        o.func = func;
+        o.context = context;
         o.count = 0;
         return o;
     }
     return {
-        result: e,
-        keyPrefix: t,
-        func: n,
-        context: r,
+        result,
+        keyPrefix,
+        func,
+        context,
         count: 0
     };
 }
@@ -243,26 +243,26 @@ function D(e, t, n, r, o) {
     M(e, I, t = R(t, i, r, o));
     N(t);
 }
-const F = {
+const ReactCurrentDispatcher = {
     current: null
 };
 function z() {
-    const F_current = F.current;
+    const F_current = ReactCurrentDispatcher.current;
     if (F_current === null) {
         throw Error(v(321));
     }
     return F_current;
 }
 export const __SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED = {
-    ReactCurrentDispatcher: F,
+    ReactCurrentDispatcher,
     ReactCurrentBatchConfig: {
         suspense: null
     },
-    ReactCurrentOwner: T,
+    ReactCurrentOwner,
     IsSomeRendererActing: {
         current: false
     },
-    assign: r
+    assign
 };
 export const Children = {
     map (e, t, n) {
@@ -299,14 +299,14 @@ export const cloneElement = function(e, t, n) {
     if (e === null || e === undefined) {
         throw Error(v(267, e));
     }
-    const o = r({}, e.props);
+    const o = assign({}, e.props);
     let e_key = e.key;
     let e_ref = e.ref;
     let e__owner = e._owner;
     if (t != null) {
         if (t.ref !== undefined) {
             e_ref = t.ref;
-            e__owner = T.current;
+            e__owner = ReactCurrentOwner.current;
         }
         if (t.key !== undefined) {
             e_key = `${t.key}`;

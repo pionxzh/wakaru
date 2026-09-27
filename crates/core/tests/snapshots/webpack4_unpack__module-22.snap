@@ -3,7 +3,7 @@ source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
 import * as o from "./module-0.js";
-import { q } from "./module-0.js";
+import { q as is } from "./module-0.js";
 import * as i from "./module-6.js";
 import * as a from "./module-12.js";
 import * as u from "./module-2.js";
@@ -21,7 +21,7 @@ export const utils = {
         return o.u;
     },
     get is () {
-        return q;
+        return is;
     },
     get deferred () {
         return o.l;
@@ -39,11 +39,11 @@ export const utils = {
         return u.d;
     },
     get CHANNEL_END () {
-        return d;
+        return CHANNEL_END;
     }
 };
 const f = "proc first argument (Saga function result) must be an iterator";
-var d = {
+var CHANNEL_END = {
     toString () {
         return "@@redux-saga/CHANNEL_END";
     }
@@ -71,13 +71,13 @@ var h = {
     }
 };
 function m(e) {
-    return (e === "*" ? h.wildcard : q.array(e) ? h.array : q.stringableFunc(e) ? h.default : q.func(e) ? h.predicate : h.default)(e);
+    return (e === "*" ? h.wildcard : is.array(e) ? h.array : is.stringableFunc(e) ? h.default : is.func(e) ? h.predicate : h.default)(e);
 }
 const y = (fn)=>({
         fn
     });
 function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymous", w) {
-    o.h(e, q.iterator, f);
+    o.h(e, is.iterator, f);
     var E = o.n(z, o.z("[...effects]", "all([...effects])"));
     var h_sagaMonitor = h.sagaMonitor;
     const { logger, onError } = h;
@@ -93,7 +93,7 @@ ${e.stack}`;
     var C = i.f(t);
     var P = Object.create(s);
     M.cancel = o.u;
-    var _ = ((e, t, n, r)=>{
+    var task = ((e, t, n, r)=>{
         let i;
         let a;
         n._deferredEnd = null;
@@ -121,7 +121,7 @@ ${e.stack}`;
         i.result = ()=>n._result;
         i.error = ()=>n._error;
         i.setContext = (e)=>{
-            o.h(e, q.object, o.k("task", e));
+            o.h(e, is.object, o.k("task", e));
             o.v.assign(P, e);
         };
         ((e, t)=>{
@@ -151,18 +151,18 @@ ${e.stack}`;
         let r = [];
         let i;
         let a = false;
-        function u(e) {
-            c();
+        function abort(e) {
+            cancelAll();
             n(e, true);
         }
-        function l(e) {
+        function addTask(e) {
             r.push(e);
             e.cont = (l, c)=>{
                 if (!a) {
                     o.w(r, e);
                     e.cont = o.u;
                     if (c) {
-                        u(l);
+                        abort(l);
                     } else {
                         if (e === t) {
                             i = l;
@@ -175,7 +175,7 @@ ${e.stack}`;
                 }
             };
         }
-        function c() {
+        function cancelAll() {
             if (!a) {
                 a = true;
                 r.forEach((e)=>{
@@ -185,11 +185,11 @@ ${e.stack}`;
                 r = [];
             }
         }
-        l(t);
+        addTask(t);
         return {
-            addTask: l,
-            cancelAll: c,
-            abort: u,
+            addTask,
+            cancelAll,
+            abort,
             getTasks () {
                 return r;
             },
@@ -210,7 +210,7 @@ ${e.stack}`;
     }
     e._isRunning = true;
     M();
-    return _;
+    return task;
     function M(t, n) {
         if (!j.isRunning) {
             throw new Error("Trying to resume an already finished generator");
@@ -222,12 +222,12 @@ ${e.stack}`;
             } else if (t === p) {
                 j.isCancelled = true;
                 M.cancel();
-                r = q.func(e.return) ? e.return(p) : {
+                r = is.func(e.return) ? e.return(p) : {
                     done: true,
                     value: p
                 };
             } else {
-                r = t === d ? q.func(e.return) ? e.return() : {
+                r = t === CHANNEL_END ? is.func(e.return) ? e.return() : {
                     done: true
                 } : e.next(t);
             }
@@ -258,7 +258,7 @@ ${e.stack}`;
                     configurable: true
                 });
             }
-            _.cont || (t instanceof Error && onError ? onError(t) : O(t));
+            task.cont || (t instanceof Error && onError ? onError(t) : O(t));
             e._error = t;
             e._isAborted = true;
             if (e._deferredEnd) {
@@ -270,20 +270,20 @@ ${e.stack}`;
                 e._deferredEnd.resolve(t);
             }
         }
-        if (_.cont) {
-            _.cont(t, n);
+        if (task.cont) {
+            task.cont(t, n);
         }
-        _.joiners.forEach((e)=>e.cb(t, n));
-        _.joiners = null;
+        task.joiners.forEach((e)=>e.cb(t, n));
+        task.joiners = null;
     }
-    function L(e, parentEffectId, label = "", h) {
+    function L(effect, parentEffectId, label = "", h) {
         const v = o.y();
         if (h_sagaMonitor) {
             h_sagaMonitor.effectTriggered({
                 effectId: v,
                 parentEffectId,
                 label,
-                effect: e
+                effect
             });
         }
         let b;
@@ -311,19 +311,19 @@ ${e.stack}`;
             }
         };
         let k;
-        if (q.promise(e)) {
-            return I(e, w);
+        if (is.promise(effect)) {
+            return I(effect, w);
         }
-        if (q.helper(e)) {
-            return F(y(e), v, w);
+        if (is.helper(effect)) {
+            return F(y(effect), v, w);
         }
-        if (q.iterator(e)) {
-            return D(e, v, g, w);
+        if (is.iterator(effect)) {
+            return D(effect, v, g, w);
         }
-        if (q.array(e)) {
-            return E(e, v, w);
+        if (is.array(effect)) {
+            return E(effect, v, w);
         }
-        if (k = u.d.take(e)) {
+        if (k = u.d.take(effect)) {
             return (({ channel, pattern, maybe }, t)=>{
                 channel = channel || C;
                 const a = (e)=>{
@@ -331,7 +331,7 @@ ${e.stack}`;
                         return t(e, true);
                     }
                     if (i.e(e) && !maybe) {
-                        return t(d);
+                        return t(CHANNEL_END);
                     }
                     return t(e);
                 };
@@ -343,7 +343,7 @@ ${e.stack}`;
                 t.cancel = a.cancel;
             })(k, w);
         }
-        if (k = u.d.put(e)) {
+        if (k = u.d.put(effect)) {
             return (({ channel, action, resolve }, t)=>{
                 a.a(()=>{
                     let e;
@@ -355,17 +355,17 @@ ${e.stack}`;
                         }
                         O(e);
                     }
-                    if (!resolve || !q.promise(e)) {
+                    if (!resolve || !is.promise(e)) {
                         return t(e);
                     }
                     I(e, t);
                 });
             })(k, w);
         }
-        if (k = u.d.all(e)) {
+        if (k = u.d.all(effect)) {
             return z(k, v, w);
         }
-        if (k = u.d.race(e)) {
+        if (k = u.d.race(effect)) {
             return ((e, t, n)=>{
                 let r;
                 const a = Object.keys(e);
@@ -376,13 +376,13 @@ ${e.stack}`;
                             if (l) {
                                 n.cancel();
                                 n(u, true);
-                            } else if (!i.e(u) && u !== d && u !== p) {
+                            } else if (!i.e(u) && u !== CHANNEL_END && u !== p) {
                                 n.cancel();
                                 r = true;
                                 const f = {
                                     [t]: u
                                 };
-                                n(q.array(e) ? [].slice.call({
+                                n(is.array(e) ? [].slice.call({
                                     ...f,
                                     length: a.length
                                 }) : f);
@@ -405,7 +405,7 @@ ${e.stack}`;
                 });
             })(k, v, w);
         }
-        if (k = u.d.call(e)) {
+        if (k = u.d.call(effect)) {
             return (({ context, fn, args }, t, n)=>{
                 let u;
                 try {
@@ -413,20 +413,20 @@ ${e.stack}`;
                 } catch (e) {
                     return n(e, true);
                 }
-                if (q.promise(u)) {
+                if (is.promise(u)) {
                     return I(u, n);
                 }
-                if (q.iterator(u)) {
+                if (is.iterator(u)) {
                     return D(u, t, fn.name, n);
                 }
                 return n(u);
             })(k, v, w);
         }
-        if (k = u.d.cps(e)) {
+        if (k = u.d.cps(effect)) {
             return (({ context, fn, args }, t)=>{
                 try {
                     const a = (e, n)=>{
-                        if (q.undef(e)) {
+                        if (is.undef(e)) {
                             return t(n);
                         }
                         return t(e, true);
@@ -440,31 +440,31 @@ ${e.stack}`;
                 }
             })(k, w);
         }
-        if (k = u.d.fork(e)) {
+        if (k = u.d.fork(effect)) {
             return F(k, v, w);
         }
-        if (k = u.d.join(e)) {
-            return ((e, t)=>{
+        if (k = u.d.join(effect)) {
+            return ((e, cb)=>{
                 if (e.isRunning()) {
                     const n = {
-                        task: _,
-                        cb: t
+                        task,
+                        cb
                     };
-                    t.cancel = ()=>o.w(e.joiners, n);
+                    cb.cancel = ()=>o.w(e.joiners, n);
                     e.joiners.push(n);
                 } else {
                     if (e.isAborted()) {
-                        t(e.error(), true);
+                        cb(e.error(), true);
                     } else {
-                        t(e.result());
+                        cb(e.result());
                     }
                 }
             })(k, w);
         }
-        if (k = u.d.cancel(e)) {
+        if (k = u.d.cancel(effect)) {
             return ((e, t)=>{
                 if (e === o.d) {
-                    e = _;
+                    e = task;
                 }
                 if (e.isRunning()) {
                     e.cancel();
@@ -472,7 +472,7 @@ ${e.stack}`;
                 t();
             })(k, w);
         }
-        if (k = u.d.select(e)) {
+        if (k = u.d.select(effect)) {
             return (({ selector, args }, t)=>{
                 try {
                     const i = selector(...[
@@ -484,42 +484,42 @@ ${e.stack}`;
                 }
             })(k, w);
         }
-        if (k = u.d.actionChannel(e)) {
+        if (k = u.d.actionChannel(effect)) {
             return (({ pattern, buffer }, n)=>{
                 const a = m(pattern);
                 a.pattern = pattern;
                 n(i.d(t, buffer || a_1.fixed(), a));
             })(k, w);
         }
-        if (k = u.d.flush(e)) {
+        if (k = u.d.flush(effect)) {
             return ((e, t)=>{
                 e.flush(t);
             })(k, w);
         }
-        if (k = u.d.cancelled(e)) {
+        if (k = u.d.cancelled(effect)) {
             return ((t)=>{
                 const e = 0;
                 t(!!j.isCancelled);
             })(w);
         }
-        if (k = u.d.getContext(e)) {
+        if (k = u.d.getContext(effect)) {
             return ((e, t)=>{
                 t(P[e]);
             })(k, w);
         }
-        if (k = u.d.setContext(e)) {
+        if (k = u.d.setContext(effect)) {
             return ((e, t)=>{
                 o.v.assign(P, e);
                 t();
             })(k, w);
         }
-        return w(e);
+        return w(effect);
     }
     function I(e, t) {
         const n = e[o.a];
-        if (q.func(n)) {
+        if (is.func(n)) {
             t.cancel = n;
-        } else if (q.func(e.abort)) {
+        } else if (is.func(e.abort)) {
             t.cancel = ()=>e.abort();
         }
         e.then(t, (e)=>t(e, true));
@@ -529,7 +529,7 @@ ${e.stack}`;
     }
     function F({ context, fn, args, detached }, i, u) {
         const d = (({ context, fn, args })=>{
-            if (q.iterator(fn)) {
+            if (is.iterator(fn)) {
                 return fn;
             }
             let i;
@@ -539,7 +539,7 @@ ${e.stack}`;
             } catch (e) {
                 a = e;
             }
-            if (q.iterator(i)) {
+            if (is.iterator(i)) {
                 return i;
             }
             if (a) {
@@ -589,7 +589,7 @@ ${e.stack}`;
     function z(e, t, n) {
         const r = Object.keys(e);
         if (!r.length) {
-            return n(q.array(e) ? [] : {});
+            return n(is.array(e) ? [] : {});
         }
         let a = 0;
         let u;
@@ -597,7 +597,7 @@ ${e.stack}`;
         const s = {};
         r.forEach((t)=>{
             const f = (s, f)=>{
-                u || (f || i.e(s) || s === d || s === p ? (n.cancel(), n(s, f)) : (l[t] = s, ++a === r.length && (u = true, n(q.array(e) ? o.f.from({
+                u || (f || i.e(s) || s === CHANNEL_END || s === p ? (n.cancel(), n(s, f)) : (l[t] = s, ++a === r.length && (u = true, n(is.array(e) ? o.f.from({
                     ...l,
                     length: r.length
                 }) : l))));
@@ -615,15 +615,15 @@ ${e.stack}`;
     }
 }
 const b = "runSaga(storeInterface, saga, ...args): saga argument must be a Generator function!";
-export function runSaga(e, t, ...r) {
+export function runSaga(e, saga, ...args) {
     let a;
-    if (q.iterator(e)) {
+    if (is.iterator(e)) {
         a = e;
-        e = t;
+        e = saga;
     } else {
-        o.h(t, q.func, b);
-        a = t(...r);
-        o.h(a, q.iterator, b);
+        o.h(saga, is.func, b);
+        a = saga(...args);
+        o.h(a, is.iterator, b);
     }
     const u = e;
     const { subscribe, dispatch, getState, context, sagaMonitor, logger, onError } = u;
@@ -640,8 +640,8 @@ export function runSaga(e, t, ...r) {
             parentEffectId: 0,
             effect: {
                 root: true,
-                saga: t,
-                args: r
+                saga,
+                args
             }
         });
     }
@@ -649,7 +649,7 @@ export function runSaga(e, t, ...r) {
         sagaMonitor,
         logger,
         onError
-    }, m, t.name);
+    }, m, saga.name);
     if (sagaMonitor) {
         sagaMonitor.effectResolved(m, y);
     }
@@ -657,16 +657,16 @@ export function runSaga(e, t, ...r) {
 }
 export default function({ context = {}, ...rest } = {}) {
     const { sagaMonitor, logger, onError } = rest;
-    if (q.func(rest)) {
+    if (is.func(rest)) {
         throw new Error("Saga middleware no longer accept Generator functions. Use sagaMiddleware.run instead");
     }
-    if (logger && !q.func(logger)) {
+    if (logger && !is.func(logger)) {
         throw new Error("`options.logger` passed to the Saga middleware is not a function!");
     }
-    if (onError && !q.func(onError)) {
+    if (onError && !is.func(onError)) {
         throw new Error("`options.onError` passed to the Saga middleware is not a function!");
     }
-    if (rest.emitter && !q.func(rest.emitter)) {
+    if (rest.emitter && !is.func(rest.emitter)) {
         throw new Error("`options.emitter` passed to the Saga middleware is not a function!");
     }
     function c({ getState, dispatch }) {
@@ -694,7 +694,7 @@ export default function({ context = {}, ...rest } = {}) {
         throw new Error("Before running a Saga, you must mount the Saga middleware on the Store using applyMiddleware");
     };
     c.setContext = (e)=>{
-        o.h(e, q.object, o.k("sagaMiddleware", e));
+        o.h(e, is.object, o.k("sagaMiddleware", e));
         o.v.assign(context, e);
     };
     return c;

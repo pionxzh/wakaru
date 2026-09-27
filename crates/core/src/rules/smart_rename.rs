@@ -1799,19 +1799,26 @@ fn symbol_key_to_const_name(key: &str) -> String {
 // ============================================================
 // Value-position renames
 //
-// A short binding `x` (≤2 chars) used *only* as the value of object-literal
-// KeyValue properties with a valid-identifier key, where every such key
-// agrees on the same target name, is renamed to that name.
+// A short binding `x` used as the value of object-literal KeyValue
+// properties with a valid-identifier key, where every such key agrees on
+// the same target name, is renamed to that name.
 //
 //   (e, t) => ({ ...e, error: t })      → (e, error) => ({ ...e, error })
 //   import r from "m"; export default { Foo: r }
 //                                        → import Foo from "m"; export default { Foo }
 //
 // Disqualified:
-//   - Any non-value-position reference (member access, call arg, spread,
-//     assignment target, export specifier, etc.)
 //   - Multiple distinct target names (e.g. `{ array: e, bool: e }`)
 //   - Computed/numeric/reserved-keyword keys
+//
+// When the binding also has other uses (member access, call arg, writes,
+// ...), the key names one destination of the value rather than the value
+// itself more often, so these are disqualified too:
+//   - Generic keys (`type`, `name`, `value`, `data`, `key`) and `$` keys
+//   - Bindings declared inside a destructuring pattern
+//   - Class declarations and class-valued declarators
+//   - A boolean-valued initializer that tests a property with the key's
+//     name (`const t = !!s.icon` → `{ icon: t }` is a flag about `icon`)
 // ============================================================
 
 fn value_position_rename_module(module: &mut Module) {
@@ -1844,8 +1851,11 @@ fn collect_value_position_renames_module(module: &Module) -> Vec<BindingRename> 
 
     // Group candidates by target name. If two bindings map to the same
     // target (e.g. five React type constants all assigned to `$$typeof:`),
-    // the key isn't discriminative — drop the whole group.
+    // the key isn't discriminative — drop the whole group. Candidates that
+    // also have other uses form a second tier: they only take a target no
+    // sole-use candidate claims, so relaxing never costs a sole-use rename.
     let mut by_target: HashMap<String, Vec<BindingId>> = HashMap::default();
+    let mut relaxed_by_target: HashMap<String, Vec<BindingId>> = HashMap::default();
     for (bid, state) in classifier.states {
         let Some(target) = state.single_target() else {
             continue;
@@ -1853,7 +1863,15 @@ fn collect_value_position_renames_module(module: &Module) -> Vec<BindingRename> 
         if target.as_str() == bid.0.as_ref() {
             continue;
         }
-        by_target.entry(target).or_default().push(bid);
+        let tier = if state.other_uses > 0 {
+            &mut relaxed_by_target
+        } else {
+            &mut by_target
+        };
+        tier.entry(target).or_default().push(bid);
+    }
+    for (target, bids) in relaxed_by_target {
+        by_target.entry(target).or_insert(bids);
     }
 
     let top_level_names = collect_module_names(module);
@@ -2250,23 +2268,123 @@ impl BindingScopeNameIndex {
     }
 }
 
+/// Declaration facts that decide whether a value-position key may name a
+/// binding that also has other uses.
+#[derive(Default)]
+struct BindingTraits {
+    destructured: bool,
+    class: bool,
+    /// Property names tested by a boolean-valued initializer.
+    boolean_tested_props: Vec<Atom>,
+}
+
+impl BindingTraits {
+    fn allows_target_with_other_uses(&self, target: &str) -> bool {
+        !matches!(target, "type" | "name" | "value" | "data" | "key")
+            && !target.starts_with('$')
+            && !self.destructured
+            && !self.class
+            && !self
+                .boolean_tested_props
+                .iter()
+                .any(|p| p.as_ref() == target)
+    }
+}
+
 #[derive(Default)]
 struct BindingCollector {
-    short_bindings: HashMap<BindingId, ()>,
+    short_bindings: HashMap<BindingId, BindingTraits>,
+    /// Depth of enclosing object/array patterns, reset at function and
+    /// class boundaries so a nested function's parameters are not counted.
+    pattern_depth: usize,
 }
 
 impl BindingCollector {
-    fn record(&mut self, id: &Ident) {
-        if is_likely_generated_alias(&id.sym) {
-            self.short_bindings.insert((id.sym.clone(), id.ctxt), ());
+    fn record(&mut self, id: &Ident) -> Option<&mut BindingTraits> {
+        if !is_likely_generated_alias(&id.sym) {
+            return None;
         }
+        let destructured = self.pattern_depth > 0;
+        let traits = self
+            .short_bindings
+            .entry((id.sym.clone(), id.ctxt))
+            .or_default();
+        traits.destructured |= destructured;
+        Some(traits)
+    }
+
+    fn with_pattern_depth_reset(&mut self, visit: impl FnOnce(&mut Self)) {
+        let depth = std::mem::take(&mut self.pattern_depth);
+        visit(self);
+        self.pattern_depth = depth;
+    }
+}
+
+/// When `expr` is boolean-valued (`!x`, a comparison, or `&&`/`||` over
+/// boolean operands), the property names it tests: `!!s.icon` → `icon`,
+/// `s.weight > 0` → `weight`, `t && !!s.badge` → `badge`.
+fn boolean_tested_props(expr: &Expr) -> Option<Vec<Atom>> {
+    fn operand_prop(expr: &Expr) -> Option<Atom> {
+        match expr.unwrap_parens() {
+            Expr::Member(member) => static_member_prop_name(&member.prop).map(Atom::from),
+            Expr::OptChain(chain) => match &*chain.base {
+                swc_core::ecma::ast::OptChainBase::Member(member) => {
+                    static_member_prop_name(&member.prop).map(Atom::from)
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+    fn operand(expr: &Expr) -> Vec<Atom> {
+        boolean_tested_props(expr).unwrap_or_else(|| operand_prop(expr).into_iter().collect())
+    }
+    use swc_core::ecma::ast::{BinaryOp, UnaryOp};
+    match expr.unwrap_parens() {
+        Expr::Unary(unary) if unary.op == UnaryOp::Bang => Some(operand(&unary.arg)),
+        Expr::Bin(bin) => match bin.op {
+            BinaryOp::EqEq
+            | BinaryOp::NotEq
+            | BinaryOp::EqEqEq
+            | BinaryOp::NotEqEq
+            | BinaryOp::Lt
+            | BinaryOp::LtEq
+            | BinaryOp::Gt
+            | BinaryOp::GtEq
+            | BinaryOp::InstanceOf
+            | BinaryOp::In => {
+                let mut props = operand(&bin.left);
+                props.extend(operand(&bin.right));
+                Some(props)
+            }
+            BinaryOp::LogicalAnd => boolean_tested_props(&bin.right).map(|mut props| {
+                props.extend(boolean_tested_props(&bin.left).unwrap_or_default());
+                props
+            }),
+            BinaryOp::LogicalOr => {
+                let mut props = boolean_tested_props(&bin.left)?;
+                props.extend(boolean_tested_props(&bin.right)?);
+                Some(props)
+            }
+            _ => None,
+        },
+        _ => None,
     }
 }
 
 impl Visit for BindingCollector {
     fn visit_pat(&mut self, pat: &Pat) {
-        if let Pat::Ident(bi) = pat {
-            self.record(&bi.id);
+        match pat {
+            Pat::Ident(bi) => {
+                self.record(&bi.id);
+            }
+            Pat::Object(_) | Pat::Array(_) => {
+                self.pattern_depth += 1;
+                pat.visit_children_with(self);
+                self.pattern_depth -= 1;
+                return;
+            }
+            _ => {}
         }
         pat.visit_children_with(self);
     }
@@ -2278,13 +2396,42 @@ impl Visit for BindingCollector {
         prop.visit_children_with(self);
     }
 
+    fn visit_var_declarator(&mut self, decl: &swc_core::ecma::ast::VarDeclarator) {
+        decl.visit_children_with(self);
+        let (Pat::Ident(bi), Some(init)) = (&decl.name, &decl.init) else {
+            return;
+        };
+        let is_class = matches!(init.unwrap_parens(), Expr::Class(_));
+        let tested = boolean_tested_props(init);
+        if let Some(traits) = self.record(&bi.id) {
+            traits.class |= is_class;
+            if let Some(props) = tested {
+                traits.boolean_tested_props.extend(props);
+            }
+        }
+    }
+
+    fn visit_function(&mut self, function: &Function) {
+        self.with_pattern_depth_reset(|this| function.visit_children_with(this));
+    }
+
+    fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
+        self.with_pattern_depth_reset(|this| arrow.visit_children_with(this));
+    }
+
+    fn visit_class(&mut self, class: &Class) {
+        self.with_pattern_depth_reset(|this| class.visit_children_with(this));
+    }
+
     fn visit_fn_decl(&mut self, decl: &FnDecl) {
         self.record(&decl.ident);
         decl.function.visit_with(self);
     }
 
     fn visit_class_decl(&mut self, decl: &ClassDecl) {
-        self.record(&decl.ident);
+        if let Some(traits) = self.record(&decl.ident) {
+            traits.class = true;
+        }
         decl.class.visit_with(self);
     }
 
@@ -2297,7 +2444,9 @@ impl Visit for BindingCollector {
 
     fn visit_class_expr(&mut self, ce: &ClassExpr) {
         if let Some(ident) = &ce.ident {
-            self.record(ident);
+            if let Some(traits) = self.record(ident) {
+                traits.class = true;
+            }
         }
         ce.class.visit_with(self);
     }
@@ -2308,7 +2457,7 @@ impl Visit for BindingCollector {
                 ImportSpecifier::Default(d) => self.record(&d.local),
                 ImportSpecifier::Named(n) => self.record(&n.local),
                 ImportSpecifier::Namespace(ns) => self.record(&ns.local),
-            }
+            };
         }
     }
 
@@ -2329,17 +2478,19 @@ impl Visit for BindingCollector {
 struct ClassificationState {
     value_targets: HashMap<String, usize>,
     other_uses: usize,
+    traits: BindingTraits,
 }
 
 impl ClassificationState {
     fn single_target(&self) -> Option<String> {
-        if self.other_uses > 0 {
-            return None;
-        }
         if self.value_targets.len() != 1 {
             return None;
         }
-        self.value_targets.keys().next().cloned()
+        let target = self.value_targets.keys().next()?;
+        if self.other_uses > 0 && !self.traits.allows_target_with_other_uses(target) {
+            return None;
+        }
+        Some(target.clone())
     }
 }
 
@@ -2348,10 +2499,18 @@ struct ValuePositionClassifier {
 }
 
 impl ValuePositionClassifier {
-    fn new(bindings: HashMap<BindingId, ()>) -> Self {
+    fn new(bindings: HashMap<BindingId, BindingTraits>) -> Self {
         let states = bindings
-            .into_keys()
-            .map(|k| (k, ClassificationState::default()))
+            .into_iter()
+            .map(|(k, traits)| {
+                (
+                    k,
+                    ClassificationState {
+                        traits,
+                        ..Default::default()
+                    },
+                )
+            })
             .collect();
         Self { states }
     }

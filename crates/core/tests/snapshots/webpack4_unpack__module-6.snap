@@ -29,13 +29,13 @@ function c() {
 const s = "invalid buffer passed to channel factory function";
 const f = "Saga was provided with an undefined action";
 function d(e = a_1.fixed()) {
-    let t = false;
-    let n = [];
+    let __closed__ = false;
+    let __takers__ = [];
     function i() {
-        if (t && n.length) {
+        if (__closed__ && __takers__.length) {
             throw p_1("Cannot have a closed channel with pending takers");
         }
-        if (n.length && !e.isEmpty()) {
+        if (__takers__.length && !e.isEmpty()) {
             throw p_1("Cannot have pending takers with non empty buffer");
         }
     }
@@ -44,11 +44,11 @@ function d(e = a_1.fixed()) {
         take (o) {
             i();
             h_1(o, q.func, "channel.take's callback must be a function");
-            if (t && e.isEmpty()) {
+            if (__closed__ && e.isEmpty()) {
                 o(a);
             } else if (e.isEmpty()) {
-                n.push(o);
-                o.cancel = ()=>w(n, o);
+                __takers__.push(o);
+                o.cancel = ()=>w(__takers__, o);
             } else {
                 o(e.take());
             }
@@ -56,14 +56,14 @@ function d(e = a_1.fixed()) {
         put (o) {
             i();
             h_1(o, q.notUndef, f);
-            if (!t) {
-                if (!n.length) {
+            if (!__closed__) {
+                if (!__takers__.length) {
                     return e.put(o);
                 }
-                for(let a = 0; a < n.length; a++){
-                    const u = n[a];
+                for(let a = 0; a < __takers__.length; a++){
+                    const u = __takers__[a];
                     if (!u[b] || u[b](o)) {
-                        n.splice(a, 1);
+                        __takers__.splice(a, 1);
                         return u(o);
                     }
                 }
@@ -72,7 +72,7 @@ function d(e = a_1.fixed()) {
         flush (n) {
             i();
             h_1(n, q.func, "channel.flush' callback must be a function");
-            if (t && e.isEmpty()) {
+            if (__closed__ && e.isEmpty()) {
                 n(a);
             } else {
                 n(e.flush());
@@ -80,19 +80,19 @@ function d(e = a_1.fixed()) {
         },
         close () {
             i();
-            if (!t && (t = true, n.length)) {
-                const e = n;
-                n = [];
+            if (!__closed__ && (__closed__ = true, __takers__.length)) {
+                const e = __takers__;
+                __takers__ = [];
                 for(let r = 0, o = e.length; r < o; r++){
                     e[r](a);
                 }
             }
         },
         get __takers__ () {
-            return n;
+            return __takers__;
         },
         get __closed__ () {
-            return t;
+            return __closed__;
         }
     };
 }
@@ -101,7 +101,7 @@ function p(e, t = a_1.none(), n) {
         h_1(n, q.func, "Invalid match function passed to eventChannel");
     }
     const i = d(t);
-    const a = ()=>{
+    const close = ()=>{
         if (!i.__closed__) {
             if (u) {
                 u();
@@ -111,7 +111,7 @@ function p(e, t = a_1.none(), n) {
     };
     var u = e((e)=>{
         if (l(e)) {
-            a();
+            close();
         } else if (!(n && !n(e))) {
             i.put(e);
         }
@@ -125,7 +125,7 @@ function p(e, t = a_1.none(), n) {
     return {
         take: i.take,
         flush: i.flush,
-        close: a
+        close
     };
 }
 function h(e) {

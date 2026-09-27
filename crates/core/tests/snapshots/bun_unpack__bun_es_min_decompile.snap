@@ -94,12 +94,12 @@ class m {
     }
     set(t, e) {
         let o = c.get(this);
-        let r = o[t];
+        let old = o[t];
         o[t] = e;
-        if (r !== e) {
+        if (old !== e) {
             this._notify(g, {
                 key: t,
-                old: r,
+                old,
                 value: e
             });
         }
@@ -146,31 +146,31 @@ function S(t) {
 const p = new f(n.INFO);
 export async function main() {
     p.info("Starting app");
-    let t = await w(1);
-    p.info(`User: ${h(t.name)}`);
-    let o = (await S(t.id)).map((i)=>({
+    let user = await w(1);
+    p.info(`User: ${h(user.name)}`);
+    let summary = (await S(user.id)).map((i)=>({
             title: $(h(i.title), 50),
             date: _(i.createdAt || new Date().toISOString()),
             wordCount: i.body ? i.body.split(" ").length : 0
         }));
-    let r = o.reduce((i, u)=>d(i, u.wordCount), 0);
-    let s = Math.round(x(r, 1 / o.length));
-    p.info(`${o.length} posts, avg ${s} words`);
+    let totalWords = summary.reduce((i, u)=>d(i, u.wordCount), 0);
+    let avg = Math.round(x(totalWords, 1 / summary.length));
+    p.info(`${summary.length} posts, avg ${avg} words`);
     let a = new m({
         count: 0,
-        user: t.name
+        user: user.name
     });
     a.subscribe((i, u)=>{
         if (i === g) {
             p.debug(`${u.key} = ${u.value}`);
         }
     });
-    a.set("count", r);
+    a.set("count", totalWords);
     return {
-        user: t,
-        summary: o,
-        totalWords: r,
-        avg: s
+        user,
+        summary,
+        totalWords,
+        avg
     };
 }
 main().then((t)=>console.log("Done:", t));

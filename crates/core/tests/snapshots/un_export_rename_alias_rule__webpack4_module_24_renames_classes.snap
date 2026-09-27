@@ -527,16 +527,16 @@ export class Switch extends Component {
     render() {
         const route = this.context.router.route;
         const children = this.props.children;
-        const n = this.props.location || route.location;
-        let r;
+        const location = this.props.location || route.location;
+        let computedMatch;
         let o;
         Children.forEach(children, (t)=>{
-            if (r == null && isValidElement(t)) {
+            if (computedMatch == null && isValidElement(t)) {
                 const i = t.props;
                 const { path, exact, strict, sensitive, from } = i;
                 const d = path || from;
                 o = t;
-                r = a(n.pathname, {
+                computedMatch = a(location.pathname, {
                     path: d,
                     exact,
                     strict,
@@ -544,10 +544,10 @@ export class Switch extends Component {
                 }, route.match);
             }
         });
-        if (r) {
+        if (computedMatch) {
             return cloneElement(o, {
-                location: n,
-                computedMatch: r
+                location,
+                computedMatch
             });
         }
         return null;
