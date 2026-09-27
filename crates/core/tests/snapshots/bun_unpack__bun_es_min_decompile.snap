@@ -2,11 +2,11 @@
 source: crates/core/tests/bun_unpack.rs
 expression: output
 ---
-function d(t, e) {
-    return t + e;
+function d(t, wordCount) {
+    return t + wordCount;
 }
-function x(t, e) {
-    return t * e;
+function x(totalWords, e) {
+    return totalWords * e;
 }
 function h(t) {
     if (!t) {

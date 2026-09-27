@@ -5,13 +5,13 @@ use std::rc::Rc;
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrayPat, ArrowExpr, ArrowFunctionBody, AssignPatProp, BlockStmt, CallExpr, Callee, Class,
-    ClassDecl, ClassExpr, Constructor, Decl, Expr, FnDecl, FnExpr, ForHead, ForInStmt, ForOfStmt,
-    ForStmt, Function, GetterProp, Ident, ImportDecl, ImportSpecifier, JSXAttr, JSXAttrName,
-    JSXAttrOrSpread, JSXAttrValue, JSXElementName, JSXExpr, JSXExprContainer, JSXMemberExpr,
-    JSXObject, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem,
-    ObjectPat, ObjectPatProp, ParamOrTsParamProp, Pat, Prop, PropName, Stmt, SwitchStmt, VarDecl,
-    VarDeclKind, VarDeclOrExpr,
+    ArrayPat, ArrowExpr, ArrowFunctionBody, AssignPatProp, BindingIdent, BlockStmt, CallExpr,
+    Callee, Class, ClassDecl, ClassExpr, Constructor, Decl, Expr, FnDecl, FnExpr, ForHead,
+    ForInStmt, ForOfStmt, ForStmt, Function, GetterProp, Ident, ImportDecl, ImportSpecifier,
+    JSXAttr, JSXAttrName, JSXAttrOrSpread, JSXAttrValue, JSXElementName, JSXExpr, JSXExprContainer,
+    JSXMemberExpr, JSXObject, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleDecl,
+    ModuleItem, ObjectPat, ObjectPatProp, ParamOrTsParamProp, Pat, Prop, PropName, Stmt,
+    SwitchStmt, VarDecl, VarDeclKind, VarDeclOrExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -19,7 +19,10 @@ use crate::js_names::{
     is_likely_generated_alias, is_reserved_binding_name, to_valid_identifier_name,
 };
 
-use super::eval_utils::{js_source_mentions_binding, module_has_with_stmt, DirectEvalAnalyzer};
+use super::eval_utils::{
+    has_dynamic_scope_construct, js_source_mentions_binding, module_has_with_stmt,
+    DirectEvalAnalyzer,
+};
 use super::expr_utils::is_unresolved_ident;
 use super::extract_inlined_function::SharedExtractedFunctionNames;
 use super::helper_matcher::static_member_prop_name;
@@ -74,7 +77,8 @@ impl VisitMut for SmartRename {
         module.visit_mut_children_with(self);
         // Runs once at the module level; uses (sym, ctxt) matching so nested
         // bindings are classified correctly without per-scope recursion.
-        value_position_rename_module(module);
+        let value_named = value_position_rename_module(module);
+        call_site_param_rename_module(module, &value_named);
         jsx_component_alias_rename_module(module, &exported_bindings);
         self.pending_value_position_names = previous_pending_names;
     }
@@ -1821,14 +1825,19 @@ fn symbol_key_to_const_name(key: &str) -> String {
 //     name (`const t = !!s.icon` → `{ icon: t }` is a flag about `icon`)
 // ============================================================
 
-fn value_position_rename_module(module: &mut Module) {
+/// Returns the renamed bindings under their new names.
+fn value_position_rename_module(module: &mut Module) -> HashSet<BindingId> {
     let renames = collect_value_position_renames_module(module);
     if renames.is_empty() {
-        return;
+        return HashSet::default();
     }
     rename_bindings_in_module(module, &renames);
     // Collapse `{ Foo: Foo }` created by the rename back to `{ Foo }`.
     module.visit_mut_with(&mut ObjShorthand);
+    renames
+        .into_iter()
+        .map(|rename| (rename.new, rename.old.1))
+        .collect()
 }
 
 fn collect_value_position_rename_map_module(module: &Module) -> HashMap<BindingId, String> {
@@ -2702,6 +2711,434 @@ fn key_as_ident_target(key: &PropName) -> Option<String> {
         return None;
     }
     Some(raw)
+}
+
+// ============================================================
+// Call-site parameter renames
+//
+// A short parameter of a function whose every reference is a direct call is
+// renamed after the argument all those calls pass at its position:
+//
+//   function f(e) { return e.trim(); }  f(input.text); f(text);
+//                                        → function f(text) { ... }
+//
+// Requirements, each measured against original names:
+//   - The function binding is declared once, never written, not exported,
+//     and never used except as a direct callee (a function that escapes has
+//     callers we cannot see).
+//   - Every call passes a named argument (`x` or `obj.x`) at the position,
+//     and all names agree. A spread at or before the position, a missing
+//     argument, or any other expression disqualifies.
+//   - The name carries meaning: a Wakaru `_N` suffix is dropped; short,
+//     mangled-looking (`kQz`, `J99`), reserved-property, `t_x`-synthesized,
+//     and React ref `current` names are rejected.
+//   - The parameter is used, never written (minifiers reuse parameters as
+//     scratch variables), and not already backed by a shorthand property;
+//     the name does not already occur anywhere inside the function.
+//
+// More callers do not make the name more reliable (widely called helpers take
+// a general parameter while callers pass something specific), and generic
+// names such as `options` or `type` are usually right here, unlike in value
+// position. Runs after value-position renames, which are more precise.
+// ============================================================
+
+/// `value_named` holds bindings value-position renames just named; their
+/// new name can still look short (`fn`) but is the better evidence.
+fn call_site_param_rename_module(module: &mut Module, value_named: &HashSet<BindingId>) {
+    if has_dynamic_scope_construct(module) {
+        return;
+    }
+    let mut functions = CallSiteFunctionCollector::default();
+    module.visit_with(&mut functions);
+    if functions.candidates.iter().all(|c| c.binding.is_none()) {
+        return;
+    }
+
+    let by_binding: HashMap<BindingId, usize> = functions
+        .candidates
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, c)| c.binding.clone().map(|bid| (bid, idx)))
+        .collect();
+    let mut uses = CallSiteUseCollector {
+        functions: &by_binding,
+        uses: HashMap::default(),
+    };
+    module.visit_with(&mut uses);
+    let exported_bindings = collect_exported_binding_ids(module);
+
+    let mut proposals: Vec<(Atom, usize, usize, BindingId)> = Vec::new();
+    for (bid, &idx) in &by_binding {
+        let Some(use_info) = uses.uses.get(bid) else {
+            continue;
+        };
+        if use_info.declarations != 1
+            || use_info.escapes > 0
+            || use_info.calls.is_empty()
+            || exported_bindings.contains(bid)
+        {
+            continue;
+        }
+        let candidate = &functions.candidates[idx];
+        for (position, param) in candidate.params.iter().enumerate() {
+            let Some(param) = param else {
+                continue;
+            };
+            if value_named.contains(param)
+                || functions.keyed_params.contains(param)
+                || functions.param_writes.get(param).copied().unwrap_or(0) > 1
+                || functions.param_refs.get(param).copied().unwrap_or(0) == 0
+            {
+                continue;
+            }
+            let Some(name) = unanimous_call_site_name(&use_info.calls, position) else {
+                continue;
+            };
+            if candidate.names.contains(&name) || name == param.0 {
+                continue;
+            }
+            proposals.push((name, idx, position, param.clone()));
+        }
+    }
+    proposals.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
+
+    // Proposals are checked against the names each function already holds;
+    // two proposals of the same name conflict when their functions are the
+    // same or nested, since the inner parameter could capture the outer one.
+    let nested = |a: usize, b: usize| {
+        a == b
+            || functions.candidates[a].ancestors.contains(&b)
+            || functions.candidates[b].ancestors.contains(&a)
+    };
+    let mut accepted: HashMap<Atom, Vec<usize>> = HashMap::default();
+    let mut renames = Vec::new();
+    for (name, idx, _, param) in proposals {
+        let taken = accepted.entry(name.clone()).or_default();
+        if taken.iter().any(|&other| nested(idx, other)) {
+            continue;
+        }
+        taken.push(idx);
+        renames.push(BindingRename {
+            old: param,
+            new: name,
+        });
+    }
+    rename_bindings_in_module(module, &renames);
+}
+
+/// Property names that name a mechanism rather than a value.
+const CALL_SITE_RESERVED_NAMES: &[&str] = &[
+    "default",
+    "length",
+    "prototype",
+    "constructor",
+    "then",
+    "call",
+    "apply",
+    "bind",
+    "value",
+    "exports",
+    "module",
+    "require",
+    "arguments",
+    "undefined",
+    "eval",
+    // React ref containers: `xRef.current` says nothing about the value.
+    "current",
+];
+
+/// A name that reads like a real identifier, with any Wakaru `_N`
+/// disambiguation suffix dropped.
+fn call_site_name(raw: &str) -> Option<Atom> {
+    if is_synthesized_prefixed_name(raw) {
+        return None;
+    }
+    let base = match raw.rsplit_once('_') {
+        Some((base, digits))
+            if !base.is_empty()
+                && !digits.is_empty()
+                && digits.bytes().all(|b| b.is_ascii_digit()) =>
+        {
+            base
+        }
+        _ => raw,
+    };
+    if is_likely_generated_alias(base)
+        || looks_mangled(base)
+        || CALL_SITE_RESERVED_NAMES.contains(&base)
+        || is_reserved_binding_name(base)
+        || !is_valid_js_ident(base)
+    {
+        return None;
+    }
+    Some(Atom::from(base))
+}
+
+/// Short names a minifier emits that `is_likely_generated_alias` does not
+/// cover: one letter plus digits (`J99`) or three letters in mixed case
+/// (`kQz`).
+fn looks_mangled(name: &str) -> bool {
+    name.chars().count() <= 3
+        && (name.chars().any(|c| c.is_ascii_digit())
+            || name.chars().skip(1).any(|c| c.is_ascii_uppercase()))
+}
+
+/// Wakaru keeps a minified stem when it builds a name from a property:
+/// `t_nextValue`, `ab_value`.
+fn is_synthesized_prefixed_name(name: &str) -> bool {
+    let chars: Vec<char> = name.chars().collect();
+    let stem_char = |c: char| c.is_ascii_alphanumeric() || c == '$';
+    let underscore_at = if chars.len() > 2 && chars[1] == '_' {
+        1
+    } else if chars.len() > 3 && chars[2] == '_' && stem_char(chars[1]) {
+        2
+    } else {
+        return false;
+    };
+    (chars[0].is_ascii_alphabetic() || chars[0] == '$')
+        && chars[underscore_at + 1].is_ascii_alphabetic()
+}
+
+fn unanimous_call_site_name(calls: &[Vec<Option<Atom>>], position: usize) -> Option<Atom> {
+    let mut agreed: Option<&Atom> = None;
+    for call in calls {
+        let name = call.get(position)?.as_ref()?;
+        match agreed {
+            Some(previous) if previous != name => return None,
+            _ => agreed = Some(name),
+        }
+    }
+    agreed.cloned()
+}
+
+struct CallSiteFunction {
+    /// The constant binding that names the function, when it has one.
+    binding: Option<BindingId>,
+    /// Short plain-identifier parameters by position.
+    params: Vec<Option<BindingId>>,
+    /// Indices of enclosing named functions.
+    ancestors: Vec<usize>,
+    /// Every identifier spelled inside the function, parameters included.
+    names: HashSet<Atom>,
+}
+
+/// Finds functions declared as `function f() {}` or `const f = ... =>` /
+/// `function () {}`, their short parameters, the names spelled inside them,
+/// and how often each such parameter is referenced.
+#[derive(Default)]
+struct CallSiteFunctionCollector {
+    candidates: Vec<CallSiteFunction>,
+    stack: Vec<usize>,
+    pending_binding: Option<BindingId>,
+    param_refs: HashMap<BindingId, usize>,
+    /// Parameters used as a shorthand property (`{ fn }`): the key already
+    /// backs the current name.
+    keyed_params: HashSet<BindingId>,
+    /// Binding sites per parameter: the parameter itself plus every write.
+    /// Minifiers reuse parameters as scratch variables, so a written
+    /// parameter can hold values unrelated to what the callers pass.
+    param_writes: HashMap<BindingId, usize>,
+}
+
+impl CallSiteFunctionCollector {
+    fn record_name(&mut self, sym: &Atom) {
+        for &idx in &self.stack {
+            self.candidates[idx].names.insert(sym.clone());
+        }
+    }
+
+    fn enter<'a>(&mut self, params: impl Iterator<Item = &'a Pat>) -> Option<usize> {
+        let binding = self.pending_binding.take()?;
+        let params: Vec<Option<BindingId>> = params
+            .map(|pat| match pat {
+                Pat::Ident(b) if is_likely_generated_alias(&b.id.sym) => {
+                    Some((b.id.sym.clone(), b.id.ctxt))
+                }
+                _ => None,
+            })
+            .collect();
+        for param in params.iter().flatten() {
+            self.param_refs.entry(param.clone()).or_default();
+        }
+        let idx = self.candidates.len();
+        self.candidates.push(CallSiteFunction {
+            binding: Some(binding),
+            params,
+            ancestors: self.stack.clone(),
+            names: HashSet::default(),
+        });
+        self.stack.push(idx);
+        Some(idx)
+    }
+
+    fn leave(&mut self, entered: Option<usize>) {
+        if entered.is_some() {
+            self.stack.pop();
+        }
+    }
+}
+
+impl Visit for CallSiteFunctionCollector {
+    fn visit_ident(&mut self, id: &Ident) {
+        self.record_name(&id.sym);
+        if let Some(count) = self.param_refs.get_mut(&(id.sym.clone(), id.ctxt)) {
+            *count += 1;
+        }
+    }
+
+    fn visit_binding_ident(&mut self, binding: &BindingIdent) {
+        self.record_name(&binding.id.sym);
+        let bid = (binding.id.sym.clone(), binding.id.ctxt);
+        if self.param_refs.contains_key(&bid) {
+            *self.param_writes.entry(bid).or_default() += 1;
+        }
+    }
+
+    fn visit_update_expr(&mut self, update: &swc_core::ecma::ast::UpdateExpr) {
+        if let Expr::Ident(id) = update.arg.unwrap_parens() {
+            let bid = (id.sym.clone(), id.ctxt);
+            if self.param_refs.contains_key(&bid) {
+                *self.param_writes.entry(bid).or_default() += 1;
+            }
+        }
+        update.visit_children_with(self);
+    }
+
+    fn visit_prop(&mut self, prop: &Prop) {
+        if let Prop::Shorthand(id) = prop {
+            let bid = (id.sym.clone(), id.ctxt);
+            if self.param_refs.contains_key(&bid) {
+                self.keyed_params.insert(bid);
+            }
+        }
+        prop.visit_children_with(self);
+    }
+
+    fn visit_fn_decl(&mut self, decl: &FnDecl) {
+        self.record_name(&decl.ident.sym);
+        self.pending_binding = Some((decl.ident.sym.clone(), decl.ident.ctxt));
+        decl.function.visit_with(self);
+    }
+
+    fn visit_fn_expr(&mut self, fn_expr: &FnExpr) {
+        if let Some(ident) = &fn_expr.ident {
+            self.record_name(&ident.sym);
+        }
+        fn_expr.function.visit_with(self);
+    }
+
+    fn visit_var_declarator(&mut self, decl: &swc_core::ecma::ast::VarDeclarator) {
+        decl.name.visit_with(self);
+        let Some(init) = &decl.init else {
+            return;
+        };
+        if let Pat::Ident(b) = &decl.name {
+            if matches!(init.unwrap_parens(), Expr::Fn(_) | Expr::Arrow(_)) {
+                self.pending_binding = Some((b.id.sym.clone(), b.id.ctxt));
+            }
+        }
+        init.visit_with(self);
+        self.pending_binding = None;
+    }
+
+    fn visit_function(&mut self, function: &Function) {
+        let entered = self.enter(function.params.iter().map(|p| &p.pat));
+        function.visit_children_with(self);
+        self.leave(entered);
+    }
+
+    fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
+        let entered = self.enter(arrow.params.iter());
+        arrow.visit_children_with(self);
+        self.leave(entered);
+    }
+
+    fn visit_constructor(&mut self, ctor: &Constructor) {
+        self.pending_binding = None;
+        ctor.visit_children_with(self);
+    }
+}
+
+#[derive(Default)]
+struct CallSiteUses {
+    /// Binding sites: the declaration plus any redeclaration or write.
+    declarations: usize,
+    /// References other than as a direct callee.
+    escapes: usize,
+    /// Per call, the usable name passed at each argument position.
+    calls: Vec<Vec<Option<Atom>>>,
+}
+
+struct CallSiteUseCollector<'a> {
+    functions: &'a HashMap<BindingId, usize>,
+    uses: HashMap<BindingId, CallSiteUses>,
+}
+
+impl CallSiteUseCollector<'_> {
+    fn entry(&mut self, id: &Ident) -> Option<&mut CallSiteUses> {
+        let bid = (id.sym.clone(), id.ctxt);
+        if !self.functions.contains_key(&bid) {
+            return None;
+        }
+        Some(self.uses.entry(bid).or_default())
+    }
+}
+
+impl Visit for CallSiteUseCollector<'_> {
+    fn visit_ident(&mut self, id: &Ident) {
+        if let Some(uses) = self.entry(id) {
+            uses.escapes += 1;
+        }
+    }
+
+    fn visit_binding_ident(&mut self, binding: &BindingIdent) {
+        if let Some(uses) = self.entry(&binding.id) {
+            uses.declarations += 1;
+        }
+    }
+
+    fn visit_fn_decl(&mut self, decl: &FnDecl) {
+        if let Some(uses) = self.entry(&decl.ident) {
+            uses.declarations += 1;
+        }
+        decl.function.visit_with(self);
+    }
+
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if let Callee::Expr(callee) = &call.callee {
+            if let Expr::Ident(id) = callee.as_ref() {
+                if self.functions.contains_key(&(id.sym.clone(), id.ctxt)) {
+                    let mut hidden = false;
+                    let names = call
+                        .args
+                        .iter()
+                        .map(|arg| {
+                            // A spread hides this and every later position.
+                            hidden |= arg.spread.is_some();
+                            if hidden {
+                                return None;
+                            }
+                            let raw = match arg.expr.unwrap_parens() {
+                                Expr::Ident(arg_id) => arg_id.sym.clone(),
+                                Expr::Member(MemberExpr {
+                                    prop: MemberProp::Ident(prop),
+                                    ..
+                                }) => prop.sym.clone(),
+                                _ => return None,
+                            };
+                            call_site_name(&raw)
+                        })
+                        .collect();
+                    if let Some(uses) = self.entry(id) {
+                        uses.calls.push(names);
+                    }
+                    call.args.visit_with(self);
+                    return;
+                }
+            }
+        }
+        call.visit_children_with(self);
+    }
 }
 
 // ============================================================

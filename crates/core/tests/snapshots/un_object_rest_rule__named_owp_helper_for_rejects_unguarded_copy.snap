@@ -2,11 +2,11 @@
 source: crates/core/tests/un_object_rest_rule.rs
 expression: output
 ---
-function m(e, t) {
+function m(obj, t) {
     const n = {};
     for(let r = 0; r < 1; r++){
         t.indexOf(r);
-        n[r] = e[r];
+        n[r] = obj[r];
     }
     return n;
 }

@@ -2,16 +2,16 @@
 source: crates/core/tests/un_define_property_rule.rs
 expression: output
 ---
-function a(e, t, n) {
-    if (t in e) {
-        Object.defineProperty(e, t, {
+function a(obj, t, n) {
+    if (t in obj) {
+        Object.defineProperty(obj, t, {
             value: n,
             writable: true
         });
     } else {
-        e[t] = n;
+        obj[t] = n;
     }
-    return e;
+    return obj;
 }
 const obj = {};
 a(obj, "k", 1);

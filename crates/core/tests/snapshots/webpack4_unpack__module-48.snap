@@ -7231,13 +7231,13 @@ function pl() {
     }
     return Y_ReactCurrentDispatcher_1_current;
 }
-function hl(e, t) {
+function hl(e, suspenseConfig) {
     if (e < Fu && e > 2) {
         Fu = e;
     }
-    if (t !== null && e < zu && e > 2) {
+    if (suspenseConfig !== null && e < zu && e > 2) {
         zu = e;
-        qu = t;
+        qu = suspenseConfig;
     }
 }
 function ml(e) {
@@ -8260,8 +8260,8 @@ function Al(e, t, n, r) {
     e.expirationTime = n;
     return e;
 }
-function Ll(e, t, n) {
-    e = jl(6, e, null, t);
+function Ll(e, mode, n) {
+    e = jl(6, e, null, mode);
     e.expirationTime = n;
     return e;
 }

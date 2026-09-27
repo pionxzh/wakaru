@@ -2,11 +2,11 @@
 source: crates/core/tests/rollup_unpack.rs
 expression: output
 ---
-function add(a, b) {
-    return a + b;
+function add(sum, wordCount) {
+    return sum + wordCount;
 }
-function multiply(a, b) {
-    return a * b;
+function multiply(totalWords, b) {
+    return totalWords * b;
 }
 function capitalize(str) {
     if (!str) {

@@ -571,10 +571,12 @@ const value = 1;
 const path = "abc";
 const value = 1;
 ((path_1, value_1) => {
-  const inner = (e) => e * 2;
+  const inner = (path) => path * 2;
   return inner(path_1) + value_1;
 })(path, value);
 "#;
+    // `inner` stays a separate binding; SmartRename later names its
+    // parameter after the only argument it receives.
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }

@@ -130,7 +130,7 @@ MemoryRouter.propTypes = {
     keyLength: u.number,
     children: u.node
 };
-const R = (e)=>Children.count(e) === 0;
+const R = (children)=>Children.count(children) === 0;
 export class Route extends Component {
     constructor(...i){
         super(...i);
@@ -420,11 +420,11 @@ const X = (e)=>{
     }
     return `/${e}`;
 };
-const J = (e, t)=>{
-    if (e) {
+const J = (basename, t)=>{
+    if (basename) {
         return {
             ...t,
-            pathname: X(e) + t.pathname
+            pathname: X(basename) + t.pathname
         };
     }
     return t;

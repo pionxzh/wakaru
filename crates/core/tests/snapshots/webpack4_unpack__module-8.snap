@@ -13,14 +13,14 @@ function i(e, t) {
     }
     e.pop();
 }
-const a = (e, t = "")=>{
+const a = (pathname, t = "")=>{
     let n;
-    const r = e && e.split("/") || [];
+    const r = pathname && pathname.split("/") || [];
     let a = t && t.split("/") || [];
-    const u = e && o(e);
+    const u = pathname && o(pathname);
     const l = t && o(t);
     const c = u || l;
-    if (e && o(e)) {
+    if (pathname && o(pathname)) {
         a = r;
     } else if (r.length) {
         a.pop();
@@ -73,26 +73,26 @@ function u(e) {
     }
     return Object.prototype.valueOf.call(e);
 }
-const l = function e(t, n) {
-    if (t === n) {
+const l = function e(state, n) {
+    if (state === n) {
         return true;
     }
-    if (t == null || n == null) {
+    if (state == null || n == null) {
         return false;
     }
-    if (Array.isArray(t)) {
-        return Array.isArray(n) && t.length === n.length && t.every((t, r)=>e(t, n[r]));
+    if (Array.isArray(state)) {
+        return Array.isArray(n) && state.length === n.length && state.every((t, r)=>e(t, n[r]));
     }
-    if (typeof t === "object" || typeof n === "object") {
-        const r = u(t);
+    if (typeof state === "object" || typeof n === "object") {
+        const r = u(state);
         const o = u(n);
-        if (r !== t || o !== n) {
+        if (r !== state || o !== n) {
             return e(r, o);
         }
         return Object.keys({
-            ...t,
+            ...state,
             ...n
-        }).every((r)=>e(t[r], n[r]));
+        }).every((r)=>e(state[r], n[r]));
     }
     return false;
 };
@@ -481,12 +481,12 @@ const P = {
         decodePath: d
     }
 };
-function _(e) {
-    const t = e.indexOf("#");
+function _(href) {
+    const t = href.indexOf("#");
     if (-1 === t) {
-        return e;
+        return href;
     }
-    return e.slice(0, t);
+    return href.slice(0, t);
 }
 function j() {
     const href = window.location.href;

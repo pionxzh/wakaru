@@ -2682,6 +2682,264 @@ async function rhY({ signal: A }) {
 }
 
 // ============================================================
+// Call-site parameter renames
+// ============================================================
+
+#[test]
+fn call_site_renames_param_when_every_call_passes_the_same_name() {
+    let input = r#"
+function f(e) {
+    return e.trim();
+}
+f(input.text);
+f(text);
+"#;
+    let expected = r#"
+function f(text) {
+    return text.trim();
+}
+f(input.text);
+f(text);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn call_site_renames_arrow_and_function_expression_params() {
+    let input = r#"
+const f = (e, t) => e.get(t);
+const g = function(e) { return e + 1; };
+f(state.cache, key);
+g(config.retryCount);
+"#;
+    let expected = r#"
+const f = (cache, key) => cache.get(key);
+const g = function(retryCount) { return retryCount + 1; };
+f(state.cache, key);
+g(config.retryCount);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn call_site_skips_when_callers_disagree_or_pass_no_name() {
+    let input = r#"
+function f(e) { return e.trim(); }
+function g(e) { return e.trim(); }
+f(input.text);
+f(input.label);
+g(input.text);
+g("literal");
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn call_site_skips_functions_used_other_than_as_direct_callee() {
+    let input = r#"
+function f(e) { return e.trim(); }
+function g(e) { return e.trim(); }
+const h = (e) => e.trim();
+f(text);
+list.map(f);
+g(text);
+g = null;
+h(text);
+h?.(text);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn call_site_skips_exported_functions() {
+    let input = r#"
+export function f(e) { return e.trim(); }
+f(text);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn call_site_strips_wakaru_numeric_suffix_from_argument_name() {
+    let input = r#"
+function f(e) { return e.getBoundingClientRect(); }
+f(anchorNode_1);
+"#;
+    let expected = r#"
+function f(anchorNode) { return anchorNode.getBoundingClientRect(); }
+f(anchorNode_1);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn call_site_skips_names_that_carry_no_meaning() {
+    // Mangled module-level names, React ref `.current`, keywords, reserved
+    // property names, and Wakaru-synthesized `t_x` names.
+    let input = r#"
+function a(e) { return e.x; }
+function b(e) { return e.x; }
+function c(e) { return e.x; }
+function d(e) { return e.x; }
+function g(e) { return e.x; }
+function h(e) { return e.x; }
+a(kQz);
+b(J99);
+c(xRef.current);
+d(step.return);
+g(list.length);
+h(t_nextValue);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn call_site_skips_names_already_present_in_the_function() {
+    let input = r#"
+function f(e) {
+    const text = e.trim();
+    return text;
+}
+function g(e) {
+    return e + text;
+}
+f(input.text);
+g(input.text);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn call_site_skips_unused_params_and_spread_calls() {
+    let input = r#"
+function f(e) { return 1; }
+function g(e, t) { return t + e; }
+f(input.text);
+g(input.size, ...rest);
+g(input.size, input.count);
+"#;
+    // A spread at or before the parameter's position hides what that call
+    // passes, so `t` keeps its name; `e` still sees `size` at both calls.
+    let expected = r#"
+function f(e) { return 1; }
+function g(size, t) { return t + size; }
+f(input.text);
+g(input.size, ...rest);
+g(input.size, input.count);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn call_site_gives_a_name_to_one_of_two_nested_functions_only() {
+    // Renaming both params to `node` would let the inner one capture the
+    // outer reference.
+    let input = r#"
+function outer(e) {
+    function inner(t) {
+        return t.parent === e;
+    }
+    return inner(tree.node);
+}
+outer(tree.node);
+"#;
+    let output = apply(input);
+    assert_eq!(
+        output.matches("(node)").count(),
+        1,
+        "exactly one param may take `node`: {output}"
+    );
+}
+
+#[test]
+fn call_site_skips_module_with_direct_eval() {
+    let input = r#"
+function f(e) { return eval("e"); }
+f(input.text);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn call_site_leaves_value_position_names_first() {
+    // The object key names the value itself; the call-site name is weaker.
+    let input = r#"
+function f(e) {
+    return { total: e };
+}
+f(order.amount);
+"#;
+    let expected = r#"
+function f(total) {
+    return { total };
+}
+f(order.amount);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn call_site_keeps_short_value_position_name() {
+    // `fn` is short enough to look generated, but value position just
+    // chose it and is the stronger evidence.
+    let input = r#"
+const f = (e) => ({ fn: e });
+f(task.handler);
+"#;
+    let expected = r#"
+const f = (fn) => ({ fn });
+f(task.handler);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn call_site_skips_params_reused_as_scratch_variables() {
+    let input = r#"
+function f(e, t) {
+    for (t = 0; t < e.length; t++) use(e[t]);
+}
+function g(e) {
+    e++;
+    return e;
+}
+function h(e) {
+    [e] = e.items;
+    return e;
+}
+f(batch.entries, cursor.position);
+g(state.count);
+h(state.list);
+"#;
+    let expected = r#"
+function f(entries, t) {
+    for (t = 0; t < entries.length; t++) use(entries[t]);
+}
+function g(e) {
+    e++;
+    return e;
+}
+function h(e) {
+    [e] = e.items;
+    return e;
+}
+f(batch.entries, cursor.position);
+g(state.count);
+h(state.list);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn call_site_keeps_param_backed_by_shorthand_property() {
+    let input = r#"
+const f = (fn) => ({ fn });
+f(task.handler);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+// ============================================================
 // SmartRenameSecondPass tests
 // ============================================================
 

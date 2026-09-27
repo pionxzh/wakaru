@@ -2,15 +2,15 @@
 source: crates/core/tests/un_object_rest_rule.rs
 expression: output
 ---
-function m(e, t) {
-    if (e == null) {
+function m(obj, t) {
+    if (obj == null) {
         return {};
     }
     const n = {};
-    const i = Object.keys(e);
+    const i = Object.keys(obj);
     for(let r = 0; r < i.length; r++){
         if (!(t.indexOf(i[r]) < 0)) {
-            n[i[r]] = e[i[r]];
+            n[i[r]] = obj[i[r]];
         }
     }
     return n;

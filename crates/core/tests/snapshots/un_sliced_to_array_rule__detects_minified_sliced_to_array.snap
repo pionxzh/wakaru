@@ -1,6 +1,5 @@
 ---
 source: crates/core/tests/un_sliced_to_array_rule.rs
-assertion_line: 518
 expression: output
 ---
 function c(e) {
@@ -8,8 +7,8 @@ function c(e) {
         return e;
     }
 }
-function r(e, t) {
-    return c(e) || o(e, t) || s(e, t) || l();
+function r(pair, t) {
+    return c(pair) || o(pair, t) || s(pair, t) || l();
 }
 const _ref = r(pair, 2);
 const key = _ref[0];

@@ -2717,7 +2717,7 @@ const r = (n = require("./dep.js")) && n.__esModule ? n : { default: n };
 function read(r) {
   return r.default;
 }
-consume(r.default, read(other));
+consume(r.default, read(other()));
 "#;
     let expected = r#"
 import r from "./dep.js";
@@ -2725,7 +2725,7 @@ let n;
 function read(r) {
   return r.default;
 }
-consume(r, read(other));
+consume(r, read(other()));
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
