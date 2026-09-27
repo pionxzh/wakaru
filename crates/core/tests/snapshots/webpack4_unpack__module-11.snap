@@ -159,8 +159,8 @@ export function combineReducers(e) {
                 }
             });
         })(n);
-    } catch (e) {
-        u = e;
+    } catch (error) {
+        u = error;
     }
     return (e = {}, t)=>{
         if (u) {

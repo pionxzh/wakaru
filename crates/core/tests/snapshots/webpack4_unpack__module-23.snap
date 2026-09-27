@@ -212,9 +212,9 @@ export function connectAdvanced(e, { getDisplayName = (e)=>`ConnectAdvanced(${e}
                                     n.props = o;
                                     n.error = null;
                                 }
-                            } catch (e) {
+                            } catch (error) {
                                 n.shouldComponentUpdate = true;
-                                n.error = e;
+                                n.error = error;
                             }
                         }
                     };

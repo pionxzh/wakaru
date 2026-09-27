@@ -111,9 +111,9 @@ function k(e = {}) {
     const t = {
         ...e
     };
-    const n = new Promise((e, n)=>{
-        t.resolve = e;
-        t.reject = n;
+    const n = new Promise((resolve, reject)=>{
+        t.resolve = resolve;
+        t.reject = reject;
     });
     t.promise = n;
     return t;
@@ -127,8 +127,8 @@ export function g(e) {
 }
 export function m(e, t = true) {
     let n;
-    const r = new Promise((r)=>{
-        n = setTimeout(()=>r(t), e);
+    const r = new Promise((resolve)=>{
+        n = setTimeout(()=>resolve(t), e);
     });
     r[c] = ()=>clearTimeout(n);
     return r;

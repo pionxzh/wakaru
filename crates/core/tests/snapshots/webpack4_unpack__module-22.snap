@@ -239,12 +239,12 @@ ${e.stack}`;
             } else {
                 L(r.value, b, "", M);
             }
-        } catch (e) {
+        } catch (error) {
             if (j.isCancelled) {
-                O(e);
+                O(error);
             }
             j.isMainRunning = false;
-            j.cont(e, true);
+            j.cont(error, true);
         }
     }
     function A(t, n) {
@@ -301,8 +301,8 @@ ${e.stack}`;
                 b = true;
                 try {
                     w.cancel();
-                } catch (e) {
-                    O(e);
+                } catch (error) {
+                    O(error);
                 }
                 w.cancel = o.u;
                 if (h_sagaMonitor) {
@@ -337,8 +337,8 @@ ${e.stack}`;
                 };
                 try {
                     channel.take(a, m(pattern));
-                } catch (e) {
-                    return t(e, true);
+                } catch (error) {
+                    return t(error, true);
                 }
                 t.cancel = a.cancel;
             })(k, w);
@@ -349,11 +349,11 @@ ${e.stack}`;
                     let e;
                     try {
                         e = (channel ? channel.put : n)(action);
-                    } catch (e) {
+                    } catch (error) {
                         if (channel || resolve) {
-                            return t(e, true);
+                            return t(error, true);
                         }
-                        O(e);
+                        O(error);
                     }
                     if (!resolve || !is.promise(e)) {
                         return t(e);
@@ -410,8 +410,8 @@ ${e.stack}`;
                 let u;
                 try {
                     u = fn.apply(context, args);
-                } catch (e) {
-                    return n(e, true);
+                } catch (error) {
+                    return n(error, true);
                 }
                 if (is.promise(u)) {
                     return I(u, n);
@@ -435,8 +435,8 @@ ${e.stack}`;
                     if (a.cancel) {
                         t.cancel = ()=>a.cancel();
                     }
-                } catch (e) {
-                    return t(e, true);
+                } catch (error) {
+                    return t(error, true);
                 }
             })(k, w);
         }
@@ -479,8 +479,8 @@ ${e.stack}`;
                         r()
                     ].concat(args));
                     t(i);
-                } catch (e) {
-                    t(e, true);
+                } catch (error) {
+                    t(error, true);
                 }
             })(k, w);
         }
@@ -536,8 +536,8 @@ ${e.stack}`;
             let a;
             try {
                 i = fn.apply(context, args);
-            } catch (e) {
-                a = e;
+            } catch (error) {
+                a = error;
             }
             if (is.iterator(i)) {
                 return i;

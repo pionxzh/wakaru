@@ -18,9 +18,9 @@ if (typeof window === "undefined" || typeof MessageChannel !== "function") {
                 const e = unstable_now();
                 l(true, e);
                 l = null;
-            } catch (e) {
+            } catch (error) {
                 setTimeout(s, 0);
-                throw e;
+                throw error;
             }
         }
     };
@@ -92,9 +92,9 @@ if (typeof window === "undefined" || typeof MessageChannel !== "function") {
                     b = false;
                     g = null;
                 }
-            } catch (e) {
+            } catch (error) {
                 T.postMessage(null);
-                throw e;
+                throw error;
             }
         } else {
             b = false;

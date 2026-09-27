@@ -32,8 +32,8 @@ function d(e, t, n, r, o, i, a, c, s) {
         const c = Array.prototype.slice.call(arguments, 3);
         try {
             t.apply(n, c);
-        } catch (e) {
-            this.onError(e);
+        } catch (error) {
+            this.onError(error);
         }
     }).apply(f, arguments);
 }
@@ -3148,12 +3148,12 @@ function Ko() {
                 }
             });
             Do = null;
-        } catch (t) {
+        } catch (error) {
             if (Do !== null) {
                 Do = Do.slice(e + 1);
             }
             unstable_scheduleCallback_1(unstable_ImmediatePriority_1, Qo);
-            throw t;
+            throw error;
         } finally{
             zo = false;
         }
@@ -6019,9 +6019,9 @@ function nu(e, t) {
     }
     try {
         console.error(t);
-    } catch (e) {
+    } catch (error) {
         setTimeout(()=>{
-            throw e;
+            throw error;
         });
     }
 }
@@ -6031,8 +6031,8 @@ function ru(e) {
         if (typeof e_ref === "function") {
             try {
                 e_ref(null);
-            } catch (t) {
-                Ol(e, t);
+            } catch (error) {
+                Ol(e, error);
             }
         } else {
             e_ref.current = null;
@@ -6159,8 +6159,8 @@ function lu(e, t, n) {
                             const o = t;
                             try {
                                 n();
-                            } catch (e) {
-                                Ol(o, e);
+                            } catch (error) {
+                                Ol(o, error);
                             }
                         }
                         e = e.next;
@@ -6176,8 +6176,8 @@ function lu(e, t, n) {
                         t.props = e.memoizedProps;
                         t.state = e.memoizedState;
                         t.componentWillUnmount();
-                    } catch (t) {
-                        Ol(e, t);
+                    } catch (error) {
+                        Ol(e, error);
                     }
                 })(t, n);
             }
@@ -6836,8 +6836,8 @@ function ul(e) {
                             try {
                                 vl();
                                 break;
-                            } catch (e) {
-                                dl(t, e);
+                            } catch (error) {
+                                dl(t, error);
                             }
                         }
                         ti();
@@ -6984,8 +6984,8 @@ function ll(e) {
             try {
                 yl();
                 break;
-            } catch (t) {
-                dl(e, t);
+            } catch (error) {
+                dl(e, error);
             }
         }
         ti();
@@ -7216,8 +7216,8 @@ Add a <Suspense fallback=...> component higher in the tree to provide a loading 
                 }while (f !== null)
             }
             Au = gl(Au);
-        } catch (e) {
-            t = e;
+        } catch (error) {
+            t = error;
             continue;
         }
         break;
@@ -7448,11 +7448,11 @@ function El(e) {
             do {
                 try {
                     xl();
-                } catch (e) {
+                } catch (error) {
                     if (Bu === null) {
                         throw Error(a(330));
                     }
-                    Ol(Bu, e);
+                    Ol(Bu, error);
                     Bu = Bu.nextEffect;
                 }
             }while (Bu !== null)
@@ -7498,11 +7498,11 @@ function El(e) {
                         }
                         Bu = Bu.nextEffect;
                     }
-                } catch (e) {
+                } catch (error) {
                     if (Bu === null) {
                         throw Error(a(330));
                     }
-                    Ol(Bu, e);
+                    Ol(Bu, error);
                     Bu = Bu.nextEffect;
                 }
             }while (Bu !== null)
@@ -7597,11 +7597,11 @@ function El(e) {
                         }
                         Bu = Bu.nextEffect;
                     }
-                } catch (e) {
+                } catch (error) {
                     if (Bu === null) {
                         throw Error(a(330));
                     }
-                    Ol(Bu, e);
+                    Ol(Bu, error);
                     Bu = Bu.nextEffect;
                 }
             }while (Bu !== null)
@@ -7700,11 +7700,11 @@ function Tl() {
                         au(5, n);
                 }
             }
-        } catch (t) {
+        } catch (error) {
             if (e === null) {
                 throw Error(a(330));
             }
-            Ol(e, t);
+            Ol(e, error);
         }
         n = e.nextEffect;
         e.nextEffect = null;
@@ -7720,19 +7720,19 @@ function Sl(e, t, n) {
         ul(e);
     }
 }
-function Ol(e, t) {
+function Ol(e, error) {
     if (e.tag === 3) {
-        Sl(e, e, t);
+        Sl(e, e, error);
     } else {
         for(let n = e.return; n !== null;){
             if (n.tag === 3) {
-                Sl(n, e, t);
+                Sl(n, e, error);
                 break;
             }
             if (n.tag === 1) {
                 const r = n.stateNode;
                 if (typeof n.type.getDerivedStateFromError === "function" || typeof r.componentDidCatch === "function" && (Ku === null || !Ku.has(r))) {
-                    si(n, e = vu(n, e = eu(t, e), 1073741823));
+                    si(n, e = vu(n, e = eu(error, e), 1073741823));
                     if ((n = il(n, 1073741823)) !== null) {
                         ul(n);
                     }

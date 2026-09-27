@@ -2940,6 +2940,112 @@ f(task.handler);
 }
 
 // ============================================================
+// Structural-role renames
+// ============================================================
+
+#[test]
+fn role_renames_used_catch_parameter_to_error() {
+    let input = r#"
+try { run(); } catch (e) { report(e.message); }
+try { run(); } catch (t) { }
+try { run(); } catch (failure) { report(failure); }
+"#;
+    let expected = r#"
+try { run(); } catch (error) { report(error.message); }
+try { run(); } catch (t) { }
+try { run(); } catch (failure) { report(failure); }
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn role_skips_catch_parameter_when_error_is_taken_or_written() {
+    let input = r#"
+const error = 1;
+try { run(); } catch (e) { report(e, error); }
+function f() {
+    try { run(); } catch (e) { e = wrap(e); throw e; }
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn role_renames_nested_catch_parameters_unless_the_inner_one_reads_the_outer() {
+    let input = r#"
+try { run(); } catch (e) {
+    try { retry(); } catch (t) { report(e, t); }
+}
+try { run(); } catch (e) {
+    report(e);
+    try { retry(); } catch (t) { report(t); }
+}
+"#;
+    let expected = r#"
+try { run(); } catch (error) {
+    try { retry(); } catch (t) { report(error, t); }
+}
+try { run(); } catch (error) {
+    report(error);
+    try { retry(); } catch (error) { report(error); }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn role_renames_promise_executor_parameters() {
+    let input = r#"
+const a = new Promise((e, t) => {
+    load(e, t);
+});
+const b = new Promise(function (e, t) {
+    e(1);
+});
+"#;
+    let expected = r#"
+const a = new Promise((resolve, reject) => {
+    load(resolve, reject);
+});
+const b = new Promise(function (resolve, reject) {
+    resolve(1);
+});
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn role_skips_local_promise_and_taken_names() {
+    let input = r#"
+function f(Promise) {
+    return new Promise((e, t) => e(t));
+}
+const b = new Promise((e, t) => {
+    const resolve = 1;
+    e(resolve, t);
+});
+"#;
+    let expected = r#"
+function f(Promise) {
+    return new Promise((e, t) => e(t));
+}
+const b = new Promise((e, reject) => {
+    const resolve = 1;
+    e(resolve, reject);
+});
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn role_skips_module_with_direct_eval() {
+    let input = r#"
+try { run(); } catch (e) { eval("report(e)"); }
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+// ============================================================
 // SmartRenameSecondPass tests
 // ============================================================
 

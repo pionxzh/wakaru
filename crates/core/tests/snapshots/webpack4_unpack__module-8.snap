@@ -193,8 +193,8 @@ export function createLocation(e, t, n, o) {
     }
     try {
         i.pathname = decodeURI(i.pathname);
-    } catch (e) {
-        throw e instanceof URIError ? new URIError(`Pathname "${i.pathname}" could not be decoded. This is likely caused by an invalid percent-encoding.`) : e;
+    } catch (error) {
+        throw error instanceof URIError ? new URIError(`Pathname "${i.pathname}" could not be decoded. This is likely caused by an invalid percent-encoding.`) : error;
     }
     if (n) {
         i.key = n;

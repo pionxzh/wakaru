@@ -79,6 +79,7 @@ impl VisitMut for SmartRename {
         // bindings are classified correctly without per-scope recursion.
         let value_named = value_position_rename_module(module);
         call_site_param_rename_module(module, &value_named);
+        role_rename_module(module, self.unresolved_mark);
         jsx_component_alias_rename_module(module, &exported_bindings);
         self.pending_value_position_names = previous_pending_names;
     }
@@ -3138,6 +3139,196 @@ impl Visit for CallSiteUseCollector<'_> {
             }
         }
         call.visit_children_with(self);
+    }
+}
+
+// ============================================================
+// Structural-role renames
+//
+// Some bindings have a role the language fixes, whatever the code around
+// them says:
+//
+//   try { ... } catch (e) { report(e); }   → catch (error)
+//   new Promise((e, t) => ...)             → (resolve, reject) => ...
+//
+// Only short parameters are renamed, and only when the new name does not
+// already occur inside the catch clause or executor. A catch parameter must
+// also be read and never written; executor parameters are renamed even when
+// unused, since the name documents the position. `Promise` must be the
+// global. A nested scope keeps its short name when it reads the outer
+// binding that takes the same name, so the rename cannot capture it.
+// ============================================================
+
+fn role_rename_module(module: &mut Module, unresolved_mark: Mark) {
+    if has_dynamic_scope_construct(module) {
+        return;
+    }
+    let mut collector = RoleCollector {
+        unresolved_mark,
+        scopes: Vec::new(),
+        stack: Vec::new(),
+        tracked: HashMap::default(),
+    };
+    module.visit_with(&mut collector);
+
+    let mut accepted: HashMap<&'static str, Vec<(usize, Atom)>> = HashMap::default();
+    let mut renames = Vec::new();
+    for (idx, scope) in collector.scopes.iter().enumerate() {
+        for (bid, target, is_catch) in &scope.params {
+            let uses = collector.tracked.get(bid).copied().unwrap_or_default();
+            if uses.writes > 1 || (*is_catch && uses.refs == 0) {
+                continue;
+            }
+            if scope.names.contains(&Atom::from(*target)) {
+                continue;
+            }
+            // An inner scope that reads the outer binding would capture it
+            // once both take the same name.
+            let taken = accepted.entry(target).or_default();
+            let captures = taken.iter().any(|(other, old)| {
+                let other_scope = &collector.scopes[*other];
+                (scope.ancestors.contains(other) && scope.names.contains(old))
+                    || (other_scope.ancestors.contains(&idx) && other_scope.names.contains(&bid.0))
+            });
+            if captures {
+                continue;
+            }
+            taken.push((idx, bid.0.clone()));
+            renames.push(BindingRename {
+                old: bid.clone(),
+                new: Atom::from(*target),
+            });
+        }
+    }
+    rename_bindings_in_module(module, &renames);
+}
+
+struct RoleScope {
+    /// Short parameters with their role name; the flag marks a catch
+    /// parameter.
+    params: Vec<(BindingId, &'static str, bool)>,
+    /// Indices of enclosing role scopes.
+    ancestors: Vec<usize>,
+    /// Every identifier spelled inside the scope, parameters included.
+    names: HashSet<Atom>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct RoleParamUses {
+    refs: usize,
+    /// Binding sites: the parameter itself plus every write.
+    writes: usize,
+}
+
+struct RoleCollector {
+    unresolved_mark: Mark,
+    scopes: Vec<RoleScope>,
+    stack: Vec<usize>,
+    tracked: HashMap<BindingId, RoleParamUses>,
+}
+
+impl RoleCollector {
+    fn record_name(&mut self, sym: &Atom) {
+        for &idx in &self.stack {
+            self.scopes[idx].names.insert(sym.clone());
+        }
+    }
+
+    fn enter(&mut self, params: Vec<(BindingId, &'static str, bool)>) {
+        for (bid, _, _) in &params {
+            self.tracked.entry(bid.clone()).or_default();
+        }
+        let idx = self.scopes.len();
+        self.scopes.push(RoleScope {
+            params,
+            ancestors: self.stack.clone(),
+            names: HashSet::default(),
+        });
+        self.stack.push(idx);
+    }
+
+    fn short_param(pat: &Pat) -> Option<BindingId> {
+        match pat {
+            Pat::Ident(b) if is_likely_generated_alias(&b.id.sym) => {
+                Some((b.id.sym.clone(), b.id.ctxt))
+            }
+            _ => None,
+        }
+    }
+}
+
+impl Visit for RoleCollector {
+    fn visit_ident(&mut self, id: &Ident) {
+        self.record_name(&id.sym);
+        if let Some(uses) = self.tracked.get_mut(&(id.sym.clone(), id.ctxt)) {
+            uses.refs += 1;
+        }
+    }
+
+    fn visit_binding_ident(&mut self, binding: &BindingIdent) {
+        self.record_name(&binding.id.sym);
+        if let Some(uses) = self
+            .tracked
+            .get_mut(&(binding.id.sym.clone(), binding.id.ctxt))
+        {
+            uses.writes += 1;
+        }
+    }
+
+    fn visit_update_expr(&mut self, update: &swc_core::ecma::ast::UpdateExpr) {
+        if let Expr::Ident(id) = update.arg.unwrap_parens() {
+            if let Some(uses) = self.tracked.get_mut(&(id.sym.clone(), id.ctxt)) {
+                uses.writes += 1;
+            }
+        }
+        update.visit_children_with(self);
+    }
+
+    fn visit_catch_clause(&mut self, catch: &swc_core::ecma::ast::CatchClause) {
+        let Some(bid) = catch.param.as_ref().and_then(Self::short_param) else {
+            catch.visit_children_with(self);
+            return;
+        };
+        self.enter(vec![(bid, "error", true)]);
+        catch.visit_children_with(self);
+        self.stack.pop();
+    }
+
+    fn visit_new_expr(&mut self, new: &swc_core::ecma::ast::NewExpr) {
+        let executor = match (new.callee.as_ref(), new.args.as_deref()) {
+            (Expr::Ident(callee), Some([first, ..]))
+                if first.spread.is_none()
+                    && is_unresolved_ident(callee, "Promise", self.unresolved_mark) =>
+            {
+                match first.expr.unwrap_parens() {
+                    Expr::Arrow(arrow) => Some(arrow.params.iter().collect::<Vec<_>>()),
+                    Expr::Fn(f) => Some(f.function.params.iter().map(|p| &p.pat).collect()),
+                    _ => None,
+                }
+                .map(|params| (params, first.expr.as_ref()))
+            }
+            _ => None,
+        };
+        let Some((params, executor)) = executor else {
+            new.visit_children_with(self);
+            return;
+        };
+        let roles: Vec<_> = params
+            .iter()
+            .zip(["resolve", "reject"])
+            .filter_map(|(pat, role)| Self::short_param(pat).map(|bid| (bid, role, false)))
+            .collect();
+        new.callee.visit_with(self);
+        if roles.is_empty() {
+            executor.visit_with(self);
+        } else {
+            self.enter(roles);
+            executor.visit_with(self);
+            self.stack.pop();
+        }
+        for arg in new.args.iter().flatten().skip(1) {
+            arg.visit_with(self);
+        }
     }
 }
 
