@@ -1,6 +1,8 @@
 mod common;
 
-use common::{assert_eq_normalized, render, render_rule};
+use common::{assert_eq_normalized, inspect_rule_output, render, render_rule};
+use swc_core::ecma::ast::TplElement;
+use swc_core::ecma::visit::{Visit, VisitWith};
 use wakaru_core::facts::{HelperExportFact, HelperKind, ModuleFacts, ModuleFactsMap};
 use wakaru_core::rules::{RewriteLevel, UnTemplateLiteral};
 
@@ -719,4 +721,45 @@ fn concat_chain_recovery_ignores_dynamic_scope() {
     let input = "with (scope) { observe(); }\nconst s = 'a'.concat(b, 'c');\n";
     let output = apply(input);
     assert!(output.contains("`a${b}c`"), "{output}");
+}
+
+/// The input text each template quasi's span starts at, in source order.
+fn quasi_span_starts(input: &str) -> Vec<Option<String>> {
+    struct Quasis(Vec<swc_core::common::Span>);
+    impl Visit for Quasis {
+        fn visit_tpl_element(&mut self, node: &TplElement) {
+            self.0.push(node.span);
+        }
+    }
+    inspect_rule_output(
+        input,
+        |_| UnTemplateLiteral::new(),
+        |module, text| {
+            let mut quasis = Quasis(Vec::new());
+            module.visit_with(&mut quasis);
+            quasis
+                .0
+                .into_iter()
+                .map(|span| {
+                    text.starting_at(span)
+                        .map(|rest| rest.chars().take(4).collect())
+                })
+                .collect()
+        },
+    )
+}
+
+#[test]
+fn template_quasis_keep_the_spans_of_their_string_literals() {
+    // Plus chain: each quasi starts at its own literal. The concat call's
+    // empty head quasi has no literal and keeps the whole call's span.
+    assert_eq!(
+        quasi_span_starts(r#"a = "x: " + U + "'"; b = "".concat(G, "-1", "!");"#),
+        [
+            Some(r#""x: "#.to_string()),
+            Some(r#""'";"#.to_string()),
+            Some(r#""".c"#.to_string()),
+            Some(r#""-1""#.to_string()),
+        ]
+    );
 }

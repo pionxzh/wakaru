@@ -1,6 +1,6 @@
 use crate::collections::{HashMap, HashSet};
 
-use swc_core::common::DUMMY_SP;
+use swc_core::common::{Span, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowFunctionBody, AssignOp, AssignTarget, BinExpr, BinaryOp, CallExpr, Callee, Decl, Expr,
     Lit, MemberExpr, MemberProp, Module, ModuleItem, Pat, SimpleAssignTarget, Stmt, TaggedTpl, Tpl,
@@ -105,7 +105,8 @@ impl Default for UnTemplateLiteral<'_> {
 }
 
 enum Part {
-    Text(String),
+    /// Cooked text and the span of the string literal it came from.
+    Text(String, Span),
     Expr(Box<Expr>),
 }
 
@@ -227,7 +228,9 @@ fn collect_concat_parts(call: &CallExpr, out: &mut Vec<Part>) -> bool {
                 return false;
             }
         }
-        Expr::Lit(Lit::Str(s)) => out.push(Part::Text(s.value.to_string_lossy().into_owned())),
+        Expr::Lit(Lit::Str(s)) => {
+            out.push(Part::Text(s.value.to_string_lossy().into_owned(), s.span))
+        }
         _ => return false,
     }
 
@@ -236,7 +239,9 @@ fn collect_concat_parts(call: &CallExpr, out: &mut Vec<Part>) -> bool {
             return false;
         }
         match &*arg.expr {
-            Expr::Lit(Lit::Str(s)) => out.push(Part::Text(s.value.to_string_lossy().into_owned())),
+            Expr::Lit(Lit::Str(s)) => {
+                out.push(Part::Text(s.value.to_string_lossy().into_owned(), s.span))
+            }
             other => out.push(Part::Expr(Box::new(other.clone()))),
         }
     }
@@ -531,7 +536,7 @@ fn rewrite_plus_chain(expr: &Expr, level: RewriteLevel) -> Option<Expr> {
 
     for op in &operands[first_str_idx..] {
         if let Expr::Lit(Lit::Str(s)) = op {
-            parts.push(Part::Text(s.value.to_string_lossy().into_owned()));
+            parts.push(Part::Text(s.value.to_string_lossy().into_owned(), s.span));
         } else {
             parts.push(Part::Expr(Box::new((*op).clone())));
         }
@@ -551,7 +556,7 @@ fn rewrite_plus_chain(expr: &Expr, level: RewriteLevel) -> Option<Expr> {
 
 fn substitutions_are_syntax_proven_primitive(parts: &[Part]) -> bool {
     parts.iter().all(|part| match part {
-        Part::Text(_) => true,
+        Part::Text(..) => true,
         Part::Expr(expr) => is_syntax_proven_primitive(expr),
     })
 }
@@ -801,17 +806,29 @@ impl TemplateData {
     }
 }
 
+/// Each quasi spans the string literals merged into it, so its text maps to
+/// those literals; a quasi with no literal (an empty head or tail) keeps the
+/// whole template's span.
 fn parts_to_template(parts: Vec<Part>, span: swc_core::common::Span) -> Tpl {
     let mut quasis = Vec::new();
     let mut exprs = Vec::new();
     let mut current = String::new();
+    let mut current_span: Option<Span> = None;
 
     for part in parts {
         match part {
-            Part::Text(text) => current.push_str(&text),
+            Part::Text(text, text_span) => {
+                current.push_str(&text);
+                if !text_span.is_dummy() {
+                    current_span = Some(match current_span {
+                        Some(merged) => Span::new(merged.lo, text_span.hi),
+                        None => text_span,
+                    });
+                }
+            }
             Part::Expr(expr) => {
                 quasis.push(TplElement {
-                    span,
+                    span: current_span.take().unwrap_or(span),
                     tail: false,
                     cooked: Some(current.clone().into()),
                     raw: escape_template_raw(&current).into(),
@@ -823,7 +840,7 @@ fn parts_to_template(parts: Vec<Part>, span: swc_core::common::Span) -> Tpl {
     }
 
     quasis.push(TplElement {
-        span,
+        span: current_span.unwrap_or(span),
         tail: true,
         cooked: Some(current.clone().into()),
         raw: escape_template_raw(&current).into(),
