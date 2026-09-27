@@ -1776,6 +1776,7 @@ fn cli_artifact_from_public(
         status,
         source_filename,
         source_map_filename: None,
+        source_map: None,
     })
 }
 
