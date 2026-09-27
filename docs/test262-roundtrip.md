@@ -47,22 +47,37 @@ on new flags, negative phases, or malformed frontmatter.
 
 ## Commands
 
+These commands compare against the reviewed baselines; CI runs the same
+comparison for every producer. A non-zero exit means an outcome moved or the
+run itself failed:
+
+```powershell
+node scripts\correctness\test262-baseline-matrix.mjs                              # every producer and slice
+node scripts\correctness\test262-baseline-matrix.mjs --producer swc-minify         # one producer
+node scripts\correctness\test262-baseline-matrix.mjs --producer swc-minify --slice operators
+node scripts\correctness\test262-baseline-matrix.mjs --slice module-graph          # module graphs, incl. Babel
+node scripts\correctness\test262-collect-stats.mjs --check                        # cached totals are current
+```
+
+Reviewing and accepting movement (`--accept`, and `--update` for identity
+changes such as a producer bump) is described in [Baselines](#baselines).
+
+### Exploratory runs
+
+`test262-roundtrip.mjs` runs any selection directly. These runs are not
+compared against a baseline, so a non-zero exit only means some selected case
+failed, and it may have failed before your change too. Compare two reports with
+`compare-test262-reports.mjs` to see what moved:
+
 ```powershell
 node scripts\correctness\test262-roundtrip.mjs --limit 500
 node scripts\correctness\test262-roundtrip.mjs --limit all --json target\test262-default.json
-node scripts\correctness\test262-roundtrip.mjs --limit all --summary target\test262-default.md
-node scripts\correctness\test262-roundtrip.mjs --preset classes --pipeline babel-env-terser --limit 100 --summary target\test262-classes-babel.md
 node scripts\correctness\test262-roundtrip.mjs --preset classes --pipeline swc-minify --limit 100 --summary target\test262-classes-swc.md
-node scripts\correctness\test262-roundtrip.mjs --preset classes --pipeline esbuild-minify --limit 100 --summary target\test262-classes-esbuild.md
-node scripts\correctness\test262-roundtrip.mjs --preset classes --limit all --json target\test262-classes.json
-node scripts\correctness\test262-roundtrip.mjs --preset modules --pipeline swc-minify --limit all --case-timeout-ms 2000 --summary target\test262-modules-graph-swc.md
-node scripts\correctness\test262-roundtrip.mjs --preset modules --pipeline esbuild-minify --limit all --case-timeout-ms 2000 --summary target\test262-modules-graph-esbuild.md
-node scripts\correctness\test262-roundtrip.mjs --preset modules --pipeline babel-env-terser --limit all --case-timeout-ms 2000 --summary target\test262-modules-graph-babel.md
 node scripts\correctness\compare-test262-reports.mjs target\before.json target\after.json --details
 node scripts\correctness\test262-roundtrip.mjs --rerun-from target\test262-default.json --rerun-status failed --json target\test262-default-rerun.json
 ```
 
-Defaults:
+Defaults for `test262-roundtrip.mjs`:
 
 - `--pipeline terser-light`
 - legacy equivalent: `--transform terser --terser-profile light`
