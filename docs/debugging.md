@@ -25,6 +25,9 @@ cargo test --test my_rule_rule
 # Run with backtrace (useful for infinite recursion / panics)
 RUST_BACKTRACE=1 cargo test -- --nocapture
 
+# Measure an emitted source map at token level (file or unpack directory)
+node scripts/sourcemap/check.mjs input.js out.js
+
 # Check identifier contexts after the pipeline over a directory of modules
 cargo run --profile dev-release -p wakaru-core --example name_capture_oracle -- path/to/modules/ > oracle.jsonl
 ```
@@ -103,6 +106,46 @@ findings are not bugs. The checks are conservative: a provider whose export
 set is unknowable (it re-exports an external package or a missing module)
 suppresses missing-name findings for its consumers instead of guessing. The
 implementation lives in `crates/core/src/output_validate.rs`.
+
+## Output Source Maps
+
+`scripts/sourcemap/check.mjs` measures an `--emit-source-map` result at token
+level. It needs Node; the first run installs its pinned parser packages into
+`target/repro-tools/`.
+
+```bash
+wakaru input.js --emit-source-map -o out.js
+node scripts/sourcemap/check.mjs input.js out.js
+
+wakaru bundle.js --unpack --emit-source-map -o out/
+node scripts/sourcemap/check.mjs bundle.js out/     # sums every module's map
+```
+
+It reports which output tokens carry a mapping at their start (overall and
+by token kind), how many a lookup resolves, how many output positions carry
+duplicate segments, and, for each mapped token, whether the input token at
+the mapped position is the same token, an identifier under another name,
+another token, or no token start at all.
+
+Reading the result:
+
+- **No input token** points at a broken offset (a wrong line index, column
+  unit, or composition hop). It should stay at or near zero.
+- **Other token** is mostly faithful rewrites: `const <- var`,
+  `true <- !`, an `if` mapped to the expression it replaced, a template
+  mapped to a `.concat` call. Scan the listed pairs for ones that cannot be a
+  rewrite of the mapped token.
+- **Duplicate positions** should be zero; the map builders keep one mapping
+  per output position.
+- Punctuation and keywords such as `else`, `in`, and `instanceof` are
+  written by the SWC emitter without a span, so their coverage is low by
+  design. Empty template chunks and whitespace-only JSX text print nothing
+  and are not counted.
+
+`--last` resolves duplicate segments to the last one instead of the first,
+`--json` prints the full result, and `--top` / `--examples` size the pair
+list. The measures themselves live in `scripts/sourcemap/quality.mjs`; after
+changing them, run `node --test scripts/sourcemap/quality.test.mjs`.
 
 ## Identifier Context Oracle
 
