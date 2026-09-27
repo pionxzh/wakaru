@@ -2959,7 +2959,7 @@ try { run(); } catch (failure) { report(failure); }
 }
 
 #[test]
-fn role_skips_catch_parameter_when_error_is_taken_or_written() {
+fn role_catch_falls_back_to_err_when_error_is_taken_and_skips_written() {
     let input = r#"
 const error = 1;
 try { run(); } catch (e) { report(e, error); }
@@ -2967,11 +2967,18 @@ function f() {
     try { run(); } catch (e) { e = wrap(e); throw e; }
 }
 "#;
-    assert_eq_normalized(&apply(input), input);
+    let expected = r#"
+const error = 1;
+try { run(); } catch (err) { report(err, error); }
+function f() {
+    try { run(); } catch (e) { e = wrap(e); throw e; }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
 }
 
 #[test]
-fn role_renames_nested_catch_parameters_unless_the_inner_one_reads_the_outer() {
+fn role_nested_catch_takes_err_instead_of_shadowing_error() {
     let input = r#"
 try { run(); } catch (e) {
     try { retry(); } catch (t) { report(e, t); }
@@ -2983,11 +2990,36 @@ try { run(); } catch (e) {
 "#;
     let expected = r#"
 try { run(); } catch (error) {
-    try { retry(); } catch (t) { report(error, t); }
+    try { retry(); } catch (err) { report(error, err); }
 }
 try { run(); } catch (error) {
     report(error);
-    try { retry(); } catch (error) { report(error); }
+    try { retry(); } catch (err) { report(err); }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn role_adds_numeric_suffix_instead_of_shadowing_an_outer_binding() {
+    let input = r#"
+import { resolve } from "path";
+const base = resolve(dir);
+const load = () => new Promise((e, t) => fetchFile(base, e, t));
+const read = () => new Promise((e) => fetchFile(resolve(dir), e));
+function f() {
+    let { error } = state;
+    try { run(error); } catch (e) { report(e); }
+}
+"#;
+    let expected = r#"
+import { resolve } from "path";
+const base = resolve(dir);
+const load = () => new Promise((resolve_1, reject) => fetchFile(base, resolve_1, reject));
+const read = () => new Promise((e) => fetchFile(resolve(dir), e));
+function f() {
+    let { error } = state;
+    try { run(error); } catch (err) { report(err); }
 }
 "#;
     assert_eq_normalized(&apply(input), expected);
@@ -3102,7 +3134,7 @@ a.data.reduce((acc, item) => acc + item, 0);
 }
 
 #[test]
-fn role_reduce_skips_taken_names_written_elements_and_capturing_nests() {
+fn role_reduce_skips_taken_names_and_written_elements_and_suffixes_nested_acc() {
     let input = r#"
 const a = list.reduce((e, t) => e + t + item, 0);
 const b = list.reduce((e, t) => {
@@ -3117,7 +3149,7 @@ const b = list.reduce((acc, t) => {
     t = t || 0;
     return acc + t;
 }, 0);
-const c = rows.reduce((acc, row) => acc + row.reduce((n, item) => n + item + acc, 0), 0);
+const c = rows.reduce((acc, row) => acc + row.reduce((acc_1, item) => acc_1 + item + acc, 0), 0);
 "#;
     assert_eq_normalized(&apply(input), expected);
 }

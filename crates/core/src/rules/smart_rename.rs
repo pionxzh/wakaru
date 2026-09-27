@@ -19,6 +19,7 @@ use crate::js_names::{
     is_likely_generated_alias, is_reserved_binding_name, to_valid_identifier_name,
 };
 
+use super::decl_utils::{collect_pat_names, collect_var_decl_names};
 use super::eval_utils::{
     has_dynamic_scope_construct, js_source_mentions_binding, module_has_with_stmt,
     DirectEvalAnalyzer,
@@ -3168,9 +3169,14 @@ impl Visit for CallSiteUseCollector<'_> {
 // loop element bindings must not be written (minifiers reuse bindings as
 // scratch variables); an accumulator may be, that is its role. Executor
 // and reduce parameters are renamed even when unused, since the name
-// documents the position. `Promise` and `Object` must be the globals. A
-// nested scope keeps its short name when it reads an outer binding that
-// takes the same name, so the rename cannot capture it.
+// documents the position. `Promise` and `Object` must be the globals.
+//
+// A name that would shadow a binding visible from outside the scope (an
+// import, an outer declaration, or an enclosing role rename) is replaced by
+// a conventional alternative (`err` for a catch parameter) or, failing that,
+// a `_N` suffix. A name already spelled inside the scope is an internal
+// collision instead: only the alternative is tried, since `resolve_1` next
+// to a local `resolve` reads worse than the short name.
 // ============================================================
 
 fn role_rename_module(module: &mut Module, unresolved_mark: Mark) {
@@ -3182,10 +3188,12 @@ fn role_rename_module(module: &mut Module, unresolved_mark: Mark) {
         scopes: Vec::new(),
         stack: Vec::new(),
         tracked: HashMap::default(),
+        frames: Vec::new(),
+        frame_stack: Vec::new(),
     };
     module.visit_with(&mut collector);
 
-    let mut accepted: HashMap<Atom, Vec<(usize, Atom)>> = HashMap::default();
+    let mut chosen: Vec<HashSet<Atom>> = vec![HashSet::default(); collector.scopes.len()];
     let mut renames = Vec::new();
     for (idx, scope) in collector.scopes.iter().enumerate() {
         for param in &scope.params {
@@ -3197,25 +3205,33 @@ fn role_rename_module(module: &mut Module, unresolved_mark: Mark) {
             if (param.forbid_writes && uses.writes > 1) || (param.require_read && uses.refs == 0) {
                 continue;
             }
-            if scope.names.contains(&param.target) {
-                continue;
+            let visible_outside = |name: &Atom| {
+                scope
+                    .frames
+                    .iter()
+                    .any(|&frame| collector.frames[frame].contains(name))
+                    || scope
+                        .ancestors
+                        .iter()
+                        .chain(std::iter::once(&idx))
+                        .any(|&other| chosen[other].contains(name))
+            };
+            let free = |name: &Atom| !scope.names.contains(name) && !visible_outside(name);
+            let mut pick = std::iter::once(param.target.clone())
+                .chain(param.alternates.iter().map(|alt| Atom::from(*alt)))
+                .find(|name| free(name));
+            if pick.is_none() && !scope.names.contains(&param.target) {
+                pick = (1..=10)
+                    .map(|i| Atom::from(format!("{}_{i}", param.target)))
+                    .find(|name| free(name));
             }
-            // An inner scope that reads the outer binding would capture it
-            // once both take the same name.
-            let taken = accepted.entry(param.target.clone()).or_default();
-            let captures = taken.iter().any(|(other, old)| {
-                let other_scope = &collector.scopes[*other];
-                (scope.ancestors.contains(other) && scope.names.contains(old))
-                    || (other_scope.ancestors.contains(&idx)
-                        && other_scope.names.contains(&param.binding.0))
-            });
-            if captures {
+            let Some(name) = pick else {
                 continue;
-            }
-            taken.push((idx, param.binding.0.clone()));
+            };
+            chosen[idx].insert(name.clone());
             renames.push(BindingRename {
                 old: param.binding.clone(),
-                new: param.target.clone(),
+                new: name,
             });
         }
     }
@@ -3225,6 +3241,8 @@ fn role_rename_module(module: &mut Module, unresolved_mark: Mark) {
 struct RoleParam {
     binding: BindingId,
     target: Atom,
+    /// Conventional names to try before a `_N` suffix.
+    alternates: &'static [&'static str],
     require_read: bool,
     forbid_writes: bool,
 }
@@ -3234,6 +3252,7 @@ impl RoleParam {
         Self {
             binding,
             target: Atom::from(target),
+            alternates: &[],
             require_read: false,
             forbid_writes: true,
         }
@@ -3246,6 +3265,8 @@ struct RoleScope {
     ancestors: Vec<usize>,
     /// Every identifier spelled inside the scope, parameters included.
     names: HashSet<Atom>,
+    /// Lexical frames enclosing the scope, for names visible from outside.
+    frames: Vec<usize>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -3260,6 +3281,13 @@ struct RoleCollector {
     scopes: Vec<RoleScope>,
     stack: Vec<usize>,
     tracked: HashMap<BindingId, RoleParamUses>,
+    /// Names declared per lexical frame (module, function, block, catch,
+    /// for head). Complete once the traversal ends, so hoisted and later
+    /// declarations count too.
+    frames: Vec<HashSet<Atom>>,
+    /// Open frames, innermost last, with whether each is a function frame
+    /// (the target of `var`).
+    frame_stack: Vec<(usize, bool)>,
 }
 
 impl RoleCollector {
@@ -3284,10 +3312,41 @@ impl RoleCollector {
             params,
             ancestors: self.stack.clone(),
             names: HashSet::default(),
+            frames: self.frame_stack.iter().map(|&(frame, _)| frame).collect(),
         });
         self.stack.push(idx);
         visit(self);
         self.stack.pop();
+    }
+
+    fn with_frame(&mut self, function: bool, visit: impl FnOnce(&mut Self)) {
+        let frame = self.frames.len();
+        self.frames.push(HashSet::default());
+        self.frame_stack.push((frame, function));
+        visit(self);
+        self.frame_stack.pop();
+    }
+
+    fn declare(&mut self, names: HashSet<Atom>, function_scoped: bool) {
+        let target = if function_scoped {
+            self.frame_stack
+                .iter()
+                .rev()
+                .find(|(_, function)| *function)
+        } else {
+            self.frame_stack.last()
+        };
+        if let Some(&(frame, _)) = target {
+            self.frames[frame].extend(names);
+        }
+    }
+
+    fn declare_pats<'a>(&mut self, pats: impl IntoIterator<Item = &'a Pat>) {
+        let mut names = HashSet::default();
+        for pat in pats {
+            collect_pat_names(pat, &mut names);
+        }
+        self.declare(names, false);
     }
 
     fn short_param(pat: &Pat) -> Option<BindingId> {
@@ -3582,12 +3641,18 @@ impl Visit for RoleCollector {
             .and_then(Self::short_param)
             .map(|binding| {
                 let mut param = RoleParam::new(binding, "error");
+                param.alternates = &["err"];
                 param.require_read = true;
                 param
             })
             .into_iter()
             .collect();
-        self.with_scope(params, |this| catch.visit_children_with(this));
+        self.with_scope(params, |this| {
+            this.with_frame(false, |this| {
+                this.declare_pats(catch.param.iter());
+                catch.visit_children_with(this);
+            })
+        });
     }
 
     fn visit_new_expr(&mut self, new: &swc_core::ecma::ast::NewExpr) {
@@ -3659,7 +3724,85 @@ impl Visit for RoleCollector {
 
     fn visit_for_stmt(&mut self, for_stmt: &ForStmt) {
         let params = Self::loop_element_params(for_stmt);
-        self.with_scope(params, |this| for_stmt.visit_children_with(this));
+        self.with_scope(params, |this| {
+            this.with_frame(false, |this| for_stmt.visit_children_with(this))
+        });
+    }
+
+    fn visit_for_in_stmt(&mut self, for_in: &ForInStmt) {
+        self.with_frame(false, |this| for_in.visit_children_with(this));
+    }
+
+    fn visit_for_of_stmt(&mut self, for_of: &ForOfStmt) {
+        self.with_frame(false, |this| for_of.visit_children_with(this));
+    }
+
+    fn visit_module(&mut self, module: &Module) {
+        self.with_frame(true, |this| module.visit_children_with(this));
+    }
+
+    fn visit_function(&mut self, function: &Function) {
+        self.with_frame(true, |this| {
+            this.declare_pats(function.params.iter().map(|p| &p.pat));
+            function.visit_children_with(this);
+        });
+    }
+
+    fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
+        self.with_frame(true, |this| {
+            this.declare_pats(arrow.params.iter());
+            arrow.visit_children_with(this);
+        });
+    }
+
+    fn visit_constructor(&mut self, ctor: &Constructor) {
+        self.with_frame(true, |this| {
+            let pats: Vec<&Pat> = ctor
+                .params
+                .iter()
+                .filter_map(|p| match p {
+                    ParamOrTsParamProp::Param(param) => Some(&param.pat),
+                    ParamOrTsParamProp::TsParamProp(_) => None,
+                })
+                .collect();
+            this.declare_pats(pats);
+            ctor.visit_children_with(this);
+        });
+    }
+
+    fn visit_block_stmt(&mut self, block: &BlockStmt) {
+        self.with_frame(false, |this| block.visit_children_with(this));
+    }
+
+    fn visit_var_decl(&mut self, var: &VarDecl) {
+        let mut names = HashSet::default();
+        collect_var_decl_names(var, &mut names);
+        self.declare(names, var.kind == VarDeclKind::Var);
+        var.visit_children_with(self);
+    }
+
+    fn visit_fn_decl(&mut self, decl: &FnDecl) {
+        self.declare(std::iter::once(decl.ident.sym.clone()).collect(), false);
+        decl.visit_children_with(self);
+    }
+
+    fn visit_class_decl(&mut self, decl: &ClassDecl) {
+        self.declare(std::iter::once(decl.ident.sym.clone()).collect(), false);
+        decl.visit_children_with(self);
+    }
+
+    fn visit_import_decl(&mut self, decl: &ImportDecl) {
+        let names = decl
+            .specifiers
+            .iter()
+            .map(|spec| match spec {
+                ImportSpecifier::Default(d) => d.local.sym.clone(),
+                ImportSpecifier::Named(n) => n.local.sym.clone(),
+                ImportSpecifier::Namespace(ns) => ns.local.sym.clone(),
+            })
+            .collect();
+        self.declare(names, false);
+        decl.visit_children_with(self);
     }
 }
 
