@@ -28,7 +28,7 @@ fn apply(input: &str) -> String {
         let mut parser = Parser::new_from(lexer);
         let mut module = parser.parse_module().expect("parse failed");
 
-        module.visit_mut_with(&mut UnPrototypeClass);
+        module.visit_mut_with(&mut UnPrototypeClass::default());
 
         let mut output = Vec::new();
         {
@@ -45,7 +45,7 @@ fn apply(input: &str) -> String {
 }
 
 fn apply_resolved(input: &str) -> String {
-    render_rule(input, |_| UnPrototypeClass)
+    render_rule(input, |_| UnPrototypeClass::default())
 }
 
 // ============================================================

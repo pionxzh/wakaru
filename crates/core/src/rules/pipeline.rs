@@ -68,6 +68,7 @@ struct RuleRunContext<'a> {
     dce_mode: DceMode,
     module_facts: Option<&'a ModuleFactsMap>,
     current_filename: Option<&'a str>,
+    call_required_plan: Option<&'a crate::rules::CallRequiredPlan>,
     local_helpers: Rc<RefCell<Option<Rc<LocalHelperContext>>>>,
     extracted_function_names: SharedExtractedFunctionNames,
     pre_dead: Option<Rc<PreDeadSet>>,
@@ -375,11 +376,14 @@ runner!(run_un_jsx, |ctx| UnJsx::new_with_level(
 ));
 fn run_un_es6_class(module: &mut Module, ctx: RuleRunContext<'_>) {
     let local_helpers = ctx.local_helpers(module);
+    let pin_exports =
+        crate::rules::pinned_export_names(ctx.call_required_plan, ctx.current_filename);
     UnEs6Class::run_with_helpers(
         module,
         ctx.unresolved_mark,
         ctx.rewrite_level,
         local_helpers.as_ref(),
+        pin_exports,
     );
 }
 fn run_un_class_fields(module: &mut Module, ctx: RuleRunContext<'_>) {
@@ -426,7 +430,11 @@ fn run_obj_method_shorthand(module: &mut Module, ctx: RuleRunContext<'_>) {
     let local_helpers = ctx.local_helpers(module);
     ObjMethodShorthand::run_with_helpers(module, ctx.unresolved_mark, local_helpers.as_ref());
 }
-runner!(run_un_prototype_class, UnPrototypeClass);
+fn run_un_prototype_class(module: &mut Module, ctx: RuleRunContext<'_>) {
+    let pin_exports =
+        crate::rules::pinned_export_names(ctx.call_required_plan, ctx.current_filename);
+    module.visit_mut_with(&mut UnPrototypeClass::with_pins(pin_exports));
+}
 runner!(run_exponent, |ctx| Exponent::new(ctx.unresolved_mark));
 runner!(run_arg_rest, |ctx| ArgRest::new(ctx.rewrite_level));
 runner!(run_un_rest_array_copy, |ctx| UnRestArrayCopy::new(
@@ -815,6 +823,7 @@ pub struct RulePipelineOptions<'a> {
     pub rewrite_level: RewriteLevel,
     pub module_facts: Option<&'a ModuleFactsMap>,
     pub current_filename: Option<&'a str>,
+    pub(crate) call_required_plan: Option<&'a crate::rules::CallRequiredPlan>,
 }
 
 impl Default for RulePipelineOptions<'_> {
@@ -826,6 +835,7 @@ impl Default for RulePipelineOptions<'_> {
             rewrite_level: RewriteLevel::Standard,
             module_facts: None,
             current_filename: None,
+            call_required_plan: None,
         }
     }
 }
@@ -863,6 +873,14 @@ impl<'a> RulePipelineOptions<'a> {
 
     pub fn with_current_filename(mut self, current_filename: &'a str) -> Self {
         self.current_filename = Some(current_filename);
+        self
+    }
+
+    pub(crate) fn with_call_required_plan(
+        mut self,
+        plan: &'a crate::rules::CallRequiredPlan,
+    ) -> Self {
+        self.call_required_plan = Some(plan);
         self
     }
 }
@@ -923,6 +941,7 @@ fn apply_rules_impl(
         dce_mode: options.dce_mode,
         module_facts: options.module_facts,
         current_filename: options.current_filename,
+        call_required_plan: options.call_required_plan,
         local_helpers: Rc::new(RefCell::new(None)),
         extracted_function_names: Rc::new(RefCell::new(ExtractedFunctionNames::default())),
         pre_dead,
@@ -1080,6 +1099,7 @@ mod tests {
                 dce_mode: DceMode::Full,
                 module_facts: None,
                 current_filename: None,
+                call_required_plan: None,
                 local_helpers: Rc::new(RefCell::new(Some(Rc::new(LocalHelperContext::default())))),
                 extracted_function_names: Default::default(),
                 pre_dead: None,

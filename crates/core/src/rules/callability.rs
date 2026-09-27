@@ -1,8 +1,10 @@
 use crate::collections::{HashMap, HashSet};
 
+use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
-    ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BindingIdent, CallExpr, Callee, Class,
-    Expr, Function, ModuleItem, Pat, ReturnStmt, SimpleAssignTarget, Stmt, VarDeclarator,
+    ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BindingIdent, CallExpr,
+    Callee, Class, Decl, DefaultDecl, ExportSpecifier, Expr, FnDecl, Function, ModuleDecl,
+    ModuleExportName, ModuleItem, Pat, ReturnStmt, SimpleAssignTarget, Stmt, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -18,12 +20,22 @@ pub(crate) struct CallabilityIndex {
 }
 
 impl CallabilityIndex {
-    pub(crate) fn collect_module_items(items: &[ModuleItem]) -> Self {
-        collect(items)
+    pub(crate) fn collect_stmts(stmts: &[Stmt]) -> Self {
+        collect(stmts, &HashSet::default())
     }
 
-    pub(crate) fn collect_stmts(stmts: &[Stmt]) -> Self {
-        collect(stmts)
+    /// Same collection as a module walk, but `roots` are required before alias
+    /// propagation. Cross-file pins use this so an exported `var Foo = IIFE`
+    /// also keeps the constructor that IIFE returns.
+    pub(crate) fn collect_module_items_with_roots(
+        items: &[ModuleItem],
+        roots: &HashSet<BindingKey>,
+    ) -> Self {
+        collect(items, roots)
+    }
+
+    pub(crate) fn collect_stmts_with_roots(stmts: &[Stmt], roots: &HashSet<BindingKey>) -> Self {
+        collect(stmts, roots)
     }
 
     pub(crate) fn requires_call(&self, binding: &BindingKey) -> bool {
@@ -31,12 +43,34 @@ impl CallabilityIndex {
     }
 }
 
-fn collect<N>(node: &N) -> CallabilityIndex
+/// One `.call` / alias fact from a module walk.
+///
+/// `guards` are converted class owners that drop this fact. That is the result
+/// alias, the IIFE parameter alias, and a constructor `super` call — not every
+/// call inside the initializer. Method bodies keep their `.call`.
+pub(crate) struct GuardedCallEffect {
+    pub guards: Vec<BindingKey>,
+    pub kind: GuardedCallEffectKind,
+}
+
+pub(crate) enum GuardedCallEffectKind {
+    Required(BindingKey),
+    /// Requiring `target` also requires `source`.
+    Alias {
+        target: BindingKey,
+        source: BindingKey,
+    },
+}
+
+fn collect<N>(node: &N, roots: &HashSet<BindingKey>) -> CallabilityIndex
 where
     N: VisitWith<CallabilityCollector> + ?Sized,
 {
     let mut collector = CallabilityCollector::default();
     node.visit_with(&mut collector);
+    // Seed before propagation. A root that is only an export name has no local
+    // `.call`, but the binding it evaluates to (IIFE return) still needs [[Call]].
+    collector.required.extend(roots.iter().cloned());
 
     let mut sources_by_target: HashMap<BindingKey, Vec<BindingKey>> = HashMap::default();
     for (target, source) in collector.aliases {
@@ -66,9 +100,52 @@ struct CallabilityCollector {
     /// `target` evaluates to `source`: requiring `target.[[Call]]` therefore
     /// requires `source.[[Call]]` too.
     aliases: Vec<(BindingKey, BindingKey)>,
+    /// Set only by [`module_guarded_call_effects`]. The index path leaves this
+    /// empty so propagation stays on `required` and `aliases`.
+    effects: Vec<GuardedCallEffect>,
+    record_effects: bool,
+    blankable: HashSet<BindingKey>,
+    guard_stack: Vec<BindingKey>,
+    /// Innermost blankable IIFE whose initializer is being walked.
+    iife_scopes: Vec<IifeConsumeScope>,
+    function_depth: usize,
+    pending_constructor: bool,
+    /// `true` while the current function is the IIFE's constructor.
+    in_constructor: Vec<bool>,
+}
+
+struct IifeConsumeScope {
+    owner: BindingKey,
+    super_param: Option<BindingKey>,
+    saw_constructor: bool,
+    /// `function_depth` before entering this IIFE's callee.
+    base_depth: usize,
 }
 
 impl CallabilityCollector {
+    fn note_required(&mut self, binding: BindingKey) {
+        if self.record_effects {
+            self.effects.push(GuardedCallEffect {
+                guards: self.guard_stack.clone(),
+                kind: GuardedCallEffectKind::Required(binding.clone()),
+            });
+        }
+        self.required.insert(binding);
+    }
+
+    fn note_alias(&mut self, target: BindingKey, source: BindingKey) {
+        if self.record_effects {
+            self.effects.push(GuardedCallEffect {
+                guards: self.guard_stack.clone(),
+                kind: GuardedCallEffectKind::Alias {
+                    target: target.clone(),
+                    source: source.clone(),
+                },
+            });
+        }
+        self.aliases.push((target, source));
+    }
+
     fn record_iife_param_aliases(&mut self, call: &CallExpr) {
         let Callee::Expr(callee) = &call.callee else {
             return;
@@ -100,7 +177,7 @@ impl CallabilityCollector {
                     .get(argument_index)
                     .and_then(|parameter| pat_binding_key(parameter))
                 {
-                    self.aliases.push((parameter_key, argument_key));
+                    self.note_alias(parameter_key, argument_key);
                 }
                 continue;
             }
@@ -111,7 +188,7 @@ impl CallabilityCollector {
             let minimum_parameter_index = argument_index - spreads_seen;
             for parameter in params.iter().skip(minimum_parameter_index) {
                 if let Some(parameter_key) = pat_binding_key(parameter) {
-                    self.aliases.push((parameter_key, argument_key.clone()));
+                    self.note_alias(parameter_key, argument_key.clone());
                 }
             }
         }
@@ -144,39 +221,288 @@ impl CallabilityCollector {
             _ => return,
         }
 
-        self.aliases.extend(
-            returns
-                .bindings
-                .into_iter()
-                .map(|source| (target.clone(), source)),
-        );
+        for source in returns.bindings {
+            self.note_alias(target.clone(), source);
+        }
+    }
+
+    /// `var t = e` / `t = e`. Requiring `t` requires `e`, including when `t` is
+    /// only reached through an IIFE return.
+    fn record_direct_ident_alias(&mut self, target: BindingKey, init: &Expr) {
+        let Some(source) = expr_binding_key(strip_parens(init)) else {
+            return;
+        };
+        if source == target {
+            return;
+        }
+        self.note_alias(target, source);
+    }
+
+    fn in_constructor(&self) -> bool {
+        self.in_constructor.last().copied().unwrap_or(false)
+    }
+
+    /// Walk a blankable class IIFE without tagging every nested `.call`.
+    ///
+    /// Class recovery deletes the wrapper, the parameter alias, and constructor
+    /// `super` calls. Calls in methods stay on the class and must still pin.
+    fn visit_blankable_init(&mut self, owner: BindingKey, init: &Expr) {
+        let Expr::Call(call) = strip_parens(init) else {
+            init.visit_with(self);
+            return;
+        };
+        self.guard_stack.push(owner.clone());
+        self.record_iife_param_aliases(call);
+        self.guard_stack.pop();
+
+        self.iife_scopes.push(IifeConsumeScope {
+            owner,
+            super_param: single_iife_param(call),
+            saw_constructor: false,
+            base_depth: self.function_depth,
+        });
+        for arg in &call.args {
+            arg.visit_with(self);
+        }
+        if let Callee::Expr(callee) = &call.callee {
+            callee.visit_with(self);
+        }
+        self.iife_scopes.pop();
     }
 }
 
 impl Visit for CallabilityCollector {
     fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
-        if let (Some(target), Some(init)) = (pat_binding_key(&declarator.name), &declarator.init) {
-            self.record_iife_result_alias(target, init);
+        let name = pat_binding_key(&declarator.name);
+        let owner = name
+            .clone()
+            .filter(|key| self.record_effects && self.blankable.contains(key));
+        // The result alias disappears with the wrapper. Nested calls do not.
+        if let Some(owner) = &owner {
+            self.guard_stack.push(owner.clone());
         }
-        declarator.visit_children_with(self);
+        if let (Some(target), Some(init)) = (name, declarator.init.as_deref()) {
+            self.record_iife_result_alias(target.clone(), init);
+            self.record_direct_ident_alias(target, init);
+        }
+        if owner.is_some() {
+            self.guard_stack.pop();
+        }
+        declarator.name.visit_with(self);
+        if let Some(init) = declarator.init.as_deref() {
+            if let Some(owner) = owner {
+                self.visit_blankable_init(owner, init);
+            } else {
+                init.visit_with(self);
+            }
+        }
+    }
+
+    fn visit_fn_decl(&mut self, decl: &FnDecl) {
+        if let Some(scope) = self.iife_scopes.last_mut() {
+            if self.function_depth == scope.base_depth + 1 && !scope.saw_constructor {
+                scope.saw_constructor = true;
+                self.pending_constructor = true;
+            }
+        }
+        decl.visit_children_with(self);
+    }
+
+    fn visit_function(&mut self, function: &Function) {
+        let constructor = self.pending_constructor;
+        self.pending_constructor = false;
+        self.in_constructor.push(constructor);
+        self.function_depth += 1;
+        function.visit_children_with(self);
+        self.function_depth -= 1;
+        self.in_constructor.pop();
+    }
+
+    fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
+        // Constructor rewriting does not enter arrows.
+        self.pending_constructor = false;
+        self.in_constructor.push(false);
+        self.function_depth += 1;
+        arrow.visit_children_with(self);
+        self.function_depth -= 1;
+        self.in_constructor.pop();
+    }
+
+    fn visit_class(&mut self, class: &Class) {
+        self.pending_constructor = false;
+        self.in_constructor.push(false);
+        class.visit_children_with(self);
+        self.in_constructor.pop();
     }
 
     fn visit_assign_expr(&mut self, assignment: &AssignExpr) {
         if assignment.op == AssignOp::Assign {
             if let AssignTarget::Simple(SimpleAssignTarget::Ident(target)) = &assignment.left {
-                self.record_iife_result_alias(binding_key(&target.id), &assignment.right);
+                let key = binding_key(&target.id);
+                self.record_iife_result_alias(key.clone(), &assignment.right);
+                self.record_direct_ident_alias(key, &assignment.right);
             }
         }
         assignment.visit_children_with(self);
     }
 
     fn visit_call_expr(&mut self, call: &CallExpr) {
-        if let Some(binding) = ident_call_or_apply_binding(call) {
-            self.required.insert(binding);
+        if let Some(binding) = ordinary_call_target(call) {
+            let consumed = self.in_constructor()
+                && self
+                    .iife_scopes
+                    .last()
+                    .and_then(|scope| scope.super_param.as_ref())
+                    == Some(&binding)
+                && constructor_super_call_is_rewritten(call);
+            if consumed {
+                if let Some(owner) = self.iife_scopes.last().map(|scope| scope.owner.clone()) {
+                    self.guard_stack.push(owner);
+                    self.note_required(binding);
+                    self.guard_stack.pop();
+                } else {
+                    self.note_required(binding);
+                }
+            } else {
+                self.note_required(binding);
+            }
         }
         self.record_iife_param_aliases(call);
         call.visit_children_with(self);
     }
+}
+
+/// `F.call` / `F.apply`, or the callee of `F.call.apply(G, …)` which is `G`.
+pub(crate) fn ordinary_call_target(call: &CallExpr) -> Option<BindingKey> {
+    call_apply_argument_binding(call).or_else(|| ident_call_or_apply_binding(call))
+}
+
+/// `F.call.apply(G, …)` — `[[Call]]` belongs to `G`, matching argument spread.
+fn call_apply_argument_binding(call: &CallExpr) -> Option<BindingKey> {
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Member(outer) = strip_parens(callee) else {
+        return None;
+    };
+    if !member_prop_name(&outer.prop, "apply") {
+        return None;
+    }
+    let Expr::Member(inner) = strip_parens(&outer.obj) else {
+        return None;
+    };
+    if !member_prop_name(&inner.prop, "call") {
+        return None;
+    }
+    let argument = call.args.first()?;
+    if argument.spread.is_some() {
+        return None;
+    }
+    let Expr::Ident(ident) = strip_parens(&argument.expr) else {
+        return None;
+    };
+    Some(binding_key(ident))
+}
+
+fn single_iife_param(call: &CallExpr) -> Option<BindingKey> {
+    if call.args.len() != 1 {
+        return None;
+    }
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    match strip_parens(callee) {
+        Expr::Fn(function) => match function.function.params.as_slice() {
+            [param] => pat_binding_key(&param.pat),
+            _ => None,
+        },
+        Expr::Arrow(arrow) => match arrow.params.as_slice() {
+            [pat] => pat_binding_key(pat),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// `SuperCallRewriter` turns these constructor calls into `super(...)`.
+fn constructor_super_call_is_rewritten(call: &CallExpr) -> bool {
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    let Expr::Member(member) = strip_parens(callee) else {
+        return false;
+    };
+    let Some(first) = call.args.first() else {
+        return false;
+    };
+    if first.spread.is_some() || !matches!(strip_parens(&first.expr), Expr::This(_)) {
+        return false;
+    }
+    if member_prop_name(&member.prop, "call") {
+        return true;
+    }
+    if !member_prop_name(&member.prop, "apply")
+        || call.args.len() != 2
+        || call.args[1].spread.is_some()
+    {
+        return false;
+    }
+    let second = strip_parens(&call.args[1].expr);
+    matches!(second, Expr::Ident(id) if id.sym.as_ref() == "arguments")
+        || matches!(second, Expr::Array(_))
+}
+
+/// Call and alias facts, tagged with the blankable var bindings that contain them.
+pub(crate) fn module_guarded_call_effects(
+    items: &[ModuleItem],
+    blankable: &HashSet<BindingKey>,
+) -> Vec<GuardedCallEffect> {
+    let mut collector = CallabilityCollector {
+        record_effects: true,
+        blankable: blankable.clone(),
+        ..CallabilityCollector::default()
+    };
+    items.visit_with(&mut collector);
+    collector.effects
+}
+
+/// Required bindings after dropping effects guarded by `blanked`, then seeding `roots`.
+pub(crate) fn required_bindings_from_effects(
+    effects: &[GuardedCallEffect],
+    blanked: &HashSet<BindingKey>,
+    roots: &HashSet<BindingKey>,
+) -> HashSet<BindingKey> {
+    let mut required = roots.clone();
+    let mut sources_by_target: HashMap<BindingKey, Vec<BindingKey>> = HashMap::default();
+    for effect in effects {
+        if effect.guards.iter().any(|guard| blanked.contains(guard)) {
+            continue;
+        }
+        match &effect.kind {
+            GuardedCallEffectKind::Required(binding) => {
+                required.insert(binding.clone());
+            }
+            GuardedCallEffectKind::Alias { target, source } => {
+                sources_by_target
+                    .entry(target.clone())
+                    .or_default()
+                    .push(source.clone());
+            }
+        }
+    }
+
+    let mut pending: Vec<BindingKey> = required.iter().cloned().collect();
+    while let Some(target) = pending.pop() {
+        let Some(sources) = sources_by_target.get(&target) else {
+            continue;
+        };
+        for source in sources {
+            if required.insert(source.clone()) {
+                pending.push(source.clone());
+            }
+        }
+    }
+    required
 }
 
 fn pat_binding_key(pat: &Pat) -> Option<BindingKey> {
@@ -222,4 +548,296 @@ impl Visit for IifeReturnCollector {
     fn visit_arrow_expr(&mut self, _: &swc_core::ecma::ast::ArrowExpr) {}
 
     fn visit_class(&mut self, _: &Class) {}
+}
+
+/// Binding keys of `exports` on this module's own export declarations.
+/// `export { t as Foo }` contributes `t`, not the exported spelling.
+/// `export default (function () { return t })()` with no local contributes `t`.
+/// Bindings reachable by IIFE-return aliases from `roots`, including `roots`.
+///
+/// Natural `.call` sites are not seeds. Nested class recovery uses this so a
+/// pinned `var Outer = (function () { return Foo })()` also pins `Foo`.
+pub(crate) fn alias_closure_of_roots(
+    items: &[ModuleItem],
+    roots: &HashSet<BindingKey>,
+) -> HashSet<BindingKey> {
+    let mut collector = CallabilityCollector::default();
+    items.visit_with(&mut collector);
+    let mut required = roots.clone();
+    let mut sources_by_target: HashMap<BindingKey, Vec<BindingKey>> = HashMap::default();
+    for (target, source) in collector.aliases {
+        sources_by_target.entry(target).or_default().push(source);
+    }
+    // `var t = e` sits between an IIFE return and the constructor. Direct ident
+    // aliases and return aliases have to close together, or the chain stops.
+    for (target, sources) in direct_ident_alias_sources(items) {
+        sources_by_target.entry(target).or_default().extend(sources);
+    }
+    let mut pending: Vec<BindingKey> = required.iter().cloned().collect();
+    while let Some(target) = pending.pop() {
+        let Some(sources) = sources_by_target.get(&target) else {
+            continue;
+        };
+        for source in sources {
+            if required.insert(source.clone()) {
+                pending.push(source.clone());
+            }
+        }
+    }
+    required
+}
+
+pub(crate) fn pinned_binding_keys(
+    items: &[ModuleItem],
+    exports: &HashSet<Atom>,
+) -> HashSet<BindingKey> {
+    let mut keys = export_binding_keys(items, exports);
+    expand_direct_ident_aliases(items, &mut keys);
+    keys
+}
+
+/// [`pinned_binding_keys`] with one shared direct-ident alias map.
+pub(crate) fn pinned_binding_keys_with_alias_sources(
+    items: &[ModuleItem],
+    exports: &HashSet<Atom>,
+    alias_sources: &HashMap<BindingKey, Vec<BindingKey>>,
+) -> HashSet<BindingKey> {
+    let mut keys = export_binding_keys(items, exports);
+    expand_alias_sources(alias_sources, &mut keys);
+    keys
+}
+
+fn object_ident_property_bindings(
+    object: &swc_core::ecma::ast::ObjectLit,
+    exports: &HashSet<Atom>,
+) -> Vec<BindingKey> {
+    let mut keys = Vec::new();
+    for prop in &object.props {
+        let swc_core::ecma::ast::PropOrSpread::Prop(prop) = prop else {
+            continue;
+        };
+        match prop.as_ref() {
+            swc_core::ecma::ast::Prop::Shorthand(ident) if exports.contains(&ident.sym) => {
+                keys.push(binding_key(ident));
+            }
+            swc_core::ecma::ast::Prop::KeyValue(pair) => {
+                let name = match &pair.key {
+                    swc_core::ecma::ast::PropName::Ident(ident) => Some(ident.sym.clone()),
+                    swc_core::ecma::ast::PropName::Str(value) => {
+                        value.value.as_str().map(Atom::from)
+                    }
+                    swc_core::ecma::ast::PropName::Num(_)
+                    | swc_core::ecma::ast::PropName::BigInt(_)
+                    | swc_core::ecma::ast::PropName::Computed(_) => None,
+                };
+                if let (Some(name), Expr::Ident(ident)) = (name, strip_parens(&pair.value)) {
+                    if exports.contains(&name) {
+                        keys.push(binding_key(ident));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    keys
+}
+
+fn export_binding_keys(items: &[ModuleItem], exports: &HashSet<Atom>) -> HashSet<BindingKey> {
+    let mut keys = HashSet::default();
+    if exports.is_empty() {
+        return keys;
+    }
+    for item in items {
+        let ModuleItem::ModuleDecl(decl) = item else {
+            continue;
+        };
+        match decl {
+            ModuleDecl::ExportDecl(export) => match &export.decl {
+                Decl::Fn(function) if exports.contains(&function.ident.sym) => {
+                    keys.insert(binding_key(&function.ident));
+                }
+                Decl::Var(var) => {
+                    for declarator in &var.decls {
+                        let Some(name) = pat_binding_key(&declarator.name) else {
+                            continue;
+                        };
+                        let Pat::Ident(binding) = &declarator.name else {
+                            continue;
+                        };
+                        if exports.contains(&binding.id.sym) {
+                            keys.insert(name);
+                        }
+                    }
+                }
+                _ => {}
+            },
+            ModuleDecl::ExportDefaultDecl(export) if exports.contains(&default_atom()) => {
+                match &export.decl {
+                    DefaultDecl::Fn(function) => {
+                        if let Some(ident) = &function.ident {
+                            keys.insert(binding_key(ident));
+                        }
+                    }
+                    DefaultDecl::Class(class) => {
+                        if let Some(ident) = &class.ident {
+                            keys.insert(binding_key(ident));
+                        }
+                    }
+                    DefaultDecl::TsInterfaceDecl(_) => {}
+                }
+            }
+            ModuleDecl::ExportDefaultExpr(export) => {
+                // `export default { Foo: local }` — `mod.Foo` is that local.
+                if let Expr::Object(object) = strip_parens(&export.expr) {
+                    keys.extend(object_ident_property_bindings(object, exports));
+                }
+                if exports.contains(&default_atom()) {
+                    match strip_parens(&export.expr) {
+                        Expr::Ident(ident) => {
+                            keys.insert(binding_key(ident));
+                        }
+                        other => keys.extend(iife_returned_bindings(other)),
+                    }
+                }
+            }
+            ModuleDecl::ExportNamed(named) if named.src.is_none() => {
+                for specifier in &named.specifiers {
+                    match specifier {
+                        ExportSpecifier::Named(named_spec) => {
+                            let exported = match &named_spec.exported {
+                                Some(name) => export_atom(name),
+                                None => export_atom(&named_spec.orig),
+                            };
+                            if !exports.contains(&exported) {
+                                continue;
+                            }
+                            if let ModuleExportName::Ident(ident) = &named_spec.orig {
+                                keys.insert(binding_key(ident));
+                            }
+                        }
+                        ExportSpecifier::Default(default_spec)
+                            if exports.contains(&default_atom()) =>
+                        {
+                            keys.insert(binding_key(&default_spec.exported));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    keys
+}
+
+/// `var Foo = e` / `Foo = e` on a pinned export: the constructor is `e`.
+/// This stays local to pin roots. Ordinary `const alias = Imported; alias.call`
+/// is still not a cross-file pin.
+fn expand_direct_ident_aliases(items: &[ModuleItem], keys: &mut HashSet<BindingKey>) {
+    if keys.is_empty() {
+        return;
+    }
+    let sources = direct_ident_alias_sources(items);
+    expand_alias_sources(&sources, keys);
+}
+
+pub(crate) fn direct_ident_alias_sources(
+    items: &[ModuleItem],
+) -> HashMap<BindingKey, Vec<BindingKey>> {
+    let mut aliases = DirectIdentAliasCollector::default();
+    items.visit_with(&mut aliases);
+    aliases.sources
+}
+
+fn expand_alias_sources(
+    sources: &HashMap<BindingKey, Vec<BindingKey>>,
+    keys: &mut HashSet<BindingKey>,
+) {
+    if keys.is_empty() {
+        return;
+    }
+    let mut pending: Vec<BindingKey> = keys.iter().cloned().collect();
+    while let Some(target) = pending.pop() {
+        let Some(list) = sources.get(&target) else {
+            continue;
+        };
+        for source in list {
+            if keys.insert(source.clone()) {
+                pending.push(source.clone());
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+struct DirectIdentAliasCollector {
+    sources: HashMap<BindingKey, Vec<BindingKey>>,
+}
+
+impl DirectIdentAliasCollector {
+    fn record(&mut self, target: BindingKey, init: &Expr) {
+        let Some(source) = expr_binding_key(strip_parens(init)) else {
+            return;
+        };
+        self.sources.entry(target).or_default().push(source);
+    }
+}
+
+impl Visit for DirectIdentAliasCollector {
+    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+        if let (Some(target), Some(init)) = (
+            pat_binding_key(&declarator.name),
+            declarator.init.as_deref(),
+        ) {
+            self.record(target, init);
+        }
+        declarator.visit_children_with(self);
+    }
+
+    fn visit_assign_expr(&mut self, assignment: &AssignExpr) {
+        if assignment.op == AssignOp::Assign {
+            if let AssignTarget::Simple(SimpleAssignTarget::Ident(target)) = &assignment.left {
+                self.record(binding_key(&target.id), &assignment.right);
+            }
+        }
+        assignment.visit_children_with(self);
+    }
+}
+
+fn default_atom() -> Atom {
+    Atom::from("default")
+}
+
+fn export_atom(name: &ModuleExportName) -> Atom {
+    match name {
+        ModuleExportName::Ident(ident) => ident.sym.clone(),
+        ModuleExportName::Str(value) => Atom::from(value.value.as_str().unwrap_or("")),
+    }
+}
+
+fn iife_returned_bindings(expr: &Expr) -> HashSet<BindingKey> {
+    let Expr::Call(call) = strip_parens(expr) else {
+        return HashSet::default();
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return HashSet::default();
+    };
+    let mut returns = IifeReturnCollector::default();
+    match strip_parens(callee) {
+        Expr::Fn(function) => {
+            if let Some(body) = &function.function.body {
+                body.visit_with(&mut returns);
+            }
+        }
+        Expr::Arrow(arrow) => match arrow.body.as_ref() {
+            ArrowFunctionBody::FunctionBody(body) => body.visit_with(&mut returns),
+            ArrowFunctionBody::Expr(expr) => {
+                if let Some(source) = expr_binding_key(strip_parens(expr)) {
+                    returns.bindings.insert(source);
+                }
+            }
+        },
+        _ => {}
+    }
+    returns.bindings
 }

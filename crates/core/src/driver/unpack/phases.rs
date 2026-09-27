@@ -506,9 +506,18 @@ pub(super) fn unpack_multi_module_with_plan(
                         LateEsmRecoveryOptions::default(),
                     );
                 }
-                let facts = collect_module_facts(&facts_module);
+                let mut facts = collect_module_facts(&facts_module);
+                // Class recovery runs on this pre-late AST. Probing the
+                // late-renamed clone misses IIFEs Phase 2 still converts.
+                crate::rules::attach_import_call_edges(
+                    &mut facts,
+                    &module,
+                    unresolved_mark,
+                    options.level,
+                );
                 (facts, Some((module, unresolved_mark)))
             } else {
+                let class_module = module.clone();
                 {
                     let span = tracing::info_span!("phase1: fact recovery");
                     let _enter = span.enter();
@@ -520,7 +529,13 @@ pub(super) fn unpack_multi_module_with_plan(
                         LateEsmRecoveryOptions::default(),
                     );
                 }
-                let facts = collect_module_facts(&module);
+                let mut facts = collect_module_facts(&module);
+                crate::rules::attach_import_call_edges(
+                    &mut facts,
+                    &class_module,
+                    unresolved_mark,
+                    options.level,
+                );
                 (facts, None)
             };
             facts.commonjs_default_object = commonjs_default_object;
@@ -573,6 +588,7 @@ pub(super) fn unpack_multi_module_with_plan(
 
     let commonjs_default_object_composition_plan =
         CommonJsDefaultObjectCompositionPlan::build(&module_facts);
+    let call_required_plan = crate::rules::CallRequiredPlan::build(&module_facts);
 
     // Cross-module barrier: resolve recovered filenames into a final rename
     // table. Kept separate from the fact map so the pipeline (facts, numeric
@@ -589,6 +605,7 @@ pub(super) fn unpack_multi_module_with_plan(
     // it continues from the Phase 1 normalized AST after the facts barrier.
     let facts_ref = &module_facts;
     let composition_plan_ref = &commonjs_default_object_composition_plan;
+    let call_required_plan_ref = &call_required_plan;
     let sm_ref = &parsed_sourcemap;
     let rename_ref = &rename_map;
     let phase2_inputs: Vec<_> = modules
@@ -656,7 +673,8 @@ pub(super) fn unpack_multi_module_with_plan(
                     .with_dce_mode(options.dce_mode)
                     .with_rewrite_level(options.level)
                     .with_module_facts(facts_ref)
-                    .with_current_filename(&unpacked.module.filename),
+                    .with_current_filename(&unpacked.module.filename)
+                    .with_call_required_plan(call_required_plan_ref),
             );
             // Later rules can expose sequence expressions. The old unpack
             // path cleaned those by running a second full module pipeline;

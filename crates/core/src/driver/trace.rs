@@ -112,6 +112,7 @@ pub fn trace_rules(
                     rewrite_level: options.level,
                     module_facts: None,
                     current_filename: Some(&options.filename),
+                    call_required_plan: None,
                 },
                 &mut observer,
             );

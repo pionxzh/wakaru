@@ -1,4 +1,4 @@
-use crate::collections::HashSet;
+use crate::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::analysis::binding_uses::BindingUseIndex;
@@ -9,16 +9,21 @@ use swc_core::common::{Mark, Span, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, AwaitExpr, BinaryOp,
     BindingIdent, CallExpr, Callee, Class, ClassDecl, ClassMember, ClassMethod, ClassProp,
-    ComputedPropName, Constructor, Decl, ExportDecl, Expr, ExprOrSpread, ExprStmt, FnDecl, FnExpr,
-    Function, FunctionBody, Ident, IdentName, ImportSpecifier, Lit, MemberExpr, MemberProp,
-    MetaPropExpr, MethodKind, ModuleDecl, ModuleExportName, ModuleItem, Param, ParamOrTsParamProp,
-    Pat, PropName, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, Super, SuperProp, SuperPropExpr,
-    ThisExpr, UpdateOp, VarDecl, VarDeclKind, VarDeclOrExpr, VarDeclarator, YieldExpr,
+    ComputedPropName, Constructor, Decl, ExportDecl, ExportSpecifier, Expr, ExprOrSpread, ExprStmt,
+    FnDecl, FnExpr, Function, FunctionBody, Ident, IdentName, ImportSpecifier, Lit, MemberExpr,
+    MemberProp, MetaPropExpr, MethodKind, Module, ModuleDecl, ModuleExportName, ModuleItem, Param,
+    ParamOrTsParamProp, Pat, PropName, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, Super,
+    SuperProp, SuperPropExpr, ThisExpr, UpdateOp, VarDecl, VarDeclKind, VarDeclOrExpr,
+    VarDeclarator, YieldExpr,
 };
 use swc_core::ecma::utils::find_pat_ids;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use super::callability::CallabilityIndex;
+use super::callability::{
+    direct_ident_alias_sources, module_guarded_call_effects, ordinary_call_target,
+    pinned_binding_keys_with_alias_sources, required_bindings_from_effects, CallabilityIndex,
+    GuardedCallEffect,
+};
 use super::decl_utils::{
     class_accessor_descriptor_attributes, class_method_has_invalid_signature,
     ensure_setter_has_value_param, ClassAccessorDescriptorAttributes,
@@ -43,6 +48,8 @@ pub struct UnEs6Class {
     unresolved_mark: Mark,
     rewrite_level: RewriteLevel,
     module_helper_context: Option<Es6ClassHelperContext>,
+    /// Exported names that still need `[[Call]]` from another module.
+    pin_exports: HashSet<Atom>,
 }
 
 impl UnEs6Class {
@@ -55,6 +62,7 @@ impl UnEs6Class {
             unresolved_mark,
             rewrite_level,
             module_helper_context: None,
+            pin_exports: HashSet::default(),
         }
     }
 
@@ -63,6 +71,7 @@ impl UnEs6Class {
         unresolved_mark: Mark,
         rewrite_level: RewriteLevel,
         local_helpers: &LocalHelperContext,
+        pin_exports: HashSet<Atom>,
     ) {
         let mut rule = Self::new_with_level(unresolved_mark, rewrite_level);
         rule.module_helper_context = Some(Es6ClassHelperContext::from_local_helpers(
@@ -70,6 +79,7 @@ impl UnEs6Class {
             unresolved_mark,
             local_helpers,
         ));
+        rule.pin_exports = pin_exports;
         module.visit_mut_with(&mut rule);
     }
 }
@@ -93,6 +103,7 @@ impl VisitMut for UnEs6Class {
         let used_imports = used_ts_extends_imports(items, &helper_context.ts_extends_helpers);
         let mut inner =
             UnEs6ClassInner::new(helper_context, self.unresolved_mark, self.rewrite_level);
+        inner.pin_exports = self.pin_exports.clone();
         if inner.can_index_ts_inheritance() {
             inner.inheritance_uses = Some(Rc::new(BindingUseIndex::collect_module_items(items)));
         }
@@ -120,6 +131,7 @@ impl VisitMut for UnEs6Class {
         let helper_context = Es6ClassHelperContext::from_stmts(stmts, self.unresolved_mark);
         let mut inner =
             UnEs6ClassInner::new(helper_context, self.unresolved_mark, self.rewrite_level);
+        inner.pin_exports = self.pin_exports.clone();
         if inner.can_index_ts_inheritance() {
             inner.inheritance_uses = Some(Rc::new(BindingUseIndex::collect_stmts(stmts)));
         }
@@ -281,6 +293,10 @@ struct UnEs6ClassInner {
     cleanup_candidates: HashSet<BindingKey>,
     unresolved_mark: Mark,
     rewrite_level: RewriteLevel,
+    pin_exports: HashSet<Atom>,
+    /// Binding keys of pinned exports, computed on the enclosing module
+    /// before nested statements run.
+    pin_roots: HashSet<BindingKey>,
 }
 
 impl UnEs6ClassInner {
@@ -302,6 +318,8 @@ impl UnEs6ClassInner {
             cleanup_candidates: HashSet::default(),
             unresolved_mark,
             rewrite_level,
+            pin_exports: HashSet::default(),
+            pin_roots: HashSet::default(),
         }
     }
 }
@@ -355,11 +373,13 @@ impl VisitMut for UnEs6ClassInner {
         reused_var_bindings.extend(self.reused_var_bindings.iter().cloned());
         let mut scoped_inner =
             UnEs6ClassInner::new(scope_helpers, self.unresolved_mark, self.rewrite_level);
+        scoped_inner.pin_exports = self.pin_exports.clone();
+        scoped_inner.pin_roots = self.pin_roots.clone();
         scoped_inner.reused_var_bindings = reused_var_bindings;
         scoped_inner.inheritance_uses = self.inheritance_uses.clone();
         stmts.visit_mut_children_with(&mut scoped_inner);
 
-        let callability = CallabilityIndex::collect_stmts(stmts);
+        let callability = CallabilityIndex::collect_stmts_with_roots(stmts, &self.pin_roots);
         let mut converted_any = fold_flattened_classes(stmts, |var_decl| {
             try_iife_to_class(
                 var_decl,
@@ -379,7 +399,7 @@ impl VisitMut for UnEs6ClassInner {
             )
         });
         loop {
-            let callability = CallabilityIndex::collect_stmts(stmts);
+            let callability = CallabilityIndex::collect_stmts_with_roots(stmts, &self.pin_roots);
             let mut converted_this_pass = false;
             let old = std::mem::take(stmts);
             for stmt in old {
@@ -427,11 +447,16 @@ impl VisitMut for UnEs6ClassInner {
     }
 
     fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
+        self.pin_roots = super::callability::pinned_binding_keys(items, &self.pin_exports);
+        // Nested recovery runs before this module's alias propagation. A pinned
+        // export that evaluates to an inner constructor must already be in the
+        // root set, or that inner IIFE becomes a class while callers remain.
+        self.pin_roots = super::callability::alias_closure_of_roots(items, &self.pin_roots);
         self.reused_var_bindings
             .extend(reused_var_bindings_in_items(items));
         items.visit_mut_children_with(self);
 
-        let callability = CallabilityIndex::collect_module_items(items);
+        let callability = CallabilityIndex::collect_module_items_with_roots(items, &self.pin_roots);
         let mut converted_any = fold_flattened_classes(items, |var_decl| {
             try_iife_to_class(
                 var_decl,
@@ -451,7 +476,8 @@ impl VisitMut for UnEs6ClassInner {
             )
         });
         loop {
-            let callability = CallabilityIndex::collect_module_items(items);
+            let roots = super::callability::pinned_binding_keys(items, &self.pin_exports);
+            let callability = CallabilityIndex::collect_module_items_with_roots(items, &roots);
             let mut converted_this_pass = false;
             let old = std::mem::take(items);
             for item in old {
@@ -3630,6 +3656,844 @@ fn find_inner_constructor_ident(stmts: &[Stmt]) -> Option<&Ident> {
         }
     }
     None
+}
+
+/// Super parameter of an IIFE that `UnEs6Class` treats as `extends`.
+///
+/// The paired owner is the binding the IIFE is assigned to. Phase 2 rewrites
+/// that parameter's `.call` / `.apply` to `super` when the owner itself stays
+/// unpinned, so the call must not pin the superclass.
+pub(crate) struct ConsumedSuperParam {
+    pub param: BindingKey,
+    /// Exported names which, if pinned, keep this `.call` from becoming `super`.
+    /// Empty means class recovery always consumes the call.
+    pub blocked_by: Vec<Atom>,
+}
+
+pub(crate) fn super_params_consumed_by_class_recovery(
+    items: &[ModuleItem],
+    unresolved_mark: Mark,
+    level: RewriteLevel,
+) -> Vec<ConsumedSuperParam> {
+    let module = Module {
+        span: DUMMY_SP,
+        body: items.to_vec(),
+        shebang: None,
+    };
+    let local_helpers = super::transpiler_helper_utils::LocalHelperContext::collect_with_mark(
+        &module,
+        unresolved_mark,
+    );
+    let helpers = Es6ClassHelperContext::from_local_helpers(items, unresolved_mark, &local_helpers);
+    // `UnEs6Class` leaves the whole module unchanged when `with` or direct
+    // `eval` is present, so none of these calls become `super()`.
+    if has_dynamic_scope_construct(items) {
+        return Vec::new();
+    }
+    let reused = reused_var_bindings_in_items(items);
+    // Same gate as `UnEs6ClassInner::can_index_ts_inheritance`.
+    let inheritance = (level >= RewriteLevel::Standard
+        && (!helpers.ts_extends_helpers.is_empty() || !helpers.tslib_namespaces.is_empty()))
+    .then(|| Rc::new(BindingUseIndex::collect_module_items(items)));
+    let unseeded = converting_owners(
+        items,
+        &helpers,
+        &reused,
+        inheritance.as_deref(),
+        unresolved_mark,
+        level,
+        &HashSet::default(),
+    );
+    if unseeded.is_empty() {
+        return Vec::new();
+    }
+
+    // One walk records which facts class recovery deletes. Each export then
+    // reuses that graph instead of cloning the module.
+    let blankable = unseeded
+        .iter()
+        .map(|(owner, _)| owner.clone())
+        .collect::<HashSet<_>>();
+    let effects = module_guarded_call_effects(items, &blankable);
+    let alias_sources = direct_ident_alias_sources(items);
+    let export_names = module_export_names(items);
+    let mut names_by_roots: HashMap<Vec<BindingKey>, Vec<Atom>> = HashMap::default();
+    for name in &export_names {
+        let mut seeds = HashSet::default();
+        seeds.insert(name.clone());
+        let roots = pinned_binding_keys_with_alias_sources(items, &seeds, &alias_sources);
+        if roots.is_empty() {
+            continue;
+        }
+        let mut root_key: Vec<BindingKey> = roots.into_iter().collect();
+        root_key.sort();
+        names_by_roots
+            .entry(root_key)
+            .or_default()
+            .push(name.clone());
+    }
+
+    let mut blocked_by_owner: HashMap<BindingKey, Vec<Atom>> = HashMap::default();
+    for (root_key, names) in &names_by_roots {
+        let roots = root_key.iter().cloned().collect::<HashSet<_>>();
+        let converted = owners_still_converting(&unseeded, &effects, &roots);
+        for (owner, _) in &unseeded {
+            if converted.contains(owner) {
+                continue;
+            }
+            blocked_by_owner
+                .entry(owner.clone())
+                .or_default()
+                .extend(names.iter().cloned());
+        }
+    }
+
+    let found = unseeded
+        .iter()
+        .map(|(owner, param)| {
+            let mut blocked_by = blocked_by_owner.get(owner).cloned().unwrap_or_default();
+            blocked_by.sort();
+            blocked_by.dedup();
+            ConsumedSuperParam {
+                param: param.clone(),
+                blocked_by,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    // Small modules compare against the fixpoint that clones the AST. Large
+    // modules skip that check; release unpacks do not compile it in.
+    #[cfg(debug_assertions)]
+    if unseeded.len().saturating_mul(export_names.len()) <= 48 {
+        let brute = blocked_by_via_fixpoint(
+            items,
+            &helpers,
+            &reused,
+            inheritance.as_deref(),
+            unresolved_mark,
+            level,
+            &unseeded,
+            &export_names,
+        );
+        assert_eq!(
+            found
+                .iter()
+                .map(|item| (item.param.clone(), item.blocked_by.clone()))
+                .collect::<Vec<_>>(),
+            brute,
+            "guarded call-effect probe diverged from the class-recovery fixpoint"
+        );
+    }
+
+    found
+}
+
+/// Owners from `candidates` that still become classes when `extra_roots` are required.
+fn owners_still_converting(
+    candidates: &[(BindingKey, BindingKey)],
+    effects: &[GuardedCallEffect],
+    extra_roots: &HashSet<BindingKey>,
+) -> HashSet<BindingKey> {
+    let mut converted = HashSet::default();
+    loop {
+        let required = required_bindings_from_effects(effects, &converted, extra_roots);
+        let mut grew = false;
+        for (owner, _) in candidates {
+            if converted.contains(owner) || required.contains(owner) {
+                continue;
+            }
+            converted.insert(owner.clone());
+            grew = true;
+        }
+        if !grew {
+            break;
+        }
+    }
+    converted
+}
+
+#[cfg(debug_assertions)]
+#[allow(clippy::too_many_arguments)]
+fn blocked_by_via_fixpoint(
+    items: &[ModuleItem],
+    helpers: &Es6ClassHelperContext,
+    reused: &HashSet<BindingKey>,
+    inheritance: Option<&BindingUseIndex>,
+    unresolved_mark: Mark,
+    level: RewriteLevel,
+    unseeded: &[(BindingKey, BindingKey)],
+    export_names: &[Atom],
+) -> Vec<(BindingKey, Vec<Atom>)> {
+    unseeded
+        .iter()
+        .map(|(owner, param)| {
+            let blocked_by = export_names
+                .iter()
+                .filter(|name| {
+                    let mut seeds = HashSet::default();
+                    seeds.insert((*name).clone());
+                    let roots = super::callability::pinned_binding_keys(items, &seeds);
+                    !converting_owners(
+                        items,
+                        helpers,
+                        reused,
+                        inheritance,
+                        unresolved_mark,
+                        level,
+                        &roots,
+                    )
+                    .iter()
+                    .any(|(converted, _)| converted == owner)
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            (param.clone(), blocked_by)
+        })
+        .collect()
+}
+
+fn converting_owners(
+    items: &[ModuleItem],
+    helpers: &Es6ClassHelperContext,
+    reused: &HashSet<BindingKey>,
+    inheritance: Option<&BindingUseIndex>,
+    unresolved_mark: Mark,
+    level: RewriteLevel,
+    extra_roots: &HashSet<BindingKey>,
+) -> Vec<(BindingKey, BindingKey)> {
+    let mut converted = HashSet::default();
+    let mut pairs = Vec::new();
+    loop {
+        let visible = substitute_converted_classes(
+            items,
+            &converted,
+            helpers,
+            reused,
+            inheritance,
+            unresolved_mark,
+            level,
+        );
+        let callability = CallabilityIndex::collect_module_items_with_roots(&visible, extra_roots);
+        let mut finder = ConsumedSuperFinder {
+            helpers: helpers.clone(),
+            callability: &callability,
+            reused: reused.clone(),
+            inheritance,
+            unresolved_mark,
+            level,
+            pairs: Vec::new(),
+        };
+        items.visit_with(&mut finder);
+        let mut grew = false;
+        for (owner, param) in finder.pairs {
+            if converted.insert(owner.clone()) {
+                pairs.push((owner, param));
+                grew = true;
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    pairs
+}
+
+/// Replace owners that already became classes, keeping method `.call`s.
+///
+/// Nulling the whole initializer also drops calls Phase 2 copies onto the
+/// class. The next fixpoint pass must still see those.
+fn substitute_converted_classes(
+    items: &[ModuleItem],
+    converted: &HashSet<BindingKey>,
+    helpers: &Es6ClassHelperContext,
+    reused: &HashSet<BindingKey>,
+    inheritance: Option<&BindingUseIndex>,
+    unresolved_mark: Mark,
+    level: RewriteLevel,
+) -> Vec<ModuleItem> {
+    if converted.is_empty() {
+        return items.to_vec();
+    }
+    let empty = CallabilityIndex::collect_module_items_with_roots(&[], &HashSet::default());
+    let mut cloned = items.to_vec();
+    struct Subst<'a> {
+        converted: &'a HashSet<BindingKey>,
+        helpers: &'a Es6ClassHelperContext,
+        reused: &'a HashSet<BindingKey>,
+        inheritance: Option<&'a BindingUseIndex>,
+        unresolved_mark: Mark,
+        level: RewriteLevel,
+        empty: &'a CallabilityIndex,
+    }
+    impl Subst<'_> {
+        fn class_for(&self, var: &VarDecl) -> Option<ClassDecl> {
+            let [declarator] = var.decls.as_slice() else {
+                return None;
+            };
+            let Pat::Ident(binding) = &declarator.name else {
+                return None;
+            };
+            if !self.converted.contains(&binding_key(&binding.id)) {
+                return None;
+            }
+            self.try_class(var).or_else(|| {
+                // Below Standard, argument-spread does not run, so `.call.apply`
+                // is not a super call yet.
+                if self.level < RewriteLevel::Standard {
+                    return None;
+                }
+                let mut normalized = var.clone();
+                normalize_super_call_apply(&mut normalized, self.level, self.unresolved_mark);
+                self.try_class(&normalized)
+            })
+        }
+
+        fn try_class(&self, var: &VarDecl) -> Option<ClassDecl> {
+            try_iife_to_class(
+                var,
+                self.reused,
+                self.empty,
+                &self.helpers.inherits_helpers,
+                &self.helpers.tslib_namespaces,
+                &self.helpers.create_class_helpers,
+                &self.helpers.call_super_helpers,
+                &self.helpers.class_call_check_helpers,
+                &self.helpers.set_prototype_of_helpers,
+                &self.helpers.ts_extends_helpers,
+                self.inheritance,
+                self.unresolved_mark,
+                self.level,
+                var.span,
+            )
+        }
+    }
+    impl VisitMut for Subst<'_> {
+        fn visit_mut_module_item(&mut self, item: &mut ModuleItem) {
+            let exported = match &*item {
+                ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => match &export.decl {
+                    Decl::Var(var) => self.class_for(var),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some(class) = exported {
+                if let ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) = item {
+                    export.decl = Decl::Class(class);
+                    return;
+                }
+            }
+            let replaced = match &*item {
+                ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => self.class_for(var),
+                _ => None,
+            };
+            if let Some(class) = replaced {
+                *item = ModuleItem::Stmt(Stmt::Decl(Decl::Class(class)));
+                return;
+            }
+            item.visit_mut_children_with(self);
+        }
+
+        fn visit_mut_stmt(&mut self, stmt: &mut Stmt) {
+            let class = match &*stmt {
+                Stmt::Decl(Decl::Var(var)) => self.class_for(var),
+                _ => None,
+            };
+            if let Some(class) = class {
+                *stmt = Stmt::Decl(Decl::Class(class));
+                return;
+            }
+            stmt.visit_mut_children_with(self);
+        }
+    }
+    cloned.visit_mut_with(&mut Subst {
+        converted,
+        helpers,
+        reused,
+        inheritance,
+        unresolved_mark,
+        level,
+        empty: &empty,
+    });
+    cloned
+}
+
+fn module_export_names(items: &[ModuleItem]) -> Vec<Atom> {
+    let mut names = Vec::new();
+    for item in items {
+        let ModuleItem::ModuleDecl(decl) = item else {
+            continue;
+        };
+        match decl {
+            ModuleDecl::ExportDecl(export) => match &export.decl {
+                Decl::Fn(function) => names.push(function.ident.sym.clone()),
+                Decl::Class(class) => names.push(class.ident.sym.clone()),
+                Decl::Var(var) => {
+                    for declarator in &var.decls {
+                        if let Pat::Ident(binding) = &declarator.name {
+                            names.push(binding.id.sym.clone());
+                        }
+                    }
+                }
+                _ => {}
+            },
+            ModuleDecl::ExportDefaultDecl(_) => names.push(Atom::from("default")),
+            ModuleDecl::ExportDefaultExpr(export) => {
+                names.push(Atom::from("default"));
+                // `export default { Pub: Sub }` is the name a default-import
+                // member call pins, so it can cascade to Sub's superclass.
+                if let Expr::Object(object) = strip_parens(&export.expr) {
+                    for prop in &object.props {
+                        let swc_core::ecma::ast::PropOrSpread::Prop(prop) = prop else {
+                            continue;
+                        };
+                        let name = match prop.as_ref() {
+                            swc_core::ecma::ast::Prop::Shorthand(ident) => Some(ident.sym.clone()),
+                            swc_core::ecma::ast::Prop::KeyValue(pair) => match &pair.key {
+                                swc_core::ecma::ast::PropName::Ident(ident) => {
+                                    Some(ident.sym.clone())
+                                }
+                                swc_core::ecma::ast::PropName::Str(value) => {
+                                    value.value.as_str().map(Atom::from)
+                                }
+                                _ => None,
+                            },
+                            _ => None,
+                        };
+                        if let Some(name) = name {
+                            names.push(name);
+                        }
+                    }
+                }
+            }
+            ModuleDecl::ExportNamed(named) if named.src.is_none() => {
+                for specifier in &named.specifiers {
+                    match specifier {
+                        ExportSpecifier::Named(named_spec) => {
+                            let exported = named_spec
+                                .exported
+                                .as_ref()
+                                .map(|name| match name {
+                                    ModuleExportName::Ident(ident) => ident.sym.clone(),
+                                    ModuleExportName::Str(value) => {
+                                        Atom::from(value.value.as_str().unwrap_or(""))
+                                    }
+                                })
+                                .unwrap_or_else(|| match &named_spec.orig {
+                                    ModuleExportName::Ident(ident) => ident.sym.clone(),
+                                    ModuleExportName::Str(value) => {
+                                        Atom::from(value.value.as_str().unwrap_or(""))
+                                    }
+                                });
+                            names.push(exported);
+                        }
+                        ExportSpecifier::Default(_) => names.push(Atom::from("default")),
+                        ExportSpecifier::Namespace(_) => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    names.sort();
+    names.dedup();
+    names
+}
+
+struct ConsumedSuperFinder<'a> {
+    helpers: Es6ClassHelperContext,
+    callability: &'a CallabilityIndex,
+    reused: HashSet<BindingKey>,
+    inheritance: Option<&'a BindingUseIndex>,
+    unresolved_mark: Mark,
+    level: RewriteLevel,
+    pairs: Vec<(BindingKey, BindingKey)>,
+}
+
+impl ConsumedSuperFinder<'_> {
+    /// The superclass parameter is consumed only when this `var` IIFE actually
+    /// becomes a class. A recognized extends helper is not enough: a later
+    /// statement can still make `try_iife_to_class` keep the `.call`.
+    fn recovered_super_param(&self, var: &VarDecl) -> Option<(BindingKey, BindingKey)> {
+        let class = self.try_convert(var).or_else(|| {
+            if self.level < RewriteLevel::Standard {
+                return None;
+            }
+            let mut normalized = var.clone();
+            normalize_super_call_apply(&mut normalized, self.level, self.unresolved_mark);
+            self.try_convert(&normalized)
+        })?;
+        let [declarator] = var.decls.as_slice() else {
+            return None;
+        };
+        let Pat::Ident(owner) = &declarator.name else {
+            return None;
+        };
+        let init = declarator.init.as_deref()?;
+        let Expr::Call(call) = strip_parens(init) else {
+            return None;
+        };
+        if call.args.len() != 1 {
+            return None;
+        }
+        let Callee::Expr(callee) = &call.callee else {
+            return None;
+        };
+        let param = match strip_parens(callee) {
+            Expr::Fn(function) => match function.function.params.as_slice() {
+                [param] => match &param.pat {
+                    Pat::Ident(binding) => &binding.id,
+                    _ => return None,
+                },
+                _ => return None,
+            },
+            Expr::Arrow(arrow) => match arrow.params.as_slice() {
+                [Pat::Ident(binding)] => &binding.id,
+                _ => return None,
+            },
+            _ => return None,
+        };
+        let param = binding_key(param);
+        // A call that survives on the class still needs [[Call]].
+        if class_still_invokes(&class, &param) {
+            return None;
+        }
+        Some((binding_key(&owner.id), param))
+    }
+
+    fn try_convert(&self, var: &VarDecl) -> Option<ClassDecl> {
+        try_iife_to_class(
+            var,
+            &self.reused,
+            self.callability,
+            &self.helpers.inherits_helpers,
+            &self.helpers.tslib_namespaces,
+            &self.helpers.create_class_helpers,
+            &self.helpers.call_super_helpers,
+            &self.helpers.class_call_check_helpers,
+            &self.helpers.set_prototype_of_helpers,
+            &self.helpers.ts_extends_helpers,
+            self.inheritance,
+            self.unresolved_mark,
+            self.level,
+            var.span,
+        )
+    }
+
+    /// Nested `var` is function-scoped. Phase 2 recomputes duplicates per
+    /// function; a module-level scan never sees `var Child; var Child = IIFE`.
+    fn consider_var(&mut self, var: &VarDecl) {
+        if let Some((owner, param)) = self.recovered_super_param(var) {
+            self.pairs.push((owner, param));
+        }
+    }
+
+    /// Only a `var` that is itself an element of a statement list is recovered.
+    /// `label: var Child = ...` and a var under `if` stay calls.
+    fn consider_direct_stmt(&mut self, stmt: &Stmt) {
+        if let Stmt::Decl(Decl::Var(var)) = stmt {
+            self.consider_var(var);
+            var.visit_children_with(self);
+            return;
+        }
+        stmt.visit_children_with(self);
+    }
+
+    fn visit_nested_stmts(&mut self, stmts: &[Stmt]) {
+        let mut reused = reused_var_bindings_in_stmts(stmts);
+        reused.extend(self.reused.iter().cloned());
+        // Same merge as `UnEs6ClassInner::visit_mut_stmts`: a helper declared
+        // in this statement list is visible to class recovery here.
+        let mut helpers = Es6ClassHelperContext::from_stmts(stmts, self.unresolved_mark);
+        helpers.extend(&self.helpers);
+        let mut nested = ConsumedSuperFinder {
+            helpers,
+            callability: self.callability,
+            reused,
+            inheritance: self.inheritance,
+            unresolved_mark: self.unresolved_mark,
+            level: self.level,
+            pairs: Vec::new(),
+        };
+        for stmt in stmts {
+            nested.consider_direct_stmt(stmt);
+        }
+        self.pairs.append(&mut nested.pairs);
+    }
+}
+
+fn class_still_invokes(class: &ClassDecl, param: &BindingKey) -> bool {
+    struct Find<'a> {
+        param: &'a BindingKey,
+        found: bool,
+    }
+    impl Visit for Find<'_> {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if ordinary_call_target(call).as_ref() == Some(self.param) {
+                self.found = true;
+                return;
+            }
+            if !self.found {
+                call.visit_children_with(self);
+            }
+        }
+    }
+    let mut find = Find {
+        param,
+        found: false,
+    };
+    class.visit_with(&mut find);
+    find.found
+}
+
+/// Facts are collected before argument-spread. Rewrite the shapes Phase 2
+/// flattens at this `level` into `recv.call(...)`, and leave the rest alone.
+fn normalize_super_call_apply(var: &mut VarDecl, level: RewriteLevel, unresolved_mark: Mark) {
+    struct Rewriter {
+        level: RewriteLevel,
+        rest_params: Vec<HashSet<BindingKey>>,
+    }
+    impl Rewriter {
+        fn push_rests(&mut self, pats: &[Pat]) {
+            let mut rests = HashSet::default();
+            for pat in pats {
+                if let Some(key) = rest_param_key(pat) {
+                    rests.insert(key);
+                }
+            }
+            self.rest_params.push(rests);
+        }
+    }
+    impl VisitMut for Rewriter {
+        fn visit_mut_function(&mut self, function: &mut Function) {
+            let pats = function
+                .params
+                .iter()
+                .map(|param| param.pat.clone())
+                .collect::<Vec<_>>();
+            self.push_rests(&pats);
+            function.visit_mut_children_with(self);
+            self.rest_params.pop();
+        }
+
+        fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
+            self.push_rests(&arrow.params);
+            arrow.visit_mut_children_with(self);
+            self.rest_params.pop();
+        }
+
+        fn visit_mut_expr(&mut self, expr: &mut Expr) {
+            expr.visit_mut_children_with(self);
+            let Expr::Call(call) = &mut *expr else {
+                return;
+            };
+            let Callee::Expr(callee) = &call.callee else {
+                return;
+            };
+            let Expr::Member(outer) = strip_parens(callee) else {
+                return;
+            };
+            if !matches!(&outer.prop, MemberProp::Ident(name) if name.sym.as_ref() == "apply") {
+                return;
+            }
+            let Expr::Member(inner) = strip_parens(&outer.obj) else {
+                return;
+            };
+            if !matches!(&inner.prop, MemberProp::Ident(name) if name.sym.as_ref() == "call") {
+                return;
+            }
+            if call.args.len() != 2 || call.args[1].spread.is_some() {
+                return;
+            }
+            let payload = call.args[1].expr.take();
+            let args = expand_apply_payload(payload.as_ref(), self.level, self.rest_params.last())
+                .unwrap_or_else(|| {
+                    vec![ExprOrSpread {
+                        spread: Some(DUMMY_SP),
+                        expr: payload,
+                    }]
+                });
+            let call_callee = inner.clone();
+            *expr = Expr::Call(CallExpr {
+                span: call.span,
+                ctxt: call.ctxt,
+                callee: Callee::Expr(Box::new(Expr::Member(call_callee))),
+                args,
+                type_args: None,
+            });
+        }
+    }
+    var.visit_mut_with(&mut Rewriter {
+        level,
+        rest_params: Vec::new(),
+    });
+    // Proven arrays (`arguments` copy loops, `var extra = [a, 1]`) are flattened
+    // by the same pass that runs immediately before class recovery.
+    if level < RewriteLevel::Standard {
+        return;
+    }
+    let mut module = Module {
+        span: DUMMY_SP,
+        body: vec![ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(
+            var.clone(),
+        ))))],
+        shebang: None,
+    };
+    module.visit_mut_with(
+        &mut super::un_array_concat_spread::UnArrayConcatSpreadRest::new(unresolved_mark, level),
+    );
+    module.visit_mut_with(&mut super::un_spread_array_literal::UnSpreadArrayLiteral);
+    if let ModuleItem::Stmt(Stmt::Decl(Decl::Var(rewritten))) = module.body.remove(0) {
+        *var = *rewritten;
+    }
+}
+
+fn rest_param_key(pat: &Pat) -> Option<BindingKey> {
+    let Pat::Rest(rest) = pat else {
+        return None;
+    };
+    let Pat::Ident(binding) = rest.arg.as_ref() else {
+        return None;
+    };
+    Some(binding_key(&binding.id))
+}
+
+/// Payload of `recv.call.apply(recv, payload)` after the spread passes that
+/// run before class recovery.
+fn expand_apply_payload(
+    payload: &Expr,
+    level: RewriteLevel,
+    rest_params: Option<&HashSet<BindingKey>>,
+) -> Option<Vec<ExprOrSpread>> {
+    // `UnSpreadArrayLiteral`: `fn(...[this, a])` → `fn(this, a)`.
+    if let Expr::Array(array) = strip_parens(payload) {
+        let mut args = Vec::new();
+        for elem in &array.elems {
+            args.push(elem.as_ref()?.clone());
+        }
+        return Some(args);
+    }
+    expand_this_concat_spread(payload, level, rest_params)
+}
+
+/// `[this].concat(extra)` as the payload of `call.apply` is the Babel
+/// `super` spread. Phase 2 flattens a literal, a rest parameter, or — at
+/// Aggressive — any extra. A plain parameter stays a call.
+fn expand_this_concat_spread(
+    payload: &Expr,
+    level: RewriteLevel,
+    rest_params: Option<&HashSet<BindingKey>>,
+) -> Option<Vec<ExprOrSpread>> {
+    let Expr::Call(concat) = strip_parens(payload) else {
+        return None;
+    };
+    let Callee::Expr(callee) = &concat.callee else {
+        return None;
+    };
+    let Expr::Member(member) = strip_parens(callee) else {
+        return None;
+    };
+    if !matches!(&member.prop, MemberProp::Ident(name) if name.sym.as_ref() == "concat") {
+        return None;
+    }
+    let Expr::Array(array) = strip_parens(&member.obj) else {
+        return None;
+    };
+    let [this_elem] = array.elems.as_slice() else {
+        return None;
+    };
+    let this_elem = this_elem.as_ref()?;
+    if this_elem.spread.is_some() || !matches!(strip_parens(&this_elem.expr), Expr::This(_)) {
+        return None;
+    }
+    let mut args = vec![ExprOrSpread {
+        spread: None,
+        expr: Box::new(Expr::This(ThisExpr { span: DUMMY_SP })),
+    }];
+    if concat.args.len() != 1 {
+        return None;
+    }
+    match strip_parens(&concat.args[0].expr) {
+        Expr::Array(extra) if extra.elems.is_empty() => {}
+        Expr::Array(extra) => {
+            for elem in &extra.elems {
+                let elem = elem.as_ref()?;
+                args.push(elem.clone());
+            }
+        }
+        Expr::Ident(ident)
+            if rest_params.is_some_and(|rests| rests.contains(&binding_key(ident))) =>
+        {
+            args.push(ExprOrSpread {
+                spread: Some(DUMMY_SP),
+                expr: Box::new(Expr::Ident(ident.clone())),
+            });
+        }
+        // Aggressive concat-spread flattens an unproven extra. Standard does not,
+        // so a plain parameter stays `e.call(...[this].concat(n))`.
+        other if level >= RewriteLevel::Aggressive => {
+            args.push(ExprOrSpread {
+                spread: Some(DUMMY_SP),
+                expr: Box::new(other.clone()),
+            });
+        }
+        _ => return None,
+    }
+    Some(args)
+}
+
+impl Visit for ConsumedSuperFinder<'_> {
+    fn visit_module_item(&mut self, item: &ModuleItem) {
+        match item {
+            ModuleItem::Stmt(stmt) => self.consider_direct_stmt(stmt),
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => {
+                if let Decl::Var(var) = &export.decl {
+                    self.consider_var(var);
+                    var.visit_children_with(self);
+                } else {
+                    export.visit_children_with(self);
+                }
+            }
+            other => other.visit_children_with(self),
+        }
+    }
+
+    fn visit_function(&mut self, function: &Function) {
+        if let Some(body) = &function.body {
+            self.visit_nested_stmts(&body.stmts);
+        }
+    }
+
+    fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
+        match arrow.body.as_ref() {
+            ArrowFunctionBody::FunctionBody(body) => self.visit_nested_stmts(&body.stmts),
+            ArrowFunctionBody::Expr(expr) => expr.visit_with(self),
+        }
+    }
+
+    fn visit_constructor(&mut self, constructor: &Constructor) {
+        if let Some(body) = &constructor.body {
+            self.visit_nested_stmts(&body.stmts);
+        }
+    }
+
+    fn visit_static_block(&mut self, block: &swc_core::ecma::ast::StaticBlock) {
+        self.visit_nested_stmts(&block.body.stmts);
+    }
+
+    fn visit_block_stmt(&mut self, block: &swc_core::ecma::ast::BlockStmt) {
+        self.visit_nested_stmts(&block.stmts);
+    }
+
+    fn visit_switch_stmt(&mut self, switch: &swc_core::ecma::ast::SwitchStmt) {
+        switch.discriminant.visit_with(self);
+        for case in &switch.cases {
+            if let Some(test) = &case.test {
+                test.visit_with(self);
+            }
+            // `case` consequents are a statement list `UnEs6Class` rewrites.
+            self.visit_nested_stmts(&case.cons);
+        }
+    }
 }
 
 fn is_use_strict_directive(stmt: &Stmt) -> bool {

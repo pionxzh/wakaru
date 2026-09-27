@@ -3,6 +3,7 @@ mod arrow_function;
 mod arrow_return;
 pub(crate) mod binding_facts;
 pub(crate) mod builtin_aliases;
+mod call_required;
 mod callability;
 mod class_expression_to_declaration;
 mod constructor_sensitivity;
@@ -165,6 +166,7 @@ impl RewritePolicy {
 pub use arg_rest::ArgRest;
 pub use arrow_function::ArrowFunction;
 pub use arrow_return::ArrowReturn;
+pub(crate) use call_required::{attach_import_call_edges, pinned_export_names, CallRequiredPlan};
 pub use class_expression_to_declaration::ClassExpressionToDeclaration;
 pub use dead_decls::{DeadDecls, DeadUninitializedDecls};
 pub use dead_imports::DeadImports;

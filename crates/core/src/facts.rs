@@ -167,6 +167,28 @@ pub struct CommonJsDefaultObjectFact {
     pub composition_sources: Vec<Atom>,
 }
 
+/// `export { Imported as Exported } from "./source"`.
+///
+/// `ExportFact.local` is `None` for this shape. The imported name has to be
+/// kept separately so a later hop can follow `Imported`, not the local binding.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReexportFact {
+    pub exported: Atom,
+    pub imported: Atom,
+    pub source: Atom,
+}
+
+/// An import that is still the callee of `[[Call]]` on the facts AST.
+///
+/// `consumed_by_exports == None` means the call remains. `Some` means class
+/// recovery rewrites it to `super` unless one of those exports is itself pinned.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportCallEdge {
+    pub source: Atom,
+    pub imported: Atom,
+    pub consumed_by_exports: Option<Vec<Atom>>,
+}
+
 /// Facts extracted from one module after Stage 2.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ModuleFacts {
@@ -188,6 +210,15 @@ pub struct ModuleFacts {
     /// may depend on another provider, so local absence is not proof that a
     /// requested name should come from the default object.
     pub has_export_all: bool,
+    /// Specifiers of each `export * from`. Empty when `has_export_all` was set
+    /// without a recorded source. Multiple entries conflict; a single entry can
+    /// be followed to the defining module.
+    pub export_star_sources: Vec<Atom>,
+    pub reexports: Vec<ReexportFact>,
+    pub import_call_edges: Vec<ImportCallEdge>,
+    /// Names of `export default { Name: localIdent }` properties. A default
+    /// import's `mod.Name.call` still needs that local constructor.
+    pub default_object_ident_properties: Vec<Atom>,
     pub ts_helper_exports: Vec<TypeScriptHelperExportFact>,
     /// Exported zero-argument functions proven to return a CommonJS namespace
     /// object containing registered TypeScript helpers.
@@ -592,6 +623,30 @@ impl fmt::Display for ModuleFacts {
 /// This collector reads the reconstructed ESM declarations produced by `UnEsm`
 /// and the helper unwrapping rules. It should be called immediately after Stage 2,
 /// before later rules modify the import/export structure.
+fn object_ident_property_names(object: &ObjectLit) -> Vec<Atom> {
+    let mut names = Vec::new();
+    for prop in &object.props {
+        let PropOrSpread::Prop(prop) = prop else {
+            continue;
+        };
+        match prop.as_ref() {
+            Prop::Shorthand(ident) => names.push(ident.sym.clone()),
+            Prop::KeyValue(pair) => {
+                let name = match &pair.key {
+                    PropName::Ident(ident) => Some(ident.sym.clone()),
+                    PropName::Str(value) => value.value.as_str().map(Atom::from),
+                    PropName::Num(_) | PropName::BigInt(_) | PropName::Computed(_) => None,
+                };
+                if let (Some(name), Expr::Ident(_)) = (name, strip_parens(&pair.value)) {
+                    names.push(name);
+                }
+            }
+            Prop::Assign(_) | Prop::Getter(_) | Prop::Setter(_) | Prop::Method(_) => {}
+        }
+    }
+    names
+}
+
 pub fn collect_module_facts(module: &Module) -> ModuleFacts {
     let mut facts = ModuleFacts::default();
 
@@ -642,6 +697,12 @@ pub fn collect_module_facts(module: &Module) -> ModuleFacts {
             ModuleDecl::ExportDefaultExpr(export) => {
                 let local = match export.expr.as_ref() {
                     Expr::Ident(ident) => Some(ident.sym.clone()),
+                    Expr::Object(object) => {
+                        facts
+                            .default_object_ident_properties
+                            .extend(object_ident_property_names(object));
+                        None
+                    }
                     _ => None,
                 };
                 facts.exports.push(ExportFact {
@@ -693,6 +754,13 @@ pub fn collect_module_facts(module: &Module) -> ModuleFacts {
                             } else {
                                 ExportKind::Named
                             };
+                            if let Some(src) = &named.src {
+                                facts.reexports.push(ReexportFact {
+                                    exported: exported_name.clone(),
+                                    imported: local_name.clone(),
+                                    source: str_to_atom(&src.value),
+                                });
+                            }
                             facts.exports.push(ExportFact {
                                 exported: exported_name,
                                 local: named.src.is_none().then_some(local_name),
@@ -716,7 +784,12 @@ pub fn collect_module_facts(module: &Module) -> ModuleFacts {
                     }
                 }
             }
-            ModuleDecl::ExportAll(_) => facts.has_export_all = true,
+            ModuleDecl::ExportAll(export) => {
+                facts.has_export_all = true;
+                facts
+                    .export_star_sources
+                    .push(str_to_atom(&export.src.value));
+            }
             _ => {}
         }
     }

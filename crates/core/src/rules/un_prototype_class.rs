@@ -20,11 +20,15 @@ use super::decl_utils::{
 };
 use super::helper_matcher::{binding_key, BindingKey};
 
-pub struct UnPrototypeClass;
+#[derive(Default)]
+pub struct UnPrototypeClass {
+    /// Exported names that still need `[[Call]]` from another module.
+    pin_exports: HashSet<Atom>,
+}
 
 impl VisitMut for UnPrototypeClass {
     fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
-        transform_module_items_to_fixpoint(items);
+        transform_module_items_to_fixpoint(items, &self.pin_exports);
     }
 
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
@@ -61,6 +65,10 @@ impl VisitMut for UnPrototypeClass {
 }
 
 impl UnPrototypeClass {
+    pub(crate) fn with_pins(pin_exports: HashSet<Atom>) -> Self {
+        Self { pin_exports }
+    }
+
     fn visit_parameter_body(&mut self, body: &mut FunctionBody, parameters: &[BindingKey]) {
         // A function declaration may share a parameter's binding; a class in
         // the same body may not even reuse its emitted name. Visit nested
@@ -116,9 +124,12 @@ impl UnPrototypeClassPass<'_> {
     }
 }
 
-fn transform_module_items_to_fixpoint(items: &mut Vec<ModuleItem>) {
+fn transform_module_items_to_fixpoint(items: &mut Vec<ModuleItem>, pin_exports: &HashSet<Atom>) {
     loop {
-        let callability = CallabilityIndex::collect_module_items(items);
+        // Re-seed every pass. Alias propagation then marks the constructor the
+        // exported IIFE returns, which is the binding this rule would class-ify.
+        let roots = super::callability::pinned_binding_keys(items, pin_exports);
+        let callability = CallabilityIndex::collect_module_items_with_roots(items, &roots);
         let mut pass = UnPrototypeClassPass {
             callability: &callability,
             converted_any: false,
