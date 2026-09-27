@@ -1142,6 +1142,7 @@ fn angular_unpack_writes_module_artifact_from_generic_module_workspace() {
         input_path.to_str().expect("input path should be utf8"),
         "--unpack",
         "--angular",
+        "--emit-source-map",
         "-o",
         out_dir.to_str().expect("output path should be utf8"),
     ])
@@ -1150,11 +1151,14 @@ fn angular_unpack_writes_module_artifact_from_generic_module_workspace() {
 
     assert!(out_dir.join("runtime.js").exists());
     assert!(out_dir.join("component.js").exists());
+    assert!(out_dir.join("runtime.js.map").exists());
+    assert!(out_dir.join("component.js.map").exists());
     let artifact_path = out_dir.join("component.angular.ts");
     let artifact = fs::read_to_string(&artifact_path).expect("read Angular artifact");
     assert!(artifact.contains("template: `"));
     assert!(artifact.contains("<article></article>"));
     assert!(!artifact.contains("shared."));
+    assert!(!append_map_extension(&artifact_path).exists());
 
     fs::remove_dir_all(&dir).expect("remove temp dir");
 }
@@ -1220,6 +1224,7 @@ fn json_modules_describe_framework_artifact_roles() {
             status: JsonModuleStatus::AngularModuleSourceJs,
             source_filename: Some("src/card.js".to_string()),
             source_map_filename: Some("src/card.js".to_string()),
+            source_map: None,
         }),
         json_module_for_artifact(&CliOutputArtifact {
             filename: "src/card.angular.ts".to_string(),
@@ -1228,6 +1233,7 @@ fn json_modules_describe_framework_artifact_roles() {
             status: JsonModuleStatus::PartialAngularModule,
             source_filename: Some("src/card.js".to_string()),
             source_map_filename: None,
+            source_map: None,
         }),
     ];
 
@@ -1281,6 +1287,7 @@ fn single_file_angular_metadata_distinguishes_primary_and_sidecar_output() {
         status: JsonModuleStatus::RecoveredAngularModule,
         source_filename: Some("compiled.js".to_string()),
         source_map_filename: None,
+        source_map: None,
     };
     let primary = single_file_angular_metadata(true, Some(&selected), &[], "compiled.js")
         .expect("Angular metadata should be present");
@@ -1420,6 +1427,7 @@ fn angular_artifact_summary_counts_complete_and_partial_modules() {
         status,
         source_filename: None,
         source_map_filename: None,
+        source_map: None,
     };
     let artifacts = vec![
         artifact(JsonModuleStatus::AngularModuleSourceJs),
