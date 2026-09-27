@@ -3555,3 +3555,114 @@ fn inline_define_properties_loop_with_inlined_guard_recovers_through_pipeline() 
     assert!(!output.contains("defineProperty"), "{output}");
     assert!(!output.contains("Cannot call a class"), "{output}");
 }
+
+// ── Class wrapper flattened into the enclosing statement list ───────────────
+
+/// A class whose minifier removed the wrapper IIFE, as it reaches UnEs6Class:
+/// `var e, t, Store = (e = function e() {...}, t = [...], loop(e.prototype, t), e)`
+/// split into statements. `{EXTRA}` is inserted before the alias.
+fn flattened_class(ctor: &str, extra: &str, after: &str) -> String {
+    format!(
+        r#"
+var e;
+var t;
+e = {ctor};
+t = [
+    {{ key: "get", value: function(e) {{ return this.items[e]; }} }},
+    {{ key: "size", get: function() {{ return this.items.length; }} }}
+];
+{}
+{extra}
+var Store = e;
+use(new Store([]));
+{after}
+"#,
+        define_properties_loop_iife("e.prototype", "t")
+    )
+}
+
+const FLAT_CTOR: &str = r#"function e(n) {
+    if (!(this instanceof e)) {
+        throw TypeError("Cannot call a class as a function");
+    }
+    this.items = n;
+}"#;
+
+const FLAT_EXPECTED: &str = r#"
+class Store {
+    constructor(n) {
+        this.items = n;
+    }
+    get(e) { return this.items[e]; }
+    get size() { return this.items.length; }
+}
+use(new Store([]));
+"#;
+
+#[test]
+fn flattened_class_run_is_recovered() {
+    let output = apply(&flattened_class(FLAT_CTOR, "", ""));
+    assert_eq_normalized(&output, FLAT_EXPECTED);
+}
+
+#[test]
+fn flattened_class_run_with_anonymous_constructor_is_recovered() {
+    let ctor = "function(n) { this.items = n; }";
+    let output = apply(&flattened_class(ctor, "", ""));
+    assert_eq_normalized(&output, FLAT_EXPECTED);
+}
+
+#[test]
+fn flattened_class_run_with_prototype_seal_is_recovered() {
+    let seal = r#"Object.defineProperty(e, "prototype", { writable: false });"#;
+    let output = apply(&flattened_class(FLAT_CTOR, seal, ""));
+    assert_eq_normalized(&output, FLAT_EXPECTED);
+}
+
+#[test]
+fn flattened_class_run_whose_constructor_escapes_stays() {
+    // `e` is read after the alias, so removing its declaration would leave a
+    // dangling reference.
+    let output = apply(&flattened_class(FLAT_CTOR, "", "other(e);"));
+    assert!(!output.contains("class Store"), "{output}");
+    assert!(output.contains("other(e)"), "{output}");
+}
+
+#[test]
+fn flattened_class_run_whose_methods_temp_escapes_stays() {
+    let output = apply(&flattened_class(FLAT_CTOR, "", "other(t);"));
+    assert!(!output.contains("class Store"), "{output}");
+    assert!(output.contains("other(t)"), "{output}");
+}
+
+#[test]
+fn flattened_class_run_with_top_level_this_stays() {
+    // Folding the run into a function would rebind `this`.
+    let output = apply(&flattened_class(FLAT_CTOR, "e.owner = this;", ""));
+    assert!(!output.contains("class Store"), "{output}");
+    assert!(output.contains("e.owner = this"), "{output}");
+}
+
+#[test]
+fn flattened_class_run_whose_method_reads_the_outer_name_stays() {
+    // The static factory reads the outer `e`, not the class name.
+    let statics = define_properties_loop_iife(
+        "e",
+        r#"[{ key: "create", value: function() { return new e([]); } }]"#,
+    );
+    let output = apply(&flattened_class(FLAT_CTOR, &statics, ""));
+    assert!(!output.contains("class Store"), "{output}");
+    assert!(output.contains("new e([])"), "{output}");
+}
+
+#[test]
+fn swc_flattened_class_recovers_through_pipeline() {
+    // Produced by @babel/preset-env 7.12 (IE 11), then @swc/core minify with
+    // compress and mangle.
+    let input = r#""use strict";var e,t,n=(e=function e(t){if(!(this instanceof e))throw TypeError("Cannot call a class as a function");this.items=t},t=[{key:"get",value:function(e){return this.items[e]}},{key:"size",get:function(){return this.items.length}}],function(e,t){for(var n=0;n<t.length;n++){var i=t[n];i.enumerable=i.enumerable||!1,i.configurable=!0,"value"in i&&(i.writable=!0),Object.defineProperty(e,i.key,i)}}(e.prototype,t),e),i=new n(["a","b"]),r=new n(["c"]);use(i.get(1),i.size,r.size);"#;
+    let output = render(input);
+    assert!(output.contains("class "), "{output}");
+    assert!(output.contains("get size()"), "{output}");
+    assert!(!output.contains("defineProperty"), "{output}");
+    assert!(!output.contains("Cannot call a class"), "{output}");
+}

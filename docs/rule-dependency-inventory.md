@@ -417,7 +417,11 @@ rationale, or level gating appear.
   names the inner constructor (the second argument of a helper call or IIFE,
   or the `instanceof` operand of a guard inlined as an `if` with Babel's
   message) is removed at commit time so that reference does not reject
-  recovery. Static *method* assignment recovery is part
+  recovery. A class whose minifier spliced the wrapper body into the
+  enclosing statement list (`e = function e() {…}; …; var n = e`) is rebuilt
+  as that IIFE first, only when the constructor and methods temporaries are
+  referenced nowhere outside the run; a rebuild that does not convert is
+  discarded. Static *method* assignment recovery is part
   of class restoration; static *data field* recovery
   (`Ctor.x = value` → `static x = value`) requires `standard+` and is
   skipped for derived classes — inherited static setters make assignment

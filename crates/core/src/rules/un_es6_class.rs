@@ -7,13 +7,13 @@ use swc_core::atoms::Atom;
 use swc_core::common::util::take::Take;
 use swc_core::common::{Mark, Span, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BinaryOp, BindingIdent,
-    CallExpr, Callee, Class, ClassDecl, ClassMember, ClassMethod, ClassProp, ComputedPropName,
-    Constructor, Decl, ExportDecl, Expr, ExprOrSpread, ExprStmt, FnExpr, Function, FunctionBody,
-    Ident, IdentName, ImportSpecifier, Lit, MemberExpr, MemberProp, MethodKind, ModuleDecl,
-    ModuleExportName, ModuleItem, Param, ParamOrTsParamProp, Pat, PropName, SeqExpr,
-    SimpleAssignTarget, Stmt, Super, SuperProp, SuperPropExpr, ThisExpr, UpdateOp, VarDecl,
-    VarDeclKind, VarDeclOrExpr, VarDeclarator,
+    ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, AwaitExpr, BinaryOp,
+    BindingIdent, CallExpr, Callee, Class, ClassDecl, ClassMember, ClassMethod, ClassProp,
+    ComputedPropName, Constructor, Decl, ExportDecl, Expr, ExprOrSpread, ExprStmt, FnDecl, FnExpr,
+    Function, FunctionBody, Ident, IdentName, ImportSpecifier, Lit, MemberExpr, MemberProp,
+    MetaPropExpr, MethodKind, ModuleDecl, ModuleExportName, ModuleItem, Param, ParamOrTsParamProp,
+    Pat, PropName, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, Super, SuperProp, SuperPropExpr,
+    ThisExpr, UpdateOp, VarDecl, VarDeclKind, VarDeclOrExpr, VarDeclarator, YieldExpr,
 };
 use swc_core::ecma::utils::find_pat_ids;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -359,7 +359,25 @@ impl VisitMut for UnEs6ClassInner {
         scoped_inner.inheritance_uses = self.inheritance_uses.clone();
         stmts.visit_mut_children_with(&mut scoped_inner);
 
-        let mut converted_any = false;
+        let callability = CallabilityIndex::collect_stmts(stmts);
+        let mut converted_any = fold_flattened_classes(stmts, |var_decl| {
+            try_iife_to_class(
+                var_decl,
+                &scoped_inner.reused_var_bindings,
+                &callability,
+                &scoped_inner.helpers.inherits_helpers,
+                &scoped_inner.helpers.tslib_namespaces,
+                &scoped_inner.helpers.create_class_helpers,
+                &scoped_inner.helpers.call_super_helpers,
+                &scoped_inner.helpers.class_call_check_helpers,
+                &scoped_inner.helpers.set_prototype_of_helpers,
+                &scoped_inner.helpers.ts_extends_helpers,
+                scoped_inner.inheritance_uses.as_deref(),
+                self.unresolved_mark,
+                self.rewrite_level,
+                var_decl.span,
+            )
+        });
         loop {
             let callability = CallabilityIndex::collect_stmts(stmts);
             let mut converted_this_pass = false;
@@ -413,7 +431,25 @@ impl VisitMut for UnEs6ClassInner {
             .extend(reused_var_bindings_in_items(items));
         items.visit_mut_children_with(self);
 
-        let mut converted_any = false;
+        let callability = CallabilityIndex::collect_module_items(items);
+        let mut converted_any = fold_flattened_classes(items, |var_decl| {
+            try_iife_to_class(
+                var_decl,
+                &self.reused_var_bindings,
+                &callability,
+                &self.helpers.inherits_helpers,
+                &self.helpers.tslib_namespaces,
+                &self.helpers.create_class_helpers,
+                &self.helpers.call_super_helpers,
+                &self.helpers.class_call_check_helpers,
+                &self.helpers.set_prototype_of_helpers,
+                &self.helpers.ts_extends_helpers,
+                self.inheritance_uses.as_deref(),
+                self.unresolved_mark,
+                self.rewrite_level,
+                var_decl.span,
+            )
+        });
         loop {
             let callability = CallabilityIndex::collect_module_items(items);
             let mut converted_this_pass = false;
@@ -499,6 +535,383 @@ impl VisitMut for UnEs6ClassInner {
                 }));
         }
     }
+}
+
+// ============================================================
+// Flattened class wrappers
+// ============================================================
+
+/// A statement-list slot that may hold a statement.
+trait StmtSlot: Sized + VisitWith<BindingRefCounter> {
+    fn stmt(&self) -> Option<&Stmt>;
+    fn stmt_mut(&mut self) -> Option<&mut Stmt>;
+    fn from_stmt(stmt: Stmt) -> Self;
+}
+
+impl StmtSlot for Stmt {
+    fn stmt(&self) -> Option<&Stmt> {
+        Some(self)
+    }
+    fn stmt_mut(&mut self) -> Option<&mut Stmt> {
+        Some(self)
+    }
+    fn from_stmt(stmt: Stmt) -> Self {
+        stmt
+    }
+}
+
+impl StmtSlot for ModuleItem {
+    fn stmt(&self) -> Option<&Stmt> {
+        match self {
+            ModuleItem::Stmt(stmt) => Some(stmt),
+            ModuleItem::ModuleDecl(_) => None,
+        }
+    }
+    fn stmt_mut(&mut self) -> Option<&mut Stmt> {
+        match self {
+            ModuleItem::Stmt(stmt) => Some(stmt),
+            ModuleItem::ModuleDecl(_) => None,
+        }
+    }
+    fn from_stmt(stmt: Stmt) -> Self {
+        ModuleItem::Stmt(stmt)
+    }
+}
+
+/// Counts every occurrence of one binding, declarations included.
+struct BindingRefCounter {
+    key: BindingKey,
+    count: usize,
+}
+
+impl Visit for BindingRefCounter {
+    fn visit_ident(&mut self, id: &Ident) {
+        if id.sym == self.key.0 && id.ctxt == self.key.1 {
+            self.count += 1;
+        }
+    }
+}
+
+fn count_binding_refs<N: VisitWith<BindingRefCounter> + ?Sized>(
+    node: &N,
+    key: &BindingKey,
+) -> usize {
+    let mut counter = BindingRefCounter {
+        key: key.clone(),
+        count: 0,
+    };
+    node.visit_with(&mut counter);
+    counter.count
+}
+
+/// A class whose minifier removed the wrapper IIFE and spliced its body into
+/// the enclosing statement list. SWC turns
+/// `var n = function() { function e() {…} … return e; }()` into
+/// `var e, t, n = (e = function e() {…}, t = […], loop(e.prototype, t), e)`,
+/// which earlier rules split into statements:
+///
+/// ```js
+/// var e;
+/// var t;
+/// e = function e(n) { … };
+/// t = [{ key: "m", value: function() {} }];
+/// (function(e, t) { for … })(e.prototype, t);
+/// var n = e;
+/// ```
+struct FlattenedClassRun {
+    /// Index of `e = function …`.
+    ctor: usize,
+    /// Index of `var n = e`, the declaration that names the class.
+    alias: usize,
+    /// The constructor binding and the temporaries whose uninitialized `var`
+    /// declarations move into the rebuilt wrapper.
+    moved: Vec<Ident>,
+}
+
+/// Rebuild each flattened class run as the wrapper IIFE it came from and
+/// convert it with `convert`. A run that does not convert is left as is.
+///
+/// Folding statements into a function is only equivalent when nothing
+/// outside the run observes the bindings that move inside: the constructor
+/// and each methods temporary may be referenced only by their uninitialized
+/// `var` declarations and by the run. The run must also not use `this`,
+/// `arguments`, `super`, `new.target`, `await`, or `yield` outside a nested
+/// function, since the wrapper rebinds or forbids them.
+fn fold_flattened_classes<T: StmtSlot>(
+    items: &mut Vec<T>,
+    mut convert: impl FnMut(&VarDecl) -> Option<ClassDecl>,
+) -> bool {
+    let mut converted_any = false;
+    let mut start = 0;
+    while let Some(run) = find_flattened_class_run(items, start) {
+        start = run.alias + 1;
+        let Some(wrapper) = rebuild_flattened_class_wrapper(items, &run) else {
+            continue;
+        };
+        let Some(class_decl) = convert(&wrapper) else {
+            continue;
+        };
+        let moved: Vec<BindingKey> = run.moved.iter().map(binding_key).collect();
+        let old = std::mem::take(items);
+        for (index, mut item) in old.into_iter().enumerate() {
+            if (run.ctor..run.alias).contains(&index) {
+                continue;
+            }
+            if index == run.alias {
+                items.push(T::from_stmt(Stmt::Decl(Decl::Class(class_decl.clone()))));
+                continue;
+            }
+            if let Some(Stmt::Decl(Decl::Var(var))) = item.stmt_mut() {
+                var.decls.retain(|decl| {
+                    decl.init.is_some()
+                        || !matches!(&decl.name, Pat::Ident(id) if moved.contains(&binding_key(&id.id)))
+                });
+                if var.decls.is_empty() {
+                    continue;
+                }
+            }
+            items.push(item);
+        }
+        start = 0;
+        converted_any = true;
+    }
+    converted_any
+}
+
+fn find_flattened_class_run<T: StmtSlot>(items: &[T], start: usize) -> Option<FlattenedClassRun> {
+    (start..items.len()).find_map(|ctor| flattened_class_run_at(items, ctor))
+}
+
+fn flattened_class_run_at<T: StmtSlot>(items: &[T], ctor: usize) -> Option<FlattenedClassRun> {
+    let (ctor_ident, _) = flattened_ctor_assignment(items[ctor].stmt()?)?;
+    let ctor_key = binding_key(ctor_ident);
+    let alias = (ctor + 1..items.len()).find(|&index| {
+        items[index]
+            .stmt()
+            .is_some_and(|stmt| flattened_alias_decl(stmt, &ctor_key).is_some())
+    })?;
+    let run: Vec<&Stmt> = items[ctor..=alias].iter().filter_map(T::stmt).collect();
+    let body = &run[1..run.len() - 1];
+    if !body.iter().all(|stmt| matches!(stmt, Stmt::Expr(_))) || !run_keeps_function_context(&run) {
+        return None;
+    }
+
+    let mut moved = vec![ctor_ident.clone()];
+    for stmt in body {
+        let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+            continue;
+        };
+        if let Some((temp, _)) = methods_temp_assignment_parts(expr) {
+            if binding_key(temp) != ctor_key
+                && !moved.iter().any(|id| binding_key(id) == binding_key(temp))
+            {
+                moved.push(temp.clone());
+            }
+        }
+    }
+    // Every moved binding is referenced only by its uninitialized top-level
+    // `var` declarations and inside the run.
+    let movable = moved.iter().all(|ident| {
+        let key = binding_key(ident);
+        let decls = items
+            .iter()
+            .filter_map(T::stmt)
+            .map(|stmt| uninitialized_var_declarators(stmt, &key))
+            .sum::<usize>();
+        let in_run: usize = run.iter().map(|stmt| count_binding_refs(*stmt, &key)).sum();
+        decls > 0
+            && items
+                .iter()
+                .map(|item| count_binding_refs(item, &key))
+                .sum::<usize>()
+                == decls + in_run
+    });
+    movable.then_some(FlattenedClassRun { ctor, alias, moved })
+}
+
+/// `e = function [e](…) {…}`
+fn flattened_ctor_assignment(stmt: &Stmt) -> Option<(&Ident, &FnExpr)> {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Assign(assign) = strip_parens(expr) else {
+        return None;
+    };
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(target)) = &assign.left else {
+        return None;
+    };
+    let Expr::Fn(fn_expr) = strip_parens(&assign.right) else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign || fn_expr.function.is_async || fn_expr.function.is_generator {
+        return None;
+    }
+    Some((&target.id, fn_expr))
+}
+
+/// `var n = e`
+fn flattened_alias_decl<'a>(stmt: &'a Stmt, ctor: &BindingKey) -> Option<&'a VarDecl> {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return None;
+    };
+    let [VarDeclarator {
+        name: Pat::Ident(_),
+        init: Some(init),
+        ..
+    }] = var.decls.as_slice()
+    else {
+        return None;
+    };
+    matches!(strip_parens(init), Expr::Ident(id) if binding_key(id) == *ctor).then_some(var)
+}
+
+fn uninitialized_var_declarators(stmt: &Stmt, key: &BindingKey) -> usize {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return 0;
+    };
+    if var.kind != VarDeclKind::Var {
+        return 0;
+    }
+    var.decls
+        .iter()
+        .filter(|decl| {
+            decl.init.is_none()
+                && matches!(&decl.name, Pat::Ident(id) if binding_key(&id.id) == *key)
+        })
+        .count()
+}
+
+/// Whether the run evaluates the same inside a zero-argument wrapper
+/// function: no `this`, `arguments`, `super`, `new.target`, `await`, or
+/// `yield` outside a nested non-arrow function.
+fn run_keeps_function_context(run: &[&Stmt]) -> bool {
+    struct ContextFinder {
+        found: bool,
+    }
+    impl Visit for ContextFinder {
+        fn visit_this_expr(&mut self, _: &ThisExpr) {
+            self.found = true;
+        }
+        fn visit_super(&mut self, _: &Super) {
+            self.found = true;
+        }
+        fn visit_meta_prop_expr(&mut self, _: &MetaPropExpr) {
+            self.found = true;
+        }
+        fn visit_await_expr(&mut self, _: &AwaitExpr) {
+            self.found = true;
+        }
+        fn visit_yield_expr(&mut self, _: &YieldExpr) {
+            self.found = true;
+        }
+        fn visit_ident(&mut self, id: &Ident) {
+            if id.sym.as_ref() == "arguments" {
+                self.found = true;
+            }
+        }
+        fn visit_function(&mut self, _: &Function) {}
+    }
+    let mut finder = ContextFinder { found: false };
+    for stmt in run {
+        stmt.visit_with(&mut finder);
+    }
+    !finder.found
+}
+
+/// `var n = function() { function e(…) {…} var t; <run body>; return e; }()`
+///
+/// A named constructor expression carries its own immutable inner binding,
+/// which is what a class name is inside its class body. The outer `e` is
+/// written once and read only here, so the run's references to it are
+/// unified onto the inner binding; a member that still reads the class under
+/// that name then fails the existing inner-name check instead of pointing at
+/// the removed outer declaration.
+fn rebuild_flattened_class_wrapper<T: StmtSlot>(
+    items: &[T],
+    run: &FlattenedClassRun,
+) -> Option<VarDecl> {
+    let (outer, fn_expr) = flattened_ctor_assignment(items[run.ctor].stmt()?)?;
+    let ctor = fn_expr.ident.clone().unwrap_or_else(|| outer.clone());
+    let mut body_stmts: Vec<Stmt> = items[run.ctor + 1..run.alias]
+        .iter()
+        .filter_map(T::stmt)
+        .cloned()
+        .collect();
+    if binding_key(&ctor) != binding_key(outer) {
+        struct Unify<'a> {
+            from: BindingKey,
+            to: &'a Ident,
+        }
+        impl VisitMut for Unify<'_> {
+            fn visit_mut_ident(&mut self, id: &mut Ident) {
+                if id.sym == self.from.0 && id.ctxt == self.from.1 {
+                    id.ctxt = self.to.ctxt;
+                }
+            }
+        }
+        body_stmts.visit_mut_with(&mut Unify {
+            from: binding_key(outer),
+            to: &ctor,
+        });
+    }
+
+    let mut stmts = vec![Stmt::Decl(Decl::Fn(FnDecl {
+        ident: ctor.clone(),
+        declare: false,
+        function: fn_expr.function.clone(),
+    }))];
+    let temps: Vec<VarDeclarator> = run.moved[1..]
+        .iter()
+        .map(|temp| VarDeclarator {
+            span: DUMMY_SP,
+            name: Pat::Ident(BindingIdent::from(temp.clone())),
+            init: None,
+            definite: false,
+        })
+        .collect();
+    if !temps.is_empty() {
+        stmts.push(Stmt::Decl(Decl::Var(Box::new(VarDecl {
+            span: DUMMY_SP,
+            ctxt: Default::default(),
+            kind: VarDeclKind::Var,
+            declare: false,
+            decls: temps,
+        }))));
+    }
+    stmts.extend(body_stmts);
+    stmts.push(Stmt::Return(ReturnStmt {
+        span: DUMMY_SP,
+        arg: Some(Box::new(Expr::Ident(ctor))),
+    }));
+
+    let wrapper = Expr::Call(CallExpr {
+        span: DUMMY_SP,
+        ctxt: Default::default(),
+        callee: Callee::Expr(Box::new(Expr::Fn(FnExpr {
+            ident: None,
+            function: Box::new(Function {
+                params: vec![],
+                decorators: vec![],
+                span: DUMMY_SP,
+                ctxt: Default::default(),
+                this_param: None,
+                body: Some(FunctionBody {
+                    span: DUMMY_SP,
+                    stmts,
+                }),
+                is_generator: false,
+                is_async: false,
+                type_params: None,
+                return_type: None,
+            }),
+        }))),
+        args: vec![],
+        type_args: None,
+    });
+    let alias = flattened_alias_decl(items[run.alias].stmt()?, &binding_key(outer))?;
+    let mut var = alias.clone();
+    var.decls[0].init = Some(Box::new(wrapper));
+    Some(var)
 }
 
 fn collect_ts_extends_helpers_from_stmts(stmts: &[Stmt]) -> HashSet<BindingKey> {
