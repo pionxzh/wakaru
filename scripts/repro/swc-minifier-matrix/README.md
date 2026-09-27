@@ -32,6 +32,15 @@ Rows are grouped by distinct lowered output per snippet. The grouping key only
 normalizes CRLF to LF and trims leading/trailing whitespace, so exact minifier
 shape is preserved while duplicate tool outputs are collapsed.
 
+The `babel-<version>-class-*` rows lower ES classes with Babel `preset-env`
+(IE 11) first, then minify Babel's output with each SWC profile. SWC inlines
+the single-use `_createClass`, `_defineProperties`, and `_classCallCheck`
+helpers into the class, which is the shape these rows track. Each Babel
+version also pins `@babel/helpers`: `@babel/core` accepts any newer
+`@babel/helpers`, and the helper bodies (for example, whether
+`_defineProperties` routes keys through `_toPropertyKey`) come from that
+package, not from core.
+
 Some rows are informational. Constant folding and full inlining can erase the
 original structure, so those rows document what Wakaru currently emits rather
 than implying a reversible source recovery is expected.

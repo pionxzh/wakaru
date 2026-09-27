@@ -847,10 +847,15 @@ export function babelPresetEnvBatch(sources, options = {}) {
   const coreVersion = options.core ?? "7.29.7";
   const presetVersion = options.preset ?? "7.29.7";
   const targets = options.targets ?? { ie: "11" };
-  const toolDir = ensureNodeTool(`babel-${coreVersion}-preset-env`, [
-    `@babel/core@${coreVersion}`,
-    `@babel/preset-env@${presetVersion}`,
-  ]);
+  // `@babel/core` depends on `@babel/helpers@^7.x`, so without a pin every
+  // older core emits the newest helper bodies.
+  const helpersVersion = options.helpers;
+  const packages = [`@babel/core@${coreVersion}`, `@babel/preset-env@${presetVersion}`];
+  if (helpersVersion) packages.push(`@babel/helpers@${helpersVersion}`);
+  const toolDir = ensureNodeTool(
+    `babel-${coreVersion}-preset-env${helpersVersion ? `-helpers-${helpersVersion}` : ""}`,
+    packages,
+  );
   const helperSource = `
 import fs from "node:fs";
 const babelModule = await import("@babel/core");
