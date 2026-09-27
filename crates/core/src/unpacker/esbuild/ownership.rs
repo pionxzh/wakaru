@@ -10,7 +10,7 @@ use crate::unpacker::{BindingId, UnpackedModule};
 
 use super::bindings::{atom_binding_map_from_keys, atom_to_filename_binding_map, ExternalImport};
 use super::factories::CjsFactoryParams;
-use super::synthesis::relative_import_path;
+use super::synthesis::{factory_owned_export_names, relative_import_path};
 
 /// A detected factory with its output filename and the top-level bindings its
 /// resolved body reads and writes, waiting for an ownership decision.
@@ -855,6 +855,9 @@ pub(super) struct MergedModulePlan {
     /// Adopted support declarations: source item index and the binding names
     /// the module keeps from it, in source order.
     pub(super) owned_items: Vec<(usize, HashSet<Atom>)>,
+    /// Sorted names the module exports for the declarations it owns. Later
+    /// modules only add to their own owned sets, so this stays final.
+    pub(super) export_names: Vec<Atom>,
     pub(super) init_bodies: Vec<(Atom, Option<CjsFactoryParams>, Vec<Stmt>)>,
     /// Names the synthesized init helpers must not shadow.
     pub(super) helper_reserved_atoms: HashSet<Atom>,
@@ -1055,6 +1058,7 @@ pub(super) fn plan_merged_module(
         external_imports,
         named_imports,
         owned_items,
+        export_names: factory_owned_export_names(filename, &ownership.factory_owned_bindings),
         init_bodies,
         helper_reserved_atoms,
     }

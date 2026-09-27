@@ -469,7 +469,6 @@ fn detect_from_prepared_factories(
             plan,
             &module.body,
             &index.external_imports,
-            &ownership.factory_owned_bindings,
             cm.clone(),
             positions,
         );

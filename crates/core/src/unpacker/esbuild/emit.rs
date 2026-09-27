@@ -30,7 +30,7 @@ use super::ownership::{
     TopLevelWriterItem,
 };
 use super::synthesis::{
-    emit_items, factory_owned_decl_items, factory_owned_export_items,
+    emit_items, export_items, factory_owned_decl_items, factory_owned_export_names,
     filter_item_to_owned_bindings, make_external_import_stmt, relative_import_path,
     reserve_import_atom,
 };
@@ -269,10 +269,10 @@ pub(super) fn emit_standalone_group(
     let mut body_items: Vec<ModuleItem> = import_items
         .into_iter()
         .chain(owned_prelude_items.into_iter().map(|(_, item)| item))
-        .chain(factory_owned_export_items(
+        .chain(export_items(&factory_owned_export_names(
             &group_filename,
             factory_owned_bindings,
-        ))
+        )))
         .collect();
     rename_bindings(&mut body_items, &import_renames);
     let mut reserved_helper_atoms: HashSet<Atom> = body_items
@@ -462,7 +462,6 @@ pub(super) fn emit_merged_module_plan(
     plan: MergedModulePlan,
     source_items: &[ModuleItem],
     external_imports: &HashMap<BindingId, ExternalImport>,
-    factory_owned_bindings: &HashMap<String, HashSet<BindingId>>,
     cm: Lrc<SourceMap>,
     positions: SourcePositions,
 ) {
@@ -470,6 +469,7 @@ pub(super) fn emit_merged_module_plan(
         external_imports: external_import_bindings,
         named_imports,
         owned_items,
+        export_names,
         init_bodies,
         mut helper_reserved_atoms,
         ..
@@ -486,10 +486,7 @@ pub(super) fn emit_merged_module_plan(
         .chain(owned_items.iter().filter_map(|(index, owned_atoms)| {
             filter_item_to_owned_bindings(&source_items[*index], owned_atoms)
         }))
-        .chain(factory_owned_export_items(
-            &module.filename,
-            factory_owned_bindings,
-        ))
+        .chain(export_items(&export_names))
         .collect();
     let extra_code = emit_items(body_items, module.filename.clone(), cm.clone(), positions);
     module.code.push('\n');

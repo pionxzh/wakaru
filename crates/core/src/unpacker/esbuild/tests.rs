@@ -19,7 +19,7 @@ use super::ownership::{
     SupportClaimFilter, TopLevelIndex, TopLevelWriterItem,
 };
 use super::synthesis::{
-    emit_items, filter_item_to_owned_bindings, relative_import_path,
+    emit_items, factory_owned_export_names, filter_item_to_owned_bindings, relative_import_path,
     retain_owned_support_source_items, scope_owned_support_decl_items,
 };
 use super::*;
@@ -787,7 +787,14 @@ fn merged_module_plans_publish_adopted_declarations_to_later_modules() {
         vec![(3, [Atom::from("support")].into_iter().collect())]
     );
     assert!(first.named_imports.is_empty());
+    assert_eq!(first.export_names, vec![Atom::from("support")]);
+    assert_eq!(
+        first.export_names,
+        factory_owned_export_names("first.js", &ownership.factory_owned_bindings),
+        "a later module's adoption must not change an earlier plan's exports"
+    );
     assert!(second.owned_items.is_empty());
+    assert!(second.export_names.is_empty());
     assert_eq!(
         second.named_imports,
         vec![(

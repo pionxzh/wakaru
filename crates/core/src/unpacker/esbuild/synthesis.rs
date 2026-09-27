@@ -244,20 +244,25 @@ fn factory_owned_decl_items_from(
         .collect()
 }
 
-pub(super) fn factory_owned_export_items(
+/// Sorted, deduplicated names of the bindings `filename` owns and exports.
+pub(super) fn factory_owned_export_names(
     filename: &str,
     factory_owned_bindings: &HashMap<String, HashSet<BindingId>>,
-) -> Vec<ModuleItem> {
+) -> Vec<Atom> {
     let Some(owned) = factory_owned_bindings.get(filename) else {
         return vec![];
     };
     let mut names: Vec<Atom> = owned.iter().map(|(atom, _)| atom.clone()).collect();
     names.sort();
     names.dedup();
+    names
+}
+
+pub(super) fn export_items(names: &[Atom]) -> Vec<ModuleItem> {
     if names.is_empty() {
         vec![]
     } else {
-        vec![make_named_export_stmt(&names)]
+        vec![make_named_export_stmt(names)]
     }
 }
 
