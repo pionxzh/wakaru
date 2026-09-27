@@ -199,7 +199,10 @@ pub(super) fn build_output_sourcemap(
     output_filename: &str,
 ) -> Result<String> {
     let mut builder = sourcemap::SourceMapBuilder::new(Some(output_filename));
-    let mut line_indexes: crate::collections::HashMap<BytePos, LineIndex> =
+    // Per input file: its line index and source id. The source and its
+    // contents are registered once; `set_source_contents` copies the whole
+    // input on every call.
+    let mut files: crate::collections::HashMap<BytePos, (LineIndex, u32)> =
         crate::collections::HashMap::default();
 
     for &(byte_pos, ref out_loc) in mappings {
@@ -212,17 +215,17 @@ pub(super) fn build_output_sourcemap(
             FileName::Custom(name) => name.as_str(),
             _ => continue,
         };
-        let Some((line, col)) = line_indexes
-            .entry(file.sf.start_pos)
-            .or_insert_with(|| LineIndex::new(&file.sf.src))
-            .position(file.pos.0)
-        else {
+        let (line_index, src_id) = files.entry(file.sf.start_pos).or_insert_with(|| {
+            let src_id = builder.add_source(source_name);
+            if !file.sf.src.is_empty() {
+                builder.set_source_contents(src_id, Some(file.sf.src.as_ref()));
+            }
+            (LineIndex::new(&file.sf.src), src_id)
+        });
+        let Some((line, col)) = line_index.position(file.pos.0) else {
             continue;
         };
-        let src_id = builder.add_source(source_name);
-        if !file.sf.src.is_empty() {
-            builder.set_source_contents(src_id, Some(file.sf.src.as_ref()));
-        }
+        let src_id = *src_id;
         builder.add_raw(
             out_loc.line,
             out_loc.col,
