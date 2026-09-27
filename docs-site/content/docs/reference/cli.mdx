@@ -93,7 +93,8 @@ wakaru extract input.js.map -o src/
   deduplication (single-file mode only).
 - `--emit-source-map` writes a `.map` alongside each output file, mapping
   output back to input. Works with `--unpack`, where each module's map
-  points into the bundle and does not embed the bundle's text.
+  points into the bundle and does not embed the bundle's text. With
+  `--formatter`, the map describes the formatted output.
 - `wakaru extract` writes the files embedded in a map's `sourcesContent` to
   disk. When the map carries original sources, this recovers them directly.
 

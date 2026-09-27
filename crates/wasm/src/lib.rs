@@ -1,5 +1,5 @@
 use serde::Serialize;
-use wakaru_formatter::{format_code, CodeFormatter};
+use wakaru_formatter::{format_code_with_source_map, CodeFormatter};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen(start)]
@@ -70,10 +70,15 @@ pub fn decompile(
     let output =
         wakaru::decompile(input, options).map_err(|error| JsValue::from_str(&error.to_string()))?;
     let vue_sfc = recover_vue_sfc_preview(&output.module.code, vue_sfc.unwrap_or(false));
-    let formatted = format_code(output.module.code, "input.js", formatter);
+    let formatted = format_code_with_source_map(
+        output.module.code,
+        output.module.source_map,
+        "input.js",
+        formatter,
+    );
     let result = WakaruDecompileResult {
         code: formatted.code,
-        source_map: output.module.source_map,
+        source_map: formatted.source_map,
         vue_sfc,
         warnings: collect_warnings(output.diagnostics, ["input.js"], formatted.warning),
     };
@@ -109,24 +114,26 @@ pub fn unpack(
         .iter()
         .map(|module| module.filename.clone())
         .collect::<Vec<_>>();
-    let source_maps = output
-        .modules
-        .iter()
-        .filter_map(|module| {
-            module.source_map.as_ref().map(|map| WakaruSourceMap {
-                filename: module.filename.clone(),
-                map: map.clone(),
-            })
-        })
-        .collect();
+    let mut source_maps = Vec::new();
     let result = WakaruUnpackResult {
         modules: output
             .modules
             .into_iter()
             .map(|module| {
-                let formatted = format_code(module.code, &module.filename, formatter);
+                let formatted = format_code_with_source_map(
+                    module.code,
+                    module.source_map,
+                    &module.filename,
+                    formatter,
+                );
                 if let Some(warning) = formatted.warning {
                     format_warnings.push(warning);
+                }
+                if let Some(map) = formatted.source_map {
+                    source_maps.push(WakaruSourceMap {
+                        filename: module.filename.clone(),
+                        map,
+                    });
                 }
                 WakaruModule {
                     filename: module.filename,

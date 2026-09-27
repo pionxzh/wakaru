@@ -814,6 +814,110 @@ fn unpack_source_maps_name_the_bundle_relative_to_each_map() {
     fs::remove_dir_all(&dir).expect("remove temp dir");
 }
 
+/// Every occurrence of `needle` in formatted `code` must carry its own
+/// mapping, and that mapping must point at `needle` in `input`.
+fn assert_map_points_needles_at_input(code: &str, map_json: &str, input: &str, needle: &str) {
+    let map = sourcemap::SourceMap::from_slice(map_json.as_bytes()).expect("valid source map");
+    let input_lines: Vec<&str> = input.split('\n').collect();
+    let mut checked = 0;
+    for (line, text) in code.lines().enumerate() {
+        for (col, _) in text.match_indices(needle) {
+            let (line, col) = (line as u32, col as u32);
+            let token = map
+                .lookup_token(line, col)
+                .unwrap_or_else(|| panic!("{needle} at {line}:{col} should be mapped"));
+            assert_eq!(
+                (token.get_dst_line(), token.get_dst_col()),
+                (line, col),
+                "{needle} at {line}:{col} should have its own mapping"
+            );
+            let source_line = input_lines[token.get_src_line() as usize];
+            assert!(
+                source_line[token.get_src_col() as usize..].starts_with(needle),
+                "{needle} at {line}:{col} maps to {:?}",
+                &source_line[token.get_src_col() as usize..]
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 0, "expected {needle} in:\n{code}");
+}
+
+/// Wider than the formatter's line width once printed, so formatting moves
+/// the arguments onto their own lines.
+const WIDE_CALL_INPUT: &str = "function f(){console.log(alphaAlphaAlpha,betaBetaBetaBeta,gammaGammaGamma,deltaDeltaDelta,console.error)}f();";
+
+#[test]
+fn formatter_carries_single_file_source_map_to_formatted_output() {
+    let dir = temp_test_dir("formatter-single-file-map");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input_path = dir.join("input.js");
+    let output_path = dir.join("output.js");
+    fs::write(&input_path, WIDE_CALL_INPUT).expect("write input");
+
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input_path.to_str().expect("input path should be utf8"),
+        "--formatter",
+        "--emit-source-map",
+        "-o",
+        output_path.to_str().expect("output path should be utf8"),
+    ])
+    .expect("cli should parse");
+    run_default(cli).expect("decompile should succeed");
+
+    let code = fs::read_to_string(&output_path).expect("read output");
+    assert!(
+        code.contains("\n    console.error"),
+        "arguments should be broken onto their own lines:\n{code}"
+    );
+    let map_json = fs::read_to_string(append_map_extension(&output_path)).expect("read map");
+    assert_map_points_needles_at_input(&code, &map_json, WIDE_CALL_INPUT, "console");
+    assert_map_points_needles_at_input(&code, &map_json, WIDE_CALL_INPUT, "deltaDeltaDelta");
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn formatter_carries_unpack_source_maps_to_formatted_output() {
+    let dir = temp_test_dir("formatter-unpack-map");
+    let out_dir = dir.join("out");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input_path = dir.join("bundle.js");
+    let bundle = "(()=>{var e={10:(e,t,n)=>{console.log(alphaAlphaAlpha,betaBetaBetaBeta,gammaGammaGamma,deltaDeltaDelta,console.error,n(20).value)},20:e=>{e.exports={value:1}}},t={};function n(r){var o=t[r];if(void 0!==o)return o.exports;var s=t[r]={exports:{}};return e[r](s,s.exports,n),s.exports}n(10)})();";
+    fs::write(&input_path, bundle).expect("write bundle");
+
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input_path.to_str().expect("input path should be utf8"),
+        "--unpack",
+        "--formatter",
+        "--emit-source-map",
+        "-o",
+        out_dir.to_str().expect("output path should be utf8"),
+    ])
+    .expect("unpack cli should parse");
+    run_default(cli).expect("unpack should succeed");
+
+    let module = fs::read_dir(&out_dir)
+        .expect("read output dir")
+        .map(|entry| entry.expect("dir entry").path())
+        .find(|path| {
+            path.extension().is_some_and(|ext| ext == "js")
+                && fs::read_to_string(path).is_ok_and(|code| code.contains("console.error"))
+        })
+        .expect("the module that logs should be written");
+    let code = fs::read_to_string(&module).expect("read module");
+    assert!(
+        code.contains("\n  console.error"),
+        "arguments should be broken onto their own lines:\n{code}"
+    );
+    let map_json = fs::read_to_string(append_map_extension(&module)).expect("read map");
+    assert_map_points_needles_at_input(&code, &map_json, bundle, "console");
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
 #[test]
 fn relative_path_climbs_to_the_common_ancestor() {
     assert_eq!(
@@ -851,6 +955,7 @@ fn json_modules_describe_vue_sfc_artifact_roles() {
             status: JsonModuleStatus::Decompiled,
             source_filename: None,
             source_map_filename: Some("src/plain.js".to_string()),
+            source_map: None,
         }),
         json_module_for_artifact(&CliOutputArtifact {
             filename: "src/App.vue.js".to_string(),
@@ -859,6 +964,7 @@ fn json_modules_describe_vue_sfc_artifact_roles() {
             status: JsonModuleStatus::VueSfcSourceJs,
             source_filename: Some("src/App.vue".to_string()),
             source_map_filename: Some("src/App.vue".to_string()),
+            source_map: None,
         }),
         json_module_for_artifact(&CliOutputArtifact {
             filename: "src/App.vue".to_string(),
@@ -867,6 +973,7 @@ fn json_modules_describe_vue_sfc_artifact_roles() {
             status: JsonModuleStatus::RecoveredVueSfc,
             source_filename: Some("src/App.vue".to_string()),
             source_map_filename: None,
+            source_map: None,
         }),
         json_module_for_artifact(&CliOutputArtifact {
             filename: "src/Broken.vue.js".to_string(),
@@ -875,6 +982,7 @@ fn json_modules_describe_vue_sfc_artifact_roles() {
             status: JsonModuleStatus::VueSfcFallbackJs,
             source_filename: None,
             source_map_filename: Some("src/Broken.vue".to_string()),
+            source_map: None,
         }),
     ];
 
@@ -917,6 +1025,7 @@ fn json_unpack_total_counts_input_modules_not_artifacts() {
             status: JsonModuleStatus::VueSfcSourceJs,
             source_filename: Some("src/App.vue".to_string()),
             source_map_filename: Some("src/App.vue".to_string()),
+            source_map: None,
         },
         CliOutputArtifact {
             filename: "src/App.vue".to_string(),
@@ -925,6 +1034,7 @@ fn json_unpack_total_counts_input_modules_not_artifacts() {
             status: JsonModuleStatus::RecoveredVueSfc,
             source_filename: Some("src/App.vue".to_string()),
             source_map_filename: None,
+            source_map: None,
         },
     ];
 
@@ -978,6 +1088,7 @@ fn provenance_names_ignore_interleaved_vue_sfc_sidecars() {
             status: JsonModuleStatus::VueSfcSourceJs,
             source_filename: Some("src/App.vue".to_string()),
             source_map_filename: Some("src/App.vue".to_string()),
+            source_map: None,
         },
         CliOutputArtifact {
             filename: "src/App.vue".to_string(),
@@ -986,6 +1097,7 @@ fn provenance_names_ignore_interleaved_vue_sfc_sidecars() {
             status: JsonModuleStatus::RecoveredVueSfc,
             source_filename: Some("src/App.vue".to_string()),
             source_map_filename: None,
+            source_map: None,
         },
         CliOutputArtifact {
             filename: "src/after.js".to_string(),
@@ -994,6 +1106,7 @@ fn provenance_names_ignore_interleaved_vue_sfc_sidecars() {
             status: JsonModuleStatus::Decompiled,
             source_filename: None,
             source_map_filename: Some("src/after.js".to_string()),
+            source_map: None,
         },
     ];
     let resolved = vec![

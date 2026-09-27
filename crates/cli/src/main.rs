@@ -26,7 +26,7 @@ mod vue;
 
 use color::Styled;
 use discovery::{collect_directory_js_inputs, collect_validate_inputs, DirectoryScanStats};
-use formatter::{format_cli_output, selected_formatter};
+use formatter::{format_cli_output, format_cli_output_with_source_map, selected_formatter};
 use json_output::{
     JsonChunkAsset, JsonChunkEnumeration, JsonChunkEnumerationOutput, JsonChunkUrl,
     JsonDecompileOutput, JsonModule, JsonModuleKind, JsonModuleStatus, JsonPublicPath,
@@ -385,11 +385,19 @@ fn run_unpack(cli: Cli) -> Result<()> {
     let module_sources = cli
         .vue_sfc
         .then(|| output.modules.iter().cloned().collect::<HashMap<_, _>>());
-    let modules = output.modules;
+    let mut source_maps: HashMap<String, String> = output.source_maps.into_iter().collect();
+    let modules: Vec<(String, String, Option<String>)> = output
+        .modules
+        .into_iter()
+        .map(|(filename, code)| {
+            let source_map = source_maps.remove(&filename);
+            (filename, code, source_map)
+        })
+        .collect();
     let total_modules = modules.len();
     let artifacts: Vec<CliOutputArtifact> = modules
         .into_par_iter()
-        .flat_map(|(filename, code)| {
+        .flat_map(|(filename, code, source_map)| {
             let mut artifacts = Vec::new();
             let recovered_vue_sfcs = if cli.vue_sfc {
                 let module_sources = module_sources
@@ -409,7 +417,8 @@ fn run_unpack(cli: Cli) -> Result<()> {
             let recovered_vue_sfc = !recovered_vue_sfcs.is_empty();
             let likely_vue_sfc = cli.vue_sfc
                 && (recovered_vue_sfc || is_likely_vue_sfc_source(&code).unwrap_or(false));
-            let formatted = format_cli_output(code, &filename, js_formatter);
+            let (formatted, source_map) =
+                format_cli_output_with_source_map(code, source_map, &filename, js_formatter);
             artifacts.push(CliOutputArtifact {
                 filename: if cli.vue_sfc {
                     vue_js_output_filename(&filename)
@@ -425,6 +434,7 @@ fn run_unpack(cli: Cli) -> Result<()> {
                 },
                 source_filename: (cli.vue_sfc && recovered_vue_sfc).then(|| filename.clone()),
                 source_map_filename: Some(filename.clone()),
+                source_map,
             });
 
             let multiple_vue_sfcs = recovered_vue_sfcs.len() > 1;
@@ -440,6 +450,7 @@ fn run_unpack(cli: Cli) -> Result<()> {
                     status: JsonModuleStatus::RecoveredVueSfc,
                     source_filename: Some(filename.clone()),
                     source_map_filename: None,
+                    source_map: None,
                 });
             }
             artifacts
@@ -473,20 +484,14 @@ fn run_unpack(cli: Cli) -> Result<()> {
         }
     }
 
-    if !output.source_maps.is_empty() {
-        let srcmap_map: std::collections::HashMap<&str, &str> = output
-            .source_maps
-            .iter()
-            .map(|(f, m)| (f.as_str(), m.as_str()))
-            .collect();
+    if artifacts
+        .iter()
+        .any(|artifact| artifact.source_map.is_some())
+    {
         let span = tracing::info_span!("cli_write_source_maps");
         let _enter = span.enter();
         artifacts.par_iter().zip(resolved.par_iter()).try_for_each(
-            |(artifact, (out_path, _))| match artifact
-                .source_map_filename
-                .as_deref()
-                .and_then(|filename| srcmap_map.get(filename))
-            {
+            |(artifact, (out_path, _))| match artifact.source_map.as_deref() {
                 Some(map_json) => {
                     write_output_source_map(&append_map_extension(out_path), map_json)
                 }
@@ -671,7 +676,12 @@ fn run_single(cli: Cli) -> Result<()> {
     );
     let formatter =
         selected_formatter(cli.formatter && (!recovered_vue_sfc || js_primary_vue_output));
-    let code = format_cli_output(output.code, &output_filename, formatter);
+    let (code, source_map) = format_cli_output_with_source_map(
+        output.code,
+        output.source_map.take(),
+        &output_filename,
+        formatter,
+    );
 
     if cli.json {
         let json_code = if output_path.is_none() {
@@ -686,7 +696,7 @@ fn run_single(cli: Cli) -> Result<()> {
             }
             fs::write(path, &code)
                 .with_context(|| format!("failed to write {}", path.display()))?;
-            if let Some(ref map_json) = output.source_map {
+            if let Some(ref map_json) = source_map {
                 write_output_source_map(&append_map_extension(path), map_json)?;
             }
             if let (Some(sidecar_path), Some(sidecar_code)) =
@@ -698,7 +708,7 @@ fn run_single(cli: Cli) -> Result<()> {
         }
         let json = JsonDecompileOutput {
             code: json_code,
-            source_map: output.source_map.clone(),
+            source_map: source_map.clone(),
             kind: vue_metadata.as_ref().map(|metadata| metadata.kind),
             status: vue_metadata.as_ref().map(|metadata| metadata.status),
             source_filename: vue_metadata
@@ -723,7 +733,7 @@ fn run_single(cli: Cli) -> Result<()> {
                 }
                 fs::write(&path, &code)
                     .with_context(|| format!("failed to write {}", path.display()))?;
-                if let Some(ref map_json) = output.source_map {
+                if let Some(ref map_json) = source_map {
                     write_output_source_map(&append_map_extension(&path), map_json)?;
                 }
                 if let (Some(sidecar_path), Some(sidecar_code)) =
@@ -1041,6 +1051,8 @@ struct CliOutputArtifact {
     status: JsonModuleStatus,
     source_filename: Option<String>,
     source_map_filename: Option<String>,
+    /// Output source map for `code`, already carried across formatting.
+    source_map: Option<String>,
 }
 
 fn json_module_for_artifact(artifact: &CliOutputArtifact) -> JsonModule {

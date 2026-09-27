@@ -11,4 +11,6 @@ description = "Shared code formatter integration for Wakaru"
 oxc_allocator = { git = "https://github.com/oxc-project/oxc.git", rev = "c1a7d478bda2203b08bc62eaf472b30f4aa7db53", package = "oxc_allocator" }
 oxc_formatter = { git = "https://github.com/oxc-project/oxc.git", rev = "c1a7d478bda2203b08bc62eaf472b30f4aa7db53", package = "oxc_formatter" }
 oxc_formatter_core = { git = "https://github.com/oxc-project/oxc.git", rev = "c1a7d478bda2203b08bc62eaf472b30f4aa7db53", package = "oxc_formatter_core" }
+oxc_parser = { git = "https://github.com/oxc-project/oxc.git", rev = "c1a7d478bda2203b08bc62eaf472b30f4aa7db53", package = "oxc_parser" }
 oxc_span = { git = "https://github.com/oxc-project/oxc.git", rev = "c1a7d478bda2203b08bc62eaf472b30f4aa7db53", package = "oxc_span" }
+sourcemap.workspace = true

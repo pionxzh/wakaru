@@ -94,6 +94,7 @@ crates/
   formatter/
     src/
       lib.rs                        — optional emitted-code formatting
+      source_map.rs                 — carries an output source map across formatting (token alignment)
 
   wasm/
     src/

@@ -172,6 +172,11 @@ wakaru bundle.js --unpack --formatter -o out/
 
 `--formatter` runs a final formatting pass after decompilation. Off by default.
 
+With `--emit-source-map`, each map is rewritten to describe the formatted
+output. Mappings at code the formatter removed (such as dropped parentheses)
+are dropped. If a map cannot be carried across formatting, that file is
+written unformatted with its original map, and Wakaru prints a warning.
+
 ## Source maps
 
 ```bash

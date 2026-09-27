@@ -738,6 +738,7 @@ export function render(_ctx, _cache) {
             status,
             source_filename: None,
             source_map_filename: None,
+            source_map: None,
         }
     }
 

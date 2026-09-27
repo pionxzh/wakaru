@@ -1,5 +1,7 @@
 use std::path::Path;
 
+mod source_map;
+
 const FORMAT_LINE_WIDTH: u16 = 80;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -32,27 +34,67 @@ pub struct FormatWarning {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FormatResult {
     pub code: String,
+    /// The output source map, rewritten to describe `code`. `None` when no
+    /// map was passed in.
+    pub source_map: Option<String>,
     pub warning: Option<FormatWarning>,
 }
 
 pub fn format_code(source: String, filename: &str, formatter: CodeFormatter) -> FormatResult {
+    format_code_with_source_map(source, None, filename, formatter)
+}
+
+/// Format `source` and rewrite `source_map`, whose generated side is
+/// `source`, to describe the formatted code.
+///
+/// When the map cannot be carried across formatting, the source stays
+/// unformatted with its original map, and the result carries a warning: a
+/// map that points at the wrong output positions is worse than no formatting.
+pub fn format_code_with_source_map(
+    source: String,
+    source_map: Option<String>,
+    filename: &str,
+    formatter: CodeFormatter,
+) -> FormatResult {
+    let unformatted = |source_map, message: String| FormatResult {
+        code: source.clone(),
+        source_map,
+        warning: Some(FormatWarning {
+            formatter,
+            filename: filename.to_string(),
+            message,
+        }),
+    };
     match formatter {
         CodeFormatter::None => FormatResult {
             code: source,
+            source_map,
             warning: None,
         },
         CodeFormatter::Oxc => match format_with_oxc(&source, filename) {
-            Ok(code) => FormatResult {
-                code,
-                warning: None,
-            },
-            Err(message) => FormatResult {
-                code: source,
-                warning: Some(FormatWarning {
-                    formatter,
-                    filename: filename.to_string(),
-                    message,
-                }),
+            Err(message) => unformatted(source_map, message),
+            Ok(code) => match source_map {
+                None => FormatResult {
+                    code,
+                    source_map: None,
+                    warning: None,
+                },
+                Some(map) => match source_map::remap_source_map(
+                    &source,
+                    &code,
+                    oxc_source_type(filename),
+                    &map,
+                ) {
+                    Some(remapped) => FormatResult {
+                        code,
+                        source_map: Some(remapped),
+                        warning: None,
+                    },
+                    None => unformatted(
+                        Some(map),
+                        "could not carry the source map across formatting".to_string(),
+                    ),
+                },
             },
         },
     }
@@ -99,6 +141,7 @@ mod tests {
             format_code(source.to_string(), "input.js", CodeFormatter::None),
             FormatResult {
                 code: source.to_string(),
+                source_map: None,
                 warning: None,
             }
         );
