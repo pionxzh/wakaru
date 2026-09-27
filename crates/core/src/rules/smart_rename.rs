@@ -3173,8 +3173,9 @@ impl Visit for CallSiteUseCollector<'_> {
 //
 // A name that would shadow a binding visible from outside the scope (an
 // import, an outer declaration, or an enclosing role rename) is replaced by
-// a conventional alternative (`err` for a catch parameter) or, failing that,
-// a `_N` suffix. A name already spelled inside the scope is an internal
+// a conventional alternative (`err` for a catch parameter, `resolvePromise`
+// and `rejectPromise` as a pair for an executor) or, failing that, a `_N`
+// suffix. A name already spelled inside the scope is an internal
 // collision instead: only the alternative is tried, since `resolve_1` next
 // to a local `resolve` reads worse than the short name.
 // ============================================================
@@ -3196,7 +3197,12 @@ fn role_rename_module(module: &mut Module, unresolved_mark: Mark) {
     let mut chosen: Vec<HashSet<Atom>> = vec![HashSet::default(); collector.scopes.len()];
     let mut renames = Vec::new();
     for (idx, scope) in collector.scopes.iter().enumerate() {
+        // Which alternative the previous parameter took (0 = the role name).
+        let mut previous_choice: Option<usize> = None;
         for param in &scope.params {
+            let paired = param.pair_with_previous;
+            let follow = previous_choice.filter(|&k| paired && k > 0);
+            previous_choice = None;
             let uses = collector
                 .tracked
                 .get(&param.binding)
@@ -3217,9 +3223,21 @@ fn role_rename_module(module: &mut Module, unresolved_mark: Mark) {
                         .any(|&other| chosen[other].contains(name))
             };
             let free = |name: &Atom| !scope.names.contains(name) && !visible_outside(name);
-            let mut pick = std::iter::once(param.target.clone())
+            let candidates: Vec<Atom> = std::iter::once(param.target.clone())
                 .chain(param.alternates.iter().map(|alt| Atom::from(*alt)))
-                .find(|name| free(name));
+                .collect();
+            let order = follow
+                .into_iter()
+                .chain(0..candidates.len())
+                .filter(|&k| k < candidates.len());
+            let mut pick = None;
+            for k in order {
+                if free(&candidates[k]) {
+                    pick = Some(candidates[k].clone());
+                    previous_choice = Some(k);
+                    break;
+                }
+            }
             if pick.is_none() && !scope.names.contains(&param.target) {
                 pick = (1..=10)
                     .map(|i| Atom::from(format!("{}_{i}", param.target)))
@@ -3243,6 +3261,9 @@ struct RoleParam {
     target: Atom,
     /// Conventional names to try before a `_N` suffix.
     alternates: &'static [&'static str],
+    /// Follow the previous parameter of the scope onto its alternative, so
+    /// `resolvePromise` pairs with `rejectPromise`.
+    pair_with_previous: bool,
     require_read: bool,
     forbid_writes: bool,
 }
@@ -3253,6 +3274,7 @@ impl RoleParam {
             binding,
             target: Atom::from(target),
             alternates: &[],
+            pair_with_previous: false,
             require_read: false,
             forbid_writes: true,
         }
@@ -3672,7 +3694,18 @@ impl Visit for RoleCollector {
         let roles = params
             .iter()
             .zip(["resolve", "reject"])
-            .filter_map(|(pat, role)| Self::short_param(pat).map(|b| RoleParam::new(b, role)))
+            .filter_map(|(pat, role)| {
+                Self::short_param(pat).map(|b| {
+                    let mut param = RoleParam::new(b, role);
+                    if role == "resolve" {
+                        param.alternates = &["resolvePromise"];
+                    } else {
+                        param.alternates = &["rejectPromise"];
+                        param.pair_with_previous = true;
+                    }
+                    param
+                })
+            })
             .collect();
         new.callee.visit_with(self);
         self.with_scope(roles, |this| executor.visit_with(this));

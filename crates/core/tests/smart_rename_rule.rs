@@ -3001,7 +3001,7 @@ try { run(); } catch (error) {
 }
 
 #[test]
-fn role_adds_numeric_suffix_instead_of_shadowing_an_outer_binding() {
+fn role_uses_alternatives_instead_of_shadowing_an_outer_binding() {
     let input = r#"
 import { resolve } from "path";
 const base = resolve(dir);
@@ -3015,12 +3015,29 @@ function f() {
     let expected = r#"
 import { resolve } from "path";
 const base = resolve(dir);
-const load = () => new Promise((resolve_1, reject) => fetchFile(base, resolve_1, reject));
-const read = () => new Promise((e) => fetchFile(resolve(dir), e));
+const load = () => new Promise((resolvePromise, rejectPromise) => fetchFile(base, resolvePromise, rejectPromise));
+const read = () => new Promise((resolvePromise) => fetchFile(resolve(dir), resolvePromise));
 function f() {
     let { error } = state;
     try { run(error); } catch (err) { report(err); }
 }
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn role_executor_falls_back_to_promise_suffixed_pair_then_numeric_suffix() {
+    let input = r#"
+import { resolve, resolvePromise } from "path";
+import { reject } from "policy";
+const a = new Promise((e) => e(1));
+const b = new Promise((e, t) => fetchFile(e, t));
+"#;
+    let expected = r#"
+import { resolve, resolvePromise } from "path";
+import { reject } from "policy";
+const a = new Promise((resolve_1) => resolve_1(1));
+const b = new Promise((resolve_1, rejectPromise) => fetchFile(resolve_1, rejectPromise));
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
@@ -3047,7 +3064,7 @@ const b = new Promise(function (resolve, reject) {
 }
 
 #[test]
-fn role_skips_local_promise_and_taken_names() {
+fn role_skips_local_promise_and_uses_alternatives_for_taken_names() {
     let input = r#"
 function f(Promise) {
     return new Promise((e, t) => e(t));
@@ -3061,9 +3078,9 @@ const b = new Promise((e, t) => {
 function f(Promise) {
     return new Promise((e, t) => e(t));
 }
-const b = new Promise((e, reject) => {
+const b = new Promise((resolvePromise, rejectPromise) => {
     const resolve = 1;
-    e(resolve, reject);
+    resolvePromise(resolve, rejectPromise);
 });
 "#;
     assert_eq_normalized(&apply(input), expected);
