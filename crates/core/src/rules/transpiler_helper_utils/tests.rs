@@ -654,6 +654,19 @@ fn class_call_check_with_parens() {
 }
 
 #[test]
+fn class_call_check_accepts_type_error_call_without_new() {
+    // Minifiers drop `new` from builtin error constructors.
+    GLOBALS.set(&Globals::new(), || {
+        let f = parse_first_function(
+            r#"function _c(a, b) {
+                    if (!(a instanceof b)) throw TypeError("Cannot call a class as a function");
+                }"#,
+        );
+        assert!(is_class_call_check_fn(&f));
+    });
+}
+
+#[test]
 fn class_call_check_rejects_wrong_param_count() {
     GLOBALS.set(&Globals::new(), || {
         let f = parse_first_function(

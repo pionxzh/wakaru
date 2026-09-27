@@ -964,10 +964,10 @@ fn matches_negated_instanceof(ctx: &MatchContext, expr: &Expr, left: &str, right
 /// Match `throw new TypeError(...)` — bare or wrapped in a block.
 fn matches_throw_type_error(stmt: &Stmt) -> bool {
     match stmt {
-        Stmt::Throw(throw) => is_new_type_error(&throw.arg),
+        Stmt::Throw(throw) => is_type_error_construction(&throw.arg),
         Stmt::Block(block) if block.stmts.len() == 1 => {
             if let Stmt::Throw(throw) = &block.stmts[0] {
-                is_new_type_error(&throw.arg)
+                is_type_error_construction(&throw.arg)
             } else {
                 false
             }
@@ -975,11 +975,18 @@ fn matches_throw_type_error(stmt: &Stmt) -> bool {
         _ => false,
     }
 }
-fn is_new_type_error(expr: &Expr) -> bool {
-    let Expr::New(new_expr) = expr else {
-        return false;
+/// `new TypeError(...)`, or `TypeError(...)`: minifiers drop `new` because
+/// calling a builtin error constructor constructs it.
+fn is_type_error_construction(expr: &Expr) -> bool {
+    let callee = match expr {
+        Expr::New(new_expr) => new_expr.callee.as_ref(),
+        Expr::Call(call) => match &call.callee {
+            Callee::Expr(callee) => callee.as_ref(),
+            _ => return false,
+        },
+        _ => return false,
     };
-    matches!(new_expr.callee.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "TypeError")
+    matches!(callee, Expr::Ident(id) if id.sym.as_ref() == "TypeError")
 }
 fn is_typeof_polyfill_init(expr: &Expr) -> bool {
     let Expr::Cond(cond) = expr else {

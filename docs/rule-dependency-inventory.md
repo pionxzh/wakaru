@@ -413,9 +413,11 @@ rationale, or level gating appear.
 - **UnEs6Class** — needs UnPossibleConstructorReturn and
   UnIife (class IIFE wrappers). It clones constructor bodies, so a
   classCallCheck statement inside the constructor survives recovery and is
-  removed by UnClassCallCheck2 once the result is class syntax. A guard whose
-  second argument is the inner constructor is removed at commit time so that
-  reference does not reject recovery. Static *method* assignment recovery is part
+  removed by UnClassCallCheck2 once the result is class syntax. A guard that
+  names the inner constructor (the second argument of a helper call or IIFE,
+  or the `instanceof` operand of a guard inlined as an `if` with Babel's
+  message) is removed at commit time so that reference does not reject
+  recovery. Static *method* assignment recovery is part
   of class restoration; static *data field* recovery
   (`Ctor.x = value` → `static x = value`) requires `standard+` and is
   skipped for derived classes — inherited static setters make assignment

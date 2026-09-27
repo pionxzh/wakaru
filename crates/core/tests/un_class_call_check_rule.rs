@@ -698,3 +698,85 @@ declare class Foo {
         "body-less TypeScript constructor must stay:\n{output}"
     );
 }
+
+// ── Guard inlined as an `if` statement ──────────────────────────────────────
+
+#[test]
+fn removes_inlined_guard_after_es6_class_recovery() {
+    // Produced by @swc/core minify: the single-use `_classCallCheck` body is
+    // inlined into the constructor and `new` is dropped from `TypeError`.
+    // Inner name `t` differs from `Foo`, so a kept guard would block recovery.
+    let input = r#"
+var Foo = function() {
+    function t() {
+        if (!(this instanceof t)) throw TypeError("Cannot call a class as a function");
+        this.x = 1;
+    }
+    t.prototype.start = function() { return this.x; };
+    return t;
+}();
+use(Foo);
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("class Foo"),
+        "expected class recovery:\n{output}"
+    );
+    assert!(
+        !output.contains("Cannot call a class as a function"),
+        "recovered class must drop the guard:\n{output}"
+    );
+    assert!(!output.contains("instanceof"), "{output}");
+}
+
+#[test]
+fn keeps_inlined_guard_on_function() {
+    let input = r#"
+export function Foo() {
+    if (!(this instanceof Foo)) throw TypeError("Cannot call a class as a function");
+    this.x = 1;
+}
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("Cannot call a class as a function"),
+        "function constructor must keep the guard:\n{output}"
+    );
+    assert!(
+        output.contains("export function Foo"),
+        "must stay a function:\n{output}"
+    );
+}
+
+#[test]
+fn keeps_inlined_instanceof_guard_with_other_message_in_class() {
+    // Only Babel's message marks the guard as a transpiler artifact. A class
+    // constructor built with another `new.target` (`Reflect.construct`) still
+    // reaches a hand-written guard.
+    let input = r#"
+class Foo {
+    constructor() {
+        if (!(this instanceof Foo)) throw new TypeError("use new Foo()");
+        this.x = 1;
+    }
+}
+export { Foo };
+"#;
+    let output = render(input);
+    assert!(output.contains("use new Foo()"), "{output}");
+}
+
+#[test]
+fn keeps_inlined_guard_testing_another_binding_in_class() {
+    let input = r#"
+class Foo {
+    constructor() {
+        if (!(this instanceof Other)) throw new TypeError("Cannot call a class as a function");
+        this.x = 1;
+    }
+}
+export { Foo };
+"#;
+    let output = render(input);
+    assert!(output.contains("instanceof Other"), "{output}");
+}

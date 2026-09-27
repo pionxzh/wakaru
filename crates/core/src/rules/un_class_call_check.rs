@@ -1,6 +1,6 @@
 use swc_core::ecma::ast::{
-    Callee, Class, ClassDecl, ClassExpr, ClassMember, Constructor, Expr, Function, Ident, Module,
-    ModuleItem, Pat, Stmt, UnaryOp, VarDeclarator,
+    BinaryOp, CallExpr, Callee, Class, ClassDecl, ClassExpr, ClassMember, Constructor, Expr,
+    Function, Ident, IfStmt, Lit, Module, ModuleItem, Pat, Stmt, UnaryOp, VarDeclarator,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -28,10 +28,11 @@ use crate::utils::paren::strip_parens;
 /// removes the guards they carried over and drops helpers with no remaining
 /// references. A recovery that skips, leaving a function, keeps the guard.
 ///
-/// Handles two forms:
+/// Handles three forms:
 /// 1. Named function: `_classCallCheck(this, Foo)` where the function is declared
 ///    at module level with the classCallCheck body shape.
 /// 2. Inline IIFE: `!((e, t) => { if (!(e instanceof t)) throw TypeError(...) })(this, Foo)`
+/// 3. Inlined body: `if (!(this instanceof Foo)) throw TypeError("Cannot call a class as a function")`
 pub struct UnClassCallCheck;
 
 impl UnClassCallCheck {
@@ -74,6 +75,9 @@ pub(crate) fn class_call_check_target(
     stmt: &Stmt,
     is_helper: impl Fn(&Ident) -> bool,
 ) -> Option<&Ident> {
+    if let Stmt::If(if_stmt) = stmt {
+        return inlined_class_call_check_target(if_stmt);
+    }
     let Stmt::Expr(expr_stmt) = stmt else {
         return None;
     };
@@ -107,6 +111,59 @@ pub(crate) fn class_call_check_target(
         return None;
     };
     Some(ctor)
+}
+
+/// The constructor an inlined helper body names:
+/// `if (!(this instanceof Foo)) throw TypeError("Cannot call a class as a function")`,
+/// with or without `new` and a block around the `throw`.
+///
+/// There is no helper body to prove the shape, so Babel's exact message is the
+/// artifact marker. A hand-written `instanceof` guard with another message
+/// stays: removing it is only equivalent for the Babel guard, whose
+/// `Reflect.construct` corner the named and IIFE forms already accept.
+fn inlined_class_call_check_target(if_stmt: &IfStmt) -> Option<&Ident> {
+    if if_stmt.alt.is_some() {
+        return None;
+    }
+    let Expr::Unary(test) = strip_parens(&if_stmt.test) else {
+        return None;
+    };
+    if test.op != UnaryOp::Bang {
+        return None;
+    }
+    let Expr::Bin(instance_of) = strip_parens(&test.arg) else {
+        return None;
+    };
+    if instance_of.op != BinaryOp::InstanceOf
+        || !matches!(strip_parens(&instance_of.left), Expr::This(_))
+    {
+        return None;
+    }
+    let Expr::Ident(ctor) = strip_parens(&instance_of.right) else {
+        return None;
+    };
+    let throw = match if_stmt.cons.as_ref() {
+        Stmt::Throw(throw) => throw,
+        Stmt::Block(block) => match block.stmts.as_slice() {
+            [Stmt::Throw(throw)] => throw,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let (callee, args) = match strip_parens(&throw.arg) {
+        Expr::New(new_expr) => (new_expr.callee.as_ref(), new_expr.args.as_deref()?),
+        Expr::Call(CallExpr {
+            callee: Callee::Expr(callee),
+            args,
+            ..
+        }) => (callee.as_ref(), args.as_slice()),
+        _ => return None,
+    };
+    let is_babel_error = matches!(callee, Expr::Ident(id) if id.sym.as_ref() == "TypeError")
+        && matches!(args, [message] if message.spread.is_none()
+            && matches!(message.expr.as_ref(), Expr::Lit(Lit::Str(s))
+                if s.value.as_str() == Some("Cannot call a class as a function")));
+    is_babel_error.then_some(ctor)
 }
 
 struct CallRemover<'a> {

@@ -3542,3 +3542,16 @@ fn minified_inline_define_properties_loop_recovers_through_pipeline() {
     assert!(!output.contains("defineProperty"), "{output}");
     assert!(!output.contains("Cannot call a class"), "{output}");
 }
+
+#[test]
+fn inline_define_properties_loop_with_inlined_guard_recovers_through_pipeline() {
+    // Produced by @swc/core minify: both `_classCallCheck` and
+    // `_defineProperties` are inlined into the class wrapper, and the guard's
+    // `new` is dropped.
+    let input = r#"var Store=function(){var e;function t(n){if(!(this instanceof t))throw TypeError("Cannot call a class as a function");this.items=n}return e=[{key:"get",value:function(e){return this.items[e]}}],function(e,t){for(var n=0;n<t.length;n++){var r=t[n];r.enumerable=r.enumerable||!1,r.configurable=!0,"value"in r&&(r.writable=!0),Object.defineProperty(e,r.key,r)}}(t.prototype,e),t}();use(new Store([]));"#;
+    let output = render(input);
+    assert!(output.contains("class Store"), "{output}");
+    assert!(output.contains("get(e)"), "{output}");
+    assert!(!output.contains("defineProperty"), "{output}");
+    assert!(!output.contains("Cannot call a class"), "{output}");
+}
