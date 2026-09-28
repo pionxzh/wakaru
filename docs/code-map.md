@@ -70,7 +70,15 @@ crates/
         browserify.rs               — browserify-family splitter (incl. Cocos Creator 2.x)
         closure_module_manager.rs   — Closure ModuleManager/gstatic splitter
         systemjs.rs                 — System.register splitter + ESM reconstruction
-        esbuild.rs                  — esbuild/Bun splitter (CJS factories + scope-hoisted)
+        esbuild.rs                  — esbuild/Bun splitter entry points + detection orchestration
+        esbuild/
+          factories.rs              — lazy-module helper detection, factory collection
+          scope.rs                  — scope-hoisted module extraction
+          scope_boundaries.rs       — `__export(ns, {...})` boundary detection
+          ownership.rs              — factory ownership planning (groups, writers, demotion, merges)
+          emit.rs                   — factory group / merged module / entry.js emission
+          synthesis.rs              — shared import/export synthesis, owned-declaration filtering
+          bindings.rs               — top-level binding indexes, reference/write collectors
         amd.rs                      — AMD define() bundle splitter
         wrappers.rs                 — UMD/AMD wrapper unwrapping for detection retry
         metro.rs                    — Metro plain-bundle detection and extraction
