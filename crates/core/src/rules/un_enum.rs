@@ -17,6 +17,8 @@ use super::decl_utils::{collect_decl_names, fresh_binding_ident};
 use super::eval_utils::{
     direct_eval_call_source, js_source_mentions_binding, DirectEvalAnalyzer, EvalCallSource,
 };
+use crate::analysis::binding_id;
+use crate::analysis::binding_uses::BindingUseIndex;
 use crate::js_names::{is_reserved_binding_name, is_valid_identifier_name};
 use crate::utils::paren::strip_parens;
 use crate::utils::prototype_members::is_prototype_mutating_member_name;
@@ -1402,6 +1404,12 @@ fn collect_exported_names(items: &[ModuleItem]) -> HashSet<Atom> {
 /// in the gap, so they do not block this rewrite. Another read or write of
 /// `exports.Public`, including inside a function or direct eval, still rejects
 /// the rewrite.
+///
+/// The export is live from the declaration on, while `exports.Public` held
+/// only the enum object and only from the call on. The two agree only when
+/// the IIFE argument is the sole write of `Local`, so any other write (in the
+/// gap, later, deferred, or through direct eval) or a second declaration
+/// rejects the rewrite.
 fn keep_numeric_enum_iife_assign_of_exports(
     stmt: &mut Stmt,
     items: &mut Vec<ModuleItem>,
@@ -1421,6 +1429,9 @@ fn keep_numeric_enum_iife_assign_of_exports(
         return false;
     }
     if prior_bare_var_index(items, &local_ident).is_none() {
+        return false;
+    }
+    if !local_is_written_only_by_enum_arg(items, remaining, &local_ident) {
         return false;
     }
     if module_items_reference_public_export(
@@ -1443,6 +1454,35 @@ fn keep_numeric_enum_iife_assign_of_exports(
     );
     exported_names.insert(public_name);
     true
+}
+
+/// `items` and `remaining` hold every module item except the enum IIFE, so
+/// the bare declaration must be the only declaration of `Local` and nothing
+/// in them may write it.
+fn local_is_written_only_by_enum_arg(
+    items: &[ModuleItem],
+    remaining: &VecDeque<ModuleItem>,
+    local_ident: &Ident,
+) -> bool {
+    let binding = binding_id(local_ident);
+    let (front, back) = remaining.as_slices();
+    let indexes = [
+        BindingUseIndex::collect_module_items(items),
+        BindingUseIndex::collect_module_items(front),
+        BindingUseIndex::collect_module_items(back),
+    ];
+    let declaring = indexes
+        .iter()
+        .filter(|index| index.has_declaration(&binding))
+        .collect::<Vec<_>>();
+    matches!(declaring.as_slice(), [index] if index.has_single_declaration(&binding))
+        && indexes
+            .iter()
+            .all(|index| !index.has_direct_write(&binding))
+        && !module_items_direct_eval_can_observe(
+            items.iter().chain(remaining.iter()),
+            &local_ident.sym,
+        )
 }
 
 fn members_are_all_numeric(members: &[EnumMember]) -> bool {

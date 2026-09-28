@@ -1162,6 +1162,76 @@ let Local;
 }
 
 #[test]
+fn assign_of_exports_rejects_gap_write_to_local() {
+    // `export { Local as Public }` is live from the declaration on, so a
+    // gap write would publish `1` where `exports.Public` was still unset.
+    let input = r#"
+var Local;
+Local = 1;
+(function (e) {
+  e[e.Dev = 0] = "Dev";
+})(Local = exports.Public || (exports.Public = {}));
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn assign_of_exports_rejects_later_write_to_local() {
+    // `exports.Public` keeps the enum object after `Local = null`; a live
+    // export of `Local` would not.
+    let input = r#"
+var Local;
+use(Local);
+(function (e) {
+  e[e.Dev = 0] = "Dev";
+})(Local = exports.Public || (exports.Public = {}));
+Local = null;
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn assign_of_exports_rejects_deferred_write_to_local() {
+    let input = r#"
+var Local;
+use(Local);
+function reset() {
+  Local = undefined;
+}
+(function (e) {
+  e[e.Dev = 0] = "Dev";
+})(Local = exports.Public || (exports.Public = {}));
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn assign_of_exports_rejects_direct_eval_naming_local() {
+    let input = r#"
+var Local;
+use(Local);
+(function (e) {
+  e[e.Dev = 0] = "Dev";
+})(Local = exports.Public || (exports.Public = {}));
+eval("Local = null");
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn assign_of_exports_rejects_redeclared_local() {
+    let input = r#"
+var Local;
+use(Local);
+(function (e) {
+  e[e.Dev = 0] = "Dev";
+})(Local = exports.Public || (exports.Public = {}));
+var Local;
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
 fn local_or_rejects_intervening_write() {
     let input = r#"
 var Local;
