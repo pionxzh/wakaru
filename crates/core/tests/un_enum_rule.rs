@@ -1009,7 +1009,176 @@ export { Mode };
 }
 
 #[test]
-fn exported_commonjs_enum_rejects_intervening_binding_use() {
+fn assign_of_exports_keeps_toplevel_read_and_function_body() {
+    // Top-level `use(Local)` runs before the IIFE and must still see the
+    // uninitialized binding. `readLater` only defines a read; it does not
+    // run in the gap. The object stays at the IIFE, not on `let Local`.
+    let input = r#"
+let Local;
+use(Local);
+function readLater() {
+  return Local.Dev;
+}
+(function (e) {
+  e[e.Dev = 0] = "Dev";
+})(Local = exports.Public || (exports.Public = {}));
+"#;
+    let expected = r#"
+let Local;
+export { Local as Public };
+use(Local);
+function readLater() {
+  return Local.Dev;
+}
+(function (e) {
+  e[e.Dev = 0] = "Dev";
+})(Local = {});
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
+#[test]
+fn assign_of_exports_ignores_shadowed_parameter() {
+    // A parameter named Local is a different binding, so the older in-place
+    // object fold still applies. The object is not moved onto `let Local`.
+    let input = r#"
+let Local;
+function nested(Local) {
+  return Local;
+}
+(function (e) {
+  e[e.Dev = 0] = "Dev";
+})(Local = exports.Public || (exports.Public = {}));
+"#;
+    let expected = r#"
+let Local;
+function nested(Local) {
+  return Local;
+}
+Local = {
+  Dev: 0,
+  0: "Dev"
+};
+export { Local as Public };
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
+#[test]
+fn assign_of_exports_keeps_cc_rf_push_module() {
+    let input = r#"
+cc._RF.push(module, "uuid", "ScriptName");
+let Local;
+function readLater() {
+  return Local.Dev;
+}
+(function (e) {
+  e[e.Dev = 0] = "Dev";
+})(Local = exports.Public || (exports.Public = {}));
+cc._RF.pop();
+"#;
+    let expected = r#"
+cc._RF.push(module, "uuid", "ScriptName");
+let Local;
+export { Local as Public };
+function readLater() {
+  return Local.Dev;
+}
+(function (e) {
+  e[e.Dev = 0] = "Dev";
+})(Local = {});
+cc._RF.pop();
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
+#[test]
+fn assign_of_exports_rejects_string_member_with_local_read() {
+    let input = r#"
+let Local;
+use(Local);
+(function (e) {
+  e.Task = "1";
+})(Local = exports.Public || (exports.Public = {}));
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn assign_of_exports_rejects_mixed_members_with_local_read() {
+    let input = r#"
+let Local;
+use(Local);
+(function (e) {
+  e[e.Dev = 0] = "Dev";
+  e.Task = "1";
+})(Local = exports.Public || (exports.Public = {}));
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn assign_of_exports_rejects_deferred_public_read() {
+    // `use(Local)` blocks the older object-literal fold, so only the
+    // keep-IIFE path could rewrite this. A deferred `exports.Public` read
+    // must still leave the argument alone.
+    let input = r#"
+let Local;
+use(Local);
+function later() {
+  return exports.Public;
+}
+(function (e) {
+  e[e.Dev = 0] = "Dev";
+})(Local = exports.Public || (exports.Public = {}));
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn assign_of_exports_rejects_direct_eval_reading_exports() {
+    let input = r#"
+let Local;
+use(Local);
+(function (e) {
+  e[e.Dev = 0] = "Dev";
+})(Local = exports.Public || (exports.Public = {}));
+observe(eval("exports.Public"));
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn assign_of_exports_rejects_nested_inner_enum() {
+    let input = r#"
+let Local;
+(function (t) {
+  (function (e) {
+    e[e.Dev = 0] = "Dev";
+  })(t.Inner || (t.Inner = {}));
+})(Local = exports.Public || (exports.Public = {}));
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn local_or_rejects_intervening_write() {
+    let input = r#"
+var Local;
+Local = {
+  keep: 1
+};
+(function (e) {
+  e[e.Dev = 0] = "Dev";
+})(Local || (exports.Public = Local = {}));
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn exported_commonjs_enum_keeps_iife_when_gap_reads_local() {
+    // A top-level read in the gap still runs before the write. Rewriting the
+    // argument must not move the object onto the bare declaration.
     let input = r#"
 var Mode;
 var before = observe(Mode);
@@ -1017,7 +1186,15 @@ var before = observe(Mode);
   e[e["Dev"] = 0] = "Dev";
 })(Mode = exports.Mode || (exports.Mode = {}));
 "#;
-    assert_eq_normalized(&apply_resolved(input), input);
+    let expected = r#"
+var Mode;
+export { Mode };
+var before = observe(Mode);
+(function (e) {
+  e[e["Dev"] = 0] = "Dev";
+})(Mode = {});
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
 }
 
 #[test]
