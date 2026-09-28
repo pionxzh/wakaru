@@ -1294,3 +1294,256 @@ fn immediate_call_constructor_pairing_respects_shadowed_parameters() {
     assert!(!output.contains("function()"), "{output}");
     assert!(output.contains("function nested(Ctor)"), "{output}");
 }
+
+#[test]
+fn exported_iife_return_stays_constructible() {
+    // The export is the IIFE result, which is the returned binding.
+    let input = r#"
+export let Name;
+Name = (function() {
+    let ctor;
+    ctor = function() {};
+    const mapped = items.map(function(value) {
+        return value;
+    });
+    use(mapped);
+    return ctor;
+})();
+"#;
+    let expected = r#"
+export let Name;
+Name = (()=>{
+    let ctor;
+    ctor = function() {};
+    const mapped = items.map((value)=>{
+        return value;
+    });
+    use(mapped);
+    return ctor;
+})();
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn constructed_iife_return_stays_constructible_without_export() {
+    let input = r#"
+let ctor;
+ctor = (function() {
+    let inner;
+    inner = function() {};
+    return inner;
+})();
+ctor.instance = new ctor();
+"#;
+    let expected = r#"
+let ctor;
+ctor = (()=>{
+    let inner;
+    inner = function() {};
+    return inner;
+})();
+ctor.instance = new ctor();
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn arrow_iife_expression_body_return_stays_constructible() {
+    let input = r#"
+let ctor = function() {};
+export let Name;
+Name = (()=>ctor)();
+Name.other = (()=>(0, ctor))();
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn iife_with_arguments_return_stays_constructible() {
+    let input = r#"
+export let Name;
+Name = (function(tag) {
+    let ctor;
+    ctor = function() {};
+    use(tag);
+    return ctor;
+})(1);
+"#;
+    let expected = r#"
+export let Name;
+Name = ((tag)=>{
+    let ctor;
+    ctor = function() {};
+    use(tag);
+    return ctor;
+})(1);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn sequence_return_ident_stays_constructible() {
+    let input = r#"
+export let Name;
+Name = (function() {
+    let ctor;
+    ctor = function() {};
+    return helper(), ctor;
+})();
+"#;
+    let expected = r#"
+export let Name;
+Name = (()=>{
+    let ctor;
+    ctor = function() {};
+    return helper(), ctor;
+})();
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn unconstructed_iife_return_still_converts() {
+    let input = r#"
+const Name = (function() {
+    let ctor;
+    ctor = function() {};
+    return ctor;
+})();
+Name();
+"#;
+    let expected = r#"
+const Name = (()=>{
+    let ctor;
+    ctor = ()=>{};
+    return ctor;
+})();
+Name();
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn nested_function_return_does_not_alias_outer_iife() {
+    let input = r#"
+export let Name;
+Name = (function() {
+    let ctor;
+    ctor = function() {};
+    function nested() {
+        return other;
+    }
+    let other = function() {
+        return 1;
+    };
+    use(nested);
+    return ctor;
+})();
+"#;
+    let output = apply(input);
+    assert!(output.contains("ctor = function() {}"), "{output}");
+    assert!(output.contains("other = ()=>"), "{output}");
+}
+
+#[test]
+fn iife_return_shadow_same_short_name_does_not_freeze_inner() {
+    // Binding identity is (sym, ctxt). The inner `ctor` is not the returned one.
+    let input = r#"
+export let Name;
+Name = (function() {
+    let ctor;
+    ctor = function() {
+        const ctor = function() {
+            return 1;
+        };
+        return ctor;
+    };
+    return ctor;
+})();
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("ctor = function() {"),
+        "outer returned function must stay constructible:\n{output}"
+    );
+    assert!(
+        output.contains("const ctor = ()=>"),
+        "inner shadow must still convert:\n{output}"
+    );
+}
+
+#[test]
+fn conditional_iife_return_does_not_alias() {
+    let input = r#"
+export let Name;
+Name = (function() {
+    let left = function() {
+        return 1;
+    };
+    let right = function() {
+        return 2;
+    };
+    return flag ? left : right;
+})();
+"#;
+    let output = apply(input);
+    assert!(output.contains("left = ()=>"), "{output}");
+    assert!(output.contains("right = ()=>"), "{output}");
+}
+
+#[test]
+fn distinct_iife_returns_do_not_alias() {
+    let input = r#"
+export let Name;
+Name = (function() {
+    let left = function() {
+        return 1;
+    };
+    let right = function() {
+        return 2;
+    };
+    if (flag) return left;
+    return right;
+})();
+"#;
+    let output = apply(input);
+    assert!(output.contains("left = ()=>"), "{output}");
+    assert!(output.contains("right = ()=>"), "{output}");
+}
+
+#[test]
+fn async_and_generator_iife_return_still_converts() {
+    for input in [
+        r#"
+export let Name;
+Name = (async function() {
+    let ctor;
+    ctor = function() {};
+    return ctor;
+})();
+"#,
+        r#"
+export let Name;
+Name = (function*() {
+    let ctor;
+    ctor = function() {};
+    return ctor;
+})();
+"#,
+        r#"
+export let Name;
+Name = (async ()=>{
+    let ctor;
+    ctor = function() {};
+    return ctor;
+})();
+"#,
+    ] {
+        let output = apply(input);
+        assert!(
+            output.contains("ctor = ()=>"),
+            "async/generator IIFE must not freeze the inner function:\n{output}"
+        );
+    }
+}
