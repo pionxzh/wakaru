@@ -505,7 +505,7 @@ pub(super) fn emit_merged_module_plan(
 }
 
 /// Re-synthesize a demoted lazy factory into entry-resident items: a guard
-/// flag plus a plain init function, mirroring [`emit_esm_init_function_code`]
+/// flag plus a plain init function, mirroring [`emit_factory_function_code`]
 /// without the export. The helper wrapper (`__esm`) was already stripped from
 /// the entry, so the source statement cannot simply be restored. The function
 /// keeps the factory statement's span so entry provenance still covers the

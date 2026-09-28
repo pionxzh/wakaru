@@ -87,6 +87,15 @@ attempted in order — first match wins:
    demoted group, demotion is impossible and the entry writer's assignment
    to the imported state remains as a residual that output validation
    reports.
+   Grouping joins standalone factories only. When a scope module owns the
+   state, a factory that writes it merges into the scope module even if it
+   also writes entry state no module claimed: the scope module adopts that
+   state with its declaration, and a factory writing only adopted state
+   merges on a later round. Adoption needs a movable top-level declaration
+   and no other entry writer, since an entry write would become an
+   assignment to an import. A factory that cannot merge stays standalone
+   without declaring the scope module's state, so its write stays unlinked
+   and output validation reports it as `unresolved_reference`.
    Standalone CommonJS factories participate in that grouping
    alongside lazy ESM initializers; each retains its own callable wrapper and
    cache/initialization guard. A CommonJS factory that assigns top-level

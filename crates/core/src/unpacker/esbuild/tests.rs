@@ -947,6 +947,26 @@ fn demotion_cascades_to_dependent_groups_and_refuses_merged_dependents() {
 }
 
 #[test]
+fn ownership_reports_bindings_listed_under_a_file_that_does_not_own_them() {
+    let mut ownership = FactoryOwnership::new(HashMap::default());
+    ownership.own(test_binding("state"), "first.js");
+    ownership.own(test_binding("scope_state"), "scope.js");
+    assert!(ownership.ownership_conflicts().is_empty());
+
+    // A second standalone writer lists the same state: grouping should have
+    // joined the two files.
+    ownership
+        .factory_owned_bindings
+        .entry("second.js".to_string())
+        .or_default()
+        .insert(test_binding("state"));
+    assert_eq!(
+        ownership.ownership_conflicts(),
+        vec![(test_binding("state"), "second.js".to_string())]
+    );
+}
+
+#[test]
 fn demoted_factories_return_to_their_source_position_with_fresh_guards() {
     GLOBALS.set(&Default::default(), || {
         let module = super::super::parse_es_module(

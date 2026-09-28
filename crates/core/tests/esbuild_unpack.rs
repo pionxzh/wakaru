@@ -1389,6 +1389,144 @@ export { a_exports, b_exports };
     );
 }
 
+/// A CommonJS factory that writes scope-owned state and also unclaimed entry
+/// state merges into the scope module, which adopts the entry state. Left
+/// standalone, the factory file would declare a second copy of the scope
+/// module's state, and writes would no longer reach the reader.
+#[test]
+fn factory_writing_scope_and_entry_state_merges_and_adopts_the_entry_state() {
+    let bundle = r#"
+var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+var __defProp = Object.defineProperty;
+var __export = (target, all) => { for (var name in all) __defProp(target, name, { get: all[name], enumerable: true }); };
+var other = 0;
+var first = __commonJS((exports, module) => { ready = 1; other = 2; module.exports = 1; });
+var second = __commonJS((exports, module) => { ready = 3; module.exports = 2; });
+var ns = {}; __export(ns, { get: () => get });
+var ready = 0;
+function get() { ready += 1; return ready; }
+console.log(second(), first(), ns.get(), other);
+export { ns };
+"#;
+
+    let raw_pairs = expect_unpack_raw(bundle);
+    let names: Vec<&String> = raw_pairs.iter().map(|(name, _)| name).collect();
+    let (_, scope_code) = raw_pairs
+        .iter()
+        .find(|(_, code)| code.contains("function get"))
+        .expect("scope module should exist");
+    assert!(
+        scope_code.contains("export function first")
+            && scope_code.contains("export function second")
+            && scope_code.contains("var other")
+            && scope_code.matches("var ready").count() == 1,
+        "the scope module should absorb both factories and adopt `other`:\n{scope_code}"
+    );
+    assert!(
+        !names.iter().any(|name| name.as_str() == "first.js"),
+        "no standalone file should keep a copy of the state: {names:?}"
+    );
+    let declaring_ready = raw_pairs
+        .iter()
+        .filter(|(_, code)| code.contains("var ready"))
+        .count();
+    assert_eq!(
+        declaring_ready, 1,
+        "`ready` must be declared once: {raw_pairs:#?}"
+    );
+    assert_eq!(validate_output_modules(&raw_pairs), vec![]);
+
+    let output = unpack(
+        bundle,
+        DecompileOptions {
+            filename: "bundle.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("unpack should succeed");
+    assert!(!output.modules.is_empty());
+}
+
+/// Adopted state can make another factory an init of the same scope module.
+/// That factory comes first in source order, so partition must revisit it.
+#[test]
+fn factory_writing_only_adopted_state_merges_on_a_later_round() {
+    let bundle = r#"
+var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+var __defProp = Object.defineProperty;
+var __export = (target, all) => { for (var name in all) __defProp(target, name, { get: all[name], enumerable: true }); };
+var other = 0;
+var zero = __commonJS((exports, module) => { other = 7; module.exports = 0; });
+var first = __commonJS((exports, module) => { ready = 1; other = 2; module.exports = 1; });
+var second = __commonJS((exports, module) => { ready = 3; module.exports = 2; });
+var ns = {}; __export(ns, { get: () => get });
+var ready = 0;
+function get() { ready += 1; return ready; }
+console.log(zero(), second(), first(), ns.get(), other);
+export { ns };
+"#;
+
+    let raw_pairs = expect_unpack_raw(bundle);
+    let (_, scope_code) = raw_pairs
+        .iter()
+        .find(|(_, code)| code.contains("function get"))
+        .expect("scope module should exist");
+    let first_at = scope_code.find("export function first");
+    let zero_at = scope_code.find("export function zero");
+    assert!(
+        zero_at.is_some() && first_at.is_some() && zero_at < first_at,
+        "both writers of `other` merge, in source order:\n{scope_code}"
+    );
+    let declaring_other = raw_pairs
+        .iter()
+        .filter(|(_, code)| code.contains("var other"))
+        .count();
+    assert_eq!(
+        declaring_other, 1,
+        "`other` must be declared once: {raw_pairs:#?}"
+    );
+    assert_eq!(validate_output_modules(&raw_pairs), vec![]);
+}
+
+/// Entry state that an entry statement also writes cannot move into the scope
+/// module, so the factory stays standalone. It must not declare its own copy
+/// of the scope module's state: the unlinked write is left for output
+/// validation to report.
+#[test]
+fn standalone_factory_does_not_copy_scope_owned_state() {
+    let bundle = r#"
+var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+var __defProp = Object.defineProperty;
+var __export = (target, all) => { for (var name in all) __defProp(target, name, { get: all[name], enumerable: true }); };
+var other = 0;
+var first = __commonJS((exports, module) => { ready = 1; other = 2; module.exports = 1; });
+var second = __commonJS((exports, module) => { ready = 3; module.exports = 2; });
+var ns = {}; __export(ns, { get: () => get });
+var ready = 0;
+function get() { ready += 1; return ready; }
+other = 5;
+console.log(second(), first(), ns.get(), other);
+export { ns };
+"#;
+
+    let raw_pairs = expect_unpack_raw(bundle);
+    let (_, first_code) = raw_pairs
+        .iter()
+        .find(|(name, _)| name == "first.js")
+        .expect("the factory stays standalone");
+    assert!(
+        !first_code.contains("var ready") && !first_code.contains("export { other, ready }"),
+        "the standalone factory must not declare the scope module's state:\n{first_code}"
+    );
+    let findings = validate_output_modules(&raw_pairs);
+    assert!(
+        findings.iter().any(|finding| {
+            finding.kind == OutputFindingKind::UnresolvedReference && finding.filename == "first.js"
+        }),
+        "the unlinked write should be reported: {findings:?}"
+    );
+}
+
 /// If a scope-hoisted module also writes state initialized by a lazy factory,
 /// the factory must merge into that scope module. Otherwise the scope module
 /// would assign to a read-only ESM import.

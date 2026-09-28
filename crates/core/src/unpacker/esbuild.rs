@@ -39,7 +39,8 @@ use factories::{
 use ownership::{
     apply_demotion, claim_standalone_ownership, group_standalone_writers,
     partition_merged_factories, place_top_level_writers, plan_demotion, plan_merged_modules,
-    FactoryOwnership, PendingFactory, SupportClaimFilter, TopLevelIndex, TopLevelWriterItem,
+    FactoryOwnership, PendingFactory, StateAdoptionFilter, SupportClaimFilter, TopLevelIndex,
+    TopLevelWriterItem,
 };
 use scope::{extract_scope_hoisted_modules, ScopeExtractionRefs, ScopeExtractionResult};
 use scope_boundaries::{
@@ -411,10 +412,29 @@ fn detect_from_prepared_factories(
     // Phase 6: decide where every factory, support declaration, and state
     // writer goes, then emit. Emission never changes ownership.
     let mut ownership = FactoryOwnership::new(binding_to_filename);
+    let remaining_entry_spans: HashSet<(u32, u32)> = remaining_entry
+        .iter()
+        .map(|item| (item.span().lo.0, item.span().hi.0))
+        .collect();
+    let entry_written_state: HashSet<BindingId> = top_level_writer_items
+        .iter()
+        .filter(|writer| remaining_entry_spans.contains(&(writer.span.lo.0, writer.span.hi.0)))
+        .flat_map(|writer| {
+            writer
+                .write_targets
+                .iter()
+                .filter(|target| !writer.declared_bindings.contains(*target))
+                .cloned()
+        })
+        .collect();
     let (merged_factories, mut standalone_factories) = partition_merged_factories(
         pending_factories,
         &scope_claimed_factory_bindings,
         &factory_importable_bindings,
+        &StateAdoptionFilter {
+            support: &support_claim_filter,
+            entry_written: &entry_written_state,
+        },
         &index,
         &mut ownership,
     );
@@ -426,11 +446,8 @@ fn detect_from_prepared_factories(
         &mut ownership.factory_owned_bindings,
     );
     group_standalone_writers(&mut standalone_factories, &index, &mut ownership);
+    ownership.debug_assert_consistent("grouping");
 
-    let remaining_entry_spans: HashSet<(u32, u32)> = remaining_entry
-        .iter()
-        .map(|item| (item.span().lo.0, item.span().hi.0))
-        .collect();
     let requested_demotions = place_top_level_writers(
         top_level_writer_items,
         &module.body,
@@ -462,6 +479,7 @@ fn detect_from_prepared_factories(
         &module_referenced_atoms,
         &mut ownership,
     );
+    ownership.debug_assert_consistent("planning");
 
     for plan in merged_module_plans {
         emit_merged_module_plan(

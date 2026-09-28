@@ -56,14 +56,23 @@ pub(super) fn claim_standalone_ownership(
     binding_to_filename: &mut HashMap<BindingId, String>,
     factory_owned_bindings: &mut HashMap<String, HashSet<BindingId>>,
 ) {
+    let standalone_files = standalone_group_filenames(standalone_factories);
     for factory in standalone_factories {
         binding_to_filename
             .entry(factory.binding.clone())
             .or_insert_with(|| factory.filename.clone());
         for write_binding in &factory.write_bindings {
-            binding_to_filename
+            let owner = binding_to_filename
                 .entry(write_binding.clone())
                 .or_insert_with(|| factory.filename.clone());
+            // State that a scope module kept stays declared there only.
+            // Partition already merged every factory that can join that
+            // module; one that could not keeps a write to the other module's
+            // state, which output validation reports as unresolved, instead
+            // of a silent second copy.
+            if !standalone_files.contains(owner) {
+                continue;
+            }
             factory_owned_bindings
                 .entry(factory.filename.clone())
                 .or_default()
@@ -237,6 +246,28 @@ pub(super) struct TopLevelWriterItem {
 
 /// Where factory-related bindings and statements go. The planning steps
 /// build it up in order; emission only reads it.
+///
+/// What each step writes, and what holds after it:
+///
+/// 1. [`FactoryOwnership::new`]: `binding_to_filename` holds the owners that
+///    scope extraction recorded.
+/// 2. [`partition_merged_factories`]: an init factory merges into the scope
+///    module that owns its written state, which also takes the factory's
+///    binding, support declarations, and the entry state it adopts.
+/// 3. [`claim_standalone_ownership`]: standalone factories claim unowned
+///    bindings, first-come, and never replace an existing owner. Each one
+///    lists the state it writes under its own file unless a scope module
+///    owns that state, so two standalone writers of one state both list it.
+/// 4. [`group_standalone_writers`]: standalone factories that write the same
+///    state join one group (`redirects`, `affected`). From here on every
+///    listed binding's owner is the file that lists it
+///    ([`FactoryOwnership::debug_assert_consistent`]).
+/// 5. [`place_top_level_writers`]: entry writers of group state move into
+///    the group (`relocated_writers`), or ask for the group's demotion.
+/// 6. [`apply_demotion`]: demoted groups leave every table.
+/// 7. [`plan_merged_module`], once per scope module: adopted support
+///    declarations get the scope module as owner and enter
+///    `entry_duplicate_declarations`.
 pub(super) struct FactoryOwnership {
     /// Output file of every binding that some recovered module declares.
     pub(super) binding_to_filename: HashMap<BindingId, String>,
@@ -265,6 +296,32 @@ impl FactoryOwnership {
         }
     }
 
+    /// Owned bindings listed under a file that is not their recorded owner.
+    /// Two standalone factories that write the same state both list it until
+    /// grouping joins them; after grouping this must stay empty, or two files
+    /// would declare the same state.
+    pub(super) fn ownership_conflicts(&self) -> Vec<(BindingId, String)> {
+        let mut conflicts = Vec::new();
+        for (filename, owned) in &self.factory_owned_bindings {
+            for binding in owned {
+                if self.binding_to_filename.get(binding) != Some(filename) {
+                    conflicts.push((binding.clone(), filename.clone()));
+                }
+            }
+        }
+        conflicts
+    }
+
+    pub(super) fn debug_assert_consistent(&self, step: &str) {
+        if cfg!(debug_assertions) {
+            let conflicts = self.ownership_conflicts();
+            debug_assert!(
+                conflicts.is_empty(),
+                "esbuild factory ownership disagrees after {step}: {conflicts:?}"
+            );
+        }
+    }
+
     /// Every file of an affected group: the canonical file and each
     /// redirected member.
     pub(super) fn affected_group_files(&self) -> impl Iterator<Item = &String> {
@@ -290,54 +347,61 @@ impl FactoryOwnership {
 /// Splits factories into init factories that merge into a scope module and
 /// standalone factories.
 ///
-/// If a factory writes to bindings that all belong to a single scope-hoisted
-/// module, and that module claimed the written state, it is an init function
-/// for that module. Merge its body into the target module rather than
-/// emitting a separate file with invalid ESM (imports are read-only, so
-/// `import {x} ...; x = ...` would be a runtime error).
+/// If the owned bindings a factory writes all belong to a single
+/// scope-hoisted module, and that module claimed the written state, it is an
+/// init function for that module. Merge its body into the target module
+/// rather than emitting a separate file with invalid ESM (imports are
+/// read-only, so `import {x} ...; x = ...` would be a runtime error).
+///
+/// The factory may also write entry state that no module claimed yet. The scope module adopts
+/// that state with the factory, so every writer keeps reaching one binding;
+/// left standalone, the factory would declare its own copy of the scope
+/// module's state. Adoption needs a movable top-level declaration and no
+/// entry writer besides that declaration, since an entry write to the
+/// adopted binding would become an assignment to an import. A factory that
+/// writes adopted state merges on a later round, so partition repeats until
+/// no factory changes side. Each module keeps its merged factories in
+/// source order.
 pub(super) fn partition_merged_factories(
     pending_factories: Vec<PendingFactory>,
     scope_claimed_factory_bindings: &HashMap<BindingId, String>,
     factory_importable_bindings: &HashMap<BindingId, String>,
+    adoption: &StateAdoptionFilter<'_>,
     index: &TopLevelIndex,
     ownership: &mut FactoryOwnership,
 ) -> (HashMap<String, Vec<MergedFactory>>, Vec<PendingFactory>) {
-    let mut merged_factories: HashMap<String, Vec<MergedFactory>> = HashMap::default();
-    let mut standalone_factories: Vec<PendingFactory> = Vec::new();
+    let mut pending: Vec<Option<PendingFactory>> =
+        pending_factories.into_iter().map(Some).collect();
+    let mut merged_by_index: Vec<(usize, String, MergedFactory)> = Vec::new();
+    // State adopted by a scope module during this partition, by module.
+    let mut adopted_state: HashMap<String, HashSet<BindingId>> = HashMap::default();
+    let declared_binding = |binding: &BindingId| {
+        index
+            .decl_binding_by_atom
+            .get(&binding.0)
+            .unwrap_or(binding)
+            .clone()
+    };
 
-    for factory in pending_factories {
-        if factory.write_bindings.is_empty() {
-            standalone_factories.push(factory);
-            continue;
-        }
-
-        // Check if all write targets belong to the same scope-hoisted module.
-        let mut target_filename: Option<String> = None;
-        let mut is_single_target = true;
-        for wb in &factory.write_bindings {
-            if let Some(fname) = ownership.binding_to_filename.get(wb) {
-                match &target_filename {
-                    None => target_filename = Some(fname.clone()),
-                    Some(existing) if existing == fname => {}
-                    Some(_) => {
-                        is_single_target = false;
-                        break;
-                    }
-                }
-            } else {
-                is_single_target = false;
-                break;
-            }
-        }
-
-        let is_scope_claimed_init = factory
-            .write_bindings
-            .iter()
-            .any(|binding| scope_claimed_factory_bindings.contains_key(binding));
-
-        if let (true, Some(fname), true) =
-            (is_single_target, target_filename, is_scope_claimed_init)
-        {
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (factory_index, slot) in pending.iter_mut().enumerate() {
+            let Some(factory) = slot.as_ref() else {
+                continue;
+            };
+            let Some((fname, adopt)) = merge_target(
+                factory,
+                scope_claimed_factory_bindings,
+                &adopted_state,
+                adoption,
+                &declared_binding,
+                ownership,
+            ) else {
+                continue;
+            };
+            let factory = slot.take().unwrap();
+            changed = true;
             ownership
                 .binding_to_filename
                 .insert(factory.binding.clone(), fname.clone());
@@ -358,31 +422,103 @@ pub(super) fn partition_merged_factories(
                 ownership.own(owned_binding.clone(), &fname);
             }
             for write_binding in &factory.write_bindings {
-                let owned_binding = index
-                    .decl_binding_by_atom
-                    .get(&write_binding.0)
-                    .unwrap_or(write_binding);
+                let owned_binding = declared_binding(write_binding);
                 if scope_claimed_factory_bindings.contains_key(write_binding)
-                    || scope_claimed_factory_bindings.contains_key(owned_binding)
+                    || scope_claimed_factory_bindings.contains_key(&owned_binding)
                 {
-                    ownership.own(owned_binding.clone(), &fname);
+                    ownership.own(owned_binding, &fname);
                 }
             }
-            merged_factories
-                .entry(fname)
-                .or_default()
-                .push(MergedFactory {
+            for binding in adopt {
+                ownership.own(binding.clone(), &fname);
+                adopted_state
+                    .entry(fname.clone())
+                    .or_default()
+                    .insert(binding);
+            }
+            merged_by_index.push((
+                factory_index,
+                fname,
+                MergedFactory {
                     var_name: factory.var_name,
                     cjs_params: factory.cjs_params,
                     stmts: factory.body_stmts,
                     referenced_bindings: factory.referenced_bindings,
                     write_bindings: factory.write_bindings,
-                });
-        } else {
-            standalone_factories.push(factory);
+                },
+            ));
         }
     }
+
+    merged_by_index.sort_by_key(|(factory_index, _, _)| *factory_index);
+    let mut merged_factories: HashMap<String, Vec<MergedFactory>> = HashMap::default();
+    for (_, fname, factory) in merged_by_index {
+        merged_factories.entry(fname).or_default().push(factory);
+    }
+    let standalone_factories = pending.into_iter().flatten().collect();
     (merged_factories, standalone_factories)
+}
+
+/// Entry state a scope module may adopt from a factory that merges into it.
+pub(super) struct StateAdoptionFilter<'a> {
+    pub(super) support: &'a SupportClaimFilter<'a>,
+    /// Bindings that a remaining entry statement writes, other than the
+    /// statement declaring them.
+    pub(super) entry_written: &'a HashSet<BindingId>,
+}
+
+impl StateAdoptionFilter<'_> {
+    fn admits(&self, binding: &BindingId) -> bool {
+        self.support.admits(binding) && !self.entry_written.contains(binding)
+    }
+}
+
+/// The scope module `factory` merges into, with the unclaimed state it adopts.
+fn merge_target(
+    factory: &PendingFactory,
+    scope_claimed_factory_bindings: &HashMap<BindingId, String>,
+    adopted_state: &HashMap<String, HashSet<BindingId>>,
+    adoption: &StateAdoptionFilter<'_>,
+    declared_binding: &impl Fn(&BindingId) -> BindingId,
+    ownership: &FactoryOwnership,
+) -> Option<(String, Vec<BindingId>)> {
+    let mut target_filename: Option<&String> = None;
+    let mut unclaimed = Vec::new();
+    for write_binding in &factory.write_bindings {
+        let owner = ownership
+            .binding_to_filename
+            .get(write_binding)
+            .or_else(|| {
+                ownership
+                    .binding_to_filename
+                    .get(&declared_binding(write_binding))
+            });
+        match owner {
+            // Scope extraction records a factory's written state under the
+            // factory's own file until some module claims it.
+            Some(fname) if *fname != factory.filename => match target_filename {
+                None => target_filename = Some(fname),
+                Some(existing) if existing == fname => {}
+                Some(_) => return None,
+            },
+            _ => unclaimed.push(declared_binding(write_binding)),
+        }
+    }
+    let fname = target_filename?;
+    let module_adopted = adopted_state.get(fname);
+    let claims_written_state = factory.write_bindings.iter().any(|binding| {
+        scope_claimed_factory_bindings.contains_key(binding)
+            || module_adopted.is_some_and(|adopted| adopted.contains(&declared_binding(binding)))
+    });
+    if !claims_written_state {
+        return None;
+    }
+    if unclaimed.iter().any(|binding| !adoption.admits(binding)) {
+        return None;
+    }
+    unclaimed.sort_by(|a, b| a.0.cmp(&b.0));
+    unclaimed.dedup();
+    Some((fname.clone(), unclaimed))
 }
 
 /// Joins standalone factories into writer groups and renames every member,
@@ -986,7 +1122,8 @@ pub(super) fn plan_merged_module(
         ownership.own(owned_binding.clone(), filename);
     }
 
-    // Names the module declares once this merge lands.
+    // Names the module declares once this merge lands. Ownership is
+    // consistent after grouping, so no later module takes these over.
     let mut local_atoms = context
         .module_local_atoms
         .get(filename)
