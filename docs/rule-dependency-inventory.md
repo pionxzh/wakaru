@@ -488,7 +488,13 @@ rationale, or level gating appear.
   shapes the converters protect syntactically — parentheses, sequence results,
   conditional/logical branches, assignment results, and `.bind` targets — so
   `new (cond ? f : g)()` and `bound = f.bind(x); new bound()` protect the
-  underlying bindings. Aliases are also recorded for logical assignments
+  underlying bindings. The alias graph also follows an immediately invoked
+  synchronous function or arrow, including `(0, f)()`, `.call`, and `.apply`,
+  to every value its own `return` statements can produce, so
+  `Name = (function () { return ctor; })()` protects `ctor`. The converters
+  have no matching syntactic case yet, so a function expression returned
+  directly from such an IIFE can still be converted.
+  Aliases are also recorded for logical assignments
   (`cached ||= ctor`) and object-destructuring bindings (`const { C } = ns`,
   including renames, nested patterns, defaults, and rest bindings). A shared
   pattern-default walker keeps the analysis and both mutators aligned for

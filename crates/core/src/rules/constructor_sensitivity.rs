@@ -377,17 +377,11 @@ fn collect_value_sources(expr: &Expr, sources: &mut Vec<ValueKey>) {
             };
             collect_value_sources(&member.obj, sources);
         }
-        // An immediately invoked function evaluates to its returned binding.
+        // An immediately invoked function evaluates to what it returns.
         // `Name = (function () { return ctor; })()` makes `new Name()` construct
         // `ctor`, so `ctor` must stay an ordinary function when `Name` is
-        // constructor-sensitive. Async and generator callees yield a Promise or
-        // iterator instead, and a callee that is not itself a function
-        // expression (including `(0, function () {})()`) is not this shape.
-        Expr::Call(call) => {
-            if let Some(returned) = iife_returned_ident(call) {
-                sources.push(returned);
-            }
-        }
+        // constructor-sensitive.
+        Expr::Call(call) => collect_iife_return_sources(call, sources),
         _ => {
             if let Some(key) = expr_value_key(expr) {
                 sources.push(key);
@@ -396,73 +390,75 @@ fn collect_value_sources(expr: &Expr, sources: &mut Vec<ValueKey>) {
     }
 }
 
-/// The single binding an IIFE call evaluates to, when that proof is exact.
-///
-/// Nested functions, arrows, and classes are not this call's result. A
-/// conditional, logical, or other non-identifier return does not prove one
-/// binding, so the call contributes no alias. Multiple returns are accepted
-/// only when every one peels to that same binding.
-fn iife_returned_ident(call: &CallExpr) -> Option<ValueKey> {
+/// Collect every value an IIFE call can return, as the conditional and
+/// logical branches above collect every value they can evaluate to. A source
+/// only keeps a function constructible, so an extra one is harmless and a
+/// missing one is not. Async and generator callees evaluate to a Promise or
+/// an iterator rather than to their returned value.
+fn collect_iife_return_sources(call: &CallExpr, sources: &mut Vec<ValueKey>) {
     let Callee::Expr(callee) = &call.callee else {
-        return None;
+        return;
     };
-    match strip_parens(callee) {
+    match iife_callee_function(callee) {
         Expr::Fn(function) => {
             if function.function.is_async || function.function.is_generator {
-                return None;
+                return;
             }
-            let body = function.function.body.as_ref()?;
-            single_body_return_ident(&body.stmts)
+            if let Some(body) = &function.function.body {
+                collect_body_return_sources(&body.stmts, sources);
+            }
         }
         Expr::Arrow(arrow) => {
             if arrow.is_async || arrow.is_generator {
-                return None;
+                return;
             }
             match arrow.body.as_ref() {
-                ArrowFunctionBody::Expr(expr) => match peel_return_ident(expr) {
-                    Peel::Ident(key) => Some(key),
-                    Peel::NoIdent | Peel::Rejected => None,
-                },
-                ArrowFunctionBody::FunctionBody(body) => single_body_return_ident(&body.stmts),
+                ArrowFunctionBody::Expr(expr) => collect_value_sources(expr, sources),
+                ArrowFunctionBody::FunctionBody(body) => {
+                    collect_body_return_sources(&body.stmts, sources)
+                }
             }
         }
-        _ => None,
+        _ => {}
     }
 }
 
-fn single_body_return_ident(stmts: &[Stmt]) -> Option<ValueKey> {
-    let mut walker = ReturnIdentWalker::default();
+/// The function an IIFE callee invokes: `(0, function () {})()` calls the
+/// sequence's last expression, and `(function () {}).call(this)` or
+/// `.apply(this, args)` calls the receiver.
+fn iife_callee_function(callee: &Expr) -> &Expr {
+    match strip_parens(callee) {
+        Expr::Seq(sequence) => match sequence.exprs.last() {
+            Some(last) => iife_callee_function(last),
+            None => strip_parens(callee),
+        },
+        Expr::Member(member)
+            if static_member_name(&member.prop)
+                .is_some_and(|name| name == "call" || name == "apply") =>
+        {
+            iife_callee_function(&member.obj)
+        }
+        callee => callee,
+    }
+}
+
+fn collect_body_return_sources(stmts: &[Stmt], sources: &mut Vec<ValueKey>) {
+    let mut walker = ReturnSourceWalker { sources };
     for stmt in stmts {
         stmt.visit_with(&mut walker);
     }
-    if walker.failed {
-        return None;
-    }
-    walker.ident
 }
 
-#[derive(Default)]
-struct ReturnIdentWalker {
-    ident: Option<ValueKey>,
-    failed: bool,
+/// Visits the returns of one function body. Nested functions, arrows, and
+/// classes return from their own calls, not this one.
+struct ReturnSourceWalker<'a> {
+    sources: &'a mut Vec<ValueKey>,
 }
 
-impl Visit for ReturnIdentWalker {
+impl Visit for ReturnSourceWalker<'_> {
     fn visit_return_stmt(&mut self, statement: &ReturnStmt) {
-        if self.failed {
-            return;
-        }
-        let Some(argument) = statement.arg.as_deref() else {
-            self.failed = true;
-            return;
-        };
-        match peel_return_ident(argument) {
-            Peel::Ident(key) => match &self.ident {
-                Some(existing) if existing != &key => self.failed = true,
-                Some(_) => {}
-                None => self.ident = Some(key),
-            },
-            Peel::NoIdent | Peel::Rejected => self.failed = true,
+        if let Some(argument) = statement.arg.as_deref() {
+            collect_value_sources(argument, self.sources);
         }
     }
 
@@ -471,51 +467,6 @@ impl Visit for ReturnIdentWalker {
     fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
 
     fn visit_class(&mut self, _: &Class) {}
-}
-
-/// One identifier a return value evaluates to, or a reason not to alias it.
-enum Peel {
-    Ident(ValueKey),
-    /// A value that is not an identifier and is not ambiguous, such as a
-    /// function expression or a call. An assignment may still evaluate to its
-    /// target binding.
-    NoIdent,
-    /// Conditional, logical, or other shapes that do not name one binding.
-    Rejected,
-}
-
-fn peel_return_ident(expr: &Expr) -> Peel {
-    match strip_parens(expr) {
-        Expr::Ident(ident) => Peel::Ident(ValueKey::binding(ident)),
-        Expr::Seq(sequence) => match sequence.exprs.last() {
-            Some(last) => peel_return_ident(last),
-            None => Peel::Rejected,
-        },
-        Expr::Assign(assign) if is_value_preserving_assign_op(assign.op) => {
-            let Some(target) = assign_target_value_key(&assign.left) else {
-                return Peel::Rejected;
-            };
-            if !target.properties.is_empty() {
-                return Peel::Rejected;
-            }
-            match peel_return_ident(&assign.right) {
-                Peel::Ident(right) if right == target => Peel::Ident(target),
-                Peel::Ident(_) => Peel::Rejected,
-                Peel::NoIdent => Peel::Ident(target),
-                Peel::Rejected => Peel::Rejected,
-            }
-        }
-        Expr::Cond(_) => Peel::Rejected,
-        Expr::Bin(binary)
-            if matches!(
-                binary.op,
-                BinaryOp::LogicalOr | BinaryOp::LogicalAnd | BinaryOp::NullishCoalescing
-            ) =>
-        {
-            Peel::Rejected
-        }
-        _ => Peel::NoIdent,
-    }
 }
 
 fn value_sources(expr: &Expr) -> Vec<ValueKey> {

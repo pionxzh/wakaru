@@ -1474,42 +1474,72 @@ Name = (function() {
 }
 
 #[test]
-fn conditional_iife_return_does_not_alias() {
-    let input = r#"
+fn every_iife_return_stays_constructible() {
+    // `new Name()` can construct any value the IIFE returns, so every branch
+    // and every return is a source, as for a conditional outside an IIFE.
+    for returns in [
+        "return flag ? left : right;",
+        "if (flag) return left;\n    return right;",
+        "return left || right;",
+        "if (flag) return;\n    return flag2 ? left : right;",
+    ] {
+        let input = format!(
+            r#"
 export let Name;
-Name = (function() {
-    let left = function() {
+Name = (function() {{
+    let left = function() {{
         return 1;
-    };
-    let right = function() {
+    }};
+    let right = function() {{
         return 2;
-    };
-    return flag ? left : right;
-})();
-"#;
-    let output = apply(input);
-    assert!(output.contains("left = ()=>"), "{output}");
-    assert!(output.contains("right = ()=>"), "{output}");
+    }};
+    {returns}
+}})();
+"#
+        );
+        let output = apply(&input);
+        assert!(output.contains("left = function()"), "{output}");
+        assert!(output.contains("right = function()"), "{output}");
+    }
 }
 
 #[test]
-fn distinct_iife_returns_do_not_alias() {
+fn indirect_iife_callee_return_stays_constructible() {
+    for call in ["(0, function() {\n", "(function() {\n"] {
+        for suffix in ["})();", "}).call(this);", "}).apply(this, []);"] {
+            if call.starts_with("(0") && suffix != "})();" {
+                continue;
+            }
+            let input = format!(
+                "export let Name;\nName = {call}    let ctor;\n    ctor = function() {{}};\n    return ctor;\n{suffix}\n"
+            );
+            let output = apply(&input);
+            assert!(output.contains("ctor = function()"), "{output}");
+        }
+    }
+}
+
+#[test]
+fn member_and_nested_iife_return_stays_constructible() {
     let input = r#"
 export let Name;
 Name = (function() {
-    let left = function() {
-        return 1;
-    };
-    let right = function() {
-        return 2;
-    };
-    if (flag) return left;
-    return right;
+    const api = {};
+    api.Ctor = function() {};
+    return api.Ctor;
+})();
+export let Other;
+Other = (function() {
+    return (function() {
+        let ctor;
+        ctor = function() {};
+        return ctor;
+    })();
 })();
 "#;
     let output = apply(input);
-    assert!(output.contains("left = ()=>"), "{output}");
-    assert!(output.contains("right = ()=>"), "{output}");
+    assert!(output.contains("api.Ctor = function()"), "{output}");
+    assert!(output.contains("ctor = function()"), "{output}");
 }
 
 #[test]
