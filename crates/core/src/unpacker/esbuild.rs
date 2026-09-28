@@ -199,43 +199,32 @@ fn detect_from_prepared_factories(
                 .chain(module_item_import_binding_ids(item))
         })
         .collect();
-    let external_imports = collect_external_imports(&analysis_module.body, &module.body);
     // Keep only item indices here. One top-level declaration can own many
     // bindings, so retaining a cloned source + analysis item per binding
     // multiplies large Bun/esbuild ASTs. Clone the selected item only when a
     // recovered module actually needs to own it.
-    let top_level_decl_indices = collect_top_level_decl_indices(&analysis_module.body);
-    let top_level_decl_binding_by_atom = atom_binding_map_from_keys(&top_level_decl_indices);
+    let decl_indices = collect_top_level_decl_indices(&analysis_module.body);
     let helper_factory_syms: HashSet<Atom> = helper_syms
         .iter()
         .chain(factory_syms.iter())
         .cloned()
         .collect();
-    let top_level_decl_references = collect_top_level_decl_references(
-        &analysis_module.body,
-        &top_level_decl_indices,
-        &all_top_level_bindings,
-        &helper_factory_syms,
-    );
-    let top_level_decl_writes = collect_top_level_decl_writes(
-        &analysis_module.body,
-        &top_level_decl_indices,
-        &all_top_level_bindings,
-    );
-
-    struct TopLevelWriterItem {
-        source_index: usize,
-        /// Top-level bindings this statement assigns, at any depth.
-        write_targets: HashSet<BindingId>,
-        referenced_bindings: HashSet<BindingId>,
-        /// Bindings this item itself declares. A declaration owned by the
-        /// target group moves with the ownership unit instead of relocating.
-        declared_bindings: HashSet<BindingId>,
-        /// Plain statements can move between modules as a unit; declarations
-        /// cannot (entry call sites would need an import back).
-        relocatable_shape: bool,
-        span: Span,
-    }
+    let index = TopLevelIndex {
+        decl_binding_by_atom: atom_binding_map_from_keys(&decl_indices),
+        decl_references: collect_top_level_decl_references(
+            &analysis_module.body,
+            &decl_indices,
+            &all_top_level_bindings,
+            &helper_factory_syms,
+        ),
+        decl_writes: collect_top_level_decl_writes(
+            &analysis_module.body,
+            &decl_indices,
+            &all_top_level_bindings,
+        ),
+        decl_indices,
+        external_imports: collect_external_imports(&analysis_module.body, &module.body),
+    };
 
     // Inventory every top-level statement that writes a top-level binding, at
     // any depth. A later ownership pass may move a written binding's
@@ -269,17 +258,6 @@ fn detect_from_prepared_factories(
             })
         })
         .collect();
-
-    struct PendingFactory {
-        binding: BindingId,
-        var_name: Atom,
-        filename: String,
-        cjs_params: Option<CjsFactoryParams>,
-        body_stmts: Vec<Stmt>,
-        referenced_bindings: HashSet<BindingId>,
-        write_bindings: HashSet<BindingId>,
-        span: Span,
-    }
 
     let mut pending_factories: Vec<PendingFactory> = Vec::new();
     for factory in factories {
@@ -328,14 +306,17 @@ fn detect_from_prepared_factories(
             factory_preassigned_bindings.insert(write_binding.clone(), factory.filename.clone());
         }
     }
+    let support_claim_filter = SupportClaimFilter {
+        helper_syms: &helper_syms,
+        factory_syms: &factory_syms,
+        top_level_decl_indices: &index.decl_indices,
+    };
     let mut factory_importable_bindings = factory_preassigned_bindings.clone();
     for factory in &pending_factories {
         for ref_binding in &factory.referenced_bindings {
             if factory.write_bindings.contains(ref_binding)
                 || factory_importable_bindings.contains_key(ref_binding)
-                || helper_syms.contains(&ref_binding.0)
-                || factory_syms.contains(&ref_binding.0)
-                || !top_level_decl_indices.contains_key(ref_binding)
+                || !support_claim_filter.admits(ref_binding)
             {
                 continue;
             }
@@ -384,8 +365,8 @@ fn detect_from_prepared_factories(
     // and return binding→module mapping for factory import synthesis.
     let ScopeExtractionResult {
         modules: scope_hoisted_modules,
-        mut remaining_entry,
-        mut binding_to_filename,
+        remaining_entry,
+        binding_to_filename,
         module_already_imports,
         module_local_atoms,
         module_referenced_atoms,
@@ -409,25 +390,398 @@ fn detect_from_prepared_factories(
     };
     modules.extend(scope_hoisted_modules);
 
-    // Phase 6: emit each factory module, now with synthesized imports for any
-    // references to scope-hoisted module bindings.
-    //
-    // Init-factory merging: if a factory writes to bindings that ALL belong to
-    // a single scope-hoisted module, it's an init function for that module.
-    // Merge its body into the target module rather than emitting a separate file
-    // with invalid ESM (imports are read-only, so `import {x} ...; x = ...`
-    // would be a runtime error).
-    struct MergedFactory {
-        var_name: Atom,
-        cjs_params: Option<CjsFactoryParams>,
-        stmts: Vec<Stmt>,
-        referenced_bindings: HashSet<BindingId>,
-        write_bindings: HashSet<BindingId>,
+    // Phase 6: decide where every factory, support declaration, and state
+    // writer goes, then emit. Emission never changes ownership.
+    let mut ownership = FactoryOwnership::new(binding_to_filename);
+    let (merged_factories, mut standalone_factories) = partition_merged_factories(
+        pending_factories,
+        &scope_claimed_factory_bindings,
+        &factory_importable_bindings,
+        &index,
+        &mut ownership,
+    );
+    claim_standalone_ownership(
+        &standalone_factories,
+        &index.decl_references,
+        &support_claim_filter,
+        &mut ownership.binding_to_filename,
+        &mut ownership.factory_owned_bindings,
+    );
+    group_standalone_writers(&mut standalone_factories, &index, &mut ownership);
+
+    let remaining_entry_spans: HashSet<(u32, u32)> = remaining_entry
+        .iter()
+        .map(|item| (item.span().lo.0, item.span().hi.0))
+        .collect();
+    let requested_demotions = place_top_level_writers(
+        top_level_writer_items,
+        &module.body,
+        &remaining_entry_spans,
+        &standalone_factories,
+        &index,
+        &mut ownership,
+    );
+    let mut demoted_factories = Vec::new();
+    if !requested_demotions.is_empty() {
+        if let Some(demoted) = plan_demotion(
+            requested_demotions,
+            &standalone_factories,
+            &merged_factories,
+            &module_referenced_atoms,
+            &remaining_entry_spans,
+            &index,
+            &ownership,
+        ) {
+            demoted_factories = apply_demotion(&demoted, &mut standalone_factories, &mut ownership);
+        }
+    }
+    let merged_module_plans = plan_merged_modules(
+        &modules,
+        merged_factories,
+        &index,
+        &module_already_imports,
+        &module_local_atoms,
+        &module_referenced_atoms,
+        &mut ownership,
+    );
+
+    for plan in merged_module_plans {
+        emit_merged_module_plan(
+            &mut modules[plan.module_index],
+            plan,
+            &module.body,
+            &index.external_imports,
+            &ownership.factory_owned_bindings,
+            cm.clone(),
+            positions,
+        );
+    }
+    let standalone_factory_write_bindings: HashSet<BindingId> = standalone_factories
+        .iter()
+        .flat_map(|factory| factory.write_bindings.iter().cloned())
+        .collect();
+    for (group_filename, factories) in group_standalone_factories(standalone_factories) {
+        modules.push(emit_standalone_group(
+            group_filename,
+            factories,
+            &module.body,
+            &index,
+            &ownership,
+            cm.clone(),
+            positions,
+        ));
+    }
+    modules.extend(redirect_stub_modules(&ownership.redirects));
+    if !remaining_entry.is_empty() || !demoted_factories.is_empty() {
+        modules.push(emit_entry(
+            remaining_entry,
+            demoted_factories,
+            &standalone_factory_write_bindings,
+            &index,
+            &ownership,
+            cm,
+            positions,
+        ));
     }
 
+    Some(UnpackResult::without_cycle_warnings(
+        modules,
+        BundleFormat::Esbuild,
+    ))
+}
+
+/// A detected factory with its output filename and the top-level bindings its
+/// resolved body reads and writes, waiting for an ownership decision.
+struct PendingFactory {
+    binding: BindingId,
+    var_name: Atom,
+    filename: String,
+    cjs_params: Option<CjsFactoryParams>,
+    body_stmts: Vec<Stmt>,
+    referenced_bindings: HashSet<BindingId>,
+    write_bindings: HashSet<BindingId>,
+    span: Span,
+}
+
+/// Which top-level bindings a factory may claim as support declarations.
+/// Runtime helpers and factory bindings stay with the bundle runtime, and a
+/// binding without a top-level declaration has nothing to move.
+struct SupportClaimFilter<'a> {
+    helper_syms: &'a HashSet<Atom>,
+    factory_syms: &'a HashSet<Atom>,
+    top_level_decl_indices: &'a HashMap<BindingId, usize>,
+}
+
+impl SupportClaimFilter<'_> {
+    fn admits(&self, binding: &BindingId) -> bool {
+        !self.helper_syms.contains(&binding.0)
+            && !self.factory_syms.contains(&binding.0)
+            && self.top_level_decl_indices.contains_key(binding)
+    }
+}
+
+/// Assigns each standalone factory its own binding, the state its body writes,
+/// and the support declarations it reaches. Bindings that an earlier owner
+/// (a scope module or a merged init) already holds are left alone.
+///
+/// Claims are first-come in factory order: every factory first claims the
+/// declarations its body references directly, then the reference closure
+/// expands one level per round across all factories until nothing changes.
+fn claim_standalone_ownership(
+    standalone_factories: &[PendingFactory],
+    top_level_decl_references: &HashMap<BindingId, HashSet<BindingId>>,
+    filter: &SupportClaimFilter<'_>,
+    binding_to_filename: &mut HashMap<BindingId, String>,
+    factory_owned_bindings: &mut HashMap<String, HashSet<BindingId>>,
+) {
+    for factory in standalone_factories {
+        binding_to_filename
+            .entry(factory.binding.clone())
+            .or_insert_with(|| factory.filename.clone());
+        for write_binding in &factory.write_bindings {
+            binding_to_filename
+                .entry(write_binding.clone())
+                .or_insert_with(|| factory.filename.clone());
+            factory_owned_bindings
+                .entry(factory.filename.clone())
+                .or_default()
+                .insert(write_binding.clone());
+        }
+    }
+    for factory in standalone_factories {
+        for ref_binding in &factory.referenced_bindings {
+            if factory.write_bindings.contains(ref_binding)
+                || binding_to_filename.contains_key(ref_binding)
+                || !filter.admits(ref_binding)
+            {
+                continue;
+            }
+            binding_to_filename.insert(ref_binding.clone(), factory.filename.clone());
+            factory_owned_bindings
+                .entry(factory.filename.clone())
+                .or_default()
+                .insert(ref_binding.clone());
+        }
+    }
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for factory in standalone_factories {
+            let owned_bindings = factory_owned_bindings
+                .get(&factory.filename)
+                .cloned()
+                .unwrap_or_default();
+            for owned_binding in owned_bindings {
+                for ref_binding in top_level_decl_references
+                    .get(&owned_binding)
+                    .into_iter()
+                    .flatten()
+                {
+                    if binding_to_filename.contains_key(ref_binding) || !filter.admits(ref_binding)
+                    {
+                        continue;
+                    }
+                    binding_to_filename.insert(ref_binding.clone(), factory.filename.clone());
+                    factory_owned_bindings
+                        .entry(factory.filename.clone())
+                        .or_default()
+                        .insert(ref_binding.clone());
+                    changed = true;
+                }
+            }
+        }
+    }
+}
+
+/// Standalone factories joined by state-write edges into output groups.
+struct WriterGroups {
+    /// Original filename → canonical group filename, for every member that is
+    /// not its group's canonical file.
+    redirects: HashMap<String, String>,
+    /// Canonical filenames of groups that contain a writer of owned state.
+    affected: HashSet<String>,
+}
+
+/// Joins standalone factories that write state owned by another standalone
+/// factory, either directly from the factory body or through a support
+/// declaration the factory owns. Each group's canonical file is its member
+/// that comes first in factory order.
+fn union_writer_groups(
+    standalone_factories: &[PendingFactory],
+    binding_to_filename: &HashMap<BindingId, String>,
+    factory_owned_bindings: &HashMap<String, HashSet<BindingId>>,
+    top_level_decl_writes: &HashMap<BindingId, HashSet<BindingId>>,
+) -> WriterGroups {
+    fn find(parent: &mut [usize], mut index: usize) -> usize {
+        while parent[index] != index {
+            parent[index] = parent[parent[index]];
+            index = parent[index];
+        }
+        index
+    }
+
+    let factory_index_by_filename: HashMap<&str, usize> = standalone_factories
+        .iter()
+        .enumerate()
+        .map(|(index, factory)| (factory.filename.as_str(), index))
+        .collect();
+    let owner_index = |binding: &BindingId| {
+        binding_to_filename
+            .get(binding)
+            .and_then(|filename| factory_index_by_filename.get(filename.as_str()))
+            .copied()
+    };
+
+    // Union-find whose root is always the smallest member index.
+    let mut parent: Vec<usize> = (0..standalone_factories.len()).collect();
+    let mut writer_indices = Vec::new();
+    for (writer_index, factory) in standalone_factories.iter().enumerate() {
+        // A factory body that assigns top-level state directly is a writer of
+        // that state too. Join it to the state's owner so the group declares
+        // the binding once instead of every writing factory keeping a copy.
+        let direct_writes = factory.write_bindings.iter();
+        let support_writes = factory_owned_bindings
+            .get(&factory.filename)
+            .into_iter()
+            .flatten()
+            .flat_map(|owned| top_level_decl_writes.get(owned).into_iter().flatten());
+        let mut is_writer = false;
+        for owner in direct_writes.chain(support_writes).filter_map(owner_index) {
+            is_writer = true;
+            let left = find(&mut parent, writer_index);
+            let right = find(&mut parent, owner);
+            parent[left.max(right)] = left.min(right);
+        }
+        if is_writer {
+            writer_indices.push(writer_index);
+        }
+    }
+
+    let mut groups = WriterGroups {
+        redirects: HashMap::default(),
+        affected: HashSet::default(),
+    };
+    for index in 0..standalone_factories.len() {
+        let root = find(&mut parent, index);
+        if root != index {
+            groups.redirects.insert(
+                standalone_factories[index].filename.clone(),
+                standalone_factories[root].filename.clone(),
+            );
+        }
+    }
+    for index in writer_indices {
+        let root = find(&mut parent, index);
+        groups
+            .affected
+            .insert(standalone_factories[root].filename.clone());
+    }
+    groups
+}
+
+fn canonical_factory_filename<'a>(
+    redirects: &'a HashMap<String, String>,
+    filename: &'a str,
+) -> &'a str {
+    redirects.get(filename).map_or(filename, String::as_str)
+}
+
+/// Top-level facts about the bundle that ownership decisions read.
+struct TopLevelIndex {
+    /// Item index of the first declaration of each top-level binding.
+    decl_indices: HashMap<BindingId, usize>,
+    decl_binding_by_atom: HashMap<Atom, BindingId>,
+    /// Top-level bindings each declaration references.
+    decl_references: HashMap<BindingId, HashSet<BindingId>>,
+    /// Top-level bindings each declaration writes.
+    decl_writes: HashMap<BindingId, HashSet<BindingId>>,
+    external_imports: HashMap<BindingId, ExternalImport>,
+}
+
+/// A top-level statement that writes a top-level binding, at any depth.
+struct TopLevelWriterItem {
+    source_index: usize,
+    /// Top-level bindings this statement assigns, at any depth.
+    write_targets: HashSet<BindingId>,
+    referenced_bindings: HashSet<BindingId>,
+    /// Bindings this item itself declares. A declaration owned by the
+    /// target group moves with the ownership unit instead of relocating.
+    declared_bindings: HashSet<BindingId>,
+    /// Plain statements can move between modules as a unit; declarations
+    /// cannot (entry call sites would need an import back).
+    relocatable_shape: bool,
+    span: Span,
+}
+
+/// Where factory-related bindings and statements go. The planning steps
+/// build it up in order; emission only reads it.
+struct FactoryOwnership {
+    /// Output file of every binding that some recovered module declares.
+    binding_to_filename: HashMap<BindingId, String>,
+    /// Support declarations and state each output file declares and exports.
+    factory_owned_bindings: HashMap<String, HashSet<BindingId>>,
+    /// Non-canonical writer-group member file → canonical group file.
+    redirects: HashMap<String, String>,
+    /// Canonical group files that hold a writer of their own state; entry
+    /// copies of that state are dropped and re-imported.
+    affected: HashSet<String>,
+    /// Entry statements that move into a standalone group.
+    relocated_writers: HashMap<String, Vec<TopLevelWriterItem>>,
+    /// Declarations a merged scope module adopted; the entry drops its copy.
+    entry_duplicate_declarations: HashSet<BindingId>,
+}
+
+impl FactoryOwnership {
+    fn new(binding_to_filename: HashMap<BindingId, String>) -> Self {
+        Self {
+            binding_to_filename,
+            factory_owned_bindings: HashMap::default(),
+            redirects: HashMap::default(),
+            affected: HashSet::default(),
+            relocated_writers: HashMap::default(),
+            entry_duplicate_declarations: HashSet::default(),
+        }
+    }
+
+    /// Every file of an affected group: the canonical file and each
+    /// redirected member.
+    fn affected_group_files(&self) -> impl Iterator<Item = &String> {
+        self.affected.iter().chain(
+            self.redirects
+                .iter()
+                .filter(|(_, canonical)| self.affected.contains(*canonical))
+                .map(|(member, _)| member),
+        )
+    }
+
+    /// Records `binding` as declared and exported by `filename`.
+    fn own(&mut self, binding: BindingId, filename: &str) {
+        self.binding_to_filename
+            .insert(binding.clone(), filename.to_string());
+        self.factory_owned_bindings
+            .entry(filename.to_string())
+            .or_default()
+            .insert(binding);
+    }
+}
+
+/// Splits factories into init factories that merge into a scope module and
+/// standalone factories.
+///
+/// If a factory writes to bindings that all belong to a single scope-hoisted
+/// module, and that module claimed the written state, it is an init function
+/// for that module. Merge its body into the target module rather than
+/// emitting a separate file with invalid ESM (imports are read-only, so
+/// `import {x} ...; x = ...` would be a runtime error).
+fn partition_merged_factories(
+    pending_factories: Vec<PendingFactory>,
+    scope_claimed_factory_bindings: &HashMap<BindingId, String>,
+    factory_importable_bindings: &HashMap<BindingId, String>,
+    index: &TopLevelIndex,
+    ownership: &mut FactoryOwnership,
+) -> (HashMap<String, Vec<MergedFactory>>, Vec<PendingFactory>) {
     let mut merged_factories: HashMap<String, Vec<MergedFactory>> = HashMap::default();
     let mut standalone_factories: Vec<PendingFactory> = Vec::new();
-    let mut factory_owned_bindings: HashMap<String, HashSet<BindingId>> = HashMap::default();
 
     for factory in pending_factories {
         if factory.write_bindings.is_empty() {
@@ -439,7 +793,7 @@ fn detect_from_prepared_factories(
         let mut target_filename: Option<String> = None;
         let mut is_single_target = true;
         for wb in &factory.write_bindings {
-            if let Some(fname) = binding_to_filename.get(wb) {
+            if let Some(fname) = ownership.binding_to_filename.get(wb) {
                 match &target_filename {
                     None => target_filename = Some(fname.clone()),
                     Some(existing) if existing == fname => {}
@@ -458,42 +812,38 @@ fn detect_from_prepared_factories(
             .write_bindings
             .iter()
             .any(|binding| scope_claimed_factory_bindings.contains_key(binding));
-        let can_merge = is_scope_claimed_init;
 
-        if let (true, Some(fname), true) = (is_single_target, target_filename, can_merge) {
-            binding_to_filename.insert(factory.binding.clone(), fname.clone());
+        if let (true, Some(fname), true) =
+            (is_single_target, target_filename, is_scope_claimed_init)
+        {
+            ownership
+                .binding_to_filename
+                .insert(factory.binding.clone(), fname.clone());
             // The standalone factory file also owns top-level support
             // declarations referenced by its body. When the factory is
             // absorbed, move and export those declarations with it so other
             // recovered modules can follow the relocated import edge.
-            for (owned_binding, owner_filename) in &factory_importable_bindings {
+            for (owned_binding, owner_filename) in factory_importable_bindings {
                 if owner_filename != &factory.filename
                     || *owned_binding == factory.binding
-                    || !top_level_decl_indices.contains_key(owned_binding)
+                    || !index.decl_indices.contains_key(owned_binding)
                 {
                     continue;
                 }
-                if binding_to_filename.contains_key(owned_binding) {
+                if ownership.binding_to_filename.contains_key(owned_binding) {
                     continue;
                 }
-                binding_to_filename.insert(owned_binding.clone(), fname.clone());
-                factory_owned_bindings
-                    .entry(fname.clone())
-                    .or_default()
-                    .insert(owned_binding.clone());
+                ownership.own(owned_binding.clone(), &fname);
             }
             for write_binding in &factory.write_bindings {
-                let owned_binding = top_level_decl_binding_by_atom
+                let owned_binding = index
+                    .decl_binding_by_atom
                     .get(&write_binding.0)
                     .unwrap_or(write_binding);
                 if scope_claimed_factory_bindings.contains_key(write_binding)
                     || scope_claimed_factory_bindings.contains_key(owned_binding)
                 {
-                    binding_to_filename.insert(owned_binding.clone(), fname.clone());
-                    factory_owned_bindings
-                        .entry(fname.clone())
-                        .or_default()
-                        .insert(owned_binding.clone());
+                    ownership.own(owned_binding.clone(), &fname);
                 }
             }
             merged_factories
@@ -510,218 +860,83 @@ fn detect_from_prepared_factories(
             standalone_factories.push(factory);
         }
     }
+    (merged_factories, standalone_factories)
+}
 
-    for factory in &standalone_factories {
-        binding_to_filename
-            .entry(factory.binding.clone())
-            .or_insert_with(|| factory.filename.clone());
-        for write_binding in &factory.write_bindings {
-            binding_to_filename
-                .entry(write_binding.clone())
-                .or_insert_with(|| factory.filename.clone());
-            factory_owned_bindings
-                .entry(factory.filename.clone())
-                .or_default()
-                .insert(write_binding.clone());
-        }
-    }
-    for factory in &standalone_factories {
-        for ref_binding in &factory.referenced_bindings {
-            if factory.write_bindings.contains(ref_binding)
-                || binding_to_filename.contains_key(ref_binding)
-                || helper_syms.contains(&ref_binding.0)
-                || factory_syms.contains(&ref_binding.0)
-                || !top_level_decl_indices.contains_key(ref_binding)
-            {
-                continue;
-            }
-            binding_to_filename.insert(ref_binding.clone(), factory.filename.clone());
-            factory_owned_bindings
-                .entry(factory.filename.clone())
-                .or_default()
-                .insert(ref_binding.clone());
-        }
-    }
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for factory in &standalone_factories {
-            let owned_bindings = factory_owned_bindings
-                .get(&factory.filename)
-                .cloned()
-                .unwrap_or_default();
-            for owned_binding in owned_bindings {
-                for ref_binding in top_level_decl_references
-                    .get(&owned_binding)
-                    .into_iter()
-                    .flatten()
-                {
-                    if binding_to_filename.contains_key(ref_binding)
-                        || helper_syms.contains(&ref_binding.0)
-                        || factory_syms.contains(&ref_binding.0)
-                        || !top_level_decl_indices.contains_key(ref_binding)
-                    {
-                        continue;
-                    }
-                    binding_to_filename.insert(ref_binding.clone(), factory.filename.clone());
-                    factory_owned_bindings
-                        .entry(factory.filename.clone())
-                        .or_default()
-                        .insert(ref_binding.clone());
-                    changed = true;
-                }
-            }
-        }
-    }
-
-    // A factory can adopt a hoisted support declaration whose body writes
-    // state initialized by another lazy factory. Those factories cannot be
-    // separate ESM modules: the adopted function would assign to a read-only
-    // import. Build connected components from declaration-level write edges
-    // and give every component one canonical output owner. CommonJS factories
-    // participate too: emission retains each factory's callable/cache boundary.
-    let standalone_original_filenames: Vec<String> = standalone_factories
-        .iter()
-        .map(|factory| factory.filename.clone())
-        .collect();
-    let factory_index_by_filename: HashMap<String, usize> = standalone_factories
-        .iter()
-        .enumerate()
-        .map(|(index, factory)| (factory.filename.clone(), index))
-        .collect();
-    let mut writer_adjacency: Vec<HashSet<usize>> =
-        vec![HashSet::default(); standalone_factories.len()];
-    let mut writer_factory_indices = HashSet::default();
-    for (writer_index, factory) in standalone_factories.iter().enumerate() {
-        // A factory body that assigns top-level state directly is a writer of
-        // that state too. Join it to the state's owner so the group declares
-        // the binding once instead of every writing factory keeping a copy.
-        for write_binding in &factory.write_bindings {
-            let Some(owner_index) = binding_to_filename
-                .get(write_binding)
-                .and_then(|filename| factory_index_by_filename.get(filename))
-                .copied()
-            else {
-                continue;
-            };
-            writer_factory_indices.insert(writer_index);
-            if owner_index != writer_index {
-                writer_adjacency[writer_index].insert(owner_index);
-                writer_adjacency[owner_index].insert(writer_index);
-            }
-        }
-        for owned_binding in factory_owned_bindings
-            .get(&factory.filename)
-            .into_iter()
-            .flatten()
-        {
-            for write_binding in top_level_decl_writes
-                .get(owned_binding)
-                .into_iter()
-                .flatten()
-            {
-                let Some(owner_index) = binding_to_filename
-                    .get(write_binding)
-                    .and_then(|filename| factory_index_by_filename.get(filename))
-                    .copied()
-                else {
-                    continue;
-                };
-                writer_factory_indices.insert(writer_index);
-                if owner_index != writer_index {
-                    writer_adjacency[writer_index].insert(owner_index);
-                    writer_adjacency[owner_index].insert(writer_index);
-                }
-            }
-        }
-    }
-
-    let mut factory_filename_redirects: HashMap<String, String> = HashMap::default();
-    let mut affected_factory_filenames = HashSet::default();
-    let mut visited = vec![false; standalone_factories.len()];
-    for start in 0..standalone_factories.len() {
-        if visited[start] {
-            continue;
-        }
-        let mut stack = vec![start];
-        let mut component = Vec::new();
-        visited[start] = true;
-        while let Some(current) = stack.pop() {
-            component.push(current);
-            for &next in &writer_adjacency[current] {
-                if !visited[next] {
-                    visited[next] = true;
-                    stack.push(next);
-                }
-            }
-        }
-        component.sort_unstable();
-        let canonical = standalone_original_filenames[component[0]].clone();
-        if component
-            .iter()
-            .any(|index| writer_factory_indices.contains(index))
-        {
-            affected_factory_filenames.insert(canonical.clone());
-        }
-        for &member in &component[1..] {
-            factory_filename_redirects.insert(
-                standalone_original_filenames[member].clone(),
-                canonical.clone(),
-            );
-        }
-    }
-
-    for factory in &mut standalone_factories {
-        if let Some(canonical) = factory_filename_redirects.get(&factory.filename) {
+/// Joins standalone factories into writer groups and renames every member,
+/// owner entry, and owned-binding table to its group's canonical file.
+///
+/// A factory can adopt a hoisted support declaration whose body writes state
+/// initialized by another lazy factory. Those factories cannot be separate
+/// ESM modules: the adopted function would assign to a read-only import.
+/// CommonJS factories participate too: emission retains each factory's
+/// callable/cache boundary.
+fn group_standalone_writers(
+    standalone_factories: &mut [PendingFactory],
+    index: &TopLevelIndex,
+    ownership: &mut FactoryOwnership,
+) {
+    let WriterGroups {
+        redirects,
+        affected,
+    } = union_writer_groups(
+        standalone_factories,
+        &ownership.binding_to_filename,
+        &ownership.factory_owned_bindings,
+        &index.decl_writes,
+    );
+    for factory in standalone_factories.iter_mut() {
+        if let Some(canonical) = redirects.get(&factory.filename) {
             factory.filename = canonical.clone();
         }
     }
-    for filename in binding_to_filename.values_mut() {
-        if let Some(canonical) = factory_filename_redirects.get(filename) {
+    for filename in ownership.binding_to_filename.values_mut() {
+        if let Some(canonical) = redirects.get(filename) {
             *filename = canonical.clone();
         }
     }
-    if !factory_filename_redirects.is_empty() {
-        let original_owned = std::mem::take(&mut factory_owned_bindings);
+    if !redirects.is_empty() {
+        let original_owned = std::mem::take(&mut ownership.factory_owned_bindings);
         for (filename, bindings) in original_owned {
-            let canonical = factory_filename_redirects
-                .get(&filename)
-                .unwrap_or(&filename)
-                .clone();
-            factory_owned_bindings
+            let canonical = canonical_factory_filename(&redirects, &filename).to_string();
+            ownership
+                .factory_owned_bindings
                 .entry(canonical)
                 .or_default()
                 .extend(bindings);
         }
     }
-    let mut affected_original_factory_filenames: HashSet<String> = standalone_original_filenames
-        .iter()
-        .filter(|filename| {
-            let canonical = factory_filename_redirects
-                .get(*filename)
-                .unwrap_or(*filename);
-            affected_factory_filenames.contains(canonical)
-        })
-        .cloned()
-        .collect();
+    ownership.redirects = redirects;
+    ownership.affected = affected;
+}
 
-    // A support declaration can make a standalone factory the sole owner of
-    // mutable state while top-level writers of that state remain in entry.js.
-    // Import repair would then turn each writer into an assignment to an
-    // immutable ESM import. The ownership unit must stay atomic: relocate a
-    // writer statement to the owner when that is provably safe, and cancel the
-    // group's standalone split (demotion) when it is not. A writer must never
-    // stay behind against an imported binding.
-    let remaining_entry_spans: HashSet<(u32, u32)> = remaining_entry
-        .iter()
-        .map(|item| (item.span().lo.0, item.span().hi.0))
-        .collect();
-    let standalone_group_filenames: HashSet<String> = standalone_factories
+fn standalone_group_filenames(standalone_factories: &[PendingFactory]) -> HashSet<String> {
+    standalone_factories
         .iter()
         .map(|factory| factory.filename.clone())
-        .collect();
-    let mut relocated_factory_writer_items: HashMap<String, Vec<TopLevelWriterItem>> =
-        HashMap::default();
+        .collect()
+}
+
+/// Keeps every entry writer of standalone-group state with that state.
+///
+/// A support declaration can make a standalone factory the sole owner of
+/// mutable state while top-level writers of that state remain in entry.js.
+/// Import repair would then turn each writer into an assignment to an
+/// immutable ESM import. The ownership unit must stay atomic: relocate a
+/// writer statement to the owner when that is provably safe, and cancel the
+/// group's standalone split (demotion) when it is not. A writer must never
+/// stay behind against an imported binding.
+///
+/// Returns the groups that need demotion.
+fn place_top_level_writers(
+    top_level_writer_items: Vec<TopLevelWriterItem>,
+    source_items: &[ModuleItem],
+    remaining_entry_spans: &HashSet<(u32, u32)>,
+    standalone_factories: &[PendingFactory],
+    index: &TopLevelIndex,
+    ownership: &mut FactoryOwnership,
+) -> HashSet<String> {
+    let standalone_group_filenames = standalone_group_filenames(standalone_factories);
     let mut relocation_demoted_groups: HashSet<String> = HashSet::default();
     let reassigned_top_level_bindings: HashSet<BindingId> = top_level_writer_items
         .iter()
@@ -734,7 +949,7 @@ fn detect_from_prepared_factories(
         let target_owner_filenames: HashSet<&String> = writer
             .write_targets
             .iter()
-            .filter_map(|target| binding_to_filename.get(target))
+            .filter_map(|target| ownership.binding_to_filename.get(target))
             .filter(|filename| standalone_group_filenames.contains(*filename))
             .collect();
         if target_owner_filenames.is_empty() {
@@ -747,7 +962,8 @@ fn detect_from_prepared_factories(
             // entry-resident writer.
             if !writer.declared_bindings.is_empty()
                 && writer.declared_bindings.iter().all(|binding| {
-                    binding_to_filename
+                    ownership
+                        .binding_to_filename
                         .get(binding)
                         .is_some_and(|filename| *filename == owner_filename)
                 })
@@ -760,44 +976,30 @@ fn detect_from_prepared_factories(
             // stable binding qualifies; moving a reassigned function would
             // shift the import write from the state to the callable.
             if let (ModuleItem::Stmt(Stmt::Decl(Decl::Fn(_))), Some(binding)) = (
-                &module.body[writer.source_index],
+                &source_items[writer.source_index],
                 writer.declared_bindings.iter().next().cloned(),
             ) {
                 let targets_owned = writer.write_targets.iter().all(|target| {
-                    binding_to_filename
+                    ownership
+                        .binding_to_filename
                         .get(target)
                         .is_some_and(|filename| *filename == owner_filename)
                 });
                 let deps_resolvable = !writer.referenced_bindings.iter().any(|ref_binding| {
                     ref_binding != &binding
-                        && top_level_decl_indices.contains_key(ref_binding)
-                        && !binding_to_filename.contains_key(ref_binding)
-                        && !external_imports.contains_key(ref_binding)
+                        && index.decl_indices.contains_key(ref_binding)
+                        && !ownership.binding_to_filename.contains_key(ref_binding)
+                        && !index.external_imports.contains_key(ref_binding)
                 });
                 if targets_owned
                     && deps_resolvable
                     && !reassigned_top_level_bindings.contains(&binding)
-                    && !binding_to_filename.contains_key(&binding)
+                    && !ownership.binding_to_filename.contains_key(&binding)
                 {
-                    binding_to_filename.insert(binding.clone(), owner_filename.clone());
-                    factory_owned_bindings
-                        .entry(owner_filename.clone())
-                        .or_default()
-                        .insert(binding);
+                    ownership.own(binding, &owner_filename);
                     // The group now holds a writer of its own state, so entry
                     // copies of that unit must be dropped and re-imported.
-                    affected_factory_filenames.insert(owner_filename.clone());
-                    affected_original_factory_filenames.extend(
-                        standalone_original_filenames
-                            .iter()
-                            .filter(|original| {
-                                factory_filename_redirects
-                                    .get(*original)
-                                    .unwrap_or(*original)
-                                    == &owner_filename
-                            })
-                            .cloned(),
-                    );
+                    ownership.affected.insert(owner_filename);
                     continue;
                 }
             }
@@ -806,20 +1008,23 @@ fn detect_from_prepared_factories(
             // entry-owned binding could not follow), and every referenced
             // top-level binding has a concrete emitted owner to import from.
             let all_targets_owned = writer.write_targets.iter().all(|target| {
-                binding_to_filename
+                ownership
+                    .binding_to_filename
                     .get(target)
                     .is_some_and(|filename| *filename == owner_filename)
-                    && factory_owned_bindings
+                    && ownership
+                        .factory_owned_bindings
                         .get(&owner_filename)
                         .is_some_and(|owned| owned.contains(target))
             });
             let deps_resolvable = !writer.referenced_bindings.iter().any(|binding| {
-                top_level_decl_indices.contains_key(binding)
-                    && !binding_to_filename.contains_key(binding)
-                    && !external_imports.contains_key(binding)
+                index.decl_indices.contains_key(binding)
+                    && !ownership.binding_to_filename.contains_key(binding)
+                    && !index.external_imports.contains_key(binding)
             });
             if writer.relocatable_shape && all_targets_owned && deps_resolvable {
-                relocated_factory_writer_items
+                ownership
+                    .relocated_writers
                     .entry(owner_filename)
                     .or_default()
                     .push(writer);
@@ -830,809 +1035,979 @@ fn detect_from_prepared_factories(
         // immutable import, so every involved group's split must be cancelled.
         relocation_demoted_groups.extend(target_owner_filenames.into_iter().cloned());
     }
+    relocation_demoted_groups
+}
 
-    // Demote groups with an unrelocatable writer: cancel their standalone
-    // split and re-synthesize their init functions into the entry, where the
-    // writers and owned declarations already live. Demotion cascades over
-    // standalone groups whose complete emission surface references a demoted
-    // binding (their synthesized imports would dangle). If a scope module or
-    // merged factory depends on a demoted binding, demotion cannot be applied
-    // safely; that residual keeps today's shape and is reported by output
-    // validation.
-    if !relocation_demoted_groups.is_empty() {
-        // Build the same dependency surface that standalone emission will use.
-        // Factory bodies are only one source: adopted support declarations and
-        // top-level writer statements scheduled for relocation can also require
-        // a binding owned by another standalone group. If that provider is
-        // demoted into entry, every such consumer must demote with it because
-        // this pass cannot synthesize an import from entry.js. Build this map
-        // only on the uncommon demotion path to avoid retaining another binding
-        // graph for ordinary large bundles.
-        let mut standalone_group_references: HashMap<String, HashSet<BindingId>> =
-            HashMap::default();
-        for factory in &standalone_factories {
-            standalone_group_references
-                .entry(factory.filename.clone())
-                .or_default()
-                .extend(factory.referenced_bindings.iter().cloned());
+/// Extends the requested demotions over every standalone group that depends
+/// on a demoted binding, and returns the full set if it can be applied.
+///
+/// Demotion cancels a group's standalone split and re-synthesizes its init
+/// functions into the entry, where the writers and owned declarations already
+/// live. It cascades over standalone groups whose complete emission surface
+/// references a demoted binding (their synthesized imports would dangle). If
+/// a scope module or merged factory depends on a demoted binding, demotion
+/// cannot be applied safely; that residual keeps today's shape and is
+/// reported by output validation.
+fn plan_demotion(
+    requested: HashSet<String>,
+    standalone_factories: &[PendingFactory],
+    merged_factories: &HashMap<String, Vec<MergedFactory>>,
+    module_referenced_atoms: &HashMap<String, HashSet<Atom>>,
+    remaining_entry_spans: &HashSet<(u32, u32)>,
+    index: &TopLevelIndex,
+    ownership: &FactoryOwnership,
+) -> Option<HashSet<String>> {
+    // Build the same dependency surface that standalone emission will use.
+    // Factory bodies are only one source: adopted support declarations and
+    // top-level writer statements scheduled for relocation can also require
+    // a binding owned by another standalone group. If that provider is
+    // demoted into entry, every such consumer must demote with it because
+    // this pass cannot synthesize an import from entry.js. Build this map
+    // only on the uncommon demotion path to avoid retaining another binding
+    // graph for ordinary large bundles.
+    let standalone_group_filenames = standalone_group_filenames(standalone_factories);
+    let mut standalone_group_references: HashMap<String, HashSet<BindingId>> = HashMap::default();
+    for factory in standalone_factories {
+        standalone_group_references
+            .entry(factory.filename.clone())
+            .or_default()
+            .extend(factory.referenced_bindings.iter().cloned());
+    }
+    for (filename, writers) in &ownership.relocated_writers {
+        standalone_group_references
+            .entry(filename.clone())
+            .or_default()
+            .extend(
+                writers
+                    .iter()
+                    .flat_map(|writer| writer.referenced_bindings.iter().cloned()),
+            );
+    }
+    for (filename, owned_bindings) in &ownership.factory_owned_bindings {
+        if !standalone_group_filenames.contains(filename) {
+            continue;
         }
-        for (filename, writers) in &relocated_factory_writer_items {
-            standalone_group_references
-                .entry(filename.clone())
-                .or_default()
-                .extend(
-                    writers
-                        .iter()
-                        .flat_map(|writer| writer.referenced_bindings.iter().cloned()),
-                );
+        let references = standalone_group_references
+            .entry(filename.clone())
+            .or_default();
+        for binding in owned_bindings {
+            references.extend(
+                index
+                    .decl_references
+                    .get(binding)
+                    .into_iter()
+                    .flatten()
+                    .cloned(),
+            );
         }
-        for (filename, owned_bindings) in &factory_owned_bindings {
-            if !standalone_group_filenames.contains(filename) {
-                continue;
-            }
-            let references = standalone_group_references
-                .entry(filename.clone())
-                .or_default();
-            for binding in owned_bindings {
-                references.extend(
-                    top_level_decl_references
-                        .get(binding)
-                        .into_iter()
-                        .flatten()
-                        .cloned(),
-                );
-            }
-        }
+    }
 
-        let mut demoted = relocation_demoted_groups;
-        loop {
-            let demoted_bindings: HashSet<&BindingId> = binding_to_filename
-                .iter()
-                .filter(|(_, filename)| demoted.contains(*filename))
-                .map(|(binding, _)| binding)
-                .collect();
-            let additions: Vec<String> = standalone_group_references
-                .iter()
-                .filter(|(filename, _)| !demoted.contains(*filename))
-                .filter(|(_, references)| {
-                    references
-                        .iter()
-                        .any(|binding| demoted_bindings.contains(binding))
-                })
-                .map(|(filename, _)| filename.clone())
-                .collect();
-            if additions.is_empty() {
-                break;
-            }
-            demoted.extend(additions);
-        }
-
-        let demoted_bindings: HashSet<BindingId> = binding_to_filename
+    let mut demoted = requested;
+    loop {
+        let demoted_bindings: HashSet<&BindingId> = ownership
+            .binding_to_filename
             .iter()
             .filter(|(_, filename)| demoted.contains(*filename))
-            .map(|(binding, _)| binding.clone())
+            .map(|(binding, _)| binding)
             .collect();
-        let demoted_atoms: HashSet<Atom> = demoted_bindings
+        let additions: Vec<String> = standalone_group_references
             .iter()
-            .map(|(atom, _)| atom.clone())
+            .filter(|(filename, _)| !demoted.contains(*filename))
+            .filter(|(_, references)| {
+                references
+                    .iter()
+                    .any(|binding| demoted_bindings.contains(binding))
+            })
+            .map(|(filename, _)| filename.clone())
             .collect();
-        let demotion_safe = standalone_factories.iter().all(|factory| {
-            !demoted.contains(&factory.filename)
-                // A partially filtered mixed declaration already left a
-                // sibling in entry at the factory's own span.
-                || !remaining_entry_spans.contains(&(factory.span.lo.0, factory.span.hi.0))
-        }) && !merged_factories.values().flatten().any(|merged| {
-            merged
-                .referenced_bindings
-                .iter()
-                .any(|binding| demoted_bindings.contains(binding))
-        }) && !module_referenced_atoms
-            .values()
-            .any(|atoms| atoms.iter().any(|atom| demoted_atoms.contains(atom)));
-
-        if demotion_safe {
-            let mut kept_factories = Vec::with_capacity(standalone_factories.len());
-            let mut restored_items: Vec<(u32, ModuleItem)> = Vec::new();
-            // The synthesized cache/guard joins the entry's top-level scope.
-            // Reserve every name the entry already declares or imports, plus
-            // the restored factory names, so the helper cannot shadow a `var`
-            // (silently skipping the body) or duplicate a lexical binding.
-            let mut reserved_entry_atoms: HashSet<Atom> = remaining_entry
-                .iter()
-                .flat_map(|item| {
-                    module_item_declared_binding_ids(item)
-                        .into_iter()
-                        .chain(module_item_import_binding_ids(item))
-                })
-                .map(|(atom, _)| atom)
-                .collect();
-            reserved_entry_atoms.extend(
-                standalone_factories
-                    .iter()
-                    .filter(|factory| demoted.contains(&factory.filename))
-                    .map(|factory| factory.var_name.clone()),
-            );
-            for factory in standalone_factories {
-                if demoted.contains(&factory.filename) {
-                    // Body locals, parameters, and free references would
-                    // shadow the helper inside the restored callable.
-                    reserved_entry_atoms.extend(ident_atoms_in_stmts(&factory.body_stmts));
-                    restored_items.extend(match &factory.cjs_params {
-                        Some(cjs_params) => {
-                            let cache = reserve_import_atom(
-                                &format!("__wakaru_{}_cache", factory.var_name).into(),
-                                &mut reserved_entry_atoms,
-                            );
-                            synthesize_entry_cjs_items(
-                                &factory.var_name,
-                                &cache,
-                                cjs_params,
-                                factory.body_stmts,
-                                factory.span,
-                            )
-                        }
-                        None => {
-                            let guard = reserve_import_atom(
-                                &format!("__wakaru_{}_initialized", factory.var_name).into(),
-                                &mut reserved_entry_atoms,
-                            );
-                            synthesize_entry_init_items(
-                                &factory.var_name,
-                                &guard,
-                                factory.body_stmts,
-                                factory.span,
-                            )
-                        }
-                    });
-                } else {
-                    kept_factories.push(factory);
-                }
-            }
-            standalone_factories = kept_factories;
-            binding_to_filename.retain(|_, filename| !demoted.contains(filename));
-            for filename in &demoted {
-                factory_owned_bindings.remove(filename);
-                affected_factory_filenames.remove(filename);
-            }
-            affected_original_factory_filenames.retain(|original| {
-                let canonical = factory_filename_redirects.get(original).unwrap_or(original);
-                !demoted.contains(canonical)
-            });
-            // Compatibility aliases share the lifetime of their canonical
-            // owner. A demoted owner is restored in entry, not emitted as a file.
-            factory_filename_redirects.retain(|_, canonical| !demoted.contains(canonical));
-            relocated_factory_writer_items.retain(|filename, _| !demoted.contains(filename));
-            // Insert the re-synthesized init functions at their original
-            // source positions so entry call sites stay after the definition.
-            for (position, item) in restored_items {
-                let index = remaining_entry
-                    .iter()
-                    .position(|existing| existing.span().lo.0 > position)
-                    .unwrap_or(remaining_entry.len());
-                remaining_entry.insert(index, item);
-            }
+        if additions.is_empty() {
+            break;
         }
-    }
-    let relocated_factory_writer_spans: HashSet<(u32, u32)> = relocated_factory_writer_items
-        .values()
-        .flatten()
-        .map(|writer| (writer.span.lo.0, writer.span.hi.0))
-        .collect();
-
-    let binding_filename_by_atom = atom_to_filename_binding_map(&binding_to_filename);
-    let external_import_by_atom = atom_binding_map_from_keys(&external_imports);
-
-    // Append merged factory bodies to their target modules, synthesizing
-    // imports for any cross-module reads the factory body needs.
-    //
-    // Relocated support declarations are cloned into their owner from the
-    // shared source items; the same declaration may still occupy an entry
-    // slot. Record every relocated binding so entry emission drops the
-    // duplicate and re-imports the owner's single mutable copy instead of
-    // silently forking the state.
-    let mut entry_duplicate_declarations: HashSet<BindingId> = HashSet::default();
-    let source_module_items = &module.body;
-    if !merged_factories.is_empty() {
-        for module in &mut modules {
-            let Some(factories) = merged_factories.remove(&module.filename) else {
-                continue;
-            };
-            let (
-                mut extra_imports,
-                extra_external_imports,
-                extra_owned_bindings,
-                merged_init_bodies,
-            ) = {
-                let current_binding_filename_by_atom =
-                    atom_to_filename_binding_map(&binding_to_filename);
-                let merged_ref_resolver = MergedRefResolver {
-                    binding_to_filename: &binding_to_filename,
-                    binding_filename_by_atom: &current_binding_filename_by_atom,
-                    external_imports: &external_imports,
-                    external_import_by_atom: &external_import_by_atom,
-                    top_level_decl_indices: &top_level_decl_indices,
-                };
-                let mut extra_imports: HashMap<String, Vec<Atom>> = HashMap::default();
-                let mut extra_external_imports: HashSet<BindingId> = HashSet::default();
-                let mut extra_owned_bindings: HashSet<BindingId> = factory_owned_bindings
-                    .get(&module.filename)
-                    .cloned()
-                    .unwrap_or_default();
-                let mut merged_init_bodies: Vec<(Atom, Option<CjsFactoryParams>, Vec<Stmt>)> =
-                    Vec::new();
-
-                let already_imported = module_already_imports
-                    .get(&module.filename)
-                    .cloned()
-                    .unwrap_or_default();
-
-                for mf in factories {
-                    for write_binding in &mf.write_bindings {
-                        let owned_binding = top_level_decl_binding_by_atom
-                            .get(&write_binding.0)
-                            .unwrap_or(write_binding);
-                        if binding_to_filename
-                            .get(owned_binding)
-                            .is_some_and(|filename| filename == &module.filename)
-                            && top_level_decl_indices.contains_key(owned_binding)
-                        {
-                            extra_owned_bindings.insert(owned_binding.clone());
-                        }
-                    }
-                    for ref_binding in &mf.referenced_bindings {
-                        if mf.write_bindings.contains(ref_binding) {
-                            continue;
-                        }
-                        if already_imported.contains(ref_binding) {
-                            continue;
-                        }
-                        match merged_ref_resolver.resolve(ref_binding, &module.filename) {
-                            MergedRefTarget::Import { filename, atom } => {
-                                extra_imports.entry(filename).or_default().push(atom);
-                            }
-                            MergedRefTarget::External(binding) => {
-                                extra_external_imports.insert(binding);
-                            }
-                            MergedRefTarget::Owned => {
-                                extra_owned_bindings.insert(ref_binding.clone());
-                            }
-                            MergedRefTarget::SameModule | MergedRefTarget::Unresolved => {}
-                        }
-                    }
-                    merged_init_bodies.push((mf.var_name, mf.cjs_params, mf.stmts));
-                }
-
-                let mut changed = true;
-                while changed {
-                    changed = false;
-                    let owned_bindings: Vec<BindingId> =
-                        extra_owned_bindings.iter().cloned().collect();
-                    for owned_binding in owned_bindings {
-                        for ref_binding in top_level_decl_references
-                            .get(&owned_binding)
-                            .into_iter()
-                            .flatten()
-                        {
-                            if extra_owned_bindings.contains(ref_binding)
-                                || already_imported.contains(ref_binding)
-                            {
-                                continue;
-                            }
-                            match merged_ref_resolver.resolve(ref_binding, &module.filename) {
-                                MergedRefTarget::Import { filename, atom } => {
-                                    extra_imports.entry(filename).or_default().push(atom);
-                                }
-                                MergedRefTarget::External(binding) => {
-                                    extra_external_imports.insert(binding);
-                                }
-                                MergedRefTarget::Owned => {
-                                    extra_owned_bindings.insert(ref_binding.clone());
-                                    changed = true;
-                                }
-                                MergedRefTarget::SameModule | MergedRefTarget::Unresolved => {}
-                            }
-                        }
-                    }
-                }
-                (
-                    extra_imports,
-                    extra_external_imports,
-                    extra_owned_bindings,
-                    merged_init_bodies,
-                )
-            };
-
-            // `extra_owned_bindings` is the complete support-declaration
-            // closure discovered for the merged factory body. These bindings
-            // used to live in the standalone factory file, so move and export
-            // them from the scope owner as part of the same relocation.
-            for owned_binding in &extra_owned_bindings {
-                binding_to_filename.insert(owned_binding.clone(), module.filename.clone());
-                factory_owned_bindings
-                    .entry(module.filename.clone())
-                    .or_default()
-                    .insert(owned_binding.clone());
-            }
-
-            let mut import_items: Vec<ModuleItem> = Vec::new();
-            let mut merged_local_atoms = module_local_atoms
-                .get(&module.filename)
-                .cloned()
-                .unwrap_or_default();
-            merged_local_atoms.extend(
-                binding_to_filename
-                    .iter()
-                    .filter(|(_, filename)| *filename == &module.filename)
-                    .map(|((atom, _), _)| atom.clone()),
-            );
-            merged_local_atoms.extend(extra_owned_bindings.iter().map(|(atom, _)| atom.clone()));
-            let mut external_imports_sorted: Vec<BindingId> =
-                extra_external_imports.into_iter().collect();
-            external_imports_sorted.sort_by(|a, b| a.0.cmp(&b.0));
-            for binding in external_imports_sorted {
-                if merged_local_atoms.contains(&binding.0) {
-                    continue;
-                }
-                if let Some(import) = external_imports.get(&binding) {
-                    import_items.push(make_external_import_stmt(import));
-                }
-            }
-            let mut source_filenames: Vec<String> = extra_imports.keys().cloned().collect();
-            source_filenames.sort();
-            if let Some(referenced_atoms) = module_referenced_atoms.get(&module.filename) {
-                augment_imports_with_referenced_atoms_for_existing_sources(
-                    &mut extra_imports,
-                    &module.filename,
-                    referenced_atoms,
-                    &binding_filename_by_atom,
-                    Some(&merged_local_atoms),
-                );
-                source_filenames = extra_imports.keys().cloned().collect();
-                source_filenames.sort();
-            }
-            for source_filename in source_filenames {
-                let names = extra_imports.get_mut(&source_filename).unwrap();
-                names.retain(|name| !merged_local_atoms.contains(name));
-                names.sort();
-                names.dedup();
-                if names.is_empty() {
-                    continue;
-                }
-                let rel_path = relative_import_path(&module.filename, &source_filename);
-                import_items.push(make_named_import_stmt(names, &rel_path));
-            }
-
-            let module_factory_owned = factory_owned_bindings
-                .get(&module.filename)
-                .cloned()
-                .unwrap_or_default();
-            // Reference analysis is binding-granular, so emission must be too.
-            // Group first because multiple adopted bindings can share one
-            // mixed declaration; filtering each independently and deduping by
-            // item index would arbitrarily discard all but one binding.
-            let mut extra_owned_atoms_by_index: HashMap<usize, HashSet<Atom>> = HashMap::default();
-            for binding in extra_owned_bindings.into_iter().filter(|binding| {
-                module_factory_owned.contains(binding)
-                    || module_local_atoms
-                        .get(&module.filename)
-                        .is_none_or(|local_atoms| !local_atoms.contains(&binding.0))
-            }) {
-                if let Some(index) = top_level_decl_indices.get(&binding) {
-                    extra_owned_atoms_by_index
-                        .entry(*index)
-                        .or_default()
-                        .insert(binding.0.clone());
-                    entry_duplicate_declarations.insert(binding);
-                }
-            }
-            let mut extra_owned_items: Vec<(usize, ModuleItem)> = extra_owned_atoms_by_index
-                .into_iter()
-                .filter_map(|(index, owned_atoms)| {
-                    filter_item_to_owned_bindings(&source_module_items[index], &owned_atoms)
-                        .map(|item| (index, item))
-                })
-                .collect();
-            extra_owned_items.sort_by_key(|(index, _)| *index);
-            let body_items: Vec<ModuleItem> = import_items
-                .into_iter()
-                .chain(extra_owned_items.into_iter().map(|(_, item)| item))
-                .chain(factory_owned_export_items(
-                    &module.filename,
-                    &factory_owned_bindings,
-                ))
-                .collect();
-            let extra_code = emit_items(body_items, module.filename.clone(), cm.clone(), positions);
-            module.code.push('\n');
-            module.append_mapped(extra_code);
-            let mut reserved_helper_atoms = merged_local_atoms;
-            reserved_helper_atoms
-                .extend(merged_init_bodies.iter().map(|(name, _, _)| name.clone()));
-            for (name, cjs_params, stmts) in merged_init_bodies {
-                module.append_mapped(emit_factory_function_code(
-                    &name,
-                    cjs_params.as_ref(),
-                    stmts,
-                    &mut reserved_helper_atoms,
-                    module.filename.clone(),
-                    cm.clone(),
-                    positions,
-                ));
-            }
-        }
+        demoted.extend(additions);
     }
 
-    let standalone_factory_write_bindings: HashSet<BindingId> = standalone_factories
+    let demoted_bindings: HashSet<BindingId> = ownership
+        .binding_to_filename
         .iter()
-        .flat_map(|factory| factory.write_bindings.iter().cloned())
+        .filter(|(_, filename)| demoted.contains(*filename))
+        .map(|(binding, _)| binding.clone())
         .collect();
-    let mut standalone_factory_group_order = Vec::new();
-    let mut standalone_factory_groups: HashMap<String, Vec<PendingFactory>> = HashMap::default();
+    let demoted_atoms: HashSet<Atom> = demoted_bindings
+        .iter()
+        .map(|(atom, _)| atom.clone())
+        .collect();
+    let demotion_safe = standalone_factories.iter().all(|factory| {
+        !demoted.contains(&factory.filename)
+            // A partially filtered mixed declaration already left a
+            // sibling in entry at the factory's own span.
+            || !remaining_entry_spans.contains(&(factory.span.lo.0, factory.span.hi.0))
+    }) && !merged_factories.values().flatten().any(|merged| {
+        merged
+            .referenced_bindings
+            .iter()
+            .any(|binding| demoted_bindings.contains(binding))
+    }) && !module_referenced_atoms
+        .values()
+        .any(|atoms| atoms.iter().any(|atom| demoted_atoms.contains(atom)));
+    demotion_safe.then_some(demoted)
+}
+
+/// Cancels the standalone split of every demoted group: its factories leave
+/// the standalone list and its ownership records are dropped. Returns the
+/// demoted factories, in factory order, for entry emission to restore.
+fn apply_demotion(
+    demoted: &HashSet<String>,
+    standalone_factories: &mut Vec<PendingFactory>,
+    ownership: &mut FactoryOwnership,
+) -> Vec<PendingFactory> {
+    let (demoted_factories, kept_factories): (Vec<_>, Vec<_>) =
+        std::mem::take(standalone_factories)
+            .into_iter()
+            .partition(|factory| demoted.contains(&factory.filename));
+    *standalone_factories = kept_factories;
+    ownership
+        .binding_to_filename
+        .retain(|_, filename| !demoted.contains(filename));
+    for filename in demoted {
+        ownership.factory_owned_bindings.remove(filename);
+        ownership.affected.remove(filename);
+    }
+    // Compatibility aliases share the lifetime of their canonical
+    // owner. A demoted owner is restored in entry, not emitted as a file.
+    ownership
+        .redirects
+        .retain(|_, canonical| !demoted.contains(canonical));
+    ownership
+        .relocated_writers
+        .retain(|filename, _| !demoted.contains(filename));
+    demoted_factories
+}
+
+/// Re-synthesizes demoted factories into the entry at their source positions
+/// so entry call sites stay after the definition.
+fn restore_demoted_factories(
+    remaining_entry: &mut Vec<ModuleItem>,
+    demoted_factories: Vec<PendingFactory>,
+) {
+    // The synthesized cache/guard joins the entry's top-level scope.
+    // Reserve every name the entry already declares or imports, plus
+    // the restored factory names, so the helper cannot shadow a `var`
+    // (silently skipping the body) or duplicate a lexical binding.
+    let mut reserved_entry_atoms: HashSet<Atom> = remaining_entry
+        .iter()
+        .flat_map(|item| {
+            module_item_declared_binding_ids(item)
+                .into_iter()
+                .chain(module_item_import_binding_ids(item))
+        })
+        .map(|(atom, _)| atom)
+        .collect();
+    reserved_entry_atoms.extend(
+        demoted_factories
+            .iter()
+            .map(|factory| factory.var_name.clone()),
+    );
+    let mut restored_items: Vec<(u32, ModuleItem)> = Vec::new();
+    for factory in demoted_factories {
+        // Body locals, parameters, and free references would
+        // shadow the helper inside the restored callable.
+        reserved_entry_atoms.extend(ident_atoms_in_stmts(&factory.body_stmts));
+        restored_items.extend(match &factory.cjs_params {
+            Some(cjs_params) => {
+                let cache = reserve_import_atom(
+                    &format!("__wakaru_{}_cache", factory.var_name).into(),
+                    &mut reserved_entry_atoms,
+                );
+                synthesize_entry_cjs_items(
+                    &factory.var_name,
+                    &cache,
+                    cjs_params,
+                    factory.body_stmts,
+                    factory.span,
+                )
+            }
+            None => {
+                let guard = reserve_import_atom(
+                    &format!("__wakaru_{}_initialized", factory.var_name).into(),
+                    &mut reserved_entry_atoms,
+                );
+                synthesize_entry_init_items(
+                    &factory.var_name,
+                    &guard,
+                    factory.body_stmts,
+                    factory.span,
+                )
+            }
+        });
+    }
+    for (position, item) in restored_items {
+        let index = remaining_entry
+            .iter()
+            .position(|existing| existing.span().lo.0 > position)
+            .unwrap_or(remaining_entry.len());
+        remaining_entry.insert(index, item);
+    }
+}
+
+/// Plans what every merged factory brings into its scope module.
+///
+/// Planning walks modules in output order and each module's adopted
+/// declarations become visible to the modules after it. Relocated support
+/// declarations are cloned into their owner from the shared source items; the
+/// same declaration may still occupy an entry slot. Every relocated binding
+/// is recorded so entry emission drops the duplicate and re-imports the
+/// owner's single mutable copy instead of silently forking the state.
+fn plan_merged_modules(
+    modules: &[UnpackedModule],
+    mut merged_factories: HashMap<String, Vec<MergedFactory>>,
+    index: &TopLevelIndex,
+    module_already_imports: &HashMap<String, HashSet<BindingId>>,
+    module_local_atoms: &HashMap<String, HashSet<Atom>>,
+    module_referenced_atoms: &HashMap<String, HashSet<Atom>>,
+    ownership: &mut FactoryOwnership,
+) -> Vec<MergedModulePlan> {
+    if merged_factories.is_empty() {
+        return Vec::new();
+    }
+    let binding_filename_by_atom = atom_to_filename_binding_map(&ownership.binding_to_filename);
+    let external_import_by_atom = atom_binding_map_from_keys(&index.external_imports);
+    let context = MergedPlanContext {
+        index,
+        external_import_by_atom: &external_import_by_atom,
+        module_already_imports,
+        module_local_atoms,
+        module_referenced_atoms,
+        pre_merge_binding_filename_by_atom: &binding_filename_by_atom,
+    };
+    let mut plans = Vec::new();
+    for (module_index, module) in modules.iter().enumerate() {
+        let Some(factories) = merged_factories.remove(&module.filename) else {
+            continue;
+        };
+        plans.push(plan_merged_module(
+            module_index,
+            &module.filename,
+            factories,
+            &context,
+            ownership,
+        ));
+    }
+    plans
+}
+
+/// Groups standalone factories by output file, in first-seen order.
+fn group_standalone_factories(
+    standalone_factories: Vec<PendingFactory>,
+) -> Vec<(String, Vec<PendingFactory>)> {
+    let mut group_order = Vec::new();
+    let mut groups: HashMap<String, Vec<PendingFactory>> = HashMap::default();
     for factory in standalone_factories {
-        if !standalone_factory_groups.contains_key(&factory.filename) {
-            standalone_factory_group_order.push(factory.filename.clone());
+        if !groups.contains_key(&factory.filename) {
+            group_order.push(factory.filename.clone());
         }
-        standalone_factory_groups
+        groups
             .entry(factory.filename.clone())
             .or_default()
             .push(factory);
     }
-
-    for group_filename in standalone_factory_group_order {
-        let factories = standalone_factory_groups
-            .remove(&group_filename)
-            .expect("standalone factory group should exist");
-        let relocated_writer_items = relocated_factory_writer_items
-            .remove(&group_filename)
-            .unwrap_or_default();
-        let group_id = factories[0].var_name.to_string();
-        let mut group_source_ranges: Vec<_> = factories
-            .iter()
-            .filter_map(|factory| span_byte_range(&cm, factory.span))
-            .collect();
-        let group_write_bindings: HashSet<BindingId> = factories
-            .iter()
-            .flat_map(|factory| factory.write_bindings.iter().cloned())
-            .collect();
-        let mut owned_prelude_items: Vec<(u32, ModuleItem)> = factory_owned_decl_items(
-            &group_filename,
-            &factory_owned_bindings,
-            &top_level_decl_indices,
-            &module.body,
-        )
+    group_order
         .into_iter()
-        .map(|item| (item.span().lo.0, item))
+        .map(|filename| {
+            let factories = groups
+                .remove(&filename)
+                .expect("standalone factory group should exist");
+            (filename, factories)
+        })
+        .collect()
+}
+
+/// Emits one standalone factory group: imports, owned support declarations
+/// and relocated writers, exports of owned state, then the init callables.
+fn emit_standalone_group(
+    group_filename: String,
+    factories: Vec<PendingFactory>,
+    source_items: &[ModuleItem],
+    index: &TopLevelIndex,
+    ownership: &FactoryOwnership,
+    cm: Lrc<SourceMap>,
+    positions: SourcePositions,
+) -> UnpackedModule {
+    let binding_to_filename = &ownership.binding_to_filename;
+    let factory_owned_bindings = &ownership.factory_owned_bindings;
+    let relocated_writer_items: &[TopLevelWriterItem] = ownership
+        .relocated_writers
+        .get(&group_filename)
+        .map_or(&[], Vec::as_slice);
+    let group_id = factories[0].var_name.to_string();
+    let mut group_source_ranges: Vec<_> = factories
+        .iter()
+        .filter_map(|factory| span_byte_range(&cm, factory.span))
         .collect();
-        owned_prelude_items.extend(relocated_writer_items.iter().map(|writer| {
-            let item = module.body[writer.source_index].clone();
-            (item.span().lo.0, item)
-        }));
-        owned_prelude_items.sort_by_key(|(position, _)| *position);
-        group_source_ranges.extend(spans_byte_ranges(
-            &cm,
-            owned_prelude_items.iter().map(|(_, item)| item.span()),
-        ));
-        let declared_owned_atoms: HashSet<Atom> = owned_prelude_items
+    let group_write_bindings: HashSet<BindingId> = factories
+        .iter()
+        .flat_map(|factory| factory.write_bindings.iter().cloned())
+        .collect();
+    let mut owned_prelude_items: Vec<(u32, ModuleItem)> = factory_owned_decl_items(
+        &group_filename,
+        factory_owned_bindings,
+        &index.decl_indices,
+        source_items,
+    )
+    .into_iter()
+    .map(|item| (item.span().lo.0, item))
+    .collect();
+    owned_prelude_items.extend(relocated_writer_items.iter().map(|writer| {
+        let item = source_items[writer.source_index].clone();
+        (item.span().lo.0, item)
+    }));
+    owned_prelude_items.sort_by_key(|(position, _)| *position);
+    group_source_ranges.extend(spans_byte_ranges(
+        &cm,
+        owned_prelude_items.iter().map(|(_, item)| item.span()),
+    ));
+    let declared_owned_atoms: HashSet<Atom> = owned_prelude_items
+        .iter()
+        .flat_map(|(_, item)| module_item_declared_binding_ids(item))
+        .map(|(atom, _)| atom)
+        .collect();
+    let owned_export_atoms: HashSet<Atom> = factory_owned_bindings
+        .get(&group_filename)
+        .into_iter()
+        .flat_map(|bindings| bindings.iter())
+        .map(|(atom, _)| atom.clone())
+        .collect();
+    let mut extended_referenced_bindings: HashSet<BindingId> = factories
+        .iter()
+        .flat_map(|factory| factory.referenced_bindings.iter().cloned())
+        .collect();
+    extended_referenced_bindings.extend(
+        relocated_writer_items
             .iter()
-            .flat_map(|(_, item)| module_item_declared_binding_ids(item))
-            .map(|(atom, _)| atom)
-            .collect();
-        let owned_export_atoms: HashSet<Atom> = factory_owned_bindings
-            .get(&group_filename)
-            .into_iter()
-            .flat_map(|bindings| bindings.iter())
-            .map(|(atom, _)| atom.clone())
-            .collect();
-        let mut extended_referenced_bindings: HashSet<BindingId> = factories
-            .iter()
-            .flat_map(|factory| factory.referenced_bindings.iter().cloned())
-            .collect();
-        extended_referenced_bindings.extend(
-            relocated_writer_items
-                .iter()
-                .flat_map(|writer| writer.referenced_bindings.iter().cloned()),
-        );
-        for owned_binding in factory_owned_bindings
-            .get(&group_filename)
-            .into_iter()
-            .flatten()
-        {
-            if let Some(references) = top_level_decl_references.get(owned_binding) {
-                extended_referenced_bindings.extend(references.iter().cloned());
-            }
+            .flat_map(|writer| writer.referenced_bindings.iter().cloned()),
+    );
+    for owned_binding in factory_owned_bindings
+        .get(&group_filename)
+        .into_iter()
+        .flatten()
+    {
+        if let Some(references) = index.decl_references.get(owned_binding) {
+            extended_referenced_bindings.extend(references.iter().cloned());
         }
+    }
 
-        let mut import_items: Vec<ModuleItem> = Vec::new();
-        let mut external_import_bindings: HashSet<BindingId> = HashSet::default();
-        let mut import_renames: Vec<BindingRename> = Vec::new();
+    let mut import_items: Vec<ModuleItem> = Vec::new();
+    let mut external_import_bindings: HashSet<BindingId> = HashSet::default();
+    let mut import_renames: Vec<BindingRename> = Vec::new();
 
-        if !binding_to_filename.is_empty() {
-            // Group factory's referenced bindings by source module filename.
-            let mut imports_by_source: HashMap<String, Vec<BindingId>> = HashMap::default();
-            let owned = factory_owned_bindings
-                .get(&group_filename)
-                .cloned()
-                .unwrap_or_default();
-            for ref_binding in &extended_referenced_bindings {
-                // Don't import bindings that this factory writes to.
-                if group_write_bindings.contains(ref_binding)
-                    || owned.contains(ref_binding)
-                    || declared_owned_atoms.contains(&ref_binding.0)
-                {
+    if !binding_to_filename.is_empty() {
+        // Group factory's referenced bindings by source module filename.
+        let mut imports_by_source: HashMap<String, Vec<BindingId>> = HashMap::default();
+        let owned = factory_owned_bindings
+            .get(&group_filename)
+            .cloned()
+            .unwrap_or_default();
+        for ref_binding in &extended_referenced_bindings {
+            // Don't import bindings that this factory writes to.
+            if group_write_bindings.contains(ref_binding)
+                || owned.contains(ref_binding)
+                || declared_owned_atoms.contains(&ref_binding.0)
+            {
+                continue;
+            }
+            if let Some(source_filename) = binding_to_filename.get(ref_binding) {
+                if source_filename == &group_filename {
                     continue;
                 }
-                if let Some(source_filename) = binding_to_filename.get(ref_binding) {
-                    if source_filename == &group_filename {
-                        continue;
-                    }
-                    imports_by_source
-                        .entry(source_filename.clone())
-                        .or_default()
-                        .push(ref_binding.clone());
-                } else if external_imports.contains_key(ref_binding) {
-                    external_import_bindings.insert(ref_binding.clone());
+                imports_by_source
+                    .entry(source_filename.clone())
+                    .or_default()
+                    .push(ref_binding.clone());
+            } else if index.external_imports.contains_key(ref_binding) {
+                external_import_bindings.insert(ref_binding.clone());
+            }
+        }
+        let mut reserved_import_atoms = declared_owned_atoms.clone();
+        reserved_import_atoms.extend(owned_export_atoms.iter().cloned());
+        reserved_import_atoms.extend(group_write_bindings.iter().map(|(atom, _)| atom.clone()));
+        let mut source_filenames: Vec<String> = imports_by_source.keys().cloned().collect();
+        source_filenames.sort();
+        for source_filename in source_filenames {
+            let bindings = imports_by_source.get_mut(&source_filename).unwrap();
+            bindings.sort_by(|a, b| a.0.cmp(&b.0));
+            bindings.dedup();
+            let mut names = Vec::new();
+            for binding in bindings {
+                let imported = binding.0.clone();
+                let local = reserve_import_atom(&imported, &mut reserved_import_atoms);
+                if local != imported {
+                    import_renames.push(BindingRename {
+                        old: binding.clone(),
+                        new: local.clone(),
+                    });
                 }
+                names.push((imported, local));
             }
-            let mut reserved_import_atoms = declared_owned_atoms.clone();
-            reserved_import_atoms.extend(owned_export_atoms.iter().cloned());
-            reserved_import_atoms.extend(group_write_bindings.iter().map(|(atom, _)| atom.clone()));
-            let mut source_filenames: Vec<String> = imports_by_source.keys().cloned().collect();
-            source_filenames.sort();
-            for source_filename in source_filenames {
-                let bindings = imports_by_source.get_mut(&source_filename).unwrap();
-                bindings.sort_by(|a, b| a.0.cmp(&b.0));
-                bindings.dedup();
-                let mut names = Vec::new();
-                for binding in bindings {
-                    let imported = binding.0.clone();
-                    let local = reserve_import_atom(&imported, &mut reserved_import_atoms);
-                    if local != imported {
-                        import_renames.push(BindingRename {
-                            old: binding.clone(),
-                            new: local.clone(),
-                        });
-                    }
-                    names.push((imported, local));
-                }
-                let rel_path = relative_import_path(&group_filename, &source_filename);
-                import_items.push(make_named_import_stmt_with_aliases(&names, &rel_path));
-            }
+            let rel_path = relative_import_path(&group_filename, &source_filename);
+            import_items.push(make_named_import_stmt_with_aliases(&names, &rel_path));
         }
-        let mut external_import_bindings: Vec<BindingId> =
-            external_import_bindings.into_iter().collect();
-        external_import_bindings.sort_by(|a, b| a.0.cmp(&b.0));
-        for binding in external_import_bindings {
-            if let Some(import) = external_imports.get(&binding) {
-                import_items.push(make_external_import_stmt(import));
-            }
+    }
+    let mut external_import_bindings: Vec<BindingId> =
+        external_import_bindings.into_iter().collect();
+    external_import_bindings.sort_by(|a, b| a.0.cmp(&b.0));
+    for binding in external_import_bindings {
+        if let Some(import) = index.external_imports.get(&binding) {
+            import_items.push(make_external_import_stmt(import));
         }
-
-        let mut body_items: Vec<ModuleItem> = import_items
-            .into_iter()
-            .chain(owned_prelude_items.into_iter().map(|(_, item)| item))
-            .chain(factory_owned_export_items(
-                &group_filename,
-                &factory_owned_bindings,
-            ))
-            .collect();
-        rename_bindings(&mut body_items, &import_renames);
-        let mut reserved_helper_atoms: HashSet<Atom> = body_items
-            .iter()
-            .flat_map(|item| {
-                module_item_declared_binding_ids(item)
-                    .into_iter()
-                    .chain(module_item_import_binding_ids(item))
-            })
-            .map(|(atom, _)| atom)
-            .collect();
-        reserved_helper_atoms.extend(owned_export_atoms.iter().cloned());
-        reserved_helper_atoms.extend(group_write_bindings.iter().map(|(atom, _)| atom.clone()));
-        reserved_helper_atoms.extend(factories.iter().map(|factory| factory.var_name.clone()));
-
-        let mut write_names: Vec<Atom> = group_write_bindings
-            .iter()
-            .filter(|binding| {
-                binding_to_filename
-                    .get(*binding)
-                    .is_some_and(|filename| filename == &group_filename)
-                    && !declared_owned_atoms.contains(&binding.0)
-            })
-            .map(|(atom, _)| atom.clone())
-            .collect();
-        write_names.sort();
-        write_names.dedup();
-
-        let mut code = MappedCode::default();
-        // Other modules may import and call this synthetic init function while
-        // this module is still evaluating through an ESM cycle. Keep the
-        // module-local storage it mutates before the exported callable wrapper,
-        // otherwise later VarDeclToLetConst can turn trailing `var` storage
-        // into TDZ-sensitive `let` declarations.
-        if !body_items.is_empty() {
-            code.push_mapped(emit_items(
-                body_items,
-                group_filename.clone(),
-                cm.clone(),
-                positions,
-            ));
-        }
-        if !write_names.is_empty() {
-            let names = write_names
-                .iter()
-                .map(|name| name.as_ref())
-                .collect::<Vec<_>>()
-                .join(", ");
-            code.push_str(&format!("export var {names};\n"));
-        }
-        for mut factory in factories {
-            rename_bindings(&mut factory.body_stmts, &import_renames);
-            let factory_body_stmts = std::mem::take(&mut factory.body_stmts);
-            code.push_mapped(emit_factory_function_code(
-                &factory.var_name,
-                factory.cjs_params.as_ref(),
-                factory_body_stmts,
-                &mut reserved_helper_atoms,
-                group_filename.clone(),
-                cm.clone(),
-                positions,
-            ));
-        }
-        modules.push(UnpackedModule {
-            id: group_id,
-            is_entry: false,
-            code: code.code,
-            filename: group_filename,
-            source_ranges: group_source_ranges,
-            inspection_context_ranges: Vec::new(),
-            source_input: String::new(),
-            generated_source_map: code.points,
-            verbatim_source_offset: None,
-            mapped_in_every_mode: false,
-        });
     }
 
-    let mut factory_redirects: Vec<(String, String)> = factory_filename_redirects
-        .iter()
-        .map(|(filename, canonical)| (filename.clone(), canonical.clone()))
+    let mut body_items: Vec<ModuleItem> = import_items
+        .into_iter()
+        .chain(owned_prelude_items.into_iter().map(|(_, item)| item))
+        .chain(factory_owned_export_items(
+            &group_filename,
+            factory_owned_bindings,
+        ))
         .collect();
-    factory_redirects.sort();
-    for (filename, canonical) in factory_redirects {
-        let specifier = relative_import_path(&filename, &canonical);
-        modules.push(UnpackedModule {
-            id: filename
-                .strip_suffix(".js")
-                .unwrap_or(&filename)
-                .to_string(),
-            is_entry: false,
-            code: format!("export * from \"{specifier}\";\n"),
-            filename,
-            source_ranges: Vec::new(),
-            inspection_context_ranges: Vec::new(),
-            source_input: String::new(),
-            generated_source_map: Vec::new(),
-            verbatim_source_offset: None,
-            mapped_in_every_mode: false,
-        });
-    }
+    rename_bindings(&mut body_items, &import_renames);
+    let mut reserved_helper_atoms: HashSet<Atom> = body_items
+        .iter()
+        .flat_map(|item| {
+            module_item_declared_binding_ids(item)
+                .into_iter()
+                .chain(module_item_import_binding_ids(item))
+        })
+        .map(|(atom, _)| atom)
+        .collect();
+    reserved_helper_atoms.extend(owned_export_atoms.iter().cloned());
+    reserved_helper_atoms.extend(group_write_bindings.iter().map(|(atom, _)| atom.clone()));
+    reserved_helper_atoms.extend(factories.iter().map(|factory| factory.var_name.clone()));
 
-    if !remaining_entry.is_empty() {
-        let affected_owned_bindings: HashSet<BindingId> = affected_factory_filenames
+    let mut write_names: Vec<Atom> = group_write_bindings
+        .iter()
+        .filter(|binding| {
+            binding_to_filename
+                .get(*binding)
+                .is_some_and(|filename| filename == &group_filename)
+                && !declared_owned_atoms.contains(&binding.0)
+        })
+        .map(|(atom, _)| atom.clone())
+        .collect();
+    write_names.sort();
+    write_names.dedup();
+
+    let mut code = MappedCode::default();
+    // Other modules may import and call this synthetic init function while
+    // this module is still evaluating through an ESM cycle. Keep the
+    // module-local storage it mutates before the exported callable wrapper,
+    // otherwise later VarDeclToLetConst can turn trailing `var` storage
+    // into TDZ-sensitive `let` declarations.
+    if !body_items.is_empty() {
+        code.push_mapped(emit_items(
+            body_items,
+            group_filename.clone(),
+            cm.clone(),
+            positions,
+        ));
+    }
+    if !write_names.is_empty() {
+        let names = write_names
             .iter()
-            .flat_map(|filename| {
-                factory_owned_bindings
-                    .get(filename)
-                    .into_iter()
-                    .flatten()
-                    .cloned()
-            })
-            .collect();
-        // Seed with every writer of relocated factory state — and with the
-        // written state bindings themselves. A passive state declaration
-        // (`var state;`) neither writes nor references anything, so the
-        // reference closure below never reaches it; leaving its entry copy
-        // behind while the owner declares and exports the same binding forks
-        // the mutable state silently.
-        let mut relocated_entry_bindings: HashSet<BindingId> = entry_duplicate_declarations;
-        for binding in &affected_owned_bindings {
-            // State assigned directly by a factory body has no support-writer
-            // edge; the factory group owns its declaration all the same.
-            if standalone_factory_write_bindings.contains(binding) {
-                relocated_entry_bindings.insert(binding.clone());
+            .map(|name| name.as_ref())
+            .collect::<Vec<_>>()
+            .join(", ");
+        code.push_str(&format!("export var {names};\n"));
+    }
+    for mut factory in factories {
+        rename_bindings(&mut factory.body_stmts, &import_renames);
+        let factory_body_stmts = std::mem::take(&mut factory.body_stmts);
+        code.push_mapped(emit_factory_function_code(
+            &factory.var_name,
+            factory.cjs_params.as_ref(),
+            factory_body_stmts,
+            &mut reserved_helper_atoms,
+            group_filename.clone(),
+            cm.clone(),
+            positions,
+        ));
+    }
+    UnpackedModule {
+        id: group_id,
+        is_entry: false,
+        code: code.code,
+        filename: group_filename,
+        source_ranges: group_source_ranges,
+        inspection_context_ranges: Vec::new(),
+        source_input: String::new(),
+        generated_source_map: code.points,
+        verbatim_source_offset: None,
+        mapped_in_every_mode: false,
+    }
+}
+
+/// Compatibility files for writer-group members that are not canonical: each
+/// re-exports its canonical group file.
+fn redirect_stub_modules(redirects: &HashMap<String, String>) -> Vec<UnpackedModule> {
+    let mut factory_redirects: Vec<(&String, &String)> = redirects.iter().collect();
+    factory_redirects.sort();
+    factory_redirects
+        .into_iter()
+        .map(|(filename, canonical)| {
+            let specifier = relative_import_path(filename, canonical);
+            UnpackedModule {
+                id: filename.strip_suffix(".js").unwrap_or(filename).to_string(),
+                is_entry: false,
+                code: format!("export * from \"{specifier}\";\n"),
+                filename: filename.clone(),
+                source_ranges: Vec::new(),
+                inspection_context_ranges: Vec::new(),
+                source_input: String::new(),
+                generated_source_map: Vec::new(),
+                verbatim_source_offset: None,
+                mapped_in_every_mode: false,
             }
-            let written_state: Vec<BindingId> = top_level_decl_writes
-                .get(binding)
+        })
+        .collect()
+}
+
+/// Entry bindings whose declarations moved to a group and must be dropped
+/// from entry.js so the entry imports the group's single mutable copy.
+fn relocated_entry_bindings(
+    standalone_factory_write_bindings: &HashSet<BindingId>,
+    index: &TopLevelIndex,
+    ownership: &FactoryOwnership,
+) -> HashSet<BindingId> {
+    let affected_owned_bindings: HashSet<BindingId> = ownership
+        .affected
+        .iter()
+        .flat_map(|filename| {
+            ownership
+                .factory_owned_bindings
+                .get(filename)
                 .into_iter()
                 .flatten()
-                .filter(|written| {
-                    binding_to_filename
-                        .get(*written)
-                        .is_some_and(|filename| affected_factory_filenames.contains(filename))
-                })
                 .cloned()
-                .collect();
-            if written_state.is_empty() {
+        })
+        .collect();
+    // Seed with every writer of relocated factory state — and with the
+    // written state bindings themselves. A passive state declaration
+    // (`var state;`) neither writes nor references anything, so the
+    // reference closure below never reaches it; leaving its entry copy
+    // behind while the owner declares and exports the same binding forks
+    // the mutable state silently.
+    let mut relocated_entry_bindings = ownership.entry_duplicate_declarations.clone();
+    for binding in &affected_owned_bindings {
+        // State assigned directly by a factory body has no support-writer
+        // edge; the factory group owns its declaration all the same.
+        if standalone_factory_write_bindings.contains(binding) {
+            relocated_entry_bindings.insert(binding.clone());
+        }
+        let written_state: Vec<BindingId> = index
+            .decl_writes
+            .get(binding)
+            .into_iter()
+            .flatten()
+            .filter(|written| {
+                ownership
+                    .binding_to_filename
+                    .get(*written)
+                    .is_some_and(|filename| ownership.affected.contains(filename))
+            })
+            .cloned()
+            .collect();
+        if written_state.is_empty() {
+            continue;
+        }
+        relocated_entry_bindings.insert(binding.clone());
+        relocated_entry_bindings.extend(written_state);
+    }
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for binding in &affected_owned_bindings {
+            if relocated_entry_bindings.contains(binding)
+                || !index
+                    .decl_references
+                    .get(binding)
+                    .into_iter()
+                    .flatten()
+                    .any(|referenced| relocated_entry_bindings.contains(referenced))
+            {
                 continue;
             }
             relocated_entry_bindings.insert(binding.clone());
-            relocated_entry_bindings.extend(written_state);
+            changed = true;
         }
+    }
+    relocated_entry_bindings
+}
+
+/// Emits entry.js: the remaining top-level items plus restored demoted
+/// factories, without relocated declarations and writers, with imports
+/// repaired against the final owners.
+fn emit_entry(
+    mut remaining_entry: Vec<ModuleItem>,
+    demoted_factories: Vec<PendingFactory>,
+    standalone_factory_write_bindings: &HashSet<BindingId>,
+    index: &TopLevelIndex,
+    ownership: &FactoryOwnership,
+    cm: Lrc<SourceMap>,
+    positions: SourcePositions,
+) -> UnpackedModule {
+    restore_demoted_factories(&mut remaining_entry, demoted_factories);
+    let relocated_entry_bindings =
+        relocated_entry_bindings(standalone_factory_write_bindings, index, ownership);
+    if !relocated_entry_bindings.is_empty() {
+        let relocated_entry_atoms: HashSet<Atom> = relocated_entry_bindings
+            .iter()
+            .map(|(atom, _)| atom.clone())
+            .collect();
+        // Entry imports that still name any original file of an affected
+        // group, canonical or redirected, point at the relocated state.
+        let factory_import_specifiers: HashSet<String> = ownership
+            .affected_group_files()
+            .map(|filename| relative_import_path("entry.js", filename))
+            .collect();
+        remaining_entry = remaining_entry
+            .into_iter()
+            .filter_map(|item| {
+                if let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = &item {
+                    if import
+                        .src
+                        .value
+                        .as_str()
+                        .is_some_and(|source| factory_import_specifiers.contains(source))
+                    {
+                        return None;
+                    }
+                }
+                filter_item_excluding_bindings(
+                    &item,
+                    &relocated_entry_bindings,
+                    &relocated_entry_atoms,
+                )
+            })
+            .collect();
+    }
+    let relocated_factory_writer_spans: HashSet<(u32, u32)> = ownership
+        .relocated_writers
+        .values()
+        .flatten()
+        .map(|writer| (writer.span.lo.0, writer.span.hi.0))
+        .collect();
+    if !relocated_factory_writer_spans.is_empty() {
+        remaining_entry.retain(|item| {
+            !relocated_factory_writer_spans.contains(&(item.span().lo.0, item.span().hi.0))
+        });
+    }
+    let entry_ranges = spans_byte_ranges(&cm, remaining_entry.iter().map(|item| item.span()));
+    let remaining_entry = repair_entry_imports(remaining_entry, &ownership.binding_to_filename);
+    let entry_module = Module {
+        span: Default::default(),
+        body: remaining_entry,
+        shebang: None,
+    };
+    let code = emit_esm::emit_module(entry_module, "entry.js".to_string(), cm, positions);
+    UnpackedModule {
+        id: "entry".to_string(),
+        is_entry: true,
+        code: code.code,
+        filename: "entry.js".to_string(),
+        source_ranges: entry_ranges,
+        inspection_context_ranges: Vec::new(),
+        source_input: String::new(),
+        generated_source_map: code.points,
+        verbatim_source_offset: None,
+        mapped_in_every_mode: false,
+    }
+}
+
+/// A lazy init factory whose writes all belong to one scope module; its body
+/// is appended to that module instead of becoming a file of its own.
+struct MergedFactory {
+    var_name: Atom,
+    cjs_params: Option<CjsFactoryParams>,
+    stmts: Vec<Stmt>,
+    referenced_bindings: HashSet<BindingId>,
+    write_bindings: HashSet<BindingId>,
+}
+
+/// Read-only inputs for planning merged factories.
+struct MergedPlanContext<'a> {
+    index: &'a TopLevelIndex,
+    external_import_by_atom: &'a HashMap<Atom, BindingId>,
+    module_already_imports: &'a HashMap<String, HashSet<BindingId>>,
+    module_local_atoms: &'a HashMap<String, HashSet<Atom>>,
+    module_referenced_atoms: &'a HashMap<String, HashSet<Atom>>,
+    /// Binding owners by atom as they stood before any merged module adopted
+    /// declarations. Existing-source import augmentation reads this snapshot.
+    pre_merge_binding_filename_by_atom: &'a HashMap<Atom, (BindingId, String)>,
+}
+
+/// What one scope module receives from the factories merged into it.
+struct MergedModulePlan {
+    module_index: usize,
+    /// External imports to re-materialize, sorted by name.
+    external_imports: Vec<BindingId>,
+    /// Relative specifier and imported names, sorted by source filename.
+    named_imports: Vec<(String, Vec<Atom>)>,
+    /// Adopted support declarations: source item index and the binding names
+    /// the module keeps from it, in source order.
+    owned_items: Vec<(usize, HashSet<Atom>)>,
+    init_bodies: Vec<(Atom, Option<CjsFactoryParams>, Vec<Stmt>)>,
+    /// Names the synthesized init helpers must not shadow.
+    helper_reserved_atoms: HashSet<Atom>,
+}
+
+/// Plans the merged factories of one scope module and records the support
+/// declarations it adopts in the ownership tables, so later modules resolve
+/// those bindings to this module. Adopted declarations also go into
+/// `entry_duplicate_declarations` so the entry drops its copy.
+fn plan_merged_module(
+    module_index: usize,
+    filename: &str,
+    factories: Vec<MergedFactory>,
+    context: &MergedPlanContext<'_>,
+    ownership: &mut FactoryOwnership,
+) -> MergedModulePlan {
+    let index = context.index;
+    let (mut extra_imports, extra_external_imports, extra_owned_bindings, init_bodies) = {
+        let current_binding_filename_by_atom =
+            atom_to_filename_binding_map(&ownership.binding_to_filename);
+        let merged_ref_resolver = MergedRefResolver {
+            binding_to_filename: &ownership.binding_to_filename,
+            binding_filename_by_atom: &current_binding_filename_by_atom,
+            external_imports: &index.external_imports,
+            external_import_by_atom: context.external_import_by_atom,
+            top_level_decl_indices: &index.decl_indices,
+        };
+        let mut extra_imports: HashMap<String, Vec<Atom>> = HashMap::default();
+        let mut extra_external_imports: HashSet<BindingId> = HashSet::default();
+        let mut extra_owned_bindings: HashSet<BindingId> = ownership
+            .factory_owned_bindings
+            .get(filename)
+            .cloned()
+            .unwrap_or_default();
+        let mut init_bodies: Vec<(Atom, Option<CjsFactoryParams>, Vec<Stmt>)> = Vec::new();
+
+        let already_imported = context
+            .module_already_imports
+            .get(filename)
+            .cloned()
+            .unwrap_or_default();
+
+        for mf in factories {
+            for write_binding in &mf.write_bindings {
+                let owned_binding = index
+                    .decl_binding_by_atom
+                    .get(&write_binding.0)
+                    .unwrap_or(write_binding);
+                if ownership
+                    .binding_to_filename
+                    .get(owned_binding)
+                    .is_some_and(|owner| owner == filename)
+                    && index.decl_indices.contains_key(owned_binding)
+                {
+                    extra_owned_bindings.insert(owned_binding.clone());
+                }
+            }
+            for ref_binding in &mf.referenced_bindings {
+                if mf.write_bindings.contains(ref_binding) {
+                    continue;
+                }
+                if already_imported.contains(ref_binding) {
+                    continue;
+                }
+                match merged_ref_resolver.resolve(ref_binding, filename) {
+                    MergedRefTarget::Import { filename, atom } => {
+                        extra_imports.entry(filename).or_default().push(atom);
+                    }
+                    MergedRefTarget::External(binding) => {
+                        extra_external_imports.insert(binding);
+                    }
+                    MergedRefTarget::Owned => {
+                        extra_owned_bindings.insert(ref_binding.clone());
+                    }
+                    MergedRefTarget::SameModule | MergedRefTarget::Unresolved => {}
+                }
+            }
+            init_bodies.push((mf.var_name, mf.cjs_params, mf.stmts));
+        }
+
         let mut changed = true;
         while changed {
             changed = false;
-            for binding in &affected_owned_bindings {
-                if relocated_entry_bindings.contains(binding)
-                    || !top_level_decl_references
-                        .get(binding)
-                        .into_iter()
-                        .flatten()
-                        .any(|referenced| relocated_entry_bindings.contains(referenced))
+            let owned_bindings: Vec<BindingId> = extra_owned_bindings.iter().cloned().collect();
+            for owned_binding in owned_bindings {
+                for ref_binding in index
+                    .decl_references
+                    .get(&owned_binding)
+                    .into_iter()
+                    .flatten()
                 {
-                    continue;
+                    if extra_owned_bindings.contains(ref_binding)
+                        || already_imported.contains(ref_binding)
+                    {
+                        continue;
+                    }
+                    match merged_ref_resolver.resolve(ref_binding, filename) {
+                        MergedRefTarget::Import { filename, atom } => {
+                            extra_imports.entry(filename).or_default().push(atom);
+                        }
+                        MergedRefTarget::External(binding) => {
+                            extra_external_imports.insert(binding);
+                        }
+                        MergedRefTarget::Owned => {
+                            extra_owned_bindings.insert(ref_binding.clone());
+                            changed = true;
+                        }
+                        MergedRefTarget::SameModule | MergedRefTarget::Unresolved => {}
+                    }
                 }
-                relocated_entry_bindings.insert(binding.clone());
-                changed = true;
             }
         }
-        if !relocated_entry_bindings.is_empty() {
-            let relocated_entry_atoms: HashSet<Atom> = relocated_entry_bindings
-                .iter()
-                .map(|(atom, _)| atom.clone())
-                .collect();
-            let factory_import_specifiers: HashSet<String> = affected_original_factory_filenames
-                .iter()
-                .map(|filename| relative_import_path("entry.js", filename))
-                .collect();
-            remaining_entry = remaining_entry
-                .into_iter()
-                .filter_map(|item| {
-                    if let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = &item {
-                        if import
-                            .src
-                            .value
-                            .as_str()
-                            .is_some_and(|source| factory_import_specifiers.contains(source))
-                        {
-                            return None;
-                        }
-                    }
-                    filter_item_excluding_bindings(
-                        &item,
-                        &relocated_entry_bindings,
-                        &relocated_entry_atoms,
-                    )
-                })
-                .collect();
-        }
-        if !relocated_factory_writer_spans.is_empty() {
-            remaining_entry.retain(|item| {
-                !relocated_factory_writer_spans.contains(&(item.span().lo.0, item.span().hi.0))
-            });
-        }
-        let entry_ranges = spans_byte_ranges(&cm, remaining_entry.iter().map(|item| item.span()));
-        let remaining_entry = repair_entry_imports(remaining_entry, &binding_to_filename);
-        let entry_module = Module {
-            span: Default::default(),
-            body: remaining_entry,
-            shebang: None,
-        };
-        let code = emit_esm::emit_module(entry_module, "entry.js".to_string(), cm, positions);
-        modules.push(UnpackedModule {
-            id: "entry".to_string(),
-            is_entry: true,
-            code: code.code,
-            filename: "entry.js".to_string(),
-            source_ranges: entry_ranges,
-            inspection_context_ranges: Vec::new(),
-            source_input: String::new(),
-            generated_source_map: code.points,
-            verbatim_source_offset: None,
-            mapped_in_every_mode: false,
-        });
+        (
+            extra_imports,
+            extra_external_imports,
+            extra_owned_bindings,
+            init_bodies,
+        )
+    };
+
+    // `extra_owned_bindings` is the complete support-declaration closure
+    // discovered for the merged factory body. These bindings used to live in
+    // the standalone factory file, so move and export them from the scope
+    // owner as part of the same relocation.
+    for owned_binding in &extra_owned_bindings {
+        ownership.own(owned_binding.clone(), filename);
     }
 
-    Some(UnpackResult::without_cycle_warnings(
-        modules,
-        BundleFormat::Esbuild,
-    ))
+    // Names the module declares once this merge lands.
+    let mut local_atoms = context
+        .module_local_atoms
+        .get(filename)
+        .cloned()
+        .unwrap_or_default();
+    local_atoms.extend(
+        ownership
+            .binding_to_filename
+            .iter()
+            .filter(|(_, owner)| owner.as_str() == filename)
+            .map(|((atom, _), _)| atom.clone()),
+    );
+    local_atoms.extend(extra_owned_bindings.iter().map(|(atom, _)| atom.clone()));
+
+    let mut external_imports: Vec<BindingId> = extra_external_imports.into_iter().collect();
+    external_imports.sort_by(|a, b| a.0.cmp(&b.0));
+    external_imports.retain(|binding| !local_atoms.contains(&binding.0));
+
+    if let Some(referenced_atoms) = context.module_referenced_atoms.get(filename) {
+        augment_imports_with_referenced_atoms_for_existing_sources(
+            &mut extra_imports,
+            filename,
+            referenced_atoms,
+            context.pre_merge_binding_filename_by_atom,
+            Some(&local_atoms),
+        );
+    }
+    let mut source_filenames: Vec<String> = extra_imports.keys().cloned().collect();
+    source_filenames.sort();
+    let mut named_imports = Vec::new();
+    for source_filename in source_filenames {
+        let mut names = extra_imports.remove(&source_filename).unwrap_or_default();
+        names.retain(|name| !local_atoms.contains(name));
+        names.sort();
+        names.dedup();
+        if names.is_empty() {
+            continue;
+        }
+        named_imports.push((relative_import_path(filename, &source_filename), names));
+    }
+
+    let module_factory_owned = ownership.factory_owned_bindings.get(filename);
+    let module_local = context.module_local_atoms.get(filename);
+    // Reference analysis is binding-granular, so emission must be too.
+    // Group first because multiple adopted bindings can share one mixed
+    // declaration; filtering each independently and deduping by item index
+    // would arbitrarily discard all but one binding.
+    let mut owned_atoms_by_index: HashMap<usize, HashSet<Atom>> = HashMap::default();
+    for binding in extra_owned_bindings.into_iter().filter(|binding| {
+        module_factory_owned.is_some_and(|owned| owned.contains(binding))
+            || module_local.is_none_or(|local_atoms| !local_atoms.contains(&binding.0))
+    }) {
+        if let Some(index) = index.decl_indices.get(&binding) {
+            owned_atoms_by_index
+                .entry(*index)
+                .or_default()
+                .insert(binding.0.clone());
+            ownership.entry_duplicate_declarations.insert(binding);
+        }
+    }
+    let mut owned_items: Vec<(usize, HashSet<Atom>)> = owned_atoms_by_index.into_iter().collect();
+    owned_items.sort_by_key(|(index, _)| *index);
+
+    let mut helper_reserved_atoms = local_atoms;
+    helper_reserved_atoms.extend(init_bodies.iter().map(|(name, _, _)| name.clone()));
+
+    MergedModulePlan {
+        module_index,
+        external_imports,
+        named_imports,
+        owned_items,
+        init_bodies,
+        helper_reserved_atoms,
+    }
+}
+
+/// Appends a planned merge to its scope module: synthesized imports, adopted
+/// declarations and their export, then the init callables.
+fn emit_merged_module_plan(
+    module: &mut UnpackedModule,
+    plan: MergedModulePlan,
+    source_items: &[ModuleItem],
+    external_imports: &HashMap<BindingId, ExternalImport>,
+    factory_owned_bindings: &HashMap<String, HashSet<BindingId>>,
+    cm: Lrc<SourceMap>,
+    positions: SourcePositions,
+) {
+    let MergedModulePlan {
+        external_imports: external_import_bindings,
+        named_imports,
+        owned_items,
+        init_bodies,
+        mut helper_reserved_atoms,
+        ..
+    } = plan;
+    let body_items: Vec<ModuleItem> = external_import_bindings
+        .iter()
+        .filter_map(|binding| external_imports.get(binding))
+        .map(make_external_import_stmt)
+        .chain(
+            named_imports
+                .iter()
+                .map(|(specifier, names)| make_named_import_stmt(names, specifier)),
+        )
+        .chain(owned_items.iter().filter_map(|(index, owned_atoms)| {
+            filter_item_to_owned_bindings(&source_items[*index], owned_atoms)
+        }))
+        .chain(factory_owned_export_items(
+            &module.filename,
+            factory_owned_bindings,
+        ))
+        .collect();
+    let extra_code = emit_items(body_items, module.filename.clone(), cm.clone(), positions);
+    module.code.push('\n');
+    module.append_mapped(extra_code);
+    for (name, cjs_params, stmts) in init_bodies {
+        module.append_mapped(emit_factory_function_code(
+            &name,
+            cjs_params.as_ref(),
+            stmts,
+            &mut helper_reserved_atoms,
+            module.filename.clone(),
+            cm.clone(),
+            positions,
+        ));
+    }
 }
 
 /// Where a merged-factory reference resolves when synthesizing the imports
@@ -7003,5 +7378,424 @@ use(JA, KA);
             Some(&vec![binding]),
             "self imports should still be ignored"
         );
+    }
+
+    fn test_binding(name: &str) -> BindingId {
+        (Atom::from(name), SyntaxContext::empty())
+    }
+
+    fn test_bindings(names: &[&str]) -> HashSet<BindingId> {
+        names.iter().map(|name| test_binding(name)).collect()
+    }
+
+    fn pending_factory(name: &str, referenced: &[&str], writes: &[&str]) -> PendingFactory {
+        PendingFactory {
+            binding: test_binding(name),
+            var_name: Atom::from(name),
+            filename: format!("{name}.js"),
+            cjs_params: None,
+            body_stmts: Vec::new(),
+            referenced_bindings: test_bindings(referenced),
+            write_bindings: test_bindings(writes),
+            span: DUMMY_SP,
+        }
+    }
+
+    #[test]
+    fn writer_groups_use_the_first_member_as_canonical_and_mark_only_writer_groups() {
+        let factories = vec![
+            // Writes state owned by a later factory: the group still takes
+            // the earlier member's file as canonical.
+            pending_factory("a", &[], &["c_state"]),
+            // Owns a support declaration whose body writes `b_state`.
+            pending_factory("b", &[], &[]),
+            pending_factory("c", &[], &[]),
+            // Writes only its own state: no redirect, but still a writer.
+            pending_factory("d", &[], &["d_state"]),
+            pending_factory("e", &[], &[]),
+            pending_factory("f", &[], &[]),
+        ];
+        let binding_to_filename: HashMap<BindingId, String> = [
+            ("c_state", "c.js"),
+            ("f_state", "f.js"),
+            ("d_state", "d.js"),
+        ]
+        .into_iter()
+        .map(|(binding, filename)| (test_binding(binding), filename.to_string()))
+        .collect();
+        let factory_owned_bindings: HashMap<String, HashSet<BindingId>> =
+            [("b.js".to_string(), test_bindings(&["b_support"]))]
+                .into_iter()
+                .collect();
+        let top_level_decl_writes: HashMap<BindingId, HashSet<BindingId>> =
+            [(test_binding("b_support"), test_bindings(&["f_state"]))]
+                .into_iter()
+                .collect();
+
+        let groups = union_writer_groups(
+            &factories,
+            &binding_to_filename,
+            &factory_owned_bindings,
+            &top_level_decl_writes,
+        );
+
+        let mut redirects: Vec<(&str, &str)> = groups
+            .redirects
+            .iter()
+            .map(|(member, canonical)| (member.as_str(), canonical.as_str()))
+            .collect();
+        redirects.sort_unstable();
+        assert_eq!(redirects, [("c.js", "a.js"), ("f.js", "b.js")]);
+        let mut affected: Vec<&str> = groups.affected.iter().map(String::as_str).collect();
+        affected.sort_unstable();
+        assert_eq!(affected, ["a.js", "b.js", "d.js"]);
+        assert_eq!(
+            canonical_factory_filename(&groups.redirects, "f.js"),
+            "b.js"
+        );
+        assert_eq!(
+            canonical_factory_filename(&groups.redirects, "e.js"),
+            "e.js"
+        );
+    }
+
+    #[test]
+    fn standalone_ownership_claims_direct_references_before_expanding_closures() {
+        // `a` reaches `shared` only through its support declaration, while
+        // `b` references it directly; the direct claim wins even though `a`
+        // comes first.
+        let factories = vec![
+            pending_factory(
+                "a",
+                &["a_support", "runtime", "global", "taken"],
+                &["a_state"],
+            ),
+            pending_factory("b", &["shared"], &[]),
+        ];
+        let helper_syms: HashSet<Atom> = [Atom::from("runtime")].into_iter().collect();
+        let factory_syms: HashSet<Atom> = [Atom::from("a"), Atom::from("b")].into_iter().collect();
+        let top_level_decl_indices: HashMap<BindingId, usize> = [
+            "a_state",
+            "a_support",
+            "shared",
+            "shared_dep",
+            "runtime",
+            "taken",
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, name)| (test_binding(name), index))
+        .collect();
+        let top_level_decl_references: HashMap<BindingId, HashSet<BindingId>> = [
+            (test_binding("a_support"), test_bindings(&["shared"])),
+            (test_binding("shared"), test_bindings(&["shared_dep"])),
+        ]
+        .into_iter()
+        .collect();
+        let filter = SupportClaimFilter {
+            helper_syms: &helper_syms,
+            factory_syms: &factory_syms,
+            top_level_decl_indices: &top_level_decl_indices,
+        };
+        let mut binding_to_filename: HashMap<BindingId, String> =
+            [(test_binding("taken"), "scope.js".to_string())]
+                .into_iter()
+                .collect();
+        let mut factory_owned_bindings = HashMap::default();
+
+        claim_standalone_ownership(
+            &factories,
+            &top_level_decl_references,
+            &filter,
+            &mut binding_to_filename,
+            &mut factory_owned_bindings,
+        );
+
+        let owner = |name: &str| {
+            binding_to_filename
+                .get(&test_binding(name))
+                .map(String::as_str)
+        };
+        assert_eq!(owner("a"), Some("a.js"));
+        assert_eq!(owner("a_state"), Some("a.js"));
+        assert_eq!(owner("a_support"), Some("a.js"));
+        assert_eq!(owner("shared"), Some("b.js"));
+        assert_eq!(owner("shared_dep"), Some("b.js"));
+        assert_eq!(owner("taken"), Some("scope.js"));
+        assert_eq!(owner("runtime"), None);
+        assert_eq!(owner("global"), None);
+        assert_eq!(
+            factory_owned_bindings.get("a.js"),
+            Some(&test_bindings(&["a_state", "a_support"]))
+        );
+        assert_eq!(
+            factory_owned_bindings.get("b.js"),
+            Some(&test_bindings(&["shared", "shared_dep"]))
+        );
+    }
+
+    #[test]
+    fn merged_module_plans_publish_adopted_declarations_to_later_modules() {
+        let merged = |name: &str, referenced: &[&str]| MergedFactory {
+            var_name: Atom::from(name),
+            cjs_params: None,
+            stmts: Vec::new(),
+            referenced_bindings: test_bindings(referenced),
+            write_bindings: HashSet::default(),
+        };
+        let index = TopLevelIndex {
+            decl_indices: [(test_binding("support"), 3)].into_iter().collect(),
+            decl_binding_by_atom: HashMap::default(),
+            decl_references: HashMap::default(),
+            decl_writes: HashMap::default(),
+            external_imports: HashMap::default(),
+        };
+        let empty_external_atoms = HashMap::default();
+        let empty_imports = HashMap::default();
+        let empty_local_atoms = HashMap::default();
+        let empty_referenced = HashMap::default();
+        let empty_owners = HashMap::default();
+        let context = MergedPlanContext {
+            index: &index,
+            external_import_by_atom: &empty_external_atoms,
+            module_already_imports: &empty_imports,
+            module_local_atoms: &empty_local_atoms,
+            module_referenced_atoms: &empty_referenced,
+            pre_merge_binding_filename_by_atom: &empty_owners,
+        };
+        let mut ownership = FactoryOwnership::new(HashMap::default());
+
+        let first = plan_merged_module(
+            0,
+            "first.js",
+            vec![merged("init_first", &["support"])],
+            &context,
+            &mut ownership,
+        );
+        let second = plan_merged_module(
+            1,
+            "second.js",
+            vec![merged("init_second", &["support"])],
+            &context,
+            &mut ownership,
+        );
+
+        assert_eq!(
+            first.owned_items,
+            vec![(3, [Atom::from("support")].into_iter().collect())]
+        );
+        assert!(first.named_imports.is_empty());
+        assert!(second.owned_items.is_empty());
+        assert_eq!(
+            second.named_imports,
+            vec![(
+                relative_import_path("second.js", "first.js"),
+                vec![Atom::from("support")]
+            )]
+        );
+        assert_eq!(
+            ownership
+                .binding_to_filename
+                .get(&test_binding("support"))
+                .map(String::as_str),
+            Some("first.js")
+        );
+        assert_eq!(
+            ownership.entry_duplicate_declarations,
+            test_bindings(&["support"])
+        );
+        assert!(first
+            .helper_reserved_atoms
+            .contains(&Atom::from("init_first")));
+    }
+
+    fn empty_top_level_index() -> TopLevelIndex {
+        TopLevelIndex {
+            decl_indices: HashMap::default(),
+            decl_binding_by_atom: HashMap::default(),
+            decl_references: HashMap::default(),
+            decl_writes: HashMap::default(),
+            external_imports: HashMap::default(),
+        }
+    }
+
+    fn writer_item(
+        source_index: usize,
+        writes: &[&str],
+        declared: &[&str],
+        relocatable_shape: bool,
+    ) -> TopLevelWriterItem {
+        TopLevelWriterItem {
+            source_index,
+            write_targets: test_bindings(writes),
+            referenced_bindings: HashSet::default(),
+            declared_bindings: test_bindings(declared),
+            relocatable_shape,
+            span: DUMMY_SP,
+        }
+    }
+
+    #[test]
+    fn top_level_writers_relocate_join_or_request_demotion() {
+        GLOBALS.set(&Default::default(), || {
+            let module = super::super::parse_es_module(
+                "state = 1; function bump() { state++; } var copy = state = 2;",
+                "writers.js",
+                Default::default(),
+            )
+            .expect("fixture should parse");
+            let factories = vec![pending_factory("group", &[], &[])];
+            let mut ownership = FactoryOwnership::new(HashMap::default());
+            ownership.own(test_binding("state"), "group.js");
+            let index = empty_top_level_index();
+            let remaining_entry_spans: HashSet<(u32, u32)> =
+                [(DUMMY_SP.lo.0, DUMMY_SP.hi.0)].into_iter().collect();
+
+            let demotions = place_top_level_writers(
+                vec![
+                    // A plain statement moves with the state it writes.
+                    writer_item(0, &["state"], &[], true),
+                    // A stable function declaration joins the group.
+                    writer_item(1, &["state"], &["bump"], false),
+                    // A declaration of an entry binding cannot move.
+                    writer_item(2, &["state"], &["copy"], false),
+                ],
+                &module.body,
+                &remaining_entry_spans,
+                &factories,
+                &index,
+                &mut ownership,
+            );
+
+            assert_eq!(
+                demotions,
+                ["group.js".to_string()].into_iter().collect::<HashSet<_>>()
+            );
+            let relocated: Vec<usize> = ownership.relocated_writers["group.js"]
+                .iter()
+                .map(|writer| writer.source_index)
+                .collect();
+            assert_eq!(relocated, [0]);
+            assert_eq!(
+                ownership.factory_owned_bindings["group.js"],
+                test_bindings(&["state", "bump"])
+            );
+            assert!(ownership.affected.contains("group.js"));
+        });
+    }
+
+    #[test]
+    fn demotion_cascades_to_dependent_groups_and_refuses_merged_dependents() {
+        let factories = vec![
+            pending_factory("provider", &[], &[]),
+            pending_factory("consumer", &["provided"], &[]),
+            pending_factory("unrelated", &[], &[]),
+        ];
+        let mut ownership = FactoryOwnership::new(HashMap::default());
+        ownership.own(test_binding("provided"), "provider.js");
+        let index = empty_top_level_index();
+        let requested: HashSet<String> = ["provider.js".to_string()].into_iter().collect();
+        let no_merged = HashMap::default();
+        let no_scope_refs = HashMap::default();
+        let no_entry_spans = HashSet::default();
+
+        let demoted = plan_demotion(
+            requested.clone(),
+            &factories,
+            &no_merged,
+            &no_scope_refs,
+            &no_entry_spans,
+            &index,
+            &ownership,
+        )
+        .expect("only standalone groups depend on the demoted binding");
+        let mut demoted: Vec<&str> = demoted.iter().map(String::as_str).collect();
+        demoted.sort_unstable();
+        assert_eq!(demoted, ["consumer.js", "provider.js"]);
+
+        let merged_dependent: HashMap<String, Vec<MergedFactory>> = [(
+            "scope.js".to_string(),
+            vec![MergedFactory {
+                var_name: Atom::from("init_scope"),
+                cjs_params: None,
+                stmts: Vec::new(),
+                referenced_bindings: test_bindings(&["provided"]),
+                write_bindings: HashSet::default(),
+            }],
+        )]
+        .into_iter()
+        .collect();
+        assert!(plan_demotion(
+            requested,
+            &factories,
+            &merged_dependent,
+            &no_scope_refs,
+            &no_entry_spans,
+            &index,
+            &ownership,
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn demoted_factories_return_to_their_source_position_with_fresh_guards() {
+        GLOBALS.set(&Default::default(), || {
+            let module = super::super::parse_es_module(
+                "var before = 1; var __wakaru_init_initialized = 0; var after = 2;",
+                "demoted.js",
+                Default::default(),
+            )
+            .expect("fixture should parse");
+            let mut remaining_entry = module.body.clone();
+            let mut factory = pending_factory("init", &[], &[]);
+            factory.span = Span::new(module.body[1].span().hi, module.body[2].span().lo);
+
+            restore_demoted_factories(&mut remaining_entry, vec![factory]);
+
+            let declared: Vec<Vec<String>> = remaining_entry
+                .iter()
+                .map(|item| {
+                    module_item_declared_binding_ids(item)
+                        .into_iter()
+                        .map(|(atom, _)| atom.to_string())
+                        .collect()
+                })
+                .collect();
+            let first_restored = 2;
+            let last_restored = declared.len() - 2;
+            assert_eq!(
+                declared[..first_restored],
+                [vec!["before"], vec!["__wakaru_init_initialized"]]
+            );
+            assert_eq!(declared[declared.len() - 1], ["after"]);
+            let restored: Vec<&String> = declared[first_restored..=last_restored]
+                .iter()
+                .flatten()
+                .collect();
+            assert!(restored.iter().any(|name| name.as_str() == "init"));
+            assert!(restored
+                .iter()
+                .any(|name| name.starts_with("__wakaru_init_initialized")
+                    && name.as_str() != "__wakaru_init_initialized"));
+        });
+    }
+
+    #[test]
+    fn affected_group_files_include_redirected_members_only_of_affected_groups() {
+        let mut ownership = FactoryOwnership::new(HashMap::default());
+        ownership.affected.insert("writer.js".to_string());
+        ownership
+            .redirects
+            .insert("writer_member.js".to_string(), "writer.js".to_string());
+        ownership
+            .redirects
+            .insert("plain_member.js".to_string(), "plain.js".to_string());
+
+        let mut files: Vec<&str> = ownership
+            .affected_group_files()
+            .map(String::as_str)
+            .collect();
+        files.sort_unstable();
+        assert_eq!(files, ["writer.js", "writer_member.js"]);
     }
 }
