@@ -365,6 +365,31 @@ recovery is a separate, provenance-checked path and does not depend on this.
 Level: `standard` and above. `minimal` rewrites only chains whose substitutions
 are primitives by syntax, as for `string_coercion_hint`.
 
+### `call_result_exposes_argument_properties`
+
+`ObjMethodShorthand` keeps an object-literal function as a `function` expression
+when the same module constructs the matching property of a call result:
+
+```js
+var Word = extend({
+    init: function (hi, lo) { this.hi = hi; },
+    describe: function () { return this.hi; }
+});
+new Word.init(1, 2);
+```
+
+The AST does not prove that `extend` copies `init` onto its return value.
+CryptoJS `Base.extend` does (`mixIn`, then `subtype.init.prototype = subtype`).
+When the assumption is wrong, the property stays a function expression instead
+of becoming a method. That skips shorthand only; it does not introduce a
+`TypeError`. A spread argument does not establish the link. A property that is
+not constructed on that result still becomes a method. Construction of the
+property in another module is out of scope.
+
+Affects: `ObjMethodShorthand`, via the shared constructor-sensitivity set.
+
+Level: every level. The rule is `always_enabled`.
+
 ### `concat_arguments_are_arrays`
 
 Unknown arguments in an array-literal `.concat(...)` call are ordinary arrays,

@@ -355,3 +355,279 @@ const x = {123: function() {}};
     let output = apply(input);
     assert_eq_normalized(&output, input);
 }
+
+#[test]
+fn call_result_constructed_member_stays_function() {
+    // call_result_exposes_argument_properties: `new Word.init` constructs the
+    // `init` copied from the object passed to `extend`. Sibling methods are
+    // not constructed and stay eligible for shorthand.
+    let input = r#"
+function extend(props) {
+    return props;
+}
+var Word = extend({
+    init: function(hi, lo) {
+        this.hi = hi;
+    },
+    describe: function() {
+        return this.hi;
+    }
+});
+new Word.init(1, 2);
+"#;
+    let expected = r#"
+function extend(props) {
+    return props;
+}
+var Word = extend({
+    init: function(hi, lo) {
+        this.hi = hi;
+    },
+    describe() {
+        return this.hi;
+    }
+});
+new Word.init(1, 2);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn chained_assignment_call_result_constructed_member_stays_function() {
+    let input = r#"
+var ns = {};
+var c = ns.Word = extend({
+    init: function() {},
+    other: function() {}
+});
+new c.init();
+"#;
+    let expected = r#"
+var ns = {};
+var c = ns.Word = extend({
+    init: function() {},
+    other() {}
+});
+new c.init();
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn intermediate_binding_call_result_constructed_member_stays_function() {
+    // Binding-to-binding fixpoint must run before the member-alias step.
+    // `new d.init` reaches `ns.Word.init` via `d = c` and `c = ns.Word`.
+    let input = r#"
+var ns = {};
+var c = ns.Word = extend({
+    init: function() {},
+    other: function() {}
+});
+var d = c;
+new d.init();
+"#;
+    let expected = r#"
+var ns = {};
+var c = ns.Word = extend({
+    init: function() {},
+    other() {}
+});
+var d = c;
+new d.init();
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn wrapped_call_result_constructed_member_stays_function() {
+    let cases = [
+        (
+            r#"
+var Word = (sideEffect(), extend({
+    init: function() {},
+    other: function() {}
+}));
+new Word.init();
+"#,
+            r#"
+var Word = (sideEffect(), extend({
+    init: function() {},
+    other() {}
+}));
+new Word.init();
+"#,
+        ),
+        (
+            r#"
+var Word = (extend({
+    init: function() {},
+    other: function() {}
+}));
+new Word.init();
+"#,
+            r#"
+var Word = extend({
+    init: function() {},
+    other() {}
+});
+new Word.init();
+"#,
+        ),
+        (
+            r#"
+var Word = fallback || extend({
+    init: function() {},
+    other: function() {}
+});
+new Word.init();
+"#,
+            r#"
+var Word = fallback || extend({
+    init: function() {},
+    other() {}
+});
+new Word.init();
+"#,
+        ),
+    ];
+    for (input, expected) in cases {
+        assert_eq_normalized(&apply(input), expected);
+    }
+}
+
+#[test]
+fn call_result_without_construct_still_uses_method_shorthand() {
+    let input = r#"
+var Word = extend({
+    init: function() {},
+    other: function() {}
+});
+Word.init();
+"#;
+    let expected = r#"
+var Word = extend({
+    init() {},
+    other() {}
+});
+Word.init();
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn call_result_ident_argument_does_not_freeze_other_object() {
+    // The object is not a call argument, and nothing constructs `existing.init`.
+    let input = r#"
+const existing = {
+    init: function() {},
+    other: function() {}
+};
+var c = extend(existing);
+new c.init();
+"#;
+    let expected = r#"
+const existing = {
+    init() {},
+    other() {}
+};
+var c = extend(existing);
+new c.init();
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn spread_argument_does_not_link_call_result_members() {
+    let input = r#"
+var Word = extend(...items);
+var other = extend({
+    init: function() {},
+    other: function() {}
+});
+new Word.init();
+"#;
+    let expected = r#"
+var Word = extend(...items);
+var other = extend({
+    init() {},
+    other() {}
+});
+new Word.init();
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn computed_key_in_call_argument_does_not_freeze_siblings() {
+    let input = r#"
+var Word = extend({
+    [name]: function() {},
+    other: function() {}
+});
+new Word.init();
+"#;
+    let expected = r#"
+var Word = extend({
+    [name]: function() {},
+    other() {}
+});
+new Word.init();
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn nested_object_init_still_uses_method_shorthand() {
+    // The constructed `init` is the call-argument property. A nested object
+    // inside that function is a different value.
+    let input = r#"
+var Word = extend({
+    init: function() {
+        const box = {
+            init: function() {
+                return 1;
+            }
+        };
+        return box;
+    },
+    other: function() {}
+});
+new Word.init();
+"#;
+    let expected = r#"
+var Word = extend({
+    init: function() {
+        const box = {
+            init() {
+                return 1;
+            }
+        };
+        return box;
+    },
+    other() {}
+});
+new Word.init();
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn unconstructed_call_argument_still_uses_method_shorthand() {
+    // Another module may evaluate `new Word.init`. This module never does,
+    // so both properties stay eligible for method shorthand.
+    let input = r#"
+var Word = extend({
+    init: function() {},
+    other: function() {}
+});
+exportWord(Word);
+"#;
+    let expected = r#"
+var Word = extend({
+    init() {},
+    other() {}
+});
+exportWord(Word);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}

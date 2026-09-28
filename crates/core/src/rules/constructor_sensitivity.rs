@@ -727,6 +727,32 @@ fn collect_constructor_sensitive_values_with_roots(
         }
     }
 
+    // `new d.init` plus `d = c` and `c = ns.Word` reaches `ns.Word.init` only
+    // after the binding-to-binding fixpoint. Copy each sensitive suffix onto
+    // every member alias of its root, once. Do not enqueue those keys:
+    // `a = b.x; b = a.y` would otherwise grow without bound.
+    let member_snapshot = collector.sensitive.iter().cloned().collect::<Vec<_>>();
+    for key in member_snapshot {
+        if key.properties.is_empty() {
+            continue;
+        }
+        let binding = ValueKey {
+            root: key.root.clone(),
+            properties: Vec::new(),
+        };
+        let Some(sources) = sources_by_target.get(&binding) else {
+            continue;
+        };
+        for source in sources {
+            if source.properties.is_empty() {
+                continue;
+            }
+            let mut propagated = source.clone();
+            propagated.properties.extend(key.properties.iter().cloned());
+            collector.sensitive.insert(propagated);
+        }
+    }
+
     collector.sensitive
 }
 

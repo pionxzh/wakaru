@@ -177,6 +177,22 @@ fn visit_mut_value_expr(
         Expr::Object(object) => {
             visit_mut_object_value(object, key, force_constructor_sensitive, converter)
         }
+        // The call result is `K`. Argument objects are inputs, so they inherit
+        // `K` (a property `init` checks `K.init`) but not
+        // `force_constructor_sensitive`. A wrong
+        // `call_result_exposes_argument_properties` assumption only skips
+        // shorthand; it does not invent a TypeError.
+        Expr::Call(call) => {
+            call.callee.visit_mut_with(converter);
+            for arg in &mut call.args {
+                if arg.spread.is_some() || key.is_none() {
+                    arg.visit_mut_with(converter);
+                    continue;
+                }
+                visit_mut_value_expr(&mut arg.expr, key, false, converter);
+            }
+            call.type_args.visit_mut_with(converter);
+        }
         _ => expr.visit_mut_with(converter),
     }
 }
