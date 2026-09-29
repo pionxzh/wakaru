@@ -270,6 +270,7 @@ export type WakaruWarningKind =
     | "tdz_violation"
     | "duplicate_declaration"
     | "import_cycle"
+    | "cross_module_class_call"
     | "output_parse_recovered"
     | "output_parse_failed"
     | "formatter_failed";
@@ -357,6 +358,10 @@ mod tests {
                 "duplicate_declaration",
             ),
             (wakaru::DiagnosticCode::ImportCycle, "import_cycle"),
+            (
+                wakaru::DiagnosticCode::CrossModuleClassCall,
+                "cross_module_class_call",
+            ),
             (
                 wakaru::DiagnosticCode::OutputParseRecovered,
                 "output_parse_recovered",

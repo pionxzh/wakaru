@@ -499,9 +499,17 @@ and its instance/static superclass method calls. See
 [helper detection](helper-detection.md#typescript-default-inheritance) for
 recognition and rejection boundaries.
 
+In multi-module unpack, a base constructor that another module calls with
+`.call` / `.apply` becomes a class at `standard` only when that caller is
+predicted to become `class extends` with `super()`
+([fact system](fact-system.md#rules-that-read-facts)). A caller that stays a
+lowered function keeps its base a function, and a surviving call after a wrong
+prediction is reported as `cross_module_class_call`.
+
 Level: `standard` and above. `minimal` preserves this lowered constructor and
-wrapper. Other existing class recoveries have their own boundaries; this is
-not a claim that `minimal` preserves every lowered class.
+wrapper, and keeps every cross-module `.call` / `.apply` target a function.
+Other existing class recoveries have their own boundaries; this is not a claim
+that `minimal` preserves every lowered class.
 
 ### `commonjs_exports_data_properties`
 

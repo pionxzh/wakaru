@@ -102,6 +102,9 @@ pub(crate) fn diagnostic_from_core(
             DiagnosticCode::DuplicateDeclaration
         }
         wakaru_core::UnpackWarningKind::ImportCycle => DiagnosticCode::ImportCycle,
+        wakaru_core::UnpackWarningKind::CrossModuleClassCall => {
+            DiagnosticCode::CrossModuleClassCall
+        }
         wakaru_core::UnpackWarningKind::OutputParseRecovered => {
             DiagnosticCode::OutputParseRecovered
         }

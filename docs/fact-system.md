@@ -276,6 +276,10 @@ fact available to consumers.
   claims conversion leaves the original bug in place (base becomes a class, the
   consumer keeps `.call`). Keep the probe (`super_params_consumed_by_class_recovery`)
   in step with `UnEs6Class` and the spread rules that run before it.
+  `Minimal` makes no prediction: every cross-file `.call` / `.apply` target
+  stays a function. At `Standard` and above, the plan remembers definitions it
+  left unpinned only on a prediction; after Phase 2, a module that still calls
+  one of them gets a `cross_module_class_call` warning.
 
 - **`commonjs_default_object_composition`** — builds a monotone fixed point at
   the barrier. A provider seeds it only when the raw assignment is its sole

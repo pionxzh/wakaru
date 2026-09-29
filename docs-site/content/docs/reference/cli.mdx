@@ -132,6 +132,10 @@ With `--diagnostics`, conflicting emitted declarations (including `var` versus
 `let` or `const` across nested blocks) produce error-class warnings and a nonzero
 exit. Legal repeated `var` declarations and inner-scope shadowing are allowed.
 
+Unpack always reports a non-error `cross_module_class_call` warning when a
+module may call a recovered class without `new`. Rerun with `--level minimal`
+if the output must execute.
+
 ## Overwrite protection
 
 Wakaru refuses to overwrite existing files or write into a non-empty output

@@ -726,6 +726,21 @@ pub(super) fn unpack_multi_module_with_plan(
             drop(rules_span);
 
             let mut diag_warnings = input_parse_warnings;
+            // Import sources are still provisional here, so they resolve
+            // against the same fact keys the plan was built from.
+            for (source, imported) in call_required_plan_ref.mispredicted_calls(
+                facts_ref,
+                &unpacked.module.filename,
+                &module,
+            ) {
+                diag_warnings.push(UnpackWarning::new(
+                    &unpacked.module.filename,
+                    UnpackWarningKind::CrossModuleClassCall,
+                    format!(
+                        "`{imported}` from `{source}` is still invoked with .call/.apply, but it was expected to become super(); the provider may now be a class that cannot be called without `new`"
+                    ),
+                ));
+            }
 
             // Final, isolated remap: rewrite import-source strings that point
             // at modules renamed via recovered filenames. Runs after every

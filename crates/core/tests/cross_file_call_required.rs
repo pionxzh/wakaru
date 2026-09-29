@@ -5,7 +5,7 @@
 
 use wakaru_core::driver::test_support::{unpack_files, UnpackInput};
 use wakaru_core::rules::RewriteLevel;
-use wakaru_core::DecompileOptions;
+use wakaru_core::{DecompileOptions, UnpackWarningKind};
 
 fn class_iife(export_name: &str) -> String {
     format!(
@@ -36,7 +36,7 @@ fn unpack_at(
             source: (*source).to_string(),
         })
         .collect();
-    unpack_files(
+    let output = unpack_files(
         inputs,
         DecompileOptions {
             emit_source_map,
@@ -44,8 +44,17 @@ fn unpack_at(
             ..Default::default()
         },
     )
-    .expect("unpack should succeed")
-    .modules
+    .expect("unpack should succeed");
+    // Every case here is one the super() prediction handles. A surviving call
+    // to a predicted provider means the probe drifted from UnEs6Class.
+    let mispredicted = output
+        .warnings
+        .iter()
+        .filter(|warning| warning.kind == UnpackWarningKind::CrossModuleClassCall)
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    assert!(mispredicted.is_empty(), "{mispredicted:#?}");
+    output.modules
 }
 
 fn code<'a>(modules: &'a [(String, String)], name: &str) -> &'a str {
@@ -956,6 +965,35 @@ export { Child };
         code(&standard, "base.js").contains("class Foo"),
         "standard consumes the call:\n{}",
         code(&standard, "base.js")
+    );
+}
+
+#[test]
+fn minimal_pins_a_call_that_standard_rewrites_to_super() {
+    let base = class_iife("Foo");
+    let child = r#"
+import { __extends } from "tslib";
+import { Foo } from "./base.js";
+var Child = (function (_super) {
+    __extends(Child, _super);
+    function Child() { return _super.call(this) || this; }
+    Child.prototype.pong = function () { return 2; };
+    return Child;
+})(Foo);
+export { Child };
+"#;
+    let files = [("base.js", base.as_str()), ("child.js", child)];
+    let standard = unpack(&files, false);
+    assert!(
+        declares_class(code(&standard, "base.js"), "Foo"),
+        "standard predicts super() and recovers the base:\n{}",
+        code(&standard, "base.js")
+    );
+    let minimal = unpack_at(&files, false, RewriteLevel::Minimal);
+    assert!(
+        !declares_class(code(&minimal, "base.js"), "Foo"),
+        "minimal pins every cross-file call:\n{}",
+        code(&minimal, "base.js")
     );
 }
 

@@ -3670,6 +3670,7 @@ pub(crate) struct ConsumedSuperParam {
     pub blocked_by: Vec<Atom>,
 }
 
+/// Runs only at `Standard` and above; `Minimal` pins every cross-file call.
 pub(crate) fn super_params_consumed_by_class_recovery(
     items: &[ModuleItem],
     unresolved_mark: Mark,
@@ -3937,11 +3938,6 @@ fn substitute_converted_classes(
                 return None;
             }
             self.try_class(var).or_else(|| {
-                // Below Standard, argument-spread does not run, so `.call.apply`
-                // is not a super call yet.
-                if self.level < RewriteLevel::Standard {
-                    return None;
-                }
                 let mut normalized = var.clone();
                 normalize_super_call_apply(&mut normalized, self.level, self.unresolved_mark);
                 self.try_class(&normalized)
@@ -4115,9 +4111,6 @@ impl ConsumedSuperFinder<'_> {
     /// statement can still make `try_iife_to_class` keep the `.call`.
     fn recovered_super_param(&self, var: &VarDecl) -> Option<(BindingKey, BindingKey)> {
         let class = self.try_convert(var).or_else(|| {
-            if self.level < RewriteLevel::Standard {
-                return None;
-            }
             let mut normalized = var.clone();
             normalize_super_call_apply(&mut normalized, self.level, self.unresolved_mark);
             self.try_convert(&normalized)
@@ -4328,9 +4321,6 @@ fn normalize_super_call_apply(var: &mut VarDecl, level: RewriteLevel, unresolved
     });
     // Proven arrays (`arguments` copy loops, `var extra = [a, 1]`) are flattened
     // by the same pass that runs immediately before class recovery.
-    if level < RewriteLevel::Standard {
-        return;
-    }
     let mut module = Module {
         span: DUMMY_SP,
         body: vec![ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(

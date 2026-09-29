@@ -186,6 +186,9 @@ reachability sweep is desired.
 - Use `--diagnostics` to catch emitted declaration conflicts during decompile or
   unpack, including `var` versus `let`/`const`. A `duplicate_declaration` warning
   is an error even if `failed` is zero; legal repeated `var` declarations are allowed.
+- A `cross_module_class_call` warning (non-error) means that module may call a
+  recovered class without `new` at runtime. Rerun with `--level minimal` if the
+  output must execute.
 - `failed` in unpack JSON counts modules that errored during decompilation;
   `total` is the module count. Treat `failed > 0` as a failed run.
 - With `--vue-sfc`, `recovered_vue_sfc` means a `.vue` artifact was written;

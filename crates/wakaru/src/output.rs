@@ -224,6 +224,7 @@ pub enum DiagnosticCode {
     TdzViolation,
     DuplicateDeclaration,
     ImportCycle,
+    CrossModuleClassCall,
     OutputParseRecovered,
     OutputParseFailed,
 }
@@ -239,6 +240,7 @@ impl DiagnosticCode {
             Self::TdzViolation => "tdz_violation",
             Self::DuplicateDeclaration => "duplicate_declaration",
             Self::ImportCycle => "import_cycle",
+            Self::CrossModuleClassCall => "cross_module_class_call",
             Self::OutputParseRecovered => "output_parse_recovered",
             Self::OutputParseFailed => "output_parse_failed",
         }

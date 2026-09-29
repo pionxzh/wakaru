@@ -201,6 +201,9 @@ pub enum UnpackWarningKind {
     TdzViolation,
     DuplicateDeclaration,
     ImportCycle,
+    /// A module still calls an import with `.call`/`.apply` after the provider
+    /// was allowed to become a class on a predicted `super()` rewrite.
+    CrossModuleClassCall,
     OutputParseRecovered,
     OutputParseFailed,
 }
@@ -216,6 +219,7 @@ impl UnpackWarningKind {
             Self::TdzViolation => "tdz_violation",
             Self::DuplicateDeclaration => "duplicate_declaration",
             Self::ImportCycle => "import_cycle",
+            Self::CrossModuleClassCall => "cross_module_class_call",
             Self::OutputParseRecovered => "output_parse_recovered",
             Self::OutputParseFailed => "output_parse_failed",
         }
@@ -226,7 +230,10 @@ impl UnpackWarningKind {
     pub fn is_diagnostic(self) -> bool {
         matches!(
             self,
-            Self::InputParseRecovered | Self::TdzViolation | Self::ImportCycle
+            Self::InputParseRecovered
+                | Self::TdzViolation
+                | Self::ImportCycle
+                | Self::CrossModuleClassCall
         )
     }
 

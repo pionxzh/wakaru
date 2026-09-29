@@ -289,6 +289,14 @@ nested blocks. These are error-class `duplicate_declaration` warnings and make
 the command exit nonzero. Repeated `var` declarations and legal inner-scope
 shadowing do not count as conflicts.
 
+Unpack also reports a non-error `cross_module_class_call` warning, with or
+without `--diagnostics`, when a module still invokes an imported constructor
+with `.call`/`.apply` after the providing module was allowed to become a
+class because that call was expected to become `super()`. The named module may
+throw `Class constructor … cannot be invoked without 'new'` at runtime. Rerun
+with `--level minimal`, which keeps every cross-module `.call`/`.apply` target
+a function.
+
 ## Overwrite protection
 
 Wakaru refuses to overwrite existing files unless `--force` is passed.

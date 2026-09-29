@@ -26,6 +26,10 @@ use crate::utils::paren::strip_parens;
 pub(crate) struct CallRequiredPlan {
     /// Canonical module key → exported names that must stay callable.
     by_module: HashMap<String, HashSet<Atom>>,
+    /// Definitions left unpinned only because every call to them was predicted
+    /// to become `super()`. A call to one of these that survives Phase 2 means
+    /// the prediction was wrong.
+    predicted_consumed: HashSet<(String, Atom)>,
 }
 
 impl CallRequiredPlan {
@@ -105,11 +109,61 @@ impl CallRequiredPlan {
             }
         }
 
+        let predicted_consumed = soft
+            .iter()
+            .map(|edge| edge.provider.clone())
+            .filter(|provider| !pinned.contains(provider))
+            .collect();
         let mut by_module: HashMap<String, HashSet<Atom>> = HashMap::default();
         for (module, exported) in pinned {
             by_module.entry(module).or_default().insert(exported);
         }
-        Self { by_module }
+        Self {
+            by_module,
+            predicted_consumed,
+        }
+    }
+
+    /// `(source, imported)` of calls in the finished Phase 2 `module` that
+    /// resolve to a definition this plan left unpinned on a `super()`
+    /// prediction. Each one may be a class invoked without `new`.
+    pub(crate) fn mispredicted_calls(
+        &self,
+        facts: &ModuleFactsMap,
+        filename: &str,
+        module: &Module,
+    ) -> Vec<(Atom, Atom)> {
+        if self.predicted_consumed.is_empty() {
+            return Vec::new();
+        }
+        let imports = import_index(module);
+        if imports.is_empty() {
+            return Vec::new();
+        }
+        let remaining = call_edges(module, &imports, &HashMap::default());
+        if remaining.is_empty() {
+            return Vec::new();
+        }
+        let modules = ModuleIndex::new(facts);
+        let consumer = filename.strip_prefix("./").unwrap_or(filename);
+        let mut found = remaining
+            .into_iter()
+            .filter(|edge| {
+                resolve_imported_module(&modules, consumer, edge.source.as_ref())
+                    .and_then(|provider| {
+                        resolve_definition(
+                            &modules,
+                            &provider,
+                            edge.imported.clone(),
+                            &mut HashSet::default(),
+                        )
+                    })
+                    .is_some_and(|definition| self.predicted_consumed.contains(&definition))
+            })
+            .map(|edge| (edge.source, edge.imported))
+            .collect::<Vec<_>>();
+        found.sort();
+        found
     }
 
     pub(crate) fn pinned_exports(&self, filename: &str) -> Option<&HashSet<Atom>> {
@@ -154,8 +208,10 @@ pub(crate) fn collect_import_call_edges(
     // clones the module and reruns class matching; skip it when no import is a
     // callee at all, which is most modules.
     let no_consumed = HashMap::default();
-    if call_edges(module, &imports, &no_consumed).is_empty() {
-        return Vec::new();
+    let every_call_remains = call_edges(module, &imports, &no_consumed);
+    // Minimal does not predict class recovery: every cross-file call pins.
+    if every_call_remains.is_empty() || level < super::RewriteLevel::Standard {
+        return every_call_remains;
     }
     let mut consumed_by_param: HashMap<BindingKey, Vec<Atom>> = HashMap::default();
     for consumed in super_params_consumed_by_class_recovery(&module.body, unresolved_mark, level) {
@@ -667,5 +723,126 @@ fn resolve_definition(
             resolve_definition(modules, &next, exported, visited)
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::facts::{ExportFact, ExportKind};
+    use swc_core::common::{sync::Lrc, FileName, SourceMap, GLOBALS};
+    use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
+    use swc_core::ecma::transforms::base::resolver;
+    use swc_core::ecma::visit::VisitMutWith;
+
+    fn resolved(source: &str) -> Module {
+        let cm: Lrc<SourceMap> = Default::default();
+        let fm = cm.new_source_file(
+            FileName::Custom("child.js".into()).into(),
+            source.to_string(),
+        );
+        let lexer = Lexer::new(
+            Syntax::Es(EsSyntax::default()),
+            Default::default(),
+            StringInput::from(&*fm),
+            None,
+        );
+        let mut module = Parser::new_from(lexer)
+            .parse_module()
+            .expect("source should parse");
+        module.visit_mut_with(&mut resolver(Mark::new(), Mark::new(), false));
+        module
+    }
+
+    fn named_export(name: &str) -> ExportFact {
+        ExportFact {
+            exported: Atom::from(name),
+            local: Some(Atom::from(name)),
+            kind: ExportKind::Named,
+        }
+    }
+
+    /// `base.js` exports `Foo`; `child.js` exports `Child` and calls `Foo`
+    /// from an `extends` IIFE that Phase 1 predicted becomes `super()`.
+    fn predicted_facts(extra_child_edge: Option<ImportCallEdge>) -> ModuleFactsMap {
+        let mut facts = ModuleFactsMap::new();
+        facts.insert(
+            "base.js",
+            ModuleFacts {
+                exports: vec![named_export("Foo")],
+                ..Default::default()
+            },
+        );
+        let mut import_call_edges = vec![ImportCallEdge {
+            source: Atom::from("./base.js"),
+            imported: Atom::from("Foo"),
+            consumed_by_exports: Some(vec![Atom::from("Child")]),
+        }];
+        import_call_edges.extend(extra_child_edge);
+        facts.insert(
+            "child.js",
+            ModuleFacts {
+                exports: vec![named_export("Child")],
+                import_call_edges,
+                ..Default::default()
+            },
+        );
+        facts
+    }
+
+    const SURVIVING_CALL: &str = r#"
+import { Foo } from "./base.js";
+export function Child() { Foo.call(this); }
+"#;
+
+    #[test]
+    fn surviving_call_to_a_predicted_super_is_reported() {
+        GLOBALS.set(&Default::default(), || {
+            let facts = predicted_facts(None);
+            let plan = CallRequiredPlan::build(&facts);
+            assert!(plan.pinned_exports("base.js").is_none());
+            let module = resolved(SURVIVING_CALL);
+            assert_eq!(
+                plan.mispredicted_calls(&facts, "child.js", &module),
+                vec![(Atom::from("./base.js"), Atom::from("Foo"))]
+            );
+        });
+    }
+
+    #[test]
+    fn consumed_call_is_not_reported() {
+        GLOBALS.set(&Default::default(), || {
+            let facts = predicted_facts(None);
+            let plan = CallRequiredPlan::build(&facts);
+            let module = resolved(
+                r#"
+import { Foo } from "./base.js";
+export class Child extends Foo { constructor() { super(); } }
+"#,
+            );
+            assert!(plan
+                .mispredicted_calls(&facts, "child.js", &module)
+                .is_empty());
+        });
+    }
+
+    #[test]
+    fn surviving_call_to_a_pinned_provider_is_not_reported() {
+        GLOBALS.set(&Default::default(), || {
+            // A second, remaining call pins `Foo`, so the call is safe.
+            let facts = predicted_facts(Some(ImportCallEdge {
+                source: Atom::from("./base.js"),
+                imported: Atom::from("Foo"),
+                consumed_by_exports: None,
+            }));
+            let plan = CallRequiredPlan::build(&facts);
+            assert!(plan
+                .pinned_exports("base.js")
+                .is_some_and(|names| names.contains(&Atom::from("Foo"))));
+            let module = resolved(SURVIVING_CALL);
+            assert!(plan
+                .mispredicted_calls(&facts, "child.js", &module)
+                .is_empty());
+        });
     }
 }
