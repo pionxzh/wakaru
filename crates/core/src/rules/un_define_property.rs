@@ -39,7 +39,7 @@ use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::helper_matcher::{binding_key, BindingKey};
 use super::transpiler_helper_utils::{LocalHelperContext, TranspilerHelperKind};
-use super::RewriteLevel;
+use super::{RewriteLevel, UnBracketNotation};
 
 pub struct UnDefineProperty;
 
@@ -121,18 +121,21 @@ impl CallSiteRewriter<'_> {
         let key = call.args[1].expr.clone();
         let value = call.args[2].expr.clone();
 
-        // Build obj[key] = value
+        // Build obj[key] = value. This runs after the UnBracketNotation pass,
+        // so normalize a literal key here: obj["name"] → obj.name.
+        let mut member = MemberExpr {
+            span: DUMMY_SP,
+            obj,
+            prop: MemberProp::Computed(ComputedPropName {
+                span: DUMMY_SP,
+                expr: key,
+            }),
+        };
+        member.visit_mut_with(&mut UnBracketNotation);
         let new_expr = Expr::Assign(AssignExpr {
             span: DUMMY_SP,
             op: AssignOp::Assign,
-            left: AssignTarget::Simple(SimpleAssignTarget::Member(MemberExpr {
-                span: DUMMY_SP,
-                obj,
-                prop: MemberProp::Computed(ComputedPropName {
-                    span: DUMMY_SP,
-                    expr: key,
-                }),
-            })),
+            left: AssignTarget::Simple(SimpleAssignTarget::Member(member)),
             right: value,
         });
         *stmt = Stmt::Expr(ExprStmt {
@@ -175,13 +178,15 @@ impl CallSiteRewriter<'_> {
         // the value argument before their helper coerces `key`; a computed
         // property coerces `key` first. The known producer shape uses ordinary
         // primitive property keys, but minimal mode preserves the exact order.
+        let mut key = PropName::Computed(ComputedPropName {
+            span: DUMMY_SP,
+            expr: key,
+        });
+        key.visit_mut_with(&mut UnBracketNotation);
         *expr = Expr::Object(ObjectLit {
             span: DUMMY_SP,
             props: vec![PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
-                key: PropName::Computed(ComputedPropName {
-                    span: DUMMY_SP,
-                    expr: key,
-                }),
+                key,
                 value,
             })))],
         });

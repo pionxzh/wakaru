@@ -30,7 +30,7 @@ console.log(obj);
 "#;
     let expected = r#"
 const obj = {};
-obj["k"] = 1;
+obj.k = 1;
 console.log(obj);
 "#;
     assert_eq_normalized(&render(input), expected.trim());
@@ -55,8 +55,8 @@ console.log(r);
 "#;
     let expected = r#"
 let r;
-(r = {})["FETCH_START"] = (e) => ({ ...e, isLoading: true });
-r["FETCH_SUCCESS"] = (e, data) => ({ ...e, data });
+(r = {}).FETCH_START = (e) => ({ ...e, isLoading: true });
+r.FETCH_SUCCESS = (e, data) => ({ ...e, data });
 console.log(r);
 "#;
     assert_eq_normalized(&render(input), expected.trim());
@@ -191,7 +191,7 @@ console.log(obj);
 "#;
     let expected = r#"
 const obj = {};
-obj["k"] = 1;
+obj.k = 1;
 console.log(obj);
 "#;
     assert_eq_normalized(&render_rule(input, |_| UnDefineProperty), expected.trim());
@@ -207,7 +207,7 @@ console.log(obj);
 "#;
     let expected = r#"
 const obj = {};
-obj["k"] = 1;
+obj.k = 1;
 console.log(obj);
 "#;
     assert_eq_normalized(&render(input), expected);
@@ -427,4 +427,35 @@ export { c };
         !calls_typeof_helper || output.contains("function r("),
         "typeof helper is called but not declared:\n{output}"
     );
+}
+
+#[test]
+fn normalizes_literal_keys_it_synthesizes() {
+    // UnDefineProperty runs after UnBracketNotation, so it normalizes the
+    // keys it builds itself.
+    let input = r#"
+function a(e, t, n) {
+    if (t in e) {
+        Object.defineProperty(e, t, { value: n, enumerable: true, configurable: true, writable: true });
+    } else {
+        e[t] = n;
+    }
+    return e;
+}
+const obj = {};
+a(obj, "default", 1);
+a(obj, "1", 2);
+a(obj, "a-b", 3);
+a(obj, k, 4);
+use(a({}, "name", 5), a({}, "x-y", 6));
+"#;
+    let expected = r#"
+const obj = {};
+obj.default = 1;
+obj[1] = 2;
+obj["a-b"] = 3;
+obj[k] = 4;
+use({ name: 5 }, { ["x-y"]: 6 });
+"#;
+    assert_eq_normalized(&render(input), expected.trim());
 }

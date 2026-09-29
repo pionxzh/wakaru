@@ -1276,7 +1276,7 @@ class Foo {
     .code;
 
     assert!(
-        output.contains("this[\"value\"] = 1"),
+        output.contains("this.value = 1"),
         "minimal mode should preserve constructor assignment semantics: {output}"
     );
     assert!(
