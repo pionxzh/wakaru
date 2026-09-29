@@ -110,8 +110,8 @@ implementation lives in `crates/core/src/output_validate.rs`.
 ## Output Source Maps
 
 `scripts/sourcemap/check.mjs` measures an `--emit-source-map` result at token
-level. It needs Node; the first run installs its pinned parser packages into
-`target/repro-tools/`.
+level. It needs Node; the first run installs its pinned parser packages into the
+shared repro tool cache (`docs/testing.md`).
 
 ```bash
 wakaru input.js --emit-source-map -o out.js

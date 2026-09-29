@@ -34,6 +34,6 @@ shapes Wakaru must recover.
 By default the script asks Cargo to refresh `target/debug/wakaru(.exe)` once,
 then uses that binary for the matrix. Set `WAKARU` to test a specific binary.
 
-The Vue compiler package is installed under `target/repro-tools/`, so the first
-run may download `@vue/compiler-sfc` and Terser packages. The `target/`
-directory is ignored by git.
+The Vue compiler package is installed in the shared repro tool cache
+(`docs/testing.md`), so the first run may download `@vue/compiler-sfc` and
+Terser packages. The `target/` directory is ignored by git.

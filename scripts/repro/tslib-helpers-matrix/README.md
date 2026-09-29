@@ -20,7 +20,7 @@ and `esModuleInterop`, and selects one helper delivery mode:
 These are actual `ts.transpileModule` outputs, not rewritten helper spellings.
 Each profile runs raw, through Terser compression, and through compression plus
 name mangling. Mangled ESM imports also test renamed helper aliases. Compiler
-packages use the existing `target/repro-tools/` cache and refresh mechanism.
+packages use the shared repro tool cache and refresh mechanism.
 
 Every source is a module. Adding `importHelpers: true` to a script-only
 profile would silently retain inline helpers and miss the namespace bug.

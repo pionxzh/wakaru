@@ -1,4 +1,4 @@
-import { installNodeTool } from "./node-tool.mjs";
+import { installNodeTool, nodeToolDir, resolveReproToolsRoot } from "./node-tool.mjs";
 import { parseExactSpec, releaseDateCutoff, RESOLUTION_WINDOW_DAYS } from "./release-date.mjs";
 import { runNodeBatch } from "./tool-process.mjs";
 import { createHash } from "node:crypto";
@@ -22,6 +22,11 @@ const execHarnessPath = fileURLToPath(new URL("./exec-harness.mjs", import.meta.
 const decompileCache = new Map();
 const decompileKey = (level, source, wakaruArgs = []) => `${level}\0${wakaruArgs.join("\0")}\0${source}`;
 const refreshedNodeTools = new Set();
+let reproToolsRoot;
+function toolDir(name, markerText) {
+  reproToolsRoot ??= resolveReproToolsRoot(repoRoot);
+  return nodeToolDir(reproToolsRoot, name, markerText);
+}
 
 export function readOption(name, fallback) {
   const equalsArg = process.argv.find((arg) => arg.startsWith(`${name}=`));
@@ -742,14 +747,14 @@ export function batchRunner(lazyBatch) {
 }
 
 export function ensureNodeTool(name, packages) {
-  const dir = join(repoRoot, "target", "repro-tools", name);
+  const inexact = packages.find((spec) => !parseExactSpec(spec));
+  if (inexact) throw new Error(`repro tool ${name}: ${inexact} is not an exact version`);
+  const markerText = packages.join("\n") + `\nresolved: ${RESOLUTION_WINDOW_DAYS} day(s) after newest publish`;
+  const dir = toolDir(name, markerText);
   const refresh = process.env.WAKARU_REPRO_REFRESH_TOOLS === "1" && !refreshedNodeTools.has(dir);
   if (refresh) {
     refreshedNodeTools.add(dir);
   }
-  const inexact = packages.find((spec) => !parseExactSpec(spec));
-  if (inexact) throw new Error(`repro tool ${name}: ${inexact} is not an exact version`);
-  const markerText = packages.join("\n") + `\nresolved: ${RESOLUTION_WINDOW_DAYS} day(s) after newest publish`;
   return installNodeTool(dir, markerText, (staging) => {
     writeFileSync(join(staging, "package.json"), JSON.stringify({ private: true, type: "commonjs" }, null, 2));
     const cutoff = releaseDateCutoff(packages, (pkg) => runCommandScript("npm", ["view", pkg, "time", "--json"]));
@@ -770,7 +775,6 @@ export function ensureTerserTool() {
 }
 
 export function ensureLockedNodeTool(name, manifestDir) {
-  const dir = join(repoRoot, "target", "repro-tools", name);
   const packageJson = join(manifestDir, "package.json");
   const packageLock = join(manifestDir, "package-lock.json");
   const markerText = createHash("sha256")
@@ -778,6 +782,7 @@ export function ensureLockedNodeTool(name, manifestDir) {
     .update("\0")
     .update(readFileSync(packageLock))
     .digest("hex");
+  const dir = toolDir(name, markerText);
   const refresh = process.env.WAKARU_REPRO_REFRESH_TOOLS === "1" && !refreshedNodeTools.has(dir);
   if (refresh) {
     refreshedNodeTools.add(dir);

@@ -27,6 +27,6 @@ shape is still preserved while duplicate tool outputs are collapsed.
 By default the script asks Cargo to refresh `target/debug/wakaru(.exe)` once,
 then uses that binary for the matrix. Set `WAKARU` to test a specific binary.
 
-The transformer packages are installed under `target/repro-tools/`, so the
-first run may download Babel, TypeScript, SWC, esbuild, or Terser packages. The
-`target/` directory is ignored by git.
+The transformer packages are installed in the shared repro tool cache
+(`docs/testing.md`), so the first run may download Babel, TypeScript, SWC,
+esbuild, or Terser packages. The `target/` directory is ignored by git.

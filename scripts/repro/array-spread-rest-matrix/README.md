@@ -47,5 +47,6 @@ node scripts/repro/array-spread-rest-matrix/matrix.mjs --level standard
 node scripts/repro/array-spread-rest-matrix/matrix.mjs --level aggressive --details
 ```
 
-The script installs transformer and minifier packages under
-`target/repro-tools/`, so those downloads are cached outside the source tree.
+The script installs transformer and minifier packages in the shared repro tool
+cache (`docs/testing.md`), so those downloads are cached outside the source
+tree.

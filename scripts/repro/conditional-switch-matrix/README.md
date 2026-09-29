@@ -13,5 +13,6 @@ node scripts/repro/conditional-switch-matrix/matrix.mjs --level standard
 node scripts/repro/conditional-switch-matrix/matrix.mjs --level standard --details
 ```
 
-The script installs minifier packages under `target/repro-tools/`, so the first
-run may download npm packages. `target/` is ignored by git.
+The script installs minifier packages in the shared repro tool cache
+(`docs/testing.md`), so the first run may download npm packages. `target/` is
+ignored by git.

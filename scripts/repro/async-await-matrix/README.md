@@ -138,5 +138,6 @@ These flags are shared by every matrix (they live in `../lib/runner.mjs`). The
 structural comparison and `--cluster` keys are produced by `wakaru debug
 normalize --rename`; see `../lib/compare.mjs`.
 
-The script installs transformer and minifier packages under
-`target/repro-tools/`, so those downloads are cached outside the source tree.
+The script installs transformer and minifier packages in the shared repro tool
+cache (`docs/testing.md`), so those downloads are cached outside the source
+tree.

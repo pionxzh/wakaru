@@ -483,7 +483,15 @@ launcher. JSON validation reports the producer, exit/signal, output size and
 bounded stderr instead of a bare parse error.
 
 Install tools with `ensureNodeTool` / `ensureLockedNodeTool` from
-`lib/runner.mjs`, never with a direct `npm install` into `target/repro-tools/`.
+`lib/runner.mjs`, never with a direct `npm install` into the repro tool cache.
+The cache is `target/repro-tools/` in the main checkout, found through
+`git rev-parse --git-common-dir`, so every worktree of a clone shares it and
+a fresh worktree does not reinstall the tools; `WAKARU_REPRO_TOOLS_DIR`
+overrides the location. Each tool directory name ends in a hash of its install
+marker (exact versions or lockfile hash), so worktrees pinning different
+contents for one tool get separate directories. `WAKARU_REPRO_REFRESH_TOOLS=1`
+therefore replaces the copy every worktree uses; stale directories from old
+pins are safe to delete when no run is active.
 Matrices, tests, and `node --test` workers share that cache and install the
 same tool concurrently, so `lib/node-tool.mjs` populates a staging directory
 and renames it into place; a complete install is never deleted from under a

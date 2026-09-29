@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
-import { installNodeTool } from "./node-tool.mjs";
+import { installNodeTool, nodeToolDir, resolveReproToolsRoot } from "./node-tool.mjs";
 
 const moduleUrl = new URL("./node-tool.mjs", import.meta.url).href;
 
@@ -136,4 +136,43 @@ test("concurrent processes installing the same tool all keep a complete install"
   assert.ok(existsSync(join(dir, ".installed")));
   assert.ok(ids.includes(payload(dir)));
   assert.deepEqual(readdirSync(root), ["tool"]);
+});
+
+test("worktrees share the main checkout's tool cache", () => {
+  const commonDir = () => "/clone/wakaru/.git";
+  assert.equal(
+    resolveReproToolsRoot("/clone/wakaru-feature", { env: {}, commonDir }),
+    join("/clone/wakaru", "target", "repro-tools"),
+  );
+  assert.equal(
+    resolveReproToolsRoot("/clone/wakaru", { env: {}, commonDir }),
+    join("/clone/wakaru", "target", "repro-tools"),
+  );
+});
+
+test("the tool cache stays in the checkout outside a regular clone", () => {
+  for (const commonDir of [() => null, () => "/clone/.git/modules/wakaru"]) {
+    assert.equal(
+      resolveReproToolsRoot("/src/wakaru", { env: {}, commonDir }),
+      join("/src/wakaru", "target", "repro-tools"),
+    );
+  }
+});
+
+test("WAKARU_REPRO_TOOLS_DIR overrides the tool cache location", () => {
+  const commonDir = () => {
+    throw new Error("git must not be consulted when the override is set");
+  };
+  assert.equal(
+    resolveReproToolsRoot("/clone/wakaru", { env: { WAKARU_REPRO_TOOLS_DIR: "cache/tools" }, commonDir }),
+    resolve("cache/tools"),
+  );
+});
+
+test("different markers for one tool name install to different directories", () => {
+  const a = nodeToolDir("/tools", "closure-compiler", "lock-a");
+  const b = nodeToolDir("/tools", "closure-compiler", "lock-b");
+  assert.notEqual(a, b);
+  assert.equal(a, nodeToolDir("/tools", "closure-compiler", "lock-a"));
+  assert.match(a, /closure-compiler-[0-9a-f]{12}$/);
 });

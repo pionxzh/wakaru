@@ -21,8 +21,8 @@ script exit non-zero. The script exits non-zero only when SWC or Wakaru cannot
 run.
 
 The matrix installs the `@swc/core` release pinned in `lib/runner.mjs`
-(`SWC_CORE_VERSION`) under `target/repro-tools/`.
-Set `WAKARU` to test a specific binary:
+(`SWC_CORE_VERSION`) in the shared repro tool cache (`docs/testing.md`). Set
+`WAKARU` to test a specific binary:
 
 ```powershell
 $env:WAKARU = "$PWD\target\debug\wakaru.exe"

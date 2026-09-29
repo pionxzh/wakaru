@@ -14,6 +14,7 @@ node scripts/repro/for-of-iteration-matrix/matrix.mjs --level standard
 node scripts/repro/for-of-iteration-matrix/matrix.mjs --level standard --details
 ```
 
-The script installs transformer and minifier packages under `target/repro-tools/`, so the
-first run may download npm packages. esbuild is checked at ES2015 because it
-does not lower `for...of` to ES5. `target/` is ignored by git.
+The script installs transformer and minifier packages in the shared repro tool
+cache (`docs/testing.md`), so the first run may download npm packages. esbuild
+is checked at ES2015 because it does not lower `for...of` to ES5. `target/` is
+ignored by git.
