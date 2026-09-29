@@ -11,7 +11,27 @@ use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 use super::decl_utils::same_ident;
 use crate::utils::paren::strip_parens_owned;
 
-pub struct UnConditionals;
+/// Rewrites short-circuit and ternary expression statements into `if`
+/// statements, and splits return ternaries.
+///
+/// The default pass converts a statement only when a branch is itself an
+/// action (call, assignment, ...). [`UnConditionals::with_nested_actions`]
+/// also converts branches whose action sits under another `&&`, `||`, or
+/// ternary, such as `a && (b ? f() : g())`. The pipeline enables that only in
+/// the cleanup pass: class and helper recovery match the expression form of
+/// inlined helpers such as `t && (Object.setPrototypeOf ? ... : ...)`.
+#[derive(Default)]
+pub struct UnConditionals {
+    nested_actions: bool,
+}
+
+impl UnConditionals {
+    pub fn with_nested_actions() -> Self {
+        Self {
+            nested_actions: true,
+        }
+    }
+}
 
 impl VisitMut for UnConditionals {
     fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
@@ -21,7 +41,7 @@ impl VisitMut for UnConditionals {
         for item in old {
             match item {
                 ModuleItem::Stmt(stmt) => {
-                    let converted = convert_stmt(stmt);
+                    let converted = convert_stmt(stmt, self.nested_actions);
                     items.extend(converted.into_iter().map(ModuleItem::Stmt));
                 }
                 other => items.push(other),
@@ -34,7 +54,7 @@ impl VisitMut for UnConditionals {
 
         let old = std::mem::take(stmts);
         for stmt in old {
-            stmts.extend(convert_stmt(stmt));
+            stmts.extend(convert_stmt(stmt, self.nested_actions));
         }
     }
 }
@@ -96,9 +116,9 @@ impl VisitMut for UnConditionalsExprStmtOnly {
 }
 
 /// Convert a single statement, returning one or more statements.
-fn convert_stmt(stmt: Stmt) -> Vec<Stmt> {
+fn convert_stmt(stmt: Stmt, nested: bool) -> Vec<Stmt> {
     match stmt {
-        Stmt::Expr(ExprStmt { expr, span }) => try_convert_expr_stmt_to_if(span, *expr),
+        Stmt::Expr(ExprStmt { expr, span }) => try_convert_expr_stmt_to_if(span, *expr, nested),
         Stmt::Return(ReturnStmt {
             span,
             arg: Some(arg),
@@ -120,7 +140,7 @@ fn convert_stmt(stmt: Stmt) -> Vec<Stmt> {
 fn convert_cond_expr_stmt_only(stmt: Stmt) -> Vec<Stmt> {
     match stmt {
         Stmt::Expr(ExprStmt { expr, span }) if matches!(*expr, Expr::Cond(_)) => {
-            try_convert_expr_stmt_to_if(span, *expr)
+            try_convert_expr_stmt_to_if(span, *expr, false)
         }
         other => vec![other],
     }
@@ -204,15 +224,15 @@ fn expr_to_assignment_only_block_stmt(expr: Expr) -> Stmt {
 /// Try to convert an ExprStmt-level expression to an if statement.
 /// Returns a Vec<Stmt> which is either the converted if statement(s) or
 /// the original ExprStmt wrapped in a Vec.
-fn try_convert_expr_stmt_to_if(span: Span, expr: Expr) -> Vec<Stmt> {
+fn try_convert_expr_stmt_to_if(span: Span, expr: Expr, nested: bool) -> Vec<Stmt> {
     match expr {
         Expr::Cond(cond_expr) => {
-            if let Some(switch_stmt) = try_cond_to_switch_expr_stmt(&cond_expr) {
+            if let Some(switch_stmt) = try_cond_to_switch_expr_stmt(&cond_expr, nested) {
                 return vec![switch_stmt];
             }
 
             // Only convert if at least one branch is action-like (has side effects)
-            if !is_action_expr(&cond_expr.cons) && !is_action_expr(&cond_expr.alt) {
+            if !is_action_expr(&cond_expr.cons, nested) && !is_action_expr(&cond_expr.alt, nested) {
                 return vec![Stmt::Expr(ExprStmt {
                     span,
                     expr: Box::new(Expr::Cond(cond_expr)),
@@ -223,6 +243,7 @@ fn try_convert_expr_stmt_to_if(span: Span, expr: Expr) -> Vec<Stmt> {
                 *cond_expr.test,
                 cond_expr.cons,
                 cond_expr.alt,
+                nested,
             )]
         }
         Expr::Bin(BinExpr {
@@ -233,7 +254,7 @@ fn try_convert_expr_stmt_to_if(span: Span, expr: Expr) -> Vec<Stmt> {
         }) => {
             // x && action() → if (x) { action(); }
             // But only if right-hand side is "action-like" (not a simple value)
-            if !is_action_expr(&right) {
+            if !is_action_expr(&right, nested) {
                 return vec![Stmt::Expr(ExprStmt {
                     span,
                     expr: Box::new((*left).make_bin(BinaryOp::LogicalAnd, *right)),
@@ -242,7 +263,7 @@ fn try_convert_expr_stmt_to_if(span: Span, expr: Expr) -> Vec<Stmt> {
             vec![Stmt::If(IfStmt {
                 span,
                 test: left,
-                cons: Box::new(expr_to_block_stmt(*right)),
+                cons: Box::new(expr_to_block_stmt(*right, nested)),
                 alt: None,
             })]
         }
@@ -253,7 +274,7 @@ fn try_convert_expr_stmt_to_if(span: Span, expr: Expr) -> Vec<Stmt> {
             ..
         }) => {
             // x || action() → if (!x) { action(); }
-            if !is_action_expr(&right) {
+            if !is_action_expr(&right, nested) {
                 return vec![Stmt::Expr(ExprStmt {
                     span,
                     expr: Box::new((*left).make_bin(BinaryOp::LogicalOr, *right)),
@@ -262,7 +283,7 @@ fn try_convert_expr_stmt_to_if(span: Span, expr: Expr) -> Vec<Stmt> {
             vec![Stmt::If(IfStmt {
                 span,
                 test: negate_expr(*left),
-                cons: Box::new(expr_to_block_stmt(*right)),
+                cons: Box::new(expr_to_block_stmt(*right, nested)),
                 alt: None,
             })]
         }
@@ -275,13 +296,34 @@ fn try_convert_expr_stmt_to_if(span: Span, expr: Expr) -> Vec<Stmt> {
 }
 
 /// Check if an expression is "action-like" - has clear side effects worth converting to if/else.
-/// Only consider: call expressions, new expressions, assignments, yield, await.
+/// Actions are calls (including optional calls), `new`, assignments, updates,
+/// `delete`, yield, and await, and a sequence holding one. With `nested`, a
+/// ternary with an action branch and `&&` / `||` with an action on the right
+/// also count; the recursive statement conversion of the branch recovers them.
 /// Pure reads (identifiers, literals, member access, etc.) are NOT action-like.
-fn is_action_expr(expr: &Box<Expr>) -> bool {
+fn is_action_expr(expr: &Box<Expr>, nested: bool) -> bool {
     match expr.as_ref() {
-        Expr::Call(_) | Expr::New(_) | Expr::Assign(_) | Expr::Yield(_) | Expr::Await(_) => true,
-        Expr::Seq(seq) => seq.exprs.iter().any(is_action_expr),
-        Expr::Paren(paren) => is_action_expr(&paren.expr),
+        Expr::Call(_)
+        | Expr::New(_)
+        | Expr::Assign(_)
+        | Expr::Update(_)
+        | Expr::Yield(_)
+        | Expr::Await(_) => true,
+        Expr::Unary(UnaryExpr {
+            op: UnaryOp::Delete,
+            ..
+        }) => true,
+        Expr::OptChain(opt) => opt.base.is_call(),
+        Expr::Seq(seq) => seq.exprs.iter().any(|expr| is_action_expr(expr, nested)),
+        Expr::Paren(paren) => is_action_expr(&paren.expr, nested),
+        Expr::Cond(cond) if nested => {
+            is_action_expr(&cond.cons, nested) || is_action_expr(&cond.alt, nested)
+        }
+        Expr::Bin(BinExpr {
+            op: BinaryOp::LogicalAnd | BinaryOp::LogicalOr,
+            right,
+            ..
+        }) if nested => is_action_expr(right, nested),
         _ => false,
     }
 }
@@ -293,9 +335,9 @@ struct SwitchChain {
     default: Box<Expr>,
 }
 
-fn try_cond_to_switch_expr_stmt(cond: &CondExpr) -> Option<Stmt> {
+fn try_cond_to_switch_expr_stmt(cond: &CondExpr, nested: bool) -> Option<Stmt> {
     let chain = collect_switch_chain(cond)?;
-    if !chain_has_action(&chain) {
+    if !chain_has_action(&chain, nested) {
         return None;
     }
 
@@ -303,7 +345,7 @@ fn try_cond_to_switch_expr_stmt(cond: &CondExpr) -> Option<Stmt> {
         span: DUMMY_SP,
         body_ctxt: Default::default(),
         discriminant: Box::new(Expr::Ident(chain.discriminant.clone())),
-        cases: switch_cases_from_expr_chain(chain),
+        cases: switch_cases_from_expr_chain(chain, nested),
     }))
 }
 
@@ -399,40 +441,43 @@ fn extract_strict_case_test(test: &Expr) -> Option<(Ident, Box<Expr>)> {
     }
 }
 
-fn switch_cases_from_expr_chain(chain: SwitchChain) -> Vec<SwitchCase> {
+fn switch_cases_from_expr_chain(chain: SwitchChain, nested: bool) -> Vec<SwitchCase> {
     let mut cases = Vec::with_capacity(chain.cases.len() + 1);
     for (test, body) in chain.cases {
         cases.push(SwitchCase {
             span: DUMMY_SP,
             test: Some(test),
-            cons: expr_to_case_stmts(*body, true),
+            cons: expr_to_case_stmts(*body, true, nested),
         });
     }
 
     cases.push(SwitchCase {
         span: DUMMY_SP,
         test: None,
-        cons: expr_to_case_stmts(*chain.default, false),
+        cons: expr_to_case_stmts(*chain.default, false, nested),
     });
 
     cases
 }
 
-fn expr_to_case_stmts(expr: Expr, append_break: bool) -> Vec<Stmt> {
+fn expr_to_case_stmts(expr: Expr, append_break: bool, nested: bool) -> Vec<Stmt> {
     let inner = strip_parens_owned(expr);
     let mut stmts = match inner {
         Expr::Seq(seq) => seq
             .exprs
             .into_iter()
-            .flat_map(|expr| expr_to_case_stmts(*expr, false))
+            .flat_map(|expr| expr_to_case_stmts(*expr, false, nested))
             .collect(),
         Expr::Cond(cond) => vec![convert_cond_to_if(
-            cond.span, *cond.test, cond.cons, cond.alt,
+            cond.span, *cond.test, cond.cons, cond.alt, nested,
         )],
-        other => convert_stmt(Stmt::Expr(ExprStmt {
-            span: DUMMY_SP,
-            expr: Box::new(other),
-        })),
+        other => convert_stmt(
+            Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(other),
+            }),
+            nested,
+        ),
     };
 
     if append_break {
@@ -445,8 +490,12 @@ fn expr_to_case_stmts(expr: Expr, append_break: bool) -> Vec<Stmt> {
     stmts
 }
 
-fn chain_has_action(chain: &SwitchChain) -> bool {
-    chain.cases.iter().any(|(_, body)| is_action_expr(body)) || is_action_expr(&chain.default)
+fn chain_has_action(chain: &SwitchChain, nested: bool) -> bool {
+    chain
+        .cases
+        .iter()
+        .any(|(_, body)| is_action_expr(body, nested))
+        || is_action_expr(&chain.default, nested)
 }
 
 fn literal_case_key(expr: &Expr) -> Option<String> {
@@ -483,9 +532,15 @@ fn unparen_expr(expr: &Expr) -> &Expr {
 }
 
 /// Convert a ternary expression to an if statement.
-fn convert_cond_to_if(span: Span, test: Expr, cons: Box<Expr>, alt: Box<Expr>) -> Stmt {
-    let cons_stmt = convert_cons_branch_to_stmt(*cons);
-    let alt_stmt = convert_alt_branch_to_stmt(*alt);
+fn convert_cond_to_if(
+    span: Span,
+    test: Expr,
+    cons: Box<Expr>,
+    alt: Box<Expr>,
+    nested: bool,
+) -> Stmt {
+    let cons_stmt = convert_cons_branch_to_stmt(*cons, nested);
+    let alt_stmt = convert_alt_branch_to_stmt(*alt, nested);
 
     Stmt::If(IfStmt {
         span,
@@ -497,37 +552,40 @@ fn convert_cond_to_if(span: Span, test: Expr, cons: Box<Expr>, alt: Box<Expr>) -
 
 /// Convert the consequent branch of a ternary to a statement.
 /// If the cons is itself a ternary, wrap it in a block (not an else-if).
-fn convert_cons_branch_to_stmt(expr: Expr) -> Stmt {
+fn convert_cons_branch_to_stmt(expr: Expr, nested: bool) -> Stmt {
     match expr {
         Expr::Cond(inner) => {
             // Nested ternary in cons position → convert to if, wrapped in a block
-            let inner_if = convert_cond_to_if(inner.span, *inner.test, inner.cons, inner.alt);
+            let inner_if =
+                convert_cond_to_if(inner.span, *inner.test, inner.cons, inner.alt, nested);
             Stmt::Block(BlockStmt {
                 span: DUMMY_SP,
                 ctxt: Default::default(),
                 stmts: vec![inner_if],
             })
         }
-        other => expr_to_block_stmt(other),
+        other => expr_to_block_stmt(other, nested),
     }
 }
 
 /// Convert the alternate branch of a ternary to a statement.
 /// If the alt is another ternary/convertible-logical, make it an else-if (not wrapped in block).
-fn convert_alt_branch_to_stmt(expr: Expr) -> Stmt {
+fn convert_alt_branch_to_stmt(expr: Expr, nested: bool) -> Stmt {
     match expr {
         // Another ternary → becomes else-if chain
-        Expr::Cond(inner) => convert_cond_to_if(inner.span, *inner.test, inner.cons, inner.alt),
+        Expr::Cond(inner) => {
+            convert_cond_to_if(inner.span, *inner.test, inner.cons, inner.alt, nested)
+        }
         // Logical AND in alt → convert to if statement (not wrapped in block)
         Expr::Bin(BinExpr {
             span,
             op: BinaryOp::LogicalAnd,
             left,
             right,
-        }) if is_action_expr(&right) => Stmt::If(IfStmt {
+        }) if is_action_expr(&right, nested) => Stmt::If(IfStmt {
             span,
             test: left,
-            cons: Box::new(expr_to_block_stmt(*right)),
+            cons: Box::new(expr_to_block_stmt(*right, nested)),
             alt: None,
         }),
         // Logical OR in alt → convert to if statement
@@ -536,20 +594,20 @@ fn convert_alt_branch_to_stmt(expr: Expr) -> Stmt {
             op: BinaryOp::LogicalOr,
             left,
             right,
-        }) if is_action_expr(&right) => Stmt::If(IfStmt {
+        }) if is_action_expr(&right, nested) => Stmt::If(IfStmt {
             span,
             test: negate_expr(*left),
-            cons: Box::new(expr_to_block_stmt(*right)),
+            cons: Box::new(expr_to_block_stmt(*right, nested)),
             alt: None,
         }),
         // Wrap in block
-        other => expr_to_block_stmt(other),
+        other => expr_to_block_stmt(other, nested),
     }
 }
 
 /// Wrap an expression in a block statement.
 /// Sequence expressions (including paren-wrapped) are expanded into converted statements.
-fn expr_to_block_stmt(expr: Expr) -> Stmt {
+fn expr_to_block_stmt(expr: Expr, nested: bool) -> Stmt {
     let inner = match expr {
         Expr::Paren(paren) => *paren.expr,
         other => other,
@@ -559,16 +617,22 @@ fn expr_to_block_stmt(expr: Expr) -> Stmt {
             .exprs
             .into_iter()
             .flat_map(|expr| {
-                convert_stmt(Stmt::Expr(ExprStmt {
-                    span: DUMMY_SP,
-                    expr,
-                }))
+                convert_stmt(
+                    Stmt::Expr(ExprStmt {
+                        span: DUMMY_SP,
+                        expr,
+                    }),
+                    nested,
+                )
             })
             .collect(),
-        other => convert_stmt(Stmt::Expr(ExprStmt {
-            span: DUMMY_SP,
-            expr: Box::new(other),
-        })),
+        other => convert_stmt(
+            Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(other),
+            }),
+            nested,
+        ),
     };
     Stmt::Block(BlockStmt {
         span: DUMMY_SP,

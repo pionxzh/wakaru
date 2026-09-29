@@ -3688,3 +3688,23 @@ fn swc_flattened_class_recovers_through_pipeline() {
     assert!(!output.contains("defineProperty"), "{output}");
     assert!(!output.contains("Cannot call a class"), "{output}");
 }
+
+#[test]
+fn pipeline_recovers_class_with_inlined_set_prototype_of_tail() {
+    // The inlined `_inherits` tail nests a ternary under `&&`. UnConditionals
+    // must leave it in expression form until class recovery has run.
+    let input = r#"
+var Bar = function (e) {
+    function t() { return e.apply(this, arguments) || this; }
+    return t.prototype = Object.create(e && e.prototype), t.prototype.constructor = t, e && (Object.setPrototypeOf ? Object.setPrototypeOf(t, e) : t.__proto__ = e), t.prototype.x = function () { return 1; }, t;
+}(Base);
+"#;
+    let expected = r#"
+class Bar extends Base {
+    x() {
+        return 1;
+    }
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}

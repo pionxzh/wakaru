@@ -701,7 +701,8 @@ pub(super) fn unpack_multi_module_with_plan(
             );
             module.visit_mut_with(&mut UnOptionalChaining::new(unresolved_mark, options.level));
             module.visit_mut_with(&mut UnConditionalsAssignmentOnly);
-            module.visit_mut_with(&mut UnConditionals);
+            // Unpack counterpart of the pipeline's UnConditionals2 cleanup pass.
+            module.visit_mut_with(&mut UnConditionals::with_nested_actions());
 
             // Source-map-enhanced passes
             if let Some(sm) = sm_ref {

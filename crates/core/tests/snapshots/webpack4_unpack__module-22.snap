@@ -109,7 +109,13 @@ ${e.stack}`;
             }
             const e = o.l();
             n._deferredEnd = e;
-            n._isRunning || (n._error ? e.reject(n._error) : e.resolve(n._result));
+            if (!n._isRunning) {
+                if (n._error) {
+                    e.reject(n._error);
+                } else {
+                    e.resolve(n._result);
+                }
+            }
             return e.promise;
         };
         i.cont = r;
@@ -258,7 +264,13 @@ ${e.stack}`;
                     configurable: true
                 });
             }
-            task.cont || (t instanceof Error && onError ? onError(t) : O(t));
+            if (!task.cont) {
+                if (t instanceof Error && onError) {
+                    onError(t);
+                } else {
+                    O(t);
+                }
+            }
             e._error = t;
             e._isAborted = true;
             if (e._deferredEnd) {
@@ -291,7 +303,13 @@ ${e.stack}`;
             if (!b) {
                 b = true;
                 h.cancel = o.u;
-                h_sagaMonitor && (t ? h_sagaMonitor.effectRejected(v, e) : h_sagaMonitor.effectResolved(v, e));
+                if (h_sagaMonitor) {
+                    if (t) {
+                        h_sagaMonitor.effectRejected(v, e);
+                    } else {
+                        h_sagaMonitor.effectResolved(v, e);
+                    }
+                }
                 h(e, t);
             }
         }
@@ -597,10 +615,21 @@ ${e.stack}`;
         const s = {};
         r.forEach((t)=>{
             const f = (s, f)=>{
-                u || (f || i.e(s) || s === CHANNEL_END || s === p ? (n.cancel(), n(s, f)) : (l[t] = s, ++a === r.length && (u = true, n(is.array(e) ? o.f.from({
-                    ...l,
-                    length: r.length
-                }) : l))));
+                if (!u) {
+                    if (f || i.e(s) || s === CHANNEL_END || s === p) {
+                        n.cancel();
+                        n(s, f);
+                    } else {
+                        l[t] = s;
+                        if (++a === r.length) {
+                            u = true;
+                            n(is.array(e) ? o.f.from({
+                                ...l,
+                                length: r.length
+                            }) : l);
+                        }
+                    }
+                }
             };
             f.cancel = o.u;
             s[t] = f;

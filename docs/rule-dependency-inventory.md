@@ -362,7 +362,11 @@ rationale, or level gating appear.
   to statements; switch recovery is limited to strict equality over one
   identifier with literal cases. The second pass is the final pipeline rule:
   SmartInline, ArrowFunction/ArrowReturn, and UnReturn expose conditionals
-  the first pass could not see.
+  the first pass could not see. Only the second pass (and its counterpart in
+  the unpack cleanup tail) also converts actions nested under `&&`, `||`, or
+  a ternary, such as `a && (b ? f() : g())`: UnEs6Class matches the inlined
+  `_inherits` tail `t && (Object.setPrototypeOf ? ... : ...)` in that
+  expression form, so the first pass must leave it alone.
 - **UnParameters** — needs the shapes produced by FlipComparisons,
   RemoveVoid, UnConditionals, and UnCurlyBraces. Pattern A
   (`if (arg === undefined) arg = val`) runs at all levels; `arguments[i]`

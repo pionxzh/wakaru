@@ -359,10 +359,14 @@ runner!(run_extract_inlined_function, |ctx| {
     )
 });
 fn run_un_conditionals(module: &mut Module, ctx: RuleRunContext<'_>) {
-    module.visit_mut_with(&mut UnConditionals);
+    module.visit_mut_with(&mut UnConditionals::default());
     // UnConditionals rewrites ternary helper bodies (e.g. _defineProperty with
     // _toPropertyKey) into if/else form. This changes helper shapes, so rebuild
     // the cache so UnClassFields and UnDefineProperty see the expanded bodies.
+    ctx.invalidate_local_helpers();
+}
+fn run_un_conditionals_nested(module: &mut Module, ctx: RuleRunContext<'_>) {
+    module.visit_mut_with(&mut UnConditionals::with_nested_actions());
     ctx.invalidate_local_helpers();
 }
 runner!(run_un_parameters, |ctx| UnParameters::new(
@@ -814,8 +818,11 @@ define_rule_registry! {
     ("UnReturn", Cleanup, run_un_return, always_enabled),
     // Late rules (SmartInline, ArrowFunction, UnReturn) can create or expose
     // conditional patterns (return ternaries, short-circuit expression
-    // statements) that the first UnConditionals pass could not see.
-    ("UnConditionals2", Cleanup, run_un_conditionals, always_enabled, requires: [
+    // statements) that the first UnConditionals pass could not see. This pass
+    // also converts actions nested under `&&`, `||`, and ternaries; class and
+    // helper recovery match inlined helpers in that expression form, so the
+    // first pass leaves them alone.
+    ("UnConditionals2", Cleanup, run_un_conditionals_nested, always_enabled, requires: [
         "UnReturn"
     ]),
 }

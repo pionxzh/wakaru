@@ -199,7 +199,17 @@ export function createLocation(e, t, n, o) {
     if (n) {
         i.key = n;
     }
-    o ? i.pathname ? i.pathname.charAt(0) !== "/" && (i.pathname = a(i.pathname, o.pathname)) : i.pathname = o.pathname : i.pathname || (i.pathname = "/");
+    if (o) {
+        if (i.pathname) {
+            if (i.pathname.charAt(0) !== "/") {
+                i.pathname = a(i.pathname, o.pathname);
+            }
+        } else {
+            i.pathname = o.pathname;
+        }
+    } else if (!i.pathname) {
+        i.pathname = "/";
+    }
     return i;
 }
 export function locationsAreEqual(e, t) {

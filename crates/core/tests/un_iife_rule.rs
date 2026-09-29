@@ -1,6 +1,6 @@
 mod common;
 
-use common::{assert_eq_normalized, render_pipeline, render_rule};
+use common::{assert_eq_normalized, render_pipeline, render_pipeline_until, render_rule};
 use wakaru_core::{rules::UnIife, RewriteLevel};
 
 fn apply(input: &str) -> String {
@@ -727,7 +727,7 @@ const Super = function() {};
 "#;
     let expected = r#"
 function Ctor() {}
-const Super = () => {};
+const Super = function() {};
 ((e, t) => {
   e.prototype = Object.create(t && t.prototype, {
     constructor: {
@@ -740,7 +740,9 @@ const Super = () => {};
   t && (Object.setPrototypeOf ? Object.setPrototypeOf(e, t) : e.__proto__ = t);
 })(Ctor, Super);
 "#;
-    let output = apply(input);
+    // The class rule matches this shape, so check what reaches it; the
+    // cleanup UnConditionals pass may expand it afterwards.
+    let output = render_pipeline_until(input, "UnEs6Class");
     assert_eq_normalized(&output, expected);
 }
 
