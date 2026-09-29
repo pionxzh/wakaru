@@ -1,5 +1,6 @@
 use swc_core::common::Spanned;
-use swc_core::ecma::ast::{Expr, Ident, IdentName, Lit, MemberExpr, MemberProp, Number, PropName};
+use swc_core::ecma::ast::{Expr, IdentName, Lit, MemberExpr, MemberProp, Number, PropName};
+use swc_core::ecma::utils::is_valid_prop_ident;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 pub struct UnBracketNotation;
@@ -29,7 +30,8 @@ impl VisitMut for UnBracketNotation {
             return;
         }
 
-        if Ident::verify_symbol(&value).is_ok() {
+        // Property names are IdentifierNames, so reserved words are allowed.
+        if is_valid_prop_ident(&value) {
             member.prop = MemberProp::Ident(IdentName::new(value.into(), str_lit.span));
         }
     }
@@ -61,7 +63,8 @@ impl VisitMut for UnBracketNotation {
             return;
         }
 
-        if Ident::verify_symbol(&value).is_ok() {
+        // Property names are IdentifierNames, so reserved words are allowed.
+        if is_valid_prop_ident(&value) {
             *name = PropName::Ident(IdentName::new(value.into(), name.span()));
         }
     }

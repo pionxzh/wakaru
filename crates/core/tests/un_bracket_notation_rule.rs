@@ -38,16 +38,12 @@ obj[3.14];
 }
 
 #[test]
-fn keeps_invalid_or_reserved_bracket_notation() {
+fn keeps_invalid_bracket_notation() {
     // Reused from packages/unminify/src/transformations/__tests__/un-bracket-notation.spec.ts
     let input = r#"
 obj[a];
 obj[''];
 obj[' '];
-obj['var'];
-obj['let'];
-obj['const'];
-obj['await'];
 obj['1var'];
 obj['prop-with-dash'];
 "#;
@@ -55,10 +51,6 @@ obj['prop-with-dash'];
 obj[a];
 obj[''];
 obj[' '];
-obj['var'];
-obj['let'];
-obj['const'];
-obj['await'];
 obj['1var'];
 obj['prop-with-dash'];
 "#;
@@ -121,23 +113,19 @@ const obj = {
 fn keeps_invalid_computed_prop_names() {
     let input = r#"
 class C {
-    ["var"]() {}
     ["prop-with-dash"] = 1;
     [""]() {}
 }
 const obj = {
-    ["let"]: 1,
     ["1var"]: 2,
 };
 "#;
     let expected = r#"
 class C {
-    ["var"]() {}
     ["prop-with-dash"] = 1;
     [""]() {}
 }
 const obj = {
-    ["let"]: 1,
     ["1var"]: 2,
 };
 "#;
@@ -227,14 +215,12 @@ const obj = {
 fn keeps_invalid_string_literal_prop_names() {
     let input = r#"
 const obj = {
-    'var': 1,
     'prop-with-dash': 2,
     '': 3,
 };
 "#;
     let expected = r#"
 const obj = {
-    'var': 1,
     'prop-with-dash': 2,
     '': 3,
 };
@@ -261,6 +247,33 @@ obj['0.0000001'];
 obj[100000000000000000000];
 obj[0.000001];
 ({ '1000000000000000000000': 1, '0.0000001': 2 });
+"#;
+
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn transforms_reserved_word_keys() {
+    // Property names are IdentifierNames: reserved words are valid after a
+    // dot and as object or class keys.
+    let input = r#"
+obj['var'];
+obj['let'];
+obj['const'];
+obj['await'];
+obj['default'];
+({ 'delete': 1, ['new']: 2 });
+class A { ['static']() {} }
+"#;
+    let expected = r#"
+obj.var;
+obj.let;
+obj.const;
+obj.await;
+obj.default;
+({ delete: 1, new: 2 });
+class A { static() {} }
 "#;
 
     let output = apply(input);
