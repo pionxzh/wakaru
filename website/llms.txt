@@ -1,0 +1,23 @@
+# Wakaru
+
+> Wakaru is a JavaScript decompiler. It splits production bundles into modules and restores readable, modern syntax from minified and transpiled code. It runs locally as a CLI (`npx wakaru`) and reads its input without executing it.
+
+Wakaru is not a deobfuscator. For obfuscated input, strip the obfuscation first with a dedicated tool such as webcrack, then run Wakaru on the result.
+
+## Docs
+
+- [Docs index](https://wakarujs.com/docs/llms.txt): every docs page with a one-line summary
+- [Full docs](https://wakarujs.com/docs/llms-full.txt): all docs pages in one file
+- [Quick Start](https://wakarujs.com/docs): decompile a file or unpack a bundle
+- [Unminify a webpack bundle](https://wakarujs.com/docs/guides/unminify-a-webpack-bundle): from a production build to readable modules
+- [Unminify a file](https://wakarujs.com/docs/guides/unminify-a-file): one minified or transpiled file to readable JavaScript
+- [Unpack a bundle](https://wakarujs.com/docs/guides/unpack-a-bundle): split a bundle into modules
+- [CLI reference](https://wakarujs.com/docs/reference/cli): every command and flag
+- [Supported inputs](https://wakarujs.com/docs/reference/supported-inputs): bundlers, transpilers, and minifiers Wakaru understands
+- [Coding agents](https://wakarujs.com/docs/guides/coding-agents): install the Wakaru skill for a coding agent
+
+## Optional
+
+- [Playground](https://wakarujs.com/playground/): try Wakaru in the browser, no install
+- [GitHub](https://github.com/pionxzh/wakaru): source, issues, and releases
+- [npm](https://www.npmjs.com/package/wakaru): the `wakaru` package
