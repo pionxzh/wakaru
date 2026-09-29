@@ -1718,11 +1718,22 @@ fn can_string_be_attr_literal(value: &Str) -> bool {
         .as_ref()
         .map(|raw| raw.as_ref())
         .unwrap_or_default();
-    !raw.contains('\\') && !wtf8_to_string(&value.value).contains('"')
+    !raw.contains('\\')
+        && value
+            .value
+            .as_str()
+            .is_some_and(|value| !value.contains('"'))
 }
 
 fn string_child(value: &Str) -> Option<JSXElementChild> {
-    let text = wtf8_to_string(&value.value);
+    // A lone surrogate has no UTF-8 form, so it cannot become JSX text
+    // without changing the string; keep the literal in a container.
+    let Some(text) = value.value.as_str().map(ToOwned::to_owned) else {
+        return Some(JSXElementChild::JSXExprContainer(JSXExprContainer {
+            span: DUMMY_SP,
+            expr: JSXExpr::Expr(Box::new(Expr::Lit(Lit::Str(value.clone())))),
+        }));
+    };
     if text.is_empty() {
         return Some(JSXElementChild::JSXExprContainer(JSXExprContainer {
             span: DUMMY_SP,

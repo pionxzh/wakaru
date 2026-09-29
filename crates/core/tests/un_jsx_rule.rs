@@ -907,3 +907,16 @@ fn unrepresentable_const_string_tag_keeps_its_runtime_value() {
     let expected = "const Tag = `x.y`; function App() { return <Tag />; }";
     assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), expected);
 }
+
+#[test]
+fn lone_surrogate_strings_stay_string_literals() {
+    // A lone surrogate has no UTF-8 form; JSX text built from it would
+    // replace it with U+FFFD and change the rendered string.
+    let input = r#"
+const a = React.createElement("b", { title: "\uD83D" }, "\uD83D");
+"#;
+    let expected = r#"
+const a = <b title={"\uD83D"}>{"\uD83D"}</b>;
+"#;
+    assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), expected);
+}
