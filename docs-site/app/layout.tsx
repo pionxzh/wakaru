@@ -2,13 +2,14 @@ import { RootProvider } from 'fumadocs-ui/provider/next';
 import './global.css';
 import { Inter } from 'next/font/google';
 import type { Metadata } from 'next';
+import { docsSiteOrigin } from '@/lib/shared';
 
 const inter = Inter({
   subsets: ['latin'],
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL('https://wakarujs.com'),
+  metadataBase: new URL(docsSiteOrigin),
   title: {
     default: 'Wakaru Docs',
     template: '%s — Wakaru Docs',

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { rewriteDocsMarkdownLinks, withDocsBasePath } from './public-path';
+import { docsCanonicalUrl, rewriteDocsMarkdownLinks, withDocsBasePath } from './public-path';
 
 describe('withDocsBasePath', () => {
   it('maps app-root paths to their public docs URLs', () => {
@@ -12,6 +12,15 @@ describe('withDocsBasePath', () => {
     expect(withDocsBasePath('guides/source-maps')).toBe('guides/source-maps');
     expect(withDocsBasePath('https://wakarujs.com/playground/')).toBe(
       'https://wakarujs.com/playground/',
+    );
+  });
+});
+
+describe('docsCanonicalUrl', () => {
+  it('returns the absolute wakarujs.com URL, including the /docs prefix', () => {
+    expect(docsCanonicalUrl('/')).toBe('https://wakarujs.com/docs');
+    expect(docsCanonicalUrl('/guides/unminify-a-webpack-bundle')).toBe(
+      'https://wakarujs.com/docs/guides/unminify-a-webpack-bundle',
     );
   });
 });

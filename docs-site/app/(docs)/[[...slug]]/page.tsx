@@ -12,6 +12,7 @@ import { getMDXComponents } from '@/components/mdx';
 import type { Metadata } from 'next';
 import { createRelativeLink } from 'fumadocs-ui/mdx';
 import { gitConfig } from '@/lib/shared';
+import { docsCanonicalUrl } from '@/lib/public-path';
 
 export default async function Page(props: PageProps<'/[[...slug]]'>) {
   const params = await props.params;
@@ -54,7 +55,11 @@ export async function generateMetadata(props: PageProps<'/[[...slug]]'>): Promis
   return {
     title: page.data.title,
     description: page.data.description,
+    alternates: {
+      canonical: docsCanonicalUrl(page.url),
+    },
     openGraph: {
+      url: docsCanonicalUrl(page.url),
       images: getPageImageUrl(page).url,
     },
   };

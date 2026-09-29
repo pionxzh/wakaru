@@ -39,6 +39,10 @@ The site is proxied under `/docs`, so `next.config.mjs` sets
   docs pages occupy the root.
 - `app/sitemap.ts` emits absolute `https://wakarujs.com/docs/...` URLs.
   `website/robots.txt` lists it next to the landing sitemap.
+- Every page sets a canonical URL and `og:url` on `https://wakarujs.com/docs/...`.
+  The same pages also answer at `wakaru-docs.vercel.app/docs/...`, and the
+  canonical tells search engines which copy to index. Both the canonical and
+  the sitemap come from `docsCanonicalUrl` in `lib/public-path.ts`.
 - `docs-site/vercel.json` declares `"framework": "nextjs"`. The Vercel
   project was created from the CLI and has no framework preset; without the
   declaration `vercel build` uses the static builder and every route 404s.

@@ -1,4 +1,4 @@
-import { docsPublicBasePath } from './shared';
+import { docsPublicBasePath, docsSiteOrigin } from './shared';
 
 export function withDocsBasePath(url: string): string {
   if (!url.startsWith('/') || url === docsPublicBasePath || url.startsWith(`${docsPublicBasePath}/`)) {
@@ -6,6 +6,10 @@ export function withDocsBasePath(url: string): string {
   }
 
   return url === '/' ? docsPublicBasePath : `${docsPublicBasePath}${url}`;
+}
+
+export function docsCanonicalUrl(url: string): string {
+  return new URL(withDocsBasePath(url), docsSiteOrigin).toString();
 }
 
 function rewriteLineLinks(line: string): string {
