@@ -591,3 +591,34 @@ fn split_return_ternary_ifs_keep_their_ternary_spans() {
         [Some("a ? 1 : ".to_string()), Some("b ? 2 : ".to_string())]
     );
 }
+
+#[test]
+fn negates_equality_by_flipping_the_operator() {
+    let input = r#"
+a == null || a.m();
+b === c || f();
+d != e || g();
+h !== i || k();
+j < l || m();
+"#;
+    let expected = r#"
+if (a != null) {
+    a.m();
+}
+if (b !== c) {
+    f();
+}
+if (d == e) {
+    g();
+}
+if (h === i) {
+    k();
+}
+if (!(j < l)) {
+    m();
+}
+"#;
+
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}

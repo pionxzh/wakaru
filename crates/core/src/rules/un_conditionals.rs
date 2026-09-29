@@ -577,21 +577,36 @@ fn expr_to_block_stmt(expr: Expr) -> Stmt {
     })
 }
 
-/// Negate an expression, removing double negation.
+/// Negate an expression, removing double negation and flipping equality
+/// operators. Relational operators keep the `!` because `!(a < b)` is not
+/// `a >= b` when either side is NaN.
 fn negate_expr(expr: Expr) -> Box<Expr> {
-    if let Expr::Unary(UnaryExpr {
-        op: UnaryOp::Bang,
-        arg,
-        ..
-    }) = expr
-    {
-        return arg;
+    match expr {
+        Expr::Unary(UnaryExpr {
+            op: UnaryOp::Bang,
+            arg,
+            ..
+        }) => arg,
+        Expr::Bin(mut bin)
+            if matches!(
+                bin.op,
+                BinaryOp::EqEq | BinaryOp::NotEq | BinaryOp::EqEqEq | BinaryOp::NotEqEq
+            ) =>
+        {
+            bin.op = match bin.op {
+                BinaryOp::EqEq => BinaryOp::NotEq,
+                BinaryOp::NotEq => BinaryOp::EqEq,
+                BinaryOp::EqEqEq => BinaryOp::NotEqEq,
+                _ => BinaryOp::EqEqEq,
+            };
+            Box::new(Expr::Bin(bin))
+        }
+        expr => Box::new(Expr::Unary(UnaryExpr {
+            span: DUMMY_SP,
+            op: UnaryOp::Bang,
+            arg: Box::new(expr),
+        })),
     }
-    Box::new(Expr::Unary(UnaryExpr {
-        span: DUMMY_SP,
-        op: UnaryOp::Bang,
-        arg: Box::new(expr),
-    }))
 }
 
 /// Try to split a `return cond ? a : b ? c : d` into
