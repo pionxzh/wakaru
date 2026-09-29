@@ -67,7 +67,7 @@ function g() {
         for(const e in b){
             const t = b[e];
             let n = v.indexOf(e);
-            if (!(-1 < n)) {
+            if (!(n > -1)) {
                 throw Error(a(96, e));
             }
             if (!E[n]) {
@@ -1162,7 +1162,7 @@ function pt(e, t, n) {
             case "reset":
                 break;
             default:
-                if (-1 === Ye.indexOf(e)) {
+                if (Ye.indexOf(e) === -1) {
                     Vt(e, t);
                 }
         }
@@ -1460,14 +1460,14 @@ function Qt(e, t, n) {
 }
 function Kt(e, t, n, r) {
     if (Bt) {
-        if (bt.length > 0 && -1 < St.indexOf(e)) {
+        if (bt.length > 0 && St.indexOf(e) > -1) {
             e = Ct(null, e, t, n, r);
             bt.push(e);
         } else {
             const o = Yt(e, t, n, r);
             if (o === null) {
                 Pt(e, r);
-            } else if (-1 < St.indexOf(e)) {
+            } else if (St.indexOf(e) > -1) {
                 e = Ct(o, e, t, n, r);
                 bt.push(e);
             } else if (!((e, t, n, r, o)=>{
@@ -1658,7 +1658,7 @@ function tn(e, t) {
     }
 }
 function nn(e, t) {
-    if (-1 === e.indexOf("-")) {
+    if (e.indexOf("-") === -1) {
         return typeof t.is === "string";
     }
     switch(e){
@@ -2100,7 +2100,7 @@ let or = false;
 function ir(e, t) {
     switch(e){
         case "keyup":
-            return -1 !== Xn.indexOf(t.keyCode);
+            return Xn.indexOf(t.keyCode) !== -1;
         case "keydown":
             return t.keyCode !== 229;
         case "keypress":
@@ -7036,7 +7036,7 @@ function fl(e, t) {
     e.finishedWork = null;
     e.finishedExpirationTime = 0;
     let e_timeoutHandle = e.timeoutHandle;
-    if (-1 !== e_timeoutHandle) {
+    if (e_timeoutHandle !== -1) {
         e.timeoutHandle = -1;
         En(e_timeoutHandle);
     }
@@ -7422,7 +7422,7 @@ function El(e) {
                                 }
                                 v = g;
                             }
-                            selectionRange = -1 === start || -1 === end ? null : {
+                            selectionRange = start === -1 || end === -1 ? null : {
                                 start,
                                 end
                             };
@@ -7873,7 +7873,7 @@ bu = (e, t, n)=>{
                 }
                 e = t.pendingProps;
                 ((e)=>{
-                    if (-1 === e._status) {
+                    if (e._status === -1) {
                         e._status = 0;
                         let t = e._ctor;
                         t = t();

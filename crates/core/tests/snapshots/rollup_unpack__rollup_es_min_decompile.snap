@@ -101,7 +101,7 @@ class c {
         e.push(t);
         return ()=>{
             const s = e.indexOf(t);
-            if (-1 !== s) {
+            if (s !== -1) {
                 e.splice(s, 1);
             }
         };

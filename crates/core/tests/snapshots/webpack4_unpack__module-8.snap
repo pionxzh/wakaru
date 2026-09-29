@@ -121,7 +121,7 @@ function encodePath(e) {
     return e;
 }
 function h(e, t) {
-    if (((e, t)=>e.toLowerCase().indexOf(t.toLowerCase()) === 0 && -1 !== "/?#".indexOf(e.charAt(t.length)))(e, t)) {
+    if (((e, t)=>e.toLowerCase().indexOf(t.toLowerCase()) === 0 && "/?#".indexOf(e.charAt(t.length)) !== -1)(e, t)) {
         return e.substr(t.length);
     }
     return e;
@@ -137,12 +137,12 @@ export function parsePath(e) {
     let n = "";
     let r = "";
     const o = pathname.indexOf("#");
-    if (-1 !== o) {
+    if (o !== -1) {
         r = pathname.substr(o);
         pathname = pathname.substr(0, o);
     }
     const i = pathname.indexOf("?");
-    if (-1 !== i) {
+    if (i !== -1) {
         n = pathname.substr(i);
         pathname = pathname.substr(0, i);
     }
@@ -271,9 +271,9 @@ export function createBrowserHistory(e = {}) {
     const window_history = window.history;
     const n = (()=>{
         const userAgent = window.navigator.userAgent;
-        return (-1 === userAgent.indexOf("Android 2.") && -1 === userAgent.indexOf("Android 4.0") || -1 === userAgent.indexOf("Mobile Safari") || -1 !== userAgent.indexOf("Chrome") || -1 !== userAgent.indexOf("Windows Phone")) && window.history && "pushState" in window.history;
+        return (userAgent.indexOf("Android 2.") === -1 && userAgent.indexOf("Android 4.0") === -1 || userAgent.indexOf("Mobile Safari") === -1 || userAgent.indexOf("Chrome") !== -1 || userAgent.indexOf("Windows Phone") !== -1) && window.history && "pushState" in window.history;
     })();
-    const o = !(-1 === window.navigator.userAgent.indexOf("Trident"));
+    const o = !(window.navigator.userAgent.indexOf("Trident") === -1);
     const { forceRefresh = false, getUserConfirmation = x, keyLength = 6 } = e;
     const y = e.basename ? m(d(e.basename)) : "";
     function g(e) {
@@ -296,7 +296,7 @@ export function createBrowserHistory(e = {}) {
         C.notifyListeners(q.location, q.action);
     }
     function _(e) {
-        if (!((e)=>e.state === undefined && -1 === navigator.userAgent.indexOf("CriOS"))(e)) {
+        if (!((e)=>e.state === undefined && navigator.userAgent.indexOf("CriOS") === -1)(e)) {
             N(g(e.state));
         }
     }
@@ -319,11 +319,11 @@ export function createBrowserHistory(e = {}) {
                     ((e)=>{
                         const q_location = q.location;
                         let n = A.indexOf(q_location.key);
-                        if (-1 === n) {
+                        if (n === -1) {
                             n = 0;
                         }
                         let r = A.indexOf(e.key);
-                        if (-1 === r) {
+                        if (r === -1) {
                             r = 0;
                         }
                         const o = n - r;
@@ -410,7 +410,7 @@ export function createBrowserHistory(e = {}) {
                             window.location.replace(r);
                         } else {
                             const l = A.indexOf(q.location.key);
-                            if (-1 !== l) {
+                            if (l !== -1) {
                                 A[l] = o.key;
                             }
                             P({
@@ -483,7 +483,7 @@ const P = {
 };
 function _(href) {
     const t = href.indexOf("#");
-    if (-1 === t) {
+    if (t === -1) {
         return href;
     }
     return href.slice(0, t);
@@ -491,7 +491,7 @@ function _(href) {
 function j() {
     const href = window.location.href;
     const t = href.indexOf("#");
-    if (-1 === t) {
+    if (t === -1) {
         return "";
     }
     return href.substring(t + 1);
@@ -554,11 +554,11 @@ export function createHashHistory(e = {}) {
                             ((e)=>{
                                 const q_location = q.location;
                                 let n = L.lastIndexOf(createPath(q_location));
-                                if (-1 === n) {
+                                if (n === -1) {
                                     n = 0;
                                 }
                                 let r = L.lastIndexOf(createPath(e));
-                                if (-1 === r) {
+                                if (r === -1) {
                                     r = 0;
                                 }
                                 const o = n - r;
@@ -642,7 +642,7 @@ export function createHashHistory(e = {}) {
                         R(r);
                     }
                     const o = L.indexOf(createPath(q.location));
-                    if (-1 !== o) {
+                    if (o !== -1) {
                         L[o] = t;
                     }
                     k({

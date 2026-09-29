@@ -93,11 +93,11 @@ fn is_flippable_literal_like(expr: &Expr, unresolved_mark: Mark) -> bool {
             op: UnaryOp::Minus,
             arg,
             ..
-        }) => matches!(
-            &**arg,
-            Expr::Ident(ident)
-                if ident.sym == "Infinity" && ident.ctxt.outer() == unresolved_mark
-        ),
+        }) => match &**arg {
+            Expr::Lit(Lit::Num(_)) | Expr::Lit(Lit::BigInt(_)) => true,
+            Expr::Ident(ident) => ident.sym == "Infinity" && ident.ctxt.outer() == unresolved_mark,
+            _ => false,
+        },
         _ => false,
     }
 }

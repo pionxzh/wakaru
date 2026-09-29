@@ -118,3 +118,22 @@ function test(undefined, NaN, Infinity) {
     let output = apply(input);
     assert_eq_normalized(&output, input);
 }
+
+#[test]
+fn flips_negative_numeric_literals() {
+    let input = r#"
+-1 !== s.indexOf(t);
+-1 < i;
+-2n === big;
+-x === y;
+"#;
+    let expected = r#"
+s.indexOf(t) !== -1;
+i > -1;
+big === -2n;
+-x === y;
+"#;
+
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
