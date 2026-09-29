@@ -82,6 +82,8 @@ are none today — use `cargo test --doc` if that changes).
 Snapshot drift **fails** the test and writes a `.snap.new` (via `INSTA_UPDATE=new`
 in `.cargo/config.toml`). Review the diff, then accept intentional changes with
 `cargo insta accept` (or `INSTA_UPDATE=always cargo test` for a one-off bulk accept).
+`cargo-insta` is optional: without it, `mv x.snap.new x.snap` accepts one file
+(see `docs/testing.md#snapshot-testing-workflow`).
 See `docs/testing.md` for test helpers, patterns, and organization.
 
 ## Developing a Rule

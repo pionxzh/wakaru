@@ -135,7 +135,8 @@ for the changed surface:
   `git diff --check`. No Rust test run is required.
 
 Changed snapshots fail tests and produce `.snap.new` files. Review each diff
-before accepting it with `cargo insta review` or `cargo insta accept`.
+before accepting it with `cargo insta review` or `cargo insta accept`. Without
+`cargo-insta`, move the reviewed `.snap.new` over its `.snap`.
 Snapshot updates alone do not replace focused regression coverage.
 
 Skip the private fixture suite if you do not have access to `wakaru-fixtures`.

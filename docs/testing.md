@@ -30,7 +30,9 @@ prebuilt binary from <https://get.nexte.st>). CI runs `cargo nextest run
 doctests; there are none today, but CI keeps a `cargo test --doc` guard.
 
 Snapshot drift fails the test and writes a `.snap.new` (via `INSTA_UPDATE=new`
-in `.cargo/config.toml`); accept intentional changes with `cargo insta accept`.
+in `.cargo/config.toml`); accept intentional changes with `cargo insta accept`,
+or without `cargo-insta` as described in
+[Snapshot Testing Workflow](#snapshot-testing-workflow).
 
 For semantic round-trip coverage with Test262, see
 [Test262 Round-Trip](test262-roundtrip.md).
@@ -158,9 +160,9 @@ with this change.
 
    `.cargo/config.toml` sets `INSTA_UPDATE=new`, so a changed snapshot **fails**
    the test and leaves a `.snap.new` instead of being silently accepted. Review
-   each one, then accept intentional changes with `cargo insta accept` (or a
-   one-off `INSTA_UPDATE=always cargo test`). Make sure no `.snap.new` files
-   remain before committing.
+   each one, then accept intentional changes (see
+   [Snapshot Testing Workflow](#snapshot-testing-workflow); `cargo-insta` is
+   optional). Make sure no `.snap.new` files remain before committing.
 
 Review every snapshot diff before committing. A snapshot change is acceptable
 only when the output is semantically better or the test fixture expectation is
@@ -400,13 +402,21 @@ committed as `.snap` files under `crates/core/tests/snapshots/`.
 test and writes a `.snap.new` (it is not silently accepted). This keeps a
 regression from landing green just because nobody eyeballed the `git diff`.
 
-To review and accept intentional changes, install `cargo-insta` and run:
+To review and accept intentional changes, read each `.snap.new` against its
+`.snap` (`git diff --no-index x.snap x.snap.new`), then accept with one of:
 
 ```bash
-cargo insta review            # accept/reject each pending .snap.new
-cargo insta accept            # accept all pending changes
-INSTA_UPDATE=always cargo test  # one-off: bulk-accept inline during a run
+cargo insta accept            # accept all pending .snap.new (needs cargo-insta)
+mv path/x.snap.new path/x.snap  # accept one file; no tool needed
+INSTA_UPDATE=always cargo test -p wakaru-core --test my_rule_rule  # rewrite during a run
 ```
+
+`cargo-insta` is optional (`cargo install cargo-insta --locked`). Without it,
+use `mv` or `INSTA_UPDATE=always`; both produce the same `.snap` as
+`cargo insta accept`, because the tests have no inline snapshots.
+`INSTA_UPDATE=always` accepts every drift in that run, reviewed or not, so
+scope it to the tests whose diffs you already read. `cargo insta review` is
+interactive and does not work in an agent shell.
 
 **When snapshots change unexpectedly:** see the "Snapshot Layers" section in
 [debugging.md](debugging.md) for how to trace the cause.

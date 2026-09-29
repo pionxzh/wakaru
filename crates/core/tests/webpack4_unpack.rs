@@ -176,8 +176,6 @@ fn webpack4_empty_factory_recovers_runtime_default_object_only_in_normal_output(
 }
 
 /// Snapshot test: every extracted module's decompiled output is pinned.
-/// When rule changes affect the output, `cargo test` will fail and show a diff.
-/// Run `cargo insta review` to accept improvements or reject regressions.
 #[test]
 fn webpack4_unpack_snapshots() {
     let source_path = "../../testcases/webpack4/dist/index.js";
