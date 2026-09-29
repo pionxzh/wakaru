@@ -188,6 +188,7 @@ runner!(run_un_indirect_call, |ctx| UnIndirectCall::new(
 ));
 runner!(run_un_typeof, UnTypeof);
 runner!(run_un_numeric_literal, UnNumericLiteral);
+runner!(run_un_string_escape, UnStringEscape);
 runner!(run_un_bracket_notation, UnBracketNotation);
 fn run_un_interop_require_default(module: &mut Module, ctx: RuleRunContext<'_>) {
     let local_helpers = ctx.local_helpers(module);
@@ -558,6 +559,7 @@ define_rule_registry! {
     ("UnIndirectCall", Syntax, run_un_indirect_call, always_enabled),
     ("UnTypeof", Syntax, run_un_typeof, always_enabled),
     ("UnNumericLiteral", Syntax, run_un_numeric_literal, always_enabled),
+    ("UnStringEscape", Syntax, run_un_string_escape, always_enabled),
     ("UnBracketNotation", Syntax, run_un_bracket_notation, always_enabled),
     ("UnInteropRequireDefault", Helpers, run_un_interop_require_default, always_enabled, requires: [
         "UnIndirectCall",
