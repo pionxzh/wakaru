@@ -43,3 +43,14 @@ strip = "symbols"
 inherits = "release"
 lto = "thin"
 codegen-units = 16
+
+# Optimized CLI for output checks that rebuild after every edit (the
+# wakaru-fixtures runner, reproduction matrices). Without LTO and with
+# incremental codegen, a one-rule change relinks in well under half the
+# dev-release time. Use dev-release or release for performance numbers.
+[profile.dev-opt]
+inherits = "release"
+opt-level = 2
+lto = false
+codegen-units = 256
+incremental = true

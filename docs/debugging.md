@@ -253,9 +253,10 @@ cd ../wakaru-my-worktree
 ```
 
 `run.sh` works on macOS, Linux, and Windows (via Git Bash — it auto-detects
-`wakaru.exe`). It builds `wakaru-cli` with the `dev-release` profile (lighter
-than full `release`, the intended profile for routine fixture/debugging runs)
-from the checkout you launch it in, so you never point at a stale binary. By
+`wakaru.exe`). It builds `wakaru-cli` with the `dev-opt` profile (optimized,
+no LTO, incremental, so it rebuilds quickly after an edit; `--perf` runs use
+`dev-release`) from the checkout you launch it in, so you never point at a
+stale binary. By
 default it diffs against the committed reference non-destructively; pass `--update`
 to update the reference. Do not use a full `cargo build --release` fixture run
 unless you specifically need release-LTO performance numbers.

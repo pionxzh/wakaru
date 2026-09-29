@@ -119,16 +119,19 @@ with this change.
    cargo clippy --workspace --all-targets -- -D warnings
    ```
 
-5. Build the release-profile CLI only when you need a standalone binary, such
-   as before running reproduction matrices with `WAKARU=target/dev-release/wakaru.exe`
+5. Build an optimized CLI only when you need a standalone binary, such as
+   before running reproduction matrices with `WAKARU=target/dev-opt/wakaru`
    or when validating CLI/build behavior directly:
 
    ```bash
-   cargo build --profile dev-release -p wakaru-cli
+   cargo build --profile dev-opt -p wakaru-cli
    ```
 
-   The fixture runner below builds this profile itself, so do not run this as
-   a separate required step only to prepare fixtures.
+   `dev-opt` skips LTO and compiles incrementally, so it rebuilds much faster
+   than `dev-release` after an edit; use `dev-release` or `release` when you
+   need performance numbers. The fixture runner below builds `dev-opt` itself
+   (`dev-release` for `--perf`), so do not run this as a separate required
+   step only to prepare fixtures.
 
 6. Fixtures, when the change can affect decompile output, unpacking, bundler
    behavior, rule ordering, helper detection, or CLI behavior. Run this only
@@ -237,15 +240,15 @@ binary in the same worktree:
 
 ```bash
 cd ../wakaru-my-worktree
-cargo build --profile dev-release -p wakaru-cli
-export WAKARU="$PWD/target/dev-release/wakaru"   # wakaru.exe on Windows
+cargo build --profile dev-opt -p wakaru-cli
+export WAKARU="$PWD/target/dev-opt/wakaru"   # wakaru.exe on Windows
 node scripts/repro/array-spread-rest-matrix/matrix.mjs --details
 ```
 
 Without an explicit `WAKARU`, the shared matrix runner asks Cargo to refresh
 the current worktree's debug CLI once before using `target/debug/wakaru`.
 
-Do not reuse a `target/dev-release/wakaru` binary from another checkout unless
+Do not reuse a `target/dev-opt/wakaru` binary from another checkout unless
 you are intentionally comparing against that checkout. A stale binary from
 `main` can make a matrix pass or fail for the wrong code.
 
