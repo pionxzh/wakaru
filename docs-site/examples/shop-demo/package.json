@@ -1,0 +1,14 @@
+{
+  "name": "shop-demo",
+  "private": true,
+  "scripts": {
+    "build": "webpack"
+  },
+  "dependencies": {
+    "ms": "2.1.3"
+  },
+  "devDependencies": {
+    "webpack": "5.101.3",
+    "webpack-cli": "6.0.1"
+  }
+}

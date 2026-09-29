@@ -2,6 +2,7 @@
   "pages": [
     "unpack-a-bundle",
     "read-an-unpacked-bundle",
+    "unminify-a-webpack-bundle",
     "unminify-a-file",
     "obfuscated-code",
     "rewrite-levels",

@@ -1,0 +1,170 @@
+---
+title: Unminify a webpack bundle
+icon: Route
+description: Get readable code back from a production webpack build, starting with the checks that can return the original source.
+---
+
+You have a file like `main.01cf6e18.js`, one long line of code, and you need
+to know what it does. Before decompiling anything, run two quick checks.
+Either one can hand you the original source. This guide walks through those
+checks and then the unpack itself, using a small webpack 5 app as the
+example. The same steps work for webpack 4 and
+[the other supported bundlers](/reference/supported-inputs#bundlers).
+
+## Collect the files
+
+A webpack app rarely ships as one file. There is an entry file, plus chunks
+the app loads when you use a feature. Wakaru needs all of them to put the
+app back together.
+
+If it is your own build, take the output folder, usually `dist/` or
+`build/`. If it is a site, open the Network tab in DevTools, filter by JS,
+and click through the features you care about so their chunks load. Then
+save the files into one folder.
+
+The example looks like this:
+
+```text
+dist/
+├── main.01cf6e18.js
+├── main.01cf6e18.js.map
+├── 118.849aee4d.js
+└── 118.849aee4d.js.map
+```
+
+## Check for a source map
+
+Look at the end of each file. A line like this means the build published a
+map:
+
+```js
+//# sourceMappingURL=main.01cf6e18.js.map
+```
+
+Even without that line, try the file's URL with `.map` on the end. Some
+builds upload the map but leave the comment out.
+
+Many maps carry a copy of every source file. If yours does, one command
+writes them out:
+
+```bash
+npx wakaru extract dist/main.01cf6e18.js.map -o recovered/
+```
+
+For the example, that gives back the app's own files and its dependency:
+
+```text
+recovered/
+└── shop-demo/
+    ├── src/
+    │   ├── api.js
+    │   ├── cart.js
+    │   └── index.js
+    ├── node_modules/
+    │   └── ms/
+    │       └── index.js
+    └── webpack/        # webpack's own runtime code
+```
+
+These are the files the map was built from, so you can stop here. If the
+map has no embedded files, [Source maps](/guides/source-maps) shows what
+else it can do. If there is no map at all, keep going.
+
+## Rule out obfuscation
+
+Minified code is only compact: short names, `!0` instead of `true`, and
+statements chained with commas. Wakaru reverses that directly.
+
+Obfuscation is deliberate, and it looks different. You will see a large
+array of encoded strings, names like `_0x4f2a`, or functions that are one
+giant `while (true)` loop around a `switch`. If you spot these, strip that
+layer first. [Obfuscated code](/guides/obfuscated-code) explains how.
+
+## Unpack the bundle
+
+Point Wakaru at the folder:
+
+```bash
+npx wakaru dist/ --unpack -o out/
+```
+
+It finds the entry and its chunks and writes one file per module:
+
+```text
+out/
+├── entry.js
+├── module-118.js
+└── module-585.js
+```
+
+The numbers come from webpack, which swaps file paths for module IDs at
+build time. In this example, `module-585.js` turns out to be the `ms`
+package, and `module-118.js` is the checkout code that loads on demand.
+
+The difference is easiest to see on one piece of code. This is the cart
+class inside the shipped entry file:
+
+```js title="dist/main.01cf6e18.js (excerpt)"
+const r=new class{items=[];async add(e,t){const r=await async function(e){const t=await fetch(`/api/price/${e}`);if(!t.ok)throw new Error(`Price lookup failed: ${t.status}`);const{price:r}=await t.json();return r??0}(e),s=this.items.find(t=>t.sku===e);s?s.quantity+=t:this.items.push({sku:e,quantity:t,price:r})}total(){return this.items.reduce((e,t)=>e+t.price*t.quantity,0)}clear(){this.items=[]}};
+```
+
+This is the same class in `out/entry.js`:
+
+```js title="out/entry.js (excerpt)"
+const r = new class {
+    items = [];
+
+    async add(sku, quantity) {
+        const price = await (async (sku_1)=>{
+            const t = await fetch(`/api/price/${sku_1}`);
+            if (!t.ok) {
+                throw new Error(`Price lookup failed: ${t.status}`);
+            }
+            const { price } = await t.json();
+            return price ?? 0;
+        })(sku);
+        const s = this.items.find((t)=>t.sku === sku);
+        if (s) {
+            s.quantity += quantity;
+        } else {
+            this.items.push({
+                sku,
+                quantity,
+                price
+            });
+        }
+    }
+
+    total() {
+        return this.items.reduce((acc, item)=>acc + item.price * item.quantity, 0);
+    }
+
+    clear() {
+        this.items = [];
+    }
+};
+```
+
+The ternary is an `if` again, every action sits on its own line, and the
+parameters are called `sku` and `quantity` because that is where the method
+stores them.
+
+## What you won't get back
+
+Most local names stay short, like `r` and `s` above, because nothing in the
+code says what they were. Comments and original file paths are gone too. A
+little webpack plumbing can also remain. Here, loading the checkout chunk
+still reads `require.e(118)` instead of `import()`.
+
+## Where to go next
+
+- [Read an unpacked bundle](/guides/read-an-unpacked-bundle) shows how to
+  find the code behind a specific behavior.
+- [Rewrite levels](/guides/rewrite-levels) matters if you plan to run the
+  result, not just read it.
+- [Output & warnings](/reference/output-and-warnings) explains any warnings
+  or failed modules.
+- [Coding agents](/guides/coding-agents) sets up an agent to do the digging
+  for you.
+- The [playground](https://wakarujs.com/playground/) runs Wakaru on a single
+  file in the browser.

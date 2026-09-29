@@ -101,6 +101,7 @@ link there from the other pages.
 | --- | --- |
 | Quick Start (`index`) | README |
 | What is Wakaru | landing FAQ, README |
+| Unminify a webpack bundle | `docs-site/examples/shop-demo/`, `docs/cli.md` |
 | Unpack a bundle | `docs/cli.md`, `docs/unpacking.md` |
 | Read an unpacked bundle | `docs-site/examples/request-demo/`, `docs/cli.md` |
 | Unminify a file | `docs/cli.md` |
@@ -130,6 +131,25 @@ npx esbuild@0.25.12 entry.cjs --bundle --platform=browser --format=iife --minify
 
 After changing the sample, unpack it and check the filenames, code excerpts,
 and provenance ranges in the guide against the actual output.
+
+### Webpack guide example
+
+Unminify a webpack bundle uses a webpack 5 production build of
+`docs-site/examples/shop-demo/`. The build output is not committed. Build it
+in a scratch copy so `node_modules/` stays out of the tree:
+
+```bash
+cp -R docs-site/examples/shop-demo /tmp/shop-demo && cd /tmp/shop-demo
+npm ci && npm run build
+npx wakaru extract dist/main.*.js.map -o recovered/
+npx wakaru dist/ --unpack -o out/
+```
+
+The committed `package-lock.json` pins webpack and its minifier, which keeps
+the content hashes, module IDs, and minified output stable. After changing
+the sample or a rule that affects it, rebuild and check the filenames,
+hashes, and excerpts in the guide. Excerpts can add blank lines for
+readability.
 
 ## Backlog
 
