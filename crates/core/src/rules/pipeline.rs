@@ -184,6 +184,7 @@ fn run_un_infinity(module: &mut Module, ctx: RuleRunContext<'_>) {
     }
 }
 runner!(run_un_indirect_call, |ctx| UnIndirectCall::new(
+    ctx.unresolved_mark,
     ctx.rewrite_level
 ));
 runner!(run_un_typeof, UnTypeof);

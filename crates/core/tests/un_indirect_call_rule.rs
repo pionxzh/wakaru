@@ -87,3 +87,21 @@ r.validate(x);
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
+#[test]
+fn keeps_object_wrap_call_through_a_local_object_binding() {
+    // Only the global `Object` returns a function argument unchanged; a local
+    // binding spelled `Object` can return anything.
+    let input = r#"
+function f(Object, r, e) {
+    return Object(r.h)(e);
+}
+"#;
+    let expected = r#"
+function f(Object, r, e) {
+    return Object(r.h)(e);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}

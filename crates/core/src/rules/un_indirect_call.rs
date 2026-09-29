@@ -1,4 +1,5 @@
 use swc_core::common::util::take::Take;
+use swc_core::common::Mark;
 use swc_core::ecma::ast::{CallExpr, Callee, Expr, Ident, Lit, SeqExpr, WithStmt};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -7,22 +8,18 @@ use super::RewriteLevel;
 use crate::utils::paren::strip_parens;
 
 pub struct UnIndirectCall {
+    unresolved_mark: Mark,
     level: RewriteLevel,
     with_depth: usize,
 }
 
 impl UnIndirectCall {
-    pub fn new(level: RewriteLevel) -> Self {
+    pub fn new(unresolved_mark: Mark, level: RewriteLevel) -> Self {
         Self {
+            unresolved_mark,
             level,
             with_depth: 0,
         }
-    }
-}
-
-impl Default for UnIndirectCall {
-    fn default() -> Self {
-        Self::new(RewriteLevel::Standard)
     }
 }
 
@@ -80,7 +77,9 @@ impl VisitMut for UnIndirectCall {
         // Pattern 2: Object(fn.method)(args) → fn.method(args)
         // Object() called on a function just returns it — used as indirect call
         if self.level >= RewriteLevel::Standard {
-            if let Some(inner) = as_object_wrap_call(callee_expr, self.with_depth) {
+            if let Some(inner) =
+                as_object_wrap_call(callee_expr, self.unresolved_mark, self.with_depth)
+            {
                 *expr = Expr::Call(CallExpr {
                     span: *span,
                     ctxt: *ctxt,
@@ -94,7 +93,7 @@ impl VisitMut for UnIndirectCall {
 }
 
 /// If `expr` is `Object(inner)` where inner is a member or ident expr, return `inner`.
-fn as_object_wrap_call(expr: &Expr, with_depth: usize) -> Option<Box<Expr>> {
+fn as_object_wrap_call(expr: &Expr, unresolved_mark: Mark, with_depth: usize) -> Option<Box<Expr>> {
     let Expr::Call(call) = strip_parens(expr) else {
         return None;
     };
@@ -104,11 +103,11 @@ fn as_object_wrap_call(expr: &Expr, with_depth: usize) -> Option<Box<Expr>> {
     let Callee::Expr(callee_expr) = &call.callee else {
         return None;
     };
-    // Must be exactly `Object`
-    let Expr::Ident(Ident { sym, .. }) = strip_parens(callee_expr) else {
+    // Must be exactly the global `Object`
+    let Expr::Ident(Ident { sym, ctxt, .. }) = strip_parens(callee_expr) else {
         return None;
     };
-    if sym.as_str() != "Object" {
+    if sym.as_str() != "Object" || ctxt.outer() != unresolved_mark {
         return None;
     }
     let arg = call.args.first()?;
