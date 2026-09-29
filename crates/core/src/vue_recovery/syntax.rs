@@ -25,14 +25,16 @@ pub(super) fn prop_name(name: &PropName) -> Option<String> {
 
 pub(super) fn string_lit(expr: &Expr) -> Option<String> {
     match expr {
-        Expr::Lit(Lit::Str(str)) => Some(wtf8_to_string(&str.value)),
+        // A lone surrogate has no UTF-8 form and no HTML spelling (`&#xD800;`
+        // decodes to U+FFFD), so such a string is not a static template
+        // string; callers keep it as an expression or skip recovery.
+        Expr::Lit(Lit::Str(str)) => str.value.as_str().map(ToOwned::to_owned),
         Expr::Tpl(tpl) if tpl.exprs.is_empty() && tpl.quasis.len() == 1 => {
             let quasi = tpl.quasis.first()?;
-            quasi
-                .cooked
-                .as_ref()
-                .map(wtf8_to_string)
-                .or_else(|| Some(quasi.raw.to_string()))
+            match &quasi.cooked {
+                Some(cooked) => cooked.as_str().map(ToOwned::to_owned),
+                None => Some(quasi.raw.to_string()),
+            }
         }
         _ => None,
     }

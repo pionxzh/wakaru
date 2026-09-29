@@ -1171,3 +1171,33 @@ export function render(_ctx, _cache) {
         "<template>\n  <div v-focus:current.trim.deep=\"value\" />\n</template>\n"
     );
 }
+
+#[test]
+fn lone_surrogate_strings_never_become_replacement_characters() {
+    // A lone surrogate has no UTF-8 form, and HTML decodes `&#xD800;` to
+    // U+FFFD, so template text or a static attribute cannot hold it.
+    let static_input = r#"
+import { openBlock, createElementBlock } from "vue";
+export function render(_ctx, _cache) {
+  return (openBlock(), createElementBlock("p", { title: "\uD83D" }, "\uD83D"));
+}
+"#;
+    let template_input = r#"
+import { toDisplayString, openBlock, createElementBlock } from "vue";
+export function render(_ctx, _cache) {
+  return (openBlock(), createElementBlock("p", null, `a\uD800${toDisplayString(_ctx.x)}`, 1));
+}
+"#;
+    assert_eq!(
+        recover_vue_sfc_source_from_js(static_input, VueSfcRecoveryOptions::default())
+            .unwrap()
+            .unwrap(),
+        "<template>\n  <p :title='\"\\uD83D\"'>{{ \"\\uD83D\" }}</p>\n</template>\n"
+    );
+    assert_eq!(
+        recover_vue_sfc_source_from_js(template_input, VueSfcRecoveryOptions::default())
+            .unwrap()
+            .unwrap(),
+        "<template>\n  <p>{{ \"a\\uD800\" }}{{ x }}</p>\n</template>\n"
+    );
+}

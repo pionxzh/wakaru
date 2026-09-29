@@ -2,9 +2,10 @@ use crate::collections::HashSet;
 
 use anyhow::Result;
 use swc_core::atoms::Atom;
+use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
     ArrowFunctionBody, AssignOp, BinaryOp, Callee, Expr, ExprOrSpread, Lit, MemberProp,
-    ObjectPatProp, Pat, ReturnStmt, Stmt, Tpl, UnaryOp,
+    ObjectPatProp, Pat, ReturnStmt, Stmt, Str, Tpl, UnaryOp,
 };
 
 use super::attrs::{recover_attrs, recover_component_attrs};
@@ -795,13 +796,26 @@ fn collect_text_concat_nodes(
 fn recover_template_literal(tpl: &Tpl, ctx: &VueRecoveryContext) -> Result<VueNode> {
     let mut nodes = Vec::new();
     for (index, quasi) in tpl.quasis.iter().enumerate() {
-        let text = quasi
-            .cooked
-            .as_ref()
-            .map(wtf8_to_string)
-            .unwrap_or_else(|| quasi.raw.to_string());
-        if keep_template_text(&text, index, tpl.quasis.len()) {
-            nodes.push(VueNode::Text(text));
+        // Template text cannot hold a lone surrogate (see `string_lit`); keep
+        // such a quasi as a string-literal interpolation.
+        if let Some(cooked) = quasi.cooked.as_ref().filter(|c| c.as_str().is_none()) {
+            let literal = Expr::Lit(Lit::Str(Str {
+                span: DUMMY_SP,
+                value: cooked.clone(),
+                raw: None,
+            }));
+            nodes.push(VueNode::Interpolation(VueExpr::new(print_expr(
+                &literal, ctx,
+            )?)));
+        } else {
+            let text = quasi
+                .cooked
+                .as_ref()
+                .map(wtf8_to_string)
+                .unwrap_or_else(|| quasi.raw.to_string());
+            if keep_template_text(&text, index, tpl.quasis.len()) {
+                nodes.push(VueNode::Text(text));
+            }
         }
         if let Some(expr) = tpl.exprs.get(index) {
             nodes.push(recover_template_literal_expr(expr.as_ref(), ctx)?);
