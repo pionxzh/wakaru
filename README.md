@@ -80,6 +80,14 @@ short because the input does not provide their original names.
 
 See [supported inputs](https://wakarujs.com/docs/reference/supported-inputs) for the full list and format-specific limits.
 
+## Guides
+
+- [Unminify a webpack bundle](https://wakarujs.com/docs/guides/unminify-a-webpack-bundle): go from a production build to readable modules, starting with the checks that can return the original source.
+- [Unpack a bundle](https://wakarujs.com/docs/guides/unpack-a-bundle): choose inputs, include chunks, and pick an unpack mode.
+- [Read an unpacked bundle](https://wakarujs.com/docs/guides/read-an-unpacked-bundle): follow a question through the recovered modules.
+- [Source maps](https://wakarujs.com/docs/guides/source-maps): extract original files or recover names from a map.
+- [Obfuscated code](https://wakarujs.com/docs/guides/obfuscated-code): what to do when the input is obfuscated, not just minified.
+
 ## Tested like a compiler
 
 We test both behavior and recovery against real compiler and minifier output:
