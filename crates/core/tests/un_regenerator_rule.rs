@@ -1144,6 +1144,58 @@ use(load_user);
 }
 
 #[test]
+fn esbuild_async_helper_with_deconflicted_name() {
+    // A bundle holding several `__async` copies renames all but one:
+    // esbuild to `__async2`, rollup to `__async$1`.
+    let input = r#"
+var __async$1 = (__this, __arguments, generator) => new Promise((resolve) => {
+  step((generator = generator.apply(__this, __arguments)).next());
+});
+function load_user(app_id) {
+  return __async$1(this, arguments, function* () {
+    var response = yield fetch_user(app_id);
+    return response;
+  });
+}
+var __async2 = (__this, __arguments, generator) => new Promise((resolve) => {
+  step((generator = generator.apply(__this, __arguments)).next());
+});
+function load_team(team_id) {
+  return __async2(this, arguments, function* () {
+    return yield fetch_team(team_id);
+  });
+}
+var __asyncX = (__this, __arguments, generator) => new Promise((resolve) => {
+  step((generator = generator.apply(__this, __arguments)).next());
+});
+function other(app_id) {
+  return __asyncX(this, arguments, function* () {
+    return yield fetch_user(app_id);
+  });
+}
+"#;
+    let expected = r#"
+async function load_user(app_id) {
+  var response = await fetch_user(app_id);
+  return response;
+}
+async function load_team(team_id) {
+  return await fetch_team(team_id);
+}
+var __asyncX = (__this, __arguments, generator) => new Promise((resolve) => {
+  step((generator = generator.apply(__this, __arguments)).next());
+});
+function other(app_id) {
+  return __asyncX(this, arguments, function* () {
+    return yield fetch_user(app_id);
+  });
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn esbuild_async_function_helper() {
     let input = r#"
 var __async = (__this, __arguments, generator) => new Promise((resolve) => {

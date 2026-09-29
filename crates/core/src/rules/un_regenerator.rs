@@ -3955,7 +3955,7 @@ fn collect_esbuild_async_helpers(module: &Module, unresolved_mark: Mark) -> Vec<
                         return None;
                     };
                     let name = binding.id.sym.as_ref();
-                    if name != "__async" && !is_likely_generated_alias(name) {
+                    if !is_esbuild_async_helper_name(name) && !is_likely_generated_alias(name) {
                         return None;
                     }
                     let init = decl.init.as_deref()?;
@@ -3968,6 +3968,16 @@ fn collect_esbuild_async_helpers(module: &Module, unresolved_mark: Mark) -> Vec<
                 .collect::<Vec<_>>()
         })
         .collect()
+}
+
+/// `__async`, or a deconflicted copy when a bundle holds several: esbuild
+/// renames it to `__async2`, rollup to `__async$1`.
+fn is_esbuild_async_helper_name(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix("__async") else {
+        return false;
+    };
+    let digits = rest.strip_prefix('$').unwrap_or(rest);
+    rest.is_empty() || (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
 }
 
 fn is_esbuild_async_helper_expr(expr: &Expr, unresolved_mark: Mark) -> bool {
