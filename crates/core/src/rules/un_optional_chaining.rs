@@ -120,8 +120,51 @@ impl VisitMut for UnOptionalChaining {
             .filter(|result| self.accept_stmt_rewrite(stmt, result))
         {
             *stmt = result;
+            return;
+        }
+
+        if let Stmt::Expr(expr_stmt) = stmt {
+            if let Some(result) = try_short_circuit_stmt_optional_chain(
+                &expr_stmt.expr,
+                self.unresolved_mark,
+                self.policy,
+                &self.isolation,
+            )
+            .filter(|result| self.accept_expr_rewrite(&expr_stmt.expr, result))
+            {
+                replace_expr_preserving_span(&mut expr_stmt.expr, result);
+            }
         }
     }
+}
+
+/// Statement-position `x == null || x.m()` and its lowered forms
+/// (`null == (t = a) || t.m()`, `(t = a) === null || t === void 0 || t.m()`).
+/// Minifiers drop the `? void 0 :` ternary when the value is unused. With the
+/// value discarded, `check || access` equals `check ? void 0 : access`, so the
+/// ternary matchers and their temp and level gates decide the rewrite.
+fn try_short_circuit_stmt_optional_chain(
+    expr: &Expr,
+    unresolved_mark: Mark,
+    policy: RewritePolicy,
+    isolation: &TempIsolation,
+) -> Option<Expr> {
+    let Expr::Bin(BinExpr {
+        op: BinaryOp::LogicalOr,
+        left,
+        right,
+        span,
+    }) = expr
+    else {
+        return None;
+    };
+    let as_ternary = Expr::Cond(CondExpr {
+        span: *span,
+        test: left.clone(),
+        cons: Expr::undefined(DUMMY_SP),
+        alt: right.clone(),
+    });
+    try_optional_chaining(&as_ternary, unresolved_mark, policy, isolation)
 }
 
 /// Replace `*expr` with `result`, copying the original expression's span onto

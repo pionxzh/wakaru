@@ -1568,3 +1568,62 @@ export const x = (_a = o) === null || _a === void 0 ? void 0 : _a.b;
 "#;
     assert_eq_normalized(&apply(input), input);
 }
+
+#[test]
+fn transforms_statement_position_short_circuit_chains() {
+    // Minifiers drop `? void 0 :` when the value is unused.
+    let input = r#"
+function f(x) {
+    x == null || x.m();
+    obj === null || obj === void 0 || obj.method(1);
+    x == null || (x.a = 1);
+}
+function g() {
+    var t;
+    null == (t = E) || t.m(1);
+}
+function h() {
+    var _a;
+    (_a = a.b) === null || _a === void 0 || _a.c();
+}
+"#;
+    let expected = r#"
+function f(x) {
+    x?.m();
+    obj?.method(1);
+    x == null || (x.a = 1);
+}
+function g() {
+    E?.m(1);
+}
+function h() {
+    a.b?.c();
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn keeps_statement_short_circuit_chain_when_temp_is_read_later() {
+    let input = r#"
+function g() {
+    var t;
+    null == (t = E) || t.m(1);
+    use(t);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn keeps_loose_statement_short_circuit_chain_at_minimal() {
+    let input = r#"
+function f(x) {
+    x == null || x.m();
+}
+"#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
+}

@@ -311,7 +311,8 @@ rationale, or level gating appear.
   (`_obj.method == null ? undefined : _obj.method(arg)` → `obj?.method?.(arg)`)
   require `aggressive` (assumes stable property reads). Shares
   structural-equality helpers with UnNullishCoalescing. Must run before
-  UnConditionals.
+  UnConditionals, which turns the statement form `x == null || x.m()` into
+  an `if`; that form goes through the same ternary matchers and gates.
 
 ### Bundler artifacts and module system
 
