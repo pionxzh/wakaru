@@ -368,6 +368,19 @@ function make() {
 }
 
 #[test]
+fn residual_call_through_ident_alias_keeps_prototype_constructor_callable() {
+    let input = r#"
+function Foo() {}
+Foo.prototype.start = function() { this.onStart(); };
+var a = Foo;
+function make() {
+    return a.call(this);
+}
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
 fn consumed_parent_call_allows_base_on_a_later_pass() {
     let input = r#"
 function Base() {}

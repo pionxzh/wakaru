@@ -509,9 +509,12 @@ rationale, or level gating appear.
   ObjMethodShorthand is always enabled; its other eligibility checks remain
   unchanged.
 - **Function-to-class callability guards** — IIFE return aliases are recorded
-  for both variable initializers and later plain assignments. A constructor
-  passed through either form to an IIFE parameter used with `.call`/`.apply`
-  remains an ordinary function until that call is consumed by a proven rewrite.
+  for both variable initializers and later plain assignments, and so are plain
+  identifier aliases (`var a = Foo`). A constructor passed through any of these
+  to a binding used with `.call`/`.apply` remains an ordinary function until
+  that call is consumed by a proven rewrite. In multi-module unpack, exports
+  another module still calls are seeded as required roots from
+  `CallRequiredPlan` (see fact-system.md).
 - **ArrowFunction → ArrowReturn** — hard chain. ArrowFunction is `standard+`
   even though it checks known blockers (`this`, `arguments`, named function
   expressions, `new.target`, and ordinary-function values required by `new`,

@@ -166,7 +166,7 @@ impl RewritePolicy {
 pub use arg_rest::ArgRest;
 pub use arrow_function::ArrowFunction;
 pub use arrow_return::ArrowReturn;
-pub(crate) use call_required::{attach_import_call_edges, pinned_export_names, CallRequiredPlan};
+pub(crate) use call_required::{collect_import_call_edges, pinned_export_names, CallRequiredPlan};
 pub use class_expression_to_declaration::ClassExpressionToDeclaration;
 pub use dead_decls::{DeadDecls, DeadUninitializedDecls};
 pub use dead_imports::DeadImports;

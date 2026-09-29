@@ -509,15 +509,20 @@ pub(super) fn unpack_multi_module_with_plan(
                 let mut facts = collect_module_facts(&facts_module);
                 // Class recovery runs on this pre-late AST. Probing the
                 // late-renamed clone misses IIFEs Phase 2 still converts.
-                crate::rules::attach_import_call_edges(
-                    &mut facts,
+                facts.import_call_edges = crate::rules::collect_import_call_edges(
                     &module,
                     unresolved_mark,
                     options.level,
                 );
                 (facts, Some((module, unresolved_mark)))
             } else {
-                let class_module = module.clone();
+                // Edges read the pre-late AST, as above. Collect them before
+                // recovering in place so this path still skips the clone.
+                let import_call_edges = crate::rules::collect_import_call_edges(
+                    &module,
+                    unresolved_mark,
+                    options.level,
+                );
                 {
                     let span = tracing::info_span!("phase1: fact recovery");
                     let _enter = span.enter();
@@ -530,12 +535,7 @@ pub(super) fn unpack_multi_module_with_plan(
                     );
                 }
                 let mut facts = collect_module_facts(&module);
-                crate::rules::attach_import_call_edges(
-                    &mut facts,
-                    &class_module,
-                    unresolved_mark,
-                    options.level,
-                );
+                facts.import_call_edges = import_call_edges;
                 (facts, None)
             };
             facts.commonjs_default_object = commonjs_default_object;

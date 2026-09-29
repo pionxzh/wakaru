@@ -3237,6 +3237,28 @@ function make() {
 }
 
 #[test]
+fn same_module_ident_alias_call_skips_class_recovery() {
+    // `var a = Foo` makes `a.call` a call of the IIFE's constructor.
+    let input = r#"
+var Foo = (function() {
+    function t() {}
+    t.prototype.start = function() { this.onStart(); };
+    return t;
+})();
+var a = Foo;
+function make() {
+    return a.call(this);
+}
+"#;
+    let output = apply(input);
+    assert!(
+        !output.contains("class Foo"),
+        "a .call through a plain alias must skip class recovery:\n{output}"
+    );
+    assert!(output.contains("a.call(this)"), "{output}");
+}
+
+#[test]
 fn isolated_ctor_without_call_or_apply_still_recovers() {
     let input = r#"
 var Foo = (function() {

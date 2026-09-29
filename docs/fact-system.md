@@ -47,9 +47,11 @@ Phase 1 (per module, parallel):
     rule range through UnEsm
     clone barrier AST → recover webpack factory IIFE ESM shapes
     collect_module_facts(&facts_clone)                ← pure AST → facts
+    collect_import_call_edges(&barrier_ast)           ← imports still under [[Call]]
     retain original barrier AST + Globals + unresolved mark
 
-──── barrier: ModuleFactsMap assembled from all modules ────
+──── barrier: ModuleFactsMap assembled from all modules;
+     CommonJsDefaultObjectCompositionPlan and CallRequiredPlan built ────
 
 Phase 2 (per module, parallel):
     resume retained barrier AST
@@ -60,6 +62,7 @@ Phase 2 (per module, parallel):
     run_namespace_decomposition(&mut module, facts)  ← reads cross-module facts
     downgrade_unused_synthetic_imports(&mut module)  ← preserve require effects
     registry rule range resuming after UnEsm, through UnReturn
+      (UnEs6Class / UnPrototypeClass read this module's CallRequiredPlan pins)
     targeted late cleanup/recovery
 ```
 
@@ -98,9 +101,12 @@ distinguishable from an authored ESM dependency downstream.
 - `ImportFact { local, source, kind: Default | Namespace | Named(imported) }`
 - `ExportFact { exported, local, kind: Default | Named }`
 - `HelperExportFact { exported, local, kind }`
+- `ReexportFact { exported, imported, source }` — `export { A as B } from`
+- `ImportCallEdge { source, imported, consumed_by_exports }`
 - `ModuleFacts { imports, exports, helper_exports,
   commonjs_default_object, commonjs_default_attached_properties,
-  has_export_all, ts_helper_exports,
+  has_export_all, export_star_sources, reexports, import_call_edges,
+  default_object_ident_properties, ts_helper_exports,
   ts_helper_namespace_factory_exports, passthrough_target }`
 - `ModuleFactsMap` — keyed by normalized module specifier
   (handles `./foo`, `foo`, `foo.js` variants)
@@ -248,6 +254,29 @@ fact available to consumers.
 
 ## Rules that read facts
 
+- **`UnEs6Class` / `UnPrototypeClass` cross-file `[[Call]]` pins** — a module
+  that still calls an imported constructor with `.call` / `.apply` (including
+  `F.call.apply(G, …)`, whose callee is `G`) needs that export to stay an
+  ordinary function. Phase 1 records these import edges on the barrier AST,
+  before late ESM recovery, because that is the AST class recovery resumes
+  from. `CallRequiredPlan` resolves each edge to its defining export at the
+  barrier: named-import renames, `export { A as B } from`, one `export *`,
+  `export { t as Foo }`, `export default` IIFE returns, and
+  `export default { Foo: local }` members are followed. Cycles, several
+  `export *` sources, computed members, local aliases of an import, external
+  specifiers, and a relative specifier that does not resolve from the
+  importing file do not pin. Phase 2 seeds the pinned bindings into
+  `CallabilityIndex` before alias propagation, so the constructor an exported
+  IIFE returns stays a function too. Single-file `decompile()` has no plan.
+  An edge whose call sits in an `extends` IIFE constructor is a prediction:
+  Phase 1 runs the `UnEs6Class` matcher on the barrier AST, and when that
+  subclass would become a class the call becomes `super()`, so it pins its base
+  only if the subclass export is itself pinned. This is the one fact here that
+  describes a later rewrite instead of the barrier AST. A misprediction that
+  claims conversion leaves the original bug in place (base becomes a class, the
+  consumer keeps `.call`). Keep the probe (`super_params_consumed_by_class_recovery`)
+  in step with `UnEs6Class` and the spread rules that run before it.
+
 - **`commonjs_default_object_composition`** — builds a monotone fixed point at
   the barrier. A provider seeds it only when the raw assignment is its sole
   CommonJS runtime use — residual `require` identifiers (conditional or nested
@@ -356,7 +385,8 @@ normal constructor.
 - No multi-round merging.
 - No speculative facts ("this might be an X"). A fact holds iff the normalized
   post-Stage-2 AST says it does, or the narrow pre-`UnEsm` collector proves the
-  exact raw CommonJS assignment shape.
+  exact raw CommonJS assignment shape. The one bounded exception is the
+  class-recovery prediction on `ImportCallEdge` described above.
 
 Rules that need heavier semantic conclusions (e.g. "this namespace projection
 is always equivalent to a direct import binding") should derive them inside the

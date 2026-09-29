@@ -550,9 +550,6 @@ impl Visit for IifeReturnCollector {
     fn visit_class(&mut self, _: &Class) {}
 }
 
-/// Binding keys of `exports` on this module's own export declarations.
-/// `export { t as Foo }` contributes `t`, not the exported spelling.
-/// `export default (function () { return t })()` with no local contributes `t`.
 /// Bindings reachable by IIFE-return aliases from `roots`, including `roots`.
 ///
 /// Natural `.call` sites are not seeds. Nested class recovery uses this so a
@@ -587,6 +584,9 @@ pub(crate) fn alias_closure_of_roots(
     required
 }
 
+/// Binding keys of `exports` on this module's own export declarations.
+/// `export { t as Foo }` contributes `t`, not the exported spelling.
+/// `export default (function () { return t })()` with no local contributes `t`.
 pub(crate) fn pinned_binding_keys(
     items: &[ModuleItem],
     exports: &HashSet<Atom>,

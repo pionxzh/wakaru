@@ -32,16 +32,23 @@ impl CallRequiredPlan {
     pub(crate) fn build(facts: &ModuleFactsMap) -> Self {
         let mut hard: HashSet<(String, Atom)> = HashSet::default();
         let mut soft: Vec<SoftEdge> = Vec::new();
+        if facts
+            .iter()
+            .all(|(_, module)| module.import_call_edges.is_empty())
+        {
+            return Self::default();
+        }
+        let modules = ModuleIndex::new(facts);
 
         for (consumer_key, module) in facts.iter() {
             for edge in &module.import_call_edges {
                 let Some(provider) =
-                    resolve_imported_module(facts, consumer_key, edge.source.as_ref())
+                    resolve_imported_module(&modules, consumer_key, edge.source.as_ref())
                 else {
                     continue;
                 };
                 let Some((def_module, def_export)) = resolve_definition(
-                    facts,
+                    &modules,
                     &provider,
                     edge.imported.clone(),
                     &mut HashSet::default(),
@@ -60,7 +67,7 @@ impl CallRequiredPlan {
                             .iter()
                             .filter_map(|name| {
                                 resolve_definition(
-                                    facts,
+                                    &modules,
                                     consumer_key,
                                     name.clone(),
                                     &mut HashSet::default(),
@@ -129,33 +136,42 @@ pub(crate) fn pinned_export_names(
     plan.pinned_exports(filename).cloned().unwrap_or_default()
 }
 
-/// Record import `[[Call]]` edges on `facts` from the facts AST.
+/// Import `[[Call]]` edges of one module, read from the facts AST.
 ///
 /// The resolved pin set is not written back onto [`ModuleFactsMap`]; callers
 /// build a [`CallRequiredPlan`] once the map is complete.
-pub(crate) fn attach_import_call_edges(
-    facts: &mut ModuleFacts,
-    module: &Module,
-    unresolved_mark: Mark,
-    level: super::RewriteLevel,
-) {
-    facts.import_call_edges = collect_import_call_edges(module, unresolved_mark, level);
-}
-
-fn collect_import_call_edges(
+pub(crate) fn collect_import_call_edges(
     module: &Module,
     unresolved_mark: Mark,
     level: super::RewriteLevel,
 ) -> Vec<ImportCallEdge> {
     let imports = import_index(module);
+    if imports.is_empty() {
+        return Vec::new();
+    }
+    // Without the class-recovery probe every call counts as remaining, so this
+    // walk finds a superset of the imports the real walk can report. The probe
+    // clones the module and reruns class matching; skip it when no import is a
+    // callee at all, which is most modules.
+    let no_consumed = HashMap::default();
+    if call_edges(module, &imports, &no_consumed).is_empty() {
+        return Vec::new();
+    }
     let mut consumed_by_param: HashMap<BindingKey, Vec<Atom>> = HashMap::default();
     for consumed in super_params_consumed_by_class_recovery(&module.body, unresolved_mark, level) {
         consumed_by_param.insert(consumed.param, consumed.blocked_by);
     }
+    call_edges(module, &imports, &consumed_by_param)
+}
 
+fn call_edges(
+    module: &Module,
+    imports: &HashMap<BindingKey, ImportBinding>,
+    consumed_by_param: &HashMap<BindingKey, Vec<Atom>>,
+) -> Vec<ImportCallEdge> {
     let mut collector = CallEdgeCollector {
-        imports: &imports,
-        consumed_by_param: &consumed_by_param,
+        imports,
+        consumed_by_param,
         binding_demand: HashMap::default(),
         namespace_demand: HashMap::default(),
         aliases: Vec::new(),
@@ -522,8 +538,32 @@ impl Visit for CallEdgeCollector<'_> {
     }
 }
 
+/// Exact and extension-stem lookups over the canonical module keys, built once
+/// per plan so each edge hop is a hash lookup.
+struct ModuleIndex<'a> {
+    by_key: HashMap<&'a str, &'a ModuleFacts>,
+    by_stem: HashMap<String, Vec<&'a str>>,
+}
+
+impl<'a> ModuleIndex<'a> {
+    fn new(facts: &'a ModuleFactsMap) -> Self {
+        let mut by_key = HashMap::default();
+        let mut by_stem: HashMap<String, Vec<&'a str>> = HashMap::default();
+        for (key, module) in facts.iter() {
+            by_key.insert(key, module);
+            by_stem.entry(script_stem(key)).or_default().push(key);
+        }
+        Self { by_key, by_stem }
+    }
+
+    /// Lookup that does not try specifier variants or a root-level fallback.
+    fn get_exact(&self, key: &str) -> Option<&'a ModuleFacts> {
+        self.by_key.get(key).copied()
+    }
+}
+
 fn resolve_imported_module(
-    facts: &ModuleFactsMap,
+    modules: &ModuleIndex<'_>,
     from_key: &str,
     specifier: &str,
 ) -> Option<String> {
@@ -536,26 +576,19 @@ fn resolve_imported_module(
     } else {
         specifier.to_string()
     };
-    unique_module_key(facts, &resolved)
+    unique_module_key(modules, &resolved)
 }
 
-fn unique_module_key(facts: &ModuleFactsMap, specifier: &str) -> Option<String> {
-    let canonical = specifier
-        .strip_prefix("./")
-        .unwrap_or(specifier)
-        .to_string();
-    let keys: Vec<&str> = facts.iter().map(|(key, _)| key).collect();
-    if let Some(key) = keys.iter().copied().find(|key| *key == canonical) {
-        return Some(key.to_string());
+fn unique_module_key(modules: &ModuleIndex<'_>, specifier: &str) -> Option<String> {
+    let canonical = specifier.strip_prefix("./").unwrap_or(specifier);
+    if modules.by_key.contains_key(canonical) {
+        return Some(canonical.to_string());
     }
-    let stem = script_stem(&canonical);
-    let mut matches = keys
-        .into_iter()
-        .filter(|key| script_stem(key) == stem)
-        .collect::<Vec<_>>();
-    matches.sort_unstable();
-    matches.dedup();
-    (matches.len() == 1).then(|| matches[0].to_string())
+    // Keys are unique map entries, so one stem entry is one module.
+    match modules.by_stem.get(&script_stem(canonical))?.as_slice() {
+        [key] => Some((*key).to_string()),
+        _ => None,
+    }
 }
 
 fn script_stem(path: &str) -> String {
@@ -571,7 +604,7 @@ fn script_stem(path: &str) -> String {
 }
 
 fn resolve_definition(
-    facts: &ModuleFactsMap,
+    modules: &ModuleIndex<'_>,
     module_key: &str,
     exported: Atom,
     visited: &mut HashSet<(String, Atom)>,
@@ -579,14 +612,14 @@ fn resolve_definition(
     if !visited.insert((module_key.to_string(), exported.clone())) {
         return None;
     }
-    let module = facts.get_exact(module_key)?;
+    let module = modules.get_exact(module_key)?;
     if let Some(reexport) = module
         .reexports
         .iter()
         .find(|reexport| reexport.exported == exported)
     {
-        let next = resolve_imported_module(facts, module_key, reexport.source.as_ref())?;
-        return resolve_definition(facts, &next, reexport.imported.clone(), visited);
+        let next = resolve_imported_module(modules, module_key, reexport.source.as_ref())?;
+        return resolve_definition(modules, &next, reexport.imported.clone(), visited);
     }
     if let Some(export) = module
         .exports
@@ -600,8 +633,8 @@ fn resolve_definition(
                     ImportKind::Default => Atom::from("default"),
                     ImportKind::Namespace => return None,
                 };
-                let next = resolve_imported_module(facts, module_key, import.source.as_ref())?;
-                return resolve_definition(facts, &next, imported, visited);
+                let next = resolve_imported_module(modules, module_key, import.source.as_ref())?;
+                return resolve_definition(modules, &next, imported, visited);
             }
             return Some((module_key.to_string(), exported));
         }
@@ -630,18 +663,9 @@ fn resolve_definition(
     // One `export *` can be followed. Several conflict, so the name is not pinned.
     match module.export_star_sources.as_slice() {
         [source] => {
-            let next = resolve_imported_module(facts, module_key, source.as_ref())?;
-            resolve_definition(facts, &next, exported, visited)
+            let next = resolve_imported_module(modules, module_key, source.as_ref())?;
+            resolve_definition(modules, &next, exported, visited)
         }
         _ => None,
-    }
-}
-
-impl ModuleFactsMap {
-    /// Lookup that does not try specifier variants or a root-level fallback.
-    fn get_exact(&self, key: &str) -> Option<&ModuleFacts> {
-        self.iter()
-            .find(|(candidate, _)| *candidate == key)
-            .map(|(_, facts)| facts)
     }
 }
