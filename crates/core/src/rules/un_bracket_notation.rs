@@ -73,6 +73,11 @@ fn parse_normalized_decimal(value: &str) -> Option<f64> {
     }
 
     let parsed = value.parse::<f64>().ok()?;
+    // Outside [1e-6, 1e21) JS `ToString` switches to exponent form, so the
+    // numeric key would name a different property than the string.
+    if parsed != 0.0 && !(1e-6..1e21).contains(&parsed) {
+        return None;
+    }
     if parsed.to_string() == value {
         Some(parsed)
     } else {

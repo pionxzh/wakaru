@@ -243,3 +243,26 @@ const obj = {
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
+#[test]
+fn keeps_decimal_keys_that_js_prints_in_exponent_form() {
+    // JS `ToString` prints 1e21 and above, and values below 1e-6, in exponent
+    // form, so `o[1e21]` reads key "1e+21", not "1000000000000000000000".
+    let input = r#"
+obj['1000000000000000000000'];
+obj['0.0000001'];
+obj['100000000000000000000'];
+obj['0.000001'];
+({ '1000000000000000000000': 1, '0.0000001': 2 });
+"#;
+    let expected = r#"
+obj['1000000000000000000000'];
+obj['0.0000001'];
+obj[100000000000000000000];
+obj[0.000001];
+({ '1000000000000000000000': 1, '0.0000001': 2 });
+"#;
+
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
