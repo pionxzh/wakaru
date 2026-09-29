@@ -766,10 +766,30 @@ fn minimal_still_strips_dot_call_on_arrow() {
 
 #[test]
 fn iife_dot_call_on_arrow_with_null_this_arg_stripped() {
-    // The thisArg value doesn't matter for arrows — strip regardless.
+    // An arrow ignores the thisArg value, so an effect-free one can go.
     let input = r#"((a) => { f(a); }).call(null, x);"#;
     let output = apply_rule(input);
     assert_eq_normalized(&output, r#"((a) => { f(a); })(x);"#);
+}
+
+#[test]
+fn iife_dot_call_on_arrow_with_effect_free_this_args_stripped() {
+    for this_arg in ["void 0", "undefined", "exports", "0"] {
+        let input = format!("((a) => {{ f(a); }}).call({this_arg}, x);");
+        let output = apply_rule(&input);
+        assert_eq_normalized(&output, r#"((a) => { f(a); })(x);"#);
+    }
+}
+
+#[test]
+fn iife_dot_call_on_arrow_keeps_effectful_this_arg() {
+    // Stripping would drop the thisArg's evaluation: its side effects, or an
+    // exception from a getter.
+    for this_arg in ["sideEffect()", "obj.prop", "(log(), this)", "x = 1"] {
+        let input = format!("((a) => {{ f(a); }}).call({this_arg}, y);");
+        let output = apply_rule(&input);
+        assert_eq_normalized(&output, &input);
+    }
 }
 
 #[test]

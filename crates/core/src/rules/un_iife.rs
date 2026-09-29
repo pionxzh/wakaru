@@ -6,11 +6,13 @@ use swc_core::ecma::ast::{
     ArrowExpr, ArrowFunctionBody, BindingIdent, CallExpr, Callee, CatchClause, ClassDecl,
     Constructor, Decl, Expr, ExprOrSpread, FnDecl, Function, FunctionBody, GetterProp, Ident, Lit,
     MemberProp, MethodProp, Module, ObjectPatProp, Param, ParamOrTsParamProp, Pat, SetterProp,
-    Stmt, ThisExpr, VarDecl, VarDeclKind, VarDeclarator,
+    Stmt, ThisExpr, UnaryOp, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::analysis::binding_uses::BindingUseIndex;
+use crate::analysis::purity::is_pure_init;
+use crate::utils::paren::strip_parens;
 
 use super::eval_utils::{js_source_mentions_binding, module_has_with_stmt, DirectEvalAnalyzer};
 use super::rename_utils::{rename_bindings, BindingRename, BindingRenamer};
@@ -168,6 +170,11 @@ fn try_unwrap_dot_call_on_arrow(call: &mut CallExpr) -> bool {
     if call.args.is_empty() || call.args[0].spread.is_some() {
         return false;
     }
+    // The arrow ignores the thisArg value, but the call still evaluates it.
+    // Dropping it is only safe when that evaluation has no effect.
+    if !this_arg_is_effect_free(&call.args[0].expr) {
+        return false;
+    }
 
     // Take the arrow base out of the Member expr without cloning the body.
     let placeholder = Box::new(Expr::This(ThisExpr { span: DUMMY_SP }));
@@ -181,6 +188,18 @@ fn try_unwrap_dot_call_on_arrow(call: &mut CallExpr) -> bool {
     call.callee = Callee::Expr(arrow_base);
     call.args.remove(0);
     true
+}
+
+/// `this`, `void 0`, and the inert values `is_pure_init` accepts (literals,
+/// identifier reads, function and arrow expressions).
+fn this_arg_is_effect_free(expr: &Expr) -> bool {
+    match strip_parens(expr) {
+        Expr::This(_) => true,
+        Expr::Unary(unary) if unary.op == UnaryOp::Void => {
+            matches!(strip_parens(&unary.arg), Expr::Lit(_))
+        }
+        expr => is_pure_init(expr),
+    }
 }
 
 fn process_fn_iife(
