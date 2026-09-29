@@ -1,12 +1,13 @@
 use crate::collections::HashSet;
 
 use swc_core::atoms::Atom;
+use swc_core::common::util::take::Take;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, ArrowFunctionBody, BindingIdent, CallExpr, Callee, CatchClause, ClassDecl,
-    Constructor, Decl, Expr, ExprOrSpread, FnDecl, Function, FunctionBody, GetterProp, Ident, Lit,
-    MemberProp, MethodProp, Module, ObjectPatProp, Param, ParamOrTsParamProp, Pat, SetterProp,
-    Stmt, ThisExpr, UnaryOp, VarDecl, VarDeclKind, VarDeclarator,
+    Constructor, Decl, Expr, ExprOrSpread, ExprStmt, FnDecl, Function, FunctionBody, GetterProp,
+    Ident, Lit, MemberProp, MethodProp, Module, ObjectPatProp, Param, ParamOrTsParamProp, Pat,
+    SetterProp, Stmt, ThisExpr, UnaryOp, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -48,6 +49,11 @@ impl VisitMut for UnIife {
         module.visit_mut_children_with(self);
     }
 
+    fn visit_mut_expr_stmt(&mut self, stmt: &mut ExprStmt) {
+        stmt.visit_mut_children_with(self);
+        drop_discarded_iife_prefix(stmt);
+    }
+
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         expr.visit_mut_children_with(self);
 
@@ -60,6 +66,28 @@ impl VisitMut for UnIife {
             process_iife(call_expr, self.level, self.with_statement_present);
         }
     }
+}
+
+/// `!function () {}();` and `void function () {}();` → `(function () {})();`.
+/// The statement discards the result, and neither operator has an effect of
+/// its own. `+`, `-`, and `~` run ToNumber, which can call `valueOf`.
+fn drop_discarded_iife_prefix(stmt: &mut ExprStmt) {
+    let Expr::Unary(unary) = stmt.expr.as_mut() else {
+        return;
+    };
+    if !matches!(unary.op, UnaryOp::Bang | UnaryOp::Void) {
+        return;
+    }
+    let Expr::Call(call) = strip_parens(&unary.arg) else {
+        return;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return;
+    };
+    if !matches!(strip_parens(callee), Expr::Fn(_) | Expr::Arrow(_)) {
+        return;
+    }
+    stmt.expr = unary.arg.take();
 }
 
 /// Simplifies `(() => expr)()` to `expr` (zero-param arrow with expression body, called with no args).

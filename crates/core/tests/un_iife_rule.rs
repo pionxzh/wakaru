@@ -73,7 +73,7 @@ fn iife_literal_args_extracted_to_const_when_no_arguments_usage() {
 "#;
     // i, s rename; o, g, r literals become const decls; a, m have no args.
     let expected = r#"
-!((window_1, document_1, a, m) => {
+((window_1, document_1, a, m) => {
   const O = 'script';
   const g = 'https://www.google-analytics.com/analytics.js';
   const r = 'ga';
@@ -1161,4 +1161,28 @@ fn named_fn_expr_eval_in_param_default_keeps_literal_param() {
 })(0);
 "#;
     assert_eq_normalized(&apply_rule(input), input);
+}
+
+#[test]
+fn drops_discarded_bang_and_void_prefix_from_iife_statements() {
+    // `!` and `void` on a discarded result have no effect. `+`, `-`, and `~`
+    // run ToNumber, which can call `valueOf`, so they stay.
+    let input = r#"
+!function() { a(); }();
+void function() { b(); }();
+!(() => { c(); })();
++function() { d(); }();
+var x = !function() { e(); }();
+!f();
+"#;
+    let expected = r#"
+(function() { a(); })();
+(function() { b(); })();
+(() => { c(); })();
++function() { d(); }();
+var x = !function() { e(); }();
+!f();
+"#;
+    let output = apply_rule_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, expected);
 }
