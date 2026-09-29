@@ -526,6 +526,39 @@ fn iife_arg_with_shorter_name_not_renamed() {
     assert_eq_normalized(&output, expected);
 }
 
+#[test]
+fn iife_two_char_arg_not_renamed() {
+    // A two-char arg is as minified as the param. Copying it would only add a
+    // `_1` suffix and hide the param from later naming rules.
+    let input = r#"
+(function(e, t) {
+  e.value = t.name;
+})(et, doc);
+"#;
+    let expected = r#"
+(function(e, doc_1) {
+  e.value = doc_1.name;
+})(et, doc);
+"#;
+    assert_eq_normalized(&apply_rule(input), expected);
+}
+
+#[test]
+fn iife_nan_and_infinity_args_not_renamed() {
+    // `NaN` and `Infinity` name values, not roles; `NaN_1` says nothing.
+    let input = r#"
+(function(e, t, n) {
+  use(e, t, n);
+})(NaN, Infinity, win);
+"#;
+    let expected = r#"
+(function(e, t, win_1) {
+  use(e, t, win_1);
+})(NaN, Infinity, win);
+"#;
+    assert_eq_normalized(&apply_rule(input), expected);
+}
+
 /// When the arg's name collides with a binding in the IIFE body's function
 /// scope, inlining is unsafe; substituting body refs would clash with the
 /// existing `const path`. Fall back to a renamed param with a `_N` suffix so

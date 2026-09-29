@@ -428,10 +428,14 @@ where
 
         match arg.expr.as_ref() {
             Expr::Ident(ident) => {
-                if ident.sym.len() <= 1 || ident.sym == param_sym {
+                // A one- or two-char arg is a minified name itself: the param
+                // would only gain a `_1` suffix, and a renamed param is no
+                // longer a minified name that later naming rules replace.
+                if ident.sym.len() <= 2 || ident.sym == param_sym {
                     continue;
                 }
-                if ident.sym.as_ref() == "undefined" {
+                // These globals name values, not roles.
+                if matches!(ident.sym.as_ref(), "undefined" | "NaN" | "Infinity") {
                     continue;
                 }
                 // Keep identifier args as parameters. Dropping the param would
