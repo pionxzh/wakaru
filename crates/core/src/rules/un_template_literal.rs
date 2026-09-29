@@ -105,7 +105,9 @@ impl Default for UnTemplateLiteral<'_> {
 }
 
 enum Part {
-    /// Cooked text and the span of the string literal it came from.
+    /// Cooked text and the span of the string literal it came from. A string
+    /// with a lone surrogate has no UTF-8 form, so the rewrite bails instead
+    /// of building text from it.
     Text(String, Span),
     Expr(Box<Expr>),
 }
@@ -229,7 +231,10 @@ fn collect_concat_parts(call: &CallExpr, out: &mut Vec<Part>) -> bool {
             }
         }
         Expr::Lit(Lit::Str(s)) => {
-            out.push(Part::Text(s.value.to_string_lossy().into_owned(), s.span))
+            let Some(text) = s.value.as_str() else {
+                return false;
+            };
+            out.push(Part::Text(text.to_owned(), s.span))
         }
         _ => return false,
     }
@@ -240,7 +245,10 @@ fn collect_concat_parts(call: &CallExpr, out: &mut Vec<Part>) -> bool {
         }
         match &*arg.expr {
             Expr::Lit(Lit::Str(s)) => {
-                out.push(Part::Text(s.value.to_string_lossy().into_owned(), s.span))
+                let Some(text) = s.value.as_str() else {
+                    return false;
+                };
+                out.push(Part::Text(text.to_owned(), s.span))
             }
             other => out.push(Part::Expr(Box::new(other.clone()))),
         }
@@ -536,7 +544,7 @@ fn rewrite_plus_chain(expr: &Expr, level: RewriteLevel) -> Option<Expr> {
 
     for op in &operands[first_str_idx..] {
         if let Expr::Lit(Lit::Str(s)) = op {
-            parts.push(Part::Text(s.value.to_string_lossy().into_owned(), s.span));
+            parts.push(Part::Text(s.value.as_str()?.to_owned(), s.span));
         } else {
             parts.push(Part::Expr(Box::new((*op).clone())));
         }
@@ -746,7 +754,7 @@ fn collect_template_array(expr: &Expr) -> Option<Vec<Option<String>>> {
                 return None;
             }
             match elem.expr.as_ref() {
-                Expr::Lit(Lit::Str(s)) => Some(Some(s.value.to_string_lossy().into_owned())),
+                Expr::Lit(Lit::Str(s)) => Some(Some(s.value.as_str()?.to_owned())),
                 Expr::Ident(id) if id.sym.as_ref() == "undefined" => Some(None),
                 Expr::Unary(unary)
                     if unary.op == swc_core::ecma::ast::UnaryOp::Void

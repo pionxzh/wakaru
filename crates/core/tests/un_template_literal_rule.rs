@@ -763,3 +763,33 @@ fn template_quasis_keep_the_spans_of_their_string_literals() {
         ]
     );
 }
+
+#[test]
+fn keeps_concatenation_with_lone_surrogate_strings() {
+    // A lone surrogate has no UTF-8 form; converting it to template text
+    // would replace it with U+FFFD and change the string.
+    let input = r#"
+var a = "(" + head + ")|[\uD800-\uDBFF][\uDC00-\uDFFF]" + tail;
+var b = "x\uDC00".concat(n);
+"#;
+    // The inner `"(" + head` has no surrogate and still becomes a template.
+    let expected = r#"
+var a = `(${head}` + ")|[\uD800-\uDBFF][\uDC00-\uDFFF]" + tail;
+var b = "x\uDC00".concat(n);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn keeps_tagged_template_with_lone_surrogate_cooked_string() {
+    let input = r#"
+function _tagged_template_literal(strings, raw) { return strings; }
+var out = tag(_tagged_template_literal(["\uD800", ""]), name);
+"#;
+    let output = apply(input);
+    assert!(
+        !output.contains('\u{FFFD}'),
+        "lone surrogate must not become U+FFFD: {output}"
+    );
+}
