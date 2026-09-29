@@ -1577,3 +1577,152 @@ Name = (async ()=>{
         );
     }
 }
+
+#[test]
+fn iife_directly_returned_function_stays_constructible() {
+    // The returned function has no binding for the analysis to mark, so the
+    // converter must protect the IIFE's own return positions.
+    let input = r#"
+export let Name;
+Name = (function() {
+    return function() {};
+})();
+"#;
+    let expected = r#"
+export let Name;
+Name = (()=>{
+    return function() {};
+})();
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn iife_every_directly_returned_function_stays_constructible() {
+    for (call, returns) in [
+        (
+            "(function() {\n",
+            "return flag ? function() {} : function() {};",
+        ),
+        (
+            "(function() {\n",
+            "if (flag) return function() {};\n    return function() {};",
+        ),
+        ("(0, function() {\n", "return function() {};"),
+        ("(function() {\n", "return function() {};"),
+    ] {
+        let suffix = if call.starts_with("(0") {
+            "})();"
+        } else {
+            "}).call(this);"
+        };
+        let input = format!("export let Name;\nName = {call}    {returns}\n{suffix}\n");
+        let output = apply(&input);
+        assert!(!output.contains("return ()=>"), "{output}");
+        assert!(!output.contains("? ()=>"), "{output}");
+        assert!(!output.contains(": ()=>"), "{output}");
+    }
+}
+
+#[test]
+fn arrow_iife_expression_body_function_stays_constructible() {
+    let input = r#"
+export let Name;
+Name = (()=>function() {})();
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn iife_nested_function_returns_still_convert() {
+    // Only the IIFE's own returns are its result. A nested function's return
+    // and an unconstructed IIFE still convert.
+    let input = r#"
+export let Name;
+Name = (function() {
+    const make = function() {
+        return function() {
+            return 1;
+        };
+    };
+    use(make);
+    return function() {};
+})();
+const plain = (function() {
+    return function() {};
+})();
+plain();
+"#;
+    let expected = r#"
+export let Name;
+Name = (()=>{
+    const make = ()=>{
+        return ()=>{
+            return 1;
+        };
+    };
+    use(make);
+    return function() {};
+})();
+const plain = (()=>{
+    return ()=>{};
+})();
+plain();
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn async_iife_returned_function_still_converts() {
+    let input = r#"
+export let Name;
+Name = (async function() {
+    return function() {};
+})();
+"#;
+    let output = apply(input);
+    assert!(output.contains("return ()=>{}"), "{output}");
+}
+
+#[test]
+fn iife_returned_base_keeps_prototype_through_pipeline() {
+    // `Base.prototype.hello = ...` throws on an arrow, which has no prototype.
+    let input = r#"
+var Base = (function() {
+    return function() {};
+})();
+Base.prototype.hello = function() {
+    return 1;
+};
+export { Base };
+"#;
+    let output = apply_pipeline(input);
+    assert!(output.contains("Base = function()"), "{output}");
+}
+
+#[test]
+fn iife_protection_stops_at_the_returned_function_body() {
+    // The returned function stays constructible; what it returns is not the
+    // IIFE's result.
+    let input = r#"
+export let Name;
+Name = (function() {
+    return function() {
+        return function() {
+            return 1;
+        };
+    };
+})();
+"#;
+    let expected = r#"
+export let Name;
+Name = (()=>{
+    return function() {
+        return ()=>{
+            return 1;
+        };
+    };
+})();
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}

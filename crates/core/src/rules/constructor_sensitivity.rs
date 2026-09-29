@@ -395,6 +395,19 @@ fn collect_value_sources(expr: &Expr, sources: &mut Vec<ValueKey>) {
 /// only keeps a function constructible, so an extra one is harmless and a
 /// missing one is not. Async and generator callees evaluate to a Promise or
 /// an iterator rather than to their returned value.
+/// A call whose callee resolves to a synchronous function or arrow
+/// expression, the IIFE shapes whose returns are the call's result.
+pub(crate) fn is_sync_iife_call(call: &CallExpr) -> bool {
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    match iife_callee_function(callee) {
+        Expr::Fn(function) => !function.function.is_async && !function.function.is_generator,
+        Expr::Arrow(arrow) => !arrow.is_async && !arrow.is_generator,
+        _ => false,
+    }
+}
+
 fn collect_iife_return_sources(call: &CallExpr, sources: &mut Vec<ValueKey>) {
     let Callee::Expr(callee) = &call.callee else {
         return;

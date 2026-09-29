@@ -491,9 +491,11 @@ rationale, or level gating appear.
   underlying bindings. The alias graph also follows an immediately invoked
   synchronous function or arrow, including `(0, f)()`, `.call`, and `.apply`,
   to every value its own `return` statements can produce, so
-  `Name = (function () { return ctor; })()` protects `ctor`. The converters
-  have no matching syntactic case yet, so a function expression returned
-  directly from such an IIFE can still be converted.
+  `Name = (function () { return ctor; })()` protects `ctor`. ArrowFunction
+  protects the same IIFE shapes syntactically: when the IIFE's result is
+  constructor-sensitive, a function expression it returns directly stays
+  ordinary, while the callee itself and functions nested in it may still
+  convert.
   Aliases are also recorded for logical assignments
   (`cached ||= ctor`) and object-destructuring bindings (`const { C } = ns`,
   including renames, nested patterns, defaults, and rest bindings). A shared

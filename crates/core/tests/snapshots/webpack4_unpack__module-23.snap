@@ -497,7 +497,7 @@ function W(e, t, n) {
 function $(e, t) {
     return e === t;
 }
-export const connect = (({ connectHOC = connectAdvanced, mapStateToPropsFactories = D, mapDispatchToPropsFactories = I, mergePropsFactories = z, selectorFactory = H } = {})=>(e, t, n, { pure = true, areStatesEqual = $, areOwnPropsEqual = R, areStatePropsEqual = R, areMergedPropsEqual = R, ...rest } = {})=>{
+export const connect = (({ connectHOC = connectAdvanced, mapStateToPropsFactories = D, mapDispatchToPropsFactories = I, mergePropsFactories = z, selectorFactory = H } = {})=>function(e, t, n, { pure = true, areStatesEqual = $, areOwnPropsEqual = R, areStatePropsEqual = R, areMergedPropsEqual = R, ...rest } = {}) {
         const initMapStateToProps = W(e, mapStateToPropsFactories, "mapStateToProps");
         const initMapDispatchToProps = W(t, mapDispatchToPropsFactories, "mapDispatchToProps");
         const initMergeProps = W(n, mergePropsFactories, "mergeProps");

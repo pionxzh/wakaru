@@ -4,14 +4,15 @@ use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 
 use swc_core::ecma::ast::{
     ArrowExpr, ArrowFunctionBody, AssignExpr, AssignTarget, BinExpr, BinaryOp, CallExpr, Callee,
-    Class, Expr, FnExpr, Function, Ident, KeyValueProp, MemberExpr, MemberProp, MetaPropExpr,
-    MetaPropKind, Module, NewExpr, Pat, ThisExpr, VarDeclarator,
+    Class, Expr, FnExpr, Function, FunctionBody, Ident, KeyValueProp, MemberExpr, MemberProp,
+    MetaPropExpr, MetaPropKind, Module, NewExpr, Pat, ReturnStmt, ThisExpr, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::constructor_sensitivity::{
     assign_target_value_key, collect_constructor_sensitive_values, is_bind_call, is_construct_call,
-    pat_value_key, static_member_name, visit_mut_assign_target_pat_constructor_sensitive_defaults,
+    is_sync_iife_call, pat_value_key, static_member_name,
+    visit_mut_assign_target_pat_constructor_sensitive_defaults,
     visit_mut_pat_constructor_sensitive_defaults, CreateClassHelpers, ValueKey,
 };
 use super::decl_utils::has_duplicate_param_names;
@@ -38,6 +39,9 @@ impl ArrowFunction {
         module.visit_mut_with(&mut ArrowFunctionConverter {
             constructor_sensitive_values: &constructor_sensitive_values,
             create_class: &create_class,
+            protect_iife_callee: false,
+            protect_next_body_returns: false,
+            protect_returns: false,
         });
     }
 }
@@ -52,6 +56,13 @@ impl VisitMut for ArrowFunction {
 struct ArrowFunctionConverter<'a> {
     constructor_sensitive_values: &'a HashSet<ValueKey>,
     create_class: &'a CreateClassHelpers,
+    /// The next call visited is a constructor-sensitive IIFE: its callee's own
+    /// `return` values are the result and must stay constructible.
+    protect_iife_callee: bool,
+    /// The next function body entered is that IIFE callee's body.
+    protect_next_body_returns: bool,
+    /// Returns in the current function body are the protected IIFE's result.
+    protect_returns: bool,
 }
 
 impl VisitMut for ArrowFunctionConverter<'_> {
@@ -127,8 +138,32 @@ impl VisitMut for ArrowFunctionConverter<'_> {
         expr.right.visit_mut_with(self);
     }
 
+    fn visit_mut_function_body(&mut self, body: &mut FunctionBody) {
+        // Each body owns its returns: only the protected IIFE callee's body
+        // takes the flag, and a nested function body starts unprotected.
+        let saved = self.protect_returns;
+        self.protect_returns = std::mem::take(&mut self.protect_next_body_returns);
+        body.visit_mut_children_with(self);
+        self.protect_returns = saved;
+    }
+
+    fn visit_mut_return_stmt(&mut self, stmt: &mut ReturnStmt) {
+        match &mut stmt.arg {
+            Some(arg) if self.protect_returns => {
+                visit_constructor_value_without_converting(arg, self);
+            }
+            _ => stmt.visit_mut_children_with(self),
+        }
+    }
+
     fn visit_mut_call_expr(&mut self, call: &mut CallExpr) {
-        call.callee.visit_mut_with(self);
+        if std::mem::take(&mut self.protect_iife_callee) {
+            if let Callee::Expr(callee) = &mut call.callee {
+                visit_iife_callee_protecting_returns(callee, self);
+            }
+        } else {
+            call.callee.visit_mut_with(self);
+        }
 
         let construct_call = is_construct_call(call);
         // A literal callee provides an exact parameter/argument pairing. Reuse
@@ -285,7 +320,70 @@ fn visit_constructor_value_without_converting(
             call.args.visit_mut_with(converter);
             call.type_args.visit_mut_with(converter);
         }
+        // An IIFE evaluates to what its callee returns, the same shapes
+        // `constructor_sensitivity` follows for returned bindings. A
+        // directly returned function has no binding to mark, so protect the
+        // callee's return positions here.
+        Expr::Call(call) if is_sync_iife_call(call) => {
+            converter.protect_iife_callee = true;
+            expr.visit_mut_with(converter);
+        }
         _ => expr.visit_mut_with(converter),
+    }
+}
+
+/// Mirrors `iife_callee_function`: parens, a sequence's last expression, and
+/// the receiver of `.call` / `.apply` lead to the invoked function. The
+/// callee itself may still become an arrow; only its returns are protected.
+fn visit_iife_callee_protecting_returns(
+    callee: &mut Expr,
+    converter: &mut ArrowFunctionConverter<'_>,
+) {
+    match callee {
+        Expr::Paren(paren) => visit_iife_callee_protecting_returns(&mut paren.expr, converter),
+        Expr::Seq(sequence) => {
+            if let Some((last, prefix)) = sequence.exprs.split_last_mut() {
+                for expr in prefix {
+                    expr.visit_mut_with(converter);
+                }
+                visit_iife_callee_protecting_returns(last, converter);
+            }
+        }
+        Expr::Member(member)
+            if static_member_name(&member.prop)
+                .is_some_and(|name| name == "call" || name == "apply") =>
+        {
+            visit_iife_callee_protecting_returns(&mut member.obj, converter);
+            if let MemberProp::Computed(computed) = &mut member.prop {
+                computed.expr.visit_mut_with(converter);
+            }
+        }
+        Expr::Fn(fn_expr) if !fn_expr.function.is_async && !fn_expr.function.is_generator => {
+            // Parameter defaults can hold function bodies of their own, so
+            // arm the flag only for this function's body.
+            fn_expr.function.params.visit_mut_with(converter);
+            fn_expr.function.decorators.visit_mut_with(converter);
+            if let Some(body) = &mut fn_expr.function.body {
+                converter.protect_next_body_returns = true;
+                body.visit_mut_with(converter);
+            }
+            if let Some(arrow) = try_convert_to_arrow(fn_expr) {
+                *callee = Expr::Arrow(arrow);
+            }
+        }
+        Expr::Arrow(arrow) if !arrow.is_async && !arrow.is_generator => {
+            arrow.params.visit_mut_with(converter);
+            match arrow.body.as_mut() {
+                ArrowFunctionBody::Expr(expr) => {
+                    visit_constructor_value_without_converting(expr, converter);
+                }
+                ArrowFunctionBody::FunctionBody(body) => {
+                    converter.protect_next_body_returns = true;
+                    body.visit_mut_with(converter);
+                }
+            }
+        }
+        callee => callee.visit_mut_with(converter),
     }
 }
 

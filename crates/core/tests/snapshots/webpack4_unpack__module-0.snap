@@ -159,7 +159,9 @@ export function j() {
         }
     };
 }
-const C = ((e = 0)=>()=>++e)();
+const C = ((e = 0)=>function() {
+        return ++e;
+    })();
 const P = (e)=>{
     throw e;
 };
