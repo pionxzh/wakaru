@@ -45,6 +45,7 @@ jobs:
       - name: Test producer execution, TypeScript profiles and module comparison
         run: >-
           node --test
+          scripts/repro/lib/matrix-jobs.test.mjs
           scripts/repro/lib/node-tool.test.mjs
           scripts/repro/lib/tool-process.test.mjs
           scripts/repro/lib/producer-batch.test.mjs

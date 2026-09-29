@@ -3,7 +3,7 @@
 // Runs every reproduction matrix with --json and writes a summary to
 // scripts/repro/stats.json.  Re-run after rule changes to update the
 // checked-in baseline so other sessions can read it without re-running
-// all matrices (~2 min).
+// all matrices.
 //
 // Usage:
 //   node scripts/repro/collect-stats.mjs            # update stats.json
@@ -12,28 +12,30 @@
 //                                                    # (1 = at most one wakaru
 //                                                    # process at any time)
 
-import { execSync, spawnSync } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseReproJobs } from "./lib/runner.mjs";
+import { defaultConcurrency, parseReproJobs, runPool, wakaruCommand } from "./lib/runner.mjs";
+import { planMatrixJobs } from "./lib/matrix-jobs.mjs";
 import { findReproStatDrift } from "./lib/doc-stats.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(scriptDir, "../..");
 const statsPath = join(scriptDir, "stats.json");
 
-// --jobs N caps runPool concurrency in every matrix (children inherit the
-// environment; matrices themselves already run sequentially via spawnSync).
-const jobsFlagIndex = process.argv.indexOf("--jobs");
-if (jobsFlagIndex !== -1) {
-  try {
-    const jobs = parseReproJobs(process.argv[jobsFlagIndex + 1], "--jobs");
-    process.env.WAKARU_REPRO_JOBS = String(jobs);
-  } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exit(1);
-  }
+// --jobs N (or WAKARU_REPRO_JOBS) is the wakaru-process budget for the whole
+// run. It is split between concurrent matrix processes, each of which gets
+// its share through WAKARU_REPRO_JOBS (see lib/matrix-jobs.mjs).
+let jobBudget;
+try {
+  const jobsFlagIndex = process.argv.indexOf("--jobs");
+  jobBudget = jobsFlagIndex !== -1
+    ? parseReproJobs(process.argv[jobsFlagIndex + 1], "--jobs")
+    : defaultConcurrency();
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
 }
 
 const matrices = [
@@ -60,15 +62,26 @@ function gitCommit() {
   }
 }
 
-function runMatrix(name) {
+function spawnMatrix(name, env) {
   const script = join(scriptDir, `${name}-matrix/matrix.mjs`);
-  const result = spawnSync("node", [script, "--json"], {
-    cwd: repoRoot,
-    encoding: "utf8",
-    maxBuffer: 1024 * 1024 * 50,
-    timeout: 5 * 60 * 1000,
-    stdio: ["pipe", "pipe", "pipe"],
+  return new Promise((resolvePromise) => {
+    const child = spawn("node", [script, "--json"], {
+      cwd: repoRoot,
+      env,
+      timeout: 5 * 60 * 1000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => (stdout += chunk));
+    child.stderr.resume();
+    child.on("error", () => resolvePromise({ status: null, stdout }));
+    child.on("close", (status) => resolvePromise({ status, stdout }));
   });
+}
+
+async function runMatrix(name, env) {
+  const result = await spawnMatrix(name, env);
   if (result.status !== 0) {
     console.error(`  ${name}: failed (exit ${result.status})`);
     return null;
@@ -169,17 +182,22 @@ function printStatsDiff(recorded, measured) {
 
 const checkMode = process.argv.includes("--check");
 
-console.log("Running reproduction matrices...");
-const results = [];
-for (const name of matrices) {
-  process.stdout.write(`  ${name}...`);
-  const result = runMatrix(name);
+const plan = planMatrixJobs(jobBudget, matrices.length);
+// Resolve (and, without $WAKARU, build) the CLI once for every child.
+const matrixEnv = { ...process.env, WAKARU: wakaruCommand(), WAKARU_REPRO_JOBS: String(plan.perMatrix) };
+
+console.log(`Running reproduction matrices (${plan.matrices} at a time, ${plan.perMatrix} job(s) each)...`);
+// Results keep the declared matrix order; stats.json comparison depends on it.
+const slots = new Array(matrices.length).fill(null);
+await runPool(matrices, async (name, index) => {
+  const result = await runMatrix(name, matrixEnv);
   if (result) {
     const errorSuffix = result.error ? ` / ${result.error} error` : "";
-    console.log(` ${result.yes}/${result.total}${errorSuffix} (${result.pct}%)`);
-    results.push(result);
+    console.log(`  ${name}: ${result.yes}/${result.total}${errorSuffix} (${result.pct}%)`);
   }
-}
+  slots[index] = result;
+}, plan.matrices);
+const results = slots.filter(Boolean);
 
 const yes = results.reduce((s, r) => s + r.yes, 0);
 const total = results.reduce((s, r) => s + r.total, 0);

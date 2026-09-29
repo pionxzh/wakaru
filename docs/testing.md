@@ -502,7 +502,10 @@ pinned once in `lib/runner.mjs` (`ensureSwcTool`, `ensureTerserTool`).
 This isolates launcher execution, not dependency installation. Populate caches
 before concurrent runs and avoid refreshing/reinstalling a tool while another
 process uses it. `WAKARU_REPRO_JOBS` limits one matrix process; it does not lock
-tool caches across sessions.
+tool caches across sessions. `collect-stats.mjs` treats `--jobs N` (or
+`WAKARU_REPRO_JOBS`) as the budget for the whole run: it runs up to N matrices
+at once and splits the budget between them (`lib/matrix-jobs.mjs`), so
+`--jobs 1` still means one wakaru process at a time.
 
 By default, matrices should spread `...mangleValidator()` from
 `lib/compare.mjs` into their `runMatrix()` config. This uses alpha-renaming normalization to compare

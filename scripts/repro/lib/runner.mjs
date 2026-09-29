@@ -524,12 +524,13 @@ export function parseReproJobs(value, optionName = "WAKARU_REPRO_JOBS") {
   return jobs;
 }
 
-function defaultConcurrency() {
+export function defaultConcurrency() {
   // WAKARU_REPRO_JOBS caps every asynchronous pool in the matrix flow. All
   // asynchronous wakaru children run inside those pools; the remaining CLI
   // calls are synchronous and occur only after earlier pools are awaited.
-  // collect-stats also runs matrices sequentially, so a value of 1 bounds the
-  // entire harness to one wakaru process.
+  // collect-stats treats the same value as a budget for the whole run and
+  // splits it between concurrent matrices (lib/matrix-jobs.mjs), so a value
+  // of 1 still bounds the entire harness to one wakaru process.
   const configuredJobs = process.env.WAKARU_REPRO_JOBS;
   if (configuredJobs !== undefined) {
     return parseReproJobs(configuredJobs);
@@ -679,6 +680,12 @@ export async function runWakaruArgsAsync(args, options = {}) {
 }
 
 function wakaruDescription() {
+  return resolveWakaruCmd().command;
+}
+
+// Build (unless $WAKARU is set) and return the CLI path, so collect-stats can
+// resolve it once instead of each concurrent matrix running its own build.
+export function wakaruCommand() {
   return resolveWakaruCmd().command;
 }
 
