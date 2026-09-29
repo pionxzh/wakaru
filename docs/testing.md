@@ -14,8 +14,7 @@ on Windows) provides this. The allocator dependency belongs only to the CLI;
 Rust library and WASM builds do not need it.
 
 ```bash
-# Run the full suite — prefer nextest (one global parallel pool; ~25x faster
-# than `cargo test`, which runs the 90+ test binaries sequentially)
+# Run the full suite — prefer nextest, the runner CI uses
 cargo nextest run -p wakaru-core      # core suite
 cargo nextest run --workspace         # everything
 
@@ -28,6 +27,12 @@ Install nextest once with `cargo install cargo-nextest --locked` (or the
 prebuilt binary from <https://get.nexte.st>). CI runs `cargo nextest run
 --workspace --profile ci` (see `.config/nextest.toml`). nextest does not run
 doctests; there are none today, but CI keeps a `cargo test --doc` guard.
+
+nextest starts one process per test. On machines where security software
+(antivirus, endpoint protection) inspects every process launch, that startup
+cost dominates: the run is slow while CPU use stays low. There,
+`cargo test -p wakaru-core --tests --no-fail-fast` runs the same tests in far
+fewer processes and can finish sooner.
 
 Snapshot drift fails the test and writes a `.snap.new` (via `INSTA_UPDATE=new`
 in `.cargo/config.toml`); accept intentional changes with `cargo insta accept`,

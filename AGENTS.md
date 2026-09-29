@@ -65,7 +65,7 @@ that leaves the machine usable (for example, half of physical RAM).
 ## Testing
 
 ```bash
-cargo nextest run -p wakaru-core               # full core suite (~25x faster than cargo test)
+cargo nextest run -p wakaru-core               # full core suite
 cargo nextest run --workspace                  # everything
 cargo test -p wakaru-core --test my_rule_rule  # one test file
 cargo test -p wakaru-core --test smart_inline_rule -- inline_single_use  # one test
@@ -73,11 +73,16 @@ cargo fmt --check                              # verify Rust formatting
 cargo clippy -p wakaru-core --all-targets -- -D warnings  # lint core changes
 ```
 
-The full suite runs much faster under [nextest](https://nexte.st) (one global
-parallel pool vs. `cargo test`'s sequential per-binary runs). Install once with
-`cargo install cargo-nextest --locked` (or `curl -LsSf https://get.nexte.st/latest/<os> | tar zxf - -C $HOME/.cargo/bin`).
+The full suite runs under [nextest](https://nexte.st), the same runner CI uses.
+Install once with `cargo install cargo-nextest --locked` (or `curl -LsSf https://get.nexte.st/latest/<os> | tar zxf - -C $HOME/.cargo/bin`).
 `cargo test` still works for everything; nextest does not run doctests (there
 are none today — use `cargo test --doc` if that changes).
+
+nextest starts one process per test. On machines where security software
+(antivirus, endpoint protection) inspects every process launch, that startup
+cost dominates: the run is slow while CPU use stays low. There,
+`cargo test -p wakaru-core --tests --no-fail-fast` runs the same tests in far
+fewer processes and can finish sooner.
 
 Snapshot drift **fails** the test and writes a `.snap.new` (via `INSTA_UPDATE=new`
 in `.cargo/config.toml`). Review the diff, then accept intentional changes with
