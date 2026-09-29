@@ -783,10 +783,12 @@ define_rule_registry! {
         "SmartRename",
         "ExtractInlinedFunction"
     ]),
-    // UnJsx2 can expose component aliases and value-position hints in JSX.
-    // Only the JSX-aware sub-rules need to re-run; the non-JSX sub-rules
-    // and recursive function/arrow descent were fully handled by SmartRename.
-    ("SmartRename2", Cleanup, run_smart_rename_second_pass, always_enabled, requires: [
+    // UnJsx2 can expose component aliases and value-position hints in JSX,
+    // and intermediate rules can expose new function-level rename shapes.
+    // Module-level non-JSX sub-rules are skipped; they ran in SmartRename.
+    // Gated like SmartRename: a repeat pass must not run where its first
+    // pass is disabled.
+    ("SmartRename2", Cleanup, run_smart_rename_second_pass, standard_or_above, requires: [
         "UnJsx2"
     ]),
     // Late structural rewrites can consume uninitialized temps used by lowered

@@ -738,6 +738,32 @@ fn minimal_disables_iife_param_rewrites() {
 }
 
 #[test]
+fn minimal_disables_smart_rename_passes() {
+    let input = r#"
+export function f(e) {
+  var o = e.scrollLeft;
+  return o;
+}
+"#;
+
+    let output = decompile(
+        input,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            level: RewriteLevel::Minimal,
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code;
+
+    assert!(
+        output.contains("o = e.scrollLeft") && !output.contains("e_scrollLeft"),
+        "minimal output should keep the original local names: {output}"
+    );
+}
+
+#[test]
 fn standard_keeps_iife_param_rewrites() {
     let input = r#"
 ((i, s, o) => {
