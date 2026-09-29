@@ -36,7 +36,7 @@ fn run_decomp(source: &str, facts: &ModuleFactsMap) -> String {
         let top_level_mark = Mark::new();
         module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
 
-        run_namespace_decomposition(&mut module, facts, None);
+        run_namespace_decomposition(&mut module, facts, None, unresolved_mark);
 
         let mut output = Vec::new();
         {
@@ -78,7 +78,7 @@ fn run_decomp_then_rename(source: &str, facts: &ModuleFactsMap) -> String {
         let top_level_mark = Mark::new();
         module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
 
-        run_namespace_decomposition(&mut module, facts, None);
+        run_namespace_decomposition(&mut module, facts, None, unresolved_mark);
         apply_rules(
             &mut module,
             unresolved_mark,
@@ -122,7 +122,7 @@ fn run_decomp_then_late_pipeline(source: &str, facts: &ModuleFactsMap) -> String
         let top_level_mark = Mark::new();
         module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
 
-        run_namespace_decomposition(&mut module, facts, None);
+        run_namespace_decomposition(&mut module, facts, None, unresolved_mark);
         apply_rules(
             &mut module,
             unresolved_mark,
@@ -282,6 +282,30 @@ function g(e) {
         !normalize(&output).contains("import u from"),
         "expected decomposition, got:\n{output}"
     );
+}
+
+#[test]
+fn free_reference_with_export_spelling_uses_alias() {
+    // `ready.run()` reads a global `ready`; importing the export as `ready`
+    // would capture it.
+    let target_facts = facts_for(
+        r#"
+export function ready() {}
+export function other() {}
+"#,
+    );
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./module-2.js", target_facts);
+
+    let input = r#"
+import * as r from "./module-2.js";
+ready.run(() => [r.ready(), r.other()]);
+"#;
+    let expected = r#"
+import { other, ready as ready_1 } from "./module-2.js";
+ready.run(() => [ready_1(), other()]);
+"#;
+    assert_eq_normalized(&run_decomp(input, &facts), expected);
 }
 
 #[test]
@@ -1188,10 +1212,10 @@ export const table = {
 fn rewritten_usages_keep_the_spans_of_their_property_names() {
     // A wrapping `(0, r.x)` starts the member's span at `(`; the rewritten
     // identifier takes the property's span so the output map stays on `x`.
-    struct Decompose<'a>(&'a ModuleFactsMap);
+    struct Decompose<'a>(&'a ModuleFactsMap, Mark);
     impl VisitMut for Decompose<'_> {
         fn visit_mut_module(&mut self, module: &mut Module) {
-            run_namespace_decomposition(module, self.0, None);
+            run_namespace_decomposition(module, self.0, None, self.1);
         }
     }
     struct Named(Vec<Ident>);
@@ -1225,7 +1249,7 @@ const x = <r.Box />;
 "#;
     let spans: Vec<(String, Option<String>)> = inspect_rule_output(
         input,
-        |_| Decompose(&facts),
+        |unresolved_mark| Decompose(&facts, unresolved_mark),
         |module, text| {
             let mut named = Named(Vec::new());
             module.visit_with(&mut named);

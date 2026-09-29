@@ -13,7 +13,7 @@
 use crate::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::{SyntaxContext, DUMMY_SP};
+use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignExpr, AssignTarget, CallExpr, Callee, CatchClause, Expr, Function, Ident, ImportDecl,
     ImportNamedSpecifier, ImportSpecifier, JSXElementName, JSXObject, MemberExpr, MemberProp,
@@ -24,7 +24,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::facts::{ExportKind, ModuleFactsMap};
 use crate::js_names::is_reserved_binding_name;
-use crate::rules::rename_utils::starts_with_lowercase;
+use crate::rules::rename_utils::{collect_free_reference_names, starts_with_lowercase};
 use crate::utils::paren::strip_parens;
 
 const MAX_SYNTHETIC_NAME_ATTEMPTS: usize = 10_000;
@@ -74,8 +74,10 @@ pub fn run_namespace_decomposition(
     module: &mut Module,
     module_facts: &ModuleFactsMap,
     current_filename: Option<&str>,
+    unresolved_mark: Mark,
 ) {
-    let candidates = find_decomposition_candidates(module, module_facts, current_filename);
+    let candidates =
+        find_decomposition_candidates(module, module_facts, current_filename, unresolved_mark);
     if candidates.is_empty() {
         return;
     }
@@ -87,6 +89,7 @@ fn find_decomposition_candidates(
     module: &Module,
     module_facts: &ModuleFactsMap,
     current_filename: Option<&str>,
+    unresolved_mark: Mark,
 ) -> Vec<DecompCandidate> {
     // Collect ALL bindings at every scope level (including function params,
     // catch clauses, inner var/let/const, etc.) to detect naming collisions.
@@ -97,6 +100,10 @@ fn find_decomposition_candidates(
     };
     module.visit_with(&mut collector);
     let mut existing_bindings = collector.bindings;
+    // A free reference with the same spelling as an accessed export would be
+    // captured by the new named import (`ready.run()` reading a global
+    // `ready` while `r.ready` becomes `ready`), so free names are occupied too.
+    existing_bindings.extend(collect_free_reference_names(module, unresolved_mark));
 
     // Step 1: Find default and namespace imports and their source modules.
     // Both shapes expose a module-namespace-like binding that can be decomposed

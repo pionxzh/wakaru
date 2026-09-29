@@ -663,7 +663,12 @@ pub(super) fn unpack_multi_module_with_plan(
                 unresolved_mark,
             );
             run_reexport_consolidation(&mut module, facts_ref, Some(&unpacked.module.filename));
-            run_namespace_decomposition(&mut module, facts_ref, Some(&unpacked.module.filename));
+            run_namespace_decomposition(
+                &mut module,
+                facts_ref,
+                Some(&unpacked.module.filename),
+                unresolved_mark,
+            );
             downgrade_unused_synthetic_imports(&mut module);
             // Late helper-through-UnReturn range.
             apply_rules_to_recovered_module(
