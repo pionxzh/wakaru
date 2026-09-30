@@ -112,6 +112,13 @@ fn process_module_items_for_enum(items: &mut Vec<ModuleItem>, unresolved_mark: O
                                 parse_exported_enum_iife(next_stmt, &bare_var_ident, mark)
                             })
                             .filter(|(public_name, _)| !exported_names.contains(public_name))
+                            .filter(|_| {
+                                let (front, back) = remaining.as_slices();
+                                local_is_written_only_by_enum_arg(
+                                    &[items, &[ModuleItem::Stmt(stmt.clone())], &front[1..], back],
+                                    &bare_var_ident,
+                                )
+                            })
                             .filter(|(public_name, _)| {
                                 // Earlier items matter too: a function defined
                                 // before the IIFE can defer a read of
@@ -171,11 +178,15 @@ fn process_module_items_for_enum(items: &mut Vec<ModuleItem>, unresolved_mark: O
                                     &local_ident.sym,
                                 )
                         } else {
+                            let (front, back) = remaining.as_slices();
                             has_safe_prior_bare_var(
                                 items,
                                 local_ident,
                                 public_name,
                                 unresolved_mark.expect("exported enum parsing requires a mark"),
+                            ) && local_is_written_only_by_enum_arg(
+                                &[items, front, back],
+                                local_ident,
                             )
                         }
                     })
@@ -1431,7 +1442,8 @@ fn keep_numeric_enum_iife_assign_of_exports(
     if prior_bare_var_index(items, &local_ident).is_none() {
         return false;
     }
-    if !local_is_written_only_by_enum_arg(items, remaining, &local_ident) {
+    let (front, back) = remaining.as_slices();
+    if !local_is_written_only_by_enum_arg(&[items, front, back], &local_ident) {
         return false;
     }
     if module_items_reference_public_export(
@@ -1456,21 +1468,19 @@ fn keep_numeric_enum_iife_assign_of_exports(
     true
 }
 
-/// `items` and `remaining` hold every module item except the enum IIFE, so
-/// the bare declaration must be the only declaration of `Local` and nothing
-/// in them may write it.
-fn local_is_written_only_by_enum_arg(
-    items: &[ModuleItem],
-    remaining: &VecDeque<ModuleItem>,
-    local_ident: &Ident,
-) -> bool {
+/// `parts` hold every module item except the enum IIFE, so the bare
+/// declaration must be the only declaration of `Local` and nothing in them
+/// may write it.
+///
+/// Every exported-enum rewrite publishes a live `export { Local as Public }`,
+/// while `exports.Public` held only the enum object. Any other write of
+/// `Local` would leak through the export.
+fn local_is_written_only_by_enum_arg(parts: &[&[ModuleItem]], local_ident: &Ident) -> bool {
     let binding = binding_id(local_ident);
-    let (front, back) = remaining.as_slices();
-    let indexes = [
-        BindingUseIndex::collect_module_items(items),
-        BindingUseIndex::collect_module_items(front),
-        BindingUseIndex::collect_module_items(back),
-    ];
+    let indexes = parts
+        .iter()
+        .map(|part| BindingUseIndex::collect_module_items(part))
+        .collect::<Vec<_>>();
     let declaring = indexes
         .iter()
         .filter(|index| index.has_declaration(&binding))
@@ -1480,7 +1490,7 @@ fn local_is_written_only_by_enum_arg(
             .iter()
             .all(|index| !index.has_direct_write(&binding))
         && !module_items_direct_eval_can_observe(
-            items.iter().chain(remaining.iter()),
+            parts.iter().flat_map(|part| part.iter()),
             &local_ident.sym,
         )
 }

@@ -1246,6 +1246,120 @@ Local = {
 }
 
 #[test]
+fn exported_enum_fold_rejects_later_write_to_local() {
+    // `exports.Public` keeps the enum object after `Local = null`; the
+    // folded `export { Local as Public }` would publish `null`.
+    let input = r#"
+var Local;
+(function (e) {
+  e[e.Dev = 0] = "Dev";
+})(Local = exports.Public || (exports.Public = {}));
+Local = null;
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn exported_enum_fold_rejects_deferred_write_to_local() {
+    let input = r#"
+function reset() {
+  Local = undefined;
+}
+var Local;
+(function (e) {
+  e["Dev"] = "dev";
+})(Local = exports.Public || (exports.Public = {}));
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn exported_enum_fold_rejects_direct_eval_naming_local() {
+    let input = r#"
+var Local;
+(function (e) {
+  e["Dev"] = "dev";
+})(Local = exports.Public || (exports.Public = {}));
+eval("Local = null");
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn exported_enum_fold_rejects_redeclared_local() {
+    let input = r#"
+var Local;
+(function (e) {
+  e["Dev"] = "dev";
+})(Local = exports.Public || (exports.Public = {}));
+var Local;
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn split_exported_enum_fold_rejects_later_write_to_local() {
+    let input = r#"
+var Local;
+var before = 1;
+(function (e) {
+  e[e.Dev = 0] = "Dev";
+})(Local = exports.Public || (exports.Public = {}));
+Local = null;
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn local_or_fold_rejects_later_write_to_local() {
+    let input = r#"
+var Local;
+(function (e) {
+  e[e.Dev = 0] = "Dev";
+})(Local || (exports.Public = Local = {}));
+Local = null;
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn split_local_or_fold_rejects_later_write_to_local() {
+    let input = r#"
+var Local;
+var before = 1;
+(function (e) {
+  e[e.Dev = 0] = "Dev";
+})(Local || (exports.Public = Local = {}));
+Local = null;
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn exported_enum_fold_ignores_write_to_shadowing_parameter() {
+    // `Local` inside `reset` is its own parameter, not the enum binding.
+    let input = r#"
+var Local;
+(function (e) {
+  e["Dev"] = "dev";
+})(Local = exports.Public || (exports.Public = {}));
+function reset(Local) {
+  Local = null;
+}
+"#;
+    let expected = r#"
+var Local = {
+  Dev: "dev"
+};
+export { Local as Public };
+function reset(Local) {
+  Local = null;
+}
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
+#[test]
 fn exported_commonjs_enum_keeps_iife_when_gap_reads_local() {
     // A top-level read in the gap still runs before the write. Rewriting the
     // argument must not move the object onto the bare declaration.

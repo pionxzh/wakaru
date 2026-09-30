@@ -399,7 +399,9 @@ rationale, or level gating appear.
   TypeScript CommonJS publication form using the resolver-proven free `exports`
   binding. Split declarations are accepted only when intervening code touches
   neither the local nor public binding, and recovery is rejected when later
-  code references the same public `exports` member. Local and exported enum
+  code references the same public `exports` member, or when anything besides
+  the IIFE argument writes or redeclares the local (the live
+  `export { Local as Public }` would leak the write). Local and exported enum
   recovery both require literal values: computed member initializers are
   preserved because an object-literal rewrite can otherwise duplicate
   evaluation or observe the enum before publication. Numeric forward/reverse
