@@ -228,13 +228,13 @@ fn process_module_items_for_enum(items: &mut Vec<ModuleItem>, unresolved_mark: O
                 }
 
                 // `let Local; use(Local); function readLater(){ return Local.Dev }`
-                // then a numeric IIFE `(Local = exports.Public || (exports.Public = {}))`.
+                // then an enum IIFE `(Local = exports.Public || (exports.Public = {}))`.
                 // Reads inside functions are definitions; top-level reads in the
                 // gap really run before the IIFE. Do not move the object onto
                 // the bare declaration. Keep the IIFE, write `Local = {}` at
                 // the call, and publish a live `export { Local as Public }`.
                 if let Some(mark) = unresolved_mark {
-                    if keep_numeric_enum_iife_assign_of_exports(
+                    if keep_enum_iife_assign_of_exports(
                         &mut stmt,
                         items,
                         &remaining,
@@ -1406,7 +1406,7 @@ fn collect_exported_names(items: &[ModuleItem]) -> HashSet<Atom> {
     names
 }
 
-/// Keep a numeric enum IIFE in place. The argument
+/// Keep an enum IIFE in place. The argument
 /// `Local = exports.Public || (exports.Public = {})` becomes `Local = {}`,
 /// and `export { Local as Public }` is inserted after the bare declaration.
 /// The object is not moved onto that declaration: top-level reads between
@@ -1421,7 +1421,7 @@ fn collect_exported_names(items: &[ModuleItem]) -> HashSet<Atom> {
 /// the IIFE argument is the sole write of `Local`, so any other write (in the
 /// gap, later, deferred, or through direct eval) or a second declaration
 /// rejects the rewrite.
-fn keep_numeric_enum_iife_assign_of_exports(
+fn keep_enum_iife_assign_of_exports(
     stmt: &mut Stmt,
     items: &mut Vec<ModuleItem>,
     remaining: &VecDeque<ModuleItem>,
@@ -1436,7 +1436,8 @@ fn keep_numeric_enum_iife_assign_of_exports(
     if arg_kind != ExportedEnumArgKind::AssignOfExports {
         return false;
     }
-    if exported_names.contains(&public_name) || !members_are_all_numeric(&members) {
+    // The IIFE body stays verbatim, so any member kind is safe.
+    if exported_names.contains(&public_name) || members.is_empty() {
         return false;
     }
     if prior_bare_var_index(items, &local_ident).is_none() {
@@ -1493,10 +1494,6 @@ fn local_is_written_only_by_enum_arg(parts: &[&[ModuleItem]], local_ident: &Iden
             parts.iter().flat_map(|part| part.iter()),
             &local_ident.sym,
         )
-}
-
-fn members_are_all_numeric(members: &[EnumMember]) -> bool {
-    !members.is_empty() && members.iter().all(|member| member.reverse.is_some())
 }
 
 fn prior_bare_var_index(items: &[ModuleItem], local_ident: &Ident) -> Option<usize> {

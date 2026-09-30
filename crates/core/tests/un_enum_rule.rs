@@ -1093,31 +1093,6 @@ cc._RF.pop();
 }
 
 #[test]
-fn assign_of_exports_rejects_string_member_with_local_read() {
-    let input = r#"
-let Local;
-use(Local);
-(function (e) {
-  e.Task = "1";
-})(Local = exports.Public || (exports.Public = {}));
-"#;
-    assert_eq_normalized(&apply_resolved(input), input);
-}
-
-#[test]
-fn assign_of_exports_rejects_mixed_members_with_local_read() {
-    let input = r#"
-let Local;
-use(Local);
-(function (e) {
-  e[e.Dev = 0] = "Dev";
-  e.Task = "1";
-})(Local = exports.Public || (exports.Public = {}));
-"#;
-    assert_eq_normalized(&apply_resolved(input), input);
-}
-
-#[test]
 fn assign_of_exports_rejects_deferred_public_read() {
     // `use(Local)` blocks the older object-literal fold, so only the
     // keep-IIFE path could rewrite this. A deferred `exports.Public` read
@@ -1379,6 +1354,81 @@ var before = observe(Mode);
 })(Mode = {});
 "#;
     assert_eq_normalized(&apply_resolved(input), expected);
+}
+
+#[test]
+fn exported_commonjs_enum_keeps_string_and_mixed_iife_when_gap_reads_local() {
+    // The IIFE body stays verbatim, so string members are as safe as numeric
+    // ones here.
+    let input = r#"
+var Mode;
+var before = observe(Mode);
+(function (e) {
+  e["Dev"] = "dev";
+  e[e["Prod"] = 1] = "Prod";
+})(Mode = exports.Mode || (exports.Mode = {}));
+"#;
+    let expected = r#"
+var Mode;
+export { Mode };
+var before = observe(Mode);
+(function (e) {
+  e["Dev"] = "dev";
+  e[e["Prod"] = 1] = "Prod";
+})(Mode = {});
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
+#[test]
+fn exported_commonjs_enum_keeps_string_iife_when_gap_function_reads_local() {
+    // Terser `toplevel` + `passes` over TypeScript 4.x ES5 output hoists
+    // `var Mode` above a function expression that reads it, so the fold
+    // declines and only the keep-IIFE path can publish the export.
+    let input = r#"
+var Mode;
+exports.getMode = function () {
+  return Mode.Dev;
+};
+(function (e) {
+  e.Dev = "dev";
+})(Mode = exports.Mode || (exports.Mode = {}));
+"#;
+    let expected = r#"
+var Mode;
+export { Mode };
+exports.getMode = function () {
+  return Mode.Dev;
+};
+(function (e) {
+  e.Dev = "dev";
+})(Mode = {});
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
+#[test]
+fn pipeline_recovers_string_enum_after_terser_hoists_its_var() {
+    let input = r#""use strict";var Mode,Num;Object.defineProperty(exports,"__esModule",{value:!0}),exports.Num=exports.getNum=exports.Mode=exports.getMode=void 0,exports.getMode=function(){return Mode.Dev},function(e){e.Dev="dev"}(Mode=exports.Mode||(exports.Mode={})),exports.getNum=function(){return Num.A},function(e){e[e.A=0]="A"}(Num=exports.Num||(exports.Num={}));"#;
+    let expected = r#"
+let Mode;
+export { Mode };
+let Num;
+export { Num };
+export const getMode = function() {
+  return Mode.Dev;
+};
+((e) => {
+  e.Dev = "dev";
+})(Mode = {});
+export const getNum = function() {
+  return Num.A;
+};
+((e) => {
+  e[e.A = 0] = "A";
+})(Num = {});
+"#;
+    assert_eq_normalized(&render_pipeline(input), expected);
 }
 
 #[test]
