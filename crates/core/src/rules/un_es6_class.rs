@@ -380,24 +380,28 @@ impl VisitMut for UnEs6ClassInner {
         stmts.visit_mut_children_with(&mut scoped_inner);
 
         let callability = CallabilityIndex::collect_stmts_with_roots(stmts, &self.pin_roots);
-        let mut converted_any = fold_flattened_classes(stmts, |var_decl| {
-            try_iife_to_class(
-                var_decl,
-                &scoped_inner.reused_var_bindings,
-                &callability,
-                &scoped_inner.helpers.inherits_helpers,
-                &scoped_inner.helpers.tslib_namespaces,
-                &scoped_inner.helpers.create_class_helpers,
-                &scoped_inner.helpers.call_super_helpers,
-                &scoped_inner.helpers.class_call_check_helpers,
-                &scoped_inner.helpers.set_prototype_of_helpers,
-                &scoped_inner.helpers.ts_extends_helpers,
-                scoped_inner.inheritance_uses.as_deref(),
-                self.unresolved_mark,
-                self.rewrite_level,
-                var_decl.span,
-            )
-        });
+        let mut converted_any = fold_flattened_classes(
+            stmts,
+            &scoped_inner.helpers.class_call_check_helpers,
+            |var_decl| {
+                try_iife_to_class(
+                    var_decl,
+                    &scoped_inner.reused_var_bindings,
+                    &callability,
+                    &scoped_inner.helpers.inherits_helpers,
+                    &scoped_inner.helpers.tslib_namespaces,
+                    &scoped_inner.helpers.create_class_helpers,
+                    &scoped_inner.helpers.call_super_helpers,
+                    &scoped_inner.helpers.class_call_check_helpers,
+                    &scoped_inner.helpers.set_prototype_of_helpers,
+                    &scoped_inner.helpers.ts_extends_helpers,
+                    scoped_inner.inheritance_uses.as_deref(),
+                    self.unresolved_mark,
+                    self.rewrite_level,
+                    var_decl.span,
+                )
+            },
+        );
         loop {
             let callability = CallabilityIndex::collect_stmts_with_roots(stmts, &self.pin_roots);
             let mut converted_this_pass = false;
@@ -457,24 +461,25 @@ impl VisitMut for UnEs6ClassInner {
         items.visit_mut_children_with(self);
 
         let callability = CallabilityIndex::collect_module_items_with_roots(items, &self.pin_roots);
-        let mut converted_any = fold_flattened_classes(items, |var_decl| {
-            try_iife_to_class(
-                var_decl,
-                &self.reused_var_bindings,
-                &callability,
-                &self.helpers.inherits_helpers,
-                &self.helpers.tslib_namespaces,
-                &self.helpers.create_class_helpers,
-                &self.helpers.call_super_helpers,
-                &self.helpers.class_call_check_helpers,
-                &self.helpers.set_prototype_of_helpers,
-                &self.helpers.ts_extends_helpers,
-                self.inheritance_uses.as_deref(),
-                self.unresolved_mark,
-                self.rewrite_level,
-                var_decl.span,
-            )
-        });
+        let mut converted_any =
+            fold_flattened_classes(items, &self.helpers.class_call_check_helpers, |var_decl| {
+                try_iife_to_class(
+                    var_decl,
+                    &self.reused_var_bindings,
+                    &callability,
+                    &self.helpers.inherits_helpers,
+                    &self.helpers.tslib_namespaces,
+                    &self.helpers.create_class_helpers,
+                    &self.helpers.call_super_helpers,
+                    &self.helpers.class_call_check_helpers,
+                    &self.helpers.set_prototype_of_helpers,
+                    &self.helpers.ts_extends_helpers,
+                    self.inheritance_uses.as_deref(),
+                    self.unresolved_mark,
+                    self.rewrite_level,
+                    var_decl.span,
+                )
+            });
         loop {
             let roots = super::callability::pinned_binding_keys(items, &self.pin_exports);
             let callability = CallabilityIndex::collect_module_items_with_roots(items, &roots);
@@ -665,11 +670,12 @@ struct FlattenedClassRun {
 /// function, since the wrapper rebinds or forbids them.
 fn fold_flattened_classes<T: StmtSlot>(
     items: &mut Vec<T>,
+    class_call_check_helpers: &HashSet<BindingKey>,
     mut convert: impl FnMut(&VarDecl) -> Option<ClassDecl>,
 ) -> bool {
     let mut converted_any = false;
     let mut start = 0;
-    while let Some(run) = find_flattened_class_run(items, start) {
+    while let Some(run) = find_flattened_class_run(items, start, class_call_check_helpers) {
         start = run.alias + 1;
         let Some(wrapper) = rebuild_flattened_class_wrapper(items, &run) else {
             continue;
@@ -704,12 +710,21 @@ fn fold_flattened_classes<T: StmtSlot>(
     converted_any
 }
 
-fn find_flattened_class_run<T: StmtSlot>(items: &[T], start: usize) -> Option<FlattenedClassRun> {
-    (start..items.len()).find_map(|ctor| flattened_class_run_at(items, ctor))
+fn find_flattened_class_run<T: StmtSlot>(
+    items: &[T],
+    start: usize,
+    class_call_check_helpers: &HashSet<BindingKey>,
+) -> Option<FlattenedClassRun> {
+    (start..items.len())
+        .find_map(|ctor| flattened_class_run_at(items, ctor, class_call_check_helpers))
 }
 
-fn flattened_class_run_at<T: StmtSlot>(items: &[T], ctor: usize) -> Option<FlattenedClassRun> {
-    let (ctor_ident, _) = flattened_ctor_assignment(items[ctor].stmt()?)?;
+fn flattened_class_run_at<T: StmtSlot>(
+    items: &[T],
+    ctor: usize,
+    class_call_check_helpers: &HashSet<BindingKey>,
+) -> Option<FlattenedClassRun> {
+    let (ctor_ident, fn_expr) = flattened_ctor_assignment(items[ctor].stmt()?)?;
     let ctor_key = binding_key(ctor_ident);
     let alias = (ctor + 1..items.len()).find(|&index| {
         items[index]
@@ -719,6 +734,15 @@ fn flattened_class_run_at<T: StmtSlot>(items: &[T], ctor: usize) -> Option<Flatt
     let run: Vec<&Stmt> = items[ctor..=alias].iter().filter_map(T::stmt).collect();
     let body = &run[1..run.len() - 1];
     if !body.iter().all(|stmt| matches!(stmt, Stmt::Expr(_))) || !run_keeps_function_context(&run) {
+        return None;
+    }
+    // Unlike a real wrapper IIFE, `X = function () {...}; var n = X` is also
+    // a hoisted plain function expression. Without member statements, only a
+    // class-call guard in the constructor shows it was a class; a class
+    // built from a plain function would throw when called.
+    if body.is_empty()
+        && !constructor_has_class_call_guard(fn_expr, ctor_ident, class_call_check_helpers)
+    {
         return None;
     }
 
@@ -753,6 +777,31 @@ fn flattened_class_run_at<T: StmtSlot>(items: &[T], ctor: usize) -> Option<Flatt
                 == decls + in_run
     });
     movable.then_some(FlattenedClassRun { ctor, alias, moved })
+}
+
+/// Whether the constructor body holds a class-call guard naming the
+/// constructor, by its outer binding or its own function name.
+fn constructor_has_class_call_guard(
+    fn_expr: &FnExpr,
+    outer: &Ident,
+    class_call_check_helpers: &HashSet<BindingKey>,
+) -> bool {
+    let Some(body) = &fn_expr.function.body else {
+        return false;
+    };
+    body.stmts.iter().any(|stmt| {
+        class_call_check_target(stmt, |id| {
+            class_call_check_helpers.contains(&binding_key(id))
+        })
+        .is_some_and(|target| {
+            let target = binding_key(target);
+            target == binding_key(outer)
+                || fn_expr
+                    .ident
+                    .as_ref()
+                    .is_some_and(|name| target == binding_key(name))
+        })
+    })
 }
 
 /// `e = function [e](…) {…}`

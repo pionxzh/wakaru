@@ -3678,6 +3678,60 @@ fn flattened_class_run_whose_method_reads_the_outer_name_stays() {
 }
 
 #[test]
+fn flattened_run_without_class_members_stays_a_function() {
+    // `var e; e = function () {...}; var n = e;` is also what a hoisted plain
+    // function expression looks like. With no member statements in the run
+    // there is no class evidence, and a class would throw when called.
+    let input = r#"
+var e;
+e = function () {
+    return 1;
+};
+var getMode = e;
+use(getMode());
+"#;
+    let output = apply(input);
+    assert!(!output.contains("class "), "{output}");
+    assert!(output.contains("use(getMode())"), "{output}");
+}
+
+#[test]
+fn flattened_run_without_members_but_with_class_call_guard_is_recovered() {
+    // The inlined guard already throws when the constructor is called
+    // without `new`, so the class keeps that behavior.
+    let input = r#"
+var e;
+e = function (n) {
+    if (!(this instanceof e)) {
+        throw TypeError("Cannot call a class as a function");
+    }
+    this.n = n;
+};
+var Store = e;
+use(new Store(1));
+"#;
+    let expected = r#"
+class Store {
+    constructor(n) {
+        this.n = n;
+    }
+}
+use(new Store(1));
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn pipeline_keeps_terser_hoisted_function_callable() {
+    // Terser `hoist_vars` splits `var getMode = function () {...}` into a
+    // hoisted declaration and an assignment.
+    let input = r#""use strict";var getMode;getMode=function(){return 1},exports.getMode=getMode;"#;
+    let output = render(input);
+    assert!(!output.contains("class "), "{output}");
+    assert!(output.contains("return 1"), "{output}");
+}
+
+#[test]
 fn swc_flattened_class_recovers_through_pipeline() {
     // Produced by @babel/preset-env 7.12 (IE 11), then @swc/core minify with
     // compress and mangle.
