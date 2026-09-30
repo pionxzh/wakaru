@@ -15,6 +15,12 @@ use super::helper_matcher::{binding_key, expr_binding_key, member_prop_name, Bin
 /// Bindings whose current uses still require an ordinary function's
 /// `[[Call]]`. Function-to-class rules must not recover these bindings until
 /// the requiring call has been consumed by another proven class recovery.
+///
+/// Only `.call` / `.apply` (lowered `super` calls) are recorded. A plain
+/// `F()` call does not block recovery: once a rule has proven a transpiler
+/// class shape, requiring `new` is an accepted function-to-class change
+/// (`docs/rewrite-assumptions.md`, `native_class_inheritance`). Rules that
+/// rebuild a class shape themselves must find their own class evidence.
 pub(crate) struct CallabilityIndex {
     required: HashSet<BindingKey>,
 }
