@@ -70,7 +70,9 @@ choosing the pipeline position.
 
 When the expected input and output are known, write the failing regression
 before implementation. Extend the existing rule test file for a fix; create
-`crates/core/tests/my_rule_rule.rs` for a new rule.
+`crates/core/tests/my_rule_rule.rs` for a new rule. Write the input with
+synthetic names rather than code copied from a real bundle (see
+[writing tests](docs/testing.md#writing-tests)).
 
 Here is a complete test example for the existing `UnDoubleNegation` rule:
 

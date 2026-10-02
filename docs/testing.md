@@ -334,6 +334,14 @@ the behavior became "rename but alias-preserve the public name"). A name like
 `public_export_name_survives_rename` stays true across implementations and
 tells the reader what actually matters.
 
+**Use synthetic code, not real data.** Write the shape that triggers the bug
+with neutral names (`Lib.mixin`, `first`/`second`, `module-11111`,
+`lazy-beta.js`). Do not copy identifiers, strings, module ids, or file names
+from the bundle or library where you found it. Copied names tie the repository
+to that input, and a real bundle may not be yours to publish. The same applies
+to doc examples and commit messages. Name the producing tool and version
+instead when it matters.
+
 **Pipeline property tests** (`crates/core/tests/pipeline_properties.rs`)
 assert invariants over full-pipeline output instead of exact strings: public
 export names survive, JSX tags never bind lowercase component bindings, and a
