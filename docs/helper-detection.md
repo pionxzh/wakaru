@@ -309,6 +309,13 @@ Priority targets, roughly ordered by real-world frequency:
 | `typeof` | `_typeof` | — | `_type_of` | Native `typeof`, including self-caching declarations |
 | `asyncToGenerator` | `_asyncToGenerator` | `__awaiter` + `__generator` | `_async_to_generator` | async/await (already handled in `un_async_await.rs`) |
 | `asyncIterator` | `_asyncIterator` (+ `AsyncFromSyncIterator` dependency) | `__asyncValues` | `_async_iterator` | `for await` adapter; the loop protocol is recovered by `un_for_await.rs`. esbuild's `__forAwait` (+ `__knownSymbol`) is matched by shape inside that rule |
+| `exportStar` | inline `Object.keys(source).forEach` copy loop | `__exportStar` | `_export_star` | `export * from` in CommonJS output; recovered by `UnEsm` (`rules/un_esm/export_star.rs`), which proves inline loop and helper bodies by shape and trusts tslib / `@swc/helpers` by module path |
+
+`exportStar` recovery stays within one module. A tslib copy bundled as its
+own module and called through that module's namespace is not recognized:
+module facts do not yet carry an `__exportStar` export. A Babel loop whose
+`require()` binding is also used elsewhere (for example by an
+`export { default } from` getter on the same source) keeps the loop.
 
 esbuild helpers (`__commonJS`, `__esm`, `__toESM`, `__toCommonJS`) are bundler-level and already handled in the unpacker, not here.
 

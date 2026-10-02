@@ -297,6 +297,347 @@ observe(source);
 }
 
 #[test]
+fn babel_export_star_with_export_names_and_getters_becomes_export_star() {
+    // Babel's default (non-loose) output when the module also has its own
+    // export: early-return guards, `_exportNames`, and live getters.
+    let input = r#"
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+var _exportNames = { local: true };
+exports.local = void 0;
+var _provider = require("./provider.js");
+Object.keys(_provider).forEach(function (key) {
+  if (key === "default" || key === "__esModule") return;
+  if (Object.prototype.hasOwnProperty.call(_exportNames, key)) return;
+  if (key in exports && exports[key] === _provider[key]) return;
+  Object.defineProperty(exports, key, {
+    enumerable: true,
+    get: function get() {
+      return _provider[key];
+    }
+  });
+});
+var local = exports.local = 1;
+"#;
+    let expected = r#"
+"use strict";
+export * from "./provider.js";
+export const local = 1;
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn minified_babel_export_star_with_export_names_becomes_export_star() {
+    let input = r#"
+"use strict";Object.defineProperty(exports,"__esModule",{value:!0});var _exportNames={local:!0};exports.local=void 0;var _provider=require("./provider.js");Object.keys(_provider).forEach(function(e){"default"!==e&&"__esModule"!==e&&(Object.prototype.hasOwnProperty.call(_exportNames,e)||e in exports&&exports[e]===_provider[e]||Object.defineProperty(exports,e,{enumerable:!0,get:function(){return _provider[e]}}))});var local=exports.local=1;
+"#;
+    let expected = r#"
+"use strict";
+export * from "./provider.js";
+export const local = 1;
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn babel_export_star_loop_in_or_chain_form_becomes_export_star() {
+    let input = r#"
+var source = require("./source.js");
+Object.keys(source).forEach(function(key) {
+  "default" === key || "__esModule" === key || key in exports && exports[key] === source[key] || (exports[key] = source[key]);
+});
+"#;
+    assert_eq_normalized(&apply(input), r#"export * from "./source.js";"#);
+}
+
+#[test]
+fn babel_export_star_loop_away_from_its_require_becomes_export_star() {
+    // Terser merges adjacent declarations, so the require binding is not the
+    // statement right before its loop.
+    let input = r#"
+var other = require("./other.js"), source = require("./source.js");
+Object.keys(source).forEach(function(key) {
+  "default" !== key && "__esModule" !== key && (key in exports && exports[key] === source[key] || (exports[key] = source[key]));
+});
+exports.run = function() { return other.value; };
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains(r#"export * from "./source.js";"#),
+        "{output}"
+    );
+    assert!(!output.contains("Object.keys"), "{output}");
+    assert!(
+        !output.contains("source.js\")"),
+        "the consumed require must go:\n{output}"
+    );
+}
+
+#[test]
+fn export_star_loop_without_default_skip_is_unchanged() {
+    // `export *` never re-exports `default`; a loop that copies it is not one.
+    let input = r#"
+var source = require("./source.js");
+Object.keys(source).forEach(function(key) {
+  "__esModule" !== key && (key in exports && exports[key] === source[key] || (exports[key] = source[key]));
+});
+"#;
+    let output = apply(input);
+    assert!(!output.contains("export * from"), "{output}");
+    assert!(output.contains("Object.keys(source)"), "{output}");
+}
+
+#[test]
+fn export_star_loop_that_can_overwrite_exports_is_unchanged() {
+    // Without an `__esModule`, own-property, or `_exportNames` skip the loop
+    // overwrites the module's own exports, which `export *` cannot do.
+    let input = r#"
+var source = require("./source.js");
+Object.keys(source).forEach(function(key) {
+  "default" !== key && (exports[key] = source[key]);
+});
+"#;
+    let output = apply(input);
+    assert!(!output.contains("export * from"), "{output}");
+}
+
+#[test]
+fn export_star_loop_with_extra_effect_is_unchanged() {
+    let input = r#"
+var source = require("./source.js");
+Object.keys(source).forEach(function(key) {
+  if (key === "default" || key === "__esModule") return;
+  track(key);
+  exports[key] = source[key];
+});
+"#;
+    let output = apply(input);
+    assert!(!output.contains("export * from"), "{output}");
+    assert!(output.contains("track(key)"), "{output}");
+}
+
+#[test]
+fn export_names_listing_a_name_the_module_does_not_export_is_unchanged() {
+    // The loop skips `hidden`, but `export *` would re-export it.
+    let input = r#"
+var _exportNames = { hidden: true };
+var source = require("./source.js");
+Object.keys(source).forEach(function(key) {
+  if (key === "default" || key === "__esModule") return;
+  if (Object.prototype.hasOwnProperty.call(_exportNames, key)) return;
+  exports[key] = source[key];
+});
+"#;
+    let output = apply(input);
+    assert!(!output.contains("export * from"), "{output}");
+}
+
+#[test]
+fn export_star_loop_with_shadowed_object_is_unchanged() {
+    let input = r#"
+var Object = makeObject();
+var source = require("./source.js");
+Object.keys(source).forEach(function(key) {
+  "default" !== key && "__esModule" !== key && (key in exports && exports[key] === source[key] || (exports[key] = source[key]));
+});
+"#;
+    let output = apply(input);
+    assert!(!output.contains("export * from"), "{output}");
+}
+
+#[test]
+fn typescript_inline_export_star_helper_becomes_export_star() {
+    let input = r#"
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __exportStar = (this && this.__exportStar) || function(m, exports) {
+    for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.local = void 0;
+__exportStar(require("./provider.js"), exports);
+__exportStar(require("./other.js"), exports);
+exports.local = 1;
+"#;
+    let expected = r#"
+"use strict";
+export * from "./provider.js";
+export * from "./other.js";
+export const local = 1;
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn minified_typescript_inline_export_star_helper_becomes_export_star() {
+    let input = r#"
+"use strict";var __createBinding=this&&this.__createBinding||(Object.create?function(e,t,r,o){void 0===o&&(o=r);var i=Object.getOwnPropertyDescriptor(t,r);i&&!("get"in i?!t.__esModule:i.writable||i.configurable)||(i={enumerable:!0,get:function(){return t[r]}}),Object.defineProperty(e,o,i)}:function(e,t,r,o){void 0===o&&(o=r),e[o]=t[r]}),__exportStar=this&&this.__exportStar||function(e,t){for(var r in e)"default"===r||Object.prototype.hasOwnProperty.call(t,r)||__createBinding(t,e,r)};Object.defineProperty(exports,"__esModule",{value:!0}),__exportStar(require("./provider.js"),exports);
+"#;
+    assert_eq_normalized(
+        &apply(input),
+        r#""use strict";
+export * from "./provider.js";"#,
+    );
+}
+
+#[test]
+fn typescript_export_star_helper_with_unproven_body_is_unchanged() {
+    // The `this.__exportStar` marker alone does not prove the helper: this
+    // body copies `default` too.
+    let input = r#"
+var __exportStar = (this && this.__exportStar) || function(m, exports) {
+    for (var p in m) if (!Object.prototype.hasOwnProperty.call(exports, p)) exports[p] = m[p];
+};
+__exportStar(require("./provider.js"), exports);
+"#;
+    let output = apply(input);
+    assert!(!output.contains("export * from"), "{output}");
+    assert!(output.contains("__exportStar("), "{output}");
+}
+
+#[test]
+fn export_star_helper_still_called_elsewhere_keeps_its_declaration() {
+    let input = r#"
+var __exportStar = (this && this.__exportStar) || function(m, exports) {
+    for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) exports[p] = m[p];
+};
+__exportStar(require("./provider.js"), exports);
+__exportStar(require("./other.js"), target);
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains(r#"export * from "./provider.js";"#),
+        "{output}"
+    );
+    assert!(
+        output.contains(r#"__exportStar(require("./other.js"), target)"#),
+        "{output}"
+    );
+    assert!(output.contains("var __exportStar = "), "{output}");
+}
+
+#[test]
+fn tslib_namespace_export_star_becomes_export_star() {
+    let input = r#"
+"use strict";Object.defineProperty(exports,"__esModule",{value:!0}),exports.local=void 0;const tslib_1=require("tslib");tslib_1.__exportStar(require("./provider.js"),exports),tslib_1.__exportStar(require("./other.js"),exports),exports.local=1;
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains(r#"export * from "./provider.js";"#),
+        "{output}"
+    );
+    assert!(
+        output.contains(r#"export * from "./other.js";"#),
+        "{output}"
+    );
+    assert!(!output.contains("__exportStar"), "{output}");
+    assert!(!output.contains("exports"), "{output}");
+}
+
+#[test]
+fn export_star_helper_call_on_module_exports_is_unchanged() {
+    let input = r#"
+const tslib_1 = require("tslib");
+tslib_1.__exportStar(require("./provider.js"), module.exports);
+"#;
+    let output = apply(input);
+    assert!(!output.contains("export * from"), "{output}");
+}
+
+#[test]
+fn swc_external_export_star_helper_becomes_export_star() {
+    let input = r#"
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+Object.defineProperty(exports, "local", {
+    enumerable: true,
+    get: function() {
+        return local;
+    }
+});
+const _export_star = require("@swc/helpers/_/_export_star");
+_export_star._(require("./provider.js"), exports);
+_export_star._(require("./other.js"), exports);
+const local = 1;
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains(r#"export * from "./provider.js";"#),
+        "{output}"
+    );
+    assert!(
+        output.contains(r#"export * from "./other.js";"#),
+        "{output}"
+    );
+    assert!(!output.contains("_export_star"), "{output}");
+}
+
+#[test]
+fn swc_export_star_helper_from_another_path_is_unchanged() {
+    let input = r#"
+const _export_star = require("./export-star.js");
+_export_star._(require("./provider.js"), exports);
+"#;
+    let output = apply(input);
+    assert!(
+        !output.contains("export * from \"./provider.js\""),
+        "{output}"
+    );
+}
+
+#[test]
+fn minified_swc_inline_export_star_helper_becomes_export_star() {
+    let input = r#"
+"use strict";function _export_star(e,r){return Object.keys(e).forEach(function(t){"default"===t||Object.prototype.hasOwnProperty.call(r,t)||Object.defineProperty(r,t,{enumerable:!0,get:function(){return e[t]}})}),e}Object.defineProperty(exports,"__esModule",{value:!0}),_export_star(require("./provider.js"),exports);
+"#;
+    assert_eq_normalized(
+        &apply(input),
+        r#""use strict";
+export * from "./provider.js";"#,
+    );
+}
+
+#[test]
+fn swc_inline_export_star_helper_becomes_export_star() {
+    let input = r#"
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+_export_star(require("./provider.js"), exports);
+function _export_star(from, to) {
+    Object.keys(from).forEach(function(k) {
+        if (k !== "default" && !Object.prototype.hasOwnProperty.call(to, k)) {
+            Object.defineProperty(to, k, {
+                enumerable: true,
+                get: function() {
+                    return from[k];
+                }
+            });
+        }
+    });
+    return from;
+}
+"#;
+    assert_eq_normalized(
+        &apply(input),
+        r#""use strict";
+export * from "./provider.js";"#,
+    );
+}
+
+#[test]
 fn multiple_defaults_separate_imports() {
     // Two require() calls for the same module produce the same value;
     // ImportDedup canonicalizes to the first local binding.
