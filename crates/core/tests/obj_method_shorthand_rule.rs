@@ -736,3 +736,42 @@ new Base.create();
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
+
+#[test]
+fn constructor_key_stays_function() {
+    // Class-system helpers return a `constructor` property as the class, and
+    // `new this.constructor()` constructs one read from a prototype object.
+    // The construction is usually invisible to this module.
+    let input = r#"
+const Item = extend(Base, {
+    constructor: function(first, second) {
+        Base.call(this, first, second);
+    },
+    other: function() {
+        return 1;
+    }
+});
+Shape.prototype = {
+    constructor: function(value) {
+        this.value = value;
+    }
+};
+"#;
+    let expected = r#"
+const Item = extend(Base, {
+    constructor: function(first, second) {
+        Base.call(this, first, second);
+    },
+    other() {
+        return 1;
+    }
+});
+Shape.prototype = {
+    constructor: function(value) {
+        this.value = value;
+    }
+};
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}

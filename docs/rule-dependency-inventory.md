@@ -522,7 +522,10 @@ rationale, or level gating appear.
   function arguments passed to constructor-sensitive parameters stay ordinary
   functions; unrelated callback arguments remain eligible for arrow recovery.
   ObjMethodShorthand is always enabled; its other eligibility checks remain
-  unchanged.
+  unchanged. It also never converts a `constructor` key, without consulting
+  the analysis: class-system helpers (`extend(Base, { constructor })`) return
+  that property as the class, and `new this.constructor()` reads it from a
+  prototype object, so its construction is usually invisible to the module.
 - **Function-to-class callability guards** — IIFE return aliases are recorded
   for both variable initializers and later plain assignments, and so are plain
   identifier aliases (`var a = Foo`). A constructor passed through any of these

@@ -295,7 +295,15 @@ fn try_convert_prop(prop: &mut Prop, constructor_sensitive: bool) {
 
     // Only convert plain identifier keys — string, numeric, and computed
     // keys cannot use method shorthand syntax
-    if !matches!(kv.key, PropName::Ident(_)) {
+    let PropName::Ident(key) = &kv.key else {
+        return;
+    };
+
+    // A `constructor` function is usually constructed where this module
+    // cannot see it: class-system helpers such as `extend(Base, { constructor })`
+    // return it as the class, and `new this.constructor()` reads it from a
+    // prototype object. Method shorthand would drop its [[Construct]].
+    if key.sym == "constructor" {
         return;
     }
 
