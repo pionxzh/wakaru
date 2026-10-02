@@ -1,5 +1,7 @@
 use std::fmt;
 
+use crate::collections::HashMap;
+use crate::facts::ModuleFactsMap;
 use crate::rules::RewriteLevel;
 use crate::unpacker::BundleFormat;
 
@@ -148,6 +150,35 @@ pub struct UnpackOutput {
     pub source_maps: Vec<(String, String)>,
 }
 
+/// Lockstep façade result for an explicitly requested pre-rewrite source view.
+///
+/// This keeps the ordinary [`PreparedUnpackOutput`] contract unchanged. The
+/// sidecar is generic module source; framework meaning is assigned only by the
+/// caller.
+#[doc(hidden)]
+#[derive(Debug, Clone, Default)]
+pub struct CapturedUnpackOutput {
+    pub output: PreparedUnpackOutput,
+    pub pre_rewrite_modules: Vec<(String, String)>,
+    /// Proven top-level binding-name correspondence from each captured module
+    /// into its finalized readable module, keyed by final filename.
+    pub binding_correspondences: HashMap<String, Vec<BindingCorrespondence>>,
+    /// Post-Stage-2 transport facts for the surviving captured modules.
+    ///
+    /// Keys and relative sources use the same final filenames as `output` and
+    /// `pre_rewrite_modules`. Framework artifact analyzers may use these facts
+    /// to project their own semantic evidence across proven module edges.
+    pub module_facts: ModuleFactsMap,
+}
+
+/// A proven emitted-name correspondence for one binding across the captured
+/// evidence and finalized readable views of a module.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BindingCorrespondence {
+    pub evidence: String,
+    pub readable: String,
+}
+
 /// Byte-range provenance for one unpacked module.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ModuleProvenance {
@@ -256,6 +287,9 @@ impl UnpackOutput {
 pub struct DecompileOutput {
     pub code: String,
     pub warnings: Vec<UnpackWarning>,
+    /// Proven top-level binding-name correspondence from the input AST into
+    /// the finalized readable AST.
+    pub binding_correspondences: Vec<BindingCorrespondence>,
     /// v3 source map JSON mapping the decompiled output back to the input.
     /// Only populated when `DecompileOptions::emit_source_map` is set.
     pub source_map: Option<String>,

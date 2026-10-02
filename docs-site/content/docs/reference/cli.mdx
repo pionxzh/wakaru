@@ -110,6 +110,24 @@ Best-effort Vue 3 render recovery. With a non-`.vue` output path, Wakaru
 writes normal JavaScript and adds a sibling `.vue` sidecar when recovery
 succeeds. Without `-o`, stdout remains JavaScript.
 
+## Angular Ivy recovery (experimental)
+
+```bash
+wakaru compiled.js --angular
+wakaru compiled.js --angular -o compiled.angular.ts
+wakaru bundle.js --unpack --angular -o out/
+wakaru dist/ --unpack --angular -o out/
+```
+
+Recovers readable TypeScript module artifacts from production Angular AOT
+output. Each artifact keeps sibling components together and puts recovered
+templates and styles inline. In unpack mode, JavaScript output is preserved
+and matching modules get an additional `.angular.ts` artifact.
+
+Unsupported Ivy regions remain explicit in partial artifacts. Add
+`--diagnostics` to audit recovered, unsupported, and malformed runtime calls.
+`--angular` cannot be combined with `--raw` or `--vue-sfc`.
+
 ## Output options
 
 ```bash
@@ -119,7 +137,9 @@ wakaru bundle.js --unpack --json -o out/   # machine-readable JSON to stdout
 
 `--json` includes warnings and errors in the JSON object. In unpack mode,
 each module also gets an artifact `kind` and `status`. Useful for CI and
-tooling.
+tooling. Angular artifacts use `angular_module` with a
+`recovered_angular_module` or `partial_angular_module` status. Their paired
+JavaScript uses `angular_module_source_js`.
 
 ## Diagnostics
 
