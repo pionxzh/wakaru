@@ -313,7 +313,7 @@ fn detect_webpack5_top_level(
             ModuleItem::ModuleDecl(_) => return None,
             ModuleItem::Stmt(Stmt::Decl(swc_core::ecma::ast::Decl::Var(var_decl))) => {
                 if modules_sym.is_none() {
-                    if let Some((_, sym)) = extract_webpack_modules_container(var_decl) {
+                    if let Some((_, sym)) = extract_webpack_modules_container(var_decl, false) {
                         modules_sym = Some(sym);
                     }
                 }
@@ -490,6 +490,24 @@ impl<'a> Webpack5ModulesContainer<'a> {
             }
             _ => None,
         }
+    }
+
+    /// A bootstrap's own table may be empty: webpack 5 production
+    /// concatenates dependency-free application code into the runtime and
+    /// emits `var r = {}`, with modules only arriving from chunks. Callers
+    /// still require the proven require lifecycle for this table and an
+    /// extracted entry. Chunk containers stay non-empty.
+    fn from_bootstrap_expr(expr: &'a Expr) -> Option<Self> {
+        match strip_parens(expr) {
+            Expr::Object(object_lit) if object_lit.props.is_empty() => {
+                Some(Self::Object(object_lit))
+            }
+            _ => Self::from_expr(expr),
+        }
+    }
+
+    fn is_empty_object(&self) -> bool {
+        matches!(self, Self::Object(object_lit) if object_lit.props.is_empty())
     }
 
     fn entry_count(&self) -> usize {
@@ -1041,24 +1059,27 @@ fn collect_pat_binding_ids(pat: &Pat, ids: &mut HashSet<Id>) {
 /// region invoke `modules_sym` as a table anywhere (at any nesting depth)?
 /// Avoids cloning + resolving regions that cannot possibly match.
 fn region_invokes_table(stmts: &[Stmt], modules_sym: &Atom) -> bool {
-    let mut finder = TableInvocationFinder {
-        modules_sym,
-        found: false,
-    };
+    invoked_table_syms(stmts).contains(modules_sym)
+}
+
+/// Every symbol the region invokes as a table, collected in one walk so a
+/// caller testing many candidates does not rescan the region per candidate.
+fn invoked_table_syms(stmts: &[Stmt]) -> HashSet<Atom> {
+    let mut finder = TableInvocationFinder::default();
     stmts.visit_with(&mut finder);
-    finder.found
+    finder.syms
 }
 
-struct TableInvocationFinder<'a> {
-    modules_sym: &'a Atom,
-    found: bool,
+#[derive(Default)]
+struct TableInvocationFinder {
+    syms: HashSet<Atom>,
 }
 
-impl Visit for TableInvocationFinder<'_> {
+impl Visit for TableInvocationFinder {
     fn visit_call_expr(&mut self, call: &CallExpr) {
         call.visit_children_with(self);
-        if table_invocation_base(call).is_some_and(|base| base.sym == *self.modules_sym) {
-            self.found = true;
+        if let Some(base) = table_invocation_base(call) {
+            self.syms.insert(base.sym.clone());
         }
     }
 
@@ -1071,9 +1092,7 @@ impl Visit for TableInvocationFinder<'_> {
     fn visit_key_value_prop(&mut self, kv: &KeyValueProp) {
         kv.visit_children_with(self);
         if let Some((base, _)) = computed_index_parts(strip_parens(&kv.value)) {
-            if base.sym == *self.modules_sym {
-                self.found = true;
-            }
+            self.syms.insert(base.sym.clone());
         }
     }
 }
@@ -1650,17 +1669,32 @@ fn extract_webpack5_modules_with_plan(
     let span = tracing::info_span!("webpack5: extract_modules");
     let _enter = span.enter();
 
+    // The top-level fallback found its table with the strict scan and passes
+    // its plan; only an IIFE bootstrap may own an empty table.
+    let allow_empty_table = require_plan.is_none();
     let (modules_container, modules_sym) = {
         let span = tracing::info_span!("webpack5: find modules object");
         let _enter = span.enter();
         let mut found: Option<(Webpack5ModulesContainer<'_>, Atom)> = None;
+        // Empty objects are common region-level declarations; test them
+        // against one shared table-invocation scan.
+        let mut invoked_tables: Option<HashSet<Atom>> = None;
         for stmt in &bootstrap_body.stmts {
             let Stmt::Decl(swc_core::ecma::ast::Decl::Var(var_decl)) = stmt else {
                 continue;
             };
-            let Some((container, modules_sym)) = extract_webpack_modules_container(var_decl) else {
+            let Some((container, modules_sym)) =
+                extract_webpack_modules_container(var_decl, allow_empty_table)
+            else {
                 continue;
             };
+            if container.is_empty_object()
+                && !invoked_tables
+                    .get_or_insert_with(|| invoked_table_syms(&bootstrap_body.stmts))
+                    .contains(&modules_sym)
+            {
+                continue;
+            }
             // Function-valued arrays and objects both occur in ordinary
             // programs. Require webpack's defining cache/invoke/return
             // lifecycle tied to this table before destructively extracting it.
@@ -1679,7 +1713,11 @@ fn extract_webpack5_modules_with_plan(
     let module_entries = {
         let span = tracing::info_span!("webpack5: collect module entries");
         let _enter = span.enter();
-        collect_module_descriptors(&modules_container)?
+        if modules_container.is_empty_object() {
+            Vec::new()
+        } else {
+            collect_module_descriptors(&modules_container)?
+        }
     };
 
     let PreparedWebpack5Factories {
@@ -1688,7 +1726,7 @@ fn extract_webpack5_modules_with_plan(
         id_to_filename,
         str_id_to_filename,
     } = prepare_webpack5_factories(&module_entries)?;
-    if failures.len() == module_entries.len() {
+    if !module_entries.is_empty() && failures.len() == module_entries.len() {
         // A synthetic startup cannot make an entirely opaque module table
         // trustworthy; retain the original whole-input fallback.
         return None;
@@ -3272,6 +3310,7 @@ fn descriptor_filename(module_id: &str) -> String {
 
 fn extract_webpack_modules_container(
     var_decl: &VarDecl,
+    allow_empty: bool,
 ) -> Option<(Webpack5ModulesContainer<'_>, Atom)> {
     for decl in &var_decl.decls {
         let VarDeclarator {
@@ -3282,7 +3321,12 @@ fn extract_webpack_modules_container(
         else {
             continue;
         };
-        let Some(container) = Webpack5ModulesContainer::from_expr(init) else {
+        let container = if allow_empty {
+            Webpack5ModulesContainer::from_bootstrap_expr(init)
+        } else {
+            Webpack5ModulesContainer::from_expr(init)
+        };
+        let Some(container) = container else {
             continue;
         };
         return Some((container, binding.id.sym.clone()));
@@ -3839,6 +3883,9 @@ const modules = Array(4).concat([
         // Only holes and placeholders — no factory
         let empty = parse_first_var_init("const modules = [, false];");
         assert!(Webpack5ModulesContainer::from_expr(&empty).is_none());
+        let empty_object = parse_first_var_init("const modules = {};");
+        assert!(Webpack5ModulesContainer::from_expr(&empty_object).is_none());
+        assert!(Webpack5ModulesContainer::from_bootstrap_expr(&empty_object).is_some());
 
         // Concise arrow body is not a factory
         let concise = parse_first_var_init("const modules = [(m, e, r) => e.a];");

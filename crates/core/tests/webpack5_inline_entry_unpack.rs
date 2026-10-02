@@ -2,7 +2,8 @@
 //! need an IIFE wrapper: `var __webpack_exports__ = {};` followed by the entry
 //! statements. These bundles previously produced no entry.js.
 
-use wakaru_core::driver::test_support::unpack;
+use wakaru_core::driver::test_support::{unpack, unpack_files, UnpackInput};
+use wakaru_core::unpacker::webpack5;
 use wakaru_core::{validate_output_modules, DecompileOptions};
 
 fn expect_unpack(source: &str, filename: &str) -> Vec<(String, String)> {
@@ -351,6 +352,94 @@ fn webpack5_inline_startup_without_exports_anchor() {
         !entry.contains("exports:") && !entry.contains("r.m ="),
         "entry must not include runtime code, got:\n{entry}"
     );
+}
+
+/// The shape webpack 5.101.3 emits in production for an ESM app with no npm
+/// dependencies and one `import()` chunk: the app code is concatenated into
+/// the runtime, so the bootstrap's own module table is empty (`r={}`).
+const EMPTY_TABLE_ENTRY: &str = r##"(()=>{"use strict";var e,t,r={},o={};function n(e){var t=o[e];if(void 0!==t)return t.exports;var a=o[e]={exports:{}};return r[e](a,a.exports,n),a.exports}n.m=r,n.d=(e,t)=>{for(var r in t)n.o(t,r)&&!n.o(e,r)&&Object.defineProperty(e,r,{enumerable:!0,get:t[r]})},n.f={},n.e=e=>Promise.all(Object.keys(n.f).reduce((t,r)=>(n.f[r](e,t),t),[])),n.u=e=>e+".lazy-beta.js",n.o=(e,t)=>Object.prototype.hasOwnProperty.call(e,t),e={},t="app:",n.l=(r,o)=>{var c=document.createElement("script");c.src=r,c.onload=c.onerror=o,e[r]=[o],document.head.appendChild(c)},n.p="/",(()=>{var e={1:0};n.f.j=(t,r)=>{var o=n.o(e,t)?e[t]:void 0;if(0!==o)if(o)r.push(o[2]);else{var a=new Promise((r,n)=>o=e[t]=[r,n]);r.push(o[2]=a);var i=n.p+n.u(t),c=new Error;n.l(i,r=>{n.o(e,t)&&(o=e[t],0!==o&&(e[t]=void 0),o&&(c.name="ChunkLoadError",o[1](c)))})}};var t=(t,r)=>{var o,a,[i,c,s]=r,u=0;if(i.some(t=>0!==e[t])){for(o in c)n.o(c,o)&&(n.m[o]=c[o]);s&&s(n)}for(t&&t(r);u<i.length;u++)a=i[u],n.o(e,a)&&e[a]&&e[a][0](),e[a]=0},r=self.webpackChunkapp=self.webpackChunkapp||[];r.forEach(t.bind(null,0)),r.push=t.bind(null,r.push.bind(r))})();const a=new class{items=[];add(e){this.items.push(e)}total(){return this.items.length}};document.querySelector("#first").addEventListener("click",()=>{a.add("first-item")}),document.querySelector("#second").addEventListener("click",async()=>{const{second:e}=await n.e(300).then(n.bind(n,300));e(a)})})();"##;
+
+const EMPTY_TABLE_CHUNK: &str = r##"(self.webpackChunkapp=self.webpackChunkapp||[]).push([[300],{300:(e,o,t)=>{function c(e){return e.total()+"-second-result"}t.d(o,{second:()=>c})}}]);"##;
+
+#[test]
+fn webpack5_entry_with_empty_module_table_extracts_concatenated_app_code() {
+    let pairs = expect_unpack(EMPTY_TABLE_ENTRY, "main.js");
+    let entry = entry_of(&pairs);
+
+    assert!(
+        entry.contains("class") && entry.contains("first-item"),
+        "entry should hold the concatenated app code, got:\n{entry}"
+    );
+    assert!(
+        !entry.contains("exports:") && !entry.contains("ChunkLoadError"),
+        "entry must not include runtime code, got:\n{entry}"
+    );
+}
+
+#[test]
+fn webpack5_entry_with_empty_module_table_unpacks_beside_its_chunk() {
+    let output = unpack_files(
+        vec![
+            UnpackInput {
+                filename: "main.js".into(),
+                source: EMPTY_TABLE_ENTRY.into(),
+            },
+            UnpackInput {
+                filename: "chunk.js".into(),
+                source: EMPTY_TABLE_CHUNK.into(),
+            },
+        ],
+        DecompileOptions::default(),
+    )
+    .expect("unpack should succeed");
+    let names: Vec<&str> = output
+        .modules
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect();
+    assert!(names.contains(&"entry.js"), "got {names:?}");
+    assert!(
+        output
+            .modules
+            .iter()
+            .any(|(_, code)| code.contains("-second-result")),
+        "the chunk module should be emitted, got {names:?}"
+    );
+}
+
+#[test]
+fn webpack5_empty_module_table_without_startup_is_not_a_bundle() {
+    // Runtime only: nothing after the runtime to extract as the entry.
+    let source = r#"
+(() => {
+    var r = {}, o = {};
+    function n(e) {
+        var t = o[e];
+        if (t !== undefined) return t.exports;
+        var a = o[e] = { exports: {} };
+        return r[e](a, a.exports, n), a.exports;
+    }
+    n.m = r, n.u = (e) => e + ".js";
+})();
+"#;
+    assert!(webpack5::detect_and_extract(source).is_none());
+}
+
+#[test]
+fn empty_table_with_a_plain_dispatcher_is_not_a_bundle() {
+    // An empty object indexed by a function is not webpack's require
+    // lifecycle: no module-cache write and no returned `.exports`.
+    let source = r#"
+(() => {
+    var handlers = {};
+    function dispatch(name) {
+        return handlers[name]();
+    }
+    handlers.ready = () => 1;
+    console.log(dispatch("ready"));
+})();
+"#;
+    assert!(webpack5::detect_and_extract(source).is_none());
 }
 
 #[test]

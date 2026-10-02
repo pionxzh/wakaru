@@ -17,7 +17,11 @@ The payload may include a prepared AST as described below. Detection is
 attempted in order — first match wins:
 
 1. **webpack5** — IIFE/arrow with module factory array or object, including
-   runtime-only entry files, inline startup (both webpack's own
+   runtime-only entry files, an IIFE bootstrap whose own table is empty
+   because production builds concatenated the dependency-free app code into
+   the runtime (accepted only with the proven require lifecycle and an
+   extracted entry; the unwrapped `output.iife: false` form still needs a
+   non-empty table), inline startup (both webpack's own
    `var __webpack_exports__ = {}` form and Vercel ncc's variant), and the
    unwrapped `output.iife: false` form. `experiments.outputModule` bundles that
    carry top-level ESM `export`/`import` declarations are left untouched — their
