@@ -502,7 +502,13 @@ rationale, or level gating appear.
   protects the same IIFE shapes syntactically: when the IIFE's result is
   constructor-sensitive, a function expression it returns directly stays
   ordinary, while the callee itself and functions nested in it may still
-  convert.
+  convert. After the fixpoint, each sensitive member key is copied once onto
+  the member aliases of its root binding (`Word = ns.Word = extend({...});
+  new Word.init()` protects `ns.Word.init`); those copies are not propagated
+  further. ObjMethodShorthand also checks an inline object argument of a call
+  against the call result's keys and the receiver's key
+  (`call_result_exposes_argument_properties`): `Word = extend({ init })`
+  checks `Word.init`, and `Lib.mixin({ make })` checks `Lib.make`.
   Aliases are also recorded for logical assignments
   (`cached ||= ctor`) and object-destructuring bindings (`const { C } = ns`,
   including renames, nested patterns, defaults, and rest bindings). A shared

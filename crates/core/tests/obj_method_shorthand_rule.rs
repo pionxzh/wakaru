@@ -515,8 +515,10 @@ Word.init();
 }
 
 #[test]
-fn call_result_ident_argument_does_not_freeze_other_object() {
-    // The object is not a call argument, and nothing constructs `existing.init`.
+fn call_result_ident_argument_is_not_linked() {
+    // Accepted boundary: only an inline object argument is linked to the call
+    // result. An argument binding is not followed, so `existing.init` still
+    // converts even though `extend` may expose it as `c.init`.
     let input = r#"
 const existing = {
     init: function() {},
@@ -628,6 +630,109 @@ var Word = extend({
     other() {}
 });
 exportWord(Word);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn receiver_constructed_member_stays_function() {
+    // call_result_exposes_argument_properties: a one-argument mixin copies
+    // the object onto its receiver, so `make` becomes `Lib.make`, which this
+    // module constructs.
+    let input = r#"
+Lib.mixin({
+    items: [],
+    make: function(first, second) {
+        this.first = first;
+    },
+    size: function(value) {
+        return value;
+    }
+});
+Lib.make.prototype = {};
+new Lib.make(alpha, beta);
+"#;
+    let expected = r#"
+Lib.mixin({
+    items: [],
+    make: function(first, second) {
+        this.first = first;
+    },
+    size (value) {
+        return value;
+    }
+});
+Lib.make.prototype = {};
+new Lib.make(alpha, beta);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn receiver_without_construct_still_uses_method_shorthand() {
+    let input = r#"
+Lib.mixin({
+    make: function(first) {
+        this.first = first;
+    }
+});
+Lib.make(alpha);
+"#;
+    let expected = r#"
+Lib.mixin({
+    make (first) {
+        this.first = first;
+    }
+});
+Lib.make(alpha);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn nested_receiver_constructed_member_stays_function() {
+    let input = r#"
+Lib.proto.mixin({
+    start: function(value) {
+        this.value = value;
+    },
+    other: function() {}
+});
+new Lib.proto.start("a");
+"#;
+    let expected = r#"
+Lib.proto.mixin({
+    start: function(value) {
+        this.value = value;
+    },
+    other () {}
+});
+new Lib.proto.start("a");
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn call_result_and_receiver_are_both_checked() {
+    // The argument object is linked to the assigned result and to the
+    // receiver at once; constructing either one keeps the property.
+    let input = r#"
+var Word = Base.extend({
+    init: function() {},
+    create: function() {},
+    other: function() {}
+});
+new Word.init();
+new Base.create();
+"#;
+    let expected = r#"
+var Word = Base.extend({
+    init: function() {},
+    create: function() {},
+    other () {}
+});
+new Word.init();
+new Base.create();
 "#;
     assert_eq_normalized(&apply(input), expected);
 }

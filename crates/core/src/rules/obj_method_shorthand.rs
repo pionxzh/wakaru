@@ -2,14 +2,14 @@ use crate::collections::HashSet;
 
 use swc_core::common::Mark;
 use swc_core::ecma::ast::{
-    AssignExpr, AssignTarget, BinaryOp, Expr, MethodProp, Module, ObjectLit, Prop, PropName,
-    PropOrSpread, VarDeclarator,
+    AssignExpr, AssignTarget, BinaryOp, CallExpr, Callee, Expr, MethodProp, Module, ObjectLit,
+    Prop, PropName, PropOrSpread, VarDeclarator,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::constructor_sensitivity::{
     assign_target_pat_has_constructor_sensitive_value, assign_target_value_key,
-    collect_constructor_sensitive_values, is_value_preserving_assign_op,
+    collect_constructor_sensitive_values, expr_value_key, is_value_preserving_assign_op,
     pat_has_constructor_sensitive_value, pat_value_key, static_prop_name,
     visit_mut_assign_target_pat_constructor_sensitive_defaults,
     visit_mut_pat_constructor_sensitive_defaults, CreateClassHelpers, ValueKey,
@@ -59,7 +59,7 @@ impl VisitMut for ObjMethodShorthandConverter<'_> {
             constructor_sensitive_values,
             &mut |expr, is_constructor_sensitive| {
                 if is_constructor_sensitive {
-                    visit_mut_value_expr(expr, None, true, self);
+                    visit_mut_value_expr(expr, &[], true, self);
                 } else {
                     expr.visit_mut_with(self);
                 }
@@ -69,10 +69,10 @@ impl VisitMut for ObjMethodShorthandConverter<'_> {
             return;
         };
         if let Some(key) = pat_value_key(&decl.name) {
-            visit_mut_value_expr(init, Some(&key), false, self);
+            visit_mut_value_expr(init, std::slice::from_ref(&key), false, self);
         } else if pat_has_constructor_sensitive_value(&decl.name, self.constructor_sensitive_values)
         {
-            visit_mut_value_expr(init, None, true, self);
+            visit_mut_value_expr(init, &[], true, self);
         } else {
             init.visit_mut_with(self);
         }
@@ -95,7 +95,7 @@ impl VisitMut for ObjMethodShorthandConverter<'_> {
                     constructor_sensitive_values,
                     &mut |expr, is_constructor_sensitive| {
                         if is_constructor_sensitive {
-                            visit_mut_value_expr(expr, None, true, self);
+                            visit_mut_value_expr(expr, &[], true, self);
                         } else {
                             expr.visit_mut_with(self);
                         }
@@ -105,15 +105,19 @@ impl VisitMut for ObjMethodShorthandConverter<'_> {
         }
         if is_value_preserving_assign_op(expr.op) {
             if let Some(key) = assign_target_value_key(&expr.left) {
-                visit_mut_value_expr(&mut expr.right, Some(&key), false, self);
+                visit_mut_value_expr(&mut expr.right, std::slice::from_ref(&key), false, self);
                 return;
             }
             if pattern_is_constructor_sensitive {
-                visit_mut_value_expr(&mut expr.right, None, true, self);
+                visit_mut_value_expr(&mut expr.right, &[], true, self);
                 return;
             }
         }
         expr.right.visit_mut_with(self);
+    }
+
+    fn visit_mut_call_expr(&mut self, call: &mut CallExpr) {
+        visit_mut_call(call, &[], self);
     }
 
     fn visit_mut_prop(&mut self, prop: &mut Prop) {
@@ -124,33 +128,36 @@ impl VisitMut for ObjMethodShorthandConverter<'_> {
 
 fn visit_mut_value_expr(
     expr: &mut Expr,
-    key: Option<&ValueKey>,
+    keys: &[ValueKey],
     force_constructor_sensitive: bool,
     converter: &mut ObjMethodShorthandConverter<'_>,
 ) {
     match expr {
-        Expr::Paren(paren) => {
-            visit_mut_value_expr(&mut paren.expr, key, force_constructor_sensitive, converter)
-        }
+        Expr::Paren(paren) => visit_mut_value_expr(
+            &mut paren.expr,
+            keys,
+            force_constructor_sensitive,
+            converter,
+        ),
         Expr::Seq(sequence) => {
             if let Some((last, prefix)) = sequence.exprs.split_last_mut() {
                 for expr in prefix {
                     expr.visit_mut_with(converter);
                 }
-                visit_mut_value_expr(last, key, force_constructor_sensitive, converter);
+                visit_mut_value_expr(last, keys, force_constructor_sensitive, converter);
             }
         }
         Expr::Cond(conditional) => {
             conditional.test.visit_mut_with(converter);
             visit_mut_value_expr(
                 &mut conditional.cons,
-                key,
+                keys,
                 force_constructor_sensitive,
                 converter,
             );
             visit_mut_value_expr(
                 &mut conditional.alt,
-                key,
+                keys,
                 force_constructor_sensitive,
                 converter,
             );
@@ -163,43 +170,75 @@ fn visit_mut_value_expr(
         {
             visit_mut_value_expr(
                 &mut binary.left,
-                key,
+                keys,
                 force_constructor_sensitive,
                 converter,
             );
             visit_mut_value_expr(
                 &mut binary.right,
-                key,
+                keys,
                 force_constructor_sensitive,
                 converter,
             );
         }
         Expr::Object(object) => {
-            visit_mut_object_value(object, key, force_constructor_sensitive, converter)
+            visit_mut_object_value(object, keys, force_constructor_sensitive, converter)
         }
-        // The call result is `K`. Argument objects are inputs, so they inherit
-        // `K` (a property `init` checks `K.init`) but not
-        // `force_constructor_sensitive`. A wrong
-        // `call_result_exposes_argument_properties` assumption only skips
-        // shorthand; it does not invent a TypeError.
-        Expr::Call(call) => {
-            call.callee.visit_mut_with(converter);
-            for arg in &mut call.args {
-                if arg.spread.is_some() || key.is_none() {
-                    arg.visit_mut_with(converter);
-                    continue;
-                }
-                visit_mut_value_expr(&mut arg.expr, key, false, converter);
-            }
-            call.type_args.visit_mut_with(converter);
-        }
+        Expr::Call(call) => visit_mut_call(call, keys, converter),
         _ => expr.visit_mut_with(converter),
     }
 }
 
+/// call_result_exposes_argument_properties: a call may copy the properties of
+/// an argument object onto its result (`Word = extend({ init })` exposes
+/// `Word.init`) or onto its receiver (`Lib.mixin({ make })` exposes
+/// `Lib.make`). Argument objects therefore inherit the call result's keys and
+/// the receiver's key, but not `force_constructor_sensitive`. A wrong
+/// assumption only skips shorthand; it does not invent a TypeError.
+fn visit_mut_call(
+    call: &mut CallExpr,
+    result_keys: &[ValueKey],
+    converter: &mut ObjMethodShorthandConverter<'_>,
+) {
+    call.callee.visit_mut_with(converter);
+    let mut keys = result_keys.to_vec();
+    if call
+        .args
+        .iter()
+        .any(|arg| arg.spread.is_none() && may_hold_object(&arg.expr))
+    {
+        if let Callee::Expr(callee) = &call.callee {
+            if let Expr::Member(member) = callee.as_ref() {
+                keys.extend(expr_value_key(&member.obj));
+            }
+        }
+    }
+    for arg in &mut call.args {
+        if arg.spread.is_some() || keys.is_empty() {
+            arg.visit_mut_with(converter);
+            continue;
+        }
+        visit_mut_value_expr(&mut arg.expr, &keys, false, converter);
+    }
+    call.type_args.visit_mut_with(converter);
+}
+
+/// Value shapes `visit_mut_value_expr` can follow to an object literal.
+fn may_hold_object(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Object(_)
+            | Expr::Paren(_)
+            | Expr::Seq(_)
+            | Expr::Cond(_)
+            | Expr::Bin(_)
+            | Expr::Call(_)
+    )
+}
+
 fn visit_mut_object_value(
     object: &mut ObjectLit,
-    key: Option<&ValueKey>,
+    keys: &[ValueKey],
     force_constructor_sensitive: bool,
     converter: &mut ObjMethodShorthandConverter<'_>,
 ) {
@@ -210,7 +249,7 @@ fn visit_mut_object_value(
             };
             visit_mut_value_expr(
                 &mut spread.expr,
-                key,
+                keys,
                 force_constructor_sensitive,
                 converter,
             );
@@ -227,17 +266,20 @@ fn visit_mut_object_value(
             try_convert_prop(prop, false);
             continue;
         };
-        let value_key = key.map(|key| key.with_property(property));
+        let value_keys = keys
+            .iter()
+            .map(|key| key.with_property(property.clone()))
+            .collect::<Vec<_>>();
         visit_mut_value_expr(
             &mut key_value.value,
-            value_key.as_ref(),
+            &value_keys,
             force_constructor_sensitive,
             converter,
         );
         let constructor_sensitive = force_constructor_sensitive
-            || value_key
-                .as_ref()
-                .is_some_and(|key| converter.constructor_sensitive_values.contains(key));
+            || value_keys
+                .iter()
+                .any(|key| converter.constructor_sensitive_values.contains(key));
         try_convert_prop(prop, constructor_sensitive);
     }
 }

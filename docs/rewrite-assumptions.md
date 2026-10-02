@@ -367,8 +367,9 @@ are primitives by syntax, as for `string_coercion_hint`.
 
 ### `call_result_exposes_argument_properties`
 
-`ObjMethodShorthand` keeps an object-literal function as a `function` expression
-when the same module constructs the matching property of a call result:
+A call may copy the properties of an inline object argument onto its result or
+onto its receiver. `ObjMethodShorthand` keeps such a property a `function`
+expression when the same module constructs the matching property of either one:
 
 ```js
 var Word = extend({
@@ -376,15 +377,22 @@ var Word = extend({
     describe: function () { return this.hi; }
 });
 new Word.init(1, 2);
+
+Lib.mixin({
+    make: function (first, second) { this.first = first; }
+});
+new Lib.make(alpha, beta);
 ```
 
-The AST does not prove that `extend` copies `init` onto its return value.
-CryptoJS `Base.extend` does (`mixIn`, then `subtype.init.prototype = subtype`).
-When the assumption is wrong, the property stays a function expression instead
-of becoming a method. That skips shorthand only; it does not introduce a
-`TypeError`. A spread argument does not establish the link. A property that is
-not constructed on that result still becomes a method. Construction of the
-property in another module is out of scope.
+The AST does not prove that `extend` copies `init` onto its return value, or
+that `mixin` copies `make` onto `Lib`. CryptoJS `Base.extend` does the first
+(`mixIn`, then `subtype.init.prototype = subtype`). A one-argument mixin that
+copies onto its receiver does the second. When the assumption is wrong, the property stays a function expression
+instead of becoming a method. That skips shorthand only; it does not introduce
+a `TypeError`. A spread argument does not establish the link, and neither does
+an argument binding (`extend(props)` does not protect `props.init`). A property
+that is not constructed on the result or the receiver still becomes a method.
+Construction of the property in another module is out of scope.
 
 Affects: `ObjMethodShorthand`, via the shared constructor-sensitivity set.
 
