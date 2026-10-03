@@ -782,6 +782,28 @@ consume(dependency);
 }
 
 #[test]
+fn redeclared_require_binding_uses_a_separate_import_binding() {
+    let input = r#"
+var dependency = require("./dependency.js");
+var dependency = replacement;
+exports.value = dependency.make();
+"#;
+    let output = apply(input);
+    assert!(output.contains("import _dependency from"), "{output}");
+    assert!(
+        validate_output_modules(&[
+            ("entry.js".to_string(), output.clone()),
+            (
+                "dependency.js".to_string(),
+                "export default {};".to_string()
+            ),
+        ])
+        .is_empty(),
+        "an import cannot share its name with a redeclared var:\n{output}"
+    );
+}
+
+#[test]
 fn nested_write_to_require_binding_stays_on_the_local() {
     let input = r#"
 var dependency = require("./dependency.js");

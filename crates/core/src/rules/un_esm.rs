@@ -6923,8 +6923,13 @@ fn preserve_written_cjs_require_bindings(module: &mut Module, unresolved_mark: M
             continue;
         }
 
+        // A second `var` declaration of the same name is a write too; an
+        // import cannot share its name.
         let binding_ids = find_pat_ids(&declarator.name);
-        if !binding_ids.iter().any(|id| uses.has_direct_write(id)) {
+        if !binding_ids
+            .iter()
+            .any(|id| uses.has_direct_write(id) || !uses.has_single_declaration(id))
+        {
             new_body.push(ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))));
             continue;
         }
