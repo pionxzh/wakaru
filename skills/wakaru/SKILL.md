@@ -178,19 +178,26 @@ reachability sweep is desired.
 
 ## Interpreting output
 
-- **Exit code** 0 = success, non-zero = failure (parse error, I/O). Errors go
-  to stderr; `--json` output goes to stdout.
+- **Exit code** 0 = success, non-zero = a fatal error (bad arguments, I/O) or
+  at least one error-class warning. Errors go to stderr; `--json` output goes
+  to stdout.
 - Inspect every JSON warning's `is_error` field. Entries with `is_error: false`
-  are non-fatal; an error-class warning makes the command fail even though the
-  JSON output and successfully recovered files may still be written.
+  are non-fatal. An error-class warning makes the command exit non-zero, but
+  Wakaru still writes the JSON output and every artifact; modules without an
+  error-class warning remain usable.
 - Use `--diagnostics` to catch emitted declaration conflicts during decompile or
-  unpack, including `var` versus `let`/`const`. A `duplicate_declaration` warning
-  is an error even if `failed` is zero; legal repeated `var` declarations are allowed.
+  unpack, including `var` versus `let`/`const`, and output that fails to
+  re-parse. `duplicate_declaration` and `output_parse_*` warnings are
+  error-class; legal repeated `var` declarations are allowed. Without
+  `--diagnostics`, emitted modules are not re-parsed.
 - A `cross_module_class_call` warning (non-error) means that module may call a
   recovered class without `new` at runtime. Rerun with `--level minimal` if the
   output must execute.
-- `failed` in unpack JSON counts modules that errored during decompilation;
-  `total` is the module count. Treat `failed > 0` as a failed run.
+- `failed` in unpack JSON counts distinct modules with at least one
+  error-class warning (decompile failures, declaration conflicts, output parse
+  failures); `total` is the module count. `failed > 0` always comes with a
+  non-zero exit. When `failed < total`, read the other modules normally and
+  report the failed ones.
 - With `--vue-sfc`, `recovered_vue_sfc` means a `.vue` artifact was written;
   `vue_sfc_source_js` is the paired JavaScript for that recovered module; and
   `vue_sfc_fallback_js` means the module looked Vue-like but stayed JavaScript.

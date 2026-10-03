@@ -275,6 +275,29 @@ and tooling integration. In unpack mode, each module includes an artifact
 `recovered_vue_sfc`, or `vue_sfc_fallback_js` for likely-Vue modules that
 could not be recovered as SFC output.
 
+## Exit status and failed modules
+
+Wakaru exits nonzero for a fatal error, such as invalid arguments or an I/O
+failure, and when any warning is error-class (`is_error: true` in JSON). An
+error-class warning does not stop the run: Wakaru still writes every artifact,
+`provenance.json`, and the JSON object, then prints the affected modules to
+stderr and exits nonzero. A module that reports `decompile_failed` keeps its
+extracted code without readability rewrites.
+
+In unpack JSON, `total` counts modules and `failed` counts distinct modules
+with at least one error-class warning, of any kind. `failed > 0` therefore
+always comes with a nonzero exit. When `failed` is below `total`, the other
+modules are still usable; the exit status alone does not separate that partial
+result from a run that produced nothing.
+
+| Error-class (`is_error: true`) | Non-error |
+|---|---|
+| `raw_normalization_failed`, `fact_collection_failed`, `webpack_factory_recovery_failed`, `decompile_failed`, `duplicate_declaration`, `output_parse_recovered`, `output_parse_failed` | `input_parse_recovered`, `tdz_violation`, `import_cycle`, `cross_module_class_call` |
+
+`duplicate_declaration` and the `output_parse_*` checks run only with
+`--diagnostics`. Without it, Wakaru does not re-parse emitted modules, so a
+zero exit does not prove that every output file parses.
+
 ## Diagnostics and profiling
 
 ```bash

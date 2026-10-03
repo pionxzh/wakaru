@@ -121,6 +121,10 @@ wakaru bundle.js --unpack --json -o out/   # machine-readable JSON to stdout
 each module also gets an artifact `kind` and `status`. Useful for CI and
 tooling.
 
+Any warning with `is_error: true` makes Wakaru exit nonzero, but it still
+writes every artifact and the JSON first. In unpack JSON, `failed` counts the
+modules with such a warning; the other modules are still usable.
+
 ## Diagnostics
 
 ```bash
