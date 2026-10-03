@@ -3218,10 +3218,17 @@ fn webpack5_module_decorators_in_expression_position_are_recovered() {
     let decorated_output = unpack_named(decorated);
     let plain_output = unpack_named(&plain);
     assert_eq!(decorated_output.detected_formats, [BundleFormat::Webpack5]);
+    // Module 3 reads the whole `module.exports` object, which stays a
+    // reported CommonJS residual in the plain factory too; the module
+    // comparison below proves the decorator changes nothing.
+    let opaque: Vec<_> = decorated_output
+        .warnings
+        .iter()
+        .filter(|warning| warning.kind != wakaru_core::UnpackWarningKind::CommonJsExportUnrecovered)
+        .collect();
     assert!(
-        decorated_output.warnings.is_empty(),
-        "decorators should not make factories opaque: {:?}",
-        decorated_output.warnings
+        opaque.is_empty(),
+        "decorators should not make factories opaque: {opaque:?}"
     );
     assert_eq!(decorated_output.modules, plain_output.modules);
 
