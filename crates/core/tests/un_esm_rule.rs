@@ -390,12 +390,94 @@ Object.keys(source).forEach(function(key) {
 
 #[test]
 fn export_star_loop_that_can_overwrite_exports_is_unchanged() {
-    // Without an `__esModule`, own-property, or `_exportNames` skip the loop
-    // overwrites the module's own exports, which `export *` cannot do.
+    // Without a skip of the module's own keys the loop overwrites the
+    // module's own exports, which `export *` cannot do.
     let input = r#"
 var source = require("./source.js");
 Object.keys(source).forEach(function(key) {
   "default" !== key && (exports[key] = source[key]);
+});
+"#;
+    let output = apply(input);
+    assert!(!output.contains("export * from"), "{output}");
+}
+
+#[test]
+fn export_star_loop_that_only_skips_es_module_needs_local_exports_after_it() {
+    // An `__esModule` skip does not protect `x`: the loop overwrites it with
+    // the source's `x`, while in ESM the local export shadows the star one.
+    let input = r#"
+var source = require("./source.js");
+exports.x = 1;
+Object.keys(source).forEach(function(key) {
+  if (key === "default" || key === "__esModule") return;
+  exports[key] = source[key];
+});
+"#;
+    let output = apply(input);
+    assert!(!output.contains("export * from"), "{output}");
+
+    // A write inside a function may run before the loop.
+    let input = r#"
+var source = require("./source.js");
+init();
+Object.keys(source).forEach(function(key) {
+  if (key === "default" || key === "__esModule") return;
+  exports[key] = source[key];
+});
+function init() { exports.x = 1; }
+"#;
+    let output = apply(input);
+    assert!(!output.contains("export * from"), "{output}");
+
+    // A top-level write after the loop overwrites the copy, as the local
+    // export shadows the star export in ESM.
+    let input = r#"
+var source = require("./source.js");
+Object.keys(source).forEach(function(key) {
+  if (key === "default" || key === "__esModule") return;
+  exports[key] = source[key];
+});
+exports.x = 1;
+"#;
+    assert_eq_normalized(
+        &apply(input),
+        r#"export * from "./source.js"; export const x = 1;"#,
+    );
+}
+
+#[test]
+fn export_star_helper_that_only_skips_es_module_is_unchanged() {
+    // A helper cannot see the exports at its call site, so it must skip keys
+    // the target already owns.
+    let input = r#"
+var __exportStar = (this && this.__exportStar) || function(m, exports) {
+    for (var p in m) if (p !== "default" && p !== "__esModule") exports[p] = m[p];
+};
+exports.x = 1;
+__exportStar(require("./provider.js"), exports);
+"#;
+    let output = apply(input);
+    assert!(!output.contains("export * from"), "{output}");
+}
+
+#[test]
+fn export_star_loop_with_extended_export_names_is_unchanged() {
+    // `_exportNames.y = true` makes the loop skip `y`, which `export *`
+    // would re-export.
+    let input = r#"
+var _exportNames = { x: true };
+_exportNames.y = true;
+exports.x = 1;
+var _source = require("./source.js");
+Object.keys(_source).forEach(function (key) {
+  if (key === "default" || key === "__esModule") return;
+  if (Object.prototype.hasOwnProperty.call(_exportNames, key)) return;
+  if (key in exports && exports[key] === _source[key]) return;
+  Object.defineProperty(exports, key, {
+    enumerable: true,
+    get: function () { return _source[key]; }
+  });
 });
 "#;
     let output = apply(input);

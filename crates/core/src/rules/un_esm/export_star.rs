@@ -72,9 +72,18 @@ pub(super) fn rewrite_commonjs_export_stars(module: &mut Module, unresolved_mark
 
     let mut cleanup: HashSet<BindingKey> = HashSet::default();
     let mut rewritten = Vec::with_capacity(module.body.len());
-    for item in std::mem::take(&mut module.body) {
+    for (index, item) in std::mem::take(&mut module.body).into_iter().enumerate() {
         let recovered = helper_call_export_star(&item, &helpers, &uses, &requires, unresolved_mark)
-            .or_else(|| loop_export_star(&item, &uses, &requires, &local_exports, unresolved_mark));
+            .or_else(|| {
+                loop_export_star(
+                    &item,
+                    index,
+                    &uses,
+                    &requires,
+                    &local_exports,
+                    unresolved_mark,
+                )
+            });
         let Some(recovered) = recovered else {
             rewritten.push(item);
             continue;
@@ -396,6 +405,7 @@ fn helper_call_export_star(
 /// `require()` binding that has no other use.
 fn loop_export_star(
     item: &ModuleItem,
+    index: usize,
     uses: &BindingUseIndex,
     requires: &HashMap<BindingKey, String>,
     local_exports: &LocalExports,
@@ -418,8 +428,16 @@ fn loop_export_star(
         CopyTarget::Exports(unresolved_mark),
         unresolved_mark,
     )?;
-    if !copy.is_reexport(uses, local_exports) {
+    if !copy.is_reexport(index, uses, local_exports) {
         return None;
+    }
+    // `_exportNames` is proven only at its initializer; a member write
+    // elsewhere (`_exportNames.y = true`) would add a skipped key.
+    if let Some(export_names) = &copy.export_names {
+        let names_key = binding_key(export_names);
+        if uses.use_count(&names_key) != count_binding_refs(item, &names_key) {
+            return None;
+        }
     }
     let mut consumed = vec![key];
     consumed.extend(copy.export_names.as_ref().map(binding_key));
@@ -546,9 +564,13 @@ impl CopyBody {
         self.skips_es_module || self.skips_target_own || self.export_names.is_some()
     }
 
+    /// A helper cannot see the module's own exports at its call sites, so it
+    /// must skip every key the target already owns (TypeScript
+    /// `__exportStar`, SWC `_export_star`). An `__esModule` skip alone would
+    /// let the copy overwrite a local export written before the call.
     fn is_helper_body(&self, create_bindings: &HashSet<BindingKey>) -> bool {
         self.skips_default
-            && self.skips_module_keys()
+            && self.skips_target_own
             && self.export_names.is_none()
             && match self.action {
                 Some(CopyAction::CreateBinding) => self
@@ -561,7 +583,13 @@ impl CopyBody {
     }
 
     /// A top-level loop over a required module that `export *` replaces.
-    fn is_reexport(&self, uses: &BindingUseIndex, local_exports: &LocalExports) -> bool {
+    /// `index` is the loop's position in the module body.
+    fn is_reexport(
+        &self,
+        index: usize,
+        uses: &BindingUseIndex,
+        local_exports: &LocalExports,
+    ) -> bool {
         if !self.skips_default
             || !self.skips_module_keys()
             || !matches!(
@@ -572,7 +600,12 @@ impl CopyBody {
             return false;
         }
         let Some(export_names) = &self.export_names else {
-            return true;
+            // An `__esModule` skip alone does not protect the module's own
+            // exports: the copy overwrites a local export written before the
+            // loop, while in ESM the local export shadows the star export. A
+            // top-level write after the loop overwrites the copy instead,
+            // which matches ESM.
+            return self.skips_target_own || local_exports.all_written_after(index);
         };
         // `_exportNames` lists the module's own exports, which shadow star
         // exports in ESM. A key it lists that the module never exports would
@@ -1116,16 +1149,33 @@ struct LocalExports {
     /// `exports.name = ...` and `Object.defineProperty(exports, "name", ...)`
     /// anywhere in the module.
     names: HashSet<Atom>,
+    /// Each such write with the module-body index of its statement, or
+    /// `None` inside a function or class body, which may run at any time.
+    writes: Vec<(Atom, Option<usize>)>,
     /// Top-level `var x = { a: true, ... }` objects, keyed by binding.
     names_objects: HashMap<BindingKey, Vec<Atom>>,
 }
 
 impl LocalExports {
     fn collect(module: &Module, unresolved_mark: Mark) -> Self {
+        let writes = collect_local_export_writes(module, unresolved_mark);
         Self {
-            names: collect_local_export_names(module, unresolved_mark),
+            names: writes.iter().map(|(name, _)| name.clone()).collect(),
+            writes,
             names_objects: collect_export_names_objects(module),
         }
+    }
+
+    /// The module writes an export other than `default` and `__esModule`,
+    /// which every accepted loop skips.
+    /// Every export other than `default` and `__esModule` (which every
+    /// accepted loop skips) is written by a module-body statement after
+    /// `index`.
+    fn all_written_after(&self, index: usize) -> bool {
+        self.writes.iter().all(|(name, position)| {
+            matches!(name.as_ref(), "default" | "__esModule")
+                || position.is_some_and(|position| position > index)
+        })
     }
 
     /// `var _exportNames = { a: true, ... }` lists only names this module
@@ -1137,19 +1187,55 @@ impl LocalExports {
     }
 }
 
-fn collect_local_export_names(module: &Module, unresolved_mark: Mark) -> HashSet<Atom> {
+fn collect_local_export_writes(
+    module: &Module,
+    unresolved_mark: Mark,
+) -> Vec<(Atom, Option<usize>)> {
     struct Collector {
         unresolved_mark: Mark,
-        names: HashSet<Atom>,
+        writes: Vec<(Atom, Option<usize>)>,
+        index: usize,
+        function_depth: usize,
+    }
+    impl Collector {
+        fn record(&mut self, name: Atom) {
+            let position = (self.function_depth == 0).then_some(self.index);
+            self.writes.push((name, position));
+        }
     }
     impl Visit for Collector {
+        fn visit_module_items(&mut self, items: &[ModuleItem]) {
+            for (index, item) in items.iter().enumerate() {
+                self.index = index;
+                item.visit_with(self);
+            }
+        }
+
+        fn visit_function(&mut self, function: &Function) {
+            self.function_depth += 1;
+            function.visit_children_with(self);
+            self.function_depth -= 1;
+        }
+
+        fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
+            self.function_depth += 1;
+            arrow.visit_children_with(self);
+            self.function_depth -= 1;
+        }
+
+        fn visit_class(&mut self, class: &swc_core::ecma::ast::Class) {
+            self.function_depth += 1;
+            class.visit_children_with(self);
+            self.function_depth -= 1;
+        }
+
         fn visit_assign_expr(&mut self, assign: &AssignExpr) {
             if let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left {
                 if matches!(member.obj.as_ref(), Expr::Ident(id)
                     if is_unresolved_ident(id, "exports", self.unresolved_mark))
                 {
                     if let Some(name) = is_ident_prop(&member.prop) {
-                        self.names.insert(name);
+                        self.record(name);
                     }
                 }
             }
@@ -1170,7 +1256,7 @@ fn collect_local_export_names(module: &Module, unresolved_mark: Mark) -> HashSet
                         {
                             if let Expr::Lit(Lit::Str(name)) = strip_parens(&name.expr) {
                                 if let Some(name) = name.value.as_str() {
-                                    self.names.insert(Atom::from(name));
+                                    self.record(Atom::from(name));
                                 }
                             }
                         }
@@ -1182,10 +1268,12 @@ fn collect_local_export_names(module: &Module, unresolved_mark: Mark) -> HashSet
     }
     let mut collector = Collector {
         unresolved_mark,
-        names: HashSet::default(),
+        writes: Vec::new(),
+        index: 0,
+        function_depth: 0,
     };
     module.visit_with(&mut collector);
-    collector.names
+    collector.writes
 }
 
 /// Top-level `var x = { a: true, ... }` objects, keyed by binding.

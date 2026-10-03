@@ -317,6 +317,15 @@ module facts do not yet carry an `__exportStar` export. A Babel loop whose
 `require()` binding is also used elsewhere (for example by an
 `export { default } from` getter on the same source) keeps the loop.
 
+A loop whose only module-key skip is `__esModule` overwrites any export the
+module wrote before it, so it is recovered only when every other local
+export is a top-level write after the loop; inline helpers must skip the
+target's own keys. `_exportNames` must have no use outside its loop. Two
+differences are accepted, because the result matches the ESM source the
+compiler started from: an assignment loop copies once while `export *` is
+live, and a name exported by two star sources is ambiguous in ESM where
+CommonJS lets the later copy win.
+
 esbuild helpers (`__commonJS`, `__esm`, `__toESM`, `__toCommonJS`) are bundler-level and already handled in the unpacker, not here.
 
 `UnDestructuring` accepts a mangled `arrayLikeToArray` declaration only when
