@@ -193,6 +193,10 @@ reachability sweep is desired.
 - A `cross_module_class_call` warning (non-error) means that module may call a
   recovered class without `new` at runtime. Rerun with `--level minimal` if the
   output must execute.
+- A `commonjs_export_unrecovered` warning (non-error) means an ESM output
+  module still accesses the listed exports through `exports` or
+  `module.exports`. Those accesses throw a `ReferenceError` when they run, so
+  treat that module's export surface as incomplete.
 - `failed` in unpack JSON counts distinct modules with at least one
   error-class warning (decompile failures, declaration conflicts, output parse
   failures); `total` is the module count. `failed > 0` always comes with a

@@ -105,6 +105,9 @@ pub(crate) fn diagnostic_from_core(
         wakaru_core::UnpackWarningKind::CrossModuleClassCall => {
             DiagnosticCode::CrossModuleClassCall
         }
+        wakaru_core::UnpackWarningKind::CommonJsExportUnrecovered => {
+            DiagnosticCode::CommonJsExportUnrecovered
+        }
         wakaru_core::UnpackWarningKind::OutputParseRecovered => {
             DiagnosticCode::OutputParseRecovered
         }

@@ -6,7 +6,7 @@ pub(crate) mod builtin_aliases;
 mod call_required;
 mod callability;
 mod class_expression_to_declaration;
-mod constructor_sensitivity;
+pub(crate) mod constructor_sensitivity;
 pub(crate) mod cross_module_helper_refs;
 pub(crate) mod dead_decls;
 pub(crate) mod dead_imports;

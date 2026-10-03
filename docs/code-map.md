@@ -45,6 +45,7 @@ crates/
         types.rs                    — driver options, outputs, and warning types
       facts.rs                      — post-Stage-2 cross-module fact extraction
       commonjs_default_object_composition.rs — exact mutable-default composition recovery
+      commonjs_export_residual.rs   — `exports` accesses left in ESM output (`commonjs_export_unrecovered`)
       sourcemap_rename.rs           — source-map-driven name recovery
       namespace_decomposition.rs    — cross-module namespace-to-named-import rewrite
       reexport_consolidation.rs     — cross-module re-export consolidation

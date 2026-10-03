@@ -271,6 +271,7 @@ export type WakaruWarningKind =
     | "duplicate_declaration"
     | "import_cycle"
     | "cross_module_class_call"
+    | "commonjs_export_unrecovered"
     | "output_parse_recovered"
     | "output_parse_failed"
     | "formatter_failed";
@@ -361,6 +362,10 @@ mod tests {
             (
                 wakaru::DiagnosticCode::CrossModuleClassCall,
                 "cross_module_class_call",
+            ),
+            (
+                wakaru::DiagnosticCode::CommonJsExportUnrecovered,
+                "commonjs_export_unrecovered",
             ),
             (
                 wakaru::DiagnosticCode::OutputParseRecovered,

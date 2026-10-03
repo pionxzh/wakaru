@@ -78,6 +78,13 @@ recovered line that still mentions `exports`, `module.exports`, or
 `require`. Those lines are a debugging aid, not part of the verdict: an export
 named `module` legitimately prints that word.
 
+The table output ends with how many `wrong` and `ok` rows got a
+`commonjs_export_unrecovered` warning from wakaru, and `--details` prints the
+warning for each row. The warning should never fire on an `ok` row. A `wrong`
+row without it is either output that stayed CommonJS (valid CommonJS, but the
+ESM driver cannot load it) or a recovered ESM module whose export surface is
+wrong without any `exports` access left.
+
 ## Adding a case
 
 Add an entry to `cases.mjs`. Keep sources small and synthetic, and make the

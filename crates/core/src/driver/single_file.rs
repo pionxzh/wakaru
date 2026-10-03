@@ -3,7 +3,10 @@ use swc_core::common::{sync::Lrc, Mark, SourceMap, GLOBALS};
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::VisitMutWith;
 
-use super::diagnostics::{collect_input_parse_warnings, collect_output_diagnostics};
+use super::diagnostics::{
+    collect_commonjs_export_residual_warnings, collect_input_parse_warnings,
+    collect_output_diagnostics,
+};
 use super::error::DriverErrorKind;
 use super::io::{
     apply_fixer, build_output_sourcemap, parse_js_with_recovery_owned, print_js,
@@ -79,6 +82,11 @@ pub fn decompile_owned(
         strip_redundant_module_use_strict(&mut module, &options.filename, true);
 
         let mut warnings = collect_input_parse_warnings(&parsed.recoverable_errors);
+        warnings.extend(collect_commonjs_export_residual_warnings(
+            &module,
+            unresolved_mark,
+            &options.filename,
+        ));
 
         {
             let span = tracing::info_span!("fixer");
@@ -142,6 +150,28 @@ mod tests {
             output.warnings.is_empty(),
             "default decompile should produce no diagnostic warnings"
         );
+    }
+
+    #[test]
+    fn commonjs_export_residuals_are_reported_without_diagnostics() {
+        let output = decompile(
+            "exports.count = 0;\nfunction bump() { exports.count += 1; }\nexports.bump = bump;",
+            DecompileOptions::default(),
+        )
+        .expect("decompile should succeed");
+        let residuals = output
+            .warnings
+            .iter()
+            .filter(|w| w.kind == UnpackWarningKind::CommonJsExportUnrecovered)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            residuals.len(),
+            1,
+            "{:#?}\n{}",
+            output.warnings,
+            output.code
+        );
+        assert!(residuals[0].message.contains("`count`"));
     }
 
     #[test]

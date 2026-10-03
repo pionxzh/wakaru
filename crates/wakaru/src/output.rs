@@ -225,6 +225,7 @@ pub enum DiagnosticCode {
     DuplicateDeclaration,
     ImportCycle,
     CrossModuleClassCall,
+    CommonJsExportUnrecovered,
     OutputParseRecovered,
     OutputParseFailed,
 }
@@ -241,6 +242,7 @@ impl DiagnosticCode {
             Self::DuplicateDeclaration => "duplicate_declaration",
             Self::ImportCycle => "import_cycle",
             Self::CrossModuleClassCall => "cross_module_class_call",
+            Self::CommonJsExportUnrecovered => "commonjs_export_unrecovered",
             Self::OutputParseRecovered => "output_parse_recovered",
             Self::OutputParseFailed => "output_parse_failed",
         }

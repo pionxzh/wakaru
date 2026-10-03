@@ -12,7 +12,10 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::{Visit, VisitMutWith, VisitWith};
 
-use super::super::diagnostics::{collect_input_parse_warnings, collect_output_diagnostics};
+use super::super::diagnostics::{
+    collect_commonjs_export_residual_warnings, collect_input_parse_warnings,
+    collect_output_diagnostics,
+};
 use super::super::io::{
     apply_fixer, build_output_sourcemap, parse_js, parse_js_with_recovery, print_js,
     print_js_with_srcmap, ParseDiagnostic,
@@ -747,6 +750,12 @@ pub(super) fn unpack_multi_module_with_plan(
                     ),
                 ));
             }
+
+            diag_warnings.extend(collect_commonjs_export_residual_warnings(
+                &module,
+                unresolved_mark,
+                &unpacked.module.filename,
+            ));
 
             // Final, isolated remap: rewrite import-source strings that point
             // at modules renamed via recovered filenames. Runs after every

@@ -206,10 +206,14 @@ try {
       const recoveredDir = join(base, "recovered");
       writeModuleDir(recoveredDir, "module", {});
       row.leftovers = [];
+      row.unrecovered = [];
       for (const file of Object.keys(cjsFiles)) {
         const output = join(recoveredDir, file);
         try {
-          await runWakaruArgsAsync([join(cjsDir, file), "-o", output]);
+          const report = JSON.parse(await runWakaruArgsAsync([join(cjsDir, file), "-o", output, "--json"]));
+          for (const warning of report.warnings ?? []) {
+            if (warning.kind === "commonjs_export_unrecovered") row.unrecovered.push(`${file}: ${warning.message}`);
+          }
         } catch (error) {
           row.verdict = "wakaru-error";
           row.detail = String(error.message ?? error).slice(0, 300);
@@ -271,6 +275,11 @@ try {
     }
     console.log("");
     console.log(`Behavior preserved: ${ok}/${scored} (excluded: producer diverges from ESM or failed to compile)`);
+    const warned = (verdict) => {
+      const matching = rows.filter((r) => r.verdict === verdict);
+      return `${matching.filter((r) => r.unrecovered?.length).length} of ${matching.length} ${verdict}`;
+    };
+    console.log(`commonjs_export_unrecovered warning on: ${warned("wrong")} rows, ${warned("ok")} rows`);
     if (showDetails) {
       for (const row of rows.filter((r) => r.verdict !== "ok")) {
         console.log("");
@@ -280,6 +289,7 @@ try {
         if (row.commonjs !== undefined) console.log(`  commonjs:  ${row.commonjs}`);
         if (row.recovered !== undefined) console.log(`  recovered: ${row.recovered}`);
         for (const line of row.leftovers ?? []) console.log(`  leftover:  ${line}`);
+        for (const line of row.unrecovered ?? []) console.log(`  warning:   ${line}`);
       }
     }
   }

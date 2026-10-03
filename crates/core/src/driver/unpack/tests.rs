@@ -604,6 +604,40 @@ fn unpack_raw_preserves_unparseable_extracted_modules() {
 }
 
 #[test]
+fn unpack_reports_commonjs_export_residuals_without_diagnostics() {
+    let modules = vec![UnpackedModule {
+        id: "1".to_string(),
+        is_entry: false,
+        code: "exports.count = 0;\nfunction bump() { exports.count += 1; }\nexports.bump = bump;"
+            .to_string(),
+        filename: "module-1.js".to_string(),
+        ..Default::default()
+    }];
+    let output =
+        unpack_multi_module(modules, DecompileOptions::default()).expect("module should decompile");
+
+    let residuals = output
+        .warnings
+        .iter()
+        .filter(|warning| warning.kind == UnpackWarningKind::CommonJsExportUnrecovered)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        residuals.len(),
+        1,
+        "{:#?}\n{}",
+        output.warnings,
+        output.modules[0].code
+    );
+    assert_eq!(residuals[0].filename, "module-1.js");
+    assert!(
+        residuals[0].message.contains("`count`"),
+        "{}",
+        residuals[0].message
+    );
+    assert!(!UnpackWarningKind::CommonJsExportUnrecovered.is_error());
+}
+
+#[test]
 fn detector_raw_large_scope_split_skips_runnable_cleanup_merge() {
     let mut source = String::from(
         r#"

@@ -204,6 +204,9 @@ pub enum UnpackWarningKind {
     /// A module still calls an import with `.call`/`.apply` after the provider
     /// was allowed to become a class on a predicted `super()` rewrite.
     CrossModuleClassCall,
+    /// An ES module output still accesses an export through the CommonJS
+    /// `exports` object, which throws in ESM.
+    CommonJsExportUnrecovered,
     OutputParseRecovered,
     OutputParseFailed,
 }
@@ -220,6 +223,7 @@ impl UnpackWarningKind {
             Self::DuplicateDeclaration => "duplicate_declaration",
             Self::ImportCycle => "import_cycle",
             Self::CrossModuleClassCall => "cross_module_class_call",
+            Self::CommonJsExportUnrecovered => "commonjs_export_unrecovered",
             Self::OutputParseRecovered => "output_parse_recovered",
             Self::OutputParseFailed => "output_parse_failed",
         }
@@ -234,6 +238,7 @@ impl UnpackWarningKind {
                 | Self::TdzViolation
                 | Self::ImportCycle
                 | Self::CrossModuleClassCall
+                | Self::CommonJsExportUnrecovered
         )
     }
 

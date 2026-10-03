@@ -292,7 +292,7 @@ result from a run that produced nothing.
 
 | Error-class (`is_error: true`) | Non-error |
 |---|---|
-| `raw_normalization_failed`, `fact_collection_failed`, `webpack_factory_recovery_failed`, `decompile_failed`, `duplicate_declaration`, `output_parse_recovered`, `output_parse_failed` | `input_parse_recovered`, `tdz_violation`, `import_cycle`, `cross_module_class_call` |
+| `raw_normalization_failed`, `fact_collection_failed`, `webpack_factory_recovery_failed`, `decompile_failed`, `duplicate_declaration`, `output_parse_recovered`, `output_parse_failed` | `input_parse_recovered`, `tdz_violation`, `import_cycle`, `cross_module_class_call`, `commonjs_export_unrecovered` |
 
 `duplicate_declaration` and the `output_parse_*` checks run only with
 `--diagnostics`. Without it, Wakaru does not re-parse emitted modules, so a
@@ -319,6 +319,16 @@ class because that call was expected to become `super()`. The named module may
 throw `Class constructor … cannot be invoked without 'new'` at runtime. Rerun
 with `--level minimal`, which keeps every cross-module `.call`/`.apply` target
 a function.
+
+Decompile and unpack both report a non-error `commonjs_export_unrecovered`
+warning, with or without `--diagnostics`, when an output module has ESM
+`import` or `export` declarations but still reads or writes an export through
+`exports` or `module.exports`. ESM has no `exports` binding, so each such access
+throws a `ReferenceError` when it runs. The message lists the export names in
+first-appearance order; `exports` or `module.exports` in the list means the
+whole object is still used as a value. Output that stayed CommonJS (no `import`
+or `export`) does not get this warning, and neither do a direct
+`typeof exports` probe or other `module` members such as `module.hot`.
 
 ## Overwrite protection
 

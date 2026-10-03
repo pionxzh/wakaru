@@ -24,6 +24,35 @@ pub(super) fn collect_tdz_warnings(
         .collect()
 }
 
+/// Report export names that an ES module output still accesses through
+/// `exports`. This reads the final pipeline AST instead of re-parsing the
+/// emitted code, so it also runs without `--diagnostics`. Only the free
+/// `exports` and `module` globals matter, and rules leave those with the
+/// resolver's `unresolved_mark`.
+pub(super) fn collect_commonjs_export_residual_warnings(
+    module: &swc_core::ecma::ast::Module,
+    unresolved_mark: Mark,
+    filename: &str,
+) -> Vec<UnpackWarning> {
+    let names =
+        crate::commonjs_export_residual::unrecovered_commonjs_export_names(module, unresolved_mark);
+    if names.is_empty() {
+        return Vec::new();
+    }
+    let list = names
+        .iter()
+        .map(|name| format!("`{name}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    vec![UnpackWarning::new(
+        filename,
+        UnpackWarningKind::CommonJsExportUnrecovered,
+        format!(
+            "ES module output still accesses CommonJS exports {list}; these accesses throw a ReferenceError when they run"
+        ),
+    )]
+}
+
 pub(super) fn collect_input_parse_warnings(errors: &[ParseDiagnostic]) -> Vec<UnpackWarning> {
     // Source locations identify occurrences, not distinct parser conditions.
     // Keep the first-seen signature order while collapsing repeated conditions
