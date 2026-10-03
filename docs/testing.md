@@ -560,6 +560,15 @@ namespaces, and ESM named imports. Script sources alone cannot test this
 dimension: TypeScript keeps helpers inline for scripts even when
 `importHelpers` is enabled. Known misses remain `no` rows in the baseline.
 
+The [CommonJS export-storage matrix](../scripts/repro/cjs-export-storage-matrix/README.md)
+does not use `runMatrix`. It compiles small multi-file ESM modules to CommonJS
+with each producer, decompiles every file, and compares the module behavior
+of the original ESM, the CommonJS, and the recovered ESM through a driver that
+imports the module. `execute` cannot do this, because it skips module syntax.
+The matrix tracks the gaps described in
+[the export-storage proposal](proposals/cjs-export-storage.md) and is not
+registered in `collect-stats.mjs`.
+
 ### Execution equivalence (`execute`)
 
 Substring and structural checks accept a *shape*; they cannot see a recovery

@@ -1,0 +1,359 @@
+# CommonJS Export Storage Recovery
+
+Status: **PROPOSED.** Evidence comes from the
+[CommonJS export-storage matrix](../../scripts/repro/cjs-export-storage-matrix/README.md).
+Nothing here is implemented yet.
+
+Ground rules: follow [AGENTS.md](../../AGENTS.md), including a focused unit
+test for every change. Use synthetic names in tests and commits. Record every
+new or changed assumption in [rewrite-assumptions.md](../rewrite-assumptions.md),
+and update [fact-system.md](../fact-system.md) where it describes same-module
+`exports` read recovery.
+
+## Problem
+
+`UnEsm` recovers exports **statement by statement**. Each top-level
+`exports.X = value` is classified as an export declaration, and later passes
+patch up the reads and writes that the classification left behind. Producers
+do not encode exports that way. What a producer decides is **where the
+exported value lives**. Its `exports.X = ...` statements are either writes to
+that storage, copies that keep the property in sync with a local binding, or
+nothing at all when a getter exposes the binding.
+
+When `UnEsm` guesses the wrong storage, the recovered module either keeps an
+`exports.X` access (a `ReferenceError` in ESM) or exports a snapshot where the
+source had a live binding. Both happen on plain compiler output, not on
+unusual hand-written code.
+
+## Evidence
+
+The matrix compiles 28 small ESM modules with 11 producer profiles, decompiles
+each CommonJS file back to ESM, and compares runtime behavior of the original
+ESM, the CommonJS, and the recovered ESM. Rows where the producer's CommonJS
+already behaves differently from the ESM source are excluded.
+
+| Binary | Behavior preserved |
+|---|---|
+| `main` at the time of writing | 27 / 291 |
+| `main` + an A-class prototype (see [Relation to existing paths](#relation-to-existing-paths)) | 108 / 291 |
+
+By producer, with the prototype: TypeScript 19 of 26–28 per profile,
+rollup 17 of 23, Babel 6 of 25–27, sucrase 3 of 24, swc and esbuild 0.
+
+The remaining failures, by cause:
+
+| Cause | Rows | Producers |
+|---|---:|---|
+| Getter helper not recognized (C below) | 77 | swc, esbuild |
+| Mirror writes kept or snapshotted (B below) | 50 | Babel, sucrase, TypeScript aliases |
+| Property storage only partly recovered (A below) | 33 | TypeScript, rollup, sucrase |
+| Single-file import interop (default import of a module without one) | 8 | all |
+| String export names (`exports["a-b"]`) | 5 | TypeScript, Babel, rollup |
+| TypeScript `__exportStar` | 4 | TypeScript |
+| Other esbuild splitting errors | 6 | esbuild |
+
+## How producers store an export
+
+All shapes below are actual output of the pinned producers in the matrix.
+
+### A. The property is the storage
+
+TypeScript (`export let`, `export var`, `export const` with a non-identifier
+initializer), rollup, and sucrase after the declaration keep no local binding.
+Every read and write goes through the property:
+
+```js
+exports.count = 0;                                  // TypeScript, rollup
+function bump() { exports.count += 1; return exports.count < exports.limit; }
+function step() { exports.n++; exports.n || (exports.n = 9); }
+function swap() { [exports.a, exports.b] = [exports.b, exports.a]; }
+function each(xs) { for (exports.a of xs); }
+
+exports.y = void 0;                                 // declaration without initializer
+exports.y = compute();
+
+let n = 0; exports.n = n;                           // sucrase: local only seeds the property,
+function step() { exports.n++; }                    // every later access uses the property
+exports.y;                                          // sucrase: `export let y;`
+```
+
+A write can be anywhere: top level, nested control flow, a function, a class
+member, or a pattern target. The property can be written more than once at the
+top level (`exports.x = 1; exports.x = 2; exports.x += 3;`).
+
+### B. A local binding is the storage; writes are mirrored
+
+Babel and sucrase keep the local binding and copy its new value into every
+exported name after each write. TypeScript does the same for
+`export { local as alias }` and for a reassigned exported function.
+
+```js
+let count = exports.count = 0;                      // Babel declaration
+exports.count = count = count + 1;                  // Babel assignment, compound
+exports.n = ++n;                                    // Babel prefix update
+_n = n++, exports.n = n, _n;                        // Babel postfix update
+[a, b] = [b, a]; exports.a = a, exports.b = b;      // Babel pattern: mirror in the next statement
+for (let _a of xs) { exports.a = a = _a; }          // Babel for-of head
+exports.other = exports.value = (internal++, internal); // TypeScript alias
+exports.impl = impl = function () { ... };          // TypeScript/Babel reassigned function
+impl = exports.impl = function () { ... };          // sucrase, reversed
+exports.f = f;                                      // hoisted function export, written once
+```
+
+Every write to the property has a value that is the local's current value.
+Every write to the local is mirrored in the same statement or the next one.
+
+### C. A local binding is the storage; a getter exposes it
+
+swc and esbuild never write the property. TypeScript and Babel use the same
+form for re-exports, and webpack uses it for every export.
+
+```js
+_export(exports, { get count() { return count; } }); // swc 1.16
+_export(exports, { count: function () { return count; } }); // older swc
+__export(mod_exports, { count: () => count });      // esbuild, then
+module.exports = __toCommonJS(mod_exports);
+Object.defineProperty(exports, "live", { enumerable: true, get: function () { return dep_1.live; } });
+__webpack_require__.d(exports, { count: () => count });
+```
+
+## Where the current model breaks
+
+`UnEsm` has several mechanisms that each handle one statement shape:
+
+- **Statement classification** (`classify_item`): each top-level
+  `exports.X = v` becomes an export. A non-identifier value becomes
+  `export const X = v`. An identifier value becomes `export { L as X }`, or a
+  snapshot `export const X = L` when `L` has any direct write. That snapshot
+  rule is correct for hand-written CommonJS. Under B it is wrong: the mirror
+  writes make the property follow `L`, so the source export was live. The
+  output keeps the mirror writes (`exports.count = count = count + 1`) next to
+  a snapshot export and throws when they run.
+- **Stable named read recovery** (`recover_stable_commonjs_reads`): replaces
+  later reads of a property that has exactly one write. It skips function
+  declaration bodies because hoisting can run them before the export
+  statement. Under A that skip is not conservative: ESM has no `exports`, so
+  every skipped read throws.
+- **Conditional named export recovery** (`recover_conditional_named_exports`):
+  activation-time writes inside top-level control flow become `export let X`
+  with reads and writes redirected. A compound write or any leftover access
+  sends the whole module back to CommonJS.
+- **Getter pre-passes**: webpack getters are lowered to assignments marked
+  live, and `Object.defineProperty(exports, ...)` getters become live exports
+  or re-exports. swc's `_export` and esbuild's `__export`/`__toCommonJS`
+  single-file shapes are not recognized at all. esbuild single-file CommonJS
+  is even split as a scope-hoisted bundle under `--unpack`.
+
+Three of these mechanisms (classification + snapshot, stable read recovery,
+conditional recovery) partly implement A, with different entry conditions.
+None implements B. Their gaps are the matrix's A and B failures.
+
+There is also an ordering problem. `UnAssignmentMerging` runs before `UnEsm`
+and splits chains with repeatable values:
+
+```js
+exports.count = count = 0;   // Babel mirror
+count = 0;                   // after UnAssignmentMerging
+exports.count = 0;
+```
+
+After the split, the mirror is only "the same literal written twice". The
+fact that the property copies `count` is no longer visible in the syntax.
+`SimplifySequence` similarly turns `_n = n++, exports.n = n, _n` into three
+statements, which keeps the mirror recognizable (next statement).
+
+## Proposed design
+
+Replace statement classification with one decision **per export name**,
+based on a whole-module inventory of how that name is accessed.
+
+### 1. Inventory
+
+Walk the resolved module once and record, for each static export name
+(identifier or string key) on the unique unresolved `exports` binding:
+
+- every access, with its position (top-level statement, nested top-level,
+  deferred inside a function or class member) and kind (read, plain write,
+  compound or logical write, update, pattern target, call target, `typeof`);
+- for each plain write, the value shape: `L`, `L = e`, `++L`, a sequence ending
+  in `L`, another export write whose value has one of these shapes, or other;
+- getter definitions for the name (`Object.defineProperty`, the swc, esbuild,
+  and webpack helpers) and the binding or member each getter returns.
+
+The module-level gates are the ones the current proofs already use: one
+`exports` binding, only static member access (no escape, computed key,
+`delete`, or prototype-mutating member), no `module.exports` replacement (or
+`module` absent), no direct `eval` or `with`. If a gate fails, keep the
+current fallback for the whole module and report it (see
+[Unrecovered names](#4-unrecovered-names)).
+
+### 2. Classify each name
+
+Check in this order. The first match wins.
+
+**C (getter).** The name has a getter definition and no other write. Export
+the returned binding live: `export { L as X }`, or `export { m as X } from`
+for a getter returning a member of a `require` binding. Replace reads of
+`exports.X` with `L`.
+
+**B (mirror).** There is one local binding `L` such that:
+
+1. every write to the property has a mirror value shape for `L`; and
+2. every write to `L` (excluding its declaration) is in a statement that
+   also writes the property with a mirror value, or is directly followed by
+   such a statement.
+
+Export `L` live: `export { L as X }`. Drop the mirror writes, keeping `L`'s
+own write (`exports.X = L = e` becomes `L = e`). Replace reads of
+`exports.X` with `L`. Condition 2 is what separates compiler mirrors from
+hand-written CommonJS. If a write of `L` is not mirrored, the property lags
+behind `L`, and a live export would change behavior.
+
+"Same statement" covers chains once `UnAssignmentMerging` leaves them whole
+(see [Relation to existing paths](#relation-to-existing-paths)). "Next
+statement" is still needed for two shapes that do not come from that split:
+Babel emits a pattern write and its mirror as two statements
+(`[a, b] = [b, a]; exports.a = a, exports.b = b;`), and `SimplifySequence`
+splits Babel's postfix form `_n = n++, exports.n = n, _n` into three
+statements, so the mirror follows the write. No producer in the matrix
+mirrors further away. A mirror two or more statements later does not count,
+and hand-written shapes are added case by case when data shows them.
+
+**A (property storage).** Otherwise, the property is the storage. Introduce
+one binding for the name and rewrite every access, in any position, to it.
+Declare it `var`:
+
+- at the first top-level plain write as `export var X = value`, when such a
+  write exists;
+- otherwise as `export var X;` at the top of the module.
+
+A hoisted `var` is `undefined` until a write runs, which is exactly an
+unassigned property. Therefore reads before the declaration, writes inside
+hoisted functions, and repeated top-level writes keep their behavior
+regardless of position. `VarDeclToLetConst` then narrows the kind with its
+full write and use-before-declaration analysis. If the name is reserved,
+invalid as an identifier, already used by an unrelated binding, or shadowed
+at an access site, use a fresh local and `export { local as X }`, including
+`export { local as "a-b" }` for string names.
+
+A direct call through the binding (`exports.f()`) passes `exports` as the
+receiver. Rewrite a call target only when the binding is never written after
+its declaration and its value cannot observe the receiver (the current
+`is_receiver_insensitive_function_value`). Otherwise leave the name
+unrecovered (see [Unrecovered names](#4-unrecovered-names)).
+
+### 3. Readability passes
+
+These do not change semantics and run after the classification:
+
+- **Seed alias** (sucrase): `let L = v; exports.X = L;` where `L` has no
+  other reference becomes `export var X = v`.
+- **Sentinels**: `exports.X = void 0` writes in the leading prefix are
+  dropped for A and B names. Under A they are writes of the same value the
+  hoisted `var` already holds.
+- **Hoisted function exports**: `exports.f = f` for a function declaration
+  never reassigned is B with no other writes. It becomes `export { f }` as
+  today.
+
+### 4. Unrecovered names
+
+A name that matches no class keeps its accesses unchanged. Today the only
+per-name failure is a direct call through a value that may be replaced or
+may observe its receiver. A module-level gate failure leaves every name
+unchanged. Either way, the recovered ESM can still contain `exports.X`, which
+throws when it runs, so the gap must be visible:
+
+- Add a warning kind (for example `commonjs_export_unrecovered`) that lists
+  the export names whose accesses remain in an ESM output. Single-file and
+  unpack runs both return driver warnings. Like `cross_module_class_call`, it
+  is computed by the driver from the emitted AST and is not error-class, so
+  it does not change the exit status. Rules have no warning channel today. A
+  driver check on the output needs none, and it also catches residuals that
+  other rules leave. A new warning kind is CLI-visible output, so the commit
+  updates `docs/cli.md`, `skills/wakaru/SKILL.md`, and the docs-site CLI page
+  together.
+- The step-1 debug report gives the reason per name (which class failed and
+  which condition rejected it), so a warning can be explained without a
+  rebuild.
+- The output validator keeps counting the same accesses as
+  `esm_commonjs_residual` for corpus runs.
+
+### Relation to existing paths
+
+| Existing path | After this design |
+|---|---|
+| Snapshot rule for `exports.X = L` with written `L` | Becomes A with value `L`: `export var X = L` is the same snapshot. The decision stands; it is no longer the default for every identifier value. |
+| Stable named read recovery | Replaced by A and B, which rewrite every access. |
+| Conditional named export recovery | Replaced by A. Nested and compound writes are ordinary A writes. |
+| A-class prototype that rewrites leftover accesses after the stable pass | Superseded. It measured that A alone moves the matrix from 27 to 108. It is held unmerged. |
+| Webpack and `defineProperty` getter pre-passes | Become C inputs. |
+| `UnAssignmentMerging` repeatable-value chain split | Stops splitting a chain that writes both an `exports` property and a local identifier. The pipeline order stays: the `UnAssignmentMerging` → `UnEsm` edge is confirmed in [rule-dependency-inventory.md](../rule-dependency-inventory.md), and moving `UnEsm` first would also hand it every chain that `UnAssignmentMerging` already splits safely. A chain left whole is handled by the class of its export name: B drops the mirror target (`L = v`), A rewrites the target (`X = L = v`, still one valid chain), C does not occur because getter names have no writes. |
+| `has_unhandled_named_export_chain` rollback | Must accept those chains instead of restoring the whole module to CommonJS. |
+
+Default exports follow the same model with the name `default`. A becomes
+`var _default; export { _default as default }`. B becomes
+`export { L as default }`. `export default <expression>` remains for a single
+top-level write with no other access, matching today.
+
+## Out of scope
+
+Each of these needs separate work. The matrix tracks them.
+
+- **swc and esbuild helper recognition.** C needs recognizers for
+  `_export(exports, {...})` (both getter forms) and for single-file esbuild
+  `__export` + `module.exports = __toCommonJS(...)`. esbuild single-file
+  output must also stop being split as a scope-hoisted bundle.
+- **`__exportStar` and other `export *` helpers.** This is separate work on
+  CommonJS `export *` recovery.
+- **Single-file import interop.** Without facts about the provider,
+  `require("./dep")` becomes a default import even when the provider has no
+  default export. Unpack mode has those facts; single-file mode does not.
+
+## Assumptions to record
+
+- **Mirror coverage (B).** If every write of `L` is mirrored in the same or
+  next statement, the property equals `L` everywhere it can be observed.
+  Between a write of `L` and a next-statement mirror, nothing else can
+  observe the property, unless the write expression itself calls code that
+  reads `exports`. Compiler output does not do that, but it is not a
+  guarantee.
+- **Hoisted `var` equivalence (A).** This holds under the existing gates. A
+  remaining difference is `"X" in exports` or `Object.keys(exports)` before the
+  first write, which the static-access gate already excludes.
+- `commonjs_exports_data_properties` continues to apply.
+
+## Implementation steps
+
+Each step is a separate commit. Each commit includes unit tests in
+`crates/core/tests/un_esm_rule.rs` and a matrix run compared with the
+previous step.
+
+1. Add the per-name inventory and classification behind the existing paths,
+   with a debug report of the A/B/C decision and the rejecting condition per
+   name. Compare its decisions with the matrix cases before changing output.
+   Add the `commonjs_export_unrecovered` warning in the same step, so the
+   baseline gap is visible before any output changes.
+2. Implement A and remove the stable read recovery and conditional
+   recovery it replaces.
+3. Stop `UnAssignmentMerging` from splitting chains that write both an
+   `exports` property and a local, then implement B.
+4. Route the existing getter pre-passes through C.
+5. Separately: swc and esbuild recognizers. They feed C.
+
+Run the private fixture suite and the full core suite at every step. Steps 2
+and 3 change snapshots by design. Each changed snapshot needs a reason in the
+commit.
+
+## Decisions
+
+Recorded 2026-10-03.
+
+1. **Fallback granularity:** an unrecovered name keeps its accesses and is
+   reported (see [Unrecovered names](#4-unrecovered-names)); the rest of the
+   module is still recovered. The warning is what lets corpus runs and users
+   see the remaining gap.
+2. **B strictness:** same statement or next statement, nothing further.
+   Hand-written CommonJS shapes are judged case by case on data.
+3. **`var` in output:** acceptable. A emits `var` and leaves narrowing to
+   `VarDeclToLetConst`; a residual `var` where that analysis cannot prove
+   safety is fine.
