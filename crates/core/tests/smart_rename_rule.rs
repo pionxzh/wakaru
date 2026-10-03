@@ -3477,3 +3477,55 @@ function Footer() {
         );
     });
 }
+
+#[test]
+fn value_position_rename_avoids_sibling_declaration_in_top_level_constructor() {
+    let input = r#"
+export class Slice {
+    constructor(i, m) {
+        const isParentBlocked = isBlocked(i);
+        this.first = { isParentBlocked };
+        const p = Boolean(m && isBlocked(m));
+        this.second = { isParentBlocked: p };
+        if (p) mark();
+    }
+}
+"#;
+    let expected = r#"
+export class Slice {
+    constructor(i, m) {
+        const isParentBlocked = isBlocked(i);
+        this.first = { isParentBlocked };
+        const isParentBlocked_1 = Boolean(m && isBlocked(m));
+        this.second = { isParentBlocked: isParentBlocked_1 };
+        if (isParentBlocked_1) mark();
+    }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn value_position_rename_avoids_destructured_name_in_top_level_constructor() {
+    let input = r#"
+export class Logger {
+    constructor(t, e) {
+        let { colorScheme: a, mode: n } = e;
+        let u = a || fallback();
+        this.config = { colorScheme: u, mode: n };
+        use(u);
+    }
+}
+"#;
+    let expected = r#"
+export class Logger {
+    constructor(t, e) {
+        let { colorScheme, mode } = e;
+        let colorScheme_1 = colorScheme || fallback();
+        this.config = { colorScheme: colorScheme_1, mode };
+        use(colorScheme_1);
+    }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}

@@ -5,11 +5,12 @@ use std::cell::Cell;
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, SyntaxContext};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignPat, BindingIdent, BlockStmt, CatchClause, Class, ClassDecl, ClassExpr, Decl,
-    DefaultDecl, ExportNamedSpecifier, Expr, FnDecl, FnExpr, Function, Ident, ImportDecl,
-    ImportNamedSpecifier, ImportSpecifier, JSXElementName, KeyValuePatProp, KeyValueProp,
-    MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, ObjectPatProp, Pat, Prop,
-    PropName, Stmt, VarDecl, VarDeclKind, VarDeclarator,
+    ArrowExpr, AssignPat, BindingIdent, BlockStmt, CatchClause, Class, ClassDecl, ClassExpr,
+    Constructor, Decl, DefaultDecl, ExportNamedSpecifier, Expr, FnDecl, FnExpr, Function, Ident,
+    ImportDecl, ImportNamedSpecifier, ImportSpecifier, JSXElementName, KeyValuePatProp,
+    KeyValueProp, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, ObjectPatProp,
+    ParamOrTsParamProp, Pat, Prop, PropName, Stmt, TsParamPropParam, VarDecl, VarDeclKind,
+    VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -278,6 +279,26 @@ impl RenameShadowIndex {
                 names
             }
 
+            fn collect_constructor_param_names(params: &[ParamOrTsParamProp]) -> HashSet<Atom> {
+                let mut names = HashSet::default();
+                for param in params {
+                    match param {
+                        ParamOrTsParamProp::Param(param) => {
+                            collect_pat_names(&param.pat, &mut names);
+                        }
+                        ParamOrTsParamProp::TsParamProp(prop) => match &prop.param {
+                            TsParamPropParam::Ident(binding) => {
+                                names.insert(binding.id.sym.clone());
+                            }
+                            TsParamPropParam::Assign(assign) => {
+                                collect_pat_names(&assign.left, &mut names);
+                            }
+                        },
+                    }
+                }
+                names
+            }
+
             fn mark_binding_reference(&mut self, ident: &Ident) {
                 if self.scope_stack.is_empty() {
                     return;
@@ -304,6 +325,16 @@ impl RenameShadowIndex {
             fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
                 self.push_scope(Self::collect_arrow_param_names(&arrow.params));
                 arrow.visit_children_with(self);
+                self.pop_scope();
+            }
+
+            // A constructor is not a `Function`, and its body is a
+            // `FunctionBody`, not a block: without its own frame, its
+            // parameters and body declarations are lost, or land in the
+            // enclosing scope.
+            fn visit_constructor(&mut self, ctor: &Constructor) {
+                self.push_scope(Self::collect_constructor_param_names(&ctor.params));
+                ctor.visit_children_with(self);
                 self.pop_scope();
             }
 
@@ -1203,6 +1234,24 @@ use(globalName);
         assert!(!starts_with_lowercase("Σelement"));
     }
 
+    /// The first declared binding spelled `name`, at any depth.
+    fn find_binding(module: &Module, name: &str) -> BindingId {
+        struct Finder<'a> {
+            name: &'a str,
+            found: Option<BindingId>,
+        }
+        impl Visit for Finder<'_> {
+            fn visit_binding_ident(&mut self, binding: &BindingIdent) {
+                if self.found.is_none() && binding.id.sym == self.name {
+                    self.found = Some((binding.id.sym.clone(), binding.id.ctxt));
+                }
+            }
+        }
+        let mut finder = Finder { name, found: None };
+        module.visit_with(&mut finder);
+        finder.found.expect("binding not found")
+    }
+
     fn top_level_binding(module: &Module, name: &str) -> BindingId {
         collect_top_level_binding_infos(module)
             .remove(&Atom::from(name))
@@ -1220,6 +1269,21 @@ use(globalName);
                 let index = RenameShadowIndex::for_bindings(module, &bindings);
                 assert!(index.rename_causes_shadowing(&target, &Atom::from("inner")));
                 assert!(!index.rename_causes_shadowing(&target, &Atom::from("other")));
+            },
+        );
+    }
+
+    #[test]
+    fn constructor_declaration_blocks_rename() {
+        with_parsed_module(
+            "class Box { constructor(param) { var v = 1; var local = 2; use(v, local, param); } }",
+            |module| {
+                let v = find_binding(module, "v");
+                let bindings = HashSet::from_iter([v.clone()]);
+                let index = RenameShadowIndex::for_bindings(module, &bindings);
+                assert!(index.rename_causes_shadowing(&v, &Atom::from("local")));
+                assert!(index.rename_causes_shadowing(&v, &Atom::from("param")));
+                assert!(!index.rename_causes_shadowing(&v, &Atom::from("other")));
             },
         );
     }
