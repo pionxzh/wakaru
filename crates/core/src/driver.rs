@@ -1,6 +1,7 @@
 mod diagnostics;
 mod discovery;
 mod error;
+mod export_storage;
 mod io;
 mod line_index;
 mod normalize;
@@ -15,6 +16,7 @@ mod unpack_cycles;
 pub use crate::unpacker::BundleFormat;
 pub use discovery::is_detected_unpack_input;
 pub use error::{DriverError, DriverErrorKind, DriverResult};
+pub use export_storage::{explain_commonjs_exports, CommonJsExportDecision, CommonJsExportReport};
 pub use normalize::{normalize, NormalizeOptions};
 pub use output::{deduplicate_path, safe_relative_module_path};
 pub use single_file::{decompile, decompile_owned, OwnedDecompileFailure};

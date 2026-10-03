@@ -235,3 +235,43 @@ contract. Directory validation reads only the emitted files, so it also scans
 artifacts retained after a failed factory recovery. Unresolved numeric webpack
 runtime calls in those artifacts are not interpreted as relative module edges.
 See [debugging.md](debugging.md) for the fixture and regression workflow.
+
+## `debug cjs-exports`
+
+```bash
+wakaru debug cjs-exports module.js
+wakaru debug cjs-exports module.js --json
+```
+
+Reports how each CommonJS export name of one module would be stored, using
+the storage models from
+[the CommonJS export-storage proposal](proposals/cjs-export-storage.md):
+
+- `getter`: a getter definition exposes a binding or a member of one, and
+  nothing else writes the property.
+- `mirror`: a module-level binding is the storage, and every write of the
+  property copies it.
+- `property`: the `exports` property itself is the storage.
+- `unrecovered`: no model fits, for example a direct `exports.f()` call
+  through a value that may be replaced or may read `this`.
+
+The analysis runs the normal single-file pipeline up to, but not including,
+`UnEsm`, so it sees the same shapes `UnEsm` does. It only reports; output is
+unchanged. Bundles are rejected: unpack first and analyze one module file.
+
+The text output prints one line per name with its access counts, followed by
+each rejected model and its reason, with a `line:column` in the input when one
+is known:
+
+```text
+count: property (writes 1, sentinels 1, other writes 1, reads 1, calls 0, getters 0, deferred 2)
+inc: mirror `inc` (writes 1, sentinels 0, other writes 0, reads 0, calls 0, getters 0, deferred 0)
+n: property (writes 1, sentinels 0, other writes 0, reads 0, calls 0, getters 0, deferred 0)
+  - mirror: a write of `n` is not mirrored in the same or the next statement (3:30)
+```
+
+When a module-level condition fails (`exports` used as a value or with a
+computed key, `module` referenced, a direct `eval`, or a `with` statement), no
+name is classified and the command prints the failed condition instead.
+`--json` prints `input`, `uses_exports`, `gate`, and an `exports` array with
+`name`, `storage`, `binding`, `rejected`, and the access counts.

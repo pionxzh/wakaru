@@ -1,8 +1,10 @@
 # CommonJS Export Storage Recovery
 
-Status: **PROPOSED.** Evidence comes from the
-[CommonJS export-storage matrix](../../scripts/repro/cjs-export-storage-matrix/README.md).
-Nothing here is implemented yet.
+Status: **IN PROGRESS.** Step 1 is implemented: the per-name analysis runs
+as a report (`wakaru debug cjs-exports`), and the `commonjs_export_unrecovered`
+warning reports leftover accesses. Output is unchanged. Evidence comes from the
+[CommonJS export-storage matrix](../../scripts/repro/cjs-export-storage-matrix/README.md);
+see [Step 1 results](#step-1-results).
 
 Ground rules: follow [AGENTS.md](../../AGENTS.md), including a focused unit
 test for every change. Use synthetic names in tests and commits. Record every
@@ -196,12 +198,24 @@ the returned binding live: `export { L as X }`, or `export { m as X } from`
 for a getter returning a member of a `require` binding. Replace reads of
 `exports.X` with `L`.
 
-**B (mirror).** There is one local binding `L` such that:
+**B (mirror).** There is one module-level binding `L` such that:
 
 1. every write to the property has a mirror value shape for `L`; and
-2. every write to `L` (excluding its declaration) is in a statement that
-   also writes the property with a mirror value, or is directly followed by
-   such a statement.
+2. every write to `L`, including an initializing declarator, is in a
+   statement that also writes the property with a mirror value, or is
+   followed by such a statement with only other mirror statements in
+   between. A mirror statement only copies local identifiers into `exports`
+   properties (`exports.a = a, exports.b = b;`).
+
+Alternatively, condition 2 holds as a **final copy**: the property is never
+read or called in the module, its only write is one top-level statement, and
+every write to `L` is an earlier top-level statement outside any function.
+Only an importer can then observe the property, and it sees the final value
+either way. Rollup places every `exports.x = x` copy at the end of the module
+in this shape.
+
+A copied parameter or function-local binding is not a candidate for `L`: a
+local copied into the property is a value, not the export's storage.
 
 Export `L` live: `export { L as X }`. Drop the mirror writes, keeping `L`'s
 own write (`exports.X = L = e` becomes `L = e`). Replace reads of
@@ -215,9 +229,14 @@ statement" is still needed for two shapes that do not come from that split:
 Babel emits a pattern write and its mirror as two statements
 (`[a, b] = [b, a]; exports.a = a, exports.b = b;`), and `SimplifySequence`
 splits Babel's postfix form `_n = n++, exports.n = n, _n` into three
-statements, so the mirror follows the write. No producer in the matrix
-mirrors further away. A mirror two or more statements later does not count,
-and hand-written shapes are added case by case when data shows them.
+statements, so the mirror follows the write. Babel and TypeScript also copy
+one binding into several names, or several bindings after one declaration,
+as consecutive statements (`let [first, second] = pair; exports.second =
+second; exports.first = first;`), so a mirror can sit behind other mirror
+statements. Those statements write properties of other names from
+identifiers; they read no property and run no code. A mirror behind any
+other statement does not count, and hand-written shapes are added case by
+case when data shows them.
 
 **A (property storage).** Otherwise, the property is the storage. Introduce
 one binding for the name and rewrite every access, in any position, to it.
@@ -305,6 +324,10 @@ Each of these needs separate work. The matrix tracks them.
   output must also stop being split as a scope-hoisted bundle.
 - **`__exportStar` and other `export *` helpers.** This is separate work on
   CommonJS `export *` recovery.
+- **sucrase `_createNamedExportFrom`.** sucrase re-exports through a local
+  helper that calls `Object.defineProperty(exports, ...)` with the export
+  name as a parameter. Like swc's `_export`, it passes `exports` as a value,
+  so the module gate fails until a recognizer feeds C.
 - **Single-file import interop.** Without facts about the provider,
   `require("./dep")` becomes a default import even when the provider has no
   default export. Unpack mode has those facts; single-file mode does not.
@@ -328,11 +351,12 @@ Each step is a separate commit. Each commit includes unit tests in
 `crates/core/tests/un_esm_rule.rs` and a matrix run compared with the
 previous step.
 
-1. Add the per-name inventory and classification behind the existing paths,
-   with a debug report of the A/B/C decision and the rejecting condition per
-   name. Compare its decisions with the matrix cases before changing output.
-   Add the `commonjs_export_unrecovered` warning in the same step, so the
-   baseline gap is visible before any output changes.
+1. **Done.** Add the per-name inventory and classification behind the
+   existing paths, with a debug report of the A/B/C decision and the
+   rejecting condition per name (`wakaru debug cjs-exports`, and `--explain`
+   in the matrix). Compare its decisions with the matrix cases before
+   changing output. Add the `commonjs_export_unrecovered` warning in the same
+   step, so the baseline gap is visible before any output changes.
 2. Implement A and remove the stable read recovery and conditional
    recovery it replaces.
 3. Stop `UnAssignmentMerging` from splitting chains that write both an
@@ -343,6 +367,57 @@ previous step.
 Run the private fixture suite and the full core suite at every step. Steps 2
 and 3 change snapshots by design. Each changed snapshot needs a reason in the
 commit.
+
+## Step 1 results
+
+Measured on the matrix with the report-only analysis; output is unchanged
+(27 / 291 behavior preserved).
+
+**Warning.** `commonjs_export_unrecovered` fires on 186 of 264 wrong rows and
+on none of the 27 ok rows. The other 78 wrong rows have no leftover access to
+report: swc and the two Babel `alias-export-mutated` rows stay whole-module
+CommonJS (valid CommonJS that the ESM driver cannot load), and esbuild rows
+are ESM with a wrong export surface but no `exports` access.
+
+**Decisions per name**, summed over all cases:
+
+| Producer | property | mirror | getter | module gate failed |
+|---|---:|---:|---:|---:|
+| TypeScript 5.9 (es2020 / es5) | 35 | 50 | 6 | 1 |
+| TypeScript 4.3 | 35 | 48 | 6 | 1 |
+| TypeScript 3.9 | 36 | 43 | 6 | 1 |
+| Babel | 11 | 72 | 6 | 0 |
+| Babel loose | 11 | 66 | 0 | 0 |
+| rollup | 21 | 45 | 2 | 1 |
+| sucrase | 24 | 48 | 0 | 2 |
+| swc (es2020 / es5) | 0 | 0 | 0 | 31 / 32 |
+
+esbuild single-file output has no `exports` access (`module.exports =
+__toCommonJS(...)`) and reports no names.
+
+Reviewed against the producer shapes above:
+
+- TypeScript: `export let/var` and non-identifier `export const` are A,
+  functions, classes, and aliases are B, re-exports are C. Matches.
+- Babel: 9 of its 11 A names are wrong for the reason this proposal
+  predicts. `UnAssignmentMerging` split a mirror chain with a repeatable
+  value (`exports.mode = mode = "on"` becomes `mode = "on"; exports.mode =
+  "on";`, including after `UnCurlyBraces` turns an `if` branch into a block),
+  so the property write no longer copies the binding. Step 3 fixes the
+  input. The other two are a snapshot `export default state` (A is correct)
+  and a name that is only declared (`maybe`).
+- sucrase: names written through the property after the seeding copy are A,
+  as described above.
+- rollup: end-of-module copies are B through the final-copy condition.
+- Module gate failures are all out of scope here: swc `_export`, sucrase
+  `_createNamedExportFrom`, and `export *` (TypeScript `__exportStar`,
+  rollup's `Object.keys(dep).forEach` loop, sucrase `_createStarExport`).
+- Babel loose has no getter names because its re-export rows are excluded:
+  its CommonJS already diverges from the ESM source.
+
+Three conditions were refined while comparing, all recorded in the B
+section: mirrors may sit behind other mirror statements, the final-copy
+alternative, and the module-level requirement for `L`.
 
 ## Decisions
 

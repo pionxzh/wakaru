@@ -222,6 +222,21 @@ enum DebugCommand {
 
     /// Statically enumerate chunk references without unpacking modules.
     EnumerateChunks(EnumerateChunksArgs),
+
+    /// Report how each CommonJS export name of one module would be stored
+    /// (getter, mirror, or property) and why other models were rejected,
+    /// analyzed on the module as it reaches UnEsm. Single-file inputs only.
+    CjsExports(CjsExportsArgs),
+}
+
+#[derive(Debug, Clone, Args)]
+struct CjsExportsArgs {
+    /// Input JavaScript file. Use `-` or omit to read from stdin.
+    input: Option<PathBuf>,
+
+    /// Print the report as JSON.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -837,7 +852,77 @@ fn run_debug(args: DebugArgs, force: bool) -> Result<()> {
         DebugCommand::Normalize(args) => run_normalize(args),
         DebugCommand::Validate(args) => run_validate(args),
         DebugCommand::EnumerateChunks(args) => run_enumerate_chunks(args),
+        DebugCommand::CjsExports(args) => run_cjs_exports(args),
     }
+}
+
+fn run_cjs_exports(args: CjsExportsArgs) -> Result<()> {
+    let (source, filename) = read_input(args.input.as_ref())?;
+    let report = wakaru_core::explain_commonjs_exports(
+        &source,
+        wakaru_core::DecompileOptions {
+            filename: filename.clone(),
+            ..Default::default()
+        },
+    )
+    .map_err(|error| error.into_inner())?;
+    if args.json {
+        let payload = serde_json::json!({
+            "input": filename,
+            "uses_exports": report.uses_exports,
+            "gate": report.gate,
+            "exports": report.exports.iter().map(|export| serde_json::json!({
+                "name": export.name,
+                "storage": export.storage,
+                "binding": export.binding,
+                "rejected": export.rejected,
+                "writes": export.writes,
+                "sentinels": export.sentinels,
+                "other_writes": export.other_writes,
+                "reads": export.reads,
+                "calls": export.calls,
+                "getters": export.getters,
+                "deferred": export.deferred,
+            })).collect::<Vec<_>>(),
+        });
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+    } else {
+        print!("{}", cjs_exports_text(&report));
+    }
+    Ok(())
+}
+
+fn cjs_exports_text(report: &wakaru_core::CommonJsExportReport) -> String {
+    if !report.uses_exports {
+        return "no CommonJS exports\n".to_string();
+    }
+    if let Some(gate) = &report.gate {
+        return format!("module gate failed: {gate}\n");
+    }
+    let mut out = String::new();
+    for export in &report.exports {
+        let binding = export
+            .binding
+            .as_ref()
+            .map(|binding| format!(" `{binding}`"))
+            .unwrap_or_default();
+        out.push_str(&format!(
+            "{}: {}{binding} (writes {}, sentinels {}, other writes {}, reads {}, calls {}, getters {}, deferred {})\n",
+            export.name,
+            export.storage,
+            export.writes,
+            export.sentinels,
+            export.other_writes,
+            export.reads,
+            export.calls,
+            export.getters,
+            export.deferred,
+        ));
+        for rejected in &export.rejected {
+            out.push_str(&format!("  - {rejected}\n"));
+        }
+    }
+    out
 }
 
 fn run_enumerate_chunks(args: EnumerateChunksArgs) -> Result<()> {

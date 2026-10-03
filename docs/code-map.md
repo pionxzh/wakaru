@@ -38,6 +38,7 @@ crates/
           dead_module.rs            — dead-module elimination
           filename_recovery.rs      — recovered module names
         trace.rs                    — rule trace orchestration and formatting
+        export_storage.rs           — `debug cjs-exports` driver (pipeline up to UnEsm, then the storage report)
         diagnostics.rs              — post-transform diagnostic warning collection
         discovery.rs                — internal structural-detection helper
         output.rs                   — internal path normalization and dedup helpers
@@ -63,6 +64,7 @@ crates/
         helper_matcher.rs           — shared helper binding/lifecycle primitives
         rename_utils.rs             — shared binding rename utilities
         un_for_await.rs             — `for await` protocol matcher run by UnForOf (not a registered rule)
+        un_esm/export_storage.rs    — per-name CommonJS export storage model (getter / mirror / property)
         *.rs                        — one file per transformation rule
       unpacker/
         mod.rs                      — unpack_bundle() dispatch

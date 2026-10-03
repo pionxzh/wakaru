@@ -129,6 +129,7 @@ const producerFilter = readOption("--producer", null);
 const asJson = process.argv.includes("--json");
 const showDetails = process.argv.includes("--details");
 const keep = process.argv.includes("--keep");
+const explain = process.argv.includes("--explain");
 
 const selectedCases = Object.entries(cases).filter(([name]) => !caseFilter || name.includes(caseFilter));
 const selectedProducers = producers.filter((p) => !producerFilter || p.name.includes(producerFilter));
@@ -201,6 +202,23 @@ try {
       if (row.commonjs !== row.expected) {
         row.verdict = "producer-diverges";
         return;
+      }
+
+      if (explain) {
+        row.storage = {};
+        for (const file of Object.keys(cjsFiles)) {
+          try {
+            const report = JSON.parse(await runWakaruArgsAsync(["debug", "cjs-exports", join(cjsDir, file), "--json"]));
+            row.storage[file] = report.gate
+              ? [`gate: ${report.gate}`]
+              : report.exports.map(
+                  (e) => `${e.name}=${e.storage}${e.binding ? `(${e.binding})` : ""}` +
+                    e.rejected.map((r) => ` [${r}]`).join(""),
+                );
+          } catch (error) {
+            row.storage[file] = [`error: ${String(error.message ?? error).slice(0, 200)}`];
+          }
+        }
       }
 
       const recoveredDir = join(base, "recovered");
@@ -290,6 +308,15 @@ try {
         if (row.recovered !== undefined) console.log(`  recovered: ${row.recovered}`);
         for (const line of row.leftovers ?? []) console.log(`  leftover:  ${line}`);
         for (const line of row.unrecovered ?? []) console.log(`  warning:   ${line}`);
+      }
+    }
+    if (explain) {
+      for (const row of rows.filter((r) => r.storage)) {
+        console.log("");
+        console.log(`## storage ${row.case} / ${row.producer}: ${row.verdict}`);
+        for (const [file, lines] of Object.entries(row.storage)) {
+          for (const line of lines) console.log(`  ${file}: ${line}`);
+        }
       }
     }
   }

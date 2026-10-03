@@ -66,6 +66,7 @@ node scripts/repro/cjs-export-storage-matrix/matrix.mjs            # table
 node scripts/repro/cjs-export-storage-matrix/matrix.mjs --details  # logs and leftovers for non-ok rows
 node scripts/repro/cjs-export-storage-matrix/matrix.mjs --json
 node scripts/repro/cjs-export-storage-matrix/matrix.mjs --case counter --producer babel --keep
+node scripts/repro/cjs-export-storage-matrix/matrix.mjs --explain  # per-name storage decisions
 ```
 
 `--case` and `--producer` filter by substring. `--keep` leaves the work
@@ -77,6 +78,11 @@ matrix; comparing two binaries is two runs.
 recovered line that still mentions `exports`, `module.exports`, or
 `require`. Those lines are a debugging aid, not part of the verdict: an export
 named `module` legitimately prints that word.
+
+`--explain` also runs `wakaru debug cjs-exports` on every CommonJS file and
+prints each name's storage decision (`getter`, `mirror`, `property`,
+`unrecovered`, or the failed module gate) with the rejected models in
+brackets, for every row that reached decompilation.
 
 The table output ends with how many `wrong` and `ok` rows got a
 `commonjs_export_unrecovered` warning from wakaru, and `--details` prints the

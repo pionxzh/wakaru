@@ -5393,3 +5393,224 @@ fn whole_named_export_chains_validate_through_the_pipeline() {
         );
     }
 }
+
+// ============================================================
+// Export storage model (report only)
+// ============================================================
+
+/// `name=storage(binding)` per export name, in first-access order, or the
+/// module gate failure.
+fn export_storage(input: &str) -> Vec<String> {
+    let report = wakaru_core::explain_commonjs_exports(input, Default::default())
+        .expect("single-file input analyzes");
+    if let Some(gate) = report.gate {
+        return vec![format!("gate: {gate}")];
+    }
+    report
+        .exports
+        .iter()
+        .map(|export| match &export.binding {
+            Some(binding) => format!("{}={}({binding})", export.name, export.storage),
+            None => format!("{}={}", export.name, export.storage),
+        })
+        .collect()
+}
+
+fn export_rejections(input: &str, name: &str) -> Vec<String> {
+    let report = wakaru_core::explain_commonjs_exports(input, Default::default())
+        .expect("single-file input analyzes");
+    report
+        .exports
+        .into_iter()
+        .find(|export| export.name == name)
+        .map(|export| export.rejected)
+        .unwrap_or_default()
+}
+
+#[test]
+fn export_storage_property_writes_in_function_bodies() {
+    let input = r#"
+exports.count = void 0;
+exports.count = 0;
+exports.bump = bump;
+function bump() { exports.count += 1; return exports.count < exports.limit; }
+exports.limit = compute();
+"#;
+    assert_eq!(
+        export_storage(input),
+        ["count=property", "bump=mirror(bump)", "limit=property"]
+    );
+}
+
+#[test]
+fn export_storage_mirror_chains_in_declaration_and_assignment() {
+    let input = r#"
+exports.count = void 0;
+let count = exports.count = start();
+function inc() {
+  exports.count = count = count + 1;
+  return count;
+}
+exports.inc = inc;
+"#;
+    assert_eq!(
+        export_storage(input),
+        ["count=mirror(count)", "inc=mirror(inc)"]
+    );
+}
+
+#[test]
+fn export_storage_mirror_may_follow_through_other_mirror_statements() {
+    let input = r#"
+let [first, second] = load();
+exports.second = second;
+exports.first = first;
+function swap() {
+  [first, second] = [second, first];
+  exports.first = first, exports.second = second;
+}
+exports.swap = swap;
+"#;
+    assert_eq!(
+        export_storage(input),
+        [
+            "second=mirror(second)",
+            "first=mirror(first)",
+            "swap=mirror(swap)"
+        ]
+    );
+}
+
+#[test]
+fn export_storage_lagging_copy_is_property_storage() {
+    // The property keeps the first value while `n` moves on: a live export of
+    // `n` would change what importers see.
+    let input = r#"
+let n = start();
+exports.n = n;
+exports.step = function () { n = n + 1; };
+"#;
+    assert_eq!(export_storage(input), ["n=property", "step=property"]);
+    assert!(
+        export_rejections(input, "n")[0].starts_with("mirror: a write of `n` is not mirrored"),
+        "{:?}",
+        export_rejections(input, "n")
+    );
+}
+
+#[test]
+fn export_storage_mirror_must_be_adjacent_when_the_property_is_read() {
+    let input = r#"
+let n = start();
+log(exports.n);
+exports.n = n;
+"#;
+    assert_eq!(export_storage(input), ["n=property"]);
+}
+
+#[test]
+fn export_storage_write_inside_expression_arrow_is_not_mirrored_by_its_statement() {
+    let input = r#"
+let n = start();
+const set = (v) => (n = v);
+exports.n = n;
+exports.set = set;
+"#;
+    assert_eq!(export_storage(input), ["n=property", "set=mirror(set)"]);
+}
+
+#[test]
+fn export_storage_final_copy_of_unread_property_is_a_mirror() {
+    // Rollup places every copy at the end of the module.
+    let input = r#"
+const limit = compute();
+function twice(v) { return v * limit; }
+exports.limit = limit;
+exports.twice = twice;
+"#;
+    assert_eq!(
+        export_storage(input),
+        ["limit=mirror(limit)", "twice=mirror(twice)"]
+    );
+}
+
+#[test]
+fn export_storage_copied_parameter_is_not_a_mirror_candidate() {
+    let input = r#"
+exports.level = compute();
+function setLevel(v) { exports.level = v; }
+exports.setLevel = setLevel;
+"#;
+    assert_eq!(
+        export_storage(input),
+        ["level=property", "setLevel=mirror(setLevel)"]
+    );
+    assert!(export_rejections(input, "level").is_empty());
+}
+
+#[test]
+fn export_storage_getters() {
+    let input = r#"
+var dep = require("dep");
+let live = compute();
+Object.defineProperty(exports, "live", { enumerable: true, get: function () { return live; } });
+Object.defineProperty(exports, "other", { enumerable: true, get: function () { return dep.other; } });
+function bump() { live = live + 1; }
+exports.bump = bump;
+"#;
+    assert_eq!(
+        export_storage(input),
+        [
+            "live=getter(live)",
+            "other=getter(dep.other)",
+            "bump=mirror(bump)"
+        ]
+    );
+}
+
+#[test]
+fn export_storage_getter_with_a_write_is_unrecovered() {
+    let input = r#"
+let live = compute();
+Object.defineProperty(exports, "live", { enumerable: true, get: function () { return live; } });
+exports.live = other();
+"#;
+    assert_eq!(export_storage(input), ["live=unrecovered"]);
+}
+
+#[test]
+fn export_storage_receiver_sensitive_call_is_unrecovered() {
+    let input = r#"
+exports.run = function () { return this.state; };
+exports.check = () => 1;
+exports.run();
+exports.check();
+"#;
+    assert_eq!(export_storage(input), ["run=unrecovered", "check=property"]);
+}
+
+#[test]
+fn export_storage_module_gates() {
+    for (input, gate) in [
+        (
+            "exports.a = 1; register(exports);",
+            "`exports` is used as a value",
+        ),
+        ("exports.a = 1; exports[key] = 2;", "computed `exports` key"),
+        (
+            "exports.a = 1; module.exports.b = 2;",
+            "`module` is referenced",
+        ),
+        (
+            "exports.a = 1; delete exports.a;",
+            "`delete` of an `exports` property",
+        ),
+    ] {
+        let storage = export_storage(input);
+        assert!(
+            storage.len() == 1 && storage[0].starts_with(&format!("gate: {gate}")),
+            "{input}: {storage:?}"
+        );
+    }
+    assert!(export_storage("const a = 1; export { a };").is_empty());
+}

@@ -39,6 +39,7 @@ use super::rename_utils::{
 use super::RewriteLevel;
 
 mod export_star;
+pub(crate) mod export_storage;
 use export_star::rewrite_commonjs_export_stars;
 
 pub struct UnEsm {
@@ -2782,6 +2783,15 @@ fn extract_direct_webpack_export_getters(
     let Expr::Call(call) = expr_stmt.expr.as_ref() else {
         return None;
     };
+    webpack_export_getter_call(call, unresolved_mark)
+}
+
+/// The getters of one `require.d(exports, ...)` call, in either the map form
+/// or the single-name form.
+fn webpack_export_getter_call(
+    call: &CallExpr,
+    unresolved_mark: Mark,
+) -> Option<Vec<(Atom, Box<Expr>)>> {
     let Callee::Expr(callee_expr) = &call.callee else {
         return None;
     };
