@@ -259,7 +259,8 @@ at an access site, use a fresh local and `export { local as X }`, including
 A direct call through the binding (`exports.f()`) passes `exports` as the
 receiver. Rewrite a call target only when the binding is never written after
 its declaration and its value cannot observe the receiver (the current
-`is_receiver_insensitive_function_value`). Otherwise leave the name
+`is_receiver_insensitive_function_value`, since removed with stable read
+recovery). Otherwise leave the name
 unrecovered (see [Unrecovered names](#4-unrecovered-names)).
 
 ### 3. Readability passes
@@ -527,11 +528,22 @@ How B was placed and where it differs from the design above:
   example after a gate failure), now keeps the module CommonJS through
   `has_unhandled_named_export_chain`; before, the split let the statement
   path convert it partially.
-- **Stable read recovery stays for now.** Mirror and property names no
-  longer reach it; only enum names and names a model rejects for a
-  receiver-sensitive call still could. With its named part disabled, the core
-  suite still passes, so removing it is a separate cleanup checked against
-  the fixtures.
+
+**Open gap: `export *` with mirror names.** Babel emits that chain for every
+write of an aliased export (`export { x as y }` makes `x = 3` into
+`exports.y = exports.x = x = 3`), so it is producer output, not hand-written
+code. When the same module has `export * from`, Babel's copy loop indexes
+`exports[key]`, which fails the module gate, and the whole module stays
+CommonJS. `main` did not recover these modules either: with one export name
+it emitted ESM that still wrote `exports.n` inside functions and kept the
+loop's free `exports`; with the chain it kept CommonJS. The storage plan is
+computed before the export-star pre-pass runs. Once that pre-pass
+recognizes Babel's loop, computing the plan after it (or letting the gate
+skip a recognized loop) closes this gap.
+- **Named stable read recovery is removed.** Mirror and property names no
+  longer reached it; only enum names and names rejected for a
+  receiver-sensitive call still could, and the core suite and the fixtures
+  pass without it. The `module.exports` default-read part stays.
 - **Assumption.** The mirror condition is recorded as
   `commonjs_export_mirror_coverage` in
   [rewrite-assumptions.md](../rewrite-assumptions.md).

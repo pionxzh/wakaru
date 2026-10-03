@@ -916,10 +916,6 @@ struct CommonJsReadRecoveryEvidence {
     /// The rebuilt `export default stableBinding` keeps this span, allowing us
     /// to recover the possibly-renamed binding without carrying stale ids.
     stable_default_assignment_span: Option<Span>,
-    /// Static `exports.name` properties with one stable value assignment. The
-    /// rebuilt body proves the replacement binding and, for direct calls, that
-    /// the function cannot observe a changed receiver.
-    stable_named_properties: HashSet<Atom>,
 }
 
 fn collect_commonjs_read_recovery_evidence(
@@ -941,7 +937,6 @@ fn collect_commonjs_read_recovery_evidence(
             unresolved_mark,
             uses,
         ),
-        stable_named_properties: collect_stable_named_properties(module, unresolved_mark, uses),
     }
 }
 
@@ -1623,115 +1618,6 @@ fn preserve_default_property_write(
     Some(Box::new(Expr::Assign(assignment)))
 }
 
-fn collect_stable_named_properties(
-    module: &Module,
-    unresolved_mark: Mark,
-    uses: &BindingUseIndex,
-) -> HashSet<Atom> {
-    #[derive(Default)]
-    struct DirectWrites {
-        count: usize,
-        value_writes: usize,
-        saw_value: bool,
-        undefined_after_value: bool,
-    }
-
-    let mut direct_writes: HashMap<Atom, DirectWrites> = HashMap::default();
-    let mut exports_bindings = HashSet::default();
-    for item in &module.body {
-        let ModuleItem::Stmt(Stmt::Expr(statement)) = item else {
-            continue;
-        };
-        let Expr::Assign(assignment) = strip_parens(&statement.expr) else {
-            continue;
-        };
-        if assignment.op != AssignOp::Assign {
-            continue;
-        }
-        let AssignTarget::Simple(SimpleAssignTarget::Member(target)) = &assignment.left else {
-            continue;
-        };
-        let Expr::Ident(exports) = target.obj.as_ref() else {
-            continue;
-        };
-        if !is_unresolved_ident(exports, "exports", unresolved_mark) {
-            continue;
-        }
-        let Some(property) = is_ident_prop(&target.prop) else {
-            continue;
-        };
-        if property.as_ref() == "default" {
-            continue;
-        }
-        exports_bindings.insert((exports.sym.clone(), exports.ctxt));
-        let writes = direct_writes.entry(property).or_default();
-        writes.count += 1;
-        if is_void_or_undefined(&assignment.right, unresolved_mark) {
-            writes.undefined_after_value |= writes.saw_value;
-        } else {
-            writes.value_writes += 1;
-            writes.saw_value = true;
-        }
-    }
-    if exports_bindings.len() != 1 {
-        return HashSet::default();
-    }
-    let exports_binding = exports_bindings
-        .iter()
-        .next()
-        .expect("the length check proves one exports binding");
-
-    // A bare escape/rebinding of `exports`, a computed access, or a delete
-    // could change any named property. Keep the proof deliberately local to
-    // modules whose complete runtime surface is static member access.
-    let mut write_counts: HashMap<Atom, usize> = HashMap::default();
-    for site in uses.use_sites(exports_binding) {
-        match &site.kind {
-            UseKind::StaticMemberRead(property) | UseKind::StaticMemberWrite(property)
-                if is_prototype_mutating_member_name(property.as_ref()) =>
-            {
-                // `exports.__defineGetter__(...)` can redefine any proven
-                // property as an accessor, and a `__proto__` write changes
-                // lookup for names without an own write. Neither surfaces as
-                // a write of the affected name, so the whole proof fails.
-                return HashSet::default();
-            }
-            UseKind::StaticMemberRead(_) | UseKind::TypeofOperand => {}
-            UseKind::StaticMemberWrite(property) => {
-                *write_counts.entry(property.clone()).or_default() += 1;
-            }
-            _ => return HashSet::default(),
-        }
-    }
-
-    // `module.exports.name` aliases the initial `exports` object only until a
-    // whole-value replacement. Rather than reason about that lifetime here,
-    // accept named recovery only when `module` is absent (apart from `typeof`).
-    let mut module_ids = UnresolvedBindingIdCollector::new("module", unresolved_mark);
-    module.visit_with(&mut module_ids);
-    if module_ids.ids.iter().any(|binding| {
-        uses.use_sites(binding)
-            .iter()
-            .any(|site| !matches!(site.kind, UseKind::TypeofOperand))
-    }) {
-        return HashSet::default();
-    }
-
-    direct_writes
-        .into_iter()
-        .filter_map(|(property, direct)| {
-            // TypeScript commonly emits `exports.name = void 0` before the
-            // real assignment. Those sentinels may precede one stable value,
-            // but every write must still be a direct top-level statement and
-            // no undefined reset may follow the value.
-            (direct.value_writes == 1
-                && !direct.undefined_after_value
-                && write_counts.get(&property) == Some(&direct.count))
-            .then_some(property)
-        })
-        .collect()
-}
-
 struct UnresolvedBindingIdCollector<'a> {
     name: &'a str,
     unresolved_mark: Mark,
@@ -1756,36 +1642,27 @@ impl Visit for UnresolvedBindingIdCollector<'_> {
     }
 }
 
-/// Replace only reads whose CommonJS object identity has already been proven.
-/// A direct `exports.method()` call additionally requires a
-/// receiver-insensitive function because the original supplies the CommonJS
-/// object as `this`. Function declarations are skipped because hoisting allows
-/// a later declaration body to run before an earlier-looking export
-/// assignment.
+/// Replace only reads of `module.exports` whose CommonJS object identity has
+/// already been proven. Function declarations are skipped because hoisting
+/// allows a later declaration body to run before an earlier-looking export
+/// assignment. Named `exports.x` reads are owned by the export-storage
+/// rewrite (`export_storage.rs`), which rewrites them in every position.
 fn recover_stable_commonjs_reads(
     body: &mut [ModuleItem],
     unresolved_mark: Mark,
     evidence: &CommonJsReadRecoveryEvidence,
 ) {
-    if evidence.stable_default_assignment_span.is_none()
-        && evidence.stable_named_properties.is_empty()
-    {
+    if evidence.stable_default_assignment_span.is_none() {
         return;
     }
 
-    let uses = BindingUseIndex::collect_module_items(body);
     let mut default_binding = None;
-    let mut stable_named_bindings = HashMap::default();
-    let mut named_bindings = HashMap::default();
 
     for item in body {
         item.visit_mut_with(&mut CommonJsReadRewriter {
             unresolved_mark,
             default_binding: default_binding.as_ref(),
-            named_bindings: &named_bindings,
         });
-
-        collect_stable_named_bindings(item, &uses, &mut stable_named_bindings);
 
         if evidence
             .stable_default_assignment_span
@@ -1796,51 +1673,6 @@ fn recover_stable_commonjs_reads(
                 .and_then(|span| default_export_ident_at_span(item, span))
                 .cloned();
         }
-
-        collect_available_named_export_bindings(
-            item,
-            &evidence.stable_named_properties,
-            &stable_named_bindings,
-            &mut named_bindings,
-        );
-    }
-}
-
-fn collect_stable_named_bindings(
-    item: &ModuleItem,
-    uses: &BindingUseIndex,
-    bindings: &mut HashMap<Id, bool>,
-) {
-    let declaration = match item {
-        ModuleItem::Stmt(Stmt::Decl(Decl::Var(declaration)))
-        | ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
-            decl: Decl::Var(declaration),
-            ..
-        })) => Some(declaration.as_ref()),
-        _ => None,
-    };
-    let Some(declaration) = declaration else {
-        return;
-    };
-    for declarator in &declaration.decls {
-        let Pat::Ident(binding) = &declarator.name else {
-            continue;
-        };
-        let Some(init) = declarator.init.as_deref().map(strip_parens) else {
-            continue;
-        };
-        let id = (binding.id.sym.clone(), binding.id.ctxt);
-        if !uses.has_direct_write(&id) {
-            bindings.insert(id, is_receiver_insensitive_function_value(init));
-        }
-    }
-}
-
-fn is_receiver_insensitive_function_value(expression: &Expr) -> bool {
-    match expression {
-        Expr::Arrow(_) => true,
-        Expr::Fn(function) => !function_observes_receiver(&function.function),
-        _ => false,
     }
 }
 
@@ -1882,73 +1714,6 @@ impl Visit for ReceiverSensitivityAnalyzer {
     fn visit_function(&mut self, _: &Function) {}
 }
 
-fn collect_available_named_export_bindings(
-    item: &ModuleItem,
-    candidates: &HashSet<Atom>,
-    stable_bindings: &HashMap<Id, bool>,
-    available: &mut HashMap<Atom, StableNamedBinding>,
-) {
-    match item {
-        ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
-            decl: Decl::Var(declaration),
-            ..
-        })) => {
-            for declarator in &declaration.decls {
-                let Pat::Ident(binding) = &declarator.name else {
-                    continue;
-                };
-                let property = binding.id.sym.clone();
-                let id = (binding.id.sym.clone(), binding.id.ctxt);
-                if let Some(receiver_insensitive) = stable_bindings.get(&id) {
-                    if candidates.contains(&property) {
-                        available.insert(
-                            property,
-                            StableNamedBinding {
-                                ident: binding.id.clone(),
-                                receiver_insensitive: *receiver_insensitive,
-                            },
-                        );
-                    }
-                }
-            }
-        }
-        ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(export)) if export.src.is_none() => {
-            for specifier in &export.specifiers {
-                let ExportSpecifier::Named(specifier) = specifier else {
-                    continue;
-                };
-                let ModuleExportName::Ident(local) = &specifier.orig else {
-                    continue;
-                };
-                let property = match &specifier.exported {
-                    Some(ModuleExportName::Ident(exported)) => exported.sym.clone(),
-                    Some(ModuleExportName::Str(_)) => continue,
-                    None => local.sym.clone(),
-                };
-                let id = (local.sym.clone(), local.ctxt);
-                if let Some(receiver_insensitive) = stable_bindings.get(&id) {
-                    if candidates.contains(&property) {
-                        available.insert(
-                            property,
-                            StableNamedBinding {
-                                ident: local.clone(),
-                                receiver_insensitive: *receiver_insensitive,
-                            },
-                        );
-                    }
-                }
-            }
-        }
-        _ => {}
-    }
-}
-
-#[derive(Clone)]
-struct StableNamedBinding {
-    ident: Ident,
-    receiver_insensitive: bool,
-}
-
 fn default_export_ident_at_span(item: &ModuleItem, span: Span) -> Option<&Ident> {
     let ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(export)) = item else {
         return None;
@@ -1965,7 +1730,6 @@ fn default_export_ident_at_span(item: &ModuleItem, span: Span) -> Option<&Ident>
 struct CommonJsReadRewriter<'a> {
     unresolved_mark: Mark,
     default_binding: Option<&'a Ident>,
-    named_bindings: &'a HashMap<Atom, StableNamedBinding>,
 }
 
 impl VisitMut for CommonJsReadRewriter<'_> {
@@ -2002,21 +1766,6 @@ impl VisitMut for CommonJsReadRewriter<'_> {
             }
         }
 
-        if let Expr::Member(member) = expression {
-            if let Expr::Ident(exports) = member.obj.as_ref() {
-                if is_unresolved_ident(exports, "exports", self.unresolved_mark) {
-                    if let Some(property) = is_ident_prop(&member.prop) {
-                        if let Some(binding) = self.named_bindings.get(&property) {
-                            let mut ident = binding.ident.clone();
-                            ident.span = member.span;
-                            *expression = Expr::Ident(ident);
-                            return;
-                        }
-                    }
-                }
-            }
-        }
-
         expression.visit_mut_children_with(self);
     }
 }
@@ -2029,31 +1778,8 @@ impl CommonJsReadRewriter<'_> {
             // insensitivity, so direct calls stay visible and fail closed.
             return;
         }
-        if let Some(property) = commonjs_named_read_property(target, self.unresolved_mark) {
-            if self
-                .named_bindings
-                .get(&property)
-                .is_some_and(|binding| binding.receiver_insensitive)
-            {
-                target.visit_mut_with(self);
-            }
-            return;
-        }
         target.visit_mut_with(self);
     }
-}
-
-fn commonjs_named_read_property(expression: &Expr, unresolved_mark: Mark) -> Option<Atom> {
-    let Expr::Member(member) = strip_parens(expression) else {
-        return None;
-    };
-    let Expr::Ident(exports) = member.obj.as_ref() else {
-        return None;
-    };
-    if !is_unresolved_ident(exports, "exports", unresolved_mark) {
-        return None;
-    }
-    is_ident_prop(&member.prop)
 }
 
 /// Merge adjacent `var/let/const X = expr;` + `export { X };` into `export var/let/const X = expr;`.

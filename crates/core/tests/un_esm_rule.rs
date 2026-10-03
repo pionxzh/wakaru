@@ -5968,8 +5968,8 @@ function next() {
 
 #[test]
 fn mirror_storage_rewrites_reads_inside_function_declarations() {
-    // Stable read recovery skips hoisted function bodies; the mirror proves
-    // the property equals the local everywhere.
+    // Reads inside hoisted function bodies can run before the copy; the
+    // mirror proves the property equals the local everywhere.
     let input = r#"
 exports.helper = helper;
 exports.run = run;
