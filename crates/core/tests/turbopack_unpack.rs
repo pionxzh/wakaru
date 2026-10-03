@@ -340,6 +340,179 @@ fn chunk_loading_residuals_are_not_captured_by_a_local_binding() {
 }
 
 #[test]
+fn path_and_host_require_members_stay_as_runtime_residuals() {
+    // `import.meta` emulation (`P` before 16.3, `F` since), the host
+    // `require` probed by next/dynamic, and the throwing require stub.
+    let source = client_chunk(
+        r#"
+101, e => {
+  "use strict";
+  let a = { get url() { return `file://${e.P("node_modules/a/index.mjs")}`; } };
+  let b = { get url() { return e.F("node_modules/b/index.mjs"); } };
+  var weak = "function" == typeof e.t.resolveWeak;
+  var stub = e.z;
+  e.s(["a", 0, a, "b", 0, b, "weak", 0, weak, "stub", 0, stub]);
+},
+202, t => { t.v("alpha"); }
+"#,
+    );
+    let output = unpack_chunk(&source);
+    assert_eq!(output.detected_formats, [BundleFormat::Turbopack]);
+    let [warning] = output.warnings.as_slice() else {
+        panic!("expected one warning: {:?}", output.warnings);
+    };
+    assert_eq!(warning.filename, "module-101.js");
+    assert_eq!(warning.kind, UnpackWarningKind::RuntimeResidual);
+    assert!(warning.message.contains("`P`"), "{}", warning.message);
+    assert_eq!(
+        module(&output, "module-101.js").trim(),
+        r#"let a = {
+    get url () {
+        return `file://${__turbopack_context__.P("node_modules/a/index.mjs")}`;
+    }
+};
+let b = {
+    get url () {
+        return __turbopack_context__.F("node_modules/b/index.mjs");
+    }
+};
+const weak = typeof __turbopack_context__.t.resolveWeak === "function";
+const stub = __turbopack_context__.z;
+export { a };
+export { b };
+export { weak };
+export { stub };"#
+    );
+}
+
+#[test]
+fn discarded_require_reads_in_amd_branches_are_dropped() {
+    // A UMD wrapper's AMD branch reads `ctx.r` for its discarded `define`
+    // dependency before registering the value.
+    let source = client_chunk(
+        r#"
+101, (e, t, r) => { !function () { var o = { alpha: 1 }; if ("function" == typeof define && define.amd) e.r, void 0 !== o && e.v(o); else t.exports = o; }(); },
+202, (e, t, r) => { var o = 1; "function" == typeof define && define.amd && (e.r, e.v(o)); },
+303, e => { e.r, e.s(["x", 0, 1]); }
+"#,
+    );
+    let output = unpack_chunk(&source);
+    assert_clean(&output);
+    assert_eq!(
+        module(&output, "module-101.js").trim(),
+        r#"(()=>{
+    const o = {
+        alpha: 1
+    };
+    if (typeof define === "function" && define.amd) {
+        if (o !== undefined) {
+            module.exports = o;
+        }
+    } else {
+        module.exports = o;
+    }
+})();"#
+    );
+    assert_eq!(
+        module(&output, "module-202.js").trim(),
+        r#"const o = 1;
+if (typeof define === "function" && define.amd) {
+    module.exports = o;
+}"#
+    );
+    assert_eq!(
+        module(&output, "module-303.js").trim(),
+        "export const x = 1;"
+    );
+}
+
+#[test]
+fn amd_factories_receive_require_and_their_discarded_result_is_exported() {
+    // Turbopack's `define(factory)` wrapper: an arrow IIFE that calls the
+    // factory with `(ctx.r, exports, module)` and registers its result.
+    let source = client_chunk(
+        r#"
+101, (e, t, r) => {
+  var s = function (req) { return { alpha: 1 }; };
+  "function" == typeof define && define.amd ? ((n, a = "function" != typeof n ? n : n(e.r, r, t)) => void 0 !== a && e.v(a))(s) : window.lib = s();
+},
+202, (e, t, r) => { var x = ((a) => e.v(a))(1); }
+"#,
+    );
+    let output = unpack_chunk(&source);
+    assert_eq!(output.detected_formats, [BundleFormat::Turbopack]);
+    let [warning] = output.warnings.as_slice() else {
+        panic!("expected one warning: {:?}", output.warnings);
+    };
+    assert_eq!(warning.filename, "module-202.js");
+    assert!(warning.message.contains("`v`"), "{}", warning.message);
+    assert_eq!(
+        module(&output, "module-101.js").trim(),
+        r#"const s = (req)=>({
+        alpha: 1
+    });
+if (typeof define === "function" && define.amd) {
+    ((n, a = typeof n !== "function" ? n : n(require, exports, module))=>a !== undefined && (module.exports = a))(s);
+} else {
+    window.lib = s();
+}"#
+    );
+}
+
+#[test]
+fn bound_runtime_functions_become_require_and_bound_residuals() {
+    // An App Router server page entry passes runtime functions as values.
+    let source = client_chunk(
+        r#"
+101, a => { "use strict"; let k = a.r.bind(a), l = a.l.bind(a); a.s(["routeModule", 0, { require: k, loadChunk: l }]); },
+202, a => { "use strict"; let m = a.f.bind(a); a.s(["m", 0, m]); }
+"#,
+    );
+    let output = unpack_chunk(&source);
+    assert_eq!(output.detected_formats, [BundleFormat::Turbopack]);
+    let [failure, residual] = output.warnings.as_slice() else {
+        panic!("expected two warnings: {:?}", output.warnings);
+    };
+    assert_eq!(failure.filename, "module-202.js");
+    assert!(failure.message.contains("`f`"), "{}", failure.message);
+    assert_eq!(residual.filename, "module-101.js");
+    assert_eq!(residual.kind, UnpackWarningKind::RuntimeResidual);
+    assert_eq!(
+        module(&output, "module-101.js").trim(),
+        r#"let require_1 = require;
+let loadChunk = __turbopack_context__.l.bind(__turbopack_context__);
+export const routeModule = {
+    require: require_1,
+    loadChunk
+};"#
+    );
+}
+
+#[test]
+fn a_factory_that_cannot_take_webpack_parameter_names_stays_opaque_alone() {
+    // Turbopack's AMD wrapper leaves `exports` and `module` free; renaming
+    // the translated parameters to those names would capture them.
+    let source = client_chunk(
+        r#"
+101, e => { "function" == typeof define && define.amd ? (e.r, exports, module, e.v(1)) : window.x = 1; },
+202, t => { t.v("alpha"); }
+"#,
+    );
+    let output = unpack_chunk(&source);
+    assert_eq!(output.detected_formats, [BundleFormat::Turbopack]);
+    let [warning] = output.warnings.as_slice() else {
+        panic!("expected one warning: {:?}", output.warnings);
+    };
+    assert_eq!(warning.filename, "module-101.js");
+    assert_eq!(
+        warning.kind,
+        UnpackWarningKind::WebpackFactoryRecoveryFailed
+    );
+    assert!(module(&output, "module-101.js").contains("e.r, exports, module"));
+    assert!(module(&output, "module-202.js").contains("export default \"alpha\""));
+}
+
+#[test]
 fn setters_and_foreign_export_targets_are_not_translated() {
     for payload in [
         // getter followed by a setter

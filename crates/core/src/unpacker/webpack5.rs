@@ -1554,8 +1554,12 @@ struct PreparedWebpack5Factories {
     str_id_to_filename: HashMap<String, String>,
 }
 
+/// `isolate_fatal` keeps a factory that cannot be normalized at all opaque
+/// on its own instead of rejecting the container. Only translated factories
+/// opt in: their detector already reports failures per module.
 fn prepare_webpack5_factories(
     module_entries: &[Webpack5ModuleDescriptor<'_>],
+    isolate_fatal: bool,
 ) -> Option<PreparedWebpack5Factories> {
     // A missing numeric ID remains an unmistakable webpack runtime call such
     // as `require(17)`. An unresolved string ID could instead look like
@@ -1565,7 +1569,7 @@ fn prepare_webpack5_factories(
     let can_isolate_runtime_parameter_reuse = module_entries
         .iter()
         .all(|entry| entry.id.parse::<usize>().is_ok());
-    let mut opaque_filenames = HashSet::default();
+    let mut opaque_filenames: HashMap<String, DetectedModuleFailure> = HashMap::default();
 
     loop {
         // Every round uses one immutable graph snapshot. Newly unsupported
@@ -1573,7 +1577,7 @@ fn prepare_webpack5_factories(
         // cannot change the converged opaque set.
         let id_to_filename: HashMap<usize, String> = module_entries
             .iter()
-            .filter(|entry| !opaque_filenames.contains(&entry.filename))
+            .filter(|entry| !opaque_filenames.contains_key(&entry.filename))
             .filter_map(|entry| {
                 entry
                     .id
@@ -1584,14 +1588,14 @@ fn prepare_webpack5_factories(
             .collect();
         let str_id_to_filename: HashMap<String, String> = module_entries
             .iter()
-            .filter(|entry| !opaque_filenames.contains(&entry.filename))
+            .filter(|entry| !opaque_filenames.contains_key(&entry.filename))
             .map(|entry| (entry.id.clone(), entry.filename.clone()))
             .collect();
 
         let mut prepared = Vec::with_capacity(module_entries.len());
-        let mut newly_opaque = HashSet::default();
+        let mut newly_opaque = HashMap::default();
         for entry in module_entries {
-            if opaque_filenames.contains(&entry.filename) {
+            if opaque_filenames.contains_key(&entry.filename) {
                 prepared.push(None);
                 continue;
             }
@@ -1601,26 +1605,29 @@ fn prepare_webpack5_factories(
                     if !can_isolate_runtime_parameter_reuse {
                         return None;
                     }
-                    newly_opaque.insert(entry.filename.clone());
+                    newly_opaque.insert(
+                        entry.filename.clone(),
+                        DetectedModuleFailure::WebpackRuntimeParameterReuse,
+                    );
                     prepared.push(None);
                 }
-                Err(FactoryNormalizationError::Fatal) => return None,
+                Err(FactoryNormalizationError::Fatal) => {
+                    if !(isolate_fatal && can_isolate_runtime_parameter_reuse) {
+                        return None;
+                    }
+                    newly_opaque.insert(
+                        entry.filename.clone(),
+                        DetectedModuleFailure::TranslatedFactoryNormalization,
+                    );
+                    prepared.push(None);
+                }
             }
         }
 
         if newly_opaque.is_empty() {
-            let failures = opaque_filenames
-                .into_iter()
-                .map(|filename| {
-                    (
-                        filename,
-                        DetectedModuleFailure::WebpackRuntimeParameterReuse,
-                    )
-                })
-                .collect();
             return Some(PreparedWebpack5Factories {
                 prepared,
-                failures,
+                failures: opaque_filenames,
                 id_to_filename,
                 str_id_to_filename,
             });
@@ -1657,7 +1664,7 @@ pub(super) fn prepare_translated_webpack_factories(
             body_stmts: &factory.body,
         })
         .collect::<Vec<_>>();
-    let prepared = prepare_webpack5_factories(&descriptors)?;
+    let prepared = prepare_webpack5_factories(&descriptors, true)?;
     Some((prepared.prepared, prepared.failures))
 }
 
@@ -1680,7 +1687,7 @@ fn extract_modules_from_container(
 
     let module_entries = collect_module_descriptors(modules_container)?;
 
-    let prepared_factories = prepare_webpack5_factories(&module_entries)?;
+    let prepared_factories = prepare_webpack5_factories(&module_entries, false)?;
 
     let mut modules = Vec::new();
     for entry in &module_entries {
@@ -1785,7 +1792,7 @@ fn extract_webpack5_modules_with_plan(
         failures,
         id_to_filename,
         str_id_to_filename,
-    } = prepare_webpack5_factories(&module_entries)?;
+    } = prepare_webpack5_factories(&module_entries, false)?;
     if !module_entries.is_empty() && failures.len() == module_entries.len() {
         // A synthetic startup cannot make an entirely opaque module table
         // trustworthy; retain the original whole-input fallback.

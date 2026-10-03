@@ -127,6 +127,11 @@ fn detector_failure_warning(filename: &str, failure: DetectedModuleFailure) -> U
             UnpackWarningKind::WebpackFactoryRecoveryFailed,
             "webpack factory runtime-parameter reuse could not be normalized; preserving the opaque factory body",
         ),
+        DetectedModuleFailure::TranslatedFactoryNormalization => UnpackWarning::new(
+            filename,
+            UnpackWarningKind::WebpackFactoryRecoveryFailed,
+            "translated factory could not take webpack's `module`/`exports`/`require` parameter names without capturing a free reference; preserving the opaque factory body",
+        ),
         DetectedModuleFailure::TurbopackUnsupportedRuntime(context_use) => UnpackWarning::new(
             filename,
             UnpackWarningKind::DecompileFailed,
@@ -143,10 +148,12 @@ fn detector_failure_warning(filename: &str, failure: DetectedModuleFailure) -> U
 
 fn detector_note_warning(filename: &str, note: DetectedModuleNote) -> UnpackWarning {
     match note {
-        DetectedModuleNote::TurbopackChunkLoadingResidual => UnpackWarning::new(
+        DetectedModuleNote::TurbopackRuntimeResidual(letter) => UnpackWarning::new(
             filename,
             UnpackWarningKind::RuntimeResidual,
-            "Turbopack chunk loading (`l`/`L`) is kept as a call through `__turbopack_context__`, which the split output does not define",
+            format!(
+                "Turbopack runtime member `{letter}` is kept as a call through `__turbopack_context__`, which the split output does not define"
+            ),
         ),
     }
 }

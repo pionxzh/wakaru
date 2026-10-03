@@ -42,7 +42,7 @@ use crate::unpacker::{
     DetectedModuleFailure, DetectedModuleNote, PreparedModuleAst, TurbopackContextUse,
     UnpackResult, UnpackedModule,
 };
-use crate::utils::paren::strip_parens;
+use crate::utils::paren::{strip_parens, strip_parens_mut};
 
 pub(super) fn detect_from_module_prepared(
     module: &Module,
@@ -131,10 +131,10 @@ pub(super) fn detect_from_module_prepared(
                 body,
                 residual,
             }) => {
-                if residual {
+                if let Some(letter) = residual {
                     notes.insert(
                         filename.clone(),
-                        DetectedModuleNote::TurbopackChunkLoadingResidual,
+                        DetectedModuleNote::TurbopackRuntimeResidual(letter),
                     );
                 }
                 translated_index.push(Some(translated.len()));
@@ -1234,7 +1234,7 @@ fn ctx_member_call<'a>(expr: &'a Expr, ctx: &Ident, name: &str) -> Option<&'a Ca
 // Factory translation
 // ---------------------------------------------------------------------------
 
-/// The free name that chunk-loading residuals keep calling through. It is
+/// The free name that runtime residuals keep calling through. It is
 /// undefined once modules are split, which the residual diagnostic reports.
 const RESIDUAL_CONTEXT: &str = "__turbopack_context__";
 
@@ -1242,9 +1242,9 @@ const RESIDUAL_CONTEXT: &str = "__turbopack_context__";
 struct Translation {
     params: Vec<Pat>,
     body: Vec<Stmt>,
-    /// Chunk loading (`ctx.l`, `ctx.L`) was kept as a call through
+    /// The first runtime member kept as a call through
     /// [`RESIDUAL_CONTEXT`].
-    residual: bool,
+    residual: Option<char>,
 }
 
 /// Translate one factory into webpack's `(module, exports, require)` form.
@@ -1274,7 +1274,7 @@ fn translate_factory(
             return Ok(Translation {
                 params: Vec::new(),
                 body: clear_contexts(module),
-                residual: false,
+                residual: None,
             });
         };
         let mut names = AllNames::default();
@@ -1351,7 +1351,7 @@ fn translate_factory(
         Ok(Translation {
             params,
             body: clear_contexts(module),
-            residual: translator.residual.is_some(),
+            residual: translator.residual,
         })
     })
 }
@@ -1387,7 +1387,7 @@ fn loader_module(target: LoaderTarget) -> Translation {
     Translation {
         params,
         body: vec![assign_stmt(member(ident_expr(&module), "exports"), loader)],
-        residual: false,
+        residual: None,
     }
 }
 
@@ -1675,7 +1675,7 @@ struct ContextTranslator<'a> {
     failure: Option<DetectedModuleFailure>,
     uses_global_this: bool,
     uses_promise: bool,
-    /// The first chunk-loading member kept as a residual.
+    /// The first runtime member kept as a residual.
     residual: Option<char>,
 }
 
@@ -1772,6 +1772,7 @@ impl ContextTranslator<'_> {
                         };
                         body.extend(stmts.into_iter().map(ModuleItem::Stmt));
                     }
+                    None if self.is_require_read(&element) => {}
                     None => {
                         self.visit_discarded(&mut element);
                         body.push(ModuleItem::Stmt(Stmt::Expr(ExprStmt {
@@ -1783,6 +1784,12 @@ impl ContextTranslator<'_> {
             }
         }
         module.body = body;
+    }
+
+    /// `ctx.r` read without a call. The member is a plain method, so a read
+    /// whose value is discarded has no effect.
+    fn is_require_read(&self, expr: &Expr) -> bool {
+        self.ctx_member(expr) == Some("r")
     }
 
     /// Visit an expression whose value is discarded. A value export there
@@ -1806,7 +1813,31 @@ impl ContextTranslator<'_> {
                     None => self.reject(letter.as_deref()),
                 }
             }
+            // An arrow IIFE evaluates to its expression body, so discarding
+            // the call discards the body too (the AMD `define` wrapper).
+            Expr::Call(call) if is_arrow_iife(call) => {
+                call.args.visit_mut_with(self);
+                let Callee::Expr(callee) = &mut call.callee else {
+                    unreachable!("is_arrow_iife matched an expression callee");
+                };
+                let Expr::Arrow(arrow) = strip_parens_mut(callee) else {
+                    unreachable!("is_arrow_iife matched an arrow");
+                };
+                arrow.params.visit_mut_with(self);
+                let ArrowFunctionBody::Expr(body) = &mut *arrow.body else {
+                    unreachable!("is_arrow_iife matched an expression body");
+                };
+                self.visit_discarded(body);
+            }
             Expr::Seq(seq) => {
+                // The AMD branch of a UMD wrapper reads `ctx.r` for the
+                // `define` dependency it never uses.
+                let last = seq.exprs.len() - 1;
+                let mut index = 0;
+                seq.exprs.retain(|element| {
+                    index += 1;
+                    index - 1 == last || !self.is_require_read(element)
+                });
                 for element in &mut seq.exprs {
                     self.visit_discarded(element);
                 }
@@ -2084,13 +2115,15 @@ impl ContextTranslator<'_> {
         translated
     }
 
-    /// `__turbopack_context__.<letter>` for a chunk-loading member. Chunk
-    /// loading reaches no module graph or export, so the call is kept
-    /// instead of making the whole factory opaque; `l` and `L` kept their
-    /// meaning across every accepted release.
+    /// `__turbopack_context__.<letter>` for a runtime member that reaches
+    /// no module graph or export, so the call is kept instead of making the
+    /// whole factory opaque: chunk loading (`l`, `L`), path and file URL
+    /// resolution (`P`, `F`), the host `require` (`t`), and the throwing
+    /// require stub (`z`). Each letter kept its meaning across every
+    /// accepted release; `F` first appears in 16.3.
     fn residual_member(&mut self, letter: &str) -> Option<Box<Expr>> {
         let mut chars = letter.chars();
-        let letter @ ('l' | 'L') = chars.next()? else {
+        let letter @ ('l' | 'L' | 'P' | 'F' | 't' | 'z') = chars.next()? else {
             return None;
         };
         if chars.next().is_some() {
@@ -2100,6 +2133,49 @@ impl ContextTranslator<'_> {
         Some(member(
             ident_expr(&Atom::from(RESIDUAL_CONTEXT)),
             &letter.to_string(),
+        ))
+    }
+
+    /// `ctx.<letter>.bind(ctx)`, which Turbopack emits for a runtime
+    /// function used as a value (App Router server page entries pass
+    /// `ctx.r` and `ctx.l` this way). The bound require is the require
+    /// parameter; a residual member stays bound to the residual name.
+    fn translate_bound_member(&mut self, expr: &Expr) -> Option<Box<Expr>> {
+        let Expr::Call(call) = expr else {
+            return None;
+        };
+        let [ExprOrSpread {
+            spread: None,
+            expr: receiver,
+        }] = call.args.as_slice()
+        else {
+            return None;
+        };
+        if !self.is_ctx(receiver) {
+            return None;
+        }
+        let Callee::Expr(callee) = &call.callee else {
+            return None;
+        };
+        let Expr::Member(MemberExpr {
+            obj,
+            prop: MemberProp::Ident(bind),
+            ..
+        }) = strip_parens(callee)
+        else {
+            return None;
+        };
+        if bind.sym != "bind" {
+            return None;
+        }
+        let letter = self.ctx_member(obj)?;
+        if letter == "r" {
+            return Some(ident_expr(&self.ctx));
+        }
+        let residual = self.residual_member(letter)?;
+        Some(call_expr(
+            member(residual, "bind"),
+            vec![ident_expr(&Atom::from(RESIDUAL_CONTEXT))],
         ))
     }
 
@@ -2203,6 +2279,10 @@ impl VisitMut for ContextTranslator<'_> {
             *expr = *replacement;
             return;
         }
+        if let Some(replacement) = self.translate_bound_member(expr) {
+            *expr = *replacement;
+            return;
+        }
         if let Expr::Call(call) = expr {
             let is_ctx_call =
                 matches!(&call.callee, Callee::Expr(callee) if self.ctx_member(callee).is_some());
@@ -2221,6 +2301,13 @@ impl VisitMut for ContextTranslator<'_> {
                 *expr = *ident_expr(&self.exports_name);
             } else if letter == "m" {
                 *expr = *ident_expr(&self.module_name);
+            } else if letter == "r" {
+                // The AMD `define` wrapper passes the require function to the
+                // factory, as webpack passes `__webpack_require__`. From 15.5
+                // the runtime method reads `this`, so a factory that called
+                // this detached value would throw where the translation
+                // keeps working.
+                *expr = *ident_expr(&self.ctx);
             } else if let Some(residual) = self.residual_member(letter) {
                 *expr = *residual;
             } else {
@@ -2236,6 +2323,14 @@ impl VisitMut for ContextTranslator<'_> {
         }
         expr.visit_mut_children_with(self);
     }
+}
+
+/// `(params => body)(args)` with an expression body.
+fn is_arrow_iife(call: &CallExpr) -> bool {
+    matches!(&call.callee, Callee::Expr(callee) if matches!(
+        strip_parens(callee),
+        Expr::Arrow(ArrowExpr { body, .. }) if matches!(**body, ArrowFunctionBody::Expr(_))
+    ))
 }
 
 fn is_function(expr: &Expr) -> bool {

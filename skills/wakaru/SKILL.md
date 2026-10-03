@@ -199,7 +199,8 @@ reachability sweep is desired.
   treat that module's export surface as incomplete.
 - A `runtime_residual` warning (non-error) means that module still calls a
   bundler runtime helper the output does not define, such as
-  `__turbopack_context__.L(...)` for Turbopack chunk loading. Read the module
+  `__turbopack_context__.L(...)` (Turbopack chunk loading) or
+  `__turbopack_context__.P(...)` (path resolution). Read the module
   normally; only that call is unresolved.
 - `failed` in unpack JSON counts distinct modules with at least one
   error-class warning (decompile failures, declaration conflicts, output parse

@@ -232,9 +232,9 @@ applies. Only members with a known meaning are translated:
   registrations name no other id stay aliases of its first id.
 - `ctx.v(x)`, `ctx.n(x)`, and `ctx.q(url)` become `module.exports = x`, as a
   statement or wherever the call's result is discarded (a UMD branch, a `&&`
-  right operand). `ctx.q` exports an asset URL; the runtime's deployment
-  suffix is not modeled. A value export whose result is used is not
-  translated.
+  right operand, the expression body of a discarded arrow IIFE). `ctx.q`
+  exports an asset URL; the runtime's deployment suffix is not modeled. A
+  value export whose result is used is not translated.
 - `ctx.e` and `ctx.m` become the exports and module parameters. All three
   parameters get fresh spellings first, so synthesized references cannot be
   captured.
@@ -244,25 +244,38 @@ applies. Only members with a known meaning are translated:
   expression when the loader is in the same input, and otherwise call
   `require(loader)()`, which the multi-input numeric rewrite resolves when the
   loader's chunk is also an input.
+- `ctx.r` read without a call is dropped where its value is discarded (the
+  AMD branch of a UMD wrapper reads it in a comma expression) and otherwise
+  becomes the require parameter, as when Turbopack's `define` wrapper passes
+  it to the factory the way webpack passes `__webpack_require__`.
+  `ctx.r.bind(ctx)`, the bound form App Router server page entries pass, also
+  becomes the require parameter; a residual member bound the same way stays
+  `__turbopack_context__.<letter>.bind(__turbopack_context__)`.
 - `ctx.x("name", () => require("name"))`, a server external, becomes
   `require("name")`; `ctx.g` becomes `globalThis` when no local binding has
   that spelling.
-- Chunk loading (`ctx.l(chunk)`, `ctx.L(url)`, called or read as a value)
-  is kept as `__turbopack_context__.l` / `.L`, and the module gets a
-  non-error `runtime_residual` diagnostic. Chunk loading reaches no module
-  graph or export, so the module still recovers; the residual name is
-  undefined in the split output. A factory that already uses that spelling
-  stays opaque.
+- Runtime members without a module-graph meaning, called or read as a
+  value, are kept as `__turbopack_context__.<letter>`, and the module gets a
+  non-error `runtime_residual` diagnostic: chunk loading (`ctx.l`, `ctx.L`),
+  path and file URL resolution for the `import.meta.url` emulation (`ctx.P`;
+  `ctx.F` from 16.3), the host `require` (`ctx.t`), and the throwing require
+  stub (`ctx.z`). These letters kept their meaning from 15.3 through 16.4
+  canary. They reach no module graph or export, so the module still
+  recovers; the residual name is undefined in the split output. A factory
+  that already uses that spelling stays opaque.
 - 15.3–15.4 factories destructure `{ g, __dirname, m, e }` from `ctx`. The
   `m`/`e` bindings become fresh module/exports parameters, and a body that the
   minifier wrapped in a block is spliced to the top level when its
   declarations cannot collide.
 
 Any other use, such as `ctx.j`, async modules,
-`require.context` (`ctx.f`), the host `require` (`ctx.t`), a read of
+`require.context` (`ctx.f`), a worker or chunk base path (`ctx.b`), a read of
 `__dirname`, or the context escaping as a value, keeps that factory opaque
 with a `decompile_failed` diagnostic. Runtime letters changed meaning
-across releases, so an unknown member is never guessed.
+across releases, so an unknown member is never guessed. A translated factory
+that the webpack normalizer cannot rename to `module`/`exports`/`require`,
+such as an AMD branch that reads a free `module`, stays opaque on its own
+with a `webpack_factory_recovery_failed` diagnostic.
 
 Turbopack can inline a module into its importer, and those boundaries are
 not recoverable. The strict-mode factory groups, `ctx.S` re-exports, and the
@@ -311,8 +324,9 @@ removes failed factory IDs from the rewrite map before retrying dependants, so
 calls to an opaque factory follow the existing absent-ID behavior instead of
 becoming invented ESM edges. The opaque body never enters rule processing,
 fact collection, filename recovery, or recursive scope splitting. Other
-normalization failures still reject the whole container, and a container with
-no recoverable factory still uses the original whole-input fallback.
+normalization failures still reject the whole container, except in factories
+another detector translated (Turbopack), which fail one at a time. A container
+with no recoverable factory still uses the original whole-input fallback.
 
 For a provable reuse boundary, localization runs before webpack's ordinary,
 position-insensitive runtime normalization. Only immediately evaluated uses

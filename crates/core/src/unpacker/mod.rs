@@ -744,6 +744,11 @@ pub(crate) struct RecoverableParseError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DetectedModuleFailure {
     WebpackRuntimeParameterReuse,
+    /// A factory another detector translated into webpack's calling
+    /// convention could not be normalized, for example because renaming its
+    /// parameters to `module`/`exports`/`require` would capture a free
+    /// reference of that name.
+    TranslatedFactoryNormalization,
     /// A Turbopack factory uses its runtime context without a known
     /// translation.
     TurbopackUnsupportedRuntime(TurbopackContextUse),
@@ -755,9 +760,11 @@ pub(crate) enum DetectedModuleFailure {
 /// the driver reports the note as a non-error diagnostic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DetectedModuleNote {
-    /// A Turbopack factory's chunk loading (`ctx.l`, `ctx.L`) is kept as a
-    /// call through an undefined `__turbopack_context__`.
-    TurbopackChunkLoadingResidual,
+    /// A Turbopack factory keeps runtime members without a module-graph
+    /// meaning (chunk loading, path resolution, the host `require`) as calls
+    /// through an undefined `__turbopack_context__`. Carries the first
+    /// member's letter.
+    TurbopackRuntimeResidual(char),
 }
 
 /// How a Turbopack factory used its runtime context when no translation

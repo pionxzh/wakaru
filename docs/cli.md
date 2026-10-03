@@ -332,10 +332,12 @@ or `export`) does not get this warning, and neither do a direct
 `typeof exports` probe or other `module` members such as `module.hot`.
 
 Unpack reports a non-error `runtime_residual` warning when a module keeps a
-bundler runtime call that the split output does not define. Today this is
-Turbopack chunk loading, kept as `__turbopack_context__.l(...)` or
-`__turbopack_context__.L(...)`. The rest of the module is recovered; that
-call would throw if executed.
+bundler runtime call that the split output does not define. Today these are
+Turbopack runtime members without a module-graph meaning, such as chunk
+loading (`__turbopack_context__.L(...)`), path resolution
+(`__turbopack_context__.P(...)`), or the host `require`
+(`__turbopack_context__.t`). The message names the first such member. The
+rest of the module is recovered; that call would throw if executed.
 
 ## Overwrite protection
 
