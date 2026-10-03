@@ -344,8 +344,12 @@ fn setters_and_foreign_export_targets_are_not_translated() {
     for payload in [
         // getter followed by a setter
         r#"101, t => { t.s(["value", () => n, e => { n = e; }]); let n = 1; }, 202, t => { t.v(1); }"#,
-        // exports registered on another module id
-        r#"101, t => { t.s(["value", 0, 1], 999); }, 202, t => { t.v(1); }"#,
+        // a listed member without registrations
+        r#"101, 102, t => { t.s(["a", 0, 1], 101); t.s(["b", 0, 2], 999); }, 202, t => { t.v(1); }"#,
+        // an unlisted member that another factory defines
+        r#"101, t => { t.s(["a", 0, 1], 101); t.s(["b", 0, 2], 202); }, 202, t => { t.v(1); }"#,
+        // a registration without an id inside a merged group
+        r#"101, t => { t.s(["a", 0, 1]); t.s(["b", 0, 2], 999); }, 202, t => { t.v(1); }"#,
     ] {
         let output = unpack_chunk(&client_chunk(payload));
         assert_eq!(output.detected_formats, [BundleFormat::Turbopack]);
@@ -650,4 +654,54 @@ fn edited_debug_id_polyfills_stay_in_the_prelude() {
     let output = unpack_chunk(&source);
     assert_clean(&output);
     assert!(module(&output, "prelude.js").contains("__APP_FLAGS"));
+}
+
+#[test]
+fn merged_group_members_become_facades_of_the_primary_module() {
+    // One factory defines modules 101 and 102 (listed) and 999 (registered
+    // only), and reads 999 back through the module cache.
+    let source = client_chunk(
+        r#"
+101, 102, t => {
+  "use strict";
+  function helper(v) { return v + 1; }
+  t.s(["helper", 0, helper], 101);
+  const FLAG = 1;
+  t.s(["FLAG", 0, FLAG], 999);
+  var flags = t.i(999);
+  function main() { return helper(flags.FLAG); }
+  t.s(["default", 0, main, "helper", () => helper], 102);
+},
+202, t => { "use strict"; var e = t.i(102), f = t.i(999); t.s(["value", 0, (0, e.helper)(1) + f.FLAG]); }
+"#,
+    );
+    let output = unpack_chunk(&source);
+    assert_clean(&output);
+    assert_eq!(
+        module(&output, "module-101.js").trim(),
+        r#"import { FLAG as FLAG_1 } from "./module-999.js";
+export function helper_102(v) {
+    return v + 1;
+}
+export { helper_102 as helper };
+export const FLAG = 1;
+export function default_102() {
+    return helper_102(FLAG_1);
+}"#
+    );
+    assert_eq!(
+        module(&output, "module-102.js").trim(),
+        r#"export { default_102 as default } from "./module-101.js";
+export { helper_102 as helper } from "./module-101.js";"#
+    );
+    assert_eq!(
+        module(&output, "module-999.js").trim(),
+        r#"export { FLAG } from "./module-101.js";"#
+    );
+    assert_eq!(
+        module(&output, "module-202.js").trim(),
+        r#"import { helper } from "./module-102.js";
+import { FLAG } from "./module-999.js";
+export const value = helper(1) + FLAG;"#
+    );
 }

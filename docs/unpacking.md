@@ -187,7 +187,8 @@ every chunk of the app. The client form is
 `(globalThis.TURBOPACK || (globalThis.TURBOPACK = [])).push([script, ...])`,
 also with a computed `globalThis["TURBOPACK_…"]` global; the server form is
 `module.exports = [...]`. From Next.js 15.5 the payload is runs of numeric ids,
-each followed by one factory; extra ids before a factory are aliases. Next.js
+each followed by one factory; extra ids before a factory share it (see merged
+groups below). Next.js
 15.3–15.4 used `(G = G || []).push([script, { id: factory }])`, 15.4 also
 `id: [factory, [aliasId]]`. Beside the containers a file may hold only
 expression statements. The debug-id polyfill that `turbopack.debugIds`
@@ -212,7 +213,23 @@ applies. Only members with a known meaning are translated:
 - `ctx.s([...])` becomes `require.r(exports)` plus `require.d` getters and
   value assignments. Next.js 16 encodes a value as `name, 0, value`; 15.5 and
   the 16 server output use `name, getter`; 15.3–15.4 pass `{ name: getter }`.
-  A setter, or a second argument naming another module id, is not translated.
+  A setter is not translated. A second argument naming the factory's own id
+  is the current module; one naming another id is a merged group.
+- Merged groups: Turbopack merges modules into one factory, lists their ids
+  before it, and registers each module's exports with `ctx.s(bindings, id)`.
+  The runtime runs the factory once and each registration fills that id's
+  module-cache entry, so an id a registration names without listing it is a
+  module too, which other factories (and the group itself) read through the
+  cache. The factory becomes the module of its first listed id. It exports
+  the other members' bindings under aliases (the exported name, or
+  `name_<id>` when that name is `default` or already taken), and each other
+  member becomes a facade module of live `export { alias as name } from`
+  re-exports, so `ctx.i(member)` resolves to the facade. A group is accepted
+  only when every registration is a top-level `ctx.s` with an id, every
+  listed id has one, no exported name repeats within a member, and no
+  unlisted member is another factory's id or another group's member;
+  otherwise the factory stays opaque. Extra ids before a factory whose
+  registrations name no other id stay aliases of its first id.
 - `ctx.v(x)`, `ctx.n(x)`, and `ctx.q(url)` become `module.exports = x`, as a
   statement or wherever the call's result is discarded (a UMD branch, a `&&`
   right operand). `ctx.q` exports an asset URL; the runtime's deployment
@@ -244,9 +261,7 @@ applies. Only members with a known meaning are translated:
 Any other use, such as `ctx.j`, async modules,
 `require.context` (`ctx.f`), the host `require` (`ctx.t`), a read of
 `__dirname`, or the context escaping as a value, keeps that factory opaque
-with a `decompile_failed` diagnostic. So does a factory that registers
-exports for another module id: Turbopack merges modules that way, and the
-merged module would need its own synthesized boundary. Runtime letters changed meaning
+with a `decompile_failed` diagnostic. Runtime letters changed meaning
 across releases, so an unknown member is never guessed.
 
 Turbopack can inline a module into its importer, and those boundaries are

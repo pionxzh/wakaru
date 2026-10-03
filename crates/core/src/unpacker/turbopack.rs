@@ -71,27 +71,60 @@ pub(super) fn detect_from_module_prepared(
         .iter()
         .filter_map(|entry| Some((entry.ids[0], loader_target(entry.factory)?)))
         .collect();
+    let groups = merged_groups(&entries, &seen_ids);
+    // Extra ids of a factory that registers exports only for itself are
+    // instances of the same module; in a merged group each id is its own
+    // module.
     let aliases: HashMap<usize, usize> = entries
         .iter()
-        .flat_map(|entry| entry.ids[1..].iter().map(|alias| (*alias, entry.ids[0])))
+        .zip(&groups)
+        .filter(|(_, group)| matches!(group, Ok(None)))
+        .flat_map(|(entry, _)| entry.ids[1..].iter().map(|alias| (*alias, entry.ids[0])))
         .collect();
 
     let modules_entries: Vec<&Entry<'_>> = entries.iter().collect();
+    let facade_ids: Vec<usize> = groups
+        .iter()
+        .flatten()
+        .flatten()
+        .flat_map(|group| group.foreign.iter().map(|facade| facade.id))
+        .collect();
     let ids: Vec<String> = modules_entries
         .iter()
-        .map(|entry| entry.ids[0].to_string())
+        .map(|entry| entry.ids[0])
+        .chain(facade_ids.iter().copied())
+        .map(|id| id.to_string())
         .collect();
-    let filenames = unique_webpack_module_filenames(ids.iter().map(String::as_str));
+    let mut filenames = unique_webpack_module_filenames(ids.iter().map(String::as_str));
+    let facade_filenames: HashMap<usize, String> = facade_ids
+        .iter()
+        .copied()
+        .zip(filenames.split_off(modules_entries.len()))
+        .collect();
+    let mut ids = ids;
+    ids.truncate(modules_entries.len());
 
     let mut translated = Vec::new();
     let mut translated_index = Vec::with_capacity(modules_entries.len());
+    let mut facades = Vec::new();
     let mut failures = HashMap::default();
     let mut notes = HashMap::default();
-    for ((entry, id), filename) in modules_entries.iter().zip(&ids).zip(&filenames) {
-        let translation = match loaders.get(&entry.ids[0]) {
-            Some(target) => Ok(loader_module(*target)),
-            None => translate_factory(entry, &loaders, &aliases),
+    for (((entry, id), filename), group) in modules_entries
+        .iter()
+        .zip(&ids)
+        .zip(&filenames)
+        .zip(&groups)
+    {
+        let translation = match (loaders.get(&entry.ids[0]), group) {
+            (_, Err(failure)) => Err(*failure),
+            (Some(target), Ok(None)) => Ok(loader_module(*target)),
+            (_, Ok(group)) => translate_factory(entry, &loaders, &aliases, group.as_ref()),
         };
+        if let (Ok(_), Ok(Some(group))) = (&translation, group) {
+            for facade in &group.foreign {
+                facades.push((facade, group.primary, facade_filenames[&facade.id].clone()));
+            }
+        }
         match translation {
             Ok(Translation {
                 params,
@@ -119,6 +152,21 @@ pub(super) fn detect_from_module_prepared(
         }
     }
 
+    let facades: Vec<_> = facades
+        .into_iter()
+        .map(|(facade, primary, filename)| {
+            let index = translated.len();
+            let (params, body) = facade_module(primary, &facade.bindings);
+            translated.push(TranslatedWebpackFactory {
+                id: facade.id.to_string(),
+                filename: filename.clone(),
+                params,
+                body,
+            });
+            (facade, filename, index)
+        })
+        .collect();
+
     let (mut prepared_translated, translated_failures) =
         prepare_translated_webpack_factories(&translated)?;
     failures.extend(translated_failures);
@@ -144,6 +192,18 @@ pub(super) fn detect_from_module_prepared(
             ..Default::default()
         });
         prepared.push(index.and_then(|index| prepared_translated[index].take()));
+    }
+    for (facade, filename, index) in facades {
+        // A facade has no source of its own; it points at the registrations
+        // that defined its exports.
+        modules.push(UnpackedModule {
+            id: facade.id.to_string(),
+            is_entry: false,
+            filename,
+            source_ranges: spans_byte_ranges(&cm, facade.spans.iter().copied()),
+            ..Default::default()
+        });
+        prepared.push(prepared_translated[index].take());
     }
     if !prelude.is_empty() {
         // Top-level code beside the containers runs when the chunk loads,
@@ -597,6 +657,281 @@ fn uses_context_member(entry: &Entry<'_>) -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// Merged groups
+// ---------------------------------------------------------------------------
+
+/// A factory that defines several modules. Turbopack merges modules into
+/// one factory, lists their ids before it, and registers each module's
+/// exports with `ctx.s(bindings, id)`. The runtime runs the factory once,
+/// for whichever id is required first, and each registration fills that
+/// id's module-cache entry, so ids the registrations name without listing
+/// them exist too. The factory becomes the primary module (the first listed
+/// id), exporting every other member's bindings under aliases, and each
+/// other member becomes a facade that re-exports them.
+struct MergedGroup {
+    primary: usize,
+    foreign: Vec<Facade>,
+}
+
+struct Facade {
+    id: usize,
+    /// `(exported name, alias in the primary module)`, in registration order.
+    bindings: Vec<(String, String)>,
+    /// The registrations that define this member.
+    spans: Vec<swc_core::common::Span>,
+}
+
+/// Each entry's merged group: `Ok(None)` when its registrations name no id
+/// besides its first. A group whose shape is not proven fails closed.
+fn merged_groups(
+    entries: &[Entry<'_>],
+    seen_ids: &HashSet<usize>,
+) -> Vec<Result<Option<MergedGroup>, DetectedModuleFailure>> {
+    let mut groups: Vec<_> = entries.iter().map(merged_group).collect();
+    // An unlisted member must not be another factory's id, and two groups
+    // must not both define one.
+    let mut owners: HashMap<usize, Vec<usize>> = HashMap::default();
+    for (index, (entry, group)) in entries.iter().zip(&groups).enumerate() {
+        if let Ok(Some(group)) = group {
+            for facade in &group.foreign {
+                owners.entry(facade.id).or_default().push(index);
+                if !entry.ids.contains(&facade.id) && seen_ids.contains(&facade.id) {
+                    owners.entry(facade.id).or_default().push(usize::MAX);
+                }
+            }
+        }
+    }
+    for indexes in owners.values().filter(|indexes| indexes.len() > 1) {
+        for &index in indexes.iter().filter(|&&index| index != usize::MAX) {
+            groups[index] = Err(DetectedModuleFailure::TurbopackUnsupportedRuntime(
+                TurbopackContextUse::Member('s'),
+            ));
+        }
+    }
+    groups
+}
+
+fn merged_group(entry: &Entry<'_>) -> Result<Option<MergedGroup>, DetectedModuleFailure> {
+    let unsupported = Err(DetectedModuleFailure::TurbopackUnsupportedRuntime(
+        TurbopackContextUse::Member('s'),
+    ));
+    let Some((params, body)) = factory_parts(entry.factory) else {
+        return Ok(None);
+    };
+    let Some(ctx) = params.first() else {
+        return Ok(None);
+    };
+    let primary = entry.ids[0];
+    // Top-level registrations, the only ones the translation accepts.
+    let mut registrations: Vec<(Option<usize>, &Expr, swc_core::common::Span)> = Vec::new();
+    for stmt in strip_directives(body) {
+        let Stmt::Expr(ExprStmt { expr, span }) = stmt else {
+            continue;
+        };
+        let elements: Vec<&Expr> = match strip_parens(expr) {
+            Expr::Seq(seq) => seq.exprs.iter().map(|expr| &**expr).collect(),
+            expr => vec![expr],
+        };
+        for element in elements {
+            let Some(call) = ctx_member_call(element, ctx, "s") else {
+                continue;
+            };
+            match call.args.as_slice() {
+                [ExprOrSpread {
+                    spread: None,
+                    expr: bindings,
+                }] => registrations.push((None, bindings, *span)),
+                [ExprOrSpread {
+                    spread: None,
+                    expr: bindings,
+                }, ExprOrSpread {
+                    spread: None,
+                    expr: id,
+                }] => {
+                    let Some(id) = numeric_id_from_expr(id) else {
+                        return unsupported;
+                    };
+                    registrations.push((Some(id), bindings, *span));
+                }
+                _ => {}
+            }
+        }
+    }
+    if !registrations
+        .iter()
+        .any(|(id, ..)| id.is_some_and(|id| id != primary))
+    {
+        return Ok(None);
+    }
+    // A registration without an id would define whichever member was
+    // required first.
+    if registrations.iter().any(|(id, ..)| id.is_none()) {
+        return unsupported;
+    }
+    // A listed member without registrations would be an empty module.
+    if !entry
+        .ids
+        .iter()
+        .all(|listed| registrations.iter().any(|(id, ..)| *id == Some(*listed)))
+    {
+        return unsupported;
+    }
+
+    let mut taken: HashSet<String> = HashSet::default();
+    for (_, bindings, _) in registrations.iter().filter(|(id, ..)| *id == Some(primary)) {
+        let Some(names) = esm_binding_names(bindings) else {
+            return unsupported;
+        };
+        taken.extend(names);
+    }
+    let mut foreign: Vec<Facade> = Vec::new();
+    for (id, bindings, span) in &registrations {
+        let id = id.expect("registrations without an id were rejected");
+        if id == primary {
+            continue;
+        }
+        let Some(names) = esm_binding_names(bindings) else {
+            return unsupported;
+        };
+        let index = match foreign.iter().position(|facade| facade.id == id) {
+            Some(index) => index,
+            None => {
+                foreign.push(Facade {
+                    id,
+                    bindings: Vec::new(),
+                    spans: Vec::new(),
+                });
+                foreign.len() - 1
+            }
+        };
+        let facade = &mut foreign[index];
+        facade.spans.push(*span);
+        for name in names {
+            // The runtime keeps the first definition of a name.
+            if facade
+                .bindings
+                .iter()
+                .any(|(exported, _)| *exported == name)
+            {
+                return unsupported;
+            }
+            let mut alias = if name == "default" || taken.contains(&name) {
+                format!("{name}_{id}")
+            } else {
+                name.clone()
+            };
+            let mut suffix = 1;
+            while taken.contains(&alias) {
+                suffix += 1;
+                alias = format!("{name}_{id}_{suffix}");
+            }
+            taken.insert(alias.clone());
+            facade.bindings.push((name, alias));
+        }
+    }
+    Ok(Some(MergedGroup { primary, foreign }))
+}
+
+/// The exported names of a `ctx.s` binding list, in order, under the same
+/// shapes the translation accepts.
+fn esm_binding_names(bindings: &Expr) -> Option<Vec<String>> {
+    let mut names = Vec::new();
+    match strip_parens(bindings) {
+        Expr::Object(object) => {
+            for prop in &object.props {
+                let PropOrSpread::Prop(prop) = prop else {
+                    return None;
+                };
+                let Prop::KeyValue(KeyValueProp { key, .. }) = &**prop else {
+                    return None;
+                };
+                names.push(match key {
+                    PropName::Ident(key) => key.sym.to_string(),
+                    PropName::Str(key) => key.value.as_str()?.to_string(),
+                    _ => return None,
+                });
+            }
+        }
+        Expr::Array(array) => {
+            let mut elements = array.elems.iter().map(|elem| match elem {
+                Some(ExprOrSpread { spread: None, expr }) => Some(&**expr),
+                _ => None,
+            });
+            while let Some(name) = elements.next() {
+                let Expr::Lit(Lit::Str(name)) = name? else {
+                    return None;
+                };
+                names.push(name.value.as_str()?.to_string());
+                let next = elements.next()??;
+                if matches!(next, Expr::Lit(Lit::Num(Number { value, .. })) if *value == 0.0) {
+                    elements.next()??;
+                }
+            }
+        }
+        _ => return None,
+    }
+    Some(names)
+}
+
+/// A member of a merged group: re-export its aliased bindings from the
+/// primary module through `Object.defineProperty` getters, the CommonJS
+/// shape that ESM recovery turns into a live `export { alias as name } from`.
+fn facade_module(primary: usize, bindings: &[(String, String)]) -> (Vec<Pat>, Vec<Stmt>) {
+    let [module, exports, require, target] =
+        ["module", "exports", "require", "primary"].map(Atom::from);
+    let mut body = vec![
+        var_stmt(
+            Ident::new_no_ctxt(target.clone(), Default::default()),
+            call_expr(ident_expr(&require), vec![number_expr(primary)]),
+        ),
+        expr_stmt(call_expr(
+            member(ident_expr(&require), "r"),
+            vec![ident_expr(&exports)],
+        )),
+    ];
+    for (name, alias) in bindings {
+        let descriptor = ObjectLit {
+            span: Default::default(),
+            props: vec![
+                PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
+                    key: prop_name("enumerable"),
+                    value: Box::new(Expr::Lit(Lit::Bool(true.into()))),
+                }))),
+                PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
+                    key: prop_name("get"),
+                    value: Box::new(Expr::Arrow(ArrowExpr {
+                        body: Box::new(ArrowFunctionBody::Expr(member(ident_expr(&target), alias))),
+                        ..Default::default()
+                    })),
+                }))),
+            ],
+        };
+        body.push(expr_stmt(call_expr(
+            member(ident_expr(&Atom::from("Object")), "defineProperty"),
+            vec![
+                ident_expr(&exports),
+                Box::new(Expr::Lit(Lit::Str(Str {
+                    span: Default::default(),
+                    value: name.as_str().into(),
+                    raw: None,
+                }))),
+                Box::new(Expr::Object(descriptor)),
+            ],
+        )));
+    }
+    let params = [module, exports, require]
+        .into_iter()
+        .map(|sym| {
+            Pat::Ident(BindingIdent {
+                id: Ident::new_no_ctxt(sym, Default::default()),
+                type_ann: None,
+            })
+        })
+        .collect();
+    (params, body)
+}
+
+// ---------------------------------------------------------------------------
 // Async loader modules
 // ---------------------------------------------------------------------------
 
@@ -919,6 +1254,7 @@ fn translate_factory(
     entry: &Entry<'_>,
     loaders: &HashMap<usize, LoaderTarget>,
     aliases: &HashMap<usize, usize>,
+    group: Option<&MergedGroup>,
 ) -> Result<Translation, DetectedModuleFailure> {
     let (params, body) =
         factory_parts(entry.factory).expect("payload entries hold validated factories");
@@ -970,6 +1306,7 @@ fn translate_factory(
             module_name: module_name.clone(),
             exports_name: exports_name.clone(),
             own_ids: &entry.ids,
+            group,
             loaders,
             aliases,
             failure: None,
@@ -1332,6 +1669,7 @@ struct ContextTranslator<'a> {
     module_name: Atom,
     exports_name: Atom,
     own_ids: &'a [usize],
+    group: Option<&'a MergedGroup>,
     loaders: &'a HashMap<usize, LoaderTarget>,
     aliases: &'a HashMap<usize, usize>,
     failure: Option<DetectedModuleFailure>,
@@ -1345,6 +1683,13 @@ struct ContextTranslator<'a> {
 enum ExportCall {
     Esm,
     Value,
+}
+
+/// The module an export registration defines.
+enum ExportTarget {
+    Own,
+    /// Another member of the merged group, by id.
+    Foreign(usize),
 }
 
 impl ContextTranslator<'_> {
@@ -1497,7 +1842,11 @@ impl ContextTranslator<'_> {
 
     /// `module.exports = value` for a value export call.
     fn value_export(&mut self, mut call: CallExpr) -> Option<Box<Expr>> {
-        if !self.accepts_target(&call) || call.args[0].spread.is_some() {
+        if !matches!(
+            self.export_target(&call, &ExportCall::Value),
+            Some(ExportTarget::Own)
+        ) || call.args[0].spread.is_some()
+        {
             return None;
         }
         call.args[0].expr.visit_mut_with(self);
@@ -1513,38 +1862,63 @@ impl ContextTranslator<'_> {
         })))
     }
 
-    /// The optional second argument targets a module id; accept only this
-    /// factory's own id, which the runtime resolves to the current module.
-    fn accepts_target(&self, call: &CallExpr) -> bool {
-        match call.args.as_slice() {
-            [_] => true,
-            [_, ExprOrSpread { spread: None, expr }] => {
-                numeric_id_from_expr(expr).is_some_and(|id| self.own_ids.contains(&id))
-            }
-            _ => false,
+    /// The optional second argument targets a module id. Outside a merged
+    /// group only this factory's own ids are accepted, which the runtime
+    /// resolves to the current module; in a merged group the primary id is
+    /// the current module and the other members' ESM registrations are
+    /// exported under their aliases.
+    fn export_target(&self, call: &CallExpr, kind: &ExportCall) -> Option<ExportTarget> {
+        let id = match call.args.as_slice() {
+            [_] => return self.group.is_none().then_some(ExportTarget::Own),
+            [_, ExprOrSpread { spread: None, expr }] => numeric_id_from_expr(expr)?,
+            _ => return None,
+        };
+        match self.group {
+            None => self.own_ids.contains(&id).then_some(ExportTarget::Own),
+            Some(group) if id == group.primary => Some(ExportTarget::Own),
+            Some(group) => (matches!(kind, ExportCall::Esm)
+                && group.foreign.iter().any(|facade| facade.id == id))
+            .then_some(ExportTarget::Foreign(id)),
         }
     }
 
     fn translate_export(&mut self, mut call: CallExpr, kind: ExportCall) -> Option<Vec<Stmt>> {
-        if !self.accepts_target(&call) || call.args[0].spread.is_some() {
+        let target = self.export_target(&call, &kind)?;
+        if call.args[0].spread.is_some() {
             return None;
         }
         // Values and getters may themselves use the context.
         call.args[0].expr.visit_mut_with(self);
         let argument = call.args.swap_remove(0).expr;
-        match kind {
-            ExportCall::Value => Some(vec![assign_stmt(
+        match (kind, target) {
+            (ExportCall::Value, _) => Some(vec![assign_stmt(
                 member(ident_expr(&self.module_name), "exports"),
                 argument,
             )]),
-            ExportCall::Esm => self.translate_esm_bindings(*argument),
+            (ExportCall::Esm, ExportTarget::Own) => self.translate_esm_bindings(*argument, None),
+            (ExportCall::Esm, ExportTarget::Foreign(id)) => {
+                let group = self.group.expect("foreign targets need a group");
+                let facade = group.foreign.iter().find(|facade| facade.id == id)?;
+                self.translate_esm_bindings(*argument, Some(facade))
+            }
         }
     }
 
     /// `ctx.s([name, getter, ...])` with `name, 0, value` value bindings
     /// (Next 16) or getter-only lists (Next 15.5). A setter, or any other
     /// tag, is not translated.
-    fn translate_esm_bindings(&self, bindings: Expr) -> Option<Vec<Stmt>> {
+    fn translate_esm_bindings(&self, bindings: Expr, facade: Option<&Facade>) -> Option<Vec<Stmt>> {
+        // A member's binding is exported under its alias.
+        let rename = |name: String| -> Option<String> {
+            match facade {
+                None => Some(name),
+                Some(facade) => facade
+                    .bindings
+                    .iter()
+                    .find(|(exported, _)| *exported == name)
+                    .map(|(_, alias)| alias.clone()),
+            }
+        };
         let array = match bindings {
             Expr::Array(array) => array,
             // 15.3–15.4: `{ name: getter }`; a `[getter, setter]` value is
@@ -1566,7 +1940,7 @@ impl ContextTranslator<'_> {
                     if !is_function(&value) {
                         return None;
                     }
-                    getters.push((name, value));
+                    getters.push((rename(name)?, value));
                 }
                 return Some(self.esm_statements(getters, Vec::new()));
             }
@@ -1589,6 +1963,7 @@ impl ContextTranslator<'_> {
             };
             let name = name.value.as_str()?.to_string();
             let next = elements.next()?;
+            let name = rename(name)?;
             if matches!(&*next, Expr::Lit(Lit::Num(Number { value, .. })) if *value == 0.0) {
                 values.push((name, elements.next()?));
                 continue;

@@ -4,8 +4,7 @@ Status: **IMPLEMENTED for Next.js 15.3 through 16.3** (`unpacker/turbopack.rs`;
 current behavior lives in [unpacking.md](../unpacking.md#turbopack)). This
 document keeps the format research and the remaining work. Not done: the
 16.4 canary shapes, chunk enumeration (Phase 3's `enumerate-chunks` part),
-`ctx.j`/async modules/chunk-loading members, and factories that register
-exports on another module id. Dev builds are out of scope, matching the
+and `ctx.j`/async modules. Dev builds are out of scope, matching the
 production-build scope in [unpacking.md](../unpacking.md).
 
 Ground rules: follow [AGENTS.md](../../AGENTS.md), including a focused unit
