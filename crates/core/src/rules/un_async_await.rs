@@ -471,7 +471,7 @@ fn binding_names_from_params(params: &[Param]) -> HashSet<Atom> {
 /// observe the original names as strings, and callable declarations or
 /// anonymous initializers can expose them through `.name`, so those cases stay
 /// fail-closed.
-fn hygienically_move_callback_locals(
+pub(crate) fn hygienically_move_callback_locals(
     moved_stmts: &mut [Stmt],
     moved_ids: &HashSet<BindingId>,
     destination_stmts: &[Stmt],

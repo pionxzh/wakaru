@@ -3731,3 +3731,121 @@ function* toggle(p) {
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
+
+const BABEL_ASYNC_TO_GENERATOR: &str = r#"
+function _asyncToGenerator(fn) {
+  return function() {
+    var gen = fn.apply(this, arguments);
+    return new Promise(function(resolve, reject) {
+      function step(key, arg) {
+        var info = gen[key](arg);
+        if (info.done) { resolve(info.value); } else { Promise.resolve(info.value).then(_next, _throw); }
+      }
+      function _next(value) { step("next", value); }
+      function _throw(err) { step("throw", err); }
+      _next(undefined);
+    });
+  };
+}
+"#;
+
+#[test]
+fn async_to_generator_renames_generator_local_colliding_with_outer_param() {
+    // A minifier reuses the outer parameter name for a generator-local
+    // `var`. Flattening must not redeclare the parameter.
+    let input = format!(
+        "{BABEL_ASYNC_TO_GENERATOR}{}",
+        r#"
+function load(e, n) {
+  var t = this;
+  return _asyncToGenerator(function*() {
+    var n;
+    n = yield t.fetch(e);
+    return n;
+  })();
+}
+"#
+    );
+    let expected = r#"
+async function load(e, n) {
+  var t = this;
+  var n1;
+  n1 = await t.fetch(e);
+  return n1;
+}
+"#;
+    assert_eq_normalized(&apply(&input), expected);
+}
+
+#[test]
+fn swc_async_to_generator_renames_ts_generator_local_colliding_with_outer_param() {
+    let input = r#"
+function _async_to_generator(fn) {
+  return function() {
+    var self = this, args = arguments;
+    return new Promise(function(resolve, reject) {
+      var gen = fn.apply(self, args);
+      function _next(value) {
+        resolve(gen.next(value).value);
+      }
+      _next(undefined);
+    });
+  };
+}
+function _ts_generator(thisArg, body) {
+  var t, _ = {
+    label: 0,
+    sent: function() { return t[1]; },
+    trys: [],
+    ops: []
+  };
+}
+function thumbnail(e, n) {
+  var t = this;
+  return _async_to_generator(function() {
+    var n;
+    return _ts_generator(this, function(r) {
+      switch (r.label) {
+        case 0:
+          return [4, t.segment(e)];
+        case 1:
+          if (!(n = r.sent())) return [2, null];
+          return [2, n.url];
+      }
+    });
+  })();
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("async function thumbnail(e, n)")
+            && output.contains("var n1;")
+            && output.contains("n1 = await t.segment(e)")
+            && output.contains("return n1.url"),
+        "generator local must be renamed away from the outer parameter, got:\n{output}"
+    );
+}
+
+#[test]
+fn async_to_generator_with_colliding_local_and_eval_fails_closed() {
+    let input = format!(
+        "{BABEL_ASYNC_TO_GENERATOR}{}",
+        r#"
+function load(e, n) {
+  return _asyncToGenerator(function*() {
+    var n;
+    eval("n");
+    n = yield fetch(e);
+    return n;
+  })();
+}
+"#
+    );
+    let output = apply(&input);
+    assert!(
+        output.contains("function load(e, n)")
+            && !output.contains("async function load")
+            && output.contains("var n;"),
+        "direct eval must keep the generator boundary, got:\n{output}"
+    );
+}

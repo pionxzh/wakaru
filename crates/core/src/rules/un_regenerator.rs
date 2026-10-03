@@ -14,7 +14,10 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::facts::{HelperKind, ModuleFactsMap};
 
-use super::decl_utils::{collect_pat_names, fresh_binding_ident};
+use super::decl_utils::{
+    collect_decl_binding_ids, collect_pat_names, collect_var_decl_binding_ids, fresh_binding_ident,
+    BindingId,
+};
 use super::eval_utils::module_has_with_stmt;
 use super::helper_matcher::{binding_key, member_prop_name, remove_unused_helper_declarations};
 use super::remove_void::finalize_synthesized_undefined;
@@ -23,7 +26,9 @@ use super::state_machine::{
     IndexLoopContinueMode, OpcodeReturnScan, StateMachineProgram,
 };
 use super::transpiler_helper_utils::{BindingKey, LocalHelperContext, TranspilerHelperKind};
-use super::un_async_await::{try_transform_ts_generator_body, AsyncHelperContext};
+use super::un_async_await::{
+    hygienically_move_callback_locals, try_transform_ts_generator_body, AsyncHelperContext,
+};
 
 use crate::js_names::is_likely_generated_alias;
 use crate::utils::paren::strip_parens;
@@ -886,6 +891,7 @@ impl VisitMut for FunctionTransformer<'_> {
         // been transformed yet, so we can still detect the full pattern.
         if let Some(body) = func.body.as_mut() {
             if try_transform_async_to_generator(
+                &func.params,
                 body,
                 self.async_to_gen_callees,
                 self.generator_helpers,
@@ -4288,6 +4294,7 @@ fn build_async_fn_expr_from_gen_arg(
 }
 
 fn try_transform_async_to_generator(
+    params: &[Param],
     body: &mut FunctionBody,
     async_to_gen_callees: &AsyncToGenCallees,
     generator_helpers: &AsyncHelperContext,
@@ -4311,11 +4318,60 @@ fn try_transform_async_to_generator(
     ) else {
         return false;
     };
+    // The generator body and the outer function become one scope. Minifiers
+    // reuse names across the two, so rename moved bindings that collide with
+    // an outer parameter or identifier, or leave the function alone when a
+    // rename is not safe.
+    let moved_ids = collect_function_scope_binding_ids(&inner_stmts);
+    if !hygienically_move_callback_locals(
+        &mut inner_stmts,
+        &moved_ids,
+        &body.stmts,
+        return_idx,
+        &binding_names_from_params(params),
+    ) {
+        return false;
+    }
     body.stmts.remove(return_idx);
     replace_yield_with_await(&mut inner_stmts);
 
     body.stmts.splice(return_idx..return_idx, inner_stmts);
     true
+}
+
+/// Bindings of `stmts` that belong to the enclosing function's scope:
+/// top-level declarations, plus `var` declarations at any depth outside
+/// nested functions and classes.
+fn collect_function_scope_binding_ids(stmts: &[Stmt]) -> HashSet<BindingId> {
+    struct VarCollector {
+        ids: HashSet<BindingId>,
+    }
+
+    impl Visit for VarCollector {
+        fn visit_var_decl(&mut self, var: &VarDecl) {
+            if var.kind == VarDeclKind::Var {
+                collect_var_decl_binding_ids(var, &mut self.ids);
+            }
+            var.visit_children_with(self);
+        }
+
+        fn visit_function(&mut self, _: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+
+        fn visit_class(&mut self, _: &swc_core::ecma::ast::Class) {}
+    }
+
+    let mut collector = VarCollector {
+        ids: HashSet::default(),
+    };
+    for stmt in stmts {
+        if let Stmt::Decl(decl) = stmt {
+            collect_decl_binding_ids(decl, &mut collector.ids);
+        }
+        stmt.visit_with(&mut collector);
+    }
+    collector.ids
 }
 
 fn is_async_to_gen_return(stmt: &Stmt, async_to_gen_callees: &AsyncToGenCallees) -> bool {
