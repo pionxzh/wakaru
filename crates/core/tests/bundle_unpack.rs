@@ -3155,6 +3155,89 @@ fn webpack5_amd_and_module_decorators_are_recovered() {
 }
 
 #[test]
+fn webpack5_module_decorators_in_expression_position_are_recovered() {
+    // `hmd` / `nmd` return their argument, so each decorated factory must
+    // recover exactly like the same factory without the decorator. The
+    // decorator on the shadowing inner `e` parameter is a statement and is
+    // not part of the substitution.
+    let decorated = r#"
+(() => {
+  var modules = ({
+    0: ((e, t, n) => {
+      (e = n.nmd(e)).exports = function() { return "member"; };
+    }),
+    1: ((e, t, n) => {
+      !function(m, root) {
+        m.exports = { root: root };
+      }((e = n.nmd(e)), this);
+    }),
+    2: ((e, t, n) => {
+      void 0 !== (e = n.hmd(e)) && (e.exports = function(e) {
+        e = n.nmd(e);
+        return e.children;
+      });
+    }),
+    3: ((e, t, n) => {
+      var r = (e = n.hmd(e)).exports || "fallback";
+      t.value = r;
+    }),
+    4: ((e) => {
+      e.exports = "control";
+    })
+  });
+  var cache = {};
+  function load(id) {
+    var cached = cache[id];
+    if (cached !== undefined) return cached.exports;
+    var module = cache[id] = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  }
+  load(0);
+  load(1);
+  load(2);
+  load(3);
+  load(4);
+})();
+"#;
+    let plain = decorated
+        .replace("(e = n.nmd(e))", "e")
+        .replace("(e = n.hmd(e))", "e");
+    assert!(!plain.contains(".hmd(") && plain.matches(".nmd(").count() == 1);
+
+    let unpack_named = |source: &str| {
+        unpack(
+            source,
+            DecompileOptions {
+                filename: "webpack5-expression-module-decorators.js".to_string(),
+                ..Default::default()
+            },
+        )
+        .expect("webpack5 unpack should succeed")
+    };
+    let decorated_output = unpack_named(decorated);
+    let plain_output = unpack_named(&plain);
+    assert_eq!(decorated_output.detected_formats, [BundleFormat::Webpack5]);
+    assert!(
+        decorated_output.warnings.is_empty(),
+        "decorators should not make factories opaque: {:?}",
+        decorated_output.warnings
+    );
+    assert_eq!(decorated_output.modules, plain_output.modules);
+
+    let shadowed = decorated_output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "module-2.js")
+        .map(|(_, code)| code)
+        .expect("expected module-2.js");
+    assert!(
+        shadowed.contains("e = require.nmd(e)"),
+        "the shadowing inner parameter keeps its decorator:\n{shadowed}"
+    );
+}
+
+#[test]
 fn browserify_unpack_extracts_multiple_modules() {
     let source_path = "../../testcases/browserify/dist/index.js";
     let source = fs::read_to_string(source_path).expect("failed to read browserify testcase");

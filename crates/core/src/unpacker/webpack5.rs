@@ -40,7 +40,11 @@ impl VisitMut for Webpack5RuntimeNormalizer {
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         expr.visit_mut_children_with(self);
 
-        if let Some(ctxt) = self.try_match_require_member(expr, "g") {
+        // `hmd` / `nmd` return the module object they receive, so the
+        // decorator assignment evaluates to the value `module` already holds.
+        if let Some(module) = self.factory_module_decorator_target(expr) {
+            *expr = Expr::Ident(module);
+        } else if let Some(ctxt) = self.try_match_require_member(expr, "g") {
             *expr = Expr::Ident(Ident::new(Atom::from("global"), DUMMY_SP, ctxt));
         } else if let Some(ctxt) = self.try_match_require_member(expr, "amdO") {
             *expr = amd_define_detection_expr(ctxt);
@@ -109,8 +113,10 @@ impl Webpack5RuntimeNormalizer {
             return None;
         };
         let stripped_expr = strip_parens(expr);
+        // `visit_mut_expr` has already reduced each factory decorator to a
+        // plain `module` read; drop the reads left in statement position.
         if allow_module_decorator_removal {
-            if self.is_module_decorator_assignment(stripped_expr) {
+            if self.is_factory_module_read(stripped_expr) {
                 return Some(vec![]);
             }
             if let Expr::Seq(seq) = stripped_expr {
@@ -158,7 +164,7 @@ impl Webpack5RuntimeNormalizer {
         let mut changed = false;
         let mut exprs = Vec::with_capacity(seq.exprs.len());
         for expr in &seq.exprs {
-            if self.is_module_decorator_assignment(strip_parens(expr)) {
+            if self.is_factory_module_read(strip_parens(expr)) {
                 changed = true;
             } else {
                 exprs.push(expr.clone());
@@ -181,6 +187,28 @@ impl Webpack5RuntimeNormalizer {
                 })),
             })]),
         }
+    }
+
+    fn is_factory_module_read(&self, expr: &Expr) -> bool {
+        matches!(expr, Expr::Ident(ident)
+            if ident.sym.as_ref() == "module" && ident.ctxt.outer() == self.unresolved_mark)
+    }
+
+    /// The factory's own `module` binding in `module = require.nmd(module)`.
+    /// A shadowing inner `module` parameter has a local context and keeps its
+    /// write.
+    fn factory_module_decorator_target(&self, expr: &Expr) -> Option<Ident> {
+        if !self.is_module_decorator_assignment(strip_parens(expr)) {
+            return None;
+        }
+        let Expr::Assign(AssignExpr {
+            left: AssignTarget::Simple(SimpleAssignTarget::Ident(module)),
+            ..
+        }) = strip_parens(expr)
+        else {
+            return None;
+        };
+        (module.id.ctxt.outer() == self.unresolved_mark).then(|| module.id.clone())
     }
 
     fn is_module_decorator_assignment(&self, expr: &Expr) -> bool {

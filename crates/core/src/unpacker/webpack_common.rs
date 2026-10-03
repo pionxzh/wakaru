@@ -190,7 +190,7 @@ pub(super) fn reused_runtime_parameters(
                 && parameters.get(2).is_some()
             {
                 let mut without_runtime_decorators = module.clone();
-                mask_top_level_module_decorator_writes(
+                mask_module_decorator_writes(
                     &mut without_runtime_decorators,
                     parameter,
                     &parameters[2],
@@ -211,35 +211,41 @@ pub(super) fn reused_runtime_parameters(
         .collect()
 }
 
-/// Webpack 5's `hmd` / `nmd` helpers preserve the runtime module identity and
-/// are removed later by `Webpack5RuntimeNormalizer`. Mask only the same
-/// top-level statement/sequence positions that normalizer consumes so those
-/// writes do not masquerade as a second parameter lifetime during detection.
-fn mask_top_level_module_decorator_writes(
+/// Webpack 5's `hmd` / `nmd` helpers return the module object they receive,
+/// so `module = require.nmd(module)` stores the value the binding already
+/// holds. `Webpack5RuntimeNormalizer` consumes the decorator in any expression
+/// position; mask the same positions so those writes do not masquerade as a
+/// second parameter lifetime during detection. Only the factory's own module
+/// and loader bindings match, so a shadowing inner parameter keeps its write.
+fn mask_module_decorator_writes(
     module: &mut Module,
     module_parameter: &Atom,
     loader_parameter: &Atom,
     unresolved_mark: Mark,
 ) {
     let unresolved_ctxt = SyntaxContext::empty().apply_mark(unresolved_mark);
-    let module_id = (module_parameter.clone(), unresolved_ctxt);
-    let loader_id = (loader_parameter.clone(), unresolved_ctxt);
-    for item in &mut module.body {
-        let ModuleItem::Stmt(Stmt::Expr(statement)) = item else {
-            continue;
-        };
-        if is_module_decorator_assignment(&statement.expr, &module_id, &loader_id) {
-            *statement.expr = Expr::Ident(Ident::new(module_id.0.clone(), DUMMY_SP, module_id.1));
-            continue;
+    module.visit_mut_with(&mut ModuleDecoratorMask {
+        module_id: (module_parameter.clone(), unresolved_ctxt),
+        loader_id: (loader_parameter.clone(), unresolved_ctxt),
+    });
+}
+
+struct ModuleDecoratorMask {
+    module_id: BindingId,
+    loader_id: BindingId,
+}
+
+impl VisitMut for ModuleDecoratorMask {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        if is_module_decorator_assignment(expr, &self.module_id, &self.loader_id) {
+            *expr = Expr::Ident(Ident::new(
+                self.module_id.0.clone(),
+                DUMMY_SP,
+                self.module_id.1,
+            ));
+            return;
         }
-        let Expr::Seq(sequence) = strip_parens_mut(&mut statement.expr) else {
-            continue;
-        };
-        for expression in &mut sequence.exprs {
-            if is_module_decorator_assignment(expression, &module_id, &loader_id) {
-                **expression = Expr::Ident(Ident::new(module_id.0.clone(), DUMMY_SP, module_id.1));
-            }
-        }
+        expr.visit_mut_children_with(self);
     }
 }
 

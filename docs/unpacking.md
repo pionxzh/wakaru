@@ -233,9 +233,14 @@ classify identifiers by `unresolved_mark` see the local as a module-local
 binding rather than an undeclared global. Runtime-helper members and mapped
 module calls in a loader prefix can then use the normal webpack recovery path; post-write calls
 and members stay attached to the new local value even when a numeric argument
-happens to match a module-table ID. Webpack 5's top-level
-`module = require.hmd(module)` / `nmd(module)` decorators are runtime-preserving
-operations consumed by its existing normalizer, not lifetime boundaries. A
+happens to match a module-table ID. Webpack 5's
+`module = require.hmd(module)` / `nmd(module)` decorators return the module
+they receive, so they are runtime-preserving operations, not lifetime
+boundaries. The normalizer reduces each one on the factory's own `module`
+binding to a plain `module` read in any expression position, such as
+`(module = require.nmd(module)).exports = ...` or an IIFE argument, and drops
+the read in top-level statement position. A decorator on a shadowing inner
+parameter keeps its write. A
 first real write may be a top-level assignment, a `var` redeclaration of the
 factory parameter, or a direct element inside a top-level/initializer sequence
 when splitting the sequence preserves its evaluation result. A consumed alias
