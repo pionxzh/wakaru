@@ -1,10 +1,10 @@
 # CommonJS Export Storage Recovery
 
-Status: **IN PROGRESS.** Step 1 is implemented: the per-name analysis runs
-as a report (`wakaru debug cjs-exports`), and the `commonjs_export_unrecovered`
-warning reports leftover accesses. Output is unchanged. Evidence comes from the
+Status: **IN PROGRESS.** Steps 1 and 2 are implemented: the per-name
+analysis (`wakaru debug cjs-exports`), the `commonjs_export_unrecovered`
+warning, and A (property storage). Evidence comes from the
 [CommonJS export-storage matrix](../../scripts/repro/cjs-export-storage-matrix/README.md);
-see [Step 1 results](#step-1-results).
+see [Step 1 results](#step-1-results) and [Step 2 results](#step-2-results).
 
 Ground rules: follow [AGENTS.md](../../AGENTS.md), including a focused unit
 test for every change. Use synthetic names in tests and commits. Record every
@@ -357,8 +357,9 @@ previous step.
    in the matrix). Compare its decisions with the matrix cases before
    changing output. Add the `commonjs_export_unrecovered` warning in the same
    step, so the baseline gap is visible before any output changes.
-2. Implement A and remove the stable read recovery and conditional
-   recovery it replaces.
+2. **Done.** Implement A and remove the conditional recovery it replaces.
+   Stable read recovery stays until step 3; see
+   [Step 2 results](#step-2-results).
 3. Stop `UnAssignmentMerging` from splitting chains that write both an
    `exports` property and a local, then implement B.
 4. Route the existing getter pre-passes through C.
@@ -419,6 +420,59 @@ Three conditions were refined while comparing, all recorded in the B
 section: mirrors may sit behind other mirror statements, the final-copy
 alternative, and the module-level requirement for `L`.
 
+## Step 2 results
+
+Matrix: 150 / 291 behavior preserved (from 27), with no row that was correct
+on `main` now wrong. By producer: TypeScript 22 per profile, rollup 21,
+sucrase 15, Babel 13 per profile, swc and esbuild 0. The warning fires on 57
+of 141 wrong rows and on no ok row. The remaining TypeScript, rollup, and
+sucrase failures are B names (aliases, reassigned functions, sucrase copies
+read inside functions, a string-named alias), `export *`, and single-file
+import interop. Babel also gains rows: names whose mirror chain
+`UnAssignmentMerging` split are A now, which is correct but less readable
+than the B result step 3 will give.
+
+How A was placed and where it differs from the design above:
+
+- **Position.** The rewrite runs after the CommonJS pre-passes (webpack
+  getters, export-star loops, require hoisting) and before statement
+  classification, because those pre-passes match `exports.x` shapes that the
+  rewrite would remove. The module-gate decision (keep CommonJS when the gate
+  fails and a property is written inside top-level control flow) is still
+  taken first, before anything changes. `has_unhandled_named_export_chain`
+  accepts a chain whose every export target is an A name the rewrite owns.
+- **Statement-path names.** A name with only whole top-level writes and
+  leading sentinels, never read in the module, stays on the statement path:
+  an importer sees its last value, which that path already exports as
+  `export const`. Names written in a chain or in control flow, read, or
+  written in functions go through A.
+- **Calls.** A direct call through an A name is rewritten under
+  `call_receiver_independence`, the assumption conditional recovery already
+  used, instead of the stricter "never reassigned and receiver-insensitive"
+  condition above. Only a written value that is a function reading `this`
+  keeps the name unrecovered.
+- **Stable read recovery stays.** It still replaces reads of a stable copy
+  (`exports.f = f; ... exports.f()`), which are B names until step 3
+  implements B.
+- **TypeScript enum and namespace initializers.**
+  `L = exports.x || (exports.x = {})` counts as chain evidence for B, so A
+  leaves it to `UnEnum`, which folds the exported enum later. Step 3 must
+  keep that shape intact when it rewrites B reads.
+- **Seed alias.** The sucrase seed (`let n = 0; exports.n = n;`, the local
+  never used again) becomes `export var n = 0`.
+- **Excluded names.** `exports.exports` stays on the statement path, which
+  keeps its boundary for that key. A name that is only ever read becomes a
+  local `var` without an export: CommonJS never created the property.
+- **Getters inside functions** fail the module gate. Such a getter can be
+  installed any number of times, and webpack factory IIFEs that contain one
+  are unwrapped by a later recovery that needs their `exports` accesses
+  intact.
+- **Sentinels.** Leading `exports.x = void 0` statements are removed by the
+  existing prefix scan, which now also looks past `var` declarations whose
+  initializers run no code (TypeScript's `this && this.__awaiter ||
+  function` helpers). A sentinel after a call stays: the call may write the
+  property first.
+
 ## Decisions
 
 Recorded 2026-10-03.
@@ -428,7 +482,17 @@ Recorded 2026-10-03.
    module is still recovered. The warning is what lets corpus runs and users
    see the remaining gap.
 2. **B strictness:** same statement or next statement, nothing further.
-   Hand-written CommonJS shapes are judged case by case on data.
+   Hand-written CommonJS shapes are judged case by case on data. Refined by
+   decision 5 for producer shapes.
 3. **`var` in output:** acceptable. A emits `var` and leaves narrowing to
    `VarDeclToLetConst`; a residual `var` where that analysis cannot prove
    safety is fine.
+
+Recorded 2026-10-04, after step 1.
+
+4. **Warning visibility:** `commonjs_export_unrecovered` is reported by
+   default. `--diagnostics` means "re-parse the output to find more
+   problems", not "show warnings", and this check needs no re-parse.
+5. **B conditions follow real artifacts:** the mirror run (copies behind
+   other mirror statements) and the final-copy condition are accepted,
+   because Babel, TypeScript, and rollup emit those shapes.

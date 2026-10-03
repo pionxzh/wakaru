@@ -219,10 +219,14 @@ mutable, computed, escaping, or otherwise incompatible reads still roll
 back. This does not guess a namespace representation for CommonJS partial
 exports.
 
-Stable same-module `module.exports` / `exports.name` read recovery is not a
+Same-module `module.exports` / `exports.name` read recovery is not a
 cross-module fact. `UnEsm` proves and consumes that identity within one resolved
-AST before this barrier; ambiguous writes and receiver-sensitive calls stay as
-visible CommonJS residuals. The same local proof can recover Babel-style lazy
+AST before this barrier. An export whose storage is the property itself is
+rewritten to one module binding at every read and write, including inside
+function bodies; a stable copy of a binding (`exports.name = local`) has its
+reads replaced by the binding. Calls through a function that reads `this`, and
+names that no storage model fits, stay as visible CommonJS residuals and are
+reported as `commonjs_export_unrecovered`. The same local proof can recover Babel-style lazy
 default helpers when one top-level function binding and `module.exports` are
 replaced together on every whole-value write. The property mirrors remain real
 mutations of that binding, while a live ESM default specifier exposes later

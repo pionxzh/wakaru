@@ -1271,17 +1271,18 @@ export const notify = () => events.dispatch("ready");
 }
 
 #[test]
-fn named_export_read_recovery_rejects_undefined_after_the_value() {
+fn property_storage_keeps_a_later_reset() {
     let input = r#"
 exports.method = () => 1;
 exports.method = void 0;
 consume(exports.method());
 "#;
-    let output = apply(input);
-    assert!(
-        output.contains("consume(exports.method())"),
-        "a later reset invalidates the recovered property value:\n{output}"
-    );
+    let expected = r#"
+export let method = () => 1;
+method = undefined;
+consume(method());
+"#;
+    assert_eq_normalized(&apply(input), expected);
 }
 
 #[test]
@@ -1313,17 +1314,18 @@ consume(exports.method`value`);
 }
 
 #[test]
-fn named_export_read_recovery_rejects_duplicate_property_writes() {
+fn property_storage_follows_repeated_writes() {
     let input = r#"
 exports.first = () => 1;
 exports.first = () => 2;
 exports.second = () => exports.first();
 "#;
-    let output = apply(input);
-    assert!(
-        output.contains("exports.first()"),
-        "a multiply-written property needs value-flow analysis:\n{output}"
-    );
+    let expected = r#"
+export let first = () => 1;
+first = () => 2;
+export const second = () => first();
+"#;
+    assert_eq_normalized(&apply(input), expected);
 }
 
 #[test]
@@ -1366,30 +1368,34 @@ consume(exports.first());
 }
 
 #[test]
-fn named_export_read_recovery_does_not_rewrite_reads_before_the_export() {
+fn property_storage_reads_before_the_write_see_the_hoisted_var() {
+    // The hoisted `var` is undefined at the earlier read, like the property.
     let input = r#"
 consume(exports.first);
 exports.first = () => 1;
 "#;
-    let output = apply(input);
-    assert!(
-        output.contains("consume(exports.first)"),
-        "the CommonJS property is not initialized at the earlier read:\n{output}"
-    );
+    let expected = r#"
+consume(first);
+export var first = () => 1;
+"#;
+    assert_eq_normalized(&apply(input), expected);
 }
 
 #[test]
-fn named_export_read_recovery_skips_hoisted_function_declarations() {
+fn property_storage_rewrites_hoisted_function_declarations() {
     let input = r#"
 invoke();
 exports.first = () => 1;
 function invoke() { return exports.first(); }
 "#;
-    let output = apply(input);
-    assert!(
-        output.contains("return exports.first()"),
-        "the hoisted function may run before the textually earlier-looking export:\n{output}"
-    );
+    let expected = r#"
+invoke();
+export var first = () => 1;
+function invoke() {
+  return first();
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
 }
 
 #[test]
@@ -4993,7 +4999,9 @@ consume(exports.current);
     let output = common::render_rule(shadowed, |mark| {
         wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
     });
-    assert!(output.contains("current = undefined"), "{output}");
+    // The shadowed `undefined` is a value, not a sentinel: its initializer
+    // reaches the export.
+    assert!(output.contains("current = fallback"), "{output}");
 
     let effectful_void = r#"
 exports.current = void sideEffect();
@@ -5058,24 +5066,48 @@ consume(current, _current);
 }
 
 #[test]
-fn unsafe_conditional_named_exports_keep_the_commonjs_boundary() {
+fn conditional_named_exports_keep_the_commonjs_boundary_when_the_module_gate_fails() {
     for source in [
         "const alias = exports; if (flag) { exports.value = 1; } exports.ready = 1;",
         "module.exports = replacement; if (flag) { exports.value = 1; } exports.ready = 1;",
         "if (flag) { exports[key] = 1; } exports.ready = 1;",
-        "if (flag) { exports.value += 1; } exports.ready = 1;",
         "if (flag) { delete exports.value; } exports.ready = 1;",
         "if (flag) { exports.value = 1; } eval('value'); exports.ready = 1;",
         "if (flag) { exports.value = 1; } with (scope) { observe(); } exports.ready = 1;",
         "Object.defineProperty(exports, 'value', { value: 0 }); if (flag) { exports.value = 1; } exports.ready = 1;",
-        "if (flag) { exports.value = 1; } function later() { exports.other = 2; } exports.ready = 1;",
-        "if (flag) { exports.value = 1; } observe(exports.other); exports.ready = 1;",
-        "if (flag) { exports.current = first(); } else { exports.current = second(); } consume(exports?.current);",
     ] {
         let output = common::render_rule(source, |mark| {
             wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
         });
         assert_eq_normalized(&output, source);
+    }
+}
+
+#[test]
+fn property_storage_recovers_compound_deferred_and_read_only_names() {
+    for (source, expected) in [
+        (
+            "if (flag) { exports.value += 1; } exports.ready = 1;",
+            "export var value; if (flag) { value += 1; } export const ready = 1;",
+        ),
+        (
+            "if (flag) { exports.value = 1; } function later() { exports.other = 2; } exports.ready = 1;",
+            "export var value; export var other; if (flag) { value = 1; } function later() { other = 2; } export const ready = 1;",
+        ),
+        // A name that is only read was never an export; it stays a local.
+        (
+            "if (flag) { exports.value = 1; } observe(exports.other); exports.ready = 1;",
+            "export var value; var other; if (flag) { value = 1; } observe(other); export const ready = 1;",
+        ),
+        (
+            "if (flag) { exports.current = first(); } else { exports.current = second(); } consume(exports?.current);",
+            "export var current; if (flag) { current = first(); } else { current = second(); } consume(current);",
+        ),
+    ] {
+        let output = common::render_rule(source, |mark| {
+            wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
+        });
+        assert_eq_normalized(&output, expected);
     }
 }
 
@@ -5093,8 +5125,7 @@ function bump() {
 exports.bump = bump;
 "#;
     let expected = r#"
-export var a;
-a = 1;
+export var a = 1;
 if (flag) {
   a = 2;
 }
@@ -5159,7 +5190,7 @@ function bump() {
 }
 
 #[test]
-fn deferred_named_export_writes_do_not_trigger_conditional_recovery() {
+fn deferred_named_export_writes_use_property_storage() {
     let source = r#"
 class Example {
   value = exports.field = createField();
@@ -5169,10 +5200,21 @@ class Example {
 }
 "#;
 
+    let expected = r#"
+export var field;
+export var value;
+class Example {
+  value = field = createField();
+  constructor() {
+    value = createValue();
+  }
+}
+"#;
+
     let output = common::render_rule(source, |mark| {
         wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
     });
-    assert_eq_normalized(&output, source);
+    assert_eq_normalized(&output, expected);
 }
 
 #[test]
@@ -5333,7 +5375,7 @@ fn whole_named_export_chains_are_recovered_in_one_pass() {
 }
 
 #[test]
-fn named_export_chains_keep_the_boundary_under_dynamic_scope_or_effectful_values() {
+fn named_export_chains_keep_the_boundary_under_dynamic_scope_or_receiver_replacement() {
     for source in [
         // The recovered exports become module bindings that direct eval or
         // `with` could observe.
@@ -5341,45 +5383,10 @@ fn named_export_chains_keep_the_boundary_under_dynamic_scope_or_effectful_values
         "exports.a = module.exports.b = 1; eval('a');",
         "module.exports = exports.default = fn; function dynamic(code) { return eval(code); }",
         "with (scope) { exports.a = exports.b = 1; }",
-        // Evaluating the value may run code that replaces a receiver. Only a
-        // literal-specifier CommonJS require is accepted among calls.
-        "exports.a = exports.b = makeValue();",
-        "exports.a = exports.b = require(name);",
-        "exports.a = exports.b = require(\"x\", extra);",
-        "exports.a = exports.b = require(...specs);",
-        "const require = load; exports.a = exports.b = require(\"x\");",
-        "exports.a = exports.b = new Thing();",
-        "exports.a = exports.b = void sideEffect();",
-        // A provider call is accepted only when the callee is rooted at a
-        // top-level `require("literal")` binding that is declared once and
-        // never rewritten, reached through static keys, and every argument
-        // is repeatable and not a CommonJS wrapper binding.
-        "var Lib = require(\"./lib\"); exports.a = exports.b = Lib.make(other());",
-        "var Lib = require(\"./lib\"); exports.a = exports.b = Lib[key](1);",
-        "var Lib = require(\"./lib\"); exports.a = exports.b = Lib.make(...xs);",
-        "var Lib = require(\"./lib\"); exports.a = exports.b = Lib?.make(1);",
-        "var Lib = require(\"./lib\"); exports.a = exports.b = Lib.make?.(1);",
+        // Passing a wrapper binding to a call can replace or leak the object.
+        "var P = require(\"./lib\"); P = function () { module.exports = {}; return 1; }; var Q = P; module.exports.a = module.exports.b = Q();",
         "var Lib = require(\"./lib\"); exports.a = exports.b = Lib.make(module);",
         "var Lib = require(\"./lib\"); exports.a = exports.b = Lib.make(exports);",
-        "var Lib = require(\"./lib\"); exports.a = exports.b = Lib.make(require);",
-        "var Lib = require(\"./lib\"); exports.a = exports.b = Lib.make(/re/);",
-        "var Lib = require(\"./lib\"); exports.a = exports.b = new Lib.Thing(1);",
-        "var Lib = require(\"./lib\"); Lib = local; exports.a = exports.b = Lib.make(1);",
-        "var Lib = require(\"./lib\"); var Lib = other; exports.a = exports.b = Lib.make(1);",
-        "var Lib = require(\"./lib\"); function reset() { Lib = other; } exports.a = exports.b = Lib.make(1);",
-        // An alias of a rewritten or redeclared root is not a provider either.
-        "var P = require(\"./lib\"); P = function () { module.exports = {}; return 1; }; var Q = P; module.exports.a = module.exports.b = Q();",
-        "var P = require(\"./lib\"); var P = other; var Q = P; exports.a = exports.b = Q(1);",
-        "var P = require(\"./lib\"); var Q = P.make; function swap() { P = other; } exports.a = exports.b = Q(1);",
-        "var P = require(\"./lib\"); var Q = P; Q = local; exports.a = exports.b = Q(1);",
-        "var Lib = require(name); exports.a = exports.b = Lib.make(1);",
-        "var Lib = require(\"./lib\", extra); exports.a = exports.b = Lib.make(1);",
-        "var Lib = require(\"./lib\")[pick]; exports.a = exports.b = Lib.make(1);",
-        "var Lib = require(\"./lib\")(); exports.a = exports.b = Lib.make(1);",
-        "function Lib() {} exports.a = exports.b = Lib.make(1);",
-        "var Lib = { make() {} }; exports.a = exports.b = Lib.make(1);",
-        "function scope() { var Lib = require(\"./lib\"); } exports.a = exports.b = Lib.make(1);",
-        "const require = load; var Lib = require(\"./lib\"); exports.a = exports.b = Lib.make(1);",
         "module.exports.a = module.exports.b = (module.exports = {}, 1);",
         "exports.a = exports.b = (exports = {}, 1);",
         "module.exports = exports.default = (exports = {}, fn);",
@@ -5392,6 +5399,55 @@ fn named_export_chains_keep_the_boundary_under_dynamic_scope_or_effectful_values
             wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
         });
         assert_eq_normalized(&once, source);
+    }
+}
+
+#[test]
+fn property_storage_recovers_named_export_chains_with_effectful_values() {
+    // Every link writes a property-storage name, so the chain becomes one
+    // assignment chain of module bindings with the same single evaluation.
+    for source in [
+        "exports.a = exports.b = makeValue();",
+        "exports.a = exports.b = require(name);",
+        "exports.a = exports.b = require(\"x\", extra);",
+        "exports.a = exports.b = require(...specs);",
+        "const require = load; exports.a = exports.b = require(\"x\");",
+        "exports.a = exports.b = new Thing();",
+        "exports.a = exports.b = void sideEffect();",
+        "var Lib = require(\"./lib\"); exports.a = exports.b = Lib.make(other());",
+        "var Lib = require(\"./lib\"); exports.a = exports.b = Lib[key](1);",
+        "var Lib = require(\"./lib\"); exports.a = exports.b = Lib.make(...xs);",
+        "var Lib = require(\"./lib\"); exports.a = exports.b = Lib?.make(1);",
+        "var Lib = require(\"./lib\"); exports.a = exports.b = Lib.make?.(1);",
+        "var Lib = require(\"./lib\"); exports.a = exports.b = Lib.make(require);",
+        "var Lib = require(\"./lib\"); exports.a = exports.b = Lib.make(/re/);",
+        "var Lib = require(\"./lib\"); exports.a = exports.b = new Lib.Thing(1);",
+        "var Lib = require(\"./lib\"); Lib = local; exports.a = exports.b = Lib.make(1);",
+        "var Lib = require(\"./lib\"); var Lib = other; exports.a = exports.b = Lib.make(1);",
+        "var Lib = require(\"./lib\"); function reset() { Lib = other; } exports.a = exports.b = Lib.make(1);",
+        "var P = require(\"./lib\"); var P = other; var Q = P; exports.a = exports.b = Q(1);",
+        "var P = require(\"./lib\"); var Q = P.make; function swap() { P = other; } exports.a = exports.b = Q(1);",
+        "var P = require(\"./lib\"); var Q = P; Q = local; exports.a = exports.b = Q(1);",
+        "var Lib = require(name); exports.a = exports.b = Lib.make(1);",
+        "var Lib = require(\"./lib\", extra); exports.a = exports.b = Lib.make(1);",
+        "var Lib = require(\"./lib\")[pick]; exports.a = exports.b = Lib.make(1);",
+        "var Lib = require(\"./lib\")(); exports.a = exports.b = Lib.make(1);",
+        "function Lib() {} exports.a = exports.b = Lib.make(1);",
+        "var Lib = { make() {} }; exports.a = exports.b = Lib.make(1);",
+        "function scope() { var Lib = require(\"./lib\"); } exports.a = exports.b = Lib.make(1);",
+        "const require = load; var Lib = require(\"./lib\"); exports.a = exports.b = Lib.make(1);",
+    ] {
+        let output = common::render_rule(source, |mark| {
+            wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
+        });
+        assert!(output.contains("a = b = "), "{source}\n{output}");
+        assert!(!output.contains("exports"), "{source}\n{output}");
+        assert!(
+            !validate_output_modules(&[("entry.js".into(), output.clone())])
+                .iter()
+                .any(|finding| finding.kind == OutputFindingKind::DuplicateDeclaration),
+            "{source}\n{output}"
+        );
     }
 }
 
@@ -5620,9 +5676,11 @@ fn export_storage_module_gates() {
         ),
         ("exports.a = 1; exports[key] = 2;", "computed `exports` key"),
         (
-            "exports.a = 1; module.exports.b = 2;",
-            "`module` is referenced",
+            "exports.a = 1; module.exports = other;",
+            "`module.exports` is used as a value",
         ),
+        ("exports.a = 1; exports = other;", "`exports` is reassigned"),
+        ("exports.a = 1; module[key] = 2;", "computed `module` key"),
         (
             "exports.a = 1; delete exports.a;",
             "`delete` of an `exports` property",
@@ -5635,4 +5693,167 @@ fn export_storage_module_gates() {
         );
     }
     assert!(export_storage("const a = 1; export { a };").is_empty());
+    // `module.exports.name` is the same object as `exports.name`.
+    assert_eq!(
+        export_storage("exports.a = 1; module.exports.b = 2; module.hot && module.hot.accept();"),
+        ["a=property", "b=property"]
+    );
+}
+
+// ============================================================
+// Property storage recovery
+// ============================================================
+
+#[test]
+fn property_storage_recovers_typescript_writes_in_function_bodies() {
+    let input = r#"
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.limit = exports.count = void 0;
+exports.bump = bump;
+exports.count = 0;
+function bump() {
+  exports.count += 1;
+  return exports.count < exports.limit;
+}
+exports.limit = 3;
+"#;
+    let output = render_pipeline(input);
+    assert!(!output.contains("exports"), "{output}");
+    assert!(output.contains("export let count = 0;"), "{output}");
+    assert!(output.contains("count += 1;"), "{output}");
+    assert!(output.contains("return count < limit;"), "{output}");
+    assert!(
+        validate_output_modules(&[("entry.js".into(), output.clone())]).is_empty(),
+        "{output}"
+    );
+}
+
+#[test]
+fn property_storage_takes_over_a_seed_local() {
+    let input = r#"
+let n = 0;
+exports.n = n;
+function step() { exports.n++; }
+exports.step = step;
+"#;
+    let expected = r#"
+export let n = 0;
+function step() {
+  n++;
+}
+export { step };
+"#;
+    assert_eq_normalized(&apply(input), expected);
+
+    // A local that is used again stays, and the export gets its own binding.
+    let used_again = r#"
+let n = 0;
+exports.n = n;
+log(n);
+function step() { exports.n++; }
+"#;
+    let output = apply(used_again);
+    assert!(output.contains("let _n = n;"), "{output}");
+    assert!(output.contains("_n++;"), "{output}");
+    assert!(output.contains("log(n);"), "{output}");
+}
+
+#[test]
+fn property_storage_avoids_names_that_would_be_shadowed() {
+    let input = r#"
+exports.count = 0;
+function setCount(count) { exports.count = count; }
+function read() { return exports.count; }
+exports.setCount = setCount;
+exports.read = read;
+"#;
+    let output = apply(input);
+    assert!(output.contains("_count = count;"), "{output}");
+    assert!(output.contains("return _count;"), "{output}");
+    assert!(output.contains("_count as count"), "{output}");
+}
+
+#[test]
+fn property_storage_exports_string_names() {
+    let input = r#"
+exports["a-b"] = compute();
+function bump() { exports["a-b"] += 1; }
+exports.bump = bump;
+"#;
+    let output = apply(input);
+    assert!(output.contains("_a_b += 1;"), "{output}");
+    assert!(output.contains(r#"_a_b as "a-b""#), "{output}");
+    assert!(!output.contains("exports"), "{output}");
+}
+
+#[test]
+fn property_storage_rewrites_calls_through_reassigned_values() {
+    // call_receiver_independence: the `exports` receiver of `exports.f()` is
+    // an artifact of lowering `f()`.
+    let input = r#"
+exports.current = first();
+function read() { return exports.current(); }
+function reset() { exports.current = second(); }
+exports.read = read;
+exports.reset = reset;
+"#;
+    let output = apply(input);
+    assert!(output.contains("return current();"), "{output}");
+    assert!(output.contains("current = second();"), "{output}");
+    assert!(!output.contains("exports"), "{output}");
+}
+
+#[test]
+fn export_getter_inside_a_function_fails_the_storage_gate() {
+    // A later recovery unwraps the factory IIFE; its `exports` accesses must
+    // reach it unchanged.
+    let input = r#"
+((t) => {
+  require.d(exports, "VERSION", () => o);
+  const r = t.make();
+  exports.default = r;
+  const o = "1.0.0";
+})(require("./dependency.js"));
+"#;
+    let storage = export_storage(input);
+    assert!(
+        storage.len() == 1
+            && storage[0].starts_with("gate: an export getter is defined inside a function"),
+        "{storage:?}"
+    );
+    let output = common::render_rule(input, |mark| {
+        wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
+    });
+    assert!(output.contains("exports.default = r"), "{output}");
+}
+
+#[test]
+fn export_sentinels_after_typescript_helper_declarations_are_removed() {
+    let input = r#"
+"use strict";
+var __awaiter = this && this.__awaiter || function (thisArg, body) { return body(); };
+exports.endpoint = void 0;
+exports.endpoint = "https://example.com/report";
+function report() { return exports.endpoint; }
+exports.report = report;
+"#;
+    let output = apply(input);
+    assert!(!output.contains("endpoint = undefined"), "{output}");
+    assert!(
+        output.contains("endpoint = \"https://example.com/report\""),
+        "{output}"
+    );
+
+    // A call before the sentinel may write the property, so the sentinel
+    // stays.
+    let after_call = r#"
+setup();
+exports.endpoint = void 0;
+exports.endpoint = compute();
+function setup() { exports.endpoint = 1; }
+function report() { return exports.endpoint; }
+"#;
+    let output = apply(after_call);
+    assert!(output.contains("endpoint = undefined"), "{output}");
 }

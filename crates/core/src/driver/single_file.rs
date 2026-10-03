@@ -155,7 +155,7 @@ mod tests {
     #[test]
     fn commonjs_export_residuals_are_reported_without_diagnostics() {
         let output = decompile(
-            "exports.count = 0;\nfunction bump() { exports.count += 1; }\nexports.bump = bump;",
+            "exports.run = function () { return this.state; };\nexports.state = 1;\nfunction go() { return exports.run(); }\nexports.go = go;",
             DecompileOptions::default(),
         )
         .expect("decompile should succeed");
@@ -171,7 +171,7 @@ mod tests {
             output.warnings,
             output.code
         );
-        assert!(residuals[0].message.contains("`count`"));
+        assert!(residuals[0].message.contains("`run`"));
     }
 
     #[test]

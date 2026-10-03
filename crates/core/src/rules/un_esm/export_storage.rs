@@ -24,15 +24,20 @@
 use crate::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
+use swc_core::common::DUMMY_SP;
 use swc_core::common::{Mark, Span, Spanned};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignOp, AssignTarget, CallExpr, Callee, Class, ClassDecl, Decl, Expr,
-    FnDecl, ForHead, ForInStmt, ForOfStmt, Function, Ident, MemberExpr, MemberProp, Module,
-    ModuleDecl, ModuleItem, OptCall, Pat, SimpleAssignTarget, Stmt, TaggedTpl, UnaryExpr, UnaryOp,
-    UpdateExpr, VarDeclarator,
+    ArrowExpr, AssignExpr, AssignOp, AssignTarget, BinaryOp, BindingIdent, CallExpr, Callee, Class,
+    ClassDecl, Decl, ExportDecl, ExportNamedSpecifier, ExportSpecifier, Expr, FnDecl, ForHead,
+    ForInStmt, ForOfStmt, Function, Ident, MemberExpr, MemberProp, Module, ModuleDecl,
+    ModuleExportName, ModuleItem, NamedExport, OptCall, OptChainBase, Pat, SimpleAssignTarget,
+    Stmt, TaggedTpl, UnaryExpr, UnaryOp, UpdateExpr, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::utils::find_pat_ids;
-use swc_core::ecma::visit::{Visit, VisitWith};
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
+
+use crate::js_names::{is_reserved_binding_name, is_valid_identifier_name};
+use crate::rules::decl_utils::{collect_decl_names, fresh_binding_ident};
 
 use crate::analysis::BindingId;
 use crate::rules::constructor_sensitivity::static_member_name;
@@ -42,10 +47,10 @@ use crate::utils::prototype_members::is_prototype_mutating_member_name;
 
 use super::{
     extract_define_property_getter_expr, extract_export_getter_map,
-    extract_getter_expr_return_expr, function_observes_receiver, is_esmodule_descriptor,
-    is_esmodule_name_arg, is_object_define_property_global_call,
-    is_receiver_insensitive_function_value, is_unresolved_ident, is_unresolved_member_expr,
-    is_void_or_undefined,
+    extract_getter_expr_return_expr, fresh_prefixed_name, function_observes_receiver,
+    is_cjs_export_object_expr, is_esmodule_descriptor, is_esmodule_name_arg,
+    is_object_define_property_global_call, is_unresolved_ident, is_unresolved_member_expr,
+    is_void_or_undefined, leading_export_sentinels, make_name_ident, make_str,
 };
 
 /// The storage model chosen for one export name.
@@ -110,6 +115,9 @@ pub(crate) enum ExportStorageReport {
     ModuleGate {
         message: String,
         span: Option<Span>,
+        /// An `exports` property is written inside top-level control flow,
+        /// where statement-by-statement recovery cannot reach it.
+        nested_write: bool,
     },
     Names(Vec<ExportStorageDecision>),
 }
@@ -124,16 +132,19 @@ pub(crate) fn analyze_export_storage(
     if !inventory.saw_exports {
         return ExportStorageReport::NoCommonJsExports;
     }
+    let nested_write = inventory.nested_write;
     if let Some((message, span)) = inventory.gate {
         return ExportStorageReport::ModuleGate {
             message,
             span: Some(span),
+            nested_write,
         };
     }
     if module_has_with_stmt(module) {
         return ExportStorageReport::ModuleGate {
             message: "the module contains a `with` statement".to_string(),
             span: None,
+            nested_write,
         };
     }
     let mut direct_eval = DirectEvalPresence::default();
@@ -142,6 +153,7 @@ pub(crate) fn analyze_export_storage(
         return ExportStorageReport::ModuleGate {
             message: "the module contains a direct `eval` call".to_string(),
             span: None,
+            nested_write,
         };
     }
 
@@ -149,6 +161,8 @@ pub(crate) fn analyze_export_storage(
     let decisions = inventory
         .order
         .iter()
+        // The interop marker is not an export.
+        .filter(|name| name.as_ref() != "__esModule")
         .map(|name| classify(name, &inventory.names[name], &inventory, &declarations))
         .collect();
     ExportStorageReport::Names(decisions)
@@ -182,12 +196,6 @@ struct Site {
     deferred: bool,
 }
 
-impl Site {
-    fn is_module_statement(&self) -> bool {
-        self.stmt.list == MODULE_LIST && !self.deferred
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MirrorEvidence {
     /// The written value reads the binding after any write to it in the same
@@ -202,9 +210,14 @@ enum MirrorEvidence {
 #[derive(Debug, Clone)]
 struct PropertyWrite {
     site: Site,
+    /// The write runs exactly once when the module body runs: it is the
+    /// expression of a top-level statement, an element of a top-level
+    /// sequence, or a link of such an assignment chain.
+    unconditional: bool,
     mirror: Option<(BindingId, MirrorEvidence)>,
     is_void: bool,
-    receiver_insensitive_function: bool,
+    /// The value is a function literal that reads `this`.
+    observes_receiver: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -237,18 +250,18 @@ impl NameFacts {
     /// Leading `exports.X = void 0` statements before any other access of the
     /// name. TypeScript emits them ahead of the real write.
     fn is_leading_sentinel(&self, write: &PropertyWrite) -> bool {
-        if !write.is_void || !write.site.is_module_statement() {
+        if !write.is_void || !write.unconditional {
             return false;
         }
         !self
             .all_sites()
-            .any(|site| site.seq < write.site.seq && !self.is_void_module_write(site))
+            .any(|site| site.seq < write.site.seq && !self.is_unconditional_void_write(site))
     }
 
-    fn is_void_module_write(&self, site: &Site) -> bool {
+    fn is_unconditional_void_write(&self, site: &Site) -> bool {
         self.plain_writes
             .iter()
-            .any(|write| write.site.seq == site.seq && write.is_void && site.is_module_statement())
+            .any(|write| write.site.seq == site.seq && write.is_void && write.unconditional)
     }
 }
 
@@ -263,6 +276,12 @@ struct Inventory {
     /// Statements that only copy local bindings into `exports` properties,
     /// such as `exports.a = a, exports.b = b;`.
     mirror_statements: HashSet<StmtPos>,
+    /// Assignments that run exactly once with the module body, keyed by
+    /// address (see [`PropertyWrite::unconditional`]).
+    unconditional_assigns: HashSet<*const AssignExpr>,
+    /// Whether the current module-body item is an expression statement.
+    in_module_expr_stmt: bool,
+    nested_write: bool,
     stmt: StmtPos,
     module_index: usize,
     next_list: usize,
@@ -283,6 +302,9 @@ impl Inventory {
             names: HashMap::default(),
             local_writes: HashMap::default(),
             mirror_statements: HashSet::default(),
+            unconditional_assigns: HashSet::default(),
+            in_module_expr_stmt: false,
+            nested_write: false,
             stmt: StmtPos {
                 list: MODULE_LIST,
                 index: 0,
@@ -319,9 +341,58 @@ impl Inventory {
         self.names.entry(name.clone()).or_default()
     }
 
+    /// `exports` or `module.exports`. The module gate rejects any other use
+    /// of `module.exports`, so both name the same object.
     fn is_exports(&self, expr: &Expr) -> bool {
-        matches!(strip_parens(expr), Expr::Ident(ident)
-            if is_unresolved_ident(ident, "exports", self.unresolved_mark))
+        match strip_parens(expr) {
+            Expr::Ident(ident) => is_unresolved_ident(ident, "exports", self.unresolved_mark),
+            Expr::Member(member) => {
+                matches!(strip_parens(&member.obj), Expr::Ident(object)
+                    if is_unresolved_ident(object, "module", self.unresolved_mark))
+                    && static_member_name(&member.prop).as_deref() == Some("exports")
+            }
+            _ => false,
+        }
+    }
+
+    fn collect_unconditional_assigns(&mut self, expr: &Expr) {
+        match strip_parens(expr) {
+            Expr::Assign(assign) => {
+                self.unconditional_assigns
+                    .insert(assign as *const AssignExpr);
+                if assign.op == AssignOp::Assign {
+                    self.collect_unconditional_assigns(&assign.right);
+                }
+            }
+            Expr::Seq(sequence) => {
+                for expr in &sequence.exprs {
+                    self.collect_unconditional_assigns(expr);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Reassigning the CommonJS wrapper bindings replaces the object every
+    /// recovered name refers to.
+    fn check_wrapper_write(
+        &mut self,
+        sym: &Atom,
+        ctxt: swc_core::common::SyntaxContext,
+        span: Span,
+    ) {
+        if ctxt.outer() == self.unresolved_mark && matches!(sym.as_ref(), "exports" | "module") {
+            self.saw_exports |= sym.as_ref() == "exports";
+            self.fail(format!("`{sym}` is reassigned"), span);
+        }
+    }
+
+    /// A write of an `exports` property inside top-level control flow.
+    fn note_exports_write_position(&mut self) {
+        if self.function_depth == 0 && (self.stmt.list != MODULE_LIST || !self.in_module_expr_stmt)
+        {
+            self.nested_write = true;
+        }
     }
 
     fn is_local(&self, ident: &Ident) -> bool {
@@ -354,6 +425,7 @@ impl Inventory {
     }
 
     fn record_local_write(&mut self, ident: &Ident) {
+        self.check_wrapper_write(&ident.sym, ident.ctxt, ident.span);
         if self.is_local(ident) {
             let site = self.site(ident.span);
             self.local_writes
@@ -369,6 +441,7 @@ impl Inventory {
     {
         let ids: Vec<swc_core::ecma::ast::Id> = find_pat_ids(pattern);
         for (sym, ctxt) in ids {
+            self.check_wrapper_write(&sym, ctxt, pattern.span());
             if ctxt.outer() != self.unresolved_mark {
                 let site = self.site(pattern.span());
                 self.local_writes.entry((sym, ctxt)).or_default().push(site);
@@ -422,7 +495,29 @@ impl Inventory {
 
     /// Mark the property assignment that `value` starts, if any, as part of a
     /// chain that also writes `binding`.
+    ///
+    /// TypeScript's exported enum and namespace initializer,
+    /// `L = exports.x || (exports.x = {})`, counts too: afterwards `L` and the
+    /// property hold the same object either way.
     fn note_chain(&mut self, value: &Expr, binding: BindingId) {
+        let value = match strip_parens(value) {
+            Expr::Bin(bin) if bin.op == BinaryOp::LogicalOr => {
+                let Some(name) = self.static_exports_name(&bin.left) else {
+                    return;
+                };
+                match strip_parens(&bin.right) {
+                    Expr::Assign(assign)
+                        if matches!(&assign.left,
+                            AssignTarget::Simple(SimpleAssignTarget::Member(member))
+                                if self.static_exports_name_of(member).as_ref() == Some(&name)) =>
+                    {
+                        &bin.right
+                    }
+                    _ => return,
+                }
+            }
+            _ => value,
+        };
         if let Expr::Assign(assign) = strip_parens(value) {
             if assign.op == AssignOp::Assign {
                 if let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left {
@@ -431,6 +526,22 @@ impl Inventory {
                     }
                 }
             }
+        }
+    }
+
+    /// The static name of `exports.x`, without recording or gating anything.
+    fn static_exports_name(&self, expr: &Expr) -> Option<Atom> {
+        match strip_parens(expr) {
+            Expr::Member(member) => self.static_exports_name_of(member),
+            _ => None,
+        }
+    }
+
+    fn static_exports_name_of(&self, member: &MemberExpr) -> Option<Atom> {
+        if self.is_exports(&member.obj) {
+            static_member_name(&member.prop)
+        } else {
+            None
         }
     }
 
@@ -522,6 +633,13 @@ impl Inventory {
 
     fn record_getter(&mut self, name: Atom, getter: &Expr, span: Span) {
         self.saw_exports = true;
+        // A getter defined inside a function may be installed any number of
+        // times, or only once the function runs; webpack's factory IIFEs are
+        // unwrapped by a later recovery that needs these accesses intact.
+        if self.function_depth > 0 {
+            self.fail("an export getter is defined inside a function", span);
+            return;
+        }
         if is_prototype_mutating_member_name(name.as_ref()) {
             self.fail(format!("prototype member `exports.{name}`"), span);
             return;
@@ -579,6 +697,10 @@ impl Visit for Inventory {
                 index,
             };
             self.module_index = index;
+            self.in_module_expr_stmt = matches!(item, ModuleItem::Stmt(Stmt::Expr(_)));
+            if let ModuleItem::Stmt(Stmt::Expr(statement)) = item {
+                self.collect_unconditional_assigns(&statement.expr);
+            }
             if matches!(item, ModuleItem::Stmt(stmt) if self.is_mirror_statement(stmt)) {
                 self.mirror_statements.insert(self.stmt);
             }
@@ -645,10 +767,20 @@ impl Visit for Inventory {
             AssignTarget::Simple(SimpleAssignTarget::Member(member))
                 if self.is_exports(&member.obj) =>
             {
+                let unconditional = self.function_depth == 0
+                    && self
+                        .unconditional_assigns
+                        .contains(&(assign as *const AssignExpr));
+                if !unconditional {
+                    self.note_exports_write_position();
+                }
                 let Some(name) = self.exports_member_name(member) else {
                     assign.right.visit_with(self);
                     return;
                 };
+                // Register the name in source order before the right-hand
+                // side, which may write other names first.
+                self.facts(&name);
                 if assign.op != AssignOp::Assign {
                     assign.right.visit_with(self);
                     let site = self.site(member.span);
@@ -663,15 +795,15 @@ impl Visit for Inventory {
                     .map(|binding| (binding, MirrorEvidence::Value))
                     .or_else(|| chain.map(|binding| (binding, MirrorEvidence::Chain)));
                 let is_void = self.is_void_value(&assign.right);
-                let receiver_insensitive_function =
-                    is_receiver_insensitive_function_value(strip_parens(&assign.right));
+                let observes_receiver = value_observes_receiver(&assign.right);
                 assign.right.visit_with(self);
                 let site = self.site(member.span);
                 self.facts(&name).plain_writes.push(PropertyWrite {
                     site,
+                    unconditional,
                     mirror,
                     is_void,
-                    receiver_insensitive_function,
+                    observes_receiver,
                 });
             }
             AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) => {
@@ -693,6 +825,7 @@ impl Visit for Inventory {
     fn visit_update_expr(&mut self, update: &UpdateExpr) {
         match strip_parens(&update.arg) {
             Expr::Member(member) if self.is_exports(&member.obj) => {
+                self.note_exports_write_position();
                 if let Some(name) = self.exports_member_name(member) {
                     let site = self.site(member.span);
                     self.facts(&name).other_writes.push(("update", site));
@@ -705,6 +838,10 @@ impl Visit for Inventory {
 
     fn visit_pat(&mut self, pattern: &Pat) {
         if let Pat::Expr(target) = pattern {
+            if matches!(strip_parens(target), Expr::Member(member) if self.is_exports(&member.obj))
+            {
+                self.note_exports_write_position();
+            }
             if let Some(name) = self.exports_target_name(target) {
                 let site = self.site(target.span());
                 self.facts(&name).other_writes.push(("pattern", site));
@@ -758,7 +895,10 @@ impl Visit for Inventory {
             UnaryOp::TypeOf
                 if matches!(strip_parens(&unary.arg), Expr::Ident(ident)
                     if is_unresolved_ident(ident, "module", self.unresolved_mark)) => {}
-            UnaryOp::Delete if self.exports_target_name(&unary.arg).is_some() => {
+            UnaryOp::Delete if matches!(strip_parens(&unary.arg), Expr::Member(member) if self.is_exports(&member.obj)) =>
+            {
+                self.saw_exports = true;
+                self.note_exports_write_position();
                 self.fail("`delete` of an `exports` property", unary.span);
             }
             _ => unary.visit_children_with(self),
@@ -770,6 +910,19 @@ impl Visit for Inventory {
             if let Some(name) = self.exports_member_name(member) {
                 let site = self.site(member.span);
                 self.facts(&name).reads.push(site);
+            }
+            return;
+        }
+        if matches!(strip_parens(&member.obj), Expr::Ident(object)
+            if is_unresolved_ident(object, "module", self.unresolved_mark))
+        {
+            // `module.exports.name` was handled above; any other use of
+            // `module.exports` can replace or leak the object. Other static
+            // members (`module.hot`, `module.id`) do not touch exports.
+            match static_member_name(&member.prop).as_deref() {
+                Some("exports") => self.fail("`module.exports` is used as a value", member.span),
+                Some(_) => {}
+                None => self.fail("computed `module` key", member.span),
             }
             return;
         }
@@ -822,16 +975,21 @@ fn visit_for_head(inventory: &mut Inventory, head: &ForHead) {
 
 #[derive(Debug, Clone, Copy)]
 struct ModuleDeclaration {
-    /// The declared value is a function that does not observe its receiver,
-    /// so a direct call through a copy of it does not depend on `this`.
-    receiver_insensitive_function: bool,
-    /// A function declaration is initialized before any statement runs.
-    hoisted_function: bool,
+    /// The declared value is a function that reads `this`, so a direct call
+    /// through a copy of it would see a different receiver.
+    observes_receiver: bool,
+}
+
+fn value_observes_receiver(value: &Expr) -> bool {
+    matches!(strip_parens(value), Expr::Fn(function) if function_observes_receiver(&function.function))
 }
 
 /// Bindings declared directly in the module body.
 fn collect_module_declarations(module: &Module) -> HashMap<BindingId, ModuleDeclaration> {
     let mut declarations = HashMap::default();
+    let plain = ModuleDeclaration {
+        observes_receiver: false,
+    };
     for item in &module.body {
         let decl = match item {
             ModuleItem::Stmt(Stmt::Decl(decl)) => decl,
@@ -845,13 +1003,7 @@ fn collect_module_declarations(module: &Module) -> HashMap<BindingId, ModuleDecl
                             &namespace.local
                         }
                     };
-                    declarations.insert(
-                        (local.sym.clone(), local.ctxt),
-                        ModuleDeclaration {
-                            receiver_insensitive_function: false,
-                            hoisted_function: false,
-                        },
-                    );
+                    declarations.insert((local.sym.clone(), local.ctxt), plain);
                 }
                 continue;
             }
@@ -862,36 +1014,22 @@ fn collect_module_declarations(module: &Module) -> HashMap<BindingId, ModuleDecl
                 declarations.insert(
                     (function.ident.sym.clone(), function.ident.ctxt),
                     ModuleDeclaration {
-                        receiver_insensitive_function: !function_observes_receiver(
-                            &function.function,
-                        ),
-                        hoisted_function: true,
+                        observes_receiver: function_observes_receiver(&function.function),
                     },
                 );
             }
             Decl::Class(class) => {
-                declarations.insert(
-                    (class.ident.sym.clone(), class.ident.ctxt),
-                    ModuleDeclaration {
-                        receiver_insensitive_function: false,
-                        hoisted_function: false,
-                    },
-                );
+                declarations.insert((class.ident.sym.clone(), class.ident.ctxt), plain);
             }
             Decl::Var(var) => {
                 for declarator in &var.decls {
-                    let receiver_insensitive_function = matches!(&declarator.name, Pat::Ident(_))
-                        && declarator.init.as_deref().is_some_and(|init| {
-                            is_receiver_insensitive_function_value(strip_parens(init))
-                        });
+                    let observes_receiver = matches!(&declarator.name, Pat::Ident(_))
+                        && declarator
+                            .init
+                            .as_deref()
+                            .is_some_and(value_observes_receiver);
                     for id in find_pat_ids::<_, swc_core::ecma::ast::Id>(&declarator.name) {
-                        declarations.insert(
-                            id,
-                            ModuleDeclaration {
-                                receiver_insensitive_function,
-                                hoisted_function: false,
-                            },
-                        );
+                        declarations.insert(id, ModuleDeclaration { observes_receiver });
                     }
                 }
             }
@@ -933,7 +1071,7 @@ fn classify(
     };
 
     if let Some((target, site)) = facts.getters.first() {
-        match classify_getter(facts, &writes, target, site, inventory, declarations) {
+        match classify_getter(facts, &writes, target, site, declarations) {
             Ok(binding) => {
                 decision.storage = ExportStorage::Getter;
                 decision.binding = Some(binding);
@@ -971,7 +1109,6 @@ fn classify_getter(
     writes: &[&PropertyWrite],
     target: &GetterTarget,
     site: &Site,
-    inventory: &Inventory,
     declarations: &HashMap<BindingId, ModuleDeclaration>,
 ) -> Result<String, Rejection> {
     let reject = |message: String, span: Option<Span>| Rejection {
@@ -1000,18 +1137,13 @@ fn classify_getter(
     let binding = match target {
         GetterTarget::Binding(ident) => {
             if let Some(call) = facts.calls.first() {
-                if !is_stable_callable(&(ident.sym.clone(), ident.ctxt), inventory, declarations) {
+                if binding_observes_receiver(&(ident.sym.clone(), ident.ctxt), declarations) {
                     return Err(receiver_rejection(call));
                 }
             }
             ident.sym.to_string()
         }
-        GetterTarget::Member(base, prop) => {
-            if let Some(call) = facts.calls.first() {
-                return Err(receiver_rejection(call));
-            }
-            format!("{}.{prop}", base.sym)
-        }
+        GetterTarget::Member(base, prop) => format!("{}.{prop}", base.sym),
         GetterTarget::Other => {
             return Err(reject(
                 "the getter returns neither a binding nor a member of one".to_string(),
@@ -1092,7 +1224,7 @@ fn classify_mirror(
         }
     }
     if let Some(call) = facts.calls.first() {
-        if !is_stable_callable(&binding, inventory, declarations) {
+        if binding_observes_receiver(&binding, declarations) {
             return Err(Some(receiver_rejection(call)));
         }
     }
@@ -1109,7 +1241,7 @@ fn is_final_copy(facts: &NameFacts, writes: &[&PropertyWrite], local_writes: &[S
     };
     facts.reads.is_empty()
         && facts.calls.is_empty()
-        && write.site.is_module_statement()
+        && write.unconditional
         && local_writes
             .iter()
             .all(|local| !local.deferred && local.module_index < write.site.module_index)
@@ -1146,40 +1278,509 @@ fn classify_property(facts: &NameFacts, writes: &[&PropertyWrite]) -> Result<(),
     let Some(call) = facts.calls.first() else {
         return Ok(());
     };
-    let stable = writes.len() == 1
-        && facts.other_writes.is_empty()
-        && writes[0].site.is_module_statement()
-        && writes[0].receiver_insensitive_function;
-    if stable {
-        Ok(())
-    } else {
+    if writes.iter().any(|write| write.observes_receiver) {
         Err(receiver_rejection(call))
+    } else {
+        Ok(())
     }
 }
 
-/// A binding that a direct call can use in place of `exports.X()`: a
-/// module-level function that never observes its receiver and is never
-/// reassigned.
-fn is_stable_callable(
+/// Direct calls rely on `call_receiver_independence`: the `exports` receiver
+/// of `exports.f()` is an artifact of lowering `f()`. Only a function that
+/// visibly reads `this` keeps its CommonJS call.
+fn binding_observes_receiver(
     binding: &BindingId,
-    inventory: &Inventory,
     declarations: &HashMap<BindingId, ModuleDeclaration>,
 ) -> bool {
-    let Some(declaration) = declarations.get(binding) else {
-        return false;
-    };
-    let writes = inventory
-        .local_writes
+    declarations
         .get(binding)
-        .map_or(0, |writes| writes.len());
-    declaration.receiver_insensitive_function
-        && writes == usize::from(!declaration.hoisted_function)
+        .is_some_and(|declaration| declaration.observes_receiver)
 }
 
 fn receiver_rejection(call: &Site) -> Rejection {
     Rejection {
         storage: ExportStorage::Unrecovered,
-        message: "a direct call passes `exports` as the receiver, and the called value may be replaced or may read `this`".to_string(),
+        message: "a direct call passes `exports` as the receiver to a function that reads `this`"
+            .to_string(),
         span: Some(call.span),
+    }
+}
+
+// ============================================================
+// Property storage recovery (A)
+// ============================================================
+
+#[derive(Default)]
+pub(super) struct PropertyStoragePlan {
+    /// The module gate failed while an `exports` property is written inside
+    /// top-level control flow. Statement-by-statement recovery would strand
+    /// that write in ESM output, so the module stays CommonJS.
+    pub(super) keep_commonjs: bool,
+    /// Names [`recover_property_storage_exports`] rewrites.
+    pub(super) names: HashSet<Atom>,
+}
+
+pub(super) fn property_storage_plan(module: &Module, unresolved_mark: Mark) -> PropertyStoragePlan {
+    match analyze_export_storage(module, unresolved_mark) {
+        ExportStorageReport::Names(decisions) => PropertyStoragePlan {
+            keep_commonjs: false,
+            names: property_storage_candidates(module, unresolved_mark, &decisions)
+                .into_iter()
+                .map(|decision| decision.name.clone())
+                .collect(),
+        },
+        ExportStorageReport::ModuleGate { nested_write, .. } => PropertyStoragePlan {
+            keep_commonjs: nested_write,
+            names: HashSet::default(),
+        },
+        ExportStorageReport::NoCommonJsExports => PropertyStoragePlan::default(),
+    }
+}
+
+/// Property-storage names that need the rewrite. A name with only whole
+/// top-level writes and leading sentinels, never read in the module, is left
+/// to the statement classification: an importer sees the last value, which
+/// that path already exports.
+fn property_storage_candidates<'a>(
+    module: &Module,
+    unresolved_mark: Mark,
+    decisions: &'a [ExportStorageDecision],
+) -> Vec<&'a ExportStorageDecision> {
+    let mut standalone_writes: HashMap<Atom, usize> = HashMap::default();
+    for item in &module.body {
+        if let Some(name) = standalone_value_write(item, unresolved_mark) {
+            *standalone_writes.entry(name).or_default() += 1;
+        }
+    }
+    let existing_exports = existing_export_names(module);
+    decisions
+        .iter()
+        .filter(|decision| decision.storage == ExportStorage::Property)
+        // `exports.exports` is the slot itself once `module.exports` is set to
+        // `module`; the statement path keeps its boundary for that name.
+        .filter(|decision| decision.name.as_ref() != "exports")
+        .filter(|decision| !existing_exports.contains(&decision.name))
+        .filter(|decision| {
+            let accesses = &decision.accesses;
+            let simple = accesses.other_writes == 0
+                && accesses.reads == 0
+                && accesses.calls == 0
+                && accesses.deferred == 0
+                && standalone_writes
+                    .get(&decision.name)
+                    .copied()
+                    .unwrap_or_default()
+                    == accesses.writes;
+            !simple
+        })
+        .collect()
+}
+
+/// Rewrite every export name whose storage is the property itself to one
+/// module-level `var` binding, in every position.
+///
+/// A hoisted `var` is `undefined` until a write runs, exactly like an
+/// unassigned property, so reads before the first write, writes inside
+/// hoisted functions, and repeated or conditional writes keep their
+/// behavior. The first standalone top-level write becomes the declaration
+/// (`export var x = value`); otherwise `var x;` is declared at the top.
+/// Leading `exports.x = void 0` statements repeat that initial value and are
+/// dropped. `VarDeclToLetConst` narrows the declaration kind later.
+///
+/// A name with one standalone top-level write and no other access is left to
+/// the statement classification, which already produces the same export.
+pub(super) fn recover_property_storage_exports(module: &mut Module, unresolved_mark: Mark) {
+    let ExportStorageReport::Names(decisions) = analyze_export_storage(module, unresolved_mark)
+    else {
+        return;
+    };
+
+    let candidates = property_storage_candidates(module, unresolved_mark, &decisions);
+    if candidates.is_empty() {
+        return;
+    }
+    let mut declaration_sites: HashMap<Atom, usize> = HashMap::default();
+    for (index, item) in module.body.iter().enumerate() {
+        if let Some(name) = standalone_value_write(item, unresolved_mark) {
+            declaration_sites.entry(name).or_insert(index);
+        }
+    }
+
+    let identifier_counts = count_identifiers(module);
+    let seeds = seed_aliases(module, &candidates, &declaration_sites, &identifier_counts);
+    let mut used_names: HashSet<Atom> = identifier_counts
+        .keys()
+        .map(|(sym, _)| sym.clone())
+        .collect();
+    used_names.extend(decisions.iter().map(|decision| decision.name.clone()));
+    let mut locals: HashMap<Atom, Ident> = HashMap::default();
+    for decision in &candidates {
+        let name = &decision.name;
+        // A seed alias that disappears frees its own name.
+        let freed = seeds
+            .get(name)
+            .filter(|seed| seed.binding.0 == *name)
+            .map_or(0, |_| 2);
+        let occurrences: usize = identifier_counts
+            .iter()
+            .filter(|((sym, _), _)| sym == name)
+            .map(|(_, count)| count)
+            .sum();
+        let local_name = if is_valid_identifier_name(name)
+            && !is_reserved_binding_name(name)
+            && name.as_ref() != "default"
+            && occurrences == freed
+        {
+            name.clone()
+        } else {
+            fresh_prefixed_name(&identifier_base(name), &mut used_names)
+        };
+        locals.insert(name.clone(), fresh_binding_ident(local_name, DUMMY_SP));
+    }
+
+    let candidate_names: HashSet<Atom> = locals.keys().cloned().collect();
+    let sentinels = leading_export_sentinels(module, &candidate_names, unresolved_mark);
+    module.visit_mut_with(&mut PropertyStorageRewriter {
+        unresolved_mark,
+        locals: &locals,
+    });
+
+    let seed_declarations: HashSet<usize> =
+        seeds.values().map(|seed| seed.declaration_index).collect();
+    let mut seeds = seeds;
+    let mut seed_inits: HashMap<Atom, Box<Expr>> = HashMap::default();
+    let declared_at: HashMap<usize, &Atom> = declaration_sites
+        .iter()
+        .filter(|(name, _)| locals.contains_key(*name))
+        .map(|(name, index)| (*index, name))
+        .collect();
+    let mut body = Vec::with_capacity(module.body.len() + candidates.len() * 2);
+    for decision in &candidates {
+        if declaration_sites.contains_key(&decision.name) {
+            continue;
+        }
+        let local = locals[&decision.name].clone();
+        let exported =
+            decision.accesses.writes + decision.accesses.sentinels + decision.accesses.other_writes
+                > 0;
+        push_declaration(&mut body, &decision.name, local, None, exported);
+    }
+    for (index, item) in std::mem::take(&mut module.body).into_iter().enumerate() {
+        if sentinels.contains(&index) {
+            continue;
+        }
+        if seed_declarations.contains(&index) {
+            let name = seeds
+                .iter()
+                .find(|(_, seed)| seed.declaration_index == index)
+                .map(|(name, _)| name.clone())
+                .expect("a seed declaration belongs to a name");
+            seeds.remove(&name);
+            if let ModuleItem::Stmt(Stmt::Decl(Decl::Var(mut var))) = item {
+                if let Some(init) = var.decls[0].init.take() {
+                    seed_inits.insert(name, init);
+                }
+            }
+            continue;
+        }
+        let Some(name) = declared_at.get(&index) else {
+            body.push(item);
+            continue;
+        };
+        let ModuleItem::Stmt(Stmt::Expr(statement)) = item else {
+            unreachable!("a declaration site is an expression statement");
+        };
+        let Expr::Assign(assign) = *strip_parens_owned(statement.expr) else {
+            unreachable!("a declaration site is an assignment");
+        };
+        let local = locals[*name].clone();
+        let init = seed_inits.remove(*name).unwrap_or(assign.right);
+        push_declaration(&mut body, name, local, Some(init), true);
+    }
+    module.body = body;
+}
+
+struct SeedAlias {
+    binding: BindingId,
+    declaration_index: usize,
+}
+
+/// sucrase seeds a property-storage export from a local it never uses again:
+/// `let n = 0; exports.n = n;`. When the declaration directly precedes the
+/// copy and the local has no other occurrence, the copy's declaration can
+/// take the initializer and the local can go.
+fn seed_aliases(
+    module: &Module,
+    candidates: &[&ExportStorageDecision],
+    declaration_sites: &HashMap<Atom, usize>,
+    identifier_counts: &HashMap<BindingId, usize>,
+) -> HashMap<Atom, SeedAlias> {
+    let mut seeds = HashMap::default();
+    for decision in candidates {
+        let Some(&index) = declaration_sites.get(&decision.name) else {
+            continue;
+        };
+        let Some(previous) = index.checked_sub(1) else {
+            continue;
+        };
+        let ModuleItem::Stmt(Stmt::Expr(statement)) = &module.body[index] else {
+            continue;
+        };
+        let Expr::Assign(assign) = strip_parens(&statement.expr) else {
+            continue;
+        };
+        let Expr::Ident(copied) = strip_parens(&assign.right) else {
+            continue;
+        };
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = &module.body[previous] else {
+            continue;
+        };
+        let [declarator] = var.decls.as_slice() else {
+            continue;
+        };
+        let Pat::Ident(binding) = &declarator.name else {
+            continue;
+        };
+        let binding = (binding.id.sym.clone(), binding.id.ctxt);
+        if declarator.init.is_none()
+            || binding != (copied.sym.clone(), copied.ctxt)
+            || identifier_counts.get(&binding) != Some(&2)
+        {
+            continue;
+        }
+        seeds.insert(
+            decision.name.clone(),
+            SeedAlias {
+                binding,
+                declaration_index: previous,
+            },
+        );
+    }
+    seeds
+}
+
+/// Occurrences of every identifier, binding and reference alike.
+fn count_identifiers(module: &Module) -> HashMap<BindingId, usize> {
+    struct Counter(HashMap<BindingId, usize>);
+    impl Visit for Counter {
+        fn visit_ident(&mut self, ident: &Ident) {
+            *self.0.entry((ident.sym.clone(), ident.ctxt)).or_default() += 1;
+        }
+    }
+    let mut counter = Counter(HashMap::default());
+    module.visit_with(&mut counter);
+    counter.0
+}
+
+/// `exports.x = value;` as a whole top-level statement, with a value that is
+/// neither a `void 0` sentinel nor another export assignment.
+fn standalone_value_write(item: &ModuleItem, unresolved_mark: Mark) -> Option<Atom> {
+    let ModuleItem::Stmt(Stmt::Expr(statement)) = item else {
+        return None;
+    };
+    let Expr::Assign(assign) = strip_parens(&statement.expr) else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left else {
+        return None;
+    };
+    if !is_cjs_export_object_expr(&member.obj, unresolved_mark) {
+        return None;
+    }
+    let value = strip_parens(&assign.right);
+    if is_void_or_undefined(value, unresolved_mark) {
+        return None;
+    }
+    if let Expr::Assign(inner) = value {
+        if matches!(&inner.left, AssignTarget::Simple(SimpleAssignTarget::Member(inner))
+            if is_cjs_export_object_expr(&inner.obj, unresolved_mark))
+        {
+            return None;
+        }
+    }
+    static_member_name(&member.prop)
+}
+
+fn strip_parens_owned(expr: Box<Expr>) -> Box<Expr> {
+    match *expr {
+        Expr::Paren(paren) => strip_parens_owned(paren.expr),
+        expr => Box::new(expr),
+    }
+}
+
+fn existing_export_names(module: &Module) -> HashSet<Atom> {
+    let mut names = HashSet::default();
+    for item in &module.body {
+        let ModuleItem::ModuleDecl(decl) = item else {
+            continue;
+        };
+        match decl {
+            ModuleDecl::ExportDecl(export) => {
+                let mut declared = HashSet::default();
+                collect_decl_names(&export.decl, &mut declared);
+                names.extend(declared);
+            }
+            ModuleDecl::ExportNamed(export) => {
+                for specifier in &export.specifiers {
+                    let exported = match specifier {
+                        ExportSpecifier::Named(named) => {
+                            named.exported.as_ref().unwrap_or(&named.orig)
+                        }
+                        ExportSpecifier::Default(_) => {
+                            names.insert(Atom::from("default"));
+                            continue;
+                        }
+                        ExportSpecifier::Namespace(namespace) => &namespace.name,
+                    };
+                    names.insert(module_export_name_atom(exported));
+                }
+            }
+            ModuleDecl::ExportDefaultDecl(_) | ModuleDecl::ExportDefaultExpr(_) => {
+                names.insert(Atom::from("default"));
+            }
+            _ => {}
+        }
+    }
+    names
+}
+
+fn module_export_name_atom(name: &ModuleExportName) -> Atom {
+    match name {
+        ModuleExportName::Ident(ident) => ident.sym.clone(),
+        ModuleExportName::Str(value) => Atom::from(value.value.to_string_lossy().as_ref()),
+    }
+}
+
+/// A binding-name base for an export name that cannot be used as is.
+fn identifier_base(name: &Atom) -> Atom {
+    let sanitized: String = name
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' || c == '$' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    Atom::from(sanitized)
+}
+
+fn push_declaration(
+    body: &mut Vec<ModuleItem>,
+    name: &Atom,
+    local: Ident,
+    init: Option<Box<Expr>>,
+    exported: bool,
+) {
+    let declaration = Decl::Var(Box::new(VarDecl {
+        span: DUMMY_SP,
+        ctxt: Default::default(),
+        kind: VarDeclKind::Var,
+        declare: false,
+        decls: vec![VarDeclarator {
+            span: DUMMY_SP,
+            name: Pat::Ident(BindingIdent {
+                id: local.clone(),
+                type_ann: None,
+            }),
+            init,
+            definite: false,
+        }],
+    }));
+    if exported && local.sym == *name {
+        body.push(ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+            span: DUMMY_SP,
+            decl: declaration,
+        })));
+        return;
+    }
+    body.push(ModuleItem::Stmt(Stmt::Decl(declaration)));
+    if exported {
+        let exported = if is_valid_identifier_name(name) {
+            ModuleExportName::Ident(make_name_ident(name.clone()))
+        } else {
+            ModuleExportName::Str(make_str(name))
+        };
+        body.push(ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(
+            NamedExport {
+                span: DUMMY_SP,
+                specifiers: vec![ExportSpecifier::Named(ExportNamedSpecifier {
+                    span: DUMMY_SP,
+                    orig: ModuleExportName::Ident(local),
+                    exported: Some(exported),
+                    is_type_only: false,
+                })],
+                src: None,
+                type_only: false,
+                with: None,
+            },
+        )));
+    }
+}
+
+struct PropertyStorageRewriter<'a> {
+    unresolved_mark: Mark,
+    locals: &'a HashMap<Atom, Ident>,
+}
+
+impl PropertyStorageRewriter<'_> {
+    fn local_for(&self, member: &MemberExpr) -> Option<Ident> {
+        if !is_cjs_export_object_expr(&member.obj, self.unresolved_mark) {
+            return None;
+        }
+        let name = static_member_name(&member.prop)?;
+        let mut local = self.locals.get(&name)?.clone();
+        local.span = member.span;
+        Some(local)
+    }
+}
+
+impl VisitMut for PropertyStorageRewriter<'_> {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        let local = match expr {
+            Expr::Member(member) => self.local_for(member),
+            Expr::OptChain(chain) => match chain.base.as_ref() {
+                OptChainBase::Member(member) => self.local_for(member),
+                OptChainBase::Call(_) => None,
+            },
+            _ => None,
+        };
+        if let Some(local) = local {
+            *expr = Expr::Ident(local);
+            return;
+        }
+        expr.visit_mut_children_with(self);
+    }
+
+    fn visit_mut_simple_assign_target(&mut self, target: &mut SimpleAssignTarget) {
+        if let SimpleAssignTarget::Member(member) = target {
+            if let Some(local) = self.local_for(member) {
+                *target = SimpleAssignTarget::Ident(BindingIdent {
+                    id: local,
+                    type_ann: None,
+                });
+                return;
+            }
+        }
+        target.visit_mut_children_with(self);
+    }
+
+    fn visit_mut_pat(&mut self, pattern: &mut Pat) {
+        if let Pat::Expr(target) = pattern {
+            if let Expr::Member(member) = strip_parens(target) {
+                if let Some(local) = self.local_for(member) {
+                    *pattern = Pat::Ident(BindingIdent {
+                        id: local,
+                        type_ann: None,
+                    });
+                    return;
+                }
+            }
+        }
+        pattern.visit_mut_children_with(self);
     }
 }

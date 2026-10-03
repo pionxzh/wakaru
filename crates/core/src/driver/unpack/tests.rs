@@ -608,7 +608,7 @@ fn unpack_reports_commonjs_export_residuals_without_diagnostics() {
     let modules = vec![UnpackedModule {
         id: "1".to_string(),
         is_entry: false,
-        code: "exports.count = 0;\nfunction bump() { exports.count += 1; }\nexports.bump = bump;"
+        code: "exports.run = function () { return this.state; };\nexports.state = 1;\nfunction go() { return exports.run(); }\nexports.go = go;"
             .to_string(),
         filename: "module-1.js".to_string(),
         ..Default::default()
@@ -630,7 +630,7 @@ fn unpack_reports_commonjs_export_residuals_without_diagnostics() {
     );
     assert_eq!(residuals[0].filename, "module-1.js");
     assert!(
-        residuals[0].message.contains("`count`"),
+        residuals[0].message.contains("`run`"),
         "{}",
         residuals[0].message
     );

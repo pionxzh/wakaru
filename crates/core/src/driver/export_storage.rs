@@ -98,7 +98,7 @@ pub fn explain_commonjs_exports(
                 uses_exports: false,
                 exports: Vec::new(),
             },
-            ExportStorageReport::ModuleGate { message, span } => CommonJsExportReport {
+            ExportStorageReport::ModuleGate { message, span, .. } => CommonJsExportReport {
                 gate: Some(format!("{message}{}", location(span).unwrap_or_default())),
                 uses_exports: true,
                 exports: Vec::new(),
