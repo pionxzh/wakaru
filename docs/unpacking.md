@@ -28,10 +28,13 @@ attempted in order — first match wins:
    public surface can't yet be recovered faithfully
 2. **webpack4** — `(function(modules) { ... })([...])` with `__webpack_require__` runtime
 3. **webpack5 chunk** — JSONP chunk push with a webpack module object
-4. **browserify family** — numeric-keyed
+4. **Turbopack** — Next.js 15.3+ production chunks: the client
+   `globalThis.TURBOPACK` push and the server `module.exports` payload. See
+   [Turbopack](#turbopack) below
+5. **browserify family** — numeric-keyed
    `(function e(t,n,r) { ... })({1:[function(...){...}, {...}], ...})`,
    including Cocos Creator 2.x's string-keyed `window.__require` variant
-5. **Closure ModuleManager** — Google/Closure shared-namespace module segments,
+6. **Closure ModuleManager** — Google/Closure shared-namespace module segments,
    usually guarded by loader `try/catch` blocks and optionally labeled by
    `/*_M:id*/`. Consecutive labels are retained as empty logical modules, and
    proven enclosing top-level and leading wrapper bootstrap code is preserved
@@ -42,8 +45,8 @@ attempted in order — first match wins:
    earlier graph record, matching Closure Library's one-pass runtime decoder;
    forward indexes reject the candidate. Loader dependencies are not fabricated
    as ESM imports.
-6. **SystemJS** — top-level `System.register(...)` modules
-7. **esbuild / Bun** — scope-hoisted ESM namespace boundaries
+7. **SystemJS** — top-level `System.register(...)` modules
+8. **esbuild / Bun** — scope-hoisted ESM namespace boundaries
    (`__export(ns, ...)`) and CJS factory helpers (`__commonJS` / `__esm`).
    Bun's bundler emits the same helper shapes as esbuild, so CJS-interop
    bundles from Bun are detected and split by this unpacker.
@@ -125,7 +128,7 @@ attempted in order — first match wins:
    are not adopted by this path; property mutations and shadowed locals do not
    count as writes to the exported binding. Functions whose own binding is
    reassigned stay in entry, avoiding a new imported-function write.
-8. **Metro** — React Native/Expo plain-JavaScript bundles made of top-level
+9. **Metro** — React Native/Expo plain-JavaScript bundles made of top-level
    `__d(factory, moduleId, dependencyMap)` definitions and `__r(entryId)`
    startup calls. The extractor resolves indexed dependencies, normalizes the
    fixed seven factory parameters, and recovers Metro's default/namespace
@@ -176,6 +179,72 @@ calls retain their invocation boundaries; an async IIFE must not turn into
 top-level await. Doing so would make module evaluation wait for an unawaited
 call and turn that call's rejection into a module-evaluation failure. This
 restriction applies to raw extraction as well as normal unpacking.
+
+## Turbopack
+
+Turbopack production chunks register factories into a runtime shared by
+every chunk of the app. The client form is
+`(globalThis.TURBOPACK || (globalThis.TURBOPACK = [])).push([script, ...])`,
+also with a computed `globalThis["TURBOPACK_…"]` global; the server form is
+`module.exports = [...]`. From Next.js 15.5 the payload is runs of numeric ids,
+each followed by one factory; extra ids before a factory are aliases. Next.js
+15.3–15.4 used `(G = G || []).push([script, { id: factory }])`, 15.4 also
+`id: [factory, [aliasId]]`. Beside the containers a file may hold only
+expression statements, such as an injected error-monitoring IIFE; like
+webpack chunk extraction, those statements belong to no module and are not
+emitted. A runtime registration (`{ otherChunks, runtimeModuleIds }`) holds no
+modules.
+The server form, which has no distinctive global, is accepted only when a
+factory calls a module-protocol member on its first parameter.
+
+Each factory runs as `factory(ctx, module, exports)`. The detector translates
+it into webpack's `(module, exports, require)` form and prepares it with the
+webpack 5 normalizer, so the existing webpack ESM and CommonJS recovery
+applies. Only members with a known meaning are translated:
+
+- `ctx.r(id)` and `ctx.i(id)` become `require(id)`; a computed id stays a
+  runtime `require(expr)`.
+- `ctx.s([...])` becomes `require.r(exports)` plus `require.d` getters and
+  value assignments. Next.js 16 encodes a value as `name, 0, value`; 15.5 and
+  the 16 server output use `name, getter`; 15.3–15.4 pass `{ name: getter }`.
+  A setter, or a second argument naming another module id, is not translated.
+- `ctx.v(x)`, `ctx.n(x)`, and `ctx.q(url)` become `module.exports = x`, as a
+  statement or wherever the call's result is discarded (a UMD branch, a `&&`
+  right operand). `ctx.q` exports an asset URL; the runtime's deployment
+  suffix is not modeled. A value export whose result is used is not
+  translated.
+- `ctx.e` and `ctx.m` become the exports and module parameters. All three
+  parameters get fresh spellings first, so synthesized references cannot be
+  captured.
+- A generated async loader module becomes
+  `module.exports = () => Promise.resolve().then(() => require(target))`.
+  `ctx.A(loader)` (15.5+) and `ctx.r(loader)(ctx.i)` (15.3–15.4) inline that
+  expression when the loader is in the same input, and otherwise call
+  `require(loader)()`, which the multi-input numeric rewrite resolves when the
+  loader's chunk is also an input.
+- `ctx.x("name", () => require("name"))`, a server external, becomes
+  `require("name")`; `ctx.g` becomes `globalThis` when no local binding has
+  that spelling.
+- 15.3–15.4 factories destructure `{ g, __dirname, m, e }` from `ctx`. The
+  `m`/`e` bindings become fresh module/exports parameters, and a body that the
+  minifier wrapped in a block is spliced to the top level when its
+  declarations cannot collide.
+
+Any other use, such as chunk loading (`ctx.l`, `ctx.L`), `ctx.j`, async modules,
+`require.context` (`ctx.f`), the host `require` (`ctx.t`), a read of
+`__dirname`, or the context escaping as a value, keeps that factory opaque
+with a `decompile_failed` diagnostic. So does a factory that registers
+exports for another module id: Turbopack merges modules that way, and the
+merged module would need its own synthesized boundary. Runtime letters changed meaning
+across releases, so an unknown member is never guessed. React's flight client
+and parts of the Next.js bootstrap use chunk loading directly, so a full
+Next.js client build usually reports a few opaque framework modules while
+application modules recover.
+
+Turbopack can inline a module into its importer, and those boundaries are
+not recoverable. The strict-mode factory groups, `ctx.S` re-exports, and the
+inverted `ctx.s` tag of unreleased 16.4 canary builds are rejected; a canary
+container keeps the original fallback.
 
 ## Browserify and Cocos Creator
 

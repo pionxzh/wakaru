@@ -475,24 +475,29 @@ pub fn unpack_prepared_inputs_with_policy(
                 // recursive scope splitting. Empty webpack factories cannot split, so
                 // their stable `(id, filename)` identity survives both paths, while an
                 // empty synthetic child can never acquire the factory runtime fact.
-                let implicit_commonjs_default_objects =
-                    if matches!(format, BundleFormat::Webpack4 | BundleFormat::Webpack5) {
-                        detected
-                            .result
-                            .modules
-                            .iter()
-                            .zip(&detected.prepared)
-                            .filter(|(module, prepared)| {
-                                prepared
-                                    .as_ref()
-                                    .map(|prepared| prepared.module.body.is_empty())
-                                    .unwrap_or_else(|| module.code.trim().is_empty())
-                            })
-                            .map(|(module, _)| (module.id.clone(), module.filename.clone()))
-                            .collect::<HashSet<_>>()
-                    } else {
-                        HashSet::default()
-                    };
+                // Turbopack factories are translated into webpack's calling
+                // convention, and its runtime also starts every module with an
+                // empty `module.exports` object shared as `exports`.
+                let implicit_commonjs_default_objects = if matches!(
+                    format,
+                    BundleFormat::Webpack4 | BundleFormat::Webpack5 | BundleFormat::Turbopack
+                ) {
+                    detected
+                        .result
+                        .modules
+                        .iter()
+                        .zip(&detected.prepared)
+                        .filter(|(module, prepared)| {
+                            prepared
+                                .as_ref()
+                                .map(|prepared| prepared.module.body.is_empty())
+                                .unwrap_or_else(|| module.code.trim().is_empty())
+                        })
+                        .map(|(module, _)| (module.id.clone(), module.filename.clone()))
+                        .collect::<HashSet<_>>()
+                } else {
+                    HashSet::default()
+                };
                 // Keep this proof on modules whose original detector identity
                 // survives optional recursive splitting. Synthetic children do
                 // not automatically inherit a webpack factory runtime.

@@ -260,6 +260,7 @@ fn map_bundle_detection(format: wakaru_core::BundleFormat) -> InputDetection {
         wakaru_core::BundleFormat::SystemJs => InputDetection::Structural(BundleFormat::SystemJs),
         wakaru_core::BundleFormat::Esbuild => InputDetection::Structural(BundleFormat::Esbuild),
         wakaru_core::BundleFormat::Amd => InputDetection::Structural(BundleFormat::Amd),
+        wakaru_core::BundleFormat::Turbopack => InputDetection::Structural(BundleFormat::Turbopack),
         wakaru_core::BundleFormat::ScopeHoisted => InputDetection::HeuristicScopeHoisted,
     }
 }

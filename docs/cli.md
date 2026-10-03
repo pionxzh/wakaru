@@ -88,8 +88,9 @@ As with other directory-producing commands, Wakaru requires an empty or new
 output directory unless `--force` is passed.
 
 Structural unpacking supports webpack 4/5 (including Vercel ncc CommonJS output
-with an IIFE webpack bootstrap), Browserify, Metro, Closure ModuleManager,
-SystemJS, esbuild/Bun helper-based bundles, and AMD/UMD wrappers. Scope-hoisted
+with an IIFE webpack bootstrap), Turbopack production chunks from Next.js 15.3
+and later, Browserify, Metro, Closure ModuleManager, SystemJS, esbuild/Bun
+helper-based bundles, and AMD/UMD wrappers. Scope-hoisted
 Rollup/Vite-style output is handled by the default heuristic fallback. For
 supported ncc output, Wakaru extracts the webpack module table and preserves
 its inline startup as `entry.js`; separately emitted asset files remain

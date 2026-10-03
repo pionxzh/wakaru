@@ -88,9 +88,9 @@ with this change.
 
 2. The full core suite — it covers the pipeline and unpack snapshot tests for
    every supported bundler format, producer variant, and dialect (webpack4/5,
-   Vercel ncc, browserify, Cocos Creator 2.x, Closure ModuleManager, SystemJS,
-   esbuild/Bun, Metro, AMD/UMD, Rollup/Vite, multi-file), which is broader than
-   any hand-picked subset:
+   Vercel ncc, Turbopack, browserify, Cocos Creator 2.x, Closure
+   ModuleManager, SystemJS, esbuild/Bun, Metro, AMD/UMD, Rollup/Vite,
+   multi-file), which is broader than any hand-picked subset:
 
    ```bash
    cargo nextest run -p wakaru-core

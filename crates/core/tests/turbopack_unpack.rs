@@ -1,0 +1,548 @@
+use wakaru_core::driver::test_support::{
+    unpack, unpack_files, unpack_raw, UnpackInput, UnpackOutput,
+};
+use wakaru_core::{BundleFormat, DecompileOptions, UnpackWarningKind};
+
+fn unpack_chunk(source: &str) -> UnpackOutput {
+    unpack(
+        source,
+        DecompileOptions {
+            filename: "chunk.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("unpack should succeed")
+}
+
+fn module<'a>(output: &'a UnpackOutput, filename: &str) -> &'a str {
+    output
+        .modules
+        .iter()
+        .find(|(name, _)| name == filename)
+        .map(|(_, code)| code.as_str())
+        .unwrap_or_else(|| panic!("{filename} missing from {:?}", output.modules))
+}
+
+fn assert_clean(output: &UnpackOutput) {
+    assert_eq!(output.detected_formats, [BundleFormat::Turbopack]);
+    assert!(
+        output.warnings.is_empty(),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+}
+
+const CLIENT_PREFIX: &str = r#"(globalThis.TURBOPACK || (globalThis.TURBOPACK = [])).push(["object" == typeof document ? document.currentScript : void 0,"#;
+
+fn client_chunk(payload: &str) -> String {
+    format!("{CLIENT_PREFIX}{payload}]);")
+}
+
+#[test]
+fn value_and_getter_exports_become_esm_exports() {
+    // Next 16 encoding: `name, 0, value` binds a value; `name, getter` binds
+    // a live getter.
+    let source = client_chunk(
+        r#"
+101, t => {
+  "use strict";
+  var e = t.i(202);
+  t.s(["default", 0, function () { return e.helper(1); }, "count", () => n], 101);
+  let n = 2;
+},
+202, t => {
+  "use strict";
+  t.s(["helper", () => r]);
+  function r(v) { return v + 1; }
+}
+"#,
+    );
+    let output = unpack_chunk(&source);
+    assert_clean(&output);
+
+    assert_eq!(
+        module(&output, "module-101.js").trim(),
+        r#"import { helper } from "./module-202.js";
+export default function() {
+    return helper(1);
+};
+export let count = 2;"#
+    );
+    assert_eq!(
+        module(&output, "module-202.js").trim(),
+        r#"export function helper(v) {
+    return v + 1;
+}"#
+    );
+}
+
+#[test]
+fn getter_only_exports_from_next_15_5_are_recovered() {
+    let source = client_chunk(
+        r#"
+101, e => {
+  "use strict";
+  e.s(["default", () => l, "named", () => m], 101);
+  function l() { return "alpha"; }
+  const m = "beta";
+}
+"#,
+    );
+    let output = unpack_chunk(&source);
+    assert_clean(&output);
+    assert_eq!(
+        module(&output, "module-101.js").trim(),
+        r#"function l() {
+    return "alpha";
+}
+export { l as default };
+export const named = "beta";"#
+    );
+}
+
+#[test]
+fn commonjs_factories_keep_module_and_exports() {
+    let source = client_chunk(
+        r#"
+101, (e, t, r) => {
+  t.exports = { value: 1 };
+},
+202, (e, t, r) => {
+  "use strict";
+  var n = e.r(101);
+  r.read = function () { return n.value; };
+}
+"#,
+    );
+    let output = unpack_chunk(&source);
+    assert_clean(&output);
+    assert_eq!(
+        module(&output, "module-101.js").trim(),
+        "export default {\n    value: 1\n};"
+    );
+    assert_eq!(
+        module(&output, "module-202.js").trim(),
+        r#"import n from "./module-101.js";
+export const read = function() {
+    return n.value;
+};"#
+    );
+}
+
+#[test]
+fn value_and_namespace_exports_assign_module_exports() {
+    let source = client_chunk(
+        r#"
+101, t => { t.v("alpha"); },
+202, t => { t.n({ beta: 1 }); }
+"#,
+    );
+    let output = unpack_chunk(&source);
+    assert_clean(&output);
+    assert_eq!(
+        module(&output, "module-101.js").trim(),
+        r#"export default "alpha";"#
+    );
+    assert_eq!(
+        module(&output, "module-202.js").trim(),
+        "export default {\n    beta: 1\n};"
+    );
+}
+
+#[test]
+fn alias_ids_resolve_to_the_first_id_of_their_factory() {
+    let source = client_chunk(
+        r#"
+101, 102, t => { t.v("shared"); },
+202, t => { "use strict"; var e = t.r(102); t.s(["default", 0, e]); }
+"#,
+    );
+    let output = unpack_chunk(&source);
+    assert_clean(&output);
+    assert!(!output
+        .modules
+        .iter()
+        .any(|(name, _)| name == "module-102.js"));
+    assert_eq!(
+        module(&output, "module-202.js").trim(),
+        "import e from \"./module-101.js\";\nexport default e;"
+    );
+}
+
+#[test]
+fn async_loader_modules_become_deferred_requires_of_their_target() {
+    let source = client_chunk(
+        r#"
+101, t => {
+  "use strict";
+  t.s(["load", 0, function () { return t.A(301).then(e => e.message); }]);
+},
+301, t => {
+  t.v(e => Promise.all(["static/chunks/lazy-beta.js"].map(e => t.l(e))).then(() => e(302)));
+},
+302, t => { "use strict"; t.s(["message", 0, "lazy"]); }
+"#,
+    );
+    let output = unpack_chunk(&source);
+    assert_clean(&output);
+    // The loader module stays available to consumers in other inputs.
+    assert_eq!(
+        module(&output, "module-301.js").trim(),
+        r#"export default (()=>Promise.resolve().then(()=>require("./module-302.js")));"#
+    );
+    assert_eq!(
+        module(&output, "module-101.js").trim(),
+        r#"export const load = function() {
+    return Promise.resolve().then(()=>require("./module-302.js")).then((e)=>e.message);
+};"#
+    );
+}
+
+#[test]
+fn async_loader_targets_in_another_input_are_rewritten_across_inputs() {
+    let consumer = client_chunk(
+        r#"
+101, t => { "use strict"; t.s(["load", 0, () => t.A(301)]); },
+301, t => { t.v(e => Promise.all(["static/chunks/lazy-beta.js"].map(e => t.l(e))).then(() => e(302))); }
+"#,
+    );
+    let lazy = client_chunk(r#"302, t => { "use strict"; t.s(["message", 0, "lazy"]); }"#);
+    let output = unpack_files(
+        vec![
+            UnpackInput {
+                filename: "consumer.js".into(),
+                source: consumer,
+            },
+            UnpackInput {
+                filename: "lazy-beta.js".into(),
+                source: lazy,
+            },
+        ],
+        DecompileOptions::default(),
+    )
+    .expect("multi-input unpack should succeed");
+    assert!(output.warnings.is_empty(), "{:?}", output.warnings);
+    let consumer = module(&output, "module-101.js");
+    assert!(consumer.contains("./module-302.js"), "{consumer}");
+}
+
+#[test]
+fn shadowed_context_names_inside_nested_functions_are_not_translated() {
+    let source = client_chunk(
+        r#"
+101, t => {
+  "use strict";
+  t.s(["read", 0, function (t) { return t.i; }]);
+}
+"#,
+    );
+    let output = unpack_chunk(&source);
+    assert_clean(&output);
+    assert_eq!(
+        module(&output, "module-101.js").trim(),
+        "export const read = function(t) {\n    return t.i;\n};"
+    );
+}
+
+#[test]
+fn computed_global_names_are_detected() {
+    let source = r#"(globalThis["TURBOPACK_remote_chunk_loading_global_example-app"] || (globalThis["TURBOPACK_remote_chunk_loading_global_example-app"] = [])).push([document.currentScript, 101, t => { t.v("alpha"); }]);"#;
+    let output = unpack_chunk(source);
+    assert_clean(&output);
+    assert!(module(&output, "module-101.js").contains("\"alpha\""));
+}
+
+#[test]
+fn server_chunks_and_externals_are_recovered() {
+    let source = r#"module.exports = [
+101, (a, b, c) => { b.exports = a.x("node:crypto", () => require("node:crypto")); },
+202, a => { "use strict"; var b = a.i(101); a.s(["hash", 0, () => b.randomUUID()]); }
+];"#;
+    let output = unpack_chunk(source);
+    assert_clean(&output);
+    assert_eq!(
+        module(&output, "module-101.js").trim(),
+        r#"export default require("node:crypto");"#
+    );
+    assert_eq!(
+        module(&output, "module-202.js").trim(),
+        r#"import * as b from "node:crypto";
+export const hash = ()=>b.randomUUID();"#
+    );
+}
+
+#[test]
+fn unsupported_context_members_keep_only_that_factory_opaque() {
+    let source = client_chunk(
+        r#"
+101, t => { t.v(t.L("static/chunks/other.js")); },
+202, t => { t.v("alpha"); }
+"#,
+    );
+    let output = unpack_chunk(&source);
+    assert_eq!(output.detected_formats, [BundleFormat::Turbopack]);
+    let [warning] = output.warnings.as_slice() else {
+        panic!("expected one warning: {:?}", output.warnings);
+    };
+    assert_eq!(warning.filename, "module-101.js");
+    assert_eq!(warning.kind, UnpackWarningKind::DecompileFailed);
+    assert!(warning.message.contains("`L`"), "{}", warning.message);
+    assert!(module(&output, "module-101.js").contains("t.L("));
+    assert!(module(&output, "module-202.js").contains("export default \"alpha\""));
+}
+
+#[test]
+fn setters_and_foreign_export_targets_are_not_translated() {
+    for payload in [
+        // getter followed by a setter
+        r#"101, t => { t.s(["value", () => n, e => { n = e; }]); let n = 1; }, 202, t => { t.v(1); }"#,
+        // exports registered on another module id
+        r#"101, t => { t.s(["value", 0, 1], 999); }, 202, t => { t.v(1); }"#,
+    ] {
+        let output = unpack_chunk(&client_chunk(payload));
+        assert_eq!(output.detected_formats, [BundleFormat::Turbopack]);
+        assert!(
+            output
+                .warnings
+                .iter()
+                .any(|warning| warning.filename == "module-101.js"
+                    && warning.kind == UnpackWarningKind::DecompileFailed),
+            "{payload}: {:?}",
+            output.warnings
+        );
+    }
+}
+
+#[test]
+fn a_local_global_this_binding_blocks_the_global_translation() {
+    let source = client_chunk(
+        r#"
+101, t => { var globalThis = {}; t.v(t.g.location); },
+202, t => { t.v(1); }
+"#,
+    );
+    let output = unpack_chunk(&source);
+    assert!(output
+        .warnings
+        .iter()
+        .any(|warning| warning.filename == "module-101.js"));
+}
+
+#[test]
+fn non_container_shapes_are_not_detected() {
+    for source in [
+        // runtime registration only
+        format!(
+            r#"{CLIENT_PREFIX}{{ otherChunks: ["static/chunks/a.js"], runtimeModuleIds: [101] }}]);"#
+        ),
+        // strict-mode factory group from unreleased builds
+        client_chunk(
+            r#"(() => { "use strict"; return [101, t => { t.v(1); }]; })(), 202, t => { t.v(2); }"#,
+        ),
+        // string module ids
+        client_chunk(r#""[project]/app/page.js", t => { t.v(1); }"#),
+        // trailing id without a factory
+        client_chunk(r#"101, t => { t.v(1); }, 202"#),
+        // another top-level statement beside the container
+        format!(
+            "var globalThis = {{}};\n{}",
+            client_chunk(r#"101, t => { t.v(1); }"#)
+        ),
+        // an ordinary CommonJS array export
+        r#"module.exports = [1, function (a) { return a + 1; }];"#.to_string(),
+    ] {
+        let output = unpack_raw(&source, &DecompileOptions::default()).expect("unpack_raw");
+        assert!(
+            !output.detected_formats.contains(&BundleFormat::Turbopack),
+            "detected Turbopack in:\n{source}"
+        );
+    }
+}
+
+#[test]
+fn dynamic_requires_stay_runtime_requires() {
+    let source = client_chunk(r#"101, t => { t.v(function (n) { return t.r(n); }); }"#);
+    let output = unpack_chunk(&source);
+    assert_clean(&output);
+    assert_eq!(
+        module(&output, "module-101.js").trim(),
+        "export default function(n) {\n    return require(n);\n};"
+    );
+}
+
+const LEGACY_CLIENT_PREFIX: &str = r#"(globalThis.TURBOPACK = globalThis.TURBOPACK || []).push(["object" == typeof document ? document.currentScript : void 0, {"#;
+
+#[test]
+fn next_15_3_object_containers_are_recovered() {
+    // 15.3–15.4: an object keyed by id, a context preamble, a block-wrapped
+    // body, object-form getters, and an inline async loader call.
+    let source = format!(
+        "{LEGACY_CLIENT_PREFIX}{}}}]);",
+        r#"
+101: e => { var { g: t, __dirname: l } = e; { "use strict"; e.s({ label: () => t }); let t = "alpha"; } },
+202: e => { "use strict"; var { g: t, __dirname: l } = e; e.s({ default: () => c }); var r = e.i(101); function c() { return e.r(301)(e.i).then(e => r.label + e.message); } },
+301: e => { var { g: t, __dirname: l } = e; e.v(t => Promise.all(["static/chunks/lazy-beta.js"].map(t => e.l(t))).then(() => t(302))); },
+302: e => { var { g: t, __dirname: l } = e; { e.s({ message: () => t }); let t = "beta"; } }
+"#
+    );
+    let output = unpack_chunk(&source);
+    assert_clean(&output);
+    assert_eq!(
+        module(&output, "module-101.js").trim(),
+        r#"export let label = "alpha";"#
+    );
+    assert_eq!(
+        module(&output, "module-202.js").trim(),
+        r#"import { label } from "./module-101.js";
+function c() {
+    return Promise.resolve().then(()=>require("./module-302.js")).then((e)=>label + e.message);
+}
+export { c as default };"#
+    );
+}
+
+#[test]
+fn next_15_preamble_bindings_survive_redeclared_spellings() {
+    // The block redeclares both the context parameter (`e`) and the
+    // module binding's spelling (`r`); 15.4 lists alias ids beside the
+    // factory; a minifier merged another declarator into the preamble.
+    let source = format!(
+        "{LEGACY_CLIENT_PREFIX}{}}}]);",
+        r#"
+403: [e => { var { g: t, __dirname: n, m: r, e: o } = e; { "use strict"; let e = 1, r = 2; o.value = e + r; } }, [404]],
+505: e => { var a, { g: t, __dirname: n, m: r, e: o } = e; a = e.r(404); r.exports = a.value; }
+"#
+    );
+    let output = unpack_chunk(&source);
+    assert_clean(&output);
+    assert_eq!(
+        module(&output, "module-403.js").trim(),
+        "let e = 1;\nlet r = 2;\nexport const value = e + r;"
+    );
+    assert_eq!(
+        module(&output, "module-505.js").trim(),
+        "let a;\na = require(\"./module-403.js\");\nexport default a.value;"
+    );
+}
+
+#[test]
+fn next_15_3_server_objects_recover_and_dirname_reads_stay_opaque() {
+    let source = r#"module.exports = {
+101: function (a) { var { g: b, __dirname: c, m: d, e: e } = a; d.exports = a.x("node:path", () => require("node:path")); },
+202: function (a) { var { g: b, __dirname: c, m: d, e: e } = a; "use strict"; d.exports = a.r(101).join(c, "x"); }
+};"#;
+    let output = unpack_chunk(source);
+    assert_eq!(output.detected_formats, [BundleFormat::Turbopack]);
+    assert_eq!(
+        module(&output, "module-101.js").trim(),
+        r#"export default require("node:path");"#
+    );
+    let [warning] = output.warnings.as_slice() else {
+        panic!("expected one warning: {:?}", output.warnings);
+    };
+    assert_eq!(warning.filename, "module-202.js");
+    assert!(warning.message.contains("__dirname"), "{}", warning.message);
+}
+
+#[test]
+fn next_15_3_evaluate_registrations_are_not_modules() {
+    let source = format!(
+        r#"{LEGACY_CLIENT_PREFIX}}}, {{ otherChunks: ["static/chunks/a.js"], runtimeModuleIds: [101] }}]);"#
+    );
+    let output = unpack_raw(&source, &DecompileOptions::default()).expect("unpack_raw");
+    assert!(!output.detected_formats.contains(&BundleFormat::Turbopack));
+}
+
+#[test]
+fn loaders_in_another_input_are_called_through_their_module() {
+    let consumer = client_chunk(r#"101, t => { "use strict"; t.s(["load", 0, () => t.A(301)]); }"#);
+    let lazy = client_chunk(
+        r#"
+301, t => { t.v(e => Promise.all(["static/chunks/lazy-beta.js"].map(e => t.l(e))).then(() => e(302))); },
+302, t => { "use strict"; t.s(["message", 0, "lazy"]); }
+"#,
+    );
+    let output = unpack_files(
+        vec![
+            UnpackInput {
+                filename: "consumer.js".into(),
+                source: consumer,
+            },
+            UnpackInput {
+                filename: "lazy-beta.js".into(),
+                source: lazy,
+            },
+        ],
+        DecompileOptions::default(),
+    )
+    .expect("multi-input unpack should succeed");
+    assert!(output.warnings.is_empty(), "{:?}", output.warnings);
+    assert_eq!(
+        module(&output, "module-101.js").trim(),
+        r#"export const load = ()=>require("./module-301.js")();"#
+    );
+}
+
+#[test]
+fn exports_module_and_asset_url_members_are_translated() {
+    let source = client_chunk(
+        r#"
+101, t => { t.e.value = 1; t.m.exports.other = 2; },
+202, t => { t.q("/static/media/alpha.png", 202); }
+"#,
+    );
+    let output = unpack_chunk(&source);
+    assert_clean(&output);
+    assert_eq!(
+        module(&output, "module-101.js").trim(),
+        "export const value = 1;\nexport const other = 2;"
+    );
+    assert_eq!(
+        module(&output, "module-202.js").trim(),
+        r#"export default "/static/media/alpha.png";"#
+    );
+}
+
+#[test]
+fn value_exports_whose_result_is_discarded_become_assignments() {
+    // A UMD wrapper registers its value conditionally.
+    let source = client_chunk(
+        r#"
+101, t => { !function () { var o = { alpha: 1 }; if ("object" == typeof t.m) t.v(o); else window.alpha = o; }(); },
+202, t => { var x = t.v(1); }
+"#,
+    );
+    let output = unpack_chunk(&source);
+    assert_eq!(output.detected_formats, [BundleFormat::Turbopack]);
+    let [warning] = output.warnings.as_slice() else {
+        panic!("expected one warning: {:?}", output.warnings);
+    };
+    assert_eq!(warning.filename, "module-202.js");
+    assert_eq!(
+        module(&output, "module-101.js").trim(),
+        r#"(()=>{
+    const o = {
+        alpha: 1
+    };
+    if (typeof module === "object") {
+        module.exports = o;
+    } else {
+        window.alpha = o;
+    }
+})();"#
+    );
+}
+
+#[test]
+fn expression_statement_preludes_do_not_block_detection() {
+    let source = format!(
+        ";!function () {{ try {{ var e = globalThis; e._debugIds = e._debugIds || {{}}; }} catch (e) {{}} }}();\n{}",
+        client_chunk(r#"101, t => { t.v("alpha"); }"#)
+    );
+    let output = unpack_chunk(&source);
+    assert_clean(&output);
+    assert_eq!(
+        module(&output, "module-101.js").trim(),
+        r#"export default "alpha";"#
+    );
+}

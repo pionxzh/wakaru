@@ -1629,6 +1629,38 @@ fn prepare_webpack5_factories(
     }
 }
 
+/// A factory another detector already translated into webpack's
+/// `(module, exports, require)` calling convention.
+pub(super) struct TranslatedWebpackFactory {
+    pub(super) id: String,
+    pub(super) filename: String,
+    pub(super) params: Vec<Pat>,
+    pub(super) body: Vec<Stmt>,
+}
+
+/// Prepare translated factories with the webpack 5 normalizer. The prepared
+/// sidecar is aligned with `factories`; `None` means the whole container must
+/// keep its original fallback.
+pub(super) fn prepare_translated_webpack_factories(
+    factories: &[TranslatedWebpackFactory],
+) -> Option<(
+    Vec<Option<PreparedModuleAst>>,
+    HashMap<String, DetectedModuleFailure>,
+)> {
+    let descriptors = factories
+        .iter()
+        .map(|factory| Webpack5ModuleDescriptor {
+            id: factory.id.clone(),
+            numeric_id: factory.id.parse::<f64>().ok(),
+            filename: factory.filename.clone(),
+            params: Webpack5FactoryParams::Arrow(&factory.params),
+            body_stmts: &factory.body,
+        })
+        .collect::<Vec<_>>();
+    let prepared = prepare_webpack5_factories(&descriptors)?;
+    Some((prepared.prepared, prepared.failures))
+}
+
 struct ExtractedWebpack5Modules {
     modules: Vec<UnpackedModule>,
     prepared: Vec<Option<PreparedModuleAst>>,

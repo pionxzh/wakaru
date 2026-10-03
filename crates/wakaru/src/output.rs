@@ -114,6 +114,7 @@ pub enum BundleFormat {
     SystemJs,
     Esbuild,
     Amd,
+    Turbopack,
 }
 
 impl BundleFormat {
@@ -127,6 +128,7 @@ impl BundleFormat {
             Self::SystemJs => "systemjs",
             Self::Esbuild => "esbuild",
             Self::Amd => "amd",
+            Self::Turbopack => "turbopack",
         }
     }
 }

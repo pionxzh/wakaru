@@ -7,6 +7,7 @@ pub mod esbuild;
 pub mod metro;
 pub mod scope_hoist;
 pub mod systemjs;
+mod turbopack;
 pub mod webpack4;
 pub mod webpack5;
 mod webpack_common;
@@ -671,6 +672,7 @@ pub enum BundleFormat {
     Esbuild,
     Metro,
     Amd,
+    Turbopack,
     ScopeHoisted,
 }
 
@@ -685,6 +687,7 @@ impl BundleFormat {
             Self::Esbuild => "esbuild",
             Self::Metro => "metro",
             Self::Amd => "amd",
+            Self::Turbopack => "turbopack",
             Self::ScopeHoisted => "scope-hoisted",
         }
     }
@@ -741,6 +744,21 @@ pub(crate) struct RecoverableParseError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DetectedModuleFailure {
     WebpackRuntimeParameterReuse,
+    /// A Turbopack factory uses its runtime context without a known
+    /// translation.
+    TurbopackUnsupportedRuntime(TurbopackContextUse),
+}
+
+/// How a Turbopack factory used its runtime context when no translation
+/// applied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TurbopackContextUse {
+    /// A runtime member such as `ctx.L`, by its letter.
+    Member(char),
+    /// The 15.3–15.4 `__dirname` preamble binding.
+    Dirname,
+    /// The context escapes as a value, or a member has a longer name.
+    Other,
 }
 
 /// Internal detector result. `prepared` is always aligned one-for-one with
@@ -1325,6 +1343,15 @@ fn detect_bundle_candidate_before_esbuild(
         let span = tracing::info_span!("detect_webpack5_chunk");
         let _enter = span.enter();
         webpack5::detect_chunk_from_module_prepared(module, cm.clone())
+    };
+    if result.is_some() {
+        return result;
+    }
+
+    let result = {
+        let span = tracing::info_span!("detect_turbopack");
+        let _enter = span.enter();
+        turbopack::detect_from_module_prepared(module, cm.clone())
     };
     if result.is_some() {
         return result;

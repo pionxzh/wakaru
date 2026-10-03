@@ -1,19 +1,21 @@
 # Turbopack Production Chunk Unpacking
 
-Status: **PROPOSED.** The format is understood well enough to design
-against. Next.js 16 builds production apps with Turbopack by default, so new
-Next.js deployments ship this format unless they opt out. Dev builds are out of
-scope, matching the production-build scope in
-[unpacking.md](../unpacking.md).
+Status: **IMPLEMENTED for Next.js 15.3 through 16.3** (`unpacker/turbopack.rs`;
+current behavior lives in [unpacking.md](../unpacking.md#turbopack)). This
+document keeps the format research and the remaining work. Not done: the
+16.4 canary shapes, chunk enumeration (Phase 3's `enumerate-chunks` part),
+`ctx.j`/async modules/chunk-loading members, and factories that register
+exports on another module id. Dev builds are out of scope, matching the
+production-build scope in [unpacking.md](../unpacking.md).
 
 Ground rules: follow [AGENTS.md](../../AGENTS.md), including a focused unit
 test for every change. Use synthetic module ids, chunk names, and strings in
 tests and commits. Update [unpacking.md](../unpacking.md) and the CLI docs in
 the same commit that adds behavior.
 
-## Current behavior
+## Behavior before the detector
 
-Wakaru has no Turbopack detector.
+Wakaru had no Turbopack detector.
 
 - A single client chunk is not detected as a bundle. It goes through the
   single-file pipeline: JSX is restored, but every module stays inside one
@@ -179,9 +181,10 @@ Support is defined by container shape, not by version number:
 2. **Canary shapes** (strict groups, `ctx.S`, inverted tags) follow when they
    reach a stable release. Until then the polarity check above rejects
    ambiguous bindings instead of misreading them.
-3. **15.2–15.4 object-keyed containers** only if real inputs show up. They
-   were experimental and need a second container parser plus the object
-   `ctx.s` encoding.
+3. **15.2–15.4 object-keyed containers** were added with the first
+   implementation because they needed only a second container parser, the
+   object `ctx.s` encoding, and the context preamble. 15.2 was verified only
+   through the shared shapes, not against a real build.
 4. **Before 15.2:** out of scope. No production output exists.
 
 ### Cross-module inlining

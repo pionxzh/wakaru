@@ -72,6 +72,7 @@ crates/
         mod.rs                      — unpack_bundle() dispatch
         webpack4.rs                 — webpack4 splitter + normalization
         webpack5.rs                 — webpack5 splitter (incl. runtime entry, ncc + chunk)
+        turbopack.rs                — Turbopack chunk detection + translation to webpack factories
         browserify.rs               — browserify-family splitter (incl. Cocos Creator 2.x)
         closure_module_manager.rs   — Closure ModuleManager/gstatic splitter
         systemjs.rs                 — System.register splitter + ESM reconstruction
@@ -98,7 +99,7 @@ crates/
                                       (webpack4 + raw, webpack5 chunk, bundle_unpack
                                       = webpack5 + browserify, Closure ModuleManager,
                                       esbuild, systemjs, amd, metro, rollup, bun,
-                                      multi-file)
+                                      turbopack, multi-file)
       webpack_fixtures.rs           — generated webpack4/5 + ncc fixture coverage
       cocos_creator_unpack.rs       — Cocos 2.x detection + dependency-map coverage
       noop_pipeline.rs              — stability tests

@@ -61,7 +61,7 @@ use crate::synthetic_import_cleanup::downgrade_unused_synthetic_imports;
 use crate::unpacker::{
     arrow_iife_call, module_stmts_have_function_level_special_bindings,
     stmts_have_function_level_return, stmts_have_function_level_special_bindings,
-    DetectedModuleFailure, InputOffsets,
+    DetectedModuleFailure, InputOffsets, TurbopackContextUse,
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -126,6 +126,17 @@ fn detector_failure_warning(filename: &str, failure: DetectedModuleFailure) -> U
             filename,
             UnpackWarningKind::WebpackFactoryRecoveryFailed,
             "webpack factory runtime-parameter reuse could not be normalized; preserving the opaque factory body",
+        ),
+        DetectedModuleFailure::TurbopackUnsupportedRuntime(context_use) => UnpackWarning::new(
+            filename,
+            UnpackWarningKind::DecompileFailed,
+            match context_use {
+                TurbopackContextUse::Member(member) => format!(
+                    "Turbopack factory uses runtime context member `{member}` without a known translation; preserving the opaque factory body"
+                ),
+                TurbopackContextUse::Dirname => "Turbopack factory reads its `__dirname` context binding; preserving the opaque factory body".to_string(),
+                TurbopackContextUse::Other => "Turbopack factory uses its runtime context without a known translation; preserving the opaque factory body".to_string(),
+            },
         ),
     }
 }
