@@ -217,7 +217,10 @@ rationale, or level gating appear.
   so a target is accepted only when that evaluation can neither throw nor
   change between the writes: a plain identifier, or a member rooted at the
   CommonJS wrapper bindings `module`, `exports`, `require`, with identifier,
-  private-name, or string/number literal keys. Receivers containing another
+  private-name, or string/number literal keys. A chain that writes both an
+  `exports` property and a resolved local (`exports.count = count = 0`) stays
+  whole: it is the evidence that the local stores the export, which UnEsm
+  recovers as one operation (`commonjs_export_mirror_coverage`). Receivers containing another
   member read (`module.exports.x`, `exports.box.flag`) keep the chain: an inner
   write may replace the intermediate object even with ordinary data properties.
   Everything else keeps the chain at every level: a local root may be in TDZ

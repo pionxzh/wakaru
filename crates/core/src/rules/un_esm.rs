@@ -42,7 +42,7 @@ mod export_star;
 pub(crate) mod export_storage;
 use export_star::rewrite_commonjs_export_stars;
 
-use export_storage::{property_storage_plan, recover_property_storage_exports};
+use export_storage::{property_storage_plan, recover_export_storage};
 
 pub struct UnEsm {
     unresolved_mark: Mark,
@@ -248,7 +248,7 @@ impl VisitMut for UnEsm {
         // `exports` object, which a module binding cannot represent; those
         // modules stay on the statement path, which proves its own cases.
         if !has_local_self_require {
-            recover_property_storage_exports(module, self.unresolved_mark);
+            recover_export_storage(module, self.unresolved_mark);
         }
         let unresolved_reference_names =
             collect_unresolved_reference_names(module, self.unresolved_mark);

@@ -64,7 +64,9 @@ source shape.
 Affects: `UnIndirectCall` (member-callee forms), `UnInteropRequireDefault`
 (call sites rewritten from `.default`), and `UnEsm` (default interop recovery,
 and calls of property-storage exports rewritten from `exports.fn()` to `fn()`
-unless a value written to that export is a function that reads `this`).
+unless a value written to that export is a function that reads `this`; calls
+of mirror-storage exports rewritten to the local unless its declaration is a
+function that reads `this`).
 
 Level: receiver-changing `UnIndirectCall` and `UnEsm` forms require `standard`
 or above. Explicit transpiler-helper recovery in `UnInteropRequireDefault`
@@ -672,6 +674,41 @@ the owner's import time — the same provider-versus-consumer interleaving
 deviation.
 
 Level: all levels. This is inherent to emitting ESM from CommonJS.
+
+### `commonjs_export_mirror_coverage`
+
+Babel, sucrase, and TypeScript (for aliases and reassigned functions) keep an
+export's value in a module-level local and copy it into the `exports`
+property after every write:
+
+```js
+let count = exports.count = 0;
+function inc() { exports.count = count = count + 1; }
+[a, b] = [b, a]; exports.a = a, exports.b = b;
+```
+
+When every write of the property copies the local, and every write of the
+local is copied in the same statement or in a following statement separated
+only by other copies, the property equals the local wherever it can be
+observed. `UnEsm` then exports the local live (`export { count }`), drops the
+copies, and replaces reads of the property with the local.
+
+Two gaps remain. Between a write of the local and a copy in a following
+statement, code that runs inside the write itself (an iterator during array
+destructuring, a getter on the right-hand side) could read the stale property.
+And a read before a lexical local is initialized returns `undefined` from the
+property but throws on the local; a top-level read before the declaration
+falls back to property storage, but a read inside a function that runs early
+throws in the recovered module as it did in the ESM source. Compiler output
+reads neither way. A write of the local without a copy, which hand-written
+CommonJS uses to keep the property behind the local, fails the
+classification and is not recovered this way.
+
+Affects: `UnEsm` (mirror-storage recovery) and `UnAssignmentMerging`, which
+keeps a chain that writes both an `exports` property and a resolved local
+whole so the copy stays visible.
+
+Level: `standard` and above, where `UnEsm` runs.
 
 ## Execution Environment Baseline
 

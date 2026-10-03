@@ -63,6 +63,11 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 /// the same fact TypeScript relies on when it
 /// synthesizes that chain: the module owns its `exports` object.
 ///
+/// A chain that writes both an `exports` property and a resolved local
+/// (`exports.count = count = 0`) stays whole even when it could be split: it
+/// is the evidence that the local stores the export, which UnEsm recovers as
+/// one operation (`commonjs_export_mirror_coverage`).
+///
 /// A `standard`-only extension for chains whose targets share one root was
 /// considered and not taken. TDZ would be covered (the innermost statement
 /// throws first), but a setter reassigning the shared root has no proof and
@@ -145,6 +150,7 @@ impl UnAssignmentMerging {
         if !is_simple_value(cur)
             || !targets_can_be_split(a)
             || !targets_are_stable_references(a, self.unresolved_ctxt)
+            || self.mirrors_local_into_export(a)
         {
             return false;
         }
@@ -156,6 +162,45 @@ impl UnAssignmentMerging {
             }
             Expr::Ident(_) => self.writes_cannot_change_value(a),
             _ => true,
+        }
+    }
+
+    /// A chain that writes both an `exports` property and a resolved local
+    /// (`exports.count = count = 0`) is how Babel, TypeScript, and sucrase
+    /// keep an export in sync with the local that stores it. Split, the
+    /// property write only repeats the value and no longer shows that it
+    /// copies the local, so UnEsm recovers such a chain whole.
+    fn mirrors_local_into_export(&self, assign: &AssignExpr) -> bool {
+        let mut export = false;
+        let mut local = false;
+        let mut current = assign;
+        loop {
+            match &current.left {
+                AssignTarget::Simple(SimpleAssignTarget::Ident(ident)) => {
+                    local |= ident.id.ctxt != self.unresolved_ctxt;
+                }
+                AssignTarget::Simple(SimpleAssignTarget::Member(member)) => {
+                    export |= self.is_exports_object(&member.obj);
+                }
+                _ => {}
+            }
+            match current.right.as_ref() {
+                Expr::Assign(next) if next.op == AssignOp::Assign => current = next,
+                _ => return export && local,
+            }
+        }
+    }
+
+    /// `exports` or `module.exports`.
+    fn is_exports_object(&self, expr: &Expr) -> bool {
+        match strip_parens(expr) {
+            Expr::Ident(ident) => ident.ctxt == self.unresolved_ctxt && ident.sym == "exports",
+            Expr::Member(member) => {
+                static_member_name(&member.prop) == Some("exports")
+                    && matches!(strip_parens(&member.obj), Expr::Ident(module)
+                        if module.ctxt == self.unresolved_ctxt && module.sym == "module")
+            }
+            _ => false,
         }
     }
 

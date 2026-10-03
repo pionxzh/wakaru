@@ -24,6 +24,7 @@
 use crate::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
+use swc_core::common::util::take::Take;
 use swc_core::common::DUMMY_SP;
 use swc_core::common::{Mark, Span, Spanned};
 use swc_core::ecma::ast::{
@@ -92,6 +93,26 @@ pub(crate) struct ExportStorageDecision {
     /// unrecovered name, the last entry is the reason no model fits.
     pub(crate) rejected: Vec<Rejection>,
     pub(crate) accesses: AccessCounts,
+    /// What the mirror rewrite needs beyond the report.
+    pub(crate) mirror: Option<MirrorFacts>,
+}
+
+/// Facts about a mirror name that decide whether its local can replace the
+/// property everywhere (see [`recover_export_storage`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MirrorFacts {
+    pub(crate) binding: BindingId,
+    /// The module-body item that declares the binding.
+    pub(crate) declaration_index: usize,
+    /// `let`, `const`, or `class`: reading it before its declaration throws.
+    pub(crate) lexical: bool,
+    /// The earliest module-body item with a read or call of the property
+    /// outside a function.
+    pub(crate) first_eager_access: Option<usize>,
+    /// TypeScript's exported enum or namespace initializer,
+    /// `L = exports.x || (exports.x = {})` or `L || (exports.x = L = {})`,
+    /// which `UnEnum` folds later.
+    pub(crate) enum_initializer: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -239,6 +260,7 @@ struct NameFacts {
     reads: Vec<Site>,
     calls: Vec<Site>,
     getters: Vec<(GetterTarget, Site)>,
+    enum_initializer: bool,
 }
 
 impl NameFacts {
@@ -523,6 +545,7 @@ impl Inventory {
                             AssignTarget::Simple(SimpleAssignTarget::Member(member))
                                 if self.static_exports_name_of(member).as_ref() == Some(&name)) =>
                     {
+                        self.facts(&name).enum_initializer = true;
                         &bin.right
                     }
                     _ => return,
@@ -538,6 +561,29 @@ impl Inventory {
                     }
                 }
             }
+        }
+    }
+
+    /// TypeScript's exported enum and namespace argument,
+    /// `L || (exports.x = L = {})`, which `UnEnum` folds into the export.
+    fn note_enum_initializer(&mut self, bin: &BinExpr) {
+        let Expr::Ident(local) = strip_parens(&bin.left) else {
+            return;
+        };
+        let Expr::Assign(assign) = strip_parens(&bin.right) else {
+            return;
+        };
+        let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left else {
+            return;
+        };
+        let Some(name) = self.static_exports_name_of(member) else {
+            return;
+        };
+        if matches!(strip_parens(&assign.right), Expr::Assign(inner)
+            if matches!(&inner.left, AssignTarget::Simple(SimpleAssignTarget::Ident(binding))
+                if binding.id.sym == local.sym && binding.id.ctxt == local.ctxt))
+        {
+            self.facts(&name).enum_initializer = true;
         }
     }
 
@@ -951,6 +997,9 @@ impl Visit for Inventory {
     }
 
     fn visit_bin_expr(&mut self, bin: &BinExpr) {
+        if bin.op == BinaryOp::LogicalOr {
+            self.note_enum_initializer(bin);
+        }
         if bin.op == BinaryOp::In {
             bin.left.visit_with(self);
             self.visit_in_operand(&bin.right);
@@ -1033,6 +1082,8 @@ struct ModuleDeclaration {
     /// The declared value is a function that reads `this`, so a direct call
     /// through a copy of it would see a different receiver.
     observes_receiver: bool,
+    index: usize,
+    lexical: bool,
 }
 
 fn value_observes_receiver(value: &Expr) -> bool {
@@ -1042,10 +1093,12 @@ fn value_observes_receiver(value: &Expr) -> bool {
 /// Bindings declared directly in the module body.
 fn collect_module_declarations(module: &Module) -> HashMap<BindingId, ModuleDeclaration> {
     let mut declarations = HashMap::default();
-    let plain = ModuleDeclaration {
-        observes_receiver: false,
-    };
-    for item in &module.body {
+    for (index, item) in module.body.iter().enumerate() {
+        let plain = ModuleDeclaration {
+            observes_receiver: false,
+            index,
+            lexical: false,
+        };
         let decl = match item {
             ModuleItem::Stmt(Stmt::Decl(decl)) => decl,
             ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => &export.decl,
@@ -1070,11 +1123,18 @@ fn collect_module_declarations(module: &Module) -> HashMap<BindingId, ModuleDecl
                     (function.ident.sym.clone(), function.ident.ctxt),
                     ModuleDeclaration {
                         observes_receiver: function_observes_receiver(&function.function),
+                        ..plain
                     },
                 );
             }
             Decl::Class(class) => {
-                declarations.insert((class.ident.sym.clone(), class.ident.ctxt), plain);
+                declarations.insert(
+                    (class.ident.sym.clone(), class.ident.ctxt),
+                    ModuleDeclaration {
+                        lexical: true,
+                        ..plain
+                    },
+                );
             }
             Decl::Var(var) => {
                 for declarator in &var.decls {
@@ -1084,7 +1144,14 @@ fn collect_module_declarations(module: &Module) -> HashMap<BindingId, ModuleDecl
                             .as_deref()
                             .is_some_and(value_observes_receiver);
                     for id in find_pat_ids::<_, swc_core::ecma::ast::Id>(&declarator.name) {
-                        declarations.insert(id, ModuleDeclaration { observes_receiver });
+                        declarations.insert(
+                            id,
+                            ModuleDeclaration {
+                                observes_receiver,
+                                lexical: var.kind != VarDeclKind::Var,
+                                ..plain
+                            },
+                        );
                     }
                 }
             }
@@ -1123,6 +1190,7 @@ fn classify(
         binding: None,
         rejected: Vec::new(),
         accesses,
+        mirror: None,
     };
 
     if let Some((target, site)) = facts.getters.first() {
@@ -1138,8 +1206,22 @@ fn classify(
 
     match classify_mirror(facts, &writes, inventory, declarations) {
         Ok(binding) => {
+            let declaration = declarations[&binding];
             decision.storage = ExportStorage::Mirror;
-            decision.binding = Some(binding);
+            decision.binding = Some(binding.0.to_string());
+            decision.mirror = Some(MirrorFacts {
+                binding,
+                declaration_index: declaration.index,
+                lexical: declaration.lexical,
+                first_eager_access: facts
+                    .reads
+                    .iter()
+                    .chain(&facts.calls)
+                    .filter(|site| !site.deferred)
+                    .map(|site| site.module_index)
+                    .min(),
+                enum_initializer: facts.enum_initializer,
+            });
             return decision;
         }
         Err(Some(rejection)) => {
@@ -1216,7 +1298,7 @@ fn classify_mirror(
     writes: &[&PropertyWrite],
     inventory: &Inventory,
     declarations: &HashMap<BindingId, ModuleDeclaration>,
-) -> Result<String, Option<Rejection>> {
+) -> Result<BindingId, Option<Rejection>> {
     let reject = |message: String, span: Option<Span>| {
         Some(Rejection {
             storage: ExportStorage::Mirror,
@@ -1268,7 +1350,7 @@ fn classify_mirror(
         .get(&binding)
         .map_or(&[][..], Vec::as_slice);
     if is_final_copy(facts, writes, local_writes) {
-        return Ok(shown);
+        return Ok(binding);
     }
     for local_write in local_writes {
         if !is_mirrored(local_write, writes, &inventory.mirror_statements) {
@@ -1283,7 +1365,7 @@ fn classify_mirror(
             return Err(Some(receiver_rejection(call)));
         }
     }
-    Ok(shown)
+    Ok(binding)
 }
 
 /// A property that the module never reads, written once by a module
@@ -1371,19 +1453,27 @@ pub(super) struct PropertyStoragePlan {
     /// cannot convert safely (see [`ExportStorageReport::ModuleGate`]), so
     /// the module stays CommonJS.
     pub(super) keep_commonjs: bool,
-    /// Names [`recover_property_storage_exports`] rewrites.
+    /// Names [`recover_export_storage`] rewrites.
     pub(super) names: HashSet<Atom>,
 }
 
 pub(super) fn property_storage_plan(module: &Module, unresolved_mark: Mark) -> PropertyStoragePlan {
     match analyze_export_storage(module, unresolved_mark) {
-        ExportStorageReport::Names(decisions) => PropertyStoragePlan {
-            keep_commonjs: false,
-            names: property_storage_candidates(module, unresolved_mark, &decisions)
-                .into_iter()
-                .map(|decision| decision.name.clone())
-                .collect(),
-        },
+        ExportStorageReport::Names(decisions) => {
+            let identifier_counts = count_identifiers(module);
+            let candidates =
+                storage_candidates(module, unresolved_mark, &decisions, &identifier_counts);
+            PropertyStoragePlan {
+                keep_commonjs: false,
+                names: candidates
+                    .property
+                    .iter()
+                    .copied()
+                    .chain(candidates.mirror.iter().map(|(decision, _)| *decision))
+                    .map(|decision| decision.name.clone())
+                    .collect(),
+            }
+        }
         ExportStorageReport::ModuleGate { keep_commonjs, .. } => PropertyStoragePlan {
             keep_commonjs,
             names: HashSet::default(),
@@ -1392,47 +1482,140 @@ pub(super) fn property_storage_plan(module: &Module, unresolved_mark: Mark) -> P
     }
 }
 
-/// Property-storage names that need the rewrite. A name with only whole
-/// top-level writes and leading sentinels, never read in the module, is left
-/// to the statement classification: an importer sees the last value, which
-/// that path already exports.
-fn property_storage_candidates<'a>(
+/// The names the storage rewrite owns, by the model it applies.
+struct StorageCandidates<'a> {
+    property: Vec<&'a ExportStorageDecision>,
+    mirror: Vec<(&'a ExportStorageDecision, &'a MirrorFacts)>,
+}
+
+/// Select the names to rewrite.
+///
+/// A property-storage name with only whole top-level writes and leading
+/// sentinels, never read in the module, is left to the statement
+/// classification: an importer sees the last value, which that path already
+/// exports. A mirror name whose only access is one `exports.x = local;`
+/// statement is left there too; that path already exports the local.
+///
+/// A mirror name whose local cannot stand in for the property at every read
+/// falls back to property storage, which is valid for any name that passes
+/// the module gate: the local is shadowed somewhere (a read rewritten to it
+/// could resolve to the inner binding), or a read outside functions runs
+/// before a lexical local is initialized (the property is `undefined` there;
+/// the local would throw). TypeScript enum initializers stay on the
+/// statement path for `UnEnum`.
+fn storage_candidates<'a>(
     module: &Module,
     unresolved_mark: Mark,
     decisions: &'a [ExportStorageDecision],
-) -> Vec<&'a ExportStorageDecision> {
+    identifier_counts: &HashMap<BindingId, usize>,
+) -> StorageCandidates<'a> {
     let mut standalone_writes: HashMap<Atom, usize> = HashMap::default();
+    let mut standalone_copies: HashMap<Atom, usize> = HashMap::default();
     for item in &module.body {
-        if let Some(name) = standalone_value_write(item, unresolved_mark) {
-            *standalone_writes.entry(name).or_default() += 1;
+        if let Some((name, copies_ident)) = standalone_value_write(item, unresolved_mark) {
+            *standalone_writes.entry(name.clone()).or_default() += 1;
+            if copies_ident {
+                *standalone_copies.entry(name).or_default() += 1;
+            }
         }
     }
     let existing_exports = existing_export_names(module);
-    decisions
+    let mut candidates = StorageCandidates {
+        property: Vec::new(),
+        mirror: Vec::new(),
+    };
+    for decision in decisions {
+        // `exports.exports` is the slot itself once `module.exports` is set
+        // to `module`; the statement path keeps its boundary for that name.
+        if decision.name.as_ref() == "exports" || existing_exports.contains(&decision.name) {
+            continue;
+        }
+        let accesses = &decision.accesses;
+        let only_top_level_writes = accesses.other_writes == 0
+            && accesses.reads == 0
+            && accesses.calls == 0
+            && accesses.deferred == 0;
+        let count = |counts: &HashMap<Atom, usize>| counts.get(&decision.name).copied();
+        match decision.storage {
+            ExportStorage::Property => {
+                if !(only_top_level_writes
+                    && count(&standalone_writes).unwrap_or_default() == accesses.writes)
+                {
+                    candidates.property.push(decision);
+                }
+            }
+            ExportStorage::Mirror => {
+                let Some(mirror) = &decision.mirror else {
+                    continue;
+                };
+                if mirror.enum_initializer
+                    || (only_top_level_writes
+                        && accesses.writes == 1
+                        && count(&standalone_copies) == Some(1))
+                {
+                    continue;
+                }
+                if mirror_local_replaces_reads(decision, mirror, identifier_counts) {
+                    candidates.mirror.push((decision, mirror));
+                } else {
+                    candidates.property.push(decision);
+                }
+            }
+            ExportStorage::Getter | ExportStorage::Unrecovered => {}
+        }
+    }
+    candidates
+}
+
+fn mirror_local_replaces_reads(
+    decision: &ExportStorageDecision,
+    mirror: &MirrorFacts,
+    identifier_counts: &HashMap<BindingId, usize>,
+) -> bool {
+    if decision.accesses.reads + decision.accesses.calls == 0 {
+        return true;
+    }
+    let (sym, ctxt) = &mirror.binding;
+    let shadowed = identifier_counts
+        .keys()
+        .any(|(other, other_ctxt)| other == sym && other_ctxt != ctxt);
+    let early = mirror.lexical
+        && mirror
+            .first_eager_access
+            .is_some_and(|index| index <= mirror.declaration_index);
+    !shadowed && !early
+}
+
+/// Rewrite every export name whose storage `UnEsm` can identify, in every
+/// position: property storage (see [`recover_property_storage`]) and mirror
+/// storage (see [`recover_mirror_storage`]).
+pub(super) fn recover_export_storage(module: &mut Module, unresolved_mark: Mark) {
+    let ExportStorageReport::Names(decisions) = analyze_export_storage(module, unresolved_mark)
+    else {
+        return;
+    };
+    let identifier_counts = count_identifiers(module);
+    let candidates = storage_candidates(module, unresolved_mark, &decisions, &identifier_counts);
+    let mirrors: Vec<(Atom, BindingId)> = candidates
+        .mirror
         .iter()
-        .filter(|decision| decision.storage == ExportStorage::Property)
-        // `exports.exports` is the slot itself once `module.exports` is set to
-        // `module`; the statement path keeps its boundary for that name.
-        .filter(|decision| decision.name.as_ref() != "exports")
-        .filter(|decision| !existing_exports.contains(&decision.name))
-        .filter(|decision| {
-            let accesses = &decision.accesses;
-            let simple = accesses.other_writes == 0
-                && accesses.reads == 0
-                && accesses.calls == 0
-                && accesses.deferred == 0
-                && standalone_writes
-                    .get(&decision.name)
-                    .copied()
-                    .unwrap_or_default()
-                    == accesses.writes;
-            !simple
-        })
-        .collect()
+        .map(|(decision, mirror)| (decision.name.clone(), mirror.binding.clone()))
+        .collect();
+    if !candidates.property.is_empty() {
+        recover_property_storage(
+            module,
+            unresolved_mark,
+            &decisions,
+            &candidates.property,
+            &identifier_counts,
+        );
+    }
+    recover_mirror_storage(module, unresolved_mark, &mirrors);
 }
 
 /// Rewrite every export name whose storage is the property itself to one
-/// module-level `var` binding, in every position.
+/// module-level `var` binding, in every position. Mirror names whose local
+/// cannot replace the property also land here (see [`storage_candidates`]).
 ///
 /// A hoisted `var` is `undefined` until a write runs, exactly like an
 /// unassigned property, so reads before the first write, writes inside
@@ -1441,35 +1624,28 @@ fn property_storage_candidates<'a>(
 /// (`export var x = value`); otherwise `var x;` is declared at the top.
 /// Leading `exports.x = void 0` statements repeat that initial value and are
 /// dropped. `VarDeclToLetConst` narrows the declaration kind later.
-///
-/// A name with one standalone top-level write and no other access is left to
-/// the statement classification, which already produces the same export.
-pub(super) fn recover_property_storage_exports(module: &mut Module, unresolved_mark: Mark) {
-    let ExportStorageReport::Names(decisions) = analyze_export_storage(module, unresolved_mark)
-    else {
-        return;
-    };
-
-    let candidates = property_storage_candidates(module, unresolved_mark, &decisions);
-    if candidates.is_empty() {
-        return;
-    }
+fn recover_property_storage(
+    module: &mut Module,
+    unresolved_mark: Mark,
+    decisions: &[ExportStorageDecision],
+    candidates: &[&ExportStorageDecision],
+    identifier_counts: &HashMap<BindingId, usize>,
+) {
     let mut declaration_sites: HashMap<Atom, usize> = HashMap::default();
     for (index, item) in module.body.iter().enumerate() {
-        if let Some(name) = standalone_value_write(item, unresolved_mark) {
+        if let Some((name, _)) = standalone_value_write(item, unresolved_mark) {
             declaration_sites.entry(name).or_insert(index);
         }
     }
 
-    let identifier_counts = count_identifiers(module);
-    let seeds = seed_aliases(module, &candidates, &declaration_sites, &identifier_counts);
+    let seeds = seed_aliases(module, candidates, &declaration_sites, identifier_counts);
     let mut used_names: HashSet<Atom> = identifier_counts
         .keys()
         .map(|(sym, _)| sym.clone())
         .collect();
     used_names.extend(decisions.iter().map(|decision| decision.name.clone()));
     let mut locals: HashMap<Atom, Ident> = HashMap::default();
-    for decision in &candidates {
+    for decision in candidates {
         let name = &decision.name;
         // A seed alias that disappears frees its own name.
         let freed = seeds
@@ -1510,7 +1686,7 @@ pub(super) fn recover_property_storage_exports(module: &mut Module, unresolved_m
         .map(|(name, index)| (*index, name))
         .collect();
     let mut body = Vec::with_capacity(module.body.len() + candidates.len() * 2);
-    for decision in &candidates {
+    for decision in candidates {
         if declaration_sites.contains_key(&decision.name) {
             continue;
         }
@@ -1628,8 +1804,9 @@ fn count_identifiers(module: &Module) -> HashMap<BindingId, usize> {
 }
 
 /// `exports.x = value;` as a whole top-level statement, with a value that is
-/// neither a `void 0` sentinel nor another export assignment.
-fn standalone_value_write(item: &ModuleItem, unresolved_mark: Mark) -> Option<Atom> {
+/// neither a `void 0` sentinel nor another export assignment, and whether the
+/// value is an identifier.
+fn standalone_value_write(item: &ModuleItem, unresolved_mark: Mark) -> Option<(Atom, bool)> {
     let ModuleItem::Stmt(Stmt::Expr(statement)) = item else {
         return None;
     };
@@ -1656,7 +1833,7 @@ fn standalone_value_write(item: &ModuleItem, unresolved_mark: Mark) -> Option<At
             return None;
         }
     }
-    static_member_name(&member.prop)
+    static_member_name(&member.prop).map(|name| (name, matches!(value, Expr::Ident(_))))
 }
 
 fn strip_parens_owned(expr: Box<Expr>) -> Box<Expr> {
@@ -1837,5 +2014,250 @@ impl VisitMut for PropertyStorageRewriter<'_> {
             }
         }
         pattern.visit_mut_children_with(self);
+    }
+}
+
+// ============================================================
+// Mirror storage recovery (B)
+// ============================================================
+
+/// Export each mirror name's local live and remove the property.
+///
+/// Every write of the property copies the local's current value, and every
+/// write of the local is copied into the property before anything can read
+/// it (the classification's proof). So the property equals the local
+/// wherever it is observed: a mirror write `exports.x = rhs` becomes `rhs`, a
+/// read or call target `exports.x` becomes the local, and the module exports
+/// the local as `x`. Statements left with no effect (`count;`, `void 0;`)
+/// are removed. The export specifier follows the local's declaration.
+fn recover_mirror_storage(
+    module: &mut Module,
+    unresolved_mark: Mark,
+    mirrors: &[(Atom, BindingId)],
+) {
+    if mirrors.is_empty() {
+        return;
+    }
+    let locals: HashMap<Atom, Ident> = mirrors
+        .iter()
+        .map(|(name, (sym, ctxt))| (name.clone(), Ident::new(sym.clone(), DUMMY_SP, *ctxt)))
+        .collect();
+    module.visit_mut_with(&mut MirrorStorageRewriter {
+        unresolved_mark,
+        locals: &locals,
+        changed: false,
+    });
+
+    let mut pending: Vec<(Atom, &BindingId)> = mirrors
+        .iter()
+        .map(|(name, binding)| (name.clone(), binding))
+        .collect();
+    let mut body = Vec::with_capacity(module.body.len() + pending.len());
+    for item in std::mem::take(&mut module.body) {
+        let declared = module_item_binding_ids(&item);
+        body.push(item);
+        if declared.is_empty() {
+            continue;
+        }
+        let (here, rest): (Vec<_>, Vec<_>) = pending
+            .into_iter()
+            .partition(|(_, binding)| declared.contains(*binding));
+        pending = rest;
+        if !here.is_empty() {
+            body.push(local_export(&here));
+        }
+    }
+    if !pending.is_empty() {
+        body.push(local_export(&pending));
+    }
+    module.body = body;
+}
+
+/// Bindings a module-body item declares.
+fn module_item_binding_ids(item: &ModuleItem) -> Vec<BindingId> {
+    let decl = match item {
+        ModuleItem::Stmt(Stmt::Decl(decl)) => decl,
+        ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => &export.decl,
+        ModuleItem::ModuleDecl(ModuleDecl::Import(import)) => {
+            return import
+                .specifiers
+                .iter()
+                .map(|specifier| {
+                    let local = match specifier {
+                        swc_core::ecma::ast::ImportSpecifier::Named(named) => &named.local,
+                        swc_core::ecma::ast::ImportSpecifier::Default(default) => &default.local,
+                        swc_core::ecma::ast::ImportSpecifier::Namespace(namespace) => {
+                            &namespace.local
+                        }
+                    };
+                    (local.sym.clone(), local.ctxt)
+                })
+                .collect();
+        }
+        _ => return Vec::new(),
+    };
+    match decl {
+        Decl::Fn(function) => vec![(function.ident.sym.clone(), function.ident.ctxt)],
+        Decl::Class(class) => vec![(class.ident.sym.clone(), class.ident.ctxt)],
+        Decl::Var(var) => var
+            .decls
+            .iter()
+            .flat_map(|declarator| find_pat_ids::<_, swc_core::ecma::ast::Id>(&declarator.name))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// `export { local as name, ... }`.
+fn local_export(names: &[(Atom, &BindingId)]) -> ModuleItem {
+    let specifiers = names
+        .iter()
+        .map(|(name, (sym, ctxt))| {
+            let exported = if sym == name {
+                None
+            } else if is_valid_identifier_name(name) {
+                Some(ModuleExportName::Ident(make_name_ident(name.clone())))
+            } else {
+                Some(ModuleExportName::Str(make_str(name)))
+            };
+            ExportSpecifier::Named(ExportNamedSpecifier {
+                span: DUMMY_SP,
+                orig: ModuleExportName::Ident(Ident::new(sym.clone(), DUMMY_SP, *ctxt)),
+                exported,
+                is_type_only: false,
+            })
+        })
+        .collect();
+    ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(NamedExport {
+        span: DUMMY_SP,
+        specifiers,
+        src: None,
+        type_only: false,
+        with: None,
+    }))
+}
+
+struct MirrorStorageRewriter<'a> {
+    unresolved_mark: Mark,
+    locals: &'a HashMap<Atom, Ident>,
+    /// Whether the statement being visited was rewritten.
+    changed: bool,
+}
+
+impl MirrorStorageRewriter<'_> {
+    fn local_for(&self, member: &MemberExpr) -> Option<Ident> {
+        if !is_cjs_export_object_expr(&member.obj, self.unresolved_mark) {
+            return None;
+        }
+        let name = static_member_name(&member.prop)?;
+        let mut local = self.locals.get(&name)?.clone();
+        local.span = member.span;
+        Some(local)
+    }
+
+    fn is_mirror_write(&self, assign: &AssignExpr) -> bool {
+        assign.op == AssignOp::Assign
+            && matches!(&assign.left,
+                AssignTarget::Simple(SimpleAssignTarget::Member(member))
+                    if self.local_for(member).is_some())
+    }
+
+    /// Visit one statement and report whether the rewrite touched it,
+    /// keeping the flag of the enclosing statement.
+    fn visit_statement<T: VisitMutWith<Self>>(&mut self, node: &mut T) -> bool {
+        let outer = std::mem::replace(&mut self.changed, false);
+        node.visit_mut_with(self);
+        let changed = self.changed;
+        self.changed = outer || changed;
+        changed
+    }
+
+    /// A rewritten expression statement keeps only the parts with an effect.
+    fn prune(&self, stmt: Stmt) -> Option<Stmt> {
+        let Stmt::Expr(mut statement) = stmt else {
+            return Some(stmt);
+        };
+        let exprs = match *strip_parens_owned(statement.expr) {
+            Expr::Seq(sequence) => sequence.exprs,
+            expr => vec![Box::new(expr)],
+        };
+        let mut kept: Vec<Box<Expr>> = exprs
+            .into_iter()
+            .filter(|expr| !self.has_no_effect(expr))
+            .collect();
+        statement.expr = match kept.len() {
+            0 => return None,
+            1 => kept.pop().expect("one expression"),
+            _ => Box::new(Expr::Seq(swc_core::ecma::ast::SeqExpr {
+                span: statement.span,
+                exprs: kept,
+            })),
+        };
+        Some(Stmt::Expr(statement))
+    }
+
+    fn has_no_effect(&self, expr: &Expr) -> bool {
+        match strip_parens(expr) {
+            Expr::Ident(ident) => {
+                ident.ctxt.outer() != self.unresolved_mark || ident.sym.as_ref() == "undefined"
+            }
+            Expr::Lit(_) => true,
+            Expr::Unary(unary) if unary.op == UnaryOp::Void => self.has_no_effect(&unary.arg),
+            _ => false,
+        }
+    }
+}
+
+impl VisitMut for MirrorStorageRewriter<'_> {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        if let Expr::Assign(assign) = expr {
+            if self.is_mirror_write(assign) {
+                let mut value = assign.right.take();
+                value.visit_mut_with(self);
+                *expr = *value;
+                self.changed = true;
+                return;
+            }
+        }
+        let local = match expr {
+            Expr::Member(member) => self.local_for(member),
+            Expr::OptChain(chain) => match chain.base.as_ref() {
+                OptChainBase::Member(member) => self.local_for(member),
+                OptChainBase::Call(_) => None,
+            },
+            _ => None,
+        };
+        if let Some(local) = local {
+            *expr = Expr::Ident(local);
+            self.changed = true;
+            return;
+        }
+        expr.visit_mut_children_with(self);
+    }
+
+    fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
+        let mut out = Vec::with_capacity(items.len());
+        for mut item in std::mem::take(items) {
+            let changed = self.visit_statement(&mut item);
+            match item {
+                ModuleItem::Stmt(stmt) if changed => {
+                    out.extend(self.prune(stmt).map(ModuleItem::Stmt));
+                }
+                item => out.push(item),
+            }
+        }
+        *items = out;
+    }
+
+    fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
+        let mut out = Vec::with_capacity(stmts.len());
+        for mut stmt in std::mem::take(stmts) {
+            if self.visit_statement(&mut stmt) {
+                out.extend(self.prune(stmt));
+            } else {
+                out.push(stmt);
+            }
+        }
+        *stmts = out;
     }
 }

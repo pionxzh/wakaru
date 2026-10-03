@@ -1,10 +1,11 @@
 # CommonJS Export Storage Recovery
 
-Status: **IN PROGRESS.** Steps 1 and 2 are implemented: the per-name
+Status: **IN PROGRESS.** Steps 1 to 3 are implemented: the per-name
 analysis (`wakaru debug cjs-exports`), the `commonjs_export_unrecovered`
-warning, and A (property storage). Evidence comes from the
+warning, A (property storage), and B (mirror storage). Evidence comes from the
 [CommonJS export-storage matrix](../../scripts/repro/cjs-export-storage-matrix/README.md);
-see [Step 1 results](#step-1-results) and [Step 2 results](#step-2-results).
+see [Step 1 results](#step-1-results), [Step 2 results](#step-2-results), and
+[Step 3 results](#step-3-results).
 
 Ground rules: follow [AGENTS.md](../../AGENTS.md), including a focused unit
 test for every change. Use synthetic names in tests and commits. Record every
@@ -360,8 +361,9 @@ previous step.
 2. **Done.** Implement A and remove the conditional recovery it replaces.
    Stable read recovery stays until step 3; see
    [Step 2 results](#step-2-results).
-3. Stop `UnAssignmentMerging` from splitting chains that write both an
-   `exports` property and a local, then implement B.
+3. **Done.** Stop `UnAssignmentMerging` from splitting chains that write
+   both an `exports` property and a local, then implement B; see
+   [Step 3 results](#step-3-results).
 4. Route the existing getter pre-passes through C.
 5. Separately: swc and esbuild recognizers. They feed C.
 
@@ -474,6 +476,65 @@ How A was placed and where it differs from the design above:
   initializers run no code (TypeScript's `this && this.__awaiter ||
   function` helpers). A sentinel after a call stays: the call may write the
   property first.
+
+## Step 3 results
+
+Matrix: 193 / 291 behavior preserved (from 150), with no row that was
+correct after step 2 now wrong. By producer: TypeScript 24 to 26 per
+profile, Babel 25 per profile, rollup 21, sucrase 21, swc and esbuild 0. The
+warning fires on 15 of 98 wrong rows and on no ok row. Outside swc and
+esbuild, the remaining failures are all out of scope: `export *`
+(TypeScript, rollup, sucrase), single-file import interop, and re-exports
+through getters (Babel, sucrase), which step 4 covers. No pipeline snapshot
+changed.
+
+Babel output for a mirrored counter is now:
+
+```js
+export let count = 0;
+function inc() {
+  count = count + 1;
+  return count;
+}
+```
+
+How B was placed and where it differs from the design above:
+
+- **Position.** B runs right after A, in the same place. A rewrites first
+  because its declaration placement uses module-body indices that B's
+  statement removal would shift.
+- **Statement-path names.** A mirror name whose only access is one whole
+  top-level `exports.x = local;` statement stays on the statement path, which
+  already exports the local. This keeps hoisted function exports
+  (`exports.f = f`) unchanged.
+- **Fallback to A.** B replaces reads with the local, so it needs the local
+  to be visible and initialized at every read. If any other binding in the
+  module has the local's name (a parameter, an inner declaration), or a read
+  outside functions comes before a lexical local's declaration, the name
+  goes through A instead. A is valid for every name that passes the module
+  gate; only readability differs.
+- **Removed statements.** A copy statement that the rewrite reduces to
+  something with no effect (`count;`, `void 0;`, `a, b;`) is removed. Only
+  statements the rewrite changed are pruned.
+- **Export placement.** The `export { local as x }` specifier follows the
+  local's declaration, so a later pass can merge it into `export let`.
+- **TypeScript enums.** Both enum and namespace argument shapes,
+  `L = exports.x || (exports.x = {})` and `L || (exports.x = L = {})`, stay
+  for `UnEnum`, which folds them into `const L = {...}` with an export.
+- **`UnAssignmentMerging`.** A chain with an `exports` property target and a
+  resolved local target stays whole, including inside functions. A chain
+  that also writes another export name, whose names no model owns (for
+  example after a gate failure), now keeps the module CommonJS through
+  `has_unhandled_named_export_chain`; before, the split let the statement
+  path convert it partially.
+- **Stable read recovery stays for now.** Mirror and property names no
+  longer reach it; only enum names and names a model rejects for a
+  receiver-sensitive call still could. With its named part disabled, the core
+  suite still passes, so removing it is a separate cleanup checked against
+  the fixtures.
+- **Assumption.** The mirror condition is recorded as
+  `commonjs_export_mirror_coverage` in
+  [rewrite-assumptions.md](../rewrite-assumptions.md).
 
 ## Reassigned or aliased `exports`
 

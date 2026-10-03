@@ -5883,3 +5883,153 @@ function report() { return exports.endpoint; }
     let output = apply(after_call);
     assert!(output.contains("endpoint = undefined"), "{output}");
 }
+
+// ============================================================
+// Mirror storage recovery
+// ============================================================
+
+fn assert_valid_esm(output: &str) {
+    assert!(
+        validate_output_modules(&[("entry.js".into(), output.to_string())]).is_empty(),
+        "{output}"
+    );
+}
+
+#[test]
+fn mirror_storage_exports_the_local_live() {
+    // Babel keeps the local as the storage and copies every write into the
+    // property, including writes inside functions.
+    let input = r#"
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.inc = inc;
+exports.mode = exports.count = void 0;
+let count = exports.count = 0;
+let mode = exports.mode = "off";
+function inc() {
+  exports.count = count = count + 1;
+  if (count > 2) {
+    exports.mode = mode = "on";
+  }
+  return count;
+}
+"#;
+    let output = apply(input);
+    assert!(!output.contains("exports"), "{output}");
+    assert!(output.contains("count = count + 1;"), "{output}");
+    assert!(output.contains("mode = \"on\";"), "{output}");
+    // Live exports of the locals, not snapshot copies.
+    assert!(
+        !output.contains("_count") && !output.contains("_mode"),
+        "{output}"
+    );
+    assert_valid_esm(&output);
+}
+
+#[test]
+fn mirror_storage_follows_a_reassigned_function() {
+    let input = r#"
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.impl = void 0;
+exports.swap = swap;
+let impl = function () { return 1; };
+exports.impl = impl;
+function swap() {
+  exports.impl = impl = function () { return 2; };
+}
+"#;
+    let output = apply(input);
+    assert!(!output.contains("exports"), "{output}");
+    assert!(!output.contains("_impl"), "{output}");
+    assert_valid_esm(&output);
+}
+
+#[test]
+fn mirror_storage_drops_update_mirrors() {
+    let input = r#"
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.next = next;
+exports.n = void 0;
+let n = exports.n = 0;
+function next() {
+  var _n;
+  _n = n++, exports.n = n, _n;
+  exports.n = ++n;
+  return n;
+}
+"#;
+    let output = apply(input);
+    assert!(!output.contains("exports"), "{output}");
+    assert!(output.contains("++n"), "{output}");
+    assert_valid_esm(&output);
+}
+
+#[test]
+fn mirror_storage_rewrites_reads_inside_function_declarations() {
+    // Stable read recovery skips hoisted function bodies; the mirror proves
+    // the property equals the local everywhere.
+    let input = r#"
+exports.helper = helper;
+exports.run = run;
+function helper() { return 1; }
+function run() { return exports.helper() + exports.helper.length; }
+"#;
+    let output = apply(input);
+    assert!(!output.contains("exports"), "{output}");
+    assert!(
+        output.contains("return helper() + helper.length;"),
+        "{output}"
+    );
+    assert_valid_esm(&output);
+}
+
+#[test]
+fn mirror_storage_falls_back_to_property_storage_when_the_local_is_shadowed() {
+    let input = r#"
+let count = exports.count = 0;
+function bump() { exports.count = count = count + 1; }
+function read(count) { return exports.count + count; }
+exports.bump = bump;
+exports.read = read;
+"#;
+    let output = apply(input);
+    assert!(!output.contains("exports"), "{output}");
+    // The read must not resolve to the parameter.
+    assert!(!output.contains("return count + count"), "{output}");
+    assert_valid_esm(&output);
+}
+
+#[test]
+fn mirror_storage_falls_back_to_property_storage_for_a_read_before_the_declaration() {
+    // The property is `undefined` before the declaration runs; the lexical
+    // local would throw in its temporal dead zone.
+    let input = r#"
+log(exports.value);
+let value = exports.value = 1;
+function bump() { exports.value = value = value + 1; }
+exports.bump = bump;
+"#;
+    let output = apply(input);
+    assert!(!output.contains("exports"), "{output}");
+    assert!(!output.contains("log(value)"), "{output}");
+    assert_valid_esm(&output);
+}
+
+#[test]
+fn mirror_storage_keeps_typescript_enum_initializers_for_un_enum() {
+    let input = r#"
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.Mode = void 0;
+var Mode;
+(function (Mode) {
+  Mode[Mode["On"] = 0] = "On";
+  Mode[Mode["Off"] = 1] = "Off";
+})(Mode || (exports.Mode = Mode = {}));
+"#;
+    let output = render_pipeline(input);
+    assert!(output.contains("const Mode = {"), "{output}");
+    assert!(!output.contains("exports"), "{output}");
+}

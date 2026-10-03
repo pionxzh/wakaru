@@ -169,6 +169,29 @@ exports.a = 1;
 }
 
 #[test]
+fn keeps_chains_that_mirror_a_local_into_an_export() {
+    // Babel and TypeScript copy a local into its export in the same chain.
+    // The chain is the evidence that the local is the export's storage;
+    // UnEsm recovers it as a whole.
+    for input in [
+        r#"let mode; exports.mode = mode = "on";"#,
+        r#"let mode; mode = exports.mode = "on";"#,
+        "let mode; module.exports.mode = mode = 1;",
+        "let mode; exports.a = exports.b = mode = 1;",
+        r#"let mode; function set() { exports.mode = mode = "on"; }"#,
+    ] {
+        assert_eq_normalized(&apply(input), input);
+    }
+    // Chains of only export targets or only locals still split.
+    assert_eq_normalized(&apply("let a, b; a = b = 1;"), "let a, b; b = 1; a = 1;");
+    // A global identifier target is not a local copy.
+    assert_eq_normalized(
+        &apply("exports.a = global = 1;"),
+        "global = 1; exports.a = 1;",
+    );
+}
+
+#[test]
 fn splits_module_exports_alias_chain() {
     // `module` is provided by the CommonJS wrapper, so evaluating
     // `module.exports` cannot throw a ReferenceError.
