@@ -121,12 +121,68 @@ another module id instead of the current one.
 
 302 is the real target module, registered in the listed chunk.
 
-### Version differences seen so far
+### Version history
 
-Between 15.5 and 16 only the `ctx.s` encoding changed (getter pairs became
-`name, 0, value` triples in client chunks). Older 15.x releases and dev
-builds were not examined. Dev builds use path-like string ids such as
-`[project]/app/page.js [app-client] (ecmascript)`.
+Traced in the vercel/next.js source (Turbopack moved into that monorepo
+under `turbopack/` in August 2024; earlier code lives in vercel/turbo). The
+chunk wrapper is written by `turbopack-browser/src/ecmascript/content.rs` and
+`turbopack-nodejs/src/ecmascript/node/content.rs`; the runtime is
+`turbopack-ecmascript-runtime/js/src/`; the letter table is `make_shortcut!`
+in `runtime_functions.rs`.
+
+| Next.js | `next build` with Turbopack | Container | `ctx` | `ctx.s` encoding | Ids |
+|---|---|---|---|---|---|
+| 13.x–15.1 | none (hidden flag, env-gated or non-functional) | object keyed by id | destructured long names | `{name: getter}` | strings |
+| 15.2 | hidden flag, alpha | object keyed by id, chunk path first | `__turbopack_context__.x` object | `{name: getter}` | numbers |
+| 15.3–15.4 | `--turbopack`, experimental | object keyed by id, `currentScript` first | `ctx.x` object | `{name: getter}` (+ target id in 15.4) | numbers |
+| 15.5 | `--turbopack` | flat `[script, id, f, ...]` | prototype letters | `name, getter[, setter]` | numbers |
+| 16.0–16.1 | default | flat | prototype letters | value `name, 0, value`; accessor `name, getter[, setter]` | numbers |
+| 16.2–16.3 | default | flat, configurable global | letters, `w`/`b` reassigned in 16.3 | same as 16.0 | numbers |
+| 16.4 canary | default | flat, plus strict-mode factory groups | adds `S` (re-export) | **inverted:** value `name, value`; accessor `name, 0, getter[, setter]` | numbers |
+
+Points that affect a parser:
+
+- Production output exists only from 15.2. Earlier versions produced
+  Turbopack output only in `next dev`, so they fall under the dev-build
+  exclusion.
+- Letter meanings are not stable across versions: 16.3 reuses `w` (was wasm,
+  now runtime root) and `b` (was worker blob, then create-worker, now chunk
+  base path). The core module protocol letters (`i r s v n j A a t g`) kept
+  their meaning from 15.5 to 16.3.
+- 16.4 canary inverts the `ctx.s` tag: `[name, 0, x]` is a value in 16.0–16.3
+  and an accessor in canary. The two readings differ only when `x` is a
+  function, which a value export of a function produces. A parser must not
+  guess: use the runtime file when present (its `esm` binding loop shows the
+  polarity), or other evidence in the same chunk (an untagged non-function
+  value proves the canary protocol; an untagged function proves 16.0–16.3),
+  and otherwise reject the ambiguous binding.
+- 16.4 canary strict-mode groups put a nested array first
+  (`push([script, (() => { "use strict"; return [id, f, ...]; })(), id, f])`)
+  or wrap the whole push in a strict IIFE. `ctx.S([...])` encodes re-export
+  groups: a module id or namespace value, `exportName, importedName` pairs,
+  and a `0` separator; a group holding one string is a comma-joined pair list.
+- Extra ids per factory: 15.4 writes `[factory, [id2, ...]]` under the first
+  key; 15.5+ writes `id, id2, factory`.
+- Async modules: before 15.5 the factory calls a destructured
+  `__turbopack_async_module__`; from 15.5 it returns `ctx.a(...)`.
+- 16.3 can emit `function () {}` factories instead of arrows.
+- Dev builds use path-like string ids such as
+  `[project]/app/page.js [app-client] (ecmascript)`.
+
+### Support scope
+
+Support is defined by container shape, not by version number:
+
+1. **First target: the 15.5+ flat container** with the 16.0–16.3 tag
+   encoding and the 15.5 getter-pair encoding. This covers Next 15.5 through
+   the latest stable 16.x.
+2. **Canary shapes** (strict groups, `ctx.S`, inverted tags) follow when they
+   reach a stable release. Until then the polarity check above rejects
+   ambiguous bindings instead of misreading them.
+3. **15.2–15.4 object-keyed containers** only if real inputs show up. They
+   were experimental and need a second container parser plus the object
+   `ctx.s` encoding.
+4. **Before 15.2:** out of scope. No production output exists.
 
 ### Cross-module inlining
 
@@ -194,8 +250,7 @@ module rather than guessing.
 
 ## Open questions
 
-- Older Turbopack production output (Next 15.0–15.4, `--turbo` era) may use
-  an object-keyed payload. Check before claiming version coverage.
+- Whether to accept the 16.4 canary shapes before they reach a stable tag.
 - Server chunks ship with sibling source maps that embed `sourcesContent` in
   the observed builds. That makes them a good fit for automatic sibling-map
   handling, but server artifacts are rarely what a user has.
