@@ -105,6 +105,7 @@ impl VisitMut for SmartInline {
                 module,
                 self.unresolved_mark,
                 BuiltinAliasInlineOptions::const_only(),
+                &Default::default(),
             );
         }
 

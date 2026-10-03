@@ -54,10 +54,13 @@ struct BuiltinAliasUsageStats {
     blocked_uses: usize,
 }
 
+/// `pinned` bindings keep their declaration, in addition to aliases named by
+/// an `export { alias }` specifier.
 pub(crate) fn inline_module_builtin_aliases(
     module: &mut Module,
     unresolved_mark: Option<Mark>,
     options: BuiltinAliasInlineOptions,
+    pinned: &HashSet<BindingKey>,
 ) -> bool {
     let mut candidates = collect_module_candidates(module, unresolved_mark, options);
     if candidates.is_empty() {
@@ -68,7 +71,7 @@ pub(crate) fn inline_module_builtin_aliases(
     // `Object.create`, so removing the declaration would leave it dangling and
     // the module would fail to link. Keep exported aliases as they are.
     let exported = collect_local_export_specifier_keys(module);
-    candidates.retain(|key, _| !exported.contains(key));
+    candidates.retain(|key, _| !exported.contains(key) && !pinned.contains(key));
     if candidates.is_empty() {
         return false;
     }

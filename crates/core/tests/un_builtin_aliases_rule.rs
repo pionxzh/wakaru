@@ -1,6 +1,6 @@
 mod common;
 
-use common::{assert_eq_normalized, render_rule};
+use common::{assert_eq_normalized, render, render_pipeline_between, render_rule};
 use wakaru_core::rules::UnBuiltinAliases;
 
 fn apply(input: &str) -> String {
@@ -182,4 +182,65 @@ fn preserves_const_alias_when_module_has_dynamic_scope() {
         let input = format!("const e = Object.freeze;\n{hazard}\nuse(e(value));\n");
         assert_eq_normalized(&apply(&input), &input);
     }
+}
+
+#[test]
+fn alias_returned_by_export_getter_remains_declared() {
+    // UnEsm turns each getter that returns a local into an ESM export of that
+    // binding. Inlining the alias first would leave the getter returning the
+    // global, which ESM cannot export.
+    for getters in [
+        "require.d(exports, { U: () => i });",
+        "require.d(exports, \"U\", function() { return i; });",
+        "Object.defineProperty(exports, \"U\", { enumerable: true, get: function() { return i; } });",
+    ] {
+        let input = format!("{getters}\nconst i = console;\n");
+        assert_eq_normalized(&apply(&input), &input);
+    }
+}
+
+#[test]
+fn alias_read_inside_export_getter_expression_is_still_inlined() {
+    // Only a getter that returns the binding whole names it as an export.
+    let input = r#"
+require.d(exports, { U: () => i.log });
+const i = console;
+"#;
+    let expected = r#"
+require.d(exports, { U: () => console.log });
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn export_getter_of_builtin_alias_becomes_a_declared_export() {
+    let input = r#"
+require.d(exports, { U: () => i, V: () => j });
+const i = console;
+const j = JSON;
+"#;
+    let output = render_pipeline_between(input, "UnBuiltinAliases", "UnEsm");
+    assert!(
+        !output.contains("export { console") && !output.contains("export { JSON"),
+        "an export must name a declared binding:\n{output}"
+    );
+    assert!(
+        output.contains("console") && output.contains("JSON"),
+        "{output}"
+    );
+    assert!(!output.contains("require.d"), "{output}");
+}
+
+#[test]
+fn export_getter_loop_of_builtin_alias_becomes_a_declared_export() {
+    // The inlined `require.d` loop reaches UnBuiltinAliases only after the
+    // earlier pipeline rules normalize it, so run the whole pipeline.
+    let input = r#"
+((t, e) => { for (var n in e) Object.defineProperty(t, n, { enumerable: true, get: e[n] }); })(exports, { U: () => i });
+const i = console;
+"#;
+    let output = render(input);
+    assert!(!output.contains("export { console"), "{output}");
+    assert!(output.contains("console"), "{output}");
+    assert!(!output.contains("defineProperty"), "{output}");
 }

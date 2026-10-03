@@ -2985,6 +2985,46 @@ impl Visit for ArgumentsIdentFinder {
     }
 }
 
+/// Local bindings that a CommonJS export getter returns whole: webpack
+/// `require.d` maps (direct or through an inlined getter loop) and
+/// `Object.defineProperty(exports, name, { get })`. UnEsm exports each such
+/// binding by name, so it must still be declared when UnEsm runs.
+pub(crate) fn collect_cjs_export_getter_local_keys(
+    module: &Module,
+    unresolved_mark: Mark,
+) -> HashSet<BindingId> {
+    let mut keys = HashSet::default();
+    for item in &module.body {
+        let getters = extract_direct_webpack_export_getters(item, unresolved_mark)
+            .or_else(|| extract_webpack_export_getter_iife(item, unresolved_mark));
+        if let Some(getters) = getters {
+            for (_, expr) in getters {
+                if let Expr::Ident(ident) = strip_parens(&expr) {
+                    keys.insert(binding_id(ident));
+                }
+            }
+            continue;
+        }
+        let ModuleItem::Stmt(Stmt::Expr(expr_stmt)) = item else {
+            continue;
+        };
+        let Expr::Call(call) = expr_stmt.expr.as_ref() else {
+            continue;
+        };
+        if call.args.len() == 3
+            && is_object_define_property_global_call(call, unresolved_mark)
+            && is_cjs_export_object_expr(call.args[0].expr.as_ref(), unresolved_mark)
+        {
+            if let Some(ident) =
+                extract_define_property_getter_ident(call.args[2].expr.as_ref(), unresolved_mark)
+            {
+                keys.insert(binding_id(&ident));
+            }
+        }
+    }
+    keys
+}
+
 fn extract_direct_webpack_export_getters(
     item: &ModuleItem,
     unresolved_mark: Mark,

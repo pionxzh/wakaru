@@ -264,6 +264,10 @@ rationale, or level gating appear.
   writes (including `++`/`delete`), or redeclarations instead of proving full
   var→const convertibility, and skips the whole module for every declaration
   kind when a `with` or direct `eval` is present (the dynamic-scope skip).
+  It also runs before `UnEsm`, so it keeps every alias that a CommonJS export
+  getter (`require.d`, `Object.defineProperty(exports, …, { get })`) returns
+  whole: `UnEsm` exports that binding by name, and an inlined global would
+  leave an ESM export of an undeclared binding.
 - **UnArgumentSpread** — `standard+`. Pattern subtleties:
   `fn.apply(null, args)` and `obj.fn.apply(obj, args)` are safe;
   `obj.fn.apply(null, args)` is *intentionally skipped* — rewriting it to
