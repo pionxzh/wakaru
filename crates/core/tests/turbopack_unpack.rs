@@ -275,7 +275,7 @@ export const hash = ()=>b.randomUUID();"#
 fn unsupported_context_members_keep_only_that_factory_opaque() {
     let source = client_chunk(
         r#"
-101, t => { t.v(t.f({ "./a.js": { id: () => 303 } })); },
+101, t => { t.v(t.U("./a.js")); },
 202, t => { t.v("alpha"); }
 "#,
     );
@@ -286,8 +286,8 @@ fn unsupported_context_members_keep_only_that_factory_opaque() {
     };
     assert_eq!(warning.filename, "module-101.js");
     assert_eq!(warning.kind, UnpackWarningKind::DecompileFailed);
-    assert!(warning.message.contains("`f`"), "{}", warning.message);
-    assert!(module(&output, "module-101.js").contains("t.f("));
+    assert!(warning.message.contains("`U`"), "{}", warning.message);
+    assert!(module(&output, "module-101.js").contains("t.U("));
     assert!(module(&output, "module-202.js").contains("export default \"alpha\""));
 }
 
@@ -465,7 +465,7 @@ fn bound_runtime_functions_become_require_and_bound_residuals() {
     let source = client_chunk(
         r#"
 101, a => { "use strict"; let k = a.r.bind(a), l = a.l.bind(a); a.s(["routeModule", 0, { require: k, loadChunk: l }]); },
-202, a => { "use strict"; let m = a.f.bind(a); a.s(["m", 0, m]); }
+202, a => { "use strict"; let m = a.U.bind(a); a.s(["m", 0, m]); }
 "#,
     );
     let output = unpack_chunk(&source);
@@ -474,7 +474,7 @@ fn bound_runtime_functions_become_require_and_bound_residuals() {
         panic!("expected two warnings: {:?}", output.warnings);
     };
     assert_eq!(failure.filename, "module-202.js");
-    assert!(failure.message.contains("`f`"), "{}", failure.message);
+    assert!(failure.message.contains("`U`"), "{}", failure.message);
     assert_eq!(residual.filename, "module-101.js");
     assert_eq!(residual.kind, UnpackWarningKind::RuntimeResidual);
     assert_eq!(
@@ -510,6 +510,138 @@ fn a_factory_that_cannot_take_webpack_parameter_names_stays_opaque_alone() {
     );
     assert!(module(&output, "module-101.js").contains("e.r, exports, module"));
     assert!(module(&output, "module-202.js").contains("export default \"alpha\""));
+}
+
+#[test]
+fn module_contexts_called_with_a_listed_constant_become_that_entry() {
+    // Next.js resolves its instrumentation hook through a one-entry context.
+    let source = client_chunk(
+        r#"
+101, (e, t, r) => { "use strict"; t.exports = e.f({ "private-next-instrumentation-client": { id: () => 303, module: () => e.r(303) } })("private-next-instrumentation-client"); },
+303, e => { "use strict"; e.s(["onRouterTransitionStart", 0, function () {}]); }
+"#,
+    );
+    let output = unpack_chunk(&source);
+    assert_clean(&output);
+    assert_eq!(
+        module(&output, "module-101.js").trim(),
+        r#"export default require("./module-303.js");"#
+    );
+}
+
+#[test]
+fn module_contexts_with_dynamic_requests_use_a_local_runtime_copy() {
+    // `import(`../icons/${name}`)` compiles to a context map of lazy entries.
+    let source = client_chunk(
+        r#"
+101, e => {
+  "use strict";
+  e.s(["load", 0, function (n) {
+    return e.f({ "../icons/a.js": { id: () => 301, module: () => e.A(301) }, "../icons/b.js": { id: () => 404, module: () => e.r(404) } }).import(`../icons/${n}.js`);
+  }, "missing", 0, function () { return e.f({ "./x.js": { id: () => 404, module: () => e.r(404) } })("./y.js"); }]);
+},
+301, t => {
+  t.v(e => Promise.all(["static/chunks/lazy-a.js"].map(e => t.l(e))).then(() => e(302)));
+},
+302, t => { "use strict"; t.s(["icon", 0, "a"]); },
+404, t => { "use strict"; t.s(["icon", 0, "b"]); }
+"#,
+    );
+    let output = unpack_chunk(&source);
+    assert_clean(&output);
+    // The requires stay inside their entry thunks, so loading stays lazy.
+    assert_eq!(
+        module(&output, "module-101.js").trim(),
+        r##"function moduleContext(map) {
+    function request(id) {
+        const hash = id.indexOf("#");
+        if (hash !== -1) {
+            id = id.substring(0, hash);
+        }
+        const query = id.indexOf("?");
+        if (query !== -1) {
+            id = id.substring(0, query);
+        }
+        return id;
+    }
+    function context(id) {
+        id = request(id);
+        if (Object.prototype.hasOwnProperty.call(map, id)) {
+            return map[id].module();
+        }
+        const error = new Error(`Cannot find module '${id}'`);
+        error.code = "MODULE_NOT_FOUND";
+        throw error;
+    }
+    context.keys = ()=>Object.keys(map);
+    context.resolve = (id)=>{
+        id = request(id);
+        if (Object.prototype.hasOwnProperty.call(map, id)) {
+            return map[id].id();
+        }
+        const error = new Error(`Cannot find module '${id}'`);
+        error.code = "MODULE_NOT_FOUND";
+        throw error;
+    };
+    context.import = async (id)=>await context(id);
+    return context;
+}
+export const load = function(n) {
+    return moduleContext({
+        "../icons/a.js": {
+            id: ()=>301,
+            module: ()=>Promise.resolve().then(()=>require("./module-302.js"))
+        },
+        "../icons/b.js": {
+            id: ()=>404,
+            module: ()=>require("./module-404.js")
+        }
+    }).import(`../icons/${n}.js`);
+};
+export const missing = function() {
+    return moduleContext({
+        "./x.js": {
+            id: ()=>404,
+            module: ()=>require("./module-404.js")
+        }
+    })("./y.js");
+};"##
+    );
+}
+
+#[test]
+fn module_contexts_in_next_15_object_containers_keep_the_request_unchanged() {
+    // Before 16.1 the runtime looks the request up without dropping a query
+    // or fragment.
+    let source = format!(
+        "{LEGACY_CLIENT_PREFIX}{}}}]);",
+        r#"
+101: e => { "use strict"; e.v(function (n) { return e.f({ "./a.js": { id: () => 202, module: () => e.r(202) } })(n); }); },
+202: e => { "use strict"; e.v("alpha"); }
+"#
+    );
+    let output = unpack_chunk(&source);
+    assert_clean(&output);
+    let helper = module(&output, "module-101.js");
+    assert!(helper.contains("function moduleContext(map)"), "{helper}");
+    assert!(!helper.contains("indexOf"), "{helper}");
+}
+
+#[test]
+fn module_contexts_stay_opaque_when_a_runtime_global_is_shadowed() {
+    let source = client_chunk(
+        r#"
+101, e => { "use strict"; var Object = 1; e.v(e.f({ "./a.js": { id: () => 202, module: () => e.r(202) } })(name)); },
+202, t => { t.v("alpha"); }
+"#,
+    );
+    let output = unpack_chunk(&source);
+    assert_eq!(output.detected_formats, [BundleFormat::Turbopack]);
+    let [warning] = output.warnings.as_slice() else {
+        panic!("expected one warning: {:?}", output.warnings);
+    };
+    assert_eq!(warning.filename, "module-101.js");
+    assert!(warning.message.contains("`f`"), "{}", warning.message);
 }
 
 #[test]

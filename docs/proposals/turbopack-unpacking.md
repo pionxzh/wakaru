@@ -2,9 +2,8 @@
 
 Status: **IMPLEMENTED for Next.js 15.3 through 16.3** (`unpacker/turbopack.rs`;
 current behavior lives in [unpacking.md](../unpacking.md#turbopack)). This
-document keeps the format research and the remaining work. Not done: the
-16.4 canary shapes, chunk enumeration (Phase 3's `enumerate-chunks` part),
-and `ctx.j`/async modules. Dev builds are out of scope, matching the
+document keeps the format research and the remaining work; the open items
+are listed under [Remaining work](#remaining-work). Dev builds are out of scope, matching the
 production-build scope in [unpacking.md](../unpacking.md).
 
 Ground rules: follow [AGENTS.md](../../AGENTS.md), including a focused unit
@@ -228,7 +227,8 @@ and a whole-container fallback on failure.
   the require stub (`ctx.z`) were later exempted: they stay residual runtime
   calls with a non-error diagnostic, because they affect no module graph or
   export (see
-  [unpacking.md](../unpacking.md#turbopack)).
+  [unpacking.md](../unpacking.md#turbopack)). `ctx.f` (`require.context`)
+  later became a call to a local copy of the runtime implementation.
 
 ### Phase 3: lazy imports and chunk facts
 
@@ -248,6 +248,42 @@ the runtime file is part of the input, read its prototype assignments
 normalizing. Without the runtime, accept only the known shapes above. An
 unknown `ctx.s` tag, or a method used with an unexpected arity, rejects the
 module rather than guessing.
+
+## Remaining work
+
+Each item keeps the affected factory opaque (or the output less readable)
+today; none of them guesses.
+
+- **Free `module`/`exports`/`require` in a translated factory.** The webpack
+  normalizer renames the translated parameters to those names, so a factory
+  that also reads one of them free stays opaque with
+  `webpack_factory_recovery_failed`. Observed shapes: the App Router page
+  runtime module in the local Next 15.5 and 16 server builds
+  (`createAppPageEntrypoint` in 16), which reads a free `require("path")`, and UMD AMD branches that pass free `exports, module`
+  to `define`. Fix direction: keep the free name distinct (for example,
+  leave the parameter on its fresh spelling when the target name is free)
+  instead of failing.
+- **`ctx.b`.** Create-worker in 16.2, chunk base path in 16.3; the same
+  letter cannot become a residual without version evidence. Revisit when
+  the chunk or the runtime file can prove the version.
+- **`ctx.C`, `ctx.U`, `ctx.R`, `ctx.j`, async modules (`ctx.a`).** Not
+  translated. `ctx.C` appears in one module of the local Next 16 server
+  build; the others were not observed in production chunks.
+- **`ctx.f` version evidence.** The local `moduleContext` copy uses the 16.1+
+  request parsing unless the chunk is a 15.2–15.4 object container, because
+  15.5–16.0 flat chunks look identical to 16.1 ones. When the runtime file
+  is in the input set, its `f` implementation shows the behavior directly
+  (16.1+ calls a request parser before the lookup); reading it needs
+  runtime facts passed across inputs. Do this when a 15.5–16.0 build that
+  uses `ctx.f` turns up.
+- **Ambiguous ids across inputs.** A merged group can list an id as a
+  member in one chunk while another chunk defines the same id as its own
+  factory. The multi-input rewrite leaves such ids as numeric `require(N)`
+  calls in importers. One option: prefer the definition from the importer's
+  own input when it has one (not measured).
+- **Cosmetic:** a local exported by both a merged group's primary and one of
+  its members is renamed to the member's `name_<id>` alias.
+- The 16.4 canary shapes and chunk enumeration (Phase 3).
 
 ## Out of scope
 

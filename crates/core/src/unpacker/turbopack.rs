@@ -23,13 +23,16 @@
 use crate::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::{sync::Lrc, Globals, Mark, SourceMap, Spanned, SyntaxContext, GLOBALS};
+use swc_core::common::{
+    sync::Lrc, FileName, Globals, Mark, SourceMap, Span, Spanned, SyntaxContext, DUMMY_SP, GLOBALS,
+};
 use swc_core::ecma::ast::{
     ArrayLit, ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BindingIdent,
     CallExpr, Callee, ClassDecl, ComputedPropName, Expr, ExprOrSpread, ExprStmt, FnDecl, Ident,
     IdentName, KeyValueProp, Lit, MemberExpr, MemberProp, Module, ModuleItem, Number, ObjectLit,
     Pat, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt, Str,
 };
+use swc_core::ecma::parser::{Parser, StringInput, Syntax};
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -244,6 +247,10 @@ pub(super) fn detect_from_module_prepared(
 struct Entry<'a> {
     ids: Vec<usize>,
     factory: &'a Expr,
+    /// From a 15.2–15.4 object container, which proves a runtime older than
+    /// 16.1. Flat containers (15.5 and later) do not show 16.0 apart from
+    /// 16.1.
+    object_form: bool,
 }
 
 impl Entry<'_> {
@@ -522,6 +529,7 @@ fn object_entry(prop: &PropOrSpread) -> Option<Entry<'_>> {
         return Some(Entry {
             ids: vec![id],
             factory: value,
+            object_form: true,
         });
     }
     let Expr::Array(pair) = strip_parens(value) else {
@@ -551,7 +559,11 @@ fn object_entry(prop: &PropOrSpread) -> Option<Entry<'_>> {
             expr => numeric_id_from_expr(expr)?,
         });
     }
-    Some(Entry { ids, factory })
+    Some(Entry {
+        ids,
+        factory,
+        object_form: true,
+    })
 }
 
 /// Split a payload into id runs, each followed by one factory. Anything else,
@@ -574,6 +586,7 @@ fn payload_entries(elems: &[Option<ExprOrSpread>]) -> Option<Vec<Entry<'_>>> {
         entries.push(Entry {
             ids: std::mem::take(&mut ids),
             factory: expr,
+            object_form: false,
         });
     }
     if !ids.is_empty() || entries.is_empty() {
@@ -1288,6 +1301,7 @@ fn translate_factory(
         let ctx_name = names.fresh("context");
         let module_name = preamble.module.unwrap_or_else(|| names.fresh("module"));
         let exports_name = preamble.exports.unwrap_or_else(|| names.fresh("exports"));
+        let context_helper = names.fresh("moduleContext");
         let unresolved_ctxt = SyntaxContext::empty().apply_mark(unresolved_mark);
         let renames = params
             .iter()
@@ -1312,6 +1326,8 @@ fn translate_factory(
             failure: None,
             uses_global_this: preamble.uses_global_this,
             uses_promise: false,
+            context_helper: context_helper.clone(),
+            uses_context_helper: false,
             residual: None,
         };
         translator.translate_module(&mut module);
@@ -1329,6 +1345,30 @@ fn translate_factory(
             return Err(DetectedModuleFailure::TurbopackUnsupportedRuntime(
                 TurbopackContextUse::Member('A'),
             ));
+        }
+        if translator.uses_context_helper {
+            if ["Object", "Error"]
+                .iter()
+                .any(|global| names.bindings.contains(&Atom::from(*global)))
+            {
+                return Err(DetectedModuleFailure::TurbopackUnsupportedRuntime(
+                    TurbopackContextUse::Member('f'),
+                ));
+            }
+            let directives = module
+                .body
+                .iter()
+                .take_while(|item| {
+                    matches!(item, ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) if matches!(&**expr, Expr::Lit(Lit::Str(_))))
+                })
+                .count();
+            module.body.insert(
+                directives,
+                ModuleItem::Stmt(module_context_helper(
+                    &context_helper,
+                    !entry.object_form,
+                )),
+            );
         }
         // The residual must stay free in the emitted module.
         if let Some(letter) = translator.residual {
@@ -1675,6 +1715,10 @@ struct ContextTranslator<'a> {
     failure: Option<DetectedModuleFailure>,
     uses_global_this: bool,
     uses_promise: bool,
+    /// The local copy of the runtime's `require.context` implementation
+    /// that `ctx.f` translates to, and whether the factory needs it.
+    context_helper: Atom,
+    uses_context_helper: bool,
     /// The first runtime member kept as a residual.
     residual: Option<char>,
 }
@@ -2095,6 +2139,10 @@ impl ContextTranslator<'_> {
             ("A", [ExprOrSpread { spread: None, expr }]) => {
                 numeric_id_from_expr(expr).map(|id| self.loader_call(id))
             }
+            ("f", [ExprOrSpread { spread: None, expr }]) => {
+                expr.visit_mut_with(self);
+                Some(call_expr(self.context_helper_expr(), vec![expr.clone()]))
+            }
             (
                 "x",
                 [ExprOrSpread {
@@ -2172,11 +2220,83 @@ impl ContextTranslator<'_> {
         if letter == "r" {
             return Some(ident_expr(&self.ctx));
         }
+        if letter == "f" {
+            return Some(self.context_helper_expr());
+        }
         let residual = self.residual_member(letter)?;
         Some(call_expr(
             member(residual, "bind"),
             vec![ident_expr(&Atom::from(RESIDUAL_CONTEXT))],
         ))
+    }
+
+    fn context_helper_expr(&mut self) -> Box<Expr> {
+        self.uses_context_helper = true;
+        ident_expr(&self.context_helper)
+    }
+
+    /// `ctx.f({ key: { id, module } })("key")` with a listed constant key,
+    /// which Next.js uses to resolve its instrumentation hook, becomes that
+    /// entry's `module` body. The runtime calls `map[key].module()`; the
+    /// other entries are object literals of arrow functions, so dropping
+    /// them has no effect.
+    fn translate_constant_context_call(&mut self, expr: &Expr) -> Option<Box<Expr>> {
+        let Expr::Call(call) = expr else {
+            return None;
+        };
+        let [ExprOrSpread {
+            spread: None,
+            expr: request,
+        }] = call.args.as_slice()
+        else {
+            return None;
+        };
+        let Expr::Lit(Lit::Str(request)) = strip_parens(request) else {
+            return None;
+        };
+        let Callee::Expr(callee) = &call.callee else {
+            return None;
+        };
+        let Expr::Call(context) = strip_parens(callee) else {
+            return None;
+        };
+        let Callee::Expr(context_callee) = &context.callee else {
+            return None;
+        };
+        if self.ctx_member(context_callee) != Some("f") {
+            return None;
+        }
+        let [ExprOrSpread {
+            spread: None,
+            expr: map,
+        }] = context.args.as_slice()
+        else {
+            return None;
+        };
+        let Expr::Object(map) = strip_parens(map) else {
+            return None;
+        };
+        let mut selected = None;
+        for prop in &map.props {
+            let PropOrSpread::Prop(prop) = prop else {
+                return None;
+            };
+            let Prop::KeyValue(KeyValueProp {
+                key: PropName::Str(key),
+                value,
+            }) = &**prop
+            else {
+                return None;
+            };
+            let module = context_entry_module(value)?;
+            if key.value == request.value {
+                // A repeated key keeps the last entry, as in any object literal.
+                selected = Some(module);
+            }
+        }
+        let mut module = Box::new(selected?.clone());
+        module.visit_mut_with(self);
+        Some(module)
     }
 
     /// 15.3–15.4 call an async loader inline: `ctx.r(loader)(ctx.i)`.
@@ -2283,6 +2403,10 @@ impl VisitMut for ContextTranslator<'_> {
             *expr = *replacement;
             return;
         }
+        if let Some(replacement) = self.translate_constant_context_call(expr) {
+            *expr = *replacement;
+            return;
+        }
         if let Expr::Call(call) = expr {
             let is_ctx_call =
                 matches!(&call.callee, Callee::Expr(callee) if self.ctx_member(callee).is_some());
@@ -2308,6 +2432,8 @@ impl VisitMut for ContextTranslator<'_> {
                 // this detached value would throw where the translation
                 // keeps working.
                 *expr = *ident_expr(&self.ctx);
+            } else if letter == "f" {
+                *expr = *self.context_helper_expr();
             } else if let Some(residual) = self.residual_member(letter) {
                 *expr = *residual;
             } else {
@@ -2323,6 +2449,102 @@ impl VisitMut for ContextTranslator<'_> {
         }
         expr.visit_mut_children_with(self);
     }
+}
+
+/// The `module` body of a `require.context` entry
+/// `{ id: () => <id>, module: () => <expr> }`.
+fn context_entry_module(entry: &Expr) -> Option<&Expr> {
+    let Expr::Object(entry) = strip_parens(entry) else {
+        return None;
+    };
+    let mut module = None;
+    let mut has_id = false;
+    for prop in &entry.props {
+        let PropOrSpread::Prop(prop) = prop else {
+            return None;
+        };
+        let Prop::KeyValue(KeyValueProp {
+            key: PropName::Ident(key),
+            value,
+        }) = &**prop
+        else {
+            return None;
+        };
+        let (params, body) = function_returning(value)?;
+        if !params.is_empty() {
+            return None;
+        }
+        match key.sym.as_ref() {
+            "id" if !has_id => has_id = true,
+            "module" if module.is_none() => module = Some(body),
+            _ => return None,
+        }
+    }
+    module.filter(|_| has_id)
+}
+
+/// A copy of the runtime's `require.context` implementation. From 16.1 the
+/// runtime drops a `?query` or `#fragment` from the request before the
+/// lookup (`parseRequest`); context keys never contain one.
+const MODULE_CONTEXT_HELPER: &str = r#"function __HELPER__(map) {__REQUEST_FN__
+  function context(id) {__REQUEST__
+    if (Object.prototype.hasOwnProperty.call(map, id)) return map[id].module();
+    const error = new Error(`Cannot find module '${id}'`);
+    error.code = "MODULE_NOT_FOUND";
+    throw error;
+  }
+  context.keys = () => Object.keys(map);
+  context.resolve = (id) => {__REQUEST__
+    if (Object.prototype.hasOwnProperty.call(map, id)) return map[id].id();
+    const error = new Error(`Cannot find module '${id}'`);
+    error.code = "MODULE_NOT_FOUND";
+    throw error;
+  };
+  context.import = async (id) => await context(id);
+  return context;
+}"#;
+
+const MODULE_CONTEXT_REQUEST: &str = r##"
+  function request(id) {
+    const hash = id.indexOf("#");
+    if (hash !== -1) id = id.substring(0, hash);
+    const query = id.indexOf("?");
+    if (query !== -1) id = id.substring(0, query);
+    return id;
+  }"##;
+
+/// The helper with 16.1+ request parsing, or without it for a chunk that
+/// proves an older runtime. A flat chunk gets the 16.1+ form: 16.0 and 16.1
+/// emit identical chunks, and the newer behavior differs only for a request
+/// that contains `?` or `#`.
+fn module_context_helper(name: &Atom, parses_request: bool) -> Stmt {
+    struct ClearSpans;
+    impl VisitMut for ClearSpans {
+        fn visit_mut_span(&mut self, span: &mut Span) {
+            *span = DUMMY_SP;
+        }
+    }
+    let cm: Lrc<SourceMap> = Default::default();
+    let (request_fn, request) = if parses_request {
+        (MODULE_CONTEXT_REQUEST, "\n    id = request(id);")
+    } else {
+        ("", "")
+    };
+    let source = MODULE_CONTEXT_HELPER
+        .replace("__HELPER__", name)
+        .replace("__REQUEST_FN__", request_fn)
+        .replace("__REQUEST__", request);
+    let fm = cm.new_source_file(FileName::Anon.into(), source);
+    let mut parser = Parser::new(
+        Syntax::Es(Default::default()),
+        StringInput::from(&*fm),
+        None,
+    );
+    let mut stmt = parser
+        .parse_stmt_list_item()
+        .expect("the module context helper parses");
+    stmt.visit_mut_with(&mut ClearSpans);
+    stmt
 }
 
 /// `(params => body)(args)` with an expression body.

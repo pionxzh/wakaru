@@ -251,6 +251,20 @@ applies. Only members with a known meaning are translated:
   `ctx.r.bind(ctx)`, the bound form App Router server page entries pass, also
   becomes the require parameter; a residual member bound the same way stays
   `__turbopack_context__.<letter>.bind(__turbopack_context__)`.
+- `ctx.f(map)`, the runtime's `require.context` that dynamic `import()` and
+  `require()` with a template request compile to, becomes a call to a local
+  `moduleContext` function inserted at the top of the module: a copy of the
+  runtime implementation (call, `keys`, `resolve`, `import`). Each entry's
+  `module: () => ctx.r(id)` or `ctx.A(id)` is translated in place, so the
+  require stays inside its thunk and loading stays lazy. From 16.1 the
+  runtime drops a `?query` or `#fragment` from the request before the
+  lookup. The copy does the same unless the chunk is a 15.2–15.4 object
+  container; 15.5–16.0 flat chunks cannot be told apart from 16.1 ones and
+  get the newer behavior, which differs only for a request that contains
+  `?` or `#`. A call with a constant key listed in an object-literal map
+  (Next.js resolves its instrumentation hook this way) becomes that entry's
+  `module` body directly. A factory with a local `Object` or `Error` binding
+  stays opaque, since the copy reads those globals.
 - `ctx.x("name", () => require("name"))`, a server external, becomes
   `require("name")`; `ctx.g` becomes `globalThis` when no local binding has
   that spelling.
@@ -269,7 +283,7 @@ applies. Only members with a known meaning are translated:
   declarations cannot collide.
 
 Any other use, such as `ctx.j`, async modules,
-`require.context` (`ctx.f`), a worker or chunk base path (`ctx.b`), a read of
+a worker or chunk base path (`ctx.b`), a read of
 `__dirname`, or the context escaping as a value, keeps that factory opaque
 with a `decompile_failed` diagnostic. Runtime letters changed meaning
 across releases, so an unknown member is never guessed. A translated factory
