@@ -237,8 +237,9 @@ enum MirrorEvidence {
 struct PropertyWrite {
     site: Site,
     /// The write runs exactly once when the module body runs: it is the
-    /// expression of a top-level statement, an element of a top-level
-    /// sequence, or a link of such an assignment chain.
+    /// expression of a top-level statement or the initializer of a top-level
+    /// declarator, an element of a top-level sequence, or a link of such an
+    /// assignment chain.
     unconditional: bool,
     mirror: Option<(BindingId, MirrorEvidence)>,
     is_void: bool,
@@ -789,8 +790,20 @@ impl Visit for Inventory {
             };
             self.module_index = index;
             self.in_module_expr_stmt = matches!(item, ModuleItem::Stmt(Stmt::Expr(_)));
-            if let ModuleItem::Stmt(Stmt::Expr(statement)) = item {
-                self.collect_unconditional_assigns(&statement.expr);
+            match item {
+                ModuleItem::Stmt(Stmt::Expr(statement)) => {
+                    self.collect_unconditional_assigns(&statement.expr);
+                }
+                // `var local = exports.x = value;`, which the statement path
+                // splits into a declaration and an export.
+                ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
+                    for init in var.decls.iter().filter_map(|decl| decl.init.as_deref()) {
+                        if matches!(strip_parens(init), Expr::Assign(_)) {
+                            self.collect_unconditional_assigns(init);
+                        }
+                    }
+                }
+                _ => {}
             }
             if matches!(item, ModuleItem::Stmt(stmt) if self.is_mirror_statement(stmt)) {
                 self.mirror_statements.insert(self.stmt);
