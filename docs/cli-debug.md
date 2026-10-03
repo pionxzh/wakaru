@@ -270,8 +270,9 @@ n: property (writes 1, sentinels 0, other writes 0, reads 0, calls 0, getters 0,
   - mirror: a write of `n` is not mirrored in the same or the next statement (3:30)
 ```
 
-When a module-level condition fails (`exports` used as a value, reassigned,
-or with a computed key; `module.exports` used as a value or replaced; a
+When a module-level condition fails (`exports` used as a value, passed to a
+call, reassigned, or with a computed key; `module.exports` used as a value or
+replaced; a
 `delete` of an export; a direct `eval`; or a `with` statement), no name is
 classified and the command prints the failed condition instead.
 `module.exports.name` counts as `exports.name`.

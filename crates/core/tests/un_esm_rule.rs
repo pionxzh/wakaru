@@ -1747,13 +1747,10 @@ exports.default = value;
 exports = other;
 module.exports = exports.default;
 "#;
-    let expected = r#"
-value;
-exports = other;
-export default exports.default;
-"#;
-    let output = apply(input);
-    assert_eq_normalized(&output, expected);
+    let output = common::render_rule(input, |mark| {
+        wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
+    });
+    assert_eq_normalized(&output, input);
 }
 
 #[test]
@@ -5083,6 +5080,31 @@ fn conditional_named_exports_keep_the_commonjs_boundary_when_the_module_gate_fai
     }
 }
 
+/// Once the `exports` binding is reassigned or aliased, a static
+/// `exports.x` access no longer proves which object it touches, so no part of
+/// the module may be converted.
+#[test]
+fn rebound_or_aliased_exports_keeps_the_commonjs_boundary() {
+    for source in [
+        "exports.a = 1; exports = { b: 2 }; exports.c = 3; module.exports.d = 4;",
+        "exports.a = 1; function reset() { exports = { b: 2 }; } exports.c = 3;",
+        "exports.a = 1; [exports] = [other];",
+        "var alias = exports; alias.a = 1; exports.b = 2;",
+        "exports.a = 1; function current() { return exports; }",
+        "exports.a = 1; holder = { exports };",
+        // The Node idiom that replaces the exported object and keeps the
+        // binding pointing at it.
+        "function Parser() {} exports = module.exports = Parser; exports.Parser = Parser;",
+        "function Parser() {} module.exports = exports = Parser; exports.Parser = Parser;",
+        "(function (root) { function Parser() {} if (typeof exports !== 'undefined') { if (typeof module !== 'undefined' && module.exports) { exports = module.exports = Parser; } exports.Parser = Parser; } else { root.Parser = Parser; } })(this);",
+    ] {
+        let output = common::render_rule(source, |mark| {
+            wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
+        });
+        assert_eq_normalized(&output, source);
+    }
+}
+
 #[test]
 fn property_storage_recovers_compound_deferred_and_read_only_names() {
     for (source, expected) in [
@@ -5672,6 +5694,10 @@ fn export_storage_module_gates() {
     for (input, gate) in [
         (
             "exports.a = 1; register(exports);",
+            "`exports` is passed to a call",
+        ),
+        (
+            "exports.a = 1; var alias = exports;",
             "`exports` is used as a value",
         ),
         ("exports.a = 1; exports[key] = 2;", "computed `exports` key"),

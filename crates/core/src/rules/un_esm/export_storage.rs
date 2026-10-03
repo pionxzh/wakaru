@@ -27,11 +27,12 @@ use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::common::{Mark, Span, Spanned};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignOp, AssignTarget, BinaryOp, BindingIdent, CallExpr, Callee, Class,
-    ClassDecl, Decl, ExportDecl, ExportNamedSpecifier, ExportSpecifier, Expr, FnDecl, ForHead,
-    ForInStmt, ForOfStmt, Function, Ident, MemberExpr, MemberProp, Module, ModuleDecl,
-    ModuleExportName, ModuleItem, NamedExport, OptCall, OptChainBase, Pat, SimpleAssignTarget,
-    Stmt, TaggedTpl, UnaryExpr, UnaryOp, UpdateExpr, VarDecl, VarDeclKind, VarDeclarator,
+    ArrowExpr, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BindingIdent, CallExpr,
+    Callee, Class, ClassDecl, Decl, ExportDecl, ExportNamedSpecifier, ExportSpecifier, Expr,
+    ExprOrSpread, FnDecl, ForHead, ForInStmt, ForOfStmt, Function, Ident, MemberExpr, MemberProp,
+    Module, ModuleDecl, ModuleExportName, ModuleItem, NamedExport, OptCall, OptChainBase, Pat,
+    SimpleAssignTarget, Stmt, TaggedTpl, UnaryExpr, UnaryOp, UpdateExpr, VarDecl, VarDeclKind,
+    VarDeclarator,
 };
 use swc_core::ecma::utils::find_pat_ids;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -115,9 +116,13 @@ pub(crate) enum ExportStorageReport {
     ModuleGate {
         message: String,
         span: Option<Span>,
-        /// An `exports` property is written inside top-level control flow,
-        /// where statement-by-statement recovery cannot reach it.
-        nested_write: bool,
+        /// Statement-by-statement recovery cannot convert part of this
+        /// module safely, so the whole module stays CommonJS. Either an
+        /// `exports` property is written inside top-level control flow,
+        /// where that recovery cannot reach it, or the `exports` binding is
+        /// reassigned or aliased, so a static `exports.X` access no longer
+        /// proves which object it touches.
+        keep_commonjs: bool,
     },
     Names(Vec<ExportStorageDecision>),
 }
@@ -132,19 +137,19 @@ pub(crate) fn analyze_export_storage(
     if !inventory.saw_exports {
         return ExportStorageReport::NoCommonJsExports;
     }
-    let nested_write = inventory.nested_write;
+    let keep_commonjs = inventory.nested_write || inventory.binding_escape;
     if let Some((message, span)) = inventory.gate {
         return ExportStorageReport::ModuleGate {
             message,
             span: Some(span),
-            nested_write,
+            keep_commonjs,
         };
     }
     if module_has_with_stmt(module) {
         return ExportStorageReport::ModuleGate {
             message: "the module contains a `with` statement".to_string(),
             span: None,
-            nested_write,
+            keep_commonjs,
         };
     }
     let mut direct_eval = DirectEvalPresence::default();
@@ -153,7 +158,7 @@ pub(crate) fn analyze_export_storage(
         return ExportStorageReport::ModuleGate {
             message: "the module contains a direct `eval` call".to_string(),
             span: None,
-            nested_write,
+            keep_commonjs,
         };
     }
 
@@ -282,6 +287,9 @@ struct Inventory {
     /// Whether the current module-body item is an expression statement.
     in_module_expr_stmt: bool,
     nested_write: bool,
+    /// The `exports` binding is reassigned, or used as a value other than a
+    /// static member object, a `typeof` operand, or a call argument.
+    binding_escape: bool,
     stmt: StmtPos,
     module_index: usize,
     next_list: usize,
@@ -305,6 +313,7 @@ impl Inventory {
             unconditional_assigns: HashSet::default(),
             in_module_expr_stmt: false,
             nested_write: false,
+            binding_escape: false,
             stmt: StmtPos {
                 list: MODULE_LIST,
                 index: 0,
@@ -382,7 +391,10 @@ impl Inventory {
         span: Span,
     ) {
         if ctxt.outer() == self.unresolved_mark && matches!(sym.as_ref(), "exports" | "module") {
-            self.saw_exports |= sym.as_ref() == "exports";
+            if sym.as_ref() == "exports" {
+                self.saw_exports = true;
+                self.binding_escape = true;
+            }
             self.fail(format!("`{sym}` is reassigned"), span);
         }
     }
@@ -577,6 +589,39 @@ impl Inventory {
         visit(self);
         self.function_depth -= 1;
         self.stmt = saved;
+    }
+
+    /// `exports` passed directly to a call fails the module gate without
+    /// [`Self::binding_escape`]: helper calls such as
+    /// `__exportStar(require("./dep"), exports)` keep their own recognizers
+    /// on the statement path.
+    fn visit_call_args(&mut self, args: &[ExprOrSpread]) {
+        for arg in args {
+            match strip_parens(&arg.expr) {
+                Expr::Ident(ident)
+                    if arg.spread.is_none()
+                        && is_unresolved_ident(ident, "exports", self.unresolved_mark) =>
+                {
+                    self.saw_exports = true;
+                    self.fail("`exports` is passed to a call", ident.span);
+                }
+                _ => arg.visit_with(self),
+            }
+        }
+    }
+
+    /// `key in exports` only tests the object and cannot alias it; the
+    /// CommonJS export-star loop checks it before each copy. A bare
+    /// `exports` there still fails the module gate, without
+    /// [`Self::binding_escape`].
+    fn visit_in_operand(&mut self, operand: &Expr) {
+        match strip_parens(operand) {
+            Expr::Ident(ident) if is_unresolved_ident(ident, "exports", self.unresolved_mark) => {
+                self.saw_exports = true;
+                self.fail("`exports` is used as a value", ident.span);
+            }
+            _ => operand.visit_with(self),
+        }
     }
 
     fn visit_call_target(&mut self, callee: &Expr) {
@@ -874,12 +919,12 @@ impl Visit for Inventory {
             Callee::Expr(callee) => self.visit_call_target(callee),
             callee => callee.visit_with(self),
         }
-        call.args.visit_with(self);
+        self.visit_call_args(&call.args);
     }
 
     fn visit_opt_call(&mut self, call: &OptCall) {
         self.visit_call_target(&call.callee);
-        call.args.visit_with(self);
+        self.visit_call_args(&call.args);
     }
 
     fn visit_tagged_tpl(&mut self, tagged: &TaggedTpl) {
@@ -902,6 +947,15 @@ impl Visit for Inventory {
                 self.fail("`delete` of an `exports` property", unary.span);
             }
             _ => unary.visit_children_with(self),
+        }
+    }
+
+    fn visit_bin_expr(&mut self, bin: &BinExpr) {
+        if bin.op == BinaryOp::In {
+            bin.left.visit_with(self);
+            self.visit_in_operand(&bin.right);
+        } else {
+            bin.visit_children_with(self);
         }
     }
 
@@ -932,6 +986,7 @@ impl Visit for Inventory {
     fn visit_ident(&mut self, ident: &Ident) {
         if is_unresolved_ident(ident, "exports", self.unresolved_mark) {
             self.saw_exports = true;
+            self.binding_escape = true;
             self.fail("`exports` is used as a value", ident.span);
         } else if is_unresolved_ident(ident, "module", self.unresolved_mark) {
             self.fail("`module` is referenced", ident.span);
@@ -1312,9 +1367,9 @@ fn receiver_rejection(call: &Site) -> Rejection {
 
 #[derive(Default)]
 pub(super) struct PropertyStoragePlan {
-    /// The module gate failed while an `exports` property is written inside
-    /// top-level control flow. Statement-by-statement recovery would strand
-    /// that write in ESM output, so the module stays CommonJS.
+    /// The module gate failed in a way statement-by-statement recovery
+    /// cannot convert safely (see [`ExportStorageReport::ModuleGate`]), so
+    /// the module stays CommonJS.
     pub(super) keep_commonjs: bool,
     /// Names [`recover_property_storage_exports`] rewrites.
     pub(super) names: HashSet<Atom>,
@@ -1329,8 +1384,8 @@ pub(super) fn property_storage_plan(module: &Module, unresolved_mark: Mark) -> P
                 .map(|decision| decision.name.clone())
                 .collect(),
         },
-        ExportStorageReport::ModuleGate { nested_write, .. } => PropertyStoragePlan {
-            keep_commonjs: nested_write,
+        ExportStorageReport::ModuleGate { keep_commonjs, .. } => PropertyStoragePlan {
+            keep_commonjs,
             names: HashSet::default(),
         },
         ExportStorageReport::NoCommonJsExports => PropertyStoragePlan::default(),

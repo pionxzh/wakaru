@@ -42,9 +42,7 @@ mod export_star;
 pub(crate) mod export_storage;
 use export_star::rewrite_commonjs_export_stars;
 
-use export_storage::{
-    property_storage_plan, recover_property_storage_exports, PropertyStoragePlan,
-};
+use export_storage::{property_storage_plan, recover_property_storage_exports};
 
 pub struct UnEsm {
     unresolved_mark: Mark,
@@ -182,11 +180,12 @@ impl VisitMut for UnEsm {
         let current_filename = self.current_filename.clone();
         let has_local_self_require =
             contains_local_self_require(module, self.unresolved_mark, current_filename.as_deref());
-        let storage_plan = if has_local_self_require {
-            PropertyStoragePlan::default()
-        } else {
-            property_storage_plan(module, self.unresolved_mark)
-        };
+        let mut storage_plan = property_storage_plan(module, self.unresolved_mark);
+        if has_local_self_require {
+            // The property-storage rewrite skips these modules (see below),
+            // but the module gate still applies.
+            storage_plan.names.clear();
+        }
         if storage_plan.keep_commonjs {
             if let Some(original) = original_body {
                 module.body = original;

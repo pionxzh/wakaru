@@ -438,7 +438,9 @@ How A was placed and where it differs from the design above:
   getters, export-star loops, require hoisting) and before statement
   classification, because those pre-passes match `exports.x` shapes that the
   rewrite would remove. The module-gate decision (keep CommonJS when the gate
-  fails and a property is written inside top-level control flow) is still
+  fails and a property is written inside top-level control flow, or when
+  `exports` is reassigned or aliased; see
+  [Reassigned or aliased `exports`](#reassigned-or-aliased-exports)) is still
   taken first, before anything changes. `has_unhandled_named_export_chain`
   accepts a chain whose every export target is an A name the rewrite owns.
 - **Statement-path names.** A name with only whole top-level writes and
@@ -473,6 +475,33 @@ How A was placed and where it differs from the design above:
   function` helpers). A sentinel after a call stays: the call may write the
   property first.
 
+## Reassigned or aliased `exports`
+
+A failed module gate used to keep the module CommonJS only when an `exports`
+property was written inside top-level control flow. Otherwise the statement
+path still converted every top-level `exports.X = v`. That is wrong once the
+`exports` binding stops naming `module.exports`:
+
+```js
+exports.a = 1; exports = { b: 2 }; exports.c = 3;  // `c` lands on the local object
+var t = exports; t.a = 1; exports.b = 2;           // export `a` is lost
+exports = module.exports = Parser; exports.Parser = Parser; // Node idiom
+```
+
+The last line is a hand-written Node idiom that libraries keep in their
+published source. The matrix compiles ESM, so it has no row for it.
+
+The whole module now stays CommonJS when the `exports` binding is reassigned
+anywhere (assignment, pattern target, in a function), or used as a value that
+can alias it: a declarator or assignment value, `return`, an object or array
+element, and so on. Two uses fail the gate without forcing that boundary,
+because the statement path recovers known helpers that make them:
+
+- a direct call argument (`__exportStar(require("./dep"), exports)`,
+  `register(exports)`);
+- the right operand of `in`, which CommonJS export-star loops test before
+  each copy.
+
 ## Decisions
 
 Recorded 2026-10-03.
@@ -496,3 +525,7 @@ Recorded 2026-10-04, after step 1.
 5. **B conditions follow real artifacts:** the mirror run (copies behind
    other mirror statements) and the final-copy condition are accepted,
    because Babel, TypeScript, and rollup emit those shapes.
+6. **Reassigned or aliased `exports` keeps the module CommonJS**, with the
+   call-argument and `in` exceptions above. Taken before step 3 because the
+   webpack factories that keep this idiom cannot be unpacked faithfully until
+   `UnEsm` stops converting such modules in part.
