@@ -228,6 +228,7 @@ pub enum DiagnosticCode {
     ImportCycle,
     CrossModuleClassCall,
     CommonJsExportUnrecovered,
+    RuntimeResidual,
     OutputParseRecovered,
     OutputParseFailed,
 }
@@ -245,6 +246,7 @@ impl DiagnosticCode {
             Self::ImportCycle => "import_cycle",
             Self::CrossModuleClassCall => "cross_module_class_call",
             Self::CommonJsExportUnrecovered => "commonjs_export_unrecovered",
+            Self::RuntimeResidual => "runtime_residual",
             Self::OutputParseRecovered => "output_parse_recovered",
             Self::OutputParseFailed => "output_parse_failed",
         }

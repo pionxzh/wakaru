@@ -275,7 +275,7 @@ export const hash = ()=>b.randomUUID();"#
 fn unsupported_context_members_keep_only_that_factory_opaque() {
     let source = client_chunk(
         r#"
-101, t => { t.v(t.L("static/chunks/other.js")); },
+101, t => { t.v(t.f({ "./a.js": { id: () => 303 } })); },
 202, t => { t.v("alpha"); }
 "#,
     );
@@ -286,9 +286,57 @@ fn unsupported_context_members_keep_only_that_factory_opaque() {
     };
     assert_eq!(warning.filename, "module-101.js");
     assert_eq!(warning.kind, UnpackWarningKind::DecompileFailed);
+    assert!(warning.message.contains("`f`"), "{}", warning.message);
+    assert!(module(&output, "module-101.js").contains("t.f("));
+    assert!(module(&output, "module-202.js").contains("export default \"alpha\""));
+}
+
+#[test]
+fn chunk_loading_members_stay_as_runtime_residuals() {
+    let source = client_chunk(
+        r#"
+101, t => {
+  "use strict";
+  t.s(["preload", 0, function (url) { return t.L(url); }, "load", 0, function (chunks) { return Promise.all(chunks.map(t.l)); }]);
+},
+202, t => { t.v("alpha"); }
+"#,
+    );
+    let output = unpack_chunk(&source);
+    assert_eq!(output.detected_formats, [BundleFormat::Turbopack]);
+    let [warning] = output.warnings.as_slice() else {
+        panic!("expected one warning: {:?}", output.warnings);
+    };
+    assert_eq!(warning.filename, "module-101.js");
+    assert_eq!(warning.kind, UnpackWarningKind::RuntimeResidual);
+    assert!(!warning.kind.is_error());
+    assert_eq!(
+        module(&output, "module-101.js").trim(),
+        r#"export const preload = function(url) {
+    return __turbopack_context__.L(url);
+};
+export const load = function(chunks) {
+    return Promise.all(chunks.map(__turbopack_context__.l));
+};"#
+    );
+}
+
+#[test]
+fn chunk_loading_residuals_are_not_captured_by_a_local_binding() {
+    let source = client_chunk(
+        r#"
+101, t => { var __turbopack_context__ = 1; t.v(t.L("static/chunks/other.js")); },
+202, t => { t.v("alpha"); }
+"#,
+    );
+    let output = unpack_chunk(&source);
+    let [warning] = output.warnings.as_slice() else {
+        panic!("expected one warning: {:?}", output.warnings);
+    };
+    assert_eq!(warning.filename, "module-101.js");
+    assert_eq!(warning.kind, UnpackWarningKind::DecompileFailed);
     assert!(warning.message.contains("`L`"), "{}", warning.message);
     assert!(module(&output, "module-101.js").contains("t.L("));
-    assert!(module(&output, "module-202.js").contains("export default \"alpha\""));
 }
 
 #[test]
@@ -534,9 +582,9 @@ fn value_exports_whose_result_is_discarded_become_assignments() {
 }
 
 #[test]
-fn expression_statement_preludes_do_not_block_detection() {
+fn expression_statements_beside_containers_become_a_prelude_module() {
     let source = format!(
-        ";!function () {{ try {{ var e = globalThis; e._debugIds = e._debugIds || {{}}; }} catch (e) {{}} }}();\n{}",
+        ";self.__APP_STARTED = Date.now();\n{}\nself.__APP_FLAGS = {{ beta: true }};",
         client_chunk(r#"101, t => { t.v("alpha"); }"#)
     );
     let output = unpack_chunk(&source);
@@ -545,4 +593,61 @@ fn expression_statement_preludes_do_not_block_detection() {
         module(&output, "module-101.js").trim(),
         r#"export default "alpha";"#
     );
+    let prelude = module(&output, "prelude.js");
+    assert!(
+        prelude.contains("self.__APP_STARTED = Date.now()"),
+        "{prelude}"
+    );
+    assert!(prelude.contains("self.__APP_FLAGS = {"), "{prelude}");
+    assert!(!prelude.contains("TURBOPACK"), "{prelude}");
+}
+
+/// The polyfill `turbopack.debugIds` prepends to every chunk.
+fn debug_id_polyfill(id: &str) -> String {
+    format!(
+        r#";!function(){{try {{ var e="undefined"!=typeof globalThis?globalThis:"undefined"!=typeof global?global:"undefined"!=typeof window?window:"undefined"!=typeof self?self:{{}},n=(new e.Error).stack;n&&((e._debugIds|| (e._debugIds={{}}))[n]="{id}")}}catch(e){{}}}}();"#
+    )
+}
+
+#[test]
+fn debug_id_polyfills_are_dropped() {
+    let source = format!(
+        "{}\n{}",
+        debug_id_polyfill("7cc192c9-cac3-6e49-0ca9-31643f48e4ad"),
+        client_chunk(r#"101, t => { t.v("alpha"); }"#)
+    );
+    let output = unpack_chunk(&source);
+    assert_clean(&output);
+    assert_eq!(output.modules.len(), 1, "{:?}", output.modules);
+    assert_eq!(
+        module(&output, "module-101.js").trim(),
+        r#"export default "alpha";"#
+    );
+}
+
+#[test]
+fn server_chunks_after_a_debug_id_polyfill_are_detected() {
+    let source = format!(
+        "{}\nmodule.exports = [101, a => {{ \"use strict\"; a.s([\"value\", 0, 1]); }}];",
+        debug_id_polyfill("5bb7027f-323d-ee4e-de51-1994ab129d95")
+    );
+    let output = unpack_chunk(&source);
+    assert_clean(&output);
+    assert_eq!(output.modules.len(), 1, "{:?}", output.modules);
+    assert_eq!(
+        module(&output, "module-101.js").trim(),
+        "export const value = 1;"
+    );
+}
+
+#[test]
+fn edited_debug_id_polyfills_stay_in_the_prelude() {
+    let source = format!(
+        "{}\n{}",
+        debug_id_polyfill("not-an-id\"),self.__APP_FLAGS=(\"x"),
+        client_chunk(r#"101, t => { t.v("alpha"); }"#)
+    );
+    let output = unpack_chunk(&source);
+    assert_clean(&output);
+    assert!(module(&output, "prelude.js").contains("__APP_FLAGS"));
 }

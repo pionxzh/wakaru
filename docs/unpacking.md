@@ -190,12 +190,17 @@ also with a computed `globalThis["TURBOPACK_…"]` global; the server form is
 each followed by one factory; extra ids before a factory are aliases. Next.js
 15.3–15.4 used `(G = G || []).push([script, { id: factory }])`, 15.4 also
 `id: [factory, [aliasId]]`. Beside the containers a file may hold only
-expression statements, such as an injected error-monitoring IIFE; like
-webpack chunk extraction, those statements belong to no module and are not
-emitted. A runtime registration (`{ otherChunks, runtimeModuleIds }`) holds no
-modules.
-The server form, which has no distinctive global, is accepted only when a
-factory calls a module-protocol member on its first parameter.
+expression statements. The debug-id polyfill that `turbopack.debugIds`
+(Next.js 16+) prepends to every client and server chunk is matched by its
+exact text and dropped: it only records the chunk's id in
+`globalThis._debugIds`. Any other statement runs when the chunk loads and
+belongs to no factory, so those statements are emitted together, in source
+order, as an entry module `prelude.js`; their order relative to the container
+is not kept. A runtime registration (`{ otherChunks, runtimeModuleIds }`)
+holds no modules.
+The server form, which has no distinctive global, must be the only statement
+besides the debug-id polyfill, and is accepted only when a factory calls a
+module-protocol member on its first parameter.
 
 Each factory runs as `factory(ctx, module, exports)`. The detector translates
 it into webpack's `(module, exports, require)` form and prepares it with the
@@ -225,21 +230,24 @@ applies. Only members with a known meaning are translated:
 - `ctx.x("name", () => require("name"))`, a server external, becomes
   `require("name")`; `ctx.g` becomes `globalThis` when no local binding has
   that spelling.
+- Chunk loading (`ctx.l(chunk)`, `ctx.L(url)`, called or read as a value)
+  is kept as `__turbopack_context__.l` / `.L`, and the module gets a
+  non-error `runtime_residual` diagnostic. Chunk loading reaches no module
+  graph or export, so the module still recovers; the residual name is
+  undefined in the split output. A factory that already uses that spelling
+  stays opaque.
 - 15.3–15.4 factories destructure `{ g, __dirname, m, e }` from `ctx`. The
   `m`/`e` bindings become fresh module/exports parameters, and a body that the
   minifier wrapped in a block is spliced to the top level when its
   declarations cannot collide.
 
-Any other use, such as chunk loading (`ctx.l`, `ctx.L`), `ctx.j`, async modules,
+Any other use, such as `ctx.j`, async modules,
 `require.context` (`ctx.f`), the host `require` (`ctx.t`), a read of
 `__dirname`, or the context escaping as a value, keeps that factory opaque
 with a `decompile_failed` diagnostic. So does a factory that registers
 exports for another module id: Turbopack merges modules that way, and the
 merged module would need its own synthesized boundary. Runtime letters changed meaning
-across releases, so an unknown member is never guessed. React's flight client
-and parts of the Next.js bootstrap use chunk loading directly, so a full
-Next.js client build usually reports a few opaque framework modules while
-application modules recover.
+across releases, so an unknown member is never guessed.
 
 Turbopack can inline a module into its importer, and those boundaries are
 not recoverable. The strict-mode factory groups, `ctx.S` re-exports, and the

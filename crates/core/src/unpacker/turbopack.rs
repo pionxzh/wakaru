@@ -39,7 +39,8 @@ use crate::unpacker::webpack5::{prepare_translated_webpack_factories, Translated
 use crate::unpacker::webpack_common::{numeric_id_from_expr, unique_webpack_module_filenames};
 use crate::unpacker::{
     source_fallback_for_stmts, spans_byte_ranges, BundleFormat, DetectedBundle,
-    DetectedModuleFailure, PreparedModuleAst, TurbopackContextUse, UnpackResult, UnpackedModule,
+    DetectedModuleFailure, DetectedModuleNote, PreparedModuleAst, TurbopackContextUse,
+    UnpackResult, UnpackedModule,
 };
 use crate::utils::paren::strip_parens;
 
@@ -50,7 +51,7 @@ pub(super) fn detect_from_module_prepared(
     let span = tracing::info_span!("turbopack: detect_from_module");
     let _enter = span.enter();
 
-    let entries = collect_entries(module)?;
+    let Chunk { entries, prelude } = collect_entries(module, &cm)?;
     if entries.is_empty() {
         return None;
     }
@@ -85,13 +86,24 @@ pub(super) fn detect_from_module_prepared(
     let mut translated = Vec::new();
     let mut translated_index = Vec::with_capacity(modules_entries.len());
     let mut failures = HashMap::default();
+    let mut notes = HashMap::default();
     for ((entry, id), filename) in modules_entries.iter().zip(&ids).zip(&filenames) {
         let translation = match loaders.get(&entry.ids[0]) {
             Some(target) => Ok(loader_module(*target)),
             None => translate_factory(entry, &loaders, &aliases),
         };
         match translation {
-            Ok((params, body)) => {
+            Ok(Translation {
+                params,
+                body,
+                residual,
+            }) => {
+                if residual {
+                    notes.insert(
+                        filename.clone(),
+                        DetectedModuleNote::TurbopackChunkLoadingResidual,
+                    );
+                }
                 translated_index.push(Some(translated.len()));
                 translated.push(TranslatedWebpackFactory {
                     id: id.clone(),
@@ -113,6 +125,7 @@ pub(super) fn detect_from_module_prepared(
     if failures.len() == modules_entries.len() {
         return None;
     }
+    notes.retain(|filename, _| !failures.contains_key(filename));
 
     let mut modules = Vec::with_capacity(modules_entries.len());
     let mut prepared: Vec<Option<PreparedModuleAst>> = Vec::with_capacity(modules_entries.len());
@@ -132,6 +145,24 @@ pub(super) fn detect_from_module_prepared(
         });
         prepared.push(index.and_then(|index| prepared_translated[index].take()));
     }
+    if !prelude.is_empty() {
+        // Top-level code beside the containers runs when the chunk loads,
+        // outside every module. Each statement is copied separately because
+        // the containers may sit between them.
+        modules.push(UnpackedModule {
+            id: "prelude".to_string(),
+            is_entry: true,
+            code: prelude
+                .iter()
+                .map(|stmt| source_fallback_for_stmts(&cm, std::slice::from_ref(*stmt)))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            filename: "prelude.js".to_string(),
+            source_ranges: spans_byte_ranges(&cm, prelude.iter().map(|stmt| stmt.span())),
+            ..Default::default()
+        });
+        prepared.push(None);
+    }
 
     Some(
         DetectedBundle::new(
@@ -141,7 +172,8 @@ pub(super) fn detect_from_module_prepared(
             prepared,
             cm,
         )
-        .with_module_failures(failures),
+        .with_module_failures(failures)
+        .with_module_notes(notes),
     )
 }
 
@@ -162,32 +194,73 @@ impl Entry<'_> {
     }
 }
 
+struct Chunk<'a> {
+    entries: Vec<Entry<'a>>,
+    /// Expression statements beside the containers, in source order.
+    prelude: Vec<&'a Stmt>,
+}
+
 /// Collect every factory entry of a Turbopack chunk. Only expression
 /// statements may appear beside the containers, which rules out a local
 /// binding that shadows `globalThis` or `module`.
-fn collect_entries(module: &Module) -> Option<Vec<Entry<'_>>> {
-    if let [ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. }))] = module.body.as_slice() {
+fn collect_entries<'a>(module: &'a Module, cm: &SourceMap) -> Option<Chunk<'a>> {
+    let mut stmts = Vec::with_capacity(module.body.len());
+    for item in &module.body {
+        match item {
+            ModuleItem::Stmt(Stmt::Empty(_)) => {}
+            ModuleItem::Stmt(stmt @ Stmt::Expr(_)) if is_debug_id_polyfill(cm, stmt) => {}
+            ModuleItem::Stmt(stmt @ Stmt::Expr(_)) => stmts.push(stmt),
+            _ => return None,
+        }
+    }
+    if let [Stmt::Expr(ExprStmt { expr, .. })] = stmts.as_slice() {
         if let Some(payload) = server_payload(expr) {
-            return server_entries(payload);
+            return Some(Chunk {
+                entries: server_entries(payload)?,
+                prelude: Vec::new(),
+            });
         }
     }
     let mut entries = Vec::new();
+    let mut prelude = Vec::new();
     let mut saw_container = false;
-    for item in &module.body {
-        // Expression statements cannot declare a binding, so a prelude such
-        // as an error-monitoring IIFE cannot shadow `globalThis`. Like webpack
-        // chunk extraction, such statements belong to no module.
-        let expr = match item {
-            ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) => expr,
-            ModuleItem::Stmt(Stmt::Empty(_)) => continue,
-            _ => return None,
+    for stmt in stmts {
+        let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+            unreachable!("only expression statements are collected");
         };
-        if let Some(payload) = client_payload(expr) {
-            saw_container = true;
-            entries.extend(container_entries(&payload.elems[1..])?);
+        match client_payload(expr) {
+            Some(payload) => {
+                saw_container = true;
+                entries.extend(container_entries(&payload.elems[1..])?);
+            }
+            None => prelude.push(stmt),
         }
     }
-    saw_container.then_some(entries)
+    saw_container.then_some(Chunk { entries, prelude })
+}
+
+/// The polyfill that `turbopack.debugIds` (Next.js 16+) prepends to every
+/// client and server chunk, around the chunk's debug id. It only records
+/// that id in `globalThis._debugIds`, so it is dropped rather than emitted
+/// as a prelude. The text is fixed in the Turbopack binary; anything else,
+/// including a re-minified copy, stays in the prelude.
+const DEBUG_ID_POLYFILL: (&str, &str) = (
+    r#"!function(){try { var e="undefined"!=typeof globalThis?globalThis:"undefined"!=typeof global?global:"undefined"!=typeof window?window:"undefined"!=typeof self?self:{},n=(new e.Error).stack;n&&((e._debugIds|| (e._debugIds={}))[n]=""#,
+    r#"")}catch(e){}}()"#,
+);
+
+fn is_debug_id_polyfill(cm: &SourceMap, stmt: &Stmt) -> bool {
+    let text = source_fallback_for_stmts(cm, std::slice::from_ref(stmt));
+    let text = text.strip_suffix(';').unwrap_or(&text);
+    let (prefix, suffix) = DEBUG_ID_POLYFILL;
+    text.strip_prefix(prefix)
+        .and_then(|rest| rest.strip_suffix(suffix))
+        .is_some_and(|id| {
+            !id.is_empty()
+                && id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() || byte == b'-')
+        })
 }
 
 fn server_entries(payload: &Expr) -> Option<Vec<Entry<'_>>> {
@@ -826,6 +899,19 @@ fn ctx_member_call<'a>(expr: &'a Expr, ctx: &Ident, name: &str) -> Option<&'a Ca
 // Factory translation
 // ---------------------------------------------------------------------------
 
+/// The free name that chunk-loading residuals keep calling through. It is
+/// undefined once modules are split, which the residual diagnostic reports.
+const RESIDUAL_CONTEXT: &str = "__turbopack_context__";
+
+/// A factory in webpack's `(module, exports, require)` form.
+struct Translation {
+    params: Vec<Pat>,
+    body: Vec<Stmt>,
+    /// Chunk loading (`ctx.l`, `ctx.L`) was kept as a call through
+    /// [`RESIDUAL_CONTEXT`].
+    residual: bool,
+}
+
 /// Translate one factory into webpack's `(module, exports, require)` form.
 /// An error means the factory uses its context in a way without a known
 /// translation and must stay opaque.
@@ -833,7 +919,7 @@ fn translate_factory(
     entry: &Entry<'_>,
     loaders: &HashMap<usize, LoaderTarget>,
     aliases: &HashMap<usize, usize>,
-) -> Result<(Vec<Pat>, Vec<Stmt>), DetectedModuleFailure> {
+) -> Result<Translation, DetectedModuleFailure> {
     let (params, body) =
         factory_parts(entry.factory).expect("payload entries hold validated factories");
     let globals = Globals::new();
@@ -849,7 +935,11 @@ fn translate_factory(
 
         let Some(ctx) = params.first() else {
             // A factory without parameters uses no runtime helper.
-            return Ok((Vec::new(), clear_contexts(module)));
+            return Ok(Translation {
+                params: Vec::new(),
+                body: clear_contexts(module),
+                residual: false,
+            });
         };
         let mut names = AllNames::default();
         module.visit_with(&mut names);
@@ -885,6 +975,7 @@ fn translate_factory(
             failure: None,
             uses_global_this: preamble.uses_global_this,
             uses_promise: false,
+            residual: None,
         };
         translator.translate_module(&mut module);
         if let Some(failure) = translator.failure {
@@ -902,6 +993,14 @@ fn translate_factory(
                 TurbopackContextUse::Member('A'),
             ));
         }
+        // The residual must stay free in the emitted module.
+        if let Some(letter) = translator.residual {
+            if names.all.contains(&Atom::from(RESIDUAL_CONTEXT)) {
+                return Err(DetectedModuleFailure::TurbopackUnsupportedRuntime(
+                    TurbopackContextUse::Member(letter),
+                ));
+            }
+        }
 
         let params = [module_name, exports_name, ctx_name]
             .into_iter()
@@ -912,13 +1011,17 @@ fn translate_factory(
                 })
             })
             .collect();
-        Ok((params, clear_contexts(module)))
+        Ok(Translation {
+            params,
+            body: clear_contexts(module),
+            residual: translator.residual.is_some(),
+        })
     })
 }
 
 /// A generated async loader module, translated to export a function that
 /// loads its target. Chunk loading has no meaning once modules are split.
-fn loader_module(target: LoaderTarget) -> (Vec<Pat>, Vec<Stmt>) {
+fn loader_module(target: LoaderTarget) -> Translation {
     let [module, exports, require] = ["module", "exports", "require"].map(Atom::from);
     let load = match target {
         LoaderTarget::Module(id) => {
@@ -944,10 +1047,11 @@ fn loader_module(target: LoaderTarget) -> (Vec<Pat>, Vec<Stmt>) {
             })
         })
         .collect();
-    (
+    Translation {
         params,
-        vec![assign_stmt(member(ident_expr(&module), "exports"), loader)],
-    )
+        body: vec![assign_stmt(member(ident_expr(&module), "exports"), loader)],
+        residual: false,
+    }
 }
 
 fn number_expr(value: usize) -> Box<Expr> {
@@ -1233,6 +1337,8 @@ struct ContextTranslator<'a> {
     failure: Option<DetectedModuleFailure>,
     uses_global_this: bool,
     uses_promise: bool,
+    /// The first chunk-loading member kept as a residual.
+    residual: Option<char>,
 }
 
 /// Top-level export registration, translated at statement level.
@@ -1564,6 +1670,11 @@ impl ContextTranslator<'_> {
             return None;
         };
         let letter = self.ctx_member(callee)?.to_owned();
+        if let Some(residual) = self.residual_member(&letter) {
+            call.callee = Callee::Expr(residual);
+            call.args.visit_mut_with(self);
+            return Some(Box::new(Expr::Call(std::mem::take(call))));
+        }
         let translated = match (letter.as_str(), call.args.as_mut_slice()) {
             ("r" | "i", [ExprOrSpread { spread: None, expr }]) => {
                 match numeric_id_from_expr(expr) {
@@ -1596,6 +1707,25 @@ impl ContextTranslator<'_> {
             self.reject(Some(&letter));
         }
         translated
+    }
+
+    /// `__turbopack_context__.<letter>` for a chunk-loading member. Chunk
+    /// loading reaches no module graph or export, so the call is kept
+    /// instead of making the whole factory opaque; `l` and `L` kept their
+    /// meaning across every accepted release.
+    fn residual_member(&mut self, letter: &str) -> Option<Box<Expr>> {
+        let mut chars = letter.chars();
+        let letter @ ('l' | 'L') = chars.next()? else {
+            return None;
+        };
+        if chars.next().is_some() {
+            return None;
+        }
+        self.residual.get_or_insert(letter);
+        Some(member(
+            ident_expr(&Atom::from(RESIDUAL_CONTEXT)),
+            &letter.to_string(),
+        ))
     }
 
     /// 15.3–15.4 call an async loader inline: `ctx.r(loader)(ctx.i)`.
@@ -1716,6 +1846,8 @@ impl VisitMut for ContextTranslator<'_> {
                 *expr = *ident_expr(&self.exports_name);
             } else if letter == "m" {
                 *expr = *ident_expr(&self.module_name);
+            } else if let Some(residual) = self.residual_member(letter) {
+                *expr = *residual;
             } else {
                 let letter = letter.to_owned();
                 self.reject(Some(&letter));

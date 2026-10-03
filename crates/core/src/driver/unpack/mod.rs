@@ -549,7 +549,7 @@ pub fn unpack_prepared_inputs_with_policy(
                         scope_hoist_policy.render_mode(),
                     )?
                 };
-                let (result, prepared, module_failures) = detected.into_parts();
+                let (result, prepared, module_failures, module_notes) = detected.into_parts();
                 let report_import_cycle_warnings = result.report_import_cycle_warnings;
                 let external_consumers = result.external_consumers;
                 let input_group = input_group_for_filename(&filename);
@@ -560,6 +560,7 @@ pub fn unpack_prepared_inputs_with_policy(
                         .zip(prepared)
                         .map(|(module, ast)| {
                             let detector_failure = module_failures.get(&module.filename).copied();
+                            let detector_note = module_notes.get(&module.filename).copied();
                             let implicit_commonjs_default_object =
                                 implicit_commonjs_default_objects
                                     .contains(&(module.id.clone(), module.filename.clone()));
@@ -584,6 +585,7 @@ pub fn unpack_prepared_inputs_with_policy(
                             .with_webpack_numeric_module_id(webpack_numeric_module_id)
                             .with_webpack_legacy_module_i(webpack_legacy_module_i)
                             .with_detector_failure(detector_failure)
+                            .with_detector_note(detector_note)
                             .with_external_consumers(external_consumers)
                         }),
                 );

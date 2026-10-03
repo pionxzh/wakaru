@@ -293,7 +293,7 @@ result from a run that produced nothing.
 
 | Error-class (`is_error: true`) | Non-error |
 |---|---|
-| `raw_normalization_failed`, `fact_collection_failed`, `webpack_factory_recovery_failed`, `decompile_failed`, `duplicate_declaration`, `output_parse_recovered`, `output_parse_failed` | `input_parse_recovered`, `tdz_violation`, `import_cycle`, `cross_module_class_call`, `commonjs_export_unrecovered` |
+| `raw_normalization_failed`, `fact_collection_failed`, `webpack_factory_recovery_failed`, `decompile_failed`, `duplicate_declaration`, `output_parse_recovered`, `output_parse_failed` | `input_parse_recovered`, `tdz_violation`, `import_cycle`, `cross_module_class_call`, `commonjs_export_unrecovered`, `runtime_residual` |
 
 `duplicate_declaration` and the `output_parse_*` checks run only with
 `--diagnostics`. Without it, Wakaru does not re-parse emitted modules, so a
@@ -330,6 +330,12 @@ first-appearance order; `exports` or `module.exports` in the list means the
 whole object is still used as a value. Output that stayed CommonJS (no `import`
 or `export`) does not get this warning, and neither do a direct
 `typeof exports` probe or other `module` members such as `module.hot`.
+
+Unpack reports a non-error `runtime_residual` warning when a module keeps a
+bundler runtime call that the split output does not define. Today this is
+Turbopack chunk loading, kept as `__turbopack_context__.l(...)` or
+`__turbopack_context__.L(...)`. The rest of the module is recovered; that
+call would throw if executed.
 
 ## Overwrite protection
 

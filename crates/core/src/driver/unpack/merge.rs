@@ -26,13 +26,14 @@ use super::super::types::{
 use super::filename_recovery::{rewrite_import_sources, rewrite_import_sources_after_move};
 use crate::module_path::relative_import_specifier;
 use crate::unpacker::UnpackedModule;
-use crate::unpacker::{DetectedModuleFailure, PreparedModuleAst};
+use crate::unpacker::{DetectedModuleFailure, DetectedModuleNote, PreparedModuleAst};
 use crate::utils::paren::{strip_parens, strip_parens_mut};
 
 pub(super) struct MultiSourceModule {
     module: UnpackedModule,
     prepared: Option<PreparedModuleAst>,
     detector_failure: Option<DetectedModuleFailure>,
+    detector_note: Option<DetectedModuleNote>,
     /// Webpack initializes every factory's `module.exports` to `{}`. An empty
     /// normalized factory has no statement that can carry that runtime value
     /// into ESM recovery, so normal processing restores it explicitly.
@@ -113,6 +114,7 @@ impl MultiSourceModule {
             module,
             prepared,
             detector_failure: None,
+            detector_note: None,
             implicit_commonjs_default_object: false,
             webpack_commonjs_runtime: false,
             webpack_numeric_module_id: None,
@@ -158,6 +160,11 @@ impl MultiSourceModule {
         self
     }
 
+    pub(super) fn with_detector_note(mut self, note: Option<DetectedModuleNote>) -> Self {
+        self.detector_note = note;
+        self
+    }
+
     pub(super) fn fallback_with_ast_from_input(
         module: UnpackedModule,
         prepared: Option<PreparedModuleAst>,
@@ -167,6 +174,7 @@ impl MultiSourceModule {
             module,
             prepared,
             detector_failure: None,
+            detector_note: None,
             implicit_commonjs_default_object: false,
             webpack_commonjs_runtime: false,
             webpack_numeric_module_id: None,
@@ -187,6 +195,7 @@ pub(super) struct PreparedUnpackModule {
     pub(super) module: UnpackedModule,
     pub(super) prepared: Option<PreparedModuleAst>,
     pub(super) detector_failure: Option<DetectedModuleFailure>,
+    pub(super) detector_note: Option<DetectedModuleNote>,
     pub(super) implicit_commonjs_default_object: bool,
     pub(super) webpack_commonjs_runtime: bool,
     pub(super) webpack_numeric_module_id: Option<f64>,
@@ -208,6 +217,7 @@ impl PreparedUnpackModule {
             module,
             prepared: None,
             detector_failure: None,
+            detector_note: None,
             implicit_commonjs_default_object: false,
             webpack_commonjs_runtime: false,
             webpack_numeric_module_id: None,
@@ -231,6 +241,7 @@ impl PreparedUnpackModule {
             module,
             prepared: None,
             detector_failure: None,
+            detector_note: None,
             implicit_commonjs_default_object: false,
             webpack_commonjs_runtime: false,
             webpack_numeric_module_id: None,
@@ -364,6 +375,7 @@ pub(super) fn prepare_multi_source_modules(
                 module: module.module,
                 prepared: module.prepared,
                 detector_failure: module.detector_failure,
+                detector_note: module.detector_note,
                 implicit_commonjs_default_object: module.implicit_commonjs_default_object,
                 webpack_commonjs_runtime: module.webpack_commonjs_runtime,
                 webpack_numeric_module_id: module.webpack_numeric_module_id,

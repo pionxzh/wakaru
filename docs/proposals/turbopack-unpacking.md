@@ -224,7 +224,10 @@ and a whole-container fallback on failure.
 - `ctx.j` (dynamic `export *` proxy) and the targeted second argument of the
   export methods stay runtime calls in the first version.
 - Unknown `ctx` members keep the module as failed/opaque, as webpack does for
-  unproven factory parameters.
+  unproven factory parameters. Chunk loading (`ctx.l`, `ctx.L`) was later
+  exempted: it stays a residual runtime call with a non-error diagnostic,
+  because it affects no module graph or export (see
+  [unpacking.md](../unpacking.md#turbopack)).
 
 ### Phase 3: lazy imports and chunk facts
 

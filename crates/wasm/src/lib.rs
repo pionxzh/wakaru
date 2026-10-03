@@ -272,6 +272,7 @@ export type WakaruWarningKind =
     | "import_cycle"
     | "cross_module_class_call"
     | "commonjs_export_unrecovered"
+    | "runtime_residual"
     | "output_parse_recovered"
     | "output_parse_failed"
     | "formatter_failed";
@@ -367,6 +368,7 @@ mod tests {
                 wakaru::DiagnosticCode::CommonJsExportUnrecovered,
                 "commonjs_export_unrecovered",
             ),
+            (wakaru::DiagnosticCode::RuntimeResidual, "runtime_residual"),
             (
                 wakaru::DiagnosticCode::OutputParseRecovered,
                 "output_parse_recovered",

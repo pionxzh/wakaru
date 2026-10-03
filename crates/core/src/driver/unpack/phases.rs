@@ -61,7 +61,7 @@ use crate::synthetic_import_cleanup::downgrade_unused_synthetic_imports;
 use crate::unpacker::{
     arrow_iife_call, module_stmts_have_function_level_special_bindings,
     stmts_have_function_level_return, stmts_have_function_level_special_bindings,
-    DetectedModuleFailure, InputOffsets, TurbopackContextUse,
+    DetectedModuleFailure, DetectedModuleNote, InputOffsets, TurbopackContextUse,
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -137,6 +137,16 @@ fn detector_failure_warning(filename: &str, failure: DetectedModuleFailure) -> U
                 TurbopackContextUse::Dirname => "Turbopack factory reads its `__dirname` context binding; preserving the opaque factory body".to_string(),
                 TurbopackContextUse::Other => "Turbopack factory uses its runtime context without a known translation; preserving the opaque factory body".to_string(),
             },
+        ),
+    }
+}
+
+fn detector_note_warning(filename: &str, note: DetectedModuleNote) -> UnpackWarning {
+    match note {
+        DetectedModuleNote::TurbopackChunkLoadingResidual => UnpackWarning::new(
+            filename,
+            UnpackWarningKind::RuntimeResidual,
+            "Turbopack chunk loading (`l`/`L`) is kept as a call through `__turbopack_context__`, which the split output does not define",
         ),
     }
 }
@@ -934,11 +944,14 @@ pub(super) fn unpack_multi_module_with_plan(
         };
 
         match result {
-            Ok((code, srcmap_json, diag_warnings, report)) => {
+            Ok((code, srcmap_json, mut diag_warnings, report)) => {
                 let out_filename = rename_ref
                     .get(&unpacked.module.filename)
                     .cloned()
                     .unwrap_or(unpacked.module.filename);
+                if let Some(note) = unpacked.detector_note {
+                    diag_warnings.push(detector_note_warning(&out_filename, note));
+                }
                 (out_filename, code, diag_warnings, report, srcmap_json)
             }
             Err(e) => (

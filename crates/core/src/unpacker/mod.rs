@@ -749,6 +749,17 @@ pub(crate) enum DetectedModuleFailure {
     TurbopackUnsupportedRuntime(TurbopackContextUse),
 }
 
+/// Detector-local fact about a module that was normalized but kept a runtime
+/// dependency the split output cannot satisfy. Unlike
+/// [`DetectedModuleFailure`], the module goes through the normal pipeline;
+/// the driver reports the note as a non-error diagnostic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DetectedModuleNote {
+    /// A Turbopack factory's chunk loading (`ctx.l`, `ctx.L`) is kept as a
+    /// call through an undefined `__turbopack_context__`.
+    TurbopackChunkLoadingResidual,
+}
+
 /// How a Turbopack factory used its runtime context when no translation
 /// applied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -767,6 +778,7 @@ pub(crate) struct DetectedBundle {
     pub(crate) result: UnpackResult,
     pub(crate) prepared: Vec<Option<PreparedModuleAst>>,
     pub(crate) module_failures: crate::collections::HashMap<String, DetectedModuleFailure>,
+    pub(crate) module_notes: crate::collections::HashMap<String, DetectedModuleNote>,
     /// Numeric module identities proven directly from webpack container keys.
     ///
     /// The public/raw module id is a string for compatibility, so it cannot
@@ -797,6 +809,7 @@ impl DetectedBundle {
             result,
             prepared,
             module_failures: Default::default(),
+            module_notes: Default::default(),
             webpack_numeric_module_ids: Default::default(),
             webpack_legacy_module_i: Default::default(),
             chunk_ids: Default::default(),
@@ -820,6 +833,7 @@ impl DetectedBundle {
             result,
             prepared,
             module_failures: Default::default(),
+            module_notes: Default::default(),
             webpack_numeric_module_ids: Default::default(),
             webpack_legacy_module_i: Default::default(),
             chunk_ids: Default::default(),
@@ -839,6 +853,19 @@ impl DetectedBundle {
             .iter()
             .any(|module| &module.filename == filename)));
         self.module_failures = failures;
+        self
+    }
+
+    pub(crate) fn with_module_notes(
+        mut self,
+        notes: crate::collections::HashMap<String, DetectedModuleNote>,
+    ) -> Self {
+        debug_assert!(notes.keys().all(|filename| self
+            .result
+            .modules
+            .iter()
+            .any(|module| &module.filename == filename)));
+        self.module_notes = notes;
         self
     }
 
@@ -874,8 +901,14 @@ impl DetectedBundle {
         UnpackResult,
         Vec<Option<PreparedModuleAst>>,
         crate::collections::HashMap<String, DetectedModuleFailure>,
+        crate::collections::HashMap<String, DetectedModuleNote>,
     ) {
-        (self.result, self.prepared, self.module_failures)
+        (
+            self.result,
+            self.prepared,
+            self.module_failures,
+            self.module_notes,
+        )
     }
 
     pub(crate) fn materialize_prepared(mut self) -> anyhow::Result<Self> {

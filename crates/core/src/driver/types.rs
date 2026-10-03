@@ -207,6 +207,9 @@ pub enum UnpackWarningKind {
     /// An ES module output still accesses an export through the CommonJS
     /// `exports` object, which throws in ESM.
     CommonJsExportUnrecovered,
+    /// A module kept a bundler runtime call that the split output does not
+    /// define, such as Turbopack chunk loading.
+    RuntimeResidual,
     OutputParseRecovered,
     OutputParseFailed,
 }
@@ -224,6 +227,7 @@ impl UnpackWarningKind {
             Self::ImportCycle => "import_cycle",
             Self::CrossModuleClassCall => "cross_module_class_call",
             Self::CommonJsExportUnrecovered => "commonjs_export_unrecovered",
+            Self::RuntimeResidual => "runtime_residual",
             Self::OutputParseRecovered => "output_parse_recovered",
             Self::OutputParseFailed => "output_parse_failed",
         }
@@ -239,6 +243,7 @@ impl UnpackWarningKind {
                 | Self::ImportCycle
                 | Self::CrossModuleClassCall
                 | Self::CommonJsExportUnrecovered
+                | Self::RuntimeResidual
         )
     }
 

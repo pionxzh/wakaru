@@ -992,4 +992,31 @@ mod tests {
             Some(ModuleStatus::Decompiled)
         );
     }
+
+    #[test]
+    fn runtime_residual_is_a_warning_on_a_decompiled_module() {
+        let source = r#"(globalThis.TURBOPACK || (globalThis.TURBOPACK = [])).push([document.currentScript,
+101, t => { t.v(function (url) { return t.L(url); }); }
+]);"#;
+
+        let output = unpack(
+            vec![Source::new("turbopack-chunk.js", source)],
+            UnpackOptions::default(),
+        )
+        .expect("unpack should succeed");
+
+        let index = output
+            .modules
+            .iter()
+            .position(|module| module.filename == "module-101.js")
+            .expect("module should be present");
+        assert_eq!(output.modules[index].status, ModuleStatus::Decompiled);
+        let [diagnostic] = output.diagnostics.as_slice() else {
+            panic!("expected one diagnostic: {:?}", output.diagnostics);
+        };
+        assert_eq!(diagnostic.module, Some(index));
+        assert_eq!(diagnostic.code, crate::DiagnosticCode::RuntimeResidual);
+        assert_eq!(diagnostic.code.as_str(), "runtime_residual");
+        assert_eq!(diagnostic.severity, crate::DiagnosticSeverity::Warning);
+    }
 }

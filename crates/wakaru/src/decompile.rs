@@ -108,6 +108,7 @@ pub(crate) fn diagnostic_from_core(
         wakaru_core::UnpackWarningKind::CommonJsExportUnrecovered => {
             DiagnosticCode::CommonJsExportUnrecovered
         }
+        wakaru_core::UnpackWarningKind::RuntimeResidual => DiagnosticCode::RuntimeResidual,
         wakaru_core::UnpackWarningKind::OutputParseRecovered => {
             DiagnosticCode::OutputParseRecovered
         }
