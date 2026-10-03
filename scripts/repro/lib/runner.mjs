@@ -962,6 +962,7 @@ export function swcBatch(sources, options = {}) {
   const target = options.target ?? "es5";
   const minify = options.minify ?? false;
   const externalHelpers = options.externalHelpers ?? false;
+  const moduleType = options.moduleType ?? "es6";
   const toolDir = ensureSwcTool();
   const variant = minify ? "minify" : externalHelpers ? "external" : "base";
   const jscExtra =
@@ -971,13 +972,14 @@ export function swcBatch(sources, options = {}) {
 const fs = require("node:fs");
 const swc = require("@swc/core");
 const target = process.env.MATRIX_SWC_TARGET || "es5";
+const moduleType = process.env.MATRIX_SWC_MODULE || "es6";
 const sources = JSON.parse(fs.readFileSync(0, "utf8"));
 const results = sources.map(source => {
   try {
     return { code: swc.transformSync(source, {
       filename: "input.js",
       jsc: { target, parser: { syntax: "ecmascript" }${jscExtra} },
-      module: { type: "es6" },
+      module: { type: moduleType },
       minify: ${minify},
     }).code };
   } catch (e) { return { error: e.message }; }
@@ -988,23 +990,25 @@ process.stdout.write(JSON.stringify(results));
     label: "swcBatch",
     format: "commonjs",
     cwd: toolDir,
-    env: { MATRIX_SWC_TARGET: target },
+    env: { MATRIX_SWC_TARGET: target, MATRIX_SWC_MODULE: moduleType },
   });
 }
 
 export function esbuildBatch(sources, options = {}) {
   const target = options.target ?? "es2015";
   const minify = options.minify ?? false;
+  const format = options.format ?? "esm";
   const toolDir = ensureNodeTool("esbuild-0.28", ["esbuild@0.28.0"]);
   const helperSource = `
 const fs = require("node:fs");
 const esbuild = require("esbuild");
 const target = process.env.MATRIX_ESBUILD_TARGET || "es2015";
+const format = process.env.MATRIX_ESBUILD_FORMAT || "esm";
 const sources = JSON.parse(fs.readFileSync(0, "utf8"));
 const results = sources.map(source => {
   try {
     return { code: esbuild.transformSync(source, {
-      loader: "js", target, format: "esm", minify: ${minify}, logLevel: "warning",
+      loader: "js", target, format, minify: ${minify}, logLevel: "warning",
     }).code };
   } catch (e) { return { error: e.message }; }
 });
@@ -1014,7 +1018,7 @@ process.stdout.write(JSON.stringify(results));
     label: "esbuildBatch",
     format: "commonjs",
     cwd: toolDir,
-    env: { MATRIX_ESBUILD_TARGET: target },
+    env: { MATRIX_ESBUILD_TARGET: target, MATRIX_ESBUILD_FORMAT: format },
   });
 }
 

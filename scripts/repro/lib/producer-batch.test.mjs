@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { babelPresetEnvBatch, ensureNodeTool, swcBatch } from "./runner.mjs";
+import { babelPresetEnvBatch, ensureNodeTool, esbuildBatch, swcBatch } from "./runner.mjs";
 
 test("concurrent SWC minifier profiles retain their external-helper setting", async () => {
   const source = "export async function load(value) { return await value; }";
@@ -16,6 +16,14 @@ test("concurrent SWC minifier profiles retain their external-helper setting", as
       assert.equal(outputs[i].get(source), order[i] ? external : inline);
     }
   }
+});
+
+test("SWC and esbuild batches emit CommonJS only when asked", async () => {
+  const source = "export let count = 0;";
+  assert.match((await swcBatch([source])).get(source), /^export /m);
+  assert.match((await swcBatch([source], { moduleType: "commonjs" })).get(source), /\bexports\b/);
+  assert.match((await esbuildBatch([source])).get(source), /^export /m);
+  assert.match((await esbuildBatch([source], { format: "cjs" })).get(source), /module\.exports/);
 });
 
 test("repro tools reject a version range before installing", () => {
