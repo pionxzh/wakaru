@@ -55,11 +55,14 @@ fn rewrite_module_items(items: &mut Vec<ModuleItem>, unresolved_mark: Mark) {
 
     while i < original.len() {
         if let Some(binding) = extract_empty_object_binding_from_module_item(&original[i]) {
-            let (replacement, next_index) =
+            let (replacement, next_index, exports) =
                 maybe_build_define_properties_item(&original, i + 1, &binding, unresolved_mark);
             if let Some(item) = replacement {
                 rewritten.push(take_item(&mut original, i));
                 rewritten.push(item);
+                for index in exports {
+                    rewritten.push(take_item(&mut original, index));
+                }
                 i = next_index;
                 continue;
             }
@@ -101,11 +104,11 @@ fn maybe_build_define_properties_item(
     start: usize,
     target: &BindingId,
     unresolved_mark: Mark,
-) -> (Option<ModuleItem>, usize) {
-    let (descriptors, first_span, next_index) =
+) -> (Option<ModuleItem>, usize, Vec<usize>) {
+    let (descriptors, first_span, next_index, exports) =
         collect_require_d_descriptors_module(items, start, target, unresolved_mark);
     if descriptors.len() < 2 {
-        return (None, start);
+        return (None, start, Vec::new());
     }
 
     let stmt_span = if first_span.lo.0 != 0 {
@@ -125,6 +128,7 @@ fn maybe_build_define_properties_item(
             )),
         }))),
         next_index,
+        exports,
     )
 }
 
@@ -160,36 +164,51 @@ fn maybe_build_define_properties_stmt(
     )
 }
 
+/// The `require.d(target, ...)` run after `start`. Local export specifiers
+/// in the run (`export { target as name }`, placed after the declaration)
+/// run no code; their indices are returned so they can follow the merged
+/// call.
 fn collect_require_d_descriptors_module(
     items: &[ModuleItem],
     start: usize,
     target: &BindingId,
     unresolved_mark: Mark,
-) -> (Vec<(String, Box<Expr>)>, Span, usize) {
+) -> (Vec<(String, Box<Expr>)>, Span, usize, Vec<usize>) {
     let mut descriptors = Vec::new();
     let mut seen = HashSet::default();
     let mut index = start;
     let mut first_span = DUMMY_SP;
+    let mut exports = Vec::new();
+    let mut end = start;
 
     while index < items.len() {
-        let ModuleItem::Stmt(stmt) = &items[index] else {
-            break;
+        let stmt = match &items[index] {
+            ModuleItem::Stmt(stmt) => stmt,
+            ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(export)) if export.src.is_none() => {
+                exports.push(index);
+                index += 1;
+                continue;
+            }
+            _ => break,
         };
         let Some((name, getter)) = extract_require_d_descriptor(stmt, target, unresolved_mark)
         else {
             break;
         };
-        if index == start {
+        if descriptors.is_empty() {
             first_span = stmt.span();
         }
         if !seen.insert(name.clone()) {
-            return (Vec::new(), DUMMY_SP, start);
+            return (Vec::new(), DUMMY_SP, start, Vec::new());
         }
         descriptors.push((name, getter));
         index += 1;
+        end = index;
     }
+    // Specifiers after the last descriptor stay where they are.
+    exports.retain(|&export| export < end);
 
-    (descriptors, first_span, index)
+    (descriptors, first_span, end, exports)
 }
 
 fn collect_require_d_descriptors_stmt(

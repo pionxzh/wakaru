@@ -74,3 +74,32 @@ require.d(utils, "TASK", ()=>o.c);
 "#;
     assert_eq_normalized(&apply(input), input);
 }
+
+#[test]
+fn groups_across_a_local_export_specifier_and_moves_it_after() {
+    // UnEsm places `export { local as name }` right after the declaration;
+    // the specifier runs no code, so it does not end the run.
+    let input = r#"
+const utils = {};
+export { utils as helpers };
+require.d(utils, "TASK", ()=>o.e);
+require.d(utils, "noop", ()=>o.u);
+use(utils);
+"#;
+    let expected = r#"
+const utils = {};
+Object.defineProperties(utils, {
+  TASK: {
+    enumerable: true,
+    get: ()=>o.e
+  },
+  noop: {
+    enumerable: true,
+    get: ()=>o.u
+  }
+});
+export { utils as helpers };
+use(utils);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
