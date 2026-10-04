@@ -120,6 +120,7 @@ ObjMethodShorthand ─┘
 | UnEsmoduleFlag → UnEsm | confirmed | Exp 1 |
 | UnWebpackInterop (pass 1) → UnEsm | confirmed **soft** | Exp 2: only the getter-wrapped default-access pattern needs it |
 | UnEsm → TS async helper cleanup (UnAsyncAwait) | confirmed | Exp 3 |
+| UnInteropRequireDefault, UnEsm → RelativeNamespaceImport | confirmed | evidence is collected before the first and the imports exist after the second |
 | UnAsyncAwait → UnWebpackInterop2 | confirmed | Exp 5: async recovery exposes interop wrappers |
 | LocalHelperContext → UnAsyncAwait | confirmed | consumes detected helper identities directly |
 | UnCurlyBraces position | confirmed **fragile** | Exp 4: interop getter matchers assume expression-body arrows |
@@ -357,6 +358,14 @@ rationale, or level gating appear.
   semantics when `local` has any direct or deferred write: UnEsm captures its
   value at the assignment instead of emitting a live export alias. A proven
   `Object.defineProperty` or webpack getter remains live.
+- **RelativeNamespaceImport** — `standard+`, single-file only. Turns
+  `UnEsm`'s default import of a relative `require` into a namespace import
+  under `relative_require_esm_provider`. Its evidence is collected in the
+  `UnInteropRequireDefault` runner, before that rule rewrites a default
+  import's `.default` reads into a named import's shape; `UnEsm` adds the
+  esbuild evidence. It sits between UnEsm and UnObjectSpread2, the range
+  unpack mode skips at the fact barrier, and also returns early when module
+  facts exist: there `provider_namespace_repair` decides from facts.
 - **UnIife** — two passes; the second catches IIFEs created by SmartInline.
   Exposes class IIFEs for UnEs6Class and enum IIFEs for UnEnum. Gating:
   param cleanup and literal hoisting are `standard+`; `.call()` unwrapping on

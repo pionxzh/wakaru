@@ -333,8 +333,8 @@ Each of these needs separate work. The matrix tracks them.
   in [`export * as ns`](#export--as-ns).
 - **sucrase `_createNamedExportFrom`.** Done in step 5.
 - **Single-file import interop.** Without facts about the provider,
-  `require("./dep")` becomes a default import even when the provider has no
-  default export. Unpack mode has those facts; single-file mode does not.
+  `require("./dep")` became a default import even when the provider has no
+  default export. See [Single-file import interop](#single-file-import-interop).
 
 ## Assumptions to record
 
@@ -656,6 +656,31 @@ recovered too. The `interop: "compat"` helper, which first returns a provider
 with a `default` key unchanged, is read the same way.
 
 Matrix: 281 / 291, with rollup `reexport-star` the only changed row.
+
+## Single-file import interop
+
+`import { live } from "./dep.js"` compiles to a plain `require` and
+`_dep.live` reads, which `UnEsm` turned into `import _dep from "./dep.js"`.
+The recovered `dep.js` has no default export, so the module failed to link.
+A default import is the only form that links against every CommonJS
+provider, but it fails against an ESM one; unpack mode settles this from
+provider facts, single-file mode had nothing.
+
+The importing module carries the evidence: compilers read a default import
+through `.default` or an interop-default helper and a named import through
+neither. `RelativeNamespaceImport` emits `import * as _dep` for a relative
+`require` binding with no default-import sign in a module marked
+`__esModule` (or lowered from esbuild's `__toCommonJS`), as the named
+assumption
+[`relative_require_esm_provider`](../rewrite-assumptions.md#relative_require_esm_provider).
+The signs are collected before `UnInteropRequireDefault`, which rewrites a
+default import's `.default` reads into the named import's shape.
+
+Matrix: 290 / 291 (from 281), with no row that was correct before now
+wrong: `import-then-export` for TypeScript, Babel, swc, and esbuild, and
+sucrase `imported-used-in-function`. rollup `import-then-export` still
+fails: rollup marks `__esModule` only when the module has a default export,
+so this module shows no evidence.
 
 ## Reassigned or aliased `exports`
 

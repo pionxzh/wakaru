@@ -1,7 +1,7 @@
 use swc_core::common::Mark;
 use swc_core::ecma::ast::{
     AssignExpr, AssignOp, AssignTarget, CallExpr, Callee, Expr, ExprStmt, IdentName, Lit,
-    MemberExpr, MemberProp, ModuleItem, SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp,
+    MemberExpr, MemberProp, Module, ModuleItem, SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -25,6 +25,14 @@ impl VisitMut for UnEsmoduleFlag {
         stmts.visit_mut_children_with(self);
         stmts.retain(|stmt| !is_esmodule_stmt(stmt, self.unresolved_mark));
     }
+}
+
+/// Whether the module marks itself `__esModule` at the top level.
+pub(crate) fn has_top_level_esmodule_flag(module: &Module, unresolved_mark: Mark) -> bool {
+    module
+        .body
+        .iter()
+        .any(|item| is_esmodule_item(item, unresolved_mark))
 }
 
 fn is_esmodule_item(item: &ModuleItem, unresolved_mark: Mark) -> bool {

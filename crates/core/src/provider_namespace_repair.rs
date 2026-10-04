@@ -7,7 +7,8 @@
 //! default, the closest faithful ESM edge is a namespace import.
 //!
 //! This pass is deliberately conservative. It only touches imports synthesized
-//! by `UnEsm`, requires a proven named/export-star provider with no default,
+//! by `UnEsm`, requires a proven named/export-star provider with no default
+//! (or, without facts, the evidence in [`run_relative_namespace_repair`]),
 //! and accepts uses whose behavior is supported by an ESM namespace: static
 //! member reads, `Object.keys(namespace)`, and a namespace used as an
 //! `Object.assign` source. A simple top-level alias may stop referring to the
@@ -40,6 +41,46 @@ pub(crate) fn run_provider_namespace_repair(
         return;
     };
 
+    let namespace_provider = |source: &str| {
+        let Some(provider) = module_facts.get_from(Some(current_filename), source) else {
+            return false;
+        };
+        let has_default = provider
+            .exports
+            .iter()
+            .any(|export| export.kind == ExportKind::Default);
+        let has_named_surface = provider.has_export_all
+            || provider
+                .exports
+                .iter()
+                .any(|export| export.kind == ExportKind::Named);
+        !has_default && has_named_surface
+    };
+    repair_synthesized_default_imports(module, unresolved_mark, true, |source, _| {
+        namespace_provider(source)
+    });
+}
+
+/// Without provider facts, repair the synthesized default imports of
+/// `bindings`, relative requires that the caller has shown to be named
+/// imports of a module compiled from ESM (`rules/relative_namespace_import.rs`).
+/// A `.default` read keeps the default import.
+pub(crate) fn run_relative_namespace_repair(
+    module: &mut Module,
+    unresolved_mark: Mark,
+    bindings: &HashSet<BindingId>,
+) {
+    repair_synthesized_default_imports(module, unresolved_mark, false, |_, binding| {
+        bindings.contains(binding)
+    });
+}
+
+fn repair_synthesized_default_imports(
+    module: &mut Module,
+    unresolved_mark: Mark,
+    allow_default_read: bool,
+    namespace_candidate: impl Fn(&str, &BindingId) -> bool,
+) {
     let mut candidates = HashSet::default();
     for item in &module.body {
         let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
@@ -51,32 +92,21 @@ pub(crate) fn run_provider_namespace_repair(
         let Some(source) = import.src.value.as_str() else {
             continue;
         };
-        let Some(provider) = module_facts.get_from(Some(current_filename), source) else {
-            continue;
-        };
-        let has_default = provider
-            .exports
-            .iter()
-            .any(|export| export.kind == ExportKind::Default);
-        let has_named_surface = provider.has_export_all
-            || provider
-                .exports
-                .iter()
-                .any(|export| export.kind == ExportKind::Named);
-        if has_default || !has_named_surface {
-            continue;
-        }
 
         for specifier in &import.specifiers {
             let ImportSpecifier::Default(default) = specifier else {
                 continue;
             };
             let binding = binding_id(&default.local);
+            if !namespace_candidate(source, &binding) {
+                continue;
+            }
             let transparent_aliases = collect_transparent_aliases(module, &binding);
             let mut usage = NamespaceCompatibleUsage::new(
                 transparent_aliases,
                 binding.clone(),
                 unresolved_mark,
+                allow_default_read,
             );
             module.visit_with(&mut usage);
             if usage.compatible && usage.has_meaningful_use {
@@ -173,12 +203,18 @@ struct NamespaceCompatibleUsage {
     all_targets: HashSet<BindingId>,
     resettable_aliases: HashSet<BindingId>,
     unresolved_mark: Mark,
+    allow_default_read: bool,
     compatible: bool,
     has_meaningful_use: bool,
 }
 
 impl NamespaceCompatibleUsage {
-    fn new(targets: HashSet<BindingId>, root: BindingId, unresolved_mark: Mark) -> Self {
+    fn new(
+        targets: HashSet<BindingId>,
+        root: BindingId,
+        unresolved_mark: Mark,
+        allow_default_read: bool,
+    ) -> Self {
         let all_targets = targets.clone();
         let resettable_aliases = targets
             .iter()
@@ -190,6 +226,7 @@ impl NamespaceCompatibleUsage {
             all_targets,
             resettable_aliases,
             unresolved_mark,
+            allow_default_read,
             compatible: true,
             has_meaningful_use: false,
         }
@@ -352,7 +389,10 @@ impl Visit for NamespaceCompatibleUsage {
     fn visit_member_expr(&mut self, member: &MemberExpr) {
         if self.target_member(member) {
             match &member.prop {
-                MemberProp::Ident(property) if property.sym != "__esModule" => {
+                MemberProp::Ident(property)
+                    if property.sym != "__esModule"
+                        && (self.allow_default_read || property.sym != "default") =>
+                {
                     self.has_meaningful_use = true;
                 }
                 _ => self.compatible = false,

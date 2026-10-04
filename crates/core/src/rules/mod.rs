@@ -24,6 +24,7 @@ mod obj_method_shorthand;
 mod obj_shorthand;
 mod object_assign_spread;
 mod pipeline;
+mod relative_namespace_import;
 mod remove_void;
 pub(crate) mod rename_utils;
 mod simplify_sequence;

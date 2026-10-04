@@ -54,18 +54,20 @@ use super::*;
 
 /// Lower every recognized export getter helper call to per-name getter
 /// definitions, and remove the helpers once nothing else refers to them.
-pub(crate) fn lower_export_getter_helpers(module: &mut Module, unresolved_mark: Mark) {
+/// Returns whether an esbuild `__toCommonJS` namespace was lowered, which
+/// only a module compiled from ESM has.
+pub(crate) fn lower_export_getter_helpers(module: &mut Module, unresolved_mark: Mark) -> bool {
     if !module
         .body
         .iter()
         .any(|item| is_helper_call_candidate(item, unresolved_mark))
     {
-        return;
+        return false;
     }
     let uses = BindingUseIndex::collect(module);
     let helpers = GetterHelpers::collect(module, &uses, unresolved_mark);
     if helpers.is_empty() {
-        return;
+        return false;
     }
 
     let mut lowered: HashMap<usize, Vec<ModuleItem>> = HashMap::default();
@@ -80,7 +82,9 @@ pub(crate) fn lower_export_getter_helpers(module: &mut Module, unresolved_mark: 
             lowered.insert(index, vec![import]);
         }
     }
-    if let Some(namespace) = helpers.lower_namespace_exports(module, &uses) {
+    let namespace = helpers.lower_namespace_exports(module, &uses);
+    let lowered_namespace = namespace.is_some();
+    if let Some(namespace) = namespace {
         consumed.extend(namespace.consumed);
         removed.extend(namespace.removed);
         lowered.insert(namespace.module_exports_index, namespace.definitions);
@@ -89,7 +93,7 @@ pub(crate) fn lower_export_getter_helpers(module: &mut Module, unresolved_mark: 
         }
     }
     if lowered.is_empty() {
-        return;
+        return false;
     }
 
     let body = std::mem::take(&mut module.body);
@@ -109,6 +113,7 @@ pub(crate) fn lower_export_getter_helpers(module: &mut Module, unresolved_mark: 
         remove_var_declarators_by_binding(&mut module.body, &removable);
         remove_fn_decls_from_body_by_binding(&mut module.body, &removable);
     }
+    lowered_namespace
 }
 
 /// A top-level statement shaped like a helper call: `f(exports, { ... })`,

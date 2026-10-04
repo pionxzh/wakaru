@@ -50,6 +50,7 @@ pub struct UnEsm {
     unresolved_mark: Mark,
     level: RewriteLevel,
     current_filename: Option<String>,
+    lowered_esbuild_namespace: bool,
 }
 
 impl UnEsm {
@@ -58,7 +59,14 @@ impl UnEsm {
             unresolved_mark,
             level,
             current_filename: None,
+            lowered_esbuild_namespace: false,
         }
+    }
+
+    /// Whether the last run lowered an esbuild `__toCommonJS` namespace,
+    /// evidence that the module was compiled from ESM.
+    pub(crate) fn lowered_esbuild_namespace(&self) -> bool {
+        self.lowered_esbuild_namespace
     }
 
     pub(crate) fn with_current_filename(mut self, current_filename: Option<&str>) -> Self {
@@ -180,7 +188,7 @@ impl VisitMut for UnEsm {
         // orphaned RHS.
         // Helper-defined getters become ordinary getter definitions before
         // any analysis, which only knows those.
-        lower_export_getter_helpers(module, self.unresolved_mark);
+        self.lowered_esbuild_namespace = lower_export_getter_helpers(module, self.unresolved_mark);
         let original_body = normalize_named_export_chains(module, self.unresolved_mark);
         let current_filename = self.current_filename.clone();
         let has_local_self_require =

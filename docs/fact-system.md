@@ -327,7 +327,10 @@ fact available to consumers.
   alias replacement, arbitrary value escape, computed/meta reads, and
   `__esModule` observation remain unchanged.
   The existing namespace decomposition pass can then recover narrower named
-  imports where its own gates allow that rewrite.
+  imports where its own gates allow that rewrite. Single-file decompilation
+  has no facts; the `RelativeNamespaceImport` rule makes the same rewrite
+  for relative sources from evidence in the importing module alone
+  (`relative_require_esm_provider` in rewrite-assumptions.md).
 - **`namespace_decomposition`** — rewrites `import r from "./x"; r.foo()` into
   `import { foo } from "./x"; foo()` when `./x` exports `foo` and no collision
   prevents the rewrite. Handles aliased pre-existing specifiers, inner-scope

@@ -780,6 +780,43 @@ then recover a star loop that shares the provider binding with the helper.
 
 Level: all levels, like the rest of helper detection.
 
+### `relative_require_esm_provider`
+
+In single-file decompilation, `UnEsm` cannot see the provider of
+`var dep = require("./dep")`, so it emits `import dep from "./dep"`. That
+links against any CommonJS provider, because Node gives a CommonJS module's
+`module.exports` as its default, but fails to link against an ESM provider
+without a default export.
+
+Babel, TypeScript, swc, sucrase, and esbuild lower `import { x } from
+"./dep"` to that plain `require` and `dep.x` reads. A default import reads
+`dep.default` or wraps the module in an interop-default helper. So in a
+module compiled from ESM, a relative `require` binding with neither is a
+named import, and its provider most likely a sibling module compiled from
+ESM too. `RelativeNamespaceImport` then emits `import * as dep from
+"./dep"`, which matches the source.
+
+The evidence is taken before `UnInteropRequireDefault`, which rewrites a
+default import's `.default` reads into the same shape as a named import:
+the module has a top-level `__esModule` marker (or `UnEsm` lowers an
+esbuild `__toCommonJS` namespace, which has none), and the binding is never
+read as `.default` nor passed to a recognized interop-default helper. After
+`UnEsm`, every use must still be a static named member read,
+`Object.keys(dep)`, or an `Object.assign` source, as in the unpack-mode
+`provider_namespace_repair`.
+
+The guess is wrong for a CommonJS provider whose export names Node's
+cjs-module-lexer cannot detect, such as `module.exports = make()`: a
+namespace import reads `undefined` for those names. Bare specifiers keep
+the default import, because packages are the likely place for such
+providers. rollup output has no `__esModule` marker unless it exports a
+default, so its named imports usually stay default imports.
+
+Affects: `RelativeNamespaceImport`, which runs only without module facts.
+Unpack mode decides the same edge from provider facts.
+
+Level: `standard` and above.
+
 ## Execution Environment Baseline
 
 Every level assumes the program runs in a standard ECMAScript environment:

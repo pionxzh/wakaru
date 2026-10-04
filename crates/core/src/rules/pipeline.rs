@@ -10,6 +10,7 @@ use crate::DceMode;
 
 use super::dead_decls::compute_pre_dead_decl_spans;
 use super::dead_imports::{compute_pre_dead_import_spans, compute_pre_existing_import_spans};
+use super::relative_namespace_import::{run_relative_namespace_import, RelativeNamespaceEvidence};
 use super::transpiler_helper_utils::{LocalHelperContext, TranspilerHelperKind};
 use super::*;
 
@@ -72,6 +73,8 @@ struct RuleRunContext<'a> {
     local_helpers: Rc<RefCell<Option<Rc<LocalHelperContext>>>>,
     extracted_function_names: SharedExtractedFunctionNames,
     pre_dead: Option<Rc<PreDeadSet>>,
+    /// Collected before `UnInteropRequireDefault` erases it, read after `UnEsm`.
+    relative_namespace: Rc<RefCell<RelativeNamespaceEvidence>>,
 }
 
 pub(super) struct PreDeadSet {
@@ -193,6 +196,10 @@ runner!(run_un_string_escape, UnStringEscape);
 runner!(run_un_bracket_notation, UnBracketNotation);
 fn run_un_interop_require_default(module: &mut Module, ctx: RuleRunContext<'_>) {
     let local_helpers = ctx.local_helpers(module);
+    if ctx.module_facts.is_none() && ctx.rewrite_level >= RewriteLevel::Standard {
+        *ctx.relative_namespace.borrow_mut() =
+            RelativeNamespaceEvidence::collect(module, ctx.unresolved_mark, &local_helpers);
+    }
     UnInteropRequireDefault::run_with_helpers(module, local_helpers.as_ref());
     // Unwrapping `_interopRequireDefault(require("@babel/runtime/helpers/..."))` can
     // expose new runtime-path helpers (e.g. interopRequireWildcard) that were hidden
@@ -294,11 +301,24 @@ runner!(run_un_assignment_merging, |ctx| {
 runner!(run_un_webpack_interop, |ctx| UnWebpackInterop::new(
     ctx.unresolved_mark
 ));
-runner!(run_un_esm, |ctx| UnEsm::new(
-    ctx.unresolved_mark,
-    ctx.rewrite_level
-)
-.with_current_filename(ctx.current_filename));
+fn run_un_esm(module: &mut Module, ctx: RuleRunContext<'_>) {
+    let mut rule = UnEsm::new(ctx.unresolved_mark, ctx.rewrite_level)
+        .with_current_filename(ctx.current_filename);
+    module.visit_mut_with(&mut rule);
+    if rule.lowered_esbuild_namespace() {
+        ctx.relative_namespace.borrow_mut().compiled_from_esm = true;
+    }
+}
+fn run_relative_namespace_import_rule(module: &mut Module, ctx: RuleRunContext<'_>) {
+    // In unpack mode the provider facts decide (`provider_namespace_repair`).
+    if ctx.module_facts.is_none() {
+        run_relative_namespace_import(
+            module,
+            &ctx.relative_namespace.borrow(),
+            ctx.unresolved_mark,
+        );
+    }
+}
 fn run_un_template_literal(module: &mut Module, ctx: RuleRunContext<'_>) {
     let local_helpers = ctx.local_helpers(module);
     let mut rule = if let Some(module_facts) = ctx.module_facts {
@@ -613,6 +633,12 @@ define_rule_registry! {
         "UnAssignmentMerging",
         "UnVariableMergingDeclsOnly",
         "UnWebpackInterop"
+    ]),
+    // Between UnEsm and UnObjectSpread2: unpack phase 1 stops at UnEsm and
+    // phase 2 resumes at UnObjectSpread2, so this never runs there.
+    ("RelativeNamespaceImport", Helpers, run_relative_namespace_import_rule, standard_or_above, requires: [
+        "UnInteropRequireDefault",
+        "UnEsm"
     ]),
     ("UnObjectSpread2", Helpers, run_un_object_spread_late, always_enabled, requires: [
         "UnEsm"
@@ -957,6 +983,7 @@ fn apply_rules_impl(
         local_helpers: Rc::new(RefCell::new(None)),
         extracted_function_names: Rc::new(RefCell::new(ExtractedFunctionNames::default())),
         pre_dead,
+        relative_namespace: Default::default(),
     };
     let mut started = options.start_from.is_none();
 
@@ -1115,6 +1142,7 @@ mod tests {
                 local_helpers: Rc::new(RefCell::new(Some(Rc::new(LocalHelperContext::default())))),
                 extracted_function_names: Default::default(),
                 pre_dead: None,
+                relative_namespace: Default::default(),
             };
 
             reset_collect_transpiler_helpers_call_count();
