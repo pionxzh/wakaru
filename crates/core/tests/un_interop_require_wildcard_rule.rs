@@ -458,3 +458,136 @@ console.log(ns, _dep);
     let output = render(input);
     assert!(!output.contains("import * as ns"), "{output}");
 }
+
+const ROLLUP_NAMESPACE_DEFAULT: &str = r#"
+function _interopNamespaceDefault(e) {
+	var n = Object.create(null);
+	if (e) {
+		Object.keys(e).forEach(function (k) {
+			if (k !== 'default') {
+				var d = Object.getOwnPropertyDescriptor(e, k);
+				Object.defineProperty(n, k, d.get ? d : {
+					enumerable: true,
+					get: function () { return e[k]; }
+				});
+			}
+		});
+	}
+	n.default = e;
+	return Object.freeze(n);
+}
+"#;
+
+#[test]
+fn rollup_namespace_default_becomes_namespace_import() {
+    // rollup's helper sets `default` to the whole module even when it is
+    // marked `__esModule`; the source's `import * as` is recovered instead.
+    let input = format!(
+        r#"
+var dep = require("dep");
+{ROLLUP_NAMESPACE_DEFAULT}
+var dep__namespace = _interopNamespaceDefault(dep);
+console.log(dep__namespace, dep.value);
+"#
+    );
+    let output = render(&input);
+    assert!(
+        output.contains(r#"import * as dep__namespace from "dep";"#),
+        "{output}"
+    );
+    assert!(!output.contains("_interopNamespaceDefault"), "{output}");
+}
+
+#[test]
+fn rollup_namespace_default_variants_become_namespace_imports() {
+    let variants = [
+        // generatedCode.constBindings: a `for...in` loop and arrow getters.
+        r#"
+function _interopNamespaceDefault(e) {
+	const n = Object.create(null);
+	if (e) {
+		for (const k in e) {
+			if (k !== 'default') {
+				const d = Object.getOwnPropertyDescriptor(e, k);
+				Object.defineProperty(n, k, d.get ? d : {
+					enumerable: true,
+					get: () => e[k]
+				});
+			}
+		}
+	}
+	n.default = e;
+	return Object.freeze(n);
+}
+"#,
+        // freeze: false, generatedCode.symbols
+        r#"
+function _interopNamespaceDefault(e) {
+	var n = Object.create(null, { [Symbol.toStringTag]: { value: 'Module' } });
+	if (e) {
+		Object.keys(e).forEach(function (k) {
+			if (k !== 'default') {
+				var d = Object.getOwnPropertyDescriptor(e, k);
+				Object.defineProperty(n, k, d.get ? d : {
+					enumerable: true,
+					get: function () { return e[k]; }
+				});
+			}
+		});
+	}
+	n.default = e;
+	return n;
+}
+"#,
+        // externalLiveBindings: false
+        r#"
+function _interopNamespaceDefault(e) {
+	var n = Object.create(null);
+	if (e) {
+		for (var k in e) {
+			n[k] = e[k];
+		}
+	}
+	n.default = e;
+	return Object.freeze(n);
+}
+"#,
+        // terser
+        r#"function _interopNamespaceDefault(e){var t=Object.create(null);return e&&Object.keys(e).forEach(function(r){if("default"!==r){var n=Object.getOwnPropertyDescriptor(e,r);Object.defineProperty(t,r,n.get?n:{enumerable:!0,get:function(){return e[r]}})}}),t.default=e,Object.freeze(t)}"#,
+    ];
+    for helper in variants {
+        let input = format!(
+            r#"
+var dep = require("dep");
+{helper}
+var ns = _interopNamespaceDefault(dep);
+console.log(ns, dep.value);
+"#
+        );
+        let output = render(&input);
+        assert!(output.contains(r#"import * as ns from "dep";"#), "{output}");
+        assert!(!output.contains("_interopNamespaceDefault"), "{output}");
+    }
+}
+
+#[test]
+fn namespace_object_builder_without_default_is_not_an_interop() {
+    // The copy loop alone is a plain object builder: no `n.default = e`.
+    let input = r#"
+var dep = require("dep");
+function copyKeys(e) {
+	var n = Object.create(null);
+	if (e) {
+		Object.keys(e).forEach(function (k) {
+			Object.defineProperty(n, k, { enumerable: true, get: function () { return e[k]; } });
+		});
+	}
+	return Object.freeze(n);
+}
+var ns = copyKeys(dep);
+console.log(ns);
+"#;
+    let output = render(input);
+    assert!(!output.contains("import * as ns"), "{output}");
+    assert!(output.contains("copyKeys(dep)"), "{output}");
+}

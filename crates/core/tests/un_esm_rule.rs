@@ -6556,3 +6556,58 @@ function set() {
     ]);
     assert!(findings.is_empty(), "{findings:?}\n{output}");
 }
+
+#[test]
+fn rollup_star_and_namespace_reexports_are_recovered() {
+    // rollup shares `dep_js` between the namespace helper and the star loop.
+    let inputs = [
+        r#"
+'use strict';
+
+var dep_js = require('./dep.js');
+
+function _interopNamespaceDefault(e) {
+    var n = Object.create(null);
+    if (e) {
+        Object.keys(e).forEach(function (k) {
+            if (k !== 'default') {
+                var d = Object.getOwnPropertyDescriptor(e, k);
+                Object.defineProperty(n, k, d.get ? d : {
+                    enumerable: true,
+                    get: function () { return e[k]; }
+                });
+            }
+        });
+    }
+    n.default = e;
+    return Object.freeze(n);
+}
+
+var dep_js__namespace = /*#__PURE__*/_interopNamespaceDefault(dep_js);
+
+const own = 1;
+
+exports.ns = dep_js__namespace;
+exports.own = own;
+Object.keys(dep_js).forEach(function (k) {
+    if (k !== 'default' && !Object.prototype.hasOwnProperty.call(exports, k)) Object.defineProperty(exports, k, {
+        enumerable: true,
+        get: function () { return dep_js[k]; }
+    });
+});
+"#,
+        r#""use strict";var dep_js=require("./dep.js");function _interopNamespaceDefault(e){var t=Object.create(null);return e&&Object.keys(e).forEach(function(r){if("default"!==r){var n=Object.getOwnPropertyDescriptor(e,r);Object.defineProperty(t,r,n.get?n:{enumerable:!0,get:function(){return e[r]}})}}),t.default=e,Object.freeze(t)}var dep_js__namespace=_interopNamespaceDefault(dep_js);const own=1;exports.ns=dep_js__namespace,exports.own=1,Object.keys(dep_js).forEach(function(e){"default"===e||Object.prototype.hasOwnProperty.call(exports,e)||Object.defineProperty(exports,e,{enumerable:!0,get:function(){return dep_js[e]}})});"#,
+    ];
+    for input in inputs {
+        let output = apply(input);
+        for leftover in ["require", "exports", "_interopNamespaceDefault"] {
+            assert!(!output.contains(leftover), "{leftover} left in {output}");
+        }
+        assert!(output.contains(r#"export * from "./dep.js";"#), "{output}");
+        assert!(
+            output.contains("import * as dep_js__namespace from"),
+            "{output}"
+        );
+        assert!(output.contains("dep_js__namespace as ns"), "{output}");
+    }
+}

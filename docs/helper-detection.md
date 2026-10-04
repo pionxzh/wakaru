@@ -356,7 +356,14 @@ wildcard call when both re-exports share a source:
 `export * from "x"` plus `import * as _x from "x"` only when the star helper
 is proven to return its source (tslib's `__exportStar` returns nothing).
 sucrase wraps a separate `var _x = require("x")`, which becomes a namespace
-import when `_x` is declared once and never written.
+import when `_x` is declared once and never written. rollup does the same with
+`_interopNamespaceDefault(_x)` and copies the star exports in a loop over the
+same `_x`. That helper sets `default` to the whole module even for one marked
+`__esModule`, but it is read as a wildcard interop anyway, so the output
+matches the ESM source (`namespace_interop_source_semantics` in
+[rewrite-assumptions.md](rewrite-assumptions.md)). Once the namespace import
+no longer reads `_x`, the loop is `_x`'s only use and becomes
+`export * from "x"`.
 
 `UnDestructuring` accepts a mangled `arrayLikeToArray` declaration only when
 its body proves the complete helper contract: the canonical null/length guard,

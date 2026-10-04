@@ -740,6 +740,43 @@ whole so the copy stays visible.
 
 Level: `standard` and above, where `UnEsm` runs.
 
+### `namespace_interop_source_semantics`
+
+rollup's default `output.interop: "default"` builds every external namespace
+import with `_interopNamespaceDefault(dep)`. The helper copies the
+provider's keys except `default` and then sets `default` to the whole
+provider, without checking `__esModule`:
+
+```js
+// source
+export * as ns from "./dep.js";
+// rollup CommonJS
+var dep_js = require("./dep.js");
+var dep_js__namespace = _interopNamespaceDefault(dep_js);
+exports.ns = dep_js__namespace;
+```
+
+For a provider compiled from ESM, rollup's CommonJS differs from its own
+source: `ns.default` is the whole provider instead of its default export
+(`undefined` when it has none). wakaru reads the helper as a wildcard
+interop and emits `import * as dep_js__namespace from "./dep.js"`, which
+matches the source. Only `ns.default` differs from rollup's CommonJS. When
+the provider is real CommonJS, Node's ESM import also gives `default` the
+whole `module.exports`, so the two agree on `default`.
+
+This follows the `export *` recovery, which also accepts a difference from
+the CommonJS output when the result matches the ESM source the compiler
+started from (see [helper-detection.md](helper-detection.md)).
+
+Affects: helper detection (`is_namespace_default_interop_fn`), so
+`UnInteropRequireWildcard` and every rule that treats a wildcard interop
+call as a namespace import; and `UnEsm`'s export-star recovery, which can
+then recover a star loop that shares the provider binding with the helper.
+rollup's `interop: "compat"` helper, which returns a provider that has a
+`default` key unchanged, is not recognized.
+
+Level: all levels, like the rest of helper detection.
+
 ## Execution Environment Baseline
 
 Every level assumes the program runs in a standard ECMAScript environment:

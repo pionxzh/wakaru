@@ -330,7 +330,7 @@ Each of these needs separate work. The matrix tracks them.
   scope-hoisted bundle under `--unpack`.
 - **`__exportStar` and other `export *` helpers.** Separate work on CommonJS
   `export *` recovery (`un_esm/export_star.rs`); its matrix row is covered
-  in [`export * as ns`](#export--as-ns) except for rollup.
+  in [`export * as ns`](#export--as-ns).
 - **sucrase `_createNamedExportFrom`.** Done in step 5.
 - **Single-file import interop.** Without facts about the provider,
   `require("./dep")` becomes a default import even when the provider has no
@@ -633,8 +633,8 @@ rows: `import-then-export` on every producer (single-file import interop),
 sucrase `imported-used-in-function` (the same interop: a default import of a
 module with no default), and rollup `reexport-star`.
 
-**rollup is not done.** Its namespace helper always sets `default` to the
-whole module:
+**rollup** came last because its namespace helper always sets `default` to
+the whole module:
 
 ```js
 function _interopNamespaceDefault(e) { var n = Object.create(null); /* getters for e's keys except default */ n.default = e; return Object.freeze(n); }
@@ -643,10 +643,18 @@ var dep_js__namespace = _interopNamespaceDefault(dep_js);
 
 Babel, TypeScript, swc, sucrase, and esbuild set `default` to `e.default`
 when the module is marked `__esModule`, which is what an ESM namespace of a
-recovered dependency gives. Recovering rollup's helper as `import * as`
-changes `ns.default` for such a dependency, so it waits for a decision. Its
-`export *` loop also shares `dep_js` with the namespace call, so the loop
-stays until the namespace is recovered.
+recovered dependency gives. Run against rollup 4.63 samples, rollup's own
+CommonJS differs from its ESM source in `ns.default` whether or not the
+provider has a default export. Keeping the helper would reproduce that
+difference; reading it as a wildcard interop reproduces the source. The
+second was chosen, as the named assumption
+[`namespace_interop_source_semantics`](../rewrite-assumptions.md#namespace_interop_source_semantics).
+The helper is proven by body shape, including the `constBindings`,
+`freeze: false`, `symbols`, non-live, and terser forms. Once the namespace
+import no longer reads `dep_js`, the `export *` loop is its only use and is
+recovered too. The `interop: "compat"` helper is not recognized.
+
+Matrix: 281 / 291, with rollup `reexport-star` the only changed row.
 
 ## Reassigned or aliased `exports`
 

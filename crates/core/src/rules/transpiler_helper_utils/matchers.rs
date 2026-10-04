@@ -162,7 +162,7 @@ pub(super) fn detect_helper_from_fn(
     if is_interop_require_default_fn(func) {
         return Some(TranspilerHelperKind::InteropRequireDefault);
     }
-    if is_interop_require_wildcard_fn(func) {
+    if is_interop_require_wildcard_fn(func) || is_namespace_default_interop_fn(func) {
         return Some(TranspilerHelperKind::InteropRequireWildcard);
     }
     if is_to_consumable_array_fn(func, has_sub_helpers) {
@@ -827,6 +827,223 @@ fn is_interop_require_wildcard_fn(func: &Function) -> bool {
 
     has_esmodule && has_property_copy
 }
+/// rollup's `_interopNamespaceDefault(e)`, the namespace interop of
+/// `output.interop: "default"`:
+///
+/// ```js
+/// var n = Object.create(null);
+/// if (e) { /* copy each key of e except default into n */ }
+/// n.default = e;
+/// return Object.freeze(n);
+/// ```
+///
+/// It has no `__esModule` check, so `default` is the whole module even for
+/// one compiled from ESM. Reading it as a wildcard interop recovers the
+/// source's `import * as`, where `default` is the provider's default export
+/// (see `docs/rewrite-assumptions.md`).
+fn is_namespace_default_interop_fn(func: &Function) -> bool {
+    let Some(mut ctx) = MatchContext::from_params(func, &["e"]) else {
+        return false;
+    };
+    let Some(body) = func.body.as_ref() else {
+        return false;
+    };
+    let [Stmt::Decl(Decl::Var(var)), copy, set_default, Stmt::Return(ReturnStmt {
+        arg: Some(result), ..
+    })] = body.stmts.as_slice()
+    else {
+        return false;
+    };
+    let [VarDeclarator {
+        name: Pat::Ident(target),
+        init: Some(init),
+        ..
+    }] = var.decls.as_slice()
+    else {
+        return false;
+    };
+    if !is_object_create_null(init) {
+        return false;
+    }
+    ctx.declare("n", target.id.sym.clone(), target.id.ctxt);
+
+    is_guarded_key_copy(copy, &ctx)
+        && is_default_assignment(set_default, &ctx)
+        && (ctx.is_binding(strip_parens(result), "n") || is_object_freeze_of(result, &ctx))
+}
+
+/// `Object.create(null)`, optionally with a property-descriptor map.
+fn is_object_create_null(expr: &Expr) -> bool {
+    let Expr::Call(call) = strip_parens(expr) else {
+        return false;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    let Expr::Member(member) = callee.as_ref() else {
+        return false;
+    };
+    is_object_member(member, "create")
+        && matches!(call.args.len(), 1 | 2)
+        && call.args.iter().all(|arg| arg.spread.is_none())
+        && matches!(call.args[0].expr.as_ref(), Expr::Lit(Lit::Null(_)))
+}
+
+/// `if (e) <copy>` or, minified, `e && <copy>`.
+fn is_guarded_key_copy(stmt: &Stmt, ctx: &MatchContext) -> bool {
+    match stmt {
+        Stmt::If(IfStmt {
+            test,
+            cons,
+            alt: None,
+            ..
+        }) => ctx.is_binding(strip_parens(test), "e") && is_key_copy(single_stmt(cons), ctx),
+        Stmt::Expr(expr_stmt) => {
+            let Expr::Bin(bin) = strip_parens(&expr_stmt.expr) else {
+                return false;
+            };
+            bin.op == BinaryOp::LogicalAnd
+                && ctx.is_binding(strip_parens(&bin.left), "e")
+                && is_keys_for_each_copy(&bin.right, ctx)
+        }
+        _ => false,
+    }
+}
+
+fn single_stmt(stmt: &Stmt) -> &Stmt {
+    match stmt {
+        Stmt::Block(block) if block.stmts.len() == 1 => single_stmt(&block.stmts[0]),
+        _ => stmt,
+    }
+}
+
+/// `Object.keys(e).forEach(k => ...)` or `for (k in e) ...`, writing into `n`.
+fn is_key_copy(stmt: &Stmt, ctx: &MatchContext) -> bool {
+    match stmt {
+        Stmt::Expr(expr_stmt) => is_keys_for_each_copy(&expr_stmt.expr, ctx),
+        Stmt::ForIn(for_in) => {
+            ctx.is_binding(strip_parens(&for_in.right), "e") && writes_into(&for_in.body, ctx)
+        }
+        _ => false,
+    }
+}
+
+fn is_keys_for_each_copy(expr: &Expr, ctx: &MatchContext) -> bool {
+    let Expr::Call(call) = strip_parens(expr) else {
+        return false;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    let Expr::Member(for_each) = callee.as_ref() else {
+        return false;
+    };
+    if !member_prop_name(&for_each.prop, "forEach") || call.args.len() != 1 {
+        return false;
+    }
+    let Expr::Call(keys) = strip_parens(&for_each.obj) else {
+        return false;
+    };
+    let Callee::Expr(keys_callee) = &keys.callee else {
+        return false;
+    };
+    let Expr::Member(keys_member) = keys_callee.as_ref() else {
+        return false;
+    };
+    if !is_object_member(keys_member, "keys")
+        || keys.args.len() != 1
+        || !ctx.is_binding(strip_parens(&keys.args[0].expr), "e")
+    {
+        return false;
+    }
+    match strip_parens(&call.args[0].expr) {
+        Expr::Fn(fn_expr) => fn_expr
+            .function
+            .body
+            .as_ref()
+            .is_some_and(|body| writes_into(body, ctx)),
+        Expr::Arrow(arrow) => writes_into(arrow.body.as_ref(), ctx),
+        _ => false,
+    }
+}
+
+/// Whether `node` contains `Object.defineProperty(n, ...)` or `n[k] = ...`.
+fn writes_into<'a, N>(node: &N, ctx: &'a MatchContext) -> bool
+where
+    N: VisitWith<NamespaceWriteFinder<'a>> + ?Sized,
+{
+    let mut finder = NamespaceWriteFinder { ctx, found: false };
+    node.visit_with(&mut finder);
+    finder.found
+}
+
+struct NamespaceWriteFinder<'a> {
+    ctx: &'a MatchContext,
+    found: bool,
+}
+
+impl Visit for NamespaceWriteFinder<'_> {
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if let Callee::Expr(callee) = &call.callee {
+            if let Expr::Member(member) = callee.as_ref() {
+                if is_object_member(member, "defineProperty")
+                    && call
+                        .args
+                        .first()
+                        .is_some_and(|arg| self.ctx.is_binding(&arg.expr, "n"))
+                {
+                    self.found = true;
+                }
+            }
+        }
+        call.visit_children_with(self);
+    }
+
+    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+        if let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left {
+            if matches!(member.prop, MemberProp::Computed(_))
+                && self.ctx.is_binding(&member.obj, "n")
+            {
+                self.found = true;
+            }
+        }
+        assign.visit_children_with(self);
+    }
+}
+
+/// `n.default = e`
+fn is_default_assignment(stmt: &Stmt, ctx: &MatchContext) -> bool {
+    let Stmt::Expr(expr_stmt) = stmt else {
+        return false;
+    };
+    let Expr::Assign(assign) = strip_parens(&expr_stmt.expr) else {
+        return false;
+    };
+    let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left else {
+        return false;
+    };
+    assign.op == AssignOp::Assign
+        && ctx.is_binding(&member.obj, "n")
+        && member_prop_name(&member.prop, "default")
+        && ctx.is_binding(strip_parens(&assign.right), "e")
+}
+
+/// `Object.freeze(n)`
+fn is_object_freeze_of(expr: &Expr, ctx: &MatchContext) -> bool {
+    let Expr::Call(call) = strip_parens(expr) else {
+        return false;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    let Expr::Member(member) = callee.as_ref() else {
+        return false;
+    };
+    is_object_member(member, "freeze")
+        && call.args.len() == 1
+        && ctx.is_binding(strip_parens(&call.args[0].expr), "n")
+}
+
 fn check_stmt_for_wildcard_markers(
     stmt: &Stmt,
     has_esmodule: &mut bool,
