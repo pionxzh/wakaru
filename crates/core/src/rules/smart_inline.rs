@@ -754,6 +754,39 @@ impl VisitMut for GlobalIdentInliner<'_> {
 // Pass 1: Temp variable inlining
 // ============================================================
 
+/// Removes generated-looking single-read `const` aliases. Unlike the
+/// `TempIsolation` proof for compiler temps, this proof is
+/// position-independent: it does not simulate evaluation order, it proves the
+/// alias source frozen, after which delaying its read is harmless.
+///
+/// - The alias is used once, in the immediately following statement.
+/// - Its identifier source is definitely initialized in the current
+///   function/statement-list context: a parameter or catch binding, a local
+///   function declaration, or a same-list declaration above the capture.
+///   Imports (live bindings), unresolved globals, and outer lexical bindings
+///   are excluded; the unresolved global `undefined` is the only global
+///   exception. A parameter is also excluded when its function observes
+///   `arguments`, because sloppy-mode mapped arguments can write it without
+///   an identifier assignment.
+/// - The source has no same-scope write after the capture and no write in any
+///   deferred body, parameter defaults and object accessors included.
+/// - An entry-binding proof may flow into nested lexical blocks of the same
+///   activation, never into a constructor, static block, or object accessor
+///   statement list analyzed under a different activation/order domain.
+/// - Direct `eval` or `with` blocks the rewrite.
+/// - A replacement is rejected when a different binding with the same emitted
+///   name occurs in the use statement: `SyntaxContext` is erased on printing.
+///   Replacement chains are resolved to their surviving source first, and
+///   that source's name is checked again at each alias's use. If it would be
+///   captured there, the alias stays declared while its initializer receives
+///   the safe substitutions for earlier links. Candidate declarations still
+///   participate in reference counting.
+///
+/// The generated-name check is readability policy as well as a safety gate:
+/// `const o = source` goes, but `const snapshot = source` or
+/// `const store = importedBinding` stays because the name carries recovered
+/// intent. Existing `let` aliases and long-lived short aliases also stay,
+/// because SmartRename may recover a name from their later use.
 fn inline_temp_vars(
     stmts: Vec<Stmt>,
     initialized_bindings: &HashSet<BindingKey>,

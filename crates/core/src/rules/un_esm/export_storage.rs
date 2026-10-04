@@ -150,6 +150,11 @@ pub(crate) enum ExportStorageReport {
 }
 
 /// Classify every static export name of a resolved module.
+///
+/// Property-storage recovery may mix static `exports.name` and
+/// `module.exports.name` roots only after the module gate proves that neither
+/// receiver can be rebound, replaced, aliased, or observed dynamically
+/// (`commonjs_exports_data_properties` in docs/rewrite-assumptions.md).
 pub(crate) fn analyze_export_storage(
     module: &Module,
     unresolved_mark: Mark,

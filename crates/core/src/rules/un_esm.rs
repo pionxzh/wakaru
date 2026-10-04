@@ -5778,7 +5778,8 @@ fn normalize_named_export_chains(
     /// runs no code. A `require("literal")` runs the provider, which the
     /// existing `exports.name = require(...)` recovery already moves ahead of
     /// the module body (`import_hoisting_eagerness`); the recovered binding
-    /// then goes through the same require-to-import path. A provider call
+    /// then goes through the same require-to-import path. Nothing proves that
+    /// the provider leaves this module's `module.exports` slot untouched. A provider call
     /// (`is_provider_call`) runs another module's code at the chain's own
     /// position; the only ordering change is that the target references are
     /// evaluated after it (`chain_receiver_reference_order`).

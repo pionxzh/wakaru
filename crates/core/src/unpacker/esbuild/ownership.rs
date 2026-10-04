@@ -583,7 +583,10 @@ fn standalone_group_filenames(standalone_factories: &[PendingFactory]) -> HashSe
 /// immutable ESM import. The ownership unit must stay atomic: relocate a
 /// writer statement to the owner when that is provably safe, and cancel the
 /// group's standalone split (demotion) when it is not. A writer must never
-/// stay behind against an imported binding.
+/// stay behind against an imported binding. A relocated writer runs at the
+/// owner's import time instead of its entry position, the same
+/// provider-versus-consumer interleaving change `import_hoisting_eagerness`
+/// (docs/rewrite-assumptions.md) accepts.
 ///
 /// Returns the groups that need demotion.
 pub(super) fn place_top_level_writers(

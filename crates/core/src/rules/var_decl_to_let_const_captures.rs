@@ -7,6 +7,49 @@
 //! is proved only within a containing statement-list block, not across branches.
 //! Existing block-escape and loop-capture guards still apply. Export entry from
 //! another module is deliberately left to the rule's existing level policy.
+//!
+//! Details:
+//!
+//! - Any reference to a local function declaration counts as possible
+//!   execution or escape, whatever the syntax (`f()`, `f.call(...)`,
+//!   `f.apply(...)`, a callback argument, an alias). Resolver binding IDs link
+//!   references between declarations of one function/module scope. Captures
+//!   include nested closures, parameter defaults, computed keys, and class
+//!   members. Aliases through properties and individual APIs are not modeled.
+//! - A named class declaration defers its captures until a local value
+//!   reference only when creation cannot run them: no superclass, computed
+//!   keys, decorators, static fields, or static blocks. Constructors,
+//!   ordinary/private methods (static included), and non-computed instance
+//!   fields are deferred. A static block or initializer can call
+//!   `this.method()` without naming the class, so those shapes stay exposed at
+//!   creation. A reference before the class completes cannot run its captures
+//!   (the class TDZ prevents it), so the ordered scan queues such references,
+//!   transitive ones from hoisted functions or classes included, and expands
+//!   the summary when the declaration completes.
+//! - A captured `var` becomes lexical only when its declaration completes
+//!   before the exposure in a containing statement-list block, nested plain
+//!   blocks included. Initialization is not inferred across branches,
+//!   `switch` cases, or loop headers. A plain function/arrow initializer may
+//!   reference its own binding, since creating it runs nothing; calls and
+//!   class initializers get no such exception.
+//! - Each declaration summary expands once, at its earliest local exposure;
+//!   no transitive capture set is built per function. Analysis is bounded per
+//!   scope with one capture traversal for named functions/classes and
+//!   anonymous function-like values, but enclosing scopes still inspect
+//!   nested bodies, so this is not globally linear in nesting depth.
+//! - ESM export specifiers (`export { f }`, aliases and default names
+//!   included) link bindings without evaluating them and add no exposure.
+//!   `export default f`, where `f` is a parenthesized or bare identifier bound
+//!   to a local function declaration or simple class declaration, reads the
+//!   value but runs no body, so it adds no capture exposure either; the read
+//!   and any class TDZ error stay in the output. Calls, object/array literals,
+//!   sequences, aliases, anonymous functions/classes, property stores, and
+//!   getter closures still expose captures. Named function declarations keep
+//!   the declaration-position guard whether or not they are exported.
+//! - No cross-module entry roots are added for exported functions or classes;
+//!   `minimal` keeps exported `var`s. Entry through an ESM cycle before module
+//!   execution needs a cross-module policy that same-scope analysis cannot
+//!   provide.
 
 use super::decl_utils::BindingId;
 use super::var_decl_to_let_const::collect_binding_ids_from_pat;

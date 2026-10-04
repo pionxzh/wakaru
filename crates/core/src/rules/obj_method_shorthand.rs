@@ -194,7 +194,10 @@ fn visit_mut_value_expr(
 /// `Word.init`) or onto its receiver (`Lib.mixin({ make })` exposes
 /// `Lib.make`). Argument objects therefore inherit the call result's keys and
 /// the receiver's key, but not `force_constructor_sensitive`. A wrong
-/// assumption only skips shorthand; it does not invent a TypeError.
+/// assumption only skips shorthand; it does not invent a TypeError. Only an
+/// inline object argument is linked: a spread argument is not, and neither is
+/// an argument binding (`extend(props)` does not protect `props.init`).
+/// Construction of the property in another module is out of scope.
 fn visit_mut_call(
     call: &mut CallExpr,
     result_keys: &[ValueKey],

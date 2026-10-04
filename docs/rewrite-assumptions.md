@@ -152,12 +152,9 @@ call (`_asyncIterator`, `_async_iterator`, `__forAwait`, `__asyncValues`) and a
 `try`/`catch`/`finally` protocol that calls the iterator's `return()` on an
 abrupt exit and rethrows the body's error after it. Native `for await` performs
 the same `IteratorClose` and error propagation, so folding the protocol back is
-not an assumption. Babel up to 7.14.7 additionally emits
-`value = await step.value` in the loop head. The
-`@babel/plugin-proposal-async-generator-functions` template carries that step
-in every release from 7.0.0 through 7.14.7, and Babel 6's
-`babel-helper-remap-async-to-generator` has it too. 7.14.9 replaced it with the
-abrupt-completion protocol; there is no 7.14.8. Native `for await` awaits only
+not an assumption. Babel 6 and Babel 7 up to 7.14.7 additionally emit
+`value = await step.value` in the loop head; 7.14.9 replaced it with the
+abrupt-completion protocol. Native `for await` awaits only
 the result object of `next()`, not its `value`. For an async iterator that
 yields promises as values, the lowered loop observes the settled value while
 the recovered loop observes the promise. Spec-conformant async iterators do not
@@ -408,8 +405,8 @@ that `mixin` copies `make` onto `Lib`. CryptoJS `Base.extend` does the first
 (`mixIn`, then `subtype.init.prototype = subtype`). A one-argument mixin that
 copies onto its receiver does the second. When the assumption is wrong, the property stays a function expression
 instead of becoming a method. That skips shorthand only; it does not introduce
-a `TypeError`. A spread argument does not establish the link, and neither does
-an argument binding (`extend(props)` does not protect `props.init`). A property
+a `TypeError`. Only an inline object argument is linked (see
+`visit_mut_call` in `rules/obj_method_shorthand.rs`). A property
 that is not constructed on the result or the receiver still becomes a method.
 Construction of the property in another module is out of scope.
 
@@ -440,12 +437,9 @@ the same receiver but wraps each spread argument in
 `$jscomp.arrayFromIterable`, so its arguments are not unknown in this sense.
 
 Affects: `UnArrayConcatSpread` for arguments whose array identity is not proven.
-Array literals are known directly. A separate binding proof covers rest
-parameters, canonical Babel/TypeScript `arguments`-copy arrays, bindings
-initialized with a hole-free array literal, and calls to functions whose whole
-body returns one. Every other use of a proven value binding must be an
-intrinsic-concat operand, and every use of a proven function a direct call, so
-these forms do not depend on this assumption.
+Array literals and the arguments its binding proof covers (rest parameters,
+`arguments` copies, and bindings or calls that provably yield a fresh array;
+see `rules/un_array_concat_spread.rs`) do not depend on this assumption.
 
 Level: `aggressive` only. `minimal` and `standard` preserve unknown concat
 arguments; `standard` may still recover the proof-backed forms.
@@ -509,8 +503,7 @@ that its attributes describe the original source construct rather than an
 intentional handwritten descriptor. TypeScript before 3.9 lowered class
 accessors, instance and static, with `enumerable: true, configurable: true`.
 TypeScript 3.9.2, the first stable 3.9 release, changed that output to the
-native class attributes (`enumerable: false, configurable: true`). Checked
-against the last release of every minor from 1.4 through 3.8 and against 3.9.2.
+native class attributes (`enumerable: false, configurable: true`).
 
 At `standard` and above, `UnEs6Class` accepts both variants after the enclosing
 IIFE has independently matched a transpiler class shape. This preserves source
@@ -569,10 +562,8 @@ recognition and rejection boundaries.
 
 In multi-module unpack, a base constructor that another module calls with
 `.call` / `.apply` becomes a class at `standard` only when that caller is
-predicted to become `class extends` with `super()`
-([fact system](fact-system.md#rules-that-read-facts)). A caller that stays a
-lowered function keeps its base a function, and a surviving call after a wrong
-prediction is reported as `cross_module_class_call`.
+predicted to become `class extends`; a wrong prediction is reported as
+`cross_module_class_call` ([fact system](fact-system.md#rules-that-read-facts)).
 
 Level: `standard` and above. `minimal` preserves this lowered constructor and
 wrapper, and keeps every cross-module `.call` / `.apply` target a function.
@@ -615,21 +606,11 @@ writes the key afterwards. That is an observation, not a guarantee. The hazard
 is accepted rather than proven; the CommonJS wrapper only guarantees that
 `module`, `exports`, and `require` are defined.
 
-Affects: `UnAssignmentMerging` (repeated identifier values and stable
-CommonJS receivers, including chains made entirely of static
-`module.exports.name` stores), and `UnEsm` (every `exports.x = v` to `export`
-recovery replaces a property write with a binding, so an accessor on `exports`
-is already ignored; its whole-chain recovery also evaluates a chained
-function value once into a binding and moves each target's reference
-evaluation past it, which creating a function cannot observe; its
-property-storage recovery replaces every access of a property-storage export,
-in any position, with one module `var` binding). A primitive literal or `void <number>`
-needs no assumption about the repeated value, but receiver stability is a
-separate condition. Nested receiver chains that also replace
-`module.exports`, mutate prototypes, or write the `exports` key stay intact;
-splitting them would require a stronger proof or a receiver capture. Property-storage recovery may mix static `exports.name` and
-`module.exports.name` roots only after its module gate proves that neither
-receiver can be rebound, replaced, aliased, or observed dynamically.
+Affects: `UnAssignmentMerging` (chain splitting with repeated identifier
+values or CommonJS receivers) and `UnEsm` (every `exports.x = v` to `export`
+recovery, whole-chain recovery, and property-storage recovery). Which chains
+and receivers each accepts is documented in `rules/un_assignment_merging.rs`
+and `rules/un_esm/export_storage.rs`.
 
 Level: `UnAssignmentMerging` relies on it at every level. `UnEsm` relies on it
 wherever it runs: `standard` and above for single-file input, because `UnEsm`
@@ -665,18 +646,12 @@ own. It can do so only by calling back into a closure this module registered
 earlier, or through an escaped `module`, and the single-export recovery
 (`exports.name = Lib.make(x)` to `export const name = Lib.make(x)`) already
 accepts those channels without inspecting the module for them. The chain
-recovery accepts them on the same terms and does not widen them: arguments that
-are the wrapper bindings `module`, `exports`, or `require`, computed callee
-keys, spread arguments, optional calls, `new`, and every call whose callee root
-is a local function, object, or an unresolved global are not recovered by this
-path. Most of them are still recovered by the property-storage path, which
-declares live `export let` bindings and writes them at the chain's original
-position (`first = second = makeValue()`). That path removes the receivers
-instead of reordering them, so it does not depend on this assumption. Its
-module gate keeps CommonJS when a value may replace `module.exports` or rebind
-`exports`, which covers wrapper-binding arguments and a local function that
-writes `module.exports`. In this path's own recovery, the value stays at the
-chain's own position; unlike the `require("literal")` value
+recovery accepts them on the same terms and does not widen them; the values it
+accepts are listed at `normalize_named_export_chains` in `rules/un_esm.rs`.
+Other chains go to the property-storage path, which writes live `export let`
+bindings at the chain's position. That path removes the receivers instead of
+reordering them, so it does not depend on this assumption. In either path the
+value stays at the chain's own position; unlike the `require("literal")` value
 (`import_hoisting_eagerness`), nothing is hoisted.
 
 This is an accepted assumption in the same sense as
@@ -719,16 +694,11 @@ providers side-effect-free would reject essentially every real module for a
 hazard every `require`-to-`import` conversion in this codebase already
 accepts.
 
-Affects: `UnEsm` require conversion, `commonjs_default_object_composition`,
-and every fact-consuming recovery that imports a proven provider. UnEsm's
-whole-chain recovery of `exports.a = exports.b = require("x")` evaluates the
-provider once into a binding before the export writes and then converts it
-the same way; it accepts this ordering deviation and does not prove that the
-provider leaves the consumer's `module.exports` slot untouched. The esbuild
-unpacker's ownership relocation (moving a top-level state writer into the
-module that owns the state declaration) shifts that statement's evaluation to
-the owner's import time — the same provider-versus-consumer interleaving
-deviation.
+Affects: `UnEsm` require conversion (including whole-chain recovery of
+`exports.a = exports.b = require("x")`), `commonjs_default_object_composition`,
+every fact-consuming recovery that imports a proven provider, and the esbuild
+unpacker's writer relocation, which moves a top-level state writer into the
+module that owns the state.
 
 Level: wherever CommonJS becomes ESM: `standard` and above for single-file
 input, because `UnEsm` does not run at `minimal` there. In unpack mode the
@@ -825,118 +795,23 @@ console.log(_tmp);
 This is a hard rule, not a level-gated policy. It prevents the assumption
 system from becoming a mechanism to skip safety checks.
 
-`TempIsolation` in `rules/binding_facts.rs` implements this proof. A temp is
-isolated when the module has no other use of it and its only declaration is
-an uninitialized declarator a pattern may assign. That excludes parameters,
-which sloppy-mode `arguments` aliases, and a `let` written in its TDZ. It
-also excludes an exported declaration, which importers can read, and an
-ambient `declare var`, which creates no binding.
+The proof is `TempIsolation` in `rules/binding_facts.rs`. Every rule that can
+drop a temp's write passes each rewrite through it at its choke point; a
+pattern's own use-count check is an early exit, not a substitute.
 
-Every rule that can drop a temp's write passes each rewrite through
-`TempIsolation::accept_expr_rewrite` (or `accept_stmts_rewrite`) at its
-choke point. The rewrite is rejected if it drops a write to a binding that
-is not isolated to the rewritten input, or if its output still reads that
-binding. This covers code paths that have no pattern proof of their own. An
-accepted rewrite reports which declarations became dead, for
-`remove_consumed_uninitialized_decls`, and updates the use counts for later
-rewrites. A pattern's own count check, where it has one, is an early exit and
-a shape policy. It does not replace this check.
-
-`SmartInline` applies a separate, position-independent proof to generic
-single-read `const` aliases. It only removes generated-looking names used in
-the immediately following statement whose identifier source is definitely
-initialized in the current function/statement-list
-context: a parameter or catch binding, a local function declaration, or a
-same-list declaration above the capture. The source must have no same-scope
-writes after capture and no writes in any deferred body, including parameter
-defaults and object accessors. Imports (live bindings), unresolved globals, and
-outer lexical bindings are excluded; direct `eval` or `with` also blocks the
-rewrite. Parameters are also excluded when their containing function observes
-`arguments`, because sloppy-mode mapped arguments can write a parameter without
-an identifier assignment. A replacement is rejected when a different binding
-with the same emitted name occurs in the use statement, preventing the printed
-identifier from being captured after `SyntaxContext` is erased. The unresolved
-global `undefined` is the only global exception.
-An entry-binding proof may flow into nested lexical blocks in the same
-activation, but never into a constructor, static block, or object accessor
-statement list analyzed under a different activation/order domain.
-
-Existing `let` aliases stay even when never written: `SmartRename` runs later
-and may recover a meaningful name from their use sites, which SmartInline
-cannot predict cheaply. The generated-name check for `const` is readability
-policy as well as a safety gate.
-Wakaru removes `const o = source` when proven safe, but preserves names such as
-`const snapshot = source` or `const store = importedBinding` because those names
-carry useful recovered intent. It also preserves long-lived short aliases
-because SmartRename may recover intent from their later use. This rule
-deliberately does not simulate
-expression evaluation order: once the local source is proven frozen, delaying
-its read is harmless; otherwise the alias stays.
-
-Candidate declarations still participate in reference counting. Replacement
-chains are resolved to their surviving source before substitution, and that
-source's emitted name is checked again at each alias's use. If it would be
-captured there, the alias stays declared while its initializer receives safe
-substitutions for earlier links.
+`SmartInline` removes generated-looking single-read `const` aliases under a
+separate, position-independent proof that the alias source is frozen
+(`inline_temp_vars` in `rules/smart_inline.rs`). Aliases with meaningful names
+stay as readability policy.
 
 ## Declaration-Kind Capture Safety
 
-`VarDeclToLetConst` treats references to local function declarations as possible
-execution or escape, regardless of invocation syntax (`f()`, `f.call(...)`,
-`f.apply(...)`, callback arguments, or alias creation). Resolver binding IDs
-connect references between declarations in the same function/module scope.
-Captures include nested closures, parameter defaults, computed keys and class
-members. Anonymous closures and class expressions are conservatively observed
-at creation; the rule does not follow aliases through properties or model
-individual APIs.
-
-Named class declarations can defer their captures until a local value
-reference only when creation cannot execute those captures: no superclass,
-computed keys, decorators, static fields or static blocks. Constructors,
-ordinary/private methods (including static methods), and non-computed instance
-fields are deferred. Other class shapes remain exposed at creation. In
-particular, a static block or initializer can invoke `this.method()` without
-referencing the class identifier; it must not use the deferred path.
-An earlier reference cannot execute a simple class's captures before that
-class initializes: its own TDZ prevents access. The ordered scan queues such
-references until the class declaration completes, then expands its summary.
-This also applies to transitive references from hoisted functions or classes.
-
-A captured `var` can become lexical only when its declaration has completed
-before the exposure in a containing statement-list block. This includes
-ordinary nested blocks, but does not infer initialization across branches,
-`switch` cases, or loop headers. Existing block-escape, loop-capture, duplicate
-declaration and dynamic-scope guards still apply. A plain function/arrow
-initializer may reference its own binding: creating it cannot execute its
-body before initialization. Calls and class initializers do not get that
-exception.
-
-The reference graph expands each declaration summary once at its earliest local
-exposure; it does not build a transitive capture set for every function.
-Analysis is bounded to each scope and reuses one capture traversal for named
-functions/classes and anonymous function-like values. Enclosing scopes still inspect
-nested bodies for captures, so this is not a claim of globally linear AST
-processing across arbitrarily deep function nesting.
-
-Pure ESM export specifiers (`export { f }`, including aliases/default names)
-link bindings without evaluating their values, so they do not add a local
-exposure. A default-export expression consisting only of a parenthesized or
-bare identifier bound to a local function declaration or simple class
-declaration also adds no capture exposure. Unlike a specifier's live binding,
-`export default f` evaluates and snapshots the binding value, but does not
-execute its body. The value read and any class TDZ error remain in the output;
-ordinary variables still undergo use-before-declaration checks. This exception
-does not include calls, object/array literals, sequences, aliases or anonymous
-functions/classes. Property stores and getter closures still expose captures.
-Named function declarations retain the existing declaration-position capture
-guard, independently of whether they are exported. Simple named class
-declarations use the deferred boundary above, including named/default exports;
-anonymous default classes remain exposed at creation.
-
-This proof does not add cross-module entry roots for every exported function
-or class. It retains `minimal`'s exported-`var` preservation. Arbitrary ESM-cycle
-entry before module execution requires a separate cross-module policy;
-same-scope analysis is not such a proof.
+`VarDeclToLetConst` turns a captured `var` into `let`/`const` only when a
+same-scope proof shows that no capture can run before the declaration
+completes. The proof and its boundaries are described in
+`rules/var_decl_to_let_const_captures.rs`. It is bounded to one scope: it does
+not follow object aliases, and it adds no cross-module entry roots, so
+`minimal` keeps exported `var`s.
 
 Accepted residual at every level: storing a function in an object property
 before its captured variable is initialized can preserve `var` even when the
@@ -963,18 +838,12 @@ temp.
 
 Original bindings are different from compiler temps: a rule that renames,
 removes, or re-kinds a binding the input program declared (params, vars) can
-break code a direct `eval` evaluates. Binding-oriented rules guard
-conservatively via `rules/eval_utils.rs`: `DirectEvalAnalyzer` classifies
-direct/indirect eval calls and their sources, and
-`js_source_mentions_binding` scopes the bail-out to bindings a known source
-string mentions (an unknown source blocks all). `VarDeclToLetConst`,
-`DeadDecls`, and `UnIife` follow this pattern. `ArrowFunction` preserves the
-function shape for unknown direct-eval sources, or when a known source mentions
-function-only bindings such as `this`, `arguments`, and `new.target`. Nested
-regular functions have their own function-only bindings and do not block an
-outer conversion; nested arrows still do. For `function() {}.bind(this)`, a
-source that mentions only `this` is safe because both forms capture the same
-value, while `arguments` and `new.target` still block conversion.
+break code a direct `eval` evaluates. Binding-oriented rules guard through
+`rules/eval_utils.rs`: `DirectEvalAnalyzer` classifies direct eval calls and
+their sources, and `js_source_mentions_binding` limits the bail-out to bindings
+a known source string mentions (an unknown source blocks all).
+`VarDeclToLetConst`, `DeadDecls`, `UnIife`, and `ArrowFunction` follow this
+pattern; each rule documents what it checks.
 
 `with` and direct `eval` are module-wide hazards. A rule that reads a free
 name as the global, renames or removes a binding, or introduces a new binding
@@ -1009,3 +878,7 @@ Before adding or widening a rewrite:
    evaluation is better than relying on `pure_getters`.
 5. Never let an assumption override a concrete observed use - a temp read
    outside the matched pattern means the temp stays.
+6. Keep this document to the contract: what the assumption is, a minimal
+   counterexample, why it is accepted, its level, and which rules rely on it.
+   How a rule matches, guards, or proves a shape belongs in a code comment
+   next to that code, named by the assumption so it stays grep-able.

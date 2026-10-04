@@ -504,6 +504,9 @@ fn try_convert_bind_this(call: &CallExpr) -> Option<ArrowExpr> {
         return None;
     }
 
+    // `function () {}.bind(this)` and the arrow capture the same `this`, so a
+    // known eval source that mentions only `this` is safe here; `arguments`
+    // and `new.target` still block the conversion.
     if function_has_arrow_sensitive_direct_eval(func, false) {
         return None;
     }
