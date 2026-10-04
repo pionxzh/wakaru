@@ -361,7 +361,9 @@ import when `_x` is declared once and never written. rollup does the same with
 same `_x`. That helper sets `default` to the whole module even for one marked
 `__esModule`, but it is read as a wildcard interop anyway, so the output
 matches the ESM source (`namespace_interop_source_semantics` in
-[rewrite-assumptions.md](rewrite-assumptions.md)). Once the namespace import
+[rewrite-assumptions.md](rewrite-assumptions.md)). The `interop: "compat"`
+helper, which first returns a provider with a `default` key unchanged, is
+read the same way. Once the namespace import
 no longer reads `_x`, the loop is `_x`'s only use and becomes
 `export * from "x"`.
 

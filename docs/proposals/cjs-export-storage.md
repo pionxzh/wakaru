@@ -652,7 +652,8 @@ second was chosen, as the named assumption
 The helper is proven by body shape, including the `constBindings`,
 `freeze: false`, `symbols`, non-live, and terser forms. Once the namespace
 import no longer reads `dep_js`, the `export *` loop is its only use and is
-recovered too. The `interop: "compat"` helper is not recognized.
+recovered too. The `interop: "compat"` helper, which first returns a provider
+with a `default` key unchanged, is read the same way.
 
 Matrix: 281 / 291, with rollup `reexport-star` the only changed row.
 

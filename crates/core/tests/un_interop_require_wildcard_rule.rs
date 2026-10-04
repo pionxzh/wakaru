@@ -552,6 +552,28 @@ function _interopNamespaceDefault(e) {
 	return Object.freeze(n);
 }
 "#,
+        // interop: "compat" returns a provider with a `default` key unchanged.
+        r#"
+function _interopNamespaceDefault(e) {
+	if (e && typeof e === 'object' && 'default' in e) return e;
+	var n = Object.create(null);
+	if (e) {
+		Object.keys(e).forEach(function (k) {
+			if (k !== 'default') {
+				var d = Object.getOwnPropertyDescriptor(e, k);
+				Object.defineProperty(n, k, d.get ? d : {
+					enumerable: true,
+					get: function () { return e[k]; }
+				});
+			}
+		});
+	}
+	n.default = e;
+	return Object.freeze(n);
+}
+"#,
+        // interop: "compat", terser
+        r#"function _interopNamespaceDefault(e){if(e&&"object"==typeof e&&"default"in e)return e;var t=Object.create(null);return e&&Object.keys(e).forEach(function(r){if("default"!==r){var n=Object.getOwnPropertyDescriptor(e,r);Object.defineProperty(t,r,n.get?n:{enumerable:!0,get:function(){return e[r]}})}}),t.default=e,Object.freeze(t)}"#,
         // terser
         r#"function _interopNamespaceDefault(e){var t=Object.create(null);return e&&Object.keys(e).forEach(function(r){if("default"!==r){var n=Object.getOwnPropertyDescriptor(e,r);Object.defineProperty(t,r,n.get?n:{enumerable:!0,get:function(){return e[r]}})}}),t.default=e,Object.freeze(t)}"#,
     ];
@@ -568,6 +590,29 @@ console.log(ns, dep.value);
         assert!(output.contains(r#"import * as ns from "dep";"#), "{output}");
         assert!(!output.contains("_interopNamespaceDefault"), "{output}");
     }
+}
+
+#[test]
+fn early_return_other_than_the_default_key_guard_is_not_an_interop() {
+    let input = r#"
+var dep = require("dep");
+function wrap(e) {
+	if (e && typeof e === 'object') return e;
+	var n = Object.create(null);
+	if (e) {
+		Object.keys(e).forEach(function (k) {
+			Object.defineProperty(n, k, { enumerable: true, get: function () { return e[k]; } });
+		});
+	}
+	n.default = e;
+	return Object.freeze(n);
+}
+var ns = wrap(dep);
+console.log(ns);
+"#;
+    let output = render(input);
+    assert!(!output.contains("import * as ns"), "{output}");
+    assert!(output.contains("wrap(dep)"), "{output}");
 }
 
 #[test]

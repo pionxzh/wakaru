@@ -768,12 +768,15 @@ This follows the `export *` recovery, which also accepts a difference from
 the CommonJS output when the result matches the ESM source the compiler
 started from (see [helper-detection.md](helper-detection.md)).
 
+rollup's `interop: "compat"` helper first returns a provider that has a
+`default` key unchanged, so its `ns.default` already matches the source for
+a provider with a default export; otherwise it behaves like
+`_interopNamespaceDefault` and is read the same way.
+
 Affects: helper detection (`is_namespace_default_interop_fn`), so
 `UnInteropRequireWildcard` and every rule that treats a wildcard interop
 call as a namespace import; and `UnEsm`'s export-star recovery, which can
 then recover a star loop that shares the provider binding with the helper.
-rollup's `interop: "compat"` helper, which returns a provider that has a
-`default` key unchanged, is not recognized.
 
 Level: all levels, like the rest of helper detection.
 

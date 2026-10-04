@@ -841,6 +841,10 @@ fn is_interop_require_wildcard_fn(func: &Function) -> bool {
 /// one compiled from ESM. Reading it as a wildcard interop recovers the
 /// source's `import * as`, where `default` is the provider's default export
 /// (see `docs/rewrite-assumptions.md`).
+///
+/// `output.interop: "compat"` names it `_interopNamespaceCompat` and first
+/// returns a provider that has a `default` key unchanged:
+/// `if (e && typeof e === "object" && "default" in e) return e;`.
 fn is_namespace_default_interop_fn(func: &Function) -> bool {
     let Some(mut ctx) = MatchContext::from_params(func, &["e"]) else {
         return false;
@@ -848,9 +852,13 @@ fn is_namespace_default_interop_fn(func: &Function) -> bool {
     let Some(body) = func.body.as_ref() else {
         return false;
     };
+    let stmts = match body.stmts.as_slice() {
+        [guard, rest @ ..] if is_default_key_guard(guard, &ctx) => rest,
+        stmts => stmts,
+    };
     let [Stmt::Decl(Decl::Var(var)), copy, set_default, Stmt::Return(ReturnStmt {
         arg: Some(result), ..
-    })] = body.stmts.as_slice()
+    })] = stmts
     else {
         return false;
     };
@@ -870,6 +878,75 @@ fn is_namespace_default_interop_fn(func: &Function) -> bool {
     is_guarded_key_copy(copy, &ctx)
         && is_default_assignment(set_default, &ctx)
         && (ctx.is_binding(strip_parens(result), "n") || is_object_freeze_of(result, &ctx))
+}
+
+/// `if (e && typeof e === "object" && "default" in e) return e;`, the
+/// conjuncts in any order and `==` for `===`.
+fn is_default_key_guard(stmt: &Stmt, ctx: &MatchContext) -> bool {
+    let Stmt::If(IfStmt {
+        test,
+        cons,
+        alt: None,
+        ..
+    }) = stmt
+    else {
+        return false;
+    };
+    let Stmt::Return(ReturnStmt {
+        arg: Some(returned),
+        ..
+    }) = single_stmt(cons)
+    else {
+        return false;
+    };
+    if !ctx.is_binding(strip_parens(returned), "e") {
+        return false;
+    }
+    let mut conjuncts = Vec::new();
+    collect_conjuncts(test, &mut conjuncts);
+    let [a, b, c] = conjuncts.as_slice() else {
+        return false;
+    };
+    let is_truthy = |expr: &Expr| ctx.is_binding(expr, "e");
+    let is_object_type = |expr: &Expr| {
+        let Expr::Bin(bin) = expr else {
+            return false;
+        };
+        let is_typeof_e = |side: &Expr| {
+            matches!(strip_parens(side), Expr::Unary(unary)
+                if unary.op == UnaryOp::TypeOf && ctx.is_binding(strip_parens(&unary.arg), "e"))
+        };
+        let is_object = |side: &Expr| matches!(strip_parens(side), Expr::Lit(Lit::Str(s)) if s.value.as_str() == Some("object"));
+        matches!(bin.op, BinaryOp::EqEqEq | BinaryOp::EqEq)
+            && ((is_typeof_e(&bin.left) && is_object(&bin.right))
+                || (is_object(&bin.left) && is_typeof_e(&bin.right)))
+    };
+    let has_default_key = |expr: &Expr| {
+        let Expr::Bin(bin) = expr else {
+            return false;
+        };
+        bin.op == BinaryOp::In
+            && matches!(strip_parens(&bin.left), Expr::Lit(Lit::Str(s)) if s.value.as_str() == Some("default"))
+            && ctx.is_binding(strip_parens(&bin.right), "e")
+    };
+    let conjuncts = [*a, *b, *c];
+    conjuncts.iter().filter(|expr| is_truthy(expr)).count() == 1
+        && conjuncts.iter().filter(|expr| is_object_type(expr)).count() == 1
+        && conjuncts
+            .iter()
+            .filter(|expr| has_default_key(expr))
+            .count()
+            == 1
+}
+
+fn collect_conjuncts<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
+    match strip_parens(expr) {
+        Expr::Bin(bin) if bin.op == BinaryOp::LogicalAnd => {
+            collect_conjuncts(&bin.left, out);
+            collect_conjuncts(&bin.right, out);
+        }
+        other => out.push(other),
+    }
 }
 
 /// `Object.create(null)`, optionally with a property-descriptor map.
