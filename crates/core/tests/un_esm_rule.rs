@@ -3078,6 +3078,54 @@ const logger = {
     );
 }
 
+const GETTER_LOOP_IIFE: &str = r#"
+((target, getters) => {
+  for (const key in getters) {
+    Object.defineProperty(target, key, {
+      enumerable: true,
+      get: getters[key]
+    });
+  }
+})"#;
+
+#[test]
+fn webpack_getter_loop_exports_of_written_bindings_stay_live() {
+    // The getters read the binding on every access, so a binding written
+    // after the getter loop must not become a snapshot export.
+    for (getters, rest, expected) in [
+        (
+            "{ Kind() { return G; } }",
+            "var G; G = { A: \"a\" };",
+            "export { G as Kind }; var G; G = { A: \"a\" };",
+        ),
+        (
+            "{ Foo() { return A; } }",
+            "let A = 1; function bump() { A = 2; }",
+            "export { A as Foo }; let A = 1; function bump() { A = 2; }",
+        ),
+    ] {
+        let source = format!("{GETTER_LOOP_IIFE}(exports, {getters}); {rest}");
+        let output = common::render_rule(&source, |mark| {
+            wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
+        });
+        assert_eq_normalized(&output, expected);
+    }
+}
+
+#[test]
+fn webpack_getter_loop_with_default_drops_the_default_compat_postamble() {
+    let source = format!(
+        "{GETTER_LOOP_IIFE}(exports, {{ Foo() {{ return A; }}, default() {{ return D; }} }}); let A = 1; function D() {{}}{DEFAULT_COMPAT_POSTAMBLE}"
+    );
+    let output = common::render_rule(&source, |mark| {
+        wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
+    });
+    assert_eq_normalized(
+        &output,
+        "export { A as Foo }; let A = 1; function D() {} export { D as default };",
+    );
+}
+
 #[test]
 fn webpack_getter_default_deferred_to_end() {
     // Webpack5 export getters place the getter map at the top of the module,
@@ -3691,6 +3739,29 @@ use(SessionContext);
 "#;
     let output = apply(input);
     insta::assert_snapshot!(output);
+}
+
+#[test]
+fn compound_exports_declarator_exports_one_binding() {
+    for (source, expected) in [
+        // The local is written later: the export is a snapshot of the first
+        // value, next to the local declaration.
+        (
+            "var s = exports.history = create(); s = 2; use(s);",
+            "var s = create(); export const history = s; s = 2; use(s);",
+        ),
+        // The property is written later: the export is the property's own
+        // binding, declared by the first write.
+        (
+            "var s = exports.history = create(); exports.history = 3;",
+            "export var history = create(); history = 3;",
+        ),
+    ] {
+        let output = common::render_rule(source, |mark| {
+            wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
+        });
+        assert_eq_normalized(&output, expected);
+    }
 }
 
 // ============================================================
