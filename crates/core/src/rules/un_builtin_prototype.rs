@@ -6,8 +6,12 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::utils::ExprFactory;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
+use super::eval_utils::module_blocks_global_reference;
+use super::rename_utils::module_declares_binding_named;
 use super::RewriteLevel;
 use crate::utils::paren::strip_parens;
+
+const BUILTIN_NAMES: [&str; 6] = ["Array", "Number", "Object", "RegExp", "String", "Function"];
 
 pub struct UnBuiltinPrototype {
     level: RewriteLevel,
@@ -15,6 +19,10 @@ pub struct UnBuiltinPrototype {
     /// name the globals, so they carry the unresolved mark like any other
     /// generated global reference.
     unresolved_ctxt: SyntaxContext,
+    /// Builtin names the current module can emit. Printed JavaScript is
+    /// name-based, so a same-named binding anywhere in the module, a `with`
+    /// statement, or a direct eval would capture the synthesized reference.
+    emittable: Vec<&'static str>,
 }
 
 impl UnBuiltinPrototype {
@@ -22,6 +30,7 @@ impl UnBuiltinPrototype {
         Self {
             level,
             unresolved_ctxt: SyntaxContext::empty().apply_mark(unresolved_mark),
+            emittable: Vec::new(),
         }
     }
 }
@@ -31,6 +40,16 @@ impl VisitMut for UnBuiltinPrototype {
         // `terser_unsafe_proto`: recovering the builtin name relies on the
         // producer having transformed only undeclared builtin references.
         if self.level != RewriteLevel::Aggressive {
+            return;
+        }
+        self.emittable = BUILTIN_NAMES
+            .into_iter()
+            .filter(|name| {
+                !module_declares_binding_named(module, name)
+                    && !module_blocks_global_reference(module, name)
+            })
+            .collect();
+        if self.emittable.is_empty() {
             return;
         }
         module.visit_mut_children_with(self);
@@ -57,7 +76,7 @@ impl VisitMut for UnBuiltinPrototype {
             return;
         };
 
-        match try_replace_builtin(call, self.unresolved_ctxt) {
+        match try_replace_builtin(call, self.unresolved_ctxt, &self.emittable) {
             Ok(new_expr) => *expr = new_expr,
             Err(original_call) => *expr = Expr::Call(original_call),
         }
@@ -66,7 +85,11 @@ impl VisitMut for UnBuiltinPrototype {
 
 /// Try to rewrite `instance.method.call(...)` → `BuiltIn.prototype.method.call(...)`
 /// Returns Ok(new_expr) on success, Err(original_call) on failure.
-fn try_replace_builtin(call: CallExpr, unresolved_ctxt: SyntaxContext) -> Result<Expr, CallExpr> {
+fn try_replace_builtin(
+    call: CallExpr,
+    unresolved_ctxt: SyntaxContext,
+    emittable: &[&str],
+) -> Result<Expr, CallExpr> {
     // callee must be a member expression: `instance.method.call` or `instance.method.apply`
     let callee_expr = match &call.callee {
         Callee::Expr(e) => e.as_ref(),
@@ -95,8 +118,8 @@ fn try_replace_builtin(call: CallExpr, unresolved_ctxt: SyntaxContext) -> Result
 
     // inner_member.obj is the instance literal (may be wrapped in parens)
     let builtin_name = match detect_builtin(strip_parens(inner_member.obj.as_ref())) {
-        Some(name) => name,
-        None => return Err(call),
+        Some(name) if emittable.contains(&name) => name,
+        _ => return Err(call),
     };
 
     // Now rebuild: BuiltIn.prototype.method.call_or_apply(args)

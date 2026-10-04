@@ -293,10 +293,12 @@ Array.prototype.splice.apply(value, args)
 
 Terser keeps `unsafe_proto` disabled by default and applies it only when the
 builtin reference is undeclared. Wakaru does not retain that producer
-provenance. Reversing the shape therefore assumes the synthesized `Array`,
-`String`, `Object`, `Number`, `RegExp`, or `Function` identifier still resolves
-to the intended builtin. The rule deliberately does not model lexical
-bindings, `with`, or direct `eval` to prove that condition.
+provenance. Reversing the shape therefore assumes the literal receiver came
+from this compression, not from handwritten code. The synthesized `Array`,
+`String`, `Object`, `Number`, `RegExp`, or `Function` identifier must still
+resolve to the builtin: the rule skips a name that any binding in the module
+declares, and skips every name when the module contains `with` or a direct
+`eval`.
 
 Affects: `UnBuiltinPrototype`.
 

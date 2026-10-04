@@ -88,3 +88,34 @@ fn full_pipeline_aggressive_recovers_all_six_builtin_prototypes() {
 
     assert_eq_normalized(&output, SIX_BUILTIN_PROTOTYPES);
 }
+
+#[test]
+fn aggressive_skips_builtin_name_a_local_binding_would_capture() {
+    // A local `Array` would capture the emitted `Array.prototype`; `String`
+    // has no such binding, so its receiver is still recovered.
+    let input = r#"
+function f(x) {
+    var Array = makeList();
+    return [].slice.call(x) + "".trim.call(x);
+}
+"#;
+    let expected = r#"
+function f(x) {
+    var Array = makeList();
+    return [].slice.call(x) + String.prototype.trim.call(x);
+}
+"#;
+    let output = apply(input, RewriteLevel::Aggressive);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn aggressive_skips_builtin_names_under_with() {
+    let input = r#"
+with (scope) {
+    use([].slice.call(x));
+}
+"#;
+    let output = apply(input, RewriteLevel::Aggressive);
+    assert_eq_normalized(&output, input);
+}
