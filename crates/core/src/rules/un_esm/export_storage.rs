@@ -474,6 +474,11 @@ struct Inventory {
     /// The binding a property write chain initializes or assigns, keyed by
     /// the address of the chain's next property assignment.
     chain_binding: Option<(*const AssignExpr, BindingId)>,
+    /// Sole arguments of a call to a function or arrow expression, the
+    /// position TypeScript gives an enum or namespace initializer and the
+    /// only one `UnEnum` folds.
+    iife_argument_assigns: HashSet<*const AssignExpr>,
+    iife_argument_bins: HashSet<*const BinExpr>,
 }
 
 impl Inventory {
@@ -500,6 +505,8 @@ impl Inventory {
             seq: 0,
             function_depth: 0,
             chain_binding: None,
+            iife_argument_assigns: HashSet::default(),
+            iife_argument_bins: HashSet::default(),
         }
     }
 
@@ -687,8 +694,10 @@ impl Inventory {
     ///
     /// TypeScript's exported enum and namespace initializer,
     /// `L = exports.x || (exports.x = {})`, counts too: afterwards `L` and the
-    /// property hold the same object either way.
-    fn note_chain(&mut self, value: &Expr, binding: BindingId) {
+    /// property hold the same object either way. It is left to `UnEnum` only
+    /// when `iife_argument` says it is still the argument of the enum IIFE;
+    /// Terser can inline the IIFE, and `UnEnum` does not fold what remains.
+    fn note_chain(&mut self, value: &Expr, binding: BindingId, iife_argument: bool) {
         let value = match strip_parens(value) {
             Expr::Bin(bin) if bin.op == BinaryOp::LogicalOr => {
                 let Some(name) = self.static_exports_name(&bin.left) else {
@@ -700,7 +709,9 @@ impl Inventory {
                             AssignTarget::Simple(SimpleAssignTarget::Member(member))
                                 if self.static_exports_name_of(member).as_ref() == Some(&name)) =>
                     {
-                        self.facts(&name).enum_initializer = true;
+                        if iife_argument {
+                            self.facts(&name).enum_initializer = true;
+                        }
                         &bin.right
                     }
                     _ => return,
@@ -720,8 +731,12 @@ impl Inventory {
     }
 
     /// TypeScript's exported enum and namespace argument,
-    /// `L || (exports.x = L = {})`, which `UnEnum` folds into the export.
+    /// `L || (exports.x = L = {})`, which `UnEnum` folds into the export while
+    /// it is still the argument of the enum IIFE.
     fn note_enum_initializer(&mut self, bin: &BinExpr) {
+        if !self.iife_argument_bins.contains(&(bin as *const BinExpr)) {
+            return;
+        }
         let Expr::Ident(local) = strip_parens(&bin.left) else {
             return;
         };
@@ -1050,7 +1065,7 @@ impl Visit for Inventory {
                     return;
                 }
                 if let Some(binding) = &chain {
-                    self.note_chain(&assign.right, binding.clone());
+                    self.note_chain(&assign.right, binding.clone(), false);
                 }
                 let mirror = self
                     .value_mirror(&assign.right)
@@ -1070,7 +1085,14 @@ impl Visit for Inventory {
             }
             AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) => {
                 if self.is_local(&binding.id) {
-                    self.note_chain(&assign.right, (binding.id.sym.clone(), binding.id.ctxt));
+                    let iife_argument = self
+                        .iife_argument_assigns
+                        .contains(&(assign as *const AssignExpr));
+                    self.note_chain(
+                        &assign.right,
+                        (binding.id.sym.clone(), binding.id.ctxt),
+                        iife_argument,
+                    );
                 }
                 assign.right.visit_with(self);
                 self.record_local_write(&binding.id);
@@ -1126,6 +1148,22 @@ impl Visit for Inventory {
     }
 
     fn visit_call_expr(&mut self, call: &CallExpr) {
+        if let (Callee::Expr(callee), [argument]) = (&call.callee, call.args.as_slice()) {
+            if argument.spread.is_none()
+                && matches!(strip_parens(callee), Expr::Fn(_) | Expr::Arrow(_))
+            {
+                match strip_parens(&argument.expr) {
+                    Expr::Assign(assign) => {
+                        self.iife_argument_assigns
+                            .insert(assign as *const AssignExpr);
+                    }
+                    Expr::Bin(bin) => {
+                        self.iife_argument_bins.insert(bin as *const BinExpr);
+                    }
+                    _ => {}
+                }
+            }
+        }
         if self.record_export_definition(call) {
             for arg in call.args.iter().skip(1) {
                 arg.visit_with(self);
@@ -1218,7 +1256,7 @@ fn init_writes(inventory: &mut Inventory, name: &Pat, init: &Expr) {
     match name {
         Pat::Ident(binding) => {
             if inventory.is_local(&binding.id) {
-                inventory.note_chain(init, (binding.id.sym.clone(), binding.id.ctxt));
+                inventory.note_chain(init, (binding.id.sym.clone(), binding.id.ctxt), false);
             }
             inventory.record_local_write(&binding.id);
         }

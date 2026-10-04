@@ -529,7 +529,10 @@ How B was placed and where it differs from the design above:
   local's declaration, so a later pass can merge it into `export let`.
 - **TypeScript enums.** Both enum and namespace argument shapes,
   `L = exports.x || (exports.x = {})` and `L || (exports.x = L = {})`, stay
-  for `UnEnum`, which folds them into `const L = {...}` with an export.
+  for `UnEnum`, which folds them into `const L = {...}` with an export. Only
+  while they are still the argument of the enum IIFE: Terser can inline the
+  IIFE (`(L = exports.x || (exports.x = {})).A = "A"`), `UnEnum` does not
+  fold that, and the name is an ordinary mirror instead.
 - **`UnAssignmentMerging`.** A chain with an `exports` property target and a
   resolved local target stays whole, including inside functions. A chain
   that also writes another export name, whose names no model owns (for

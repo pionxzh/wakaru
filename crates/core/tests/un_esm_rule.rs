@@ -6604,6 +6604,32 @@ var Mode;
     assert!(!output.contains("exports"), "{output}");
 }
 
+/// Terser can inline the enum IIFE, which leaves the initializer outside any
+/// call. `UnEnum` only folds the IIFE argument, so the inlined initializer
+/// must be recovered as an ordinary mirror instead of being left to it.
+#[test]
+fn inlined_typescript_enum_initializers_are_recovered_as_mirrors() {
+    // TypeScript 4.3.5, then Terser 5.51 with `toplevel` and two passes.
+    let input = r#""use strict";var e;Object.defineProperty(exports,"__esModule",{value:!0}),exports.Kind=exports.Mode=void 0,(e=exports.Mode||(exports.Mode={})).ON="ON",e.OFF="OFF",(exports.Kind||(exports.Kind={})).A="A";"#;
+    let output = render_pipeline(input);
+    assert!(!output.contains("exports"), "{output}");
+    assert!(
+        output.contains("Mode") && output.contains("Kind"),
+        "{output}"
+    );
+    assert_valid_esm(&output);
+
+    // The same initializer next to an export that the statement path owns.
+    let input = r#""use strict";var e;Object.defineProperty(exports,"__esModule",{value:!0}),(e=exports.Mode||(exports.Mode={})).ON="ON",e.OFF="OFF",exports.Ready=1;"#;
+    let output = render_pipeline(input);
+    assert!(!output.contains("exports"), "{output}");
+    assert!(
+        output.contains("Mode") && output.contains("Ready"),
+        "{output}"
+    );
+    assert_valid_esm(&output);
+}
+
 #[test]
 fn mirror_storage_recovers_alongside_a_babel_export_star_loop() {
     // The loop's `exports[key]` would fail the storage gate, but the loop
