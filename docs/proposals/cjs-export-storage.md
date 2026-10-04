@@ -1,6 +1,6 @@
 # CommonJS Export Storage Recovery
 
-Status: **IN PROGRESS.** Steps 1 to 3 and 5 are implemented: the per-name
+Status: **IMPLEMENTED.** Steps 1 to 3 and 5 are implemented: the per-name
 analysis (`wakaru debug cjs-exports`), the `commonjs_export_unrecovered`
 warning, A (property storage), B (mirror storage), and the swc, esbuild, and
 sucrase getter helpers feeding C. Step 4 was narrowed to one bug fix. Evidence
@@ -8,9 +8,11 @@ comes from the
 [CommonJS export-storage matrix](../../scripts/repro/cjs-export-storage-matrix/README.md);
 see [Step 1 results](#step-1-results), [Step 2 results](#step-2-results),
 [Step 3 results](#step-3-results),
-[Steps 4 and 5 results](#steps-4-and-5-results), and
-[`export * as ns`](#export--as-ns), which is outside the storage model
-but blocked its last matrix rows.
+[Steps 4 and 5 results](#steps-4-and-5-results),
+[`export * as ns`](#export--as-ns), and
+[Single-file import interop](#single-file-import-interop). The last two are
+outside the storage model but blocked the remaining matrix rows. The matrix
+is at 290 / 291; [Remaining gaps](#remaining-gaps) lists what is left.
 
 Ground rules: follow [AGENTS.md](../../AGENTS.md), including a focused unit
 test for every change. Use synthetic names in tests and commits. Record every
@@ -681,6 +683,30 @@ wrong: `import-then-export` for TypeScript, Babel, swc, and esbuild, and
 sucrase `imported-used-in-function`. rollup `import-then-export` still
 fails: rollup marks `__esModule` only when the module has a default export,
 so this module shows no evidence.
+
+## Remaining gaps
+
+- **rollup `import-then-export`, single-file only.** Without a marker the
+  module has no module-level evidence. The two signals left are weak: a
+  re-export getter from the same source (present only when the module also
+  re-exports from it), and rollup naming the binding after the source path
+  (`dep_js` for `./dep.js`), which hand-written code can match. Neither is
+  used. Decompiling both files together (`wakaru --unpack=auto mod.js
+  dep.js`) already recovers `import { live } from "./dep.js"` from provider
+  facts, and its behavior matches the ESM source; rollup output with many
+  CommonJS files (`preserveModules`) is meant to be decompiled that way.
+- **esbuild single-file CommonJS under `--unpack`.** Still split as a
+  scope-hoisted bundle (see [Out of scope](#out-of-scope)).
+- **Interop unwrapping runs before the module boundary is decided.**
+  `UnInteropRequireDefault` rewrites `_interopRequireDefault(require(x)).default`
+  to a plain `require(x)` binding read whole, which is right only once
+  `UnEsm` turns that `require` into a default import. When `UnEsm` keeps the
+  module CommonJS, or the `require` is inside a function, the output calls
+  the module object instead of its default export. The same early rewrite is
+  why [Single-file import interop](#single-file-import-interop) collects its
+  evidence before that rule. `UnInteropRequireWildcard` emits `import * as`
+  just as early, which mixes `import` with `exports` in a module that stays
+  CommonJS. Not covered by the matrix; tracked as separate work.
 
 ## Reassigned or aliased `exports`
 
