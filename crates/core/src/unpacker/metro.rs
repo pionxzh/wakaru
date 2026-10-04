@@ -465,7 +465,7 @@ fn normalize_metro_module(
             new: target.into(),
         })
         .collect::<Vec<_>>();
-    if !deconflict_runtime_binding_renames(&mut module, &renames) {
+    if !deconflict_runtime_binding_renames(&mut module, &renames, None) {
         return None;
     }
     rename_bindings_in_module(&mut module, &renames);

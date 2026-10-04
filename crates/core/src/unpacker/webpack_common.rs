@@ -19,6 +19,7 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::emit_esm::{dedup_filename, FilenameDedupStyle};
+use super::DetectedModuleFailure;
 use crate::analysis::binding_uses::{BindingId, BindingUseIndex, UseKind};
 use crate::module_path::relative_import_specifier;
 use crate::rules::rename_utils::{
@@ -31,11 +32,47 @@ const JAVASCRIPT_LIKE_EXTENSIONS: &[&str] = &["js", "mjs", "cjs", "jsx", "ts", "
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum FactoryNormalizationError {
     /// A factory runtime parameter is written, but its runtime/local lifetime
-    /// boundary cannot be proved. This is the only normalization failure that
-    /// webpack extraction may isolate to one opaque factory.
+    /// boundary cannot be proved. Webpack extraction isolates it to one
+    /// opaque factory.
     RuntimeParameterReuse,
+    /// Renaming a factory parameter to `module`/`exports`/`require` would
+    /// capture a free reference of that name in the factory body. Webpack
+    /// extraction isolates it to one opaque factory.
+    FreeNameCapture,
     /// Any other normalization failure remains container-fatal.
     Fatal,
+}
+
+/// Whether a free `require(...)` call may share the `require` name with the
+/// factory's loader parameter: no spread, and a first argument that the
+/// module-id rewriters leave alone (no number, no string naming a module id
+/// or looking like a numeric one).
+pub(super) fn is_external_require_call(
+    call: &CallExpr,
+    string_ids: &HashMap<String, String>,
+) -> bool {
+    call.args.iter().all(|arg| arg.spread.is_none())
+        && call
+            .args
+            .first()
+            .is_none_or(|arg| match strip_parens(&arg.expr) {
+                Expr::Lit(Lit::Num(_)) => false,
+                Expr::Lit(Lit::Str(request)) => request.value.as_str().is_some_and(|request| {
+                    !string_ids.contains_key(request) && request.parse::<usize>().is_err()
+                }),
+                _ => true,
+            })
+}
+
+/// The per-module failure reported for a factory that extraction isolated.
+pub(super) fn isolated_failure(error: FactoryNormalizationError) -> DetectedModuleFailure {
+    match error {
+        FactoryNormalizationError::RuntimeParameterReuse => {
+            DetectedModuleFailure::WebpackRuntimeParameterReuse
+        }
+        FactoryNormalizationError::FreeNameCapture => DetectedModuleFailure::WebpackFreeNameCapture,
+        FactoryNormalizationError::Fatal => DetectedModuleFailure::TranslatedFactoryNormalization,
+    }
 }
 
 /// Derive a truthful JavaScript output filename from a webpack module id.

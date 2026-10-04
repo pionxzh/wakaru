@@ -575,7 +575,7 @@ fn normalize_factory_module(
             new: target.into(),
         })
         .collect::<Vec<_>>();
-    if !deconflict_runtime_binding_renames(&mut module, &renames) {
+    if !deconflict_runtime_binding_renames(&mut module, &renames, None) {
         return None;
     }
     for rename in &renames {

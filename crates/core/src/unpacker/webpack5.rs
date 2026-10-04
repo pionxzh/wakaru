@@ -21,7 +21,8 @@ use crate::unpacker::webpack4::{
     RequireStringIdRewriter,
 };
 use crate::unpacker::webpack_common::{
-    numeric_id_from_expr, split_array_concat, FactoryNormalizationError,
+    is_external_require_call, isolated_failure, numeric_id_from_expr, split_array_concat,
+    FactoryNormalizationError,
 };
 use crate::unpacker::{
     deconflict_runtime_binding_renames, emit_module_with_positions, source_fallback_for_stmts,
@@ -1554,9 +1555,10 @@ struct PreparedWebpack5Factories {
     str_id_to_filename: HashMap<String, String>,
 }
 
-/// `isolate_fatal` keeps a factory that cannot be normalized at all opaque
-/// on its own instead of rejecting the container. Only translated factories
-/// opt in: their detector already reports failures per module.
+/// Runtime-parameter reuse and free-name capture keep one factory opaque in
+/// a numeric-id container. `isolate_fatal` does the same for any other
+/// normalization failure; only translated factories opt in, because their
+/// detector already reports failures per module.
 fn prepare_webpack5_factories(
     module_entries: &[Webpack5ModuleDescriptor<'_>],
     isolate_fatal: bool,
@@ -1601,14 +1603,14 @@ fn prepare_webpack5_factories(
             }
             match prepare_webpack5_module(entry, &id_to_filename, &str_id_to_filename) {
                 Ok(ast) => prepared.push(Some(ast)),
-                Err(FactoryNormalizationError::RuntimeParameterReuse) => {
+                Err(
+                    error @ (FactoryNormalizationError::RuntimeParameterReuse
+                    | FactoryNormalizationError::FreeNameCapture),
+                ) => {
                     if !can_isolate_runtime_parameter_reuse {
                         return None;
                     }
-                    newly_opaque.insert(
-                        entry.filename.clone(),
-                        DetectedModuleFailure::WebpackRuntimeParameterReuse,
-                    );
+                    newly_opaque.insert(entry.filename.clone(), isolated_failure(error));
                     prepared.push(None);
                 }
                 Err(FactoryNormalizationError::Fatal) => {
@@ -3513,8 +3515,14 @@ fn normalize_extracted_webpack_module(
                 new: target.into(),
             })
             .collect::<Vec<_>>();
-        if !deconflict_runtime_binding_renames(&mut synthetic_module, &renames) {
-            return Err(FactoryNormalizationError::Fatal);
+        let external_require_call =
+            |call: &CallExpr| is_external_require_call(call, str_id_to_filename);
+        if !deconflict_runtime_binding_renames(
+            &mut synthetic_module,
+            &renames,
+            Some(&external_require_call),
+        ) {
+            return Err(FactoryNormalizationError::FreeNameCapture);
         }
         for rename in &renames {
             let to_ident = Ident::new(rename.new.clone(), Default::default(), unresolved_ctxt);

@@ -513,6 +513,27 @@ fn a_factory_that_cannot_take_webpack_parameter_names_stays_opaque_alone() {
 }
 
 #[test]
+fn free_require_calls_in_translated_factories_share_the_require_name() {
+    // Next's app-page template calls
+    // `require("path").join(/* turbopackIgnore: true */ process.cwd(), dir)`,
+    // which Turbopack leaves as a free host `require`.
+    let source = client_chunk(
+        r#"
+101, e => { var d = e.r(202); e.s(["dir", 0, require("path").join(process.cwd(), d.dir)]); },
+202, (e, r, t) => { t.dir = "beta"; }
+"#,
+    );
+    let output = unpack_chunk(&source);
+    assert_clean(&output);
+    let code = module(&output, "module-101.js");
+    assert!(
+        code.contains(r#"require("path").join(process.cwd()"#),
+        "{code}"
+    );
+    assert!(code.contains("./module-202.js"), "{code}");
+}
+
+#[test]
 fn module_contexts_called_with_a_listed_constant_become_that_entry() {
     // Next.js resolves its instrumentation hook through a one-entry context.
     let source = client_chunk(

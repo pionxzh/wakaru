@@ -323,15 +323,30 @@ factory wrapper and gives its runtime parameters canonical names. Before doing
 so, the unpackers check top-level collisions, pre-existing free references, and
 nested-scope shadowing. Bound locals that would capture a canonical runtime
 name are hygienically renamed first. A pre-existing free reference cannot be
-renamed without changing host-environment lookup, so that case still rejects
-the candidate and normal fallback preserves the original bundle.
+renamed without changing host-environment lookup. Browserify/Cocos and Metro
+reject the candidate in that case, and normal fallback preserves the original
+bundle; webpack isolates the factory as described below.
 
-Webpack has one narrower partial-failure path. A minified factory may reuse its
-`module`, `exports`, or loader parameter as an ordinary local after its last
-runtime use. In a numeric-ID container, when that lifetime boundary cannot be
-proved, Wakaru preserves that factory's extracted body unchanged and marks only
-that module as failed; other factories in the same structurally proven
-container remain recoverable. Named-ID containers keep the whole-input fallback
+Webpack and translated (Turbopack) factories make one exception for a free
+`require`: when every free `require` is a direct call whose first argument is
+neither a number nor a string naming a module id, the loader parameter takes
+the name `require` and the two merge. The output already treats `require` as
+the host require (externals become `require("name")`), and a bundler leaves a
+free `require` only where the author opted out of bundling
+(`__non_webpack_require__`, `turbopackIgnore`), so the merged call is the
+author's own text. In a browser chunk the original free call throws, while
+the output resolves it. A free `require` used as a value, a member, or under
+`typeof`, and any free `module` or `exports`, still counts as a capture.
+
+Webpack has a narrower partial-failure path for two factory-local failures. A
+minified factory may reuse its `module`, `exports`, or loader parameter as an
+ordinary local after its last runtime use, and a factory may read one of the
+canonical names free (webpack emits a free `require` for
+`__non_webpack_require__` and keeps `typeof exports` free in ESM modules). In a
+numeric-ID container, when the reuse boundary cannot be proved or the rename
+would capture a free reference, Wakaru preserves that factory's extracted body
+unchanged and marks only that module as failed; other factories in the same
+structurally proven container remain recoverable. Named-ID containers keep the whole-input fallback
 because an unresolved path-like runtime call could otherwise be mistaken for an
 ESM import. A fixed-point pass
 removes failed factory IDs from the rewrite map before retrying dependants, so

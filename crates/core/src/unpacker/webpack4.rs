@@ -23,7 +23,9 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use crate::module_path::relative_import_specifier;
 use crate::rules::eval_utils::DirectEvalAnalyzer;
 use crate::rules::rename_utils::BindingRename;
-use crate::unpacker::webpack_common::FactoryNormalizationError;
+use crate::unpacker::webpack_common::{
+    is_external_require_call, isolated_failure, FactoryNormalizationError,
+};
 use crate::unpacker::{
     deconflict_runtime_binding_renames, emit_module_with_positions, source_slice_for_stmts,
     span_byte_range, BundleFormat, DetectedBundle, DetectedModuleFailure, MappedCode,
@@ -485,13 +487,13 @@ fn prepare_webpack4_modules(
     cm: Lrc<SourceMap>,
     positions: SourcePositions,
 ) -> Option<DetectedBundle> {
-    let mut opaque_filenames = HashSet::default();
+    let mut opaque_filenames: HashMap<String, DetectedModuleFailure> = HashMap::default();
 
     loop {
         let num_id_to_filename: HashMap<usize, String> = if all_numeric {
             descriptors
                 .iter()
-                .filter(|descriptor| !opaque_filenames.contains(&descriptor.filename))
+                .filter(|descriptor| !opaque_filenames.contains_key(&descriptor.filename))
                 .filter_map(|descriptor| {
                     descriptor
                         .id
@@ -508,15 +510,15 @@ fn prepare_webpack4_modules(
         } else {
             descriptors
                 .iter()
-                .filter(|descriptor| !opaque_filenames.contains(&descriptor.filename))
+                .filter(|descriptor| !opaque_filenames.contains_key(&descriptor.filename))
                 .map(|descriptor| (descriptor.id.clone(), descriptor.filename.clone()))
                 .collect()
         };
 
         let mut emitted = Vec::with_capacity(descriptors.len());
-        let mut newly_opaque = HashSet::default();
+        let mut newly_opaque = HashMap::default();
         for descriptor in descriptors {
-            if opaque_filenames.contains(&descriptor.filename) {
+            if opaque_filenames.contains_key(&descriptor.filename) {
                 emitted.push(None);
                 continue;
             }
@@ -550,21 +552,24 @@ fn prepare_webpack4_modules(
             );
             let (mut module, _) = match normalized {
                 Ok(normalized) => normalized,
-                Err(FactoryNormalizationError::RuntimeParameterReuse) => {
+                Err(
+                    error @ (FactoryNormalizationError::RuntimeParameterReuse
+                    | FactoryNormalizationError::FreeNameCapture),
+                ) => {
                     // A retained numeric call cannot be mistaken for an ESM
                     // import. Named IDs can be path-like strings, so keep the
                     // historical whole-container fallback for that shape.
                     if !all_numeric {
                         return None;
                     }
-                    newly_opaque.insert(descriptor.filename.clone());
+                    newly_opaque.insert(descriptor.filename.clone(), isolated_failure(error));
                     emitted.push(None);
                     continue;
                 }
                 Err(FactoryNormalizationError::Fatal) => return None,
             };
-            // Runtime-parameter reuse is the only factory-local failure. A
-            // fixer or emitter failure still invalidates the whole container;
+            // Runtime-parameter reuse and free-name capture are the only
+            // factory-local failures. A fixer or emitter failure still invalidates the whole container;
             // skipping that module would leave rewritten callers pointing at
             // an output file that was never emitted.
             apply_fixer(&mut module).ok()?;
@@ -587,20 +592,11 @@ fn prepare_webpack4_modules(
             return None;
         }
 
-        let failures = opaque_filenames
-            .iter()
-            .cloned()
-            .map(|filename| {
-                (
-                    filename,
-                    DetectedModuleFailure::WebpackRuntimeParameterReuse,
-                )
-            })
-            .collect();
+        let failures = opaque_filenames.clone();
         let mut modules = Vec::with_capacity(descriptors.len());
         for (descriptor, emitted) in descriptors.iter().zip(emitted) {
             let (code, generated_source_map, verbatim_source_offset) =
-                if opaque_filenames.contains(&descriptor.filename) {
+                if opaque_filenames.contains_key(&descriptor.filename) {
                     let body = descriptor.factory.function.body.as_ref()?;
                     let (code, start) = source_slice_for_stmts(&cm, &body.stmts);
                     (code, Vec::new(), start)
@@ -918,8 +914,14 @@ fn normalize_extracted_webpack_module(
             new: new_sym.clone(),
         })
         .collect::<Vec<_>>();
-    if !deconflict_runtime_binding_renames(&mut synthetic_module, &renames) {
-        return Err(FactoryNormalizationError::Fatal);
+    let external_require_call =
+        |call: &CallExpr| is_external_require_call(call, loader_module_ids.string);
+    if !deconflict_runtime_binding_renames(
+        &mut synthetic_module,
+        &renames,
+        Some(&external_require_call),
+    ) {
+        return Err(FactoryNormalizationError::FreeNameCapture);
     }
     for rename in &renames {
         let to_ident = Ident::new(rename.new.clone(), Default::default(), unresolved_ctxt);

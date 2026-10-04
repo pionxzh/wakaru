@@ -1245,6 +1245,279 @@ fn webpack4_unprovable_exports_reuse_isolates_only_its_factory() {
     assert_eq!(validate_output_modules(&output.modules), vec![]);
 }
 
+fn free_name_capture_failures(
+    output: &wakaru_core::driver::test_support::UnpackOutput,
+) -> Vec<String> {
+    let mut filenames = output
+        .warnings
+        .iter()
+        .filter(|warning| {
+            warning.kind == wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed
+                && warning.message.contains("capturing a free reference")
+        })
+        .map(|warning| warning.filename.clone())
+        .collect::<Vec<_>>();
+    filenames.sort();
+    filenames
+}
+
+#[test]
+fn webpack5_free_name_capture_isolates_only_its_factory() {
+    // Factory 1 reads a free `require` as a value and factory 2 a free
+    // `exports` (an ESM module's environment probe). Renaming their loader or
+    // exports parameter would capture those names.
+    let source = r#"
+(() => {
+  var modules = ({
+    0: ((e, t, n) => {
+      e.exports = [n(1), n(2), n(3)];
+    }),
+    1: ((e, t, n) => {
+      e.exports = function () { return [n(3), globalThis.hostRequire = require]; };
+    }),
+    2: ((e, t, n) => {
+      n.d(t, { probe: () => r });
+      var r = typeof exports;
+    }),
+    3: ((e) => {
+      e.exports = "dependency";
+    })
+  });
+  var cache = {};
+  (function load(id) {
+    var module = cache[id] = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  })(0);
+})();
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack5-free-name-capture.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("a free-name capture should isolate only its factory");
+
+    assert_eq!(output.detected_formats, [BundleFormat::Webpack5]);
+    assert_eq!(
+        free_name_capture_failures(&output),
+        ["module-1.js", "module-2.js"],
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+    let code = |name: &str| {
+        output
+            .modules
+            .iter()
+            .find(|(filename, _)| filename == name)
+            .map(|(_, code)| code.clone())
+            .unwrap_or_else(|| panic!("missing {name}"))
+    };
+    let opaque = code("module-1.js");
+    assert!(
+        opaque.contains("globalThis.hostRequire = require"),
+        "{opaque}"
+    );
+    let entry = code("module-0.js");
+    assert!(entry.contains("require(1)"), "{entry}");
+    assert!(entry.contains("require(2)"), "{entry}");
+    assert!(entry.contains("./module-3.js"), "{entry}");
+    assert!(code("module-3.js").contains("dependency"));
+}
+
+#[test]
+fn webpack4_free_name_capture_isolates_only_its_factory() {
+    let source = r#"
+!function(modules) {
+  function load(id) {
+    var module = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  }
+  return load(2);
+}([
+  function(e, t, n) {
+    e.exports = function () { return [n(1), typeof require]; };
+  },
+  function(e) {
+    e.exports = "stable";
+  },
+  function(e, t, n) {
+    e.exports = [n(0), n(1)];
+  }
+]);
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack4-free-name-capture.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("a free-name capture should isolate only its factory");
+
+    assert_eq!(output.detected_formats, [BundleFormat::Webpack4]);
+    assert_eq!(
+        free_name_capture_failures(&output),
+        ["module-0.js"],
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+    let entry = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "module-2.js")
+        .map(|(_, code)| code)
+        .expect("expected recoverable sibling factory");
+    assert!(entry.contains("require(0)"), "{entry}");
+    assert!(entry.contains("./module-1.js"), "{entry}");
+}
+
+#[test]
+fn webpack5_free_require_calls_share_the_loader_name() {
+    // `__non_webpack_require__("os")` compiles to a free `require` call. The
+    // output's `require` is the host require, so the loader parameter takes
+    // the name and the free call stays as written.
+    let source = r#"
+(() => {
+  var modules = ({
+    0: ((e, t, n) => {
+      e.exports = function (name) { return [n(1), require("os"), require(name)]; };
+    }),
+    1: ((e) => {
+      e.exports = "dependency";
+    })
+  });
+  var cache = {};
+  (function load(id) {
+    var module = cache[id] = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  })(0);
+})();
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack5-free-require-call.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("free require calls should unpack");
+
+    assert_eq!(output.detected_formats, [BundleFormat::Webpack5]);
+    assert_eq!(
+        free_name_capture_failures(&output),
+        Vec::<String>::new(),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+    let entry = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "module-0.js")
+        .map(|(_, code)| code)
+        .expect("expected recovered entry");
+    assert!(entry.contains("./module-1.js"), "{entry}");
+    assert!(entry.contains(r#"require("os")"#), "{entry}");
+    assert!(entry.contains("require(name)"), "{entry}");
+}
+
+#[test]
+fn webpack5_free_require_calls_that_name_a_module_id_stay_opaque() {
+    // A free call with a number or an id-like string would be rewritten into
+    // an internal edge once it shares the loader's name.
+    for call in [
+        r#"require(1)"#,
+        r#"require("1")"#,
+        r#"require.resolve("os")"#,
+    ] {
+        let source = format!(
+            r#"
+(() => {{
+  var modules = ({{
+    0: ((e, t, n) => {{
+      e.exports = function () {{ return [n(1), {call}]; }};
+    }}),
+    1: ((e) => {{
+      e.exports = "dependency";
+    }})
+  }});
+  var cache = {{}};
+  (function load(id) {{
+    var module = cache[id] = {{ exports: {{}} }};
+    modules[id](module, module.exports, load);
+    return module.exports;
+  }})(0);
+}})();
+"#
+        );
+        let output = unpack(
+            &source,
+            DecompileOptions {
+                filename: "webpack5-free-require-id.js".to_string(),
+                ..Default::default()
+            },
+        )
+        .expect("an isolated factory should unpack");
+
+        assert_eq!(output.detected_formats, [BundleFormat::Webpack5], "{call}");
+        assert_eq!(
+            free_name_capture_failures(&output),
+            ["module-0.js"],
+            "{call}: unexpected warnings: {:?}",
+            output.warnings
+        );
+    }
+}
+
+#[test]
+fn webpack5_free_name_capture_in_a_named_id_container_keeps_the_whole_fallback() {
+    // An unresolved string id could pass for an authored import path, so a
+    // named-id container is not split around an opaque factory.
+    let source = r#"
+(() => {
+  var modules = ({
+    "./src/entry.js": ((e, t, n) => {
+      e.exports = [n("./src/host.js"), n("./src/value.js")];
+    }),
+    "./src/host.js": ((e, t, n) => {
+      e.exports = function () { return [n("./src/value.js"), globalThis.hostRequire = require]; };
+    }),
+    "./src/value.js": ((e) => {
+      e.exports = "dependency";
+    })
+  });
+  var cache = {};
+  (function load(id) {
+    var module = cache[id] = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  })("./src/entry.js");
+})();
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack5-named-free-name-capture.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("an undetected container still unpacks as a single file");
+
+    assert!(
+        !output.detected_formats.contains(&BundleFormat::Webpack5),
+        "{:?}",
+        output.detected_formats
+    );
+}
+
 #[test]
 fn webpack5_exports_reuse_that_reads_the_old_value_stays_opaque() {
     let source = r#"
@@ -2689,40 +2962,6 @@ fn webpack5_loader_reuse_demotion_reaches_an_order_independent_fixed_point() {
         "an absent numeric target stays an honest runtime call instead of demoting its caller"
     );
     assert_eq!(reverse, forward);
-}
-
-#[test]
-fn webpack5_non_runtime_parameter_normalization_failure_still_rejects_the_container() {
-    let source = r#"
-(() => {
-  var modules = ({
-    0: ((m, e, r) => {
-      globalThis.originalRequire = require;
-      m.exports = r(1);
-    }),
-    1: ((module) => { module.exports = "stable"; })
-  });
-  var cache = {};
-  function load(id) {
-    var module = cache[id] = { exports: {} };
-    modules[id](module, module.exports, load);
-    return module.exports;
-  }
-  load(0);
-})();
-"#;
-
-    let output = unpack_raw(
-        source,
-        &DecompileOptions {
-            filename: "webpack5-fatal-normalization.js".to_string(),
-            ..Default::default()
-        },
-    )
-    .expect("fatal detector normalization should retain the input fallback");
-    assert!(output.detected_formats.is_empty());
-    assert_eq!(output.modules.len(), 1);
-    assert!(output.modules[0].1.contains("originalRequire"));
 }
 
 #[test]

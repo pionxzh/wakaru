@@ -127,10 +127,15 @@ fn detector_failure_warning(filename: &str, failure: DetectedModuleFailure) -> U
             UnpackWarningKind::WebpackFactoryRecoveryFailed,
             "webpack factory runtime-parameter reuse could not be normalized; preserving the opaque factory body",
         ),
+        DetectedModuleFailure::WebpackFreeNameCapture => UnpackWarning::new(
+            filename,
+            UnpackWarningKind::WebpackFactoryRecoveryFailed,
+            "webpack factory could not take the `module`/`exports`/`require` parameter names without capturing a free reference; preserving the opaque factory body",
+        ),
         DetectedModuleFailure::TranslatedFactoryNormalization => UnpackWarning::new(
             filename,
             UnpackWarningKind::WebpackFactoryRecoveryFailed,
-            "translated factory could not take webpack's `module`/`exports`/`require` parameter names without capturing a free reference; preserving the opaque factory body",
+            "translated factory could not be normalized; preserving the opaque factory body",
         ),
         DetectedModuleFailure::TurbopackUnsupportedRuntime(context_use) => UnpackWarning::new(
             filename,

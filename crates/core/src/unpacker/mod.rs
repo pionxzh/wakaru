@@ -21,7 +21,8 @@ use swc_core::common::{
     GLOBALS,
 };
 use swc_core::ecma::ast::{
-    Decl, Expr, Module, ModuleDecl, ModuleItem, Stmt, UnaryExpr, UnaryOp, VarDecl, WithStmt,
+    CallExpr, Callee, Decl, Expr, Ident, Module, ModuleDecl, ModuleItem, Stmt, UnaryExpr, UnaryOp,
+    VarDecl, WithStmt,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
@@ -471,8 +472,14 @@ pub(crate) fn arrow_iife_call_with_async(
 }
 
 /// Whether extraction can rename removed factory parameters without changing
-/// which binding a printed identifier resolves to.
-pub(crate) fn runtime_binding_renames_are_safe(module: &Module, renames: &[BindingRename]) -> bool {
+/// which binding a printed identifier resolves to. `merged_targets` are free
+/// target names the caller accepted as the same binding as the renamed
+/// parameter.
+pub(crate) fn runtime_binding_renames_are_safe(
+    module: &Module,
+    renames: &[BindingRename],
+    merged_targets: &crate::collections::HashSet<BindingId>,
+) -> bool {
     let uses = BindingUseIndex::collect(module);
     let relevant = renames
         .iter()
@@ -492,18 +499,27 @@ pub(crate) fn runtime_binding_renames_are_safe(module: &Module, renames: &[Bindi
     relevant.into_iter().all(|rename| {
         let target = (rename.new.clone(), rename.old.1);
         !module_names.contains(&rename.new)
-            && uses.use_count(&target) == 0
+            && (uses.use_count(&target) == 0 || merged_targets.contains(&target))
             && !uses.has_declaration(&target)
             && !shadow_index.rename_causes_shadowing(&rename.old, &rename.new)
     })
 }
 
 /// Make bound-local conflicts safe before factory runtime parameters receive
-/// their canonical names. Free references to a target name remain a hard
-/// rejection because renaming them would change host-environment lookup.
+/// their canonical names. Free references to a target name are a rejection
+/// because renaming them would change host-environment lookup, with one
+/// exception: when `external_require_call` accepts every free `require` (each
+/// one a call), the loader parameter takes the name and the two merge.
+///
+/// The output treats `require` as the host require (webpack and Turbopack
+/// externals already become `require("name")`), and a bundler leaves a free
+/// `require` only where the author opted out of bundling
+/// (`__non_webpack_require__`, `turbopackIgnore`). The predicate must reject a
+/// call that the module-id rewriters would turn into an internal edge.
 pub(crate) fn deconflict_runtime_binding_renames(
     module: &mut Module,
     renames: &[BindingRename],
+    external_require_call: Option<&dyn Fn(&CallExpr) -> bool>,
 ) -> bool {
     let uses = BindingUseIndex::collect(module);
     let relevant = renames
@@ -517,11 +533,24 @@ pub(crate) fn deconflict_runtime_binding_renames(
     // The stripped factory parameters and free globals both carry the
     // unresolved context. A pre-existing free target therefore cannot be
     // hygienically renamed or kept distinct in the standalone module.
-    if relevant.iter().any(|rename| {
+    let mut merged_targets = crate::collections::HashSet::default();
+    for rename in &relevant {
         let target = (rename.new.clone(), rename.old.1);
-        uses.use_count(&target) > 0
-    }) {
-        return false;
+        if uses.use_count(&target) == 0 {
+            continue;
+        }
+        let mergeable = rename.new.as_ref() == "require"
+            && !uses
+                .declared_bindings()
+                .iter()
+                .any(|binding| binding.0 == rename.new)
+            && external_require_call.is_some_and(|accepts| {
+                free_target_uses_are_accepted_calls(module, &target, accepts)
+            });
+        if !mergeable {
+            return false;
+        }
+        merged_targets.insert(target);
     }
 
     let module_names = collect_module_names(module);
@@ -550,7 +579,7 @@ pub(crate) fn deconflict_runtime_binding_renames(
     }
 
     if conflicts.is_empty() {
-        return runtime_binding_renames_are_safe(module, renames);
+        return runtime_binding_renames_are_safe(module, renames, &merged_targets);
     }
 
     let mut used_names = uses
@@ -576,7 +605,50 @@ pub(crate) fn deconflict_runtime_binding_renames(
         .collect::<Vec<_>>();
     rename_bindings_in_module(module, &local_renames);
 
-    runtime_binding_renames_are_safe(module, renames)
+    runtime_binding_renames_are_safe(module, renames, &merged_targets)
+}
+
+/// Whether every use of the free `target` is the callee of a call that
+/// `accepts` allows. Any other use (a value, a member, `typeof`) rejects.
+fn free_target_uses_are_accepted_calls(
+    module: &Module,
+    target: &BindingId,
+    accepts: &dyn Fn(&CallExpr) -> bool,
+) -> bool {
+    struct Checker<'a> {
+        target: &'a BindingId,
+        accepts: &'a dyn Fn(&CallExpr) -> bool,
+        accepted: bool,
+    }
+
+    impl Visit for Checker<'_> {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if let Callee::Expr(callee) = &call.callee {
+                if let Expr::Ident(ident) = strip_parens(callee) {
+                    if ident.sym == self.target.0 && ident.ctxt == self.target.1 {
+                        self.accepted &= (self.accepts)(call);
+                        call.args.visit_with(self);
+                        return;
+                    }
+                }
+            }
+            call.visit_children_with(self);
+        }
+
+        fn visit_ident(&mut self, ident: &Ident) {
+            if ident.sym == self.target.0 && ident.ctxt == self.target.1 {
+                self.accepted = false;
+            }
+        }
+    }
+
+    let mut checker = Checker {
+        target,
+        accepts,
+        accepted: true,
+    };
+    module.visit_with(&mut checker);
+    checker.accepted
 }
 
 fn fresh_runtime_local_name(
@@ -744,10 +816,11 @@ pub(crate) struct RecoverableParseError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DetectedModuleFailure {
     WebpackRuntimeParameterReuse,
+    /// Renaming the factory parameters to `module`/`exports`/`require` would
+    /// capture a free reference of that name.
+    WebpackFreeNameCapture,
     /// A factory another detector translated into webpack's calling
-    /// convention could not be normalized, for example because renaming its
-    /// parameters to `module`/`exports`/`require` would capture a free
-    /// reference of that name.
+    /// convention could not be normalized for another reason.
     TranslatedFactoryNormalization,
     /// A Turbopack factory uses its runtime context without a known
     /// translation.
