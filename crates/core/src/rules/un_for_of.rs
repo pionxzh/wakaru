@@ -268,7 +268,7 @@ impl ForOfHelperContext {
     }
 }
 
-fn strip_closure_indirect_call(expr: &Expr) -> &Expr {
+pub(super) fn strip_closure_indirect_call(expr: &Expr) -> &Expr {
     let expr = strip_parens(expr);
     let Expr::Seq(sequence) = expr else {
         return expr;
@@ -283,7 +283,7 @@ fn strip_closure_indirect_call(expr: &Expr) -> &Expr {
     }
 }
 
-fn collect_closure_jscomp_namespaces(module: &Module) -> HashSet<BindingKey> {
+pub(super) fn collect_closure_jscomp_namespaces(module: &Module) -> HashSet<BindingKey> {
     struct Collector {
         namespaces: HashSet<BindingKey>,
     }

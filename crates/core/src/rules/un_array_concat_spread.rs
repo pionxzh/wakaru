@@ -13,7 +13,10 @@ use crate::collections::{HashMap, HashSet};
 
 use super::arg_rest::find_rest_array_copy_proof;
 use super::eval_utils::has_dynamic_scope_construct;
+use super::helper_matcher::{binding_key, static_member_prop_name, BindingKey};
+use super::un_for_of::{collect_closure_jscomp_namespaces, strip_closure_indirect_call};
 use super::RewriteLevel;
+use crate::utils::paren::strip_parens;
 
 /// Flattens array-literal `.concat(...)` calls into one array literal.
 ///
@@ -158,6 +161,9 @@ impl UnArrayConcatSpreadRest {
 
 impl VisitMut for UnArrayConcatSpreadRest {
     fn visit_mut_module(&mut self, module: &mut Module) {
+        if self.level >= RewriteLevel::Standard && !has_dynamic_scope_construct(module) {
+            recover_closure_array_spread(module, self.unresolved_mark);
+        }
         module.visit_mut_children_with(self);
         if self.level < RewriteLevel::Standard || has_dynamic_scope_construct(module) {
             return;
@@ -588,13 +594,76 @@ impl Visit for ProofUseScanner<'_> {
     }
 }
 
+/// Closure Compiler lowers `[a, ...xs]` to
+/// `[a].concat($jscomp.arrayFromIterable(xs))`. The runtime helper returns
+/// `xs` itself when it is an Array and otherwise an Array built by iterating
+/// it, so concat always spreads the result and `[a, ...xs]` is the source
+/// form. Like `$jscomp.makeIterator` in `un_for_of.rs`, the helper is trusted
+/// by its exact member name on an unresolved `$jscomp` or the canonical
+/// `var $jscomp = $jscomp || {}` bootstrap; its body is versioned runtime code
+/// and is not matched.
+fn recover_closure_array_spread(module: &mut Module, unresolved_mark: Mark) {
+    let runtime = ClosureRuntime {
+        namespaces: collect_closure_jscomp_namespaces(module),
+        unresolved_mark,
+    };
+    let arrays = ProvenArrays {
+        closure: Some(runtime),
+        ..ProvenArrays::default()
+    };
+    module.visit_mut_with(&mut ProvenConcatRewriter { arrays: &arrays });
+}
+
+struct ClosureRuntime {
+    namespaces: HashSet<BindingKey>,
+    unresolved_mark: Mark,
+}
+
+impl ClosureRuntime {
+    /// `xs` in `$jscomp.arrayFromIterable(xs)`.
+    fn array_from_iterable_source<'a>(&self, expr: &'a Expr) -> Option<&'a Expr> {
+        let Expr::Call(call) = expr else {
+            return None;
+        };
+        let Callee::Expr(callee) = &call.callee else {
+            return None;
+        };
+        let Expr::Member(member) = strip_closure_indirect_call(callee) else {
+            return None;
+        };
+        if static_member_prop_name(&member.prop) != Some("arrayFromIterable") {
+            return None;
+        }
+        let Expr::Ident(namespace) = strip_parens(&member.obj) else {
+            return None;
+        };
+        if namespace.sym.as_ref() != "$jscomp"
+            || !(self.namespaces.contains(&binding_key(namespace))
+                || namespace.ctxt.outer() == self.unresolved_mark)
+        {
+            return None;
+        }
+        match call.args.as_slice() {
+            [arg] if arg.spread.is_none() => Some(&arg.expr),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Default)]
 struct ProvenArrays {
     values: HashSet<BindingId>,
     factories: HashSet<BindingId>,
+    closure: Option<ClosureRuntime>,
 }
 
 impl ProvenArrays {
+    fn array_from_iterable_source<'a>(&self, expr: &'a Expr) -> Option<&'a Expr> {
+        self.closure
+            .as_ref()
+            .and_then(|runtime| runtime.array_from_iterable_source(expr))
+    }
+
     fn proves(&self, expr: &Expr) -> bool {
         match expr {
             Expr::Ident(ident) => self.values.contains(&binding_id(ident)),
@@ -614,6 +683,19 @@ struct ProvenConcatRewriter<'a> {
 }
 
 impl VisitMut for ProvenConcatRewriter<'_> {
+    /// `...$jscomp.arrayFromIterable(xs)` iterates `xs` once either way. The
+    /// spread already exists when Aggressive's early concat pass treated the
+    /// helper call as an unknown array.
+    fn visit_mut_expr_or_spread(&mut self, arg: &mut ExprOrSpread) {
+        arg.visit_mut_children_with(self);
+        if arg.spread.is_none() {
+            return;
+        }
+        if let Some(source) = self.arrays.array_from_iterable_source(&arg.expr) {
+            *arg.expr = source.clone();
+        }
+    }
+
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         expr.visit_mut_children_with(self);
 
@@ -652,6 +734,11 @@ fn try_simplify_array_concat(
     };
 
     for arg in &call.args {
+        if let Some(source) = proven.and_then(|arrays| arrays.array_from_iterable_source(&arg.expr))
+        {
+            elems.push(Some(spread_elem(source)));
+            continue;
+        }
         match arg.expr.as_ref() {
             Expr::Array(arr) => elems.extend(arr.elems.iter().cloned()),
             expr if proves(expr) => elems.push(Some(spread_elem(expr))),

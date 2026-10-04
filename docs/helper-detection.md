@@ -159,6 +159,10 @@ Rules still own domain-specific shape recognition. For example:
   adjacent `.next()` loop and whole-module binding non-escape conditions. This remains
   rule-local because the proof is the namespace-plus-consumer shape and no
   helper declaration is removed.
+- `un_array_concat_spread.rs` recognizes `$jscomp.arrayFromIterable(xs)` the
+  same way, by member name on the same namespace, as a concat argument or a
+  spread element. The helper returns `xs` when it is an Array and otherwise
+  an Array built by iterating it, so the call is replaced by a spread of `xs`.
 
 This is deliberate. A helper matcher should encode the smallest semantic shape
 that proves the transform is safe, while shared utilities handle binding

@@ -676,3 +676,88 @@ const all = [...a, ...b, ...c];
 "#;
     assert_eq_normalized(&apply_rest_proof(input), expected);
 }
+
+#[test]
+fn closure_array_from_iterable_becomes_spread_at_standard() {
+    // Closure lowers `[0, ...xs, 1]` through `$jscomp.arrayFromIterable`.
+    let input = r#"
+var $jscomp = $jscomp || {};
+function f(xs, ys) {
+    return [0].concat($jscomp.arrayFromIterable(xs), [1], $jscomp.arrayFromIterable(ys));
+}
+"#;
+    let expected = r#"
+var $jscomp = $jscomp || {};
+function f(xs, ys) {
+    return [0, ...xs, 1, ...ys];
+}
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), expected);
+}
+
+#[test]
+fn closure_array_from_iterable_on_unresolved_runtime_becomes_spread() {
+    let input = r#"
+const x = [a].concat($jscomp.arrayFromIterable(xs));
+"#;
+    let expected = r#"
+const x = [a, ...xs];
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), expected);
+}
+
+#[test]
+fn closure_array_from_iterable_spread_element_is_unwrapped() {
+    let input = r#"
+const x = [a, ...$jscomp.arrayFromIterable(xs)];
+f(...$jscomp.arrayFromIterable(ys));
+"#;
+    let expected = r#"
+const x = [a, ...xs];
+f(...ys);
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), expected);
+}
+
+#[test]
+fn local_jscomp_binding_is_not_closure_runtime() {
+    let input = r#"
+function f($jscomp, xs) {
+    return [0].concat($jscomp.arrayFromIterable(xs));
+}
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), input);
+}
+
+#[test]
+fn minimal_keeps_closure_array_from_iterable_concat() {
+    let input = r#"
+const x = [a].concat($jscomp.arrayFromIterable(xs));
+"#;
+    let output = render_rule(input, |unresolved_mark| {
+        UnArrayConcatSpreadRest::new(unresolved_mark, RewriteLevel::Minimal)
+    });
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn pipeline_recovers_closure_array_spread() {
+    let input = r#"
+var $jscomp = $jscomp || {};
+function arrSpread(a) {
+    return [0].concat($jscomp.arrayFromIterable(a));
+}
+"#;
+    for level in [RewriteLevel::Standard, RewriteLevel::Aggressive] {
+        let output = crate::common::render_with_level(input, level);
+        assert_eq_normalized(
+            &output,
+            r#"
+var $jscomp = $jscomp || {};
+function arrSpread(a) {
+    return [0, ...a];
+}
+"#,
+        );
+    }
+}

@@ -306,7 +306,9 @@ rationale, or level gating appear.
   is an intrinsic-concat operand (an argument of an Array receiver, or the
   receiver of its own `.concat`). Calls to functions whose whole body returns
   a hole-free array literal count as Arrays when every use of the function is
-  a direct call. It runs before
+  a direct call. The same pass turns Closure Compiler's
+  `$jscomp.arrayFromIterable(xs)` concat argument, or spread element, into a
+  spread of `xs`, under the namespace check UnForOf uses. It runs before
   UnEs6Class, followed by a second UnSpreadArrayLiteral pass, so a proven
   `[this].concat(args)` can expose `Base.call.apply(Base, [this, ...args])`
   without restoring the unsafe general heuristic.

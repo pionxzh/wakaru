@@ -450,7 +450,8 @@ their spread inputs are arrays: Babel 6 and 7 in loose mode, Babel 7 with the
 `downlevelIteration`, SWC with `jsc.loose` from 1.3.69, and Buble. The
 resulting AST no longer carries that producer setting. Closure Compiler emits
 the same receiver but wraps each spread argument in
-`$jscomp.arrayFromIterable`, so its arguments are not unknown in this sense.
+`$jscomp.arrayFromIterable`, so its arguments are not unknown in this sense;
+`UnArrayConcatSpreadRest` recovers them at `standard`.
 
 An argument that is visibly not an array (a primitive literal or operator
 result, a template literal, a function, or an object literal without computed
