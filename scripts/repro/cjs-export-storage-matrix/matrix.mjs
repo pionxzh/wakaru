@@ -38,7 +38,21 @@ const producers = [
   { name: "esbuild-0.28", batch: (sources) => esbuildBatch(sources, { target: "es2020", format: "cjs" }) },
   { name: "rollup-4.63", paths: true, batch: rollupBatch },
   { name: "sucrase-3.35", batch: sucraseBatch },
+  // Bundlers compile a whole case into one file, which is unpacked instead of
+  // decompiled file by file. The batch takes case directories. webpack 5.108
+  // added an array form of `require.d` for `const` exports; 5.107 is the last
+  // release that emits only the object form.
+  webpackProducer("webpack-5.107-terser", "5.107.2", true),
+  webpackProducer("webpack-5.111", "5.111.1", false),
+  webpackProducer("webpack-5.111-terser", "5.111.1", true),
 ];
+
+function webpackProducer(name, version, minimize) {
+  return { name, bundle: true, batch: (dirs) => webpackBatch(dirs, name, version, minimize) };
+}
+// Set by the bundle's stub entry, so the CommonJS driver can reach the
+// namespace of `mod.js` without making it the entry module.
+const BUNDLE_GLOBAL = "__wakaruMatrixModule";
 
 function tscOptions(version, target) {
   return { version, target, module: "CommonJS", esModuleInterop: true };
@@ -65,6 +79,57 @@ const paths = JSON.parse(fs.readFileSync(0, "utf8"));
 })();
 `;
   return runNodeBatch(launcher, paths, { label: "rollupBatch", format: "commonjs", cwd: toolDir });
+}
+
+// Bundle each case with `mod.js` as an ordinary module, not the entry: a stub
+// entry imports its namespace and stores it on a global, which the drivers
+// read from the bundle and from the unpacked entry alike. Webpack then emits
+// `mod.js` as a module factory with `require.d` export getters, the shape the
+// unpacker hands to `UnEsm`. Module concatenation is off so every source file
+// stays its own module, and one chunk keeps `import()` targets in the bundle.
+function webpackBatch(dirs, name, version, minimize) {
+  const toolDir = ensureNodeTool(`webpack-${version}`, [`webpack@${version}`]);
+  const launcher = `
+const fs = require("node:fs");
+const path = require("node:path");
+const webpack = require("webpack");
+const dirs = JSON.parse(fs.readFileSync(0, "utf8"));
+const minimize = ${JSON.stringify(minimize)};
+function bundle(dir) {
+  const work = path.join(dir, "..", ${JSON.stringify(`${name}-build`)});
+  const srcDir = path.join(work, "src");
+  fs.mkdirSync(srcDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(srcDir, "entry.js"),
+    "import * as m from " + JSON.stringify(path.join(dir, "mod.js")) + "; globalThis.${BUNDLE_GLOBAL} = m;\\n",
+  );
+  return new Promise((resolve) => {
+    webpack({
+      mode: "production",
+      context: srcDir,
+      entry: "./entry.js",
+      target: "node",
+      output: { path: path.join(work, "dist"), filename: "bundle.js" },
+      optimization: { concatenateModules: false, minimize },
+      plugins: [new webpack.optimize.LimitChunkCountPlugin({ maxChunks: 1 })],
+      devtool: false,
+    }, (err, stats) => {
+      if (err || stats.hasErrors()) {
+        return resolve({ error: String(err ?? stats.toString({ all: false, errors: true })).split("\\n")[0] });
+      }
+      resolve({ code: fs.readFileSync(path.join(work, "dist", "bundle.js"), "utf8") });
+    });
+  });
+}
+(async () => {
+  const results = [];
+  for (const dir of dirs) {
+    try { results.push(await bundle(dir)); } catch (e) { results.push({ error: e.message }); }
+  }
+  process.stdout.write(JSON.stringify(results));
+})();
+`;
+  return runNodeBatch(launcher, dirs, { label: `webpackBatch ${name}`, format: "commonjs", cwd: toolDir });
 }
 
 function sucraseBatch(sources) {
@@ -124,6 +189,63 @@ function leftoverLines(file, code) {
     .map((line) => `${file}: ${line.trim()}`);
 }
 
+// A bundle row runs the bundle as CommonJS, unpacks it, and runs the unpacked
+// entry, which stores the namespace of the recovered `mod.js` on the global.
+async function runBundleRow(row, caseName, testCase, producer, outputs) {
+  const result = outputs instanceof Error ? outputs : outputs.get(join(root, caseName, "esm"));
+  if (result instanceof Error) {
+    row.verdict = "compile-error";
+    row.detail = result.message.split("\n")[0];
+    return;
+  }
+  const code = result;
+  const base = join(root, caseName, producer.name);
+  const cjsDir = join(base, "cjs");
+  writeModuleDir(cjsDir, "commonjs", { "bundle.js": code });
+  writeDriver(
+    cjsDir,
+    testCase.driver,
+    'import { createRequire } from "node:module"; createRequire(import.meta.url)("./bundle.js");' +
+      ` const m = globalThis.${BUNDLE_GLOBAL};`,
+  );
+  row.commonjs = await runDriver(cjsDir);
+  if (row.commonjs !== row.expected) {
+    row.verdict = "producer-diverges";
+    return;
+  }
+  if (explain) row.storage = { "bundle.js": ["not reported for unpacked bundles"] };
+
+  // Unpack refuses a non-empty output directory, so package.json comes after.
+  const recoveredDir = join(base, "recovered");
+  row.leftovers = [];
+  row.unrecovered = [];
+  let report;
+  try {
+    report = JSON.parse(await runWakaruArgsAsync([join(cjsDir, "bundle.js"), "--unpack", "-o", recoveredDir, "--json"]));
+  } catch (error) {
+    row.verdict = "wakaru-error";
+    row.detail = String(error.message ?? error).slice(0, 300);
+    return;
+  }
+  writeModuleDir(recoveredDir, "module", {});
+  for (const warning of report.warnings ?? []) {
+    if (warning.kind === "commonjs_export_unrecovered") row.unrecovered.push(warning.message);
+  }
+  const files = (report.modules ?? []).map((module) => module.filename);
+  if (!files.includes("entry.js")) {
+    row.verdict = "wakaru-error";
+    row.detail = `unpack emitted no entry.js (${files.join(", ")})`;
+    return;
+  }
+  for (const file of files) {
+    const path = join(recoveredDir, file);
+    if (existsSync(path)) row.leftovers.push(...leftoverLines(file, readFileSync(path, "utf8")));
+  }
+  writeDriver(recoveredDir, testCase.driver, `import "./entry.js"; const m = globalThis.${BUNDLE_GLOBAL};`);
+  row.recovered = await runDriver(recoveredDir);
+  row.verdict = row.recovered === row.expected ? "ok" : "wrong";
+}
+
 const caseFilter = readOption("--case", null);
 const producerFilter = readOption("--producer", null);
 const asJson = process.argv.includes("--json");
@@ -151,6 +273,10 @@ try {
     selectedProducers.map(async (producer) => {
       const inputs = [];
       for (const [caseName, testCase] of selectedCases) {
+        if (producer.bundle) {
+          inputs.push(join(root, caseName, "esm"));
+          continue;
+        }
         for (const [file, code] of Object.entries(testCase.files)) {
           inputs.push(producer.paths ? join(root, caseName, "esm", file) : code);
         }
@@ -175,6 +301,10 @@ try {
       const row = { case: caseName, producer: producer.name, expected: expected.get(caseName) };
       rows.push(row);
       const outputs = compiled.get(producer.name);
+      if (producer.bundle) {
+        await runBundleRow(row, caseName, testCase, producer, outputs);
+        return;
+      }
       const cjsFiles = {};
       for (const [file, code] of Object.entries(testCase.files)) {
         const key = producer.paths ? join(root, caseName, "esm", file) : code;
@@ -266,7 +396,34 @@ try {
   }
 
   if (asJson) {
-    console.log(JSON.stringify({ matrix: "cjs-export-storage", summary, rows }, null, 2));
+    // `summary` and each row's `status` use the shape every matrix reports to
+    // collect-stats.mjs: a wrong row or a wakaru failure is `no`, a producer
+    // whose CommonJS diverges from the source is informational, and a
+    // producer that cannot compile the case is an error outside the score.
+    const status = (verdict) => {
+      if (verdict === "ok") return "yes";
+      if (verdict === "wrong" || verdict === "wakaru-error") return "no";
+      if (verdict === "producer-diverges") return "info-producer-diverges";
+      return verdict;
+    };
+    const jsonRows = rows.map((row) => ({
+      ...row,
+      snippet: row.case,
+      tools: [row.producer],
+      status: status(row.verdict),
+      notes: row.detail,
+    }));
+    const count = (predicate) => jsonRows.filter((row) => predicate(row.status)).length;
+    const yes = count((s) => s === "yes");
+    const no = count((s) => s === "no");
+    const info = count((s) => s.startsWith("info-"));
+    const error = jsonRows.length - yes - no - info;
+    const pct = yes + no > 0 ? +((yes / (yes + no)) * 100).toFixed(1) : 0;
+    console.log(JSON.stringify(
+      { name: "cjs-export-storage", summary: { yes, no, error, info, pct }, producers: summary, rows: jsonRows },
+      null,
+      2,
+    ));
   } else {
     const label = { ok: "ok", wrong: "**no**", "wakaru-error": "**err**", "producer-diverges": "p≠", "compile-error": "c-err" };
     console.log("# CommonJS export-storage matrix");

@@ -12,8 +12,9 @@ see [Step 1 results](#step-1-results), [Step 2 results](#step-2-results),
 [`export * as ns`](#export--as-ns),
 [Single-file import interop](#single-file-import-interop), and
 [Lowered `import()`](#lowered-import). The last three are outside the
-storage model but blocked matrix rows. The matrix is at 297 / 298;
-[Remaining gaps](#remaining-gaps) lists what is left.
+storage model but blocked matrix rows. The compiler profiles are at
+297 / 298. The webpack profiles, added after the implementation, are at
+34 / 87; [Remaining gaps](#remaining-gaps) lists what is left for both.
 
 Ground rules: follow [AGENTS.md](../../AGENTS.md), including a focused unit
 test for every change. Use synthetic names in tests and commits. Record every
@@ -725,6 +726,24 @@ end-to-end unit test.
   CommonJS files (`preserveModules`) is meant to be decompiled that way.
 - **esbuild single-file CommonJS under `--unpack`.** Still split as a
   scope-hoisted bundle (see [Out of scope](#out-of-scope)).
+- **webpack profiles.** The matrix bundles each case with webpack 5.107
+  (object-form `require.d`) and 5.111 and unpacks the bundle. Each failing
+  row has at least one of four causes:
+  - webpack 5.108 and later define `const` exports with an array form,
+    `require.d(exports, ["name", 0, value, ...])`, which is not recognized;
+    the whole call stays in the output.
+  - A re-export getter that returns a member of an imported module
+    (`x: () => dep.y`) becomes a snapshot `export const x = y` instead of
+    `export { y as x } from`. It goes through the webpack getter pre-pass, not
+    C (see [Steps 4 and 5 results](#steps-4-and-5-results)).
+  - A whole-namespace use of a module marked ESM (`var ns = require(id);
+    use(ns)`) becomes a default import. Without a default export the module
+    fails to link; with one, the import silently binds the default value
+    instead of the namespace. webpack 5.107 emits this shape for the stub
+    entry, so it decides every 5.107 row except `dynamic-import`.
+  - webpack's own lowered `import()`
+    (`Promise.resolve().then(require.bind(require, id))`, and `require.e` for
+    a context module) is not restored.
 - **Interop unwrapping before the module boundary is decided.**
   Unwrapping `_interopRequireDefault(require(x)).default` to a plain
   `require(x)` binding read whole is right only once `UnEsm` turns that

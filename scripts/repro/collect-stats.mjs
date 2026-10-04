@@ -41,6 +41,7 @@ try {
 const matrices = [
   "array-spread-rest",
   "async-await",
+  "cjs-export-storage",
   "class-accessor",
   "closure-compiler",
   "conditional-switch",

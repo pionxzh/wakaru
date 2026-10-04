@@ -11,10 +11,9 @@ a leftover `exports.count += 1` inside a function looks harmless and throws
 `ReferenceError` only when it runs, and a snapshot `export const` looks like a
 live export until a later write is missed.
 
-The matrix is not registered in `collect-stats.mjs`. It tracks known gaps
-(see [the proposal](../../../docs/proposals/cjs-export-storage.md)) and is
-far below the other matrices, so it stays out of the aggregate recovery rate
-until that work lands.
+The matrix is registered in `collect-stats.mjs`, so its counts are part of
+`stats.json` and the aggregate recovery rate. A change to `UnEsm` or the
+interop helpers that moves a row shows up in `collect-stats.mjs --check`.
 
 ## How a row is judged
 
@@ -34,8 +33,14 @@ For every case and producer:
    driver against the recovered ESM. The row is `ok` when the log matches
    step 1, and `no` otherwise. A wakaru failure is `err` and counts as `no`.
 
-Single-file decompilation is deliberate: it is what a user gets for one
-published CommonJS file. Cases with a `dep.js` decompile each file
+A bundler profile builds one bundle per case instead. A stub entry imports
+the namespace of `mod.js` and stores it on a global, so `mod.js` is an
+ordinary module of the bundle, not the entry. Step 2 runs the bundle and
+reads the global; step 3 unpacks the bundle with `wakaru <bundle> --unpack`,
+runs the unpacked `entry.js`, and reads the same global.
+
+Single-file decompilation is deliberate for the compiler profiles: it is what
+a user gets for one published CommonJS file. Cases with a `dep.js` decompile each file
 separately, so they also expose single-file interop limits (for example a
 default import synthesized for a module that has no default export).
 
@@ -51,12 +56,16 @@ default import synthesized for a module that has no default export).
 | `esbuild-0.28` | esbuild 0.28.0 `transformSync` | `format: "cjs"`, target es2020 |
 | `rollup-4.63` | rollup 4.63.5 | `format: "cjs"`, every other module external |
 | `sucrase-3.35` | sucrase 3.35.1 | `transforms: ["imports"]` |
+| `webpack-5.107-terser` | webpack 5.107.2 | `mode: production` (Terser), `concatenateModules: false`, one chunk |
+| `webpack-5.111`, `webpack-5.111-terser` | webpack 5.111.1 | same, without and with minification |
 
 The producers cover the three ways an ESM export is stored in CommonJS:
 the `exports` property itself (TypeScript, rollup), a local binding mirrored
 into the property on every write (Babel, sucrase, TypeScript aliases), and a
-local binding exposed through a getter (swc, esbuild). The proposal lists the
-exact shapes.
+local binding exposed through a getter (swc, esbuild, webpack). The proposal
+lists the exact shapes. webpack 5.108 and later emit an array form of
+`require.d` for `const` exports; 5.107 is the last release with only the
+object form, so the two webpack versions cover both.
 
 ## Running
 
