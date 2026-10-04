@@ -219,6 +219,8 @@ and a whole-container fallback on failure.
   getter objects. Getter exports become live bindings; `name, 0, value`
   exports become constant snapshots.
 - `ctx.v` / `ctx.n` become `module.exports` assignments.
+- `ctx.e` (from 15.4.0, a CJS module's free top-level `this`) later became
+  `this` again outside nested receivers.
 - `ctx.j` (dynamic `export *` proxy) and the targeted second argument of the
   export methods stay runtime calls in the first version.
 - Unknown `ctx` members keep the module as failed/opaque, as webpack does for
@@ -270,14 +272,6 @@ today; none of them guesses.
   `require("path").join(/* turbopackIgnore: true */ process.cwd(), …)`)
   merges with the require parameter; see
   [unpacking.md](../unpacking.md#factory-normalization-and-failure-boundaries).
-- **Top-level `this` in a CommonJS factory.** Turbopack compiles a free
-  top-level `this` in a CommonJS module to `ctx.e` (from 15.4.0). Only the
-  TypeScript helper guard `ctx.e && ctx.e.__name` becomes `this` again;
-  every other read stays `exports`. Translating all of them to `this` would
-  restore the source text (UMD roots, `var root = … ? self : this`), but
-  `UnEsm` converts a module with a top-level `this` to ESM and keeps `this`,
-  which is `undefined` there. Do it once `UnEsm` treats a top-level `this`
-  as the exports object.
 - **`ctx.b`.** Create-worker in 16.2, chunk base path in 16.3; the same
   letter cannot become a residual without version evidence. Revisit when
   the chunk or the runtime file can prove the version.

@@ -871,9 +871,11 @@ fn exports_module_and_asset_url_members_are_translated() {
     );
     let output = unpack_chunk(&source);
     assert_clean(&output);
+    // `ctx.e` is the source's top-level `this`, which keeps the module
+    // CommonJS.
     assert_eq!(
         module(&output, "module-101.js").trim(),
-        "export const value = 1;\nexport const other = 2;"
+        "this.value = 1;\nmodule.exports.other = 2;"
     );
     assert_eq!(
         module(&output, "module-202.js").trim(),
@@ -897,6 +899,27 @@ fn typescript_helper_guards_on_top_level_this_are_recognized() {
     assert!(!code.contains("__importDefault"), "{code}");
     assert!(!code.contains("exports"), "{code}");
     assert!(code.contains("export const value"), "{code}");
+}
+
+#[test]
+fn top_level_this_reads_are_restored() {
+    // A UMD root and an arrow both read the module's `this`; a class field
+    // initializer has its own `this`.
+    let source = client_chunk(
+        r#"
+101, (e, r, t) => { var n = "object" == typeof self ? self : e.e; var o = () => e.e; class A { x = e.e; } n.alpha = o; t.A = A; }
+"#,
+    );
+    let output = unpack_chunk(&source);
+    assert_clean(&output);
+    let code = module(&output, "module-101.js");
+    assert!(
+        code.contains(r#"typeof self === "object" ? self : this"#),
+        "{code}"
+    );
+    assert!(code.contains("()=>this"), "{code}");
+    assert!(code.contains("x = exports;"), "{code}");
+    assert!(!code.contains("export "), "{code}");
 }
 
 #[test]

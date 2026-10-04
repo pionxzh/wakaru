@@ -27,11 +27,11 @@ use swc_core::common::{
     sync::Lrc, FileName, Globals, Mark, SourceMap, Span, Spanned, SyntaxContext, DUMMY_SP, GLOBALS,
 };
 use swc_core::ecma::ast::{
-    ArrayLit, ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BinaryOp,
-    BindingIdent, CallExpr, Callee, ClassDecl, ClassProp, ComputedPropName, Constructor, Expr,
-    ExprOrSpread, ExprStmt, FnDecl, Function, Ident, IdentName, KeyValueProp, Lit, MemberExpr,
-    MemberProp, Module, ModuleItem, Number, ObjectLit, Pat, PrivateProp, Prop, PropName,
-    PropOrSpread, ReturnStmt, SimpleAssignTarget, StaticBlock, Stmt, Str, ThisExpr,
+    ArrayLit, ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BindingIdent,
+    CallExpr, Callee, ClassDecl, ClassProp, ComputedPropName, Constructor, Expr, ExprOrSpread,
+    ExprStmt, FnDecl, Function, Ident, IdentName, KeyValueProp, Lit, MemberExpr, MemberProp,
+    Module, ModuleItem, Number, ObjectLit, Pat, PrivateProp, Prop, PropName, PropOrSpread,
+    ReturnStmt, SimpleAssignTarget, StaticBlock, Stmt, Str, ThisExpr,
 };
 use swc_core::ecma::parser::{Parser, StringInput, Syntax};
 use swc_core::ecma::transforms::base::resolver;
@@ -1771,28 +1771,6 @@ impl ContextTranslator<'_> {
         }
     }
 
-    /// `ctx.e && ctx.e.__name` at top-level `this` scope, the
-    /// `(this && this.__name) || …` guard of TypeScript's CommonJS helpers.
-    /// From Next 15.4.0 Turbopack compiles a free top-level `this` in a
-    /// CommonJS module to `ctx.e`; restoring `this` here keeps the helper
-    /// recognizable. Other `ctx.e` reads stay `exports`, the same object in
-    /// CommonJS, because `UnEsm` does not treat a top-level `this` as the
-    /// exports object when it converts a module.
-    fn is_this_helper_guard(&self, expr: &Expr) -> bool {
-        let Expr::Bin(bin) = expr else {
-            return false;
-        };
-        if self.this_scope_depth != 0 || bin.op != BinaryOp::LogicalAnd {
-            return false;
-        }
-        let Expr::Member(right) = strip_parens(&bin.right) else {
-            return false;
-        };
-        self.ctx_member(&bin.left) == Some("e")
-            && self.ctx_member(&right.obj) == Some("e")
-            && matches!(&right.prop, MemberProp::Ident(name) if name.sym.starts_with("__"))
-    }
-
     fn export_call(&self, expr: &Expr) -> Option<ExportCall> {
         let Expr::Call(call) = strip_parens(expr) else {
             return None;
@@ -2452,16 +2430,6 @@ impl VisitMut for ContextTranslator<'_> {
         if self.failure.is_some() {
             return;
         }
-        if self.is_this_helper_guard(expr) {
-            let Expr::Bin(bin) = expr else {
-                unreachable!("checked by is_this_helper_guard");
-            };
-            *bin.left = this_expr();
-            if let Expr::Member(right) = strip_parens_mut(&mut bin.right) {
-                *right.obj = this_expr();
-            }
-            return;
-        }
         if let Some(replacement) = self.translate_inline_loader_call(expr) {
             *expr = *replacement;
             return;
@@ -2489,7 +2457,16 @@ impl VisitMut for ContextTranslator<'_> {
                 self.uses_global_this = true;
                 *expr = *ident_expr(&Atom::from("globalThis"));
             } else if letter == "e" {
-                *expr = *ident_expr(&self.exports_name);
+                // From Next 15.4.0 Turbopack compiles a free top-level `this`
+                // in a CommonJS module to `ctx.e`, and nothing else to that
+                // member. Below a function, constructor, class field, or
+                // static block the source `this` was a different receiver,
+                // so those reads keep the exports object.
+                *expr = if self.this_scope_depth == 0 {
+                    this_expr()
+                } else {
+                    *ident_expr(&self.exports_name)
+                };
             } else if letter == "m" {
                 *expr = *ident_expr(&self.module_name);
             } else if letter == "r" {
