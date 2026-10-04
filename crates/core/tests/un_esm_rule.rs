@@ -1534,6 +1534,64 @@ consume(dep.other);
     assert_eq_normalized(&apply(input), expected);
 }
 
+const BABEL_INTEROP_REQUIRE_WILDCARD: &str = r#"
+function _interopRequireWildcard(e, t) { if ("function" == typeof WeakMap) var r = new WeakMap(), n = new WeakMap(); return (_interopRequireWildcard = function (e, t) { if (!t && e && e.__esModule) return e; var o, i, f = { __proto__: null, default: e }; if (null === e || "object" != typeof e && "function" != typeof e) return f; if (o = t ? n : r) { if (o.has(e)) return o.get(e); o.set(e, f); } for (const t in e) "default" !== t && {}.hasOwnProperty.call(e, t) && ((i = (o = Object.defineProperty) && Object.getOwnPropertyDescriptor(e, t)) && (i.get || i.set) ? o(f, t, i) : f[t] = e[t]); return f; })(e, t); }
+"#;
+
+#[test]
+fn define_property_getter_of_wildcard_import_becomes_live_reexport() {
+    // Babel defines the getters before the wildcard require, which
+    // `UnInteropRequireWildcard` has turned into a namespace import by the
+    // time `UnEsm` runs.
+    let input = format!(
+        r#"
+Object.defineProperty(exports, "__esModule", {{ value: true }});
+Object.defineProperty(exports, "count", {{
+  enumerable: true,
+  get: function () {{
+    return _dep.count;
+  }}
+}});
+Object.defineProperty(exports, "depDefault", {{
+  enumerable: true,
+  get: function () {{
+    return _dep.default;
+  }}
+}});
+var _dep = _interopRequireWildcard(require("./dep.js"));
+{BABEL_INTEROP_REQUIRE_WILDCARD}
+"#
+    );
+    let expected = r#"
+export { count } from "./dep.js";
+export { default as depDefault } from "./dep.js";
+"#;
+    assert_eq_normalized(&apply(&input), expected);
+}
+
+#[test]
+fn live_reexport_of_wildcard_import_retains_import_with_other_reads() {
+    let input = format!(
+        r#"
+Object.defineProperty(exports, "count", {{
+  enumerable: true,
+  get: function () {{
+    return _dep.count;
+  }}
+}});
+var _dep = _interopRequireWildcard(require("./dep.js"));
+consume(_dep.other);
+{BABEL_INTEROP_REQUIRE_WILDCARD}
+"#
+    );
+    let expected = r#"
+import * as _dep from "./dep.js";
+export { count } from "./dep.js";
+consume(_dep.other);
+"#;
+    assert_eq_normalized(&apply(&input), expected);
+}
+
 #[test]
 fn define_property_member_getter_rejects_reassigned_require_binding() {
     let input = r#"

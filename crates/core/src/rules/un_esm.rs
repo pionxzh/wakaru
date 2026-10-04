@@ -457,6 +457,12 @@ impl VisitMut for UnEsm {
         for c in classified.iter() {
             match c {
                 Classified::ExistingImport(import) => {
+                    let Some(import) =
+                        without_consumed_namespace_imports(import, &consumed_reexport_bindings)
+                    else {
+                        continue;
+                    };
+                    let import = &import;
                     let src = wtf8_to_string(&import.src.value);
 
                     if cjs_sources.contains(&src) {
@@ -5061,6 +5067,22 @@ fn collect_stable_require_bindings(
 ) -> HashMap<BindingId, String> {
     let mut bindings = HashMap::default();
     for item in &module.body {
+        // A namespace import is immutable, and a member read through it is a
+        // live read of the provider's export. Earlier rules produce it from
+        // interop wrappers such as Babel's `_interopRequireWildcard(require())`.
+        if let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item {
+            if !import.type_only {
+                for specifier in &import.specifiers {
+                    if let ImportSpecifier::Namespace(namespace) = specifier {
+                        bindings.insert(
+                            (namespace.local.sym.clone(), namespace.local.ctxt),
+                            wtf8_to_string(&import.src.value),
+                        );
+                    }
+                }
+            }
+            continue;
+        }
         let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
             continue;
         };
@@ -5083,6 +5105,32 @@ fn collect_stable_require_bindings(
         }
     }
     bindings
+}
+
+/// The import without namespace specifiers whose binding only kept live
+/// re-export getters read, or `None` when no specifier remains. The
+/// re-exports from the same source keep its evaluation.
+fn without_consumed_namespace_imports(
+    import: &ImportDecl,
+    consumed: &HashSet<BindingId>,
+) -> Option<ImportDecl> {
+    let is_consumed = |specifier: &ImportSpecifier| {
+        matches!(specifier, ImportSpecifier::Namespace(namespace)
+            if consumed.contains(&(namespace.local.sym.clone(), namespace.local.ctxt)))
+    };
+    if !import.specifiers.iter().any(is_consumed) {
+        return Some(import.clone());
+    }
+    let specifiers: Vec<ImportSpecifier> = import
+        .specifiers
+        .iter()
+        .filter(|specifier| !is_consumed(specifier))
+        .cloned()
+        .collect();
+    (!specifiers.is_empty()).then(|| ImportDecl {
+        specifiers,
+        ..import.clone()
+    })
 }
 
 fn remove_default_export_mirrors(classified: &mut [Classified], unresolved_mark: Mark) {
