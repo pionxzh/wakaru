@@ -213,8 +213,9 @@ rationale, or level gating appear.
   Wakaru accepts that producer assumption in aggressive mode and deliberately
   keeps a compact shape matcher instead of rebuilding a JS+TS scope model.
   `minimal` and `standard` preserve literal receivers.
-- **UnEsmoduleFlag** — removes `__esModule` flag statements; confirmed UnEsm
-  prerequisite (export classification noise).
+- **UnEsmoduleFlag** — removes `__esModule` flag statements and rollup's
+  `Symbol.toStringTag` marker; confirmed UnEsm prerequisite (export
+  classification noise).
 - **UnAssignmentMerging** — splits `a = b = val` into one statement per
   target, innermost first (`b = val; a = val;`), which is the order the
   chained form commits its writes (own setters, a throwing `const` write).

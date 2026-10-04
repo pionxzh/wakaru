@@ -837,8 +837,9 @@ ESM too. `RelativeNamespaceImport` then emits `import * as dep from
 "./dep"`, which matches the source.
 
 The module counts as compiled from ESM when it has a top-level
-`__esModule` marker, or an esbuild `__toCommonJS` namespace, which has no
-marker. When and how the evidence is collected is documented in
+`__esModule` marker (including rollup's combined `Object.defineProperties`
+form), or an esbuild `__toCommonJS` namespace, which has no marker. rollup's
+`Symbol.toStringTag` marker on its own does not count. When and how the evidence is collected is documented in
 `relative_namespace_import.rs`.
 
 The guess is wrong for a CommonJS provider whose export names Node's

@@ -101,3 +101,39 @@ function outer(exports, require) {
     let output = apply(input);
     assert_eq_normalized(&output, input);
 }
+
+// rollup 4.63 with `generatedCode.symbols`: the module marks itself with
+// `Symbol.toStringTag`, alone or combined with `__esModule` when it has a
+// default export. An ES module namespace has the same tag.
+#[test]
+fn removes_rollup_to_string_tag_markers() {
+    let input = r#"
+Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' });
+Object.defineProperties(exports, { __esModule: { value: true }, [Symbol.toStringTag]: { value: 'Module' } });
+exports.a = 1;
+"#;
+    let expected = r#"
+exports.a = 1;
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn keeps_to_string_tag_definitions_that_are_not_the_marker() {
+    let input = r#"
+Object.defineProperty(exports, Symbol.toStringTag, { value: 'Custom' });
+Object.defineProperty(exports, Symbol.toStringTag, { get: tag });
+Object.defineProperties(exports, { __esModule: { value: true }, extra: { value: 1 } });
+Object.defineProperty(other, Symbol.toStringTag, { value: 'Module' });
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn shadowed_symbol_is_not_the_marker() {
+    let input = r#"
+const Symbol = { toStringTag: 'tag' };
+Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' });
+"#;
+    assert_eq_normalized(&apply(input), input);
+}

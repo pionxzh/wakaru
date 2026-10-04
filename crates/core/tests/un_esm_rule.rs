@@ -5662,6 +5662,22 @@ exports.own = 1;
     assert!(!output.contains("exports"), "{output}");
 }
 
+/// rollup's `Symbol.toStringTag` marker passes `exports` to a call, so it
+/// must be gone before conversion or the module would stay CommonJS.
+#[test]
+fn rollup_to_string_tag_markers_do_not_keep_commonjs() {
+    // rollup 4.63, `format: "cjs"`, `generatedCode.symbols`.
+    for input in [
+        "'use strict';\n\nObject.defineProperty(exports, Symbol.toStringTag, { value: 'Module' });\n\nconst a = 1;\nexports.b = 2;\nfunction setB(v) { exports.b = v; }\n\nexports.a = a;\nexports.setB = setB;\n",
+        "'use strict';\n\nObject.defineProperties(exports, { __esModule: { value: true }, [Symbol.toStringTag]: { value: 'Module' } });\n\nconst a = 1;\nfunction f() { return a; }\n\nexports.a = a;\nexports.default = f;\n",
+    ] {
+        let output = render_pipeline(input);
+        assert!(!output.contains("exports"), "{output}");
+        assert!(!output.contains("toStringTag"), "{output}");
+        assert!(output.contains("export"), "{output}");
+    }
+}
+
 /// A top-level `this` in CommonJS is `module.exports`; in ESM it is
 /// `undefined`. Converting would make writes throw and reads change value.
 #[test]
