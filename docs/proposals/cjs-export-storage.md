@@ -16,6 +16,8 @@ see [Step 1 results](#step-1-results), [Step 2 results](#step-2-results),
 storage model but blocked matrix rows. The compiler profiles are at
 297 / 298. The webpack profiles, added after the implementation, are at
 54 / 87; [Remaining gaps](#remaining-gaps) lists what is left for both.
+[Statement-path pre-pass audit](#statement-path-pre-pass-audit) records
+which older `UnEsm` pre-passes still do work next to the storage rewrite.
 
 Ground rules: follow [AGENTS.md](../../AGENTS.md), including a focused unit
 test for every change. Use synthetic names in tests and commits. Record every
@@ -314,13 +316,13 @@ throws when it runs, so the gap must be visible:
 
 | Existing path | After this design |
 |---|---|
-| Snapshot rule for `exports.X = L` with written `L` | Becomes A with value `L`: `export var X = L` is the same snapshot. The decision stands; it is no longer the default for every identifier value. |
+| Snapshot rule for `exports.X = L` with written `L` | Becomes A with value `L`: `export var X = L` is the same snapshot. The decision stands; it is no longer the default for every identifier value. Still applies to the names the statement path keeps (see [Statement-path pre-pass audit](#statement-path-pre-pass-audit)). |
 | Stable named read recovery | Replaced by A and B, which rewrite every access. |
 | Conditional named export recovery | Replaced by A. Nested and compound writes are ordinary A writes. |
 | A-class prototype that rewrites leftover accesses after the stable pass | Superseded by step 2. It measured that A alone moves the matrix from 27 to 108, and was never merged. |
-| Webpack and `defineProperty` getter pre-passes | C inputs. Top-level webpack `require.d` calls are lowered to getter definitions; the storage rewrite owns getters of a local binding (see [One getter path](#one-getter-path)). |
+| Webpack and `defineProperty` getter pre-passes | C inputs. Top-level webpack `require.d` calls are lowered to getter definitions; the storage rewrite owns getters of a local binding (see [One getter path](#one-getter-path)). The getter-loop IIFE still becomes live assignments in `rewrite_webpack_export_getters`. |
 | `UnAssignmentMerging` repeatable-value chain split | Stops splitting a chain that writes both an `exports` property and a local identifier. The pipeline order stays: the `UnAssignmentMerging` → `UnEsm` edge is confirmed in [rule-dependency-inventory.md](../rule-dependency-inventory.md), and moving `UnEsm` first would also hand it every chain that `UnAssignmentMerging` already splits safely. A chain left whole is handled by the class of its export name: B drops the mirror target (`L = v`), A rewrites the target (`X = L = v`, still one valid chain), C does not occur because getter names have no writes. |
-| `has_unhandled_named_export_chain` rollback | Must accept those chains instead of restoring the whole module to CommonJS. |
+| `has_unhandled_named_export_chain` rollback | Accepts a chain whose export targets are all names the storage rewrite owns (step 2). Still keeps the boundary for chains whose names no model owns, such as after a module gate failure. |
 
 Default exports follow the same model with the name `default`. A becomes
 `var _default; export { _default as default }`. B becomes
@@ -776,6 +778,34 @@ follows its declaration instead of the getter map, which merges `export
 const version` in webpack 5 output and spreads minified webpack 4 aliases
 (`export { i as x }`) next to their declarations.
 
+## Statement-path pre-pass audit
+
+The storage rewrite took over most names, so the older pre-passes that
+`UnEsm::convert` runs before it were checked for dead code, the same way
+named stable read recovery was removed in step 3. Each pass was disabled in
+turn, and the core suite, the matrix, and the private fixtures were compared
+with the unchanged build. None is dead, so none was removed. No matrix row
+moved with any pass disabled: compiler and webpack output reaches these
+passes only with shapes the storage rewrite already owns or that the matrix
+does not contain.
+
+| Pass | What it still handles | Without it |
+|---|---|---|
+| `split_compound_exports`, `module.exports` form | `var v = module.exports = e` | `module.exports` stays in the ESM output |
+| `split_compound_exports`, named form | `var s = exports.x = e` when `s` or the property is written again, or when the module gate fails | valid but less readable A output (`export var x; var s = x = e;`); under a direct `eval` the module stays CommonJS |
+| `split_chained_local_module_exports_assignments` | `local = module.exports = e` | the module stays CommonJS |
+| `split_called_module_exports_assignments` | `(module.exports = f)(args)` | the module stays CommonJS |
+| `normalize_named_export_chains` | chains with a function, `require`, or provider-call value, and `module.exports = exports.default = v` | named chains fall to A (`export var a; export var b; a = b = function () {};`); the default chain keeps the module CommonJS |
+| `has_unhandled_named_export_chain` | chains whose names no model owns, for example under a direct `eval`; its local-tail exemption lets TypeScript enum initializers (`L \|\| (exports.x = L = {})`) through to `UnEnum` | `export const a = exports.b = v`, which leaves `exports.b` in ESM; a module with a TypeScript enum export stays CommonJS |
+| Snapshot rule in the statement classifier | a one-write name copying a written local, such as `var v = 1; exports.v = v; function f() { v = 2; }` | a live `export { v }` that follows the later write |
+| `rewrite_webpack_export_getters` | webpack's getter-loop IIFE, `require.d` calls inside an unused wrapper IIFE, the live mark on the lowered assignments, and the default compat postamble after the IIFE | the getters stay, or a getter of a later-written binding becomes a snapshot |
+
+The `module.exports` forms are default exports, which the storage rewrite
+does not model. Three of these were live only on shapes no test covered: the
+named form of `split_compound_exports`, the live mark, and the postamble
+removal after an IIFE with a `default` getter. Each now has a unit test that
+fails without it.
+
 ## Remaining gaps
 
 - **The statement path is still an entry point for named exports.** The
@@ -789,8 +819,20 @@ const version` in webpack 5 output and spreads minified webpack 4 aliases
     (see [One getter path](#one-getter-path));
   - TypeScript enum initializers that `UnEnum` folds, `exports.exports`, and
     names the module already exports as ESM;
-  - every name in a module with a self-`require`, and every
+  - every name in a module with a self-`require` or a module gate failure
+    that does not force CommonJS (for example a direct `eval`), and every
     `module.exports` assignment.
+
+  The pre-passes that prepare those statements are all still needed; see
+  [Statement-path pre-pass audit](#statement-path-pre-pass-audit).
+- **Getter-loop IIFE names that are also read.** `rewrite_webpack_export_getters`
+  lowers each getter of the IIFE to an `exports.x = value` assignment marked
+  live, but the storage rewrite runs after it and does not see the mark. A
+  name that the module also reads (`use(exports.x)`) goes through A, which
+  declares `export var x = L` at the IIFE's position. That is a snapshot,
+  and a TDZ error when `L` is a `let` or `const` declared later. Lowering the
+  IIFE to getter definitions, as `require.d` calls are, would route these
+  names through C.
 - **rollup `import-then-export`, single-file only.** Without a marker the
   module has no module-level evidence. The two signals left are weak: a
   re-export getter from the same source (present only when the module also
