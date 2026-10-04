@@ -37,8 +37,35 @@ pub(crate) enum InteropScope {
     /// Only `helper(require(path))` of a helper runtime package
     /// (`@babel/runtime`, `@swc/helpers`).
     RuntimeHelpers,
-    /// Every call: the module is being converted to ESM.
+    /// Every call except one around a `require(...)` call inside a function
+    /// or class body: the module is being converted to ESM, and `UnEsm`
+    /// turns top-level requires into imports, which a call on their binding
+    /// then reads. A `require` inside a function stays a `require`, so the
+    /// call around it keeps its CommonJS meaning and stays.
     All,
+}
+
+impl InteropScope {
+    /// Whether a call wrapping `arg`, `nesting` function or class bodies
+    /// deep, is in scope.
+    pub(crate) fn reaches(
+        self,
+        nesting: usize,
+        arg: &Expr,
+        local_helpers: &LocalHelperContext,
+    ) -> bool {
+        self == Self::RuntimeHelpers || nesting == 0 || !is_require_call(arg, local_helpers)
+    }
+}
+
+/// `require(x)` with one argument, literal or not.
+fn is_require_call(expr: &Expr, local_helpers: &LocalHelperContext) -> bool {
+    let Expr::Call(call) = expr else { return false };
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    matches!(callee.as_ref(), Expr::Ident(id) if local_helpers.is_unresolved_or_unguarded_ident(id, "require"))
+        && matches!(call.args.as_slice(), [arg] if arg.spread.is_none())
 }
 
 impl UnInteropRequireDefault {
@@ -103,6 +130,7 @@ fn run_un_interop_require_default(
         let mut collector = AffectedBindingCollector {
             local_helpers,
             scope,
+            nesting: 0,
             affected: &mut affected_bindings,
         };
         collector.visit_module(module);
@@ -136,6 +164,7 @@ fn run_un_interop_require_default(
         let mut call_unwrapper = CallUnwrapper {
             local_helpers,
             scope,
+            nesting: 0,
             preserved_assignment_form: false,
         };
         module.visit_mut_with(&mut call_unwrapper);
@@ -361,6 +390,8 @@ fn fresh_namespace_import_name(name: &Atom, used_names: &mut HashSet<Atom>) -> A
 struct AffectedBindingCollector<'a> {
     local_helpers: &'a LocalHelperContext,
     scope: InteropScope,
+    /// Function and class bodies around the visited node.
+    nesting: usize,
     affected: &'a mut HashSet<BindingKey>,
 }
 
@@ -370,15 +401,33 @@ impl Visit for AffectedBindingCollector<'_> {
         let Some(init) = &decl.init else { return };
 
         // var _a = helper(arg)
-        if is_helper_call(init, self.local_helpers, self.scope) {
+        let Expr::Call(call) = init.as_ref() else {
+            return;
+        };
+        if extract_helper_call_arg(call, self.local_helpers, self.scope)
+            .is_some_and(|arg| self.scope.reaches(self.nesting, &arg, self.local_helpers))
+        {
             self.affected.insert((bi.id.sym.clone(), bi.id.ctxt));
         }
     }
-}
 
-fn is_helper_call(expr: &Expr, local_helpers: &LocalHelperContext, scope: InteropScope) -> bool {
-    let Expr::Call(call) = expr else { return false };
-    extract_helper_call_arg(call, local_helpers, scope).is_some()
+    fn visit_function(&mut self, function: &Function) {
+        self.nesting += 1;
+        function.visit_children_with(self);
+        self.nesting -= 1;
+    }
+
+    fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
+        self.nesting += 1;
+        arrow.visit_children_with(self);
+        self.nesting -= 1;
+    }
+
+    fn visit_class(&mut self, class: &Class) {
+        self.nesting += 1;
+        class.visit_children_with(self);
+        self.nesting -= 1;
+    }
 }
 
 /// Collect standalone interop assignments that initialize a require-backed
@@ -910,6 +959,8 @@ impl Visit for BindingReferenceFinder<'_> {
 struct CallUnwrapper<'a> {
     local_helpers: &'a LocalHelperContext,
     scope: InteropScope,
+    /// Function and class bodies around the visited node.
+    nesting: usize,
     preserved_assignment_form: bool,
 }
 
@@ -928,15 +979,36 @@ impl VisitMut for CallUnwrapper<'_> {
         assign.visit_mut_children_with(self);
     }
 
+    fn visit_mut_function(&mut self, function: &mut Function) {
+        self.nesting += 1;
+        function.visit_mut_children_with(self);
+        self.nesting -= 1;
+    }
+
+    fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
+        self.nesting += 1;
+        arrow.visit_mut_children_with(self);
+        self.nesting -= 1;
+    }
+
+    fn visit_mut_class(&mut self, class: &mut Class) {
+        self.nesting += 1;
+        class.visit_mut_children_with(self);
+        self.nesting -= 1;
+    }
+
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         expr.visit_mut_children_with(self);
+        let unwrapped = |call: &CallExpr| {
+            extract_helper_call_arg(call, self.local_helpers, self.scope)
+                .filter(|arg| self.scope.reaches(self.nesting, arg, self.local_helpers))
+        };
 
         // helper(arg).default → arg
         if let Expr::Member(member) = expr {
             if is_default_prop(&member.prop) {
                 if let Expr::Call(call) = member.obj.as_ref() {
-                    if let Some(arg) = extract_helper_call_arg(call, self.local_helpers, self.scope)
-                    {
+                    if let Some(arg) = unwrapped(call) {
                         *expr = arg;
                         return;
                     }
@@ -946,7 +1018,7 @@ impl VisitMut for CallUnwrapper<'_> {
 
         // helper(arg) → arg
         if let Expr::Call(call) = expr {
-            if let Some(arg) = extract_helper_call_arg(call, self.local_helpers, self.scope) {
+            if let Some(arg) = unwrapped(call) {
                 *expr = arg;
             }
         }

@@ -971,3 +971,27 @@ exports.load = function (other) { return ((t) => Promise.resolve().then(() => _i
     assert!(!output.contains(r#"import("./x")"#), "{output}");
     assert!(output.contains("import(other)"), "{output}");
 }
+
+#[test]
+fn require_inside_a_function_keeps_interop_wildcard() {
+    // A `require` inside a function stays a `require`, so the namespace
+    // interop around it stays too. A lowered `import()` is the exception.
+    let input = format!(
+        "{BABEL_WILDCARD}{}",
+        r#"
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.read = function () { var ns = _interopRequireWildcard(require("./a")); return ns.value; };
+exports.load = function () { return Promise.resolve().then(() => _interopRequireWildcard(require("./b"))); };
+"#
+    );
+    let output = render(&input);
+    assert!(
+        output.contains(r#"_interopRequireWildcard(require("./a"))"#),
+        "{output}"
+    );
+    assert!(output.contains(r#"import("./b")"#), "{output}");
+    assert!(
+        output.contains("function _interopRequireWildcard"),
+        "{output}"
+    );
+}

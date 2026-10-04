@@ -943,3 +943,58 @@ exports.run = function () { return _a.default(); };
     );
     assert!(output.contains("_a.default()"), "{output}");
 }
+
+#[test]
+fn require_inside_a_function_keeps_interop_default() {
+    // `UnEsm` turns only top-level requires into imports. A `require` inside
+    // a function stays a `require`, where the interop call means the default
+    // export and the unwrapped form the whole module.
+    let input = r#"
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.run = run;
+exports.peek = peek;
+var _b = _interopRequireDefault(require("./b"));
+function _interopRequireDefault(e) { return e && e.__esModule ? e : { default: e }; }
+function run() { var _a = _interopRequireDefault(require("./a")); return _a.default() + _b.default(); }
+function peek() { return _interopRequireDefault(require("./c")).default; }
+"#;
+    let output = render(input);
+    assert!(output.contains(r#"import _b from "./b""#), "{output}");
+    assert!(output.contains("_b()"), "{output}");
+    assert!(
+        output.contains(r#"_interopRequireDefault(require("./a"))"#),
+        "{output}"
+    );
+    assert!(output.contains("_a.default()"), "{output}");
+    assert!(
+        output.contains(r#"_interopRequireDefault(require("./c")).default"#),
+        "{output}"
+    );
+    assert!(
+        output.contains("function _interopRequireDefault"),
+        "{output}"
+    );
+}
+
+#[test]
+fn interop_of_a_top_level_require_binding_inside_a_getter_is_unwrapped() {
+    // TypeScript 5.9 `export { default as depDefault } from "./dep.js"`: the
+    // getter is a function, but `dep_js_1` is a top-level require that
+    // becomes an import, so the call reads that import's default.
+    let input = r#"
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.depDefault = exports.depCount = void 0;
+var dep_js_1 = require("./dep.js");
+Object.defineProperty(exports, "depCount", { enumerable: true, get: function () { return dep_js_1.depCount; } });
+Object.defineProperty(exports, "depDefault", { enumerable: true, get: function () { return __importDefault(dep_js_1).default; } });
+"#;
+    let output = render(input);
+    assert!(!output.contains("exports"), "{output}");
+    assert!(!output.contains("__importDefault"), "{output}");
+    assert!(output.contains("depDefault"), "{output}");
+}

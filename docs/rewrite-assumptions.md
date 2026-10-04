@@ -71,7 +71,9 @@ function that reads `this`).
 Level: receiver-changing `UnIndirectCall` and `UnEsm` forms require `standard`
 or above. Explicit transpiler-helper recovery in `UnInteropRequireDefault`
 applies whenever that helper is recognized around a helper runtime `require`;
-around any other `require` it runs inside `UnEsm`, at `standard` or above.
+around any other `require` outside a function or class body it runs inside
+`UnEsm`, at `standard` or above. Inside one, the `require` stays and so does
+the call.
 
 ### `iterator_materialization_independence`
 

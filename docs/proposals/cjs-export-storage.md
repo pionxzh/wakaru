@@ -723,9 +723,13 @@ rollup keep a native `import()` with the matrix options, so their rows are
   `require` into a default import. `UnInteropRequireDefault` now unwraps
   only helper runtime requires, and `UnEsm` unwraps the rest, including the
   wildcard interop's `import * as`, when it commits to converting the
-  module; a module it keeps CommonJS keeps the calls. Still open: in a
-  converted module, a `require` inside a function is unwrapped too,
-  although it stays a `require`. Not covered by the matrix.
+  module; a module it keeps CommonJS keeps the calls, and so does a
+  `require` inside a function or class body, which stays a `require`.
+  The exception is a lowered `import()` (see [Lowered `import()`](#lowered-import)).
+  Still open: in unpack mode, swc's wildcard helper bundled as its own
+  module (`import { _ } from "./helper.js"`, then
+  `Promise.resolve().then(() => _(require(x)))`) is not recognized while
+  `UnEsm` runs, because the helper is known only from cross-module facts.
 
 ## Reassigned or aliased `exports`
 

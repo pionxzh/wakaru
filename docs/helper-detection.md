@@ -250,7 +250,9 @@ For example, `UnInteropRequireDefault`:
   see `_extends(...)`. Every other call is the default import's semantics,
   which is wrong while the module is CommonJS (`require("a")` is the whole
   module there), so `UnEsm` unwraps those only once it commits to
-  converting the module. A module it keeps CommonJS keeps the calls.
+  converting the module. A module it keeps CommonJS keeps the calls, and
+  so does a `require` inside a function or class body, which stays a
+  `require` in a converted module.
   `UnInteropRequireWildcard` works the same way: its `import * as` output
   is produced inside `UnEsm` at the same point, right after the default
   unwrap

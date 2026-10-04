@@ -254,7 +254,9 @@ impl VisitMut for UnEsm {
         // The module is becoming ESM: `interopRequireDefault(require(x))`
         // now means the default import of `x`, and the wildcard interop its
         // namespace import. Every return above keeps CommonJS, where the
-        // unwrapped forms mean the whole module, so the calls stay.
+        // unwrapped forms mean the whole module, so the calls stay. A call
+        // around a `require` inside a function stays too: that `require`
+        // does not become an import.
         let local_helpers = self.local_helpers.clone().unwrap_or_else(|| {
             std::rc::Rc::new(LocalHelperContext::collect_with_mark(
                 module,

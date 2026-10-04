@@ -4,9 +4,10 @@ use swc_core::atoms::Atom;
 use swc_core::common::util::take::Take;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    ArrowFunctionBody, AssignOp, AssignTarget, CallExpr, Callee, Decl, Expr, ExprOrSpread,
-    ExprStmt, FnExpr, Ident, Import, ImportDecl, ImportStarAsSpecifier, Lit, MemberProp, Module,
-    ModuleDecl, ModuleItem, Pat, ReturnStmt, SimpleAssignTarget, Stmt, UnaryOp, VarDecl,
+    ArrowExpr, ArrowFunctionBody, AssignOp, AssignTarget, CallExpr, Callee, Class, Decl, Expr,
+    ExprOrSpread, ExprStmt, FnExpr, Function, Ident, Import, ImportDecl, ImportStarAsSpecifier,
+    Lit, MemberProp, Module, ModuleDecl, ModuleItem, Pat, ReturnStmt, SimpleAssignTarget, Stmt,
+    UnaryOp, VarDecl,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -36,7 +37,10 @@ use crate::utils::paren::strip_parens;
 ///
 /// A top-level `target.x = _irw(require("a"))` gets its own binding:
 /// `import * as x from "a"; target.x = x;`. Any other `_irw(require("a"))`
-/// is unwrapped to the `require` call; other arguments are left wrapped.
+/// outside a function or class body is unwrapped to the `require` call;
+/// other arguments are left wrapped. Inside one, the `require` stays a
+/// `require`, so the call stays too, except a lowered `import()`, which
+/// becomes that call.
 ///
 /// Both produce ESM semantics, so they belong to a module that becomes ESM.
 /// The registered rule ([`InteropScope::RuntimeHelpers`]) only drops unused
@@ -129,6 +133,7 @@ fn run_un_interop_require_wildcard(
     // Phase 2: Unwrap remaining call sites in expressions (non-var-decl contexts)
     let mut unwrapper = WildcardCallUnwrapper {
         local_helpers,
+        nesting: 0,
         restore_dynamic_imports: !module_blocks_global_reference(module, "Promise"),
     };
     module.visit_mut_with(&mut unwrapper);
@@ -494,12 +499,34 @@ fn extract_wildcard_require(
 /// a namespace object that may differ from the raw expression value.
 struct WildcardCallUnwrapper<'a> {
     local_helpers: &'a LocalHelperContext,
+    /// Function and class bodies around the visited node: a `require` there
+    /// stays a `require`, so its interop call stays unless it is a lowered
+    /// `import()`.
+    nesting: usize,
     /// Whether `Promise` is provably the global: no `with` statement or
     /// direct `eval` can shadow it.
     restore_dynamic_imports: bool,
 }
 
 impl VisitMut for WildcardCallUnwrapper<'_> {
+    fn visit_mut_function(&mut self, function: &mut Function) {
+        self.nesting += 1;
+        function.visit_mut_children_with(self);
+        self.nesting -= 1;
+    }
+
+    fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
+        self.nesting += 1;
+        arrow.visit_mut_children_with(self);
+        self.nesting -= 1;
+    }
+
+    fn visit_mut_class(&mut self, class: &mut Class) {
+        self.nesting += 1;
+        class.visit_mut_children_with(self);
+        self.nesting -= 1;
+    }
+
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         if self.restore_dynamic_imports {
             if let Some(import) = lowered_dynamic_import(expr, self.local_helpers) {
@@ -534,8 +561,10 @@ impl VisitMut for WildcardCallUnwrapper<'_> {
             }
         }
 
-        // Only unwrap when the first arg is require("...")
-        if is_require_call(&call.args[0].expr, self.local_helpers) {
+        // Only unwrap when the first arg is require("...") outside a function.
+        if is_require_call(&call.args[0].expr, self.local_helpers)
+            && InteropScope::All.reaches(self.nesting, &call.args[0].expr, self.local_helpers)
+        {
             *expr = *call.args[0].expr.take();
         }
     }
