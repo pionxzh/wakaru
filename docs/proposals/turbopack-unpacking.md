@@ -257,12 +257,42 @@ today; none of them guesses.
 - **Free `module`/`exports`/`require` in a translated factory.** The webpack
   normalizer renames the translated parameters to those names, so a factory
   that also reads one of them free stays opaque with
-  `webpack_factory_recovery_failed`. Observed shapes: the App Router page
-  runtime module in the local Next 15.5 and 16 server builds
-  (`createAppPageEntrypoint` in 16), which reads a free `require("path")`, and UMD AMD branches that pass free `exports, module`
-  to `define`. Fix direction: keep the free name distinct (for example,
-  leave the parameter on its fresh spelling when the target name is free)
-  instead of failing.
+  `webpack_factory_recovery_failed`. Turbopack resolves these names itself
+  almost everywhere (CJS bindings, folded `typeof` checks, ESM `require`),
+  so a free one comes from a few sources: `require(/* turbopackIgnore: true
+  */ x)`; Next's app-page template, whose
+  `require("path").join(/* turbopackIgnore: true */ process.cwd(), …)` makes
+  every App Router server page entry read a free `require("path")`;
+  `module.hot` or `module` as a value in an ESM module; and Turbopack's own
+  lowering of a UMD `define(...)` inside an ESM module, which leaves
+  discarded `exports, module` reads. The same factory text appears in client
+  and server chunks. Fix direction differs by name:
+  - `require`: use the original name. wakaru's output already treats
+    `require` as the host require (`ctx.x` externals become
+    `require("name")`), a nested call stays in place, and the merged text is
+    what the author wrote. Merge only when every free `require` is a callee
+    whose argument the id rewriters leave alone (no numeric literal, no
+    string that names a module id). Divergence to accept or reject: in a
+    browser chunk the original free call throws.
+  - `module`/`exports`: never merge. They are different objects (an ESM
+    `typeof exports` probe would flip from `"undefined"` to `"object"`), and
+    the parameter cannot keep another spelling because `UnEsm` matches
+    `require.d(exports, …)` by the unresolved `exports` name. Keep the
+    factory opaque; discarded reads may be dropped.
+
+  The shared webpack path has the same rejection but drops the whole
+  container instead of the one factory (webpack emits a free `require` for
+  `__non_webpack_require__` and leaves `typeof exports` free in ESM
+  modules); that fix belongs to the webpack unpacker, not this detector.
+- **Top-level `this` in a CommonJS factory.** Turbopack rewrites it to
+  `ctx.e`, which translates to `exports`. TypeScript's
+  `(this && this.__createBinding) || …` and `__setModuleDefault` helpers
+  then read `exports && exports.__createBinding`, which helper detection
+  does not recognize (it does for `__importStar` and `__importDefault`).
+  The module keeps the helpers and an `import * as` next to CommonJS
+  exports, and reports `commonjs_export_unrecovered`. Fix direction: accept
+  the unresolved `exports` receiver for these helpers, since top-level
+  `this` is `exports` in CommonJS.
 - **`ctx.b`.** Create-worker in 16.2, chunk base path in 16.3; the same
   letter cannot become a residual without version evidence. Revisit when
   the chunk or the runtime file can prove the version.
