@@ -1627,3 +1627,25 @@ function f(x) {
     let output = apply_with_level(input, RewriteLevel::Minimal);
     assert_eq_normalized(&output, input);
 }
+
+#[test]
+fn minimal_keeps_plain_member_optional_access() {
+    // The access reads `a.b` again; minimal assumes nothing about getters.
+    let input = r#"
+const x = a.b === null || a.b === void 0 ? void 0 : a.b.c;
+"#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn minimal_recovers_plain_identifier_optional_access() {
+    let input = r#"
+const x = a === null || a === void 0 ? void 0 : a.b;
+"#;
+    let expected = r#"
+const x = a?.b;
+"#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, expected);
+}

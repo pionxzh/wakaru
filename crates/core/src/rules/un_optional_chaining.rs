@@ -1333,7 +1333,12 @@ fn try_ternary_optional_chain(
         return None;
     }
 
-    // Plain form
+    // Plain form. The access reads the checked value again; for a member
+    // expression that is a repeated property read a getter can observe, and
+    // `minimal` assumes nothing about getters.
+    if !matches!(strip_parens(&checked), Expr::Ident(_)) && policy.level < RewriteLevel::Standard {
+        return None;
+    }
     make_optional_chain(*checked, alt)
 }
 

@@ -108,12 +108,12 @@ fn try_nullish_coalescing(
     }
 
     // Pattern B: `x === null || x === void 0 ? fallback : x`
-    if let Some(result) = try_pattern_b_coalescing(cond_expr, unresolved_mark, isolation) {
+    if let Some(result) = try_pattern_b_coalescing(cond_expr, unresolved_mark, policy, isolation) {
         return Some(result);
     }
 
     // Pattern A: `x !== null && x !== void 0 ? x : fallback`
-    if let Some(result) = try_pattern_a_coalescing(cond_expr, unresolved_mark, isolation) {
+    if let Some(result) = try_pattern_a_coalescing(cond_expr, unresolved_mark, policy, isolation) {
         return Some(result);
     }
 
@@ -337,6 +337,7 @@ fn try_loose_pattern_parts(
 fn try_pattern_a_coalescing(
     cond: &CondExpr,
     unresolved_mark: Mark,
+    policy: RewritePolicy,
     isolation: &TempIsolation,
 ) -> Option<Expr> {
     let NullCheckResult { value, real_value } =
@@ -356,7 +357,7 @@ fn try_pattern_a_coalescing(
     }
 
     // Plain form: consequent must equal the checked value
-    if exprs_structurally_equal(&cond.cons, &value) {
+    if plain_form_allowed(&value, policy) && exprs_structurally_equal(&cond.cons, &value) {
         return Some(make_nullish_coalescing(value, cond.alt.clone()));
     }
 
@@ -368,6 +369,7 @@ fn try_pattern_a_coalescing(
 fn try_pattern_b_coalescing(
     cond: &CondExpr,
     unresolved_mark: Mark,
+    policy: RewritePolicy,
     isolation: &TempIsolation,
 ) -> Option<Expr> {
     let NullCheckResult { value, real_value } = extract_null_check(&cond.test, unresolved_mark)?;
@@ -386,11 +388,19 @@ fn try_pattern_b_coalescing(
     }
 
     // Plain form: alternate must equal the checked value
-    if exprs_structurally_equal(&cond.alt, &value) {
+    if plain_form_allowed(&value, policy) && exprs_structurally_equal(&cond.alt, &value) {
         return Some(make_nullish_coalescing(value, cond.cons.clone()));
     }
 
     None
+}
+
+/// The plain strict forms read the checked value up to three times, and the
+/// recovered `??` reads it once. For a member expression that drops property
+/// reads a getter can observe; `minimal` assumes nothing about getters, so it
+/// recovers only an identifier operand.
+fn plain_form_allowed(value: &Expr, policy: RewritePolicy) -> bool {
+    matches!(strip_parens(value), Expr::Ident(_)) || policy.level >= RewriteLevel::Standard
 }
 
 /// Pattern C: `(tmp = X) === null || tmp === undefined || tmp`  →  `X ?? true`

@@ -613,3 +613,27 @@ const y = n;
 "#;
     assert_eq_normalized(&apply(input), input);
 }
+
+#[test]
+fn minimal_keeps_plain_member_nullish_checks() {
+    // Three reads of `a.b.c` would become one; minimal assumes nothing about
+    // getters.
+    let input = r#"
+const x = a.b.c === null || a.b.c === void 0 ? fallback : a.b.c;
+const y = obj.value !== null && obj.value !== void 0 ? obj.value : fallback;
+"#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn minimal_recovers_plain_identifier_nullish_check() {
+    let input = r#"
+const x = value === null || value === void 0 ? fallback : value;
+"#;
+    let expected = r#"
+const x = value ?? fallback;
+"#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, expected);
+}

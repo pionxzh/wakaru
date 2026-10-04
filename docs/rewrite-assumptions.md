@@ -237,7 +237,8 @@ Affects: `UnOptionalChaining` (repeated-base forms), `UnNullishCoalescing`
 
 Level: `standard` and above for identifier bases (e.g. `x.prop`). Member
 expression bases (e.g. `a.b.prop`) should require `aggressive` unless a temp
-proves single evaluation.
+proves single evaluation. `minimal` recovers the repeated-read forms only when
+the checked value is an identifier.
 
 ### `stable_builtins`
 
