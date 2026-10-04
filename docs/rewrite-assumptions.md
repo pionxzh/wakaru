@@ -264,6 +264,16 @@ throw new TypeError("x"); // reads TypeError after patchTypeError()
 That is usually acceptable for generated production bundles, but it is not a
 semantic guarantee from the AST alone.
 
+The assumption covers patches the module cannot see, such as the call above.
+When the module itself writes the alias's source path, or a prefix of it, the
+alias stays at every level:
+
+```js
+var origLog = console.log;
+console.log = function () { origLog.apply(console, arguments); };
+// inlining `origLog` would make the wrapper call itself
+```
+
 Affects: `UnBuiltinAliases` and `SmartInline` (builtin/global alias
 inlining).
 

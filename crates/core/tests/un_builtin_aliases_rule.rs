@@ -244,3 +244,101 @@ const i = console;
     assert!(output.contains("console"), "{output}");
     assert!(!output.contains("defineProperty"), "{output}");
 }
+
+#[test]
+fn preserves_alias_of_builtin_the_module_replaces() {
+    // Inlining `origLog` would make the replacement call itself.
+    let input = r#"
+var origLog = console.log;
+console.log = function() {
+    origLog.apply(console, arguments);
+};
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn preserves_alias_of_builtin_written_through_global_object() {
+    let input = r#"
+var origThen = Promise.prototype;
+var origAll = Promise.all;
+window.Promise.all = function(list) {
+    return origAll.call(this, list);
+};
+use(origThen);
+"#;
+    let expected = r#"
+var origAll = Promise.all;
+window.Promise.all = function(list) {
+    return origAll.call(this, list);
+};
+use(Promise.prototype);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn preserves_alias_of_builtin_whose_root_the_module_replaces() {
+    let input = r#"
+var e = console.log;
+console = makeConsole();
+use(e);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn preserves_alias_of_builtin_defined_reflectively() {
+    let input = r#"
+var e = Object.keys;
+var r = Object.freeze;
+Object.defineProperty(Object, "keys", { value: shim });
+Object.assign(Function, { bind: shim });
+use(e(r(value)));
+"#;
+    let expected = r#"
+var e = Object.keys;
+Object.defineProperty(Object, "keys", { value: shim });
+Object.assign(Function, { bind: shim });
+use(e(Object.freeze(value)));
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn inlines_alias_when_module_writes_a_sibling_builtin_path() {
+    let input = r#"
+var e = console.log;
+console.warn = noop;
+use(e);
+"#;
+    let expected = r#"
+console.warn = noop;
+use(console.log);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn inlines_alias_when_a_local_binding_shares_the_patched_name() {
+    let input = r#"
+var e = console.log;
+function f(console) {
+    console.log = noop;
+}
+use(e);
+"#;
+    let expected = r#"
+function f(console) {
+    console.log = noop;
+}
+use(console.log);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}

@@ -1,9 +1,12 @@
 use crate::collections::{HashMap, HashSet};
 
+use swc_core::atoms::Atom;
 use swc_core::common::{Mark, Span};
 use swc_core::ecma::ast::{
-    Decl, ExportSpecifier, Expr, Ident, MemberExpr, MemberProp, Module, ModuleDecl,
-    ModuleExportName, ModuleItem, Pat, PropName, Stmt, UnaryExpr, UnaryOp, UpdateExpr, VarDeclKind,
+    AssignExpr, AssignTarget, AssignTargetPat, CallExpr, Callee, Decl, ExportSpecifier, Expr,
+    ForHead, Ident, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem,
+    ObjectPatProp, Pat, PropName, SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp, UpdateExpr,
+    VarDeclKind,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -54,6 +57,258 @@ struct BuiltinAliasUsageStats {
     blocked_uses: usize,
 }
 
+/// Builtin paths the module itself writes.
+///
+/// `stable_builtins` covers patches the module cannot see: a polyfill loaded
+/// earlier, another chunk. A write in the module is visible evidence against
+/// the assumption for that path. A wrapper that saves `console.log` and
+/// installs a replacement calling the saved function would call itself once
+/// the alias is inlined, and a save/restore of `Error.prepareStackTrace` would
+/// restore the patched value. So an alias keeps its binding when the module
+/// writes its source path or a prefix of it (`console = …` replaces
+/// `console.log` too), with or without a `window`/`self`/`globalThis`/`global`
+/// qualifier.
+///
+/// A write through a computed key on the global object itself
+/// (`window[name] = …`) is not recorded: UMD wrappers use that shape to
+/// publish a library, and it would block every alias in the module.
+#[derive(Default)]
+pub(crate) struct PatchedBuiltinPaths {
+    writes: Vec<PathWrite>,
+}
+
+struct PathWrite {
+    path: Vec<Atom>,
+    /// `X[key] = v`, `Object.assign(X, …)`: some property of `path` changes,
+    /// but `path` itself still holds the same object.
+    any_property: bool,
+}
+
+impl PatchedBuiltinPaths {
+    pub(crate) fn collect<N>(node: &N, unresolved_mark: Option<Mark>) -> Self
+    where
+        N: for<'a> VisitWith<PatchedPathCollector<'a>>,
+    {
+        let mut paths = Self::default();
+        node.visit_with(&mut PatchedPathCollector {
+            unresolved_mark,
+            paths: &mut paths,
+        });
+        paths
+    }
+
+    fn blocks(&self, alias_init: &Expr) -> bool {
+        let source: Vec<Atom> = match alias_init {
+            Expr::Ident(id) => vec![id.sym.clone()],
+            Expr::Member(MemberExpr {
+                obj,
+                prop: MemberProp::Ident(prop),
+                ..
+            }) => match obj.as_ref() {
+                Expr::Ident(obj_id) => vec![obj_id.sym.clone(), prop.sym.clone()],
+                _ => return false,
+            },
+            _ => return false,
+        };
+        self.writes.iter().any(|write| {
+            source.starts_with(&write.path)
+                && (source.len() > write.path.len() || !write.any_property)
+        })
+    }
+}
+
+pub(crate) struct PatchedPathCollector<'a> {
+    unresolved_mark: Option<Mark>,
+    paths: &'a mut PatchedBuiltinPaths,
+}
+
+impl PatchedPathCollector<'_> {
+    /// The global path an expression names, and whether a computed key makes
+    /// it "some property of" that path. `None` for a path rooted in a local
+    /// binding or in anything but an identifier.
+    fn global_path(&self, expr: &Expr) -> Option<(Vec<Atom>, bool)> {
+        match strip_parens(expr) {
+            Expr::Ident(id) => {
+                if !self
+                    .unresolved_mark
+                    .is_none_or(|mark| id.ctxt.outer() == mark)
+                {
+                    return None;
+                }
+                if matches!(id.sym.as_ref(), "window" | "self" | "globalThis" | "global") {
+                    Some((Vec::new(), false))
+                } else {
+                    Some((vec![id.sym.clone()], false))
+                }
+            }
+            Expr::Member(member) => {
+                let (mut path, any_property) = self.global_path(&member.obj)?;
+                if any_property {
+                    return Some((path, true));
+                }
+                match &member.prop {
+                    MemberProp::Ident(prop) => path.push(prop.sym.clone()),
+                    MemberProp::Computed(computed) => match string_key(&computed.expr) {
+                        Some(key) => path.push(key),
+                        None => return Some((path, true)),
+                    },
+                    MemberProp::PrivateName(_) => return None,
+                }
+                Some((path, false))
+            }
+            _ => None,
+        }
+    }
+
+    fn record(&mut self, path: Vec<Atom>, any_property: bool) {
+        if !path.is_empty() {
+            self.paths.writes.push(PathWrite { path, any_property });
+        }
+    }
+
+    fn record_target(&mut self, expr: &Expr) {
+        if let Some((path, any_property)) = self.global_path(expr) {
+            self.record(path, any_property);
+        }
+    }
+
+    fn record_pat(&mut self, pat: &Pat) {
+        match pat {
+            Pat::Ident(binding) => self.record_target(&Expr::Ident(binding.id.clone())),
+            Pat::Expr(expr) => self.record_target(expr),
+            Pat::Array(array) => {
+                for elem in array.elems.iter().flatten() {
+                    self.record_pat(elem);
+                }
+            }
+            Pat::Object(object) => {
+                for prop in &object.props {
+                    match prop {
+                        ObjectPatProp::KeyValue(kv) => self.record_pat(&kv.value),
+                        ObjectPatProp::Assign(assign) => {
+                            self.record_target(&Expr::Ident(assign.key.id.clone()))
+                        }
+                        ObjectPatProp::Rest(rest) => self.record_pat(&rest.arg),
+                    }
+                }
+            }
+            Pat::Rest(rest) => self.record_pat(&rest.arg),
+            Pat::Assign(assign) => self.record_pat(&assign.left),
+            Pat::Invalid(_) => {}
+        }
+    }
+
+    /// `Object.defineProperty(X, "p", …)`, `Object.assign(X, …)`,
+    /// `Reflect.set(X, "p", …)` and their kin write a property of `X`.
+    fn record_reflective_write(&mut self, call: &CallExpr) {
+        let Callee::Expr(callee) = &call.callee else {
+            return;
+        };
+        let Expr::Member(MemberExpr {
+            obj,
+            prop: MemberProp::Ident(method),
+            ..
+        }) = strip_parens(callee)
+        else {
+            return;
+        };
+        let Expr::Ident(namespace) = strip_parens(obj) else {
+            return;
+        };
+        if !self
+            .unresolved_mark
+            .is_none_or(|mark| namespace.ctxt.outer() == mark)
+        {
+            return;
+        }
+        let keyed = match (namespace.sym.as_ref(), method.sym.as_ref()) {
+            ("Object", "defineProperty")
+            | ("Reflect", "defineProperty" | "set" | "deleteProperty") => true,
+            ("Object", "assign" | "defineProperties" | "setPrototypeOf")
+            | ("Reflect", "setPrototypeOf") => false,
+            _ => return,
+        };
+        let Some(target) = call.args.first().filter(|arg| arg.spread.is_none()) else {
+            return;
+        };
+        let Some((mut path, any_property)) = self.global_path(&target.expr) else {
+            return;
+        };
+        if any_property {
+            self.record(path, true);
+            return;
+        }
+        let key = call
+            .args
+            .get(1)
+            .filter(|arg| keyed && arg.spread.is_none())
+            .and_then(|arg| string_key(&arg.expr));
+        match key {
+            Some(key) => {
+                path.push(key);
+                self.record(path, false);
+            }
+            None => self.record(path, true),
+        }
+    }
+}
+
+fn string_key(expr: &Expr) -> Option<Atom> {
+    match strip_parens(expr) {
+        Expr::Lit(Lit::Str(key)) => key.value.as_str().map(Atom::from),
+        _ => None,
+    }
+}
+
+impl Visit for PatchedPathCollector<'_> {
+    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+        match &assign.left {
+            AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) => {
+                self.record_target(&Expr::Ident(binding.id.clone()))
+            }
+            AssignTarget::Simple(SimpleAssignTarget::Member(member)) => {
+                self.record_target(&Expr::Member(member.clone()))
+            }
+            AssignTarget::Simple(SimpleAssignTarget::Paren(paren)) => {
+                self.record_target(&paren.expr)
+            }
+            AssignTarget::Simple(_) => {}
+            AssignTarget::Pat(AssignTargetPat::Array(array)) => {
+                self.record_pat(&Pat::Array(array.clone()))
+            }
+            AssignTarget::Pat(AssignTargetPat::Object(object)) => {
+                self.record_pat(&Pat::Object(object.clone()))
+            }
+            AssignTarget::Pat(AssignTargetPat::Invalid(_)) => {}
+        }
+        assign.visit_children_with(self);
+    }
+
+    fn visit_update_expr(&mut self, update: &UpdateExpr) {
+        self.record_target(&update.arg);
+        update.visit_children_with(self);
+    }
+
+    fn visit_unary_expr(&mut self, unary: &UnaryExpr) {
+        if unary.op == UnaryOp::Delete {
+            self.record_target(&unary.arg);
+        }
+        unary.visit_children_with(self);
+    }
+
+    fn visit_for_head(&mut self, head: &ForHead) {
+        if let ForHead::Pat(pat) = head {
+            self.record_pat(pat);
+        }
+        head.visit_children_with(self);
+    }
+
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        self.record_reflective_write(call);
+        call.visit_children_with(self);
+    }
+}
+
 /// `pinned` bindings keep their declaration, in addition to aliases named by
 /// an `export { alias }` specifier.
 pub(crate) fn inline_module_builtin_aliases(
@@ -79,6 +334,9 @@ pub(crate) fn inline_module_builtin_aliases(
     if has_dynamic_scope_construct(module) {
         return false;
     }
+
+    let patched = PatchedBuiltinPaths::collect(module, unresolved_mark);
+    candidates.retain(|_, candidate| !patched.blocks(&candidate.init));
 
     if options.require_no_var_use_before_decl {
         candidates.retain(|key, candidate| {
@@ -116,14 +374,17 @@ pub(crate) fn inline_module_builtin_aliases(
 
 /// `pinned` bindings keep their declaration: module-scope aliases named by an
 /// `export { alias }` specifier (see `collect_local_export_specifier_keys`).
+/// `patched` holds the builtin paths the enclosing module writes; a statement
+/// list cannot see writes outside itself.
 pub(crate) fn inline_builtin_aliases_stmts(
     mut stmts: Vec<Stmt>,
     unresolved_mark: Option<Mark>,
     options: BuiltinAliasInlineOptions,
     pinned: &HashSet<BindingKey>,
+    patched: &PatchedBuiltinPaths,
 ) -> Vec<Stmt> {
     let mut candidates = collect_stmt_candidates(&stmts, unresolved_mark, options);
-    candidates.retain(|key, _| !pinned.contains(key));
+    candidates.retain(|key, candidate| !pinned.contains(key) && !patched.blocks(&candidate.init));
     if candidates.is_empty() {
         return stmts;
     }

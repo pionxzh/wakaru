@@ -1565,6 +1565,39 @@ const x = (()=>{
 }
 
 #[test]
+fn standard_keeps_function_scope_alias_of_builtin_the_module_restores() {
+    // Save/restore of a builtin property: inlining `c` would turn the
+    // restore into `Error.prepareStackTrace = Error.prepareStackTrace`.
+    let input = r#"
+function describe(fn) {
+    const c = Error.prepareStackTrace;
+    Error.prepareStackTrace = undefined;
+    try {
+        return fn();
+    } finally {
+        Error.prepareStackTrace = c;
+    }
+}
+"#;
+    let output = apply_with_level(input, RewriteLevel::Standard);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn standard_keeps_module_const_alias_of_builtin_patched_in_a_function() {
+    let input = r#"
+const origLog = console.log;
+function install() {
+    console.log = function(...args) {
+        origLog(prefix, ...args);
+    };
+}
+"#;
+    let output = apply_with_level(input, RewriteLevel::Standard);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn no_inline_when_source_mutated_after_def_in_try_finally() {
     // Save/restore pattern: const r = M; try { mutate M } finally { M = r; }
     // Must NOT inline because M is mutated inside the try block.
