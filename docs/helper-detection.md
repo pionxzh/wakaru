@@ -309,7 +309,7 @@ Priority targets, roughly ordered by real-world frequency:
 | `typeof` | `_typeof` | — | `_type_of` | Native `typeof`, including self-caching declarations |
 | `asyncToGenerator` | `_asyncToGenerator` | `__awaiter` + `__generator` | `_async_to_generator` | async/await (already handled in `un_async_await.rs`) |
 | `asyncIterator` | `_asyncIterator` (+ `AsyncFromSyncIterator` dependency) | `__asyncValues` | `_async_iterator` | `for await` adapter; the loop protocol is recovered by `un_for_await.rs`. esbuild's `__forAwait` (+ `__knownSymbol`) is matched by shape inside that rule |
-| `exportStar` | inline `Object.keys(source).forEach` copy loop | `__exportStar` | `_export_star` | `export * from` in CommonJS output; recovered by `UnEsm` (`rules/un_esm/export_star.rs`), which proves inline loop and helper bodies by shape and trusts tslib / `@swc/helpers` by module path |
+| `exportStar` | inline `Object.keys(source).forEach` copy loop | `__exportStar` | `_export_star` | `export * from` in CommonJS output; recovered by `UnEsm` (`rules/un_esm/export_star.rs`), which proves inline loop and helper bodies by shape and trusts tslib / `@swc/helpers` by module path. Also sucrase's `_createStarExport(source)` and esbuild's `__reExport`, both proven by shape |
 
 `exportStar` recovery stays within one module. A tslib copy bundled as its
 own module and called through that module's namespace is not recognized:
@@ -338,9 +338,25 @@ shape. A map entry that does not match the helper's getter read, a repeated
 or `__proto__` key, and an esbuild namespace when the module also refers to
 `module` or `exports` keep the call unchanged.
 
-The other esbuild helpers (`__commonJS`, `__esm`, `__toESM`) are
-bundler-level and handled in the unpacker, not here; a single-file
-`__toESM(require(...))` is not recognized.
+In single-file output, esbuild's `__reExport(ns, require("x"), module.exports)`
+becomes `__reExport(exports, require("x"))` in the same lowering, which the
+export-star recovery turns into `export * from "x"`, and
+`var x = __toESM(require("x"))` becomes `import * as x from "x"`, like
+Babel's wildcard interop. The `isNodeMode` form `__toESM(require("x"), 1)`
+stays: it sets `default` to the whole module even when the module is marked
+`__esModule`. `__commonJS` and `__esm` are bundler-level and handled in the
+unpacker, not here.
+
+`export * as ns from "x"` reaches `UnEsm` in three shapes. TypeScript
+writes `exports.ns = __importStar(require("x"))`, which
+`UnInteropRequireWildcard` gives its own `import * as ns from "x"` instead of
+unwrapping it to the raw `require`. SWC nests its star helper in the
+wildcard call when both re-exports share a source:
+`var _x = WILDCARD(_export_star(require("x"), exports))`, which becomes
+`export * from "x"` plus `import * as _x from "x"` only when the star helper
+is proven to return its source (tslib's `__exportStar` returns nothing).
+sucrase wraps a separate `var _x = require("x")`, which becomes a namespace
+import when `_x` is declared once and never written.
 
 `UnDestructuring` accepts a mangled `arrayLikeToArray` declaration only when
 its body proves the complete helper contract: the canonical null/length guard,

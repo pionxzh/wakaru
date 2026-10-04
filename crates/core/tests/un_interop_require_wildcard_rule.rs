@@ -398,3 +398,63 @@ fn compressed_import_star_keeps_observable_factory_initialization() {
         assert!(output.contains("this.__importStar"), "{output}");
     }
 }
+
+#[test]
+fn namespace_assigned_to_a_property_becomes_namespace_import() {
+    // TypeScript lowers `export * as ns from "dep"` to a property write; the
+    // raw `require` result would lose the synthesized namespace.
+    let input = r#"
+var tslib_1 = require("tslib");
+exports.ns = tslib_1.__importStar(require("dep"));
+"#;
+    let expected = r#"
+import tslib_1 from "tslib";
+import * as ns from "dep";
+export { ns };
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn namespace_assigned_to_a_property_gets_a_free_name() {
+    let input = r#"
+var _interopRequireWildcard = require("@babel/runtime/helpers/interopRequireWildcard");
+var ns = 1;
+exports.ns = _interopRequireWildcard(require("dep"));
+function read() {
+  return ns_1;
+}
+"#;
+    let output = render(input);
+    assert!(
+        output.contains(r#"import * as ns_2 from "dep";"#),
+        "{output}"
+    );
+    assert!(output.contains("ns_2 as ns"), "{output}");
+}
+
+#[test]
+fn wildcard_of_a_required_binding_becomes_namespace_import() {
+    // sucrase keeps the module in its own binding and wraps that.
+    let input = r#"
+var _interopRequireWildcard = require("@babel/runtime/helpers/interopRequireWildcard");
+var _dep = require("dep");
+var ns = _interopRequireWildcard(_dep);
+console.log(ns, _dep.value);
+"#;
+    let output = render(input);
+    assert!(output.contains(r#"import * as ns from "dep";"#), "{output}");
+}
+
+#[test]
+fn wildcard_of_a_written_required_binding_stays() {
+    let input = r#"
+var _interopRequireWildcard = require("@babel/runtime/helpers/interopRequireWildcard");
+var _dep = require("dep");
+var ns = _interopRequireWildcard(_dep);
+_dep = other;
+console.log(ns, _dep);
+"#;
+    let output = render(input);
+    assert!(!output.contains("import * as ns"), "{output}");
+}

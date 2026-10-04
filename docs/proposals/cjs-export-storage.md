@@ -7,8 +7,10 @@ sucrase getter helpers feeding C. Step 4 was narrowed to one bug fix. Evidence
 comes from the
 [CommonJS export-storage matrix](../../scripts/repro/cjs-export-storage-matrix/README.md);
 see [Step 1 results](#step-1-results), [Step 2 results](#step-2-results),
-[Step 3 results](#step-3-results), and
-[Steps 4 and 5 results](#steps-4-and-5-results).
+[Step 3 results](#step-3-results),
+[Steps 4 and 5 results](#steps-4-and-5-results), and
+[`export * as ns`](#export--as-ns), which is outside the storage model
+but blocked its last matrix rows.
 
 Ground rules: follow [AGENTS.md](../../AGENTS.md), including a focused unit
 test for every change. Use synthetic names in tests and commits. Record every
@@ -326,8 +328,9 @@ Each of these needs separate work. The matrix tracks them.
 - **swc and esbuild helper recognition.** Done in step 5 for single-file
   decompilation. esbuild single-file output is still split as a
   scope-hoisted bundle under `--unpack`.
-- **`__exportStar` and other `export *` helpers.** This is separate work on
-  CommonJS `export *` recovery.
+- **`__exportStar` and other `export *` helpers.** Separate work on CommonJS
+  `export *` recovery (`un_esm/export_star.rs`); its matrix row is covered
+  in [`export * as ns`](#export--as-ns) except for rollup.
 - **sucrase `_createNamedExportFrom`.** Done in step 5.
 - **Single-file import interop.** Without facts about the provider,
   `require("./dep")` becomes a default import even when the provider has no
@@ -608,6 +611,42 @@ proven by shape:
 
 A getter definition for a name that is not an identifier
 (`export { v as "a-b" }`) now becomes a quoted export specifier.
+
+## `export * as ns`
+
+After steps 4 and 5, every `reexport-star` row still failed. The case puts
+`export * from "./dep.js"` and `export * as ns from "./dep.js"` in one
+module, and each producer broke on the second re-export or on how the two
+share a source:
+
+| Producer | Shape | Fix |
+|---|---|---|
+| TypeScript | `exports.ns = __importStar(require("./dep.js"))` | `UnInteropRequireWildcard` unwrapped the call to the raw `require`, which `UnEsm` left as `export const ns = require(...)`. A top-level property write of a wildcard call now gets its own `import * as ns` binding. |
+| swc | `var _dep = _interop_require_wildcard(_export_star(require("./dep.js"), exports))` | The export-star recovery only knew the call as a statement. The nested form becomes `export * from` plus `import * as _dep`, when the star helper is proven to return its source. |
+| esbuild | `__reExport(ns, require("./dep.js"), module.exports)` and `var ns = __toESM(require("./dep.js"))` | Neither helper was recognized in single-file output. The getter lowering rewrites the first to `__reExport(exports, require(...))` for the export-star recovery, and the second to `import * as ns`. |
+| sucrase | `var _depjs = require(...); var _depjs2 = _interopRequireWildcard(_depjs); _createStarExport(_depjs);` | The wildcard of a separate `require` binding becomes a namespace import when the binding is declared once and never written, and `_createStarExport` is a new star helper shape. |
+
+Matrix: 280 / 291 (from 270), with no row that was correct before now wrong.
+Besides 8 `reexport-star` rows, `__toESM` fixed esbuild's
+`imported-used-in-function` and `reexport-named`. The remaining 11 wrong
+rows: `import-then-export` on every producer (single-file import interop),
+sucrase `imported-used-in-function` (the same interop: a default import of a
+module with no default), and rollup `reexport-star`.
+
+**rollup is not done.** Its namespace helper always sets `default` to the
+whole module:
+
+```js
+function _interopNamespaceDefault(e) { var n = Object.create(null); /* getters for e's keys except default */ n.default = e; return Object.freeze(n); }
+var dep_js__namespace = _interopNamespaceDefault(dep_js);
+```
+
+Babel, TypeScript, swc, sucrase, and esbuild set `default` to `e.default`
+when the module is marked `__esModule`, which is what an ESM namespace of a
+recovered dependency gives. Recovering rollup's helper as `import * as`
+changes `ns.default` for such a dependency, so it waits for a decision. Its
+`export *` loop also shares `dep_js` with the namespace call, so the loop
+stays until the namespace is recovered.
 
 ## Reassigned or aliased `exports`
 

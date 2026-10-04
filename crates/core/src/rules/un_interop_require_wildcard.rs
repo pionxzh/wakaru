@@ -1,13 +1,16 @@
 use crate::collections::{HashMap, HashSet};
 
+use swc_core::atoms::Atom;
 use swc_core::common::util::take::Take;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    Callee, Decl, Expr, ExprStmt, Ident, ImportDecl, ImportStarAsSpecifier, Lit, Module,
-    ModuleDecl, ModuleItem, Pat, Stmt, UnaryOp, VarDecl,
+    AssignOp, AssignTarget, Callee, Decl, Expr, ExprStmt, Ident, ImportDecl, ImportStarAsSpecifier,
+    Lit, MemberProp, Module, ModuleDecl, ModuleItem, Pat, SimpleAssignTarget, Stmt, UnaryOp,
+    VarDecl,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use super::decl_utils::fresh_binding_ident;
 use super::helper_matcher::{
     binding_key, import_specifier_binding_key, var_declarator_binding_key,
 };
@@ -15,6 +18,7 @@ use super::transpiler_helper_utils::{
     helpers_with_remaining_refs, remove_helper_declarations, BindingKey, LocalHelperContext,
     TranspilerHelperKind, TsHelperKind,
 };
+use crate::js_names::{is_reserved_binding_name, is_valid_identifier_name};
 
 /// Detects and unwraps `interopRequireWildcard` helper calls.
 ///
@@ -22,9 +26,13 @@ use super::transpiler_helper_utils::{
 ///   `var _a = _interopRequireWildcard(require("a"))`
 ///   → `import * as _a from "a"`
 ///
-/// Also handles the 2-arg form: `_irw(require("a"), true)` → `import * as _a from "a"`
+/// Also handles the 2-arg form: `_irw(require("a"), true)` → `import * as _a from "a"`,
+/// and a wrapped binding: `var _a = require("a"); var ns = _irw(_a)` →
+/// `import * as ns from "a"` when `_a` is declared once and never written.
 ///
-/// For non-require arguments, just unwraps: `_irw(expr)` → `expr`
+/// A top-level `target.x = _irw(require("a"))` gets its own binding:
+/// `import * as x from "a"; target.x = x;`. Any other `_irw(require("a"))`
+/// is unwrapped to the `require` call; other arguments are left wrapped.
 pub struct UnInteropRequireWildcard;
 
 impl UnInteropRequireWildcard {
@@ -58,10 +66,39 @@ fn run_un_interop_require_wildcard(module: &mut Module, local_helpers: &LocalHel
     // in the module must stay a var: an assignment to an import binding is a
     // runtime error in ESM.
     let written = collect_written_bindings(module);
+    // Every identifier name in the module, so a new import binding can
+    // neither collide with a binding nor capture a reference in any scope.
+    let mut used_names: HashSet<Atom> = if module
+        .body
+        .iter()
+        .any(|item| assigned_wildcard_require(item, local_helpers).is_some())
+    {
+        let mut names = IdentNames::default();
+        module.visit_with(&mut names);
+        names.0
+    } else {
+        HashSet::default()
+    };
+    let declaration_counts = top_level_declaration_counts(module);
+    // `var a = require("x")` bindings declared so far, never written or
+    // redeclared: wrapping one is wrapping the same cached module.
+    let mut requires: HashMap<BindingKey, swc_core::ecma::ast::Str> = HashMap::default();
     let mut new_body = Vec::with_capacity(module.body.len());
-    for item in module.body.drain(..) {
-        if let Some(imports) = try_convert_to_namespace_import(&item, local_helpers, &written) {
+    let body = std::mem::take(&mut module.body);
+    for item in body {
+        collect_stable_require(
+            &item,
+            &written,
+            &declaration_counts,
+            local_helpers,
+            &mut requires,
+        );
+        if let Some(imports) =
+            try_convert_to_namespace_import(&item, local_helpers, &written, &requires)
+        {
             new_body.extend(imports);
+        } else if let Some(source) = assigned_wildcard_require(&item, local_helpers) {
+            new_body.extend(hoist_assigned_namespace(item, source, &mut used_names));
         } else {
             new_body.push(item);
         }
@@ -137,6 +174,7 @@ fn try_convert_to_namespace_import(
     item: &ModuleItem,
     local_helpers: &LocalHelperContext,
     written: &HashSet<BindingKey>,
+    requires: &HashMap<BindingKey, swc_core::ecma::ast::Str>,
 ) -> Option<Vec<ModuleItem>> {
     let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
         return None;
@@ -161,7 +199,9 @@ fn try_convert_to_namespace_import(
             continue;
         }
 
-        if let Some(source) = extract_wildcard_require(init, local_helpers) {
+        if let Some(source) = extract_wildcard_require(init, local_helpers)
+            .or_else(|| extract_wildcard_of_required(init, local_helpers, requires))
+        {
             // Convert to: import * as _x from "source"
             let import = ImportDecl {
                 span: DUMMY_SP,
@@ -195,6 +235,181 @@ fn try_convert_to_namespace_import(
     }
 
     Some(result)
+}
+
+/// `target.x = _irw(require("path"));` as a top-level statement: the source.
+/// TypeScript and Babel lower `export * as x from "path"` to this shape.
+fn assigned_wildcard_require(
+    item: &ModuleItem,
+    local_helpers: &LocalHelperContext,
+) -> Option<swc_core::ecma::ast::Str> {
+    let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
+        return None;
+    };
+    let Expr::Assign(assign) = expr.as_ref() else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign
+        || !matches!(
+            &assign.left,
+            AssignTarget::Simple(SimpleAssignTarget::Member(_))
+        )
+    {
+        return None;
+    }
+    extract_wildcard_require(&assign.right, local_helpers)
+}
+
+/// Give a namespace that is assigned to a property its own import binding:
+/// `import * as x from "path"; target.x = x;`. Unwrapping the call to the
+/// raw `require` instead would lose the namespace the helper builds.
+fn hoist_assigned_namespace(
+    item: ModuleItem,
+    source: swc_core::ecma::ast::Str,
+    used_names: &mut HashSet<Atom>,
+) -> Vec<ModuleItem> {
+    let ModuleItem::Stmt(Stmt::Expr(mut statement)) = item else {
+        unreachable!("checked by assigned_wildcard_require");
+    };
+    let Expr::Assign(assign) = statement.expr.as_mut() else {
+        unreachable!("checked by assigned_wildcard_require");
+    };
+    let base = match &assign.left {
+        AssignTarget::Simple(SimpleAssignTarget::Member(member)) => match &member.prop {
+            MemberProp::Ident(prop)
+                if is_valid_identifier_name(prop.sym.as_ref())
+                    && !is_reserved_binding_name(prop.sym.as_ref()) =>
+            {
+                prop.sym.to_string()
+            }
+            _ => "ns".to_string(),
+        },
+        _ => "ns".to_string(),
+    };
+    let mut name = Atom::from(base.as_str());
+    let mut index = 1usize;
+    while !used_names.insert(name.clone()) {
+        name = Atom::from(format!("{base}_{index}"));
+        index += 1;
+    }
+    let local = fresh_binding_ident(name, DUMMY_SP);
+    *assign.right = Expr::Ident(local.clone());
+    let import = ImportDecl {
+        span: DUMMY_SP,
+        specifiers: vec![swc_core::ecma::ast::ImportSpecifier::Namespace(
+            ImportStarAsSpecifier {
+                span: DUMMY_SP,
+                local,
+            },
+        )],
+        src: Box::new(source),
+        type_only: false,
+        with: None,
+        phase: Default::default(),
+    };
+    vec![
+        ModuleItem::ModuleDecl(ModuleDecl::Import(import)),
+        ModuleItem::Stmt(Stmt::Expr(statement)),
+    ]
+}
+
+/// How many times each binding is declared directly in the module body.
+fn top_level_declaration_counts(module: &Module) -> HashMap<BindingKey, usize> {
+    let mut counts: HashMap<BindingKey, usize> = HashMap::default();
+    for item in &module.body {
+        match item {
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
+                for decl in &var.decls {
+                    for id in swc_core::ecma::utils::find_pat_ids::<_, swc_core::ecma::ast::Id>(
+                        &decl.name,
+                    ) {
+                        *counts.entry(id).or_default() += 1;
+                    }
+                }
+            }
+            ModuleItem::Stmt(Stmt::Decl(Decl::Fn(function))) => {
+                *counts.entry(binding_key(&function.ident)).or_default() += 1;
+            }
+            _ => {}
+        }
+    }
+    counts
+}
+
+/// Record `var a = require("x")` when `a` is declared once and never
+/// written.
+fn collect_stable_require(
+    item: &ModuleItem,
+    written: &HashSet<BindingKey>,
+    declaration_counts: &HashMap<BindingKey, usize>,
+    local_helpers: &LocalHelperContext,
+    requires: &mut HashMap<BindingKey, swc_core::ecma::ast::Str>,
+) {
+    let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+        return;
+    };
+    for decl in &var.decls {
+        let (Pat::Ident(binding), Some(init)) = (&decl.name, decl.init.as_deref()) else {
+            continue;
+        };
+        let key = binding_key(&binding.id);
+        if written.contains(&key) || declaration_counts.get(&key) != Some(&1) {
+            continue;
+        }
+        if let Some(source) = require_source(init, local_helpers) {
+            requires.insert(key, source);
+        }
+    }
+}
+
+/// `_irw(a)` where `a` is a recorded `var a = require("x")`: the source.
+/// sucrase and rollup keep the module in its own binding and wrap that.
+fn extract_wildcard_of_required(
+    expr: &Expr,
+    local_helpers: &LocalHelperContext,
+    requires: &HashMap<BindingKey, swc_core::ecma::ast::Str>,
+) -> Option<swc_core::ecma::ast::Str> {
+    let Expr::Call(call) = expr else { return None };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    if !local_helpers.is_helper_callee(callee, TranspilerHelperKind::InteropRequireWildcard) {
+        return None;
+    }
+    let [arg] = call.args.as_slice() else {
+        return None;
+    };
+    if arg.spread.is_some() {
+        return None;
+    }
+    let Expr::Ident(module) = arg.expr.as_ref() else {
+        return None;
+    };
+    requires.get(&binding_key(module)).cloned()
+}
+
+/// `require("x")`: the source.
+fn require_source(
+    expr: &Expr,
+    local_helpers: &LocalHelperContext,
+) -> Option<swc_core::ecma::ast::Str> {
+    let Expr::Call(call) = expr else { return None };
+    if !is_require_call(expr, local_helpers) {
+        return None;
+    }
+    match call.args[0].expr.as_ref() {
+        Expr::Lit(Lit::Str(source)) => Some(source.clone()),
+        _ => None,
+    }
+}
+
+#[derive(Default)]
+struct IdentNames(HashSet<Atom>);
+
+impl Visit for IdentNames {
+    fn visit_ident(&mut self, ident: &Ident) {
+        self.0.insert(ident.sym.clone());
+    }
 }
 
 /// Extract the require source from `_irw(require("path"))` or `_irw(require("path"), true)`.

@@ -1853,6 +1853,186 @@ _depjs = other;
     assert!(output.contains("_createNamedExportFrom(_depjs"), "{output}");
 }
 
+const SWC_INTEROP_REQUIRE_WILDCARD: &str = r#"
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) return obj;
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") return {
+        default: obj
+    };
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) return cache.get(obj);
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) Object.defineProperty(newObj, key, desc);
+            else newObj[key] = obj[key];
+        }
+    }
+    newObj.default = obj;
+    if (cache) cache.set(obj, newObj);
+    return newObj;
+}
+"#;
+
+#[test]
+fn swc_star_and_namespace_reexport_of_one_source_are_recovered() {
+    let input = format!(
+        r#"
+Object.defineProperty(exports, "__esModule", {{ value: true }});
+{SWC_EXPORT_HELPER}
+_export(exports, {{
+    get ns () {{
+        return _dep;
+    }},
+    get own () {{
+        return own;
+    }}
+}});
+var _dep = /*#__PURE__*/ _interop_require_wildcard(_export_star(require("./dep.js"), exports));
+function _export_star(from, to) {{
+    Object.keys(from).forEach(function(k) {{
+        if (k !== "default" && !Object.prototype.hasOwnProperty.call(to, k)) {{
+            Object.defineProperty(to, k, {{
+                enumerable: true,
+                get: function() {{
+                    return from[k];
+                }}
+            }});
+        }}
+    }});
+    return from;
+}}
+{SWC_INTEROP_REQUIRE_WILDCARD}
+var own = 1;
+"#
+    );
+    let output = apply(&input);
+    assert!(!output.contains("require"), "{output}");
+    assert!(!output.contains("exports"), "{output}");
+    assert!(output.contains(r#"export * from "./dep.js";"#), "{output}");
+    assert!(
+        output.contains(r#"import * as _dep from "./dep.js";"#),
+        "{output}"
+    );
+    assert!(output.contains("_dep as ns"), "{output}");
+}
+
+#[test]
+fn namespace_export_star_needs_a_helper_that_returns_its_source() {
+    // tslib's `__exportStar` returns nothing; the namespace would wrap
+    // `undefined`.
+    let input = r#"
+var __exportStar = (this && this.__exportStar) || function(m, exports) {
+    for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) exports[p] = m[p];
+};
+var tslib_1 = require("tslib");
+var _dep = tslib_1.__importStar(__exportStar(require("./dep.js"), exports));
+consume(_dep);
+"#;
+    let output = apply(input);
+    assert!(!output.contains("export *"), "{output}");
+}
+
+const ESBUILD_ESM_INTEROP_HELPERS: &str = r#"
+var __create = Object.create;
+var __getProtoOf = Object.getPrototypeOf;
+var __reExport = (target, mod, secondTarget) => (__copyProps(target, mod, "default"), secondTarget && __copyProps(secondTarget, mod, "default"));
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
+"#;
+
+#[test]
+fn esbuild_star_and_namespace_reexports_are_recovered() {
+    let input = format!(
+        r#"
+{ESBUILD_CJS_HELPERS}
+{ESBUILD_ESM_INTEROP_HELPERS}
+var mod_exports = {{}};
+__export(mod_exports, {{
+  ns: () => ns,
+  own: () => own
+}});
+module.exports = __toCommonJS(mod_exports);
+__reExport(mod_exports, require("./dep.js"), module.exports);
+var ns = __toESM(require("./dep.js"));
+const own = 1;
+"#
+    );
+    let output = apply(&input);
+    for leftover in ["require", "exports", "__reExport", "__toESM"] {
+        assert!(!output.contains(leftover), "{leftover} left in {output}");
+    }
+    assert!(output.contains(r#"export * from "./dep.js";"#), "{output}");
+    assert!(
+        output.contains(r#"import * as ns from "./dep.js";"#),
+        "{output}"
+    );
+    assert!(output.contains("export { ns }"), "{output}");
+}
+
+#[test]
+fn esbuild_to_esm_in_node_mode_stays() {
+    // `isNodeMode` makes `default` the whole module even for a module marked
+    // `__esModule`, which a namespace import would not.
+    let input = format!(
+        r#"
+{ESBUILD_CJS_HELPERS}
+{ESBUILD_ESM_INTEROP_HELPERS}
+var import_dep = __toESM(require("./dep.js"), 1);
+console.log(import_dep.default);
+"#
+    );
+    let output = apply(&input);
+    assert!(output.contains("__toESM("), "{output}");
+}
+
+#[test]
+fn sucrase_star_and_namespace_reexports_are_recovered() {
+    let input = r#"
+"use strict";Object.defineProperty(exports, "__esModule", {value: true}); function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) { newObj[key] = obj[key]; } } } newObj.default = obj; return newObj; } } function _createStarExport(obj) { Object.keys(obj) .filter((key) => key !== "default" && key !== "__esModule") .forEach((key) => { if (exports.hasOwnProperty(key)) { return; } Object.defineProperty(exports, key, {enumerable: true, configurable: true, get: () => obj[key]}); }); }
+var _depjs = require('./dep.js'); var _depjs2 = _interopRequireWildcard(_depjs); exports.ns = _depjs2; _createStarExport(_depjs);
+
+ const own = 1; exports.own = own;
+"#;
+    let output = apply(input);
+    for leftover in [
+        "require",
+        "exports",
+        "_createStarExport",
+        "_interopRequireWildcard(",
+    ] {
+        assert!(!output.contains(leftover), "{leftover} left in {output}");
+    }
+    assert!(output.contains(r#"export * from "./dep.js";"#), "{output}");
+    assert!(output.contains("import * as _depjs2 from"), "{output}");
+}
+
+#[test]
+fn source_only_star_helper_must_skip_default() {
+    // Without the `default` filter the copy would re-export `default`,
+    // which `export *` never does.
+    let input = r#"
+function _createStarExport(obj) { Object.keys(obj) .filter((key) => key !== "__esModule") .forEach((key) => { if (exports.hasOwnProperty(key)) { return; } Object.defineProperty(exports, key, {enumerable: true, configurable: true, get: () => obj[key]}); }); }
+var _depjs = require('./dep.js'); _createStarExport(_depjs);
+"#;
+    let output = apply(input);
+    assert!(!output.contains("export *"), "{output}");
+}
+
 #[test]
 fn define_property_member_getter_rejects_member_writes() {
     let input = r#"

@@ -1,6 +1,6 @@
 //! CommonJS `export * from "..."` recovery.
 //!
-//! Three producers lower `export * from "./source.js"` to a key-copy loop:
+//! Producers lower `export * from "./source.js"` to a key-copy loop:
 //!
 //! ```text
 //! // Babel: an inline loop over the required module
@@ -26,6 +26,21 @@
 //!   });
 //!   return from;
 //! }
+//! // With `export * as ns` on the same source, SWC nests the call in the
+//! // namespace interop; see [`namespace_export_star`]:
+//! var _source = _interop_require_wildcard(_export_star(require("./source.js"), exports));
+//!
+//! // sucrase: a helper that copies into the module's own `exports`:
+//! function _createStarExport(obj) {
+//!   Object.keys(obj).filter((key) => key !== "default" && key !== "__esModule").forEach((key) => {
+//!     if (exports.hasOwnProperty(key)) { return; }
+//!     Object.defineProperty(exports, key, { enumerable: true, configurable: true, get: () => obj[key] });
+//!   });
+//! }
+//! _createStarExport(_source);
+//!
+//! // esbuild: `__reExport(exports, require("./source.js"))`, as the export
+//! // getter lowering leaves it (see `export_getters.rs`).
 //! ```
 //!
 //! Minifiers rewrite the guards as `&&` / `||` chains, so every loop body is
@@ -44,10 +59,12 @@ use crate::rules::helper_matcher::{
 };
 use crate::rules::transpiler_helper_utils::{
     collect_tslib_namespace_bindings, ts_expr_matches_helper_kind, tslib_require_member_name,
-    TsHelperKind,
+    LocalHelperContext, TranspilerHelperKind, TsHelperKind,
 };
 
-use swc_core::ecma::ast::{BinExpr, KeyValueProp, MethodProp};
+use swc_core::ecma::ast::{BinExpr, ExprOrSpread, KeyValueProp, MethodProp};
+
+use super::export_getters::esbuild_re_export_helpers;
 
 use super::*;
 
@@ -68,6 +85,9 @@ pub(super) fn rewrite_commonjs_export_stars(module: &mut Module, unresolved_mark
         };
         cleanup.extend(recovered.consumed);
         rewritten.push(make_export_all(&recovered.source, recovered.span));
+        if let Some(namespace) = recovered.namespace {
+            rewritten.push(make_namespace_import(&recovered.source, namespace));
+        }
     }
 
     module.body = rewritten;
@@ -100,11 +120,9 @@ fn recognize_export_stars(
 ) -> HashMap<usize, RecoveredExportStar> {
     // Match the statement shape before collecting helpers or a use index.
     // Most modules (and later UnEsm passes) have no candidate at all.
-    if !module
-        .body
-        .iter()
-        .any(|item| is_export_star_candidate(item, unresolved_mark))
-    {
+    if !module.body.iter().any(|item| {
+        is_export_star_candidate(item, unresolved_mark) || is_source_only_helper_candidate(item)
+    }) {
         return HashMap::default();
     }
 
@@ -112,6 +130,8 @@ fn recognize_export_stars(
     let uses = BindingUseIndex::collect(module);
     let local_exports = LocalExports::collect(module, unresolved_mark);
     let requires = collect_require_bindings(module, &uses, unresolved_mark);
+    let interop = OnceCell::new();
+    let re_exports = OnceCell::new();
 
     module
         .body
@@ -119,6 +139,10 @@ fn recognize_export_stars(
         .enumerate()
         .filter_map(|(index, item)| {
             helper_call_export_star(item, &helpers, &uses, &requires, unresolved_mark)
+                .or_else(|| {
+                    namespace_export_star(item, &helpers, &uses, &interop, module, unresolved_mark)
+                })
+                .or_else(|| re_export_star(item, &re_exports, module, unresolved_mark))
                 .or_else(|| {
                     loop_export_star(
                         item,
@@ -134,6 +158,20 @@ fn recognize_export_stars(
         .collect()
 }
 
+fn make_namespace_import(source: &str, local: Ident) -> ModuleItem {
+    ModuleItem::ModuleDecl(ModuleDecl::Import(ImportDecl {
+        span: DUMMY_SP,
+        specifiers: vec![ImportSpecifier::Namespace(ImportStarAsSpecifier {
+            span: DUMMY_SP,
+            local,
+        })],
+        src: Box::new(make_str(source)),
+        type_only: false,
+        with: None,
+        phase: Default::default(),
+    }))
+}
+
 fn make_export_all(source: &str, span: Span) -> ModuleItem {
     ModuleItem::ModuleDecl(ModuleDecl::ExportAll(ExportAll {
         span,
@@ -144,8 +182,16 @@ fn make_export_all(source: &str, span: Span) -> ModuleItem {
 }
 
 /// A top-level `Object.keys(x).forEach(...)` loop or a two-argument call
-/// whose second argument is `exports`.
+/// whose second argument is `exports`, or a declarator that wraps such a
+/// call (see [`namespace_export_star`]).
 fn is_export_star_candidate(item: &ModuleItem, unresolved_mark: Mark) -> bool {
+    if nested_star_call(item).is_some_and(|(_, star)| {
+        matches!(star.args.as_slice(), [_, target]
+            if matches!(strip_parens(&target.expr), Expr::Ident(id)
+                if is_unresolved_ident(id, "exports", unresolved_mark)))
+    }) {
+        return true;
+    }
     let ModuleItem::Stmt(Stmt::Expr(expr_stmt)) = item else {
         return false;
     };
@@ -157,11 +203,30 @@ fn is_export_star_candidate(item: &ModuleItem, unresolved_mark: Mark) -> bool {
     };
     let for_each = matches!(strip_parens(callee), Expr::Member(member)
         if matches!(&member.prop, MemberProp::Ident(prop) if prop.sym == "forEach"));
+    let is_exports = |arg: &ExprOrSpread| {
+        arg.spread.is_none()
+            && matches!(strip_parens(&arg.expr), Expr::Ident(id)
+                if is_unresolved_ident(id, "exports", unresolved_mark))
+    };
     for_each
-        || matches!(call.args.as_slice(), [_, target]
-            if target.spread.is_none()
-                && matches!(strip_parens(&target.expr), Expr::Ident(id)
-                    if is_unresolved_ident(id, "exports", unresolved_mark)))
+        || matches!(call.args.as_slice(), [first, second] if is_exports(second) || is_exports(first))
+}
+
+/// `function helper(source) { <one loop> }`: the shape of a helper that copies
+/// into the module's own `exports`, whose calls take one argument.
+fn is_source_only_helper_candidate(item: &ModuleItem) -> bool {
+    let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) = item else {
+        return false;
+    };
+    fn_decl.function.params.len() == 1
+        && matches!(
+            fn_decl
+                .function
+                .body
+                .as_ref()
+                .map(|body| body.stmts.as_slice()),
+            Some([Stmt::Expr(_)])
+        )
 }
 
 // ---------------------------------------------------------------------------
@@ -172,6 +237,12 @@ struct ExportStarHelpers {
     /// Inline helpers whose body was proven to be an export-star copy, with
     /// the TypeScript `__createBinding` helper the body calls.
     inline: HashMap<BindingKey, Option<BindingKey>>,
+    /// Inline helpers among them that return their source module (SWC's
+    /// `_export_star`).
+    returns_source: HashSet<BindingKey>,
+    /// Inline helpers among them that take only the source and copy into
+    /// the module's own `exports` (sucrase's `_createStarExport`).
+    source_only: HashSet<BindingKey>,
     /// `require("tslib")` bindings.
     tslib_namespaces: HashSet<BindingKey>,
     /// `require("@swc/helpers/_/_export_star")` bindings.
@@ -183,6 +254,8 @@ impl ExportStarHelpers {
     fn collect(module: &Module, unresolved_mark: Mark) -> Self {
         let mut helpers = Self {
             inline: HashMap::default(),
+            returns_source: HashSet::default(),
+            source_only: HashSet::default(),
             tslib_namespaces: collect_tslib_namespace_bindings(module, Some(unresolved_mark)),
             swc_namespaces: HashSet::default(),
             unresolved_mark,
@@ -194,9 +267,10 @@ impl ExportStarHelpers {
                     if let Some(copy) = helper_function_copy(&fn_decl.function, unresolved_mark)
                         .filter(|copy| copy.is_helper_body(&create_binding_candidates))
                     {
-                        helpers.inline.insert(
+                        helpers.record_inline(
                             binding_key(&fn_decl.ident),
-                            copy.create_binding.as_ref().map(binding_key),
+                            &fn_decl.function,
+                            &copy,
                         );
                     }
                 }
@@ -220,10 +294,7 @@ impl ExportStarHelpers {
                         if let Some(copy) = helper_function_copy(function, unresolved_mark)
                             .filter(|copy| copy.is_helper_body(&create_binding_candidates))
                         {
-                            helpers.inline.insert(
-                                binding_key(&binding.id),
-                                copy.create_binding.as_ref().map(binding_key),
-                            );
+                            helpers.record_inline(binding_key(&binding.id), function, &copy);
                         }
                     }
                 }
@@ -231,6 +302,17 @@ impl ExportStarHelpers {
             }
         }
         helpers
+    }
+
+    fn record_inline(&mut self, key: BindingKey, function: &Function, copy: &CopyBody) {
+        if returns_first_param(function) {
+            self.returns_source.insert(key.clone());
+        }
+        if copy.copies_into_exports {
+            self.source_only.insert(key.clone());
+        }
+        self.inline
+            .insert(key, copy.create_binding.as_ref().map(binding_key));
     }
 
     /// The bindings a call through `callee` consumes (an inline helper and its
@@ -277,6 +359,42 @@ impl ExportStarHelpers {
             _ => None,
         }
     }
+}
+
+impl ExportStarHelpers {
+    /// Whether a call through `callee` returns its first argument: a proven
+    /// inline helper that ends in `return source`, or `@swc/helpers`'
+    /// `_export_star`. tslib's `__exportStar` returns nothing.
+    fn returns_source(&self, callee: &Expr) -> bool {
+        match strip_parens(callee) {
+            Expr::Ident(id) => self.returns_source.contains(&binding_key(id)),
+            Expr::Member(member) => matches!(
+                (strip_parens(&member.obj), &member.prop),
+                (Expr::Ident(object), MemberProp::Ident(prop))
+                    if prop.sym == "_" && self.swc_namespaces.contains(&binding_key(object))
+            ),
+            _ => false,
+        }
+    }
+}
+
+/// A body that ends by returning its first parameter, as `return source` or
+/// the minified `return loop, source`. [`helper_function_copy`] already
+/// proved that any return in a helper body returns the source.
+fn returns_first_param(function: &Function) -> bool {
+    let Some(Pat::Ident(source)) = function.params.first().map(|param| &param.pat) else {
+        return false;
+    };
+    let Some(Stmt::Return(ReturnStmt { arg: Some(arg), .. })) =
+        function.body.as_ref().and_then(|body| body.stmts.last())
+    else {
+        return false;
+    };
+    let returned = match strip_parens(arg) {
+        Expr::Seq(seq) => seq.exprs.last().map(|expr| strip_parens(expr)),
+        expr => Some(expr),
+    };
+    matches!(returned, Some(Expr::Ident(id)) if same_ident(id, &source.id))
 }
 
 /// The fallback of TypeScript's `this && this.__exportStar || function ...`,
@@ -341,6 +459,26 @@ fn helper_function_copy(function: &Function, unresolved_mark: Mark) -> Option<Co
     if function.is_async || function.is_generator {
         return None;
     }
+    // sucrase's `_createStarExport(obj)` copies into the module's own
+    // `exports` instead of a target parameter.
+    if let [source] = function.params.as_slice() {
+        let Pat::Ident(source) = &source.pat else {
+            return None;
+        };
+        let [Stmt::Expr(loop_stmt)] = function.body.as_ref()?.stmts.as_slice() else {
+            return None;
+        };
+        return match_keys_for_each(
+            &loop_stmt.expr,
+            &source.id,
+            CopyTarget::Exports(unresolved_mark),
+            unresolved_mark,
+        )
+        .map(|copy| CopyBody {
+            copies_into_exports: true,
+            ..copy
+        });
+    }
     let [source, target] = function.params.as_slice() else {
         return None;
     };
@@ -401,14 +539,20 @@ fn helper_call_export_star(
     let Callee::Expr(callee) = &call.callee else {
         return None;
     };
-    let [source, target] = call.args.as_slice() else {
-        return None;
+    let source_only = matches!(strip_parens(callee), Expr::Ident(id)
+        if helpers.source_only.contains(&binding_key(id)));
+    let source = match (call.args.as_slice(), source_only) {
+        ([source], true) => source,
+        ([source, target], false)
+            if target.spread.is_none()
+                && matches!(strip_parens(&target.expr), Expr::Ident(id)
+                    if is_unresolved_ident(id, "exports", unresolved_mark)) =>
+        {
+            source
+        }
+        _ => return None,
     };
-    if source.spread.is_some()
-        || target.spread.is_some()
-        || !matches!(strip_parens(&target.expr), Expr::Ident(id)
-            if is_unresolved_ident(id, "exports", unresolved_mark))
-    {
+    if source.spread.is_some() {
         return None;
     }
     let mut consumed = helpers.helper_callee_bindings(callee, uses)?;
@@ -429,6 +573,144 @@ fn helper_call_export_star(
         source,
         span: expr_stmt.span,
         consumed,
+        namespace: None,
+    })
+}
+
+/// `var ns = WRAP(STAR(...))` as the only declarator of a top-level
+/// declaration: the declarator and the inner call.
+fn nested_star_call(item: &ModuleItem) -> Option<(&VarDeclarator, &CallExpr)> {
+    let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+        return None;
+    };
+    let [decl] = var.decls.as_slice() else {
+        return None;
+    };
+    let Expr::Call(wrap) = strip_parens(decl.init.as_deref()?) else {
+        return None;
+    };
+    let [arg] = wrap.args.as_slice() else {
+        return None;
+    };
+    if arg.spread.is_some() {
+        return None;
+    }
+    match strip_parens(&arg.expr) {
+        Expr::Call(star) => Some((decl, star)),
+        _ => None,
+    }
+}
+
+/// SWC lowers `export * from "x"` and `export * as ns from "x"` on one
+/// source to one declaration:
+///
+/// ```text
+/// var _x = _interop_require_wildcard(_export_star(require("x"), exports));
+/// ```
+///
+/// `_export_star` copies the re-exports and returns the module it was given,
+/// which the wildcard interop then wraps as a namespace. The declaration
+/// becomes `export * from "x"` and `import * as _x from "x"`; the second
+/// `require` of the same source in the original would return the same
+/// cached module. The star helper must be proven to return its source.
+fn namespace_export_star(
+    item: &ModuleItem,
+    helpers: &ExportStarHelpers,
+    uses: &BindingUseIndex,
+    interop: &OnceCell<LocalHelperContext>,
+    module: &Module,
+    unresolved_mark: Mark,
+) -> Option<RecoveredExportStar> {
+    let (decl, star) = nested_star_call(item)?;
+    let Pat::Ident(binding) = &decl.name else {
+        return None;
+    };
+    let key = binding_key(&binding.id);
+    if !uses.has_single_declaration(&key) || uses.has_direct_write(&key) {
+        return None;
+    }
+    let Some(Expr::Call(wrap)) = decl.init.as_deref().map(strip_parens) else {
+        return None;
+    };
+    let Callee::Expr(wrap_callee) = &wrap.callee else {
+        return None;
+    };
+    let interop = interop.get_or_init(|| LocalHelperContext::collect(module));
+    if !interop.is_helper_callee(wrap_callee, TranspilerHelperKind::InteropRequireWildcard) {
+        return None;
+    }
+    let Callee::Expr(star_callee) = &star.callee else {
+        return None;
+    };
+    let [source, target] = star.args.as_slice() else {
+        return None;
+    };
+    if source.spread.is_some()
+        || target.spread.is_some()
+        || !matches!(strip_parens(&target.expr), Expr::Ident(id)
+            if is_unresolved_ident(id, "exports", unresolved_mark))
+        || !helpers.returns_source(star_callee)
+    {
+        return None;
+    }
+    let mut consumed = helpers.helper_callee_bindings(star_callee, uses)?;
+    if let Expr::Ident(wrap) = strip_parens(wrap_callee) {
+        consumed.push(binding_key(wrap));
+    }
+    let Expr::Call(require) = strip_parens(&source.expr) else {
+        return None;
+    };
+    let source = is_require_call(require, unresolved_mark)?;
+    Some(RecoveredExportStar {
+        source,
+        span: module_item_span(item),
+        consumed,
+        namespace: Some(binding.id.clone()),
+    })
+}
+
+/// esbuild's `__reExport(exports, require("x"))`, which the export getter
+/// lowering leaves once the `__toCommonJS` namespace is gone (see
+/// `export_getters.rs`).
+fn re_export_star(
+    item: &ModuleItem,
+    re_exports: &OnceCell<HashSet<BindingKey>>,
+    module: &Module,
+    unresolved_mark: Mark,
+) -> Option<RecoveredExportStar> {
+    let ModuleItem::Stmt(Stmt::Expr(expr_stmt)) = item else {
+        return None;
+    };
+    let Expr::Call(call) = strip_parens(expr_stmt.expr.as_ref()) else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Ident(callee) = strip_parens(callee) else {
+        return None;
+    };
+    let [target, source] = call.args.as_slice() else {
+        return None;
+    };
+    if target.spread.is_some()
+        || source.spread.is_some()
+        || !matches!(strip_parens(&target.expr), Expr::Ident(id)
+            if is_unresolved_ident(id, "exports", unresolved_mark))
+    {
+        return None;
+    }
+    let Expr::Call(require) = strip_parens(&source.expr) else {
+        return None;
+    };
+    let source = is_require_call(require, unresolved_mark)?;
+    let key = binding_key(callee);
+    let re_exports = re_exports.get_or_init(|| esbuild_re_export_helpers(module, unresolved_mark));
+    re_exports.contains(&key).then(|| RecoveredExportStar {
+        source,
+        span: expr_stmt.span,
+        consumed: vec![key],
+        namespace: None,
     })
 }
 
@@ -476,6 +758,7 @@ fn loop_export_star(
         source: source.clone(),
         span: expr_stmt.span,
         consumed,
+        namespace: None,
     })
 }
 
@@ -484,6 +767,10 @@ struct RecoveredExportStar {
     span: Span,
     /// Bindings whose declarations may go once nothing references them.
     consumed: Vec<BindingKey>,
+    /// The namespace binding of a nested re-export
+    /// (`var ns = WILDCARD(STAR(require("x"), exports))`), which becomes
+    /// `import * as ns from "x"`.
+    namespace: Option<Ident>,
 }
 
 /// `binding` in `Object.keys(binding).forEach(...)`.
@@ -586,6 +873,9 @@ struct CopyBody {
     export_names: Option<Ident>,
     action: Option<CopyAction>,
     create_binding: Option<Ident>,
+    /// A helper that copies into the free `exports` and takes only the
+    /// source module.
+    copies_into_exports: bool,
 }
 
 impl CopyBody {
@@ -670,7 +960,41 @@ fn match_keys_for_each(
     let [callback] = for_each.args.as_slice() else {
         return None;
     };
-    let Expr::Call(keys) = strip_parens(&for_each_member.obj) else {
+    let mut matcher = CopyMatcher::new(source, target, unresolved_mark);
+    let mut keys_expr = strip_parens(&for_each_member.obj);
+    // sucrase: `Object.keys(source).filter((key) => key !== "default" &&
+    // key !== "__esModule").forEach(...)`; the filter skips what its
+    // predicate rejects.
+    if let Expr::Call(filter) = keys_expr {
+        if let Callee::Expr(filter_callee) = &filter.callee {
+            if let Expr::Member(filter_member) = strip_parens(filter_callee) {
+                if matches!(&filter_member.prop, MemberProp::Ident(prop) if prop.sym == "filter") {
+                    let [predicate] = filter.args.as_slice() else {
+                        return None;
+                    };
+                    if predicate.spread.is_some() {
+                        return None;
+                    }
+                    let Expr::Arrow(predicate) = strip_parens(&predicate.expr) else {
+                        return None;
+                    };
+                    let [Pat::Ident(key)] = predicate.params.as_slice() else {
+                        return None;
+                    };
+                    if predicate.is_async || predicate.is_generator {
+                        return None;
+                    }
+                    let ArrowFunctionBody::Expr(test) = predicate.body.as_ref() else {
+                        return None;
+                    };
+                    matcher.key = Some(key.id.clone());
+                    matcher.skip_when(test, false)?;
+                    keys_expr = strip_parens(&filter_member.obj);
+                }
+            }
+        }
+    }
+    let Expr::Call(keys) = keys_expr else {
         return None;
     };
     let Callee::Expr(keys_callee) = &keys.callee else {
@@ -684,7 +1008,6 @@ fn match_keys_for_each(
     {
         return None;
     }
-    let mut matcher = CopyMatcher::new(source, target, unresolved_mark);
     match strip_parens(&callback.expr) {
         Expr::Fn(function) => {
             let function = &function.function;
@@ -767,6 +1090,7 @@ impl<'a> CopyMatcher<'a> {
                 export_names: None,
                 action: None,
                 create_binding: None,
+                copies_into_exports: false,
             },
         }
     }
@@ -1078,6 +1402,15 @@ impl<'a> CopyMatcher<'a> {
                         return false;
                     }
                     enumerable = true;
+                }
+                // sucrase marks the copy configurable; the re-export it
+                // stands for is a fixed binding either way.
+                Prop::KeyValue(KeyValueProp { key, value })
+                    if prop_name_is(key, "configurable") =>
+                {
+                    if !matches!(strip_parens(value), Expr::Lit(Lit::Bool(_))) {
+                        return false;
+                    }
                 }
                 Prop::KeyValue(KeyValueProp { key, value }) if prop_name_is(key, "get") => {
                     if !self.returns_source_key(value) {

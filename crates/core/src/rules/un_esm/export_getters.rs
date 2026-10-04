@@ -75,12 +75,18 @@ pub(crate) fn lower_export_getter_helpers(module: &mut Module, unresolved_mark: 
         if let Some((callee, definitions)) = helpers.lower_exports_call(item, &uses) {
             consumed.insert(callee);
             lowered.insert(index, definitions);
+        } else if let Some((callee, import)) = helpers.lower_to_esm(item, &uses) {
+            consumed.insert(callee);
+            lowered.insert(index, vec![import]);
         }
     }
     if let Some(namespace) = helpers.lower_namespace_exports(module, &uses) {
         consumed.extend(namespace.consumed);
         removed.extend(namespace.removed);
         lowered.insert(namespace.module_exports_index, namespace.definitions);
+        for (index, item) in namespace.rewritten {
+            lowered.insert(index, vec![item]);
+        }
     }
     if lowered.is_empty() {
         return;
@@ -109,6 +115,9 @@ pub(crate) fn lower_export_getter_helpers(module: &mut Module, unresolved_mark: 
 /// `f(binding, "a", "b")`, or `module.exports = f(binding)`. Most modules
 /// have none, and then no binding analysis runs.
 fn is_helper_call_candidate(item: &ModuleItem, unresolved_mark: Mark) -> bool {
+    if to_esm_declarator(item, unresolved_mark).is_some() {
+        return true;
+    }
     let ModuleItem::Stmt(Stmt::Expr(statement)) = item else {
         return false;
     };
@@ -161,6 +170,12 @@ struct GetterHelpers {
     to_common_js: HashSet<BindingKey>,
     /// sucrase `_createNamedExportFrom(obj, localName, importedName)`.
     named_export_from: HashSet<BindingKey>,
+    /// esbuild `__reExport(target, mod, secondTarget)`: copies every key of
+    /// `mod` except `default` that the targets do not own yet.
+    pub(super) re_export: HashSet<BindingKey>,
+    /// esbuild `__toESM(mod)`: a namespace object for a required module,
+    /// with `default` set to the module unless it is marked `__esModule`.
+    to_esm: HashSet<BindingKey>,
     /// Bindings that only the helpers above use: esbuild `__copyProps` and
     /// `__hasOwnProp`.
     dependencies: HashSet<BindingKey>,
@@ -173,6 +188,8 @@ impl GetterHelpers {
             getter_maps: HashMap::default(),
             to_common_js: HashSet::default(),
             named_export_from: HashSet::default(),
+            re_export: HashSet::default(),
+            to_esm: HashSet::default(),
             dependencies: HashSet::default(),
         };
         let mut functions: Vec<(&Ident, HelperFunction)> = Vec::new();
@@ -232,15 +249,53 @@ impl GetterHelpers {
         }
         for (ident, function) in &functions {
             let key = binding_key(ident);
-            if stable(&key) && is_to_common_js_helper(function, &copy_props, unresolved_mark) {
+            if !stable(&key) {
+                continue;
+            }
+            if is_to_common_js_helper(function, &copy_props, unresolved_mark) {
                 helpers.to_common_js.insert(key);
+            } else if is_re_export_helper(function, &copy_props) {
+                helpers.re_export.insert(key);
+            } else if is_to_esm_helper(function, &copy_props, unresolved_mark) {
+                helpers.to_esm.insert(key);
             }
         }
         helpers
     }
 
     fn is_empty(&self) -> bool {
-        self.getter_maps.is_empty() && self.named_export_from.is_empty()
+        self.getter_maps.is_empty() && self.named_export_from.is_empty() && self.to_esm.is_empty()
+    }
+
+    /// `var ns = __toESM(require("x"));` becomes `import * as ns from "x"`,
+    /// as Babel's `_interopRequireWildcard(require("x"))` does. The
+    /// two-argument form (`isNodeMode`) always sets `default` to the module,
+    /// which a namespace import of a module marked `__esModule` would not.
+    fn lower_to_esm(
+        &self,
+        item: &ModuleItem,
+        uses: &BindingUseIndex,
+    ) -> Option<(BindingKey, ModuleItem)> {
+        let (binding, callee, source) = to_esm_declarator(item, self.unresolved_mark)?;
+        let key = binding_key(binding);
+        if !self.to_esm.contains(&callee)
+            || !uses.has_single_declaration(&key)
+            || uses.has_direct_write(&key)
+        {
+            return None;
+        }
+        let import = ImportDecl {
+            span: module_item_span(item),
+            specifiers: vec![ImportSpecifier::Namespace(ImportStarAsSpecifier {
+                span: DUMMY_SP,
+                local: binding.clone(),
+            })],
+            src: Box::new(make_str(&source)),
+            type_only: false,
+            with: None,
+            phase: Default::default(),
+        };
+        Some((callee, ModuleItem::ModuleDecl(ModuleDecl::Import(import))))
     }
 
     /// `_export(exports, { ... })` or `_createNamedExportFrom(dep, "a", "b")`
@@ -354,11 +409,22 @@ impl GetterHelpers {
         let namespace_key = binding_key(&namespace);
         let exports_key = binding_key(&make_unresolved_ident("exports".into(), unresolved_mark));
         let module_key = binding_key(&make_unresolved_ident("module".into(), unresolved_mark));
+        // `__reExport(namespace, require("x"), module.exports)` after the
+        // assignment copies into both objects; `export *` from the namespace
+        // is only observable through `module.exports`.
+        let re_exports: Vec<(usize, &CallExpr)> = module.body[module_exports_index + 1..]
+            .iter()
+            .enumerate()
+            .filter_map(|(offset, item)| {
+                let call = self.namespace_re_export(item, &namespace)?;
+                Some((module_exports_index + 1 + offset, call))
+            })
+            .collect();
         if count_binding_refs(module, &exports_key) != 0
-            || count_binding_refs(module, &module_key) != 1
+            || count_binding_refs(module, &module_key) != 1 + re_exports.len()
             || !uses.has_single_declaration(&namespace_key)
             || uses.has_direct_write(&namespace_key)
-            || uses.use_count(&namespace_key) != 2
+            || uses.use_count(&namespace_key) != 2 + re_exports.len()
         {
             return None;
         }
@@ -392,12 +458,57 @@ impl GetterHelpers {
                 getter_definition(span, &name, getter, false, unresolved_mark)
             }),
         );
+        // The copy into the namespace is unobservable once it is gone, and
+        // `module.exports` is `exports` again: `__reExport(exports, mod)`.
+        let rewritten = re_exports
+            .into_iter()
+            .map(|(index, call)| {
+                let mut call = call.clone();
+                call.args.truncate(2);
+                call.args[0] = exports_ident(unresolved_mark).as_arg();
+                let item = ModuleItem::Stmt(Stmt::Expr(ExprStmt {
+                    span: module_item_span(&module.body[index]),
+                    expr: Box::new(Expr::Call(call)),
+                }));
+                (index, item)
+            })
+            .collect();
         Some(LoweredNamespace {
             module_exports_index,
             definitions,
             removed: vec![declaration_index, definition_index],
             consumed: vec![getter_map, to_common_js],
+            rewritten,
         })
+    }
+
+    /// `__reExport(namespace, require("x"), module.exports);`
+    fn namespace_re_export<'a>(
+        &self,
+        item: &'a ModuleItem,
+        namespace: &Ident,
+    ) -> Option<&'a CallExpr> {
+        let ModuleItem::Stmt(Stmt::Expr(statement)) = item else {
+            return None;
+        };
+        let Expr::Call(call) = strip_parens(&statement.expr) else {
+            return None;
+        };
+        let Callee::Expr(callee) = &call.callee else {
+            return None;
+        };
+        let Expr::Ident(callee) = strip_parens(callee) else {
+            return None;
+        };
+        if !self.re_export.contains(&binding_key(callee)) {
+            return None;
+        }
+        let [target, source, second] = plain_args(&call.args)?;
+        (is_ident_expr(target, namespace)
+            && matches!(strip_parens(source), Expr::Call(require)
+                if is_require_call(require, self.unresolved_mark).is_some())
+            && is_module_exports_expr(strip_parens(second), self.unresolved_mark))
+        .then_some(call)
     }
 
     /// `module.exports = __toCommonJS(namespace);`
@@ -477,6 +588,52 @@ struct LoweredNamespace {
     definitions: Vec<ModuleItem>,
     removed: Vec<usize>,
     consumed: Vec<BindingKey>,
+    /// Re-export calls rewritten to copy into `exports`, by body index.
+    rewritten: Vec<(usize, ModuleItem)>,
+}
+
+/// The esbuild `__reExport` helpers of a module, for the export-star
+/// recovery: `__reExport(exports, require("x"))` is `export * from "x"`.
+pub(super) fn esbuild_re_export_helpers(
+    module: &Module,
+    unresolved_mark: Mark,
+) -> HashSet<BindingKey> {
+    let uses = BindingUseIndex::collect(module);
+    GetterHelpers::collect(module, &uses, unresolved_mark).re_export
+}
+
+/// `var binding = CALLEE(require("x"));` as the only declarator: the
+/// binding, the callee, and the source.
+fn to_esm_declarator(
+    item: &ModuleItem,
+    unresolved_mark: Mark,
+) -> Option<(&Ident, BindingKey, String)> {
+    let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+        return None;
+    };
+    let [VarDeclarator {
+        name: Pat::Ident(binding),
+        init: Some(init),
+        ..
+    }] = var.decls.as_slice()
+    else {
+        return None;
+    };
+    let Expr::Call(call) = strip_parens(init) else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Ident(callee) = strip_parens(callee) else {
+        return None;
+    };
+    let [module] = plain_args(&call.args)?;
+    let Expr::Call(require) = strip_parens(module) else {
+        return None;
+    };
+    let source = is_require_call(require, unresolved_mark)?;
+    Some((&binding.id, binding_key(callee), source))
 }
 
 #[derive(Clone, Copy)]
@@ -526,6 +683,38 @@ impl<'a> HelperFunction<'a> {
                 ArrowFunctionBody::Expr(_) => None,
             },
         }
+    }
+
+    /// The body as the expressions it evaluates, the last one returned:
+    /// `(a, b)` as an arrow body, or `{ a; return b; }` once
+    /// `SimplifySequence` has split it.
+    fn effects(self) -> Option<Vec<&'a Expr>> {
+        let mut effects = Vec::new();
+        let returned = match self {
+            Self::Arrow(ArrowExpr { body, .. })
+                if matches!(body.as_ref(), ArrowFunctionBody::Expr(_)) =>
+            {
+                self.returned_expr()?
+            }
+            _ => {
+                let (last, init) = self.stmts()?.split_last()?;
+                for stmt in init {
+                    let Stmt::Expr(statement) = stmt else {
+                        return None;
+                    };
+                    effects.push(statement.expr.as_ref());
+                }
+                let Stmt::Return(ReturnStmt { arg: Some(arg), .. }) = last else {
+                    return None;
+                };
+                arg.as_ref()
+            }
+        };
+        match strip_parens(returned) {
+            Expr::Seq(seq) => effects.extend(seq.exprs.iter().map(|expr| expr.as_ref())),
+            expr => effects.push(expr),
+        }
+        Some(effects)
     }
 
     /// The returned expression of an expression-bodied arrow or a function
@@ -974,6 +1163,132 @@ fn is_copied_enumerable(
         if is_ident_expr(&member.obj, desc)
             && matches!(&member.prop, MemberProp::Ident(prop) if prop.sym == "enumerable"));
     assigns_desc && reads_descriptor && reads_enumerable
+}
+
+/// esbuild's `__reExport`:
+/// `(target, mod, secondTarget) => (__copyProps(target, mod, "default"),
+/// secondTarget && __copyProps(secondTarget, mod, "default"))`.
+fn is_re_export_helper(function: &HelperFunction, copy_props: &HashSet<BindingKey>) -> bool {
+    let Some(params) = function.params() else {
+        return false;
+    };
+    let [target, module, second] = params.as_slice() else {
+        return false;
+    };
+    let Some(effects) = function.effects() else {
+        return false;
+    };
+    let [first_copy, second_copy] = effects.as_slice() else {
+        return false;
+    };
+    let is_copy = |expr: &Expr, to: &Ident| {
+        let Expr::Call(call) = strip_parens(expr) else {
+            return false;
+        };
+        matches!(&call.callee, Callee::Expr(callee)
+            if matches!(strip_parens(callee), Expr::Ident(id) if copy_props.contains(&binding_key(id))))
+            && plain_args(&call.args).is_some_and(|[copy_to, from, except]: [&Expr; 3]| {
+                is_ident_expr(copy_to, to)
+                    && is_ident_expr(from, module)
+                    && string_value(except).as_deref() == Some("default")
+            })
+    };
+    is_copy(first_copy, target)
+        && matches!(strip_parens(second_copy), Expr::Bin(BinExpr { op: BinaryOp::LogicalAnd, left, right, .. })
+            if is_ident_expr(left, second) && is_copy(right, second))
+}
+
+/// esbuild's `__toESM`:
+///
+/// ```text
+/// (mod, isNodeMode, target) => (
+///   target = mod != null ? __create(__getProtoOf(mod)) : {},
+///   __copyProps(
+///     isNodeMode || !mod || !mod.__esModule
+///       ? __defProp(target, "default", { value: mod, enumerable: true })
+///       : target,
+///     mod))
+/// ```
+///
+/// The prototype of the copy is not checked: a namespace import exposes the
+/// same keys either way.
+fn is_to_esm_helper(
+    function: &HelperFunction,
+    copy_props: &HashSet<BindingKey>,
+    unresolved_mark: Mark,
+) -> bool {
+    let Some(params) = function.params() else {
+        return false;
+    };
+    let [module, node_mode, target] = params.as_slice() else {
+        return false;
+    };
+    let Some(effects) = function.effects() else {
+        return false;
+    };
+    let [init, copy] = effects.as_slice() else {
+        return false;
+    };
+    let assigns_target = matches!(strip_parens(init), Expr::Assign(assign)
+        if assign.op == AssignOp::Assign
+            && matches!(&assign.left, AssignTarget::Simple(SimpleAssignTarget::Ident(binding))
+                if same_ident(&binding.id, target)));
+    let Expr::Call(copy) = strip_parens(copy) else {
+        return false;
+    };
+    let copies = matches!(&copy.callee, Callee::Expr(callee)
+        if matches!(strip_parens(callee), Expr::Ident(id) if copy_props.contains(&binding_key(id))));
+    let Some([to, from]) = plain_args(&copy.args) else {
+        return false;
+    };
+    let Expr::Cond(choice) = strip_parens(to) else {
+        return false;
+    };
+    // `isNodeMode || !mod || !mod.__esModule`
+    let mut tests = Vec::new();
+    collect_or_operands(&choice.test, &mut tests);
+    let tests_interop = matches!(tests.as_slice(), [node, missing, not_es_module]
+        if is_ident_expr(node, node_mode)
+            && matches!(strip_parens(missing), Expr::Unary(UnaryExpr { op: UnaryOp::Bang, arg, .. })
+                if is_ident_expr(arg, module))
+            && matches!(strip_parens(not_es_module), Expr::Unary(UnaryExpr { op: UnaryOp::Bang, arg, .. })
+                if matches!(strip_parens(arg), Expr::Member(member)
+                    if is_ident_expr(&member.obj, module)
+                        && matches!(&member.prop, MemberProp::Ident(prop) if prop.sym == "__esModule"))));
+    // `__defProp(target, "default", { value: mod, enumerable: true })`
+    let defines_default = matches!(strip_parens(&choice.cons), Expr::Call(define)
+    if matches!(&define.callee, Callee::Expr(callee)
+        if is_unresolved_member_expr(callee, "Object", "defineProperty", unresolved_mark))
+        && plain_args(&define.args).is_some_and(|[object, name, descriptor]: [&Expr; 3]| {
+            is_ident_expr(object, target)
+                && string_value(name).as_deref() == Some("default")
+                && descriptor_entries(descriptor).is_some_and(|entries| {
+                    entries.len() == 2
+                        && entries.get("value").is_some_and(|value| is_ident_expr(value, module))
+                        && entries.get("enumerable").is_some_and(|value| is_bool_lit(value, true))
+                })
+        }));
+    assigns_target
+        && copies
+        && tests_interop
+        && defines_default
+        && is_ident_expr(&choice.alt, target)
+        && is_ident_expr(from, module)
+}
+
+fn collect_or_operands<'a>(expr: &'a Expr, operands: &mut Vec<&'a Expr>) {
+    match strip_parens(expr) {
+        Expr::Bin(BinExpr {
+            op: BinaryOp::LogicalOr,
+            left,
+            right,
+            ..
+        }) => {
+            collect_or_operands(left, operands);
+            collect_or_operands(right, operands);
+        }
+        expr => operands.push(expr),
+    }
 }
 
 /// esbuild's `__toCommonJS`:
