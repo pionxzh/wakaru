@@ -270,15 +270,14 @@ today; none of them guesses.
   `require("path").join(/* turbopackIgnore: true */ process.cwd(), …)`)
   merges with the require parameter; see
   [unpacking.md](../unpacking.md#factory-normalization-and-failure-boundaries).
-- **Top-level `this` in a CommonJS factory.** Turbopack rewrites it to
-  `ctx.e`, which translates to `exports`. TypeScript's
-  `(this && this.__createBinding) || …` and `__setModuleDefault` helpers
-  then read `exports && exports.__createBinding`, which helper detection
-  does not recognize (it does for `__importStar` and `__importDefault`).
-  The module keeps the helpers and an `import * as` next to CommonJS
-  exports, and reports `commonjs_export_unrecovered`. Fix direction: accept
-  the unresolved `exports` receiver for these helpers, since top-level
-  `this` is `exports` in CommonJS.
+- **Top-level `this` in a CommonJS factory.** Turbopack compiles a free
+  top-level `this` in a CommonJS module to `ctx.e` (from 15.4.0). Only the
+  TypeScript helper guard `ctx.e && ctx.e.__name` becomes `this` again;
+  every other read stays `exports`. Translating all of them to `this` would
+  restore the source text (UMD roots, `var root = … ? self : this`), but
+  `UnEsm` converts a module with a top-level `this` to ESM and keeps `this`,
+  which is `undefined` there. Do it once `UnEsm` treats a top-level `this`
+  as the exports object.
 - **`ctx.b`.** Create-worker in 16.2, chunk base path in 16.3; the same
   letter cannot become a residual without version evidence. Revisit when
   the chunk or the runtime file can prove the version.

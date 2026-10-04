@@ -27,10 +27,11 @@ use swc_core::common::{
     sync::Lrc, FileName, Globals, Mark, SourceMap, Span, Spanned, SyntaxContext, DUMMY_SP, GLOBALS,
 };
 use swc_core::ecma::ast::{
-    ArrayLit, ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BindingIdent,
-    CallExpr, Callee, ClassDecl, ComputedPropName, Expr, ExprOrSpread, ExprStmt, FnDecl, Ident,
-    IdentName, KeyValueProp, Lit, MemberExpr, MemberProp, Module, ModuleItem, Number, ObjectLit,
-    Pat, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt, Str,
+    ArrayLit, ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BinaryOp,
+    BindingIdent, CallExpr, Callee, ClassDecl, ClassProp, ComputedPropName, Constructor, Expr,
+    ExprOrSpread, ExprStmt, FnDecl, Function, Ident, IdentName, KeyValueProp, Lit, MemberExpr,
+    MemberProp, Module, ModuleItem, Number, ObjectLit, Pat, PrivateProp, Prop, PropName,
+    PropOrSpread, ReturnStmt, SimpleAssignTarget, StaticBlock, Stmt, Str, ThisExpr,
 };
 use swc_core::ecma::parser::{Parser, StringInput, Syntax};
 use swc_core::ecma::transforms::base::resolver;
@@ -1329,6 +1330,7 @@ fn translate_factory(
             context_helper: context_helper.clone(),
             uses_context_helper: false,
             residual: None,
+            this_scope_depth: 0,
         };
         translator.translate_module(&mut module);
         if let Some(failure) = translator.failure {
@@ -1721,6 +1723,9 @@ struct ContextTranslator<'a> {
     uses_context_helper: bool,
     /// The first runtime member kept as a residual.
     residual: Option<char>,
+    /// Nesting depth of functions, constructors, class field initializers,
+    /// and static blocks, each of which binds its own `this`.
+    this_scope_depth: usize,
 }
 
 /// Top-level export registration, translated at statement level.
@@ -1764,6 +1769,28 @@ impl ContextTranslator<'_> {
             MemberProp::Ident(prop) => Some(prop.sym.as_ref()),
             _ => None,
         }
+    }
+
+    /// `ctx.e && ctx.e.__name` at top-level `this` scope, the
+    /// `(this && this.__name) || …` guard of TypeScript's CommonJS helpers.
+    /// From Next 15.4.0 Turbopack compiles a free top-level `this` in a
+    /// CommonJS module to `ctx.e`; restoring `this` here keeps the helper
+    /// recognizable. Other `ctx.e` reads stay `exports`, the same object in
+    /// CommonJS, because `UnEsm` does not treat a top-level `this` as the
+    /// exports object when it converts a module.
+    fn is_this_helper_guard(&self, expr: &Expr) -> bool {
+        let Expr::Bin(bin) = expr else {
+            return false;
+        };
+        if self.this_scope_depth != 0 || bin.op != BinaryOp::LogicalAnd {
+            return false;
+        }
+        let Expr::Member(right) = strip_parens(&bin.right) else {
+            return false;
+        };
+        self.ctx_member(&bin.left) == Some("e")
+            && self.ctx_member(&right.obj) == Some("e")
+            && matches!(&right.prop, MemberProp::Ident(name) if name.sym.starts_with("__"))
     }
 
     fn export_call(&self, expr: &Expr) -> Option<ExportCall> {
@@ -2391,8 +2418,48 @@ impl VisitMut for ContextTranslator<'_> {
         self.visit_discarded(&mut stmt.expr);
     }
 
+    fn visit_mut_function(&mut self, function: &mut Function) {
+        self.this_scope_depth += 1;
+        function.visit_mut_children_with(self);
+        self.this_scope_depth -= 1;
+    }
+
+    fn visit_mut_constructor(&mut self, constructor: &mut Constructor) {
+        self.this_scope_depth += 1;
+        constructor.visit_mut_children_with(self);
+        self.this_scope_depth -= 1;
+    }
+
+    fn visit_mut_class_prop(&mut self, prop: &mut ClassProp) {
+        self.this_scope_depth += 1;
+        prop.visit_mut_children_with(self);
+        self.this_scope_depth -= 1;
+    }
+
+    fn visit_mut_private_prop(&mut self, prop: &mut PrivateProp) {
+        self.this_scope_depth += 1;
+        prop.visit_mut_children_with(self);
+        self.this_scope_depth -= 1;
+    }
+
+    fn visit_mut_static_block(&mut self, block: &mut StaticBlock) {
+        self.this_scope_depth += 1;
+        block.visit_mut_children_with(self);
+        self.this_scope_depth -= 1;
+    }
+
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         if self.failure.is_some() {
+            return;
+        }
+        if self.is_this_helper_guard(expr) {
+            let Expr::Bin(bin) = expr else {
+                unreachable!("checked by is_this_helper_guard");
+            };
+            *bin.left = this_expr();
+            if let Expr::Member(right) = strip_parens_mut(&mut bin.right) {
+                *right.obj = this_expr();
+            }
             return;
         }
         if let Some(replacement) = self.translate_inline_loader_call(expr) {
@@ -2557,6 +2624,12 @@ fn is_arrow_iife(call: &CallExpr) -> bool {
 
 fn is_function(expr: &Expr) -> bool {
     matches!(strip_parens(expr), Expr::Arrow(_) | Expr::Fn(_))
+}
+
+fn this_expr() -> Expr {
+    Expr::This(ThisExpr {
+        span: Default::default(),
+    })
 }
 
 fn ident_expr(sym: &Atom) -> Box<Expr> {

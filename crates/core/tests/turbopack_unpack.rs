@@ -882,6 +882,39 @@ fn exports_module_and_asset_url_members_are_translated() {
 }
 
 #[test]
+fn typescript_helper_guards_on_top_level_this_are_recognized() {
+    // Turbopack compiles TypeScript's `(this && this.__importDefault) || …`
+    // guard to `ctx.e && ctx.e.__importDefault`.
+    let source = client_chunk(
+        r#"
+101, (e, r, t) => { "use strict"; var n = e.e && e.e.__importDefault || function (m) { return m && m.__esModule ? m : { default: m }; }; Object.defineProperty(t, "__esModule", { value: !0 }); var d = n(e.r(202)); t.value = d.default.label; },
+202, (e, r, t) => { t.label = "beta"; }
+"#,
+    );
+    let output = unpack_chunk(&source);
+    assert_clean(&output);
+    let code = module(&output, "module-101.js");
+    assert!(!code.contains("__importDefault"), "{code}");
+    assert!(!code.contains("exports"), "{code}");
+    assert!(code.contains("export const value"), "{code}");
+}
+
+#[test]
+fn helper_guards_inside_functions_keep_the_exports_object() {
+    // Inside a non-arrow function `this` is that function's receiver, so only
+    // a top-level guard can name the module's `this`.
+    let source = client_chunk(
+        r#"
+101, (e, r, t) => { t.read = function () { return e.e && e.e.__helper; }; }
+"#,
+    );
+    let output = unpack_chunk(&source);
+    let code = module(&output, "module-101.js");
+    assert!(code.contains("exports && exports.__helper"), "{code}");
+    assert!(!code.contains("this"), "{code}");
+}
+
+#[test]
 fn value_exports_whose_result_is_discarded_become_assignments() {
     // A UMD wrapper registers its value conditionally.
     let source = client_chunk(

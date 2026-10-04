@@ -237,7 +237,13 @@ applies. Only members with a known meaning are translated:
   value export whose result is used is not translated.
 - `ctx.e` and `ctx.m` become the exports and module parameters. All three
   parameters get fresh spellings first, so synthesized references cannot be
-  captured.
+  captured. From Next 15.4.0, `ctx.e` is Turbopack's compile-time
+  replacement for a free top-level `this` in a CommonJS module. The guard
+  `ctx.e && ctx.e.__name` outside any function, class field, or static block
+  (TypeScript's `(this && this.__name) || …` helper prelude) becomes `this`
+  again so helper detection recognizes it; other `ctx.e` reads stay the
+  exports object, because `UnEsm` does not treat a top-level `this` as
+  `exports` when it converts a module.
 - A generated async loader module becomes
   `module.exports = () => Promise.resolve().then(() => require(target))`.
   `ctx.A(loader)` (15.5+) and `ctx.r(loader)(ctx.i)` (15.3–15.4) inline that
