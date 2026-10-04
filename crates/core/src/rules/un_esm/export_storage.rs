@@ -47,6 +47,7 @@ use crate::rules::eval_utils::{module_has_with_stmt, DirectEvalPresence};
 use crate::utils::paren::strip_parens;
 use crate::utils::prototype_members::is_prototype_mutating_member_name;
 
+use super::export_star::export_star_statement_indices;
 use super::{
     extract_define_property_getter_expr, extract_export_getter_map,
     extract_getter_expr_return_expr, fresh_prefixed_name, function_observes_receiver,
@@ -154,6 +155,7 @@ pub(crate) fn analyze_export_storage(
     unresolved_mark: Mark,
 ) -> ExportStorageReport {
     let mut inventory = Inventory::new(unresolved_mark);
+    inventory.export_star_statements = export_star_statement_indices(module, unresolved_mark);
     module.visit_with(&mut inventory);
     if !inventory.saw_exports {
         return ExportStorageReport::NoCommonJsExports;
@@ -310,6 +312,9 @@ struct Inventory {
     /// Whether the current module-body item is an expression statement.
     in_module_expr_stmt: bool,
     nested_write: bool,
+    /// Module-body statements that become `export * from`; see
+    /// [`export_star_statement_indices`].
+    export_star_statements: HashSet<usize>,
     /// The `exports` binding is reassigned, or used as a value other than a
     /// static member object, a `typeof` operand, or a call argument.
     binding_escape: bool,
@@ -336,6 +341,7 @@ impl Inventory {
             unconditional_assigns: HashSet::default(),
             in_module_expr_stmt: false,
             nested_write: false,
+            export_star_statements: HashSet::default(),
             binding_escape: false,
             stmt: StmtPos {
                 list: MODULE_LIST,
@@ -784,6 +790,10 @@ impl Visit for Inventory {
     fn visit_module_items(&mut self, items: &[ModuleItem]) {
         let saved = self.stmt;
         for (index, item) in items.iter().enumerate() {
+            if self.export_star_statements.contains(&index) {
+                self.saw_exports = true;
+                continue;
+            }
             self.stmt = StmtPos {
                 list: MODULE_LIST,
                 index,

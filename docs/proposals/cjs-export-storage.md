@@ -529,17 +529,22 @@ How B was placed and where it differs from the design above:
   `has_unhandled_named_export_chain`; before, the split let the statement
   path convert it partially.
 
-**Open gap: `export *` with mirror names.** Babel emits that chain for every
-write of an aliased export (`export { x as y }` makes `x = 3` into
+**`export *` with mirror names.** Babel emits that chain for every write of
+an aliased export (`export { x as y }` makes `x = 3` into
 `exports.y = exports.x = x = 3`), so it is producer output, not hand-written
 code. When the same module has `export * from`, Babel's copy loop indexes
-`exports[key]`, which fails the module gate, and the whole module stays
-CommonJS. `main` did not recover these modules either: with one export name
-it emitted ESM that still wrote `exports.n` inside functions and kept the
-loop's free `exports`; with the chain it kept CommonJS. The storage plan is
-computed before the export-star pre-pass runs. Once that pre-pass
-recognizes Babel's loop, computing the plan after it (or letting the gate
-skip a recognized loop) closes this gap.
+`exports[key]`, which failed the module gate, and the whole module stayed
+CommonJS. The analysis now skips every statement the export-star recovery
+(`un_esm/export_star.rs`) replaces with `export * from`; that rewrite runs
+before the storage rewrite, so the loop is gone by then. A top-level
+declarator chain (`var local = exports.local = 1`) also no longer counts as
+a write nested in control flow, which had kept such modules CommonJS when
+the gate failed.
+
+The matrix `reexport-star` rows still fail, on `export * as ns`:
+TypeScript's `exports.ns = __importStar(require("./dep.js"))` leaves its
+`require` in the ESM output. That is namespace re-export recovery, outside
+this proposal.
 - **Named stable read recovery is removed.** Mirror and property names no
   longer reached it; only enum names and names rejected for a
   receiver-sensitive call still could, and the core suite and the fixtures

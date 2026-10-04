@@ -275,6 +275,8 @@ call, reassigned, or with a computed key; `module.exports` used as a value or
 replaced; a
 `delete` of an export; a direct `eval`; or a `with` statement), no name is
 classified and the command prints the failed condition instead.
-`module.exports.name` counts as `exports.name`.
+`module.exports.name` counts as `exports.name`. A copy loop or helper call
+that `UnEsm` recovers as `export * from` is not counted: it copies another
+module's exports, not this module's own.
 `--json` prints `input`, `uses_exports`, `gate`, and an `exports` array with
 `name`, `storage`, `binding`, `rejected`, and the access counts.

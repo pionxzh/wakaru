@@ -54,37 +54,15 @@ use super::*;
 const SWC_EXPORT_STAR_PATH: &str = "@swc/helpers/_/_export_star";
 
 pub(super) fn rewrite_commonjs_export_stars(module: &mut Module, unresolved_mark: Mark) {
-    // Match the statement shape before collecting helpers or a use index.
-    // Most modules (and later UnEsm passes) have no candidate at all.
-    if !module
-        .body
-        .iter()
-        .any(|item| is_export_star_candidate(item, unresolved_mark))
-    {
+    let mut recovered = recognize_export_stars(module, unresolved_mark);
+    if recovered.is_empty() {
         return;
     }
-
-    let helpers = ExportStarHelpers::collect(module, unresolved_mark);
-    let uses = BindingUseIndex::collect(module);
-    let local_exports = LocalExports::collect(module, unresolved_mark);
-
-    let requires = collect_require_bindings(module, &uses, unresolved_mark);
 
     let mut cleanup: HashSet<BindingKey> = HashSet::default();
     let mut rewritten = Vec::with_capacity(module.body.len());
     for (index, item) in std::mem::take(&mut module.body).into_iter().enumerate() {
-        let recovered = helper_call_export_star(&item, &helpers, &uses, &requires, unresolved_mark)
-            .or_else(|| {
-                loop_export_star(
-                    &item,
-                    index,
-                    &uses,
-                    &requires,
-                    &local_exports,
-                    unresolved_mark,
-                )
-            });
-        let Some(recovered) = recovered else {
+        let Some(recovered) = recovered.remove(&index) else {
             rewritten.push(item);
             continue;
         };
@@ -101,6 +79,59 @@ pub(super) fn rewrite_commonjs_export_stars(module: &mut Module, unresolved_mark
         remove_var_declarators_by_binding(&mut module.body, &removable);
         remove_fn_decls_from_body_by_binding(&mut module.body, &removable);
     }
+}
+
+/// Module-body statements that [`rewrite_commonjs_export_stars`] replaces
+/// with `export * from`. The export-storage analysis skips them: their
+/// `exports[key]` and `exports` arguments are the copy the re-export
+/// replaces, not accesses of the module's own exports.
+pub(super) fn export_star_statement_indices(
+    module: &Module,
+    unresolved_mark: Mark,
+) -> HashSet<usize> {
+    recognize_export_stars(module, unresolved_mark)
+        .into_keys()
+        .collect()
+}
+
+fn recognize_export_stars(
+    module: &Module,
+    unresolved_mark: Mark,
+) -> HashMap<usize, RecoveredExportStar> {
+    // Match the statement shape before collecting helpers or a use index.
+    // Most modules (and later UnEsm passes) have no candidate at all.
+    if !module
+        .body
+        .iter()
+        .any(|item| is_export_star_candidate(item, unresolved_mark))
+    {
+        return HashMap::default();
+    }
+
+    let helpers = ExportStarHelpers::collect(module, unresolved_mark);
+    let uses = BindingUseIndex::collect(module);
+    let local_exports = LocalExports::collect(module, unresolved_mark);
+    let requires = collect_require_bindings(module, &uses, unresolved_mark);
+
+    module
+        .body
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| {
+            helper_call_export_star(item, &helpers, &uses, &requires, unresolved_mark)
+                .or_else(|| {
+                    loop_export_star(
+                        item,
+                        index,
+                        &uses,
+                        &requires,
+                        &local_exports,
+                        unresolved_mark,
+                    )
+                })
+                .map(|recovered| (index, recovered))
+        })
+        .collect()
 }
 
 fn make_export_all(source: &str, span: Span) -> ModuleItem {

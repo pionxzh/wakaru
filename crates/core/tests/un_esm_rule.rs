@@ -6033,3 +6033,44 @@ var Mode;
     assert!(output.contains("const Mode = {"), "{output}");
     assert!(!output.contains("exports"), "{output}");
 }
+
+#[test]
+fn mirror_storage_recovers_alongside_a_babel_export_star_loop() {
+    // The loop's `exports[key]` would fail the storage gate, but the loop
+    // becomes `export * from` first; the aliased export is still mirrored.
+    let input = r#"
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+var _exportNames = { x: true, y: true, set: true };
+exports.set = set;
+exports.y = exports.x = void 0;
+var _dep = require("./dep.js");
+Object.keys(_dep).forEach(function (key) {
+  if (key === "default" || key === "__esModule") return;
+  if (Object.prototype.hasOwnProperty.call(_exportNames, key)) return;
+  if (key in exports && exports[key] === _dep[key]) return;
+  Object.defineProperty(exports, key, {
+    enumerable: true,
+    get: function () { return _dep[key]; }
+  });
+});
+let x = exports.y = exports.x = 1;
+function set() {
+  exports.y = exports.x = x = 2;
+}
+"#;
+    let output = apply(input);
+    assert!(output.contains(r#"export * from "./dep.js";"#), "{output}");
+    assert!(!output.contains("exports"), "{output}");
+    // Both names export one live local; a later pass picks its name.
+    assert!(
+        output.contains("export let y = 1;") && output.contains("export { y as x };"),
+        "{output}"
+    );
+    assert!(output.contains("y = 2;"), "{output}");
+    let findings = validate_output_modules(&[
+        ("entry.js".into(), output.clone()),
+        ("dep.js".into(), "export const z = 1;".into()),
+    ]);
+    assert!(findings.is_empty(), "{findings:?}\n{output}");
+}
