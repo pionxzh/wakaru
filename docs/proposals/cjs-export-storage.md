@@ -270,7 +270,8 @@ receiver. Rewrite a call target only when the binding is never written after
 its declaration and its value cannot observe the receiver (the current
 `is_receiver_insensitive_function_value`, since removed with stable read
 recovery). Otherwise leave the name
-unrecovered (see [Unrecovered names](#4-unrecovered-names)).
+unrecovered (see [Unrecovered names](#4-unrecovered-names)). The
+implementation uses a looser condition; see [Step 2 results](#step-2-results).
 
 ### 3. Readability passes
 
@@ -315,8 +316,8 @@ throws when it runs, so the gap must be visible:
 | Snapshot rule for `exports.X = L` with written `L` | Becomes A with value `L`: `export var X = L` is the same snapshot. The decision stands; it is no longer the default for every identifier value. |
 | Stable named read recovery | Replaced by A and B, which rewrite every access. |
 | Conditional named export recovery | Replaced by A. Nested and compound writes are ordinary A writes. |
-| A-class prototype that rewrites leftover accesses after the stable pass | Superseded. It measured that A alone moves the matrix from 27 to 108. It is held unmerged. |
-| Webpack and `defineProperty` getter pre-passes | Become C inputs. |
+| A-class prototype that rewrites leftover accesses after the stable pass | Superseded by step 2. It measured that A alone moves the matrix from 27 to 108, and was never merged. |
+| Webpack and `defineProperty` getter pre-passes | Planned as C inputs. Step 4 was narrowed instead: both still feed the statement path (see [Steps 4 and 5 results](#steps-4-and-5-results)). |
 | `UnAssignmentMerging` repeatable-value chain split | Stops splitting a chain that writes both an `exports` property and a local identifier. The pipeline order stays: the `UnAssignmentMerging` → `UnEsm` edge is confirmed in [rule-dependency-inventory.md](../rule-dependency-inventory.md), and moving `UnEsm` first would also hand it every chain that `UnAssignmentMerging` already splits safely. A chain left whole is handled by the class of its export name: B drops the mirror target (`L = v`), A rewrites the target (`X = L = v`, still one valid chain), C does not occur because getter names have no writes. |
 | `has_unhandled_named_export_chain` rollback | Must accept those chains instead of restoring the whole module to CommonJS. |
 
@@ -454,11 +455,15 @@ How A was placed and where it differs from the design above:
   [Reassigned or aliased `exports`](#reassigned-or-aliased-exports)) is still
   taken first, before anything changes. `has_unhandled_named_export_chain`
   accepts a chain whose every export target is an A name the rewrite owns.
-- **Statement-path names.** A name with only whole top-level writes and
-  leading sentinels, never read in the module, stays on the statement path:
-  an importer sees its last value, which that path already exports as
-  `export const`. Names written in a chain or in control flow, read, or
-  written in functions go through A.
+- **Statement-path names.** A name whose only access is one whole top-level
+  write after leading sentinels stays on the statement path, which exports
+  the value directly (`export default value`, `export const f = function f()
+  {}`); A would need a fresh local whenever the name is taken. Names written
+  more than once, in a chain or in control flow, read, or written in
+  functions go through A, and so does a name with only a sentinel
+  (`exports.x = void 0` becomes `export let x;`). An earlier version also
+  left names with several whole top-level writes on the statement path,
+  which exported only the last value.
 - **Calls.** A direct call through an A name is rewritten under
   `call_receiver_independence`, the assumption conditional recovery already
   used, instead of the stricter "never reassigned and receiver-insensitive"
@@ -539,6 +544,13 @@ How B was placed and where it differs from the design above:
   example after a gate failure), now keeps the module CommonJS through
   `has_unhandled_named_export_chain`; before, the split let the statement
   path convert it partially.
+- **Named stable read recovery is removed.** Mirror and property names no
+  longer reached it; only enum names and names rejected for a
+  receiver-sensitive call still could, and the core suite and the fixtures
+  pass without it. The `module.exports` default-read part stays.
+- **Assumption.** The mirror condition is recorded as
+  `commonjs_export_mirror_coverage` in
+  [rewrite-assumptions.md](../rewrite-assumptions.md).
 
 **`export *` with mirror names.** Babel emits that chain for every write of
 an aliased export (`export { x as y }` makes `x = 3` into
@@ -556,13 +568,6 @@ The matrix `reexport-star` rows still fail, on `export * as ns`:
 TypeScript's `exports.ns = __importStar(require("./dep.js"))` leaves its
 `require` in the ESM output. That is namespace re-export recovery, outside
 this proposal.
-- **Named stable read recovery is removed.** Mirror and property names no
-  longer reached it; only enum names and names rejected for a
-  receiver-sensitive call still could, and the core suite and the fixtures
-  pass without it. The `module.exports` default-read part stays.
-- **Assumption.** The mirror condition is recorded as
-  `commonjs_export_mirror_coverage` in
-  [rewrite-assumptions.md](../rewrite-assumptions.md).
 
 ## Steps 4 and 5 results
 
@@ -718,6 +723,19 @@ end-to-end unit test.
 
 ## Remaining gaps
 
+- **The statement path is still an entry point for named exports.** The
+  storage rewrite owns A and B names, but `UnEsm`'s statement classification
+  (`classify_item`) still converts:
+  - a property name whose only access is one whole top-level write, and a
+    mirror name whose only access is one `exports.x = local;` copy (see
+    [Step 2 results](#step-2-results) and [Step 3 results](#step-3-results));
+  - every getter name: webpack `require.d` through its own pre-pass, and
+    `Object.defineProperty` getters, including the lowered swc, esbuild, and
+    sucrase helpers (see [Steps 4 and 5 results](#steps-4-and-5-results));
+  - TypeScript enum initializers that `UnEnum` folds, `exports.exports`, and
+    names the module already exports as ESM;
+  - every name in a module with a self-`require`, and every
+    `module.exports` assignment.
 - **rollup `import-then-export`, single-file only.** Without a marker the
   module has no module-level evidence. The two signals left are weak: a
   re-export getter from the same source (present only when the module also

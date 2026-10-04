@@ -18,8 +18,11 @@
 //!   CommonJS accesses.
 //!
 //! See `docs/proposals/cjs-export-storage.md` for the producer shapes and the
-//! reasoning behind each condition. The analysis only reports decisions; it
-//! does not rewrite the module.
+//! reasoning behind each condition. [`analyze_export_storage`] only reports
+//! decisions (it also backs `wakaru debug cjs-exports`);
+//! [`recover_export_storage`] rewrites the property and mirror names that
+//! [`storage_candidates`] selects. Getter names and the names left to the
+//! statement path are rewritten by `UnEsm`'s statement classification.
 
 use crate::collections::{HashMap, HashSet};
 
@@ -1699,11 +1702,15 @@ struct StorageCandidates<'a> {
 
 /// Select the names to rewrite.
 ///
-/// A property-storage name with only whole top-level writes and leading
-/// sentinels, never read in the module, is left to the statement
-/// classification: an importer sees the last value, which that path already
-/// exports. A mirror name whose only access is one `exports.x = local;`
-/// statement is left there too; that path already exports the local.
+/// A property-storage name whose only access is one whole top-level write
+/// (after leading sentinels) is left to the statement classification. That
+/// path exports the value directly (`export default value`,
+/// `export const f = function f() {}`), where property storage would need a
+/// fresh local whenever the name is taken, as it is by the function's own
+/// name or by `default`. A name written more than once goes through property
+/// storage, which keeps every write instead of exporting only the last. A
+/// mirror name whose only access is one `exports.x = local;` statement is left
+/// to the statement path too; that path already exports the local.
 ///
 /// A mirror name whose local cannot stand in for the property at every read
 /// falls back to property storage, which is valid for any name that passes
@@ -1748,7 +1755,8 @@ fn storage_candidates<'a>(
         match decision.storage {
             ExportStorage::Property => {
                 if !(only_top_level_writes
-                    && count(&standalone_writes).unwrap_or_default() == accesses.writes)
+                    && accesses.writes == 1
+                    && count(&standalone_writes) == Some(1))
                 {
                     candidates.property.push(decision);
                 }

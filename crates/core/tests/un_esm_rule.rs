@@ -2306,8 +2306,8 @@ exports.foo = 1;
 exports.bar = void second();
 "#;
     let expected = r#"
-void first();
-export const foo = 1;
+export let foo = void first();
+foo = 1;
 export const bar = void second();
 "#;
     let output = apply(input);
@@ -2315,14 +2315,18 @@ export const bar = void second();
 }
 
 #[test]
-fn export_dedup_preserves_dropped_rhs_evaluation() {
+fn repeated_top_level_writes_keep_every_write() {
+    // Each write is a write to the property storage, including the earlier
+    // value that code between the writes can observe.
     let input = r#"
 exports.foo = sideEffect1();
+setup();
 exports.foo = sideEffect2();
 "#;
     let expected = r#"
-sideEffect1();
-export const foo = sideEffect2();
+export let foo = sideEffect1();
+setup();
+foo = sideEffect2();
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
@@ -3226,9 +3230,11 @@ if (flag) {
 }
 
 #[test]
-fn void_only_export_removed() {
+fn void_only_export_is_an_uninitialized_export() {
+    // TypeScript emits only the sentinel for `export let foo;`. The property
+    // exists, so an importer of `foo` must still link.
     let input = "exports.foo = void 0;";
-    let expected = "";
+    let expected = "export let foo;";
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
