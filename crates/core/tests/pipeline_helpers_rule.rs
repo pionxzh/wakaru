@@ -252,7 +252,8 @@ var foo = (0, _interopRequireWildcard.default)(require("foo"));
 import * as foo from "foo";
 "#;
 
-    let result = render_pipeline_until(input, "UnInteropRequireWildcard");
+    // The wildcard call itself is unwrapped when UnEsm converts the module.
+    let result = render_pipeline_until(input, "UnEsm");
     assert_eq_normalized(&result, expected);
 }
 

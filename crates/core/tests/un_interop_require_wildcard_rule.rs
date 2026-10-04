@@ -1,5 +1,6 @@
 mod common;
-use common::{assert_eq_normalized, render};
+use common::{assert_eq_normalized, render, render_with_level};
+use wakaru_core::RewriteLevel;
 
 #[test]
 fn unwraps_wildcard_by_import_path() {
@@ -635,4 +636,36 @@ console.log(ns);
     let output = render(input);
     assert!(!output.contains("import * as ns"), "{output}");
     assert!(output.contains("copyKeys(dep)"), "{output}");
+}
+
+#[test]
+fn module_kept_commonjs_keeps_interop_wildcard() {
+    // An aliased `exports` keeps the module CommonJS; an `import` there would
+    // make it a module that cannot use `exports`.
+    let input = r#"
+"use strict";
+var _a = _interopRequireWildcard(require("./a"));
+function _interopRequireWildcard(e) { if (e && e.__esModule) return e; var n = {}; if (e != null) for (var k in e) if (Object.prototype.hasOwnProperty.call(e, k)) n[k] = e[k]; n.default = e; return n; }
+var target = exports;
+target.run = function () { return _a.default(); };
+"#;
+    let output = render(input);
+    assert!(!output.contains("import"), "{output}");
+    assert!(
+        output.contains(r#"_interopRequireWildcard(require("./a"))"#),
+        "{output}"
+    );
+}
+
+#[test]
+fn minimal_level_keeps_interop_wildcard() {
+    // `UnEsm` does not convert at `minimal`, so the module stays CommonJS.
+    let input = r#"
+var _interopRequireWildcard = require("@babel/runtime/helpers/interopRequireWildcard");
+var ns = _interopRequireWildcard(require("./a"));
+exports.read = function () { return ns.value; };
+"#;
+    let output = render_with_level(input, RewriteLevel::Minimal);
+    assert!(!output.contains("import"), "{output}");
+    assert!(output.contains(r#"require("./a")"#), "{output}");
 }

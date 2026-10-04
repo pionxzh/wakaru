@@ -214,7 +214,11 @@ fn run_un_interop_require_default(module: &mut Module, ctx: RuleRunContext<'_>) 
 
 fn run_un_interop_require_wildcard(module: &mut Module, ctx: RuleRunContext<'_>) {
     let local_helpers = ctx.local_helpers(module);
-    UnInteropRequireWildcard::run_with_helpers(module, local_helpers.as_ref());
+    UnInteropRequireWildcard::run_with_helpers(
+        module,
+        local_helpers.as_ref(),
+        InteropScope::RuntimeHelpers,
+    );
 }
 
 fn run_un_to_consumable_array(module: &mut Module, ctx: RuleRunContext<'_>) {

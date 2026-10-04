@@ -18,6 +18,7 @@ use super::transpiler_helper_utils::{
     helpers_with_remaining_refs, remove_helper_declarations, BindingKey, LocalHelperContext,
     TranspilerHelperKind, TsHelperKind,
 };
+use super::un_interop_require_default::InteropScope;
 use crate::js_names::{is_reserved_binding_name, is_valid_identifier_name};
 
 /// Detects and unwraps `interopRequireWildcard` helper calls.
@@ -33,22 +34,35 @@ use crate::js_names::{is_reserved_binding_name, is_valid_identifier_name};
 /// A top-level `target.x = _irw(require("a"))` gets its own binding:
 /// `import * as x from "a"; target.x = x;`. Any other `_irw(require("a"))`
 /// is unwrapped to the `require` call; other arguments are left wrapped.
+///
+/// Both produce ESM semantics, so they belong to a module that becomes ESM.
+/// The registered rule ([`InteropScope::RuntimeHelpers`]) only drops unused
+/// inline TypeScript sub-helpers; `UnEsm` runs the rest
+/// ([`InteropScope::All`]) once it commits to converting the module.
 pub struct UnInteropRequireWildcard;
 
 impl UnInteropRequireWildcard {
-    pub(crate) fn run_with_helpers(module: &mut Module, local_helpers: &LocalHelperContext) {
-        run_un_interop_require_wildcard(module, local_helpers);
+    pub(crate) fn run_with_helpers(
+        module: &mut Module,
+        local_helpers: &LocalHelperContext,
+        scope: InteropScope,
+    ) {
+        run_un_interop_require_wildcard(module, local_helpers, scope);
     }
 }
 
 impl VisitMut for UnInteropRequireWildcard {
     fn visit_mut_module(&mut self, module: &mut Module) {
         let local_helpers = LocalHelperContext::collect(module);
-        run_un_interop_require_wildcard(module, &local_helpers);
+        run_un_interop_require_wildcard(module, &local_helpers, InteropScope::All);
     }
 }
 
-fn run_un_interop_require_wildcard(module: &mut Module, local_helpers: &LocalHelperContext) {
+fn run_un_interop_require_wildcard(
+    module: &mut Module,
+    local_helpers: &LocalHelperContext,
+    scope: InteropScope,
+) {
     let helpers = local_helpers.helpers_of_kind(TranspilerHelperKind::InteropRequireWildcard);
     let tslib_namespaces = local_helpers.tslib_namespaces();
     let has_direct_tslib_calls =
@@ -57,6 +71,10 @@ fn run_un_interop_require_wildcard(module: &mut Module, local_helpers: &LocalHel
         module,
         &[TsHelperKind::CreateBinding, TsHelperKind::SetModuleDefault],
     );
+    // No helper rule reads a namespace interop of a helper runtime module.
+    if scope == InteropScope::RuntimeHelpers {
+        return;
+    }
     if helpers.is_empty() && tslib_namespaces.is_empty() && !has_direct_tslib_calls {
         return;
     }

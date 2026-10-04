@@ -38,6 +38,7 @@ use super::rename_utils::{
 };
 use super::transpiler_helper_utils::LocalHelperContext;
 use super::un_interop_require_default::{InteropScope, UnInteropRequireDefault};
+use super::un_interop_require_wildcard::UnInteropRequireWildcard;
 use super::RewriteLevel;
 
 mod export_getters;
@@ -251,8 +252,9 @@ impl VisitMut for UnEsm {
             return;
         }
         // The module is becoming ESM: `interopRequireDefault(require(x))`
-        // now means the default import of `x`. Every return above keeps
-        // CommonJS, where it means the whole module, so the call stays.
+        // now means the default import of `x`, and the wildcard interop its
+        // namespace import. Every return above keeps CommonJS, where the
+        // unwrapped forms mean the whole module, so the calls stay.
         let local_helpers = self.local_helpers.clone().unwrap_or_else(|| {
             std::rc::Rc::new(LocalHelperContext::collect_with_mark(
                 module,
@@ -260,6 +262,7 @@ impl VisitMut for UnEsm {
             ))
         });
         UnInteropRequireDefault::run_with_helpers(module, &local_helpers, InteropScope::All);
+        UnInteropRequireWildcard::run_with_helpers(module, &local_helpers, InteropScope::All);
         recover_coupled_commonjs_default_binding(module, self.unresolved_mark);
         // Phase -1: hoist require() calls out of complex expressions
         hoist_embedded_requires(module, self.unresolved_mark);

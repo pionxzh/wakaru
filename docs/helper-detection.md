@@ -250,7 +250,10 @@ For example, `UnInteropRequireDefault`:
   see `_extends(...)`. Every other call is the default import's semantics,
   which is wrong while the module is CommonJS (`require("a")` is the whole
   module there), so `UnEsm` unwraps those only once it commits to
-  converting the module. A module it keeps CommonJS keeps the calls
+  converting the module. A module it keeps CommonJS keeps the calls.
+  `UnInteropRequireWildcard` works the same way: its `import * as` output
+  is produced inside `UnEsm` at the same point, right after the default
+  unwrap
 
 SWC AMD's assignment form `_a = _interopRequireDefault(_a)` — and the modern
 external-helper spelling `_a = helper._(_a)`, proven against the exact

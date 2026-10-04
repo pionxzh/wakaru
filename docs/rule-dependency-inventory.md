@@ -176,8 +176,9 @@ rationale, or level gating appear.
   UnIndirectCall and UnBracketNotation to have normalized call and member
   shapes; both are confirmed prerequisites of UnEsm. UnInteropRequireDefault
   unwraps only helper runtime requires here, which the helper rules after it
-  need; UnEsm unwraps every other call once it commits to converting the
-  module, because the unwrapped form means a default import.
+  need; UnInteropRequireWildcard only drops unused inline TypeScript
+  sub-helpers. UnEsm runs both in full once it commits to converting the
+  module, because their output means an ESM default or namespace import.
 - **UnObjectSpread** — safe because it only transforms when the first
   argument is `{}`. The esbuild `__spreadValues`/`__spreadProps` variant is
   stateful and deliberately rule-local — see

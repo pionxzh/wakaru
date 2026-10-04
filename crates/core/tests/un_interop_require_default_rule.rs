@@ -1,5 +1,6 @@
 mod common;
-use common::{assert_eq_normalized, render, render_pipeline_until, render_rule};
+use common::{assert_eq_normalized, render, render_pipeline_until, render_rule, render_with_level};
+use wakaru_core::RewriteLevel;
 
 // The registered rule only unwraps helper runtime requires; `UnEsm` runs
 // the full unwrap when it converts the module. These tests exercise the
@@ -925,4 +926,20 @@ function run() {
 }
 "#;
     assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn minimal_level_keeps_interop_default() {
+    // `UnEsm` does not convert at `minimal`, so the module stays CommonJS.
+    let input = r#"
+var _interopRequireDefault = require("@babel/runtime/helpers/interopRequireDefault");
+var _a = _interopRequireDefault(require("./a"));
+exports.run = function () { return _a.default(); };
+"#;
+    let output = render_with_level(input, RewriteLevel::Minimal);
+    assert!(
+        output.contains(r#"_interopRequireDefault(require("./a"))"#),
+        "{output}"
+    );
+    assert!(output.contains("_a.default()"), "{output}");
 }

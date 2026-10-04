@@ -702,13 +702,11 @@ so this module shows no evidence.
   Unwrapping `_interopRequireDefault(require(x)).default` to a plain
   `require(x)` binding read whole is right only once `UnEsm` turns that
   `require` into a default import. `UnInteropRequireDefault` now unwraps
-  only helper runtime requires; `UnEsm` unwraps the rest when it commits to
-  converting the module, so a module it keeps CommonJS keeps the calls.
-  Still open: in a converted module, a `require` inside a function is
-  unwrapped too, although it stays a `require`; and
-  `UnInteropRequireWildcard` still emits `import * as` before the boundary
-  is decided, which mixes `import` with `exports` in a module that stays
-  CommonJS. Not covered by the matrix.
+  only helper runtime requires, and `UnEsm` unwraps the rest, including the
+  wildcard interop's `import * as`, when it commits to converting the
+  module; a module it keeps CommonJS keeps the calls. Still open: in a
+  converted module, a `require` inside a function is unwrapped too,
+  although it stays a `require`. Not covered by the matrix.
 
 ## Reassigned or aliased `exports`
 
