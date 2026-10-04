@@ -136,24 +136,28 @@ remain required.
 
 ### `async_iterator_value_await`
 
-The program does not depend on the extra `await` that Babel 7.8–7.13 apply to
-each iteration value of a lowered `for await`.
+The program does not depend on the extra `await` that Babel 6 and Babel 7
+before 7.14.9 apply to each iteration value of a lowered `for await`.
 
-Every lowerer replaces `for await (const item of iterable)` with an adapter call
-(`_asyncIterator`, `_async_iterator`, `__forAwait`, `__asyncValues`) and a
+Every lowerer replaces `for await (const item of iterable)` with an adapter
+call (`_asyncIterator`, `_async_iterator`, `__forAwait`, `__asyncValues`) and a
 `try`/`catch`/`finally` protocol that calls the iterator's `return()` on an
 abrupt exit and rethrows the body's error after it. Native `for await` performs
 the same `IteratorClose` and error propagation, so folding the protocol back is
-not an assumption. Babel 7.8–7.13 additionally emit
-`value = await step.value` in the loop head; native `for await` awaits only the
-result object of `next()`, not its `value`. For an async iterator that yields
-promises as values, the lowered loop observes the settled value while the
-recovered loop observes the promise. Spec-conformant async iterators do not
-yield promises, and the `AsyncFromSyncIterator` wrapper of later Babel
-versions and of the runtime already awaits sync iterator values, so this is a
+not an assumption. Babel up to 7.14.7 additionally emits
+`value = await step.value` in the loop head. The
+`@babel/plugin-proposal-async-generator-functions` template carries that step
+in every release from 7.0.0 through 7.14.7, and Babel 6's
+`babel-helper-remap-async-to-generator` has it too. 7.14.9 replaced it with the
+abrupt-completion protocol; there is no 7.14.8. Native `for await` awaits only
+the result object of `next()`, not its `value`. For an async iterator that
+yields promises as values, the lowered loop observes the settled value while
+the recovered loop observes the promise. Spec-conformant async iterators do not
+yield promises, and the `AsyncFromSyncIterator` wrapper of later Babel versions
+and of the runtime already awaits sync iterator values, so this is a
 source-recovery difference only for that producer range.
 
-Affects: `UnForOf` (`for await` recovery from the Babel 7.8–7.13 protocol).
+Affects: `UnForOf` (`for await` recovery from the Babel ≤ 7.14.7 protocol).
 The other protocols carry no extra `await` and are recovered without this
 assumption.
 
@@ -322,13 +326,14 @@ on the hint, and for objects whose `valueOf` throws (Temporal). Every built-in
 coerces identically: `Date` treats the default hint as `string`, and primitive
 wrappers, arrays, plain objects, and symbols behave the same either way.
 
-Babel loose mode and TypeScript ≤ 4.4 lower templates to this exact shape, so
-the reversal restores the original template where the chain was generated — but
-the shape is indistinguishable from handwritten concatenation, so it is an
-assumption, not a proof. The private fixture suite recovers roughly 3,000
-templates through this path with no substitution shaped like a known
-hint-sensitive object, which is why `standard` keeps it rather than demoting it
-to `aggressive`.
+Several producers lower templates to this exact shape: Babel 7 and 8 in loose
+mode, Babel 6 by default, SWC with `jsc.loose` from 1.2.155, TypeScript ≤ 4.4,
+esbuild ≤ 0.12.5, and Closure Compiler targeting ES5. The reversal therefore
+restores the original template where the chain was generated — but the shape is
+indistinguishable from handwritten concatenation, so it is an assumption, not a
+proof. The private fixture suite recovers roughly 3,000 templates through this
+path with no substitution shaped like a known hint-sensitive object, which is
+why `standard` keeps it rather than demoting it to `aggressive`.
 
 Affects: `UnTemplateLiteral` (plus-chain path).
 
@@ -357,10 +362,11 @@ substitution reads. A patched `concat` is outside the baseline — `minimal`'s
 primitive-only rewrite is exact with respect to coercion, not with respect to a
 replaced method.
 
-The string-literal receiver is strong producer evidence — Babel (spec mode),
-SWC, esbuild, and TypeScript ≥ 4.5 all lower templates this way and handwritten
-code almost never calls `.concat` on a literal — but the AST cannot prove the
-producer, so this remains a named assumption.
+The string-literal receiver is strong producer evidence — Babel 7 and 8 in spec
+mode, SWC without `jsc.loose`, esbuild ≥ 0.12.6, and TypeScript ≥ 4.5 all lower
+templates this way and handwritten code almost never calls `.concat` on a
+literal — but the AST cannot prove the producer, so this remains a named
+assumption.
 
 Affects: `UnTemplateLiteral` (concat-chain path). Tagged-template helper
 recovery is a separate, provenance-checked path and does not depend on this.
@@ -415,9 +421,13 @@ so concat's conditional flattening can be recovered as array spread:
 This is not true for an arbitrary value. Concat appends a scalar or string as
 one element, and spreads only arrays or values opting in through
 `Symbol.isConcatSpreadable`; array spread instead requires an iterable and
-always iterates it. Babel's loose / `iterableIsArray` transforms emit this
-concat shape after assuming their spread inputs are arrays, but the resulting
-AST no longer carries that producer setting.
+always iterates it. Several producers emit this concat shape after assuming
+their spread inputs are arrays: Babel 6 and 7 in loose mode, Babel 7 with the
+`iterableIsArray` assumption, TypeScript 1.5–3.5 targeting ES5 without
+`downlevelIteration`, SWC with `jsc.loose` from 1.3.69, and Buble. The
+resulting AST no longer carries that producer setting. Closure Compiler emits
+the same receiver but wraps each spread argument in
+`$jscomp.arrayFromIterable`, so its arguments are not unknown in this sense.
 
 Affects: `UnArrayConcatSpread` for arguments whose array identity is not proven.
 Array literals are known directly. A separate binding proof covers rest
@@ -442,10 +452,15 @@ var n = { [k]: 1, b: 2 };                   // definition: always own properties
 ```
 
 This is the same assumption Babel exposes as
-`@babel/plugin-transform-computed-properties` `loose: true` / the Babel 7
-`setComputedProperties: true` assumption, which is what produces the shape in
-the first place. Key evaluation order is *not* at risk — both forms evaluate
-each key before its own value, in source order.
+`@babel/plugin-transform-computed-properties` `loose: true` (Babel 6 and 7) /
+the Babel 7 `setComputedProperties: true` assumption, which is what produces
+the shape in the first place. Other producers emit it without any option:
+TypeScript 1.5–5.9 targeting ES5 always does, and SWC does with `jsc.loose`
+from 1.2.155. esbuild's minifier also folds handwritten assignment code
+(`var c; c = {}; c[k] = v; return c`) into `return c={},c[k]=v,c`, so the shape
+does not prove that the source used definition semantics. Key evaluation order
+is *not* at risk — both forms evaluate each key before its own value, in source
+order.
 
 Several cases can still observe the difference:
 
@@ -476,9 +491,11 @@ Level: `standard` and above. `minimal` preserves the sequence.
 
 Recovering an accessor descriptor inside a proven class-lowering IIFE assumes
 that its attributes describe the original source construct rather than an
-intentional handwritten descriptor. TypeScript 3.5–3.8 lowered class accessors
-with `enumerable: true, configurable: true`; TypeScript 3.9 changed that output
-to the native class attributes (`enumerable: false, configurable: true`).
+intentional handwritten descriptor. TypeScript before 3.9 lowered class
+accessors, instance and static, with `enumerable: true, configurable: true`.
+TypeScript 3.9.2, the first stable 3.9 release, changed that output to the
+native class attributes (`enumerable: false, configurable: true`). Checked
+against the last release of every minor from 1.4 through 3.8 and against 3.9.2.
 
 At `standard` and above, `UnEs6Class` accepts both variants after the enclosing
 IIFE has independently matched a transpiler class shape. This preserves source
@@ -566,14 +583,17 @@ exports.a = exports.b = value; // chain: reads value once, a receives 1
 exports.b = value; exports.a = value; // split: a receives 2
 ```
 
-In the transpiler output examined so far and in the private fixtures, an
-accessor on `exports` never appears together with a chained export assignment:
-TypeScript's `exports.A = exports.B = void 0` and Babel's
-`exports.default = exports.x = value` are emitted against a fresh object whose
-accessors, if any, are live re-export getters on other keys. That is an
-observation, not a guarantee. The hazard is accepted rather than proven; the
-CommonJS wrapper only guarantees that `module`, `exports`, and `require` are
-defined.
+In the transpiler output examined so far and in the private fixtures, no
+accessor intercepts a chained export assignment. TypeScript's
+`exports.A = exports.B = void 0` (from 3.9) and Babel's
+`exports.default = exports.x = value` (6 and 7) write keys that have no
+accessor at that point. The only accessors these producers install are
+getter-only live re-exports. Babel puts them on other keys. From 4.0,
+TypeScript also lists a re-exported name in its `void 0` chain and then
+installs the getter on that same key, but the chain runs first and nothing
+writes the key afterwards. That is an observation, not a guarantee. The hazard
+is accepted rather than proven; the CommonJS wrapper only guarantees that
+`module`, `exports`, and `require` are defined.
 
 Affects: `UnAssignmentMerging` (repeated identifier values and stable
 CommonJS receivers, including chains made entirely of static

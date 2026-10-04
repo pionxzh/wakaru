@@ -175,7 +175,7 @@ use(first.value, second.value);
       ["class ", "get value()", "set value("],
     ],
     rejected: ["Object.defineProperty("],
-    // TypeScript 3.5–3.8 intentionally emits enumerable:true here, while
+    // TypeScript before 3.9 intentionally emits enumerable:true here, while
     // 3.9+ emits the native class attributes. The standard-level recovery of
     // the older shape is tracked as a named source-recovery assumption; this
     // execution check observes accessor behavior but not descriptor metadata.

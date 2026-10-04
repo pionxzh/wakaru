@@ -112,7 +112,7 @@ async function consume(stream) {
 
 #[test]
 fn for_await_from_old_babel_async_iterator_awaits_value() {
-    // Babel 7.8–7.13: the head also awaits `step.value` and tracks a
+    // Babel ≤ 7.14.7: the head also awaits `step.value` and tracks a
     // normal-completion flag that starts true.
     let input = with_helper(
         OLD_BABEL_ASYNC_ITERATOR,
@@ -550,7 +550,7 @@ export async function t(e) {
 
 #[test]
 fn for_await_from_terser_compressed_old_babel_head() {
-    // Babel 7.8–7.13 through Terser compress: the step assignment is folded
+    // Babel ≤ 7.14.7 through Terser compress: the step assignment is folded
     // into the completion flag (`normal = (step = await it.next()).done`) and
     // the close guard is negated into `!(normal || it.return == null)`.
     let input = with_helper(
@@ -599,7 +599,7 @@ async function o(n) {
 
 #[test]
 fn for_await_binds_step_when_terser_inlined_the_element() {
-    // Babel 7.8–7.13 through Terser compress: the single-use element
+    // Babel ≤ 7.14.7 through Terser compress: the single-use element
     // declaration is gone and the body reads the awaited value temporary
     // directly. The loop can only bind the protocol's step name.
     let input = with_helper(

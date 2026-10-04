@@ -115,7 +115,7 @@ pub(crate) enum ClassAccessorDescriptorAttributes {
 /// Classify exact accessor descriptors that can be traced back to class
 /// syntax. Direct `Object.defineProperty` defaults `configurable` to false,
 /// while class accessors are configurable and non-enumerable. TypeScript
-/// 3.5–3.8 is the known producer of the enumerable variant.
+/// before 3.9 is the known producer of the enumerable variant.
 pub(crate) fn class_accessor_descriptor_attributes(
     descriptor: &ObjectLit,
 ) -> Option<ClassAccessorDescriptorAttributes> {

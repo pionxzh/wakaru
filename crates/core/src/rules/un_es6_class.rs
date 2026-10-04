@@ -3025,7 +3025,7 @@ fn try_parse_object_define_property(
     let accessor_descriptor_is_compatible = match class_accessor_descriptor_attributes(obj) {
         Some(ClassAccessorDescriptorAttributes::ClassCompatible) => true,
         // Assumption: `transpiled_class_accessor_attributes`. TypeScript
-        // 3.5–3.8 emits `enumerable: true` while lowering source-level class
+        // before 3.9 emits `enumerable: true` while lowering source-level class
         // accessors. Only UnEs6Class has the surrounding class-IIFE proof.
         Some(ClassAccessorDescriptorAttributes::Enumerable) => allow_legacy_typescript_attributes,
         None => false,

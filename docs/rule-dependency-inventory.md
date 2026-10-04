@@ -286,8 +286,9 @@ rationale, or level gating appear.
   `.concat`-chain path (`concat_coercion_order`) are `standard+` for arbitrary
   substitutions; at `minimal` both rewrite only when every substitution is a
   primitive by syntax. The plus-chain path was deliberately kept at `standard`
-  rather than demoted to `aggressive`: Babel loose and TypeScript ≤ 4.4 lower
-  templates to plain concatenation, and the private fixtures recover ~3,000
+  rather than demoted to `aggressive`: Babel loose, Babel 6, SWC loose,
+  TypeScript ≤ 4.4, esbuild ≤ 0.12.5, and Closure (ES5 output) lower templates
+  to plain concatenation, and the private fixtures recover ~3,000
   templates through it.
 - **UnArrayConcatSpread** — array-literal arguments flatten at every level.
   An arbitrary concat argument becomes a spread only at `aggressive`, under

@@ -182,8 +182,9 @@ impl VisitMut for TaggedTemplateReplacer<'_> {
     }
 }
 
-/// `"a".concat(b, "c")` → `` `a${b}c` `` — the Babel (spec mode), SWC,
-/// esbuild, and TypeScript ≥ 4.5 lowering of a template literal.
+/// `"a".concat(b, "c")` → `` `a${b}c` `` — the Babel 7+ spec-mode, SWC
+/// (non-loose), esbuild ≥ 0.12.6, and TypeScript ≥ 4.5 lowering of a template
+/// literal.
 ///
 /// `String.prototype.concat` evaluates every argument before coercing any of
 /// them; a template coerces each substitution before evaluating the next. The
@@ -508,7 +509,8 @@ fn is_inline_template_helper(expr: &Expr) -> bool {
 /// A plus chain evaluates and coerces its operands in the same order a
 /// template does; the only difference is the coercion hint (`+` uses
 /// `default`, a template uses `string`), which matters for objects whose
-/// `valueOf` and `toString` disagree. Babel loose mode and TypeScript ≤ 4.4
+/// `valueOf` and `toString` disagree. Babel loose mode, Babel 6, SWC loose
+/// (≥ 1.2.155), TypeScript ≤ 4.4, esbuild ≤ 0.12.5, and Closure (ES5 output)
 /// lower templates to this exact shape, indistinguishable from handwritten
 /// concatenation. `standard` accepts the hint change under the
 /// `string_coercion_hint` assumption (`rewrite-assumptions.md`); `minimal`

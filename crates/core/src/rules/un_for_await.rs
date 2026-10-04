@@ -27,8 +27,8 @@
 //!
 //! Recovering the loop drops the protocol's `return()` guard and rethrow
 //! bookkeeping: native `for await` closes the iterator on abrupt exit and
-//! propagates the body's error the same way. Babel 7.8–7.13 additionally
-//! await `step.value` in the loop head; native `for await` awaits only the
+//! propagates the body's error the same way. Babel ≤ 7.14.7 additionally
+//! awaits `step.value` in the loop head; native `for await` awaits only the
 //! result object (`async_iterator_value_await` in rewrite-assumptions).
 
 use crate::collections::HashSet;
@@ -92,7 +92,7 @@ struct LoopShape {
     /// Babel/esbuild: true while the iterator is not done, reset to `false`
     /// at the end of every iteration (`abrupt = !(step = await it.next()).done`).
     abrupt_flag: Option<Ident>,
-    /// Babel 7.8–7.13: `normal = step.done`, reset to `true` per iteration.
+    /// Babel ≤ 7.14.7: `normal = step.done`, reset to `true` per iteration.
     normal_flag: Option<Ident>,
     /// TypeScript 5: `first = true` before the loop, `false` once a value
     /// has been read, `true` again at the end of the iteration.
@@ -828,8 +828,8 @@ struct LoopTest {
 
 /// The loop test after `await` is restored. Four producer shapes:
 ///
-/// - Babel ≥ 7.28, SWC, esbuild: `abrupt = !(step = await it.next()).done`
-/// - Babel 7.8–7.13: `step = await it.next(), normal = step.done,
+/// - Babel ≥ 7.14.9, SWC, esbuild: `abrupt = !(step = await it.next()).done`
+/// - Babel ≤ 7.14.7: `step = await it.next(), normal = step.done,
 ///   value = await step.value, !normal`
 /// - TypeScript 5: `step = await it.next(), done = step.done, !done`
 /// - TypeScript 4: `step = await it.next(), !step.done`
