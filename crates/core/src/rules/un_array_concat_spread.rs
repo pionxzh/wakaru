@@ -1,8 +1,9 @@
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrayLit, ArrowExpr, ArrowFunctionBody, CallExpr, Callee, Constructor, Decl, DefaultDecl, Expr,
-    ExprOrSpread, Function, FunctionBody, Ident, MemberProp, Module, ModuleDecl, ModuleItem,
-    ParamOrTsParamProp, Pat, Stmt, VarDeclKind,
+    ArrayLit, ArrowExpr, ArrowFunctionBody, BinaryOp, CallExpr, Callee, Constructor, Decl,
+    DefaultDecl, Expr, ExprOrSpread, Function, FunctionBody, GetterProp, Ident, KeyValueProp,
+    MemberProp, MethodProp, Module, ModuleDecl, ModuleItem, ParamOrTsParamProp, Pat, Prop,
+    PropName, PropOrSpread, SetterProp, Stmt, VarDeclKind,
 };
 use swc_core::ecma::utils::find_pat_ids;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -19,7 +20,8 @@ use super::RewriteLevel;
 /// At Minimal and Standard, every argument must be an array literal. Aggressive
 /// also treats unknown arguments as arrays, preserving the old generated-code
 /// heuristic for Babel loose / `iterableIsArray` output under the
-/// `concat_arguments_are_arrays` assumption.
+/// `concat_arguments_are_arrays` assumption. An argument that is visibly not
+/// an array (a number, a string, an object literal) stays one element.
 ///
 /// Handles:
 /// - `[a].concat([b, c])` → `[a, b, c]`
@@ -652,9 +654,21 @@ fn try_simplify_array_concat(
     for arg in &call.args {
         match arg.expr.as_ref() {
             Expr::Array(arr) => elems.extend(arr.elems.iter().cloned()),
-            expr if proves(expr) || level >= RewriteLevel::Aggressive => {
-                elems.push(Some(spread_elem(expr)));
+            expr if proves(expr) => elems.push(Some(spread_elem(expr))),
+            // `concat_arguments_are_arrays` covers values the AST cannot
+            // classify. A value that is visibly not an array is appended as
+            // one element by `concat`, and spreading it would iterate a
+            // string or throw on a number.
+            expr if level >= RewriteLevel::Aggressive && is_visibly_non_array(expr) => {
+                elems.push(Some(ExprOrSpread {
+                    spread: None,
+                    expr: Box::new(expr.clone()),
+                }));
             }
+            // An object literal that may be concat-spreadable is still not
+            // iterable, so neither form is faithful.
+            Expr::Object(_) => return None,
+            expr if level >= RewriteLevel::Aggressive => elems.push(Some(spread_elem(expr))),
             _ => return None,
         }
     }
@@ -663,6 +677,39 @@ fn try_simplify_array_concat(
         span: DUMMY_SP,
         elems,
     })
+}
+
+/// Whether `expr` evaluates to a primitive, or to a fresh object or function
+/// that is neither an Array nor concat-spreadable.
+fn is_visibly_non_array(expr: &Expr) -> bool {
+    match expr {
+        Expr::Lit(_) | Expr::Tpl(_) | Expr::Unary(_) | Expr::Update(_) => true,
+        Expr::Bin(bin) => !matches!(
+            bin.op,
+            BinaryOp::LogicalAnd | BinaryOp::LogicalOr | BinaryOp::NullishCoalescing
+        ),
+        Expr::Fn(_) | Expr::Arrow(_) => true,
+        // A computed key can install `Symbol.isConcatSpreadable`, and a
+        // `__proto__` entry can inherit it.
+        Expr::Object(object) => object.props.iter().all(|prop| match prop {
+            PropOrSpread::Spread(_) => false,
+            PropOrSpread::Prop(prop) => match prop.as_ref() {
+                Prop::Shorthand(ident) => ident.sym != "__proto__",
+                Prop::KeyValue(KeyValueProp { key, .. })
+                | Prop::Getter(GetterProp { key, .. })
+                | Prop::Setter(SetterProp { key, .. })
+                | Prop::Method(MethodProp { key, .. }) => match key {
+                    PropName::Ident(name) => name.sym != "__proto__",
+                    PropName::Str(name) => name.value != *"__proto__",
+                    PropName::Num(_) | PropName::BigInt(_) => true,
+                    PropName::Computed(_) => false,
+                },
+                Prop::Assign(_) => false,
+            },
+        }),
+        Expr::Paren(paren) => is_visibly_non_array(&paren.expr),
+        _ => false,
+    }
 }
 
 fn spread_elem(expr: &Expr) -> ExprOrSpread {

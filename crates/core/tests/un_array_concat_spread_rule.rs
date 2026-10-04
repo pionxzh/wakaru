@@ -337,6 +337,48 @@ const x = [].concat(1);
 }
 
 #[test]
+fn aggressive_keeps_visibly_non_array_arguments_as_elements() {
+    // `[].concat(128, zeros)` appends 128; `[...128]` throws.
+    let input = r#"
+const a = [].concat(128, zeros);
+const b = [x].concat("ab", `t${y}`, -1, n * 2, !flag, typeof v);
+const c = [].concat({ id: 1 }, function() {}, () => 0, items);
+"#;
+    let expected = r#"
+const a = [128, ...zeros];
+const b = [x, "ab", `t${y}`, -1, n * 2, !flag, typeof v];
+const c = [{ id: 1 }, function() {}, () => 0, ...items];
+"#;
+    let output = apply_rule_with_level(input, RewriteLevel::Aggressive);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn aggressive_keeps_concat_for_object_literals_that_may_be_spreadable() {
+    // A computed key or a `__proto__` entry can make the object
+    // concat-spreadable, but spreading it would still throw.
+    let input = r#"
+const b = [].concat({ [k]: 1 });
+const c = [].concat({ __proto__: p }, items);
+"#;
+    let output = apply_rule_with_level(input, RewriteLevel::Aggressive);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn aggressive_spreads_logical_expression_arguments() {
+    // Either operand can be an array, so the assumption still applies.
+    let input = r#"
+const a = [].concat(x || y);
+"#;
+    let expected = r#"
+const a = [...x || y];
+"#;
+    let output = apply_rule_with_level(input, RewriteLevel::Aggressive);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn concat_arguments_object_stays_concat() {
     // ES6 concat does not spread arguments; [...arguments] does.
     let input = r#"
