@@ -776,13 +776,26 @@ published source. The matrix compiles ESM, so it has no row for it.
 The whole module now stays CommonJS when the `exports` binding is reassigned
 anywhere (assignment, pattern target, in a function), or used as a value that
 can alias it: a declarator or assignment value, `return`, an object or array
-element, and so on. Two uses fail the gate without forcing that boundary,
-because the statement path recovers known helpers that make them:
+element, and so on. Two uses fail the gate without forcing that boundary
+up front, because the statement path recovers known helpers that make them:
 
 - a direct call argument (`__exportStar(require("./dep"), exports)`,
   `register(exports)`);
 - the right operand of `in`, which CommonJS export-star loops test before
   each copy.
+
+If such a use is still there after conversion, no helper took it (an
+unknown call, or `__exportStar(require(12345), exports)` with a module id the
+unpacker could not resolve), and the ES module would throw on it. `UnEsm`
+then restores the CommonJS module, unless that module calls bundler runtime
+helpers such as `require.d`: no CommonJS loader provides them, so restoring
+gains nothing, and the converted form keeps the recovered exports and the
+warning. Before checking, `UnEsm` removes a default-object compatibility
+block that the converted getters left dead, which unpack used to do only on
+its second `UnEsm` run. A module with a default export keeps that block,
+which reads the whole `exports` object
+(`Object.assign(exports.default, exports)`); without bundler helpers it now
+stays CommonJS instead of converting into ESM that threw at load.
 
 A top-level `this` is the same object: CommonJS runs the module body with
 `this` set to `module.exports`, and an ES module body has `this` undefined.
@@ -825,3 +838,9 @@ Recorded 2026-10-04, after step 1.
    module CommonJS, with the TypeScript helper guard exempt. Taken after an
    outside review of this line found modules converted with a `this` that
    then throws or reads `undefined`.
+8. **A whole-`exports` use that survives conversion restores the CommonJS
+   module.** Decision 6 lets call arguments and `in` operands through for
+   the helpers the statement path recognizes; when none recognized them,
+   the ESM output would throw on the leftover use. Not for modules that
+   call bundler runtime helpers, which cannot run as CommonJS either.
+   Per-name leftovers (`exports.x`) still keep decision 1.

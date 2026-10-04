@@ -2,7 +2,19 @@
 source: crates/core/tests/un_esm_rule.rs
 expression: output
 ---
-export const Foo = 1;
+((exports_1, B)=>{
+    for(const G in B){
+        Object.defineProperty(exports_1, G, {
+            enumerable: true,
+            get: B[G]
+        });
+    }
+})(exports, {
+    Foo () {
+        return A;
+    }
+});
+const A = 1;
 if (flag) {
     Object.defineProperty(exports.default, "__esModule", {
         value: true

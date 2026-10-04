@@ -48,6 +48,20 @@ pub(crate) fn unrecovered_commonjs_export_names(
     collector.names
 }
 
+/// Whether `module` uses the whole `exports` object as a value: a call
+/// argument, an `in` operand, a computed key, and so on. Unlike
+/// [`unrecovered_commonjs_export_names`], this looks at CommonJS input too.
+///
+/// `module` must be resolved with `unresolved_mark`.
+pub(crate) fn uses_whole_exports_object(module: &Module, unresolved_mark: Mark) -> bool {
+    let mut collector = ResidualCollector {
+        unresolved_mark,
+        names: Vec::new(),
+    };
+    module.visit_with(&mut collector);
+    collector.names.iter().any(|name| name == WHOLE_EXPORTS)
+}
+
 struct ResidualCollector {
     unresolved_mark: Mark,
     names: Vec<Atom>,
@@ -166,6 +180,34 @@ mod tests {
             names("export {}; register(exports); module.exports = value; exports[key] = 1;"),
             ["exports", "module.exports"]
         );
+    }
+
+    fn uses_whole(source: &str) -> bool {
+        GLOBALS.set(&Default::default(), || {
+            let cm: Lrc<SourceMap> = Default::default();
+            let file = cm.new_source_file(FileName::Anon.into(), source.to_string());
+            let mut module = parse_file_as_module(
+                &file,
+                Syntax::Es(EsSyntax::default()),
+                Default::default(),
+                None,
+                &mut Vec::new(),
+            )
+            .expect("test source parses");
+            let unresolved_mark = Mark::new();
+            module.visit_mut_with(&mut resolver(unresolved_mark, Mark::new(), false));
+            uses_whole_exports_object(&module, unresolved_mark)
+        })
+    }
+
+    #[test]
+    fn whole_exports_use_is_found_in_commonjs_input() {
+        assert!(uses_whole("register(exports); exports.a = 1;"));
+        assert!(uses_whole("if (key in exports) {}"));
+        assert!(!uses_whole(
+            "exports.a = 1; typeof exports; module.exports = value;"
+        ));
+        assert!(!uses_whole("function f(exports) { g(exports); }"));
     }
 
     #[test]

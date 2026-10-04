@@ -20,6 +20,9 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use super::constructor_sensitivity::static_member_name;
 use crate::analysis::binding_id;
 use crate::analysis::binding_uses::{BindingId, BindingUseIndex, UseKind};
+use crate::commonjs_export_residual::{
+    unrecovered_commonjs_export_names, uses_whole_exports_object, WHOLE_EXPORTS,
+};
 use crate::facts::{collect_module_facts, ModuleFactsMap};
 use crate::js_names::{is_reserved_binding_name, is_valid_identifier_name};
 use crate::module_path::resolve_relative_specifier;
@@ -243,7 +246,13 @@ impl VisitMut for UnEsm {
         {
             return;
         }
-        let original_cjs_module = if has_local_self_require {
+        // The module gate lets `exports` through as a call argument or an `in`
+        // operand, because recognized helpers that take it (`__exportStar`,
+        // `require.d`, export-star loops) are recovered below. A use that
+        // survives conversion would throw in ESM, so keep the original to
+        // restore then.
+        let uses_whole_exports = uses_whole_exports_object(module, self.unresolved_mark);
+        let original_cjs_module = if has_local_self_require || uses_whole_exports {
             Some(module.clone())
         } else {
             None
@@ -811,8 +820,12 @@ impl VisitMut for UnEsm {
         inline_adjacent_default_export_aliases(&mut new_body);
         module.body = new_body;
 
-        if let (Some(original), Some(current_filename)) =
-            (original_cjs_module, current_filename.as_deref())
+        let Some(original) = original_cjs_module else {
+            return;
+        };
+        if let Some(current_filename) = current_filename
+            .as_deref()
+            .filter(|_| has_local_self_require)
         {
             // A self-require used only through a provider's proven named
             // surface can use the same conservative namespace representation
@@ -835,9 +848,63 @@ impl VisitMut for UnEsm {
                 // self-import cannot even link. Roll back this rule as one
                 // unit instead of mixing an unrepresentable edge with ESM.
                 *module = original;
+                return;
+            }
+        }
+        if uses_whole_exports {
+            // Converted getters no longer touch `exports`, so a default-object
+            // compatibility block for a module without a default can be proven
+            // dead now. Unpack runs UnEsm again on its output and removed it
+            // there; do it here so the check below sees the final shape.
+            remove_dead_named_only_default_compat_blocks(module, self.unresolved_mark);
+            // Restoring is worth it only when the original runs as CommonJS
+            // on its own. Unpacked bundler modules still call runtime helpers
+            // such as `require.d`, which no CommonJS loader provides; their
+            // converted form keeps the recovered exports and reports the
+            // leftover use instead.
+            if unrecovered_commonjs_export_names(module, self.unresolved_mark)
+                .iter()
+                .any(|name| name == WHOLE_EXPORTS)
+                && !calls_bundler_require_helper(&original, self.unresolved_mark)
+            {
+                *module = original;
             }
         }
     }
+}
+
+/// Whether `module` calls a member of the free `require` other than Node's
+/// own `require.resolve`, such as webpack's `require.d` or `require.r`.
+fn calls_bundler_require_helper(module: &Module, unresolved_mark: Mark) -> bool {
+    struct Finder {
+        unresolved_mark: Mark,
+        found: bool,
+    }
+    impl Visit for Finder {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if let Callee::Expr(callee) = &call.callee {
+                if let Expr::Member(member) = strip_parens(callee) {
+                    if matches!(strip_parens(&member.obj), Expr::Ident(object)
+                        if is_unresolved_ident(object, "require", self.unresolved_mark))
+                        && member
+                            .prop
+                            .as_ident()
+                            .is_none_or(|prop| prop.sym != "resolve")
+                    {
+                        self.found = true;
+                        return;
+                    }
+                }
+            }
+            call.visit_children_with(self);
+        }
+    }
+    let mut finder = Finder {
+        unresolved_mark,
+        found: false,
+    };
+    module.visit_with(&mut finder);
+    finder.found
 }
 
 pub(crate) fn contains_local_self_require(

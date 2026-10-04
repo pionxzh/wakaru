@@ -2213,13 +2213,10 @@ exports.default = value;
 mutate(exports);
 module.exports = exports.default;
 "#;
-    let expected = r#"
-value;
-mutate(exports);
-export default exports.default;
-"#;
+    // `mutate(exports)` blocks the mirror, and the call still passes the whole
+    // `exports` object after conversion, so the module stays CommonJS.
     let output = apply(input);
-    assert_eq_normalized(&output, expected);
+    assert_eq_normalized(&output, input);
 }
 
 #[test]
@@ -2526,6 +2523,25 @@ exports.answer = answer;
     assert_eq_normalized(&output, "export const answer = 42;");
 }
 
+/// The postamble reads `exports` until the getter is converted; only then can
+/// it be proven dead, so the module must not be rolled back before that.
+#[test]
+fn getter_exports_beside_a_dead_default_compat_postamble_convert() {
+    let input = format!(
+        r#"
+Object.defineProperty(exports, "getLocale", {{ enumerable: true, get: function () {{ return getLocale; }} }});
+function getLocale(value) {{ return false; }}
+{DEFAULT_COMPAT_POSTAMBLE}
+"#
+    );
+    let output = apply(&input);
+    assert!(
+        output.contains("export { getLocale }") || output.contains("export function getLocale"),
+        "{output}"
+    );
+    assert!(!output.contains("exports"), "{output}");
+}
+
 #[test]
 fn recovered_default_keeps_default_compat_postamble() {
     let input = format!(
@@ -2536,7 +2552,9 @@ exports.default = answer;
 "#
     );
     let output = apply(&input);
-    assert!(output.contains("export default answer"));
+    // The postamble is not dead when a default exists, and it reads the whole
+    // `exports` object, so the module stays CommonJS.
+    assert!(output.contains("exports.default = answer"), "{output}");
     assert!(
         output.contains("Object.assign(exports.default, exports)")
             && output.contains("module.exports = exports.default"),
@@ -5585,6 +5603,63 @@ fn rebound_or_aliased_exports_keeps_the_commonjs_boundary() {
         });
         assert_eq_normalized(&output, source);
     }
+}
+
+/// Passing `exports` to a call does not fail the gate, because recognized
+/// helpers that take it (`__exportStar`, `require.d`) are recovered. When the
+/// call survives conversion, the ES module would throw on it, so the module
+/// stays CommonJS.
+#[test]
+fn surviving_exports_call_arguments_keep_the_commonjs_boundary() {
+    for source in [
+        "register(exports);\nexports.a = 1;\n",
+        "__exportStar(require(12345), exports);\nexports.own = 1;\n",
+    ] {
+        let output = common::render_rule(source, |mark| {
+            wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
+        });
+        assert_eq_normalized(&output, source);
+    }
+
+    // TypeScript's helper with a module id the unpacker could not resolve.
+    let source = r#"
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __exportStar = (this && this.__exportStar) || function(m, exports) {
+    for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.own = void 0;
+__exportStar(require(12345), exports);
+exports.own = 1;
+"#;
+    let output = render_pipeline(source);
+    assert!(
+        output.contains("__exportStar(require(12345), exports);"),
+        "{output}"
+    );
+    assert!(output.contains("exports.own = 1;"), "{output}");
+    assert!(
+        !output
+            .lines()
+            .any(|line| line.starts_with("export ") || line.starts_with("import ")),
+        "{output}"
+    );
+
+    // A recognized helper call is still recovered.
+    let output = render_pipeline(&source.replace("require(12345)", "require(\"./dep\")"));
+    assert!(output.contains("export * from \"./dep\";"), "{output}");
+    assert!(!output.contains("exports"), "{output}");
 }
 
 /// A top-level `this` in CommonJS is `module.exports`; in ESM it is
