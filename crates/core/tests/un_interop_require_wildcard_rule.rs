@@ -995,3 +995,231 @@ exports.load = function () { return Promise.resolve().then(() => _interopRequire
         "{output}"
     );
 }
+
+/// webpack 5.111 bundle of a package compiled by swc 1.16 with
+/// `externalHelpers` and `module.type: "commonjs"`: the wildcard helper is
+/// its own module, known to the consumer only from cross-module facts.
+const SWC_EXTERNAL_HELPER_BUNDLE: &str = r#"/******/ (() => { // webpackBootstrap
+/******/ 	var __webpack_modules__ = ({
+
+/***/ 509
+(__unused_webpack_module, exports, __webpack_require__) {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({
+    value: true
+}));
+function _export(target, all) {
+    for(var name in all)Object.defineProperty(target, name, {
+        enumerable: true,
+        get: Object.getOwnPropertyDescriptor(all, name).get
+    });
+}
+_export(exports, {
+    get loadLazy () {
+        return loadLazy;
+    },
+    get loadThen () {
+        return loadThen;
+    }
+});
+const _interop_require_wildcard = __webpack_require__(544);
+async function loadLazy() {
+    const ns = await Promise.resolve().then(()=>/*#__PURE__*/ _interop_require_wildcard._(__webpack_require__(931)));
+    return ns.value + ns.default();
+}
+function loadThen() {
+    return Promise.resolve().then(()=>/*#__PURE__*/ _interop_require_wildcard._(__webpack_require__(931))).then((ns)=>ns.value);
+}
+
+
+/***/ },
+
+/***/ 931
+(__unused_webpack_module, exports) {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({
+    value: true
+}));
+function _export(target, all) {
+    for(var name in all)Object.defineProperty(target, name, {
+        enumerable: true,
+        get: Object.getOwnPropertyDescriptor(all, name).get
+    });
+}
+_export(exports, {
+    get default () {
+        return one;
+    },
+    get value () {
+        return value;
+    }
+});
+const value = 41;
+function one() {
+    return 1;
+}
+
+
+/***/ },
+
+/***/ 544
+(__unused_webpack___webpack_module__, __webpack_exports__, __webpack_require__) {
+
+"use strict";
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   _: () => (/* binding */ _interop_require_wildcard)
+/* harmony export */ });
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) return obj;
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") return { default: obj };
+
+    var cache = _getRequireWildcardCache(nodeInterop);
+
+    if (cache && cache.has(obj)) return cache.get(obj);
+
+    var newObj = { __proto__: null };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+
+    for (var key in obj) {
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) Object.defineProperty(newObj, key, desc);
+            else newObj[key] = obj[key];
+        }
+    }
+
+    newObj.default = obj;
+
+    if (cache) cache.set(obj, newObj);
+
+    return newObj;
+}
+
+
+
+/***/ }
+
+/******/ 	});
+/************************************************************************/
+/******/ 	// The module cache
+/******/ 	const __webpack_module_cache__ = {};
+/******/ 	
+/******/ 	// The require function
+/******/ 	function __webpack_require__(moduleId) {
+/******/ 		// Check if module is in cache
+/******/ 		const cachedModule = __webpack_module_cache__[moduleId];
+/******/ 		if (cachedModule !== undefined) {
+/******/ 			return cachedModule.exports;
+/******/ 		}
+/******/ 		// Create a new module (and put it into the cache)
+/******/ 		const module = __webpack_module_cache__[moduleId] = {
+/******/ 			// no module.id needed
+/******/ 			// no module.loaded needed
+/******/ 			exports: {}
+/******/ 		};
+/******/ 	
+/******/ 		// Execute the module function
+/******/ 		__webpack_modules__[moduleId](module, module.exports, __webpack_require__);
+/******/ 	
+/******/ 		// Return the exports of the module
+/******/ 		return module.exports;
+/******/ 	}
+/******/ 	
+/************************************************************************/
+/******/ 	/* webpack/runtime/define property getters */
+/******/ 	// define getter/value functions for harmony exports
+/******/ 	__webpack_require__.d = (exports, definition) => {
+/******/ 		for(var key in definition) {
+/******/ 			if(__webpack_require__.o(definition, key) && !__webpack_require__.o(exports, key)) {
+/******/ 				Object.defineProperty(exports, key, { enumerable: true, get: definition[key] });
+/******/ 			}
+/******/ 		}
+/******/ 	};
+/******/ 	
+/******/ 	/* webpack/runtime/hasOwnProperty shorthand */
+/******/ 	__webpack_require__.o = (obj, prop) => (Object.prototype.hasOwnProperty.call(obj, prop));
+/******/ 	
+/************************************************************************/
+let __webpack_exports__ = {};
+const pkg = __webpack_require__(509);
+pkg.loadLazy().then((v) => console.log("lazy", v));
+pkg.loadThen().then((v) => console.log("then", v));
+
+/******/ })()
+;"#;
+
+#[test]
+fn cross_module_wildcard_helper_lowered_dynamic_import_becomes_import_call() {
+    let output = wakaru_core::driver::test_support::unpack(
+        SWC_EXTERNAL_HELPER_BUNDLE,
+        wakaru_core::DecompileOptions {
+            filename: "bundle.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("unpack should succeed");
+    let (_, consumer) = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "module-509.js")
+        .expect("consumer module");
+    assert!(
+        consumer.contains(r#"await import("./module-931.js")"#),
+        "{consumer}"
+    );
+    assert!(
+        consumer.contains(r#"return import("./module-931.js").then"#),
+        "{consumer}"
+    );
+    assert!(!consumer.contains("require"), "{consumer}");
+}
+
+#[test]
+fn cross_module_call_of_a_non_helper_is_not_a_lowered_import() {
+    // The provider's `_` is an ordinary function, so its export fact proves
+    // no helper identity.
+    let start = SWC_EXTERNAL_HELPER_BUNDLE
+        .find("function _interop_require_wildcard(obj, nodeInterop) {")
+        .expect("helper start");
+    let end = SWC_EXTERNAL_HELPER_BUNDLE[start..]
+        .find("\n/***/ }")
+        .map(|offset| start + offset)
+        .expect("helper end");
+    let bundle = format!(
+        "{}function _interop_require_wildcard(obj) {{ return {{ wrapped: obj }}; }}\n{}",
+        &SWC_EXTERNAL_HELPER_BUNDLE[..start],
+        &SWC_EXTERNAL_HELPER_BUNDLE[end..]
+    );
+    let output = wakaru_core::driver::test_support::unpack(
+        &bundle,
+        wakaru_core::DecompileOptions {
+            filename: "bundle.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("unpack should succeed");
+    let (_, consumer) = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "module-509.js")
+        .expect("consumer module");
+    assert!(!consumer.contains("import("), "{consumer}");
+    assert!(
+        consumer.contains(r#"require("./module-931.js")"#),
+        "{consumer}"
+    );
+}

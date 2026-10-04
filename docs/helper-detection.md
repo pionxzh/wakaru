@@ -261,7 +261,10 @@ For example, `UnInteropRequireDefault`:
   is a lowered `import("./a")` and becomes that call. The forms that pass a
   non-literal specifier through the promise or a wrapper function are read
   the same way (`lowered_dynamic_import_source_semantics` in
-  [rewrite-assumptions.md](rewrite-assumptions.md))
+  [rewrite-assumptions.md](rewrite-assumptions.md)). In unpack mode, a
+  wildcard helper bundled as its own module is proven only by helper export
+  facts, so a Phase 2 pass restores the same shape there (see
+  [fact-system.md](fact-system.md))
 
 SWC AMD's assignment form `_a = _interopRequireDefault(_a)` — and the modern
 external-helper spelling `_a = helper._(_a)`, proven against the exact

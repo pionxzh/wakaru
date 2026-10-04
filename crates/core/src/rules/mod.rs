@@ -18,6 +18,7 @@ mod extract_inlined_function;
 mod flip_comparisons;
 pub(crate) mod helper_matcher;
 mod import_dedup;
+pub(crate) mod lowered_dynamic_import;
 pub(crate) mod match_context;
 mod merge_declaration_init;
 mod obj_method_shorthand;

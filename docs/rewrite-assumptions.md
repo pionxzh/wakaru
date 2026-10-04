@@ -815,7 +815,8 @@ matches the source the compiler started from, as for
 `require` that an ESM module cannot call.
 
 Affects: `UnInteropRequireWildcard` when `UnEsm` runs it on a module it
-converts.
+converts, and the Phase 2 pass `run_cross_module_lowered_dynamic_imports`
+for a helper imported from another module of a bundle.
 
 Level: `standard` and above, where `UnEsm` runs.
 

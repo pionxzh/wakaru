@@ -307,6 +307,10 @@ impl LocalHelperContext {
         self.helper_callee_kind(callee) == Some(kind)
     }
 
+    pub(crate) fn unresolved_mark(&self) -> Option<Mark> {
+        self.unresolved_mark
+    }
+
     pub(crate) fn is_unresolved_or_unguarded_ident(&self, id: &Ident, name: &str) -> bool {
         is_unresolved_or_unguarded_ident(id, name, self.unresolved_mark)
     }

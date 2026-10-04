@@ -59,6 +59,7 @@ Phase 2 (per module, parallel):
     run_provider_import_repair(&mut module, facts)    ← proven CJS property edges
     run_provider_namespace_repair(&mut module, facts) ← proven ESM namespace edges
     run_reexport_consolidation(&mut module, facts)
+    run_cross_module_lowered_dynamic_imports(...)    ← helper export facts
     run_namespace_decomposition(&mut module, facts)  ← reads cross-module facts
     downgrade_unused_synthetic_imports(&mut module)  ← preserve require effects
     registry rule range resuming after UnEsm, through UnReturn
@@ -331,6 +332,13 @@ fact available to consumers.
   has no facts; the `RelativeNamespaceImport` rule makes the same rewrite
   for relative sources from evidence in the importing module alone
   (`relative_require_esm_provider` in rewrite-assumptions.md).
+- **`run_cross_module_lowered_dynamic_imports`** — restores a lowered
+  `import()`, `Promise.resolve().then(() => _(require(x)))`, when `_` is
+  imported from a module whose helper export fact proves it is the wildcard
+  interop helper (swc's `externalHelpers` output, with `@swc/helpers` bundled
+  as its own module). `UnEsm` restores the same shape with a local helper;
+  in Phase 1 it cannot see a helper from another module
+  (`lowered_dynamic_import_source_semantics` in rewrite-assumptions.md).
 - **`namespace_decomposition`** — rewrites `import r from "./x"; r.foo()` into
   `import { foo } from "./x"; foo()` when `./x` exports `foo` and no collision
   prevents the rewrite. Handles aliased pre-existing specifiers, inner-scope

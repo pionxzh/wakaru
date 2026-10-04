@@ -50,6 +50,7 @@ use crate::provider_namespace_repair::run_provider_namespace_repair;
 use crate::reexport_consolidation::run_reexport_consolidation;
 use crate::rules::eval_utils::DirectEvalAnalyzer;
 use crate::rules::expr_utils::is_unresolved_ident;
+use crate::rules::lowered_dynamic_import::run_cross_module_lowered_dynamic_imports;
 use crate::rules::{
     apply_rules, apply_rules_to_recovered_module, contains_local_self_require, ImportDedup,
     RewriteLevel, RulePipelineOptions, SimplifySequence, UnAssignmentMerging, UnConditionals,
@@ -666,6 +667,12 @@ pub(super) fn unpack_multi_module_with_plan(
                 unresolved_mark,
             );
             run_reexport_consolidation(&mut module, facts_ref, Some(&unpacked.module.filename));
+            run_cross_module_lowered_dynamic_imports(
+                &mut module,
+                facts_ref,
+                Some(&unpacked.module.filename),
+                unresolved_mark,
+            );
             run_namespace_decomposition(
                 &mut module,
                 facts_ref,
