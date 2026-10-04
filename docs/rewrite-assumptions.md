@@ -119,18 +119,26 @@ This assumption does not relax helper identity, reassignment, temporary-use,
 or complete-pattern checks. An unproven or reassigned helper call must remain.
 See [helper detection](helper-detection.md) for those proof requirements.
 
-Compressed indexed returns recovered into complete patterns share the helper
-versus native iterator boundary. For example, TypeScript's `__read` calls the
-iterator's `return()` if a later `next()` throws after an earlier successful
-step; native destructuring propagates that error without closing the iterator.
-Recovering the pattern at `standard` accepts this source-recovery difference.
+TypeScript's `__read` also differs from native destructuring when closing the
+iterator. If a later `next()` throws after an earlier successful step, `__read`
+calls the iterator's `return()` before rethrowing; native destructuring
+propagates the error without closing the iterator. Babel's `_slicedToArray`
+matches native here (checked with `@babel/plugin-transform-destructuring`
+7.28.5). This difference applies to every recovered `__read` group, not only to
+groups with defaults: `UnSlicedToArray` recovers a plain
+`var _a = __read(src, 2), a = _a[0], b = _a[1]` to `const [a, b] = src` at
+every level, `minimal` included. Compressed indexed returns recovered into
+complete patterns share the same boundary.
 
 Affects: `UnDestructuring` (complete sliced-helper groups with defaults) and
-`UnSlicedToArray` (compressed indexed returns recovered into complete patterns).
-`UnParameters2` may subsequently fold the recovered pattern into a parameter.
+`UnSlicedToArray` (every recovered `__read` group, plus compressed indexed
+returns recovered into complete patterns). `UnParameters2` may subsequently
+fold the recovered pattern into a parameter.
 
-Level: `standard` and above. `minimal` retains the helper materialization for
-these default groups and compressed indexed returns. These recoveries use the
+Level: the default-ordering difference and compressed indexed returns need
+`standard` or above; `minimal` retains the helper materialization for those.
+The `__read` close-on-throw difference is accepted at every level, because
+`minimal` already recovers plain `__read` groups. These recoveries use the
 existing source-recovery policy; helper identity and complete-pattern checks
 remain required.
 
@@ -301,7 +309,9 @@ key object with a side-effecting `Symbol.toPrimitive`, `valueOf`, or `toString`
 can observe the difference.
 
 Affects: `UnDefineProperty` for expression-position calls whose target is an
-exactly empty object literal. Standalone calls rewritten to assignments do not
+exactly empty object literal, and `UnComputedProperties`, whose
+member-assignment sequences also coerce each key after its value (see
+`set_computed_properties`). Standalone calls rewritten to assignments do not
 depend on this assumption.
 
 Level: `standard` and above. `minimal` preserves the helper call.
@@ -458,9 +468,14 @@ the shape in the first place. Other producers emit it without any option:
 TypeScript 1.5–5.9 targeting ES5 always does, and SWC does with `jsc.loose`
 from 1.2.155. esbuild's minifier also folds handwritten assignment code
 (`var c; c = {}; c[k] = v; return c`) into `return c={},c[k]=v,c`, so the shape
-does not prove that the source used definition semantics. Key evaluation order
-is *not* at risk — both forms evaluate each key before its own value, in source
-order.
+does not prove that the source used definition semantics. Key *expression*
+order is not at risk: both forms evaluate each key expression before its own
+value, in source order. Key *coercion* order differs. The assignment form runs
+ToPropertyKey on the key after evaluating the value, while the literal form
+runs it before the value in Node 24. JavaScriptCore (Bun 1.3) runs it after the
+value in both forms, so engines already disagree on the literal. Only a key
+object whose `Symbol.toPrimitive`, `valueOf`, or `toString` has side effects
+can observe this, the same hazard `effect_free_property_key_coercion` names.
 
 Several cases can still observe the difference:
 
@@ -562,7 +577,12 @@ prediction is reported as `cross_module_class_call`.
 Level: `standard` and above. `minimal` preserves this lowered constructor and
 wrapper, and keeps every cross-module `.call` / `.apply` target a function.
 Other existing class recoveries have their own boundaries; this is not a claim
-that `minimal` preserves every lowered class.
+that `minimal` preserves every lowered class. In particular, an explicit
+TypeScript constructor (`var _this = _super.call(this, m) || this`) in a class
+without superclass method calls becomes `super(m)` at every level, `minimal`
+included. That recovery carries the same native-parent and overridden-`.call`
+differences listed above. With a native parent such as `Error` it also changes
+`instanceof` and method lookup on instances, in the direction of the source.
 
 ### `commonjs_exports_data_properties`
 
@@ -611,7 +631,10 @@ splitting them would require a stronger proof or a receiver capture. Property-st
 `module.exports.name` roots only after its module gate proves that neither
 receiver can be rebound, replaced, aliased, or observed dynamically.
 
-Level: all levels. UnEsm's recovery is itself unconditional on this point.
+Level: `UnAssignmentMerging` relies on it at every level. `UnEsm` relies on it
+wherever it runs: `standard` and above for single-file input, because `UnEsm`
+does not run at `minimal` there. In unpack mode the module recovery converts
+CommonJS at every level, so the recovery depends on it at every level.
 
 ### `chain_receiver_reference_order`
 
@@ -642,12 +665,19 @@ own. It can do so only by calling back into a closure this module registered
 earlier, or through an escaped `module`, and the single-export recovery
 (`exports.name = Lib.make(x)` to `export const name = Lib.make(x)`) already
 accepts those channels without inspecting the module for them. The chain
-recovery accepts them on the same terms and does not widen them: arguments
-that are the wrapper bindings `module`, `exports`, or `require`, computed
-callee keys, spread arguments, optional calls, `new`, and every call whose
-callee root is a local function, object, or an unresolved global stay whole.
-The value stays at the chain's own position; unlike the `require("literal")`
-value (`import_hoisting_eagerness`), nothing is hoisted.
+recovery accepts them on the same terms and does not widen them: arguments that
+are the wrapper bindings `module`, `exports`, or `require`, computed callee
+keys, spread arguments, optional calls, `new`, and every call whose callee root
+is a local function, object, or an unresolved global are not recovered by this
+path. Most of them are still recovered by the property-storage path, which
+declares live `export let` bindings and writes them at the chain's original
+position (`first = second = makeValue()`). That path removes the receivers
+instead of reordering them, so it does not depend on this assumption. Its
+module gate keeps CommonJS when a value may replace `module.exports` or rebind
+`exports`, which covers wrapper-binding arguments and a local function that
+writes `module.exports`. In this path's own recovery, the value stays at the
+chain's own position; unlike the `require("literal")` value
+(`import_hoisting_eagerness`), nothing is hoisted.
 
 This is an accepted assumption in the same sense as
 `commonjs_exports_data_properties`: it names the residual rather than proving
@@ -660,7 +690,9 @@ value is a provider call. Everything the recovery does afterwards (binding
 name, snapshot exports, `module.exports` head) is the existing function-value
 path.
 
-Level: all levels, matching the rest of the chain recovery.
+Level: `standard` and above for single-file input, because `UnEsm` does not run
+at `minimal` there. In unpack mode the module recovery converts CommonJS at
+every level, so this path applies at every level.
 
 ### `import_hoisting_eagerness`
 
@@ -670,9 +702,14 @@ dependencies evaluate before the importing module's body. In CommonJS, a
 provider executes at its `require` call site, interleaved with the consumer's
 own statements. Every wakaru CommonJS recovery shares this deviation; it is
 observable whenever a later provider's side effects (a global write, an
-installed getter or setter) change what an earlier consumer statement — such
-as an `Object.assign` copy — reads. Relative provider order is preserved;
-only the provider-versus-consumer interleaving moves.
+installed getter or setter) change what an earlier consumer statement — such as
+an `Object.assign` copy — reads. Relative provider order is preserved only
+among requires that become imports. A require that stays a call keeps running
+in place, after every hoisted import. In
+`require("dotenv").config(); const db = require("./db")`, the recovery imports
+`./db` but leaves `require("dotenv").config()` as a call, so `./db` now loads
+first. Requires of numeric module ids that are not in the input stay calls the
+same way in unpack output.
 
 Recoveries that copy values at a specific program point (the default-object
 composition's `Object.assign` shells) prove the consumer's body exact but
@@ -693,7 +730,10 @@ module that owns the state declaration) shifts that statement's evaluation to
 the owner's import time — the same provider-versus-consumer interleaving
 deviation.
 
-Level: all levels. This is inherent to emitting ESM from CommonJS.
+Level: wherever CommonJS becomes ESM: `standard` and above for single-file
+input, because `UnEsm` does not run at `minimal` there. In unpack mode the
+module recovery converts CommonJS at every level, so this applies at every
+level. This is inherent to emitting ESM from CommonJS.
 
 ### `commonjs_export_mirror_coverage`
 
