@@ -8,9 +8,9 @@ use swc_core::ecma::ast::{
     ArrowExpr, AssignPat, BindingIdent, BlockStmt, CatchClause, Class, ClassDecl, ClassExpr,
     Constructor, Decl, DefaultDecl, ExportNamedSpecifier, Expr, FnDecl, FnExpr, Function, Ident,
     ImportDecl, ImportNamedSpecifier, ImportSpecifier, JSXElementName, KeyValuePatProp,
-    KeyValueProp, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, ObjectPatProp,
-    ParamOrTsParamProp, Pat, Prop, PropName, Stmt, TsParamPropParam, VarDecl, VarDeclKind,
-    VarDeclarator,
+    KeyValueProp, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, NamedExport,
+    ObjectPatProp, ParamOrTsParamProp, Pat, Prop, PropName, Stmt, TsParamPropParam, VarDecl,
+    VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -996,6 +996,15 @@ impl VisitMut for BindingRenamer {
         }
     }
 
+    fn visit_mut_named_export(&mut self, export: &mut NamedExport) {
+        // In `export { a as b } from "m"`, `a` names an export of `m`, not a
+        // local binding, even when an emitted ident happens to share a local
+        // binding's identity.
+        if export.src.is_none() {
+            export.visit_mut_children_with(self);
+        }
+    }
+
     fn visit_mut_export_named_specifier(&mut self, spec: &mut ExportNamedSpecifier) {
         let ModuleExportName::Ident(orig) = &mut spec.orig else {
             return;
@@ -1091,6 +1100,58 @@ impl VisitMut for BindingRenamer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn binding_renamer_keeps_re_export_source_names() {
+        use swc_core::ecma::ast::ExportSpecifier;
+        with_parsed_module("export { d as x } from 'm'; export { d };", |module| {
+            let mut module = module.clone();
+            let ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(local)) = &module.body[1] else {
+                panic!("expected a local export");
+            };
+            let ExportSpecifier::Named(ExportNamedSpecifier {
+                orig: ModuleExportName::Ident(orig),
+                ..
+            }) = &local.specifiers[0]
+            else {
+                panic!("expected a named specifier");
+            };
+            let local_id = (orig.sym.clone(), orig.ctxt);
+            // Give the re-exported name the local binding's identity.
+            let ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(re_export)) = &mut module.body[0]
+            else {
+                panic!("expected a re-export");
+            };
+            let ExportSpecifier::Named(ExportNamedSpecifier {
+                orig: ModuleExportName::Ident(source_name),
+                ..
+            }) = &mut re_export.specifiers[0]
+            else {
+                panic!("expected a named specifier");
+            };
+            source_name.ctxt = local_id.1;
+            let renames = [BindingRename {
+                old: local_id,
+                new: "renamed".into(),
+            }];
+            module.visit_mut_with(&mut BindingRenamer::new(&renames));
+            let orig_name = |index: usize| {
+                let ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(export)) = &module.body[index]
+                else {
+                    unreachable!()
+                };
+                let ExportSpecifier::Named(named) = &export.specifiers[0] else {
+                    unreachable!()
+                };
+                match &named.orig {
+                    ModuleExportName::Ident(ident) => ident.sym.to_string(),
+                    ModuleExportName::Str(_) => unreachable!(),
+                }
+            };
+            assert_eq!(orig_name(0), "d");
+            assert_eq!(orig_name(1), "renamed");
+        });
+    }
 
     #[test]
     fn module_declares_binding_named_sees_every_binding_form() {
