@@ -38,8 +38,10 @@ use super::rename_utils::{
 };
 use super::RewriteLevel;
 
+mod export_getters;
 mod export_star;
 pub(crate) mod export_storage;
+pub(crate) use export_getters::lower_export_getter_helpers;
 use export_star::rewrite_commonjs_export_stars;
 
 use export_storage::{property_storage_plan, recover_export_storage};
@@ -176,6 +178,9 @@ impl VisitMut for UnEsm {
         // chain still remains, keep the CommonJS boundary before any
         // import/export rewrites; converting only its outer write leaves an
         // orphaned RHS.
+        // Helper-defined getters become ordinary getter definitions before
+        // any analysis, which only knows those.
+        lower_export_getter_helpers(module, self.unresolved_mark);
         let original_body = normalize_named_export_chains(module, self.unresolved_mark);
         let current_filename = self.current_filename.clone();
         let has_local_self_require =
@@ -3441,8 +3446,7 @@ fn build_export_items(
                     orig: ModuleExportName::Ident(
                         IdentName::new(imported.clone(), DUMMY_SP).into(),
                     ),
-                    exported: (imported != name)
-                        .then(|| ModuleExportName::Ident(IdentName::new(name, DUMMY_SP).into())),
+                    exported: (imported != name).then(|| export_specifier_name(name)),
                     is_type_only: false,
                 })],
                 src: Some(Box::new(make_str(&source))),
@@ -3492,7 +3496,7 @@ fn build_export_items(
                             specifiers: vec![ExportSpecifier::Named(ExportNamedSpecifier {
                                 span: DUMMY_SP,
                                 orig: ModuleExportName::Ident(id),
-                                exported: Some(ModuleExportName::Ident(make_name_ident(name))),
+                                exported: Some(export_specifier_name(name)),
                                 is_type_only: false,
                             })],
                             src: None,
@@ -6743,15 +6747,21 @@ fn is_esmodule_name_arg(expr: &Expr) -> bool {
     matches!(strip_parens(expr), Expr::Lit(Lit::Str(str)) if str.value.as_str() == Some("__esModule"))
 }
 
+/// The export name of a getter definition. Any string works: a getter only
+/// becomes a live export or a re-export, whose specifier can quote it.
 fn literal_export_name_arg(expr: &Expr) -> Option<Atom> {
     let Expr::Lit(Lit::Str(str)) = strip_parens(expr) else {
         return None;
     };
-    let value = str.value.as_str()?;
-    if is_valid_js_ident(value) {
-        Some(value.into())
+    Some(str.value.as_str()?.into())
+}
+
+/// An export specifier name, quoted when it is not an identifier name.
+fn export_specifier_name(name: Atom) -> ModuleExportName {
+    if is_valid_js_ident(name.as_ref()) {
+        ModuleExportName::Ident(make_name_ident(name))
     } else {
-        None
+        ModuleExportName::Str(make_str(name.as_ref()))
     }
 }
 

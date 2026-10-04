@@ -1,11 +1,14 @@
 # CommonJS Export Storage Recovery
 
-Status: **IN PROGRESS.** Steps 1 to 3 are implemented: the per-name
+Status: **IN PROGRESS.** Steps 1 to 3 and 5 are implemented: the per-name
 analysis (`wakaru debug cjs-exports`), the `commonjs_export_unrecovered`
-warning, A (property storage), and B (mirror storage). Evidence comes from the
+warning, A (property storage), B (mirror storage), and the swc, esbuild, and
+sucrase getter helpers feeding C. Step 4 was narrowed to one bug fix. Evidence
+comes from the
 [CommonJS export-storage matrix](../../scripts/repro/cjs-export-storage-matrix/README.md);
-see [Step 1 results](#step-1-results), [Step 2 results](#step-2-results), and
-[Step 3 results](#step-3-results).
+see [Step 1 results](#step-1-results), [Step 2 results](#step-2-results),
+[Step 3 results](#step-3-results), and
+[Steps 4 and 5 results](#steps-4-and-5-results).
 
 Ground rules: follow [AGENTS.md](../../AGENTS.md), including a focused unit
 test for every change. Use synthetic names in tests and commits. Record every
@@ -320,16 +323,12 @@ top-level write with no other access, matching today.
 
 Each of these needs separate work. The matrix tracks them.
 
-- **swc and esbuild helper recognition.** C needs recognizers for
-  `_export(exports, {...})` (both getter forms) and for single-file esbuild
-  `__export` + `module.exports = __toCommonJS(...)`. esbuild single-file
-  output must also stop being split as a scope-hoisted bundle.
+- **swc and esbuild helper recognition.** Done in step 5 for single-file
+  decompilation. esbuild single-file output is still split as a
+  scope-hoisted bundle under `--unpack`.
 - **`__exportStar` and other `export *` helpers.** This is separate work on
   CommonJS `export *` recovery.
-- **sucrase `_createNamedExportFrom`.** sucrase re-exports through a local
-  helper that calls `Object.defineProperty(exports, ...)` with the export
-  name as a parameter. Like swc's `_export`, it passes `exports` as a value,
-  so the module gate fails until a recognizer feeds C.
+- **sucrase `_createNamedExportFrom`.** Done in step 5.
 - **Single-file import interop.** Without facts about the provider,
   `require("./dep")` becomes a default import even when the provider has no
   default export. Unpack mode has those facts; single-file mode does not.
@@ -365,8 +364,10 @@ previous step.
 3. **Done.** Stop `UnAssignmentMerging` from splitting chains that write
    both an `exports` property and a local, then implement B; see
    [Step 3 results](#step-3-results).
-4. Route the existing getter pre-passes through C.
-5. Separately: swc and esbuild recognizers. They feed C.
+4. **Narrowed.** Route the existing getter pre-passes through C. Only one
+   C failure remained, a statement-path bug, fixed instead; see
+   [Steps 4 and 5 results](#steps-4-and-5-results).
+5. **Done.** swc, esbuild, and sucrase recognizers. They feed C.
 
 Run the private fixture suite and the full core suite at every step. Steps 2
 and 3 change snapshots by design. Each changed snapshot needs a reason in the
@@ -552,6 +553,61 @@ this proposal.
 - **Assumption.** The mirror condition is recorded as
   `commonjs_export_mirror_coverage` in
   [rewrite-assumptions.md](../rewrite-assumptions.md).
+
+## Steps 4 and 5 results
+
+Matrix: 270 / 291 behavior preserved (from 193), with no row that was correct
+after step 3 now wrong. By producer: TypeScript 24 to 26 per profile, Babel 26
+and 25 (loose), swc 25 and 26, esbuild 24, sucrase 22, rollup 21. The
+warning fires on 6 of 21 wrong rows and on no ok row. Every remaining failure
+is out of scope: `export * as ns` (all `reexport-star` rows), single-file
+import interop (all `import-then-export` rows, sucrase
+`imported-used-in-function`), and esbuild's `__toESM(require(...))`, which
+single-file mode does not recognize (esbuild `imported-used-in-function` and
+`reexport-named`). No pipeline snapshot or fixture output changed.
+
+**Step 4 was narrowed.** Webpack `require.d` getters keep their own pre-pass,
+and `Object.defineProperty(exports, ...)` getters keep the statement-path
+classifier. After step 5 every getter input reaches one of the two, and on
+every matrix row their output matches the C decision except one: Babel's
+`reexport-named`. Babel defines the getters before
+`var _dep = _interopRequireWildcard(require("./dep.js"))`, which
+`UnInteropRequireWildcard` has turned into `import * as _dep` by the time
+`UnEsm` runs. The re-export classifier only accepted `require()` bindings, so
+the getters stayed and threw at load. It now also accepts namespace import
+bindings, which are immutable, and drops the import when only the re-exports
+read it. Merging the two paths into C would change no matrix row, so it was
+not done. It becomes worth doing if the analysis reports a getter that the
+output still accesses; the warning makes that visible.
+
+**Step 5: getter helpers are lowered, not classified.** `UnEsm` first
+rewrites each helper call into the per-name getter definitions it performs,
+`Object.defineProperty(exports, "x", { enumerable: true, get })`
+(`un_esm/export_getters.rs`). Both the analysis (C) and the statement path
+already handle that shape, and the result is the same CommonJS module, so a
+module that later keeps its CommonJS boundary loses nothing. `debug
+cjs-exports` runs the same lowering before its analysis. Helper bodies are
+proven by shape:
+
+- swc `_export(target, all)`: one `for (name in all)` defining
+  `{ enumerable: true, get }` on `target`, where `get` is
+  `Object.getOwnPropertyDescriptor(all, name).get` (swc 1.16, entries are
+  getters) or `all[name]` (older swc and esbuild, entries are functions). An
+  entry that does not match the helper's read keeps the call.
+- esbuild `module.exports = __toCommonJS(ns)` after `var ns = {};
+  __export(ns, {...})`: `__toCommonJS` and its `__copyProps` are proven too.
+  The getters move from the fresh `module.exports` object to `exports` only
+  when the module refers to neither `module` nor `exports` anywhere else, so
+  nothing can tell the two objects apart. No code runs between the
+  replacement and the getter definitions.
+- sucrase `_createNamedExportFrom(obj, "x", "y")`: lowered when `obj` is a
+  binding that is never written, because the helper captured its value.
+- A repeated or `__proto__` key keeps the call: defining the same
+  non-configurable property twice throws, and the object literal would set
+  the prototype instead.
+
+A getter definition for a name that is not an identifier
+(`export { v as "a-b" }`) now becomes a quoted export specifier.
 
 ## Reassigned or aliased `exports`
 

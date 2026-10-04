@@ -1609,6 +1609,250 @@ Object.defineProperty(exports, "value", {
     assert!(!output.contains("export { value } from"));
 }
 
+const SWC_EXPORT_HELPER: &str = r#"
+function _export(target, all) {
+    for(var name in all)Object.defineProperty(target, name, {
+        enumerable: true,
+        get: Object.getOwnPropertyDescriptor(all, name).get
+    });
+}
+"#;
+
+const ESBUILD_CJS_HELPERS: &str = r#"
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+"#;
+
+#[test]
+fn swc_export_helper_getters_become_live_exports() {
+    let input = format!(
+        r#"
+Object.defineProperty(exports, "__esModule", {{ value: true }});
+{SWC_EXPORT_HELPER}
+_export(exports, {{
+    get bump () {{
+        return bump;
+    }},
+    get count () {{
+        return count;
+    }},
+    get default () {{
+        return main;
+    }}
+}});
+let count = 0;
+function bump() {{
+    count += 1;
+}}
+function main() {{
+    return count;
+}}
+"#
+    );
+    let expected = r#"
+export { bump };
+export { count };
+export { main as default };
+let count = 0;
+function bump() {
+    count += 1;
+}
+function main() {
+    return count;
+}
+"#;
+    assert_eq_normalized(&apply(&input), expected);
+}
+
+#[test]
+fn older_swc_export_helper_with_function_values_becomes_live_exports() {
+    let input = r#"
+function _export(target, all) {
+    for(var name in all)Object.defineProperty(target, name, {
+        enumerable: true,
+        get: all[name]
+    });
+}
+_export(exports, {
+    count: function() {
+        return count;
+    },
+    bump: function() {
+        return bump;
+    }
+});
+var count = 0;
+function bump() {
+    count += 1;
+}
+"#;
+    let expected = r#"
+export { count };
+export { bump };
+let count = 0;
+function bump() {
+    count += 1;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn getter_helper_keeps_entries_its_getter_read_does_not_expect() {
+    // The accessor-reading helper would define `get: undefined` for a value
+    // entry; the call stays as written.
+    let input = format!(
+        r#"
+{SWC_EXPORT_HELPER}
+_export(exports, {{
+    count: function() {{
+        return count;
+    }}
+}});
+var count = 0;
+"#
+    );
+    let output = apply(&input);
+    assert!(output.contains("_export(exports"), "{output}");
+}
+
+#[test]
+fn getter_helper_keeps_a_map_with_a_repeated_name() {
+    // Defining the same non-configurable property twice throws.
+    let input = r#"
+function _export(target, all) {
+    for(var name in all)Object.defineProperty(target, name, {
+        enumerable: true,
+        get: all[name]
+    });
+}
+_export(exports, {
+    count: () => count,
+    count: () => other
+});
+var count = 0;
+var other = 1;
+"#;
+    let output = apply(input);
+    assert!(output.contains("_export(exports"), "{output}");
+}
+
+#[test]
+fn getter_helper_string_name_becomes_quoted_live_export() {
+    let input = format!(
+        r#"
+{SWC_EXPORT_HELPER}
+_export(exports, {{
+    get "a-b" () {{
+        return v;
+    }}
+}});
+var v = 1;
+function bump() {{
+    v++;
+}}
+exports.bump = bump;
+"#
+    );
+    let output = apply(&input);
+    assert!(!output.contains("exports"), "{output}");
+    assert!(output.contains(r#"v as "a-b""#), "{output}");
+}
+
+#[test]
+fn esbuild_to_common_js_namespace_becomes_live_exports() {
+    let input = format!(
+        r#"
+{ESBUILD_CJS_HELPERS}
+var mod_exports = {{}};
+__export(mod_exports, {{
+  count: () => count,
+  default: () => mod_default,
+  reset: () => reset
+}});
+module.exports = __toCommonJS(mod_exports);
+let count = 0;
+function reset() {{
+  count = 0;
+}}
+var mod_default = count;
+"#
+    );
+    let output = apply(&input);
+    for helper in [
+        "__export",
+        "__toCommonJS",
+        "__copyProps",
+        "__hasOwnProp",
+        "mod_exports",
+    ] {
+        assert!(!output.contains(helper), "{helper} left in {output}");
+    }
+    assert!(!output.contains("module.exports"), "{output}");
+    assert!(output.contains("export { count }"), "{output}");
+    assert!(output.contains("export { reset }"), "{output}");
+}
+
+#[test]
+fn esbuild_to_common_js_namespace_stays_when_module_reads_exports() {
+    // Getters on `exports` would differ from getters on the replaced
+    // `module.exports` once the module refers to `exports` itself.
+    let input = format!(
+        r#"
+{ESBUILD_CJS_HELPERS}
+var mod_exports = {{}};
+__export(mod_exports, {{
+  count: () => count
+}});
+module.exports = __toCommonJS(mod_exports);
+let count = 0;
+exports.extra = 1;
+"#
+    );
+    let output = apply(&input);
+    assert!(output.contains("__toCommonJS(mod_exports)"), "{output}");
+}
+
+#[test]
+fn sucrase_named_export_from_becomes_reexport() {
+    let input = r#"
+Object.defineProperty(exports, "__esModule", {value: true}); function _createNamedExportFrom(obj, localName, importedName) { Object.defineProperty(exports, localName, {enumerable: true, configurable: true, get: () => obj[importedName]}); }
+var _depjs = require('./dep.js'); _createNamedExportFrom(_depjs, 'depCount', 'depCount'); _createNamedExportFrom(_depjs, 'depDefault', 'default'); _createNamedExportFrom(_depjs, 'renamed', 'depCount');
+"#;
+    let expected = r#"
+export { depCount } from "./dep.js";
+export { default as depDefault } from "./dep.js";
+export { depCount as renamed } from "./dep.js";
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn sucrase_named_export_from_keeps_call_on_written_source() {
+    let input = r#"
+function _createNamedExportFrom(obj, localName, importedName) { Object.defineProperty(exports, localName, {enumerable: true, configurable: true, get: () => obj[importedName]}); }
+var _depjs = require('./dep.js'); _createNamedExportFrom(_depjs, 'depCount', 'depCount');
+_depjs = other;
+"#;
+    let output = apply(input);
+    assert!(output.contains("_createNamedExportFrom(_depjs"), "{output}");
+}
+
 #[test]
 fn define_property_member_getter_rejects_member_writes() {
     let input = r#"

@@ -326,7 +326,21 @@ compiler started from: an assignment loop copies once while `export *` is
 live, and a name exported by two star sources is ambiguous in ESM where
 CommonJS lets the later copy win.
 
-esbuild helpers (`__commonJS`, `__esm`, `__toESM`, `__toCommonJS`) are bundler-level and already handled in the unpacker, not here.
+Export getter helpers define every CommonJS export getter in one call: swc's
+inline `_export(exports, { get x() { ... } })` (or, before swc 1.16, function
+values), esbuild's `__export(ns, { x: () => x })` followed by
+`module.exports = __toCommonJS(ns)`, and sucrase's
+`_createNamedExportFrom(dep, "x", "y")`. `UnEsm` first lowers each call to
+one `Object.defineProperty(exports, "x", { enumerable: true, get })` per name
+(`rules/un_esm/export_getters.rs`), then recovers those as live exports or
+re-exports like any other getter definition. Helper bodies are proven by
+shape. A map entry that does not match the helper's getter read, a repeated
+or `__proto__` key, and an esbuild namespace when the module also refers to
+`module` or `exports` keep the call unchanged.
+
+The other esbuild helpers (`__commonJS`, `__esm`, `__toESM`) are
+bundler-level and handled in the unpacker, not here; a single-file
+`__toESM(require(...))` is not recognized.
 
 `UnDestructuring` accepts a mangled `arrayLikeToArray` declaration only when
 its body proves the complete helper contract: the canonical null/length guard,

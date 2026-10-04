@@ -64,6 +64,7 @@ crates/
         helper_matcher.rs           — shared helper binding/lifecycle primitives
         rename_utils.rs             — shared binding rename utilities
         un_for_await.rs             — `for await` protocol matcher run by UnForOf (not a registered rule)
+        un_esm/export_getters.rs    — swc / esbuild / sucrase export getter helpers lowered to per-name getter definitions
         un_esm/export_storage.rs    — per-name CommonJS export storage model (getter / mirror / property)
         *.rs                        — one file per transformation rule
       unpacker/

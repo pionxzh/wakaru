@@ -277,6 +277,9 @@ replaced; a
 classified and the command prints the failed condition instead.
 `module.exports.name` counts as `exports.name`. A copy loop or helper call
 that `UnEsm` recovers as `export * from` is not counted: it copies another
-module's exports, not this module's own.
+module's exports, not this module's own. A getter helper call (swc
+`_export`, esbuild `__export` with `module.exports = __toCommonJS(...)`,
+sucrase `_createNamedExportFrom`) counts as one getter definition per name:
+`UnEsm` lowers those calls first, and so does the analysis.
 `--json` prints `input`, `uses_exports`, `gate`, and an `exports` array with
 `name`, `storage`, `binding`, `rejected`, and the access counts.
