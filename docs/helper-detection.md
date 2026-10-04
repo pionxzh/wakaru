@@ -245,6 +245,12 @@ For example, `UnInteropRequireDefault`:
   outside the declaration itself. A helper that is the module's own export
   (Babel's runtime `interopRequireDefault` module), re-exported, or aliased
   keeps its declaration
+- The registered rule unwraps only calls around a helper runtime `require`
+  (`@babel/runtime/...`, `@swc/helpers/...`), so the helper rules after it
+  see `_extends(...)`. Every other call is the default import's semantics,
+  which is wrong while the module is CommonJS (`require("a")` is the whole
+  module there), so `UnEsm` unwraps those only once it commits to
+  converting the module. A module it keeps CommonJS keeps the calls
 
 SWC AMD's assignment form `_a = _interopRequireDefault(_a)` — and the modern
 external-helper spelling `_a = helper._(_a)`, proven against the exact

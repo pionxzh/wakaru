@@ -36,6 +36,8 @@ use super::helper_matcher::count_binding_refs;
 use super::rename_utils::{
     collect_module_names, collect_unresolved_reference_names, rename_bindings, BindingRename,
 };
+use super::transpiler_helper_utils::LocalHelperContext;
+use super::un_interop_require_default::{InteropScope, UnInteropRequireDefault};
 use super::RewriteLevel;
 
 mod export_getters;
@@ -50,6 +52,7 @@ pub struct UnEsm {
     unresolved_mark: Mark,
     level: RewriteLevel,
     current_filename: Option<String>,
+    local_helpers: Option<std::rc::Rc<LocalHelperContext>>,
     lowered_esbuild_namespace: bool,
 }
 
@@ -59,8 +62,19 @@ impl UnEsm {
             unresolved_mark,
             level,
             current_filename: None,
+            local_helpers: None,
             lowered_esbuild_namespace: false,
         }
+    }
+
+    /// The helper context the pipeline already collected; without one,
+    /// `UnEsm` collects its own when it unwraps interop calls.
+    pub(crate) fn with_local_helpers(
+        mut self,
+        local_helpers: std::rc::Rc<LocalHelperContext>,
+    ) -> Self {
+        self.local_helpers = Some(local_helpers);
+        self
     }
 
     /// Whether the last run lowered an esbuild `__toCommonJS` namespace,
@@ -236,6 +250,16 @@ impl VisitMut for UnEsm {
         if !prepare_swc_async_namespace_requires(module, self.unresolved_mark) {
             return;
         }
+        // The module is becoming ESM: `interopRequireDefault(require(x))`
+        // now means the default import of `x`. Every return above keeps
+        // CommonJS, where it means the whole module, so the call stays.
+        let local_helpers = self.local_helpers.clone().unwrap_or_else(|| {
+            std::rc::Rc::new(LocalHelperContext::collect_with_mark(
+                module,
+                self.unresolved_mark,
+            ))
+        });
+        UnInteropRequireDefault::run_with_helpers(module, &local_helpers, InteropScope::All);
         recover_coupled_commonjs_default_binding(module, self.unresolved_mark);
         // Phase -1: hoist require() calls out of complex expressions
         hoist_embedded_requires(module, self.unresolved_mark);

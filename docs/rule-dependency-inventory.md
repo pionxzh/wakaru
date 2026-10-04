@@ -120,7 +120,7 @@ ObjMethodShorthand ─┘
 | UnEsmoduleFlag → UnEsm | confirmed | Exp 1 |
 | UnWebpackInterop (pass 1) → UnEsm | confirmed **soft** | Exp 2: only the getter-wrapped default-access pattern needs it |
 | UnEsm → TS async helper cleanup (UnAsyncAwait) | confirmed | Exp 3 |
-| UnInteropRequireDefault, UnEsm → RelativeNamespaceImport | confirmed | evidence is collected before the first and the imports exist after the second |
+| UnInteropRequireDefault, UnEsm → RelativeNamespaceImport | confirmed | evidence is collected in the first one's runner, before UnEsmoduleFlag and UnEsm's interop unwrapping; the imports exist after the second |
 | UnAsyncAwait → UnWebpackInterop2 | confirmed | Exp 5: async recovery exposes interop wrappers |
 | LocalHelperContext → UnAsyncAwait | confirmed | consumes detected helper identities directly |
 | UnCurlyBraces position | confirmed **fragile** | Exp 4: interop getter matchers assume expression-body arrows |
@@ -174,7 +174,10 @@ rationale, or level gating appear.
 
 - **UnInteropRequireDefault / UnInteropRequireWildcard** — need
   UnIndirectCall and UnBracketNotation to have normalized call and member
-  shapes; both are confirmed prerequisites of UnEsm.
+  shapes; both are confirmed prerequisites of UnEsm. UnInteropRequireDefault
+  unwraps only helper runtime requires here, which the helper rules after it
+  need; UnEsm unwraps every other call once it commits to converting the
+  module, because the unwrapped form means a default import.
 - **UnObjectSpread** — safe because it only transforms when the first
   argument is `{}`. The esbuild `__spreadValues`/`__spreadProps` variant is
   stateful and deliberately rule-local — see
@@ -361,9 +364,10 @@ rationale, or level gating appear.
 - **RelativeNamespaceImport** — `standard+`, single-file only. Turns
   `UnEsm`'s default import of a relative `require` into a namespace import
   under `relative_require_esm_provider`. Its evidence is collected in the
-  `UnInteropRequireDefault` runner, before that rule rewrites a default
-  import's `.default` reads into a named import's shape; `UnEsm` adds the
-  esbuild evidence. It sits between UnEsm and UnObjectSpread2, the range
+  `UnInteropRequireDefault` runner, before `UnEsmoduleFlag` removes the
+  `__esModule` marker and before UnEsm's interop unwrapping rewrites a
+  default import's `.default` reads into a named import's shape; `UnEsm` adds
+  the esbuild evidence. It sits between UnEsm and UnObjectSpread2, the range
   unpack mode skips at the fact barrier, and also returns early when module
   facts exist: there `provider_namespace_repair` decides from facts.
 - **UnIife** — two passes; the second catches IIFEs created by SmartInline.

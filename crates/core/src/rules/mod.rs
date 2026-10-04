@@ -222,6 +222,7 @@ pub use un_iife::UnIife;
 pub use un_import_rename::UnImportRename;
 pub use un_indirect_call::UnIndirectCall;
 pub use un_infinity::UnInfinity;
+pub(crate) use un_interop_require_default::InteropScope;
 pub use un_interop_require_default::UnInteropRequireDefault;
 pub use un_interop_require_wildcard::UnInteropRequireWildcard;
 pub use un_jsx::UnJsx;

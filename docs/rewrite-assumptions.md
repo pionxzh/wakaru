@@ -70,7 +70,8 @@ function that reads `this`).
 
 Level: receiver-changing `UnIndirectCall` and `UnEsm` forms require `standard`
 or above. Explicit transpiler-helper recovery in `UnInteropRequireDefault`
-applies whenever that helper is recognized.
+applies whenever that helper is recognized around a helper runtime `require`;
+around any other `require` it runs inside `UnEsm`, at `standard` or above.
 
 ### `iterator_materialization_independence`
 
@@ -796,8 +797,9 @@ named import, and its provider most likely a sibling module compiled from
 ESM too. `RelativeNamespaceImport` then emits `import * as dep from
 "./dep"`, which matches the source.
 
-The evidence is taken before `UnInteropRequireDefault`, which rewrites a
-default import's `.default` reads into the same shape as a named import:
+The evidence is taken at the start of the helper stage, before `UnEsm`
+unwraps interop calls, which rewrites a default import's `.default` reads
+into the same shape as a named import:
 the module has a top-level `__esModule` marker (or `UnEsm` lowers an
 esbuild `__toCommonJS` namespace, which has none), and the binding is never
 read as `.default` nor passed to a recognized interop-default helper. After

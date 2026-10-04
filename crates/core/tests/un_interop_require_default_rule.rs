@@ -1,5 +1,12 @@
 mod common;
-use common::{assert_eq_normalized, render, render_pipeline_until};
+use common::{assert_eq_normalized, render, render_pipeline_until, render_rule};
+
+// The registered rule only unwraps helper runtime requires; `UnEsm` runs
+// the full unwrap when it converts the module. These tests exercise the
+// full unwrap and its gates directly.
+fn apply_rule(input: &str) -> String {
+    render_rule(input, |_| wakaru_core::rules::UnInteropRequireDefault)
+}
 
 #[test]
 fn unwraps_interop_require_default_by_import_path() {
@@ -378,10 +385,7 @@ const value = require("value");
 value = helper_namespace._(value);
 console.log(value.default);
 "#;
-    assert_eq_normalized(
-        &render_pipeline_until(input, "UnInteropRequireDefault"),
-        expected,
-    );
+    assert_eq_normalized(&apply_rule(input), expected);
 }
 
 #[test]
@@ -400,10 +404,7 @@ const value = require("value");
 value = _get_prototype_of._(value);
 console.log(value.default);
 "#;
-    assert_eq_normalized(
-        &render_pipeline_until(input, "UnInteropRequireDefault"),
-        expected,
-    );
+    assert_eq_normalized(&apply_rule(input), expected);
 }
 
 #[test]
@@ -459,7 +460,7 @@ function run(helper, value) {
 }
 console.log(run);
 "#;
-    let output = render_pipeline_until(input, "UnInteropRequireDefault");
+    let output = apply_rule(input);
     assert!(
         output.contains("return helper._(value)") && !output.contains("return value"),
         "a shadowing parameter must not inherit the outer helper provenance:\n{output}"
@@ -481,10 +482,7 @@ var wrapped;
 wrapped = _react;
 console.log(wrapped.default);
 "#;
-    assert_eq_normalized(
-        &render_pipeline_until(input, "UnInteropRequireDefault"),
-        expected,
-    );
+    assert_eq_normalized(&apply_rule(input), expected);
 }
 
 #[test]
@@ -503,10 +501,7 @@ observe(_react.default);
 _react = _interop_require_default(_react);
 console.log(_react.default);
 "#;
-    assert_eq_normalized(
-        &render_pipeline_until(input, "UnInteropRequireDefault"),
-        expected,
-    );
+    assert_eq_normalized(&apply_rule(input), expected);
 }
 
 #[test]
@@ -527,10 +522,7 @@ if (enabled) {
 }
 console.log(_react.default);
 "#;
-    assert_eq_normalized(
-        &render_pipeline_until(input, "UnInteropRequireDefault"),
-        expected,
-    );
+    assert_eq_normalized(&apply_rule(input), expected);
 }
 
 #[test]
@@ -556,10 +548,7 @@ for (_react of list) {
     use2(_react.default);
 }
 "#;
-    assert_eq_normalized(
-        &render_pipeline_until(input, "UnInteropRequireDefault"),
-        expected,
-    );
+    assert_eq_normalized(&apply_rule(input), expected);
 }
 
 #[test]
@@ -580,10 +569,7 @@ use(_react.default);
 [_react] = replacements;
 use2(_react.default);
 "#;
-    assert_eq_normalized(
-        &render_pipeline_until(input, "UnInteropRequireDefault"),
-        expected,
-    );
+    assert_eq_normalized(&apply_rule(input), expected);
 }
 
 #[test]
@@ -608,10 +594,7 @@ function swap(next) {
     _react = next;
 }
 "#;
-    assert_eq_normalized(
-        &render_pipeline_until(input, "UnInteropRequireDefault"),
-        expected,
-    );
+    assert_eq_normalized(&apply_rule(input), expected);
 }
 
 #[test]
@@ -639,10 +622,7 @@ function probe() {
     return _react.default;
 }
 "#;
-    assert_eq_normalized(
-        &render_pipeline_until(input, "UnInteropRequireDefault"),
-        expected,
-    );
+    assert_eq_normalized(&apply_rule(input), expected);
 }
 
 #[test]
@@ -724,10 +704,7 @@ probe();
 react = _interop_require_default(react);
 "#;
 
-    assert_eq_normalized(
-        &render_pipeline_until(input, "UnInteropRequireDefault"),
-        input,
-    );
+    assert_eq_normalized(&apply_rule(input), input);
 }
 
 #[test]
@@ -753,7 +730,7 @@ function useThing() {
     return _react.default.useEffect;
 }
 "#;
-    let output = render_pipeline_until(input, "UnInteropRequireDefault");
+    let output = apply_rule(input);
     assert!(
         !output.contains("_interop_require_default(_react)")
             && !output.contains("_react = _react")
@@ -776,7 +753,7 @@ function probe() {
     return _react.default;
 }
 "#;
-    let output = render_pipeline_until(input, "UnInteropRequireDefault");
+    let output = apply_rule(input);
     assert!(
         output.contains("_react = _interop_require_default(_react)")
             && output.contains("_react.default"),
@@ -887,4 +864,65 @@ console.log(_a.default, interop);
         "{focused}"
     );
     assert!(focused.contains("var _a = require(\"a\");"), "{focused}");
+}
+
+#[test]
+fn registered_rule_unwraps_only_helper_runtime_requires() {
+    // `_a.default` is the default export only once `_a` becomes a default
+    // import; until UnEsm commits to that, the wrapped call stays.
+    let input = r#"
+var _interopRequireDefault = require("@babel/runtime/helpers/interopRequireDefault");
+var _extends2 = _interopRequireDefault(require("@babel/runtime/helpers/extends"));
+var _a = _interopRequireDefault(require("./a"));
+console.log(_extends2.default({}, _a.default));
+"#;
+    let output = render_pipeline_until(input, "UnInteropRequireDefault");
+    assert!(
+        output.contains(r#"var _extends2 = require("@babel/runtime/helpers/extends");"#),
+        "{output}"
+    );
+    assert!(
+        output.contains(r#"_interopRequireDefault(require("./a"))"#),
+        "{output}"
+    );
+    assert!(output.contains("_a.default"), "{output}");
+}
+
+#[test]
+fn module_kept_commonjs_keeps_interop_default() {
+    // An aliased `exports` keeps the module CommonJS, where `require("./a")`
+    // is the whole module: unwrapping would call the module object.
+    let input = r#"
+"use strict";
+var _a = _interopRequireDefault(require("./a"));
+function _interopRequireDefault(e) { return e && e.__esModule ? e : { default: e }; }
+var target = exports;
+target.run = function () { return _a.default(); };
+"#;
+    let output = render(input);
+    assert!(
+        output.contains(r#"_interopRequireDefault(require("./a"))"#),
+        "{output}"
+    );
+    assert!(output.contains("_a.default()"), "{output}");
+}
+
+#[test]
+fn module_converted_to_esm_unwraps_interop_default() {
+    let input = r#"
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.run = run;
+var _a = _interopRequireDefault(require("./a"));
+function _interopRequireDefault(e) { return e && e.__esModule ? e : { default: e }; }
+function run() { return _a.default(); }
+"#;
+    let expected = r#"
+import _a from "./a";
+export { run };
+function run() {
+    return _a();
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
 }

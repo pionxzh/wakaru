@@ -10,11 +10,13 @@
 //! binding with neither is a named import, and its provider most likely a
 //! sibling compiled the same way: `import * as dep` matches the source.
 //!
-//! The evidence has to be collected before `UnInteropRequireDefault`, which
-//! rewrites `_interopRequireDefault(require("./a")).default.x` to a plain
-//! `require("./a")` binding read as `.x`, the same shape as a named import.
-//! It is also where the `__esModule` marker still exists. esbuild has no
-//! marker; `UnEsm` records its `__toCommonJS` namespace instead.
+//! The evidence has to be collected before `UnEsm` unwraps interop calls,
+//! which rewrites `_interopRequireDefault(require("./a")).default.x` to a
+//! plain `require("./a")` binding read as `.x`, the same shape as a named
+//! import, and before `UnEsmoduleFlag` removes the `__esModule` marker. It is
+//! collected in the `UnInteropRequireDefault` runner, the first rule of the
+//! helper stage. esbuild has no marker; `UnEsm` records its `__toCommonJS`
+//! namespace instead.
 //!
 //! In unpack mode the provider facts make this decision
 //! (`provider_namespace_repair`), so the rule runs only without facts. See

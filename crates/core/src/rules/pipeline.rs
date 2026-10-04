@@ -73,7 +73,8 @@ struct RuleRunContext<'a> {
     local_helpers: Rc<RefCell<Option<Rc<LocalHelperContext>>>>,
     extracted_function_names: SharedExtractedFunctionNames,
     pre_dead: Option<Rc<PreDeadSet>>,
-    /// Collected before `UnInteropRequireDefault` erases it, read after `UnEsm`.
+    /// Collected at the start of the helper stage, before `UnEsmoduleFlag`
+    /// and `UnEsm`'s interop unwrapping erase it; read after `UnEsm`.
     relative_namespace: Rc<RefCell<RelativeNamespaceEvidence>>,
 }
 
@@ -200,7 +201,11 @@ fn run_un_interop_require_default(module: &mut Module, ctx: RuleRunContext<'_>) 
         *ctx.relative_namespace.borrow_mut() =
             RelativeNamespaceEvidence::collect(module, ctx.unresolved_mark, &local_helpers);
     }
-    UnInteropRequireDefault::run_with_helpers(module, local_helpers.as_ref());
+    UnInteropRequireDefault::run_with_helpers(
+        module,
+        local_helpers.as_ref(),
+        InteropScope::RuntimeHelpers,
+    );
     // Unwrapping `_interopRequireDefault(require("@babel/runtime/helpers/..."))` can
     // expose new runtime-path helpers (e.g. interopRequireWildcard) that were hidden
     // behind the default wrapper. Rebuild the cache so the next rule sees them.
@@ -303,7 +308,8 @@ runner!(run_un_webpack_interop, |ctx| UnWebpackInterop::new(
 ));
 fn run_un_esm(module: &mut Module, ctx: RuleRunContext<'_>) {
     let mut rule = UnEsm::new(ctx.unresolved_mark, ctx.rewrite_level)
-        .with_current_filename(ctx.current_filename);
+        .with_current_filename(ctx.current_filename)
+        .with_local_helpers(ctx.local_helpers(module));
     module.visit_mut_with(&mut rule);
     if rule.lowered_esbuild_namespace() {
         ctx.relative_namespace.borrow_mut().compiled_from_esm = true;

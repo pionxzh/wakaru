@@ -675,8 +675,9 @@ neither. `RelativeNamespaceImport` emits `import * as _dep` for a relative
 `__esModule` (or lowered from esbuild's `__toCommonJS`), as the named
 assumption
 [`relative_require_esm_provider`](../rewrite-assumptions.md#relative_require_esm_provider).
-The signs are collected before `UnInteropRequireDefault`, which rewrites a
-default import's `.default` reads into the named import's shape.
+The signs are collected at the start of the helper stage, before the
+interop unwrapping rewrites a default import's `.default` reads into the
+named import's shape.
 
 Matrix: 290 / 291 (from 281), with no row that was correct before now
 wrong: `import-then-export` for TypeScript, Babel, swc, and esbuild, and
@@ -697,16 +698,17 @@ so this module shows no evidence.
   CommonJS files (`preserveModules`) is meant to be decompiled that way.
 - **esbuild single-file CommonJS under `--unpack`.** Still split as a
   scope-hoisted bundle (see [Out of scope](#out-of-scope)).
-- **Interop unwrapping runs before the module boundary is decided.**
-  `UnInteropRequireDefault` rewrites `_interopRequireDefault(require(x)).default`
-  to a plain `require(x)` binding read whole, which is right only once
-  `UnEsm` turns that `require` into a default import. When `UnEsm` keeps the
-  module CommonJS, or the `require` is inside a function, the output calls
-  the module object instead of its default export. The same early rewrite is
-  why [Single-file import interop](#single-file-import-interop) collects its
-  evidence before that rule. `UnInteropRequireWildcard` emits `import * as`
-  just as early, which mixes `import` with `exports` in a module that stays
-  CommonJS. Not covered by the matrix; tracked as separate work.
+- **Interop unwrapping before the module boundary is decided.**
+  Unwrapping `_interopRequireDefault(require(x)).default` to a plain
+  `require(x)` binding read whole is right only once `UnEsm` turns that
+  `require` into a default import. `UnInteropRequireDefault` now unwraps
+  only helper runtime requires; `UnEsm` unwraps the rest when it commits to
+  converting the module, so a module it keeps CommonJS keeps the calls.
+  Still open: in a converted module, a `require` inside a function is
+  unwrapped too, although it stays a `require`; and
+  `UnInteropRequireWildcard` still emits `import * as` before the boundary
+  is decided, which mixes `import` with `exports` in a module that stays
+  CommonJS. Not covered by the matrix.
 
 ## Reassigned or aliased `exports`
 

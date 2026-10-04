@@ -22,22 +22,69 @@ use super::transpiler_helper_utils::{
 /// Transforms:
 ///   `var _a = _interopRequireDefault(require("a")); _a.default`
 ///   → `var _a = require("a"); _a`
+///
+/// The rewrite is the ESM default import's semantics, so it is right only in
+/// a module that becomes ESM: in CommonJS, `require("a")` is the whole
+/// module, not its default export. The registered rule therefore unwraps
+/// only helper runtime requires ([`InteropScope::RuntimeHelpers`]), which the
+/// helper rules after it need to see; `UnEsm` unwraps the rest once it
+/// commits to converting the module ([`InteropScope::All`]).
 pub struct UnInteropRequireDefault;
 
+/// Which interop calls a run unwraps.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum InteropScope {
+    /// Only `helper(require(path))` of a helper runtime package
+    /// (`@babel/runtime`, `@swc/helpers`).
+    RuntimeHelpers,
+    /// Every call: the module is being converted to ESM.
+    All,
+}
+
 impl UnInteropRequireDefault {
-    pub(crate) fn run_with_helpers(module: &mut Module, local_helpers: &LocalHelperContext) {
-        run_un_interop_require_default(module, local_helpers);
+    pub(crate) fn run_with_helpers(
+        module: &mut Module,
+        local_helpers: &LocalHelperContext,
+        scope: InteropScope,
+    ) {
+        run_un_interop_require_default(module, local_helpers, scope);
     }
 }
 
 impl VisitMut for UnInteropRequireDefault {
     fn visit_mut_module(&mut self, module: &mut Module) {
         let local_helpers = LocalHelperContext::collect(module);
-        run_un_interop_require_default(module, &local_helpers);
+        run_un_interop_require_default(module, &local_helpers, InteropScope::All);
     }
 }
 
-fn run_un_interop_require_default(module: &mut Module, local_helpers: &LocalHelperContext) {
+/// `@babel/runtime/helpers/extends`, `@swc/helpers/_/_extends`, and the
+/// like: modules whose default export is a transpiler helper.
+fn is_helper_runtime_source(source: &str) -> bool {
+    [
+        "@babel/runtime/",
+        "@babel/runtime-corejs2/",
+        "@babel/runtime-corejs3/",
+        "@swc/helpers/",
+    ]
+    .iter()
+    .any(|prefix| source.starts_with(prefix))
+}
+
+/// `require("<helper runtime>")`, the only argument unwrapped in
+/// [`InteropScope::RuntimeHelpers`].
+fn is_helper_runtime_require(expr: &Expr, local_helpers: &LocalHelperContext) -> bool {
+    let Expr::Call(call) = expr else { return false };
+    call_is_static_require(call, local_helpers)
+        && matches!(call.args[0].expr.as_ref(), Expr::Lit(Lit::Str(source))
+            if source.value.as_str().is_some_and(is_helper_runtime_source))
+}
+
+fn run_un_interop_require_default(
+    module: &mut Module,
+    local_helpers: &LocalHelperContext,
+    scope: InteropScope,
+) {
     let mut affected_bindings: HashSet<BindingKey> = HashSet::default();
     let mut preserve_named_helpers = false;
 
@@ -55,6 +102,7 @@ fn run_un_interop_require_default(module: &mut Module, local_helpers: &LocalHelp
         // Phase 1: Collect which bindings receive helper-wrapped values
         let mut collector = AffectedBindingCollector {
             local_helpers,
+            scope,
             affected: &mut affected_bindings,
         };
         collector.visit_module(module);
@@ -69,8 +117,11 @@ fn run_un_interop_require_default(module: &mut Module, local_helpers: &LocalHelp
         // not a later semantic reassignment. Recognize only the exact,
         // unconditional top-level producer shape and remove it before the
         // ordinary reassignment check.
-        let assignment_initializers =
-            collect_assignment_form_initializers(module, local_helpers, &mut affected_bindings);
+        let assignment_initializers = if scope == InteropScope::All {
+            collect_assignment_form_initializers(module, local_helpers, &mut affected_bindings)
+        } else {
+            HashSet::default()
+        };
         if !assignment_initializers.is_empty() {
             module.body = std::mem::take(&mut module.body)
                 .into_iter()
@@ -84,6 +135,7 @@ fn run_un_interop_require_default(module: &mut Module, local_helpers: &LocalHelp
         // Phase 2a: Unwrap helper calls — replace `helper(arg)` with `arg`.
         let mut call_unwrapper = CallUnwrapper {
             local_helpers,
+            scope,
             preserved_assignment_form: false,
         };
         module.visit_mut_with(&mut call_unwrapper);
@@ -99,18 +151,22 @@ fn run_un_interop_require_default(module: &mut Module, local_helpers: &LocalHelp
         // `_` binding. Preserve every still-referenced proven namespace as an
         // explicit namespace import before UnEsm classifies the remaining
         // dependency declarations.
-        preserve_remaining_swc_member_helper_namespaces(
-            module,
-            local_helpers,
-            &swc_member_helpers,
-            &swc_member_helper_namespaces,
-        );
+        if scope == InteropScope::All {
+            preserve_remaining_swc_member_helper_namespaces(
+                module,
+                local_helpers,
+                &swc_member_helpers,
+                &swc_member_helper_namespaces,
+            );
+        }
     }
 
     // --- Inline IIFE interop path ---
     // Detect: `const x = ((e) => { if (e && e.__esModule) return e; return {default: e} })(require(...))`
     // Replace with: `const x = require(...)`  and record `x` as affected
-    unwrap_inline_interop_iifes(module, &mut affected_bindings);
+    if scope == InteropScope::All {
+        unwrap_inline_interop_iifes(module, &mut affected_bindings);
+    }
 
     // Phase 2b: Rewrite `.default` member access on affected bindings,
     //           but only if the binding is never reassigned.
@@ -304,6 +360,7 @@ fn fresh_namespace_import_name(name: &Atom, used_names: &mut HashSet<Atom>) -> A
 
 struct AffectedBindingCollector<'a> {
     local_helpers: &'a LocalHelperContext,
+    scope: InteropScope,
     affected: &'a mut HashSet<BindingKey>,
 }
 
@@ -313,18 +370,15 @@ impl Visit for AffectedBindingCollector<'_> {
         let Some(init) = &decl.init else { return };
 
         // var _a = helper(arg)
-        if is_helper_call(init, self.local_helpers) {
+        if is_helper_call(init, self.local_helpers, self.scope) {
             self.affected.insert((bi.id.sym.clone(), bi.id.ctxt));
         }
     }
 }
 
-fn is_helper_call(expr: &Expr, local_helpers: &LocalHelperContext) -> bool {
+fn is_helper_call(expr: &Expr, local_helpers: &LocalHelperContext, scope: InteropScope) -> bool {
     let Expr::Call(call) = expr else { return false };
-    let Callee::Expr(callee) = &call.callee else {
-        return false;
-    };
-    local_helpers.is_helper_callee(callee, TranspilerHelperKind::InteropRequireDefault)
+    extract_helper_call_arg(call, local_helpers, scope).is_some()
 }
 
 /// Collect standalone interop assignments that initialize a require-backed
@@ -855,6 +909,7 @@ impl Visit for BindingReferenceFinder<'_> {
 
 struct CallUnwrapper<'a> {
     local_helpers: &'a LocalHelperContext,
+    scope: InteropScope,
     preserved_assignment_form: bool,
 }
 
@@ -864,7 +919,9 @@ impl VisitMut for CallUnwrapper<'_> {
         // pass. Any exact self-wrapper assignment still present was rejected
         // by the safety proof (or was not an unconditional top-level item), so
         // keep both the call and the helper that implements its semantics.
-        if assignment_form_binding(assign, self.local_helpers).is_some() {
+        if self.scope == InteropScope::All
+            && assignment_form_binding(assign, self.local_helpers).is_some()
+        {
             self.preserved_assignment_form = true;
             return;
         }
@@ -878,7 +935,8 @@ impl VisitMut for CallUnwrapper<'_> {
         if let Expr::Member(member) = expr {
             if is_default_prop(&member.prop) {
                 if let Expr::Call(call) = member.obj.as_ref() {
-                    if let Some(arg) = extract_helper_call_arg(call, self.local_helpers) {
+                    if let Some(arg) = extract_helper_call_arg(call, self.local_helpers, self.scope)
+                    {
                         *expr = arg;
                         return;
                     }
@@ -888,7 +946,7 @@ impl VisitMut for CallUnwrapper<'_> {
 
         // helper(arg) → arg
         if let Expr::Call(call) = expr {
-            if let Some(arg) = extract_helper_call_arg(call, self.local_helpers) {
+            if let Some(arg) = extract_helper_call_arg(call, self.local_helpers, self.scope) {
                 *expr = arg;
             }
         }
@@ -898,6 +956,7 @@ impl VisitMut for CallUnwrapper<'_> {
 fn extract_helper_call_arg(
     call: &swc_core::ecma::ast::CallExpr,
     local_helpers: &LocalHelperContext,
+    scope: InteropScope,
 ) -> Option<Expr> {
     let Callee::Expr(callee) = &call.callee else {
         return None;
@@ -905,10 +964,14 @@ fn extract_helper_call_arg(
     if !local_helpers.is_helper_callee(callee, TranspilerHelperKind::InteropRequireDefault) {
         return None;
     }
-    if call.args.len() != 1 {
+    let [arg] = call.args.as_slice() else {
+        return None;
+    };
+    if scope == InteropScope::RuntimeHelpers && !is_helper_runtime_require(&arg.expr, local_helpers)
+    {
         return None;
     }
-    Some(*call.args[0].expr.clone())
+    Some(*arg.expr.clone())
 }
 
 // ---------------------------------------------------------------------------
