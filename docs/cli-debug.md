@@ -273,8 +273,10 @@ n: property (writes 1, sentinels 0, other writes 0, reads 0, calls 0, getters 0,
 When a module-level condition fails (`exports` used as a value, passed to a
 call, reassigned, or with a computed key; `module.exports` used as a value or
 replaced; a
-`delete` of an export; a direct `eval`; or a `with` statement), no name is
-classified and the command prints the failed condition instead.
+`delete` of an export; a direct `eval`; a `with` statement; or a top-level
+`this`, which CommonJS binds to `module.exports`), no name is classified and
+the command prints the failed condition instead. A TypeScript helper guard
+`(this && this.__name) || impl` is not a top-level `this` use.
 `module.exports.name` counts as `exports.name`. A copy loop or helper call
 that `UnEsm` recovers as `export * from` is not counted: it copies another
 module's exports, not this module's own. A getter helper call (swc

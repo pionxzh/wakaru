@@ -28,11 +28,12 @@ use swc_core::common::util::take::Take;
 use swc_core::common::DUMMY_SP;
 use swc_core::common::{Mark, Span, Spanned};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BindingIdent, CallExpr,
-    Callee, Class, ClassDecl, Decl, ExportDecl, ExportNamedSpecifier, ExportSpecifier, Expr,
-    ExprOrSpread, FnDecl, ForHead, ForInStmt, ForOfStmt, Function, Ident, MemberExpr, MemberProp,
-    Module, ModuleDecl, ModuleExportName, ModuleItem, NamedExport, OptCall, OptChainBase, Pat,
-    SimpleAssignTarget, Stmt, TaggedTpl, UnaryExpr, UnaryOp, UpdateExpr, VarDecl, VarDeclKind,
+    ArrowExpr, AssignExpr, AssignOp, AssignTarget, AutoAccessor, BinExpr, BinaryOp, BindingIdent,
+    CallExpr, Callee, Class, ClassDecl, ClassProp, Constructor, Decl, ExportDecl,
+    ExportNamedSpecifier, ExportSpecifier, Expr, ExprOrSpread, FnDecl, ForHead, ForInStmt,
+    ForOfStmt, Function, Ident, MemberExpr, MemberProp, Module, ModuleDecl, ModuleExportName,
+    ModuleItem, NamedExport, OptCall, OptChainBase, Pat, PrivateProp, SimpleAssignTarget,
+    StaticBlock, Stmt, TaggedTpl, ThisExpr, UnaryExpr, UnaryOp, UpdateExpr, VarDecl, VarDeclKind,
     VarDeclarator,
 };
 use swc_core::ecma::utils::find_pat_ids;
@@ -159,6 +160,13 @@ pub(crate) fn analyze_export_storage(
     module: &Module,
     unresolved_mark: Mark,
 ) -> ExportStorageReport {
+    if let Some(span) = top_level_this(module, unresolved_mark) {
+        return ExportStorageReport::ModuleGate {
+            message: "top-level `this` is `module.exports`".to_string(),
+            span: Some(span),
+            keep_commonjs: true,
+        };
+    }
     let mut inventory = Inventory::new(unresolved_mark);
     inventory.export_star_statements = export_star_statement_indices(module, unresolved_mark);
     module.visit_with(&mut inventory);
@@ -298,6 +306,141 @@ impl NameFacts {
             .iter()
             .any(|write| write.site.seq == site.seq && write.is_void && write.unconditional)
     }
+}
+
+/// The first `this` of a CommonJS module body that is not bound by a function
+/// or class body, unless it is a TypeScript helper guard.
+///
+/// CommonJS runs the module body with `this` set to `module.exports`; an ES
+/// module body has `this` undefined. Such a `this` is another name for the
+/// exports object, so converting the module would make its writes throw and
+/// its reads change value, like an aliased `exports` binding. Arrow functions,
+/// a class heritage, computed class keys, and decorators see the outer `this`.
+///
+/// TypeScript declares each helper as `(this && this.__name) || impl`. The
+/// guard picks `impl` in both module systems unless the module writes that
+/// property itself, so it does not count when the name starts with `__` and
+/// the module never accesses it through `exports` or `module.exports`.
+///
+/// A module that already has import or export declarations is ESM, and one
+/// that never refers to `require`, `exports`, or `module` has nothing to
+/// convert; both report nothing.
+fn top_level_this(module: &Module, unresolved_mark: Mark) -> Option<Span> {
+    if module
+        .body
+        .iter()
+        .any(|item| matches!(item, ModuleItem::ModuleDecl(_)))
+    {
+        return None;
+    }
+    let mut finder = TopLevelThis {
+        unresolved_mark,
+        first: None,
+        commonjs: false,
+        guards: Vec::new(),
+        exported_names: HashSet::default(),
+    };
+    module.visit_with(&mut finder);
+    if !finder.commonjs {
+        return None;
+    }
+    let guard = finder
+        .guards
+        .iter()
+        .find(|(name, _)| finder.exported_names.contains(name))
+        .map(|(_, span)| *span);
+    match (finder.first, guard) {
+        (Some(this), Some(guard)) => Some(if guard.lo < this.lo { guard } else { this }),
+        (this, guard) => this.or(guard),
+    }
+}
+
+struct TopLevelThis {
+    unresolved_mark: Mark,
+    first: Option<Span>,
+    commonjs: bool,
+    /// Helper guards `this && this.__name`, by property name.
+    guards: Vec<(Atom, Span)>,
+    /// Static property names accessed on `exports` or `module.exports`.
+    exported_names: HashSet<Atom>,
+}
+
+impl TopLevelThis {
+    fn helper_guard(&self, bin: &BinExpr) -> Option<Atom> {
+        if bin.op != BinaryOp::LogicalAnd || !matches!(strip_parens(&bin.left), Expr::This(_)) {
+            return None;
+        }
+        let Expr::Member(member) = strip_parens(&bin.right) else {
+            return None;
+        };
+        if !matches!(strip_parens(&member.obj), Expr::This(_)) {
+            return None;
+        }
+        static_member_name(&member.prop).filter(|name| name.starts_with("__"))
+    }
+
+    fn is_exports_object(&self, expr: &Expr) -> bool {
+        match strip_parens(expr) {
+            Expr::Ident(ident) => is_unresolved_ident(ident, "exports", self.unresolved_mark),
+            Expr::Member(member) => {
+                matches!(strip_parens(&member.obj), Expr::Ident(object)
+                    if is_unresolved_ident(object, "module", self.unresolved_mark))
+                    && static_member_name(&member.prop).as_deref() == Some("exports")
+            }
+            _ => false,
+        }
+    }
+}
+
+impl Visit for TopLevelThis {
+    fn visit_this_expr(&mut self, this: &ThisExpr) {
+        if self.first.is_none() {
+            self.first = Some(this.span);
+        }
+    }
+
+    fn visit_ident(&mut self, ident: &Ident) {
+        if ["require", "exports", "module"]
+            .iter()
+            .any(|name| is_unresolved_ident(ident, name, self.unresolved_mark))
+        {
+            self.commonjs = true;
+        }
+    }
+
+    fn visit_bin_expr(&mut self, bin: &BinExpr) {
+        if let Some(name) = self.helper_guard(bin) {
+            self.guards.push((name, bin.span));
+            return;
+        }
+        bin.visit_children_with(self);
+    }
+
+    fn visit_member_expr(&mut self, member: &MemberExpr) {
+        if self.is_exports_object(&member.obj) {
+            if let Some(name) = static_member_name(&member.prop) {
+                self.exported_names.insert(name);
+            }
+        }
+        member.visit_children_with(self);
+    }
+
+    // Bodies with their own `this`. Function also covers methods, accessors,
+    // and class methods, whose keys are visited separately.
+    fn visit_function(&mut self, _: &Function) {}
+    fn visit_constructor(&mut self, _: &Constructor) {}
+    fn visit_class_prop(&mut self, prop: &ClassProp) {
+        prop.key.visit_with(self);
+        prop.decorators.visit_with(self);
+    }
+    fn visit_private_prop(&mut self, prop: &PrivateProp) {
+        prop.decorators.visit_with(self);
+    }
+    fn visit_auto_accessor(&mut self, accessor: &AutoAccessor) {
+        accessor.key.visit_with(self);
+        accessor.decorators.visit_with(self);
+    }
+    fn visit_static_block(&mut self, _: &StaticBlock) {}
 }
 
 struct Inventory {

@@ -5587,6 +5587,94 @@ fn rebound_or_aliased_exports_keeps_the_commonjs_boundary() {
     }
 }
 
+/// A top-level `this` in CommonJS is `module.exports`; in ESM it is
+/// `undefined`. Converting would make writes throw and reads change value.
+#[test]
+fn top_level_this_keeps_the_commonjs_boundary() {
+    for source in [
+        "this.value = 1; exports.other = 2;",
+        "var root = typeof self == 'object' ? self : this; exports.root = root;",
+        "(function (root) { root.ready = true; })(this); exports.other = 2;",
+        "exports.a = 1; observe(typeof this);",
+        // No export at all: the require alone would become an import.
+        "var dep = require('dep'); this.value = dep;",
+        // Arrows, a class heritage, and a computed class key see the outer `this`.
+        "const read = () => this.value; exports.read = read;",
+        "class Child extends (this.Base || Object) {} exports.Child = Child;",
+        "class Keyed { [this.key]() {} } exports.Keyed = Keyed;",
+    ] {
+        let output = common::render_rule(source, |mark| {
+            wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
+        });
+        assert_eq_normalized(&output, source);
+    }
+}
+
+#[test]
+fn this_bound_by_a_function_or_class_body_does_not_keep_commonjs() {
+    for source in [
+        "function self() { return this; } exports.self = self;",
+        "exports.object = { get value() { return this.v; }, method() { return this.v; } };",
+        "class Holder { constructor() { this.a = 1; } b = this.a; static { this.c = 1; } read() { return this.a; } } exports.Holder = Holder;",
+    ] {
+        let output = common::render_rule(source, |mark| {
+            wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
+        });
+        assert!(output.contains("export"), "{output}");
+        assert!(!output.contains("exports"), "{output}");
+    }
+}
+
+/// TypeScript declares each helper as `(this && this.__name) || impl`. The
+/// guard reads `undefined` in ESM and an absent property of the empty
+/// `module.exports` in CommonJS, so both pick `impl`.
+#[test]
+fn typescript_helper_guards_on_this_do_not_keep_commonjs() {
+    // TypeScript 5.9, `module: CommonJS`, `esModuleInterop`, target ES2015.
+    let source = r#"
+"use strict";
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.run = run;
+const dep_1 = __importDefault(require("./dep"));
+function run() {
+    return __awaiter(this, void 0, void 0, function* () { return (0, dep_1.default)(); });
+}
+"#;
+    let output = render_pipeline(source);
+    assert!(output.contains("from \"./dep\""), "{output}");
+    assert!(output.contains("export { run }"), "{output}");
+    assert!(!output.contains("exports"), "{output}");
+    assert!(!output.contains("this"), "{output}");
+}
+
+/// Only the TypeScript helper guard shape is exempt: a guard whose property
+/// the module also exports, or a non-helper name, still reads
+/// `module.exports`.
+#[test]
+fn other_this_guards_keep_the_commonjs_boundary() {
+    for source in [
+        "var helper = this && this.helper || fallback; exports.a = helper;",
+        "exports.__assign = mine; var __assign = this && this.__assign || fallback; exports.b = __assign;",
+    ] {
+        let output = common::render_rule(source, |mark| {
+            wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
+        });
+        assert_eq_normalized(&output, source);
+    }
+}
+
 #[test]
 fn property_storage_recovers_compound_deferred_and_read_only_names() {
     for (source, expected) in [

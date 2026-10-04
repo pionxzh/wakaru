@@ -781,6 +781,16 @@ because the statement path recovers known helpers that make them:
 - the right operand of `in`, which CommonJS export-star loops test before
   each copy.
 
+A top-level `this` is the same object: CommonJS runs the module body with
+`this` set to `module.exports`, and an ES module body has `this` undefined.
+`this.value = 1` would throw after conversion, and UMD global detection
+(`typeof self == "object" ? self : this`) would silently pick `undefined`.
+So a top-level `this` (outside function and class bodies; arrows, a class
+heritage, and computed class keys see it) keeps the module CommonJS too,
+even when the module has no `exports` access. TypeScript's helper guard
+`(this && this.__name) || impl` is exempt: it picks `impl` in both module
+systems unless the module accesses that property through `exports`.
+
 ## Decisions
 
 Recorded 2026-10-03.
@@ -808,3 +818,7 @@ Recorded 2026-10-04, after step 1.
    call-argument and `in` exceptions above. Taken before step 3 because the
    webpack factories that keep this idiom cannot be unpacked faithfully until
    `UnEsm` stops converting such modules in part.
+7. **A top-level `this` counts as an aliased `exports`** and keeps the
+   module CommonJS, with the TypeScript helper guard exempt. Taken after an
+   outside review of this line found modules converted with a `this` that
+   then throws or reads `undefined`.
