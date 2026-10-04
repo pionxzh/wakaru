@@ -254,6 +254,12 @@ For example, `UnInteropRequireDefault`:
   `UnInteropRequireWildcard` works the same way: its `import * as` output
   is produced inside `UnEsm` at the same point, right after the default
   unwrap
+- In that pass, a wildcard interop of a `require` returned from a promise
+  callback, `Promise.resolve().then(() => _interopRequireWildcard(require("./a")))`,
+  is a lowered `import("./a")` and becomes that call. The forms that pass a
+  non-literal specifier through the promise or a wrapper function are read
+  the same way (`lowered_dynamic_import_source_semantics` in
+  [rewrite-assumptions.md](rewrite-assumptions.md))
 
 SWC AMD's assignment form `_a = _interopRequireDefault(_a)` — and the modern
 external-helper spelling `_a = helper._(_a)`, proven against the exact

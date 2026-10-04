@@ -781,6 +781,42 @@ then recover a star loop that shares the provider binding with the helper.
 
 Level: all levels, like the rest of helper detection.
 
+### `lowered_dynamic_import_source_semantics`
+
+Babel, TypeScript (`esModuleInterop`), swc, sucrase, and rollup
+(`dynamicImportInCjs: false`) lower `import(x)` to a wildcard interop of a
+`require` inside a promise callback:
+
+```js
+// source
+const ns = await import("./dep.js");
+// TypeScript CommonJS
+const ns = await Promise.resolve().then(() => __importStar(require("./dep.js")));
+```
+
+wakaru emits `import("./dep.js")`. The result follows ESM semantics where
+the CommonJS output differs from its own source:
+
+- The provider loads through the ESM loader: ESM resolution, as for every
+  import `UnEsm` emits, and asynchronous evaluation instead of a synchronous
+  `require` inside the callback.
+- For a CommonJS provider, `ns.default` is the whole `module.exports` in
+  both forms, but named keys come from Node's cjs-module-lexer instead of a
+  copy of the provider's own keys. A name the lexer cannot detect reads
+  `undefined`.
+- TypeScript before 4.5 and sucrase evaluate a non-literal specifier inside
+  the callback; `import()` evaluates it at the call, as the source did.
+
+The callback shape is compiler output for `import()`, and the result
+matches the source the compiler started from, as for
+`namespace_interop_source_semantics`. Keeping the lowered form leaves a
+`require` that an ESM module cannot call.
+
+Affects: `UnInteropRequireWildcard` when `UnEsm` runs it on a module it
+converts.
+
+Level: `standard` and above, where `UnEsm` runs.
+
 ### `relative_require_esm_provider`
 
 In single-file decompilation, `UnEsm` cannot see the provider of

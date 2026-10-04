@@ -237,6 +237,22 @@ export function readLive() { return live; }
     },
     driver: `log(m.live); m.bumpLive(); log(m.live); log(m.readLive());`,
   },
+  "dynamic-import": {
+    files: {
+      "dep.js": `
+export let live = 0;
+export function bumpLive() { live++; }
+export default function depFn() { return "fn"; }
+`,
+      "mod.js": `
+export async function loadNs() { return await import("./dep.js"); }
+export function loadThen() { return import("./dep.js").then((ns) => ns.live); }
+export async function loadDefault() { const { default: f } = await import("./dep.js"); return f(); }
+export function loadByName(name) { return import("./" + name + ".js").then((ns) => ns.live); }
+`,
+    },
+    driver: `const ns = await m.loadNs(); log(ns.live); ns.bumpLive(); log(ns.live); log(await m.loadThen()); log(await m.loadDefault()); log(await m.loadByName("dep"));`,
+  },
   "imported-used-in-function": {
     files: {
       "dep.js": `

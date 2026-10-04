@@ -598,7 +598,18 @@ impl Visit for ArrowSensitiveDirectEvalAnalyzer {
 // Visitor: check for `this` or `arguments` (not in nested fns)
 // ============================================================
 
-struct HasThisOrArguments(bool);
+pub(crate) struct HasThisOrArguments(bool);
+
+/// Whether `node` reads `this`, `arguments`, or `new.target` of the function
+/// around it, outside nested non-arrow functions.
+pub(crate) fn has_this_or_arguments<T>(node: &T) -> bool
+where
+    T: VisitWith<HasThisOrArguments> + ?Sized,
+{
+    let mut checker = HasThisOrArguments(false);
+    node.visit_with(&mut checker);
+    checker.0
+}
 
 impl Visit for HasThisOrArguments {
     fn visit_this_expr(&mut self, _: &ThisExpr) {

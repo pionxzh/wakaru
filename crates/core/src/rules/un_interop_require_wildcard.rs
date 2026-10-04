@@ -4,13 +4,15 @@ use swc_core::atoms::Atom;
 use swc_core::common::util::take::Take;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    AssignOp, AssignTarget, Callee, Decl, Expr, ExprStmt, Ident, ImportDecl, ImportStarAsSpecifier,
-    Lit, MemberProp, Module, ModuleDecl, ModuleItem, Pat, SimpleAssignTarget, Stmt, UnaryOp,
-    VarDecl,
+    ArrowFunctionBody, AssignOp, AssignTarget, CallExpr, Callee, Decl, Expr, ExprOrSpread,
+    ExprStmt, FnExpr, Ident, Import, ImportDecl, ImportStarAsSpecifier, Lit, MemberProp, Module,
+    ModuleDecl, ModuleItem, Pat, ReturnStmt, SimpleAssignTarget, Stmt, UnaryOp, VarDecl,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use super::arrow_function::has_this_or_arguments;
 use super::decl_utils::fresh_binding_ident;
+use super::eval_utils::{has_dynamic_scope_construct, module_blocks_global_reference};
 use super::helper_matcher::{
     binding_key, import_specifier_binding_key, var_declarator_binding_key,
 };
@@ -20,6 +22,7 @@ use super::transpiler_helper_utils::{
 };
 use super::un_interop_require_default::InteropScope;
 use crate::js_names::{is_reserved_binding_name, is_valid_identifier_name};
+use crate::utils::paren::strip_parens;
 
 /// Detects and unwraps `interopRequireWildcard` helper calls.
 ///
@@ -124,7 +127,10 @@ fn run_un_interop_require_wildcard(
     module.body = new_body;
 
     // Phase 2: Unwrap remaining call sites in expressions (non-var-decl contexts)
-    let mut unwrapper = WildcardCallUnwrapper { local_helpers };
+    let mut unwrapper = WildcardCallUnwrapper {
+        local_helpers,
+        restore_dynamic_imports: !module_blocks_global_reference(module, "Promise"),
+    };
     module.visit_mut_with(&mut unwrapper);
 
     if helpers.is_empty() {
@@ -488,10 +494,18 @@ fn extract_wildcard_require(
 /// a namespace object that may differ from the raw expression value.
 struct WildcardCallUnwrapper<'a> {
     local_helpers: &'a LocalHelperContext,
+    /// Whether `Promise` is provably the global: no `with` statement or
+    /// direct `eval` can shadow it.
+    restore_dynamic_imports: bool,
 }
 
 impl VisitMut for WildcardCallUnwrapper<'_> {
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        if self.restore_dynamic_imports {
+            if let Some(import) = lowered_dynamic_import(expr, self.local_helpers) {
+                *expr = import;
+            }
+        }
         expr.visit_mut_children_with(self);
 
         let Expr::Call(call) = expr else { return };
@@ -525,6 +539,226 @@ impl VisitMut for WildcardCallUnwrapper<'_> {
             *expr = *call.args[0].expr.take();
         }
     }
+}
+
+/// The `import(x)` that Babel, TypeScript, swc, sucrase, and rollup lower to
+/// CommonJS as a wildcard interop of a `require` deferred to a promise
+/// callback:
+///
+/// ```js
+/// Promise.resolve().then(() => _interopRequireWildcard(require("./a")))
+/// Promise.resolve(spec).then((s) => _interopRequireWildcard(require(s)))
+/// (s => new Promise(r => r(`${s}`)).then(s => _interopRequireWildcard(require(s))))(spec)
+/// (function (t) { return Promise.resolve().then(function () { return _interopNamespaceDefault(require(t)); }); })(spec)
+/// ```
+///
+/// A non-literal specifier is passed through the promise or a wrapper call,
+/// so it is evaluated before the callback runs, like the specifier of
+/// `import()`. TypeScript before 4.5 and sucrase defer it into the callback;
+/// `import()` evaluates it at the call again, as the source did. Callbacks
+/// may be arrows or `function` expressions; a `function` callback must not
+/// give the specifier its own `this`, `arguments`, or `eval` scope. See
+/// `lowered_dynamic_import_source_semantics` in
+/// `docs/rewrite-assumptions.md`.
+fn lowered_dynamic_import(expr: &Expr, local_helpers: &LocalHelperContext) -> Option<Expr> {
+    let Expr::Call(call) = expr else {
+        return None;
+    };
+    let specifier = wrapped_import_specifier(call, local_helpers)
+        .or_else(|| lowered_import_specifier(call, local_helpers))?;
+    Some(Expr::Call(CallExpr {
+        span: call.span,
+        callee: Callee::Import(Import {
+            span: DUMMY_SP,
+            phase: Default::default(),
+        }),
+        args: vec![ExprOrSpread {
+            spread: None,
+            expr: Box::new(specifier.clone()),
+        }],
+        ..Default::default()
+    }))
+}
+
+/// The specifier of `<promise>.then(callback)`, where the callback returns
+/// the wildcard interop of `require(specifier)`.
+fn lowered_import_specifier<'a>(
+    then_call: &'a CallExpr,
+    local_helpers: &LocalHelperContext,
+) -> Option<&'a Expr> {
+    let [callback] = then_call.args.as_slice() else {
+        return None;
+    };
+    if callback.spread.is_some() {
+        return None;
+    }
+    let passed = promise_resolution(
+        member_call_object(&then_call.callee, "then")?,
+        local_helpers,
+    )?;
+    let (params, returned, is_function) = callback_return(&callback.expr)?;
+    let specifier = wildcard_require_specifier(returned, local_helpers)?;
+    match (passed, params.as_slice()) {
+        (None, []) => (!(is_function
+            && (has_this_or_arguments(specifier) || has_dynamic_scope_construct(specifier))))
+        .then_some(specifier),
+        (Some(passed), [Pat::Ident(param)]) => {
+            reads_binding(specifier, &param.id).then_some(passed)
+        }
+        _ => None,
+    }
+}
+
+/// The specifier passed to a one-parameter wrapper whose body is a lowered
+/// import of that parameter, or of the parameter converted to a string.
+fn wrapped_import_specifier<'a>(
+    call: &'a CallExpr,
+    local_helpers: &LocalHelperContext,
+) -> Option<&'a Expr> {
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let [specifier] = call.args.as_slice() else {
+        return None;
+    };
+    let (params, Expr::Call(lowered), _) = callback_return(callee)? else {
+        return None;
+    };
+    let [Pat::Ident(param)] = params.as_slice() else {
+        return None;
+    };
+    let inner = lowered_import_specifier(lowered, local_helpers)?;
+    let inner = match strip_parens(inner) {
+        Expr::Tpl(tpl)
+            if tpl.exprs.len() == 1 && tpl.quasis.iter().all(|quasi| quasi.raw.is_empty()) =>
+        {
+            &tpl.exprs[0]
+        }
+        inner => inner,
+    };
+    (specifier.spread.is_none() && reads_binding(inner, &param.id)).then_some(&specifier.expr)
+}
+
+/// What `Promise.resolve()`, `Promise.resolve(x)`, or `new Promise(r => r(x))`
+/// resolves with: `None` for nothing, `Some(x)` for `x`.
+fn promise_resolution<'a>(
+    expr: &'a Expr,
+    local_helpers: &LocalHelperContext,
+) -> Option<Option<&'a Expr>> {
+    let is_promise = |expr: &Expr| {
+        matches!(strip_parens(expr), Expr::Ident(promise)
+            if local_helpers.is_unresolved_or_unguarded_ident(promise, "Promise"))
+    };
+    match strip_parens(expr) {
+        Expr::Call(call) => {
+            if !is_promise(member_call_object(&call.callee, "resolve")?) {
+                return None;
+            }
+            match call.args.as_slice() {
+                [] => Some(None),
+                [value] if value.spread.is_none() => Some(Some(&value.expr)),
+                _ => None,
+            }
+        }
+        Expr::New(new) if is_promise(&new.callee) => {
+            let [executor] = new.args.as_deref()? else {
+                return None;
+            };
+            let (params, Expr::Call(call), _) = callback_return(&executor.expr)? else {
+                return None;
+            };
+            let [Pat::Ident(resolve)] = params.as_slice() else {
+                return None;
+            };
+            let Callee::Expr(callee) = &call.callee else {
+                return None;
+            };
+            match call.args.as_slice() {
+                [value]
+                    if executor.spread.is_none()
+                        && value.spread.is_none()
+                        && reads_binding(callee, &resolve.id) =>
+                {
+                    Some(Some(&value.expr))
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// The parameters and returned expression of a non-async, non-generator
+/// arrow or function expression whose body only returns, and whether it is
+/// a `function`.
+fn callback_return(expr: &Expr) -> Option<(Vec<&Pat>, &Expr, bool)> {
+    match strip_parens(expr) {
+        Expr::Arrow(arrow) if !arrow.is_async && !arrow.is_generator => {
+            let returned = match arrow.body.as_ref() {
+                ArrowFunctionBody::Expr(expr) => expr.as_ref(),
+                ArrowFunctionBody::FunctionBody(body) => single_return(&body.stmts)?,
+            };
+            Some((arrow.params.iter().collect(), strip_parens(returned), false))
+        }
+        Expr::Fn(FnExpr { function, .. }) if !function.is_async && !function.is_generator => {
+            let returned = single_return(&function.body.as_ref()?.stmts)?;
+            let params = function.params.iter().map(|param| &param.pat).collect();
+            Some((params, strip_parens(returned), true))
+        }
+        _ => None,
+    }
+}
+
+fn reads_binding(expr: &Expr, binding: &Ident) -> bool {
+    matches!(strip_parens(expr), Expr::Ident(read) if read.to_id() == binding.to_id())
+}
+
+/// `obj` of a call to `obj.name(...)`.
+fn member_call_object<'a>(callee: &'a Callee, name: &str) -> Option<&'a Expr> {
+    let Callee::Expr(callee) = callee else {
+        return None;
+    };
+    let Expr::Member(member) = strip_parens(callee) else {
+        return None;
+    };
+    matches!(&member.prop, MemberProp::Ident(prop) if prop.sym == name).then_some(&member.obj)
+}
+
+fn single_return(stmts: &[Stmt]) -> Option<&Expr> {
+    match stmts {
+        [Stmt::Return(ReturnStmt { arg: Some(arg), .. })] => Some(arg),
+        _ => None,
+    }
+}
+
+/// `x` of `_irw(require(x))`, under the same argument checks as the call
+/// unwrapping.
+fn wildcard_require_specifier<'a>(
+    expr: &'a Expr,
+    local_helpers: &LocalHelperContext,
+) -> Option<&'a Expr> {
+    let Expr::Call(call) = strip_parens(expr) else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    if !local_helpers.is_helper_callee(callee, TranspilerHelperKind::InteropRequireWildcard)
+        || call.args.is_empty()
+        || call.args.len() > 2
+        || call.args.iter().any(|arg| arg.spread.is_some())
+        || call
+            .args
+            .get(1)
+            .is_some_and(|flag| !is_canonical_interop_flag(&flag.expr))
+        || !is_require_call(&call.args[0].expr, local_helpers)
+    {
+        return None;
+    }
+    let Expr::Call(require) = call.args[0].expr.as_ref() else {
+        return None;
+    };
+    Some(require.args[0].expr.as_ref())
 }
 
 /// The canonical shapes of Babel's second `_interopRequireWildcard` argument

@@ -669,3 +669,305 @@ exports.read = function () { return ns.value; };
     assert!(!output.contains("import"), "{output}");
     assert!(output.contains(r#"require("./a")"#), "{output}");
 }
+
+const TSC_IMPORT_STAR: &str = r#"
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+"#;
+
+const BABEL_WILDCARD: &str = r#"
+function _interopRequireWildcard(e) { if (e && e.__esModule) return e; var n = {}; if (e != null) for (var k in e) if (Object.prototype.hasOwnProperty.call(e, k)) n[k] = e[k]; n.default = e; return n; }
+"#;
+
+#[test]
+fn typescript_lowered_dynamic_import_becomes_import_call() {
+    // TypeScript 5.9, `module: CommonJS`, `esModuleInterop`.
+    let input = format!(
+        "{TSC_IMPORT_STAR}{}",
+        r#"
+exports.loadNs = loadNs;
+exports.loadByName = loadByName;
+async function loadNs() { return await Promise.resolve().then(() => __importStar(require("./dep.js"))); }
+function loadByName(name) { return Promise.resolve(`${"./" + name + ".js"}`).then(s => __importStar(require(s))).then((ns) => ns.live); }
+"#
+    );
+    let output = render(&input);
+    assert!(output.contains(r#"await import("./dep.js")"#), "{output}");
+    assert!(output.contains("return import(`"), "{output}");
+    assert!(output.contains(".then((ns)=>ns.live)"), "{output}");
+    assert!(!output.contains("require"), "{output}");
+    assert!(!output.contains("__importStar"), "{output}");
+}
+
+#[test]
+fn typescript_es5_lowered_dynamic_import_becomes_import_call() {
+    // TypeScript 5.9 with `target: ES5` uses function callbacks; TypeScript
+    // 3.9 also lowers a dynamic specifier into the callback.
+    let input = format!(
+        "{TSC_IMPORT_STAR}{}",
+        r#"
+exports.loadThen = loadThen;
+exports.loadByName = loadByName;
+exports.loadOld = loadOld;
+function loadThen() { return Promise.resolve().then(function () { return __importStar(require("./dep.js")); }).then(function (ns) { return ns.live; }); }
+function loadByName(name) { return Promise.resolve("".concat("./" + name + ".js")).then(function (s) { return __importStar(require(s)); }).then(function (ns) { return ns.live; }); }
+function loadOld(name) { return Promise.resolve().then(function () { return __importStar(require("./" + name + ".js")); }); }
+"#
+    );
+    let output = render(&input);
+    assert!(
+        output.contains(r#"return import("./dep.js").then"#),
+        "{output}"
+    );
+    assert_eq!(output.matches("import(").count(), 3, "{output}");
+    assert!(!output.contains("require"), "{output}");
+}
+
+#[test]
+fn swc_lowered_dynamic_import_becomes_import_call() {
+    // swc 1.16, `module.type: "commonjs"`.
+    let input = r#"
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+function _export(target, all) {
+    for(var name in all)Object.defineProperty(target, name, {
+        enumerable: true,
+        get: Object.getOwnPropertyDescriptor(all, name).get
+    });
+}
+_export(exports, {
+    get loadByName () {
+        return loadByName;
+    },
+    get loadDefault () {
+        return loadDefault;
+    }
+});
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) return obj;
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") return {
+        default: obj
+    };
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) return cache.get(obj);
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) Object.defineProperty(newObj, key, desc);
+            else newObj[key] = obj[key];
+        }
+    }
+    newObj.default = obj;
+    if (cache) cache.set(obj, newObj);
+    return newObj;
+}
+async function loadDefault() {
+    const { default: f } = await Promise.resolve().then(()=>/*#__PURE__*/ _interop_require_wildcard(require("./dep.js")));
+    return f();
+}
+function loadByName(name) {
+    return Promise.resolve("./" + name + ".js").then((p)=>/*#__PURE__*/ _interop_require_wildcard(require(p))).then((ns)=>ns.live);
+}
+"#;
+    let output = render(input);
+    assert!(output.contains(r#"await import("./dep.js")"#), "{output}");
+    assert!(output.contains("return import(`./${name}.js`)"), "{output}");
+    assert!(!output.contains("require"), "{output}");
+    assert!(!output.contains("_interop_require_wildcard"), "{output}");
+}
+
+#[test]
+fn promise_callbacks_that_are_not_a_lowered_import_keep_the_require() {
+    // Each callback differs from the lowered `import()` in one way: the
+    // require reads another binding than the passed specifier, the callback
+    // does more than return, the wrapper is not an interop helper, and the
+    // callback reads its own `arguments`.
+    let input = format!(
+        "{BABEL_WILDCARD}{}",
+        r#"
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.a = function (q) { return Promise.resolve("./x").then((p) => _interopRequireWildcard(require(q))); };
+exports.b = function () { return Promise.resolve().then(() => { log(); return _interopRequireWildcard(require("./x")); }); };
+exports.c = function () { return Promise.resolve().then(() => wrap(require("./x"))); };
+exports.d = function () { return Promise.resolve().then(function () { return _interopRequireWildcard(require(arguments[0])); }); };
+"#
+    );
+    let output = render(&input);
+    assert!(!output.contains("import("), "{output}");
+    assert_eq!(output.matches("require(").count(), 4, "{output}");
+}
+
+#[test]
+fn shadowed_promise_is_not_a_lowered_import() {
+    let input = format!(
+        "{BABEL_WILDCARD}{}",
+        r#"
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.load = function (Promise) { return Promise.resolve().then(() => _interopRequireWildcard(require("./x"))); };
+"#
+    );
+    let output = render(&input);
+    assert!(!output.contains("import("), "{output}");
+}
+
+#[test]
+fn direct_eval_keeps_lowered_dynamic_import() {
+    // A direct `eval` can declare a `Promise` binding, so `Promise` is not
+    // provably the global.
+    let input = format!(
+        "{BABEL_WILDCARD}{}",
+        r#"
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.load = function (code) { eval(code); return Promise.resolve().then(() => _interopRequireWildcard(require("./x"))); };
+"#
+    );
+    let output = render(&input);
+    assert!(output.contains("export const load"), "{output}");
+    assert!(!output.contains("import("), "{output}");
+}
+
+#[test]
+fn module_kept_commonjs_keeps_lowered_dynamic_import() {
+    let input = format!(
+        "{BABEL_WILDCARD}{}",
+        r#"
+var target = exports;
+target.load = function () { return Promise.resolve().then(() => _interopRequireWildcard(require("./a"))); };
+"#
+    );
+    let output = render(&input);
+    assert!(!output.contains("import"), "{output}");
+    assert!(
+        output.contains(r#"_interopRequireWildcard(require("./a"))"#),
+        "{output}"
+    );
+}
+
+#[test]
+fn babel_lowered_dynamic_import_becomes_import_call() {
+    // Babel 7.29 preset-env, `modules: "commonjs"`: a non-literal specifier
+    // goes through a wrapper and a `new Promise` executor.
+    let input = r#"
+"use strict";
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.loadByName = loadByName;
+exports.loadNs = loadNs;
+function _interopRequireWildcard(e, t) { if ("function" == typeof WeakMap) var r = new WeakMap(), n = new WeakMap(); return (_interopRequireWildcard = function (e, t) { if (!t && e && e.__esModule) return e; var o, i, f = { __proto__: null, default: e }; if (null === e || "object" != typeof e && "function" != typeof e) return f; if (o = t ? n : r) { if (o.has(e)) return o.get(e); o.set(e, f); } for (const t in e) "default" !== t && {}.hasOwnProperty.call(e, t) && ((i = (o = Object.defineProperty) && Object.getOwnPropertyDescriptor(e, t)) && (i.get || i.set) ? o(f, t, i) : f[t] = e[t]); return f; })(e, t); }
+async function loadNs() {
+  return await Promise.resolve().then(() => _interopRequireWildcard(require("./dep.js")));
+}
+function loadByName(name) {
+  return (specifier => new Promise(r => r(`${specifier}`)).then(s => _interopRequireWildcard(require(s))))("./" + name + ".js").then(ns => ns.live);
+}
+"#;
+    let output = render(input);
+    assert!(output.contains(r#"await import("./dep.js")"#), "{output}");
+    assert!(
+        output.contains("return import(`./${name}.js`).then"),
+        "{output}"
+    );
+    assert!(!output.contains("require"), "{output}");
+    assert!(!output.contains("Promise"), "{output}");
+}
+
+#[test]
+fn rollup_lowered_dynamic_import_becomes_import_call() {
+    // rollup 4.63 with `dynamicImportInCjs: false`.
+    let input = r#"
+'use strict';
+
+function _interopNamespaceDefault(e) {
+	var n = Object.create(null);
+	if (e) {
+		Object.keys(e).forEach(function (k) {
+			if (k !== 'default') {
+				var d = Object.getOwnPropertyDescriptor(e, k);
+				Object.defineProperty(n, k, d.get ? d : {
+					enumerable: true,
+					get: function () { return e[k]; }
+				});
+			}
+		});
+	}
+	n.default = e;
+	return Object.freeze(n);
+}
+
+async function loadNs() { return await Promise.resolve().then(function () { return /*#__PURE__*/_interopNamespaceDefault(require('./dep.js')); }); }
+function loadByName(name) { return (function (t) { return Promise.resolve().then(function () { return /*#__PURE__*/_interopNamespaceDefault(require(t)); }); })("./" + name + ".js").then((ns) => ns.live); }
+
+exports.loadByName = loadByName;
+exports.loadNs = loadNs;
+"#;
+    let output = render(input);
+    assert!(output.contains("await import('./dep.js')"), "{output}");
+    assert!(
+        output.contains("return import(`./${name}.js`).then"),
+        "{output}"
+    );
+    assert!(!output.contains("require"), "{output}");
+    assert!(!output.contains("_interopNamespaceDefault"), "{output}");
+}
+
+#[test]
+fn wrapper_that_does_not_pass_its_parameter_is_not_a_lowered_import() {
+    let input = format!(
+        "{BABEL_WILDCARD}{}",
+        r#"
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.load = function (other) { return ((t) => Promise.resolve().then(() => _interopRequireWildcard(require(other))))("./x"); };
+"#
+    );
+    let output = render(&input);
+    assert!(!output.contains(r#"import("./x")"#), "{output}");
+    assert!(output.contains("import(other)"), "{output}");
+}

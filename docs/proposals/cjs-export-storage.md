@@ -9,10 +9,11 @@ comes from the
 see [Step 1 results](#step-1-results), [Step 2 results](#step-2-results),
 [Step 3 results](#step-3-results),
 [Steps 4 and 5 results](#steps-4-and-5-results),
-[`export * as ns`](#export--as-ns), and
-[Single-file import interop](#single-file-import-interop). The last two are
-outside the storage model but blocked the remaining matrix rows. The matrix
-is at 290 / 291; [Remaining gaps](#remaining-gaps) lists what is left.
+[`export * as ns`](#export--as-ns),
+[Single-file import interop](#single-file-import-interop), and
+[Lowered `import()`](#lowered-import). The last three are outside the
+storage model but blocked matrix rows. The matrix is at 297 / 298;
+[Remaining gaps](#remaining-gaps) lists what is left.
 
 Ground rules: follow [AGENTS.md](../../AGENTS.md), including a focused unit
 test for every change. Use synthetic names in tests and commits. Record every
@@ -684,6 +685,24 @@ wrong: `import-then-export` for TypeScript, Babel, swc, and esbuild, and
 sucrase `imported-used-in-function`. rollup `import-then-export` still
 fails: rollup marks `__esModule` only when the module has a default export,
 so this module shows no evidence.
+
+## Lowered `import()`
+
+Babel, TypeScript, swc, sucrase, and rollup (`dynamicImportInCjs: false`)
+compile `import("./dep.js")` to
+`Promise.resolve().then(() => WILDCARD(require("./dep.js")))`, or pass a
+non-literal specifier through the promise or a wrapper function. In a
+converted module, `UnEsm` unwrapped the interop and left
+`Promise.resolve().then(() => require("./dep.js"))`, which throws
+`ReferenceError` in ESM. The wildcard unwrap that `UnEsm` runs now turns the
+whole shape back into `import(...)`, under the named assumption
+[`lowered_dynamic_import_source_semantics`](../rewrite-assumptions.md#lowered_dynamic_import_source_semantics).
+
+The `dynamic-import` case covers a namespace, a `.then` read, a default
+export, and a non-literal specifier. Matrix: 297 / 298 (from 290 / 291): the
+case's 7 scored rows are correct, and nothing else moved. Babel, esbuild, and
+rollup keep a native `import()` with the matrix options, so their rows are
+`p≠`; the Babel 7.29 and rollup lowered forms have unit tests instead.
 
 ## Remaining gaps
 
