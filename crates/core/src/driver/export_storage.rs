@@ -8,8 +8,8 @@ use super::types::DecompileOptions;
 use super::unpack::detect_bundle;
 use super::{DriverError, DriverErrorKind, DriverResult};
 use crate::rules::{
-    analyze_export_storage, apply_rules, lower_export_getter_helpers, rule_names,
-    ExportStorageReport, RulePipelineOptions,
+    analyze_export_storage, apply_rules, lower_export_getter_helpers,
+    lower_webpack_export_definitions, rule_names, ExportStorageReport, RulePipelineOptions,
 };
 
 /// The per-name CommonJS export storage decisions for one single-file input,
@@ -88,6 +88,7 @@ pub fn explain_commonjs_exports(
         }
 
         // UnEsm's first step; the analysis runs after it.
+        lower_webpack_export_definitions(&mut module, unresolved_mark);
         lower_export_getter_helpers(&mut module, unresolved_mark);
 
         let location = |span: Option<Span>| {

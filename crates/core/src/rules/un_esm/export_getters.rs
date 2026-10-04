@@ -32,13 +32,30 @@
 //!
 //! Each call becomes the getter definitions it performs, written as
 //! `Object.defineProperty(exports, "name", { enumerable: true, get })`. The
-//! export-storage analysis classifies those names as getters, and the
-//! statement path exports them live or re-exports them, as for any other
-//! getter definition. The result is still the same CommonJS module, so a
-//! module that later keeps its CommonJS boundary loses nothing.
+//! export-storage analysis classifies those names as getters. The storage
+//! rewrite exports a getter of a local binding live; the statement path
+//! re-exports a getter of an imported member. The result is still the same
+//! CommonJS module, so a module that later keeps its CommonJS boundary loses
+//! nothing.
 //!
 //! A helper is recognized by its body, not by its name. Its binding must have
 //! one declaration and no write.
+//!
+//! webpack's runtime `require.d` has no body in an unpacked module; its
+//! semantics come from the runtime. [`lower_webpack_export_definitions`]
+//! lowers every form a top-level call takes:
+//!
+//! ```text
+//! require.d(exports, { x: () => x });            // object of getters
+//! require.d(exports, "x", function () { return x; }); // webpack 4, one name
+//! require.d(exports, ["c", 0, c, "x", () => x]); // webpack 5.108+: a `0` slot
+//!                                                // is followed by a value
+//! require.d(exports, { x: () => x }, { c });     // rspack: getters, values
+//! ```
+//!
+//! A value is a data property read when the call runs, so it becomes
+//! `exports.c = c` at the call's position. `UnEsm` restores the calls as
+//! written when the module stays CommonJS.
 
 use crate::analysis::binding_uses::BindingUseIndex;
 use crate::rules::helper_matcher::{
@@ -1515,4 +1532,186 @@ fn is_empty_object_declaration(item: &ModuleItem, namespace: &Ident) -> bool {
     matches!(var.decls.as_slice(), [VarDeclarator { name: Pat::Ident(binding), init: Some(init), .. }]
         if same_ident(&binding.id, namespace)
             && matches!(strip_parens(init), Expr::Object(ObjectLit { props, .. }) if props.is_empty()))
+}
+
+/// One export defined by webpack's `require.d`.
+enum WebpackExport {
+    /// A getter returning this expression.
+    Getter(Box<Expr>),
+    /// A data property holding this value, read when the call runs.
+    Value(Box<Expr>),
+}
+
+/// Lower webpack's runtime `require.d(exports, definition)` statements to
+/// per-name definitions: getters to `Object.defineProperty(exports, "x", {
+/// enumerable: true, get })`, and values to `exports.x = value`. Returns
+/// whether any statement was lowered.
+pub(crate) fn lower_webpack_export_definitions(module: &mut Module, unresolved_mark: Mark) -> bool {
+    if !has_webpack_export_definitions(module, unresolved_mark) {
+        return false;
+    }
+    // The runtime skips a key that `exports` already owns; a second
+    // `Object.defineProperty` of the same non-configurable key would throw.
+    let mut seen: HashSet<Atom> = HashSet::default();
+    let unique = module
+        .body
+        .iter()
+        .filter_map(|item| webpack_export_statement(item, unresolved_mark))
+        .flatten()
+        .all(|(name, _)| seen.insert(name));
+    if !unique {
+        return false;
+    }
+    for item in std::mem::take(&mut module.body) {
+        let Some(exports) = webpack_export_statement(&item, unresolved_mark) else {
+            module.body.push(item);
+            continue;
+        };
+        let span = module_item_span(&item);
+        for (name, export) in exports {
+            module.body.push(match export {
+                WebpackExport::Getter(expr) => getter_definition(
+                    span,
+                    &name,
+                    Box::new(arrow_returning(expr)),
+                    false,
+                    unresolved_mark,
+                ),
+                WebpackExport::Value(value) => exports_write(span, &name, value, unresolved_mark),
+            });
+        }
+    }
+    true
+}
+
+pub(crate) fn has_webpack_export_definitions(module: &Module, unresolved_mark: Mark) -> bool {
+    module
+        .body
+        .iter()
+        .any(|item| webpack_export_statement(item, unresolved_mark).is_some())
+}
+
+fn webpack_export_statement(
+    item: &ModuleItem,
+    unresolved_mark: Mark,
+) -> Option<Vec<(Atom, WebpackExport)>> {
+    let ModuleItem::Stmt(Stmt::Expr(statement)) = item else {
+        return None;
+    };
+    let Expr::Call(call) = strip_parens(&statement.expr) else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    if !is_unresolved_member_expr(callee, "require", "d", unresolved_mark) {
+        return None;
+    }
+    if call.args.iter().any(|arg| arg.spread.is_some()) {
+        return None;
+    }
+    let target = call.args.first()?;
+    if !matches!(strip_parens(&target.expr), Expr::Ident(id)
+        if is_unresolved_ident(id, "exports", unresolved_mark))
+    {
+        return None;
+    }
+    let mut exports = Vec::new();
+    match &call.args[1..] {
+        [definition] => match strip_parens(&definition.expr) {
+            Expr::Object(getters) => {
+                for (name, expr) in extract_export_getter_map(getters)? {
+                    exports.push((name, WebpackExport::Getter(expr)));
+                }
+            }
+            Expr::Array(array) => {
+                let mut elements = array.elems.iter();
+                while let Some(key) = elements.next() {
+                    let name = string_value(&key.as_ref()?.expr)?;
+                    let binding = &elements.next()?.as_ref()?.expr;
+                    let export = if matches!(strip_parens(binding), Expr::Lit(Lit::Num(num)) if num.value == 0.0)
+                    {
+                        WebpackExport::Value(elements.next()?.as_ref()?.expr.clone())
+                    } else {
+                        WebpackExport::Getter(extract_getter_expr_return_expr(binding)?)
+                    };
+                    exports.push((name, export));
+                }
+            }
+            _ => return None,
+        },
+        [name, getter] if string_value(&name.expr).is_some() => {
+            let name = string_value(&name.expr)?;
+            exports.push((
+                name,
+                WebpackExport::Getter(extract_getter_expr_return_expr(&getter.expr)?),
+            ));
+        }
+        [getters, values] => {
+            let (Expr::Object(getters), Expr::Object(values)) =
+                (strip_parens(&getters.expr), strip_parens(&values.expr))
+            else {
+                return None;
+            };
+            for (name, expr) in extract_export_getter_map(getters)? {
+                exports.push((name, WebpackExport::Getter(expr)));
+            }
+            for prop in &values.props {
+                let PropOrSpread::Prop(prop) = prop else {
+                    return None;
+                };
+                let (name, value) = match prop.as_ref() {
+                    Prop::KeyValue(entry) => (prop_name_as_atom(&entry.key)?, entry.value.clone()),
+                    Prop::Shorthand(ident) => {
+                        (ident.sym.clone(), Box::new(Expr::Ident(ident.clone())))
+                    }
+                    _ => return None,
+                };
+                exports.push((name, WebpackExport::Value(value)));
+            }
+        }
+        _ => return None,
+    }
+    let mut seen: HashSet<Atom> = HashSet::default();
+    if exports.is_empty()
+        || !exports.iter().all(|(name, _)| {
+            !is_prototype_mutating_member_name(name.as_ref()) && seen.insert(name.clone())
+        })
+    {
+        return None;
+    }
+    Some(exports)
+}
+
+fn arrow_returning(expr: Box<Expr>) -> Expr {
+    Expr::Arrow(ArrowExpr {
+        span: DUMMY_SP,
+        ctxt: Default::default(),
+        params: Vec::new(),
+        body: Box::new(ArrowFunctionBody::Expr(expr)),
+        is_async: false,
+        is_generator: false,
+        type_params: None,
+        return_type: None,
+    })
+}
+
+/// `exports.name = value;`, or `exports["name"] = value;` when the name
+/// cannot follow a dot.
+fn exports_write(span: Span, name: &Atom, value: Box<Expr>, unresolved_mark: Mark) -> ModuleItem {
+    let Expr::Member(target) = member_read(
+        make_unresolved_ident("exports".into(), unresolved_mark),
+        name,
+    ) else {
+        unreachable!("member_read builds a member expression");
+    };
+    ModuleItem::Stmt(Stmt::Expr(ExprStmt {
+        span,
+        expr: Box::new(Expr::Assign(AssignExpr {
+            span: DUMMY_SP,
+            op: AssignOp::Assign,
+            left: AssignTarget::Simple(SimpleAssignTarget::Member(target)),
+            right: value,
+        })),
+    }))
 }

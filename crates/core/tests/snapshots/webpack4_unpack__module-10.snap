@@ -187,6 +187,6 @@ const h = (e)=>`import { ${e} } from 'redux-saga' has been deprecated in favor o
 The latter will not work with yield*, as helper effects are wrapped automatically for you in fork effect.
 Therefore yield ${e} will return task descriptor to your saga and execute next lines of code.`;
 const m = r.n(b, h("takeEvery"));
+export { m as a };
 export const c = r.n(d, h("takeLatest"));
 export const e = r.n(f, h("throttle"));
-export { m as a };

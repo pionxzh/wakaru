@@ -283,13 +283,13 @@ fn webpack_system_library_raw_recurses_into_inner_bundle() {
         "normal unpack should convert the inner entry require to import:\n{entry}"
     );
     assert!(
-        entry.contains("export { value };") && entry.contains("export { run as default };"),
+        entry.contains("export const value =") && entry.contains("export { run as default };"),
         "normal unpack should recover inner entry exports:\n{entry}"
     );
 
     let dep = module_code(&modules, "webpack-src/dep.js");
     assert!(
-        dep.contains("export { named };") && dep.contains("export { double as default };"),
+        dep.contains("export const named = 5;") && dep.contains("export { double as default };"),
         "normal unpack should recover inner dependency exports:\n{dep}"
     );
 }

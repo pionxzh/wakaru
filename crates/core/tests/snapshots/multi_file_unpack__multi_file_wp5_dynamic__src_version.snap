@@ -2,6 +2,5 @@
 source: crates/core/tests/multi_file_unpack.rs
 expression: code
 ---
-const version = '1.0.0';
+export const version = '1.0.0';
 export const name = 'test';
-export { version };

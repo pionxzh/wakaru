@@ -1,10 +1,11 @@
 # CommonJS Export Storage Recovery
 
-Status: **IMPLEMENTED.** Steps 1 to 3 and 5 are implemented: the per-name
+Status: **IMPLEMENTED.** Steps 1 to 5 are implemented: the per-name
 analysis (`wakaru debug cjs-exports`), the `commonjs_export_unrecovered`
-warning, A (property storage), B (mirror storage), and the swc, esbuild, and
-sucrase getter helpers feeding C. Step 4 was narrowed to one bug fix. Evidence
-comes from the
+warning, A (property storage), B (mirror storage), C for getters of a local
+binding, and the swc, esbuild, sucrase, and webpack getter forms feeding C.
+Step 4 was first narrowed to one bug fix and done later; see
+[One getter path](#one-getter-path). Evidence comes from the
 [CommonJS export-storage matrix](../../scripts/repro/cjs-export-storage-matrix/README.md);
 see [Step 1 results](#step-1-results), [Step 2 results](#step-2-results),
 [Step 3 results](#step-3-results),
@@ -14,7 +15,7 @@ see [Step 1 results](#step-1-results), [Step 2 results](#step-2-results),
 [Lowered `import()`](#lowered-import). The last three are outside the
 storage model but blocked matrix rows. The compiler profiles are at
 297 / 298. The webpack profiles, added after the implementation, are at
-34 / 87; [Remaining gaps](#remaining-gaps) lists what is left for both.
+54 / 87; [Remaining gaps](#remaining-gaps) lists what is left for both.
 
 Ground rules: follow [AGENTS.md](../../AGENTS.md), including a focused unit
 test for every change. Use synthetic names in tests and commits. Record every
@@ -317,7 +318,7 @@ throws when it runs, so the gap must be visible:
 | Stable named read recovery | Replaced by A and B, which rewrite every access. |
 | Conditional named export recovery | Replaced by A. Nested and compound writes are ordinary A writes. |
 | A-class prototype that rewrites leftover accesses after the stable pass | Superseded by step 2. It measured that A alone moves the matrix from 27 to 108, and was never merged. |
-| Webpack and `defineProperty` getter pre-passes | Planned as C inputs. Step 4 was narrowed instead: both still feed the statement path (see [Steps 4 and 5 results](#steps-4-and-5-results)). |
+| Webpack and `defineProperty` getter pre-passes | C inputs. Top-level webpack `require.d` calls are lowered to getter definitions; the storage rewrite owns getters of a local binding (see [One getter path](#one-getter-path)). |
 | `UnAssignmentMerging` repeatable-value chain split | Stops splitting a chain that writes both an `exports` property and a local identifier. The pipeline order stays: the `UnAssignmentMerging` → `UnEsm` edge is confirmed in [rule-dependency-inventory.md](../rule-dependency-inventory.md), and moving `UnEsm` first would also hand it every chain that `UnAssignmentMerging` already splits safely. A chain left whole is handled by the class of its export name: B drops the mirror target (`L = v`), A rewrites the target (`X = L = v`, still one valid chain), C does not occur because getter names have no writes. |
 | `has_unhandled_named_export_chain` rollback | Must accept those chains instead of restoring the whole module to CommonJS. |
 
@@ -372,9 +373,11 @@ previous step.
 3. **Done.** Stop `UnAssignmentMerging` from splitting chains that write
    both an `exports` property and a local, then implement B; see
    [Step 3 results](#step-3-results).
-4. **Narrowed.** Route the existing getter pre-passes through C. Only one
-   C failure remained, a statement-path bug, fixed instead; see
-   [Steps 4 and 5 results](#steps-4-and-5-results).
+4. **Done.** Route the existing getter pre-passes through C. First narrowed
+   to one statement-path bug (see
+   [Steps 4 and 5 results](#steps-4-and-5-results)); done once the webpack
+   profiles showed what the separate paths missed (see
+   [One getter path](#one-getter-path)).
 5. **Done.** swc, esbuild, and sucrase recognizers. They feed C.
 
 Run the private fixture suite and the full core suite at every step. Steps 2
@@ -592,8 +595,8 @@ every matrix row their output matches the C decision except one: Babel's
 the getters stayed and threw at load. It now also accepts namespace import
 bindings, which are immutable, and drops the import when only the re-exports
 read it. Merging the two paths into C would change no matrix row, so it was
-not done. It becomes worth doing if the analysis reports a getter that the
-output still accesses; the warning makes that visible.
+not done then. The webpack profiles later showed rows it does change; see
+[One getter path](#one-getter-path).
 
 **Step 5: getter helpers are lowered, not classified.** `UnEsm` first
 rewrites each helper call into the per-name getter definitions it performs,
@@ -721,6 +724,58 @@ before that helper is known, so a Phase 2 pass restores the shape from the
 provider's helper export fact. A webpack 5 bundle of that output has an
 end-to-end unit test.
 
+## One getter path
+
+The webpack profiles showed what the separate getter paths missed. Webpack
+`require.d` calls went through their own pre-pass, which turned each getter
+into `exports.x = value` marked live:
+
+- the array form of webpack 5.108 and later,
+  `require.d(exports, ["c", 0, c, "x", () => x])`, and rspack's
+  `require.d(exports, getters, values)` were not recognized, and the call
+  stayed in the ESM output;
+- a getter returning a member of an imported module (`x: () => dep.y`)
+  became a snapshot `export const x = dep.y` instead of
+  `export { y as x } from`.
+
+Every top-level `require.d` call is now lowered to per-name definitions
+before the analysis, in `un_esm/export_getters.rs`, like the swc, esbuild,
+and sucrase helpers. A getter becomes `Object.defineProperty(exports, "x",
+{ enumerable: true, get })`. A value slot becomes `exports.c = c` at the
+call's position: the runtime reads it when the call runs. A key that two
+calls define is not lowered, because the runtime skips a key `exports`
+already owns while a second definition would throw. When the module stays
+CommonJS, `UnEsm` puts the calls back as written. `require.d` calls inside an
+unused wrapper IIFE are lowered once the IIFE body is exposed; the
+pre-pass now handles only the getter-loop IIFE form.
+
+The storage rewrite now also owns C names whose getter returns a binding the
+module computes itself (a function, a class, or a variable whose initializer
+calls no `require`). It drops the definition, rewrites reads to the binding,
+and places `export { local as x }` after the binding's declaration, as for B.
+A later pass then merges it into `export let`/`export const` where the names
+match. A getter of an import, a `require` result, or a member of one stays
+on the statement path, which emits `export { y as x } from`. A module that
+calls bundler runtime helpers still keeps its converted form under decision
+8; that check now reads the module before the lowering.
+
+Two neighboring fixes came with it. Webpack re-exports now reach
+`export { d as x } from "./m"`, and in unpack mode a later rename of an
+unrelated local `d` also renamed that specifier, because `BindingRenamer`
+treated the source name of an `export … from` as a local reference; it now
+skips those specifiers. And a specifier placed after `var o = {}` split the
+`require.d(o, ...)` run that `UnWebpackDefineGetters` folds into one object;
+that rule now looks past local export specifiers, which run no code.
+
+Matrix: 351 / 385 (from 331), with no row that was correct before now wrong.
+webpack 5.111 rises from 17 to 27 rows in both profiles. The remaining
+webpack failures are `reexport-star` and `dynamic-import` (see below) and
+every webpack 5.107 row (the whole-namespace default import). Pipeline
+snapshots changed only in placement: the specifier of a getter export now
+follows its declaration instead of the getter map, which merges `export
+const version` in webpack 5 output and spreads minified webpack 4 aliases
+(`export { i as x }`) next to their declarations.
+
 ## Remaining gaps
 
 - **The statement path is still an entry point for named exports.** The
@@ -729,9 +784,9 @@ end-to-end unit test.
   - a property name whose only access is one whole top-level write, and a
     mirror name whose only access is one `exports.x = local;` copy (see
     [Step 2 results](#step-2-results) and [Step 3 results](#step-3-results));
-  - every getter name: webpack `require.d` through its own pre-pass, and
-    `Object.defineProperty` getters, including the lowered swc, esbuild, and
-    sucrase helpers (see [Steps 4 and 5 results](#steps-4-and-5-results));
+  - a getter that returns an import, a `require` result, or a member of one,
+    which becomes a re-export, and getters in webpack's getter-loop IIFE
+    (see [One getter path](#one-getter-path));
   - TypeScript enum initializers that `UnEnum` folds, `exports.exports`, and
     names the module already exports as ESM;
   - every name in a module with a self-`require`, and every
@@ -748,15 +803,9 @@ end-to-end unit test.
 - **esbuild single-file CommonJS under `--unpack`.** Still split as a
   scope-hoisted bundle (see [Out of scope](#out-of-scope)).
 - **webpack profiles.** The matrix bundles each case with webpack 5.107
-  (object-form `require.d`) and 5.111 and unpacks the bundle. Each failing
-  row has at least one of four causes:
-  - webpack 5.108 and later define `const` exports with an array form,
-    `require.d(exports, ["name", 0, value, ...])`, which is not recognized;
-    the whole call stays in the output.
-  - A re-export getter that returns a member of an imported module
-    (`x: () => dep.y`) becomes a snapshot `export const x = y` instead of
-    `export { y as x } from`. It goes through the webpack getter pre-pass, not
-    C (see [Steps 4 and 5 results](#steps-4-and-5-results)).
+  (object-form `require.d`) and 5.111 and unpacks the bundle. The array form
+  and re-export getters are fixed (see [One getter path](#one-getter-path)).
+  Each failing row has at least one of these causes:
   - A whole-namespace use of a module marked ESM (`var ns = require(id);
     use(ns)`) becomes a default import. Without a default export the module
     fails to link; with one, the import silently binds the default value

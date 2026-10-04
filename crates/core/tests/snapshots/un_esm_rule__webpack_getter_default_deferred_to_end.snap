@@ -6,5 +6,5 @@ const r = {
     apiBase: "https://example.com"
 };
 const o = r;
-export const VERSION = "2.1.0";
 export { o as default };
+export const VERSION = "2.1.0";

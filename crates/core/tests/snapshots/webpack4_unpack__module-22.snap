@@ -6,9 +6,8 @@ import * as o from "./module-0.js";
 import { q as is } from "./module-0.js";
 import * as i from "./module-6.js";
 import * as a from "./module-12.js";
-import * as u from "./module-2.js";
+import { d as asEffect } from "./module-2.js";
 import { a as a_1 } from "./module-9.js";
-import * as w from "./module-10.js";
 import E from "./module-17.js";
 export const utils = {
     get TASK () {
@@ -36,7 +35,7 @@ export const utils = {
         return o.i;
     },
     get asEffect () {
-        return u.d;
+        return asEffect;
     },
     get CHANNEL_END () {
         return CHANNEL_END;
@@ -341,7 +340,7 @@ ${e.stack}`;
         if (is.array(effect)) {
             return E(effect, v, w);
         }
-        if (k = u.d.take(effect)) {
+        if (k = asEffect.take(effect)) {
             return (({ channel, pattern, maybe }, t)=>{
                 channel = channel || C;
                 const a = (e)=>{
@@ -361,7 +360,7 @@ ${e.stack}`;
                 t.cancel = a.cancel;
             })(k, w);
         }
-        if (k = u.d.put(effect)) {
+        if (k = asEffect.put(effect)) {
             return (({ channel, action, resolve }, t)=>{
                 a.a(()=>{
                     let e;
@@ -380,10 +379,10 @@ ${e.stack}`;
                 });
             })(k, w);
         }
-        if (k = u.d.all(effect)) {
+        if (k = asEffect.all(effect)) {
             return z(k, v, w);
         }
-        if (k = u.d.race(effect)) {
+        if (k = asEffect.race(effect)) {
             return ((e, t, n)=>{
                 let r;
                 const a = Object.keys(e);
@@ -423,7 +422,7 @@ ${e.stack}`;
                 });
             })(k, v, w);
         }
-        if (k = u.d.call(effect)) {
+        if (k = asEffect.call(effect)) {
             return (({ context, fn, args }, t, n)=>{
                 let u;
                 try {
@@ -440,7 +439,7 @@ ${e.stack}`;
                 return n(u);
             })(k, v, w);
         }
-        if (k = u.d.cps(effect)) {
+        if (k = asEffect.cps(effect)) {
             return (({ context, fn, args }, t)=>{
                 try {
                     const a = (e, n)=>{
@@ -458,10 +457,10 @@ ${e.stack}`;
                 }
             })(k, w);
         }
-        if (k = u.d.fork(effect)) {
+        if (k = asEffect.fork(effect)) {
             return F(k, v, w);
         }
-        if (k = u.d.join(effect)) {
+        if (k = asEffect.join(effect)) {
             return ((e, cb)=>{
                 if (e.isRunning()) {
                     const n = {
@@ -479,7 +478,7 @@ ${e.stack}`;
                 }
             })(k, w);
         }
-        if (k = u.d.cancel(effect)) {
+        if (k = asEffect.cancel(effect)) {
             return ((e, t)=>{
                 if (e === o.d) {
                     e = task;
@@ -490,7 +489,7 @@ ${e.stack}`;
                 t();
             })(k, w);
         }
-        if (k = u.d.select(effect)) {
+        if (k = asEffect.select(effect)) {
             return (({ selector, args }, t)=>{
                 try {
                     const i = selector(...[
@@ -502,30 +501,30 @@ ${e.stack}`;
                 }
             })(k, w);
         }
-        if (k = u.d.actionChannel(effect)) {
+        if (k = asEffect.actionChannel(effect)) {
             return (({ pattern, buffer }, n)=>{
                 const a = m(pattern);
                 a.pattern = pattern;
                 n(i.d(t, buffer || a_1.fixed(), a));
             })(k, w);
         }
-        if (k = u.d.flush(effect)) {
+        if (k = asEffect.flush(effect)) {
             return ((e, t)=>{
                 e.flush(t);
             })(k, w);
         }
-        if (k = u.d.cancelled(effect)) {
+        if (k = asEffect.cancelled(effect)) {
             return ((t)=>{
                 const e = 0;
                 t(!!j.isCancelled);
             })(w);
         }
-        if (k = u.d.getContext(effect)) {
+        if (k = asEffect.getContext(effect)) {
             return ((e, t)=>{
                 t(P[e]);
             })(k, w);
         }
-        if (k = u.d.setContext(effect)) {
+        if (k = asEffect.setContext(effect)) {
             return ((e, t)=>{
                 o.v.assign(P, e);
                 t();
@@ -684,6 +683,17 @@ export function runSaga(e, saga, ...args) {
     }
     return y;
 }
+export { a as END } from "./module-6.js";
+export { d as eventChannel } from "./module-6.js";
+export { b as channel } from "./module-6.js";
+export { a as buffers } from "./module-9.js";
+export { a as takeEvery } from "./module-10.js";
+export { c as takeLatest } from "./module-10.js";
+export { e as throttle } from "./module-10.js";
+export { m as delay } from "./module-0.js";
+export { a as CANCEL } from "./module-0.js";
+export { i as detach } from "./module-2.js";
+export { E as effects };
 export default function({ context = {}, ...rest } = {}) {
     const { sagaMonitor, logger, onError } = rest;
     if (is.func(rest)) {
@@ -728,14 +738,3 @@ export default function({ context = {}, ...rest } = {}) {
     };
     return c;
 };
-export const END = i.a;
-export const eventChannel = i.d;
-export const channel = i.b;
-export const buffers = a_1;
-export const takeEvery = w.a;
-export const takeLatest = w.c;
-export const throttle = w.e;
-export const delay = o.m;
-export const CANCEL = o.a;
-export const detach = u.i;
-export { E as effects };

@@ -29,6 +29,7 @@ const x = function(e) {
     e[f].detached = true;
     return e;
 };
+export { x as i };
 function k(e = "*") {
     if (arguments.length) {
         r.h(arguments[0], r.q.notUndef, "take(patternOrChannel): patternOrChannel is undefined");
@@ -45,6 +46,7 @@ function k(e = "*") {
     }
     throw new Error(`take(patternOrChannel): argument ${String(e)} is not valid channel or a valid pattern`);
 }
+export { k as s };
 k.maybe = function() {
     const e = k(...arguments);
     e[i].maybe = true;
@@ -69,9 +71,11 @@ export function n(channel, action) {
 function O(e) {
     return E(u, e);
 }
+export { O as b };
 function C(e) {
     return E(l, e);
 }
+export { C as o };
 function P(e, fn, args) {
     r.h(fn, r.q.notUndef, `${e}: argument fn is undefined`);
     let context = null;
@@ -103,15 +107,19 @@ function j(context, fn, n = []) {
         fn
     }, n));
 }
+export { j as c };
 function R(e, ...n) {
     return E(s, P("cps", e, n));
 }
+export { R as h };
 function N(e, ...n) {
     return E(f, P("fork", e, n));
 }
+export { N as k };
 function M(e, ...n) {
     return x(N(e, ...n));
 }
+export { M as r };
 function A(...t) {
     if (t.length > 1) {
         return O(t.map((e)=>A(e)));
@@ -121,6 +129,7 @@ function A(...t) {
     r.h(o, r.q.task, `join(task): argument ${o} is not a valid Task object ${w}`);
     return E(d, o);
 }
+export { A as m };
 function L(...t) {
     if (t.length > 1) {
         return O(t.map((e)=>L(e)));
@@ -132,6 +141,7 @@ function L(...t) {
     }
     return E(p, o || r.d);
 }
+export { L as f };
 function I(selector) {
     for(var t = arguments.length, args = Array(t > 1 ? t - 1 : 0), o = 1; o < t; o++){
         args[o - 1] = arguments[o];
@@ -147,6 +157,7 @@ function I(selector) {
         args
     });
 }
+export { I as p };
 function D(pattern, buffer) {
     r.h(pattern, r.q.notUndef, "actionChannel(pattern,...): argument pattern is undefined");
     if (arguments.length > 1) {
@@ -158,21 +169,26 @@ function D(pattern, buffer) {
         buffer
     });
 }
+export { D as a };
 function F() {
     return E(y, {});
 }
+export { F as g };
 function z(e) {
     r.h(e, r.q.channel, `flush(channel): argument ${e} is not valid channel`);
     return E(v, e);
 }
+export { z as j };
 function q(e) {
     r.h(e, r.q.string, `getContext(prop): argument ${e} is not a string`);
     return E(b, e);
 }
+export { q as l };
 function U(e) {
     r.h(e, r.q.object, r.k(null, e));
     return E(g, e);
 }
+export { U as q };
 n.resolve = function() {
     const e = n(...arguments);
     e[a].resolve = true;
@@ -197,20 +213,4 @@ var W = {
     getContext: H(b),
     setContext: H(g)
 };
-export { x as i };
-export { k as s };
-export { O as b };
-export { C as o };
-export { j as c };
-export { R as h };
-export { N as k };
-export { M as r };
-export { A as m };
-export { L as f };
-export { I as p };
-export { D as a };
-export { F as g };
-export { z as j };
-export { q as l };
-export { U as q };
 export { W as d };

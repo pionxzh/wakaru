@@ -47,7 +47,8 @@ use super::RewriteLevel;
 mod export_getters;
 mod export_star;
 pub(crate) mod export_storage;
-pub(crate) use export_getters::lower_export_getter_helpers;
+use export_getters::has_webpack_export_definitions;
+pub(crate) use export_getters::{lower_export_getter_helpers, lower_webpack_export_definitions};
 use export_star::rewrite_commonjs_export_stars;
 
 use export_storage::{property_storage_plan, recover_export_storage};
@@ -199,6 +200,34 @@ impl VisitMut for UnEsm {
         if self.level < RewriteLevel::Standard {
             return;
         }
+        // Read before the lowering below removes webpack's `require.d` calls.
+        let calls_bundler_helper = calls_bundler_require_helper(module, self.unresolved_mark);
+        // webpack's `require.d` calls become per-name definitions, which the
+        // analysis and the export rewrites share with every other producer.
+        // A module that stays CommonJS keeps the calls as written.
+        let was_commonjs = !module
+            .body
+            .iter()
+            .any(|item| matches!(item, ModuleItem::ModuleDecl(_)));
+        let before_lowering = (was_commonjs
+            && has_webpack_export_definitions(module, self.unresolved_mark))
+        .then(|| module.body.clone());
+        let lowered = lower_webpack_export_definitions(module, self.unresolved_mark);
+        self.convert(module, calls_bundler_helper);
+        if let (true, Some(original)) = (lowered, before_lowering) {
+            if !module
+                .body
+                .iter()
+                .any(|item| matches!(item, ModuleItem::ModuleDecl(_)))
+            {
+                module.body = original;
+            }
+        }
+    }
+}
+
+impl UnEsm {
+    fn convert(&mut self, module: &mut Module, calls_bundler_helper: bool) {
         // UnAssignmentMerging owns safe chain splitting. UnEsm recovers the
         // remaining top-level named-export chains as whole operations. If a
         // chain still remains, keep the CommonJS boundary before any
@@ -865,7 +894,7 @@ impl VisitMut for UnEsm {
             if unrecovered_commonjs_export_names(module, self.unresolved_mark)
                 .iter()
                 .any(|name| name == WHOLE_EXPORTS)
-                && !calls_bundler_require_helper(&original, self.unresolved_mark)
+                && !calls_bundler_helper
             {
                 *module = original;
             }
@@ -2123,48 +2152,27 @@ fn extract_single_require_binding(
 
 fn rewrite_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) -> Vec<(Span, Atom)> {
     expose_unused_iife_webpack_export_getters(module, unresolved_mark);
+    // The exposed IIFE body can hold `require.d` calls the first lowering
+    // did not see.
+    lower_webpack_export_definitions(module, unresolved_mark);
 
     let mut converted_getter_map = false;
     let mut live_named_assignments = Vec::new();
     let mut new_body = Vec::with_capacity(module.body.len());
-    // Webpack5 getter maps appear at the top of the module, before the
-    // declarations they reference.  Deferring all converted exports to the
-    // end of the body (a) avoids TDZ violations for `export default ident`
-    // and (b) places `exports.X = X` adjacent to its `const X = ...`
-    // declaration so merge_decl_and_named_export can fold them into
-    // `export const X = ...`.
-    let mut deferred_named: Vec<ModuleItem> = Vec::new();
+    // The getter map commonly precedes the declarations it references.
+    // Deferring a converted default export to the end of the body avoids a
+    // TDZ violation for `export default ident`. Top-level `require.d` calls
+    // were already lowered to getter definitions (see
+    // `lower_webpack_export_definitions`); only this IIFE form is left here.
     let mut deferred_default: Vec<ModuleItem> = Vec::new();
 
     for item in std::mem::take(&mut module.body) {
         let item_span = module_item_span(&item);
-        if let Some(exports) = extract_direct_webpack_export_getters(&item, unresolved_mark) {
-            for (name, expr) in exports {
-                if name.as_ref() == "default" {
-                    deferred_default.push(make_deferred_webpack_default_export(
-                        item_span,
-                        expr,
-                        unresolved_mark,
-                    ));
-                } else {
-                    live_named_assignments.push((item_span, name.clone()));
-                    deferred_named.push(make_exports_assign_expr_item(
-                        item_span,
-                        (name, expr),
-                        unresolved_mark,
-                    ));
-                }
-            }
-            continue;
-        }
-
         if let Some(exports) = extract_webpack_export_getter_iife(&item, unresolved_mark) {
             converted_getter_map = true;
             for (name, expr) in exports {
                 if name.as_ref() == "default" {
-                    // The getter map commonly precedes the declaration it
-                    // references. Keep default live and defer it past the
-                    // declarations just like the direct `require.d` form.
+                    // Keep default live and defer it past the declarations.
                     deferred_default.push(make_deferred_webpack_default_export(
                         item_span,
                         expr,
@@ -2191,9 +2199,6 @@ fn rewrite_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) ->
         new_body.push(item);
     }
 
-    // Named exports first (adjacent to their declarations for merging),
-    // then default exports last (after all declarations to avoid TDZ).
-    new_body.extend(deferred_named);
     new_body.extend(deferred_default);
     module.body = new_body;
     live_named_assignments

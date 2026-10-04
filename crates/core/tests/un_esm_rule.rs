@@ -1665,16 +1665,15 @@ function main() {{
 "#
     );
     let expected = r#"
-export { bump };
-export { count };
-export { main as default };
-let count = 0;
+export let count = 0;
 function bump() {
     count += 1;
 }
+export { bump };
 function main() {
     return count;
 }
+export { main as default };
 "#;
     assert_eq_normalized(&apply(&input), expected);
 }
@@ -1702,12 +1701,11 @@ function bump() {
 }
 "#;
     let expected = r#"
-export { count };
-export { bump };
-let count = 0;
+export let count = 0;
 function bump() {
     count += 1;
 }
+export { bump };
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
@@ -1804,7 +1802,7 @@ var mod_default = count;
         assert!(!output.contains(helper), "{helper} left in {output}");
     }
     assert!(!output.contains("module.exports"), "{output}");
-    assert!(output.contains("export { count }"), "{output}");
+    assert!(output.contains("export let count = 0"), "{output}");
     assert!(output.contains("export { reset }"), "{output}");
 }
 
@@ -2567,7 +2565,9 @@ exports.default = answer;
 }
 
 #[test]
-fn recovered_default_getter_keeps_default_compat_postamble() {
+fn webpack_default_only_getter_rewrites_default_compat_postamble() {
+    // A lowered `require.d` getter takes the same default-only compatibility
+    // rewrite as an `Object.defineProperty` getter.
     let input = format!(
         r#"
 require.d(exports, {{
@@ -2577,15 +2577,18 @@ const answer = 42;
 {DEFAULT_COMPAT_POSTAMBLE}
 "#
     );
-    let output = apply(&input);
-    assert!(
-        output.contains("export { answer as default }"),
-        "the getter should be recovered as a live default export:\n{output}"
-    );
-    assert!(
-        output.contains("Object.assign(exports.default, exports)")
-            && output.contains("module.exports = exports.default"),
-        "a recovered ESM default must keep case-2 compatibility intact:\n{output}"
+    assert_eq_normalized(
+        &apply(&input),
+        r#"
+const answer = 42;
+export { answer as default };
+if ((typeof answer === "function" || typeof answer === "object" && answer !== null) && answer.__esModule === undefined) {
+    Object.defineProperty(answer, "__esModule", {
+        value: true
+    });
+    answer.default = answer;
+}
+"#,
     );
 }
 
@@ -2611,8 +2614,8 @@ function entry() {}
     assert_eq_normalized(
         &output,
         r#"
-export { entry as default };
 function entry() {}
+export { entry as default };
 if ((typeof entry === "function" || typeof entry === "object" && entry !== null) && entry.__esModule === undefined) {
     Object.defineProperty(entry, "__esModule", {
         value: true
@@ -3109,6 +3112,96 @@ function i(t, e = null) {
 }
 
 #[test]
+fn webpack_array_form_values_and_getters_become_exports() {
+    // webpack 5.108+ defines `const` exports at the end of the module with an
+    // array: a `0` slot is followed by the value of a data property, any
+    // other slot is a getter.
+    let input = r#"
+require.d(exports, { f: () => f });
+const limit = 1;
+const config = { a: 1 };
+function f() { return limit; }
+let count = 0;
+require.d(exports, ["cfg", 0, config, "count", () => count, "limit", 0, limit]);
+"#;
+    let expected = r#"
+const limit = 1;
+const config = {
+    a: 1
+};
+function f() {
+    return limit;
+}
+export { f };
+export let count = 0;
+export { config as cfg };
+export { limit };
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn rspack_value_definitions_become_exports() {
+    // rspack's `require.d(exports, getters, values)` defines each entry of
+    // the third object as a data property holding its value.
+    let input = r#"
+const table = { a: 1 };
+function f() { return table; }
+require.d(exports, { f: () => f }, { table });
+"#;
+    let expected = r#"
+const table = {
+    a: 1
+};
+function f() {
+    return table;
+}
+export { f };
+export { table };
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn webpack_getter_returning_a_require_member_becomes_a_re_export() {
+    let input = r#"
+require.d(exports, ["take", () => effects.take]);
+var effects = require("./effects.js");
+"#;
+    assert_eq_normalized(&apply(input), r#"export { take } from "./effects.js";"#);
+}
+
+#[test]
+fn module_that_stays_commonjs_keeps_webpack_definitions_as_written() {
+    // The lowered getter definitions are only an intermediate form for
+    // conversion; an aliased `exports` keeps the module CommonJS.
+    let input = r#"
+require.d(exports, { a: () => a });
+var alias = exports;
+alias.extra = 1;
+const a = 1;
+"#;
+    let output = apply(input);
+    assert!(output.contains("require.d(exports, {"), "{output}");
+    assert!(!output.contains("defineProperty"), "{output}");
+}
+
+#[test]
+fn repeated_webpack_definition_keys_are_not_lowered() {
+    // The runtime skips a key `exports` already owns, while a second
+    // `Object.defineProperty` of the same key would throw.
+    let input = r#"
+require.d(exports, { a: () => a });
+require.d(exports, ["a", 0, b]);
+const a = 1;
+const b = 2;
+"#;
+    let output = apply(input);
+    assert!(!output.contains("defineProperty"), "{output}");
+    assert_eq!(output.matches("require.d(exports").count(), 2, "{output}");
+}
+
+#[test]
 fn webpack_export_getter_to_mutable_binding_stays_live() {
     let input = r#"
 let value = 1;
@@ -3116,9 +3209,8 @@ require.d(exports, "value", () => value);
 value = 2;
 "#;
     let expected = r#"
-let value = 1;
+export let value = 1;
 value = 2;
-export { value };
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);

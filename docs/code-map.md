@@ -65,7 +65,7 @@ crates/
         rename_utils.rs             — shared binding rename utilities
         un_for_await.rs             — `for await` protocol matcher run by UnForOf (not a registered rule)
         lowered_dynamic_import.rs   — lowered `import()` matcher, run by UnInteropRequireWildcard and by a Phase 2 pass for a cross-module helper (not a registered rule)
-        un_esm/export_getters.rs    — swc / esbuild / sucrase export getter helpers lowered to per-name getter definitions
+        un_esm/export_getters.rs    — swc / esbuild / sucrase export getter helpers and webpack `require.d` lowered to per-name definitions
         un_esm/export_storage.rs    — per-name CommonJS export storage model (getter / mirror / property)
         *.rs                        — one file per transformation rule
       unpacker/

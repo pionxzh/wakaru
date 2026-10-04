@@ -2,33 +2,32 @@
 source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
-import { a, b, c, e, f, g, h, j, k, l, m, n, o as o_1, p, q, r, s, t } from "./module-2.js";
-import * as o from "./module-10.js";
-import { d } from "./module-10.js";
+import { k } from "./module-2.js";
+import { b, d, f } from "./module-10.js";
 export function takeEvery(e, t, ...i) {
-    return k(o.b, e, t, ...i);
+    return k(b, e, t, ...i);
 }
 export function takeLatest(e, t, ...i) {
     return k(d, e, t, ...i);
 }
 export function throttle(e, t, n, ...a) {
-    return k(o.f, e, t, n, ...a);
+    return k(f, e, t, n, ...a);
 }
-export const take = s;
-export const takem = t;
-export const put = n;
-export const all = b;
-export const race = o_1;
-export const call = e;
-export const apply = c;
-export const cps = h;
-export const fork = k;
-export const spawn = r;
-export const join = m;
-export const cancel = f;
-export const select = p;
-export const actionChannel = a;
-export const cancelled = g;
-export const flush = j;
-export const getContext = l;
-export const setContext = q;
+export { s as take } from "./module-2.js";
+export { t as takem } from "./module-2.js";
+export { n as put } from "./module-2.js";
+export { b as all } from "./module-2.js";
+export { o as race } from "./module-2.js";
+export { e as call } from "./module-2.js";
+export { c as apply } from "./module-2.js";
+export { h as cps } from "./module-2.js";
+export { k as fork } from "./module-2.js";
+export { r as spawn } from "./module-2.js";
+export { m as join } from "./module-2.js";
+export { f as cancel } from "./module-2.js";
+export { p as select } from "./module-2.js";
+export { a as actionChannel } from "./module-2.js";
+export { g as cancelled } from "./module-2.js";
+export { j as flush } from "./module-2.js";
+export { l as getContext } from "./module-2.js";
+export { q as setContext } from "./module-2.js";

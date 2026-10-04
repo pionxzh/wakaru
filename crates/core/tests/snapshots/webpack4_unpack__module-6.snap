@@ -11,6 +11,7 @@ export const a = {
 const l = function(e) {
     return e && e.type === "@@redux-saga/CHANNEL_END";
 };
+export { l as e };
 function c() {
     const e = [];
     return {
@@ -26,6 +27,7 @@ function c() {
         }
     };
 }
+export { c };
 const s = "invalid buffer passed to channel factory function";
 const f = "Saga was provided with an undefined action";
 function d(e = a_1.fixed()) {
@@ -96,6 +98,7 @@ function d(e = a_1.fixed()) {
         }
     };
 }
+export { d as b };
 function p(e, t = a_1.none(), n) {
     if (arguments.length > 2) {
         h_1(n, q.func, "Invalid match function passed to eventChannel");
@@ -128,6 +131,7 @@ function p(e, t = a_1.none(), n) {
         close
     };
 }
+export { p as d };
 function h(e) {
     const t = p((t)=>e((e)=>{
             if (e[c_1]) {
@@ -147,8 +151,4 @@ function h(e) {
         }
     };
 }
-export { l as e };
-export { c };
-export { d as b };
-export { p as d };
 export { h as f };

@@ -20,9 +20,10 @@
 //! See `docs/proposals/cjs-export-storage.md` for the producer shapes and the
 //! reasoning behind each condition. [`analyze_export_storage`] only reports
 //! decisions (it also backs `wakaru debug cjs-exports`);
-//! [`recover_export_storage`] rewrites the property and mirror names that
-//! [`storage_candidates`] selects. Getter names and the names left to the
-//! statement path are rewritten by `UnEsm`'s statement classification.
+//! [`recover_export_storage`] rewrites the property, mirror, and getter names
+//! that [`storage_candidates`] selects. A getter of an imported member or a
+//! `require` result, and the names left to the statement path, are rewritten
+//! by `UnEsm`'s statement classification.
 
 use crate::collections::{HashMap, HashSet};
 
@@ -100,6 +101,10 @@ pub(crate) struct ExportStorageDecision {
     pub(crate) accesses: AccessCounts,
     /// What the mirror rewrite needs beyond the report.
     pub(crate) mirror: Option<MirrorFacts>,
+    /// For a getter that returns a module-level binding holding a value the
+    /// module computes itself (not a `require` result or an import), that
+    /// binding. The storage rewrite exports it live.
+    pub(crate) getter: Option<BindingId>,
 }
 
 /// Facts about a mirror name that decide whether its local can replace the
@@ -201,7 +206,7 @@ pub(crate) fn analyze_export_storage(
         };
     }
 
-    let declarations = collect_module_declarations(module);
+    let declarations = collect_module_declarations(module, unresolved_mark);
     let decisions = inventory
         .order
         .iter()
@@ -1296,6 +1301,36 @@ struct ModuleDeclaration {
     observes_receiver: bool,
     index: usize,
     lexical: bool,
+    /// A function, a class, or a variable whose initializer has no `require`
+    /// call: a value the module computes itself. An import or a `require`
+    /// result is left to the statement path, which re-exports it.
+    own_value: bool,
+}
+
+/// Whether `expr` calls the CommonJS `require` anywhere.
+fn contains_require_call(expr: &Expr, unresolved_mark: Mark) -> bool {
+    struct Finder {
+        unresolved_mark: Mark,
+        found: bool,
+    }
+    impl Visit for Finder {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if matches!(&call.callee, Callee::Expr(callee)
+                if matches!(strip_parens(callee), Expr::Ident(id)
+                    if is_unresolved_ident(id, "require", self.unresolved_mark)))
+            {
+                self.found = true;
+                return;
+            }
+            call.visit_children_with(self);
+        }
+    }
+    let mut finder = Finder {
+        unresolved_mark,
+        found: false,
+    };
+    expr.visit_with(&mut finder);
+    finder.found
 }
 
 fn value_observes_receiver(value: &Expr) -> bool {
@@ -1303,13 +1338,17 @@ fn value_observes_receiver(value: &Expr) -> bool {
 }
 
 /// Bindings declared directly in the module body.
-fn collect_module_declarations(module: &Module) -> HashMap<BindingId, ModuleDeclaration> {
+fn collect_module_declarations(
+    module: &Module,
+    unresolved_mark: Mark,
+) -> HashMap<BindingId, ModuleDeclaration> {
     let mut declarations = HashMap::default();
     for (index, item) in module.body.iter().enumerate() {
         let plain = ModuleDeclaration {
             observes_receiver: false,
             index,
             lexical: false,
+            own_value: false,
         };
         let decl = match item {
             ModuleItem::Stmt(Stmt::Decl(decl)) => decl,
@@ -1335,6 +1374,7 @@ fn collect_module_declarations(module: &Module) -> HashMap<BindingId, ModuleDecl
                     (function.ident.sym.clone(), function.ident.ctxt),
                     ModuleDeclaration {
                         observes_receiver: function_observes_receiver(&function.function),
+                        own_value: true,
                         ..plain
                     },
                 );
@@ -1344,6 +1384,7 @@ fn collect_module_declarations(module: &Module) -> HashMap<BindingId, ModuleDecl
                     (class.ident.sym.clone(), class.ident.ctxt),
                     ModuleDeclaration {
                         lexical: true,
+                        own_value: true,
                         ..plain
                     },
                 );
@@ -1355,12 +1396,17 @@ fn collect_module_declarations(module: &Module) -> HashMap<BindingId, ModuleDecl
                             .init
                             .as_deref()
                             .is_some_and(value_observes_receiver);
+                    let own_value = declarator
+                        .init
+                        .as_deref()
+                        .is_none_or(|init| !contains_require_call(init, unresolved_mark));
                     for id in find_pat_ids::<_, swc_core::ecma::ast::Id>(&declarator.name) {
                         declarations.insert(
                             id,
                             ModuleDeclaration {
                                 observes_receiver,
                                 lexical: var.kind != VarDeclKind::Var,
+                                own_value,
                                 ..plain
                             },
                         );
@@ -1403,6 +1449,7 @@ fn classify(
         rejected: Vec::new(),
         accesses,
         mirror: None,
+        getter: None,
     };
 
     if let Some((target, site)) = facts.getters.first() {
@@ -1410,6 +1457,15 @@ fn classify(
             Ok(binding) => {
                 decision.storage = ExportStorage::Getter;
                 decision.binding = Some(binding);
+                if let GetterTarget::Binding(ident) = target {
+                    let id = (ident.sym.clone(), ident.ctxt);
+                    if declarations
+                        .get(&id)
+                        .is_some_and(|declaration| declaration.own_value)
+                    {
+                        decision.getter = Some(id);
+                    }
+                }
             }
             Err(rejection) => decision.rejected.push(rejection),
         }
@@ -1682,6 +1738,7 @@ pub(super) fn property_storage_plan(module: &Module, unresolved_mark: Mark) -> P
                     .iter()
                     .copied()
                     .chain(candidates.mirror.iter().map(|(decision, _)| *decision))
+                    .chain(candidates.getter.iter().map(|(decision, _)| *decision))
                     .map(|decision| decision.name.clone())
                     .collect(),
             }
@@ -1698,6 +1755,7 @@ pub(super) fn property_storage_plan(module: &Module, unresolved_mark: Mark) -> P
 struct StorageCandidates<'a> {
     property: Vec<&'a ExportStorageDecision>,
     mirror: Vec<(&'a ExportStorageDecision, &'a MirrorFacts)>,
+    getter: Vec<(&'a ExportStorageDecision, &'a BindingId)>,
 }
 
 /// Select the names to rewrite.
@@ -1719,6 +1777,13 @@ struct StorageCandidates<'a> {
 /// before a lexical local is initialized (the property is `undefined` there;
 /// the local would throw). TypeScript enum initializers stay on the
 /// statement path for `UnEnum`.
+///
+/// A getter name whose getter returns a binding the module computes itself
+/// (see [`ExportStorageDecision::getter`]) is rewritten like a mirror name:
+/// the definition goes, reads become the binding, and `export { local as x }`
+/// follows the binding's declaration. A read before a lexical binding's
+/// declaration throws through the getter too, so only shadowing keeps such a
+/// name on the statement path.
 fn storage_candidates<'a>(
     module: &Module,
     unresolved_mark: Mark,
@@ -1739,6 +1804,7 @@ fn storage_candidates<'a>(
     let mut candidates = StorageCandidates {
         property: Vec::new(),
         mirror: Vec::new(),
+        getter: Vec::new(),
     };
     for decision in decisions {
         // `exports.exports` is the slot itself once `module.exports` is set
@@ -1778,10 +1844,28 @@ fn storage_candidates<'a>(
                     candidates.property.push(decision);
                 }
             }
-            ExportStorage::Getter | ExportStorage::Unrecovered => {}
+            ExportStorage::Getter => {
+                let Some(binding) = &decision.getter else {
+                    continue;
+                };
+                if accesses.reads + accesses.calls == 0 || !is_shadowed(binding, identifier_counts)
+                {
+                    candidates.getter.push((decision, binding));
+                }
+            }
+            ExportStorage::Unrecovered => {}
         }
     }
     candidates
+}
+
+/// Whether another binding in the module has the same name, so a read
+/// rewritten to `binding` could resolve to that one instead.
+fn is_shadowed(binding: &BindingId, identifier_counts: &HashMap<BindingId, usize>) -> bool {
+    let (sym, ctxt) = binding;
+    identifier_counts
+        .keys()
+        .any(|(other, other_ctxt)| other == sym && other_ctxt != ctxt)
 }
 
 fn mirror_local_replaces_reads(
@@ -1792,10 +1876,7 @@ fn mirror_local_replaces_reads(
     if decision.accesses.reads + decision.accesses.calls == 0 {
         return true;
     }
-    let (sym, ctxt) = &mirror.binding;
-    let shadowed = identifier_counts
-        .keys()
-        .any(|(other, other_ctxt)| other == sym && other_ctxt != ctxt);
+    let shadowed = is_shadowed(&mirror.binding, identifier_counts);
     let early = mirror.lexical
         && mirror
             .first_eager_access
@@ -1804,8 +1885,8 @@ fn mirror_local_replaces_reads(
 }
 
 /// Rewrite every export name whose storage `UnEsm` can identify, in every
-/// position: property storage (see [`recover_property_storage`]) and mirror
-/// storage (see [`recover_mirror_storage`]).
+/// position: property storage (see [`recover_property_storage`]), and mirror
+/// storage and getters of a local binding (see [`recover_mirror_storage`]).
 pub(super) fn recover_export_storage(module: &mut Module, unresolved_mark: Mark) {
     let ExportStorageReport::Names(decisions) = analyze_export_storage(module, unresolved_mark)
     else {
@@ -1813,10 +1894,21 @@ pub(super) fn recover_export_storage(module: &mut Module, unresolved_mark: Mark)
     };
     let identifier_counts = count_identifiers(module);
     let candidates = storage_candidates(module, unresolved_mark, &decisions, &identifier_counts);
+    let getter_names: HashSet<Atom> = candidates
+        .getter
+        .iter()
+        .map(|(decision, _)| decision.name.clone())
+        .collect();
     let mirrors: Vec<(Atom, BindingId)> = candidates
         .mirror
         .iter()
         .map(|(decision, mirror)| (decision.name.clone(), mirror.binding.clone()))
+        .chain(
+            candidates
+                .getter
+                .iter()
+                .map(|(decision, binding)| (decision.name.clone(), (*binding).clone())),
+        )
         .collect();
     if !candidates.property.is_empty() {
         recover_property_storage(
@@ -1827,7 +1919,32 @@ pub(super) fn recover_export_storage(module: &mut Module, unresolved_mark: Mark)
             &identifier_counts,
         );
     }
+    if !getter_names.is_empty() {
+        remove_getter_definitions(module, unresolved_mark, &getter_names);
+    }
     recover_mirror_storage(module, unresolved_mark, &mirrors);
+}
+
+/// Drop the top-level getter definitions of `names`. The module gate already
+/// failed for a getter defined anywhere else.
+fn remove_getter_definitions(module: &mut Module, unresolved_mark: Mark, names: &HashSet<Atom>) {
+    module.body.retain(|item| {
+        let ModuleItem::Stmt(Stmt::Expr(statement)) = item else {
+            return true;
+        };
+        let Expr::Call(call) = strip_parens(&statement.expr) else {
+            return true;
+        };
+        let [target, name, descriptor] = call.args.as_slice() else {
+            return true;
+        };
+        let is_definition = is_object_define_property_global_call(call, unresolved_mark)
+            && is_cjs_export_object_expr(&target.expr, unresolved_mark)
+            && matches!(strip_parens(&name.expr), Expr::Lit(swc_core::ecma::ast::Lit::Str(name))
+                if name.value.as_str().is_some_and(|name| names.contains(&Atom::from(name))))
+            && extract_define_property_getter_expr(&descriptor.expr).is_some();
+        !is_definition
+    });
 }
 
 /// Rewrite every export name whose storage is the property itself to one
@@ -2332,7 +2449,9 @@ fn local_export(names: &[(Atom, &BindingId)]) -> ModuleItem {
         .map(|(name, (sym, ctxt))| {
             let exported = if sym == name {
                 None
-            } else if is_valid_identifier_name(name) {
+            } else if is_valid_identifier_name(name) || is_reserved_binding_name(name) {
+                // An export name is an IdentifierName: reserved words such as
+                // `default` need no quotes.
                 Some(ModuleExportName::Ident(make_name_ident(name.clone())))
             } else {
                 Some(ModuleExportName::Str(make_str(name)))

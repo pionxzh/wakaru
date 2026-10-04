@@ -19,6 +19,7 @@ function a(e) {
         b();
     }
 }
+export { a };
 export function c() {
     o++;
 }
@@ -32,4 +33,3 @@ export function b() {
         i(e);
     }
 }
-export { a };

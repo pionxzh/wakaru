@@ -356,7 +356,10 @@ one `Object.defineProperty(exports, "x", { enumerable: true, get })` per name
 re-exports like any other getter definition. Helper bodies are proven by
 shape. A map entry that does not match the helper's getter read, a repeated
 or `__proto__` key, and an esbuild namespace when the module also refers to
-`module` or `exports` keep the call unchanged.
+`module` or `exports` keep the call unchanged. Webpack's runtime `require.d`
+(object, single-name, array, and rspack value forms) goes through the same
+lowering, by its runtime semantics rather than a proven body; a module that
+stays CommonJS keeps those calls as written.
 
 In single-file output, esbuild's `__reExport(ns, require("x"), module.exports)`
 becomes `__reExport(exports, require("x"))` in the same lowering, which the
