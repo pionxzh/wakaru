@@ -5213,11 +5213,33 @@ fn collect_stable_require_bindings(
             continue;
         };
         let binding_id = (binding.id.sym.clone(), binding.id.ctxt);
-        if uses.has_only_static_member_reads_any(&binding_id) {
+        if uses.has_single_declaration(&binding_id) && !is_written_through(uses, &binding_id) {
             bindings.insert(binding_id, source);
         }
     }
     bindings
+}
+
+/// Whether the module rebinds `binding` or writes one of its properties.
+///
+/// Reading the binding whole (`use(dep)`, `require.n(dep)`) is allowed: a
+/// bundler passes a namespace on as a getter-only object (webpack's
+/// `require.t(dep, 2)` copy, or an ESM provider's exports), so the escaped
+/// value cannot change what `dep.member` reads. A CommonJS `module.exports`
+/// passed on whole can be written by the callee, but a snapshot export misses
+/// that write too. A write this module makes itself is visible, so it keeps
+/// the getter.
+fn is_written_through(uses: &BindingUseIndex, binding: &BindingId) -> bool {
+    uses.use_sites(binding).iter().any(|site| {
+        matches!(
+            site.kind,
+            UseKind::Write
+                | UseKind::ReadWrite
+                | UseKind::StaticMemberWrite(_)
+                | UseKind::ComputedMemberWrite
+                | UseKind::DeleteTarget
+        )
+    })
 }
 
 /// The import without namespace specifiers whose binding only kept live

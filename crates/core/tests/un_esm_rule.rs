@@ -2049,10 +2049,30 @@ Object.defineProperty(exports, "value", {
 }
 
 #[test]
-fn define_property_member_getter_rejects_binding_escape() {
+fn define_property_member_getter_of_escaped_require_stays_live_reexport() {
     let input = r#"
 const dep = require("./dep.js");
 consume(dep);
+Object.defineProperty(exports, "value", {
+  enumerable: true,
+  get() {
+    return dep.value;
+  }
+});
+"#;
+    let expected = r#"
+import dep from "./dep.js";
+consume(dep);
+export { value } from "./dep.js";
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn define_property_member_getter_rejects_member_delete() {
+    let input = r#"
+const dep = require("./dep.js");
+delete dep.value;
 Object.defineProperty(exports, "value", {
   enumerable: true,
   get() {
