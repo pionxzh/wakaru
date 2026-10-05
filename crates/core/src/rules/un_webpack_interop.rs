@@ -74,9 +74,11 @@ impl VisitMut for UnWebpackInterop {
         }
 
         let initial_ref_counts = collect_binding_ref_counts(module);
+        let namespace_imports = collect_namespace_import_bindings(module);
         let mut namespace_replacer = WebpackNamespaceReplacer {
             initial_ref_counts: &initial_ref_counts,
             module_bindings: &module_bindings,
+            namespace_imports: &namespace_imports,
             removed_caches: HashSet::default(),
             unresolved_mark: self.unresolved_mark,
         };
@@ -196,6 +198,22 @@ fn collect_module_bindings(module: &Module, unresolved_mark: Mark) -> HashSet<Bi
         }
     }
     bindings
+}
+
+fn collect_namespace_import_bindings(module: &Module) -> HashSet<BindingKey> {
+    module
+        .body
+        .iter()
+        .filter_map(|item| match item {
+            ModuleItem::ModuleDecl(ModuleDecl::Import(import)) => Some(import),
+            _ => None,
+        })
+        .flat_map(|import| &import.specifiers)
+        .filter_map(|specifier| match specifier {
+            ImportSpecifier::Namespace(namespace) => Some(binding_key(&namespace.local)),
+            _ => None,
+        })
+        .collect()
 }
 
 fn is_require_call(expr: &Expr, unresolved_mark: Mark) -> bool {
@@ -854,12 +872,45 @@ impl VisitMut for GetterReplacer<'_> {
 struct WebpackNamespaceReplacer<'a> {
     initial_ref_counts: &'a HashMap<BindingKey, usize>,
     module_bindings: &'a HashSet<BindingKey>,
+    namespace_imports: &'a HashSet<BindingKey>,
     removed_caches: HashSet<BindingKey>,
     unresolved_mark: Mark,
 }
 
+impl WebpackNamespaceReplacer<'_> {
+    /// Whether `expr`, the whole namespace expression, is the only use of its
+    /// cache binding; record the cache for removal when it is.
+    fn take_cache(&mut self, expr: &Expr, cache: Option<BindingKey>) -> bool {
+        let Some(cache) = cache else {
+            return true;
+        };
+        let total_refs = self.initial_ref_counts.get(&cache).copied().unwrap_or(0);
+        if total_refs != count_binding_refs_in_expr(expr, &cache) {
+            return false;
+        }
+        self.removed_caches.insert(cache);
+        true
+    }
+}
+
 impl VisitMut for WebpackNamespaceReplacer<'_> {
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        // Match the outermost cached form (`ns || (ns = require.t(dep, 2))`)
+        // before its inner call. A namespace import already is the namespace
+        // object `require.t` built for the CommonJS module it imported.
+        if let Some(namespace) =
+            match_require_t_namespace(expr, self.module_bindings, self.unresolved_mark)
+        {
+            if self
+                .namespace_imports
+                .contains(&binding_key(&namespace.base))
+                && self.take_cache(expr, namespace.cache)
+            {
+                *expr = Expr::Ident(namespace.base);
+                return;
+            }
+        }
+
         expr.visit_mut_children_with(self);
 
         let Expr::Member(member) = expr else {
@@ -875,13 +926,8 @@ impl VisitMut for WebpackNamespaceReplacer<'_> {
         ) else {
             return;
         };
-        if let Some(cache) = namespace.cache {
-            let total_refs = self.initial_ref_counts.get(&cache).copied().unwrap_or(0);
-            let local_refs = count_binding_refs_in_expr(member.obj.as_ref(), &cache);
-            if total_refs != local_refs {
-                return;
-            }
-            self.removed_caches.insert(cache);
+        if !self.take_cache(member.obj.as_ref(), namespace.cache) {
+            return;
         }
 
         if prop_name == "default" {

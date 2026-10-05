@@ -778,6 +778,45 @@ follows its declaration instead of the getter map, which merges `export
 const version` in webpack 5 output and spreads minified webpack 4 aliases
 (`export { i as x }`) next to their declarations.
 
+## Escaped namespaces and unresolved ids
+
+Step 2 left two kinds of webpack getter in the ESM output, where the first
+`exports` access throws. Both were snapshots before it.
+
+- **A getter of a namespace the module also passes on whole**
+  (`x: () => o.y` next to `use(o)`). The statement path kept the getter: an
+  escaped namespace might be written through. webpack and rspack output
+  shows that write cannot happen through the escape. A CommonJS provider's
+  namespace escapes as `require.t(o, 2)`, a new object with getters only,
+  and an ESM provider's exports have getters only too. Only a CommonJS
+  `module.exports` passed on through a default import can be written, and
+  a snapshot misses that write as well. The getter is the compiled form of
+  a live `export { y as x } from`, so a binding that the module never
+  rebinds, writes a property of, or deletes from now gets that re-export
+  whatever else reads it.
+- **A getter of a member of `require(<id>)` whose id the unpacker could not
+  resolve** has no source to re-export from. It becomes `exports.x = r.y`
+  right after the `require` declaration, a snapshot export of the value once
+  the module has loaded. webpack defines its getters before the
+  declarations, so the write moves down past other export definitions and
+  `require` statements, which a getter definition cannot observe. A getter
+  with any other statement in between stays as written.
+
+The escaped namespace itself was the other half. `UnEsm` imports
+`var o = require("./m")` as a default import, and with provider facts
+`provider_namespace_repair` turned it into `import * as o` only for member
+reads and a few `Object` helpers. A namespace passed on as a value
+(`use(o)`, `require.t(o, 2)`, `export { o as ns }`) kept a default import
+that cannot link when the provider has no default export. The repair now
+accepts those uses in unpack mode, and `UnWebpackInterop` replaces
+`require.t(ns, 2)` of a namespace import, with its cache, by the namespace.
+A self-requiring module keeps the old check: its fallback is CommonJS, not
+an import that cannot link.
+
+Matrix: 377 / 385 (from 351), with no row that was correct before now wrong.
+webpack 5.107 rises from 0 to 24 rows and webpack 5.111 from 27 to 28 in
+both profiles.
+
 ## Statement-path pre-pass audit
 
 The storage rewrite took over most names, so the older pre-passes that
@@ -849,13 +888,33 @@ fails without it.
   and re-export getters are fixed (see [One getter path](#one-getter-path)).
   Each failing row has at least one of these causes:
   - A whole-namespace use of a module marked ESM (`var ns = require(id);
-    use(ns)`) becomes a default import. Without a default export the module
-    fails to link; with one, the import silently binds the default value
-    instead of the namespace. webpack 5.107 emits this shape for the stub
-    entry, so it decides every 5.107 row except `dynamic-import`.
+    use(ns)`) becomes a default import when the provider also has a default
+    export, and the import silently binds the default value instead of the
+    namespace. Without a default export it becomes `import * as ns` (see
+    [Escaped namespaces and unresolved ids](#escaped-namespaces-and-unresolved-ids)).
+    Telling the two apart needs a fact that the provider was marked ESM
+    before `UnEsm`; `module.exports = value` also yields a default export,
+    and there the default import is right.
   - webpack's own lowered `import()`
     (`Promise.resolve().then(require.bind(require, id))`, and `require.e` for
     a context module) is not restored.
+- **Getter inputs C does not take yet.** swc's `_export` helper inlined by a
+  minifier into `for (k in all) Object.defineProperty(exports, k, { get:
+  all[k] })` is the largest real-world residual: the module stays CommonJS
+  with its exports unrecovered. A named getter function (`get: function
+  get() {}`) and a value descriptor (`{ value: v }`, which may be a mangled
+  `__esModule`) are not taken either.
+- **Re-exports from a provider that stays CommonJS.** `export { y as x }
+  from "./m"` links in Node only when cjs-module-lexer finds `y` in `./m`;
+  it does not for `module.exports = value`. Getter re-exports emit it
+  whatever the provider recovers to, escaped or not. Node binds that name
+  once, after `./m` has run, which is what a snapshot gives too, and a
+  bundler keeps it live.
+- **Unresolved-id snapshots** (see
+  [Escaped namespaces and unresolved ids](#escaped-namespaces-and-unresolved-ids))
+  lose later writes to the property, and a module whose getter has other
+  code before the `require` declaration keeps the getter. The `require(<id>)`
+  itself stays in the ESM output, with no warning.
 - **Interop unwrapping before the module boundary is decided.**
   Unwrapping `_interopRequireDefault(require(x)).default` to a plain
   `require(x)` binding read whole is right only once `UnEsm` turns that

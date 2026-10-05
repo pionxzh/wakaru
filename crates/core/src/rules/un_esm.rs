@@ -870,6 +870,7 @@ impl UnEsm {
                 &local_facts,
                 Some(current_filename),
                 self.unresolved_mark,
+                false,
             );
             if has_unlinkable_default_self_import(module, current_filename) {
                 // CommonJS returns the current, partially initialized

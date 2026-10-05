@@ -313,6 +313,36 @@ let useId = require.t(react, 2)[name];
 }
 
 #[test]
+fn require_t_mode_2_of_namespace_import_is_that_namespace() {
+    // The namespace import already is the object `require.t` builds for the
+    // CommonJS module it imported.
+    let input = r#"
+import * as dep from "./dep.js";
+let ns;
+use(ns || (ns = require.t(dep, 2)));
+consume(require.t(dep, 2));
+"#;
+    let expected = r#"
+import * as dep from "./dep.js";
+use(dep);
+consume(dep);
+"#;
+    assert_eq_normalized(&render(input), expected.trim());
+}
+
+#[test]
+fn require_t_mode_2_whole_value_of_default_import_not_inlined() {
+    // A default import of a CommonJS module is `module.exports`, not the
+    // namespace object `require.t` builds from it.
+    let input = r#"
+import dep from "./dep.js";
+use(require.t(dep, 2));
+"#;
+    let output = render(input);
+    assert!(output.contains("use(require.t(dep, 2))"), "{output}");
+}
+
+#[test]
 fn require_t_non_mode_2_not_inlined() {
     let input = r#"
 const lib = require("./lib");

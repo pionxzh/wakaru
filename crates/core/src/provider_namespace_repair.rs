@@ -12,9 +12,11 @@
 //! and accepts uses whose behavior is supported by an ESM namespace: static
 //! member reads, `Object.keys(namespace)`, and a namespace used as an
 //! `Object.assign` source. A simple top-level alias may stop referring to the
-//! namespace after an unconditional replacement assignment. Mutation,
-//! binding escape, computed/meta access, and `__esModule` observation leave
-//! the original import unchanged.
+//! namespace after an unconditional replacement assignment. With provider
+//! facts, a binding passed on as a value is accepted too: the default import
+//! cannot link against a provider without a default export. Mutation,
+//! computed/meta access, `__esModule` observation, and (without facts) binding
+//! escape leave the original import unchanged.
 
 use crate::collections::HashSet;
 
@@ -31,11 +33,18 @@ use crate::facts::{ExportKind, ModuleFactsMap};
 use crate::rules::expr_utils::is_unresolved_ident;
 use crate::utils::paren::strip_parens;
 
+/// Repair the synthesized default imports whose provider `module_facts` prove
+/// to have named exports and no default. With `allow_value_escape`, a binding
+/// passed on as a value is repaired too: its default import cannot link, so
+/// the namespace is the only value it can still have. A caller with a better
+/// fallback than the unlinkable import, such as restoring CommonJS, passes
+/// `false`.
 pub(crate) fn run_provider_namespace_repair(
     module: &mut Module,
     module_facts: &ModuleFactsMap,
     current_filename: Option<&str>,
     unresolved_mark: Mark,
+    allow_value_escape: bool,
 ) {
     let Some(current_filename) = current_filename else {
         return;
@@ -56,7 +65,11 @@ pub(crate) fn run_provider_namespace_repair(
                 .any(|export| export.kind == ExportKind::Named);
         !has_default && has_named_surface
     };
-    repair_synthesized_default_imports(module, unresolved_mark, true, |source, _| {
+    let policy = UsagePolicy {
+        allow_default_read: true,
+        allow_value_escape,
+    };
+    repair_synthesized_default_imports(module, unresolved_mark, policy, |source, _| {
         namespace_provider(source)
     });
 }
@@ -70,15 +83,26 @@ pub(crate) fn run_relative_namespace_repair(
     unresolved_mark: Mark,
     bindings: &HashSet<BindingId>,
 ) {
-    repair_synthesized_default_imports(module, unresolved_mark, false, |_, binding| {
+    let policy = UsagePolicy {
+        allow_default_read: false,
+        allow_value_escape: false,
+    };
+    repair_synthesized_default_imports(module, unresolved_mark, policy, |_, binding| {
         bindings.contains(binding)
     });
+}
+
+/// Which uses beyond static member reads keep a binding a namespace candidate.
+#[derive(Clone, Copy)]
+struct UsagePolicy {
+    allow_default_read: bool,
+    allow_value_escape: bool,
 }
 
 fn repair_synthesized_default_imports(
     module: &mut Module,
     unresolved_mark: Mark,
-    allow_default_read: bool,
+    policy: UsagePolicy,
     namespace_candidate: impl Fn(&str, &BindingId) -> bool,
 ) {
     let mut candidates = HashSet::default();
@@ -106,7 +130,7 @@ fn repair_synthesized_default_imports(
                 transparent_aliases,
                 binding.clone(),
                 unresolved_mark,
-                allow_default_read,
+                policy,
             );
             module.visit_with(&mut usage);
             if usage.compatible && usage.has_meaningful_use {
@@ -203,7 +227,7 @@ struct NamespaceCompatibleUsage {
     all_targets: HashSet<BindingId>,
     resettable_aliases: HashSet<BindingId>,
     unresolved_mark: Mark,
-    allow_default_read: bool,
+    policy: UsagePolicy,
     compatible: bool,
     has_meaningful_use: bool,
 }
@@ -213,7 +237,7 @@ impl NamespaceCompatibleUsage {
         targets: HashSet<BindingId>,
         root: BindingId,
         unresolved_mark: Mark,
-        allow_default_read: bool,
+        policy: UsagePolicy,
     ) -> Self {
         let all_targets = targets.clone();
         let resettable_aliases = targets
@@ -226,7 +250,7 @@ impl NamespaceCompatibleUsage {
             all_targets,
             resettable_aliases,
             unresolved_mark,
-            allow_default_read,
+            policy,
             compatible: true,
             has_meaningful_use: false,
         }
@@ -391,7 +415,7 @@ impl Visit for NamespaceCompatibleUsage {
             match &member.prop {
                 MemberProp::Ident(property)
                     if property.sym != "__esModule"
-                        && (self.allow_default_read || property.sym != "default") =>
+                        && (self.policy.allow_default_read || property.sym != "default") =>
                 {
                     self.has_meaningful_use = true;
                 }
@@ -404,9 +428,16 @@ impl Visit for NamespaceCompatibleUsage {
 
     fn visit_ident(&mut self, ident: &Ident) {
         if self.is_target(ident) {
-            // Any bare use not handled by the exact Object helpers above can
-            // observe or mutate object identity/prototype/extensibility.
-            self.compatible = false;
+            if self.policy.allow_value_escape {
+                // The escape may observe or mutate identity or extensibility,
+                // which an ESM namespace fixes; the default import it
+                // replaces fails before any code runs.
+                self.has_meaningful_use = true;
+            } else {
+                // Any bare use not handled by the exact Object helpers above can
+                // observe or mutate object identity/prototype/extensibility.
+                self.compatible = false;
+            }
         }
     }
 }
@@ -474,6 +505,7 @@ consume(before, provider.alpha);
                 &facts,
                 Some("consumer.js"),
                 unresolved_mark,
+                true,
             );
 
             let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = &module.body[0] else {

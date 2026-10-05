@@ -320,13 +320,15 @@ fact available to consumers.
   synthesized for a whole-object `require("./x")` into a namespace import when
   the provider facts prove a named or `export *` surface and no default export.
   It accepts static member reads, `Object.keys(namespace)`, and namespace values
-  used as `Object.assign` sources. Simple local aliases preserve that proof; an
+  used as `Object.assign` sources, and a namespace passed on as a value
+  (`use(ns)`, webpack's `require.t(ns, 2)` namespace object): the default
+  import it replaces cannot link. Simple local aliases preserve that proof; an
   exact, unconditional top-level replacement assignment ends an alias's
   namespace lifetime after its right-hand side is evaluated. Hoisted function
   declarations are always checked against the original lifetime regardless of
   textual position. Authored imports, namespace mutation, conditional/nested
-  alias replacement, arbitrary value escape, computed/meta reads, and
-  `__esModule` observation remain unchanged.
+  alias replacement, computed/meta reads, and `__esModule` observation remain
+  unchanged.
   The existing namespace decomposition pass can then recover narrower named
   imports where its own gates allow that rewrite. Single-file decompilation
   has no facts; the `RelativeNamespaceImport` rule makes the same rewrite

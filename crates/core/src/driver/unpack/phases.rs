@@ -698,6 +698,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 facts_ref,
                 Some(&unpacked.module.filename),
                 unresolved_mark,
+                true,
             );
             run_reexport_consolidation(&mut module, facts_ref, Some(&unpacked.module.filename));
             run_cross_module_lowered_dynamic_imports(
@@ -1720,6 +1721,88 @@ module.exports = Object.keys(provider).join(",") + copy.alpha;
     }
 
     #[test]
+    fn named_only_provider_repairs_an_escaped_synthetic_default() {
+        // Without a default export the default import cannot link, so a
+        // namespace passed on as a value keeps the only meaning left.
+        let modules = vec![
+            UnpackedModule {
+                id: "provider".to_string(),
+                code: "exports.alpha = 1; exports.beta = 2;".to_string(),
+                filename: "provider.js".to_string(),
+                ..Default::default()
+            },
+            UnpackedModule {
+                id: "consumer".to_string(),
+                is_entry: true,
+                code: r#"
+var provider = require("./provider.js");
+register(provider);
+exports.alpha = provider.alpha;
+"#
+                .to_string(),
+                filename: "consumer.js".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        let output = unpack_multi_module(modules, DecompileOptions::default())
+            .expect("escaped namespace fixture should decompile");
+        assert_eq!(validate_prepared_output(&output), vec![]);
+        let consumer = output
+            .modules
+            .iter()
+            .find(|module| module.filename == "consumer.js")
+            .map(|module| module.code.as_str())
+            .expect("expected consumer module");
+        assert!(
+            consumer.contains("import * as provider from \"./provider.js\";")
+                && consumer.contains("register(provider)"),
+            "an escaped namespace must not keep a default import that cannot link:\n{consumer}"
+        );
+    }
+
+    #[test]
+    fn webpack_namespace_object_of_a_commonjs_import_becomes_a_namespace_import() {
+        let modules = vec![
+            UnpackedModule {
+                id: "provider".to_string(),
+                code: "exports.alpha = 1; exports.beta = 2;".to_string(),
+                filename: "provider.js".to_string(),
+                ..Default::default()
+            },
+            UnpackedModule {
+                id: "consumer".to_string(),
+                is_entry: true,
+                code: r#"
+var ns;
+var provider = require("./provider.js");
+register(ns || (ns = require.t(provider, 2)));
+exports.alpha = provider.alpha;
+"#
+                .to_string(),
+                filename: "consumer.js".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        let output = unpack_multi_module(modules, DecompileOptions::default())
+            .expect("require.t namespace fixture should decompile");
+        assert_eq!(validate_prepared_output(&output), vec![]);
+        let consumer = output
+            .modules
+            .iter()
+            .find(|module| module.filename == "consumer.js")
+            .map(|module| module.code.as_str())
+            .expect("expected consumer module");
+        assert!(
+            consumer.contains("import * as provider from \"./provider.js\";")
+                && consumer.contains("register(provider)")
+                && !consumer.contains("require.t"),
+            "webpack's namespace object of a whole import is the namespace import:\n{consumer}"
+        );
+    }
+
+    #[test]
     fn recovered_export_star_surface_repairs_downstream_namespace_copy() {
         let modules = vec![
             UnpackedModule {
@@ -2137,13 +2220,19 @@ module.exports = function(value) { return provider.transform(value); };
 
         let output = unpack_multi_module(modules, DecompileOptions::default())
             .expect("substantive namespace fixture should decompile");
-        let findings = validate_prepared_output(&output);
+        assert_eq!(validate_prepared_output(&output), vec![]);
+        let consumer = output
+            .modules
+            .iter()
+            .find(|module| module.filename == "consumer.js")
+            .map(|module| module.code.as_str())
+            .expect("expected consumer module");
         assert!(
-            findings.iter().any(|finding| {
-                finding.kind == OutputFindingKind::MissingImportedName
-                    && finding.filename == "consumer.js"
-            }),
-            "a substantive whole-object use must keep the namespace repair fail closed: {findings:#?}"
+            consumer.contains("import * as provider from \"./provider.js\";")
+                && consumer.contains("observe(provider)")
+                && consumer.contains("provider.transform(value)")
+                && !consumer.contains("import { transform }"),
+            "a substantive whole-object use must keep the whole namespace binding:\n{consumer}"
         );
     }
 
