@@ -42,7 +42,8 @@ use crate::commonjs_default_object_composition::{
 };
 use crate::facts::{
     collect_commonjs_default_attached_properties, collect_commonjs_default_object,
-    collect_module_facts, ModuleFactsMap,
+    collect_module_facts, collect_require_returns_exports_object, collect_whole_require_sources,
+    ModuleFactsMap,
 };
 use crate::namespace_decomposition::run_namespace_decomposition;
 use crate::provider_import_repair::run_provider_import_repair;
@@ -512,6 +513,9 @@ pub(super) fn unpack_multi_module_with_plan(
                 collect_commonjs_default_object(&module, unresolved_mark);
             let commonjs_default_attached_properties =
                 collect_commonjs_default_attached_properties(&module, unresolved_mark);
+            let require_returns_exports_object =
+                collect_require_returns_exports_object(&module, unresolved_mark);
+            let whole_require_sources = collect_whole_require_sources(&module, unresolved_mark);
             {
                 let span = tracing::info_span!("phase1: rules");
                 let _enter = span.enter();
@@ -578,6 +582,8 @@ pub(super) fn unpack_multi_module_with_plan(
             facts.commonjs_default_object = commonjs_default_object;
             facts.commonjs_default_attached_properties =
                 commonjs_default_attached_properties;
+            facts.require_returns_exports_object = require_returns_exports_object;
+            facts.whole_require_sources = whole_require_sources;
             (facts, prepared, None, suggested_filename)
         });
         let prepared = prepared_parts.map(|(module, unresolved_mark)| Phase1PreparedModule {
@@ -1761,6 +1767,119 @@ exports.alpha = provider.alpha;
         );
     }
 
+    fn decompiled_consumer(provider: &str, consumer: &str) -> String {
+        let modules = vec![
+            UnpackedModule {
+                id: "provider".to_string(),
+                code: provider.to_string(),
+                filename: "provider.js".to_string(),
+                ..Default::default()
+            },
+            UnpackedModule {
+                id: "consumer".to_string(),
+                is_entry: true,
+                code: consumer.to_string(),
+                filename: "consumer.js".to_string(),
+                ..Default::default()
+            },
+        ];
+        let output = unpack_multi_module(modules, DecompileOptions::default())
+            .expect("provider fixture should decompile");
+        assert_eq!(validate_prepared_output(&output), vec![]);
+        output
+            .modules
+            .iter()
+            .find(|module| module.filename == "consumer.js")
+            .map(|module| module.code.clone())
+            .expect("expected consumer module")
+    }
+
+    #[test]
+    fn exports_object_provider_with_a_default_repairs_a_whole_use_to_a_namespace() {
+        // Requiring the provider returns its `exports` object, which holds
+        // `default` as one property among the others: the namespace of the
+        // recovered module, not its default export.
+        for provider in [
+            "exports.default = D; exports.alpha = 1; function D() { return 2; }",
+            "require.r(exports); require.d(exports, { default: () => D, alpha: () => alpha }); \
+             function D() { return 2; } var alpha = 1;",
+        ] {
+            let consumer = decompiled_consumer(
+                provider,
+                "var provider = require(\"./provider.js\"); register(provider); \
+                 exports.value = provider.default() + provider.alpha;",
+            );
+            assert!(
+                consumer.contains("import * as provider from \"./provider.js\";")
+                    && consumer.contains("register(provider)"),
+                "the whole `exports` object is the namespace:\n{consumer}"
+            );
+        }
+    }
+
+    #[test]
+    fn provider_declaring_its_default_before_un_esm_keeps_the_default_import() {
+        // The webpack runtime normalizers write a replaced `module.exports`
+        // as `export default` before the rules run; that default is the whole
+        // required value.
+        let consumer = decompiled_consumer(
+            "var _webpackDefault = function D() {}; _webpackDefault.alpha = 1; \
+             export default _webpackDefault; exports.beta = 2;",
+            "var provider = require(\"./provider.js\"); register(provider); \
+             exports.value = provider.alpha;",
+        );
+        assert!(
+            !consumer.contains("import * as provider"),
+            "a declared default is the whole required value:\n{consumer}"
+        );
+    }
+
+    #[test]
+    fn interop_default_of_an_exports_object_provider_keeps_the_default_import() {
+        // webpack's `require.n` getter, inline or as the runtime call, reads
+        // the default export of a provider marked ESM. The getter is replaced
+        // by the plain binding before the repair runs, so the binding then
+        // means the default export, not the namespace.
+        let provider = "Object.defineProperty(exports, \"__esModule\", { value: true }); \
+                        exports.default = { run() { return 2; } }; exports.alpha = 1;";
+        for consumer in [
+            "var provider = require(\"./provider.js\"), \
+             get = () => provider && provider.__esModule ? provider.default : provider; \
+             exports.value = get().run();",
+            "var provider = require(\"./provider.js\"), get = require.n(provider); \
+             exports.value = get().run();",
+            // `UnEsm` merges both bindings of the source into one default
+            // import, so the whole use alone does not make it a namespace.
+            "function _interopRequireDefault(obj) { \
+               return obj && obj.__esModule ? obj : { default: obj }; } \
+             var whole = require(\"./provider.js\"); \
+             var provider = _interopRequireDefault(require(\"./provider.js\")); \
+             register(whole); exports.value = provider.default.run();",
+        ] {
+            let consumer = decompiled_consumer(provider, consumer);
+            assert!(
+                !consumer.contains("import * as"),
+                "an unwrapped interop default must keep the default import:\n{consumer}"
+            );
+        }
+    }
+
+    #[test]
+    fn replaced_module_exports_provider_keeps_the_default_import_of_a_whole_use() {
+        // `module.exports = D` makes `D` the whole required value; its
+        // properties are recovered as named exports, but the default import
+        // is the value the consumer used.
+        let consumer = decompiled_consumer(
+            "module.exports = D; module.exports.alpha = 1; function D() { return 2; }",
+            "var provider = require(\"./provider.js\"); register(provider); \
+             exports.value = provider() + provider.alpha;",
+        );
+        assert!(
+            consumer.contains("import provider from \"./provider.js\";"),
+            "a replaced `module.exports` is the default export:\n{consumer}"
+        );
+    }
+
     #[test]
     fn webpack_namespace_object_of_a_commonjs_import_becomes_a_namespace_import() {
         let modules = vec![
@@ -1995,6 +2114,11 @@ function dim(value) { return value; }
 const logger = {
     warn(value) { console.warn(value); }
 };
+if ((typeof exports.default === "function" || typeof exports.default === "object" && exports.default !== null) && exports.default.__esModule === undefined) {
+    Object.defineProperty(exports.default, "__esModule", { value: true });
+    Object.assign(exports.default, exports);
+    module.exports = exports.default;
+}
 "#
                     .to_string(),
                     filename: "provider.js".to_string(),
@@ -2034,6 +2158,7 @@ module.exports = function(value) { return logger.warn(value); };
             .find(|module| module.filename == "consumer.js")
             .map(|module| module.code.as_str())
             .expect("expected consumer module");
+        // The compatibility block makes the default the whole required value.
         assert!(
             consumer.contains("import logger from \"./provider.js\";"),
             "the proven provider default should satisfy the synthetic require:\n{consumer}"

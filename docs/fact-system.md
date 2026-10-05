@@ -106,7 +106,7 @@ distinguishable from an authored ESM dependency downstream.
 - `ImportCallEdge { source, imported, consumed_by_exports }`
 - `ModuleFacts { imports, exports, helper_exports,
   commonjs_default_object, commonjs_default_attached_properties,
-  has_export_all, export_star_sources, reexports, import_call_edges,
+  require_returns_exports_object, whole_require_sources, has_export_all, export_star_sources, reexports, import_call_edges,
   default_object_ident_properties, ts_helper_exports,
   ts_helper_namespace_factory_exports, passthrough_target }`
 - `ModuleFactsMap` — keyed by normalized module specifier
@@ -142,6 +142,22 @@ positive-membership fact only: a recorded property can be repaired, but an
 absent property says nothing about the callable's runtime surface. Computed,
 conditional, nested, or reassigned shapes fail closed. Neither collector
 mutates the AST or shared state.
+
+`collect_require_returns_exports_object` records that the module has no
+unresolved `module` reference anywhere and no direct eval, so requiring it
+returns its `exports` object. `UnEsm` turns both `exports.default = v` and
+`module.exports = v` into a default export; only the first is one property
+of the required value, which a consumer's whole `require` reads as the
+namespace.
+
+`collect_whole_require_sources` is the consumer half. It lists the sources
+of top-level `var x = require("src")` bindings that the module uses as the
+plain required value: every `require("src")` call is such a declarator, and
+no binding of it is tested for `__esModule` or passed to `require.n` or an
+interop helper. The helper stage and `UnWebpackInterop` later replace an
+interop default (`() => x && x.__esModule ? x.default : x`) with the plain
+binding, and `UnEsm` merges every binding of one source into one default
+import, so after Phase 1 the two meanings can no longer be told apart.
 
 Normal processing also restores webpack's runtime-created `module.exports = {}`
 when structural webpack detection proves that a normalized extracted factory
@@ -318,7 +334,10 @@ fact available to consumers.
   mutable facade design.
 - **`provider_namespace_repair`** — changes a dummy-span default import
   synthesized for a whole-object `require("./x")` into a namespace import when
-  the provider facts prove a named or `export *` surface and no default export.
+  the provider facts prove a named or `export *` surface and no default export,
+  or a default export whose provider requires as its `exports` object
+  (`require_returns_exports_object`) while the consumer used the whole value
+  without an interop wrapper (`whole_require_sources`).
   It accepts static member reads, `Object.keys(namespace)`, and namespace values
   used as `Object.assign` sources, and a namespace passed on as a value
   (`use(ns)`, webpack's `require.t(ns, 2)` namespace object): the default

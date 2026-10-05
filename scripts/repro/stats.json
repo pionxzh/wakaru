@@ -1,10 +1,10 @@
 {
-  "commit": "71b01baea",
+  "commit": "364e3cce2",
   "date": "2026-10-05",
   "aggregate": {
-    "yes": 2824,
+    "yes": 2827,
     "total": 2991,
-    "pct": 94.4
+    "pct": 94.5
   },
   "matrices": [
     {
@@ -27,12 +27,12 @@
     },
     {
       "name": "cjs-export-storage",
-      "yes": 377,
-      "no": 8,
+      "yes": 380,
+      "no": 5,
       "error": 2,
       "info": 19,
       "total": 385,
-      "pct": 97.9
+      "pct": 98.7
     },
     {
       "name": "class-accessor",

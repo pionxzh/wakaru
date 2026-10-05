@@ -15,7 +15,7 @@ see [Step 1 results](#step-1-results), [Step 2 results](#step-2-results),
 [Lowered `import()`](#lowered-import). The last three are outside the
 storage model but blocked matrix rows. The compiler profiles are at
 297 / 298. The webpack profiles, added after the implementation, are at
-54 / 87; [Remaining gaps](#remaining-gaps) lists what is left for both.
+83 / 87; [Remaining gaps](#remaining-gaps) lists what is left for both.
 [Statement-path pre-pass audit](#statement-path-pre-pass-audit) records
 which older `UnEsm` pre-passes still do work next to the storage rewrite.
 
@@ -844,6 +844,30 @@ removed with it, as before; a module that stays CommonJS gets both back.
 The one shape that loses recovery is a getter of a member of a local object
 (see [Remaining gaps](#remaining-gaps)).
 
+## Providers with a default export
+
+A whole-namespace use (`var ns = require(id); use(ns)`) of a provider with a
+default export still became `import ns from`, which silently binds the
+default value instead of the namespace. `UnEsm` turns both `exports.default =
+v` and `module.exports = v` into a default export, and only the second makes
+`v` the whole required value. A Phase 1 fact now records, before `UnEsm`,
+that a module has no `module` reference, so requiring it returns its
+`exports` object; `provider_namespace_repair` treats such a provider's
+default as one namespace property. The fact does not need the `__esModule`
+marker: a hand-written CommonJS module that sets `exports.default` returns
+the same object.
+
+The consumer needs a fact too. webpack's `require.n` getter (`() => x &&
+x.__esModule ? x.default : x`) and the Babel and TypeScript interop helpers
+read the default export, and the helper stage and `UnWebpackInterop` replace
+them with the plain binding before the repair runs. A second fact records,
+before those rules, which sources the consumer requires only as plain
+`var x = require(src)` bindings that no interop wrapper touches. The repair
+treats a default as a namespace property only for those sources.
+
+Matrix: 380 / 385 (from 377), with no row that was correct before now wrong.
+webpack 5.107 rises from 24 to 27 rows.
+
 ## Statement-path pre-pass audit
 
 The storage rewrite took over most names, so the older pre-passes that
@@ -910,18 +934,11 @@ out of this pass (see [Getter-loop IIFE](#getter-loop-iife)).
 - **webpack profiles.** The matrix bundles each case with webpack 5.107
   (object-form `require.d`) and 5.111 and unpacks the bundle. The array form
   and re-export getters are fixed (see [One getter path](#one-getter-path)).
-  Each failing row has at least one of these causes:
-  - A whole-namespace use of a module marked ESM (`var ns = require(id);
-    use(ns)`) becomes a default import when the provider also has a default
-    export, and the import silently binds the default value instead of the
-    namespace. Without a default export it becomes `import * as ns` (see
-    [Escaped namespaces and unresolved ids](#escaped-namespaces-and-unresolved-ids)).
-    Telling the two apart needs a fact that the provider was marked ESM
-    before `UnEsm`; `module.exports = value` also yields a default export,
-    and there the default import is right.
-  - webpack's own lowered `import()`
-    (`Promise.resolve().then(require.bind(require, id))`, and `require.e` for
-    a context module) is not restored.
+  The failing rows are `dynamic-import` in every profile, because webpack's
+  own lowered `import()` (`Promise.resolve().then(require.bind(require,
+  id))`, and `require.e` for a context module) is not restored, and
+  `string-export-name` in webpack 5.107, whose `require.d` stays in the
+  output for a reason not yet investigated.
 - **Getter inputs C does not take yet.** swc's `_export` helper inlined by a
   minifier into `for (k in all) Object.defineProperty(exports, k, { get:
   all[k] })` is the largest real-world residual: the module stays CommonJS

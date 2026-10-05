@@ -4,10 +4,14 @@
 //! `UnEsm` must lower `var provider = require("./provider")` before
 //! cross-module facts exist, so it initially chooses a default import. When
 //! the recovered provider is later proven to expose named exports but no
-//! default, the closest faithful ESM edge is a namespace import.
+//! default, the closest faithful ESM edge is a namespace import. The same
+//! holds for a provider with a default export that never refers to `module`:
+//! requiring it returns its `exports` object, where `default` is one property
+//! among the others, while a default from `module.exports = v` is the whole
+//! required value.
 //!
 //! This pass is deliberately conservative. It only touches imports synthesized
-//! by `UnEsm`, requires a proven named/export-star provider with no default
+//! by `UnEsm`, requires one of those proven providers
 //! (or, without facts, the evidence in [`run_relative_namespace_repair`]),
 //! and accepts uses whose behavior is supported by an ESM namespace: static
 //! member reads, `Object.keys(namespace)`, and a namespace used as an
@@ -34,7 +38,8 @@ use crate::rules::expr_utils::is_unresolved_ident;
 use crate::utils::paren::strip_parens;
 
 /// Repair the synthesized default imports whose provider `module_facts` prove
-/// to have named exports and no default. With `allow_value_escape`, a binding
+/// to have named exports and no default, or a default export that is a
+/// property of the required `exports` object. With `allow_value_escape`, a binding
 /// passed on as a value is repaired too: its default import cannot link, so
 /// the namespace is the only value it can still have. A caller with a better
 /// fallback than the unlinkable import, such as restoring CommonJS, passes
@@ -50,6 +55,10 @@ pub(crate) fn run_provider_namespace_repair(
         return;
     };
 
+    let whole_require_sources = module_facts
+        .get(current_filename)
+        .map(|facts| facts.whole_require_sources.as_slice())
+        .unwrap_or_default();
     let namespace_provider = |source: &str| {
         let Some(provider) = module_facts.get_from(Some(current_filename), source) else {
             return false;
@@ -63,7 +72,16 @@ pub(crate) fn run_provider_namespace_repair(
                 .exports
                 .iter()
                 .any(|export| export.kind == ExportKind::Named);
-        !has_default && has_named_surface
+        // A default export from `exports.default` is one property of the
+        // required value; one from `module.exports = v` is the whole value.
+        // An interop wrapper the consumer had unwrapped also makes the
+        // binding mean the default export.
+        (has_named_surface || has_default)
+            && (!has_default
+                || (provider.require_returns_exports_object
+                    && whole_require_sources
+                        .iter()
+                        .any(|whole| whole.as_ref() == source)))
     };
     let policy = UsagePolicy {
         allow_default_read: true,
@@ -430,8 +448,9 @@ impl Visit for NamespaceCompatibleUsage {
         if self.is_target(ident) {
             if self.policy.allow_value_escape {
                 // The escape may observe or mutate identity or extensibility,
-                // which an ESM namespace fixes; the default import it
-                // replaces fails before any code runs.
+                // which an ESM namespace fixes. The default import it
+                // replaces fails before any code runs, or binds a value that
+                // is not the required `exports` object.
                 self.has_meaningful_use = true;
             } else {
                 // Any bare use not handled by the exact Object helpers above can

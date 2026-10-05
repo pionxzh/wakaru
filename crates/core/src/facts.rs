@@ -206,6 +206,15 @@ pub struct ModuleFacts {
     /// `module.exports`. Unlike a proven object value, absence from this list
     /// is not evidence that a callable property is missing.
     pub commonjs_default_attached_properties: Vec<Atom>,
+    /// True when the module never refers to `module` before `UnEsm`, so
+    /// requiring it returns its `exports` object. A consumer's whole
+    /// `require` value is then the namespace of the recovered exports, with
+    /// `default` as one of its properties.
+    pub require_returns_exports_object: bool,
+    /// Sources this module requires as a whole value it uses directly, with
+    /// no interop wrapper that would make the binding mean the provider's
+    /// default export (see [`collect_whole_require_sources`]).
+    pub whole_require_sources: Vec<Atom>,
     /// True when the module contains `export *`. Its complete named surface
     /// may depend on another provider, so local absence is not proof that a
     /// requested name should come from the default object.
@@ -1224,6 +1233,160 @@ pub fn collect_commonjs_default_object(
         )
         .unwrap_or_default(),
     })
+}
+
+/// Whether requiring the module returns its `exports` object: no unresolved
+/// `module` reference, including in deferred function bodies, can replace
+/// `module.exports`. Collected before `UnEsm`, which turns both
+/// `exports.default = v` and `module.exports = v` into a default export.
+///
+/// A module with ESM declarations at this point fails: the webpack runtime
+/// normalizers write a replaced `module.exports` as `export default`.
+pub fn collect_require_returns_exports_object(module: &Module, unresolved_mark: Mark) -> bool {
+    if module
+        .body
+        .iter()
+        .any(|item| matches!(item, ModuleItem::ModuleDecl(_)))
+    {
+        return false;
+    }
+    let mut runtime_surface = CommonJsRuntimeSurfaceCollector {
+        unresolved_mark,
+        module_uses: 0,
+        exports_uses: 0,
+        require_uses: 0,
+        has_direct_eval: false,
+    };
+    module.visit_with(&mut runtime_surface);
+    runtime_surface.module_uses == 0 && !runtime_surface.has_direct_eval
+}
+
+/// Sources of top-level `var x = require("src")` bindings whose value the
+/// module uses as it is. Every `require("src")` call in the module must be
+/// such a declarator, and no binding of it may be tested for `__esModule` or
+/// passed to `require.n` or an interop helper. Collected before the helper
+/// stage and `UnWebpackInterop` replace an interop default with the plain
+/// binding, after which both read as the same default import.
+pub fn collect_whole_require_sources(module: &Module, unresolved_mark: Mark) -> Vec<Atom> {
+    let mut bindings: HashMap<BindingId, Atom> = HashMap::default();
+    let mut declarator_calls: HashMap<Atom, usize> = HashMap::default();
+    for item in &module.body {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            continue;
+        };
+        for declarator in &var.decls {
+            let (Pat::Ident(binding), Some(init)) = (&declarator.name, &declarator.init) else {
+                continue;
+            };
+            if let Some(source) = string_require_source(init, unresolved_mark) {
+                *declarator_calls.entry(source.clone()).or_default() += 1;
+                bindings.insert((binding.id.sym.clone(), binding.id.ctxt), source);
+            }
+        }
+    }
+    if bindings.is_empty() {
+        return Vec::new();
+    }
+    let mut collector = WholeRequireUseCollector {
+        unresolved_mark,
+        bindings: &bindings,
+        local_helpers: LocalHelperContext::collect_with_mark(module, unresolved_mark),
+        calls: HashMap::default(),
+        interop: HashSet::default(),
+    };
+    module.visit_with(&mut collector);
+    let mut sources: Vec<Atom> = declarator_calls
+        .into_iter()
+        .filter(|(source, count)| {
+            collector.calls.get(source) == Some(count) && !collector.interop.contains(source)
+        })
+        .map(|(source, _)| source)
+        .collect();
+    sources.sort();
+    sources
+}
+
+fn string_require_source(expr: &Expr, unresolved_mark: Mark) -> Option<Atom> {
+    let Expr::Call(call) = strip_parens(expr) else {
+        return None;
+    };
+    require_call_source(call, unresolved_mark)
+}
+
+/// The source of `require("src")`.
+fn require_call_source(call: &CallExpr, unresolved_mark: Mark) -> Option<Atom> {
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let [arg] = call.args.as_slice() else {
+        return None;
+    };
+    if arg.spread.is_some()
+        || !matches!(strip_parens(callee), Expr::Ident(id)
+            if is_unresolved_ident(id, "require", unresolved_mark))
+    {
+        return None;
+    }
+    let Expr::Lit(Lit::Str(source)) = arg.expr.as_ref() else {
+        return None;
+    };
+    source.value.as_str().map(Atom::from)
+}
+
+/// Counts every `require("src")` call and records the sources whose
+/// bindings meet an interop wrapper.
+struct WholeRequireUseCollector<'a> {
+    unresolved_mark: Mark,
+    bindings: &'a HashMap<BindingId, Atom>,
+    local_helpers: LocalHelperContext,
+    calls: HashMap<Atom, usize>,
+    interop: HashSet<Atom>,
+}
+
+impl WholeRequireUseCollector<'_> {
+    fn source_of(&self, expr: &Expr) -> Option<Atom> {
+        let Expr::Ident(ident) = strip_parens(expr) else {
+            return None;
+        };
+        self.bindings.get(&(ident.sym.clone(), ident.ctxt)).cloned()
+    }
+}
+
+impl Visit for WholeRequireUseCollector<'_> {
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if let Some(source) = require_call_source(call, self.unresolved_mark) {
+            *self.calls.entry(source).or_default() += 1;
+        }
+        if let Callee::Expr(callee) = &call.callee {
+            let interop_callee = matches!(strip_parens(callee), Expr::Member(member)
+                if matches!(member.obj.as_ref(), Expr::Ident(id)
+                    if is_unresolved_ident(id, "require", self.unresolved_mark))
+                    && matches!(&member.prop, MemberProp::Ident(prop) if prop.sym == "n"))
+                || self
+                    .local_helpers
+                    .is_helper_callee(callee, TranspilerHelperKind::InteropRequireDefault)
+                || self
+                    .local_helpers
+                    .is_helper_callee(callee, TranspilerHelperKind::InteropRequireWildcard);
+            if interop_callee {
+                for arg in &call.args {
+                    if let Some(source) = self.source_of(&arg.expr) {
+                        self.interop.insert(source);
+                    }
+                }
+            }
+        }
+        call.visit_children_with(self);
+    }
+
+    fn visit_member_expr(&mut self, member: &swc_core::ecma::ast::MemberExpr) {
+        if matches!(&member.prop, MemberProp::Ident(prop) if prop.sym == "__esModule") {
+            if let Some(source) = self.source_of(&member.obj) {
+                self.interop.insert(source);
+            }
+        }
+        member.visit_children_with(self);
+    }
 }
 
 /// Collect every unresolved CommonJS runtime identifier, including uses in
