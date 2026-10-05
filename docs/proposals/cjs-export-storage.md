@@ -320,7 +320,7 @@ throws when it runs, so the gap must be visible:
 | Stable named read recovery | Replaced by A and B, which rewrite every access. |
 | Conditional named export recovery | Replaced by A. Nested and compound writes are ordinary A writes. |
 | A-class prototype that rewrites leftover accesses after the stable pass | Superseded by step 2. It measured that A alone moves the matrix from 27 to 108, and was never merged. |
-| Webpack and `defineProperty` getter pre-passes | C inputs. Top-level webpack `require.d` calls are lowered to getter definitions; the storage rewrite owns getters of a local binding (see [One getter path](#one-getter-path)). The getter-loop IIFE still becomes live assignments in `rewrite_webpack_export_getters`. |
+| Webpack and `defineProperty` getter pre-passes | C inputs. Top-level webpack `require.d` calls are lowered to getter definitions; the storage rewrite owns getters of a local binding (see [One getter path](#one-getter-path)). The getter-loop IIFE is lowered the same way (see [Getter-loop IIFE](#getter-loop-iife)). |
 | `UnAssignmentMerging` repeatable-value chain split | Stops splitting a chain that writes both an `exports` property and a local identifier. The pipeline order stays: the `UnAssignmentMerging` → `UnEsm` edge is confirmed in [rule-dependency-inventory.md](../rule-dependency-inventory.md), and moving `UnEsm` first would also hand it every chain that `UnAssignmentMerging` already splits safely. A chain left whole is handled by the class of its export name: B drops the mirror target (`L = v`), A rewrites the target (`X = L = v`, still one valid chain), C does not occur because getter names have no writes. |
 | `has_unhandled_named_export_chain` rollback | Accepts a chain whose export targets are all names the storage rewrite owns (step 2). Still keeps the boundary for chains whose names no model owns, such as after a module gate failure. |
 
@@ -748,8 +748,8 @@ call's position: the runtime reads it when the call runs. A key that two
 calls define is not lowered, because the runtime skips a key `exports`
 already owns while a second definition would throw. When the module stays
 CommonJS, `UnEsm` puts the calls back as written. `require.d` calls inside an
-unused wrapper IIFE are lowered once the IIFE body is exposed; the
-pre-pass now handles only the getter-loop IIFE form.
+unused wrapper IIFE are lowered once the IIFE body is exposed. The
+getter-loop IIFE form was lowered later (see [Getter-loop IIFE](#getter-loop-iife)).
 
 The storage rewrite now also owns C names whose getter returns a binding the
 module computes itself (a function, a class, or a variable whose initializer
@@ -817,6 +817,33 @@ Matrix: 377 / 385 (from 351), with no row that was correct before now wrong.
 webpack 5.107 rises from 0 to 24 rows and webpack 5.111 from 27 to 28 in
 both profiles.
 
+## Getter-loop IIFE
+
+webpack's getter loop can also appear inlined as an IIFE:
+
+```js
+((target, getters) => {
+  for (const key in getters)
+    Object.defineProperty(target, key, { enumerable: true, get: getters[key] });
+})(exports, { x: () => L });
+```
+
+`rewrite_webpack_export_getters` used to lower each getter to
+`exports.x = L` and mark it live for the statement path. The storage
+rewrite runs before that path and did not see the mark, so a name the module
+also read (`use(exports.x)`) became A: `export var x = L` at the IIFE's
+position, a snapshot, and a TDZ error when `L` is a `let` or `const`
+declared later. A getter of a member of a `require` binding became a
+snapshot as well, instead of `export { y as x } from`.
+
+The IIFE is now lowered with the top-level `require.d` calls, to the same
+getter definitions, so its names take the same paths: C for a local binding,
+a re-export for an imported member, and the unresolved-id snapshot. The live
+mark is gone. The default-object compatibility block after the IIFE is
+removed with it, as before; a module that stays CommonJS gets both back.
+The one shape that loses recovery is a getter of a member of a local object
+(see [Remaining gaps](#remaining-gaps)).
+
 ## Statement-path pre-pass audit
 
 The storage rewrite took over most names, so the older pre-passes that
@@ -837,13 +864,14 @@ does not contain.
 | `normalize_named_export_chains` | chains with a function, `require`, or provider-call value, and `module.exports = exports.default = v` | named chains fall to A (`export var a; export var b; a = b = function () {};`); the default chain keeps the module CommonJS |
 | `has_unhandled_named_export_chain` | chains whose names no model owns, for example under a direct `eval`; its local-tail exemption lets TypeScript enum initializers (`L \|\| (exports.x = L = {})`) through to `UnEnum` | `export const a = exports.b = v`, which leaves `exports.b` in ESM; a module with a TypeScript enum export stays CommonJS |
 | Snapshot rule in the statement classifier | a one-write name copying a written local, such as `var v = 1; exports.v = v; function f() { v = 2; }` | a live `export { v }` that follows the later write |
-| `rewrite_webpack_export_getters` | webpack's getter-loop IIFE, `require.d` calls inside an unused wrapper IIFE, the live mark on the lowered assignments, and the default compat postamble after the IIFE | the getters stay, or a getter of a later-written binding becomes a snapshot |
+| `rewrite_webpack_export_getters` | `require.d` calls inside an unused wrapper IIFE | the getters stay |
 
 The `module.exports` forms are default exports, which the storage rewrite
 does not model. Three of these were live only on shapes no test covered: the
 named form of `split_compound_exports`, the live mark, and the postamble
 removal after an IIFE with a `default` getter. Each now has a unit test that
-fails without it.
+fails without it. The live mark and the postamble removal have since moved
+out of this pass (see [Getter-loop IIFE](#getter-loop-iife)).
 
 ## Remaining gaps
 
@@ -854,8 +882,7 @@ fails without it.
     mirror name whose only access is one `exports.x = local;` copy (see
     [Step 2 results](#step-2-results) and [Step 3 results](#step-3-results));
   - a getter that returns an import, a `require` result, or a member of one,
-    which becomes a re-export, and getters in webpack's getter-loop IIFE
-    (see [One getter path](#one-getter-path));
+    which becomes a re-export (see [One getter path](#one-getter-path));
   - TypeScript enum initializers that `UnEnum` folds, `exports.exports`, and
     names the module already exports as ESM;
   - every name in a module with a self-`require` or a module gate failure
@@ -864,14 +891,11 @@ fails without it.
 
   The pre-passes that prepare those statements are all still needed; see
   [Statement-path pre-pass audit](#statement-path-pre-pass-audit).
-- **Getter-loop IIFE names that are also read.** `rewrite_webpack_export_getters`
-  lowers each getter of the IIFE to an `exports.x = value` assignment marked
-  live, but the storage rewrite runs after it and does not see the mark. A
-  name that the module also reads (`use(exports.x)`) goes through A, which
-  declares `export var x = L` at the IIFE's position. That is a snapshot,
-  and a TDZ error when `L` is a `let` or `const` declared later. Lowering the
-  IIFE to getter definitions, as `require.d` calls are, would route these
-  names through C.
+- **A getter of a member of a local object** (`x: () => cfg.main`) has no
+  live ES module form. The name is unrecovered, so a module without bundler
+  runtime helpers stays CommonJS under decision 8, and one with them keeps
+  the getter definition in its ESM output. The getter-loop IIFE used to turn
+  it into a snapshot (see [Getter-loop IIFE](#getter-loop-iife)).
 - **rollup `import-then-export`, single-file only.** Without a marker the
   module has no module-level evidence. The two signals left are weak: a
   re-export getter from the same source (present only when the module also

@@ -3116,12 +3116,12 @@ fn webpack_getter_loop_exports_of_written_bindings_stay_live() {
         (
             "{ Kind() { return G; } }",
             "var G; G = { A: \"a\" };",
-            "export { G as Kind }; var G; G = { A: \"a\" };",
+            "var G; export { G as Kind }; G = { A: \"a\" };",
         ),
         (
             "{ Foo() { return A; } }",
             "let A = 1; function bump() { A = 2; }",
-            "export { A as Foo }; let A = 1; function bump() { A = 2; }",
+            "let A = 1; export { A as Foo }; function bump() { A = 2; }",
         ),
     ] {
         let source = format!("{GETTER_LOOP_IIFE}(exports, {getters}); {rest}");
@@ -3130,6 +3130,44 @@ fn webpack_getter_loop_exports_of_written_bindings_stay_live() {
         });
         assert_eq_normalized(&output, expected);
     }
+}
+
+#[test]
+fn webpack_getter_loop_exports_that_are_also_read_stay_live() {
+    // A read of the property sends the name through property storage unless
+    // the analysis sees the getter. Declaring the export at the loop would be
+    // a snapshot, and a TDZ error for a `let` declared after it.
+    for (getters, rest, expected) in [
+        (
+            "{ Foo() { return A; } }",
+            "let A = 1; function bump() { A = 2; } use(exports.Foo);",
+            "let A = 1; export { A as Foo }; function bump() { A = 2; } use(A);",
+        ),
+        (
+            "{ Foo: () => A }",
+            "function read() { return exports.Foo; } const A = 1;",
+            "function read() { return A; } const A = 1; export { A as Foo };",
+        ),
+    ] {
+        let source = format!("{GETTER_LOOP_IIFE}(exports, {getters}); {rest}");
+        let output = common::render_rule(&source, |mark| {
+            wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
+        });
+        assert_eq_normalized(&output, expected);
+    }
+}
+
+#[test]
+fn webpack_getter_loop_with_a_repeated_key_stays_commonjs() {
+    // The loop defines the key once, with the last getter. Lowering each
+    // entry would define it twice, and the second non-configurable
+    // definition throws.
+    let source =
+        format!("{GETTER_LOOP_IIFE}(exports, {{ Foo: () => A, Foo: () => B }}); let A = 1, B = 2;");
+    let output = common::render_rule(&source, |mark| {
+        wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
+    });
+    assert_eq_normalized(&output, &source);
 }
 
 #[test]
@@ -3142,7 +3180,7 @@ fn webpack_getter_loop_with_default_drops_the_default_compat_postamble() {
     });
     assert_eq_normalized(
         &output,
-        "export { A as Foo }; let A = 1; function D() {} export { D as default };",
+        "let A = 1; export { A as Foo }; function D() {} export { D as default };",
     );
 }
 

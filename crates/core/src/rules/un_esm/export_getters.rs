@@ -51,6 +51,10 @@
 //! require.d(exports, ["c", 0, c, "x", () => x]); // webpack 5.108+: a `0` slot
 //!                                                // is followed by a value
 //! require.d(exports, { x: () => x }, { c });     // rspack: getters, values
+//! ((target, getters) => {                        // the getter loop inlined
+//!   for (const key in getters)
+//!     Object.defineProperty(target, key, { enumerable: true, get: getters[key] });
+//! })(exports, { x: () => x });
 //! ```
 //!
 //! A value is a data property read when the call runs, so it becomes
@@ -1542,10 +1546,13 @@ enum WebpackExport {
     Value(Box<Expr>),
 }
 
-/// Lower webpack's runtime `require.d(exports, definition)` statements to
-/// per-name definitions: getters to `Object.defineProperty(exports, "x", {
-/// enumerable: true, get })`, and values to `exports.x = value`. Returns
-/// whether any statement was lowered.
+/// Lower webpack's runtime `require.d(exports, definition)` statements, and
+/// the getter-loop IIFE, to per-name definitions: getters to
+/// `Object.defineProperty(exports, "x", { enumerable: true, get })`, and
+/// values to `exports.x = value`. Returns whether any statement was lowered.
+///
+/// A default-object compatibility block after a getter-loop IIFE is removed
+/// with it.
 pub(crate) fn lower_webpack_export_definitions(module: &mut Module, unresolved_mark: Mark) -> bool {
     if !has_webpack_export_definitions(module, unresolved_mark) {
         return false;
@@ -1562,11 +1569,16 @@ pub(crate) fn lower_webpack_export_definitions(module: &mut Module, unresolved_m
     if !unique {
         return false;
     }
+    let mut lowered_getter_loop = false;
     for item in std::mem::take(&mut module.body) {
         let Some(exports) = webpack_export_statement(&item, unresolved_mark) else {
-            module.body.push(item);
+            if !(lowered_getter_loop && is_exports_default_compat_postamble(&item, unresolved_mark))
+            {
+                module.body.push(item);
+            }
             continue;
         };
+        lowered_getter_loop |= extract_webpack_export_getter_iife(&item, unresolved_mark).is_some();
         let span = module_item_span(&item);
         for (name, export) in exports {
             module.body.push(match export {
@@ -1595,6 +1607,14 @@ fn webpack_export_statement(
     item: &ModuleItem,
     unresolved_mark: Mark,
 ) -> Option<Vec<(Atom, WebpackExport)>> {
+    if let Some(getters) = extract_webpack_export_getter_iife(item, unresolved_mark) {
+        return Some(
+            getters
+                .into_iter()
+                .map(|(name, expr)| (name, WebpackExport::Getter(expr)))
+                .collect(),
+        );
+    }
     let ModuleItem::Stmt(Stmt::Expr(statement)) = item else {
         return None;
     };

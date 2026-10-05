@@ -317,8 +317,7 @@ impl UnEsm {
         //          `var s = expr; exports.X = s;`
         split_compound_exports(module, self.unresolved_mark);
         rewrite_commonjs_export_stars(module, self.unresolved_mark);
-        let live_webpack_export_assignments =
-            rewrite_webpack_export_getters(module, self.unresolved_mark);
+        rewrite_webpack_export_getters(module, self.unresolved_mark);
         rewrite_recovered_default_only_default_compat_block(module, self.unresolved_mark);
         remove_dead_named_only_default_compat_blocks(module, self.unresolved_mark);
         lower_exported_cjs_requires(module, self.unresolved_mark);
@@ -369,20 +368,6 @@ impl UnEsm {
                     },
                 );
             let mut entry = classify_item(item, self.unresolved_mark, &require_bindings);
-            // The webpack pre-pass lowers getters to ordinary assignments.
-            // Restore their live semantics before snapshot analysis.
-            if let Classified::CjsExport {
-                span,
-                kind: CjsExportKind::Named { name, is_live, .. },
-            } = &mut entry
-            {
-                if live_webpack_export_assignments
-                    .iter()
-                    .any(|(live_span, live_name)| live_span == span && live_name == name)
-                {
-                    *is_live = true;
-                }
-            }
             if let (
                 Some(write),
                 Classified::CjsExport {
@@ -2152,58 +2137,12 @@ fn extract_single_require_binding(
     ))
 }
 
-fn rewrite_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) -> Vec<(Span, Atom)> {
+/// Expose `require.d` calls inside an unused wrapper IIFE, and lower them.
+fn rewrite_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) {
     expose_unused_iife_webpack_export_getters(module, unresolved_mark);
     // The exposed IIFE body can hold `require.d` calls the first lowering
     // did not see.
     lower_webpack_export_definitions(module, unresolved_mark);
-
-    let mut converted_getter_map = false;
-    let mut live_named_assignments = Vec::new();
-    let mut new_body = Vec::with_capacity(module.body.len());
-    // The getter map commonly precedes the declarations it references.
-    // Deferring a converted default export to the end of the body avoids a
-    // TDZ violation for `export default ident`. Top-level `require.d` calls
-    // were already lowered to getter definitions (see
-    // `lower_webpack_export_definitions`); only this IIFE form is left here.
-    let mut deferred_default: Vec<ModuleItem> = Vec::new();
-
-    for item in std::mem::take(&mut module.body) {
-        let item_span = module_item_span(&item);
-        if let Some(exports) = extract_webpack_export_getter_iife(&item, unresolved_mark) {
-            converted_getter_map = true;
-            for (name, expr) in exports {
-                if name.as_ref() == "default" {
-                    // Keep default live and defer it past the declarations.
-                    deferred_default.push(make_deferred_webpack_default_export(
-                        item_span,
-                        expr,
-                        unresolved_mark,
-                    ));
-                } else {
-                    // Keep named assignments in place so the ordinary export
-                    // classifier can merge them with nearby declarations.
-                    live_named_assignments.push((item_span, name.clone()));
-                    new_body.push(make_exports_assign_expr_item(
-                        item_span,
-                        (name, expr),
-                        unresolved_mark,
-                    ));
-                }
-            }
-            continue;
-        }
-
-        if converted_getter_map && is_exports_default_compat_postamble(&item, unresolved_mark) {
-            continue;
-        }
-
-        new_body.push(item);
-    }
-
-    new_body.extend(deferred_default);
-    module.body = new_body;
-    live_named_assignments
 }
 
 /// Rewrite ncc's CommonJS default-object adapter when the complete generated
@@ -2410,34 +2349,6 @@ fn has_esm_default_export(module: &Module) -> bool {
         }
         _ => false,
     })
-}
-
-fn make_deferred_webpack_default_export(
-    span: Span,
-    expr: Box<Expr>,
-    unresolved_mark: Mark,
-) -> ModuleItem {
-    if let Expr::Ident(ident) = *expr {
-        // Webpack getter `() => ident` is a live accessor. Emit a live export
-        // specifier directly instead of routing through CJS classification,
-        // which would snapshot the binding.
-        ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(NamedExport {
-            span,
-            specifiers: vec![ExportSpecifier::Named(ExportNamedSpecifier {
-                span: DUMMY_SP,
-                orig: ModuleExportName::Ident(ident),
-                exported: Some(ModuleExportName::Ident(
-                    IdentName::new("default".into(), DUMMY_SP).into(),
-                )),
-                is_type_only: false,
-            })],
-            src: None,
-            type_only: false,
-            with: None,
-        }))
-    } else {
-        make_exports_assign_expr_item(span, ("default".into(), expr), unresolved_mark)
-    }
 }
 
 fn expose_unused_iife_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) {
@@ -2916,29 +2827,6 @@ fn extract_single_return_expr(block: &FunctionBody) -> Option<Box<Expr>> {
         return None;
     };
     Some(arg.clone())
-}
-
-fn make_exports_assign_expr_item(
-    span: Span,
-    (name, expr): (Atom, Box<Expr>),
-    unresolved_mark: Mark,
-) -> ModuleItem {
-    ModuleItem::Stmt(Stmt::Expr(ExprStmt {
-        span,
-        expr: Box::new(Expr::Assign(AssignExpr {
-            span: DUMMY_SP,
-            op: AssignOp::Assign,
-            left: AssignTarget::Simple(SimpleAssignTarget::Member(MemberExpr {
-                span: DUMMY_SP,
-                obj: Box::new(Expr::Ident(make_unresolved_ident(
-                    "exports".into(),
-                    unresolved_mark,
-                ))),
-                prop: MemberProp::Ident(IdentName::new(name, DUMMY_SP)),
-            })),
-            right: expr,
-        })),
-    }))
 }
 
 fn is_exports_default_compat_block(item: &ModuleItem, unresolved_mark: Mark) -> bool {
