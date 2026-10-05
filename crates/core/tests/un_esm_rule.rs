@@ -3240,6 +3240,40 @@ var effects = require("./effects.js");
 }
 
 #[test]
+fn webpack_getter_of_unresolved_module_id_member_becomes_snapshot_after_require() {
+    // A module id the unpacker could not resolve has no source to re-export
+    // from; the getter's value once the require has run is what remains.
+    let input = r#"
+require.d(exports, { take: () => effects.take, local: () => local });
+var effects = require(11111);
+var other = require("./other.js");
+var local = other.make();
+"#;
+    let expected = r#"
+import other from "./other.js";
+const effects = require(11111);
+export const take = effects.take;
+export const local = other.make();
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn webpack_getter_of_unresolved_module_id_member_stays_behind_other_code() {
+    let input = r#"
+require.d(exports, { take: () => effects.take, local: () => local });
+var local = 1;
+var effects = require(11111);
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("Object.defineProperty(exports, \"take\""),
+        "{output}"
+    );
+    assert!(!output.contains("export const take"), "{output}");
+}
+
+#[test]
 fn module_that_stays_commonjs_keeps_webpack_definitions_as_written() {
     // The lowered getter definitions are only an intermediate form for
     // conversion; an aliased `exports` keeps the module CommonJS.

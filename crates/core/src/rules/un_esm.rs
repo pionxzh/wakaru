@@ -323,6 +323,7 @@ impl UnEsm {
         remove_dead_named_only_default_compat_blocks(module, self.unresolved_mark);
         lower_exported_cjs_requires(module, self.unresolved_mark);
         preserve_written_cjs_require_bindings(module, self.unresolved_mark);
+        export_getters::snapshot_unresolved_id_require_getters(module, self.unresolved_mark);
         // Runs after the getter and wrapper pre-passes, whose shapes it would
         // otherwise rewrite. A self-require reads the partially built
         // `exports` object, which a module binding cannot represent; those

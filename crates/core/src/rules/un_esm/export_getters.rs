@@ -1715,3 +1715,176 @@ fn exports_write(span: Span, name: &Atom, value: Box<Expr>, unresolved_mark: Mar
         })),
     }))
 }
+
+/// Turn each getter that reads a member of `require(<id>)`, where the id is
+/// a bundler module id the unpacker could not resolve to a file of this
+/// input, into `exports.x = binding.member;` right after that binding's
+/// declaration.
+///
+/// Such a getter has no source to re-export from, so `UnEsm` would leave it
+/// in the module, and an ES module throws on its `exports` access. The
+/// assignment becomes a snapshot export: the value the getter returned once
+/// the `require` ran, without later changes to that property. webpack defines
+/// its getters before the `require` declarations, so the write moves down,
+/// but only past other export definitions and `require` statements, which a
+/// getter definition cannot observe. Getters with anything else in between
+/// stay as written.
+pub(super) fn snapshot_unresolved_id_require_getters(module: &mut Module, unresolved_mark: Mark) {
+    let mut declarations: HashMap<BindingId, usize> = module
+        .body
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| {
+            unresolved_id_require_declaration(item, unresolved_mark).map(|binding| (binding, index))
+        })
+        .collect();
+    if declarations.is_empty() {
+        return;
+    }
+    let uses = BindingUseIndex::collect(module);
+    declarations.retain(|binding, _| {
+        uses.has_single_declaration(binding) && !is_written_through(&uses, binding)
+    });
+    if declarations.is_empty() {
+        return;
+    }
+
+    // Getter index → index of the statement the snapshot follows.
+    let mut targets: HashMap<usize, usize> = HashMap::default();
+    for (index, item) in module.body.iter().enumerate() {
+        let Some(binding) = unresolved_id_getter_binding(item, unresolved_mark) else {
+            continue;
+        };
+        let Some(&declaration) = declarations.get(&binding) else {
+            continue;
+        };
+        if declaration < index {
+            targets.insert(index, index);
+        } else if module.body[index + 1..declaration]
+            .iter()
+            .all(|item| is_getter_transparent_item(item, unresolved_mark))
+        {
+            targets.insert(index, declaration);
+        }
+    }
+    if targets.is_empty() {
+        return;
+    }
+
+    let mut writes: HashMap<usize, Vec<ModuleItem>> = HashMap::default();
+    let mut order: Vec<usize> = targets.keys().copied().collect();
+    order.sort_unstable();
+    for index in order {
+        let write = unresolved_id_getter_write(&module.body[index], unresolved_mark)
+            .expect("getter matched above");
+        writes.entry(targets[&index]).or_default().push(write);
+    }
+    for (index, item) in std::mem::take(&mut module.body).into_iter().enumerate() {
+        if !targets.contains_key(&index) {
+            module.body.push(item);
+        }
+        if let Some(writes) = writes.remove(&index) {
+            module.body.extend(writes);
+        }
+    }
+}
+
+/// The binding of a single top-level `var r = require(12345);`.
+fn unresolved_id_require_declaration(
+    item: &ModuleItem,
+    unresolved_mark: Mark,
+) -> Option<BindingId> {
+    let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+        return None;
+    };
+    let [declarator] = var.decls.as_slice() else {
+        return None;
+    };
+    let Pat::Ident(binding) = &declarator.name else {
+        return None;
+    };
+    let Expr::Call(call) = strip_parens(declarator.init.as_deref()?) else {
+        return None;
+    };
+    is_unresolved_id_require_call(call, unresolved_mark).then(|| binding_id(&binding.id))
+}
+
+fn is_unresolved_id_require_call(call: &CallExpr, unresolved_mark: Mark) -> bool {
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    matches!(callee.as_ref(), Expr::Ident(id) if is_unresolved_ident(id, "require", unresolved_mark))
+        && matches!(
+            call.args.as_slice(),
+            [ExprOrSpread { spread: None, expr }] if matches!(expr.as_ref(), Expr::Lit(Lit::Num(_)))
+        )
+}
+
+/// `Object.defineProperty(exports, "x", { enumerable: true, get: () => r.y })`
+/// as `(name, r, y)`.
+fn define_property_member_getter(
+    item: &ModuleItem,
+    unresolved_mark: Mark,
+) -> Option<(Atom, Ident, Atom)> {
+    let ModuleItem::Stmt(Stmt::Expr(statement)) = item else {
+        return None;
+    };
+    let Expr::Call(call) = strip_parens(&statement.expr) else {
+        return None;
+    };
+    if !is_object_define_property_global_call(call, unresolved_mark)
+        || call.args.len() != 3
+        || !is_cjs_export_object_expr(&call.args[0].expr, unresolved_mark)
+    {
+        return None;
+    }
+    let name = literal_export_name_arg(&call.args[1].expr)?;
+    let (base, member) = extract_define_property_getter_member(&call.args[2].expr)?;
+    Some((name, base, member))
+}
+
+fn unresolved_id_getter_binding(item: &ModuleItem, unresolved_mark: Mark) -> Option<BindingId> {
+    define_property_member_getter(item, unresolved_mark).map(|(_, base, _)| binding_id(&base))
+}
+
+fn unresolved_id_getter_write(item: &ModuleItem, unresolved_mark: Mark) -> Option<ModuleItem> {
+    let (name, base, member) = define_property_member_getter(item, unresolved_mark)?;
+    Some(exports_write(
+        module_item_span(item),
+        &name,
+        Box::new(member_read(base, &member)),
+        unresolved_mark,
+    ))
+}
+
+/// A statement a getter definition can move past: another export definition
+/// or a `require` that only loads a module.
+fn is_getter_transparent_item(item: &ModuleItem, unresolved_mark: Mark) -> bool {
+    let ModuleItem::Stmt(stmt) = item else {
+        return matches!(item, ModuleItem::ModuleDecl(ModuleDecl::Import(_)));
+    };
+    let is_require = |expr: &Expr| {
+        matches!(strip_parens(expr), Expr::Call(call)
+            if matches!(&call.callee, Callee::Expr(callee)
+                if matches!(callee.as_ref(), Expr::Ident(id)
+                    if is_unresolved_ident(id, "require", unresolved_mark))))
+    };
+    let is_getter_definition = |expr: &Expr| {
+        matches!(strip_parens(expr), Expr::Call(call)
+            if is_object_define_property_global_call(call, unresolved_mark)
+                && call.args.len() == 3
+                && is_cjs_export_object_expr(&call.args[0].expr, unresolved_mark)
+                && literal_export_name_arg(&call.args[1].expr).is_some()
+                && extract_define_property_getter_expr(&call.args[2].expr).is_some())
+    };
+    match stmt {
+        Stmt::Expr(statement) => {
+            is_require(&statement.expr) || is_getter_definition(&statement.expr)
+        }
+        Stmt::Decl(Decl::Var(var)) => var.decls.iter().all(|declarator| {
+            matches!(&declarator.name, Pat::Ident(_))
+                && declarator.init.as_deref().is_some_and(is_require)
+        }),
+        _ => false,
+    }
+}
