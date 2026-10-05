@@ -31,6 +31,30 @@ look generated but cannot be traced to a known toolchain belong in `aggressive`
 at most, with a test comment noting the shape is speculative and why
 reproduction was unavailable.
 
+## Source-Intent Recovery
+
+Compiled CommonJS sometimes behaves differently from the ESM source it was
+compiled from: an interop helper sets `default` to the whole provider, a
+lowered `import()` loads synchronously, a call gains a receiver. A rule may
+then emit the source's form, with ESM semantics, instead of reproducing the
+CommonJS behavior. It may do so only when all of these hold:
+
+- **Producer evidence.** The shape is reproduced output of a known compiler
+  or bundler for a known source construct, recognized by what makes it that
+  output: a helper body, a callback shape, an `__esModule` marker. Code that
+  only resembles it keeps its CommonJS behavior.
+- **The output matches the source.** The emitted form is what the producer
+  started from, not a guess at what the author meant.
+- **The difference is named.** An assumption below lists each behavior that
+  moves from the CommonJS output to ESM semantics, and where the result
+  differs for a real CommonJS provider.
+
+Without that evidence, the rule keeps the CommonJS behavior, even when the
+ESM form would read better. `namespace_interop_source_semantics`,
+`lowered_dynamic_import_source_semantics`, and
+`relative_require_esm_provider` are recoveries of this kind, and so is the
+`export *` recovery in [helper-detection.md](helper-detection.md).
+
 ## Assumptions
 
 These are named properties of the input that rules may depend on when a
