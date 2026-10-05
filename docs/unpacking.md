@@ -540,6 +540,21 @@ prepared-module materialization and Closure emission, which happen in every
 mode), never on whether points are present. Recording points costs emitter
 bookkeeping per token, which is why extraction discards them by default.
 
+## Known gaps
+
+- **Relative `require` inside a top-level expression.** A module binding
+  assigned inside an expression (`r = f((e = require("./m")).x)`) is not
+  turned into an import. The `require` stays in the ESM output, where it
+  throws, and no warning reports it. rspack production entries emit this
+  shape.
+- **rspack entry runtime leftovers.** rspack (1.7) writes runtime metadata
+  into the entry module (`require.rv = () => "1.7.12"; require.ruid =
+  "bundler=rspack@1.7.12"`), which stays and throws in ESM. An inline
+  `require.n` getter called in place (`(() => e && e.__esModule ? e.default
+  : e)()`) is not collapsed either: `UnWebpackInterop` matches only a getter
+  bound to a declared variable. webpack 5 builds of the same source have
+  neither shape.
+
 ## Production-build scope
 
 Development builds are a non-goal. Wakaru targets shipped, production

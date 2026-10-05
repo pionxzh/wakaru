@@ -44,6 +44,11 @@ struct ExportRenamePlan {
 
 impl VisitMut for UnExportRename {
     fn visit_mut_module(&mut self, module: &mut Module) {
+        // Known bug: no `with` / direct `eval` guard yet. A local renamed to
+        // its export name breaks a direct `eval` that reads the old name
+        // (`var e = f; export { e as helper }; eval("e()")`). See "Dynamic
+        // Scope Limits" in docs/rewrite-assumptions.md for the required guard.
+        //
         // Names a rename target must not take: every name the module declares,
         // plus every free (unresolved) name it references. A local renamed to
         // `Error` or `fetch` would become a module binding that captures the

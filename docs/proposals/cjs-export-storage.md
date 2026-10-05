@@ -976,6 +976,31 @@ out of this pass (see [Getter-loop IIFE](#getter-loop-iife)).
   lose later writes to the property, and a module whose getter has other
   code before the `require` declaration keeps the getter. The `require(<id>)`
   itself stays in the ESM output, with no warning.
+- **Next's default-object compatibility tail with a default export.** The
+  tail (`Object.assign(exports.default, exports); module.exports =
+  exports.default`) runs only when the module has a default export. Without
+  named exports it is rewritten exactly onto the default binding; with them
+  the module stays CommonJS (decision 8). Dropping the tail under source
+  semantics was considered and rejected: webpack compiles an app module's
+  `import Link, { useStatus } from` a Next CommonJS module to one binding
+  read both ways (`n = r.n(o); n(); o.useStatus`), which unpacks to `import
+  o from` plus `o.useStatus`, and that reads `undefined` once the default
+  object no longer carries the named exports. Next step (decided): extend
+  the exact default-only rewrite. Keep the guard and the `__esModule`
+  definition, turn the copy into `Object.assign(D, { <names in the order
+  `exports` defines them>, default: D })`, and drop only the `module.exports`
+  assignment. It needs the proof the named-only removal already makes:
+  every `exports` access is a static, ordinary name. A module without that
+  proof stays CommonJS.
+- **swc's cjs-module-lexer annotation in unminified output.** swc emits
+  `0 && (module.exports = { a: null, ... })` so Node can detect the export
+  names. A minifier drops it; unminified output keeps it, and the converted
+  module carries a dead `if (0) { module.exports = ... }` that the
+  leftover-access warning reports although it never runs.
+- **The leftover-access warning covers `exports` and `module` only.** A
+  `require(...)` that stays in the ESM output, such as one inside a function
+  body or an unresolved `require(<id>)`, throws when it runs and is not
+  reported.
 - **Interop unwrapping before the module boundary is decided.**
   Unwrapping `_interopRequireDefault(require(x)).default` to a plain
   `require(x)` binding read whole is right only once `UnEsm` turns that
