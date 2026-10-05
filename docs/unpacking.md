@@ -542,6 +542,15 @@ bookkeeping per token, which is why extraction discards them by default.
 
 ## Known gaps
 
+- **Browserify drops the code around the bundle.** When the input's top
+  level has other statements before or after the prelude call
+  (`(function(){function r(e,n,t){...}return r})()({1: [...]}, {}, [1])`),
+  only the table modules are written; the statements around it appear in no
+  output file, and nothing reports it. webpack keeps authored trailing calls
+  in `entry.js` (see [Webpack 5 trailing startup calls](#webpack-5-trailing-startup-calls));
+  the fix is to do the same here, or at least warn. Whether the AMD,
+  SystemJS, Closure, and Metro unpackers lose code the same way is
+  unchecked.
 - **Relative `require` inside a top-level expression.** A module binding
   assigned inside an expression (`r = f((e = require("./m")).x)`) is not
   turned into an import. The `require` stays in the ESM output, where it
