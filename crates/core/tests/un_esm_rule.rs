@@ -1711,6 +1711,59 @@ export { bump };
 }
 
 #[test]
+fn minified_swc_export_loops_become_live_exports() {
+    // A minifier inlines swc's `_export` helper into the module: swc keeps
+    // the getter object in a variable and loops over it, Terser calls the
+    // helper's function expression in place.
+    let rest = "let count = 0; function bump() { count += 1; } function main() { return count; }";
+    let accessors = "{ get bump() { return bump; }, get count() { return count; }, get default() { return main; } }";
+    let values = "{ bump: function() { return bump; }, count: function() { return count; }, default: function() { return main; } }";
+    let accessor_get = "Object.getOwnPropertyDescriptor(m, k).get";
+    for source in [
+        format!(
+            "var m = {accessors}; for (var k in m) Object.defineProperty(exports, k, {{ enumerable: !0, get: {accessor_get} }}); {rest}"
+        ),
+        format!(
+            "var m = {values}; for (var k in m) Object.defineProperty(exports, k, {{ enumerable: !0, get: m[k] }}); {rest}"
+        ),
+        format!(
+            "!function(t, m) {{ for (var k in m) Object.defineProperty(t, k, {{ enumerable: !0, get: {accessor_get} }}); }}(exports, {accessors}); {rest}"
+        ),
+        format!(
+            "!function(t, m) {{ for (var k in m) Object.defineProperty(t, k, {{ enumerable: !0, get: m[k] }}); }}(exports, {values}); {rest}"
+        ),
+    ] {
+        let expected = r#"
+export let count = 0;
+function bump() {
+    count += 1;
+}
+export { bump };
+function main() {
+    return count;
+}
+export { main as default };
+"#;
+        assert_eq_normalized(&apply(&source), expected);
+    }
+}
+
+#[test]
+fn swc_export_loop_over_an_object_used_elsewhere_stays_commonjs() {
+    // The loop defines the getters the object holds when it runs; an object
+    // that something else can reach may hold others by then.
+    for source in [
+        "var m = { count: function() { return count; } }; register(m); for (var k in m) Object.defineProperty(exports, k, { enumerable: true, get: m[k] }); var count = 0;",
+        "var m = { count: function() { return count; } }; m.extra = function() { return 1; }; for (var k in m) Object.defineProperty(exports, k, { enumerable: true, get: m[k] }); var count = 0;",
+        "var m = { count: function() { return count; } }; setup(); for (var k in m) Object.defineProperty(exports, k, { enumerable: true, get: m[k] }); var count = 0;",
+        "var m = { count: function() { return count; } }; for (var k in m) Object.defineProperty(exports, k, { enumerable: true, get: m[k] }); register(m); var count = 0;",
+    ] {
+        let output = apply(source);
+        assert!(output.contains("Object.defineProperty(exports, k"), "{output}");
+    }
+}
+
+#[test]
 fn getter_helper_keeps_entries_its_getter_read_does_not_expect() {
     // The accessor-reading helper would define `get: undefined` for a value
     // entry; the call stays as written.

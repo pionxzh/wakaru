@@ -281,7 +281,8 @@ the command prints the failed condition instead. A TypeScript helper guard
 that `UnEsm` recovers as `export * from` is not counted: it copies another
 module's exports, not this module's own. A getter helper call (swc
 `_export`, esbuild `__export` with `module.exports = __toCommonJS(...)`,
-sucrase `_createNamedExportFrom`) counts as one getter definition per name:
+sucrase `_createNamedExportFrom`), including swc's helper inlined by a
+minifier, counts as one getter definition per name:
 `UnEsm` lowers those calls first, and so does the analysis.
 `--json` prints `input`, `uses_exports`, `gate`, and an `exports` array with
 `name`, `storage`, `binding`, `rejected`, and the access counts.

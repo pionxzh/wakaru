@@ -30,6 +30,15 @@
 //! _createNamedExportFrom(_dep, "count", "count");
 //! ```
 //!
+//! A minifier inlines the swc helper into the module, as a loop over the
+//! getter object or as a call of the helper's function in place:
+//!
+//! ```text
+//! var all = { get count() { return count; } };
+//! for (var name in all) Object.defineProperty(exports, name, { enumerable: !0, get: GETTER });
+//! !function (target, all) { for (var name in all) ... }(exports, { ... });
+//! ```
+//!
 //! Each call becomes the getter definitions it performs, written as
 //! `Object.defineProperty(exports, "name", { enumerable: true, get })`. The
 //! export-storage analysis classifies those names as getters. The storage
@@ -87,14 +96,25 @@ pub(crate) fn lower_export_getter_helpers(module: &mut Module, unresolved_mark: 
     }
     let uses = BindingUseIndex::collect(module);
     let helpers = GetterHelpers::collect(module, &uses, unresolved_mark);
-    if helpers.is_empty() {
-        return false;
-    }
 
     let mut lowered: HashMap<usize, Vec<ModuleItem>> = HashMap::default();
     let mut removed: HashSet<usize> = HashSet::default();
     let mut consumed: HashSet<BindingKey> = HashSet::default();
     for (index, item) in module.body.iter().enumerate() {
+        if let Some(definitions) = lower_inline_getter_map_call(item, unresolved_mark) {
+            lowered.insert(index, definitions);
+            continue;
+        }
+        if let Some(definitions) = index.checked_sub(1).and_then(|previous| {
+            lower_getter_map_loop(&module.body[previous], item, &uses, unresolved_mark)
+        }) {
+            removed.insert(index - 1);
+            lowered.insert(index, definitions);
+            continue;
+        }
+        if helpers.is_empty() {
+            continue;
+        }
         if let Some((callee, definitions)) = helpers.lower_exports_call(item, &uses) {
             consumed.insert(callee);
             lowered.insert(index, definitions);
@@ -144,10 +164,15 @@ fn is_helper_call_candidate(item: &ModuleItem, unresolved_mark: Mark) -> bool {
     if to_esm_declarator(item, unresolved_mark).is_some() {
         return true;
     }
-    let ModuleItem::Stmt(Stmt::Expr(statement)) = item else {
-        return false;
+    let statement = match item {
+        ModuleItem::Stmt(Stmt::Expr(statement)) => statement,
+        ModuleItem::Stmt(Stmt::ForIn(_)) => return true,
+        _ => return false,
     };
     let ident_callee = |call: &CallExpr| matches!(&call.callee, Callee::Expr(callee) if matches!(strip_parens(callee), Expr::Ident(_)));
+    if discarded_call(&statement.expr).is_some_and(|call| inline_helper_function(call).is_some()) {
+        return true;
+    }
     match strip_parens(&statement.expr) {
         Expr::Call(call) if ident_callee(call) => {
             if let Some([target, entries]) = plain_args(&call.args) {
@@ -851,6 +876,23 @@ fn getter_map_helper(function: &HelperFunction, unresolved_mark: Mark) -> Option
     let [Stmt::ForIn(for_in)] = function.stmts()? else {
         return None;
     };
+    getter_map_loop(
+        for_in,
+        |defined_target| is_ident_expr(defined_target, target),
+        all,
+        unresolved_mark,
+    )
+}
+
+/// `for (name in all) Object.defineProperty(TARGET, name, { enumerable: true,
+/// get: GETTER })`, where GETTER is `all[name]` or
+/// `Object.getOwnPropertyDescriptor(all, name).get`.
+fn getter_map_loop(
+    for_in: &ForInStmt,
+    is_target: impl Fn(&Expr) -> bool,
+    all: &Ident,
+    unresolved_mark: Mark,
+) -> Option<GetterMap> {
     if !is_ident_expr(&for_in.right, all) {
         return None;
     }
@@ -873,7 +915,7 @@ fn getter_map_helper(function: &HelperFunction, unresolved_mark: Mark) -> Option
         return None;
     }
     let [defined_target, defined_name, descriptor] = plain_args(&call.args)?;
-    if !is_ident_expr(defined_target, target) || !is_ident_expr(defined_name, name) {
+    if !is_target(defined_target) || !is_ident_expr(defined_name, name) {
         return None;
     }
     let entries = descriptor_entries(descriptor)?;
@@ -1404,6 +1446,137 @@ fn getter_map_entries(entries: &ObjectLit, map: GetterMap) -> Option<Vec<(Atom, 
         getters.push((name, getter));
     }
     Some(getters)
+}
+
+/// The function a call invokes in place: `(function (a, b) { ... })(x, y)`
+/// or the arrow form.
+fn inline_helper_function(call: &CallExpr) -> Option<HelperFunction<'_>> {
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    match strip_parens(callee) {
+        Expr::Fn(FnExpr { function, .. }) => Some(HelperFunction::Function(function)),
+        Expr::Arrow(arrow) => Some(HelperFunction::Arrow(arrow)),
+        _ => None,
+    }
+}
+
+/// The call of an expression statement, also behind the `!` or `void` a
+/// minifier puts in front of a function it calls in place.
+fn discarded_call(expr: &Expr) -> Option<&CallExpr> {
+    match strip_parens(expr) {
+        Expr::Call(call) => Some(call),
+        Expr::Unary(unary) if matches!(unary.op, UnaryOp::Bang | UnaryOp::Void) => {
+            match strip_parens(&unary.arg) {
+                Expr::Call(call) => Some(call),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// A getter-map helper called in place on `exports`, as a minifier inlines
+/// it: the definitions it performs.
+fn lower_inline_getter_map_call(
+    item: &ModuleItem,
+    unresolved_mark: Mark,
+) -> Option<Vec<ModuleItem>> {
+    let ModuleItem::Stmt(Stmt::Expr(statement)) = item else {
+        return None;
+    };
+    let call = discarded_call(&statement.expr)?;
+    let map = getter_map_helper(&inline_helper_function(call)?, unresolved_mark)?;
+    let [target, entries] = plain_args(&call.args)?;
+    if !matches!(strip_parens(target), Expr::Ident(id)
+        if is_unresolved_ident(id, "exports", unresolved_mark))
+    {
+        return None;
+    }
+    let Expr::Object(entries) = strip_parens(entries) else {
+        return None;
+    };
+    let getters = getter_map_entries(entries, map)?;
+    Some(
+        getters
+            .into_iter()
+            .map(|(name, getter)| {
+                getter_definition(statement.span, &name, getter, false, unresolved_mark)
+            })
+            .collect(),
+    )
+}
+
+/// A getter-map loop over the object declared by the statement before it,
+/// as a minifier inlines the helper: the definitions it performs. The object
+/// must be read nowhere else, so the loop sees the entries it was declared
+/// with.
+fn lower_getter_map_loop(
+    declaration: &ModuleItem,
+    item: &ModuleItem,
+    uses: &BindingUseIndex,
+    unresolved_mark: Mark,
+) -> Option<Vec<ModuleItem>> {
+    let ModuleItem::Stmt(Stmt::ForIn(for_in)) = item else {
+        return None;
+    };
+    let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = declaration else {
+        return None;
+    };
+    let [VarDeclarator {
+        name: Pat::Ident(binding),
+        init: Some(init),
+        ..
+    }] = var.decls.as_slice()
+    else {
+        return None;
+    };
+    let Expr::Object(entries) = strip_parens(init) else {
+        return None;
+    };
+    let map = getter_map_loop(
+        for_in,
+        |target| {
+            matches!(strip_parens(target), Expr::Ident(id)
+            if is_unresolved_ident(id, "exports", unresolved_mark))
+        },
+        &binding.id,
+        unresolved_mark,
+    )?;
+    let key = binding_key(&binding.id);
+    let mut loop_reads = 0;
+    for_in.visit_with(&mut BindingRefCounter {
+        binding: &binding.id,
+        count: &mut loop_reads,
+    });
+    if !uses.has_single_declaration(&key)
+        || uses.has_direct_write(&key)
+        || uses.use_count(&key) != loop_reads
+    {
+        return None;
+    }
+    let getters = getter_map_entries(entries, map)?;
+    Some(
+        getters
+            .into_iter()
+            .map(|(name, getter)| {
+                getter_definition(for_in.span, &name, getter, false, unresolved_mark)
+            })
+            .collect(),
+    )
+}
+
+struct BindingRefCounter<'a> {
+    binding: &'a Ident,
+    count: &'a mut usize,
+}
+
+impl Visit for BindingRefCounter<'_> {
+    fn visit_ident(&mut self, ident: &Ident) {
+        if ident.sym == self.binding.sym && ident.ctxt == self.binding.ctxt {
+            *self.count += 1;
+        }
+    }
 }
 
 fn string_value(expr: &Expr) -> Option<Atom> {

@@ -868,6 +868,28 @@ treats a default as a namespace property only for those sources.
 Matrix: 380 / 385 (from 377), with no row that was correct before now wrong.
 webpack 5.107 rises from 24 to 27 rows.
 
+## Inlined swc `_export`
+
+A minifier inlines swc's `_export` helper into the module. swc's minifier
+keeps the getter object in a variable and loops over it; Terser calls the
+helper's function expression in place:
+
+```js
+var all = { get count() { return count; } };
+for (var name in all) Object.defineProperty(exports, name, { enumerable: !0, get: Object.getOwnPropertyDescriptor(all, name).get });
+
+!function (target, all) { for (var name in all) Object.defineProperty(target, name, { enumerable: !0, get: all[name] }); }(exports, { count: function () { return count; } });
+```
+
+Both reach `lower_export_getter_helpers` and become the same getter
+definitions as the helper call, which keeps the body check (`getter_map_loop`)
+and the entry check. The loop is lowered only when the object is declared by
+the statement right before it and read nowhere else, so the loop sees the
+entries it was declared with; the declaration is removed with it. A module
+with a default export and Next's default-object compatibility tail still
+stays CommonJS (decision 8); without a default export the tail is dead and
+removed, as before.
+
 ## Statement-path pre-pass audit
 
 The storage rewrite took over most names, so the older pre-passes that
@@ -939,12 +961,10 @@ out of this pass (see [Getter-loop IIFE](#getter-loop-iife)).
   id))`, and `require.e` for a context module) is not restored, and
   `string-export-name` in webpack 5.107, whose `require.d` stays in the
   output for a reason not yet investigated.
-- **Getter inputs C does not take yet.** swc's `_export` helper inlined by a
-  minifier into `for (k in all) Object.defineProperty(exports, k, { get:
-  all[k] })` is the largest real-world residual: the module stays CommonJS
-  with its exports unrecovered. A named getter function (`get: function
-  get() {}`) and a value descriptor (`{ value: v }`, which may be a mangled
-  `__esModule`) are not taken either.
+- **Getter inputs C does not take yet.** A named getter function (`get:
+  function get() {}`) and a value descriptor (`{ value: v }`, which may be a
+  mangled `__esModule`). An inlined swc `_export` loop whose getter object is
+  not declared right before it is not taken either.
 - **Re-exports from a provider that stays CommonJS.** `export { y as x }
   from "./m"` links in Node only when cjs-module-lexer finds `y` in `./m`;
   it does not for `module.exports = value`. Getter re-exports emit it

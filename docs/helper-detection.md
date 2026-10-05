@@ -354,7 +354,11 @@ Export getter helpers define every CommonJS export getter in one call: swc's
 inline `_export(exports, { get x() { ... } })` (or, before swc 1.16, function
 values), esbuild's `__export(ns, { x: () => x })` followed by
 `module.exports = __toCommonJS(ns)`, and sucrase's
-`_createNamedExportFrom(dep, "x", "y")`. `UnEsm` first lowers each call to
+`_createNamedExportFrom(dep, "x", "y")`. A minifier inlines swc's helper
+into a loop over a getter object declared right before it, or into a call of
+the helper's function in place (`!function (t, all) { ... }(exports, {...})`);
+both take the same lowering when the loop body matches the helper's and the
+object is read nowhere else. `UnEsm` first lowers each call to
 one `Object.defineProperty(exports, "x", { enumerable: true, get })` per name
 (`rules/un_esm/export_getters.rs`), then recovers those as live exports or
 re-exports like any other getter definition. Helper bodies are proven by
