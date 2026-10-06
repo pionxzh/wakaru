@@ -655,6 +655,60 @@ class MyClass {
 }
 
 #[test]
+fn create_class_descriptor_with_getter_and_setter_keeps_both() {
+    // One `_createClass` descriptor defines both accessors of the property.
+    let input = r#"
+function _defineProperties(t, p) { for (var i = 0; i < p.length; i++) { var d = p[i]; d.enumerable = d.enumerable || false; d.configurable = true; if ("value" in d) d.writable = true; Object.defineProperty(t, d.key, d); } }
+function _createClass(C, pp, sp) { if (pp) _defineProperties(C.prototype, pp); if (sp) _defineProperties(C, sp); return C; }
+var C = /*#__PURE__*/function () {
+    function C() { this._x = 1; }
+    _createClass(C, [{
+        key: "x",
+        get: function get() { return this._x; },
+        set: function set(v) { this._x = v; }
+    }], [{
+        key: "y",
+        set: function set(v) { C._y = v; },
+        get: function get() { return C._y; }
+    }]);
+    return C;
+}();
+"#;
+    let expected = r#"
+function _defineProperties(t, p) { for (var i = 0; i < p.length; i++) { var d = p[i]; d.enumerable = d.enumerable || false; d.configurable = true; if ("value" in d) d.writable = true; Object.defineProperty(t, d.key, d); } }
+class C {
+    constructor() { this._x = 1; }
+    get x() { return this._x; }
+    set x(v) { this._x = v; }
+    static get y() { return C._y; }
+    static set y(v) { C._y = v; }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn create_class_descriptor_with_value_and_accessor_is_kept() {
+    // `Object.defineProperty` throws on a descriptor with both `value` and
+    // `get`; recovering either half would hide that.
+    let input = r#"
+function _defineProperties(t, p) { for (var i = 0; i < p.length; i++) { var d = p[i]; d.enumerable = d.enumerable || false; d.configurable = true; if ("value" in d) d.writable = true; Object.defineProperty(t, d.key, d); } }
+function _createClass(C, pp, sp) { if (pp) _defineProperties(C.prototype, pp); if (sp) _defineProperties(C, sp); return C; }
+var C = /*#__PURE__*/function () {
+    function C() {}
+    _createClass(C, [{
+        key: "x",
+        value: function x() { return 1; },
+        get: function get() { return 2; }
+    }]);
+    return C;
+}();
+"#;
+    let output = apply(input);
+    assert!(output.contains("_createClass(C"), "{output}");
+}
+
+#[test]
 fn define_property_zero_param_setter_gets_dummy_arg() {
     // `Object.defineProperty` setters may be zero-arg; class `set` must have
     // exactly one parameter. FairyGUI-style empty setters need a dummy.

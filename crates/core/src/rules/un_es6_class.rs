@@ -3630,7 +3630,8 @@ fn parse_create_class_array(arg: &Expr, is_static: bool, members: &mut Vec<Class
 
         let mut key_name: Option<Atom> = None;
         let mut value_fn: Option<&FnExpr> = None;
-        let mut method_kind = MethodKind::Method;
+        let mut getter_fn: Option<&FnExpr> = None;
+        let mut setter_fn: Option<&FnExpr> = None;
 
         for prop in &obj.props {
             let swc_core::ecma::ast::PropOrSpread::Prop(p) = prop else {
@@ -3644,45 +3645,47 @@ fn parse_create_class_array(arg: &Expr, is_static: bool, members: &mut Vec<Class
                 PropName::Str(s) => s.value.as_str().unwrap_or("").into(),
                 _ => return false,
             };
-            match k.as_ref() {
+            let slot = match k.as_ref() {
                 "key" => {
                     let Expr::Lit(swc_core::ecma::ast::Lit::Str(s)) = strip_parens(&kv.value)
                     else {
                         return false;
                     };
                     key_name = Some(s.value.as_str().unwrap_or("").into());
+                    continue;
                 }
-                "value" => {
-                    let Expr::Fn(f) = strip_parens(&kv.value) else {
-                        return false;
-                    };
-                    value_fn = Some(f);
-                }
-                "get" => {
-                    let Expr::Fn(f) = strip_parens(&kv.value) else {
-                        return false;
-                    };
-                    method_kind = MethodKind::Getter;
-                    value_fn = Some(f);
-                }
-                "set" => {
-                    let Expr::Fn(f) = strip_parens(&kv.value) else {
-                        return false;
-                    };
-                    method_kind = MethodKind::Setter;
-                    value_fn = Some(f);
-                }
+                "value" => &mut value_fn,
+                "get" => &mut getter_fn,
+                "set" => &mut setter_fn,
                 // `writable`, `enumerable`, `configurable` — skip
-                _ => {}
-            }
+                _ => continue,
+            };
+            let Expr::Fn(f) = strip_parens(&kv.value) else {
+                return false;
+            };
+            *slot = Some(f);
         }
 
-        let (Some(name_sym), Some(fn_expr)) = (key_name, value_fn) else {
+        let Some(name_sym) = key_name else {
             return false;
         };
-        let method_key = PropName::Ident(IdentName::new(name_sym, DUMMY_SP));
-        let method = build_class_method(method_key, fn_expr, is_static, method_kind);
-        members.push(ClassMember::Method(method));
+        // One descriptor defines one property: a data method, or a getter
+        // and/or setter pair. `_defineProperties` rejects a descriptor with
+        // both `value` and an accessor.
+        let parts = match (value_fn, getter_fn, setter_fn) {
+            (Some(f), None, None) => vec![(f, MethodKind::Method)],
+            (None, None, None) | (Some(_), _, _) => return false,
+            (None, getter, setter) => getter
+                .map(|f| (f, MethodKind::Getter))
+                .into_iter()
+                .chain(setter.map(|f| (f, MethodKind::Setter)))
+                .collect(),
+        };
+        for (fn_expr, method_kind) in parts {
+            let method_key = PropName::Ident(IdentName::new(name_sym.clone(), DUMMY_SP));
+            let method = build_class_method(method_key, fn_expr, is_static, method_kind);
+            members.push(ClassMember::Method(method));
+        }
     }
 
     true
