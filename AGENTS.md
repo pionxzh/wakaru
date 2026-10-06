@@ -216,7 +216,7 @@ under that document's handoff rules.
 
 ## Important Rules
 
-1. **All changes must be tested** — no exceptions.
+1. **Every code change needs a unit test** — no exceptions. Documentation-only changes use the checks in `docs/testing.md` instead.
 2. **Use resolver identity** — globals require `unresolved_mark`; local bindings require `(sym, ctxt)`. Check emitted-name capture separately.
 3. **Use `BindingRenamer` for renames** — never rename by `sym` alone.
 4. **Formatting must pass, but don't format opportunistically** — run `cargo fmt --check`; if formatting is needed, keep it limited to files you intentionally changed and avoid unrelated rustfmt churn.
