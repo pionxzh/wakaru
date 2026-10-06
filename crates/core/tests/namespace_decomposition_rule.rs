@@ -235,9 +235,9 @@ Object.keys(r);
 }
 
 #[test]
-fn namespace_default_access_prevents_decomposition() {
-    // `r.default` can't be expressed as a named specifier, so decomposition
-    // should be skipped for the whole candidate.
+fn namespace_default_access_becomes_a_default_import() {
+    // A namespace's `default` property is the provider's default export, so
+    // the default import takes over the namespace's own name.
     let target_facts = facts_for(
         r#"
 export default function d() {}
@@ -252,10 +252,71 @@ import * as r from "./mod.js";
 r.foo();
 r.default();
 "#;
+    let expected = r#"
+import r, { foo } from "./mod.js";
+foo();
+r();
+"#;
+    assert_eq_normalized(&run_decomp(input, &facts), expected.trim());
+}
+
+#[test]
+fn namespace_default_access_reuses_a_sibling_default_import() {
+    let target_facts = facts_for(r#"export default function d() {}"#);
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./mod.js", target_facts);
+
+    let input = r#"
+import d, * as r from "./mod.js";
+r.default(d);
+"#;
+    let expected = r#"
+import d from "./mod.js";
+d(d);
+"#;
+    assert_eq_normalized(&run_decomp(input, &facts), expected.trim());
+}
+
+#[test]
+fn default_import_default_access_prevents_decomposition() {
+    // The `default` property of a default import is a property of the
+    // exported value, not another import.
+    let target_facts = facts_for(
+        r#"
+export default function d() {}
+export function foo() {}
+"#,
+    );
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./mod.js", target_facts);
+
+    let input = r#"
+import r from "./mod.js";
+r.foo();
+r.default();
+"#;
+    let output = run_decomp(input, &facts);
+    assert!(
+        normalize(&output).contains("import r from"),
+        "should keep the default import when .default is accessed, got: {output}"
+    );
+}
+
+#[test]
+fn namespace_default_access_without_a_provider_default_prevents_decomposition() {
+    let target_facts = facts_for(r#"export function foo() {}"#);
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./mod.js", target_facts);
+
+    let input = r#"
+import * as r from "./mod.js";
+r.foo();
+r.default();
+"#;
     let output = run_decomp(input, &facts);
     assert!(
         normalize(&output).contains("import * as r from"),
-        "should keep namespace import when .default is accessed, got: {output}"
+        "should keep the namespace import without a provider default, got: {output}"
     );
 }
 
@@ -1063,6 +1124,35 @@ import { Icon } from "./mod.js";
 const x = jsx(Icon, {});
 "#;
     assert_eq_normalized(&run_decomp(input, &facts), expected.trim());
+}
+
+#[test]
+fn jsx_factory_namespace_default_arg_follows_the_namespace_name() {
+    let target_facts = facts_for(r#"export default function Icon() {}"#);
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./mod.js", target_facts);
+
+    // `jsx(Icon.default, ...)` becomes `jsx(Icon, ...)`: the tag takes the
+    // namespace's name, so its case decides the recovered element.
+    let input = r#"
+import * as Icon from "./mod.js";
+const x = jsx(Icon.default, {});
+"#;
+    let expected = r#"
+import Icon from "./mod.js";
+const x = jsx(Icon, {});
+"#;
+    assert_eq_normalized(&run_decomp(input, &facts), expected.trim());
+
+    let input = r#"
+import * as icon from "./mod.js";
+const x = jsx(icon.default, {});
+"#;
+    let output = run_decomp(input, &facts);
+    assert!(
+        normalize(&output).contains("import * as icon from"),
+        "a lowercase namespace name would recover an intrinsic tag, got: {output}"
+    );
 }
 
 #[test]

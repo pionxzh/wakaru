@@ -1,6 +1,7 @@
 //! Namespace decomposition: decompose default or namespace imports into named
 //! imports when the imported binding is only used via property access and the
-//! target module exports those properties.
+//! target module exports those properties. A namespace's `default` property
+//! becomes a default import.
 //!
 //! Runs at the Stage 2 barrier (after `UnEsm`, before `UnTemplateLiteral`),
 //! using cross-module `ModuleFacts` to verify that the target module actually
@@ -16,9 +17,9 @@ use swc_core::atoms::Atom;
 use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignExpr, AssignTarget, CallExpr, Callee, CatchClause, Expr, Function, Ident, ImportDecl,
-    ImportNamedSpecifier, ImportSpecifier, JSXElementName, JSXObject, MemberExpr, MemberProp,
-    Module, ModuleDecl, ModuleExportName, ModuleItem, Param, Pat, SimpleAssignTarget, Stmt,
-    UnaryExpr, UnaryOp, UpdateExpr,
+    ImportDefaultSpecifier, ImportNamedSpecifier, ImportSpecifier, JSXElementName, JSXObject,
+    MemberExpr, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, Param, Pat,
+    SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp, UpdateExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -108,7 +109,7 @@ fn find_decomposition_candidates(
     // Step 1: Find default and namespace imports and their source modules.
     // Both shapes expose a module-namespace-like binding that can be decomposed
     // into direct named specifiers when usage is property-access only.
-    let mut namespace_like_imports: Vec<(usize, Atom, SyntaxContext, Atom)> = Vec::new();
+    let mut namespace_like_imports: Vec<(usize, Atom, SyntaxContext, Atom, bool)> = Vec::new();
     for (idx, item) in module.body.iter().enumerate() {
         let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
             continue;
@@ -122,6 +123,7 @@ fn find_decomposition_candidates(
                         s.local.sym.clone(),
                         s.local.ctxt,
                         source.clone(),
+                        false,
                     ));
                 }
                 ImportSpecifier::Namespace(s) => {
@@ -130,6 +132,7 @@ fn find_decomposition_candidates(
                         s.local.sym.clone(),
                         s.local.ctxt,
                         source.clone(),
+                        true,
                     ));
                 }
                 ImportSpecifier::Named(_) => {}
@@ -143,15 +146,24 @@ fn find_decomposition_candidates(
 
     // Step 2: For each default/namespace import, analyze usage
     let mut candidates = Vec::new();
-    for (import_index, local_sym, local_ctxt, source) in namespace_like_imports {
+    for (import_index, local_sym, local_ctxt, source, is_namespace) in namespace_like_imports {
         // Check if target module's exports are known
         let Some(target_facts) = module_facts.get_from(current_filename, source.as_ref()) else {
             continue;
         };
 
+        // A namespace's `default` property is the provider's default export.
+        // The default property of a default import is a property of that
+        // export, so it stays unsupported there.
+        let default_export = is_namespace
+            && target_facts
+                .exports
+                .iter()
+                .any(|e| e.kind == ExportKind::Default);
         let mut analyzer = UsageAnalyzer {
             target_sym: &local_sym,
             target_ctxt: local_ctxt,
+            default_export,
             accessed_props: HashSet::default(),
             safe: true,
             in_import_decl: false,
@@ -181,10 +193,9 @@ fn find_decomposition_candidates(
             .map(|e| e.exported.as_ref())
             .collect();
 
-        let all_exported = analyzer
-            .accessed_props
-            .iter()
-            .all(|prop| exported_names.contains(prop.as_ref()));
+        let all_exported = analyzer.accessed_props.iter().all(|prop| {
+            exported_names.contains(prop.as_ref()) || (default_export && prop == "default")
+        });
 
         if !all_exported {
             continue;
@@ -201,6 +212,13 @@ fn find_decomposition_candidates(
         let mut existing_import_locals: HashSet<Atom> = HashSet::default();
         if let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = &module.body[import_index] {
             for spec in &import.specifiers {
+                if let ImportSpecifier::Default(s) = spec {
+                    if default_export {
+                        existing_import_locals.insert(s.local.sym.clone());
+                        exported_to_local
+                            .insert("default".into(), (s.local.sym.clone(), s.local.ctxt));
+                    }
+                }
                 if let ImportSpecifier::Named(s) = spec {
                     existing_import_locals.insert(s.local.sym.clone());
                     // Skip string-named imports (`import { "x" as y }`) — we can't
@@ -237,6 +255,16 @@ fn find_decomposition_candidates(
                     collision_alias: false,
                 });
                 reused_existing += 1;
+                continue;
+            }
+            if default_export && prop == "default" {
+                // The default import takes over the namespace's own binding.
+                props.push(DecompProp {
+                    exported: prop.clone(),
+                    local: local_sym.clone(),
+                    local_ctxt,
+                    collision_alias: false,
+                });
                 continue;
             }
             let is_own_binding = *prop == local_sym;
@@ -413,6 +441,9 @@ impl Visit for AllBindingsCollector {
 struct UsageAnalyzer<'a> {
     target_sym: &'a Atom,
     target_ctxt: SyntaxContext,
+    /// Whether `target.default` reads the provider's default export, which
+    /// then takes the target's own name.
+    default_export: bool,
     accessed_props: HashSet<Atom>,
     safe: bool,
     in_import_decl: bool,
@@ -454,7 +485,12 @@ impl Visit for UsageAnalyzer<'_> {
                     if let Expr::Member(member) = first_arg.expr.as_ref() {
                         if self.is_target_member(member) {
                             if let MemberProp::Ident(prop) = &member.prop {
-                                if starts_with_lowercase(prop.sym.as_ref()) {
+                                let local = if self.default_export && prop.sym == "default" {
+                                    self.target_sym
+                                } else {
+                                    &prop.sym
+                                };
+                                if starts_with_lowercase(local.as_ref()) {
                                     self.safe = false;
                                 }
                             }
@@ -602,11 +638,15 @@ fn apply_decompositions(module: &mut Module, candidates: &[DecompCandidate]) {
             continue;
         };
 
-        // Collect names already present as named imports to avoid duplicates
+        // Collect names already present as named imports, or as a sibling
+        // default import, to avoid duplicates
         let already_imported: HashSet<Atom> = import
             .specifiers
             .iter()
             .filter_map(|s| match s {
+                ImportSpecifier::Default(d) if d.local.sym != candidate.local_sym => {
+                    Some(d.local.sym.clone())
+                }
                 ImportSpecifier::Named(n) => Some(n.local.sym.clone()),
                 _ => None,
             })
@@ -627,6 +667,13 @@ fn apply_decompositions(module: &mut Module, candidates: &[DecompCandidate]) {
         let mut named_specifiers = Vec::new();
         for prop in &candidate.props {
             if already_imported.contains(&prop.local) {
+                continue;
+            }
+            if prop.exported == "default" && prop.local == candidate.local_sym {
+                named_specifiers.push(ImportSpecifier::Default(ImportDefaultSpecifier {
+                    span: DUMMY_SP,
+                    local: Ident::new(prop.local.clone(), DUMMY_SP, prop.local_ctxt),
+                }));
                 continue;
             }
             let imported = if prop.exported != prop.local {
@@ -668,7 +715,12 @@ fn apply_decompositions(module: &mut Module, candidates: &[DecompCandidate]) {
                     phase: import.phase,
                 });
         } else {
-            import.specifiers.extend(named_specifiers);
+            // Keep a default specifier ahead of any named sibling.
+            let (defaults, named): (Vec<_>, Vec<_>) = std::mem::take(&mut import.specifiers)
+                .into_iter()
+                .chain(named_specifiers)
+                .partition(|s| matches!(s, ImportSpecifier::Default(_)));
+            import.specifiers = defaults.into_iter().chain(named).collect();
         }
     }
 

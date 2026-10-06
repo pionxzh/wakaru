@@ -366,7 +366,10 @@ Neither proof creates a default-object fact available to consumers.
   (`lowered_dynamic_import_source_semantics` in rewrite-assumptions.md).
 - **`namespace_decomposition`** — rewrites `import r from "./x"; r.foo()` into
   `import { foo } from "./x"; foo()` when `./x` exports `foo` and no collision
-  prevents the rewrite. Handles aliased pre-existing specifiers, inner-scope
+  prevents the rewrite. On a namespace import, `ns.default` becomes a default
+  import named after the namespace when `./x` has a default export; on a
+  default import, `.default` is a property of that value and blocks the
+  rewrite. Handles aliased pre-existing specifiers, inner-scope
   shadowing, mixed default+named imports, and readability backoff when too many
   collisions would force aliasing. For imports synthesized from `require()`, it
   also discards an otherwise-inert top-level binding read left by interop-helper
