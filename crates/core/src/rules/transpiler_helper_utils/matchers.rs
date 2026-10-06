@@ -1196,6 +1196,7 @@ fn is_to_consumable_array_fn(func: &Function, has_sub_helpers: bool) -> bool {
     if markers.has_array_is_array
         && (markers.has_array_from || markers.has_array_constructor)
         && body.stmts.len() <= 4
+        && array_markers_apply_to_param(func)
     {
         return true;
     }
@@ -1215,6 +1216,81 @@ fn is_to_consumable_array_fn(func: &Function, has_sub_helpers: bool) -> bool {
 
     false
 }
+/// Babel 6 `_toConsumableArray(arr)` tests and copies its own parameter:
+/// `Array.isArray(arr)`, then `Array.from(arr)` or `Array(arr.length)`. A
+/// short utility that tests or copies some other value
+/// (`Array.isArray(settings.list)`) only shares the markers.
+fn array_markers_apply_to_param(func: &Function) -> bool {
+    let Some(ctx) = MatchContext::from_params(func, &["arr"]) else {
+        return false;
+    };
+
+    struct ParamArrayCalls<'a> {
+        ctx: &'a MatchContext,
+        tests_param: bool,
+        copies_param: bool,
+    }
+
+    impl ParamArrayCalls<'_> {
+        fn is_param(&self, expr: Option<&Expr>) -> bool {
+            expr.is_some_and(|expr| self.ctx.is_binding(strip_parens(expr), "arr"))
+        }
+
+        fn is_param_length(&self, expr: Option<&Expr>) -> bool {
+            matches!(expr.map(strip_parens), Some(Expr::Member(member))
+                if member_prop_name(&member.prop, "length")
+                    && self.ctx.is_binding(strip_parens(&member.obj), "arr"))
+        }
+    }
+
+    fn first_arg(args: &[swc_core::ecma::ast::ExprOrSpread]) -> Option<&Expr> {
+        args.first()
+            .filter(|arg| arg.spread.is_none())
+            .map(|arg| arg.expr.as_ref())
+    }
+
+    impl Visit for ParamArrayCalls<'_> {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if let Callee::Expr(callee) = &call.callee {
+                let arg = first_arg(&call.args);
+                match callee.as_ref() {
+                    Expr::Member(member) if matches!(member.obj.as_ref(), Expr::Ident(obj) if obj.sym == "Array") =>
+                    {
+                        if member_prop_name(&member.prop, "isArray") && self.is_param(arg) {
+                            self.tests_param = true;
+                        }
+                        if member_prop_name(&member.prop, "from") && self.is_param(arg) {
+                            self.copies_param = true;
+                        }
+                    }
+                    Expr::Ident(id) if id.sym == "Array" && self.is_param_length(arg) => {
+                        self.copies_param = true;
+                    }
+                    _ => {}
+                }
+            }
+            call.visit_children_with(self);
+        }
+
+        fn visit_new_expr(&mut self, expr: &swc_core::ecma::ast::NewExpr) {
+            if matches!(expr.callee.as_ref(), Expr::Ident(id) if id.sym == "Array")
+                && self.is_param_length(expr.args.as_deref().and_then(first_arg))
+            {
+                self.copies_param = true;
+            }
+            expr.visit_children_with(self);
+        }
+    }
+
+    let mut visitor = ParamArrayCalls {
+        ctx: &ctx,
+        tests_param: false,
+        copies_param: false,
+    };
+    func.visit_with(&mut visitor);
+    visitor.tests_param && visitor.copies_param
+}
+
 pub(super) fn is_class_call_check_fn(func: &Function) -> bool {
     let Some(ctx) = MatchContext::from_params(func, &["instance", "constructor"]) else {
         return false;

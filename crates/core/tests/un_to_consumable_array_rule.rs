@@ -86,6 +86,28 @@ const x = [...items];
 }
 
 #[test]
+fn ignores_short_function_testing_and_copying_another_value() {
+    // Same markers as the Babel 6 helper, but `Array.isArray` and
+    // `Array.from` apply to a property of the parameter, not the parameter.
+    let input = r#"
+function validate(settings) {
+    if (settings == null) {
+        return null;
+    } else if (typeof settings !== "object") {
+        throw new Error("bad");
+    } else {
+        if (!Array.isArray(settings.weekend)) throw new Error("bad");
+        return { first: settings.first, weekend: Array.from(settings.weekend) };
+    }
+}
+var x = validate(input);
+"#;
+    let output = render(input);
+    assert!(output.contains("validate(input)"), "{output}");
+    assert!(!output.contains("[...input]"), "{output}");
+}
+
+#[test]
 fn detects_inlined_babel7_form() {
     // Babel 7+: logical-OR chain of sub-helper calls.
     // The module must also contain a sub-helper with Array.isArray/Array.from
