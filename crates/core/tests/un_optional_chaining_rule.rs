@@ -1649,3 +1649,84 @@ const x = a?.b;
     let output = apply_with_level(input, RewriteLevel::Minimal);
     assert_eq_normalized(&output, expected);
 }
+
+#[test]
+fn minimal_keeps_statement_optional_call_with_loose_inner_check() {
+    // The inner `t == null` also matches `document.all`; minimal does not
+    // assume `no_document_all`.
+    let input = r#"
+function f(t, n) {
+    var r;
+    (r = t == null ? void 0 : t.set) === null || r === void 0 || r.call(t, n);
+}
+"#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn standard_recovers_statement_optional_call_with_loose_inner_check() {
+    let input = r#"
+function f(t, n) {
+    var r;
+    (r = t == null ? void 0 : t.set) === null || r === void 0 || r.call(t, n);
+}
+"#;
+    let expected = r#"
+function f(t, n) {
+    t?.set?.(n);
+}
+"#;
+    let output = apply_with_level(input, RewriteLevel::Standard);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn minimal_keeps_statement_optional_call_with_plain_member_inner_check() {
+    // The inner plain form reads `a.b` three times; the chain reads it once.
+    let input = r#"
+function f(a, n) {
+    var r;
+    (r = a.b === null || a.b === void 0 ? void 0 : a.b.set) === null || r === void 0 || r.call(a.b, n);
+}
+"#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn minimal_keeps_statement_optional_call_with_repeated_member_context() {
+    // The temp's value and the `.call` context both read `a.b`; the chain
+    // reads it once.
+    let input = r#"
+function f(a, n) {
+    var r;
+    (r = a.b.set) === null || r === void 0 || r.call(a.b, n);
+}
+function g(a, n) {
+    var r;
+    if (!((r = a.b.set) === null || r === void 0)) {
+        r.call(a.b, n);
+    }
+}
+"#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn standard_recovers_statement_optional_call_with_repeated_member_context() {
+    let input = r#"
+function f(a, n) {
+    var r;
+    (r = a.b.set) === null || r === void 0 || r.call(a.b, n);
+}
+"#;
+    let expected = r#"
+function f(a, n) {
+    a.b.set?.(n);
+}
+"#;
+    let output = apply_with_level(input, RewriteLevel::Standard);
+    assert_eq_normalized(&output, expected);
+}
