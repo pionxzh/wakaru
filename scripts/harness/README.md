@@ -29,8 +29,8 @@ python3 run_harness.py --seeds 1,2,3 --bundlers esbuild,webpack5,rollup \
 ```
 
 First run does a one-time `npm install` of the package pool into
-`workspace/` (gitignored). Requires a `dev-release` CLI build (or pass
-`--wakaru`).
+`workspace/` (gitignored). Without `--wakaru`, the harness first builds this
+checkout's `dev-opt` CLI (a no-op when it is already fresh) and tests that.
 
 ## Notes
 

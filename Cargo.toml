@@ -34,18 +34,22 @@ tracing = "0.1"
 debug = "line-tables-only"
 split-debuginfo = "unpacked"
 
+# Shipped binaries (the release workflow). Not for local checks.
 [profile.release]
 lto = "fat"
 codegen-units = 1
 strip = "symbols"
 
+# Performance numbers (fixtures --perf, perf work): close to release codegen
+# without fat LTO's build time.
 [profile.dev-release]
 inherits = "release"
 lto = "thin"
 codegen-units = 16
 
 # Optimized CLI for output checks that rebuild after every edit (the
-# wakaru-fixtures runner, reproduction matrices). Without LTO and with
+# wakaru-fixtures runner, the synthetic harness, the Vue public corpus).
+# Without LTO and with
 # incremental codegen, a one-rule change relinks in well under half the
 # dev-release time. Use dev-release or release for performance numbers.
 [profile.dev-opt]

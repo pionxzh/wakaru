@@ -41,6 +41,7 @@ import {
   validateTest262BaselineOptions,
 } from "./test262-baseline.mjs";
 import { parseExactSpec, releaseDateCutoff, RESOLUTION_WINDOW_DAYS } from "../repro/lib/release-date.mjs";
+import { createWakaruCommandResolver } from "../repro/lib/runner.mjs";
 
 export { parseTestMetadata, runnableVariants } from "./test262-metadata.mjs";
 
@@ -721,23 +722,17 @@ function withTimeout(promise, timeoutMs, relativePath) {
   ]).finally(() => clearTimeout(timer));
 }
 
+// Without $WAKARU, Cargo refreshes this checkout's debug CLI once before first
+// use, so a direct run never tests a stale binary. $WAKARU is read on every
+// call because callers may point it at a different binary between runs.
+const resolveBuiltWakaruCmd = createWakaruCommandResolver({ env: {} });
+
 function resolveWakaruCmd() {
   const configured = process.env.WAKARU;
   if (configured) {
     return { command: configured, prefix: [] };
   }
-  const debugBinary = join(
-    repoRoot,
-    "target",
-    "debug",
-    process.platform === "win32" ? "wakaru.exe" : "wakaru",
-  );
-  if (existsSync(debugBinary)) {
-    return { command: debugBinary, prefix: [] };
-  }
-  throw new Error(
-    `missing wakaru binary: run "cargo build -p wakaru-cli" first, or set WAKARU to a wakaru executable`,
-  );
+  return resolveBuiltWakaruCmd();
 }
 
 export function runWakaruAsync(source, { level, timeoutMs, wakaruCmd }) {

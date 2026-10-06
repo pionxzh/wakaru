@@ -29,7 +29,7 @@ RUST_BACKTRACE=1 cargo test -- --nocapture
 node scripts/sourcemap/check.mjs input.js out.js
 
 # Check identifier contexts after the pipeline over a directory of modules
-cargo run --profile dev-release -p wakaru-core --example name_capture_oracle -- path/to/modules/ > oracle.jsonl
+cargo run --profile dev-opt -p wakaru-core --example name_capture_oracle -- path/to/modules/ > oracle.jsonl
 ```
 
 ## Rule Trace
@@ -167,7 +167,7 @@ defects that printed output cannot show:
   a binding and rebuilt the reference or the declaration instead of cloning it.
 
 ```bash
-cargo run --profile dev-release -p wakaru-core --example name_capture_oracle -- \
+cargo run --profile dev-opt -p wakaru-core --example name_capture_oracle -- \
   path/to/modules/ > oracle.jsonl        # one JSON object per module on stdout
                                          # aggregate totals on stderr
 ```

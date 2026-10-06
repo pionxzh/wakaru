@@ -48,6 +48,29 @@ cargo run -p wakaru-cli -- input.js -m input.js.map         # with source map
 cargo run -p wakaru-cli -- debug trace path/to/module.js    # debug: per-rule diffs
 ```
 
+### Build profiles and binary freshness
+
+Pick the profile by what the binary is for. Each profile keeps its own
+artifacts, so reaching for a second one costs a cold build:
+
+| Profile | Use for |
+|---|---|
+| `dev` (default) | tests, `cargo run`, reproduction matrices, Test262 (small inputs) |
+| `dev-opt` | output checks over real bundles: fixtures, the synthetic harness, the Vue corpus |
+| `dev-release` | performance numbers only (`run.sh --perf`, perf work) |
+| `release` | shipped binaries (the release workflow); not for local checks |
+
+Do not reason about whether `target/` is fresh: run the matching `cargo build`
+before using a binary. It is a ~1 s no-op when nothing changed, and Cargo's
+fingerprints cover uncommitted edits. The script runners do this themselves
+unless `WAKARU` (or the harness's `--wakaru`) names a binary. Never place a
+binary at Cargo's own output path (`target/<profile>/wakaru`): Cargo trusts
+its mtime and reports it fresh. For A/B comparisons, copy builds out of
+`target/` under a name that carries the commit, such as `wakaru-<sha>[-dirty]`.
+If your result disagrees with another agent's on the same input, suspect a
+binary someone placed there: `cmp` the two binaries, or `touch` a source file
+and rebuild to force a relink.
+
 Branch worktrees live as sibling checkouts at `../wakaru-<branch-suffix>`
 (e.g. `../wakaru-repro-edge-cases` for branch `codex/repro-edge-cases`).
 Run `git worktree list` before creating one — it usually already exists.

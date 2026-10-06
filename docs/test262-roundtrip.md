@@ -270,9 +270,9 @@ Node major, harness, producer, Wakaru options, or selection does not match.
 
 Add `--missing` to skip summaries that already exist and have `complete: true`.
 The matrix runner builds `wakaru-cli` once before running jobs unless `WAKARU`
-is already set.
-The lower-level roundtrip runner does not fall back to `cargo run`; build the
-CLI first or set `WAKARU` before calling it directly.
+is already set, and passes that binary to every job through `WAKARU`.
+Run directly, the lower-level roundtrip runner also refreshes this checkout's
+debug CLI with Cargo before using it, unless `WAKARU` names a binary.
 
 The `Test262 Correctness` workflow runs the tooling tests and corpus-wide
 metadata audit first, then compares all canonical baselines in one isolated CI

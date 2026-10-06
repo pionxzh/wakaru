@@ -9,6 +9,7 @@ import {
   acceptBaselineMatrixCandidates,
   baselineSlices,
   buildBaselineMatrixJobs,
+  jobEnv,
   moduleGraphBaselineProducers,
   normalBaselineProducers,
   parseMatrixArgs,
@@ -233,6 +234,16 @@ test("acceptBaselineMatrixCandidates validates every candidate before promotion"
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("jobs inherit the CLI the matrix resolved instead of rebuilding", () => {
+  const explicit = { WAKARU: "/opt/wakaru", PATH: "/bin" };
+  assert.equal(jobEnv(explicit, "linux"), explicit);
+
+  const pinned = jobEnv({ PATH: "/bin" }, "linux");
+  assert.equal(pinned.PATH, "/bin");
+  assert.match(pinned.WAKARU, /[\\/]target[\\/]debug[\\/]wakaru$/);
+  assert.match(jobEnv({}, "win32").WAKARU, /[\\/]target[\\/]debug[\\/]wakaru\.exe$/);
 });
 
 function sha256(value) {

@@ -1,9 +1,10 @@
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
-from run_harness import layouts_for_bundler, split_evidence
+from run_harness import REPO_ROOT, layouts_for_bundler, resolve_wakaru, split_evidence
 
 
 class HarnessVerificationTests(unittest.TestCase):
@@ -46,6 +47,30 @@ class HarnessVerificationTests(unittest.TestCase):
         self.assertEqual(layouts_for_bundler("esbuild", requested), requested)
         self.assertEqual(layouts_for_bundler("rollup", requested), requested)
         self.assertEqual(layouts_for_bundler("webpack5", requested), [None])
+
+
+class ResolveWakaruTests(unittest.TestCase):
+    def test_default_builds_the_dev_opt_cli_before_using_it(self):
+        calls = []
+
+        def run(cmd, cwd):
+            calls.append((cmd, cwd))
+            return subprocess.CompletedProcess(cmd, 0)
+
+        wakaru = resolve_wakaru(None, run=run)
+
+        self.assertEqual(calls, [(
+            ["cargo", "build", "--profile", "dev-opt", "-p", "wakaru-cli"],
+            REPO_ROOT,
+        )])
+        self.assertEqual(wakaru.parent, REPO_ROOT / "target" / "dev-opt")
+
+    def test_explicit_binary_is_used_without_building(self):
+        with tempfile.NamedTemporaryFile() as binary:
+            def run(cmd, cwd):
+                raise AssertionError("explicit --wakaru must not build")
+
+            self.assertEqual(resolve_wakaru(binary.name, run=run), Path(binary.name))
 
 
 if __name__ == "__main__":

@@ -211,10 +211,20 @@ async function runPool(items, worker, concurrency = defaultConcurrency()) {
   await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, run));
 }
 
-function spawnJobAsync(job) {
+// Jobs run the roundtrip runner, which builds the CLI itself unless $WAKARU is
+// set. Pin $WAKARU to the binary resolved here so concurrent jobs neither
+// rebuild nor ignore --skip-build.
+export function jobEnv(env = process.env, platform = process.platform) {
+  if (env.WAKARU) return env;
+  const exe = platform === "win32" ? "wakaru.exe" : "wakaru";
+  return { ...env, WAKARU: join(repoRoot, "target", "debug", exe) };
+}
+
+function spawnJobAsync(job, env) {
   return new Promise((resolvePromise) => {
     const child = spawn(job.command, job.args, {
       cwd: repoRoot,
+      env,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stderr = "";
@@ -266,6 +276,7 @@ export async function runBaselineMatrix(options) {
     }
   }
 
+  const env = jobEnv();
   const concurrency = defaultConcurrency();
   let failCount = 0;
 
@@ -273,7 +284,7 @@ export async function runBaselineMatrix(options) {
 
   await runPool(jobs, async (job) => {
     const displaySummary = relative(repoRoot, job.summary);
-    const { code, stderr } = await spawnJobAsync(job);
+    const { code, stderr } = await spawnJobAsync(job, env);
     if (code !== 0) {
       console.log(`FAIL ${job.producer} / ${job.slice} -> ${displaySummary} (exit ${code})`);
       if (stderr.trim()) console.log(stderr.trim());

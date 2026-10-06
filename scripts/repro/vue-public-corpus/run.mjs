@@ -184,7 +184,7 @@ Options:
   --skip-install         Skip the case install command.
   --skip-build           Skip the case build command.
   --skip-sfc-validate    Skip @vue/compiler-sfc validation.
-  --no-build-wakaru      Use WAKARU or an existing dev-release binary.
+  --no-build-wakaru      Use WAKARU or an existing dev-opt binary.
   --no-keep-going        Stop after the first failed case.
   --json                 Print JSON report instead of Markdown.
   --help                 Show this message.
@@ -206,9 +206,9 @@ function resolveWakaru(options) {
     return process.env.WAKARU;
   }
 
-  const binary = join(repoRoot, "target", "dev-release", process.platform === "win32" ? "wakaru.exe" : "wakaru");
+  const binary = join(repoRoot, "target", "dev-opt", process.platform === "win32" ? "wakaru.exe" : "wakaru");
   if (!options.skipWakaruBuild) {
-    runChecked(["cargo", "build", "--profile", "dev-release", "-p", "wakaru-cli"], {
+    runChecked(["cargo", "build", "--profile", "dev-opt", "-p", "wakaru-cli"], {
       cwd: repoRoot,
       label: "build wakaru-cli",
     });

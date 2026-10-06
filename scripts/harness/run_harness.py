@@ -27,7 +27,9 @@ HARNESS = Path(__file__).resolve().parent
 WORKSPACE = HARNESS / "workspace"
 APPS = WORKSPACE / "apps"
 REPO_ROOT = HARNESS.parent.parent
-DEFAULT_WAKARU = REPO_ROOT / "target" / "dev-release" / "wakaru"
+# Unpack output checks rebuild after every edit, so they use dev-opt (see
+# Cargo.toml); dev-release is for performance numbers.
+WAKARU_PROFILE = "dev-opt"
 
 sys.path.insert(0, str(HARNESS))
 from gen_app import generate  # noqa: E402
@@ -46,6 +48,26 @@ def sh(cmd, cwd=None, env=None, label=""):
         for line in tail:
             print(f"      {line}")
     return r
+
+
+def resolve_wakaru(explicit, run=subprocess.run):
+    """Return the CLI to test: an explicit path as-is, else a fresh build.
+
+    Cargo's no-op build takes about a second, so the default path always
+    refreshes this checkout's binary instead of trusting whatever is in target/.
+    """
+    if explicit:
+        wakaru = Path(explicit)
+        if not wakaru.exists():
+            sys.exit(f"wakaru binary not found at {wakaru}")
+        return wakaru
+    r = run(["cargo", "build", "--profile", WAKARU_PROFILE, "-p", "wakaru-cli"],
+            cwd=REPO_ROOT)
+    if r.returncode != 0:
+        sys.exit(f"cargo build --profile {WAKARU_PROFILE} -p wakaru-cli "
+                 f"exited {r.returncode}")
+    exe = "wakaru.exe" if os.name == "nt" else "wakaru"
+    return REPO_ROOT / "target" / WAKARU_PROFILE / exe
 
 
 def ensure_workspace():
@@ -173,13 +195,12 @@ def main():
     ap.add_argument("--modes", default="prod,dev")
     ap.add_argument("--layouts", default="iife,split",
                     help="esbuild/rollup layouts: iife,split")
-    ap.add_argument("--wakaru", default=str(DEFAULT_WAKARU))
+    ap.add_argument("--wakaru",
+                    help="wakaru binary to test (default: build this checkout's "
+                         f"{WAKARU_PROFILE} CLI)")
     args = ap.parse_args()
 
-    wakaru = Path(args.wakaru)
-    if not wakaru.exists():
-        sys.exit(f"wakaru binary not found at {wakaru}; build with "
-                 f"`cargo build --profile dev-release -p wakaru-cli`")
+    wakaru = resolve_wakaru(args.wakaru)
 
     ensure_workspace()
     seeds = [int(s) for s in args.seeds.split(",")]
