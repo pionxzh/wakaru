@@ -1,6 +1,7 @@
 pub mod amd;
 pub mod browserify;
 pub mod chunk_enumeration;
+mod chunk_loading_global;
 pub mod closure_module_manager;
 pub(crate) mod emit_esm;
 pub mod esbuild;
@@ -872,6 +873,9 @@ pub(crate) struct DetectedBundle {
     /// a bare `.i` in a modern chunk must not be guessed from the table key.
     pub(crate) webpack_legacy_module_i: crate::collections::HashSet<String>,
     pub(crate) chunk_ids: crate::collections::HashSet<usize>,
+    /// Names of the chunk-loading globals the input pushes into or binds as a
+    /// runtime: the input's build identity for cross-input numeric rewrites.
+    pub(crate) chunk_loading_globals: Vec<String>,
     /// Statically extracted webpack chunk-reference surface, when one was
     /// found. Populated only for the dedicated debug inspection path and
     /// never consumed by module recovery.
@@ -893,6 +897,7 @@ impl DetectedBundle {
             webpack_numeric_module_ids: Default::default(),
             webpack_legacy_module_i: Default::default(),
             chunk_ids: Default::default(),
+            chunk_loading_globals: Vec::new(),
             chunk_enumeration: None,
             input_has_esm_declarations: false,
             materialize_cm: None,
@@ -917,6 +922,7 @@ impl DetectedBundle {
             webpack_numeric_module_ids: Default::default(),
             webpack_legacy_module_i: Default::default(),
             chunk_ids: Default::default(),
+            chunk_loading_globals: Vec::new(),
             chunk_enumeration: None,
             input_has_esm_declarations: false,
             materialize_cm: Some(materialize_cm),
@@ -1287,6 +1293,7 @@ fn detect_parsed_source(
     let chunk_ids = webpack5::detect_chunk_ids_from_module(module);
     if let Some(mut result) = detect_bundle_candidate(module, cm.clone(), source, true, positions) {
         result.chunk_ids = chunk_ids;
+        result.chunk_loading_globals = chunk_loading_global::chunk_loading_globals(module);
         result.input_has_esm_declarations = input_has_esm_declarations;
         if collect_chunk_enumeration {
             let unresolved_mark = resolve_chunk_enumeration_module(module);
@@ -1303,6 +1310,7 @@ fn detect_parsed_source(
         detect_owned_bun_candidate(candidate, cm.clone(), source, positions)
     }) {
         result.chunk_ids = chunk_ids;
+        result.chunk_loading_globals = chunk_loading_global::chunk_loading_globals(module);
         result.input_has_esm_declarations = input_has_esm_declarations;
         return Some(result);
     }
@@ -1313,6 +1321,8 @@ fn detect_parsed_source(
             detect_bundle_candidate(&candidate, cm.clone(), source, false, positions)
         {
             result.chunk_ids = chunk_ids;
+            // The unwrapped body holds the chunk push a wrapper hid from the top level.
+            result.chunk_loading_globals = chunk_loading_global::chunk_loading_globals(&candidate);
             result.input_has_esm_declarations = input_has_esm_declarations;
             if collect_chunk_enumeration {
                 let unresolved_mark = resolve_chunk_enumeration_module(&mut candidate);
@@ -1334,6 +1344,7 @@ fn detect_parsed_source(
     result.map(|result| {
         let mut detected = DetectedBundle::from_result(result);
         detected.chunk_ids = chunk_ids;
+        detected.chunk_loading_globals = chunk_loading_global::chunk_loading_globals(module);
         detected.input_has_esm_declarations = input_has_esm_declarations;
         detected
     })

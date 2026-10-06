@@ -590,11 +590,22 @@ the same `prepare_unpack_input` intake and structured executor result used by
 the façade; no production caller or second detector loop remains.
 
 Before the two-phase pipeline starts, multi-source unpack stabilizes the merged
-module set: filenames are made unique before fact collection, and unambiguous
-numeric webpack module IDs are mapped to those final filenames so entry/chunk
-references can be rewritten across physical input files. Duplicate numeric IDs
-are treated as ambiguous and are not rewritten globally, which avoids merging
-unrelated webpack runtimes from the same scanned directory.
+module set: filenames are made unique before fact collection, and numeric
+webpack module IDs are mapped to those final filenames so entry/chunk
+references can be rewritten across physical input files.
+
+A numeric reference only links within its own build. One page often loads
+several unrelated builds (an app, an ad SDK, a support widget), each numbering
+its modules from its own table. Each input's build identity is the
+chunk-loading global it pushes into (`(self.webpackChunk_app =
+self.webpackChunk_app || []).push(…)`, Turbopack's `globalThis.TURBOPACK…`) or,
+for a runtime, the one it binds to a local (`var n = self.webpackChunk_app =
+self.webpackChunk_app || []`). An input that names a global matches only
+inputs sharing a name; inputs that name none (CommonJS chunks and their
+runtime, server chunks, a self-contained bundle) match only each other. A
+reference is rewritten when exactly one candidate of its build carries the ID,
+so the same ID in an unrelated build no longer blocks the rewrite, and two
+candidates in one build stay ambiguous and keep the numeric call.
 In normal output, opaque factories still reserve their numeric IDs but cannot
 become rewritten callers or targets. Recoverable siblings remain eligible for
 cross-input rewrites; an opaque factory does not disable its whole container.

@@ -3,7 +3,8 @@
 //! When unpacking multiple input files at once, extracted module filenames are
 //! uniqued across inputs. Relative references are updated when that uniquing
 //! renames sibling outputs, and numeric `require(<id>)` / async-chunk
-//! references are rewritten when the target id is unambiguous across inputs.
+//! references are rewritten when the target id is unambiguous among the
+//! inputs of the referencing module's build.
 
 use crate::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -59,6 +60,10 @@ pub(super) struct MultiSourceModule {
     /// elimination must fail closed for this module.
     external_consumers: bool,
     chunk_ids: Arc<HashSet<usize>>,
+    /// The input's build identity: the chunk-loading globals it pushes into or
+    /// binds as a runtime (empty when it shows none). A numeric reference only
+    /// links to a module of the same build.
+    chunk_loading_globals: Arc<[String]>,
     input_filename: String,
     input_group: String,
     input: Option<PreparedInputId>,
@@ -124,10 +129,16 @@ impl MultiSourceModule {
             report_import_cycle_warnings,
             external_consumers: false,
             chunk_ids: chunk_ids.into(),
+            chunk_loading_globals: Arc::default(),
             input_filename,
             input_group,
             input,
         }
+    }
+
+    pub(super) fn with_chunk_loading_globals(mut self, globals: Arc<[String]>) -> Self {
+        self.chunk_loading_globals = globals;
+        self
     }
 
     pub(super) fn with_implicit_commonjs_default_object(mut self, enabled: bool) -> Self {
@@ -184,6 +195,7 @@ impl MultiSourceModule {
             report_import_cycle_warnings: false,
             external_consumers: false,
             chunk_ids: Arc::default(),
+            chunk_loading_globals: Arc::default(),
             input_filename: String::new(),
             input_group: String::new(),
             input,
@@ -260,6 +272,7 @@ impl PreparedUnpackModule {
 pub(super) struct NumericRewriteModuleContext {
     input_group: String,
     module_filename: String,
+    build: Arc<[String]>,
 }
 
 pub(super) struct FilenameRewriteModuleContext {
@@ -268,15 +281,48 @@ pub(super) struct FilenameRewriteModuleContext {
     rename_map: Arc<HashMap<String, String>>,
 }
 
+/// Every module that a numeric id names, across all inputs. A reference
+/// resolves only when exactly one candidate belongs to the referencing
+/// module's build and that candidate is healthy.
 #[derive(Default)]
 pub(super) struct NumericRewritePlan {
-    plain_id_to_filename: HashMap<usize, String>,
-    chunk_id_to_filename: HashMap<(String, usize, usize), String>,
+    plain_id_targets: HashMap<usize, Vec<NumericTarget>>,
+    chunk_id_targets: HashMap<(String, usize, usize), Vec<NumericTarget>>,
+    can_rewrite: bool,
+}
+
+struct NumericTarget {
+    /// `None` for an opaque factory. It still occupies its id, so a healthy
+    /// same-numbered module elsewhere in the build cannot capture a
+    /// deliberately unresolved reference.
+    filename: Option<String>,
+    build: Arc<[String]>,
 }
 
 impl NumericRewritePlan {
+    fn new(
+        plain_id_targets: HashMap<usize, Vec<NumericTarget>>,
+        chunk_id_targets: HashMap<(String, usize, usize), Vec<NumericTarget>>,
+    ) -> Self {
+        // Skip the rewrite pass when no candidate could ever resolve: every
+        // candidate is opaque or shares its build with another candidate.
+        let resolvable = |targets: &Vec<NumericTarget>| {
+            targets.iter().any(|target| {
+                target.filename.is_some()
+                    && resolve_numeric_target(targets, &target.build).is_some()
+            })
+        };
+        let can_rewrite =
+            plain_id_targets.values().any(resolvable) || chunk_id_targets.values().any(resolvable);
+        Self {
+            plain_id_targets,
+            chunk_id_targets,
+            can_rewrite,
+        }
+    }
+
     pub(super) fn is_empty(&self) -> bool {
-        self.plain_id_to_filename.is_empty() && self.chunk_id_to_filename.is_empty()
+        !self.can_rewrite
     }
 }
 
@@ -334,10 +380,10 @@ pub(super) fn prepare_multi_source_modules(
         .into_iter()
         .map(|(input, rename_map)| (input, Arc::new(rename_map)))
         .collect::<HashMap<_, _>>();
-    let numeric_rewrite_plan = NumericRewritePlan {
-        plain_id_to_filename: unique_numeric_module_id_map(&modules),
-        chunk_id_to_filename: unique_numeric_chunk_module_id_map(&modules),
-    };
+    let numeric_rewrite_plan = NumericRewritePlan::new(
+        numeric_module_id_targets(&modules),
+        numeric_chunk_module_id_targets(&modules),
+    );
     let has_rewrites = !numeric_rewrite_plan.is_empty();
 
     let modules = modules
@@ -352,6 +398,7 @@ pub(super) fn prepare_multi_source_modules(
                 Some(NumericRewriteModuleContext {
                     input_group: module.input_group,
                     module_filename: module.module.filename.clone(),
+                    build: module.chunk_loading_globals.clone(),
                 })
             } else {
                 None
@@ -514,8 +561,18 @@ fn chunk_filename_matches_id(filename: &str, chunk_id: usize) -> bool {
     name == format!("{chunk_id}.js") || name == format!("{chunk_id}.bundle.js")
 }
 
-fn unique_numeric_module_id_map(modules: &[MultiSourceModule]) -> HashMap<usize, String> {
-    let mut counts: HashMap<usize, (usize, Option<String>)> = HashMap::default();
+fn numeric_target(module: &MultiSourceModule) -> NumericTarget {
+    NumericTarget {
+        filename: module
+            .detector_failure
+            .is_none()
+            .then(|| module.module.filename.clone()),
+        build: module.chunk_loading_globals.clone(),
+    }
+}
+
+fn numeric_module_id_targets(modules: &[MultiSourceModule]) -> HashMap<usize, Vec<NumericTarget>> {
+    let mut targets: HashMap<usize, Vec<NumericTarget>> = HashMap::default();
     for module in modules {
         if !module.allow_cross_chunk_rewrite {
             continue;
@@ -523,31 +580,15 @@ fn unique_numeric_module_id_map(modules: &[MultiSourceModule]) -> HashMap<usize,
         let Ok(id) = module.module.id.parse::<usize>() else {
             continue;
         };
-        // Opaque factories still occupy their IDs. Counting them prevents a
-        // healthy same-numbered module in another input from capturing a
-        // deliberately unresolved reference, without excluding healthy siblings.
-        let filename = module
-            .detector_failure
-            .is_none()
-            .then(|| module.module.filename.clone());
-        let entry = counts.entry(id).or_default();
-        entry.0 += 1;
-        entry.1 = filename;
+        targets.entry(id).or_default().push(numeric_target(module));
     }
-
-    counts
-        .into_iter()
-        .filter_map(|(key, entry)| match entry {
-            (1, Some(filename)) => Some((key, filename)),
-            _ => None,
-        })
-        .collect()
+    targets
 }
 
-fn unique_numeric_chunk_module_id_map(
+fn numeric_chunk_module_id_targets(
     modules: &[MultiSourceModule],
-) -> HashMap<(String, usize, usize), String> {
-    let mut counts: HashMap<(String, usize, usize), (usize, Option<String>)> = HashMap::default();
+) -> HashMap<(String, usize, usize), Vec<NumericTarget>> {
+    let mut targets: HashMap<(String, usize, usize), Vec<NumericTarget>> = HashMap::default();
     for module in modules {
         if !module.allow_cross_chunk_rewrite || module.chunk_ids.is_empty() {
             continue;
@@ -559,26 +600,36 @@ fn unique_numeric_chunk_module_id_map(
             if !chunk_filename_matches_id(&module.input_filename, *chunk_id) {
                 continue;
             }
-            // Use the same occupied-ID rule for explicit async chunk edges.
-            let filename = module
-                .detector_failure
-                .is_none()
-                .then(|| module.module.filename.clone());
-            let entry = counts
+            targets
                 .entry((module.input_group.clone(), *chunk_id, id))
-                .or_default();
-            entry.0 += 1;
-            entry.1 = filename;
+                .or_default()
+                .push(numeric_target(module));
         }
     }
+    targets
+}
 
-    counts
-        .into_iter()
-        .filter_map(|(key, entry)| match entry {
-            (1, Some(filename)) => Some((key, filename)),
-            _ => None,
-        })
-        .collect()
+/// The one healthy candidate in `build`, if the build has exactly one.
+fn resolve_numeric_target<'a>(targets: &'a [NumericTarget], build: &[String]) -> Option<&'a str> {
+    let mut compatible = targets
+        .iter()
+        .filter(|target| same_build(&target.build, build));
+    let target = compatible.next()?;
+    if compatible.next().is_some() {
+        return None;
+    }
+    target.filename.as_deref()
+}
+
+/// Inputs that name no chunk-loading global (CommonJS chunks and their
+/// runtime, server chunks, other formats) keep the build-agnostic match they
+/// have always had among themselves; an input that names one only matches an
+/// input sharing a name.
+fn same_build(left: &[String], right: &[String]) -> bool {
+    if left.is_empty() || right.is_empty() {
+        return left.is_empty() && right.is_empty();
+    }
+    left.iter().any(|name| right.contains(name))
 }
 
 pub(super) fn apply_numeric_rewrites(
@@ -597,9 +648,9 @@ pub(super) fn apply_numeric_rewrites(
     module.visit_mut_with(&mut WebpackNumericReferenceRewriter {
         input_group: &context.input_group,
         module_filename: &context.module_filename,
+        build: &context.build,
         unresolved_mark,
-        plain_id_to_filename: &plan.plain_id_to_filename,
-        chunk_id_to_filename: &plan.chunk_id_to_filename,
+        plan,
     });
 }
 
@@ -710,9 +761,9 @@ pub(super) fn emit_raw_modules_with_numeric_rewrites(
 struct WebpackNumericReferenceRewriter<'a> {
     input_group: &'a str,
     module_filename: &'a str,
+    build: &'a [String],
     unresolved_mark: Mark,
-    plain_id_to_filename: &'a HashMap<usize, String>,
-    chunk_id_to_filename: &'a HashMap<(String, usize, usize), String>,
+    plan: &'a NumericRewritePlan,
 }
 
 impl VisitMut for WebpackNumericReferenceRewriter<'_> {
@@ -738,7 +789,12 @@ impl WebpackNumericReferenceRewriter<'_> {
         let Some(module_id) = numeric_single_arg_id(call) else {
             return;
         };
-        let Some(filename) = self.plain_id_to_filename.get(&module_id) else {
+        let Some(filename) = self
+            .plan
+            .plain_id_targets
+            .get(&module_id)
+            .and_then(|targets| resolve_numeric_target(targets, self.build))
+        else {
             return;
         };
         rewrite_numeric_arg_to_filename(&mut call.args[0], self.module_filename, filename);
@@ -864,9 +920,11 @@ impl WebpackNumericReferenceRewriter<'_> {
         let Some(module_id) = numeric_arg_id(&arg.expr) else {
             return;
         };
-        let Some(filename) =
-            self.chunk_id_to_filename
-                .get(&(self.input_group.to_string(), chunk_id, module_id))
+        let Some(filename) = self
+            .plan
+            .chunk_id_targets
+            .get(&(self.input_group.to_string(), chunk_id, module_id))
+            .and_then(|targets| resolve_numeric_target(targets, self.build))
         else {
             return;
         };
@@ -950,19 +1008,17 @@ mod tests {
             }
             let (prepared, plan) =
                 prepare_multi_source_modules(modules, &PlannedPublicPaths::default());
-            assert_eq!(
-                plan.plain_id_to_filename.get(&100).map(String::as_str),
-                Some("module-100.js")
-            );
-            assert!(!plan.plain_id_to_filename.contains_key(&200));
-            assert!(plan
-                .chunk_id_to_filename
-                .keys()
-                .any(|(_, _, id)| *id == 100));
-            assert!(!plan
-                .chunk_id_to_filename
-                .keys()
-                .any(|(_, _, id)| *id == 200));
+            let plain = |id| resolve_numeric_target(&plan.plain_id_targets[&id], &[]);
+            let chunk = |id| {
+                plan.chunk_id_targets
+                    .iter()
+                    .filter(|((_, _, key), _)| *key == id)
+                    .find_map(|(_, targets)| resolve_numeric_target(targets, &[]))
+            };
+            assert_eq!(plain(100), Some("module-100.js"));
+            assert_eq!(plain(200), None);
+            assert_eq!(chunk(100), Some("module-100.js"));
+            assert_eq!(chunk(200), None);
             assert!(prepared[0].numeric_rewrite.is_some());
             assert!(prepared[1].numeric_rewrite.is_none());
         }

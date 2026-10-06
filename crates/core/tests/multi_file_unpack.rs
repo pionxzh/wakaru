@@ -1454,6 +1454,150 @@ exports.modules = {
     );
 }
 
+fn unpack_named(inputs: &[(&str, &str)]) -> Vec<(String, String)> {
+    unpack_files(
+        inputs
+            .iter()
+            .map(|(filename, source)| UnpackInput {
+                filename: filename.to_string(),
+                source: source.to_string(),
+            })
+            .collect(),
+        DecompileOptions::default(),
+    )
+    .expect("inputs should unpack together")
+    .modules
+}
+
+fn module_named<'a>(modules: &'a [(String, String)], name: &str) -> &'a str {
+    modules
+        .iter()
+        .find(|(filename, _)| filename == name)
+        .map(|(_, code)| code.as_str())
+        .unwrap_or_else(|| {
+            panic!(
+                "{name} should exist, got {:?}",
+                modules.iter().map(|(name, _)| name).collect::<Vec<_>>()
+            )
+        })
+}
+
+const APP_CONSUMER_CHUNK: &str = r#"
+(self.webpackChunk_app = self.webpackChunk_app || []).push([[1], {
+    100: function(module, exports, require) { module.exports = require(200); }
+}]);
+"#;
+
+#[test]
+fn numeric_require_does_not_link_into_another_builds_chunk() {
+    let widget = r#"
+(self.webpackChunk_widget = self.webpackChunk_widget || []).push([[9], {
+    200: function(module) { module.exports = "widget"; }
+}]);
+"#;
+    for inputs in [
+        [("app.js", APP_CONSUMER_CHUNK), ("widget.js", widget)],
+        [("widget.js", widget), ("app.js", APP_CONSUMER_CHUNK)],
+    ] {
+        let modules = unpack_named(&inputs);
+        let consumer = module_named(&modules, "module-100.js");
+        assert!(consumer.contains("require(200)"), "{consumer}");
+        assert!(!consumer.contains("module-200"), "{consumer}");
+    }
+}
+
+#[test]
+fn numeric_require_from_a_chunk_does_not_link_into_a_standalone_bundle() {
+    // A self-contained bundle installs no chunk-loading global: its module
+    // table is private to its own runtime.
+    let widget = r#"
+(() => {
+  var __webpack_modules__ = ({
+    200: function(module) { module.exports = "widget"; },
+    300: function(module, exports, require) { module.exports = require(200); }
+  });
+  var __webpack_module_cache__ = {};
+  function __webpack_require__(id) {
+    var cached = __webpack_module_cache__[id];
+    if (cached !== undefined) return cached.exports;
+    var module = __webpack_module_cache__[id] = { exports: {} };
+    __webpack_modules__[id](module, module.exports, __webpack_require__);
+    return module.exports;
+  }
+  __webpack_require__(300);
+})();
+"#;
+    let modules = unpack_named(&[("app.js", APP_CONSUMER_CHUNK), ("widget.js", widget)]);
+    let consumer = module_named(&modules, "module-100.js");
+    assert!(consumer.contains("require(200)"), "{consumer}");
+    assert!(!consumer.contains("module-200"), "{consumer}");
+}
+
+#[test]
+fn numeric_require_links_to_its_own_build_when_another_build_reuses_the_id() {
+    let app_provider = r#"
+(self.webpackChunk_app = self.webpackChunk_app || []).push([[2], {
+    200: function(module) { module.exports = "app"; }
+}]);
+"#;
+    let widget = r#"
+(self.webpackChunk_widget = self.webpackChunk_widget || []).push([[9], {
+    200: function(module) { module.exports = "widget"; }
+}]);
+"#;
+    for inputs in [
+        [
+            ("app.js", APP_CONSUMER_CHUNK),
+            ("widget.js", widget),
+            ("app-provider.js", app_provider),
+        ],
+        [
+            ("app-provider.js", app_provider),
+            ("widget.js", widget),
+            ("app.js", APP_CONSUMER_CHUNK),
+        ],
+    ] {
+        let modules = unpack_named(&inputs);
+        let (app_name, _) = modules
+            .iter()
+            .find(|(name, code)| name.starts_with("module-200") && code.contains("\"app\""))
+            .expect("the app's module 200 should be emitted");
+        let consumer = module_named(&modules, "module-100.js");
+        assert!(consumer.contains(&format!("./{app_name}")), "{consumer}");
+        assert!(!consumer.contains("require(200)"), "{consumer}");
+    }
+}
+
+#[test]
+fn numeric_require_links_a_runtime_bundle_to_chunks_of_the_global_it_binds() {
+    let entry = r#"
+(() => {
+  var __webpack_modules__ = ({
+    20: function(module, exports, require) { module.exports = require(999); }
+  });
+  var __webpack_module_cache__ = {};
+  function __webpack_require__(id) {
+    var cached = __webpack_module_cache__[id];
+    if (cached !== undefined) return cached.exports;
+    var module = __webpack_module_cache__[id] = { exports: {} };
+    __webpack_modules__[id](module, module.exports, __webpack_require__);
+    return module.exports;
+  }
+  var chunkLoadingGlobal = self["webpackChunk_app"] = self["webpackChunk_app"] || [];
+  __webpack_require__(20);
+})();
+"#;
+    let chunk = r#"
+(self.webpackChunk_app = self.webpackChunk_app || []).push([[5], {
+    999: function(module) { module.exports = "shared"; }
+}]);
+"#;
+    let modules = unpack_named(&[("entry.js", entry), ("chunk.js", chunk)]);
+    let consumer = module_named(&modules, "module-20.js");
+    assert!(consumer.contains("./module-999.js"), "{consumer}");
+    assert!(!consumer.contains("require(999)"), "{consumer}");
+}
+
 #[test]
 fn parent_relative_inputs_keep_public_paths_without_failing() {
     // `wakaru --unpack ../pkg/*.js` is an ordinary invocation; the traversal

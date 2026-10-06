@@ -471,6 +471,8 @@ pub fn unpack_prepared_inputs_with_policy(
                     continue;
                 }
                 let chunk_ids = Arc::new(detected.chunk_ids.clone());
+                let chunk_loading_globals: Arc<[String]> =
+                    detected.chunk_loading_globals.as_slice().into();
                 // Capture this detector-owned fact before optional materialization or
                 // recursive scope splitting. Empty webpack factories cannot split, so
                 // their stable `(id, filename)` identity survives both paths, while an
@@ -584,6 +586,7 @@ pub fn unpack_prepared_inputs_with_policy(
                             .with_webpack_commonjs_runtime(webpack_commonjs_runtime)
                             .with_webpack_numeric_module_id(webpack_numeric_module_id)
                             .with_webpack_legacy_module_i(webpack_legacy_module_i)
+                            .with_chunk_loading_globals(chunk_loading_globals.clone())
                             .with_detector_failure(detector_failure)
                             .with_detector_note(detector_note)
                             .with_external_consumers(external_consumers)

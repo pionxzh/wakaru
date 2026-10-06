@@ -90,6 +90,7 @@ crates/
         metro.rs                    — Metro plain-bundle detection and extraction
         scope_hoist.rs              — heuristic scope-hoisted splitting (esbuild, Bun, Rollup, Vite)
         chunk_enumeration.rs        — fail-closed lazy-chunk URL / relative-import enumeration (`debug enumerate-chunks`)
+        chunk_loading_global.rs     — an input's chunk-loading global names (its build identity for multi-input numeric rewrites)
       utils/
         paren.rs, swc_safety.rs     — paren stripping, SWC panic guards
     tests/
