@@ -755,6 +755,11 @@ fn try_simplify_array_concat(
             // An object literal that may be concat-spreadable is still not
             // iterable, so neither form is faithful.
             Expr::Object(_) => return None,
+            // The `arguments` object is array-like, not an Array: `concat`
+            // appends it as one element, and spread copies its entries. A
+            // sloppy-mode local may also be named `arguments`, so keep the
+            // call rather than classify it.
+            Expr::Ident(ident) if ident.sym == "arguments" => return None,
             expr if level >= RewriteLevel::Aggressive => elems.push(Some(spread_elem(expr))),
             _ => return None,
         }

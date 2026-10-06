@@ -366,6 +366,22 @@ const c = [].concat({ __proto__: p }, items);
 }
 
 #[test]
+fn aggressive_keeps_concat_with_arguments_object() {
+    // `concat` appends the array-like `arguments` object as one element;
+    // spreading it would copy its entries instead.
+    let input = r#"
+function f() {
+    return [].concat(arguments);
+}
+function g() {
+    return [0].concat(arguments, [1]);
+}
+"#;
+    let output = apply_rule_with_level(input, RewriteLevel::Aggressive);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn aggressive_spreads_logical_expression_arguments() {
     // Either operand can be an array, so the assumption still applies.
     let input = r#"

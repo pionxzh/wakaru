@@ -480,7 +480,8 @@ the same receiver but wraps each spread argument in
 An argument that is visibly not an array (a primitive literal or operator
 result, a template literal, a function, or an object literal without computed
 or `__proto__` keys) stays one element, as concat appends it. An object literal
-that may be concat-spreadable keeps the concat call.
+that may be concat-spreadable, and the array-like `arguments` object, keep the
+concat call.
 
 Affects: `UnArrayConcatSpread` for arguments whose array identity is not proven.
 Array literals and the arguments its binding proof covers (rest parameters,
