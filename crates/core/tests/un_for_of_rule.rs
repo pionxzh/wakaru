@@ -548,6 +548,59 @@ for (const item of items) {
 }
 
 #[test]
+fn loose_iterator_helper_step_read_by_loop_closure_is_kept() {
+    // Babel's `_loop` closure reads `step` from outside the loop; the
+    // recovered loop would leave that read unbound.
+    let input = r#"
+function walk(items) {
+  const _loop = function () {
+    const item = step.value;
+    later(() => item);
+  };
+  let step;
+  for (const iterator = _createForOfIteratorHelperLoose(items); !(step = iterator()).done;) {
+    _loop();
+  }
+}
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("_createForOfIteratorHelperLoose(items)"),
+        "{output}"
+    );
+    assert!(!output.contains(" of items"), "{output}");
+}
+
+#[test]
+fn iterator_helper_step_read_by_loop_closure_is_kept() {
+    let input = r#"
+function walk(items) {
+  const _loop = function () {
+    const item = step.value;
+    later(() => item);
+  };
+  let step;
+  const iterator = _createForOfIteratorHelper(items);
+  try {
+    for (iterator.s(); !(step = iterator.n()).done;) {
+      _loop();
+    }
+  } catch (err) {
+    iterator.e(err);
+  } finally {
+    iterator.f();
+  }
+}
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("_createForOfIteratorHelper(items)"),
+        "{output}"
+    );
+    assert!(!output.contains(" of items"), "{output}");
+}
+
+#[test]
 fn for_of_from_babel_iterator_helper_rewrites_value_refs() {
     let input = r#"
 let step;

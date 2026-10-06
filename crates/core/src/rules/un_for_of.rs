@@ -889,7 +889,11 @@ fn try_convert_iterator_helper_sequence(
     let consumed_stmts = helper_index + 2;
     if stmts[consumed_stmts..].iter().any(|stmt| {
         stmt_uses_ident_key(stmt, &item_ident) || stmt_uses_ident_key(stmt, &helper_ident)
-    }) {
+    }) || temps_used_outside(
+        &stmts[..consumed_stmts],
+        &[&item_ident, &helper_ident],
+        helper_context,
+    ) {
         return None;
     }
 
@@ -921,7 +925,8 @@ fn try_convert_iterator_helper_decl_first_sequence(
 
     if stmts[3..].iter().any(|stmt| {
         stmt_uses_ident_key(stmt, &item_ident) || stmt_uses_ident_key(stmt, &helper_ident)
-    }) {
+    }) || temps_used_outside(&stmts[..3], &[&item_ident, &helper_ident], helper_context)
+    {
         return None;
     }
 
@@ -964,7 +969,8 @@ fn try_convert_loose_iterator_sequence(
     }
     if stmts[2..].iter().any(|stmt| {
         stmt_uses_ident_key(stmt, &item_ident) || stmt_uses_ident_key(stmt, &helper_ident)
-    }) {
+    }) || temps_used_outside(&stmts[..2], &[&item_ident, &helper_ident], helper_context)
+    {
         return None;
     }
 
@@ -984,6 +990,20 @@ fn try_convert_loose_iterator_sequence(
         preserved_stmts: Vec::new(),
         for_of,
     })
+}
+
+/// The step and iterator temps disappear from the recovered loop, so no code
+/// outside the consumed statements may read them. Babel's loop-closure
+/// function (`var _loop = function () { var token = _step.value; ... }`) is
+/// declared before the loop and reads the step from there.
+fn temps_used_outside(
+    consumed: &[Stmt],
+    temps: &[&Ident],
+    helper_context: &ForOfHelperContext,
+) -> bool {
+    temps
+        .iter()
+        .any(|temp| helper_context.binding_is_used_outside(consumed, temp))
 }
 
 fn try_convert_ts_values_sequence(
