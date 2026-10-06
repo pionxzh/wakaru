@@ -7,12 +7,13 @@ use swc_core::common::{Mark, Span, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BinaryOp, BindingIdent,
     BlockStmt, CallExpr, Callee, CondExpr, Decl, ExportAll, ExportDecl, ExportDefaultExpr,
-    ExportNamedSpecifier, ExportSpecifier, Expr, ExprStmt, ForHead, ForInStmt, Function,
-    FunctionBody, Id, Ident, IdentName, IfStmt, ImportDecl, ImportDefaultSpecifier,
-    ImportNamedSpecifier, ImportSpecifier, ImportStarAsSpecifier, Lit, MemberExpr, MemberProp,
-    Module, ModuleDecl, ModuleExportName, ModuleItem, NamedExport, ObjectPatProp, OptCall,
-    OptChainBase, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt,
-    Str, TaggedTpl, ThisExpr, UnaryExpr, UnaryOp, VarDecl, VarDeclKind, VarDeclarator,
+    ExportNamedSpecifier, ExportSpecifier, Expr, ExprOrSpread, ExprStmt, ForHead, ForInStmt,
+    Function, FunctionBody, Id, Ident, IdentName, IfStmt, ImportDecl, ImportDefaultSpecifier,
+    ImportNamedSpecifier, ImportSpecifier, ImportStarAsSpecifier, KeyValueProp, Lit, MemberExpr,
+    MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, NamedExport, ObjectLit,
+    ObjectPatProp, OptCall, OptChainBase, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SeqExpr,
+    SimpleAssignTarget, Stmt, Str, TaggedTpl, ThisExpr, UnaryExpr, UnaryOp, VarDecl, VarDeclKind,
+    VarDeclarator,
 };
 use swc_core::ecma::utils::{find_pat_ids, ExprFactory};
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -2146,19 +2147,23 @@ fn rewrite_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) {
 }
 
 /// Rewrite ncc's CommonJS default-object adapter when the complete generated
-/// export surface is exactly one live `default` getter.
+/// export surface is a set of live getters, one of them `default`.
 ///
-/// In that exact shape, `Object.assign(exports.default, exports)` copies only
-/// the enumerable `default` getter back onto the default value itself. Keep
-/// that self mirror and the observable `__esModule` definition on the
-/// recovered binding, while native ESM replaces the final `module.exports`
-/// reassignment.
+/// In that exact shape, `Object.assign(exports.default, exports)` copies each
+/// enumerable getter's current value onto the default value, in the order the
+/// getters were defined. Keep that copy (a self mirror when `default` is the
+/// only getter) and the observable `__esModule` definition on the recovered
+/// binding, while native ESM replaces the final `module.exports`
+/// reassignment. The copy has to stay: an unpacked consumer that imported the
+/// default and named exports of this module reads both through one binding
+/// (`import o from`, then `o()` and `o.useStatus`).
 ///
 /// This is deliberately not inferred from the eventual printed export. The
-/// proof requires one top-level generated getter, one final exact postamble,
-/// no pre-existing ESM declarations, and no other unresolved `exports` or
-/// `module` use anywhere in the module. Named properties, aliases, escapes,
-/// hidden mutations, and direct eval therefore fail closed.
+/// proof requires top-level generated getters that each return a local
+/// binding under a distinct ordinary name, one final exact postamble, no
+/// pre-existing ESM declarations, and no other unresolved `exports` or
+/// `module` use anywhere in the module. Data properties, re-export getters,
+/// aliases, escapes, hidden mutations, and direct eval therefore fail closed.
 fn rewrite_recovered_default_only_default_compat_block(module: &mut Module, unresolved_mark: Mark) {
     let compat_indices: Vec<usize> = module
         .body
@@ -2187,21 +2192,32 @@ fn rewrite_recovered_default_only_default_compat_block(module: &mut Module, unre
         return;
     }
 
-    let default_getters: Vec<(usize, Ident)> = module
+    let getters: Vec<(usize, Atom, Ident)> = module
         .body
         .iter()
         .enumerate()
         .filter_map(|(index, item)| {
-            extract_exports_default_ident_getter(item, unresolved_mark)
-                .map(|binding| (index, binding))
+            extract_exports_ident_getter(item, unresolved_mark)
+                .map(|(name, binding)| (index, name, binding))
         })
         .collect();
-    let [(default_getter_index, default_binding)] = default_getters.as_slice() else {
-        return;
-    };
-    if default_getter_index >= compat_index {
+    // Redefining a getter replaces it in place, and a non-configurable one
+    // throws. `__proto__` would set the prototype of an object literal instead
+    // of creating a property.
+    let mut names = HashSet::default();
+    if getters.iter().any(|(_, name, _)| {
+        !names.insert(name.clone()) || is_prototype_mutating_member_name(name.as_ref())
+    }) {
         return;
     }
+    let default_bindings: Vec<Ident> = getters
+        .iter()
+        .filter(|(_, name, _)| name.as_ref() == "default")
+        .map(|(_, _, binding)| binding.clone())
+        .collect();
+    let [default_binding] = default_bindings.as_slice() else {
+        return;
+    };
 
     let mut direct_eval = DirectEvalPresence::default();
     module.visit_with(&mut direct_eval);
@@ -2209,8 +2225,9 @@ fn rewrite_recovered_default_only_default_compat_block(module: &mut Module, unre
         return;
     }
 
+    let getter_indices: HashSet<usize> = getters.iter().map(|(index, _, _)| *index).collect();
     for (index, item) in module.body.iter().enumerate() {
-        if index == *compat_index || index == *default_getter_index {
+        if index == *compat_index || getter_indices.contains(&index) {
             continue;
         }
 
@@ -2227,9 +2244,14 @@ fn rewrite_recovered_default_only_default_compat_block(module: &mut Module, unre
         }
     }
 
+    let copied: Vec<(Atom, Ident)> = getters
+        .into_iter()
+        .map(|(_, name, binding)| (name, binding))
+        .collect();
     let Some(rewritten) = make_default_binding_compat_block(
         &module.body[*compat_index],
         default_binding,
+        &copied,
         unresolved_mark,
     ) else {
         return;
@@ -2851,7 +2873,9 @@ fn is_exports_default_compat_block(item: &ModuleItem, unresolved_mark: Mark) -> 
         && is_module_exports_default_reassignment(&block.stmts[2], unresolved_mark)
 }
 
-fn extract_exports_default_ident_getter(item: &ModuleItem, unresolved_mark: Mark) -> Option<Ident> {
+/// A top-level `Object.defineProperty(exports, "name", { enumerable: true,
+/// get() { return local; } })`, as its name and the local it returns.
+fn extract_exports_ident_getter(item: &ModuleItem, unresolved_mark: Mark) -> Option<(Atom, Ident)> {
     let ModuleItem::Stmt(Stmt::Expr(statement)) = item else {
         return None;
     };
@@ -2866,17 +2890,19 @@ fn extract_exports_default_ident_getter(item: &ModuleItem, unresolved_mark: Mark
     }
     if !matches!(strip_parens(call.args[0].expr.as_ref()), Expr::Ident(id)
         if is_unresolved_ident(id, "exports", unresolved_mark))
-        || !matches!(strip_parens(call.args[1].expr.as_ref()), Expr::Lit(Lit::Str(name))
-            if name.value.as_str() == Some("default"))
     {
         return None;
     }
-    extract_define_property_getter_ident(call.args[2].expr.as_ref(), unresolved_mark)
+    let name = literal_export_name_arg(call.args[1].expr.as_ref())?;
+    let binding =
+        extract_define_property_getter_ident(call.args[2].expr.as_ref(), unresolved_mark)?;
+    Some((name, binding))
 }
 
 fn make_default_binding_compat_block(
     item: &ModuleItem,
     default_binding: &Ident,
+    copied: &[(Atom, Ident)],
     unresolved_mark: Mark,
 ) -> Option<ModuleItem> {
     let (span, mut test, mut define_esmodule) =
@@ -2888,9 +2914,9 @@ fn make_default_binding_compat_block(
     test.visit_mut_with(&mut replacer);
     define_esmodule.visit_mut_with(&mut replacer);
 
-    let self_mirror = Stmt::Expr(ExprStmt {
-        span,
-        expr: Box::new(Expr::Assign(AssignExpr {
+    let copy = if let [(_, only)] = copied {
+        // `default` is the only getter: the copy is a self mirror.
+        Expr::Assign(AssignExpr {
             span,
             op: AssignOp::Assign,
             left: AssignTarget::Simple(SimpleAssignTarget::Member(MemberExpr {
@@ -2898,8 +2924,53 @@ fn make_default_binding_compat_block(
                 obj: Box::new(Expr::Ident(default_binding.clone())),
                 prop: MemberProp::Ident(IdentName::new("default".into(), span)),
             })),
-            right: Box::new(Expr::Ident(default_binding.clone())),
-        })),
+            right: Box::new(Expr::Ident(only.clone())),
+        })
+    } else {
+        // An object literal orders its keys the same way as `exports`
+        // (integer keys first, then creation order), and `Object.assign`
+        // still writes each one with `[[Set]]` on the default value.
+        let props = copied
+            .iter()
+            .map(|(name, binding)| {
+                let key = if is_valid_js_ident(name.as_ref()) {
+                    PropName::Ident(IdentName::new(name.clone(), span))
+                } else {
+                    PropName::Str(make_str(name.as_ref()))
+                };
+                PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
+                    key,
+                    value: Box::new(Expr::Ident(binding.clone())),
+                })))
+            })
+            .collect();
+        Expr::Call(CallExpr {
+            span,
+            ctxt: Default::default(),
+            callee: Callee::Expr(Box::new(Expr::Member(MemberExpr {
+                span,
+                obj: Box::new(Expr::Ident(make_unresolved_ident(
+                    "Object".into(),
+                    unresolved_mark,
+                ))),
+                prop: MemberProp::Ident(IdentName::new("assign".into(), span)),
+            }))),
+            args: vec![
+                ExprOrSpread {
+                    spread: None,
+                    expr: Box::new(Expr::Ident(default_binding.clone())),
+                },
+                ExprOrSpread {
+                    spread: None,
+                    expr: Box::new(Expr::Object(ObjectLit { span, props })),
+                },
+            ],
+            type_args: None,
+        })
+    };
+    let self_mirror = Stmt::Expr(ExprStmt {
+        span,
+        expr: Box::new(copy),
     });
 
     Some(ModuleItem::Stmt(Stmt::If(IfStmt {
@@ -3169,13 +3240,27 @@ fn is_exports_default_not_null(expr: &Expr, unresolved_mark: Mark) -> bool {
         && matches!(strip_parens(bin.right.as_ref()), Expr::Lit(Lit::Null(_)))
 }
 
+/// `exports.default.__esModule === undefined`, or the unminified
+/// `typeof exports.default.__esModule === "undefined"`.
 fn is_exports_default_esmodule_undefined(expr: &Expr, unresolved_mark: Mark) -> bool {
     let Expr::Bin(bin) = strip_parens(expr) else {
         return false;
     };
-    bin.op == BinaryOp::EqEqEq
-        && is_exports_default_esmodule_expr(bin.left.as_ref(), unresolved_mark)
-        && matches!(strip_parens(bin.right.as_ref()), Expr::Ident(id) if is_undefined_ident(id, unresolved_mark))
+    if bin.op != BinaryOp::EqEqEq {
+        return false;
+    }
+    match strip_parens(bin.left.as_ref()) {
+        Expr::Unary(unary) if unary.op == UnaryOp::TypeOf => {
+            is_exports_default_esmodule_expr(unary.arg.as_ref(), unresolved_mark)
+                && matches!(strip_parens(bin.right.as_ref()), Expr::Lit(Lit::Str(value))
+                    if value.value.as_str() == Some("undefined"))
+        }
+        left => {
+            is_exports_default_esmodule_expr(left, unresolved_mark)
+                && matches!(strip_parens(bin.right.as_ref()), Expr::Ident(id)
+                    if is_undefined_ident(id, unresolved_mark))
+        }
+    }
 }
 
 fn is_exports_default_esmodule_expr(expr: &Expr, unresolved_mark: Mark) -> bool {

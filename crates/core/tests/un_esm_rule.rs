@@ -2757,13 +2757,106 @@ if ((typeof exports.default === "function" || typeOf(exports.default) === "objec
     assert!(!output.contains("module.exports"), "{output}");
 }
 
+/// `Object.assign(exports.default, exports)` copies every enumerable getter
+/// in definition order, so the rewrite lists the getter bindings in that order.
+/// The copy is what lets an unpacked consumer read a named export through the
+/// default import (`import o from; o.useStatus()`).
 #[test]
-fn non_exact_default_surfaces_keep_default_compat_postamble() {
-    let cases = [
-        (
-            "named export getter",
-            format!(
-                r#"
+fn recovered_default_with_named_getters_rewrites_default_compat_postamble() {
+    let input = r#"
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+Object.defineProperty(exports, "default", {
+  enumerable: true,
+  get: function() {
+    return entry;
+  }
+});
+Object.defineProperty(exports, "useStatus", {
+  enumerable: true,
+  get: function() {
+    return status;
+  }
+});
+function entry() {}
+function status() {}
+("function" == typeof exports.default || "object" == typeof exports.default && null !== exports.default) && void 0 === exports.default.__esModule && (Object.defineProperty(exports.default, "__esModule", {
+  value: true
+}), Object.assign(exports.default, exports), module.exports = exports.default);
+"#;
+
+    let output = apply(input);
+    assert_eq_normalized(
+        &output,
+        r#"
+function entry() {}
+export { entry as default };
+export function useStatus() {}
+if ((typeof entry === "function" || typeof entry === "object" && entry !== null) && entry.__esModule === undefined) {
+    Object.defineProperty(entry, "__esModule", {
+        value: true
+    });
+    Object.assign(entry, {
+        default: entry,
+        useStatus
+    });
+}
+"#,
+    );
+    assert!(
+        validate_output_modules(&[("entry.js".into(), output)]).is_empty(),
+        "the rewritten adapter should leave no CommonJS residual"
+    );
+}
+
+#[test]
+fn default_compat_postamble_copies_named_getters_in_definition_order() {
+    let input = format!(
+        r#"
+Object.defineProperty(exports, "answer", {{
+  enumerable: true,
+  get() {{ return answer; }}
+}});
+Object.defineProperty(exports, "default", {{
+  enumerable: true,
+  get() {{ return entry; }}
+}});
+Object.defineProperty(exports, "aria-label", {{
+  enumerable: true,
+  get() {{ return label; }}
+}});
+function entry() {{}}
+const answer = 42;
+const label = "label";
+{DEFAULT_COMPAT_POSTAMBLE}
+"#
+    );
+
+    let output = apply(&input);
+    assert!(
+        output.contains(
+            "Object.assign(entry, {\n        answer,\n        default: entry,\n        \"aria-label\": label\n    });"
+        ),
+        "{output}"
+    );
+    assert!(!output.contains("exports"), "{output}");
+    assert!(!output.contains("module.exports"), "{output}");
+}
+
+/// Unminified output tests the marker with `typeof`; the rewrite keeps the
+/// test as written, so that spelling is taken too.
+#[test]
+fn typeof_undefined_default_compat_postamble_is_taken() {
+    const TYPEOF_POSTAMBLE: &str = r#"
+if ((typeof exports.default === 'function' || (typeof exports.default === 'object' && exports.default !== null)) && typeof exports.default.__esModule === 'undefined') {
+  Object.defineProperty(exports.default, '__esModule', { value: true });
+  Object.assign(exports.default, exports);
+  module.exports = exports.default;
+}
+"#;
+    let with_default = format!(
+        r#"
 Object.defineProperty(exports, "default", {{
   enumerable: true,
   get() {{ return entry; }}
@@ -2774,6 +2867,110 @@ Object.defineProperty(exports, "answer", {{
 }});
 function entry() {{}}
 const answer = 42;
+{TYPEOF_POSTAMBLE}
+"#
+    );
+    let output = apply(&with_default);
+    assert!(
+        output.contains("typeof entry.__esModule === 'undefined'"),
+        "{output}"
+    );
+    assert!(output.contains("default: entry"), "{output}");
+    assert!(!output.contains("exports"), "{output}");
+
+    let named_only = format!("const answer = 42;\nexports.answer = answer;\n{TYPEOF_POSTAMBLE}");
+    assert_eq_normalized(&apply(&named_only), "export const answer = 42;");
+}
+
+#[test]
+fn non_exact_default_surfaces_keep_default_compat_postamble() {
+    let cases = [
+        (
+            "non-enumerable named getter",
+            format!(
+                r#"
+Object.defineProperty(exports, "default", {{
+  enumerable: true,
+  get() {{ return entry; }}
+}});
+Object.defineProperty(exports, "answer", {{
+  get() {{ return answer; }}
+}});
+function entry() {{}}
+const answer = 42;
+{DEFAULT_COMPAT_POSTAMBLE}
+"#
+            ),
+        ),
+        (
+            "named re-export getter",
+            format!(
+                r#"
+const dependency = require("./dependency.js");
+Object.defineProperty(exports, "default", {{
+  enumerable: true,
+  get() {{ return entry; }}
+}});
+Object.defineProperty(exports, "answer", {{
+  enumerable: true,
+  get() {{ return dependency.answer; }}
+}});
+function entry() {{}}
+{DEFAULT_COMPAT_POSTAMBLE}
+"#
+            ),
+        ),
+        (
+            "named data property",
+            format!(
+                r#"
+Object.defineProperty(exports, "default", {{
+  enumerable: true,
+  get() {{ return entry; }}
+}});
+exports.answer = 42;
+function entry() {{}}
+{DEFAULT_COMPAT_POSTAMBLE}
+"#
+            ),
+        ),
+        (
+            "duplicate named getter",
+            format!(
+                r#"
+Object.defineProperty(exports, "default", {{
+  enumerable: true,
+  get() {{ return entry; }}
+}});
+Object.defineProperty(exports, "answer", {{
+  enumerable: true,
+  get() {{ return answer; }}
+}});
+Object.defineProperty(exports, "answer", {{
+  enumerable: true,
+  get() {{ return replacement; }}
+}});
+function entry() {{}}
+const answer = 42;
+const replacement = 43;
+{DEFAULT_COMPAT_POSTAMBLE}
+"#
+            ),
+        ),
+        (
+            "prototype getter name",
+            format!(
+                r#"
+Object.defineProperty(exports, "default", {{
+  enumerable: true,
+  get() {{ return entry; }}
+}});
+Object.defineProperty(exports, "__proto__", {{
+  enumerable: true,
+  get() {{ return base; }}
+}});
+function entry() {{}}
+const base = {{}};
 {DEFAULT_COMPAT_POSTAMBLE}
 "#
             ),
@@ -2947,6 +3144,24 @@ if ((typeof exports.default === "function" || typeof exports.default === "object
   Object.defineProperty(exports.default, "__esModule", {
     value: true,
     configurable: touch(exports)
+  });
+  Object.assign(exports.default, exports);
+  module.exports = exports.default;
+}
+"#
+            .to_string(),
+        ),
+        (
+            "typeof test against another type",
+            r#"
+Object.defineProperty(exports, "default", {
+  enumerable: true,
+  get() { return entry; }
+});
+function entry() {}
+if ((typeof exports.default === "function" || typeof exports.default === "object" && exports.default !== null) && typeof exports.default.__esModule === "boolean") {
+  Object.defineProperty(exports.default, "__esModule", {
+    value: true
   });
   Object.assign(exports.default, exports);
   module.exports = exports.default;

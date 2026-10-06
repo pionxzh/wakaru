@@ -259,20 +259,24 @@ receiver-sensitive calls, and additional CommonJS object escapes fail closed.
 Two same-module proofs handle the exact
 default-compatibility postamble. The named-only proof treats it as a dead branch
 only when every `exports` access outside the postamble is a static, non-default
-member access to an ordinary name. The default-only proof instead rewrites the
-generated CommonJS adapter onto the recovered binding when the complete surface
-has exactly one live identifier getter for `exports.default`, the postamble is
-the final statement, and there is no authored ESM or other unresolved
-`exports` / `module` use. Its observable `__esModule` definition and
-`.default = self` mirror remain; native ESM replaces only the namespace copy
-and final `module.exports` reassignment. A one-argument type helper in the
-guard need not be identified: its call and receiver remain in place, and only
-the exact live `exports.default` getter read becomes its recovered binding.
-Computed access, whole-object escape, unresolved getter helpers,
-prototype-mutating member names (`__proto__`, `__defineGetter__`,
-`__defineSetter__`), meaningful `module` use, direct eval, and mixed or named
-default-bearing surfaces all fail closed. Neither proof creates a default-object
-fact available to consumers.
+member access to an ordinary name. The default-bearing proof instead rewrites
+the generated CommonJS adapter onto the recovered binding when the complete
+surface is a set of top-level enumerable getters that each return a local
+binding under a distinct name, one of them `default`, the postamble is the
+final statement, and there is no authored ESM or other unresolved
+`exports` / `module` use. Its observable `__esModule` definition and the copy
+onto the default value remain: `.default = self` when `default` is the only
+getter, otherwise `Object.assign(self, { ... })` listing every getter's binding
+in definition order. Native ESM replaces only the final `module.exports`
+reassignment. The copy has to stay because an unpacked consumer that imported
+both the default and a named export reads them through one default binding.
+A one-argument type helper in the guard need not be identified: its call and
+receiver remain in place, and only the exact live `exports.default` getter
+read becomes its recovered binding. Computed access, whole-object escape,
+unresolved getter helpers, data properties, re-export getters, duplicate
+getters, prototype-mutating member names (`__proto__`, `__defineGetter__`,
+`__defineSetter__`), meaningful `module` use, and direct eval all fail closed.
+Neither proof creates a default-object fact available to consumers.
 
 ## Rules that read facts
 

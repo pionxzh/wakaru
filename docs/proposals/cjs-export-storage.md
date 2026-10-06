@@ -885,10 +885,42 @@ Both reach `lower_export_getter_helpers` and become the same getter
 definitions as the helper call, which keeps the body check (`getter_map_loop`)
 and the entry check. The loop is lowered only when the object is declared by
 the statement right before it and read nowhere else, so the loop sees the
-entries it was declared with; the declaration is removed with it. A module
-with a default export and Next's default-object compatibility tail still
-stays CommonJS (decision 8); without a default export the tail is dead and
-removed, as before.
+entries it was declared with; the declaration is removed with it. Without a
+default export, Next's default-object compatibility tail is dead and removed,
+as before; with one, see [Next's compatibility tail](#nexts-compatibility-tail).
+
+## Next's compatibility tail
+
+Next's CommonJS output ends with a tail that makes `require()` return the
+default export, with the named exports copied onto it:
+
+```js
+if ((typeof exports.default === "function" || typeof exports.default === "object" && exports.default !== null) && exports.default.__esModule === undefined) {
+  Object.defineProperty(exports.default, "__esModule", { value: true });
+  Object.assign(exports.default, exports);
+  module.exports = exports.default;
+}
+```
+
+It was rewritten only when `default` was the only export (a `.default =
+self` mirror). With named exports the module stayed CommonJS. Dropping the
+tail under source semantics was rejected: webpack compiles an app module's
+`import Link, { useStatus } from` this module to one binding read both ways
+(`n = r.n(o); n(); o.useStatus`), which unpacks to `import o from` plus
+`o.useStatus`, and that reads `undefined` once the default object no longer
+carries the named exports.
+
+The rewrite now takes named getters too. When every `exports` use is a
+top-level enumerable getter returning a local binding, under distinct names
+other than `__proto__`, the tail keeps its guard and `__esModule` definition,
+the copy becomes `Object.assign(D, { useStatus, default: D })` with the names
+in getter definition order, and only `module.exports = exports.default` is
+dropped. A getter that returns an imported member, a data property, or any
+other `exports` use keeps the module CommonJS. The unminified
+`typeof exports.default.__esModule === "undefined"` test is taken as well,
+since the rewrite keeps the test as written. Unminified swc output still
+stays CommonJS for another reason: its cjs-module-lexer annotation (see
+[Remaining gaps](#remaining-gaps)).
 
 ## Statement-path pre-pass audit
 
@@ -976,27 +1008,13 @@ out of this pass (see [Getter-loop IIFE](#getter-loop-iife)).
   lose later writes to the property, and a module whose getter has other
   code before the `require` declaration keeps the getter. The `require(<id>)`
   itself stays in the ESM output, with no warning.
-- **Next's default-object compatibility tail with a default export.** The
-  tail (`Object.assign(exports.default, exports); module.exports =
-  exports.default`) runs only when the module has a default export. Without
-  named exports it is rewritten exactly onto the default binding; with them
-  the module stays CommonJS (decision 8). Dropping the tail under source
-  semantics was considered and rejected: webpack compiles an app module's
-  `import Link, { useStatus } from` a Next CommonJS module to one binding
-  read both ways (`n = r.n(o); n(); o.useStatus`), which unpacks to `import
-  o from` plus `o.useStatus`, and that reads `undefined` once the default
-  object no longer carries the named exports. Next step (decided): extend
-  the exact default-only rewrite. Keep the guard and the `__esModule`
-  definition, turn the copy into `Object.assign(D, { <names in the order
-  `exports` defines them>, default: D })`, and drop only the `module.exports`
-  assignment. It needs the proof the named-only removal already makes:
-  every `exports` access is a static, ordinary name. A module without that
-  proof stays CommonJS.
 - **swc's cjs-module-lexer annotation in unminified output.** swc emits
   `0 && (module.exports = { a: null, ... })` so Node can detect the export
   names. A minifier drops it; unminified output keeps it, and the converted
   module carries a dead `if (0) { module.exports = ... }` that the
-  leftover-access warning reports although it never runs.
+  leftover-access warning reports although it never runs. With Next's
+  compatibility tail and a default export, the annotation is a `module` use
+  the tail rewrite does not accept, so that module stays CommonJS.
 - **The leftover-access warning covers `exports` and `module` only.** A
   `require(...)` that stays in the ESM output, such as one inside a function
   body or an unresolved `require(<id>)`, throws when it runs and is not
@@ -1046,10 +1064,11 @@ helpers such as `require.d`: no CommonJS loader provides them, so restoring
 gains nothing, and the converted form keeps the recovered exports and the
 warning. Before checking, `UnEsm` removes a default-object compatibility
 block that the converted getters left dead, which unpack used to do only on
-its second `UnEsm` run. A module with a default export keeps that block,
-which reads the whole `exports` object
-(`Object.assign(exports.default, exports)`); without bundler helpers it now
-stays CommonJS instead of converting into ESM that threw at load.
+its second `UnEsm` run. A module with a default export whose block is not
+rewritten (see [Next's compatibility tail](#nexts-compatibility-tail)) keeps
+it, and the block reads the whole `exports` object
+(`Object.assign(exports.default, exports)`); without bundler helpers such a
+module now stays CommonJS instead of converting into ESM that threw at load.
 
 A top-level `this` is the same object: CommonJS runs the module body with
 `this` set to `module.exports`, and an ES module body has `this` undefined.
