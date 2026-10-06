@@ -53,7 +53,7 @@ mod un_enum;
 mod un_es6_class;
 mod un_esbuild_cjs_wrapper;
 mod un_esm;
-mod un_esmodule_flag;
+pub(crate) mod un_esmodule_flag;
 mod un_export_rename;
 mod un_for_await;
 mod un_for_of;

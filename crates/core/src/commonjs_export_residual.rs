@@ -1,12 +1,13 @@
 use swc_core::atoms::Atom;
 use swc_core::common::Mark;
 use swc_core::ecma::ast::{
-    Expr, Ident, MemberExpr, MemberProp, Module, ModuleItem, UnaryExpr, UnaryOp,
+    Expr, Ident, MemberExpr, MemberProp, Module, ModuleItem, Stmt, UnaryExpr, UnaryOp,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
 use crate::rules::constructor_sensitivity::static_member_name;
 use crate::rules::expr_utils::is_unresolved_ident;
+use crate::rules::un_esmodule_flag::is_marker_stmt;
 use crate::utils::paren::strip_parens;
 
 /// Name reported for a use of the whole `exports` object.
@@ -42,6 +43,7 @@ pub(crate) fn unrecovered_commonjs_export_names(
     }
     let mut collector = ResidualCollector {
         unresolved_mark,
+        skip_markers: false,
         names: Vec::new(),
     };
     module.visit_with(&mut collector);
@@ -51,11 +53,14 @@ pub(crate) fn unrecovered_commonjs_export_names(
 /// Whether `module` uses the whole `exports` object as a value: a call
 /// argument, an `in` operand, a computed key, and so on. Unlike
 /// [`unrecovered_commonjs_export_names`], this looks at CommonJS input too.
+/// An interop marker statement such as `Object.defineProperty(exports,
+/// "__esModule", ...)` does not count: `UnEsm` removes it when it converts.
 ///
 /// `module` must be resolved with `unresolved_mark`.
 pub(crate) fn uses_whole_exports_object(module: &Module, unresolved_mark: Mark) -> bool {
     let mut collector = ResidualCollector {
         unresolved_mark,
+        skip_markers: true,
         names: Vec::new(),
     };
     module.visit_with(&mut collector);
@@ -64,6 +69,7 @@ pub(crate) fn uses_whole_exports_object(module: &Module, unresolved_mark: Mark) 
 
 struct ResidualCollector {
     unresolved_mark: Mark,
+    skip_markers: bool,
     names: Vec<Atom>,
 }
 
@@ -96,6 +102,13 @@ impl ResidualCollector {
 }
 
 impl Visit for ResidualCollector {
+    fn visit_stmt(&mut self, stmt: &Stmt) {
+        if self.skip_markers && is_marker_stmt(stmt, self.unresolved_mark) {
+            return;
+        }
+        stmt.visit_children_with(self);
+    }
+
     fn visit_unary_expr(&mut self, unary: &UnaryExpr) {
         if unary.op == UnaryOp::TypeOf
             && matches!(strip_parens(&unary.arg), Expr::Ident(ident) if self.is_global(ident, "exports"))
@@ -172,6 +185,19 @@ mod tests {
             ),
             ["count", "limit", "extra", "maybe"]
         );
+    }
+
+    #[test]
+    fn interop_markers_are_not_whole_object_uses() {
+        assert!(!uses_whole(
+            r#"Object.defineProperty(exports, "__esModule", { value: true }); exports.a = 1;"#
+        ));
+        assert!(!uses_whole(
+            "if (ready) { require.r(exports); } exports.a = 1;"
+        ));
+        assert!(uses_whole(
+            r#"Object.defineProperty(exports, "__esModule", { value: true }); register(exports);"#
+        ));
     }
 
     #[test]

@@ -354,7 +354,7 @@ Neither proof creates a default-object fact available to consumers.
   unchanged.
   The existing namespace decomposition pass can then recover narrower named
   imports where its own gates allow that rewrite. Single-file decompilation
-  has no facts; the `RelativeNamespaceImport` rule makes the same rewrite
+  has no facts; the `UnEsm` runner makes the same rewrite
   for relative sources from evidence in the importing module alone
   (`relative_require_esm_provider` in rewrite-assumptions.md).
 - **`run_cross_module_lowered_dynamic_imports`** — restores a lowered

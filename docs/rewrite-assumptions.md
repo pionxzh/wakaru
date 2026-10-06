@@ -877,7 +877,7 @@ Babel, TypeScript, swc, sucrase, and esbuild lower `import { x } from
 `dep.default` or wraps the module in an interop-default helper. So in a
 module compiled from ESM, a relative `require` binding with neither is a
 named import, and its provider most likely a sibling module compiled from
-ESM too. `RelativeNamespaceImport` then emits `import * as dep from
+ESM too. The `UnEsm` runner then emits `import * as dep from
 "./dep"`, which matches the source.
 
 The module counts as compiled from ESM when it has a top-level
@@ -893,7 +893,8 @@ the default import, because packages are the likely place for such
 providers. rollup output has no `__esModule` marker unless it exports a
 default, so its named imports usually stay default imports.
 
-Affects: `RelativeNamespaceImport`, which runs only without module facts.
+Affects: the relative namespace rewrite in the `UnEsm` runner
+(`relative_namespace_import.rs`), which runs only without module facts.
 Unpack mode decides the same edge from provider facts.
 
 Level: `standard` and above.

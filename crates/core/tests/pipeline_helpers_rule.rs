@@ -373,7 +373,6 @@ fn rule_descriptors_expose_dependency_metadata() {
         requires("UnEsm"),
         &[
             "UnCurlyBraces",
-            "UnEsmoduleFlag",
             "UnAssignmentMerging",
             "UnVariableMergingDeclsOnly",
             "UnWebpackInterop"

@@ -45,7 +45,6 @@ UnBracketNotation ──→ UnInteropRequireDefault ──┐
 UnIndirectCall ─────→ UnInteropRequireWildcard ──┤
 UnAssignmentMerging ────────────────────────────┤
 UnVariableMergingDeclsOnly ─────────────────────┤
-UnEsmoduleFlag ─────────────────────────────────┤
 UnWebpackInterop (pass 1, soft) ────────────────┤
                                                  ↓
                                               UnEsm
@@ -117,10 +116,8 @@ ObjMethodShorthand ─┘
 | UnInteropRequireDefault → UnEsm | confirmed | Exp 1 |
 | UnInteropRequireWildcard → UnEsm | confirmed | Exp 1 |
 | UnAssignmentMerging → UnEsm | confirmed | Exp 1 |
-| UnEsmoduleFlag → UnEsm | confirmed | Exp 1 |
 | UnWebpackInterop (pass 1) → UnEsm | confirmed **soft** | Exp 2: only the getter-wrapped default-access pattern needs it |
 | UnEsm → TS async helper cleanup (UnAsyncAwait) | confirmed | Exp 3 |
-| UnInteropRequireDefault, UnEsm → RelativeNamespaceImport | confirmed | evidence is collected in the first one's runner, before UnEsmoduleFlag and UnEsm's interop unwrapping; the imports exist after the second |
 | UnAsyncAwait → UnWebpackInterop2 | confirmed | Exp 5: async recovery exposes interop wrappers |
 | LocalHelperContext → UnAsyncAwait | confirmed | consumes detected helper identities directly |
 | UnCurlyBraces position | confirmed **fragile** | Exp 4: interop getter matchers assume expression-body arrows |
@@ -213,9 +210,15 @@ rationale, or level gating appear.
   Wakaru accepts that producer assumption in aggressive mode and deliberately
   keeps a compact shape matcher instead of rebuilding a JS+TS scope model.
   `minimal` and `standard` preserve literal receivers.
-- **UnEsmoduleFlag** — removes `__esModule` flag statements and rollup's
-  `Symbol.toStringTag` marker; confirmed UnEsm prerequisite (export
-  classification noise).
+- **`__esModule` markers** — not a pipeline rule. `UnEsm` removes the
+  `__esModule` marker and rollup's `Symbol.toStringTag` marker (with the
+  `UnEsmoduleFlag` visitor, nested ones included) when it commits to
+  converting a module. A module that stays CommonJS keeps them, because a
+  consumer's interop check (`m.__esModule ? m : { default: m }`) reads the
+  marker to pick the default. `UnEsmoduleFlag` used to run before UnEsm as
+  a prerequisite marked confirmed by Exp 1, but Exp 1 moved UnEsm as a whole
+  and never tested this edge alone; removing the marker that early lost it
+  from every module that stayed CommonJS.
 - **UnAssignmentMerging** — splits `a = b = val` into one statement per
   target, innermost first (`b = val; a = val;`), which is the order the
   chained form commits its writes (own setters, a throwing `const` write).
@@ -365,15 +368,16 @@ rationale, or level gating appear.
   semantics when `local` has any direct or deferred write: UnEsm captures its
   value at the assignment instead of emitting a live export alias. A proven
   `Object.defineProperty` or webpack getter remains live.
-- **RelativeNamespaceImport** — `standard+`, single-file only. Turns
-  `UnEsm`'s default import of a relative `require` into a namespace import
-  under `relative_require_esm_provider`. Its evidence is collected in the
-  `UnInteropRequireDefault` runner, before `UnEsmoduleFlag` removes the
-  `__esModule` marker and before UnEsm's interop unwrapping rewrites a
-  default import's `.default` reads into a named import's shape; `UnEsm` adds
-  the esbuild evidence. It sits between UnEsm and UnObjectSpread2, the range
-  unpack mode skips at the fact barrier, and also returns early when module
-  facts exist: there `provider_namespace_repair` decides from facts.
+- **Relative namespace imports** (`relative_namespace_import.rs`) —
+  `standard+`, single-file only, and part of the `UnEsm` runner rather than
+  a rule of its own. Turns `UnEsm`'s default import of a relative `require`
+  into a namespace import under `relative_require_esm_provider`. The runner
+  collects the evidence before `UnEsm` removes the `__esModule` marker and
+  unwraps interop calls (which rewrites a default import's `.default` reads
+  into a named import's shape), runs `UnEsm`, adds the esbuild evidence, and
+  then rewrites. It skips a run with module facts, where
+  `provider_namespace_repair` decides, and a run that stops at UnEsm, which
+  is unpack's first phase, before those facts exist.
 - **UnIife** — two passes; the second catches IIFEs created by SmartInline.
   Exposes class IIFEs for UnEs6Class and enum IIFEs for UnEnum. Gating:
   param cleanup and literal hoisting are `standard+`; `.call()` unwrapping on

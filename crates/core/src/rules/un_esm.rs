@@ -290,12 +290,17 @@ impl UnEsm {
         if !prepare_swc_async_namespace_requires(module, self.unresolved_mark) {
             return;
         }
-        // The module is becoming ESM: `interopRequireDefault(require(x))`
-        // now means the default import of `x`, and the wildcard interop its
-        // namespace import. Every return above keeps CommonJS, where the
-        // unwrapped forms mean the whole module, so the calls stay. A call
-        // around a `require` inside a function stays too: that `require`
-        // does not become an import.
+        // The module is becoming ESM, so its `__esModule` and
+        // `Symbol.toStringTag` markers go, nested ones included: ESM has no
+        // `exports` to define them on. Every return above keeps CommonJS,
+        // where a consumer's interop check still reads the marker, and the
+        // restores below bring it back with the rest of the module.
+        module.visit_mut_with(&mut super::UnEsmoduleFlag::new(self.unresolved_mark));
+        // `interopRequireDefault(require(x))` now means the default import of
+        // `x`, and the wildcard interop its namespace import. Every return
+        // above keeps CommonJS, where the unwrapped forms mean the whole
+        // module, so the calls stay. A call around a `require` inside a
+        // function stays too: that `require` does not become an import.
         let local_helpers = self.local_helpers.clone().unwrap_or_else(|| {
             std::rc::Rc::new(LocalHelperContext::collect_with_mark(
                 module,

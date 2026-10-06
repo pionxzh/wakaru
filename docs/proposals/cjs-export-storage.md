@@ -690,9 +690,11 @@ neither. `RelativeNamespaceImport` emits `import * as _dep` for a relative
 `__esModule` (or lowered from esbuild's `__toCommonJS`), as the named
 assumption
 [`relative_require_esm_provider`](../rewrite-assumptions.md#relative_require_esm_provider).
-The signs are collected at the start of the helper stage, before the
+The signs were collected at the start of the helper stage, before the
 interop unwrapping rewrites a default import's `.default` reads into the
-named import's shape.
+named import's shape. Since `UnEsm` removes the marker itself (only from a
+module it converts), the `UnEsm` runner collects them and applies the
+rewrite; see `relative_namespace_import.rs`.
 
 Matrix: 290 / 291 (from 281), with no row that was correct before now
 wrong: `import-then-export` for TypeScript, Babel, swc, and esbuild, and

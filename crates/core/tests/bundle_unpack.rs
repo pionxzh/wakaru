@@ -333,6 +333,54 @@ fn webpack5_require_n_default_interop_is_recovered() {
     );
 }
 
+/// A provider that stays CommonJS keeps its `__esModule` marker, also one
+/// defined only on one branch: a consumer's interop check reads it.
+#[test]
+fn webpack_commonjs_provider_keeps_a_conditional_esmodule_marker() {
+    let source = r#"
+(() => {
+  var modules = {
+    100: function(module, exports) {
+      var api = { a: 1 };
+      exports.default = api;
+      exports.api = api;
+      "undefined" == typeof window || window !== exports ? Object.defineProperty(exports, "__esModule", { value: !0 }) : delete exports.default;
+    },
+    200: function(module, exports, load) {
+      var p = load(100);
+      console.log(p.__esModule, p.default === p.api, p.api.a);
+    }
+  };
+  var cache = {};
+  function load(id) {
+    var cached = cache[id];
+    if (cached !== undefined) return cached.exports;
+    var module = cache[id] = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  }
+  load(200);
+})();
+"#;
+
+    let output =
+        unpack(source, DecompileOptions::default()).expect("webpack unpack should succeed");
+    let provider = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "module-100.js")
+        .map(|(_, code)| code)
+        .expect("expected provider module");
+    assert!(
+        provider.contains("exports.default = api"),
+        "the provider stays CommonJS:\n{provider}"
+    );
+    assert!(
+        provider.contains(r#"Object.defineProperty(exports, "__esModule""#),
+        "the provider keeps its marker:\n{provider}"
+    );
+}
+
 #[test]
 fn webpack5_css_module_composition_recovers_one_mutable_default_object() {
     let source = r#"

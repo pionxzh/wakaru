@@ -54,7 +54,6 @@ must appear in any source text that contains a pattern the rule can transform.
 | UnClassCallCheck | `instanceof` | Body contains `instanceof` operator |
 | UnPossibleConstructorReturn | `ReferenceError` | Body contains `throw new ReferenceError(...)` |
 | UnTypeofPolyfill | `Symbol` | Body checks `typeof Symbol` |
-| UnEsmoduleFlag | `__esModule` | All three patterns reference `__esModule` |
 | UnWebpackInterop | `__esModule` | Getter pattern checks `base.__esModule` |
 | UnClassFields | `__init` | Matches `__init*` method names |
 | UnAsyncAwait | `__awaiter`, `__generator`, or detected TypeScript async helper aliases | Async/generator helper recovery |

@@ -49,7 +49,7 @@ fn is_esmodule_item(item: &ModuleItem, unresolved_mark: Mark) -> bool {
 /// An interop marker statement: the `__esModule` flag, or rollup's
 /// `Symbol.toStringTag` marker on its own. Only the first counts as evidence
 /// that the module was compiled from ESM (see [`has_top_level_esmodule_flag`]).
-fn is_marker_stmt(stmt: &Stmt, unresolved_mark: Mark) -> bool {
+pub(crate) fn is_marker_stmt(stmt: &Stmt, unresolved_mark: Mark) -> bool {
     if is_esmodule_stmt(stmt, unresolved_mark) {
         return true;
     }

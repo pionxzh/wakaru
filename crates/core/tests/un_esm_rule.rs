@@ -2757,6 +2757,66 @@ if ((typeof exports.default === "function" || typeOf(exports.default) === "objec
     assert!(!output.contains("module.exports"), "{output}");
 }
 
+/// A module that stays CommonJS keeps its `__esModule` marker: a consumer's
+/// interop helper (`m.__esModule ? m : { default: m }`) reads it to pick the
+/// default.
+#[test]
+fn commonjs_module_keeps_its_esmodule_marker() {
+    let input = r#"
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.default = function main() { return 1; };
+var t = exports;
+t.extra = 2;
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("exports.default = function main"),
+        "{output}"
+    );
+    assert!(
+        output.contains(r#"Object.defineProperty(exports, "__esModule""#),
+        "{output}"
+    );
+}
+
+#[test]
+fn commonjs_module_keeps_a_nested_esmodule_marker() {
+    let input = r#"
+var api = { a: 1 };
+exports.default = api;
+exports.api = api;
+if (typeof window === "undefined" || window !== exports) {
+  Object.defineProperty(exports, "__esModule", { value: true });
+} else {
+  delete exports.default;
+}
+"#;
+    let output = apply(input);
+    assert!(output.contains("exports.default = api"), "{output}");
+    assert!(
+        output.contains(r#"Object.defineProperty(exports, "__esModule""#),
+        "{output}"
+    );
+}
+
+#[test]
+fn converted_module_drops_top_level_and_nested_esmodule_markers() {
+    let input = r#"
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.answer = 42;
+function mark() {
+  if (ready) {
+    exports.__esModule = true;
+  }
+}
+"#;
+    let output = apply(input);
+    assert!(output.contains("export const answer = 42"), "{output}");
+    assert!(!output.contains("__esModule"), "{output}");
+    assert!(!output.contains("exports"), "{output}");
+}
+
 /// `Object.assign(exports.default, exports)` copies every enumerable getter
 /// in definition order, so the rewrite lists the getter bindings in that order.
 /// The copy is what lets an unpacked consumer read a named export through the

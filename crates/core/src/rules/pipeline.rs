@@ -73,9 +73,8 @@ struct RuleRunContext<'a> {
     local_helpers: Rc<RefCell<Option<Rc<LocalHelperContext>>>>,
     extracted_function_names: SharedExtractedFunctionNames,
     pre_dead: Option<Rc<PreDeadSet>>,
-    /// Collected at the start of the helper stage, before `UnEsmoduleFlag`
-    /// and `UnEsm`'s interop unwrapping erase it; read after `UnEsm`.
-    relative_namespace: Rc<RefCell<RelativeNamespaceEvidence>>,
+    /// The rule this run stops after, if any.
+    stop_after: Option<&'a str>,
 }
 
 pub(super) struct PreDeadSet {
@@ -197,10 +196,6 @@ runner!(run_un_string_escape, UnStringEscape);
 runner!(run_un_bracket_notation, UnBracketNotation);
 fn run_un_interop_require_default(module: &mut Module, ctx: RuleRunContext<'_>) {
     let local_helpers = ctx.local_helpers(module);
-    if ctx.module_facts.is_none() && ctx.rewrite_level >= RewriteLevel::Standard {
-        *ctx.relative_namespace.borrow_mut() =
-            RelativeNamespaceEvidence::collect(module, ctx.unresolved_mark, &local_helpers);
-    }
     UnInteropRequireDefault::run_with_helpers(
         module,
         local_helpers.as_ref(),
@@ -301,9 +296,6 @@ fn run_un_typeof_polyfill(module: &mut Module, ctx: RuleRunContext<'_>) {
     UnTypeofPolyfill::run_with_helpers(module, local_helpers.as_ref());
 }
 runner!(run_un_curly_braces, UnCurlyBraces);
-runner!(run_un_esmodule_flag, |ctx| UnEsmoduleFlag::new(
-    ctx.unresolved_mark
-));
 runner!(run_un_assignment_merging, |ctx| {
     UnAssignmentMerging::new(ctx.unresolved_mark)
 });
@@ -311,22 +303,24 @@ runner!(run_un_webpack_interop, |ctx| UnWebpackInterop::new(
     ctx.unresolved_mark
 ));
 fn run_un_esm(module: &mut Module, ctx: RuleRunContext<'_>) {
+    let local_helpers = ctx.local_helpers(module);
+    // Single-file decompilation only: with module facts the provider facts
+    // decide (`provider_namespace_repair`), and unpack's first phase stops
+    // here, before those facts exist. The evidence is read before `UnEsm`
+    // removes the `__esModule` marker and unwraps interop calls.
+    let mut relative_namespace = (ctx.module_facts.is_none()
+        && ctx.rewrite_level >= RewriteLevel::Standard
+        && ctx.stop_after != Some("UnEsm"))
+    .then(|| RelativeNamespaceEvidence::collect(module, ctx.unresolved_mark, &local_helpers));
     let mut rule = UnEsm::new(ctx.unresolved_mark, ctx.rewrite_level)
         .with_current_filename(ctx.current_filename)
-        .with_local_helpers(ctx.local_helpers(module));
+        .with_local_helpers(local_helpers);
     module.visit_mut_with(&mut rule);
-    if rule.lowered_esbuild_namespace() {
-        ctx.relative_namespace.borrow_mut().compiled_from_esm = true;
-    }
-}
-fn run_relative_namespace_import_rule(module: &mut Module, ctx: RuleRunContext<'_>) {
-    // In unpack mode the provider facts decide (`provider_namespace_repair`).
-    if ctx.module_facts.is_none() {
-        run_relative_namespace_import(
-            module,
-            &ctx.relative_namespace.borrow(),
-            ctx.unresolved_mark,
-        );
+    if let Some(evidence) = relative_namespace.as_mut() {
+        if rule.lowered_esbuild_namespace() {
+            evidence.compiled_from_esm = true;
+        }
+        run_relative_namespace_import(module, evidence, ctx.unresolved_mark);
     }
 }
 fn run_un_template_literal(module: &mut Module, ctx: RuleRunContext<'_>) {
@@ -615,15 +609,14 @@ define_rule_registry! {
     ("UnClassCallCheck", Helpers, run_un_class_call_check, always_enabled),
     ("UnPossibleConstructorReturn", Helpers, run_un_possible_constructor_return, always_enabled),
     ("UnTypeofPolyfill", Helpers, run_un_typeof_polyfill, always_enabled),
-    // UnEsm prerequisites: add braces to enable assignment splitting, remove
-    // __esModule flags, split chained assignments, and resolve webpack interop
-    // getters. These dependencies are documented in
-    // docs/rule-dependency-inventory.md.
+    // UnEsm prerequisites: add braces to enable assignment splitting, split
+    // chained assignments, and resolve webpack interop getters. UnEsm removes
+    // the __esModule marker itself, only from a module it converts. These
+    // dependencies are documented in docs/rule-dependency-inventory.md.
     ("UnCurlyBraces", Helpers, run_un_curly_braces, always_enabled),
     ("SimplifySequence2", Helpers, run_simplify_sequence, always_enabled, requires: [
         "UnCurlyBraces"
     ]),
-    ("UnEsmoduleFlag", Helpers, run_un_esmodule_flag, always_enabled),
     ("UnAssignmentMerging", Helpers, run_un_assignment_merging, always_enabled, requires: [
         "UnCurlyBraces"
     ]),
@@ -634,21 +627,13 @@ define_rule_registry! {
         "UnVariableMergingDeclsOnly"
     ]),
     ("UnWebpackInterop", Helpers, run_un_webpack_interop, always_enabled, requires: [
-        "UnBracketNotation",
-        "UnEsmoduleFlag"
+        "UnBracketNotation"
     ]),
     ("UnEsm", Helpers, run_un_esm, always_enabled, requires: [
         "UnCurlyBraces",
-        "UnEsmoduleFlag",
         "UnAssignmentMerging",
         "UnVariableMergingDeclsOnly",
         "UnWebpackInterop"
-    ]),
-    // Between UnEsm and UnObjectSpread2: unpack phase 1 stops at UnEsm and
-    // phase 2 resumes at UnObjectSpread2, so this never runs there.
-    ("RelativeNamespaceImport", Helpers, run_relative_namespace_import_rule, standard_or_above, requires: [
-        "UnInteropRequireDefault",
-        "UnEsm"
     ]),
     ("UnObjectSpread2", Helpers, run_un_object_spread_late, always_enabled, requires: [
         "UnEsm"
@@ -993,7 +978,7 @@ fn apply_rules_impl(
         local_helpers: Rc::new(RefCell::new(None)),
         extracted_function_names: Rc::new(RefCell::new(ExtractedFunctionNames::default())),
         pre_dead,
-        relative_namespace: Default::default(),
+        stop_after: options.stop_after,
     };
     let mut started = options.start_from.is_none();
 
@@ -1152,7 +1137,7 @@ mod tests {
                 local_helpers: Rc::new(RefCell::new(Some(Rc::new(LocalHelperContext::default())))),
                 extracted_function_names: Default::default(),
                 pre_dead: None,
-                relative_namespace: Default::default(),
+                stop_after: None,
             };
 
             reset_collect_transpiler_helpers_call_count();

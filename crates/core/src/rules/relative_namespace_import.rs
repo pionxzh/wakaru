@@ -13,13 +13,13 @@
 //! The evidence has to be collected before `UnEsm` unwraps interop calls,
 //! which rewrites `_interopRequireDefault(require("./a")).default.x` to a
 //! plain `require("./a")` binding read as `.x`, the same shape as a named
-//! import, and before `UnEsmoduleFlag` removes the `__esModule` marker. It is
-//! collected in the `UnInteropRequireDefault` runner, the first rule of the
-//! helper stage. esbuild has no marker; `UnEsm` records its `__toCommonJS`
-//! namespace instead.
+//! import, and removes the `__esModule` marker of a module it converts. The
+//! `UnEsm` runner collects it, runs `UnEsm`, and then applies this rewrite.
+//! esbuild has no marker; `UnEsm` records its `__toCommonJS` namespace
+//! instead.
 //!
 //! In unpack mode the provider facts make this decision
-//! (`provider_namespace_repair`), so the rule runs only without facts. See
+//! (`provider_namespace_repair`), so the rewrite runs only without facts. See
 //! `relative_require_esm_provider` in `docs/rewrite-assumptions.md`.
 
 use crate::collections::HashSet;
@@ -37,7 +37,7 @@ use crate::provider_namespace_repair::run_relative_namespace_repair;
 use crate::rules::expr_utils::is_unresolved_ident;
 use crate::utils::paren::strip_parens;
 
-/// What the module showed before helper unwrapping erased it.
+/// What the module showed before `UnEsm` erased it.
 #[derive(Debug, Default)]
 pub(crate) struct RelativeNamespaceEvidence {
     /// A top-level `__esModule` marker, or an esbuild `__toCommonJS`
