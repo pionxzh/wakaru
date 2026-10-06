@@ -443,7 +443,7 @@ fn test_inheritance_inherits() {
     let input = r#"
 var Child = (function(_super) {
     _inherits(t, _super);
-    function t() {}
+    function t() { return _super.apply(this, arguments) || this; }
     t.prototype.run = function run() {}
     return t;
 }(Base));
@@ -525,7 +525,7 @@ function keep(o, p) {
 }
 var Child = (function(_super) {
     _inherits(t, _super);
-    function t() {}
+    function t() { return _super.apply(this, arguments) || this; }
     t.prototype.run = function run() {
         return true;
     };
@@ -612,12 +612,45 @@ var Child = (function(__extends) {
 // ============================================================
 
 #[test]
+fn derived_iife_constructor_without_parent_call_is_kept() {
+    // The constructor never calls `_super`; `class extends` without
+    // `super()` throws on `new`.
+    let input = r#"
+var Child = (function(_super) {
+    _inherits(t, _super);
+    function t(x) { this.x = x; }
+    t.prototype.run = function run() {}
+    return t;
+}(Base));
+"#;
+    let output = apply(input);
+    assert!(!output.contains("class Child"), "{output}");
+    assert!(output.contains("_inherits(t, _super)"), "{output}");
+}
+
+#[test]
+fn derived_iife_empty_constructor_is_kept() {
+    // Recovering the empty constructor as the default derived constructor
+    // would run `Base`, which the original never ran.
+    let input = r#"
+var Child = (function(_super) {
+    _inherits(t, _super);
+    function t() {}
+    t.prototype.run = function run() {}
+    return t;
+}(Base));
+"#;
+    let output = apply(input);
+    assert!(!output.contains("class Child"), "{output}");
+}
+
+#[test]
 fn test_inheritance_member_expr_super() {
     // Super class is a member expression (e.g. React.Component or module.Component)
     let input = r#"
 var Child = (function(_super) {
     _inherits(t, _super);
-    function t() {}
+    function t() { return _super.apply(this, arguments) || this; }
     t.prototype.run = function run() {}
     return t;
 }(module.Component));
@@ -1191,7 +1224,7 @@ class Foo {
 fn test_arrow_iife_class_with_extends() {
     let input = r#"
 var Foo = ((e) => {
-    function t() {}
+    function t() { return e.apply(this, arguments) || this; }
     ((e, t) => {
         e.prototype = Object.create(t && t.prototype, {
             constructor: { value: e, enumerable: false, writable: true, configurable: true }
@@ -1219,7 +1252,7 @@ fn test_arrow_iife_class_with_inherits_typecheck() {
     // Full Babel pattern with typeof check in inherits IIFE
     let input = r#"
 var Foo = ((e) => {
-    function t() {}
+    function t() { return e.apply(this, arguments) || this; }
     ((e, t) => {
         if (typeof t != "function" && t !== null) {
             throw new TypeError("Super expression must either be null or a function");

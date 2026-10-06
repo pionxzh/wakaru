@@ -323,6 +323,69 @@ class Child extends Parent {
 }
 
 #[test]
+fn inherits_without_parent_call_keeps_prototype_shape() {
+    // The constructor never calls `Parent`. A derived class constructor
+    // without `super()` throws on `new`, and an empty one omitted as the
+    // default constructor would run `Parent`, which the original never ran.
+    let input = r#"
+function Child(x) {
+    this.constructor$(x);
+    this.y = 2;
+}
+util.inherits(Child, Parent);
+Child.prototype.sum = function() { return this.x + this.y; };
+function Empty() {}
+util.inherits(Empty, Parent);
+Empty.prototype.get = function() { return 1; };
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn object_create_subclass_without_parent_call_keeps_prototype_shape() {
+    // Buble emits a constructor that never calls the parent when the source
+    // class has no `super()` call.
+    let input = r#"
+var ArraySeq = (function (Base) {
+    function ArraySeq(array) {
+        this._array = array;
+    }
+    if (Base) ArraySeq.__proto__ = Base;
+    ArraySeq.prototype = Object.create(Base && Base.prototype);
+    ArraySeq.prototype.constructor = ArraySeq;
+    ArraySeq.prototype.get = function get(i) { return this._array[i]; };
+    return ArraySeq;
+}(Base));
+"#;
+    let output = apply(input);
+    assert!(!output.contains("class ArraySeq"), "{output}");
+    assert!(
+        output.contains("ArraySeq.prototype.get = function get"),
+        "{output}"
+    );
+}
+
+#[test]
+fn object_create_subclass_with_parent_call_recovers() {
+    let input = r#"
+var ArraySeq = (function (Base) {
+    function ArraySeq(array) {
+        Base.call(this);
+        this._array = array;
+    }
+    if (Base) ArraySeq.__proto__ = Base;
+    ArraySeq.prototype = Object.create(Base && Base.prototype);
+    ArraySeq.prototype.constructor = ArraySeq;
+    ArraySeq.prototype.get = function get(i) { return this._array[i]; };
+    return ArraySeq;
+}(Base));
+"#;
+    let output = apply(input);
+    assert!(output.contains("class ArraySeq extends Base"), "{output}");
+    assert!(output.contains("super()"), "{output}");
+}
+
+#[test]
 fn test_closure_function_expression_classes() {
     // Shape reaching this rule after VarDeclToLetConst normalizes Closure
     // Compiler's safe single-declarator `var` bindings.

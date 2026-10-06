@@ -5011,6 +5011,9 @@ fn build_constructor(
         remove_constructor_set_prototype_of_this(&mut body, inner_ctor_name, unresolved_mark);
         // Strip `return super(...)` → `super(...)` (constructors return implicitly)
         strip_return_super(&mut body);
+        if !constructor_calls_super(&body) {
+            return None;
+        }
     }
 
     let ctor_span = if function.span.lo.0 != 0 {
@@ -5837,6 +5840,33 @@ fn is_ctor_prototype_expr(expr: &Expr, inner_ctor_name: &str) -> bool {
 
 fn is_super_call(expr: &Expr) -> bool {
     matches!(expr, Expr::Call(call) if matches!(call.callee, Callee::Super(..)))
+}
+
+/// Whether a recovered derived constructor calls `super(...)` (arrow bodies
+/// included, nested functions and classes not).
+///
+/// A lowered constructor that never calls its parent cannot become a derived
+/// class: its explicit constructor would throw on every `new`, and an empty
+/// one recovered as the default constructor would run a parent constructor
+/// the original never ran.
+pub(super) fn constructor_calls_super(body: &FunctionBody) -> bool {
+    struct SuperCallFinder {
+        found: bool,
+    }
+    impl Visit for SuperCallFinder {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if matches!(call.callee, Callee::Super(..)) {
+                self.found = true;
+                return;
+            }
+            call.visit_children_with(self);
+        }
+        fn visit_function(&mut self, _: &Function) {}
+        fn visit_class(&mut self, _: &Class) {}
+    }
+    let mut finder = SuperCallFinder { found: false };
+    body.visit_with(&mut finder);
+    finder.found
 }
 
 /// Walk an assignment chain like `n = r = super()` and collect all LHS idents as aliases.

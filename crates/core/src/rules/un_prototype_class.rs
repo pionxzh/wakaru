@@ -19,6 +19,7 @@ use super::decl_utils::{
     ensure_setter_has_value_param, has_duplicate_param_names, ClassAccessorDescriptorAttributes,
 };
 use super::helper_matcher::{binding_key, BindingKey};
+use super::un_es6_class::constructor_calls_super;
 
 #[derive(Default)]
 pub struct UnPrototypeClass {
@@ -211,53 +212,59 @@ fn transform_module_items(items: &mut Vec<ModuleItem>, callability: &Callability
                     .any(|item| module_decl_references_binding(item, &candidate.binding))
         })
         .collect();
-    if candidates.is_empty() {
+    let mut built = build_class_decls(&candidates, |idx| stmts[idx]);
+    if built.is_empty() {
         return false;
     }
-
-    let mut all_consumed: HashSet<usize> = candidates
-        .iter()
-        .flat_map(|c| c.consumed_indices.iter().copied())
-        .collect();
-    // Pre-ref statements are also skipped at their original position (relocated after class).
-    let all_pre_refs: HashSet<usize> = candidates
-        .iter()
-        .flat_map(|c| c.pre_ref_indices.iter().copied())
-        .collect();
-    all_consumed.extend(&all_pre_refs);
-    let fn_decl_map: HashMap<usize, &ClassCandidate> =
-        candidates.iter().map(|c| (c.fn_decl_idx, c)).collect();
+    let all_consumed = consumed_indices(&built);
 
     let old: Vec<ModuleItem> = std::mem::take(items);
-    let mut converted_any = false;
     for (i, item) in old.iter().enumerate() {
         if all_consumed.contains(&i) {
             continue;
         }
-        if let Some(candidate) = fn_decl_map.get(&i) {
-            if let ModuleItem::Stmt(stmt) = item {
-                if let Some(class_decl) = build_class_decl(candidate, stmt) {
-                    items.push(ModuleItem::Stmt(Stmt::Decl(Decl::Class(class_decl))));
-                    converted_any = true;
-                    for &pre_idx in &candidate.pre_ref_indices {
-                        items.push(old[pre_idx].clone());
-                    }
-                    if let Some(cn) = &candidate.class_name_value {
-                        items.push(ModuleItem::Stmt(make_class_name_stmt(
-                            &candidate.binding,
-                            cn,
-                        )));
-                    }
-                    continue;
-                }
-            }
-            debug_assert_candidate_points_to_function_decl(item);
+        let Some((candidate, class_decl)) = built.remove(&i) else {
             items.push(item.clone());
-        } else {
-            items.push(item.clone());
+            continue;
+        };
+        debug_assert_candidate_points_to_function_decl(item);
+        items.push(ModuleItem::Stmt(Stmt::Decl(Decl::Class(class_decl))));
+        for &pre_idx in &candidate.pre_ref_indices {
+            items.push(old[pre_idx].clone());
+        }
+        if let Some(cn) = &candidate.class_name_value {
+            items.push(ModuleItem::Stmt(make_class_name_stmt(
+                &candidate.binding,
+                cn,
+            )));
         }
     }
-    converted_any
+    true
+}
+
+/// Build every candidate's class first; only a candidate whose class builds
+/// may consume its prototype statements; the rest keep them in place.
+fn build_class_decls<'a, 's>(
+    candidates: &'a [ClassCandidate],
+    stmt_at: impl Fn(usize) -> Option<&'s Stmt>,
+) -> HashMap<usize, (&'a ClassCandidate, ClassDecl)> {
+    candidates
+        .iter()
+        .filter_map(|candidate| {
+            let stmt = stmt_at(candidate.fn_decl_idx)?;
+            let class_decl = build_class_decl(candidate, stmt)?;
+            Some((candidate.fn_decl_idx, (candidate, class_decl)))
+        })
+        .collect()
+}
+
+/// Statements a built class absorbs. Pre-ref statements are also skipped at
+/// their original position (relocated after the class).
+fn consumed_indices(built: &HashMap<usize, (&ClassCandidate, ClassDecl)>) -> HashSet<usize> {
+    built
+        .values()
+        .flat_map(|(c, _)| c.consumed_indices.iter().chain(&c.pre_ref_indices).copied())
+        .collect()
 }
 
 fn transform_stmts(
@@ -274,47 +281,31 @@ fn transform_stmts(
                 .any(|(name, _)| *name == candidate.binding.0)
         })
         .collect();
-    if candidates.is_empty() {
+    let mut built = build_class_decls(&candidates, |idx| stmt_opts[idx]);
+    if built.is_empty() {
         return false;
     }
-
-    let mut all_consumed: HashSet<usize> = candidates
-        .iter()
-        .flat_map(|c| c.consumed_indices.iter().copied())
-        .collect();
-    let all_pre_refs: HashSet<usize> = candidates
-        .iter()
-        .flat_map(|c| c.pre_ref_indices.iter().copied())
-        .collect();
-    all_consumed.extend(&all_pre_refs);
-    let fn_decl_map: HashMap<usize, &ClassCandidate> =
-        candidates.iter().map(|c| (c.fn_decl_idx, c)).collect();
+    let all_consumed = consumed_indices(&built);
 
     let old: Vec<Stmt> = std::mem::take(stmts);
-    let mut converted_any = false;
     for (i, stmt) in old.iter().enumerate() {
         if all_consumed.contains(&i) {
             continue;
         }
-        if let Some(candidate) = fn_decl_map.get(&i) {
-            if let Some(class_decl) = build_class_decl(candidate, stmt) {
-                stmts.push(Stmt::Decl(Decl::Class(class_decl)));
-                converted_any = true;
-                for &pre_idx in &candidate.pre_ref_indices {
-                    stmts.push(old[pre_idx].clone());
-                }
-                if let Some(cn) = &candidate.class_name_value {
-                    stmts.push(make_class_name_stmt(&candidate.binding, cn));
-                }
-            } else {
-                debug_assert_stmt_is_function_decl(stmt);
-                stmts.push(stmt.clone());
-            }
-        } else {
+        let Some((candidate, class_decl)) = built.remove(&i) else {
             stmts.push(stmt.clone());
+            continue;
+        };
+        debug_assert_stmt_is_function_decl(stmt);
+        stmts.push(Stmt::Decl(Decl::Class(class_decl)));
+        for &pre_idx in &candidate.pre_ref_indices {
+            stmts.push(old[pre_idx].clone());
+        }
+        if let Some(cn) = &candidate.class_name_value {
+            stmts.push(make_class_name_stmt(&candidate.binding, cn));
         }
     }
-    converted_any
+    true
 }
 
 fn debug_assert_candidate_points_to_function_decl(item: &ModuleItem) {
@@ -973,6 +964,9 @@ fn build_class_decl(candidate: &ClassCandidate, original_stmt: &Stmt) -> Option<
 
     // Build constructor from the function
     let ctor = build_constructor_from_fn(function, candidate.super_class_binding.as_ref());
+    if candidate.super_class.is_some() && !ctor.body.as_ref().is_some_and(constructor_calls_super) {
+        return None;
+    }
     if !is_empty_body(function) {
         members.push(ClassMember::Constructor(ctor));
     }
