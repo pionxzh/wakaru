@@ -502,10 +502,6 @@ fn try_logical_and_optional_chain(
     policy: RewritePolicy,
     isolation: &TempIsolation,
 ) -> Option<Expr> {
-    if policy.level < RewriteLevel::Standard {
-        return None;
-    }
-
     let mut terms = Vec::new();
     collect_logical_and_terms(expr, &mut terms);
     if terms.len() < 3 {
@@ -778,10 +774,6 @@ fn try_flattened_optional_chain(
     policy: RewritePolicy,
     isolation: &TempIsolation,
 ) -> Option<Expr> {
-    if policy.level < RewriteLevel::Standard {
-        return None;
-    }
-
     let Expr::Cond(CondExpr {
         test, cons, alt, ..
     }) = expr
@@ -1202,6 +1194,9 @@ fn make_flattened_final_access(
     {
         return Some(chain);
     }
+    if !allows_intrinsic_call_unwrap(policy) {
+        return None;
+    }
     make_flattened_optional_call(current_tmp, chain, access, temp_values, temp_call_contexts)
 }
 
@@ -1374,7 +1369,7 @@ fn try_ternary_optional_chain(
             if let Some(chain) =
                 make_optional_chain_replacing(&checked, &real_rhs, alt, unresolved_mark, policy)
             {
-                return (policy.level >= RewriteLevel::Standard).then_some(chain);
+                return Some(chain);
             }
         }
         // No further path: an undeclared, observed, or initialized temp cannot
@@ -1388,6 +1383,14 @@ fn try_ternary_optional_chain(
         return None;
     }
     make_optional_chain(*checked, alt, policy)
+}
+
+/// Lowered optional calls call the checked value through `.call(context)`.
+/// Dropping the `.call` assumes it is `Function.prototype.call`
+/// (`intrinsic_function_call`); an object with its own `call` method behaves
+/// differently, and `minimal` keeps the `.call`.
+fn allows_intrinsic_call_unwrap(policy: RewritePolicy) -> bool {
+    policy.level >= RewriteLevel::Standard
 }
 
 /// A plain lowered form reads the checked value again where the recovered
@@ -2149,6 +2152,9 @@ fn recover_babel_optional_call_callee(
     unresolved_mark: Mark,
     policy: RewritePolicy,
 ) -> Option<Expr> {
+    if !allows_intrinsic_call_unwrap(policy) {
+        return None;
+    }
     match strip_parens(real_rhs) {
         Expr::Member(MemberExpr { obj, prop, .. }) => {
             let recovered_obj = recover_babel_call_context(obj, context, policy)?;
@@ -2307,6 +2313,9 @@ fn recover_babel_call_context(
     context: &Expr,
     policy: RewritePolicy,
 ) -> Option<Expr> {
+    if !allows_intrinsic_call_unwrap(policy) {
+        return None;
+    }
     // `tmp.call(a.b, ...)` with `tmp = a.b.m` reads `a.b` twice; the
     // recovered `a.b.m?.(...)` reads it once.
     if exprs_structurally_equal(member_obj, context) {

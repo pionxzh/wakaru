@@ -325,11 +325,13 @@ rationale, or level gating appear.
   semantics (assumes `pure_getters`). Must run before UnConditionals, which
   would otherwise consume eligible ternaries.
 - **UnOptionalChaining** — needs `undefined` identifiers (RemoveVoid).
-  Gating mirrors UnNullishCoalescing: loose null checks and single-ternary
-  member rereads (`a.cb == null ? undefined : a.cb(arg)` → `a.cb?.(arg)`) at
-  `standard`; flattened chains that reread a member
+  Gating mirrors UnNullishCoalescing: strict temp chains at every level;
+  loose null checks and single-ternary member rereads
+  (`a.cb == null ? undefined : a.cb(arg)` → `a.cb?.(arg)`) at `standard`;
+  flattened chains that reread a member
   (`(_obj = obj) == null || _obj.method == null ? undefined : _obj.method(arg)`)
-  at `aggressive` (`pure_getters`). Shares
+  at `aggressive` (`pure_getters`). Dropping the `.call` of a lowered
+  optional call is `standard+` (`intrinsic_function_call`). Shares
   structural-equality helpers with UnNullishCoalescing. Must run before
   UnConditionals, which turns the statement form `x == null || x.m()` into
   an `if`; that form goes through the same ternary matchers and gates.

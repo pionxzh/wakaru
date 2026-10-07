@@ -421,13 +421,18 @@ const name = user?.profile?.name;
 }
 
 #[test]
-fn minimal_does_not_transform_babel_flattened_strict_optional_member_chain() {
+fn minimal_transforms_babel_flattened_strict_optional_member_chain() {
+    // Strict checks on isolated temps: no `document.all` or getter assumption.
     let input = r#"
 var _r$foo$bar, _r;
 const a = (_r = r) === null || _r === void 0 || (_r = _r.foo) === null || _r === void 0 || (_r = _r.bar) === null || _r === void 0 ? void 0 : _r.baz;
 "#;
+    let expected = r#"
+var _r$foo$bar;
+const a = r?.foo?.bar?.baz;
+"#;
     let output = apply_with_level(input, RewriteLevel::Minimal);
-    assert_eq_normalized(&output, input);
+    assert_eq_normalized(&output, expected);
 }
 
 #[test]
@@ -1763,3 +1768,69 @@ function f(a, b) {
     assert_eq_normalized(&output, input);
 }
 
+#[test]
+fn minimal_transforms_strict_temp_optional_chains() {
+    // producer @babel/plugin-transform-optional-chaining@7.28.5 (spec)
+    let input = r#"
+function f(o) {
+    var _a, _b;
+    const x = (_a = o.p) === null || _a === void 0 ? void 0 : _a.q;
+    if ((_b = o.r) !== null && _b !== void 0 && _b.s) {
+        use();
+    }
+    return x;
+}
+"#;
+    let expected = r#"
+function f(o) {
+    const x = o.p?.q;
+    if (o.r?.s) {
+        use();
+    }
+    return x;
+}
+"#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn minimal_keeps_call_of_lowered_optional_calls() {
+    // `.call` is not `Function.prototype.call` for an object with its own
+    // `call` method (intrinsic_function_call); minimal keeps it.
+    let input = r#"
+function f(o) {
+    var _a, _b, _c;
+    (_a = o.f) === null || _a === void 0 || _a.call(o, 1);
+    if (!((_b = o.g) === null || _b === void 0)) {
+        _b.call(o, 2);
+    }
+    return (_c = o.h) === null || _c === void 0 ? void 0 : _c.call(o, 3);
+}
+"#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn standard_unwraps_call_of_lowered_optional_calls() {
+    let input = r#"
+function f(o) {
+    var _a, _b, _c;
+    (_a = o.f) === null || _a === void 0 || _a.call(o, 1);
+    if (!((_b = o.g) === null || _b === void 0)) {
+        _b.call(o, 2);
+    }
+    return (_c = o.h) === null || _c === void 0 ? void 0 : _c.call(o, 3);
+}
+"#;
+    let expected = r#"
+function f(o) {
+    o.f?.(1);
+    o.g?.(2);
+    return o.h?.(3);
+}
+"#;
+    let output = apply_with_level(input, RewriteLevel::Standard);
+    assert_eq_normalized(&output, expected);
+}

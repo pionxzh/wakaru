@@ -213,9 +213,36 @@ assumption.
 Affects: `UnOptionalChaining` (loose null-check forms), `UnNullishCoalescing`
 (loose null-check forms).
 
-Level: `standard` and above. `minimal` should only recover optional chaining
-and nullish coalescing from strict checks or temp-based patterns where the
-assumption is not needed.
+Level: `standard` and above. `minimal` recovers optional chaining and
+nullish coalescing only from strict checks, including Babel's temp-based
+strict chains (`(_a = o.p) === null || _a === void 0 ? void 0 : _a.q`),
+flattened `||` chains, and `&&` chains in a boolean context. A strict check
+is exactly the `?.` test, so these need no assumption beyond the isolated
+temps (see `pure_getters` and `intrinsic_function_call` for what else
+`minimal` declines).
+
+### `intrinsic_function_call`
+
+The `.call` that a lowered optional call reads on the checked value is
+`Function.prototype.call`.
+
+Babel, TypeScript, and SWC lower `o.f?.(1)` to a temp and an explicit
+receiver (TypeScript 5.9 output shown):
+
+```js
+(_a = o.f) === null || _a === void 0 ? void 0 : _a.call(o, 1)
+// -> o.f?.(1)
+```
+
+The recovered call no longer reads `call`. For a function this is the same
+call. For a callable object with its own `call` method, or a function whose
+`call` was replaced, the lowered code runs that method and the recovered
+code calls the value directly (a `TypeError` for a plain object).
+
+Affects: `UnOptionalChaining` (every `.call(context, ...)` unwrap: ternary,
+flattened, statement, and `if` forms).
+
+Level: `standard` and above. `minimal` keeps the lowered form.
 
 ### `pure_getters`
 
