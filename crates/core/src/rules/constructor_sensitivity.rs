@@ -41,6 +41,14 @@ impl ValueKey {
         key.properties.push(property);
         key
     }
+
+    /// The last two property names (`HMAC.init` of `C_algo.HMAC.init`).
+    pub(crate) fn property_suffix(&self) -> Option<(&Atom, &Atom)> {
+        match self.properties.as_slice() {
+            [.., parent, property] => Some((parent, property)),
+            _ => None,
+        }
+    }
 }
 
 pub(crate) fn static_member_name(prop: &MemberProp) -> Option<Atom> {
@@ -75,6 +83,11 @@ pub(crate) fn expr_value_key(expr: &Expr) -> Option<ValueKey> {
             Some(key)
         }
         Expr::Paren(paren) => expr_value_key(&paren.expr),
+        // `(T.Tween = E).prototype` names `E.prototype`: the assignment
+        // evaluates to its right-hand value.
+        Expr::Assign(assign) if assign.op == AssignOp::Assign => {
+            expr_value_key(&assign.right).or_else(|| assign_target_value_key(&assign.left))
+        }
         _ => None,
     }
 }

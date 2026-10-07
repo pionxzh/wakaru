@@ -1,5 +1,6 @@
 use crate::collections::HashSet;
 
+use swc_core::atoms::Atom;
 use swc_core::common::Mark;
 use swc_core::ecma::ast::{
     AssignExpr, AssignTarget, BinaryOp, CallExpr, Callee, Expr, MethodProp, Module, ObjectLit,
@@ -34,8 +35,15 @@ impl ObjMethodShorthand {
         let create_class = CreateClassHelpers::collect(module, unresolved_mark, local_helpers);
         let constructor_sensitive_values =
             collect_constructor_sensitive_values(module, &create_class);
+        let constructed_suffixes = constructor_sensitive_values
+            .iter()
+            .filter_map(ValueKey::property_suffix)
+            .filter(|(parent, _)| parent.as_ref() != "prototype")
+            .map(|(parent, property)| (parent.clone(), property.clone()))
+            .collect();
         module.visit_mut_with(&mut ObjMethodShorthandConverter {
             constructor_sensitive_values: &constructor_sensitive_values,
+            constructed_suffixes: &constructed_suffixes,
         });
     }
 }
@@ -49,6 +57,24 @@ impl VisitMut for ObjMethodShorthand {
 
 struct ObjMethodShorthandConverter<'a> {
     constructor_sensitive_values: &'a HashSet<ValueKey>,
+    /// `(parent, property)` name suffixes of constructor-sensitive keys,
+    /// without a `prototype` parent. The resolver keys miss a namespace
+    /// object reached through a different binding in a sibling scope (UMD
+    /// IIFEs linked only through a global, a wrapper parameter bound to a
+    /// `require` result), so `new C.algo.HMAC.init()` also protects
+    /// `X.HMAC = Base.extend({ init: function () {} })`. A false match only
+    /// keeps a function expression.
+    constructed_suffixes: &'a HashSet<(Atom, Atom)>,
+}
+
+impl ObjMethodShorthandConverter<'_> {
+    fn is_constructor_sensitive(&self, key: &ValueKey) -> bool {
+        self.constructor_sensitive_values.contains(key)
+            || key.property_suffix().is_some_and(|(parent, property)| {
+                self.constructed_suffixes
+                    .contains(&(parent.clone(), property.clone()))
+            })
+    }
 }
 
 impl VisitMut for ObjMethodShorthandConverter<'_> {
@@ -185,6 +211,22 @@ fn visit_mut_value_expr(
             visit_mut_object_value(object, keys, force_constructor_sensitive, converter)
         }
         Expr::Call(call) => visit_mut_call(call, keys, converter),
+        // `S.fn = S.prototype = { init: function () {} }` exposes the object
+        // under both targets.
+        Expr::Assign(assign)
+            if is_value_preserving_assign_op(assign.op)
+                && matches!(assign.left, AssignTarget::Simple(_)) =>
+        {
+            assign.left.visit_mut_with(converter);
+            let mut chained = keys.to_vec();
+            chained.extend(assign_target_value_key(&assign.left));
+            visit_mut_value_expr(
+                &mut assign.right,
+                &chained,
+                force_constructor_sensitive,
+                converter,
+            );
+        }
         _ => expr.visit_mut_with(converter),
     }
 }
@@ -282,7 +324,7 @@ fn visit_mut_object_value(
         let constructor_sensitive = force_constructor_sensitive
             || value_keys
                 .iter()
-                .any(|key| converter.constructor_sensitive_values.contains(key));
+                .any(|key| converter.is_constructor_sensitive(key));
         try_convert_prop(prop, constructor_sensitive);
     }
 }

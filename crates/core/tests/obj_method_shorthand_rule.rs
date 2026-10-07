@@ -775,3 +775,137 @@ Shape.prototype = {
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
+#[test]
+fn prototype_of_assignment_result_stays_constructible() {
+    // wild-observed: a minified Tween class assigns its constructor to a
+    // namespace inside the prototype target.
+    let input = r#"
+var T = {};
+function E(e) {
+    return new E.prototype.init(e);
+}
+((T.Tween = E).prototype = {
+    constructor: E,
+    init: function(e) {
+        this.e = e;
+    }
+}).init.prototype = E.prototype;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn chained_prototype_target_stays_constructible() {
+    // wild-observed: `S.fn = S.prototype = { init }` with `new S.fn.init()`.
+    let input = r#"
+var S = function(e) {
+    return new S.fn.init(e);
+};
+S.fn = S.prototype = {
+    init: function(e) {
+        this.e = e;
+    },
+    size: function() {
+        return 1;
+    }
+};
+"#;
+    let expected = r#"
+var S = function(e) {
+    return new S.fn.init(e);
+};
+S.fn = S.prototype = {
+    init: function(e) {
+        this.e = e;
+    },
+    size() {
+        return 1;
+    }
+};
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn constructed_member_suffix_in_sibling_scope_stays_function() {
+    // wild-observed: UMD files that share a namespace only through a global
+    // (`C.algo` in one IIFE, `CryptoJS.algo` in the next), so the resolver
+    // sees two unrelated roots.
+    let input = r#"
+(function() {
+    var C_algo = CryptoJS.algo = {};
+    CryptoJS.hmac = function(h, k) {
+        return new C_algo.HMAC.init(h, k);
+    };
+})();
+(function() {
+    var C_algo = CryptoJS.algo;
+    C_algo.HMAC = Base.extend({
+        init: function(h, k) {
+            this.h = h;
+        },
+        reset: function() {
+            this.h = null;
+        }
+    });
+})();
+"#;
+    let expected = r#"
+(function() {
+    var C_algo = CryptoJS.algo = {};
+    CryptoJS.hmac = function(h, k) {
+        return new C_algo.HMAC.init(h, k);
+    };
+})();
+(function() {
+    var C_algo = CryptoJS.algo;
+    C_algo.HMAC = Base.extend({
+        init: function(h, k) {
+            this.h = h;
+        },
+        reset() {
+            this.h = null;
+        }
+    });
+})();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn constructed_member_suffix_ignores_prototype_parent_and_other_parents() {
+    // `prototype.init` is shared by unrelated classes, and `Other.init`
+    // differs in the parent name.
+    let input = r#"
+function A() {}
+new A.prototype.init();
+var B = function() {};
+B.prototype = {
+    init: function() {}
+};
+var ns = {};
+new ns.HMAC.init();
+other.Other = make({
+    init: function() {}
+});
+"#;
+    let expected = r#"
+function A() {}
+new A.prototype.init();
+var B = function() {};
+B.prototype = {
+    init() {}
+};
+var ns = {};
+new ns.HMAC.init();
+other.Other = make({
+    init() {}
+});
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}

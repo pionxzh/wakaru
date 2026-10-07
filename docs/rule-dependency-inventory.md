@@ -559,6 +559,15 @@ rationale, or level gating appear.
   the analysis: class-system helpers (`extend(Base, { constructor })`) return
   that property as the class, and `new this.constructor()` reads it from a
   prototype object, so its construction is usually invisible to the module.
+  An object in an assignment chain gets every target's key
+  (`S.fn = S.prototype = { init }` checks `S.fn.init` too), and an
+  assignment result names its value (`(T.Tween = E).prototype` is
+  `E.prototype`). Last, a name guard: a property whose last two key names
+  match those of a constructor-sensitive key (`X.HMAC = extend({ init })`
+  against `new C.algo.HMAC.init()`) stays a function unless that parent name
+  is `prototype`. It covers namespaces the resolver cannot link, such as
+  sibling UMD IIFEs that share an object only through a global; a false
+  match only keeps a function expression.
 - **Function-to-class callability guards** — IIFE return aliases are recorded
   for both variable initializers and later plain assignments, and so are plain
   identifier aliases (`var a = Foo`). A constructor passed through any of these
