@@ -399,7 +399,7 @@ ${e.stack}`;
                                 const f = {
                                     [t]: u
                                 };
-                                n(is.array(e) ? [].slice.call({
+                                n(is.array(e) ? Array.prototype.slice.call({
                                     ...f,
                                     length: a.length
                                 }) : f);

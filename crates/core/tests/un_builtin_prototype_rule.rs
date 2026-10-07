@@ -22,15 +22,6 @@ RegExp.prototype.test.call(value, "x");
 Function.prototype.call.apply(value, args);
 "#;
 
-const SIX_STANDARD_LITERAL_RECEIVERS: &str = r#"
-[].splice.apply(value, args);
-"".indexOf.call(value, "x");
-({}).hasOwnProperty.call(value, "x");
-0..toFixed.call(value, 2);
-/x/.test.call(value, "x");
-(() => {}).call.apply(value, args);
-"#;
-
 fn apply(input: &str, level: RewriteLevel) -> String {
     render_rule(input, |unresolved_mark| {
         UnBuiltinPrototype::new(unresolved_mark, level)
@@ -52,20 +43,10 @@ fn minimal_preserves_literal_receivers() {
 }
 
 #[test]
-fn default_rule_preserves_literal_receivers() {
-    // Default construction must not bypass the aggressive-only gate.
-    let output = render_rule(SIX_LITERAL_RECEIVERS, |unresolved_mark| {
-        UnBuiltinPrototype::new(unresolved_mark, RewriteLevel::Standard)
-    });
-
-    assert_eq_normalized(&output, SIX_LITERAL_RECEIVERS);
-}
-
-#[test]
-fn standard_preserves_literal_receivers() {
+fn standard_recovers_all_six_builtin_prototypes() {
     let output = apply(SIX_LITERAL_RECEIVERS, RewriteLevel::Standard);
 
-    assert_eq_normalized(&output, SIX_LITERAL_RECEIVERS);
+    assert_eq_normalized(&output, SIX_BUILTIN_PROTOTYPES);
 }
 
 #[test]
@@ -76,10 +57,10 @@ fn full_pipeline_minimal_preserves_literal_receivers() {
 }
 
 #[test]
-fn full_pipeline_standard_preserves_literal_receivers() {
+fn full_pipeline_standard_recovers_all_six_builtin_prototypes() {
     let output = render_with_level(SIX_LITERAL_RECEIVERS, RewriteLevel::Standard);
 
-    assert_eq_normalized(&output, SIX_STANDARD_LITERAL_RECEIVERS);
+    assert_eq_normalized(&output, SIX_BUILTIN_PROTOTYPES);
 }
 
 #[test]

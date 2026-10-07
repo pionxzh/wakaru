@@ -204,12 +204,12 @@ rationale, or level gating appear.
   `String(x)` changes the coercion hint observed by `Symbol.toPrimitive`.
   Replacing a hole array with `Array(n)` also introduces a mutable global
   constructor lookup. `minimal` and `standard` preserve all three shapes.
-- **UnBuiltinPrototype** — whole rule is `aggressive` only, under
+- **UnBuiltinPrototype** — whole rule is `standard+`, under
   `terser_unsafe_proto`. It reverses Terser's opt-in `unsafe_proto` compression,
   whose producer-side matcher only transforms undeclared builtin references.
-  Wakaru accepts that producer assumption in aggressive mode and deliberately
-  keeps a compact shape matcher instead of rebuilding a JS+TS scope model.
-  `minimal` and `standard` preserve literal receivers.
+  Wakaru accepts that producer assumption and deliberately keeps a compact
+  shape matcher instead of rebuilding a JS+TS scope model. `minimal`
+  preserves literal receivers.
 - **`__esModule` markers** — not a pipeline rule. `UnEsm` removes the
   `__esModule` marker and rollup's `Symbol.toStringTag` marker (with the
   `UnEsmoduleFlag` visitor, nested ones included) when it commits to

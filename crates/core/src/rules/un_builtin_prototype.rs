@@ -39,7 +39,7 @@ impl VisitMut for UnBuiltinPrototype {
     fn visit_mut_module(&mut self, module: &mut Module) {
         // `terser_unsafe_proto`: recovering the builtin name relies on the
         // producer having transformed only undeclared builtin references.
-        if self.level != RewriteLevel::Aggressive {
+        if self.level < RewriteLevel::Standard {
             return;
         }
         self.emittable = BUILTIN_NAMES

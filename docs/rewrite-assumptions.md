@@ -375,10 +375,22 @@ resolve to the builtin: the rule skips a name that any binding in the module
 declares, and skips every name when the module contains `with` or a direct
 `eval`.
 
+The method read itself does not depend on the producer. When the
+synthesized name resolves to the builtin, `[].m` and `Array.prototype.m` read
+the same property, so a same-module patch of `Array.prototype.m` gives the
+same result in both forms. Babel minifies its helper templates with
+`unsafe_proto` (producer `@babel/helpers@7.28.6`,
+`lib/helpers-generated.js`), so inlined Babel helpers carry the shape even
+in handwritten bundles.
+
+Only the call form is recovered (`[].m.call(...)`, `[].m.apply(...)`). The
+value form (`var push = [].push`) is not: `[].__proto__` reads an accessor
+whose value on `Array.prototype` differs, so a value-form recovery would need
+to exclude accessor names first.
+
 Affects: `UnBuiltinPrototype`.
 
-Level: `aggressive` only. `minimal` and `standard` preserve the literal
-receiver.
+Level: `standard` and above. `minimal` preserves the literal receiver.
 
 ### `effect_free_property_key_coercion`
 
