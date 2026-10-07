@@ -214,6 +214,74 @@ require.d(integrations, {
 }
 
 #[test]
+fn folds_webpack_require_d_map_inside_a_function_body() {
+    // shape: producer webpack@5.111.1 mode=production (Terser). The entry's
+    // escaping namespace object stays in the startup IIFE.
+    let input = r#"
+(()=>{
+  "use strict";
+  var e = require("./module-100.js");
+  var r = {};
+  require.r(r);
+  require.d(r, {
+    alpha: ()=>e.first,
+    beta: ()=>e.second
+  });
+  globalThis.sink = r;
+})();
+"#;
+    let expected = r#"
+(()=>{
+  "use strict";
+  var e = require("./module-100.js");
+  var r = {
+    get alpha() {
+      return e.first;
+    },
+    get beta() {
+      return e.second;
+    }
+  };
+  globalThis.sink = r;
+})();
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn preserves_webpack_require_d_map_inside_a_function_when_target_is_used_first() {
+    let input = r#"
+function init() {
+  var r = {};
+  use(r);
+  require.r(r);
+  require.d(r, {
+    alpha: ()=>alpha,
+    beta: ()=>beta
+  });
+  return r;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn preserves_webpack_require_d_map_inside_a_function_with_a_local_require() {
+    let input = r#"
+function init(require) {
+  var r = {};
+  require.r(r);
+  require.d(r, {
+    alpha: ()=>alpha,
+    beta: ()=>beta
+  });
+  return r;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
 fn folds_consecutive_define_property_calls_into_getters() {
     let input = r#"
 export const ns = {};

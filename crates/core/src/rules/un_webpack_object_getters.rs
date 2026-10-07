@@ -86,8 +86,46 @@ fn plan_webpack_namespace_rewrites(
         let Some(binding) = extract_empty_object_binding_from_module_item(&items[index]) else {
             continue;
         };
-        let Some((replacement, remove_indices)) =
-            maybe_rewrite_webpack_namespace(items, index, &binding, unresolved_mark)
+        let Some((getters, remove_indices)) =
+            plan_webpack_namespace(items, index, &binding, unresolved_mark)
+        else {
+            continue;
+        };
+        let mut replacement = items[index].clone();
+        if replace_module_item_init_with_getters(&mut replacement, getters).is_none() {
+            continue;
+        }
+
+        replacements.insert(index, replacement);
+        removed.extend(remove_indices);
+    }
+
+    (replacements, removed)
+}
+
+/// Statement-list counterpart of [`plan_webpack_namespace_rewrites`]: a
+/// minified entry keeps its namespace object inside the startup IIFE
+/// (`var r = {}; require.r(r); require.d(r, { ... })`).
+fn plan_webpack_namespace_stmt_rewrites(
+    stmts: &[Stmt],
+    unresolved_mark: Mark,
+) -> (HashMap<usize, Stmt>, HashSet<usize>) {
+    let mut replacements = HashMap::default();
+    let mut removed = HashSet::default();
+
+    for index in 0..stmts.len() {
+        if removed.contains(&index) {
+            continue;
+        }
+        let Some(binding) = extract_empty_object_binding_from_stmt(&stmts[index]) else {
+            continue;
+        };
+        let Some((getters, remove_indices)) =
+            plan_webpack_namespace(stmts, index, &binding, unresolved_mark)
+        else {
+            continue;
+        };
+        let Some(replacement) = rewrite_stmt_init_with_getters(stmts[index].clone(), getters)
         else {
             continue;
         };
@@ -99,12 +137,35 @@ fn plan_webpack_namespace_rewrites(
     (replacements, removed)
 }
 
-fn maybe_rewrite_webpack_namespace(
-    items: &[ModuleItem],
+/// A statement position that the namespace planner can inspect: module items
+/// carry statements and module declarations, function bodies only statements.
+trait NamespaceItem: VisitWith<BindingRefFinder> {
+    fn as_stmt(&self) -> Option<&Stmt>;
+}
+
+impl NamespaceItem for ModuleItem {
+    fn as_stmt(&self) -> Option<&Stmt> {
+        match self {
+            ModuleItem::Stmt(stmt) => Some(stmt),
+            ModuleItem::ModuleDecl(_) => None,
+        }
+    }
+}
+
+impl NamespaceItem for Stmt {
+    fn as_stmt(&self) -> Option<&Stmt> {
+        Some(self)
+    }
+}
+
+/// The getters for the empty object declared at `decl_index` and the indices
+/// of the marker and definition statements they replace.
+fn plan_webpack_namespace<T: NamespaceItem>(
+    items: &[T],
     decl_index: usize,
     target: &BindingId,
     unresolved_mark: Mark,
-) -> Option<(ModuleItem, Vec<usize>)> {
+) -> Option<(Vec<GetterProp>, Vec<usize>)> {
     let mut require_r_indices = Vec::new();
     let mut odp_getters = Vec::new();
     let mut odp_indices = Vec::new();
@@ -112,28 +173,27 @@ fn maybe_rewrite_webpack_namespace(
     let mut index = decl_index + 1;
 
     while index < items.len() {
-        if is_require_r_module_item(&items[index], target, unresolved_mark) {
+        let stmt = items[index].as_stmt();
+        if stmt.is_some_and(|stmt| is_require_r_stmt(stmt, target, unresolved_mark)) {
             require_r_indices.push(index);
             index += 1;
             continue;
         }
 
         if let Some(getters) =
-            extract_require_d_map_getters_module_item(&items[index], target, unresolved_mark)
+            stmt.and_then(|stmt| extract_require_d_map_getters(stmt, target, unresolved_mark))
         {
             if require_r_indices.is_empty() || getters.len() < 2 {
                 return None;
             }
-            let mut replacement = items[decl_index].clone();
-            replace_module_item_init_with_getters(&mut replacement, getters)?;
             require_r_indices.push(index);
-            return Some((replacement, require_r_indices));
+            return Some((getters, require_r_indices));
         }
 
         if !seen_non_marker {
-            if let Some(getter) =
-                extract_single_define_property_getter(&items[index], target, unresolved_mark)
-            {
+            if let Some(getter) = stmt.and_then(|stmt| {
+                extract_single_define_property_getter_from_stmt(stmt, target, unresolved_mark)
+            }) {
                 odp_getters.push(getter);
                 odp_indices.push(index);
                 index += 1;
@@ -145,7 +205,7 @@ fn maybe_rewrite_webpack_namespace(
             break;
         }
 
-        if module_item_references_binding(&items[index], target) {
+        if item_references_binding(&items[index], target) {
             break;
         }
         seen_non_marker = true;
@@ -153,11 +213,9 @@ fn maybe_rewrite_webpack_namespace(
     }
 
     if odp_getters.len() >= 2 {
-        let mut replacement = items[decl_index].clone();
-        replace_module_item_init_with_getters(&mut replacement, odp_getters)?;
         let mut removed = require_r_indices;
         removed.extend(odp_indices);
-        return Some((replacement, removed));
+        return Some((odp_getters, removed));
     }
 
     None
@@ -165,12 +223,19 @@ fn maybe_rewrite_webpack_namespace(
 
 fn rewrite_stmts(stmts: &mut Vec<Stmt>, unresolved_mark: Mark) {
     let mut original = std::mem::take(stmts);
+    let (mut replacements, removed) =
+        plan_webpack_namespace_stmt_rewrites(&original, unresolved_mark);
     let mut rewritten = Vec::with_capacity(original.len());
     let mut skip_until = 0;
     let mut i = 0;
 
     while i < original.len() {
-        if i < skip_until {
+        if i < skip_until || removed.contains(&i) {
+            i += 1;
+            continue;
+        }
+        if let Some(stmt) = replacements.remove(&i) {
+            rewritten.push(stmt);
             i += 1;
             continue;
         }
@@ -348,17 +413,6 @@ fn extract_empty_object_binding_from_var_decl(decls: &[VarDeclarator]) -> Option
 }
 
 /// Extract a getter from `Object.defineProperty(target, "name", { enumerable: true, get: ... })`.
-fn extract_single_define_property_getter(
-    item: &ModuleItem,
-    target: &BindingId,
-    unresolved_mark: Mark,
-) -> Option<GetterProp> {
-    let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
-        return None;
-    };
-    extract_single_define_property_getter_from_expr(expr.as_ref(), target, unresolved_mark)
-}
-
 fn extract_single_define_property_getter_from_stmt(
     stmt: &Stmt,
     target: &BindingId,
@@ -470,10 +524,7 @@ fn extract_define_properties_getters(
     Some(getters)
 }
 
-fn is_require_r_module_item(item: &ModuleItem, target: &BindingId, unresolved_mark: Mark) -> bool {
-    let ModuleItem::Stmt(stmt) = item else {
-        return false;
-    };
+fn is_require_r_stmt(stmt: &Stmt, target: &BindingId, unresolved_mark: Mark) -> bool {
     let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
         return false;
     };
@@ -486,14 +537,11 @@ fn is_require_r_module_item(item: &ModuleItem, target: &BindingId, unresolved_ma
     matches!(call.args[0].expr.as_ref(), Expr::Ident(id) if id.sym == target.0 && id.ctxt == target.1)
 }
 
-fn extract_require_d_map_getters_module_item(
-    item: &ModuleItem,
+fn extract_require_d_map_getters(
+    stmt: &Stmt,
     target: &BindingId,
     unresolved_mark: Mark,
 ) -> Option<Vec<GetterProp>> {
-    let ModuleItem::Stmt(stmt) = item else {
-        return None;
-    };
     let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
         return None;
     };
@@ -575,21 +623,21 @@ fn is_require_member_call(
     matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == prop_name)
 }
 
-fn module_item_references_binding(item: &ModuleItem, target: &BindingId) -> bool {
+fn item_references_binding<T: NamespaceItem>(item: &T, target: &BindingId) -> bool {
     let mut finder = BindingRefFinder {
-        target,
+        target: target.clone(),
         found: false,
     };
     item.visit_with(&mut finder);
     finder.found
 }
 
-struct BindingRefFinder<'a> {
-    target: &'a BindingId,
+struct BindingRefFinder {
+    target: BindingId,
     found: bool,
 }
 
-impl Visit for BindingRefFinder<'_> {
+impl Visit for BindingRefFinder {
     fn visit_ident(&mut self, ident: &Ident) {
         if ident.sym == self.target.0 && ident.ctxt == self.target.1 {
             self.found = true;
