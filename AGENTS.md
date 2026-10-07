@@ -247,6 +247,7 @@ under that document's handoff rules.
 5. **Inspect snapshot diffs** — "different" without "better" is a regression.
 6. **Be honest about what works** — never overstate what was accomplished.
 7. **Commit messages describe the mechanism and the code shape** — what the rule did wrong, the input shape that triggers it, and the fix. Leave out where the bug was found: no bundle or module names, no paths or ids, no counts of affected modules or references, no test-run tallies.
+8. **Shape claims carry provenance** — tag them `producer <tool>@<version> <options>`, `wild-observed`, or `hypothetical`; untagged means `hypothetical`. A hypothetical shape alone never reverses a recorded decision or justifies a guard that costs recovery. See `docs/reviewing.md#shape-claims-need-provenance`.
 
 ## Code Review Self-Check
 

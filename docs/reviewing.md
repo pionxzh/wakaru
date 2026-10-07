@@ -62,9 +62,8 @@ For each actionable finding, identify:
 - Whether it was introduced by this change, already existed on the base, or
   was newly exposed by a harness or validator change. Say when attribution is
   still unknown.
-- The evidence source: real bundle, reproduced toolchain output, or handwritten
-  counterexample. For generated-code recovery, identify the producer/version
-  when available.
+- The evidence source, as a provenance tag (see
+  [Shape claims need provenance](#shape-claims-need-provenance)).
 - The smallest correction, its scope, and why it should or should not block
   this change.
 
@@ -81,6 +80,38 @@ contract without counting as successful recovery. Fewer validator findings do
 not by themselves prove better output; check for lost modules, reduced coverage,
 or changed validation. When both producer and validator changed, compare them
 separately on fixed inputs before attributing the difference.
+
+## Shape claims need provenance
+
+A claim that a producer emits some code shape ("webpack writes X", "esbuild
+can order Y before Z") is a fact about a toolchain and needs evidence of that
+kind. Tag every shape claim, in review text, tests, and docs, with its source:
+
+- `producer <tool>@<version> <options>`: reproduced by running that producer
+  on legal source, meaning source that runs as written without throwing. Show
+  that by running it, or by a clear argument; source whose ESM cycle reads a
+  `const` in its TDZ is not legal, whatever a bundler makes of it.
+- `wild-observed`: seen in captured real-world code.
+- `hypothetical`: written by hand or reasoned from a description, never run
+  through a producer.
+
+Tags combine; give the strongest you have. A shape seen in captured code and
+then reproduced is `producer <tool>@<version> <options>; wild-observed`: the
+producer tag says how to regenerate it, `wild-observed` says real code
+contains it. `wild-observed` alone is evidence too, but leaves a producer
+recipe to find. An untagged claim counts as `hypothetical`.
+
+Before arguing from a shape, try to produce it: a pinned producer run on legal
+source, or a row in a reproduction matrix (`scripts/repro/`). When nothing
+reproduces it, report what you tried. "Not emitted by webpack 5.111.1 or
+esbuild 0.28.0 with these options" is a result; "no producer emits this" is
+not.
+
+A `hypothetical` shape keeps its uses: a unit-test soundness check, or proof
+that a rule violates its contract (see above). On its own it cannot reverse a
+recorded decision, and it cannot justify a guard or a narrower match that gives
+up recovery of produced or observed shapes. That trade-off needs a `producer`
+or `wild-observed` shape on the side being protected.
 
 ## Keep the fix proportionate
 

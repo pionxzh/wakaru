@@ -319,6 +319,11 @@ Generated artifacts should not be edited by hand. Regenerate them from the
 checked-in inputs, and verify deterministic output before committing when the
 producer permits it.
 
+A test that encodes a producer shape names its source in a comment, for example
+`// shape: producer webpack@5.111.1 concatenateModules; wild-observed` or
+`// shape: hypothetical` (see
+[reviewing.md](reviewing.md#shape-claims-need-provenance)).
+
 A few fixtures under `webpack-gen/dist/` are hand-authored shapes no real
 bundler emits (e.g. `wp-path-traversal`, `wp5-require-s`); `generate.sh`
 deliberately leaves them alone — it removes and rebuilds only the outputs its
