@@ -4,7 +4,8 @@
 # scope-hoisted ESM unpacker, not a separate Bun-specific detector.
 # Requires:
 #   - Node.js + npm (uses npx to fetch esbuild on-the-fly)
-#   - Bun (for Bun comparison fixtures)
+#   - npx also fetches Bun at BUN_VERSION (Bun comparison fixtures); Bun's
+#     minified output changed after 1.3.0, so the version is pinned
 #
 # Usage:
 #   cd crates/core/tests/bundles/esbuild-gen
@@ -17,6 +18,8 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 ESBUILD_VERSION="0.25.4"
+BUN_VERSION="1.3.0"
+BUN="npx --yes bun@${BUN_VERSION}"
 
 rm -rf dist
 
@@ -54,36 +57,44 @@ echo "  es-helper-after-export: ESM scope-hoisted with private helper after expo
 npx --yes esbuild@${ESBUILD_VERSION} src/entry-helper-after-export.js \
   --bundle --format=esm --outfile=dist/es-helper-after-export/bundle.js
 
+echo "  es-cross-ref:          ESM scope-hoisted namespaces whose modules call each other"
+npx --yes esbuild@${ESBUILD_VERSION} src/cross-ref/entry.js \
+  --bundle --format=esm --outfile=dist/es-cross-ref/bundle.js
+
 echo "  iife-factories:        IIFE with factory pattern"
 npx --yes esbuild@${ESBUILD_VERSION} src/entry-factories.js \
   --bundle --format=iife --outfile=dist/iife-factories/bundle.js
 
 echo ""
-echo "=== bun $(bun --version) ==="
+echo "=== bun ${BUN_VERSION} ==="
 
 echo "  bun-scope-only-min:         minified ESM scope-hoisted only"
-bun build src/entry-scope-only.js \
+${BUN} build src/entry-scope-only.js \
   --target=browser --format=esm --minify --outfile=dist/bun-scope-only-min/bundle.js
 
 echo "  bun-scope-side-effects-min: minified ESM scope-hoisted with module side effects"
-bun build src/entry-scope-side-effects.js \
+${BUN} build src/entry-scope-side-effects.js \
   --target=browser --format=esm --minify --outfile=dist/bun-scope-side-effects-min/bundle.js
 
 echo "  bun-mixed-min:              minified ESM with inlined CJS + scope-hoisted namespaces"
-bun build src/entry-mixed.js \
+${BUN} build src/entry-mixed.js \
   --target=browser --format=esm --minify --outfile=dist/bun-mixed-min/bundle.js
 
 echo "  bun-single-boundary-min:    minified ESM scope-hoisted with one namespace boundary"
-bun build src/entry-single-boundary.js \
+${BUN} build src/entry-single-boundary.js \
   --target=browser --format=esm --minify --outfile=dist/bun-single-boundary-min/bundle.js
 
 echo "  bun-helper-after-export-min: minified ESM with private helper after export"
-bun build src/entry-helper-after-export.js \
+${BUN} build src/entry-helper-after-export.js \
   --target=browser --format=esm --minify --outfile=dist/bun-helper-after-export-min/bundle.js
 
 echo "  bun-factories-min:          minified Bun bundle without namespace boundaries"
-bun build src/entry-factories.js \
+${BUN} build src/entry-factories.js \
   --target=browser --format=esm --minify --outfile=dist/bun-factories-min/bundle.js
+
+echo "  bun-cross-ref-min:          minified ESM namespaces whose modules call each other"
+${BUN} build src/cross-ref/entry.js \
+  --target=browser --format=esm --minify --outfile=dist/bun-cross-ref-min/bundle.js
 
 echo ""
 echo "Done. Outputs in dist/*/"

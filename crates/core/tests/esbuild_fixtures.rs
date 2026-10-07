@@ -397,8 +397,11 @@ fn bun_minified_cross_module_references_get_import_export_synthesis() {
     );
 
     let math = code_containing(&raw, "3.14159");
-    // The format module (u.js) references l, a, x from math — should import them.
-    let format = module_code(&raw, "u.js");
+    // The format module references add, multiply, and PI from math under
+    // minified names, so it must import them. Found by content: Bun's
+    // mangled namespace names, and the filenames derived from them, change
+    // between releases.
+    let format = code_containing(&raw, "(PI=");
 
     assert!(
         math.contains("export"),

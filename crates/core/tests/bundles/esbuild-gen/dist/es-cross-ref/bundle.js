@@ -4,7 +4,7 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
-// src/math.js
+// src/cross-ref/math.js
 var math_exports = {};
 __export(math_exports, {
   PI: () => PI,
@@ -19,11 +19,11 @@ function multiply(a, b) {
   return a * b;
 }
 
-// src/format.js
+// src/cross-ref/format.js
 var format_exports = {};
 __export(format_exports, {
-  formatSum: () => formatSum,
-  formatProduct: () => formatProduct
+  formatProduct: () => formatProduct,
+  formatSum: () => formatSum
 });
 function formatSum(a, b) {
   return a + " + " + b + " = " + add(a, b);
@@ -32,7 +32,7 @@ function formatProduct(a, b) {
   return a + " * " + b + " = " + multiply(a, b) + " (PI=" + PI + ")";
 }
 
-// src/greet.js
+// src/cross-ref/greet.js
 var greet_exports = {};
 __export(greet_exports, {
   greetWithMath: () => greetWithMath
@@ -41,7 +41,7 @@ function greetWithMath(name) {
   return "Hello " + name + "! " + formatSum(1, 2);
 }
 export {
-  math_exports as math,
   format_exports as format,
-  greet_exports as greet
+  greet_exports as greet,
+  math_exports as math
 };
