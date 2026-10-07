@@ -3,9 +3,18 @@ use std::fs;
 use wakaru_core::driver::test_support::{unpack, unpack_raw};
 use wakaru_core::{validate_output_modules, DecompileOptions};
 
-fn fixture(path: &str) -> String {
-    let full = format!("tests/bundles/webpack-gen/dist/{path}");
+/// Bundles `generate.sh` produces.
+const GENERATED: &str = "tests/bundles/webpack-gen/dist";
+/// Hand-authored bundles no generator produces (`shape: hypothetical`).
+const HANDWRITTEN: &str = "tests/bundles/webpack";
+
+fn read_bundle(dir: &str, path: &str) -> String {
+    let full = format!("{dir}/{path}");
     fs::read_to_string(&full).unwrap_or_else(|e| panic!("failed to read {full}: {e}"))
+}
+
+fn fixture(path: &str) -> String {
+    read_bundle(GENERATED, path)
 }
 
 fn unpack_fixture(path: &str) -> Vec<(String, String)> {
@@ -13,7 +22,14 @@ fn unpack_fixture(path: &str) -> Vec<(String, String)> {
 }
 
 fn unpack_fixture_with_options(path: &str, emit_source_map: bool) -> Vec<(String, String)> {
-    let source = fixture(path);
+    unpack_source(fixture(path), path, emit_source_map)
+}
+
+fn unpack_handwritten(path: &str) -> Vec<(String, String)> {
+    unpack_source(read_bundle(HANDWRITTEN, path), path, false)
+}
+
+fn unpack_source(source: String, path: &str, emit_source_map: bool) -> Vec<(String, String)> {
     let output = unpack(
         &source,
         DecompileOptions {
@@ -558,9 +574,10 @@ fn wp5_ncc_minified_inline_entry() {
 // Webpack 5 — require.s entry (hand-crafted)
 // ========================================================================
 
+// shape: hypothetical
 #[test]
 fn wp5_require_s_entry() {
-    let pairs = unpack_fixture("wp5-require-s/bundle.js");
+    let pairs = unpack_handwritten("wp5-require-s.js");
     assert_eq!(
         pairs.len(),
         2,
@@ -603,9 +620,10 @@ fn wp5_require_o_entry() {
 // Path traversal (hand-crafted)
 // ========================================================================
 
+// shape: hypothetical
 #[test]
 fn wp_path_traversal_sanitized() {
-    let pairs = unpack_fixture("wp-path-traversal/bundle.js");
+    let pairs = unpack_handwritten("wp-path-traversal.js");
     assert!(!pairs.is_empty(), "wp-path-traversal should unpack");
     assert_no_traversal(&pairs, "wp-path-traversal");
 }

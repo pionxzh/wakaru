@@ -13,15 +13,9 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# dist/ also carries hand-authored fixtures no generator here produces
-# (wp-path-traversal's traversal ids, wp5-require-s's minified require.s
-# shape). Remove only the outputs this script regenerates: every
-# webpackN-<x>.config.cjs writes to dist/wpN-<x>, plus the two ncc builds.
-for config in webpack4-*.config.cjs webpack5-*.config.cjs; do
-  name="${config%.config.cjs}"
-  rm -rf "dist/wp${name#webpack}"
-done
-rm -rf dist/wp5-ncc dist/wp5-ncc-min node_modules
+# dist/ holds only this script's outputs; hand-authored webpack bundles live
+# in ../webpack/.
+rm -rf dist node_modules
 
 echo "=== Webpack 4 (4.47.0) ==="
 
@@ -162,6 +156,8 @@ npx --yes -p webpack@5.109.0 -p webpack-cli@5.1.4 \
   webpack --config webpack5-amd-return-min.config.cjs 2>/dev/null
 
 echo "=== Vercel ncc (0.44.1) ==="
+# ncc's numeric module ids change with the directory it runs in: a checkout at
+# another path regenerates these two bundles with different ids only.
 
 echo "  wp5-ncc:           Node CJS bundle with inline webpack startup"
 npx --yes @vercel/ncc@0.44.1 build src/ncc-entry.cjs -o dist/wp5-ncc 2>/dev/null

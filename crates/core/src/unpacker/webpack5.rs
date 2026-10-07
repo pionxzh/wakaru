@@ -4018,9 +4018,10 @@ const modules = Array(4).concat([
     #[test]
     fn detects_wp5_require_s_entry() {
         // Webpack 5 bundle using __webpack_require__(__webpack_require__.s = 2) for entry
+        // shape: hypothetical
         let source = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/bundles/webpack-gen/dist/wp5-require-s/bundle.js"
+            "/tests/bundles/webpack/wp5-require-s.js"
         ))
         .expect("failed to read wp5-require-s fixture");
 

@@ -324,10 +324,10 @@ A test that encodes a producer shape names its source in a comment, for example
 `// shape: hypothetical` (see
 [reviewing.md](reviewing.md#shape-claims-need-provenance)).
 
-A few fixtures under `webpack-gen/dist/` are hand-authored shapes no real
-bundler emits (e.g. `wp-path-traversal`, `wp5-require-s`); `generate.sh`
-deliberately leaves them alone — it removes and rebuilds only the outputs its
-own configs produce.
+`<bundler>-gen/dist/` holds only generator output. Hand-authored bundles go in
+`crates/core/tests/bundles/<bundler>/` with a README that says what each one
+tests (for example `webpack/`, `closure-module-manager/`); their shapes are
+`hypothetical`.
 
 ## Writing Tests
 
