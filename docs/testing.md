@@ -153,6 +153,10 @@ with this change.
    To accept a deliberate, reviewed output improvement into the reference, run
    `../wakaru-fixtures/run.sh --update` and commit the `outputs/` change.
 
+   If the sibling `wakaru-private-artificial` repository is checked out, also
+   run the checks its `README.md` lists for your change, against your
+   worktree's binary.
+
 7. Docs freshness: if your change makes any statement in `docs/` or
    `AGENTS.md` false (a renamed flag, a moved file, a new rule ordering, a
    changed workflow), fix the doc in the same commit. Agents and new
