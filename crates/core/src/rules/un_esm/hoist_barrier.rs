@@ -151,10 +151,7 @@ fn require_call_kind(expr: &Expr, unresolved_mark: Mark) -> Option<bool> {
 /// `require("x")`, `require("x").a.b`, or `helper(require("x"))`: the shapes
 /// UnEsm turns into an import.
 fn is_require_like(expr: &Expr, unresolved_mark: Mark) -> bool {
-    let mut current = strip_parens(expr);
-    while let Expr::Member(member) = current {
-        current = strip_parens(&member.obj);
-    }
+    let current = member_root(expr);
     if require_call_kind(current, unresolved_mark) == Some(true) {
         return true;
     }
@@ -210,6 +207,15 @@ fn chain_root(expr: &Expr) -> &Expr {
             _ => return current,
         }
     }
+}
+
+/// The object a member chain starts from: `f()` in `f().a.b`.
+fn member_root(expr: &Expr) -> &Expr {
+    let mut current = strip_parens(expr);
+    while let Expr::Member(member) = current {
+        current = strip_parens(&member.obj);
+    }
+    current
 }
 
 fn mentions_commonjs_object(stmt: &Stmt, unresolved_mark: Mark) -> bool {
@@ -291,8 +297,10 @@ impl Visit for EffectScan<'_> {
         let leftover = if self.in_control_flow {
             is_string_require_call(call, self.unresolved_mark)
         } else {
+            // `require("x").a()` or `require("x")(a)`: walk members only,
+            // because `chain_root` would step through the require call too.
             matches!(&call.callee, Callee::Expr(callee)
-                if matches!(chain_root(callee), Expr::Call(inner)
+                if matches!(member_root(callee), Expr::Call(inner)
                     if is_string_require_call(inner, self.unresolved_mark)))
         };
         if leftover {

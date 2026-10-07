@@ -770,9 +770,10 @@ top-level `require` stays a call in place, and the module may become ESM with
 those calls in it. The barriers are:
 
 - a write to a global: `window.fetch = spy`, `process.env.X = v`, `g = 1`;
-- a string `require` that stays a call: one whose result is called
-  (`require("dotenv").config()`), or any require inside `if`, a loop, or
-  `try`;
+- a string `require` that stays a call: one whose result is called, in an
+  expression statement or a declaration (`require("dotenv").config()`,
+  `var env = require("dotenv").config()`), or any require inside `if`, a
+  loop, or `try`;
 - an expression statement that calls into a required module and discards
   the result: `polyfill.install();`.
 
@@ -781,7 +782,13 @@ requires in order. Other statements are not barriers: declarations,
 function and class definitions, export plumbing, calls whose result is kept
 (`var x = lib.make()`), and calls of local functions. A required value read
 as an argument (`f(require("x").default)`) becomes an import, so it does not
-count as a require that stays a call. webpack's module concatenation (producer
+count as a require that stays a call.
+
+The barrier sees effects only through these shapes, so some observable
+effects do not stop hoisting: a global written by a local helper
+(`setup()`), a write through a required binding (`cfg.debug = true`), a
+call of a destructured require binding (`var { install } = require("p");
+install()`), and `Object.defineProperty(window, ...)`. webpack's module concatenation (producer
 `webpack@5.111.1` `concatenateModules`) is the main source of mid-body
 requires: an inner module's code runs before the next inner module's
 external require.

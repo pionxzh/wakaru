@@ -7430,6 +7430,38 @@ export default { db: db };
 }
 
 #[test]
+fn require_after_a_declaration_that_calls_a_require_result_stays_a_call() {
+    for first in [
+        r#"var env = require("dotenv").config();"#,
+        r#"var env = require("dotenv")(process.env);"#,
+        r#"var env = { presets: require("./themes").ZP.getPresets() };"#,
+    ] {
+        let input = format!(
+            r#"
+{first}
+var db = require("./db");
+module.exports = {{ db: db, env: env }};
+"#
+        );
+        let output = un_esm_standard(&input);
+        assert!(output.contains("var db = require(\"./db\")"), "{output}");
+        assert!(!output.contains("from \"./db\""), "{output}");
+    }
+}
+
+#[test]
+fn require_after_a_declaration_that_reads_a_required_value_becomes_an_import() {
+    let input = r#"
+var make = require("./make").create;
+var db = require("./db");
+module.exports = { db: db, make: make };
+"#;
+    let output = un_esm_standard(input);
+    assert!(output.contains("from \"./db\""), "{output}");
+    assert!(!output.contains("require("), "{output}");
+}
+
+#[test]
 fn require_after_a_discarded_call_into_a_provider_stays_a_call() {
     let input = r#"
 var polyfill = require("./polyfill");
