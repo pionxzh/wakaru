@@ -233,7 +233,7 @@ console.log(x);
 
 #[test]
 fn unwraps_inline_ternary_iife() {
-    // Inline IIFE using ternary form (not if/return) — the pattern from webpack4 module-27.
+    // Inline IIFE using ternary form (not if/return).
     // Previously required a double-pass: UnConditionals expanded the ternary first,
     // then UnInteropRequireDefault matched the if/return form on re-parse.
     let input = r#"

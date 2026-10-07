@@ -752,7 +752,7 @@ export function foo(t = {}) {
 
 #[test]
 fn named_owp_helper_decompiled_object_keys_form() {
-    // Exact shape from webpack4 module-23 after Stage 1 normalization:
+    // A webpack 4 module after Stage 1 normalization:
     // separate temp vars, key assigned in loop, copy uses temp var
     let input = r#"
 function m(e, t) {

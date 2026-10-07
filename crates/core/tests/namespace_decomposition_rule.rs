@@ -320,11 +320,11 @@ r.default();
     );
 }
 
-// ── Diagnostic: module-22 shape ────────────────────────────────────
+// ── Nested member access on a default import ───────────────────────
 
 #[test]
 fn nested_member_access_on_default_import_decomposes() {
-    // Matches the `u.d.take(e)` shape from webpack4 module-22. `u` is a default
+    // The `u.d.take(e)` shape from a webpack 4 module. `u` is a default
     // import whose accessed prop is `d`; target module exports `d`.
     let target_facts = facts_for(r#"export function d() {}"#);
     let mut facts = ModuleFactsMap::new();
@@ -371,7 +371,7 @@ ready.run(() => [ready_1(), other()]);
 
 #[test]
 fn nested_member_access_with_collision_aliases() {
-    // Module-22 exact shape: top-level `const d` already exists, so the
+    // Top-level `const d` already exists, so the
     // accessed prop `u.d` must alias to `d_1` on decomposition.
     let target_facts = facts_for(r#"export function d() {}"#);
     let mut facts = ModuleFactsMap::new();
@@ -613,7 +613,7 @@ export const buffers = a_1;
 
 #[test]
 fn nested_member_access_with_inner_shadow_decomposes() {
-    // Module-22 shape: `u` is a default import, but there's an inner
+    // `u` is a default import, but there's an inner
     // `function u(e) {}` in a different scope. The inner binding should NOT
     // block decomposition because it has a different SyntaxContext.
     let target_facts = facts_for(r#"export function d() {}"#);

@@ -1978,7 +1978,7 @@ mod polyfill_tests {
     // ---- positive cases ----
 
     #[test]
-    fn unwraps_module_21_shape_function() {
+    fn unwraps_polyfill_global_call_function() {
         let input = r#"(function(e, r) {
     var o, i = require("./module-31.js");
     o = typeof self != "undefined" ? self : typeof window != "undefined" ? window : void 0 !== e ? e : r;

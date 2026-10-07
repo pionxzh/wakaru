@@ -3087,7 +3087,8 @@ var C = function(r) {
 
 #[test]
 fn function_referenced_only_inside_another_misclassified_function_survives() {
-    // Bench shape: `C` and `R` both carry the loose `__values` signals through
+    // shape: wild-observed
+    // `C` and `R` both carry the loose `__values` signals through
     // nested inlined helpers. `C` is only referenced inside `R`'s initializer;
     // `R` stays because the module calls it, so `C` must stay as well.
     let input = r#"

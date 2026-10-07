@@ -823,8 +823,8 @@ fn iife_dot_apply_preserved() {
 }
 
 #[test]
-fn iife_dot_call_module_21_pipeline_strips_wrapper() {
-    // Module-21 style: a `function` IIFE with no `this` usage wrapped in
+fn iife_dot_call_polyfill_pipeline_strips_wrapper() {
+    // A `function` IIFE with no `this` usage wrapped in
     // `.call(this, ...)` for global polyfill injection. After the full
     // pipeline, `ArrowFunction` converts fn→arrow and `UnIife2` strips the
     // now-dead `.call(this, ...)`.

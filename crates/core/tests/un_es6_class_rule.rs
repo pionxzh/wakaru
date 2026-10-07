@@ -1462,7 +1462,7 @@ class Foo extends Base {
 
 #[test]
 fn test_inline_pcr_iife_with_apply() {
-    // The pattern from module-24 classes z, Q, oe:
+    // An inline possibleConstructorReturn IIFE applied to the constructor:
     // function t() { return PCR_IIFE(this, e.apply(this, arguments)); }
     let input = r#"
 var Foo = (function(e) {
@@ -1659,7 +1659,7 @@ class Foo {
 
 #[test]
 fn test_inherits_helper_in_outer_scope() {
-    // Module-23 pattern: inherits helper at top level, class IIFE inside a function body.
+    // Inherits helper at top level, class IIFE inside a function body.
     // The inherits helper `o` is detected at module level and available in nested scopes.
     let input = r#"
 function o(e, t) {
@@ -3044,7 +3044,8 @@ use(Widget);
 
 #[test]
 fn class_referenced_only_from_another_inlined_loop_class_survives() {
-    // Bench shape: two classes with inlined loops, `Processor` builds a `Timer`
+    // shape: wild-observed
+    // Two classes with inlined loops, `Processor` builds a `Timer`
     // inside a method, the module only uses `Processor`. Both are classes and
     // both must survive the sweep that removes the real `_createClass`.
     let input = format!(

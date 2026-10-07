@@ -2582,13 +2582,13 @@ System.register([], function (_export, _context) {
 
 #[test]
 fn assign_of_export_literal_keeps_name_and_return_value() {
-    // `S = _export("TodayShow", "TodayShow")` must emit the export and keep
+    // `S = _export("Featured", "Featured")` must emit the export and keep
     // `_export`'s return value for the assignment (not drop the name).
     let source = r#"
 System.register([], function (_export, _context) {
   var S;
   return { setters: [], execute: function () {
-    S = _export("TodayShow", "TodayShow");
+    S = _export("Featured", "Featured");
     use(S);
   } };
 });
@@ -2596,37 +2596,38 @@ System.register([], function (_export, _context) {
     let raw = unpack_source_raw(source);
     let entry = module_code(&raw, "entry.js");
     assert!(
-        entry.contains("export const TodayShow = \"TodayShow\"")
-            || entry.contains("export const TodayShow = 'TodayShow'"),
+        entry.contains("export const Featured = \"Featured\"")
+            || entry.contains("export const Featured = 'Featured'"),
         "literal UNIQUE export must be emitted:\n{entry}"
     );
     assert!(
-        entry.contains("S = TodayShow") || entry.contains("S=TodayShow"),
+        entry.contains("S = Featured") || entry.contains("S=Featured"),
         "assignment must keep `_export`'s return value:\n{entry}"
     );
 }
 
 #[test]
 fn seq_assign_export_literal_then_named_export_keeps_both_names() {
-    // Activity51Popup shape: `S = _export("TodayShow", "TodayShow"), _export("Popup", ctor)`.
+    // shape: wild-observed
+    // `S = _export("Featured", "Featured"), _export("Dialog", ctor)`.
     let source = r#"
 System.register([], function (_export, _context) {
   var S;
   return { setters: [], execute: function () {
-    S = _export("TodayShow", "TodayShow"), _export("Popup", function Popup() {});
+    S = _export("Featured", "Featured"), _export("Dialog", function Dialog() {});
   } };
 });
 "#;
     let raw = unpack_source_raw(source);
     let entry = module_code(&raw, "entry.js");
     assert!(
-        entry.contains("export const TodayShow = \"TodayShow\"")
-            || entry.contains("export const TodayShow = 'TodayShow'"),
-        "TodayShow must be a bound export, not only a local mention:\n{entry}"
+        entry.contains("export const Featured = \"Featured\"")
+            || entry.contains("export const Featured = 'Featured'"),
+        "Featured must be a bound export, not only a local mention:\n{entry}"
     );
     assert!(
-        entry.contains("export const Popup")
-            || (entry.contains("export {") && entry.contains("Popup")),
+        entry.contains("export const Dialog")
+            || (entry.contains("export {") && entry.contains("Dialog")),
         "following named export must survive:\n{entry}"
     );
 }
@@ -2637,19 +2638,19 @@ fn assign_of_export_literal_respects_freedom_proof() {
 System.register([], function (_export, _context) {
   var S;
   return { setters: [], execute: function () {
-    eval("TodayShow");
-    S = _export("TodayShow", "TodayShow");
+    eval("Featured");
+    S = _export("Featured", "Featured");
   } };
 });
 "#;
     let raw = unpack_source_raw(source);
     let entry = module_code(&raw, "entry.js");
     assert!(
-        entry.contains("export { __systemjs_export as TodayShow }"),
+        entry.contains("export { __systemjs_export as Featured }"),
         "direct eval must force the alias path:\n{entry}"
     );
     assert!(
-        !entry.contains("export const TodayShow"),
+        !entry.contains("export const Featured"),
         "must not bind a name a direct eval could observe:\n{entry}"
     );
 }
@@ -2682,16 +2683,16 @@ fn nested_export_literal_expression_keeps_name() {
     let source = r#"
 System.register([], function (_export, _context) {
   return { setters: [], execute: function () {
-    use(_export("TodayShow", "TodayShow"));
+    use(_export("Featured", "Featured"));
   } };
 });
 "#;
     let raw = unpack_source_raw(source);
     let entry = module_code(&raw, "entry.js");
     assert!(
-        entry.contains("export const TodayShow")
-            || entry.contains("export let TodayShow")
-            || entry.contains("export {") && entry.contains("TodayShow"),
+        entry.contains("export const Featured")
+            || entry.contains("export let Featured")
+            || entry.contains("export {") && entry.contains("Featured"),
         "nested `_export` literal must still emit the name:\n{entry}"
     );
 }
@@ -2701,7 +2702,7 @@ fn expression_export_preserves_sibling_evaluation_order() {
     let source = r#"
 System.register([], function (_export, _context) {
   return { setters: [], execute: function () {
-    use(before(), _export("TodayShow", make()), after());
+    use(before(), _export("Featured", make()), after());
   } };
 });
 "#;
@@ -2860,42 +2861,42 @@ fn assign_of_export_literal_rejects_existing_local() {
 System.register([], function (_export, _context) {
   var S;
   return { setters: [], execute: function () {
-    const TodayShow = 1;
-    S = _export("TodayShow", "TodayShow");
-    use(S, TodayShow);
+    const Featured = 1;
+    S = _export("Featured", "Featured");
+    use(S, Featured);
   } };
 });
 "#;
     let raw = unpack_source_raw(source);
     let entry = module_code(&raw, "entry.js");
     assert!(
-        entry.contains("export { __systemjs_export as TodayShow }"),
+        entry.contains("export { __systemjs_export as Featured }"),
         "an existing local must force the alias path:\n{entry}"
     );
     assert!(
-        !entry.contains("export const TodayShow"),
+        !entry.contains("export const Featured"),
         "must not rebind an existing local as the export:\n{entry}"
     );
 }
 
 #[test]
 fn assign_of_export_literal_ignores_cjs_hasownproperty_string() {
-    // `exports.hasOwnProperty("TodayShow")` is a CJS surface read. SystemJS
+    // `exports.hasOwnProperty("Featured")` is a CJS surface read. SystemJS
     // `_export` does not own that object; a string key must not block a free name.
     let source = r#"
 System.register([], function (_export, _context) {
   var S;
   return { setters: [], execute: function () {
-    exports.hasOwnProperty("TodayShow");
-    S = _export("TodayShow", "TodayShow");
+    exports.hasOwnProperty("Featured");
+    S = _export("Featured", "Featured");
   } };
 });
 "#;
     let raw = unpack_source_raw(source);
     let entry = module_code(&raw, "entry.js");
     assert!(
-        entry.contains("export const TodayShow = \"TodayShow\"")
-            || entry.contains("export const TodayShow = 'TodayShow'"),
+        entry.contains("export const Featured = \"Featured\"")
+            || entry.contains("export const Featured = 'Featured'"),
         "a CJS hasOwnProperty string must not force the alias path:\n{entry}"
     );
 }

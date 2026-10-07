@@ -145,7 +145,7 @@ console.log(StrictMode);
 
 #[test]
 fn skips_rename_when_new_name_shadows_original_in_inner_scope() {
-    // module-0 pattern: `exports.e = a` wants to rename `a → e`, but the function
+    // `exports.e = a` wants to rename `a → e`, but the function
     // that uses `a` also declares a local `e`. Without the shadowing check the
     // Renamer would produce `e[e]` — wrong — because both the module-level
     // renamed `a` and the local `e` print as `e` after SyntaxContext is erased.

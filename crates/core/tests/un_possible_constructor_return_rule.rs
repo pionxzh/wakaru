@@ -86,7 +86,7 @@ var x = d(this, Parent.call(this));
 
 #[test]
 fn handles_multiple_pcr_helpers_in_same_module() {
-    // Module-24 has multiple possibleConstructorReturn helpers (d, m, E, ...)
+    // One module with several possibleConstructorReturn helpers (d, m, E, ...).
     let input = r#"
 function d(e, t) {
     if (!e) {

@@ -38,7 +38,7 @@ console.log(obj);
 
 #[test]
 fn rewrites_assignment_wrap_form() {
-    // Module-36 shape: `a(r = {}, KEY, VALUE)` used to seed an object.
+    // `a(r = {}, KEY, VALUE)` used to seed an object.
     let input = r#"
 function a(e, t, n) {
     if (t in e) {
@@ -64,7 +64,7 @@ console.log(r);
 
 #[test]
 fn detects_compact_babel_helper_after_normalization() {
-    // Raw webpack module-36 shape: Babel's helper starts as a ternary return
+    // Raw webpack module: Babel's helper starts as a ternary return
     // wrapped in a comma sequence, so UnConditionals must normalize it first.
     let input = r#"
 function a(e, t, n) {
