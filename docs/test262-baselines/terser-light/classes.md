@@ -23,20 +23,18 @@
 
 | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---:|---:|---:|---:|---:|---:|---:|
-| 8426 | 8426 | 0 | 45 | 992 | 7389 | 0 |
+| 8426 | 8426 | 0 | 41 | 990 | 7395 | 0 |
 
 ## Reasons
 
 | Status | Reason | Count |
 |---|---|---:|
 | rejected | swc-print-class-extends-arrow-parens | 2 |
-| rejected | swc-print-static-constructor-method | 2 |
 | rejected | transform-reject | 74 |
 | rejected | transform-runtime | 914 |
 | unsupported | node-vm-baseline | 35 |
 | unsupported | swc-parse-async-ident | 4 |
 | unsupported | swc-parse-await-class-name | 2 |
-| unsupported | swc-parse-static-async-constructor-method | 4 |
 
 ## Failures
 

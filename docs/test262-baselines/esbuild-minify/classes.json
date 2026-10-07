@@ -31,9 +31,9 @@
     "discovered": 8426,
     "runnable": 8426,
     "skipped": 0,
-    "unsupported": 39,
-    "rejected": 528,
-    "passed": 7859,
+    "unsupported": 35,
+    "rejected": 526,
+    "passed": 7865,
     "failed": 0
   },
   "outcomes": [
@@ -2132,30 +2132,6 @@
       "kind": "node-vm-baseline",
       "fingerprint": "121bd23ee6859c8941733d01093e743ecf740f3c77487ebe7834835bdad2d59d",
       "summary": "Error: sloppy: expected success, got parse SyntaxError: Unexpected identifier '$'"
-    },
-    {
-      "path": "test/language/expressions/class/elements/syntax/valid/grammar-static-ctor-async-gen-meth-valid.js",
-      "variant": "case",
-      "status": "unsupported",
-      "kind": "swc-parse-static-async-constructor-method",
-      "fingerprint": "4b1583c3c8bac09d784ebe3e8f3463be2fa7872e9fabecfcd45e3256022ef869",
-      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (32..43, AsyncConstructor) }"
-    },
-    {
-      "path": "test/language/expressions/class/elements/syntax/valid/grammar-static-ctor-async-meth-valid.js",
-      "variant": "case",
-      "status": "unsupported",
-      "kind": "swc-parse-static-async-constructor-method",
-      "fingerprint": "4b1583c3c8bac09d784ebe3e8f3463be2fa7872e9fabecfcd45e3256022ef869",
-      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (32..43, AsyncConstructor) }"
-    },
-    {
-      "path": "test/language/expressions/class/elements/syntax/valid/grammar-static-ctor-meth-valid.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "swc-print-static-constructor-method",
-      "fingerprint": "4cb5021a5ca9ec6a8ade152d7b5977522164bf471c4ad3c45e47ae055610525b",
-      "summary": "Error: sloppy: expected success, got parse SyntaxError: A class may only have one constructor"
     },
     {
       "path": "test/language/expressions/class/heritage-arrow-function.js",
@@ -4508,30 +4484,6 @@
       "kind": "transform-reject",
       "fingerprint": "18f0a0a8b4c4ad22abaad746644f3f5750a0c3464a83b91d39ccc38a0f79f639",
       "summary": "Error: Transform failed with 1 error:\n<stdin>:40:2: ERROR: Unexpected \"*\""
-    },
-    {
-      "path": "test/language/statements/class/elements/syntax/valid/grammar-static-ctor-async-gen-meth-valid.js",
-      "variant": "case",
-      "status": "unsupported",
-      "kind": "swc-parse-static-async-constructor-method",
-      "fingerprint": "535a5bfb1a9d38785ab7485064d3fda153ff0e5eb423a7cebb1f6d234171b142",
-      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (28..39, AsyncConstructor) }"
-    },
-    {
-      "path": "test/language/statements/class/elements/syntax/valid/grammar-static-ctor-async-meth-valid.js",
-      "variant": "case",
-      "status": "unsupported",
-      "kind": "swc-parse-static-async-constructor-method",
-      "fingerprint": "535a5bfb1a9d38785ab7485064d3fda153ff0e5eb423a7cebb1f6d234171b142",
-      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (28..39, AsyncConstructor) }"
-    },
-    {
-      "path": "test/language/statements/class/elements/syntax/valid/grammar-static-ctor-meth-valid.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "swc-print-static-constructor-method",
-      "fingerprint": "25ed88490bae61e72724bb3fb900862d5e8c29d6b55da2c6bf1c06b27af434a7",
-      "summary": "Error: sloppy: expected success, got parse SyntaxError: A class may only have one constructor"
     },
     {
       "path": "test/language/statements/class/name-binding/in-extends-expression-grouped.js",

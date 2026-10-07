@@ -25,7 +25,7 @@ test("compareReports summarizes totals and status transitions", () => {
     results: [
       { path: "a.js", status: "passed", variants: ["sloppy"] },
       { path: "b.js", status: "passed", variants: ["sloppy"] },
-      { path: "c.js", status: "rejected", phase: "swc-fidelity", reason: "swc-array-binding-elision" },
+      { path: "c.js", status: "rejected", phase: "swc-fidelity", reason: "swc-print-new-arrow-parens" },
       { path: "d.js", status: "failed", phase: "decompiled-runtime" },
     ],
   };
@@ -36,7 +36,7 @@ test("compareReports summarizes totals and status transitions", () => {
   assert.equal(comparison.deltas.failed, -1);
   assert.deepEqual(comparison.transitions, [
     { transition: "failed:decompiled-runtime -> passed", count: 1 },
-    { transition: "failed:wakaru -> rejected:swc-array-binding-elision", count: 1 },
+    { transition: "failed:wakaru -> rejected:swc-print-new-arrow-parens", count: 1 },
     { transition: "missing -> failed:decompiled-runtime", count: 1 },
   ]);
 });

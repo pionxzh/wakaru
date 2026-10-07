@@ -36,27 +36,11 @@
     "runnable": 1396,
     "skipped": 0,
     "unsupported": 19,
-    "rejected": 4,
-    "passed": 1373,
+    "rejected": 2,
+    "passed": 1375,
     "failed": 0
   },
   "outcomes": [
-    {
-      "path": "test/language/expressions/arrow-function/dstr/ary-ptrn-elision-step-err.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "swc-array-binding-elision",
-      "fingerprint": "d8911e46ccaa8e8f8e3519d365fe48f2231ba16a1e229ef8911570051e3b373f",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all"
-    },
-    {
-      "path": "test/language/expressions/arrow-function/dstr/ary-ptrn-elision.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "swc-array-binding-elision",
-      "fingerprint": "c33ddfcef69aef93b1548f56a8ed48031b28211e9b80ad68db7f5adf1ee1349e",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«0», «1») to be true"
-    },
     {
       "path": "test/language/expressions/arrow-function/param-dflt-yield-id-non-strict.js",
       "variant": "case",

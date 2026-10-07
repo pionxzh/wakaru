@@ -3,8 +3,7 @@ use std::panic::{self, AssertUnwindSafe};
 use anyhow::anyhow;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    AssignTarget, Callee, Expr, ExprStmt, JSXExpr, JSXExprContainer, JSXSpreadChild, Module,
-    OptChainBase, ParenExpr, SimpleAssignTarget,
+    AssignTarget, Callee, Expr, ExprStmt, Module, OptChainBase, ParenExpr, SimpleAssignTarget,
 };
 use swc_core::ecma::transforms::base::fixer::fixer;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
@@ -72,37 +71,6 @@ fn parenthesize_callee(callee: &mut Box<Expr>) {
     }
 }
 
-/// SWC's fixer has no JSX context: an expression container inherits the
-/// context of the enclosing statement, so inside a `return` it drops the
-/// parentheses of `{(a, b)}`. A container holds an AssignmentExpression, and
-/// the emitter prints the bare sequence as invalid JSX. Re-wrap sequences in
-/// containers and spread children after the fixer.
-struct JsxSequenceParens;
-
-impl VisitMut for JsxSequenceParens {
-    fn visit_mut_jsx_expr_container(&mut self, container: &mut JSXExprContainer) {
-        container.visit_mut_children_with(self);
-        if let JSXExpr::Expr(expression) = &mut container.expr {
-            parenthesize_sequence(expression);
-        }
-    }
-
-    fn visit_mut_jsx_spread_child(&mut self, child: &mut JSXSpreadChild) {
-        child.visit_mut_children_with(self);
-        parenthesize_sequence(&mut child.expr);
-    }
-}
-
-fn parenthesize_sequence(expression: &mut Box<Expr>) {
-    if matches!(expression.as_ref(), Expr::Seq(_)) {
-        let sequence = std::mem::replace(expression, Box::new(Expr::Invalid(Default::default())));
-        **expression = Expr::Paren(ParenExpr {
-            span: DUMMY_SP,
-            expr: sequence,
-        });
-    }
-}
-
 /// Run SWC's fixer pass, catching panics from malformed AST that the
 /// error-recovery parser accepted but the fixer doesn't handle.
 pub(crate) fn apply_fixer(module: &mut Module) -> anyhow::Result<()> {
@@ -116,7 +84,6 @@ pub(crate) fn apply_fixer(module: &mut Module) -> anyhow::Result<()> {
         // Limit the repair to the statement's left edge: the same callee in a
         // variable initializer or assignment RHS is already valid JavaScript.
         module.visit_mut_with(&mut FunctionExpressionCalleeParens);
-        module.visit_mut_with(&mut JsxSequenceParens);
     }))
     .map_err(|payload| {
         let msg = payload
@@ -208,6 +175,10 @@ function accept(value) {
         });
     }
 
+    // SWC's fixer used to give a JSX expression container the context of the
+    // enclosing statement and drop the parentheses of `{(a, b)}`, printing
+    // invalid JSX. Fixed upstream in swc_core 82; these cases guard against a
+    // regression. https://github.com/swc-project/swc/issues/12484
     #[test]
     fn fixer_keeps_jsx_container_sequence_parens() {
         let source = r#"function f() { return <div a={(x, y)}>{(a, b)}</div>; }"#;

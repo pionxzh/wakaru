@@ -204,16 +204,13 @@ Known non-Wakaru reasons currently classified:
 - `swc-parse-await-class-name`
 - `swc-parse-deep-iife-stack-overflow`
 - `swc-parse-static-init-await`
-- `swc-parse-static-async-constructor-method`
 - `swc-parse-yield-arrow-parameter`
 - `swc-parse-yield-function-name`
 - `swc-parse-yield-ident`
 - `swc-parse-yield-label`
-- `swc-array-binding-elision`
 - `swc-print-class-extends-arrow-parens`
 - `swc-print-export-default-function-expression`
 - `swc-print-new-arrow-parens`
-- `swc-print-static-constructor-method`
 
 Most known non-Wakaru classifications live in
 `scripts/correctness/test262-known-blockers.json`. Keep entries narrow: match the

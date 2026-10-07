@@ -1,11 +1,11 @@
 {
-  "commit": "281fb103e",
-  "date": "2026-09-13",
+  "commit": "88fca223c",
+  "date": "2026-10-08",
   "aggregate": {
     "producers": 3,
     "entries": 60,
     "runnable": 66729,
-    "passed": 62155,
+    "passed": 62171,
     "failed": 0,
     "pct": 100
   },
@@ -89,9 +89,9 @@
       "discovered": 8426,
       "runnable": 8426,
       "skipped": 0,
-      "unsupported": 39,
-      "rejected": 528,
-      "passed": 7859,
+      "unsupported": 35,
+      "rejected": 526,
+      "passed": 7865,
       "failed": 0
     },
     {
@@ -222,8 +222,8 @@
       "runnable": 1396,
       "skipped": 0,
       "unsupported": 10,
-      "rejected": 187,
-      "passed": 1199,
+      "rejected": 185,
+      "passed": 1201,
       "failed": 0
     },
     {
@@ -569,9 +569,9 @@
       "discovered": 8426,
       "runnable": 8426,
       "skipped": 0,
-      "unsupported": 45,
-      "rejected": 992,
-      "passed": 7389,
+      "unsupported": 41,
+      "rejected": 990,
+      "passed": 7395,
       "failed": 0
     },
     {
@@ -702,8 +702,8 @@
       "runnable": 1396,
       "skipped": 0,
       "unsupported": 19,
-      "rejected": 4,
-      "passed": 1373,
+      "rejected": 2,
+      "passed": 1375,
       "failed": 0
     },
     {

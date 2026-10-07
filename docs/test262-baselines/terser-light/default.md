@@ -33,8 +33,7 @@
 | rejected | transform-runtime | 3 |
 | unsupported | node-vm-baseline | 4 |
 | unsupported | sloppy-only-strict-ident | 24 |
-| unsupported | swc-parse-async-ident | 5 |
-| unsupported | swc-parse-static-init-await | 3 |
+| unsupported | swc-parse-async-ident | 8 |
 | unsupported | swc-parse-yield-ident | 1 |
 
 ## Failures

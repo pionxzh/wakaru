@@ -323,8 +323,8 @@
       "variant": "case",
       "status": "unsupported",
       "kind": "sloppy-only-strict-ident",
-      "fingerprint": "9c16d72b3fec538671d79be8739b3dcde780d532dfa862aa249d53af3536e1bf",
-      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (78..83, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
+      "fingerprint": "5b87eb55cc55b321c2d8d3df55b3a5ff037e43170b3f7309feaed46cc3d3f891",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (78..83, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\"); <stdin>:1:49: ReservedWordInObjShorthandOrPat"
     },
     {
       "path": "test/language/expressions/assignment/dstr/obj-id-init-yield-ident-valid.js",
@@ -547,8 +547,8 @@
       "variant": "case",
       "status": "unsupported",
       "kind": "sloppy-only-strict-ident",
-      "fingerprint": "bfc6fd135eb1cee4a136d59a1ea4d10010beb3b45ece2bac0d34d66af40a1b64",
-      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (68..73, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
+      "fingerprint": "c63a15b4d1ae9a8aceed0cd9c32b1a5e92ba709b8879fcf23d4190220476c674",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (68..73, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\"); <stdin>:1:30: ReservedWordInObjShorthandOrPat"
     },
     {
       "path": "test/language/statements/for-of/dstr/obj-id-init-yield-ident-valid.js",

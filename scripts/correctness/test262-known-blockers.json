@@ -38,15 +38,6 @@
       }
     },
     {
-      "reason": "swc-parse-static-async-constructor-method",
-      "status": "unsupported",
-      "phase": "wakaru-parse",
-      "when": {
-        "pathIncludes": ["grammar-static-ctor-async"],
-        "errorIncludes": ["AsyncConstructor"]
-      }
-    },
-    {
       "reason": "swc-parse-deep-iife-stack-overflow",
       "status": "unsupported",
       "phase": "wakaru-parse",
@@ -188,18 +179,6 @@
       "note": "Test262 script execution preloads a global harness binding named assert. Top-level script `var assert` can coexist with that environment, but decompiled top-level `const assert` is a lexical redeclaration."
     },
     {
-      "reason": "swc-array-binding-elision",
-      "status": "rejected",
-      "phase": "swc-fidelity",
-      "when": {
-        "pathStartsWith": ["test/language/expressions/arrow-function/dstr/"],
-        "pathRegex": ["(?:^|/)dstr/(?:dflt-)?ary-ptrn-(?:elem-ary-)?elision"],
-        "errorRegex": ["Test262Error|TypeError"],
-        "decompiledRegex": ["=>"]
-      },
-      "note": "swc_ecma_parser drops trailing elisions from array binding patterns in arrow parameters, so `([,]) => {}` reaches Wakaru as `([]) => {}` and skips the iterator step. Assignment patterns keep their elisions since swc_ecma_parser 45.1.2."
-    },
-    {
       "reason": "swc-print-class-extends-arrow-parens",
       "status": "rejected",
       "phase": "swc-fidelity",
@@ -217,16 +196,6 @@
         "pathIncludes": ["test/language/expressions/arrow-function/throw-new.js"],
         "errorIncludes": ["Malformed arrow function parameter list"],
         "decompiledRegex": ["\\bnew\\s*\\(\\s*\\)\\s*=>"]
-      }
-    },
-    {
-      "reason": "swc-print-static-constructor-method",
-      "status": "rejected",
-      "phase": "swc-fidelity",
-      "when": {
-        "pathIncludes": ["grammar-static-ctor-meth-valid.js"],
-        "errorIncludes": ["A class may only have one constructor"],
-        "decompiledRegex": ["\\bconstructor\\s*\\(\\)\\s*\\{\\}\\s*constructor\\s*\\(\\)"]
       }
     },
     {

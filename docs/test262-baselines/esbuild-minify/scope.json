@@ -36,8 +36,8 @@
     "runnable": 1396,
     "skipped": 0,
     "unsupported": 10,
-    "rejected": 187,
-    "passed": 1199,
+    "rejected": 185,
+    "passed": 1201,
     "failed": 0
   },
   "outcomes": [
@@ -96,22 +96,6 @@
       "kind": "transform-runtime-inferred-name",
       "fingerprint": "87e14f19ab86dd4eddcc317bed1eaaf81fbbc2c3a4dc7b0030e19b26e33fceb9",
       "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«\"xGen\"», «\"xGen\"») to be false"
-    },
-    {
-      "path": "test/language/expressions/arrow-function/dstr/ary-ptrn-elision-step-err.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "swc-array-binding-elision",
-      "fingerprint": "9121f62b3dcd89cc8c1ee010eb2c3940b2e919fb397ad7d905e57b9eb23e6ee7",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all"
-    },
-    {
-      "path": "test/language/expressions/arrow-function/dstr/ary-ptrn-elision.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "swc-array-binding-elision",
-      "fingerprint": "cec832ef1e846cfc6fc28d995e7e40c43136a94a54238a14b988a483625c992d",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«0», «1») to be true"
     },
     {
       "path": "test/language/expressions/arrow-function/dstr/dflt-ary-ptrn-elem-id-init-fn-name-class.js",

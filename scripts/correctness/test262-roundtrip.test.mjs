@@ -851,14 +851,6 @@ test("knownWakaruParseUnsupportedReason classifies SWC parser gaps", () => {
   );
   assert.equal(
     knownWakaruParseUnsupportedReason(
-      new Error("failed to parse input.js: Error { error: (26..37, AsyncConstructor) }"),
-      [{ name: "sloppy", strict: false }],
-      "test/language/expressions/class/elements/syntax/valid/grammar-static-ctor-async-meth-valid.js",
-    ),
-    "swc-parse-static-async-constructor-method",
-  );
-  assert.equal(
-    knownWakaruParseUnsupportedReason(
       new Error("thread 'main' has overflowed its stack"),
       [{ name: "sloppy", strict: false }],
       "test/language/statements/function/S13.2.1_A1_T1.js",
@@ -883,49 +875,7 @@ test("knownWakaruParseUnsupportedReason classifies SWC parser gaps", () => {
   );
 });
 
-test("knownSwcFidelityIssueReason classifies arrow parameter elision gaps only", () => {
-  // Assignment-pattern elisions round-trip since swc_ecma_parser 45.1.2, so
-  // those shapes must not be reclassified as a known swc gap.
-  assert.equal(
-    knownSwcFidelityIssueReason({
-      path: "test/language/statements/for-of/dstr/array-iteration.js",
-      error: new Error("Test262Error"),
-      decompiled: "for ([] of [g()]) {}",
-    }),
-    null,
-  );
-  assert.equal(
-    knownSwcFidelityIssueReason({
-      path: "test/language/statements/for-await-of/async-gen-decl-dstr-array-elision-iter-nrml-close.js",
-      error: new Error("Test262Error"),
-      decompiled: "for await ([] of [iterable]) {}",
-    }),
-    null,
-  );
-  assert.equal(
-    knownSwcFidelityIssueReason({
-      path: "test/language/expressions/assignment/dstr/array-elision-iter-nrml-close.js",
-      error: new Error("Test262Error"),
-      decompiled: "[x] = iterable;",
-    }),
-    null,
-  );
-  assert.equal(
-    knownSwcFidelityIssueReason({
-      path: "test/language/expressions/assignment/dstr/array-iteration.js",
-      error: new Error("Test262Error"),
-      decompiled: "result = vals;\n[] = vals;",
-    }),
-    null,
-  );
-  assert.equal(
-    knownSwcFidelityIssueReason({
-      path: "test/language/expressions/arrow-function/dstr/ary-ptrn-elision.js",
-      error: new Error("Test262Error"),
-      decompiled: "f = ([])=>{};",
-    }),
-    "swc-array-binding-elision",
-  );
+test("knownSwcFidelityIssueReason classifies known swc printer gaps", () => {
   assert.equal(
     knownSwcFidelityIssueReason({
       path: "test/language/statements/for-of/dstr/obj-id.js",
@@ -933,14 +883,6 @@ test("knownSwcFidelityIssueReason classifies arrow parameter elision gaps only",
       decompiled: "for ({ x } of values) {}",
     }),
     null,
-  );
-  assert.equal(
-    knownSwcFidelityIssueReason({
-      path: "test/language/expressions/class/elements/syntax/valid/grammar-static-ctor-meth-valid.js",
-      error: new Error("SyntaxError: A class may only have one constructor"),
-      decompiled: "class {\nconstructor(){}\nconstructor(){}\n}",
-    }),
-    "swc-print-static-constructor-method",
   );
   assert.equal(
     knownSwcFidelityIssueReason({
@@ -1074,7 +1016,7 @@ test("formatMarkdownSummary emits stable totals, reasons, and failures", () => {
     },
     results: [
       { path: "a.js", status: "skipped", reason: "flag:async" },
-      { path: "b.js", status: "rejected", reason: "swc-array-binding-elision" },
+      { path: "b.js", status: "rejected", reason: "swc-print-new-arrow-parens" },
       { path: "c.js", status: "failed", phase: "decompiled-runtime" },
     ],
   });
@@ -1085,7 +1027,7 @@ test("formatMarkdownSummary emits stable totals, reasons, and failures", () => {
   assert.match(summary, /- harnessVersion: unrecorded/);
   assert.match(summary, /- caseTimeoutMs: 5000/);
   assert.match(summary, /\| 3 \| 2 \| 1 \| 0 \| 1 \| 0 \| 1 \|/);
-  assert.match(summary, /\| rejected \| swc-array-binding-elision \| 1 \|/);
+  assert.match(summary, /\| rejected \| swc-print-new-arrow-parens \| 1 \|/);
   assert.match(summary, /- c\.js \(decompiled-runtime\)/);
 });
 

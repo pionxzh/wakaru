@@ -1029,25 +1029,25 @@
       "path": "test/language/expressions/object/method-definition/static-init-await-binding-accessor.js",
       "variant": "case",
       "status": "unsupported",
-      "kind": "swc-parse-static-init-await",
-      "fingerprint": "00cdeb8a455ee457dbceed779923fcde36ba8506ad4748a7056b49670cf58cae",
-      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (31..36, ExpectedIdent) }"
+      "kind": "swc-parse-async-ident",
+      "fingerprint": "4aea9ef684ff1f0a9978415ecb2ac0bd527df6a5511f6891648d04e916c2b97a",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (31..36, InvalidIdentInAsync) }"
     },
     {
       "path": "test/language/expressions/object/method-definition/static-init-await-binding-generator.js",
       "variant": "case",
       "status": "unsupported",
-      "kind": "swc-parse-static-init-await",
-      "fingerprint": "dbe9d657e8b3617fb9b6b88be232ad15973dc3abaa4b81d308c901bbca121b83",
-      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (26..31, ExpectedIdent) }"
+      "kind": "swc-parse-async-ident",
+      "fingerprint": "ea28f617d6ab305cbd10c94a0ddede5b164b5183de82973cf1b8ab80e7bcec97",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (26..31, InvalidIdentInAsync) }"
     },
     {
       "path": "test/language/expressions/object/method-definition/static-init-await-binding-normal.js",
       "variant": "case",
       "status": "unsupported",
-      "kind": "swc-parse-static-init-await",
-      "fingerprint": "eb64acb651e89a6963f757a5d362bfc4dda92d74936a7fd6204944d3d4aef3a5",
-      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (25..30, ExpectedIdent) }"
+      "kind": "swc-parse-async-ident",
+      "fingerprint": "99cbe78343bac87a71ef56befcbba1f4c9f5a3915f7017e76c6942b240079782",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (25..30, InvalidIdentInAsync) }"
     },
     {
       "path": "test/language/expressions/object/method-definition/static-init-await-reference-accessor.js",
