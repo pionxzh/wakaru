@@ -27,10 +27,11 @@ use crate::module_path::resolve_relative_specifier;
 use crate::rules::expr_utils::is_unresolved_ident;
 use crate::rules::helper_matcher::{binding_key, binding_key_from_ident_pat, BindingKey};
 use crate::rules::transpiler_helper_utils::{
-    collect_inline_ts_helpers_deep, collect_transpiler_helpers,
+    classify_inline_callable, collect_inline_ts_helpers_deep, collect_transpiler_helpers,
     collect_ts_helper_export_registrars, is_ts_helper_export_registration_call, LocalHelperContext,
     TranspilerHelperKind, TsHelperKind,
 };
+use crate::rules::un_esmodule_flag::has_top_level_esmodule_flag;
 use crate::utils::paren::strip_parens;
 
 /// How a binding was imported.
@@ -215,6 +216,14 @@ pub struct ModuleFacts {
     /// no interop wrapper that would make the binding mean the provider's
     /// default export (see [`collect_whole_require_sources`]).
     pub whole_require_sources: Vec<Atom>,
+    /// True when the module marks its `exports` `__esModule` at the top level
+    /// before `UnEsm` removes the marker. A wildcard interop helper returns
+    /// such a module's required value unchanged.
+    pub marks_es_module: bool,
+    /// Sources this module requires only through a wildcard interop helper
+    /// (`var x = interopRequireWildcard(require("src"))`, declared or inlined
+    /// at the call site). See [`collect_wildcard_require_sources`].
+    pub wildcard_require_sources: Vec<Atom>,
     /// True when the module contains `export *`. Its complete named surface
     /// may depend on another provider, so local absence is not proof that a
     /// requested name should come from the default object.
@@ -1304,6 +1313,83 @@ pub fn collect_whole_require_sources(module: &Module, unresolved_mark: Mark) -> 
         .collect();
     sources.sort();
     sources
+}
+
+/// Whether the module marks its `exports` `__esModule` at the top level.
+/// Collected before `UnEsm`, which removes the marker of a module it converts.
+pub fn collect_marks_es_module(module: &Module, unresolved_mark: Mark) -> bool {
+    has_top_level_esmodule_flag(module, unresolved_mark)
+}
+
+/// Sources of top-level `var x = wildcard(require("src"))` bindings, where
+/// `wildcard` is an interop-wildcard helper, declared or inlined at the call
+/// site (a minifier inlines a single-use helper). Every `require("src")` call
+/// in the module must be such an argument. `UnEsm` unwraps the helper, so the
+/// binding reaches the provider repair as a default import; for a provider
+/// marked `__esModule` the helper returned the required value unchanged, so
+/// the binding is the whole required value.
+pub fn collect_wildcard_require_sources(module: &Module, unresolved_mark: Mark) -> Vec<Atom> {
+    let local_helpers = LocalHelperContext::collect_with_mark(module, unresolved_mark);
+    let mut wrapped_calls: HashMap<Atom, usize> = HashMap::default();
+    for item in &module.body {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            continue;
+        };
+        for declarator in &var.decls {
+            let (Pat::Ident(_), Some(init)) = (&declarator.name, &declarator.init) else {
+                continue;
+            };
+            let Expr::Call(call) = strip_parens(init) else {
+                continue;
+            };
+            let (Callee::Expr(callee), [arg]) = (&call.callee, call.args.as_slice()) else {
+                continue;
+            };
+            if arg.spread.is_some() {
+                continue;
+            }
+            let wildcard = local_helpers
+                .is_helper_callee(callee, TranspilerHelperKind::InteropRequireWildcard)
+                || classify_inline_callable(strip_parens(callee))
+                    == Some(TranspilerHelperKind::InteropRequireWildcard);
+            if !wildcard {
+                continue;
+            }
+            if let Some(source) = string_require_source(&arg.expr, unresolved_mark) {
+                *wrapped_calls.entry(source).or_default() += 1;
+            }
+        }
+    }
+    if wrapped_calls.is_empty() {
+        return Vec::new();
+    }
+    let mut counter = RequireCallCounter {
+        unresolved_mark,
+        calls: HashMap::default(),
+    };
+    module.visit_with(&mut counter);
+    let mut sources: Vec<Atom> = wrapped_calls
+        .into_iter()
+        .filter(|(source, count)| counter.calls.get(source) == Some(count))
+        .map(|(source, _)| source)
+        .collect();
+    sources.sort();
+    sources
+}
+
+/// Counts every `require("src")` call by source.
+struct RequireCallCounter {
+    unresolved_mark: Mark,
+    calls: HashMap<Atom, usize>,
+}
+
+impl Visit for RequireCallCounter {
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if let Some(source) = require_call_source(call, self.unresolved_mark) {
+            *self.calls.entry(source).or_default() += 1;
+        }
+        call.visit_children_with(self);
+    }
 }
 
 fn string_require_source(expr: &Expr, unresolved_mark: Mark) -> Option<Atom> {

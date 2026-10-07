@@ -55,9 +55,12 @@ pub(crate) fn run_provider_namespace_repair(
         return;
     };
 
-    let whole_require_sources = module_facts
-        .get(current_filename)
+    let consumer = module_facts.get(current_filename);
+    let whole_require_sources = consumer
         .map(|facts| facts.whole_require_sources.as_slice())
+        .unwrap_or_default();
+    let wildcard_require_sources = consumer
+        .map(|facts| facts.wildcard_require_sources.as_slice())
         .unwrap_or_default();
     let namespace_provider = |source: &str| {
         let Some(provider) = module_facts.get_from(Some(current_filename), source) else {
@@ -75,13 +78,17 @@ pub(crate) fn run_provider_namespace_repair(
         // A default export from `exports.default` is one property of the
         // required value; one from `module.exports = v` is the whole value.
         // An interop wrapper the consumer had unwrapped also makes the
-        // binding mean the default export.
+        // binding mean the default export, except a wildcard interop of a
+        // provider marked `__esModule`: it returns the required value as is.
+        let whole_value = whole_require_sources
+            .iter()
+            .any(|whole| whole.as_ref() == source)
+            || (provider.marks_es_module
+                && wildcard_require_sources
+                    .iter()
+                    .any(|wrapped| wrapped.as_ref() == source));
         (has_named_surface || has_default)
-            && (!has_default
-                || (provider.require_returns_exports_object
-                    && whole_require_sources
-                        .iter()
-                        .any(|whole| whole.as_ref() == source)))
+            && (!has_default || (provider.require_returns_exports_object && whole_value))
     };
     let policy = UsagePolicy {
         allow_default_read: true,

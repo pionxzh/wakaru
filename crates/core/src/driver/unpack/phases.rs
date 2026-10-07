@@ -42,8 +42,8 @@ use crate::commonjs_default_object_composition::{
 };
 use crate::facts::{
     collect_commonjs_default_attached_properties, collect_commonjs_default_object,
-    collect_module_facts, collect_require_returns_exports_object, collect_whole_require_sources,
-    ModuleFactsMap,
+    collect_marks_es_module, collect_module_facts, collect_require_returns_exports_object,
+    collect_whole_require_sources, collect_wildcard_require_sources, ModuleFactsMap,
 };
 use crate::namespace_decomposition::run_namespace_decomposition;
 use crate::provider_import_repair::run_provider_import_repair;
@@ -516,6 +516,9 @@ pub(super) fn unpack_multi_module_with_plan(
             let require_returns_exports_object =
                 collect_require_returns_exports_object(&module, unresolved_mark);
             let whole_require_sources = collect_whole_require_sources(&module, unresolved_mark);
+            let marks_es_module = collect_marks_es_module(&module, unresolved_mark);
+            let wildcard_require_sources =
+                collect_wildcard_require_sources(&module, unresolved_mark);
             {
                 let span = tracing::info_span!("phase1: rules");
                 let _enter = span.enter();
@@ -584,6 +587,8 @@ pub(super) fn unpack_multi_module_with_plan(
                 commonjs_default_attached_properties;
             facts.require_returns_exports_object = require_returns_exports_object;
             facts.whole_require_sources = whole_require_sources;
+            facts.marks_es_module = marks_es_module;
+            facts.wildcard_require_sources = wildcard_require_sources;
             (facts, prepared, None, suggested_filename)
         });
         let prepared = prepared_parts.map(|(module, unresolved_mark)| Phase1PreparedModule {
@@ -1862,6 +1867,55 @@ exports.alpha = provider.alpha;
                 "an unwrapped interop default must keep the default import:\n{consumer}"
             );
         }
+    }
+
+    /// swc's `_interop_require_wildcard`, inlined by Terser at its only call
+    /// site and applied to `require("./provider.js")`.
+    /// shape: producer swc@1.16.2 module=commonjs, then @rspack/core@1.7.12
+    /// mode=production.
+    const INLINE_WILDCARD_REQUIRE: &str = "function(e) { \
+        if (e && e.__esModule) return e; \
+        if (null === e || \"object\" != typeof e && \"function\" != typeof e) return { default: e }; \
+        var n = { __proto__: null }, u = Object.defineProperty && Object.getOwnPropertyDescriptor; \
+        for (var o in e) if (\"default\" !== o && Object.prototype.hasOwnProperty.call(e, o)) { \
+          var a = u ? Object.getOwnPropertyDescriptor(e, o) : null; \
+          a && (a.get || a.set) ? Object.defineProperty(n, o, a) : n[o] = e[o]; } \
+        return n.default = e, n; }(require(\"./provider.js\"))";
+
+    #[test]
+    fn inline_wildcard_of_a_marked_provider_repairs_to_a_namespace() {
+        // A wildcard interop returns a provider marked `__esModule` unchanged,
+        // so the binding is the whole `exports` object: the namespace.
+        let consumer = decompiled_consumer(
+            "Object.defineProperty(exports, \"__esModule\", { value: !0 }); \
+             exports.default = D; exports.alpha = 1; function D() { return 2; }",
+            &format!(
+                "var provider = {INLINE_WILDCARD_REQUIRE}; register(provider); \
+                 exports.value = provider.default() + provider.alpha;"
+            ),
+        );
+        assert!(
+            consumer.contains("import * as provider from \"./provider.js\";")
+                && consumer.contains("register(provider)"),
+            "the wildcard of a marked provider is its namespace:\n{consumer}"
+        );
+    }
+
+    #[test]
+    fn inline_wildcard_of_an_unmarked_provider_keeps_the_default_import() {
+        // Without the marker the wildcard builds a copy whose `default` is the
+        // whole `exports` object, not the recovered default export.
+        let consumer = decompiled_consumer(
+            "exports.default = D; exports.alpha = 1; function D() { return 2; }",
+            &format!(
+                "var provider = {INLINE_WILDCARD_REQUIRE}; register(provider); \
+                 exports.value = provider.default.alpha;"
+            ),
+        );
+        assert!(
+            !consumer.contains("import * as provider"),
+            "an unmarked provider must keep the default import:\n{consumer}"
+        );
     }
 
     #[test]

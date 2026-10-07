@@ -15,7 +15,9 @@ statically declared properties of an object assigned directly to
 `module.exports`, whether that assignment is the module's only CommonJS
 runtime use, an exact ordered default-object composition shell, and positively
 observed properties attached to a stable callable before it becomes
-`module.exports`. For object defaults, the identity proof is independent of
+`module.exports`, and whether the module marks itself `__esModule`; on the
+consumer side, which sources it requires as a whole value or through a
+wildcard interop. For object defaults, the identity proof is independent of
 the property list: an empty list may describe a proven empty object rather
 than an unknown value. An empty callable-property list is not such a proof.
 
@@ -106,7 +108,8 @@ distinguishable from an authored ESM dependency downstream.
 - `ImportCallEdge { source, imported, consumed_by_exports }`
 - `ModuleFacts { imports, exports, helper_exports,
   commonjs_default_object, commonjs_default_attached_properties,
-  require_returns_exports_object, whole_require_sources, has_export_all, export_star_sources, reexports, import_call_edges,
+  require_returns_exports_object, whole_require_sources, marks_es_module,
+  wildcard_require_sources, has_export_all, export_star_sources, reexports, import_call_edges,
   default_object_ident_properties, ts_helper_exports,
   ts_helper_namespace_factory_exports, passthrough_target }`
 - `ModuleFactsMap` — keyed by normalized module specifier
@@ -158,6 +161,20 @@ interop helper. The helper stage and `UnWebpackInterop` later replace an
 interop default (`() => x && x.__esModule ? x.default : x`) with the plain
 binding, and `UnEsm` merges every binding of one source into one default
 import, so after Phase 1 the two meanings can no longer be told apart.
+
+A wildcard interop helper is the exception that needs the provider's
+`__esModule` marker. It returns a marked provider unchanged, so the binding is
+the whole required value; for an unmarked provider it builds a copy whose
+`default` is the whole `exports` object. `collect_marks_es_module` records the
+provider half: a top-level `__esModule` marker (`Object.defineProperty`,
+assignment, or webpack's `require.r(exports)`), read before `UnEsm` removes
+it. The marker matcher is the one `UnEsmoduleFlag` uses, and it does not check
+the descriptor's value. `collect_wildcard_require_sources` is the consumer
+half: sources of top-level `var x = wildcard(require("src"))` bindings, with
+the helper declared or inlined at the call site (a minifier inlines a
+single-use helper), when every `require("src")` call in the module is such an
+argument. Other positions, such as a wildcard inside a lowered `import()`,
+are not recorded.
 
 Normal processing also restores webpack's runtime-created `module.exports = {}`
 when structural webpack detection proves that a normalized extracted factory
@@ -341,7 +358,9 @@ Neither proof creates a default-object fact available to consumers.
   the provider facts prove a named or `export *` surface and no default export,
   or a default export whose provider requires as its `exports` object
   (`require_returns_exports_object`) while the consumer used the whole value
-  without an interop wrapper (`whole_require_sources`).
+  without an interop wrapper (`whole_require_sources`), or through a wildcard
+  interop of a provider marked `__esModule` (`wildcard_require_sources` and
+  `marks_es_module`).
   It accepts static member reads, `Object.keys(namespace)`, and namespace values
   used as `Object.assign` sources, and a namespace passed on as a value
   (`use(ns)`, webpack's `require.t(ns, 2)` namespace object): the default
