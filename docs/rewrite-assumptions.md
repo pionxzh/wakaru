@@ -432,6 +432,13 @@ proof. The private fixture suite recovers roughly 3,000 templates through this
 path with no substitution shaped like a known hint-sensitive object, which is
 why `standard` keeps it rather than demoting it to `aggressive`.
 
+Known miscompile: `"x" + dateObj`, where `dateObj` is a moment, dayjs, or
+luxon object, becomes `` `x${dateObj}` ``. The input prints the timestamp from
+`valueOf`; the output prints the formatted date from `toString`. No guard
+covers it. Refusing call substitutions would catch `"x" + moment(t)` but not
+`var m = moment(t); "x" + m`, and identifier substitutions are the common
+case, so that guard costs recovery without closing the gap.
+
 Affects: `UnTemplateLiteral` (plus-chain path).
 
 Level: `standard` and above. `minimal` rewrites only chains whose substitutions
