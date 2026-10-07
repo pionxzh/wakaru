@@ -2,10 +2,10 @@ use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrayLit, ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp,
     CallExpr, Callee, Constructor, Decl, DefaultDecl, Expr, ExprOrSpread, FnDecl, ForStmt,
-    Function, FunctionBody, GetterProp, Ident, KeyValueProp, MemberProp, MethodProp, Module,
-    ModuleDecl, ModuleItem, ParamOrTsParamProp, Pat, Prop, PropName, PropOrSpread, ReturnStmt,
-    SetterProp, SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp, VarDeclKind, VarDeclOrExpr,
-    VarDeclarator,
+    Function, FunctionBody, GetterProp, Ident, IfStmt, KeyValueProp, MemberProp, MethodProp,
+    Module, ModuleDecl, ModuleItem, ParamOrTsParamProp, Pat, Prop, PropName, PropOrSpread,
+    ReturnStmt, SetterProp, SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp, VarDeclKind,
+    VarDeclOrExpr, VarDeclarator,
 };
 use swc_core::ecma::utils::find_pat_ids;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -851,7 +851,7 @@ fn concat_receiver(call: &CallExpr) -> Option<&Expr> {
 ///
 /// - `function (a) { return a instanceof Array ? a : F(...) }`, where `F`
 ///   only returns a local Array literal binding (the renamed
-///   `arrayFromIterator`);
+///   `arrayFromIterator`), also after UnConditionals splits the ternary;
 /// - `function (a) { if (!(a instanceof Array)) { ...; a = h; } return a }`,
 ///   where `h` is a local Array literal binding.
 ///
@@ -942,16 +942,21 @@ fn function_returns_local_array(function: &Function) -> bool {
         return false;
     };
     let local = binding_id(local);
-    let initialized = body.stmts[..body.stmts.len() - 1]
+    // A return before the declaration would yield `undefined`.
+    let Some(declared_at) = body.stmts[..body.stmts.len() - 1]
         .iter()
-        .any(|stmt| stmt_declares_array_literal(stmt, &local));
-    initialized
+        .position(|stmt| stmt_declares_array_literal(stmt, &local))
+    else {
+        return false;
+    };
+    !contains_return(&body.stmts[..declared_at])
         && returns_only(&body.stmts, &local)
         && !BindingUseIndex::collect_stmts(&body.stmts).has_direct_write(&local)
 }
 
 /// `function (a) { return a instanceof Array ? a : F(...) }` with `F` in
-/// `builders`, or
+/// `builders` (or the `if (a instanceof Array) return a; return F(...)` form
+/// UnConditionals splits it into), or
 /// `function (a) { if (!(a instanceof Array)) { ...; a = h; } return a }`.
 fn is_array_from_iterable_body(
     function: &Function,
@@ -971,6 +976,13 @@ fn is_array_from_iterable_body(
     let Some(body) = &function.body else {
         return false;
     };
+    let calls_builder = |expr: &Expr| {
+        matches!(strip_parens(expr), Expr::Call(CallExpr {
+            callee: Callee::Expr(callee),
+            ..
+        }) if matches!(strip_parens(callee), Expr::Ident(builder)
+            if builders.contains(&binding_id(builder))))
+    };
     match body.stmts.as_slice() {
         [Stmt::Return(ReturnStmt { arg: Some(arg), .. })] => {
             let Expr::Cond(cond) = strip_parens(arg) else {
@@ -978,11 +990,26 @@ fn is_array_from_iterable_body(
             };
             is_instanceof_array(&cond.test, &param, unresolved_mark)
                 && is_binding(&cond.cons, &param)
-                && matches!(strip_parens(&cond.alt), Expr::Call(CallExpr {
-                    callee: Callee::Expr(callee),
-                    ..
-                }) if matches!(strip_parens(callee), Expr::Ident(builder)
-                    if builders.contains(&binding_id(builder))))
+                && calls_builder(&cond.alt)
+        }
+        [Stmt::If(IfStmt {
+            test,
+            cons,
+            alt: None,
+            ..
+        }), Stmt::Return(ReturnStmt {
+            arg: Some(built), ..
+        })] if is_instanceof_array(test, &param, unresolved_mark) => {
+            let returned = match cons.as_ref() {
+                Stmt::Block(block) => match block.stmts.as_slice() {
+                    [only] => only,
+                    _ => return false,
+                },
+                other => other,
+            };
+            matches!(returned, Stmt::Return(ReturnStmt { arg: Some(arg), .. })
+                if is_binding(arg, &param))
+                && calls_builder(built)
         }
         [Stmt::If(if_stmt), Stmt::Return(ReturnStmt { arg: Some(arg), .. })] => {
             let Expr::Unary(UnaryExpr {

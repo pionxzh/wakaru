@@ -164,8 +164,10 @@ Rules still own domain-specific shape recognition. For example:
   spread element. The helper returns `xs` when it is an Array and otherwise
   an Array built by iterating it, so the call is replaced by a spread of `xs`.
   ADVANCED output renames the helper, so there the body is the proof:
-  `a instanceof Array ? a : F(...)` with `F` returning a local array, or the
-  inlined `if (!(a instanceof Array)) { ...; a = h } return a`. That proves
+  `a instanceof Array ? a : F(...)` with `F` returning a local array (also
+  in the `if (a instanceof Array) return a; return F(...)` form that
+  `UnConditionals` turns it into before the proof runs), or the inlined
+  `if (!(a instanceof Array)) { ...; a = h } return a`. That proves
   only that the call returns an Array, so the concat becomes `...helper(xs)`
   and the call stays: a castArray-like body has the same outline.
 

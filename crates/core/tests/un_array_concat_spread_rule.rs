@@ -1,5 +1,5 @@
 mod common;
-use common::{assert_eq_normalized, render, render_rule};
+use common::{assert_eq_normalized, render, render_rule, render_with_level};
 use wakaru_core::{
     rules::{UnArrayConcatSpread, UnArrayConcatSpreadRest},
     RewriteLevel,
@@ -878,6 +878,82 @@ var ya = function(a) {
 const x = [...w(xs), 1];
 "#;
     assert_eq_normalized(&apply_rest_proof(input), expected);
+}
+
+#[test]
+fn renamed_closure_array_from_iterable_split_by_un_conditionals_becomes_spread() {
+    // UnConditionals runs first and splits the helper's ternary return.
+    let input = r#"
+var ya = function(a) {
+    var b;
+    var c = [];
+    while (!(b = a.next()).done) c.push(b.value);
+    return c;
+};
+var w = function(a) {
+    if (a instanceof Array) {
+        return a;
+    }
+    return ya(m(a));
+};
+const x = [].concat(w(xs), [1]);
+"#;
+    let expected = r#"
+var ya = function(a) {
+    var b;
+    var c = [];
+    while (!(b = a.next()).done) c.push(b.value);
+    return c;
+};
+var w = function(a) {
+    if (a instanceof Array) {
+        return a;
+    }
+    return ya(m(a));
+};
+const x = [...w(xs), 1];
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), expected);
+}
+
+#[test]
+fn renamed_closure_array_from_iterable_becomes_spread_in_the_pipeline() {
+    // wild-observed helper outline; the whole pipeline runs UnConditionals
+    // before the proof.
+    let input = r#"
+var ya = function(a) {
+    for (var b, c = []; !(b = a.next()).done;) c.push(b.value);
+    return c;
+}, w = function(a) {
+    return a instanceof Array ? a : ya(m(a));
+};
+export const x = [].concat(w(xs), [1]);
+export const y = [].concat(w(xs));
+"#;
+    for level in [RewriteLevel::Standard, RewriteLevel::Aggressive] {
+        let output = render_with_level(input, level);
+        let tail = output.split("export const x").nth(1).unwrap_or_default();
+        assert_eq_normalized(
+            &format!("export const x{tail}"),
+            "export const x = [...w(xs), 1];\nexport const y = [...w(xs)];",
+        );
+    }
+}
+
+#[test]
+fn array_builder_that_returns_before_its_declaration_is_not_proof() {
+    let input = r#"
+var ya = function(a) {
+    if (a) return c;
+    var b, c = [];
+    return c;
+};
+var w = function(a) {
+    return a instanceof Array ? a : ya(a);
+};
+const x = [].concat(w(xs));
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), input);
 }
 
 #[test]
