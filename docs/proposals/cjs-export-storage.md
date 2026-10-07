@@ -941,7 +941,7 @@ does not contain.
 | `split_compound_exports`, named form | `var s = exports.x = e` when `s` or the property is written again, or when the module gate fails | valid but less readable A output (`export var x; var s = x = e;`); under a direct `eval` the module stays CommonJS |
 | `split_chained_local_module_exports_assignments` | `local = module.exports = e` | the module stays CommonJS |
 | `split_called_module_exports_assignments` | `(module.exports = f)(args)` | the module stays CommonJS |
-| `normalize_named_export_chains` | chains with a function, `require`, or provider-call value, and `module.exports = exports.default = v` | named chains fall to A (`export var a; export var b; a = b = function () {};`); the default chain keeps the module CommonJS |
+| `normalize_named_export_chains` | chains with a function or `require` value, and `module.exports = exports.default = v` | named chains fall to A (`export var a; export var b; a = b = function () {};`); the default chain keeps the module CommonJS |
 | `has_unhandled_named_export_chain` | chains whose names no model owns, for example under a direct `eval`; its local-tail exemption lets TypeScript enum initializers (`L \|\| (exports.x = L = {})`) through to `UnEnum` | `export const a = exports.b = v`, which leaves `exports.b` in ESM; a module with a TypeScript enum export stays CommonJS |
 | Snapshot rule in the statement classifier | a one-write name copying a written local, such as `var v = 1; exports.v = v; function f() { v = 2; }` | a live `export { v }` that follows the later write |
 | `rewrite_webpack_export_getters` | `require.d` calls inside an unused wrapper IIFE | the getters stay |

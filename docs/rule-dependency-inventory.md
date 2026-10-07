@@ -67,13 +67,10 @@ including a `module.exports` slot or resolved local head, stores that
 binding, so recovered exports stay snapshots. Creating a function runs no
 code, and the require form takes the same provider-ordering deviation as the
 single `exports.name = require(...)` recovery (`import_hoisting_eagerness`),
-so no module-wide receiver analysis is needed. A call rooted, through static
-keys, at a provider binding (a top-level `require("literal")` declarator or a
-static member of one, declared once and never written) with repeatable
-arguments other than the wrapper bindings takes the same stored path at the
-chain's own position (`chain_receiver_reference_order`); the binding-use walk
-that qualifies provider bindings runs only when such a chain is present. Any
-other effectful value stays whole.
+so no module-wide receiver analysis is needed. Any other effectful value,
+including a call on a required binding, stays whole; export storage then
+recovers a chain of named-export targets as `export let` bindings assigned
+at the chain's position.
 `module.exports = exports.default = value` becomes the default-export mirror
 pair. The normalization skips a module with direct eval or `with`, because
 the recovered exports become module bindings. A chain UnEsm cannot recover

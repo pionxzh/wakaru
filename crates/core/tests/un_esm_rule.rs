@@ -6606,34 +6606,6 @@ fn whole_named_export_chains_are_recovered_in_one_pass() {
             "module.exports = exports.default = require(\"impl-lib\");",
             "export default require(\"impl-lib\");",
         ),
-        // A call on a provider binding (a top-level `require("literal")`
-        // declarator that is never rewritten) with repeatable arguments is
-        // evaluated once into a binding at the chain's position
-        // (`chain_receiver_reference_order`).
-        (
-            "var Lib = require(\"./lib\"); var KEY = \"alpha\"; exports.first = exports.second = Lib.matcher(KEY);",
-            "import Lib from \"./lib\"; var KEY = \"alpha\"; export var second = Lib.matcher(KEY); export { second as first };",
-        ),
-        (
-            "var Lib = require(\"./lib\"); exports.first = exports.second = Lib.matcher(\"beta\");",
-            "import Lib from \"./lib\"; export var second = Lib.matcher(\"beta\"); export { second as first };",
-        ),
-        (
-            "var counter = require(\"./lib\").matcher; var T = \"gamma\"; exports.first = exports.second = counter(T);",
-            "import { matcher as counter } from \"./lib\"; var T = \"gamma\"; export var second = counter(T); export { second as first };",
-        ),
-        (
-            "var make = require(\"./make\"); exports.a = exports.b = make(1, void 0);",
-            "import make from \"./make\"; export var b = make(1, void 0); export { b as a };",
-        ),
-        (
-            "var P = require(\"./lib\"); var Q = P; exports.a = exports.b = Q.make(1);",
-            "import P from \"./lib\"; var Q = P; export var b = Q.make(1); export { b as a };",
-        ),
-        (
-            "var Lib = require(\"./lib\"); module.exports = exports.helper = Lib.build.helper();",
-            "import Lib from \"./lib\"; export var helper = Lib.build.helper(); export default helper;",
-        ),
     ] {
         let once = common::render_rule(source, |mark| {
             wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
@@ -6686,6 +6658,10 @@ fn property_storage_recovers_named_export_chains_with_effectful_values() {
         "const require = load; exports.a = exports.b = require(\"x\");",
         "exports.a = exports.b = new Thing();",
         "exports.a = exports.b = void sideEffect();",
+        "var Lib = require(\"./lib\"); var KEY = \"alpha\"; exports.a = exports.b = Lib.matcher(KEY);",
+        "var counter = require(\"./lib\").matcher; exports.a = exports.b = counter(\"gamma\");",
+        "var make = require(\"./make\"); exports.a = exports.b = make(1, void 0);",
+        "var P = require(\"./lib\"); var Q = P; exports.a = exports.b = Q.make(1);",
         "var Lib = require(\"./lib\"); exports.a = exports.b = Lib.make(other());",
         "var Lib = require(\"./lib\"); exports.a = exports.b = Lib[key](1);",
         "var Lib = require(\"./lib\"); exports.a = exports.b = Lib.make(...xs);",
