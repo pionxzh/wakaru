@@ -1,5 +1,5 @@
 use swc_core::atoms::Atom;
-use swc_core::ecma::ast::{Callee, Expr, Lit, Module, WithStmt};
+use swc_core::ecma::ast::{CallExpr, Callee, Expr, Function, Lit, Module, ThisExpr, WithStmt};
 use swc_core::ecma::visit::{Visit, VisitWith};
 
 use crate::utils::paren::strip_parens;
@@ -280,4 +280,44 @@ pub(crate) fn module_blocks_global_reference(module: &Module, name: &str) -> boo
             .known_direct_eval_sources
             .iter()
             .any(|source| js_source_mentions_binding(source, &Atom::from(name)))
+}
+
+/// Whether calling `function` can observe its receiver: it reads `this`,
+/// or a direct eval may. Nested ordinary functions have their own receiver.
+pub(crate) fn function_observes_receiver(function: &Function) -> bool {
+    let mut analyzer = ReceiverSensitivityAnalyzer::default();
+    function.params.visit_with(&mut analyzer);
+    function.body.visit_with(&mut analyzer);
+    analyzer.sensitive
+}
+
+#[derive(Default)]
+struct ReceiverSensitivityAnalyzer {
+    sensitive: bool,
+}
+
+impl Visit for ReceiverSensitivityAnalyzer {
+    fn visit_this_expr(&mut self, _: &ThisExpr) {
+        self.sensitive = true;
+    }
+
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if let Some(source) = direct_eval_call_source(call) {
+            let this_name: Atom = "this".into();
+            self.sensitive |= match source {
+                EvalCallSource::NoSource => false,
+                EvalCallSource::Known(source) => js_source_mentions_binding(&source, &this_name),
+                EvalCallSource::Unknown => true,
+            };
+            for argument in &call.args {
+                argument.expr.visit_with(self);
+            }
+            return;
+        }
+        call.visit_children_with(self);
+    }
+
+    // Nested ordinary functions establish their own receiver. Arrows retain
+    // the default traversal because they capture this function's receiver.
+    fn visit_function(&mut self, _: &Function) {}
 }

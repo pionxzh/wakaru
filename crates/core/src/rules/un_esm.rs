@@ -12,7 +12,7 @@ use swc_core::ecma::ast::{
     ImportNamedSpecifier, ImportSpecifier, ImportStarAsSpecifier, KeyValueProp, Lit, MemberExpr,
     MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, NamedExport, ObjectLit,
     ObjectPatProp, OptCall, OptChainBase, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SeqExpr,
-    SimpleAssignTarget, Stmt, Str, TaggedTpl, ThisExpr, UnaryExpr, UnaryOp, VarDecl, VarDeclKind,
+    SimpleAssignTarget, Stmt, Str, TaggedTpl, UnaryExpr, UnaryOp, VarDecl, VarDeclKind,
     VarDeclarator,
 };
 use swc_core::ecma::utils::{find_pat_ids, ExprFactory};
@@ -33,8 +33,7 @@ use crate::utils::prototype_members::is_prototype_mutating_member_name;
 
 use super::decl_utils::{collect_decl_names, collect_pat_names, fresh_binding_ident, same_ident};
 use super::eval_utils::{
-    direct_eval_call_source, js_source_mentions_binding, DirectEvalAnalyzer, DirectEvalPresence,
-    EvalCallSource,
+    function_observes_receiver, js_source_mentions_binding, DirectEvalAnalyzer, DirectEvalPresence,
 };
 use super::helper_matcher::count_binding_refs;
 use super::rename_utils::{
@@ -1811,44 +1810,6 @@ fn recover_stable_commonjs_reads(
                 .cloned();
         }
     }
-}
-
-fn function_observes_receiver(function: &Function) -> bool {
-    let mut analyzer = ReceiverSensitivityAnalyzer::default();
-    function.params.visit_with(&mut analyzer);
-    function.body.visit_with(&mut analyzer);
-    analyzer.sensitive
-}
-
-#[derive(Default)]
-struct ReceiverSensitivityAnalyzer {
-    sensitive: bool,
-}
-
-impl Visit for ReceiverSensitivityAnalyzer {
-    fn visit_this_expr(&mut self, _: &ThisExpr) {
-        self.sensitive = true;
-    }
-
-    fn visit_call_expr(&mut self, call: &CallExpr) {
-        if let Some(source) = direct_eval_call_source(call) {
-            let this_name: Atom = "this".into();
-            self.sensitive |= match source {
-                EvalCallSource::NoSource => false,
-                EvalCallSource::Known(source) => js_source_mentions_binding(&source, &this_name),
-                EvalCallSource::Unknown => true,
-            };
-            for argument in &call.args {
-                argument.expr.visit_with(self);
-            }
-            return;
-        }
-        call.visit_children_with(self);
-    }
-
-    // Nested ordinary functions establish their own receiver. Arrows retain
-    // the default traversal because they capture this function's receiver.
-    fn visit_function(&mut self, _: &Function) {}
 }
 
 fn default_export_ident_at_span(item: &ModuleItem, span: Span) -> Option<&Ident> {

@@ -161,7 +161,9 @@ rationale, or level gating appear.
   indirect-call wrappers around direct identifier callees (`(0, fn)()` →
   `fn()`), excluding `eval` and calls inside `with`. Member callees and
   `Object(fn)()` wrappers require `standard` because
-  `(0, obj.method)()` → `obj.method()` changes the receiver `this`. Enables
+  `(0, obj.method)()` → `obj.method()` changes the receiver `this`; a
+  same-module `obj` whose `method` visibly reads `this` keeps the wrapper at
+  every level (`call_receiver_independence`). Enables
   interop helper detection downstream (`(0, x.default)()`).
 - **UnBracketNotation** — critical early normalizer: the interop rules,
   UnObjectRest, UnWebpackInterop, and UnEsm all pattern-match dot-form

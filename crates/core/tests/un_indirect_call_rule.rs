@@ -105,3 +105,75 @@ function f(Object, r, e) {
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
+#[test]
+fn keeps_indirect_call_of_local_method_that_reads_this() {
+    // producer terser@5.51.2 { module: true, mangle: false } turns
+    // `const m = o.method; return m();` into `(0, o.method)()`, which calls
+    // the method with an undefined receiver.
+    let input = r#"
+const o = { method() { return this; } };
+export function h() { return (0, o.method)(); }
+"#;
+    let expected = r#"
+const o = {
+    method() {
+        return this;
+    }
+};
+export function h() {
+    return (0, o.method)();
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn keeps_indirect_calls_of_assigned_and_static_methods_that_read_this() {
+    let input = r#"
+var a = {};
+a.f = function () { return this; };
+class C { static g() { return this; } }
+var b = { k: function () { return this; } };
+use((0, a.f)(), (0, C.g)(), Object(b.k)());
+"#;
+    let expected = r#"
+const a = {};
+a.f = function() {
+    return this;
+};
+class C {
+    static g() {
+        return this;
+    }
+}
+const b = {
+    k() {
+        return this;
+    }
+};
+use((0, a.f)(), (0, C.g)(), Object(b.k)());
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn unwraps_indirect_call_of_local_member_that_ignores_this() {
+    let input = r#"
+const o = { method() { return 1; }, arrow: () => this, other: function () { return 2; } };
+use((0, o.method)(), (0, o.arrow)(), (0, o.other)());
+"#;
+    let expected = r#"
+const o = {
+    method() {
+        return 1;
+    },
+    arrow: ()=>this,
+    other() {
+        return 2;
+    }
+};
+use(o.method(), o.arrow(), o.other());
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
