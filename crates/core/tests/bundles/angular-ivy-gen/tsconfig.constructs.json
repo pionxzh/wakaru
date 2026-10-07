@@ -1,0 +1,22 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "declaration": false,
+    "isolatedModules": false,
+    "module": "ES2022",
+    "outDir": "./target/angular-constructs",
+    "rootDir": "./src/isolated",
+    "types": []
+  },
+  "angularCompilerOptions": {
+    "compilationMode": "full",
+    "enableI18nLegacyMessageIdFormat": false,
+    "strictInjectionParameters": true,
+    "strictInputAccessModifiers": true,
+    "strictTemplates": true
+  },
+  "files": [
+    "./src/isolated/template-constructs.component.ts"
+  ],
+  "references": []
+}
