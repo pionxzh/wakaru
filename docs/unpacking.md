@@ -171,7 +171,20 @@ anchor or a canonical `__webpack_exports__ = {}` anchor used exclusively by
 webpack export helpers. A live anchor passed to application code or captured by
 a closure retains its declaration and wrapper, even with the canonical name. Entry declarations and side effects before
 an authored trailing call remain in `entry.js`, including entry expressions
-merged into the last runtime sequence. Raw extraction uses the same boundary.
+merged into the last runtime sequence. Terser can also merge the wrapper itself
+into that sequence (`r.d = ..., r.o = ..., (() => { ... })()`); the wrapper at
+the end of the sequence is unwrapped like a standalone one. Raw extraction uses
+the same boundary.
+
+Terser can inline a single-use require function into the startup and call it
+with the entry id (`!function r(id) { ... }(100)`). Its body is runtime, never
+entry code: a bare or `!`-prefixed call marks module 100 as the entry. When a
+library build consumes the call (`window.lib = function r(id) { ... }(100)`),
+`entry.js` gets webpack's unrolled form,
+`var lib = require("./module-100.js"); window.lib = lib;`, which `UnEsm` turns
+into an import. This happens only when the assignment targets name globals; a
+target that reads a bootstrap binding or `this` would change meaning outside
+the bootstrap, so that statement is still dropped.
 
 Wrapper removal requires an anonymous synchronous, non-generator function or
 synchronous arrow, with no parameters or call arguments. Async and generator
@@ -556,13 +569,12 @@ bookkeeping per token, which is why extraction discards them by default.
   turned into an import. The `require` stays in the ESM output, where it
   throws, and no warning reports it. rspack production entries emit this
   shape.
-- **rspack entry runtime leftovers.** rspack (1.7) writes runtime metadata
-  into the entry module (`require.rv = () => "1.7.12"; require.ruid =
-  "bundler=rspack@1.7.12"`), which stays and throws in ESM. An inline
-  `require.n` getter called in place (`(() => e && e.__esModule ? e.default
-  : e)()`) is not collapsed either: `UnWebpackInterop` matches only a getter
-  bound to a declared variable. webpack 5 builds of the same source have
-  neither shape.
+- **rspack inline `require.n` getter.** An inline `require.n` getter called
+  in place in an rspack (1.7) entry (`(() => e && e.__esModule ? e.default :
+  e)()`) is not collapsed: `UnWebpackInterop` matches only a getter bound to a
+  declared variable. webpack 5 builds of the same source do not have this
+  shape. (rspack's version metadata, `require.rv` and `require.ruid`, is
+  treated as runtime and stays out of the entry.)
 
 ## Production-build scope
 

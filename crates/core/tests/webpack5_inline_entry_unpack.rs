@@ -856,9 +856,12 @@ fn directly_invoked_require_marks_called_module_as_entry() {
 }
 
 #[test]
-fn assigned_directly_invoked_require_marks_called_module_as_entry() {
+fn assigned_directly_invoked_require_keeps_the_assignment_as_entry() {
     // `output.library` builds consume the entry's exports: the directly
-    // invoked require runtime appears as an assignment right-hand side.
+    // invoked require runtime appears as an assignment right-hand side. The
+    // runtime body is not entry code, but the assignment is.
+    // shape: producer webpack@5.111.1 mode=production (Terser), entry assigned
+    // to a global.
     let source = r#"
 (() => {
     var modules = {
@@ -883,9 +886,50 @@ fn assigned_directly_invoked_require_marks_called_module_as_entry() {
         "the genuine webpack module must be extracted, got {:?}",
         pairs.iter().map(|(name, _)| name).collect::<Vec<_>>()
     );
+    let entry = entry_of(&pairs);
+    assert!(
+        entry.contains(r#"import * as lib from "./module-1.js";"#)
+            && entry.contains("window.lib = lib;"),
+        "the library assignment must survive as an import of the entry module, got:\n{entry}"
+    );
+    assert!(
+        !entry.contains("cache") && !entry.contains("exports: {}"),
+        "the require runtime body must not become entry code, got:\n{entry}"
+    );
+    assert_eq!(validate_output_modules(&pairs), vec![]);
+}
+
+#[test]
+fn directly_invoked_require_assigned_to_a_bootstrap_local_stays_dropped() {
+    // The target reads a bootstrap binding; moved to entry.js it would be a
+    // free reference, so the statement is not extracted.
+    let source = r#"
+(() => {
+    var modules = {
+        1: (module, exports) => {
+            exports.value = 42;
+        }
+    };
+    var cache = {}, holder = {};
+    holder.lib = function require(id) {
+        var cached = cache[id];
+        if (cached !== undefined) return cached.exports;
+        var module = cache[id] = { exports: {} };
+        modules[id].call(module.exports, module, module.exports, require);
+        return module.exports;
+    }(1);
+})();
+"#;
+
+    let pairs = expect_unpack(source, "bundle.js");
+    assert!(
+        pairs.iter().any(|(name, _)| name == "module-1.js"),
+        "the genuine webpack module must be extracted, got {:?}",
+        pairs.iter().map(|(name, _)| name).collect::<Vec<_>>()
+    );
     assert!(
         !pairs.iter().any(|(name, _)| name == "entry.js"),
-        "the require runtime body must not become entry.js, got {:?}",
+        "an assignment to a bootstrap local must not become entry.js, got {:?}",
         pairs.iter().map(|(name, _)| name).collect::<Vec<_>>()
     );
 }
@@ -1365,6 +1409,23 @@ fn inlined_esmodule_marker_is_dropped_from_entry() {
         entry.contains("./module-1.js") && !entry.contains("require.r"),
         "the inlined esModule marker must be dropped, got:\n{entry}"
     );
+}
+
+#[test]
+fn rspack_version_metadata_stays_out_of_the_entry() {
+    // shape: producer @rspack/core@1.7.12 mode=production. Rspack's runtime
+    // records its version on the require function before startup; left in
+    // the entry it throws once `require` is gone.
+    let source = bundle_with_startup(
+        r#"requireModule.rv = () => "1.7.12", requireModule.ruid = "bundler=rspack@1.7.12"; var dependency = requireModule(1); consume(dependency);"#,
+    );
+    let pairs = expect_unpack(&source, "bundle.js");
+    let entry = entry_of(&pairs);
+    assert!(
+        entry.contains("./module-1.js") && !entry.contains(".rv") && !entry.contains("ruid"),
+        "Rspack version metadata is runtime, not entry code, got:\n{entry}"
+    );
+    assert_eq!(validate_output_modules(&pairs), vec![]);
 }
 
 fn bundle_with_startup(startup: &str) -> String {
