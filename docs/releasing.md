@@ -18,7 +18,9 @@ Before tagging:
 1. Confirm `Cargo.toml`, `Cargo.lock`, and npm package metadata match the tag version.
    The npm versions are rewritten from the tag at publish time; the Cargo
    version is not, and the release workflow fails if it differs from the tag.
-2. Run the release verification checks from [Testing](testing.md).
+2. Run the release verification checks from [Testing](testing.md). If the
+   sibling checkout `../wakaru-private-artificial` exists, also run the release
+   checks its `README.md` lists.
 3. Check `git tag -l vX.Y.Z` is empty before creating the tag.
 4. Inspect `CHANGELOG.md` against `git log --no-merges vPREV..HEAD`.
 5. Review `npm/README.md` against the release: its claims must match what the
