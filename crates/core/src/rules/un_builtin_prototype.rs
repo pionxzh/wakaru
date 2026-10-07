@@ -7,6 +7,7 @@ use swc_core::ecma::utils::ExprFactory;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::eval_utils::module_blocks_global_reference;
+use super::helper_matcher::static_member_prop_name;
 use super::rename_utils::module_declares_binding_named;
 use super::RewriteLevel;
 use crate::utils::paren::strip_parens;
@@ -115,6 +116,14 @@ fn try_replace_builtin(
         Expr::Member(m) => m,
         _ => return Err(call),
     };
+
+    // `[].__proto__` reads an accessor whose value on `Array.prototype`
+    // differs, and a dynamic key could name it at runtime. Other own
+    // properties of the literal (`length`, `lastIndex`) are not callable, so
+    // `.call` throws in both forms.
+    if static_member_prop_name(&inner_member.prop).is_none_or(|name| name == "__proto__") {
+        return Err(call);
+    }
 
     // inner_member.obj is the instance literal (may be wrapped in parens)
     let builtin_name = match detect_builtin(strip_parens(inner_member.obj.as_ref())) {

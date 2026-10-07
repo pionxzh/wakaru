@@ -100,3 +100,24 @@ with (scope) {
     let output = apply(input, RewriteLevel::Aggressive);
     assert_eq_normalized(&output, input);
 }
+
+#[test]
+fn proto_accessor_and_dynamic_keys_stay_on_the_literal() {
+    // `[].__proto__` is `Array.prototype`; `Array.prototype.__proto__` is
+    // `Object.prototype`. A dynamic key could name `__proto__` at runtime.
+    let input = r#"
+(() => {}).__proto__.call(value, 1);
+[]["__proto__"].call(value);
+[][key].call(value);
+[]["slice"].call(value, 1);
+"#;
+    let expected = r#"
+(() => {}).__proto__.call(value, 1);
+[]["__proto__"].call(value);
+[][key].call(value);
+Array.prototype["slice"].call(value, 1);
+"#;
+    for level in [RewriteLevel::Standard, RewriteLevel::Aggressive] {
+        assert_eq_normalized(&apply(input, level), expected);
+    }
+}
