@@ -1446,6 +1446,8 @@ fn make_optional_chain(base: Expr, access: &Expr, policy: RewritePolicy) -> Opti
         },
 
         // x(...) → x?.(...)
+        // a.cb(...) → a.cb?.(...): the optional call keeps `a` as the
+        // receiver. Callers gate the repeated read of `a.cb` on the level.
         Expr::Call(CallExpr {
             callee: Callee::Expr(callee_expr),
             args,
@@ -1453,7 +1455,8 @@ fn make_optional_chain(base: Expr, access: &Expr, policy: RewritePolicy) -> Opti
             span,
             ctxt,
         }) => {
-            if matches!(&base, Expr::Ident(ident) if ident.sym != "eval")
+            if (matches!(&base, Expr::Ident(ident) if ident.sym != "eval")
+                || matches!(&base, Expr::Member(_)))
                 && exprs_structurally_equal(callee_expr, &base)
             {
                 return Some(Expr::OptChain(OptChainExpr {

@@ -483,14 +483,13 @@ const x = value?.foo?.bar?.baz ?? "fallback";
 }
 
 #[test]
-fn pipeline_standard_preserves_babel_loose_optional_call_nullish_wrapper() {
+fn pipeline_standard_recovers_babel_loose_optional_call_nullish_wrapper() {
     let input = r#"
 var _obj$method, _obj;
 const out = (_obj$method = (_obj = obj) == null ? void 0 : _obj.method == null ? void 0 : _obj.method(arg)) != null ? _obj$method : fallback;
 "#;
     let expected = r#"
-let _obj;
-const out = ((_obj = obj) == null ? undefined : _obj.method == null ? undefined : _obj.method(arg)) ?? fallback;
+const out = obj?.method?.(arg) ?? fallback;
 "#;
     let output = render(input);
     assert_eq_normalized(&output, expected);
@@ -721,17 +720,7 @@ const out = obj?.method?.(arg);
 }
 
 #[test]
-fn standard_preserves_babel_old_loose_optional_call_with_repeated_property() {
-    let input = r#"
-var _obj;
-const out = (_obj = obj) == null ? void 0 : _obj.method == null ? void 0 : _obj.method(arg);
-"#;
-    let output = apply(input);
-    assert_eq_normalized(&output, input);
-}
-
-#[test]
-fn aggressive_transforms_babel_old_loose_optional_call_with_repeated_property() {
+fn standard_transforms_babel_old_loose_optional_call_with_repeated_property() {
     let input = r#"
 var _obj;
 const out = (_obj = obj) == null ? void 0 : _obj.method == null ? void 0 : _obj.method(arg);
@@ -739,7 +728,7 @@ const out = (_obj = obj) == null ? void 0 : _obj.method == null ? void 0 : _obj.
     let expected = r#"
 const out = obj?.method?.(arg);
 "#;
-    let output = apply_with_level(input, RewriteLevel::Aggressive);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -767,17 +756,7 @@ const out = obj?.foo?.method?.(arg);
 }
 
 #[test]
-fn standard_preserves_babel_old_loose_nested_optional_call_with_repeated_property() {
-    let input = r#"
-var _obj, _obj_foo;
-const out = (_obj = obj) == null ? void 0 : (_obj_foo = _obj.foo) == null ? void 0 : _obj_foo.method == null ? void 0 : _obj_foo.method(arg);
-"#;
-    let output = apply(input);
-    assert_eq_normalized(&output, input);
-}
-
-#[test]
-fn aggressive_transforms_babel_old_loose_nested_optional_call_with_repeated_property() {
+fn standard_transforms_babel_old_loose_nested_optional_call_with_repeated_property() {
     let input = r#"
 var _obj, _obj_foo;
 const out = (_obj = obj) == null ? void 0 : (_obj_foo = _obj.foo) == null ? void 0 : _obj_foo.method == null ? void 0 : _obj_foo.method(arg);
@@ -785,7 +764,7 @@ const out = (_obj = obj) == null ? void 0 : (_obj_foo = _obj.foo) == null ? void
     let expected = r#"
 const out = obj?.foo?.method?.(arg);
 "#;
-    let output = apply_with_level(input, RewriteLevel::Aggressive);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -1730,3 +1709,57 @@ function f(a, n) {
     let output = apply_with_level(input, RewriteLevel::Standard);
     assert_eq_normalized(&output, expected);
 }
+
+#[test]
+fn standard_recovers_member_optional_call_without_temps() {
+    // producer @babel/plugin-transform-optional-chaining@7.28.5 loose, and
+    // assumptions { pureGetters } with and without noDocumentAll:
+    // `a.cb?.(1)` keeps the member as the callee instead of a temp.
+    let input = r#"
+function f(a, t) {
+    a.cb == null || a.cb(1);
+    t.options.onSettled === null || t.options.onSettled === void 0 || t.options.onSettled(2);
+    const y = a.cb == null ? void 0 : a.cb(3);
+    const z = a.b.c === null || a.b.c === void 0 ? void 0 : a.b.c(4);
+    return [y, z];
+}
+"#;
+    let expected = r#"
+function f(a, t) {
+    a.cb?.(1);
+    t.options.onSettled?.(2);
+    const y = a.cb?.(3);
+    const z = a.b.c?.(4);
+    return [y, z];
+}
+"#;
+    let output = apply_with_level(input, RewriteLevel::Standard);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn minimal_keeps_member_optional_call_without_temps() {
+    // The lowered forms read `a.cb` twice; the optional call reads it once.
+    let input = r#"
+function f(a) {
+    a.cb === null || a.cb === void 0 || a.cb(0);
+    const y = a.cb == null ? void 0 : a.cb(1);
+    const z = a.b.c === null || a.b.c === void 0 ? void 0 : a.b.c(2);
+    return [y, z];
+}
+"#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn keeps_member_optional_call_on_a_different_callee() {
+    let input = r#"
+function f(a, b) {
+    return a.cb == null ? void 0 : b.cb(1);
+}
+"#;
+    let output = apply_with_level(input, RewriteLevel::Aggressive);
+    assert_eq_normalized(&output, input);
+}
+

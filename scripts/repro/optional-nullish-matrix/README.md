@@ -33,11 +33,11 @@ Add `--details` to print full lowered and recovered code for missed cases.
 Add `--level minimal`, `--level standard`, or `--level aggressive` to run
 wakaru with a specific rewrite level.
 
-Some Babel loose optional-call rows are expected to stay unrecovered at
-`standard`, including the same loose output after Terser: those lowerings read
-the same property twice, while optional-call syntax reads it once. Wakaru only
-recovers those rows at `aggressive`, where stable getter reads are an accepted
-assumption. The matrix marks those rows as `gated` instead of `no`.
+Some Babel loose optional-call rows read the same property twice, while
+optional-call syntax reads it once. Wakaru recovers the single-ternary form
+(`o.m == null ? void 0 : o.m(a)`) from `standard` and the flattened form
+(`(_o = o) == null || _o.m == null ? void 0 : _o.m(a)`) only at `aggressive`
+(see `pure_getters` in `docs/rewrite-assumptions.md`).
 
 Rows are grouped by distinct lowered output per snippet. The grouping key only
 normalizes CRLF to LF and trims leading/trailing whitespace, so exact helper

@@ -256,13 +256,36 @@ var _a;
 Rules should prefer temp-based recovery when available. Repeated-access recovery
 requires this assumption.
 
+The checked value is compared structurally, so a computed key with side
+effects (`a[f()]`, `a[i++]`) never matches its second read. The assumption
+covers getters and proxies on the base only.
+
 Affects: `UnOptionalChaining` (repeated-base forms), `UnNullishCoalescing`
 (repeated-base forms).
 
-Level: `standard` and above for identifier bases (e.g. `x.prop`). Member
-expression bases (e.g. `a.b.prop`) should require `aggressive` unless a temp
-proves single evaluation. `minimal` recovers the repeated-read forms only when
-the checked value is an identifier.
+Level:
+
+- `minimal` recovers a repeated-read form only when the checked value is an
+  identifier.
+- `standard` also recovers a single ternary whose checked value is a member
+  expression: `x.p`, `this.p`, `x.p.q`, `x[k]`, `arguments[i]`. This covers
+  plain strict and loose `??` (`x.p != null ? x.p : d`), optional access
+  (`x.p == null ? void 0 : x.p.q`), the member optional call
+  (`x.p == null ? void 0 : x.p(1)` and its statement form
+  `x.p == null || x.p(1)`), and the same shapes nested inside a lowered chain.
+  Babel emits the member optional call in `loose` mode and under the
+  `pureGetters` assumption (producer
+  `@babel/plugin-transform-optional-chaining@7.28.5`).
+- `aggressive` adds the multi-read shapes: flattened `||` chains whose root or
+  final link reads a member again
+  (`(_o = o) == null || _o.m == null ? void 0 : _o.m(a)`), `&&` chains whose
+  first segment is a member, the `x.p === null || x.p === undefined || x.p`
+  form of `UnNullishCoalescing`, and `??=` on a member deeper than
+  `local.prop`.
+
+An impure getter or a proxy on a base the module cannot see is the remaining
+risk at `standard`. `arguments[i]` is always safe: its elements are data
+properties.
 
 ### `stable_builtins`
 

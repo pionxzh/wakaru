@@ -319,16 +319,17 @@ rationale, or level gating appear.
   (`x === null || x === undefined`) run at all levels; loose
   `x != null ? x : y` requires `standard+` (assumes `no_document_all`);
   temp-based forms run at `minimal` when binding analysis proves the temp is
-  isolated; non-identifier bases (member/computed) require `aggressive`
-  because collapsing three reads to one changes getter/proxy semantics
-  (assumes `pure_getters`). Must run before UnConditionals, which would
-  otherwise consume eligible ternaries.
+  isolated; plain forms on a member base (`x.p != null ? x.p : d`) require
+  `standard`, and the three-read `||` form on a member base requires
+  `aggressive`, because collapsing reads to one changes getter/proxy
+  semantics (assumes `pure_getters`). Must run before UnConditionals, which
+  would otherwise consume eligible ternaries.
 - **UnOptionalChaining** — needs `undefined` identifiers (RemoveVoid).
-  Gating mirrors UnNullishCoalescing: loose null-check recovery at
-  `standard` when evaluation count is preserved; Babel loose
-  repeated-property call forms
-  (`_obj.method == null ? undefined : _obj.method(arg)` → `obj?.method?.(arg)`)
-  require `aggressive` (assumes stable property reads). Shares
+  Gating mirrors UnNullishCoalescing: loose null checks and single-ternary
+  member rereads (`a.cb == null ? undefined : a.cb(arg)` → `a.cb?.(arg)`) at
+  `standard`; flattened chains that reread a member
+  (`(_obj = obj) == null || _obj.method == null ? undefined : _obj.method(arg)`)
+  at `aggressive` (`pure_getters`). Shares
   structural-equality helpers with UnNullishCoalescing. Must run before
   UnConditionals, which turns the statement form `x == null || x.m()` into
   an `if`; that form goes through the same ternary matchers and gates.
