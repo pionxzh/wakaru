@@ -266,8 +266,9 @@ mod rewrite_assumptions_tests {
     // the documented standard+ contract and the rules that embody it
     // (SmartInline builtin-alias inlining, UnBuiltinAliases). `pure_getters`
     // is pinned at its current aggressive-only value; the documented contract
-    // is shape-sensitive (identifier bases at standard), which a single
-    // boolean cannot express — reconcile matcher gating before widening it.
+    // is shape-sensitive (identifier bases at minimal, single-ternary member
+    // rereads at standard), which a single boolean cannot express — reconcile
+    // matcher gating before widening it.
     #[test]
     fn assumption_table_pins_current_policy() {
         let minimal = RewriteAssumptions::from_level(RewriteLevel::Minimal);
