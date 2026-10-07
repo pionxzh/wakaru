@@ -79,3 +79,12 @@ fn nested_object_pattern_default_becomes_shorthand_default() {
         r#"function nested({ outer: { value = fallbackValue } = {} } = {}) { return use(value); }"#;
     assert_eq_normalized(&apply(input), expected);
 }
+
+#[test]
+fn proto_key_stays_key_value() {
+    // `{ __proto__: v }` sets the prototype; `{ __proto__ }` defines an own
+    // property.
+    let input = r#"const obj = {__proto__: __proto__, a: a};"#;
+    let expected = r#"const obj = {__proto__: __proto__, a};"#;
+    assert_eq_normalized(&apply(input), expected);
+}

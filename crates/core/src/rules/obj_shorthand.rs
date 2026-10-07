@@ -71,7 +71,9 @@ impl VisitMut for ObjShorthand {
             return;
         };
 
-        if key_ident.sym != val_ident.sym {
+        // `{ __proto__: v }` sets the prototype; `{ __proto__ }` defines an
+        // own property.
+        if key_ident.sym != val_ident.sym || key_ident.sym == "__proto__" {
             return;
         }
 

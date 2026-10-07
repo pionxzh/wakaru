@@ -3529,3 +3529,20 @@ export class Logger {
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
+
+#[test]
+fn proto_key_is_not_a_naming_hint() {
+    // producer terser@5.51.2: `const derived = { __proto__: base }` with the
+    // base binding mangled. Naming it `__proto__` would invite the shorthand
+    // `{ __proto__ }`, which defines an own property instead.
+    let input = r#"
+const e = { describe: () => "base", kind: "base kind" };
+const r = { __proto__: e, describe() { return "derived via " + super.describe(); } };
+export function report() {
+    return [r.describe(), r.kind, Object.getPrototypeOf(r) === e, Object.keys(r)];
+}
+"#;
+    let output = apply(input);
+    assert!(!output.contains("const __proto__"), "{output}");
+    assert!(output.contains("__proto__: e"), "{output}");
+}

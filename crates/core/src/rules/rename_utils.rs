@@ -3,14 +3,14 @@ use crate::collections::{HashMap, HashSet};
 use std::cell::Cell;
 
 use swc_core::atoms::Atom;
-use swc_core::common::{Mark, SyntaxContext};
+use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignPat, BindingIdent, BlockStmt, CatchClause, Class, ClassDecl, ClassExpr,
-    Constructor, Decl, DefaultDecl, ExportNamedSpecifier, Expr, FnDecl, FnExpr, Function, Ident,
-    ImportDecl, ImportNamedSpecifier, ImportSpecifier, JSXElementName, KeyValuePatProp,
-    KeyValueProp, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, NamedExport,
-    ObjectPatProp, ParamOrTsParamProp, Pat, Prop, PropName, Stmt, TsParamPropParam, VarDecl,
-    VarDeclKind, VarDeclarator,
+    ComputedPropName, Constructor, Decl, DefaultDecl, ExportNamedSpecifier, Expr, FnDecl, FnExpr,
+    Function, Ident, ImportDecl, ImportNamedSpecifier, ImportSpecifier, JSXElementName,
+    KeyValuePatProp, KeyValueProp, Lit, MemberProp, Module, ModuleDecl, ModuleExportName,
+    ModuleItem, NamedExport, ObjectPatProp, ParamOrTsParamProp, Pat, Prop, PropName, Stmt, Str,
+    TsParamPropParam, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -1025,7 +1025,16 @@ impl VisitMut for BindingRenamer {
     fn visit_mut_prop(&mut self, prop: &mut Prop) {
         if let Prop::Shorthand(ident) = prop {
             if let Some(new_name) = self.lookup(&ident.sym, ident.ctxt) {
-                let key = PropName::Ident(ident.clone().into());
+                // A shorthand `__proto__` defines an own property; the
+                // key-value form would set the prototype instead.
+                let key = if ident.sym == "__proto__" {
+                    PropName::Computed(ComputedPropName {
+                        span: DUMMY_SP,
+                        expr: Box::new(Expr::Lit(Lit::Str(Str::from("__proto__")))),
+                    })
+                } else {
+                    PropName::Ident(ident.clone().into())
+                };
                 ident.sym = new_name.clone();
                 *prop = Prop::KeyValue(KeyValueProp {
                     key,
@@ -1041,7 +1050,7 @@ impl VisitMut for BindingRenamer {
             let (PropName::Ident(key), Expr::Ident(value)) = (&kv.key, kv.value.as_ref()) else {
                 return;
             };
-            if key.sym != value.sym {
+            if key.sym != value.sym || key.sym == "__proto__" {
                 return;
             }
 
@@ -1150,6 +1159,42 @@ mod tests {
             };
             assert_eq!(orig_name(0), "d");
             assert_eq!(orig_name(1), "renamed");
+        });
+    }
+
+    #[test]
+    fn binding_renamer_keeps_a_shorthand_proto_property_own() {
+        with_parsed_module("var __proto__ = 1; var o = { __proto__ };", |module| {
+            let mut module = module.clone();
+            let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = &module.body[0] else {
+                panic!("expected a declaration");
+            };
+            let Pat::Ident(binding) = &var.decls[0].name else {
+                panic!("expected an identifier");
+            };
+            let renames = [BindingRename {
+                old: (binding.id.sym.clone(), binding.id.ctxt),
+                new: "proto".into(),
+            }];
+            module.visit_mut_with(&mut BindingRenamer::new(&renames));
+            let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = &module.body[1] else {
+                unreachable!()
+            };
+            let Some(Expr::Object(object)) = var.decls[0].init.as_deref() else {
+                panic!("expected an object");
+            };
+            let swc_core::ecma::ast::PropOrSpread::Prop(prop) = &object.props[0] else {
+                panic!("expected a property");
+            };
+            let Prop::KeyValue(KeyValueProp {
+                key: PropName::Computed(key),
+                value,
+            }) = prop.as_ref()
+            else {
+                panic!("expected a computed key, got {prop:?}");
+            };
+            assert!(matches!(&*key.expr, Expr::Lit(Lit::Str(s)) if s.value == *"__proto__"));
+            assert!(matches!(&**value, Expr::Ident(id) if id.sym == "proto"));
         });
     }
 

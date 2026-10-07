@@ -2709,7 +2709,13 @@ fn key_as_ident_target(key: &PropName) -> Option<String> {
         PropName::Str(s) => s.value.as_str().map(|s| s.to_string())?,
         _ => return None,
     };
-    if raw.is_empty() || !is_valid_js_ident(&raw) || is_reserved_binding_name(&raw) {
+    // `{ __proto__: x }` sets a prototype; `x` is not a value named
+    // `__proto__`.
+    if raw.is_empty()
+        || !is_valid_js_ident(&raw)
+        || is_reserved_binding_name(&raw)
+        || raw == "__proto__"
+    {
         return None;
     }
     Some(raw)
