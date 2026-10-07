@@ -158,6 +158,22 @@ use((0, a.f)(), (0, C.g)(), Object(b.k)());
 }
 
 #[test]
+fn keeps_indirect_calls_of_class_value_and_super_reading_methods() {
+    let input = r#"
+var Q = class { static g() { return this; } };
+var R;
+R = class { static h() { return typeof this; } };
+const p = { m() { return super.toString(); }, n() { return () => super.x; } };
+use((0, Q.g)(), (0, R.h)(), (0, p.m)(), (0, p.n)());
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("use((0, Q.g)(), (0, R.h)(), (0, p.m)(), (0, p.n)());"),
+        "{output}"
+    );
+}
+
+#[test]
 fn unwraps_indirect_call_of_local_member_that_ignores_this() {
     let input = r#"
 const o = { method() { return 1; }, arrow: () => this, other: function () { return 2; } };

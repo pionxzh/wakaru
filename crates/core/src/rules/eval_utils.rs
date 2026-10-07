@@ -1,5 +1,7 @@
 use swc_core::atoms::Atom;
-use swc_core::ecma::ast::{CallExpr, Callee, Expr, Function, Lit, Module, ThisExpr, WithStmt};
+use swc_core::ecma::ast::{
+    CallExpr, Callee, Expr, Function, Lit, Module, SuperPropExpr, ThisExpr, WithStmt,
+};
 use swc_core::ecma::visit::{Visit, VisitWith};
 
 use crate::utils::paren::strip_parens;
@@ -298,6 +300,12 @@ struct ReceiverSensitivityAnalyzer {
 
 impl Visit for ReceiverSensitivityAnalyzer {
     fn visit_this_expr(&mut self, _: &ThisExpr) {
+        self.sensitive = true;
+    }
+
+    // `super.m()` calls `m` with this function's receiver, and `super.x`
+    // passes it to an inherited getter.
+    fn visit_super_prop_expr(&mut self, _: &SuperPropExpr) {
         self.sensitive = true;
     }
 

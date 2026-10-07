@@ -94,8 +94,9 @@ function that reads `this`).
 
 `UnIndirectCall` keeps `(0, o.m)()` and `Object(o.m)()` when `o` is a
 same-module binding whose member `m` is an ordinary function that reads
-`this` (an object literal method or function value, an `o.m = function`
-assignment, or a static class method). Terser emits that shape for
+`this` or `super` (an object literal method or function value, an `o.m =
+function` assignment, or a static method of a class declaration or a class
+value such as `var C = class {}`). Terser emits that shape for
 `const m = o.m; m()` (producer `terser@5.51.2`), and the direct call would
 pass `o` as the receiver. Import bindings, parameters, and other roots
 whose callee the module cannot see still drop the wrapper.

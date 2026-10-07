@@ -2,9 +2,9 @@ use swc_core::atoms::Atom;
 use swc_core::common::util::take::Take;
 use swc_core::common::Mark;
 use swc_core::ecma::ast::{
-    AssignExpr, AssignOp, AssignTarget, CallExpr, Callee, ClassDecl, ClassMember, Expr, Ident, Lit,
-    MemberExpr, MemberProp, Module, ObjectLit, Pat, Prop, PropName, PropOrSpread, SeqExpr,
-    SimpleAssignTarget, VarDeclarator, WithStmt,
+    AssignExpr, AssignOp, AssignTarget, CallExpr, Callee, Class, ClassDecl, ClassMember, Expr,
+    Ident, Lit, MemberExpr, MemberProp, Module, ObjectLit, Pat, Prop, PropName, PropOrSpread,
+    SeqExpr, SimpleAssignTarget, VarDeclarator, WithStmt,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -203,7 +203,8 @@ fn static_prop_name(key: &PropName) -> Option<Atom> {
 /// Members of same-module bindings that are ordinary functions reading
 /// `this`: object literal methods and function values (`var o = { m() {} }`,
 /// `o = { m: function () {} }`), member assignments (`o.m = function () {}`),
-/// and static class methods. Arrows keep the outer `this` and are skipped.
+/// and static methods of class declarations and class values (`var C =
+/// class {}`). Arrows keep the outer `this` and are skipped.
 fn collect_receiver_sensitive_members(module: &Module) -> HashSet<(BindingId, Atom)> {
     #[derive(Default)]
     struct Collector {
@@ -232,14 +233,34 @@ fn collect_receiver_sensitive_members(module: &Module) -> HashSet<(BindingId, At
                 }
             }
         }
+
+        fn add_class(&mut self, binding: BindingId, class: &Class) {
+            for member in &class.body {
+                let ClassMember::Method(method) = member else {
+                    continue;
+                };
+                if !method.is_static || !function_observes_receiver(&method.function) {
+                    continue;
+                }
+                if let Some(name) = static_prop_name(&method.key) {
+                    self.members.insert((binding.clone(), name));
+                }
+            }
+        }
+
+        fn add_value(&mut self, binding: BindingId, value: &Expr) {
+            match strip_parens(value) {
+                Expr::Object(object) => self.add_object(binding, object),
+                Expr::Class(class) => self.add_class(binding, &class.class),
+                _ => {}
+            }
+        }
     }
 
     impl Visit for Collector {
         fn visit_var_declarator(&mut self, decl: &VarDeclarator) {
-            if let (Pat::Ident(name), Some(Expr::Object(object))) =
-                (&decl.name, decl.init.as_deref().map(strip_parens))
-            {
-                self.add_object(binding_id(&name.id), object);
+            if let (Pat::Ident(name), Some(init)) = (&decl.name, decl.init.as_deref()) {
+                self.add_value(binding_id(&name.id), init);
             }
             decl.visit_children_with(self);
         }
@@ -248,9 +269,7 @@ fn collect_receiver_sensitive_members(module: &Module) -> HashSet<(BindingId, At
             if assign.op == AssignOp::Assign {
                 match &assign.left {
                     AssignTarget::Simple(SimpleAssignTarget::Ident(name)) => {
-                        if let Expr::Object(object) = strip_parens(&assign.right) {
-                            self.add_object(binding_id(&name.id), object);
-                        }
+                        self.add_value(binding_id(&name.id), &assign.right);
                     }
                     AssignTarget::Simple(SimpleAssignTarget::Member(member)) => {
                         if let (Expr::Ident(object), Some(name), Expr::Fn(function)) = (
@@ -270,17 +289,7 @@ fn collect_receiver_sensitive_members(module: &Module) -> HashSet<(BindingId, At
         }
 
         fn visit_class_decl(&mut self, decl: &ClassDecl) {
-            for member in &decl.class.body {
-                let ClassMember::Method(method) = member else {
-                    continue;
-                };
-                if !method.is_static || !function_observes_receiver(&method.function) {
-                    continue;
-                }
-                if let Some(name) = static_prop_name(&method.key) {
-                    self.members.insert((binding_id(&decl.ident), name));
-                }
-            }
+            self.add_class(binding_id(&decl.ident), &decl.class);
             decl.visit_children_with(self);
         }
     }
