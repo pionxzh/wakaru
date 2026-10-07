@@ -301,8 +301,9 @@ rationale, or level gating appear.
   templates through it.
 - **UnArrayConcatSpread** — array-literal arguments flatten at every level.
   An arbitrary concat argument becomes a spread only at `aggressive`, under
-  `concat_arguments_are_arrays`; scalars, strings, and general iterables do
-  not share concat's spread semantics. At `standard`, the later
+  `concat_arguments_are_arrays`, and never as the single argument of
+  `[].concat(x)` (the castArray idiom); scalars, strings, and general
+  iterables do not share concat's spread semantics. At `standard`, the later
   **UnArrayConcatSpreadRest** pass admits only existing rest parameters,
   canonical Babel/TypeScript `arguments`-copy arrays, and bindings initialized
   with a hole-free array literal, and only when every use after initialization
@@ -311,7 +312,8 @@ rationale, or level gating appear.
   a hole-free array literal count as Arrays when every use of the function is
   a direct call. The same pass turns Closure Compiler's
   `$jscomp.arrayFromIterable(xs)` concat argument, or spread element, into a
-  spread of `xs`, under the namespace check UnForOf uses. It runs before
+  spread of `xs`, under the namespace check UnForOf uses, and spreads a call
+  of the renamed ADVANCED helper, recognized by its body. It runs before
   UnEs6Class, followed by a second UnSpreadArrayLiteral pass, so a proven
   `[this].concat(args)` can expose `Base.call.apply(Base, [this, ...args])`
   without restoring the unsafe general heuristic.

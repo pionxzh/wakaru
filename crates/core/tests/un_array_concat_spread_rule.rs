@@ -116,10 +116,12 @@ fn aggressive_assumes_concat_arguments_are_arrays() {
     // `concat_arguments_are_arrays`: retain the generated-code heuristic for
     // Babel loose / iterableIsArray output only at Aggressive.
     let input = r#"
-const x = [].concat(a);
+const x = [b].concat(a);
+const y = [].concat(a, c);
 "#;
     let expected = r#"
-const x = [...a];
+const x = [b, ...a];
+const y = [...a, ...c];
 "#;
     let output = apply_rule_with_level(input, RewriteLevel::Aggressive);
     assert_eq_normalized(&output, expected);
@@ -382,13 +384,42 @@ function g() {
 }
 
 #[test]
+fn aggressive_keeps_single_unproven_argument_of_empty_concat() {
+    // `[].concat(x)` is also the castArray idiom: a scalar `x` becomes a
+    // one-element array, and `[...x]` would iterate a string or throw.
+    let input = r#"
+function toArray(v) {
+    return [].concat(v);
+}
+const messages = [].concat(rule.message);
+const boundaries = [].concat(x || y);
+"#;
+    let output = apply_rule_with_level(input, RewriteLevel::Aggressive);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn aggressive_still_flattens_empty_concat_of_array_literal() {
+    let input = r#"
+const a = [].concat([x, y]);
+const b = [].concat(1);
+"#;
+    let expected = r#"
+const a = [x, y];
+const b = [1];
+"#;
+    let output = apply_rule_with_level(input, RewriteLevel::Aggressive);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn aggressive_spreads_logical_expression_arguments() {
     // Either operand can be an array, so the assumption still applies.
     let input = r#"
-const a = [].concat(x || y);
+const a = [0].concat(x || y);
 "#;
     let expected = r#"
-const a = [...x || y];
+const a = [0, ...x || y];
 "#;
     let output = apply_rule_with_level(input, RewriteLevel::Aggressive);
     assert_eq_normalized(&output, expected);
@@ -776,4 +807,143 @@ function arrSpread(a) {
 "#,
         );
     }
+}
+
+#[test]
+fn renamed_closure_array_from_iterable_becomes_spread_at_standard() {
+    // producer google-closure-compiler@20260629.0.0
+    // --compilation_level=ADVANCED --language_out=ECMASCRIPT5 inlines
+    // arrayFromIterator into the renamed helper.
+    let input = r#"
+function r(a) {
+    return a[Symbol.iterator]();
+}
+function u(a) {
+    if (!(a instanceof Array)) {
+        a = r(a);
+        for (var e, h = []; !(e = a.next()).done;) h.push(e.value);
+        a = h;
+    }
+    return a;
+}
+function B(a, e) {
+    return [a].concat(u(e));
+}
+function D(a) {
+    return [].concat(u(a));
+}
+"#;
+    let expected = r#"
+function r(a) {
+    return a[Symbol.iterator]();
+}
+function u(a) {
+    if (!(a instanceof Array)) {
+        a = r(a);
+        for (var e, h = []; !(e = a.next()).done;) h.push(e.value);
+        a = h;
+    }
+    return a;
+}
+function B(a, e) {
+    return [a, ...u(e)];
+}
+function D(a) {
+    return [...u(a)];
+}
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), expected);
+}
+
+#[test]
+fn renamed_closure_array_from_iterable_with_iterator_helper_becomes_spread() {
+    // wild-observed: the helper keeps a call to the renamed
+    // arrayFromIterator instead of inlining it.
+    let input = r#"
+var ya = function(a) {
+    for (var b, c = []; !(b = a.next()).done;) c.push(b.value);
+    return c;
+}, w = function(a) {
+    return a instanceof Array ? a : ya(m(a));
+};
+const x = [].concat(w(xs), [1]);
+"#;
+    let expected = r#"
+var ya = function(a) {
+    for (var b, c = []; !(b = a.next()).done;) c.push(b.value);
+    return c;
+}, w = function(a) {
+    return a instanceof Array ? a : ya(m(a));
+};
+const x = [...w(xs), 1];
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), expected);
+}
+
+#[test]
+fn cast_array_helper_is_not_array_from_iterable() {
+    // Returns its argument when it is not an Array.
+    let input = r#"
+function u(a) {
+    if (!(a instanceof Array)) {
+        var h = [];
+        h.push(a);
+    }
+    return a;
+}
+var w = function(a) {
+    return a instanceof Array ? a : wrap(a);
+};
+const x = [].concat(u(v), w(v));
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), input);
+}
+
+#[test]
+fn reassigned_renamed_array_from_iterable_stays_concat() {
+    let input = r#"
+function u(a) {
+    if (!(a instanceof Array)) {
+        var h = [];
+        a = h;
+    }
+    return a;
+}
+u = other;
+const x = [].concat(u(v));
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), input);
+}
+
+#[test]
+fn renamed_array_from_iterable_needs_the_global_array() {
+    let input = r#"
+function f(Array) {
+    function u(a) {
+        if (!(a instanceof Array)) {
+            var h = [];
+            a = h;
+        }
+        return a;
+    }
+    return [].concat(u(v));
+}
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), input);
+}
+
+#[test]
+fn renamed_array_from_iterable_with_early_return_stays_concat() {
+    let input = r#"
+function u(a) {
+    if (!(a instanceof Array)) {
+        if (a == null) return a;
+        var h = [];
+        a = h;
+    }
+    return a;
+}
+const x = [].concat(u(v));
+"#;
+    assert_eq_normalized(&apply_rest_proof(input), input);
 }

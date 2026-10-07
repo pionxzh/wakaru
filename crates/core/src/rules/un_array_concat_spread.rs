@@ -1,13 +1,16 @@
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrayLit, ArrowExpr, ArrowFunctionBody, BinaryOp, CallExpr, Callee, Constructor, Decl,
-    DefaultDecl, Expr, ExprOrSpread, Function, FunctionBody, GetterProp, Ident, KeyValueProp,
-    MemberProp, MethodProp, Module, ModuleDecl, ModuleItem, ParamOrTsParamProp, Pat, Prop,
-    PropName, PropOrSpread, SetterProp, Stmt, VarDeclKind,
+    ArrayLit, ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp,
+    CallExpr, Callee, Constructor, Decl, DefaultDecl, Expr, ExprOrSpread, FnDecl, ForStmt,
+    Function, FunctionBody, GetterProp, Ident, KeyValueProp, MemberProp, MethodProp, Module,
+    ModuleDecl, ModuleItem, ParamOrTsParamProp, Pat, Prop, PropName, PropOrSpread, ReturnStmt,
+    SetterProp, SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp, VarDeclKind, VarDeclOrExpr,
+    VarDeclarator,
 };
 use swc_core::ecma::utils::find_pat_ids;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use crate::analysis::binding_uses::BindingUseIndex;
 use crate::analysis::{binding_id, BindingId};
 use crate::collections::{HashMap, HashSet};
 
@@ -23,8 +26,9 @@ use crate::utils::paren::strip_parens;
 /// At Minimal and Standard, every argument must be an array literal. Aggressive
 /// also treats unknown arguments as arrays, preserving the old generated-code
 /// heuristic for Babel loose / `iterableIsArray` output under the
-/// `concat_arguments_are_arrays` assumption. An argument that is visibly not
-/// an array (a number, a string, an object literal) stays one element.
+/// `concat_arguments_are_arrays` assumption, except the single argument of
+/// `[].concat(x)`. An argument that is visibly not an array (a number, a
+/// string, an object literal) stays one element.
 ///
 /// Handles:
 /// - `[a].concat([b, c])` → `[a, b, c]`
@@ -605,6 +609,7 @@ impl Visit for ProofUseScanner<'_> {
 fn recover_closure_array_spread(module: &mut Module, unresolved_mark: Mark) {
     let runtime = ClosureRuntime {
         namespaces: collect_closure_jscomp_namespaces(module),
+        array_helpers: collect_renamed_array_from_iterable(module, unresolved_mark),
         unresolved_mark,
     };
     let arrays = ProvenArrays {
@@ -616,6 +621,8 @@ fn recover_closure_array_spread(module: &mut Module, unresolved_mark: Mark) {
 
 struct ClosureRuntime {
     namespaces: HashSet<BindingKey>,
+    /// Renamed `arrayFromIterable` helpers recognized by body shape.
+    array_helpers: HashSet<BindingId>,
     unresolved_mark: Mark,
 }
 
@@ -671,7 +678,10 @@ impl ProvenArrays {
                 &call.callee,
                 Callee::Expr(callee)
                     if matches!(callee.as_ref(), Expr::Ident(ident)
-                        if self.factories.contains(&binding_id(ident)))
+                        if self.factories.contains(&binding_id(ident))
+                            || self.closure.as_ref().is_some_and(|runtime| {
+                                runtime.array_helpers.contains(&binding_id(ident))
+                            }))
             ),
             _ => false,
         }
@@ -727,6 +737,12 @@ fn try_simplify_array_concat(
         return None;
     }
 
+    // `[].concat(x)` with one unproven `x` is also the castArray idiom, which
+    // wraps a non-array `x` instead of spreading it. Aggressive's
+    // `concat_arguments_are_arrays` does not extend to it.
+    let cast_array_shape =
+        matches!(receiver, Expr::Array(array) if array.elems.is_empty()) && call.args.len() == 1;
+
     let mut elems: Vec<Option<ExprOrSpread>> = match receiver {
         Expr::Array(receiver_arr) => receiver_arr.elems.clone(),
         Expr::Ident(_) if proves(receiver) => vec![Some(spread_elem(receiver))],
@@ -760,7 +776,9 @@ fn try_simplify_array_concat(
             // sloppy-mode local may also be named `arguments`, so keep the
             // call rather than classify it.
             Expr::Ident(ident) if ident.sym == "arguments" => return None,
-            expr if level >= RewriteLevel::Aggressive => elems.push(Some(spread_elem(expr))),
+            expr if level >= RewriteLevel::Aggressive && !cast_array_shape => {
+                elems.push(Some(spread_elem(expr)))
+            }
             _ => return None,
         }
     }
@@ -825,4 +843,263 @@ fn concat_receiver(call: &CallExpr) -> Option<&Expr> {
         return None;
     }
     Some(member.obj.as_ref())
+}
+
+/// Closure Compiler's ADVANCED mode renames and may inline
+/// `$jscomp.arrayFromIterable`. Two shapes are recognized by body, on a
+/// function binding that is declared once and never written:
+///
+/// - `function (a) { return a instanceof Array ? a : F(...) }`, where `F`
+///   only returns a local Array literal binding (the renamed
+///   `arrayFromIterator`);
+/// - `function (a) { if (!(a instanceof Array)) { ...; a = h; } return a }`,
+///   where `h` is a local Array literal binding.
+///
+/// Both always return an Array, so `[].concat(helper(x))` spreads the
+/// result. The call is kept: only the full Closure runtime proves that it
+/// iterates `x` like a spread.
+fn collect_renamed_array_from_iterable(
+    module: &Module,
+    unresolved_mark: Mark,
+) -> HashSet<BindingId> {
+    let builders = collect_function_bindings(module, function_returns_local_array);
+    let candidates = collect_function_bindings(module, |function| {
+        is_array_from_iterable_body(function, &builders, unresolved_mark)
+    });
+    if candidates.is_empty() {
+        return candidates;
+    }
+
+    let uses = BindingUseIndex::collect(module);
+    let stable = |binding: &BindingId| {
+        uses.has_single_declaration(binding) && !uses.has_direct_write(binding)
+    };
+    let builders = builders
+        .into_iter()
+        .filter(|binding| stable(binding))
+        .collect::<HashSet<_>>();
+    collect_function_bindings(module, |function| {
+        is_array_from_iterable_body(function, &builders, unresolved_mark)
+    })
+    .into_iter()
+    .filter(|binding| stable(binding))
+    .collect()
+}
+
+/// Bindings of function declarations and `var f = function () {}`
+/// declarators whose function satisfies `predicate`.
+fn collect_function_bindings(
+    module: &Module,
+    predicate: impl Fn(&Function) -> bool,
+) -> HashSet<BindingId> {
+    struct Collector<P> {
+        predicate: P,
+        bindings: HashSet<BindingId>,
+    }
+
+    impl<P: Fn(&Function) -> bool> Visit for Collector<P> {
+        fn visit_fn_decl(&mut self, decl: &FnDecl) {
+            if (self.predicate)(&decl.function) {
+                self.bindings.insert(binding_id(&decl.ident));
+            }
+            decl.visit_children_with(self);
+        }
+
+        fn visit_var_declarator(&mut self, decl: &VarDeclarator) {
+            if let (Pat::Ident(name), Some(init)) = (&decl.name, decl.init.as_deref()) {
+                if let Expr::Fn(function) = strip_parens(init) {
+                    if (self.predicate)(&function.function) {
+                        self.bindings.insert(binding_id(&name.id));
+                    }
+                }
+            }
+            decl.visit_children_with(self);
+        }
+    }
+
+    let mut collector = Collector {
+        predicate,
+        bindings: HashSet::default(),
+    };
+    module.visit_with(&mut collector);
+    collector.bindings
+}
+
+/// `function (it) { for (var s, out = []; ...;) out.push(...); return out }`:
+/// every return yields one local binding initialized with an Array literal
+/// and never written, and the body ends with that return.
+fn function_returns_local_array(function: &Function) -> bool {
+    if function.is_async || function.is_generator {
+        return false;
+    }
+    let Some(body) = &function.body else {
+        return false;
+    };
+    let Some(Stmt::Return(ReturnStmt { arg: Some(arg), .. })) = body.stmts.last() else {
+        return false;
+    };
+    let Expr::Ident(local) = strip_parens(arg) else {
+        return false;
+    };
+    let local = binding_id(local);
+    let initialized = body.stmts[..body.stmts.len() - 1]
+        .iter()
+        .any(|stmt| stmt_declares_array_literal(stmt, &local));
+    initialized
+        && returns_only(&body.stmts, &local)
+        && !BindingUseIndex::collect_stmts(&body.stmts).has_direct_write(&local)
+}
+
+/// `function (a) { return a instanceof Array ? a : F(...) }` with `F` in
+/// `builders`, or
+/// `function (a) { if (!(a instanceof Array)) { ...; a = h; } return a }`.
+fn is_array_from_iterable_body(
+    function: &Function,
+    builders: &HashSet<BindingId>,
+    unresolved_mark: Mark,
+) -> bool {
+    if function.is_async || function.is_generator {
+        return false;
+    }
+    let [param] = function.params.as_slice() else {
+        return false;
+    };
+    let Pat::Ident(param) = &param.pat else {
+        return false;
+    };
+    let param = binding_id(&param.id);
+    let Some(body) = &function.body else {
+        return false;
+    };
+    match body.stmts.as_slice() {
+        [Stmt::Return(ReturnStmt { arg: Some(arg), .. })] => {
+            let Expr::Cond(cond) = strip_parens(arg) else {
+                return false;
+            };
+            is_instanceof_array(&cond.test, &param, unresolved_mark)
+                && is_binding(&cond.cons, &param)
+                && matches!(strip_parens(&cond.alt), Expr::Call(CallExpr {
+                    callee: Callee::Expr(callee),
+                    ..
+                }) if matches!(strip_parens(callee), Expr::Ident(builder)
+                    if builders.contains(&binding_id(builder))))
+        }
+        [Stmt::If(if_stmt), Stmt::Return(ReturnStmt { arg: Some(arg), .. })] => {
+            let Expr::Unary(UnaryExpr {
+                op: UnaryOp::Bang,
+                arg: test,
+                ..
+            }) = strip_parens(&if_stmt.test)
+            else {
+                return false;
+            };
+            let Stmt::Block(block) = if_stmt.cons.as_ref() else {
+                return false;
+            };
+            if if_stmt.alt.is_some()
+                || !is_instanceof_array(test, &param, unresolved_mark)
+                || !is_binding(arg, &param)
+            {
+                return false;
+            }
+            let Some((Stmt::Expr(last), rest)) = block.stmts.split_last() else {
+                return false;
+            };
+            let Expr::Assign(AssignExpr {
+                op: AssignOp::Assign,
+                left: AssignTarget::Simple(SimpleAssignTarget::Ident(target)),
+                right,
+                ..
+            }) = strip_parens(&last.expr)
+            else {
+                return false;
+            };
+            let Expr::Ident(local) = strip_parens(right) else {
+                return false;
+            };
+            let local = binding_id(local);
+            binding_id(&target.id) == param
+                && rest
+                    .iter()
+                    .any(|stmt| stmt_declares_array_literal(stmt, &local))
+                && !contains_return(&block.stmts)
+                && !BindingUseIndex::collect_stmts(&body.stmts).has_direct_write(&local)
+        }
+        _ => false,
+    }
+}
+
+fn is_instanceof_array(expr: &Expr, param: &BindingId, unresolved_mark: Mark) -> bool {
+    matches!(strip_parens(expr), Expr::Bin(BinExpr {
+        op: BinaryOp::InstanceOf,
+        left,
+        right,
+        ..
+    }) if is_binding(left, param)
+        && matches!(strip_parens(right), Expr::Ident(array)
+            if array.sym == "Array" && array.ctxt.outer() == unresolved_mark))
+}
+
+fn is_binding(expr: &Expr, binding: &BindingId) -> bool {
+    matches!(strip_parens(expr), Expr::Ident(ident) if binding_id(ident) == *binding)
+}
+
+/// A statement that always runs its declarators: a declaration or a `for`
+/// whose `var`/`let` init declares `local = [...]` once, with no holes.
+fn stmt_declares_array_literal(stmt: &Stmt, local: &BindingId) -> bool {
+    let declarators = match stmt {
+        Stmt::Decl(Decl::Var(var)) => &var.decls,
+        Stmt::For(ForStmt {
+            init: Some(VarDeclOrExpr::VarDecl(var)),
+            ..
+        }) => &var.decls,
+        _ => return false,
+    };
+    declarators.iter().any(|decl| {
+        matches!(&decl.name, Pat::Ident(name) if binding_id(&name.id) == *local)
+            && decl.init.as_deref().is_some_and(is_dense_array_literal)
+    })
+}
+
+/// Every `return` outside nested functions returns `local`.
+fn returns_only(stmts: &[Stmt], local: &BindingId) -> bool {
+    struct Returns<'a> {
+        local: &'a BindingId,
+        ok: bool,
+    }
+
+    impl Visit for Returns<'_> {
+        fn visit_return_stmt(&mut self, ret: &ReturnStmt) {
+            self.ok &= ret
+                .arg
+                .as_deref()
+                .is_some_and(|arg| is_binding(arg, self.local));
+        }
+
+        fn visit_function(&mut self, _: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+    }
+
+    let mut returns = Returns { local, ok: true };
+    stmts.visit_with(&mut returns);
+    returns.ok
+}
+
+fn contains_return(stmts: &[Stmt]) -> bool {
+    struct Finder(bool);
+
+    impl Visit for Finder {
+        fn visit_return_stmt(&mut self, _: &ReturnStmt) {
+            self.0 = true;
+        }
+
+        fn visit_function(&mut self, _: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+    }
+
+    let mut finder = Finder(false);
+    stmts.visit_with(&mut finder);
+    finder.0
 }

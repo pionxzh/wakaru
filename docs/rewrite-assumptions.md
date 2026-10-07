@@ -544,7 +544,15 @@ their spread inputs are arrays: Babel 6 and 7 in loose mode, Babel 7 with the
 resulting AST no longer carries that producer setting. Closure Compiler emits
 the same receiver but wraps each spread argument in
 `$jscomp.arrayFromIterable`, so its arguments are not unknown in this sense;
-`UnArrayConcatSpreadRest` recovers them at `standard`.
+`UnArrayConcatSpreadRest` recovers them at `standard`, including the renamed
+helper of ADVANCED output, recognized by its body.
+
+The assumption does not cover `[].concat(x)` with a single argument. That
+call is also the castArray idiom (`toArray(v) { return [].concat(v) }`),
+which handwritten libraries use to wrap a scalar, and nothing in the call
+tells the two apart. It stays a call unless the binding proof or a
+Closure helper proves `x` is an Array. A loose `[...xs]` therefore stays
+`[].concat(xs)` at every level.
 
 An argument that is visibly not an array (a primitive literal or operator
 result, a template literal, a function, or an object literal without computed
@@ -557,8 +565,9 @@ Array literals and the arguments its binding proof covers (rest parameters,
 `arguments` copies, and bindings or calls that provably yield a fresh array;
 see `rules/un_array_concat_spread.rs`) do not depend on this assumption.
 
-Level: `aggressive` only. `minimal` and `standard` preserve unknown concat
-arguments; `standard` may still recover the proof-backed forms.
+Level: `aggressive` only, and never for a single argument of an empty
+receiver. `minimal` and `standard` preserve unknown concat arguments;
+`standard` may still recover the proof-backed forms.
 
 ### `set_computed_properties`
 
