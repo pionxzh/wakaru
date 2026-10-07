@@ -349,7 +349,11 @@ rationale, or level gating appear.
   prerequisite chain is diagrammed above; multi-module unpack extracts
   cross-module facts from its output (see
   [fact-system.md](fact-system.md)). Historical experiments that placed it
-  elsewhere are superseded — treat the registry as authoritative. Static
+  elsewhere are superseded — treat the registry as authoritative. Before
+  anything else it hides every top-level `require` after the first hoisting
+  barrier (a global write, a require that stays a call, or a discarded call
+  into a required module; `import_hoisting_eagerness`), so those requires
+  stay calls in place, and gives them back when it is done. Static
   CommonJS live getters (`get: () => dep.member`) become source re-exports
   only when `dep` is a resolver-proven top-level literal `require()` binding
   and every use is a static member read; writes, dynamic reads, and escapes

@@ -47,6 +47,7 @@ use super::RewriteLevel;
 mod export_getters;
 mod export_star;
 pub(crate) mod export_storage;
+mod hoist_barrier;
 use export_getters::has_webpack_export_definitions;
 pub(crate) use export_getters::{lower_export_getter_helpers, lower_webpack_export_definitions};
 use export_star::rewrite_commonjs_export_stars;
@@ -213,6 +214,8 @@ impl VisitMut for UnEsm {
             && has_webpack_export_definitions(module, self.unresolved_mark))
         .then(|| module.body.clone());
         let lowered = lower_webpack_export_definitions(module, self.unresolved_mark);
+        let hidden_requires =
+            hoist_barrier::hide_requires_after_barrier(module, self.unresolved_mark);
         self.convert(module, calls_bundler_helper);
         if let (true, Some(original)) = (lowered, before_lowering) {
             if !module
@@ -222,6 +225,9 @@ impl VisitMut for UnEsm {
             {
                 module.body = original;
             }
+        }
+        if let Some(hidden) = hidden_requires {
+            hoist_barrier::restore_requires(module, hidden, self.unresolved_mark);
         }
     }
 }

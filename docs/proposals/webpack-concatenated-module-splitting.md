@@ -1,8 +1,8 @@
 # Webpack Concatenated Modules: Split at External-Import Boundaries
 
-Status: **PROPOSED.** Not started. A planned import-hoisting barrier in
-UnEsm (see "Relationship to the hoisting barrier" below) is the short-term
-guard for the same miscompile; this proposal is the structural fix.
+Status: **PROPOSED.** Not started. The import-hoisting barrier in UnEsm
+(see "Relationship to the hoisting barrier" below) is the short-term guard
+for the same miscompile; this proposal is the structural fix.
 
 Ground rules: follow [AGENTS.md](../../AGENTS.md), including a focused unit
 test for every change. Use synthetic module ids and filenames in tests and
@@ -125,9 +125,10 @@ Limits of the signal:
 
 ## Relationship to the hoisting barrier
 
-The planned barrier keeps a later `require` in place when an earlier
-statement is a global or `process.env` write, a leftover string `require`
-call, or a discarded-result call through a required binding (`p.install();`).
+The barrier (`rules/un_esm/hoist_barrier.rs`) keeps a later `require` in
+place when an earlier statement is a global or `process.env` write, a
+leftover string `require` call, or a discarded-result call through a
+required binding (`p.install();`).
 It keeps the `require` in place, which is correct but leaves CommonJS
 calls inside ESM output. This split removes the barrier's work for
 concatenated factories by giving each inner module its own import list.

@@ -761,11 +761,30 @@ observable whenever a later provider's side effects (a global write, an
 installed getter or setter) change what an earlier consumer statement — such as
 an `Object.assign` copy — reads. Relative provider order is preserved only
 among requires that become imports. A require that stays a call keeps running
-in place, after every hoisted import. In
-`require("dotenv").config(); const db = require("./db")`, the recovery imports
-`./db` but leaves `require("dotenv").config()` as a call, so `./db` now loads
-first. Requires of numeric module ids that are not in the input stay calls the
-same way in unpack output.
+in place, after every hoisted import. Requires of numeric module ids that are
+not in the input stay calls the same way in unpack output.
+
+UnEsm limits the deviation with a barrier (`rules/un_esm/hoist_barrier.rs`).
+After the first top-level statement that a later provider can observe, every
+top-level `require` stays a call in place, and the module may become ESM with
+those calls in it. The barriers are:
+
+- a write to a global: `window.fetch = spy`, `process.env.X = v`, `g = 1`;
+- a string `require` that stays a call: one whose result is called
+  (`require("dotenv").config()`), or any require inside `if`, a loop, or
+  `try`;
+- an expression statement that calls into a required module and discards
+  the result: `polyfill.install();`.
+
+So `require("dotenv").config(); const db = require("./db")` keeps both
+requires in order. Other statements are not barriers: declarations,
+function and class definitions, export plumbing, calls whose result is kept
+(`var x = lib.make()`), and calls of local functions. A required value read
+as an argument (`f(require("x").default)`) becomes an import, so it does not
+count as a require that stays a call. webpack's module concatenation (producer
+`webpack@5.111.1` `concatenateModules`) is the main source of mid-body
+requires: an inner module's code runs before the next inner module's
+external require.
 
 Recoveries that copy values at a specific program point (the default-object
 composition's `Object.assign` shells) prove the consumer's body exact but
@@ -775,8 +794,9 @@ providers side-effect-free would reject essentially every real module for a
 hazard every `require`-to-`import` conversion in this codebase already
 accepts.
 
-Affects: `UnEsm` require conversion (including whole-chain recovery of
-`exports.a = exports.b = require("x")`), `commonjs_default_object_composition`,
+Affects: `UnEsm` require conversion before the first barrier (including
+whole-chain recovery of `exports.a = exports.b = require("x")`),
+`commonjs_default_object_composition`,
 every fact-consuming recovery that imports a proven provider, and the esbuild
 unpacker's writer relocation, which moves a top-level state writer into the
 module that owns the state.

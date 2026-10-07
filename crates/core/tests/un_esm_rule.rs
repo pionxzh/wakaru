@@ -4891,14 +4891,16 @@ observe(UIBase);
 
 #[test]
 fn toplevel_require_named_member_fails_closed_on_unresolved_assignment_target() {
+    // The write sits in a function: a top-level global write before the
+    // requires would be a hoisting barrier and keep them as calls.
     let input = r#"
-UIBase = globalValue;
+function reset() { UIBase = globalValue; }
 var keep = require("./keep.js");
 consume(require("./UIBase.js").UIBase);
 "#;
     let expected = r#"
 import keep from "./keep.js";
-UIBase = globalValue;
+function reset() { UIBase = globalValue; }
 consume(require("./UIBase.js").UIBase);
 "#;
     let output = apply_unesm(input);
@@ -5365,12 +5367,12 @@ observe(UIBase);
 #[test]
 fn toplevel_require_default_member_falls_back_for_unresolved_assignment_target() {
     let input = r#"
-UIBase = globalValue;
+function reset() { UIBase = globalValue; }
 consume(require("./UIBase.js").default);
 "#;
     let expected = r#"
 import defaultExport from "./UIBase.js";
-UIBase = globalValue;
+function reset() { UIBase = globalValue; }
 consume(defaultExport);
 "#;
     let output = apply_unesm(input);
@@ -7380,4 +7382,115 @@ Object.keys(dep_js).forEach(function (k) {
         );
         assert!(output.contains("dep_js__namespace as ns"), "{output}");
     }
+}
+
+fn un_esm_standard(source: &str) -> String {
+    common::render_rule(source, |mark| {
+        wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
+    })
+}
+
+#[test]
+fn require_after_a_global_write_stays_a_call() {
+    // producer webpack@5.111.1 concatenateModules: an inner module patches a
+    // global, and the next inner module's external require follows it.
+    // An import would load the provider before the patch.
+    let input = r#"
+var origFetch = globalThis.fetch;
+globalThis.fetch = function spy() {};
+var player = require("./player");
+var util = require("./util");
+exports.report = function () { return player.check(util); };
+"#;
+    let expected = r#"
+var origFetch = globalThis.fetch;
+globalThis.fetch = function spy() {};
+var player = require("./player");
+var util = require("./util");
+export const report = function () { return player.check(util); };
+"#;
+    let output = un_esm_standard(input);
+    assert_eq_normalized(&output, expected);
+    assert_eq_normalized(&un_esm_standard(&output), &output);
+}
+
+#[test]
+fn require_after_a_require_that_stays_a_call_stays_a_call() {
+    let input = r#"
+require("dotenv").config();
+var db = require("./db");
+module.exports = { db: db };
+"#;
+    let expected = r#"
+require("dotenv").config();
+var db = require("./db");
+export default { db: db };
+"#;
+    assert_eq_normalized(&un_esm_standard(input), expected);
+}
+
+#[test]
+fn require_after_a_discarded_call_into_a_provider_stays_a_call() {
+    let input = r#"
+var polyfill = require("./polyfill");
+polyfill.install();
+var lib = require("./lib");
+exports.run = function () { return lib.go(); };
+"#;
+    let expected = r#"
+import polyfill from "./polyfill";
+polyfill.install();
+var lib = require("./lib");
+export const run = function () { return lib.go(); };
+"#;
+    assert_eq_normalized(&un_esm_standard(input), expected);
+}
+
+#[test]
+fn require_after_kept_results_and_local_calls_becomes_an_import() {
+    // A provider call whose result is kept, a helper IIFE, a local call, and
+    // export plumbing are not barriers.
+    let input = r#"
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+var lib = require("./lib");
+var made = lib.make();
+var helper = function () { return 1; }();
+setup();
+var other = require("./other");
+exports.value = other.read(made, helper);
+"#;
+    let output = un_esm_standard(input);
+    assert!(output.contains("import other from \"./other\""), "{output}");
+    assert!(!output.contains("require("), "{output}");
+}
+
+#[test]
+fn require_after_a_conditional_require_stays_a_call() {
+    let input = r#"
+if (process.env.TRACE) require("./trace");
+var a = require("./a");
+exports.a = a;
+"#;
+    let output = un_esm_standard(input);
+    assert!(output.contains("var a = require(\"./a\")"), "{output}");
+    assert!(!output.contains("import "), "{output}");
+}
+
+#[test]
+fn a_provider_call_through_an_import_is_still_a_barrier() {
+    // A later UnEsm run sees the earlier provider as an import; the barrier
+    // must stay where the first run found it.
+    let input = r#"
+import { b } from "./tuple";
+b("topLeft", "topRight");
+var toast = require("./toast");
+exports.show = function () { return toast.Z(); };
+"#;
+    let output = un_esm_standard(input);
+    assert!(
+        output.contains("var toast = require(\"./toast\")"),
+        "{output}"
+    );
+    assert!(!output.contains("from \"./toast\""), "{output}");
 }
