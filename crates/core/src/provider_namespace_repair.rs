@@ -248,6 +248,8 @@ struct NamespaceCompatibleUsage {
     policy: UsagePolicy,
     compatible: bool,
     has_meaningful_use: bool,
+    #[cfg(test)]
+    call_visits: usize,
 }
 
 impl NamespaceCompatibleUsage {
@@ -271,6 +273,8 @@ impl NamespaceCompatibleUsage {
             policy,
             compatible: true,
             has_meaningful_use: false,
+            #[cfg(test)]
+            call_visits: 0,
         }
     }
 
@@ -358,6 +362,10 @@ impl Visit for NamespaceCompatibleUsage {
     }
 
     fn visit_call_expr(&mut self, call: &CallExpr) {
+        #[cfg(test)]
+        {
+            self.call_visits += 1;
+        }
         if self.is_object_method(call, "keys")
             && call.args.len() == 1
             && self.direct_target_arg(&call.args[0])
@@ -377,9 +385,13 @@ impl Visit for NamespaceCompatibleUsage {
                 }
             }
             call.type_args.visit_with(self);
-            if accepted_source {
-                return;
+            // The arguments are visited; visiting the children again would
+            // repeat them once per nesting level, and a left-deep
+            // `Object.assign(Object.assign(...), ...)` chain would cost 2^depth.
+            if !accepted_source {
+                call.callee.visit_with(self);
             }
+            return;
         }
 
         call.visit_children_with(self);
@@ -471,6 +483,66 @@ mod tests {
     use super::*;
     use crate::facts::{ExportFact, ModuleFacts};
 
+    fn parse_consumer(cm: &Lrc<SourceMap>, source: &str) -> (Module, Mark) {
+        let file = cm.new_source_file(
+            FileName::Custom("consumer.js".into()).into(),
+            source.to_string(),
+        );
+        let lexer = Lexer::new(
+            Syntax::Es(EsSyntax::default()),
+            Default::default(),
+            StringInput::from(&*file),
+            None,
+        );
+        let mut module = Parser::new_from(lexer)
+            .parse_module()
+            .expect("consumer should parse");
+        let unresolved_mark = Mark::new();
+        module.visit_mut_with(&mut resolver(unresolved_mark, Mark::new(), false));
+        (module, unresolved_mark)
+    }
+
+    #[test]
+    fn nested_object_assign_is_visited_once_per_call() {
+        GLOBALS.set(&Globals::new(), || {
+            let cm: Lrc<SourceMap> = Default::default();
+            let depth = 20;
+            let mut chain = "{}".to_string();
+            for level in 0..depth {
+                chain = format!("Object.assign({chain}, {{ k{level}: 1 }})");
+            }
+            let source = format!(
+                "import imported from \"./provider.js\";\nconsume(imported.alpha, {chain});\n"
+            );
+            let (module, unresolved_mark) = parse_consumer(&cm, &source);
+            let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = &module.body[0] else {
+                panic!("expected leading import")
+            };
+            let ImportSpecifier::Default(default) = &import.specifiers[0] else {
+                panic!("expected default import")
+            };
+            let binding = binding_id(&default.local);
+            let mut usage = NamespaceCompatibleUsage::new(
+                HashSet::from_iter([binding.clone()]),
+                binding,
+                unresolved_mark,
+                UsagePolicy {
+                    allow_default_read: true,
+                    allow_value_escape: true,
+                },
+            );
+
+            module.visit_with(&mut usage);
+
+            assert!(usage.compatible && usage.has_meaningful_use);
+            assert_eq!(
+                usage.call_visits,
+                depth + 1,
+                "each call is visited once: the chain plus `consume`"
+            );
+        });
+    }
+
     #[test]
     fn hoisted_function_after_alias_reset_is_checked_against_the_original_lifetime() {
         GLOBALS.set(&Globals::new(), || {
@@ -486,21 +558,7 @@ function mutateProvider() {
 }
 consume(before, provider.alpha);
 "#;
-            let file = cm.new_source_file(
-                FileName::Custom("consumer.js".into()).into(),
-                source.to_string(),
-            );
-            let lexer = Lexer::new(
-                Syntax::Es(EsSyntax::default()),
-                Default::default(),
-                StringInput::from(&*file),
-                None,
-            );
-            let mut module = Parser::new_from(lexer)
-                .parse_module()
-                .expect("consumer should parse");
-            let unresolved_mark = Mark::new();
-            module.visit_mut_with(&mut resolver(unresolved_mark, Mark::new(), false));
+            let (mut module, unresolved_mark) = parse_consumer(&cm, source);
             let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = &mut module.body[0] else {
                 panic!("expected leading import")
             };
