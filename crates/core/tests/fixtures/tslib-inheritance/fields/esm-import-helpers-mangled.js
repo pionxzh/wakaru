@@ -1,0 +1,1 @@
+import{__extends as t}from"tslib";var r=function(r){function n(){var t=null!==r&&r.apply(this,arguments)||this;return t.label="main",t.read=function(){return t.label},t}return t(n,r),n.prototype.value=function(){return r.prototype.value.call(this)+1},n}(Parent);export{r as Child};

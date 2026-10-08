@@ -12,8 +12,8 @@ use swc_core::ecma::ast::{
     ComputedPropName, Constructor, Decl, ExportDecl, ExportSpecifier, Expr, ExprOrSpread, ExprStmt,
     FnDecl, FnExpr, Function, FunctionBody, Ident, IdentName, ImportSpecifier, Lit, MemberExpr,
     MemberProp, MetaPropExpr, MethodKind, Module, ModuleDecl, ModuleExportName, ModuleItem, Param,
-    ParamOrTsParamProp, Pat, PropName, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, Super,
-    SuperProp, SuperPropExpr, ThisExpr, UpdateOp, VarDecl, VarDeclKind, VarDeclOrExpr,
+    ParamOrTsParamProp, Pat, PropName, RestPat, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt,
+    Super, SuperProp, SuperPropExpr, ThisExpr, UpdateOp, VarDecl, VarDeclKind, VarDeclOrExpr,
     VarDeclarator, YieldExpr,
 };
 use swc_core::ecma::utils::find_pat_ids;
@@ -2512,11 +2512,20 @@ fn recover_ts_default_inheritance(
     let [function] = constructors.as_slice() else {
         return;
     };
-    if function.ident.to_id() != constructor.to_id()
-        || !is_ts_default_derived_constructor(&function.function, base)
-    {
+    if function.ident.to_id() != constructor.to_id() {
         return;
     }
+    // A subclass with field initializers keeps the implicit constructor's
+    // frame, so its replacement still forwards every argument.
+    let field_constructor = if is_ts_default_derived_constructor(&function.function, base) {
+        None
+    } else {
+        let Some(replacement) = ts_field_initializer_constructor(&function.function, base, uses)
+        else {
+            return;
+        };
+        Some(replacement)
+    };
     let extends_calls = original.iter().filter(|stmt| {
         let Stmt::Expr(statement) = stmt else { return false; };
         let Expr::Call(call) = strip_parens(&statement.expr) else { return false; };
@@ -2547,7 +2556,12 @@ fn recover_ts_default_inheritance(
     let [position] = positions.as_slice() else {
         return;
     };
-    members.remove(*position);
+    match field_constructor {
+        Some(replacement) => members[*position] = ClassMember::Constructor(replacement),
+        None => {
+            members.remove(*position);
+        }
+    }
     for member in members {
         if let ClassMember::Method(method) = member {
             if super::helper_matcher::count_binding_refs(&method.function, &constructor.to_id()) > 0
@@ -2647,7 +2661,117 @@ fn is_ts_default_derived_constructor(function: &Function, base: &Ident) -> bool 
     let [Stmt::Return(statement)] = body.stmts.as_slice() else {
         return false;
     };
-    let Some(Expr::Bin(fallback)) = statement.arg.as_deref().map(strip_parens) else {
+    statement
+        .arg
+        .as_deref()
+        .is_some_and(|frame| is_ts_default_super_frame(frame, base))
+}
+
+/// TypeScript lowers a subclass that has field initializers but no
+/// constructor to the default frame stored in an alias:
+/// `var _this = <frame>; _this.x = …; return _this;`. Rebuild it as
+/// `constructor(...args) { super(...args); this.x = …; }`.
+fn ts_field_initializer_constructor(
+    function: &Function,
+    base: &Ident,
+    uses: &BindingUseIndex,
+) -> Option<Constructor> {
+    if !function.params.is_empty() || function.is_async || function.is_generator {
+        return None;
+    }
+    let body = function.body.as_ref()?;
+    let [Stmt::Decl(Decl::Var(frame)), initializers @ .., Stmt::Return(ret)] =
+        body.stmts.as_slice()
+    else {
+        return None;
+    };
+    let [VarDeclarator {
+        name: Pat::Ident(alias),
+        init: Some(init),
+        ..
+    }] = frame.decls.as_slice()
+    else {
+        return None;
+    };
+    if !is_ts_default_super_frame(init, base)
+        || !matches!(ret.arg.as_deref().map(strip_parens), Some(Expr::Ident(id)) if id.to_id() == alias.to_id())
+        || !uses.has_single_declaration(&alias.to_id())
+        || uses.has_direct_write(&alias.to_id())
+    {
+        return None;
+    }
+    // tsc rewrites `this` in initializers to the alias. A direct `this`
+    // would name the receiver passed to `.apply`, not the parent's result.
+    if initializers
+        .iter()
+        .any(|stmt| !matches!(stmt, Stmt::Expr(_)) || reads_lexical_this(stmt))
+    {
+        return None;
+    }
+
+    let mut body = body.clone();
+    let rest_name = super::arg_rest::fresh_rest_name(&body, &function.params, "args".into(), None);
+    let rest = super::decl_utils::fresh_binding_ident(rest_name, DUMMY_SP);
+    let Stmt::Decl(Decl::Var(frame)) = &mut body.stmts[0] else {
+        unreachable!()
+    };
+    frame.decls[0].init = Some(Box::new(Expr::Call(CallExpr {
+        span: DUMMY_SP,
+        ctxt: Default::default(),
+        callee: Callee::Super(Super { span: DUMMY_SP }),
+        args: vec![ExprOrSpread {
+            spread: Some(DUMMY_SP),
+            expr: Box::new(Expr::Ident(rest.clone())),
+        }],
+        type_args: None,
+    })));
+    cleanup_super_aliases(&mut body);
+    if !constructor_calls_super(&body) {
+        return None;
+    }
+    Some(Constructor {
+        span: if function.span.lo.0 != 0 {
+            function.span
+        } else {
+            DUMMY_SP
+        },
+        ctxt: Default::default(),
+        key: PropName::Ident(IdentName::new("constructor".into(), DUMMY_SP)),
+        params: vec![ParamOrTsParamProp::Param(Param {
+            span: DUMMY_SP,
+            decorators: vec![],
+            pat: Pat::Rest(RestPat {
+                span: DUMMY_SP,
+                dot3_token: DUMMY_SP,
+                arg: Box::new(Pat::Ident(rest.into())),
+                type_ann: None,
+            }),
+        })],
+        body: Some(body),
+        accessibility: None,
+        is_optional: false,
+    })
+}
+
+fn reads_lexical_this(stmt: &Stmt) -> bool {
+    struct Finder(bool);
+    impl Visit for Finder {
+        fn visit_this_expr(&mut self, _: &ThisExpr) {
+            self.0 = true;
+        }
+        // Only plain functions get their own `this`. Any `this` in a class
+        // counts, including the ones that cannot see the constructor's.
+        fn visit_function(&mut self, _: &Function) {}
+    }
+    let mut finder = Finder(false);
+    stmt.visit_with(&mut finder);
+    finder.0
+}
+
+/// `base !== null && base.apply(this, arguments) || this`: TypeScript's
+/// lowering of a derived constructor's implicit `super(...arguments)`.
+fn is_ts_default_super_frame(frame: &Expr, base: &Ident) -> bool {
+    let Expr::Bin(fallback) = strip_parens(frame) else {
         return false;
     };
     if fallback.op != BinaryOp::LogicalOr || !matches!(strip_parens(&fallback.right), Expr::This(_))

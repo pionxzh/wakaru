@@ -783,7 +783,7 @@ fn prepare_rest_ident<P: VisitWith<IdentNameCollector>>(
 /// Printed JavaScript has no SyntaxContext. Reserve every identifier spelling
 /// except the copy binding being replaced, then pick the preferred name or an
 /// unused suffix. This covers both capture of inserted reads and outer names.
-fn fresh_rest_name<P: VisitWith<IdentNameCollector>>(
+pub(crate) fn fresh_rest_name<P: VisitWith<IdentNameCollector>>(
     body: &FunctionBody,
     params: &P,
     preferred: Atom,
@@ -806,7 +806,7 @@ fn fresh_rest_name<P: VisitWith<IdentNameCollector>>(
         .expect("an unused suffix exists")
 }
 
-struct IdentNameCollector {
+pub(crate) struct IdentNameCollector {
     names: HashSet<Atom>,
     ignored_binding: Option<BindingId>,
 }

@@ -1,0 +1,1 @@
+Object.defineProperty(exports,"__esModule",{value:!0}),exports.Child=void 0;var e=require("tslib"),t=function(t){function r(){var e=null!==t&&t.apply(this,arguments)||this;return e.label="main",e.read=function(){return e.label},e}return e.__extends(r,t),r.prototype.value=function(){return t.prototype.value.call(this)+1},r}(Parent);exports.Child=t;

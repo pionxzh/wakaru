@@ -479,7 +479,14 @@ stable declarations; namespaces must have only static member reads. Direct
 `eval` or `with` disables this new path. The module's use index is shared with
 nested visitors so writes outside the immediate wrapper still disqualify it.
 
-Only the exact parameterless, single-return default constructor is consumed.
+Only the exact parameterless, single-return default constructor is consumed,
+plus the frame TypeScript emits for a subclass with field initializers and no
+constructor (without `downlevelIteration`): `var _this = <frame>;`, then
+expression statements, then `return _this;`. That one becomes
+`constructor(...args) { super(...args); ... }`, with the alias rewritten to
+`this` as for explicit constructors. The alias needs a single declaration and
+no writes, and an initializer that reads the function's own `this` keeps the
+wrapper, because that `this` is the receiver, not the parent's result.
 Superclass method calls require `this` as their first non-spread argument and
 a static method name. Lexical arrows share the method's `super`; ordinary
 nested functions and classes do not. Remaining superclass captures, references
@@ -494,7 +501,8 @@ Deferred factories, constructor writes, and other inner-constructor uses remain
 unsupported. This is not general
 superclass recovery. Real TypeScript 5.9.3 and Terser 5.51.2 outputs are checked
 in under `tests/fixtures/tslib-inheritance/`. The compressed variants use the
-same module-mode Terser settings as the matrix. If compression lifts the
+same module-mode Terser settings as the matrix; `fields/` holds the
+field-initializer frame with its own runtime oracle. If compression lifts the
 helper's `extendStatics` factory into a sequence, the TypeScript helper collector
 checks both function bodies and the resolved factory call, then applies the
 same module-wide private-local proof as the import-star factory. An external

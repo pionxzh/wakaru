@@ -31,3 +31,10 @@ against the same minimal/lowered and standard/native policy. Two additional
 hand-authored cases reassign the outer class variable: the factory must still
 construct the original inner constructor, including when its emitted name
 was different. Run this oracle with the same environment and VM flag as above.
+
+The `fields/` child directory compiles a subclass with field initializers and
+no constructor, without `downlevelIteration` (with it, TypeScript emits an
+explicit `constructor(...args)` instead of the default frame). Its
+`runtime.cjs` checks ordinary, object-returning, native, null, and
+overridden-apply parents, and calls the arrow-function field detached so the
+recovered `this` alias is exercised. Run it the same way.

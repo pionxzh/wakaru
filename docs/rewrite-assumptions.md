@@ -683,8 +683,13 @@ function Child() {
 }
 ```
 
-Recovering `class Child extends Parent { ... }` removes this constructor and
-uses native construction. It also recovers proven instance/static superclass
+A subclass with field initializers and no constructor gets the same frame
+stored in an alias, `var _this = <frame>; _this.x = ...; return _this;`.
+
+Recovering `class Child extends Parent { ... }` removes the default
+constructor, or rebuilds the field-initializer one as
+`constructor(...args) { super(...args); this.x = ...; }`, and uses native
+construction. It also recovers proven instance/static superclass
 method calls as `super.method(...)`. These changes are intentionally observable:
 
 - With `Parent = null`, the lowered constructor can return `this`; the native
@@ -706,7 +711,8 @@ frame and stable helper bindings; this does not authorize deleting arbitrary
 null guards or rewriting captured superclass references.
 
 Affects: `UnEs6Class` recovery of the TypeScript default derived constructor
-and its instance/static superclass method calls. See
+(with or without field initializers) and its instance/static superclass
+method calls. See
 [helper detection](helper-detection.md#typescript-default-inheritance) for
 recognition and rejection boundaries.
 

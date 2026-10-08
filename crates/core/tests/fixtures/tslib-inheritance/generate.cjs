@@ -3,7 +3,13 @@ const path = require("node:path");
 const ts = require("typescript");
 const terser = require("terser");
 (async () => {
-  for (const directory of [__dirname, path.join(__dirname, "static-factory")]) {
+  // With downlevelIteration, tsc lowers a field-only subclass through an
+  // explicit `constructor(...args)` instead of the default frame.
+  for (const [directory, downlevelIteration] of [
+    [__dirname, true],
+    [path.join(__dirname, "static-factory"), true],
+    [path.join(__dirname, "fields"), false],
+  ]) {
     const source = fs.readFileSync(path.join(directory, "source.ts"), "utf8");
     for (const [name, module, importHelpers] of [
       ["commonjs-inline", ts.ModuleKind.CommonJS, false],
@@ -12,7 +18,7 @@ const terser = require("terser");
     ]) {
       const code = ts.transpileModule(source, {
         compilerOptions: { target: ts.ScriptTarget.ES5, module, importHelpers,
-          downlevelIteration: true, esModuleInterop: true },
+          downlevelIteration, esModuleInterop: true },
       }).outputText;
       fs.writeFileSync(path.join(directory, `${name}.js`), code);
       for (const mangle of [false, true]) {

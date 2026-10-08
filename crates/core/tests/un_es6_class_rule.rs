@@ -2837,6 +2837,105 @@ fn tsc_static_factories_recover_across_helper_delivery_and_minification() {
     }
 }
 
+/// TypeScript 5.9.3 lowers `class Child extends Parent { x = …; }` (no
+/// constructor, no downlevelIteration) to the default frame in an alias.
+fn ts_field_inheritance(initializers: &str) -> String {
+    ts_default_inheritance("").replace(
+        "function Child() { return base !== null && base.apply(this, arguments) || this; }",
+        &format!(
+            "function Child() {{ var _this = base !== null && base.apply(this, arguments) || this; {initializers} return _this; }}"
+        ),
+    )
+}
+
+#[test]
+fn ts_field_initializers_recover_as_a_forwarding_constructor() {
+    let input = ts_field_inheritance(
+        r#"_this.label = "main"; _this.read = function () { return _this.label; };"#,
+    )
+    .replace(
+        "return Child;",
+        "Child.prototype.value = function () { return base.prototype.value.call(this); }; return Child;",
+    );
+    let expected = r#"import "tslib";
+class Child extends Parent {
+    constructor(...args) {
+        super(...args);
+        var _this = this;
+        this.label = "main";
+        this.read = function () { return _this.label; };
+    }
+    value() { return super.value(); }
+}"#;
+    assert_eq_normalized(&apply(&input), expected);
+    let minimal = apply_minimal(&input);
+    assert!(!minimal.contains("class Child"), "{minimal}");
+    assert!(minimal.contains("base.apply(this, arguments)"), "{minimal}");
+}
+
+#[test]
+fn ts_field_constructor_rest_name_avoids_initializer_names() {
+    let input = ts_field_inheritance("_this.args = args; _this.copy = args_1;");
+    let expected = r#"import "tslib";
+class Child extends Parent {
+    constructor(...args_2) { super(...args_2); this.args = args; this.copy = args_1; }
+}"#;
+    assert_eq_normalized(&apply(&input), expected);
+}
+
+#[test]
+fn ts_field_constructor_keeps_noncanonical_frames() {
+    let input = ts_field_inheritance(r#"_this.label = "main";"#);
+    for source in [
+        // `this` names the receiver, which the parent may have replaced.
+        input.replace(r#"_this.label = "main";"#, "_this.label = this.label;"),
+        input.replace(r#"_this.label = "main";"#, "_this = other;"),
+        input.replace(r#"_this.label = "main";"#, "if (flag) _this.label = 1;"),
+        input.replace(r#"_this.label = "main";"#, "_this.label = base;"),
+        input.replace("return _this;", "return this;"),
+        input.replace("var _this =", "var other = 1, _this ="),
+        input.replace("base !== null", "base != null"),
+        input.replace("function Child()", "function Child(value)"),
+    ] {
+        let output = apply(&source);
+        assert!(!output.contains("class Child extends"), "{output}");
+    }
+}
+
+#[test]
+fn tsc_field_initializers_recover_across_helper_delivery_and_minification() {
+    for input in [
+        include_str!("fixtures/tslib-inheritance/fields/commonjs-inline.js"),
+        include_str!("fixtures/tslib-inheritance/fields/commonjs-inline-compressed.js"),
+        include_str!("fixtures/tslib-inheritance/fields/commonjs-inline-mangled.js"),
+        include_str!("fixtures/tslib-inheritance/fields/commonjs-import-helpers.js"),
+        include_str!("fixtures/tslib-inheritance/fields/commonjs-import-helpers-compressed.js"),
+        include_str!("fixtures/tslib-inheritance/fields/commonjs-import-helpers-mangled.js"),
+        include_str!("fixtures/tslib-inheritance/fields/esm-import-helpers.js"),
+        include_str!("fixtures/tslib-inheritance/fields/esm-import-helpers-compressed.js"),
+        include_str!("fixtures/tslib-inheritance/fields/esm-import-helpers-mangled.js"),
+    ] {
+        let output = render(input);
+        assert!(output.contains("class Child extends Parent"), "{output}");
+        assert!(output.contains("constructor(...args)"), "{output}");
+        assert!(output.contains("super(...args);"), "{output}");
+        assert!(output.contains("this.label = \"main\";"), "{output}");
+        assert!(output.contains("super.value() + 1"), "{output}");
+        assert!(!output.contains(".apply(this, arguments)"), "{output}");
+        let minimal = wakaru_core::decompile(
+            input,
+            DecompileOptions {
+                level: RewriteLevel::Minimal,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .code;
+        assert!(!minimal.contains("class Child"), "{minimal}");
+        assert!(minimal.contains(".apply(this, arguments)"), "{minimal}");
+    }
+}
+
 #[test]
 fn extends_import_cleanup_respects_dynamic_lookup_and_binding_identity() {
     let input = ts_default_inheritance("") + "function inspect() { return eval(' __extends '); }";
