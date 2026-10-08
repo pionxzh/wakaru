@@ -372,6 +372,15 @@ Ambiguous or missing hints retain `module-<id>.js`; entry names remain
 `entry.js` / `entry-<id>.js`, and path collisions are suffixed
 case-insensitively. Dependency rewrites always use the final emitted filename.
 
+Top-level statements before or after the prelude call (or the Cocos
+`window.__require` assignment) run before or after the bundle. As with
+[webpack 5](#webpack-5-code-around-the-bootstrap), they go to `entry.js`
+verbatim, in source order, around a `require` of each entry module in the
+prelude's entry order. The entry modules then take `entry-<id>.js` names, and
+only `entry.js` is marked as the entry. Directives and empty statements alone
+change nothing. Surrounding code that declares `require` at its top level
+keeps the input as one file, because it would capture those requires.
+
 ## Factory normalization and failure boundaries
 
 Factory-based webpack, Browserify/Cocos, and Metro extraction removes the
@@ -622,15 +631,12 @@ layout directly is a proposal:
 
 ## Known gaps
 
-- **Browserify drops the code around the bundle.** When the input's top
-  level has other statements before or after the prelude call
-  (`(function(){function r(e,n,t){...}return r})()({1: [...]}, {}, [1])`),
-  only the table modules are written; the statements around it appear in no
-  output file, and nothing reports it. webpack keeps authored trailing calls
-  in `entry.js` (see [Webpack 5 trailing startup calls](#webpack-5-trailing-startup-calls));
-  the fix is to do the same here, or at least warn. Whether the AMD,
-  SystemJS, Closure, and Metro unpackers lose code the same way is
-  unchecked.
+- **Other unpackers may drop the code around the bundle.** webpack 5 and
+  Browserify keep top-level statements before or after the bundle statement
+  in `entry.js` (see [Webpack 5 code around the
+  bootstrap](#webpack-5-code-around-the-bootstrap)). Whether webpack 4, AMD,
+  SystemJS, Closure, Metro, and Turbopack lose that code is unchecked, as is
+  code outside a UMD or AMD wrapper that detection unwraps.
 - **Relative `require` inside a top-level expression.** A module binding
   assigned inside an expression (`r = f((e = require("./m")).x)`) is not
   turned into an import. The `require` stays in the ESM output, where it

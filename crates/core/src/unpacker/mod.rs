@@ -7,6 +7,7 @@ pub(crate) mod emit_esm;
 pub mod esbuild;
 pub mod metro;
 pub mod scope_hoist;
+mod surrounding;
 pub mod systemjs;
 mod turbopack;
 pub mod webpack4;

@@ -2,11 +2,13 @@ use crate::collections::{HashMap, HashSet};
 use std::collections::BTreeMap;
 
 use swc_core::atoms::Atom;
-use swc_core::common::{sync::Lrc, Globals, Mark, SourceMap, Spanned, SyntaxContext, GLOBALS};
+use swc_core::common::{
+    sync::Lrc, Globals, Mark, SourceMap, Spanned, SyntaxContext, DUMMY_SP, GLOBALS,
+};
 use swc_core::ecma::ast::{
     ArrayLit, ArrowFunctionBody, AssignOp, AssignTarget, CallExpr, Callee, Expr, ExprOrSpread,
-    ExprStmt, FnExpr, Lit, MemberExpr, MemberProp, Module, ModuleItem, Number, ObjectLit, Pat,
-    Prop, PropName, PropOrSpread, SimpleAssignTarget, Stmt,
+    ExprStmt, FnExpr, Ident, Lit, MemberExpr, MemberProp, Module, ModuleItem, Number, ObjectLit,
+    Pat, Prop, PropName, PropOrSpread, SimpleAssignTarget, Stmt,
 };
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::utils::replace_ident;
@@ -14,9 +16,11 @@ use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use crate::module_path::relative_import_specifier;
 use crate::rules::rename_utils::BindingRename;
+use crate::unpacker::surrounding::{SurroundingCode, SurroundingItems};
 use crate::unpacker::{
-    deconflict_runtime_binding_renames, sanitize_relative_path, source_fallback_for_stmts,
-    span_byte_range, BundleFormat, DetectedBundle, PreparedModuleAst, UnpackResult, UnpackedModule,
+    deconflict_runtime_binding_renames, emit_module_with_source_map, sanitize_relative_path,
+    source_fallback_for_stmts, span_byte_range, spans_byte_ranges, BundleFormat, DetectedBundle,
+    PreparedModuleAst, UnpackResult, UnpackedModule,
 };
 use crate::utils::swc_safety::apply_fixer;
 
@@ -75,14 +79,15 @@ pub(super) fn detect_from_module_prepared(
     module: &Module,
     cm: Lrc<SourceMap>,
 ) -> Option<DetectedBundle> {
-    for item in &module.body {
+    for (idx, item) in module.body.iter().enumerate() {
         let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
             continue;
         };
+        let surrounding = SurroundingItems::around(&module.body, idx);
 
         if let Some(call) = cocos_creator_call(expr) {
             if let Some(result) =
-                extract_commonjs_table(call, TableDialect::CocosCreator2, cm.clone())
+                extract_commonjs_table(call, TableDialect::CocosCreator2, surrounding, cm.clone())
             {
                 return Some(result);
             }
@@ -91,7 +96,9 @@ pub(super) fn detect_from_module_prepared(
         let Some(call) = browserify_call(expr) else {
             continue;
         };
-        if let Some(result) = extract_commonjs_table(call, TableDialect::Browserify, cm.clone()) {
+        if let Some(result) =
+            extract_commonjs_table(call, TableDialect::Browserify, surrounding, cm.clone())
+        {
             return Some(result);
         }
     }
@@ -136,9 +143,11 @@ fn is_window_require_member(member: &MemberExpr) -> bool {
         && member_prop_name_is(&member.prop, "__require")
 }
 
+/// `surrounding` is the input's top-level code around the prelude call.
 fn extract_commonjs_table(
     call: &CallExpr,
     dialect: TableDialect,
+    surrounding: SurroundingItems<'_>,
     cm: Lrc<SourceMap>,
 ) -> Option<DetectedBundle> {
     if call.args.len() != 3 {
@@ -181,7 +190,15 @@ fn extract_commonjs_table(
         return None;
     }
 
-    assign_filenames(&mut descriptors, &entry_ids, dialect);
+    // Code around the prelude call runs before or after the bundle; entry.js
+    // keeps it, in source order, around the entry modules' requires.
+    let surrounding = SurroundingCode::collect(surrounding, &["require"])?;
+    assign_filenames(
+        &mut descriptors,
+        &entry_ids,
+        dialect,
+        !surrounding.is_empty(),
+    );
     let id_to_filename: HashMap<ModuleId, String> = descriptors
         .iter()
         .map(|module| (module.id.clone(), module.filename.clone()))
@@ -191,13 +208,14 @@ fn extract_commonjs_table(
     }
     let entry_set: HashSet<ModuleId> = entry_ids.iter().cloned().collect();
 
-    let mut modules = Vec::with_capacity(descriptors.len());
-    let mut prepared = Vec::with_capacity(descriptors.len());
+    let mut modules = Vec::with_capacity(descriptors.len() + 1);
+    let mut prepared = Vec::with_capacity(descriptors.len() + 1);
     for descriptor in &descriptors {
         let ast = prepare_factory_module(descriptor, &id_to_filename, dialect)?;
         modules.push(UnpackedModule {
             id: descriptor.id.as_string(),
-            is_entry: entry_set.contains(&descriptor.id),
+            // With code around the call, entry.js runs the entries.
+            is_entry: surrounding.is_empty() && entry_set.contains(&descriptor.id),
             code: source_fallback_for_stmts(&cm, descriptor.body_stmts),
             filename: descriptor.filename.clone(),
             source_ranges: span_byte_range(&cm, descriptor.source_span)
@@ -211,6 +229,15 @@ fn extract_commonjs_table(
         });
         prepared.push(Some(ast));
     }
+    if !surrounding.is_empty() {
+        modules.push(surrounding_entry_module(
+            &surrounding,
+            &entry_ids,
+            &id_to_filename,
+            &cm,
+        )?);
+        prepared.push(None);
+    }
 
     Some(DetectedBundle::new(
         UnpackResult::new(modules, BundleFormat::Browserify),
@@ -218,6 +245,55 @@ fn extract_commonjs_table(
         cm,
     ))
 }
+
+/// entry.js for code around the prelude call: the code before it, a
+/// `require` of each entry module in the prelude's order, and the code after
+/// it.
+fn surrounding_entry_module(
+    surrounding: &SurroundingCode,
+    entry_ids: &[ModuleId],
+    id_to_filename: &HashMap<ModuleId, String>,
+    cm: &Lrc<SourceMap>,
+) -> Option<UnpackedModule> {
+    let mut module = build_module_from_stmts(
+        entry_ids
+            .iter()
+            .map(|id| {
+                let specifier =
+                    relative_import_specifier(SURROUNDING_ENTRY, id_to_filename.get(id)?);
+                Some(Stmt::Expr(ExprStmt {
+                    span: DUMMY_SP,
+                    expr: Box::new(Expr::Call(CallExpr {
+                        callee: Callee::Expr(Box::new(Expr::Ident(Ident::new_no_ctxt(
+                            "require".into(),
+                            DUMMY_SP,
+                        )))),
+                        args: vec![Expr::from(specifier.as_str()).into()],
+                        ..Default::default()
+                    })),
+                }))
+            })
+            .collect::<Option<Vec<_>>>()?,
+    );
+    surrounding.place_around(&mut module);
+    let (code, generated_source_map) = emit_module_with_source_map(&module, cm.clone()).ok()?;
+    Some(UnpackedModule {
+        id: "entry".to_string(),
+        is_entry: true,
+        code,
+        filename: SURROUNDING_ENTRY.to_string(),
+        source_ranges: spans_byte_ranges(cm, surrounding.spans()),
+        inspection_context_ranges: Vec::new(),
+        source_input: String::new(),
+        generated_source_map,
+        verbatim_source_offset: None,
+        mapped_in_every_mode: false,
+    })
+}
+
+/// The file holding code around the prelude call. Entry modules then take
+/// the multi-entry names (`entry-<id>.js`).
+const SURROUNDING_ENTRY: &str = "entry.js";
 
 fn collect_factory_modules(
     modules: &ObjectLit,
@@ -342,13 +418,18 @@ fn extract_factory_parts(expr: &Expr) -> Option<(FactoryParams<'_>, &[Stmt])> {
     }
 }
 
+/// `reserve_entry` keeps `entry.js` for the code around the prelude call.
 fn assign_filenames(
     modules: &mut [FactoryModule<'_>],
     entries: &[ModuleId],
     dialect: TableDialect,
+    reserve_entry: bool,
 ) {
     let entry_set: HashSet<&ModuleId> = entries.iter().collect();
     let mut seen = HashSet::default();
+    if reserve_entry {
+        dedup_filename(SURROUNDING_ENTRY, &mut seen);
+    }
 
     if dialect == TableDialect::CocosCreator2 {
         for module in modules {
@@ -370,7 +451,7 @@ fn assign_filenames(
                 continue;
             }
             let id = module.id.as_string();
-            let candidate = if is_entry && entries.len() == 1 {
+            let candidate = if is_entry && entries.len() == 1 && !reserve_entry {
                 "entry.js".to_string()
             } else if is_entry {
                 format!("entry-{id}.js")

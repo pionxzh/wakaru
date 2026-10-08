@@ -37,10 +37,12 @@ var entryDependencies = { "./value": 2 };
     let output = unpack_raw(source, &DecompileOptions::default())
         .expect("Browserify dynamic dependency-map bundle should unpack");
     assert_eq!(output.detected_formats, [BundleFormat::Browserify]);
+    // The map's declaration is code around the prelude call, so entry.js
+    // holds it and the entry module takes its id.
     let entry = output
         .modules
         .iter()
-        .find(|(name, _)| name == "entry.js")
+        .find(|(name, _)| name == "entry-1.js")
         .map(|(_, code)| code)
         .expect("Browserify entry should exist");
     assert!(
@@ -173,6 +175,100 @@ fn browserify_reserves_entries_and_deduplicates_hint_paths_case_insensitively() 
     assert_eq!(
         names,
         ["entry.js", "entry-2.js", "Utility.js", "utility-2.js"]
+    );
+}
+
+#[test]
+fn browserify_keeps_code_around_the_prelude_call_in_entry() {
+    // Statements before and after the prelude call run before and after the
+    // bundle; entry.js keeps them around the entries' requires, in the
+    // prelude's entry order. shape: hypothetical (a script concatenated
+    // with a Browserify bundle).
+    let source = r#"
+function setup() { globalThis.before = 1; }
+var config = setup();
+(function() { return function() {}; })()({
+  1: [function(require, module) { globalThis.first = 1; }, {}],
+  2: [function(require, module) { globalThis.second = 2; }, {}]
+}, {}, [2, 1]);
+console.log("after", config);
+"#;
+
+    let output = unpack_raw(source, &DecompileOptions::default())
+        .expect("Browserify bundle with surrounding code should unpack");
+    assert_eq!(output.detected_formats, [BundleFormat::Browserify]);
+    let entry = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "entry.js")
+        .map(|(_, code)| code)
+        .expect("entry.js should hold the surrounding code");
+    let positions = [
+        "var config = setup()",
+        r#"require("./entry-2.js")"#,
+        r#"require("./entry-1.js")"#,
+        r#"console.log("after", config)"#,
+    ]
+    .map(|needle| {
+        entry
+            .find(needle)
+            .unwrap_or_else(|| panic!("entry.js must contain `{needle}`:\n{entry}"))
+    });
+    assert!(
+        positions.windows(2).all(|pair| pair[0] < pair[1]),
+        "source and entry order must be kept:\n{entry}"
+    );
+    assert!(
+        output
+            .provenance
+            .iter()
+            .all(|module| module.is_entry == (module.filename == "entry.js")),
+        "entry.js runs the entries, so only it is the entry: {:?}",
+        output.provenance
+    );
+}
+
+#[test]
+fn browserify_directive_around_the_prelude_call_writes_no_extra_entry() {
+    // shape: hypothetical (a directive prologue before the prelude call).
+    let source = r#"
+"use strict";
+(function() { return function() {}; })()({
+  1: [function(require, module) { module.exports = "entry"; }, {}]
+}, {}, [1]);
+"#;
+
+    let output =
+        unpack_raw(source, &DecompileOptions::default()).expect("Browserify bundle should unpack");
+    let names = output
+        .modules
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(names, ["entry.js"]);
+}
+
+#[test]
+fn browserify_code_around_declaring_require_stays_unsplit() {
+    // entry.js calls the module's `require`; a top-level `require` declared
+    // around the prelude call would capture it. shape: hypothetical.
+    let source = r#"
+var require = function () {};
+(function() { return function() {}; })()({
+  1: [function(require, module) { module.exports = require("./value"); }, { "./value": 2 }],
+  2: [function(require, module) { module.exports = "value"; }, {}]
+}, {}, [1]);
+"#;
+
+    let output = unpack_raw(source, &DecompileOptions::default()).expect("unpack should succeed");
+    assert!(
+        !output.detected_formats.contains(&BundleFormat::Browserify),
+        "a declared `require` around the prelude call must keep the input whole, got {:?}",
+        output
+            .modules
+            .iter()
+            .map(|(name, _)| name)
+            .collect::<Vec<_>>()
     );
 }
 

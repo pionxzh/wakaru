@@ -16,7 +16,10 @@ use swc_core::ecma::utils::replace_ident;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::js_names::{is_reserved_binding_name, is_valid_identifier_name};
-use crate::rules::rename_utils::{rename_bindings_in_module, BindingRename};
+use crate::rules::rename_utils::BindingRename;
+use crate::unpacker::surrounding::{
+    ContextSymCollector, IdentNameCollector, SurroundingCode, SurroundingItems,
+};
 use crate::unpacker::webpack4::{
     rewrite_require_n_accesses, unwrap_webpack_global_envelopes, RequireIdRewriter,
     RequireStringIdRewriter,
@@ -312,16 +315,12 @@ pub(super) fn detect_from_module_prepared(
         let Some(bootstrap_body) = extract_iife_body(expr) else {
             continue;
         };
-        let surrounding = SurroundingItems {
-            before: &module.body[..idx],
-            after: &module.body[idx + 1..],
-        };
         if let Some(result) = extract_webpack5_modules_with_plan(
             bootstrap_body,
             cm.clone(),
             None,
             positions,
-            surrounding,
+            SurroundingItems::around(&module.body, idx),
         ) {
             return Some(result);
         }
@@ -684,29 +683,6 @@ fn direct_entry_is_movable(
     let mut entry = ContextSymCollector::new(table_id.1);
     moved.visit_with(&mut entry);
     entry.syms.is_disjoint(&runtime.syms)
-}
-
-/// Symbols of identifiers that carry one syntax context.
-struct ContextSymCollector {
-    ctxt: SyntaxContext,
-    syms: HashSet<Atom>,
-}
-
-impl ContextSymCollector {
-    fn new(ctxt: SyntaxContext) -> Self {
-        Self {
-            ctxt,
-            syms: HashSet::default(),
-        }
-    }
-}
-
-impl Visit for ContextSymCollector {
-    fn visit_ident(&mut self, ident: &Ident) {
-        if ident.ctxt == self.ctxt {
-            self.syms.insert(ident.sym.clone());
-        }
-    }
 }
 
 /// How the bootstrap exposes its proven webpack require lifecycle.
@@ -1963,7 +1939,7 @@ fn extract_webpack5_modules_with_plan(
 
     // Code around the bootstrap runs before or after the bundle; entry.js
     // keeps it, in source order, around the startup.
-    let surrounding = SurroundingCode::collect(surrounding)?;
+    let surrounding = SurroundingCode::collect(surrounding, &ENTRY_NORMALIZED_NAMES)?;
     let entry = EntryEmitter {
         cm: &cm,
         id_to_filename,
@@ -2279,15 +2255,6 @@ fn direct_entry_binding_name(expr: &Expr, taken: &HashSet<Atom>) -> Atom {
     name
 }
 
-#[derive(Default)]
-struct IdentNameCollector(HashSet<Atom>);
-
-impl Visit for IdentNameCollector {
-    fn visit_ident(&mut self, ident: &Ident) {
-        self.0.insert(ident.sym.clone());
-    }
-}
-
 /// Replace the directly invoked call at the end of the assignment chain with
 /// `binding`, returning the call.
 fn replace_direct_invoke_call(expr: &mut Expr, binding: &Ident) -> Option<CallExpr> {
@@ -2357,6 +2324,12 @@ fn entry_module_require(module_entries: &[Webpack5ModuleDescriptor<'_>], entry_i
     })
 }
 
+/// Free names entry normalization gives a meaning of its own: the module's
+/// `require` and `exports` (from the runtime's require and exports object),
+/// `global` and `define.amd` (from `require.g` and `require.amdO`), and the
+/// CommonJS `module`.
+const ENTRY_NORMALIZED_NAMES: [&str; 5] = ["require", "exports", "module", "global", "define"];
+
 /// Emits synthetic entry.js programs, with the input's code around the
 /// bootstrap placed before and after the normalized startup.
 struct EntryEmitter<'a> {
@@ -2390,7 +2363,8 @@ impl EntryEmitter<'_> {
             exports_sym,
         );
         self.surrounding
-            .place_around(&mut synthetic_module, top_level_mark);
+            .rename_conflicts(&mut synthetic_module, top_level_mark);
+        self.surrounding.place_around(&mut synthetic_module);
         if apply_fixer(&mut synthetic_module).is_err() {
             return (ranges, None);
         }
@@ -2402,160 +2376,6 @@ impl EntryEmitter<'_> {
         )
         .ok();
         (ranges, code)
-    }
-}
-
-/// The input's top-level items before and after a bootstrap IIFE.
-#[derive(Clone, Copy, Default)]
-struct SurroundingItems<'a> {
-    before: &'a [ModuleItem],
-    after: &'a [ModuleItem],
-}
-
-/// Authored code around a bootstrap IIFE: a raw banner or footer, or scripts
-/// concatenated with the bundle. It runs before or after the bundle, so it
-/// goes to entry.js verbatim, in source order around the startup.
-#[derive(Default)]
-struct SurroundingCode {
-    before: Vec<ModuleItem>,
-    after: Vec<ModuleItem>,
-    /// Names the code reads as globals or declares at its top level. Moved
-    /// next to them, entry bindings with these names would capture them.
-    names: HashSet<Atom>,
-    /// Every identifier name in the code, which renamed entry bindings avoid.
-    all_names: HashSet<Atom>,
-}
-
-/// Free names entry normalization gives a meaning of its own: the module's
-/// `require` and `exports` (from the runtime's require and exports object),
-/// `global` and `define.amd` (from `require.g` and `require.amdO`), and the
-/// CommonJS `module`.
-const ENTRY_NORMALIZED_NAMES: [&str; 5] = ["require", "exports", "module", "global", "define"];
-
-impl SurroundingCode {
-    /// `None` when the code declares a name entry normalization uses: the
-    /// entry would read that declaration instead of the bundle's runtime.
-    fn collect(items: SurroundingItems<'_>) -> Option<Self> {
-        // Directives and empty statements alone are no reason to write
-        // entry.js.
-        let is_inert = |item: &ModuleItem| match item {
-            ModuleItem::Stmt(Stmt::Empty(_)) => true,
-            ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) => {
-                matches!(&**expr, Expr::Lit(Lit::Str(_)))
-            }
-            _ => false,
-        };
-        if items.before.iter().chain(items.after).all(is_inert) {
-            return Some(Self::default());
-        }
-
-        let mut probe = Module {
-            span: DUMMY_SP,
-            body: items.before.iter().chain(items.after).cloned().collect(),
-            shebang: None,
-        };
-        let unresolved_mark = Mark::new();
-        let top_level_mark = Mark::new();
-        probe.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
-        let mut names = SurroundingNameCollector {
-            unresolved_ctxt: SyntaxContext::empty().apply_mark(unresolved_mark),
-            top_level_ctxt: SyntaxContext::empty().apply_mark(top_level_mark),
-            names: HashSet::default(),
-            top_level_names: HashSet::default(),
-            all_names: HashSet::default(),
-        };
-        probe.visit_with(&mut names);
-        if ENTRY_NORMALIZED_NAMES
-            .iter()
-            .any(|name| names.top_level_names.contains(&Atom::from(*name)))
-        {
-            return None;
-        }
-
-        Some(Self {
-            before: items.before.to_vec(),
-            after: items.after.to_vec(),
-            names: names.names,
-            all_names: names.all_names,
-        })
-    }
-
-    fn is_empty(&self) -> bool {
-        self.before.is_empty() && self.after.is_empty()
-    }
-
-    fn spans(&self) -> impl Iterator<Item = Span> + '_ {
-        self.before.iter().chain(&self.after).map(Spanned::span)
-    }
-
-    /// Place the code around the normalized entry `module`. Entry top-level
-    /// bindings were bootstrap locals; one whose name the code uses is
-    /// renamed so neither side captures the other.
-    fn place_around(&self, module: &mut Module, top_level_mark: Mark) {
-        if self.is_empty() {
-            return;
-        }
-        let top_level_ctxt = SyntaxContext::empty().apply_mark(top_level_mark);
-        let mut bindings = ContextSymCollector::new(top_level_ctxt);
-        module.visit_with(&mut bindings);
-        let mut conflicts: Vec<Atom> = bindings
-            .syms
-            .into_iter()
-            .filter(|sym| self.names.contains(sym))
-            .collect();
-        conflicts.sort_unstable();
-        let mut taken = IdentNameCollector::default();
-        module.visit_with(&mut taken);
-        let mut taken = taken.0;
-        taken.extend(self.all_names.iter().cloned());
-        let renames: Vec<BindingRename> = conflicts
-            .into_iter()
-            .map(|sym| {
-                let mut suffix = 1;
-                let mut new = Atom::from(format!("{sym}_{suffix}"));
-                while taken.contains(&new) {
-                    suffix += 1;
-                    new = Atom::from(format!("{sym}_{suffix}"));
-                }
-                taken.insert(new.clone());
-                BindingRename {
-                    old: (sym, top_level_ctxt),
-                    new,
-                }
-            })
-            .collect();
-        rename_bindings_in_module(module, &renames);
-
-        let entry_items = std::mem::take(&mut module.body);
-        module.body = self
-            .before
-            .iter()
-            .cloned()
-            .chain(entry_items)
-            .chain(self.after.iter().cloned())
-            .collect();
-    }
-}
-
-/// Splits the identifiers of code around the bootstrap by resolution.
-struct SurroundingNameCollector {
-    unresolved_ctxt: SyntaxContext,
-    top_level_ctxt: SyntaxContext,
-    /// Free names and top-level bindings.
-    names: HashSet<Atom>,
-    top_level_names: HashSet<Atom>,
-    all_names: HashSet<Atom>,
-}
-
-impl Visit for SurroundingNameCollector {
-    fn visit_ident(&mut self, ident: &Ident) {
-        self.all_names.insert(ident.sym.clone());
-        if ident.ctxt == self.top_level_ctxt {
-            self.top_level_names.insert(ident.sym.clone());
-            self.names.insert(ident.sym.clone());
-        } else if ident.ctxt == self.unresolved_ctxt {
-            self.names.insert(ident.sym.clone());
-        }
     }
 }
 
