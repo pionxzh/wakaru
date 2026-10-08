@@ -553,6 +553,35 @@ prepared-module materialization and Closure emission, which happen in every
 mode), never on whether points are present. Recording points costs emitter
 bookkeeping per token, which is why extraction discards them by default.
 
+## Running the output
+
+Unpack output targets Node's rules for ESM and CommonJS. Most modules come
+back as ESM, and a module whose exports cannot be recovered safely stays
+CommonJS. The tree has no `package.json`, so Node's syntax detection picks
+each `.js` file's format. An ESM module imports a CommonJS sibling with a
+default import, which Node resolves to the live `module.exports`. The
+exceptions are listed under [Known gaps](#known-gaps), such as a module
+that keeps a `.cjs` name but comes back with ESM syntax.
+
+A bundler that rebuilds the tree reads that import by the `__esModule`
+convention instead, because a `.js` importer with no package type is not
+Node-mode ESM to it. The rebuild breaks only when an ESM module
+default-imports a CommonJS sibling that sets `__esModule`: the import then
+reads `exports.default`, usually `undefined`. A sibling without the marker
+(`module.exports = …`) reads the same under both rules, and a tree with no
+CommonJS module is unaffected.
+
+Adding `"type": "module"` alone makes it worse, because the CommonJS files
+named `.js` then load as ESM. To rebuild, rename every file without module
+syntax (`import`, `export`, `import.meta`, or top-level `await`) to `.cjs`,
+update every import and kept `require("./x.js")` call that names them, and
+add `{"type": "module"}` at the root. esbuild and webpack then read the
+import the way Node does. Scripts with no CommonJS references are renamed
+too: as ESM they would switch to strict mode and module scope, and a UMD
+wrapper's `typeof module` test would take another branch. Emitting that
+layout directly is a proposal:
+[mixed-module-output-interop.md](proposals/mixed-module-output-interop.md).
+
 ## Known gaps
 
 - **Browserify drops the code around the bundle.** When the input's top

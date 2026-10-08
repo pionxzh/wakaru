@@ -201,6 +201,13 @@ reachability sweep is desired.
   `module.exports` stay in place, so its output has no imports to follow.
   `--unpack` does not apply this yet: a `.cjs` input or recovered module can
   still come out with ESM syntax, which Node cannot load from a `.cjs` file.
+- Before rebuilding unpack output with a bundler, check ESM modules that
+  default-import a CommonJS sibling setting `__esModule`: Node reads
+  `module.exports`, a bundler reads `exports.default` (usually `undefined`).
+  Rename every file without module syntax (`import`, `export`,
+  `import.meta`, or top-level `await`) to `.cjs`, scripts included, update
+  the specifiers, and add
+  `{"type": "module"}` at the output root.
 - A `runtime_residual` warning (non-error) means that module still calls a
   bundler runtime helper the output does not define, such as
   `__turbopack_context__.L(...)` (Turbopack chunk loading) or

@@ -1,8 +1,8 @@
 # Mixed ESM/CommonJS output: which interop rules the output targets
 
-Status: proposed, not started. The goal is recovered output that people can
-run again. The recommended first step (document the current contract) is
-small. The preferred long-term direction is option C; the `.mjs` layouts
+Status: option A is done (`unpacking.md`, "Running the output"); the rest
+is proposed, not started. The goal is recovered output that people can run
+again. The preferred long-term direction is option C; the `.mjs` layouts
 rename too many files. C renames files in every unpack output tree that
 keeps a CommonJS module, so it is a next-major candidate. Revisit when
 users report that recovered output breaks after a rebuild, or when a major
@@ -30,9 +30,14 @@ importer that Node would load as ESM (`.mjs`, or `.js` under
 `__esModule` convention.
 
 Running the output again goes through one of two paths. A Node-targeted
-tree can run in Node directly. A browser cannot load CommonJS or JSX, so a
-browser-targeted tree that keeps either runs only after a bundler builds it
-again. That rebuild is where today's layout breaks.
+tree can run in Node directly when no JSX was recovered; wakaru writes
+recovered JSX into `.js` files, and a server-rendering bundle can produce
+it. A browser cannot load CommonJS or JSX, so a browser-targeted tree that
+keeps either runs only after a bundler builds it again. That rebuild breaks
+today's layout when an ESM module default-imports a CommonJS sibling that
+sets `__esModule`. A sibling without the marker (`module.exports = …`)
+reads the same under both rules, and a tree with no CommonJS module is
+unaffected.
 
 ## Measurements
 
@@ -113,14 +118,12 @@ Node's rules hold for the tree only while two things are true:
 
 ## Options
 
-### A. Keep Node's rules and document them (recommended now)
+### A. Keep Node's rules and document them (done)
 
-State in `docs/unpacking.md` and the CLI reference that the output follows
-Node's ESM/CommonJS rules, and that a bundler rebuilding today's tree reads
-imports of CommonJS siblings by the `__esModule` convention instead. No
-output changes. Adding `"type": "module"` alone does not help (first
-table); a user who needs a rebuild has to rename one side by hand, which is
-option C or its `.mjs` variant.
+The current contract, the condition under which a rebuild breaks, and the
+manual rebuild layout are documented in
+[unpacking.md](../unpacking.md#running-the-output), "Running the output".
+No output changes.
 
 ### B. Namespace import for a marked CommonJS provider (rejected)
 

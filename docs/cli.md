@@ -52,6 +52,18 @@ only `.js`, `.mjs`, and `.cjs` candidates, and stdin remains text input. Use
 See [bun-standalone.md](bun-standalone.md) for the container format, safety
 properties, and current limits.
 
+Unpacked output follows Node's rules for ESM and CommonJS, except for the
+cases listed in [Known gaps](unpacking.md#known-gaps). A module that stays
+CommonJS is usually named `.js`, and an ESM module imports it with a default
+import, which Node resolves to `module.exports`. A bundler that rebuilds the
+output reads that import by the `__esModule` convention instead: if the
+CommonJS module sets `__esModule`, the import reads its `exports.default`,
+usually `undefined`. To rebuild, rename every file without module syntax
+(`import`, `export`, `import.meta`, or top-level `await`) to `.cjs`, scripts
+included, update the imports and kept `require()` calls that name them, and
+add `{"type": "module"}` at the output root.
+[Running the output](unpacking.md#running-the-output) explains why.
+
 ## Module provenance
 
 ```bash
