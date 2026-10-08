@@ -49,7 +49,7 @@ mod un_curly_braces;
 mod un_define_property;
 mod un_destructuring;
 mod un_double_negation;
-mod un_enum;
+pub(crate) mod un_enum;
 mod un_es6_class;
 mod un_esbuild_cjs_wrapper;
 mod un_esm;
@@ -257,6 +257,8 @@ pub use un_webpack_object_getters::UnWebpackObjectGetters;
 pub use un_while_loop::UnWhileLoop;
 pub use unminify_booleans::UnminifyBooleans;
 pub use var_decl_to_let_const::VarDeclToLetConst;
+
+pub(crate) use un_esm::export_storage::is_cjs_this_helper_guard;
 
 #[cfg(test)]
 mod rewrite_assumptions_tests {

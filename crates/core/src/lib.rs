@@ -13,6 +13,7 @@ pub(crate) mod commonjs_export_residual;
 pub mod driver;
 pub mod facts;
 pub(crate) mod js_names;
+pub(crate) mod marked_commonjs_namespace;
 pub(crate) mod module_path;
 pub mod namespace_decomposition;
 pub mod output_validate;

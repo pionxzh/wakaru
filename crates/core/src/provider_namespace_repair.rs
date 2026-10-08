@@ -10,6 +10,14 @@
 //! among the others, while a default from `module.exports = v` is the whole
 //! required value.
 //!
+//! A provider that stays CommonJS has no ESM export facts. A second pass,
+//! [`run_marked_commonjs_namespace_repair`], applies only when that file's own
+//! AST proves an `__esModule` marker and a named surface with no default.
+//! Static member reads become `import * as`. Whole-value uses stay default
+//! imports, the same binding the baseline already emitted. The "unlinkable
+//! default" reason for `allow_value_escape` does not apply to a module that
+//! stayed CommonJS.
+//!
 //! This pass is deliberately conservative. It only touches imports synthesized
 //! by `UnEsm`, requires one of those proven providers
 //! (or, without facts, the evidence in [`run_relative_namespace_repair`]),
@@ -93,6 +101,7 @@ pub(crate) fn run_provider_namespace_repair(
     let policy = UsagePolicy {
         allow_default_read: true,
         allow_value_escape,
+        allow_object_helpers: true,
     };
     repair_synthesized_default_imports(module, unresolved_mark, policy, |source, _| {
         namespace_provider(source)
@@ -111,9 +120,53 @@ pub(crate) fn run_relative_namespace_repair(
     let policy = UsagePolicy {
         allow_default_read: false,
         allow_value_escape: false,
+        allow_object_helpers: true,
     };
     repair_synthesized_default_imports(module, unresolved_mark, policy, |_, binding| {
         bindings.contains(binding)
+    });
+}
+
+/// Namespace-import a synthesized default import of a CommonJS provider that
+/// stayed unconverted but proved a marked named surface with no default.
+///
+/// Member reads only. A value passed onward, a `.default` read, or a default
+/// interop wrapper keeps the default import. A wildcard interop of this
+/// marked provider is the whole required value, same as a plain `require`,
+/// so its static member reads take the namespace too.
+pub(crate) fn run_marked_commonjs_namespace_repair(
+    module: &mut Module,
+    module_facts: &ModuleFactsMap,
+    current_filename: Option<&str>,
+    unresolved_mark: Mark,
+) {
+    let Some(current_filename) = current_filename else {
+        return;
+    };
+    let whole_require_sources = module_facts
+        .get(current_filename)
+        .map(|facts| facts.whole_require_sources.as_slice())
+        .unwrap_or_default();
+    let wildcard_require_sources = module_facts
+        .get(current_filename)
+        .map(|facts| facts.wildcard_require_sources.as_slice())
+        .unwrap_or_default();
+    let policy = UsagePolicy {
+        allow_default_read: false,
+        allow_value_escape: false,
+        allow_object_helpers: false,
+    };
+    repair_synthesized_default_imports(module, unresolved_mark, policy, |source, _| {
+        let whole = whole_require_sources
+            .iter()
+            .any(|entry| entry.as_ref() == source)
+            || wildcard_require_sources
+                .iter()
+                .any(|entry| entry.as_ref() == source);
+        whole
+            && module_facts
+                .get_from(Some(current_filename), source)
+                .is_some_and(|provider| provider.commonjs_marked_named_without_default)
     });
 }
 
@@ -122,6 +175,10 @@ pub(crate) fn run_relative_namespace_repair(
 struct UsagePolicy {
     allow_default_read: bool,
     allow_value_escape: bool,
+    /// `Object.keys(ns)` and `Object.assign(_, ns)`. An ESM namespace's keys
+    /// differ from a CommonJS `module.exports` object, so the marked-CJS pass
+    /// turns this off.
+    allow_object_helpers: bool,
 }
 
 fn repair_synthesized_default_imports(
@@ -373,7 +430,8 @@ impl Visit for NamespaceCompatibleUsage {
         {
             self.call_visits += 1;
         }
-        if self.is_object_method(call, "keys")
+        if self.policy.allow_object_helpers
+            && self.is_object_method(call, "keys")
             && call.args.len() == 1
             && self.direct_target_arg(&call.args[0])
         {
@@ -381,7 +439,10 @@ impl Visit for NamespaceCompatibleUsage {
             return;
         }
 
-        if self.is_object_method(call, "assign") && call.args.len() >= 2 {
+        if self.policy.allow_object_helpers
+            && self.is_object_method(call, "assign")
+            && call.args.len() >= 2
+        {
             let mut accepted_source = false;
             for (index, arg) in call.args.iter().enumerate() {
                 if index > 0 && self.direct_target_arg(arg) {
@@ -536,6 +597,7 @@ mod tests {
                 UsagePolicy {
                     allow_default_read: true,
                     allow_value_escape: true,
+                    allow_object_helpers: true,
                 },
             );
 

@@ -260,7 +260,7 @@ fn process_module_items_for_enum(items: &mut Vec<ModuleItem>, unresolved_mark: O
     }
 }
 
-enum CcRfMarker {
+pub(crate) enum CcRfMarker {
     Push { skippable_span: Option<Span> },
     Pop,
 }
@@ -268,7 +268,7 @@ enum CcRfMarker {
 /// Return the direct top-level `cc._RF.push` whose matching `pop` encloses
 /// the current enum. A push elsewhere in the AST is not evidence that its
 /// bare `module` argument is the Cocos registration marker for this enum.
-fn enclosing_cc_rf_push_span<'a>(
+pub(crate) fn enclosing_cc_rf_push_span<'a>(
     before: impl DoubleEndedIterator<Item = &'a ModuleItem>,
     after: impl Iterator<Item = &'a ModuleItem>,
     unresolved_mark: Mark,
@@ -304,7 +304,7 @@ fn enclosing_cc_rf_push_span<'a>(
     None
 }
 
-fn direct_cc_rf_marker(item: &ModuleItem, unresolved_mark: Mark) -> Option<CcRfMarker> {
+pub(crate) fn direct_cc_rf_marker(item: &ModuleItem, unresolved_mark: Mark) -> Option<CcRfMarker> {
     let ModuleItem::Stmt(Stmt::Expr(expr_stmt)) = item else {
         return None;
     };
@@ -327,7 +327,7 @@ fn direct_cc_rf_marker(item: &ModuleItem, unresolved_mark: Mark) -> Option<CcRfM
     None
 }
 
-fn is_cc_rf_method_callee(callee: &Expr, method: &str, unresolved_mark: Mark) -> bool {
+pub(crate) fn is_cc_rf_method_callee(callee: &Expr, method: &str, unresolved_mark: Mark) -> bool {
     let Expr::Member(method_member) = strip_parens(callee) else {
         return false;
     };
@@ -352,7 +352,7 @@ fn is_cc_rf_method_callee(callee: &Expr, method: &str, unresolved_mark: Mark) ->
     is_unresolved_named(cc, "cc", unresolved_mark)
 }
 
-fn first_arg_is_unresolved_module(call: &CallExpr, unresolved_mark: Mark) -> bool {
+pub(crate) fn first_arg_is_unresolved_module(call: &CallExpr, unresolved_mark: Mark) -> bool {
     let Some(first) = call.args.first() else {
         return false;
     };

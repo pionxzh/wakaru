@@ -373,18 +373,31 @@ struct TopLevelThis {
     exported_names: HashSet<Atom>,
 }
 
+/// TypeScript's `(this && this.__helper) || impl` guard. The `__` name is
+/// the same condition `TopLevelThis` already uses to keep that read off the
+/// "top-level `this` is `module.exports`" gate.
+pub(crate) fn is_cjs_this_helper_guard(bin: &BinExpr) -> bool {
+    if bin.op != BinaryOp::LogicalAnd || !matches!(strip_parens(&bin.left), Expr::This(_)) {
+        return false;
+    }
+    let Expr::Member(member) = strip_parens(&bin.right) else {
+        return false;
+    };
+    if !matches!(strip_parens(&member.obj), Expr::This(_)) {
+        return false;
+    }
+    static_member_name(&member.prop).is_some_and(|name| name.starts_with("__"))
+}
+
 impl TopLevelThis {
     fn helper_guard(&self, bin: &BinExpr) -> Option<Atom> {
-        if bin.op != BinaryOp::LogicalAnd || !matches!(strip_parens(&bin.left), Expr::This(_)) {
+        if !is_cjs_this_helper_guard(bin) {
             return None;
         }
         let Expr::Member(member) = strip_parens(&bin.right) else {
             return None;
         };
-        if !matches!(strip_parens(&member.obj), Expr::This(_)) {
-            return None;
-        }
-        static_member_name(&member.prop).filter(|name| name.starts_with("__"))
+        static_member_name(&member.prop)
     }
 
     fn is_exports_object(&self, expr: &Expr) -> bool {

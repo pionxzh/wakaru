@@ -212,6 +212,13 @@ pub struct ModuleFacts {
     /// `require` value is then the namespace of the recovered exports, with
     /// `default` as one of its properties.
     pub require_returns_exports_object: bool,
+    /// The module stayed CommonJS and its own post-recovery AST proves an
+    /// `__esModule` marker, an enumerable named export surface, and no default.
+    /// Collected beside [`collect_module_facts`], not inside it, so a
+    /// self-require's local fact map does not inherit the flag. Absence is
+    /// not proof: a hand-written CommonJS module without the marker stays a
+    /// default import under Node's `module.exports` interop.
+    pub commonjs_marked_named_without_default: bool,
     /// Sources this module requires as a whole value it uses directly, with
     /// no interop wrapper that would make the binding mean the provider's
     /// default export (see [`collect_whole_require_sources`]).
@@ -509,6 +516,7 @@ impl fmt::Display for ModuleFacts {
             && !self.has_export_all
             && self.ts_helper_exports.is_empty()
             && self.ts_helper_namespace_factory_exports.is_empty()
+            && !self.commonjs_marked_named_without_default
         {
             return write!(f, "(no imports or exports)");
         }
@@ -631,6 +639,16 @@ impl fmt::Display for ModuleFacts {
                 writeln!(f)?;
             }
             write!(f, "contains export *")?;
+        }
+        if self.commonjs_marked_named_without_default {
+            if has_prior
+                || self.commonjs_default_object.is_some()
+                || !self.commonjs_default_attached_properties.is_empty()
+                || self.has_export_all
+            {
+                writeln!(f)?;
+            }
+            write!(f, "CommonJS marked named exports without a default")?;
         }
         Ok(())
     }

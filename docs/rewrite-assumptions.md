@@ -962,7 +962,14 @@ default, so its named imports usually stay default imports.
 
 Affects: the relative namespace rewrite in the `UnEsm` runner
 (`relative_namespace_import.rs`), which runs only without module facts.
-Unpack mode decides the same edge from provider facts.
+Unpack mode decides the same edge from provider facts. When those facts are
+empty because the provider stayed CommonJS, unpack still rewrites a
+synthesized default import to `import * as` if the provider AST itself has a
+top-level `__esModule` marker, a proven enumerable named export, and no
+default, and the consumer's `require` is a whole require or a wildcard interop
+used only through static member reads. Whole-value uses stay default imports, the same binding
+the baseline already emitted. A missing marker, a default write, a default-interop wrapper, or an unproven `exports` / `module`
+use keeps the default import.
 
 Level: `standard` and above.
 

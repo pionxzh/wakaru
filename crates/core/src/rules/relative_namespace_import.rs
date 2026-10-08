@@ -19,7 +19,10 @@
 //! instead.
 //!
 //! In unpack mode the provider facts make this decision
-//! (`provider_namespace_repair`), so the rewrite runs only without facts. See
+//! (`provider_namespace_repair`), including a provider that stayed CommonJS
+//! when its own AST proves an `__esModule` marker and a named surface with
+//! no default (`run_marked_commonjs_namespace_repair`). The single-file
+//! rewrite runs only without module facts. See
 //! `relative_require_esm_provider` in `docs/rewrite-assumptions.md`.
 
 use crate::collections::HashSet;

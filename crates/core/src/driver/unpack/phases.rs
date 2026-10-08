@@ -45,9 +45,12 @@ use crate::facts::{
     collect_marks_es_module, collect_module_facts, collect_require_returns_exports_object,
     collect_whole_require_sources, collect_wildcard_require_sources, ModuleFactsMap,
 };
+use crate::marked_commonjs_namespace::collect_commonjs_marked_named_without_default;
 use crate::namespace_decomposition::run_namespace_decomposition;
 use crate::provider_import_repair::run_provider_import_repair;
-use crate::provider_namespace_repair::run_provider_namespace_repair;
+use crate::provider_namespace_repair::{
+    run_marked_commonjs_namespace_repair, run_provider_namespace_repair,
+};
 use crate::reexport_consolidation::run_reexport_consolidation;
 use crate::rules::eval_utils::DirectEvalAnalyzer;
 use crate::rules::expr_utils::is_unresolved_ident;
@@ -551,6 +554,12 @@ pub(super) fn unpack_multi_module_with_plan(
                     );
                 }
                 let mut facts = collect_module_facts(&facts_module);
+                facts.commonjs_marked_named_without_default =
+                    collect_commonjs_marked_named_without_default(
+                        &facts_module,
+                        unresolved_mark,
+                        Some(&unpacked.module.filename),
+                    );
                 // Class recovery runs on this pre-late AST. Probing the
                 // late-renamed clone misses IIFEs Phase 2 still converts.
                 facts.import_call_edges = crate::rules::collect_import_call_edges(
@@ -579,6 +588,12 @@ pub(super) fn unpack_multi_module_with_plan(
                     );
                 }
                 let mut facts = collect_module_facts(&module);
+                facts.commonjs_marked_named_without_default =
+                    collect_commonjs_marked_named_without_default(
+                        &module,
+                        unresolved_mark,
+                        Some(&unpacked.module.filename),
+                    );
                 facts.import_call_edges = import_call_edges;
                 (facts, None)
             };
@@ -710,6 +725,15 @@ pub(super) fn unpack_multi_module_with_plan(
                 Some(&unpacked.module.filename),
                 unresolved_mark,
                 true,
+            );
+            // Separate policy: whole-value uses of a fail-closed CommonJS
+            // provider keep the baseline default import. Only static member
+            // reads move to a namespace import.
+            run_marked_commonjs_namespace_repair(
+                &mut module,
+                facts_ref,
+                Some(&unpacked.module.filename),
+                unresolved_mark,
             );
             run_reexport_consolidation(&mut module, facts_ref, Some(&unpacked.module.filename));
             run_cross_module_lowered_dynamic_imports(
@@ -3388,5 +3412,295 @@ export { helper };
         assert!(error.to_string().contains(
             "input source maps are not supported with unpacking because extracted module coordinates differ from bundle coordinates"
         ));
+    }
+
+    /// Provider stays CommonJS: top-level `typeof this` is `module.exports`,
+    /// so UnEsm must not convert it. The member read is the namespace edge.
+    fn marked_named_provider() -> String {
+        r#"
+"use strict";
+cc._RF.push(module, "id", "Provider");
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.name = void 0;
+Object.defineProperty(exports, "getter", {
+    enumerable: true,
+    get: function () { return 1; }
+});
+var guard = (this && this.__decorate) || function () {};
+observe(typeof this);
+var pkg = require("pkg");
+exports.name = function (t, e) { return pkg(t, e); };
+cc._RF.pop();
+"#
+        .to_string()
+    }
+
+    fn unpack_marked_pair(
+        provider: &str,
+        consumer: &str,
+        emit_source_map: bool,
+    ) -> (String, String, Vec<crate::OutputFinding>) {
+        let output = unpack_multi_module(
+            vec![
+                UnpackedModule {
+                    id: "provider".to_string(),
+                    code: provider.to_string(),
+                    filename: "provider.js".to_string(),
+                    ..Default::default()
+                },
+                UnpackedModule {
+                    id: "consumer".to_string(),
+                    is_entry: true,
+                    code: consumer.to_string(),
+                    filename: "consumer.js".to_string(),
+                    ..Default::default()
+                },
+            ],
+            DecompileOptions {
+                emit_source_map,
+                ..Default::default()
+            },
+        )
+        .expect("marked provider fixture should decompile");
+        let code = |name: &str| {
+            output
+                .modules
+                .iter()
+                .find(|module| module.filename == name)
+                .map(|module| module.code.clone())
+                .unwrap_or_else(|| panic!("missing {name}"))
+        };
+        let findings = validate_prepared_output(&output);
+        (code("provider.js"), code("consumer.js"), findings)
+    }
+
+    fn assert_no_missing_consumer_import(findings: &[crate::OutputFinding]) {
+        assert!(
+            !findings.iter().any(|finding| {
+                finding.kind == OutputFindingKind::MissingImportedName
+                    && finding.filename == "consumer.js"
+            }),
+            "consumer import must resolve: {findings:#?}"
+        );
+    }
+
+    #[test]
+    fn marked_commonjs_provider_member_read_keeps_namespace_import() {
+        let consumer = r#"
+var local = require("./provider.js");
+module.exports = local.name;
+"#;
+        for emit_source_map in [false, true] {
+            let (provider, consumer, findings) =
+                unpack_marked_pair(&marked_named_provider(), consumer, emit_source_map);
+            assert!(
+                provider.contains("exports")
+                    && provider.contains("require")
+                    && !provider.contains("export "),
+                "provider stays CommonJS:\n{provider}"
+            );
+            assert!(
+                consumer.contains("import * as local from \"./provider.js\""),
+                "member read of a marked named-only provider is a namespace import:\n{consumer}"
+            );
+            assert_no_missing_consumer_import(&findings);
+        }
+    }
+
+    #[test]
+    fn marked_commonjs_wildcard_member_read_keeps_namespace_import() {
+        // A wildcard interop returns a marked provider unchanged, so a member
+        // read is the namespace even when the provider stays CommonJS.
+        let consumer =
+            format!("var local = {INLINE_WILDCARD_REQUIRE};\nmodule.exports = local.name;\n");
+        let (provider, consumer, findings) =
+            unpack_marked_pair(&marked_named_provider(), &consumer, false);
+        assert!(
+            provider.contains("exports") && !provider.contains("export "),
+            "provider stays CommonJS:\n{provider}"
+        );
+        assert!(
+            consumer.contains("import * as local from \"./provider.js\""),
+            "a wildcard of a fail-closed marked provider is a namespace import:\n{consumer}"
+        );
+        assert_no_missing_consumer_import(&findings);
+    }
+
+    #[test]
+    fn marked_commonjs_provider_without_module_ident_keeps_namespace_import() {
+        let provider = r#"
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.name = function (t, e) { return t + e; };
+observe(typeof this);
+var pkg = require("pkg");
+"#;
+        let consumer = r#"
+var local = require("./provider.js");
+module.exports = local.name;
+"#;
+        let (provider, consumer, findings) = unpack_marked_pair(provider, consumer, false);
+        assert!(
+            provider.contains("exports") && !provider.contains("export "),
+            "provider stays CommonJS:\n{provider}"
+        );
+        assert!(
+            consumer.contains("import * as local from \"./provider.js\""),
+            "a marked named surface with no free `module` is still a namespace import:\n{consumer}"
+        );
+        assert_no_missing_consumer_import(&findings);
+    }
+
+    fn assert_keeps_default_import(provider: &str, consumer: &str) {
+        let (_, consumer, _) = unpack_marked_pair(provider, consumer, false);
+        assert!(
+            consumer.contains("import local from \"./provider.js\""),
+            "this shape must keep the synthesized default import:\n{consumer}"
+        );
+        assert!(
+            !consumer.contains("import * as"),
+            "this shape must not become a namespace import:\n{consumer}"
+        );
+    }
+
+    #[test]
+    fn fail_closed_provider_without_marker_or_with_default_keeps_default_import() {
+        let member = r#"
+var local = require("./provider.js");
+module.exports = local.name;
+"#;
+        let unmarked = r#"
+exports.name = 1;
+observe(typeof this);
+"#;
+        assert_keeps_default_import(unmarked, member);
+
+        let with_default = r#"
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.name = 1;
+exports.default = function E() {};
+observe(typeof this);
+"#;
+        assert_keeps_default_import(
+            with_default,
+            r#"
+var local = require("./provider.js");
+module.exports = local.name;
+"#,
+        );
+
+        let replaced = r#"
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+function D() { return 1; }
+module.exports = D;
+observe(typeof this);
+"#;
+        assert_keeps_default_import(
+            replaced,
+            r#"
+var local = require("./provider.js");
+module.exports = local.name;
+"#,
+        );
+    }
+
+    #[test]
+    fn marked_provider_value_escape_and_interop_keep_default_import() {
+        let provider = marked_named_provider();
+        assert_keeps_default_import(
+            &provider,
+            r#"
+var local = require("./provider.js");
+register(local);
+"#,
+        );
+        assert_keeps_default_import(
+            &provider,
+            r#"
+var local = require("./provider.js");
+module.exports = local.default;
+"#,
+        );
+        assert_keeps_default_import(
+            &provider,
+            r#"
+var local = require("./provider.js");
+local.name = 2;
+module.exports = local.name;
+"#,
+        );
+        assert_keeps_default_import(
+            &provider,
+            r#"
+var local = require("./provider.js");
+module.exports = local[key];
+"#,
+        );
+        assert_keeps_default_import(
+            &provider,
+            r#"
+var local = require("./provider.js");
+module.exports = local.__esModule;
+"#,
+        );
+        assert_keeps_default_import(
+            &provider,
+            r#"
+var local = require("./provider.js");
+module.exports = Object.keys(local);
+"#,
+        );
+        assert_keeps_default_import(
+            &provider,
+            r#"
+var local = require("./provider.js");
+module.exports = Object.assign({}, local);
+"#,
+        );
+        assert_keeps_default_import(
+            &provider,
+            r#"
+function _interopRequireDefault(obj) {
+    return obj && obj.__esModule ? obj : { default: obj };
+}
+var local = _interopRequireDefault(require("./provider.js"));
+module.exports = local.default.name;
+"#,
+        );
+        assert_keeps_default_import(
+            &provider,
+            r#"
+var local = require("./provider.js"),
+get = () => local && local.__esModule ? local.default : local;
+exports.value = get();
+"#,
+        );
+        assert_keeps_default_import(
+            &provider,
+            r#"
+var local = require("./provider.js"), get = require.n(local);
+exports.value = get();
+"#,
+        );
+        let (_, interop_whole, _) = unpack_marked_pair(
+            &provider,
+            r#"
+function _interopRequireDefault(obj) {
+    return obj && obj.__esModule ? obj : { default: obj };
+}
+var whole = require("./provider.js");
+var local = _interopRequireDefault(require("./provider.js"));
+register(whole);
+exports.value = local.default;
+"#,
+            false,
+        );
+        assert!(
+            interop_whole.contains("import whole from \"./provider.js\"")
+                && !interop_whole.contains("import * as"),
+            "an interop wrapper around a second require must keep the whole require as a default import:\n{interop_whole}"
+        );
     }
 }

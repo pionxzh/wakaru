@@ -376,6 +376,15 @@ Neither proof creates a default-object fact available to consumers.
   has no facts; the `UnEsm` runner makes the same rewrite
   for relative sources from evidence in the importing module alone
   (`relative_require_esm_provider` in rewrite-assumptions.md).
+  A provider that stays CommonJS has no ESM export facts.
+  `run_marked_commonjs_namespace_repair` then applies the single-file contract
+  to that provider's own post-recovery AST: an `__esModule` marker, an
+  enumerable named surface, and no default. A consumer whole-require
+  (`whole_require_sources`) or wildcard interop (`wildcard_require_sources`)
+  whose uses are static member reads becomes `import * as`. A value passed
+  onward, a `.default` read, or a default-interop wrapper stays a default
+  import, the same binding the baseline already emitted.
+  An unproven surface, including a bare `module` outside one direct `cc._RF.push` / `pop` frame, stays a default import too.
 - **`run_cross_module_lowered_dynamic_imports`** — restores a lowered
   `import()`, `Promise.resolve().then(() => _(require(x)))`, when `_` is
   imported from a module whose helper export fact proves it is the wildcard
