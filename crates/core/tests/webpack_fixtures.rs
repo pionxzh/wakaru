@@ -388,14 +388,16 @@ fn wp5_variable_factory_call_recovers_the_default() {
         .any(|(_, code)| code.contains(".call(exports, require, exports, module)")));
     for maps in [false, true] {
         let pairs = unpack_fixture_with_options(path, maps);
-        assert_eq!(pairs.len(), 2);
+        // The library's `module.exports = e` after the inlined require is
+        // entry.js, which re-exports the entry module's default.
+        assert_eq!(pairs.len(), 3);
         assert_eq!(validate_output_modules(&pairs), vec![]);
         assert_eq!(
             pairs
                 .iter()
                 .filter(|(_, code)| code.contains("export default"))
                 .count(),
-            2
+            3
         );
         assert!(pairs
             .iter()

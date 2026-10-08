@@ -178,18 +178,22 @@ the same boundary.
 
 Terser can inline a single-use require function into the startup and call it
 with the entry id (`!function r(id) { ... }(100)`). Its body is runtime, never
-entry code: a bare or `!`-prefixed call marks module 100 as the entry. When a
-library build consumes the call (`window.lib = function r(id) { ... }(100)`),
-`entry.js` gets webpack's unrolled form,
-`var lib = require("./module-100.js"); window.lib = lib;`, which `UnEsm` turns
-into an import. This happens only when the assignment targets name globals; a
-target that reads a bootstrap binding or `this` would change meaning outside
-the bootstrap, so that statement is still dropped. An `output.library` of type
+entry code. The statement holding the call and every statement after it are
+entry code, and `entry.js` gets them in webpack's unrolled form: a library
+build that consumes the call (`window.lib = function r(id) { ... }(100)`)
+becomes `var lib = require("./module-100.js"); window.lib = lib;`, which
+`UnEsm` turns into an import, and a declaration
+(`var lib = function r(id) { ... }(100)`) becomes
+`var lib = require("./module-100.js")`. An `output.library` of type
 `commonjs2` makes Terser merge the call into a comma sequence with
-`module.exports = {}`; each element then becomes its own statement in
-`entry.js`. A sequence is split only when every other element reads nothing
-but globals. Otherwise the bundle stays one file, because dropping those
-elements would lose the library's exports.
+`module.exports = {}`; each element then becomes its own statement. A bare or
+`!`-prefixed call with nothing after it only marks module 100 as the entry.
+The entry code moves only when it means the same outside the bootstrap: it
+shares no binding with the runtime left behind, and it does not read the
+bootstrap function's `this` or `arguments` or return from it (a final
+`return` is lowered as in the startup region). Otherwise the bundle stays one
+file, because dropping that code would lose the library's exports or the
+call that starts the app.
 
 Wrapper removal requires an anonymous synchronous, non-generator function or
 synchronous arrow, with no parameters or call arguments. Async and generator
@@ -197,6 +201,31 @@ calls retain their invocation boundaries; an async IIFE must not turn into
 top-level await. Doing so would make module evaluation wait for an unawaited
 call and turn that call's rejection into a module-evaluation failure. This
 restriction applies to raw extraction as well as normal unpacking.
+
+### Webpack 5 code around the bootstrap
+
+Top-level statements before or after the bootstrap IIFE run before or after
+the bundle: a BannerPlugin `raw: true` banner or footer added after
+minification (producer `webpack@5.111.1` `stage:
+PROCESS_ASSETS_STAGE_REPORT`), or scripts concatenated with the bundle. They
+go to `entry.js` verbatim, in source order around the startup. When the
+startup only marks an entry module, `entry.js` is written anyway, with that
+module's `require` between the two parts. Directives and empty statements
+alone do not write `entry.js`.
+
+The entry's top-level bindings were bootstrap locals. One whose name the
+surrounding code declares at its top level or reads as a global is renamed,
+so neither side captures the other. The input stays one file when the
+surrounding code declares a name entry normalization uses (`require`,
+`exports`, `module`, `global`, `define`), or when the bootstrap has no
+startup to place it around: otherwise the code would be in no output file.
+At BannerPlugin's default stage Terser merges the banner and the bootstrap
+into one comma sequence, which is not detected as a bundle, so that input
+also stays one file.
+
+`entry.js` is a module, so its imports are hoisted: the entry module
+evaluates before a banner that writes globals only from inside a function
+(see [`import_hoisting_eagerness`](rewrite-assumptions.md#import_hoisting_eagerness)).
 
 ## Turbopack
 

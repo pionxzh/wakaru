@@ -900,9 +900,10 @@ fn assigned_directly_invoked_require_keeps_the_assignment_as_entry() {
 }
 
 #[test]
-fn directly_invoked_require_assigned_to_a_bootstrap_local_stays_dropped() {
+fn directly_invoked_require_assigned_to_a_bootstrap_local_stays_unsplit() {
     // The target reads a bootstrap binding; moved to entry.js it would be a
-    // free reference, so the statement is not extracted.
+    // free reference, and dropping it would lose the assignment, so the
+    // bundle is not split.
     let source = r#"
 (() => {
     var modules = {
@@ -923,13 +924,8 @@ fn directly_invoked_require_assigned_to_a_bootstrap_local_stays_dropped() {
 
     let pairs = expect_unpack(source, "bundle.js");
     assert!(
-        pairs.iter().any(|(name, _)| name == "module-1.js"),
-        "the genuine webpack module must be extracted, got {:?}",
-        pairs.iter().map(|(name, _)| name).collect::<Vec<_>>()
-    );
-    assert!(
-        !pairs.iter().any(|(name, _)| name == "entry.js"),
-        "an assignment to a bootstrap local must not become entry.js, got {:?}",
+        !pairs.iter().any(|(name, _)| name == "module-1.js"),
+        "an assignment to a bootstrap local must keep the bundle whole, got {:?}",
         pairs.iter().map(|(name, _)| name).collect::<Vec<_>>()
     );
 }
@@ -1030,8 +1026,9 @@ fn sequenced_directly_invoked_require_reading_a_bootstrap_local_stays_unsplit() 
 }
 
 #[test]
-fn var_bound_directly_invoked_require_marks_called_module_as_entry() {
-    // The same library form can bind the entry's exports to a local.
+fn var_bound_directly_invoked_require_becomes_an_entry_declaration() {
+    // The same library form can bind the entry's exports to a local. The
+    // declaration is entry code; the require runtime body is not.
     let source = r#"
 (() => {
     var modules = {
@@ -1056,9 +1053,302 @@ fn var_bound_directly_invoked_require_marks_called_module_as_entry() {
         "the genuine webpack module must be extracted, got {:?}",
         pairs.iter().map(|(name, _)| name).collect::<Vec<_>>()
     );
+    let entry = entry_of(&pairs);
     assert!(
-        !pairs.iter().any(|(name, _)| name == "entry.js"),
-        "the require runtime body must not become entry.js, got {:?}",
+        entry.contains(r#""./module-1.js""#),
+        "entry.js must load the entry module, got:\n{entry}"
+    );
+    assert!(
+        !entry.contains("exports: {}"),
+        "the require runtime body must not become entry code, got:\n{entry}"
+    );
+}
+
+#[test]
+fn var_bound_directly_invoked_require_keeps_the_code_after_it() {
+    // Terser inlines the single-use require into the declaration that binds
+    // the entry's exports; the statement after it reads that binding.
+    // shape: producer webpack@5.111.1 mode=production (Terser), a CommonJS
+    // entry stub `globalThis.sink = Object.freeze({ get load() {...} })`;
+    // sink renamed to `globalThis.lib`.
+    let source = r#"(()=>{"use strict";var e={97(e,t,o){Object.defineProperty(t,"__esModule",{value:!0}),t.load=async function(){const e=await Promise.resolve().then(()=>o(240));return[e.makeLabel("consumer"),e.default.kind,e.count]}},240(e,t){t.default=t.count=void 0,t.makeLabel=function(e){return"label:"+e},t.count=3,t.default={kind:"default-object"}}};const t={};var o=function o(r){const n=t[r];if(void 0!==n)return n.exports;const a=t[r]={exports:{}};return e[r](a,a.exports,o),a.exports}(97);globalThis.lib=Object.freeze({get load(){return o.load}})})();"#;
+
+    let pairs = expect_unpack(source, "bundle.js");
+    for name in ["module-97.js", "module-240.js"] {
+        assert!(
+            pairs.iter().any(|(file, _)| file == name),
+            "{name} must be extracted, got {:?}",
+            pairs.iter().map(|(file, _)| file).collect::<Vec<_>>()
+        );
+    }
+    let entry = entry_of(&pairs);
+    assert!(
+        entry.contains(r#""./module-97.js""#) && entry.contains("globalThis.lib = Object.freeze"),
+        "the statement after the call must stay in entry.js, got:\n{entry}"
+    );
+    assert!(
+        !entry.contains("exports: {}"),
+        "the require runtime body must not become entry code, got:\n{entry}"
+    );
+}
+
+#[test]
+fn bare_directly_invoked_require_keeps_the_statements_after_it() {
+    // shape: hypothetical (statements after a bare inlined require call).
+    let source = r#"
+(() => {
+    var modules = {
+        1: (module, exports) => {
+            exports.start = () => 1;
+        }
+    };
+    var cache = {};
+    !function require(id) {
+        var cached = cache[id];
+        if (cached !== undefined) return cached.exports;
+        var module = cache[id] = { exports: {} };
+        modules[id].call(module.exports, module, module.exports, require);
+        return module.exports;
+    }(1);
+    globalThis.ready = true;
+})();
+"#;
+
+    let pairs = expect_unpack(source, "bundle.js");
+    let entry = entry_of(&pairs);
+    let load = entry
+        .find(r#""./module-1.js""#)
+        .unwrap_or_else(|| panic!("entry.js must load the entry module, got:\n{entry}"));
+    let ready = entry
+        .find("globalThis.ready = true")
+        .unwrap_or_else(|| panic!("the statement after the call must stay, got:\n{entry}"));
+    assert!(load < ready, "source order must be kept, got:\n{entry}");
+}
+
+#[test]
+fn directly_invoked_require_followed_by_a_bootstrap_read_stays_unsplit() {
+    // The statement after the call reads the module cache, which stays with
+    // the runtime; moved to entry.js it would be a free reference.
+    // shape: hypothetical.
+    let source = r#"
+(() => {
+    var modules = {
+        1: (module, exports) => {
+            exports.value = 42;
+        }
+    };
+    var cache = {};
+    !function require(id) {
+        var cached = cache[id];
+        if (cached !== undefined) return cached.exports;
+        var module = cache[id] = { exports: {} };
+        modules[id].call(module.exports, module, module.exports, require);
+        return module.exports;
+    }(1);
+    globalThis.loaded = Object.keys(cache);
+})();
+"#;
+
+    let pairs = expect_unpack(source, "bundle.js");
+    assert!(
+        !pairs.iter().any(|(name, _)| name == "module-1.js"),
+        "a statement reading a bootstrap binding must keep the bundle whole, got {:?}",
+        pairs.iter().map(|(name, _)| name).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn directly_invoked_require_followed_by_a_bootstrap_this_read_stays_unsplit() {
+    // `this` names the bootstrap function's receiver; at the top of entry.js
+    // it would mean something else. shape: hypothetical.
+    let source = r#"
+!function () {
+    var modules = {
+        1: (module, exports) => {
+            exports.value = 42;
+        }
+    };
+    var cache = {};
+    var lib = function require(id) {
+        var cached = cache[id];
+        if (cached !== undefined) return cached.exports;
+        var module = cache[id] = { exports: {} };
+        modules[id].call(module.exports, module, module.exports, require);
+        return module.exports;
+    }(1);
+    this.lib = lib;
+}();
+"#;
+
+    let pairs = expect_unpack(source, "bundle.js");
+    assert!(
+        !pairs.iter().any(|(name, _)| name == "module-1.js"),
+        "a statement reading the bootstrap's `this` must keep the bundle whole, got {:?}",
+        pairs.iter().map(|(name, _)| name).collect::<Vec<_>>()
+    );
+}
+
+/// A one-module bootstrap whose inlined require is the given startup
+/// statement, with `before` and `after` around the IIFE.
+fn bundle_with_code_around(before: &str, startup: &str, after: &str) -> String {
+    format!(
+        r#"{before}
+(() => {{
+    var modules = {{
+        1: (module, exports) => {{
+            exports.value = 42;
+        }}
+    }};
+    var cache = {{}};
+    {startup} function require(id) {{
+        var cached = cache[id];
+        if (cached !== undefined) return cached.exports;
+        var module = cache[id] = {{ exports: {{}} }};
+        modules[id].call(module.exports, module, module.exports, require);
+        return module.exports;
+    }}(1);
+}})();
+{after}
+"#
+    )
+}
+
+#[test]
+fn raw_banner_before_the_bootstrap_stays_in_entry() {
+    // BannerPlugin `raw: true` at the report stage writes the banner as its
+    // own statement before the bootstrap; Terser does not merge it.
+    // shape: producer webpack@5.111.1 mode=production (Terser),
+    // BannerPlugin raw=true stage=PROCESS_ASSETS_STAGE_REPORT; globals
+    // renamed to `globalThis.banner` / `globalThis.lib`.
+    let source = r#"!function(){try{globalThis.banner={v:1,list:[1,2,3]}}catch(e){console.error("bad banner")}}();
+(()=>{var r={574(r,e,n){var t=n(240),i=n(869);e.describe=t.describe,e.twice=i.twice,e.name="entry-name"},869(r,e){e.twice=function(r){return 2*r}},240(r,e){e.describe=function(r){return"provider:"+r}}};const e={};globalThis.lib=function n(t){const i=e[t];if(void 0!==i)return i.exports;const c=e[t]={exports:{}};return r[t](c,c.exports,n),c.exports}(574)})();"#;
+
+    let pairs = expect_unpack(source, "bundle.js");
+    for name in ["module-240.js", "module-574.js", "module-869.js"] {
+        assert!(
+            pairs.iter().any(|(file, _)| file == name),
+            "{name} must be extracted, got {:?}",
+            pairs.iter().map(|(file, _)| file).collect::<Vec<_>>()
+        );
+    }
+    let entry = entry_of(&pairs);
+    let banner = entry
+        .find("globalThis.banner = {")
+        .unwrap_or_else(|| panic!("the banner must stay in entry.js, got:\n{entry}"));
+    let sink = entry
+        .find("globalThis.lib = lib")
+        .unwrap_or_else(|| panic!("the library assignment must stay, got:\n{entry}"));
+    assert!(banner < sink, "the banner must run first, got:\n{entry}");
+}
+
+#[test]
+fn raw_footer_after_the_bootstrap_stays_in_entry() {
+    // shape: producer webpack@5.111.1 mode=production (Terser),
+    // BannerPlugin raw=true footer=true stage=PROCESS_ASSETS_STAGE_REPORT;
+    // globals renamed to `globalThis.banner` / `globalThis.lib`.
+    let source = r#"(()=>{var r={574(r,e,n){var t=n(240),i=n(869);e.describe=t.describe,e.twice=i.twice,e.name="entry-name"},869(r,e){e.twice=function(r){return 2*r}},240(r,e){e.describe=function(r){return"provider:"+r}}};const e={};globalThis.lib=function n(t){const i=e[t];if(void 0!==i)return i.exports;const c=e[t]={exports:{}};return r[t](c,c.exports,n),c.exports}(574)})();
+!function(){try{globalThis.banner={v:1,list:[1,2,3]}}catch(e){console.error("bad banner")}}();"#;
+
+    let pairs = expect_unpack(source, "bundle.js");
+    let entry = entry_of(&pairs);
+    let sink = entry
+        .find("globalThis.lib = lib")
+        .unwrap_or_else(|| panic!("the library assignment must stay, got:\n{entry}"));
+    let footer = entry
+        .find("globalThis.banner = {")
+        .unwrap_or_else(|| panic!("the footer must stay in entry.js, got:\n{entry}"));
+    assert!(sink < footer, "the footer must run last, got:\n{entry}");
+}
+
+#[test]
+fn code_around_a_bootstrap_without_entry_code_gets_an_entry() {
+    // A bare startup call only marks the entry module; the code around the
+    // bootstrap still needs a file, in order around that module's require.
+    // shape: hypothetical.
+    let source = bundle_with_code_around("globalThis.before = 1;", "!", "globalThis.after = 2;");
+
+    let pairs = expect_unpack(&source, "bundle.js");
+    let entry = entry_of(&pairs);
+    let before = entry
+        .find("globalThis.before = 1")
+        .unwrap_or_else(|| panic!("the code before must stay, got:\n{entry}"));
+    let load = entry
+        .find(r#""./module-1.js""#)
+        .unwrap_or_else(|| panic!("entry.js must load the entry module, got:\n{entry}"));
+    let after = entry
+        .find("globalThis.after = 2")
+        .unwrap_or_else(|| panic!("the code after must stay, got:\n{entry}"));
+    assert!(
+        before < load && load < after,
+        "source order must be kept, got:\n{entry}"
+    );
+}
+
+#[test]
+fn directives_around_a_bootstrap_write_no_entry() {
+    // shape: hypothetical (a directive prologue before the bootstrap).
+    let source = bundle_with_code_around(r#""use strict";"#, "!", "");
+
+    let output = unpack(
+        &source,
+        DecompileOptions {
+            filename: "bundle.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("unpack should succeed");
+    assert!(
+        !output.modules.iter().any(|(name, _)| name == "entry.js"),
+        "a directive alone must not write entry.js, got {:?}",
+        output
+            .modules
+            .iter()
+            .map(|(name, _)| name)
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        output
+            .provenance
+            .iter()
+            .any(|module| module.filename == "module-1.js" && module.is_entry),
+        "the called module must stay marked as entry: {:?}",
+        output.provenance
+    );
+}
+
+#[test]
+fn entry_binding_named_like_code_around_the_bootstrap_is_renamed() {
+    // The banner declares `lib` at the top level and the footer reads it;
+    // the entry's own `lib` was a bootstrap local and must not capture
+    // either. shape: hypothetical.
+    let source = bundle_with_code_around(
+        "var lib = \"banner\";",
+        "var lib =",
+        "globalThis.seen = lib;",
+    );
+
+    let pairs = expect_unpack(&source, "bundle.js");
+    let entry = entry_of(&pairs);
+    assert!(
+        entry.contains(r#"lib = "banner""#) && entry.contains("globalThis.seen = lib;"),
+        "the banner's binding must keep its name, got:\n{entry}"
+    );
+    assert!(
+        !entry.contains("lib from"),
+        "the entry's binding must not take the banner's name, got:\n{entry}"
+    );
+}
+
+#[test]
+fn code_around_a_bootstrap_declaring_require_stays_unsplit() {
+    // entry.js calls the module's `require`; a top-level `require` declared
+    // around the bootstrap would capture it. shape: hypothetical.
+    let source = bundle_with_code_around("var require = function () {};", "!", "");
+
+    let pairs = expect_unpack(&source, "bundle.js");
+    assert!(
+        !pairs.iter().any(|(name, _)| name == "module-1.js"),
+        "a declared `require` around the bootstrap must keep the bundle whole, got {:?}",
         pairs.iter().map(|(name, _)| name).collect::<Vec<_>>()
     );
 }

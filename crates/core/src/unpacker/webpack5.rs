@@ -16,7 +16,7 @@ use swc_core::ecma::utils::replace_ident;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::js_names::{is_reserved_binding_name, is_valid_identifier_name};
-use crate::rules::rename_utils::BindingRename;
+use crate::rules::rename_utils::{rename_bindings_in_module, BindingRename};
 use crate::unpacker::webpack4::{
     rewrite_require_n_accesses, unwrap_webpack_global_envelopes, RequireIdRewriter,
     RequireStringIdRewriter,
@@ -27,8 +27,10 @@ use crate::unpacker::webpack_common::{
 };
 use crate::unpacker::{
     deconflict_runtime_binding_renames, emit_module_with_positions, source_fallback_for_stmts,
-    spans_byte_ranges, BundleFormat, DetectedBundle, DetectedModuleFailure, MappedCode,
-    PreparedModuleAst, SourcePositions, UnpackResult, UnpackedModule,
+    spans_byte_ranges, stmts_have_function_level_return,
+    stmts_have_function_level_special_bindings, BundleFormat, DetectedBundle,
+    DetectedModuleFailure, MappedCode, PreparedModuleAst, SourcePositions, UnpackResult,
+    UnpackedModule,
 };
 use crate::utils::paren::strip_parens;
 use crate::utils::swc_safety::apply_fixer;
@@ -303,14 +305,24 @@ pub(super) fn detect_from_module_prepared(
 ) -> Option<DetectedBundle> {
     let span = tracing::info_span!("webpack5: detect_from_module");
     let _enter = span.enter();
-    for item in &module.body {
+    for (idx, item) in module.body.iter().enumerate() {
         let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
             continue;
         };
         let Some(bootstrap_body) = extract_iife_body(expr) else {
             continue;
         };
-        if let Some(result) = extract_webpack5_modules(bootstrap_body, cm.clone(), positions) {
+        let surrounding = SurroundingItems {
+            before: &module.body[..idx],
+            after: &module.body[idx + 1..],
+        };
+        if let Some(result) = extract_webpack5_modules_with_plan(
+            bootstrap_body,
+            cm.clone(),
+            None,
+            positions,
+            surrounding,
+        ) {
             return Some(result);
         }
     }
@@ -371,7 +383,13 @@ fn detect_webpack5_top_level(
         span: DUMMY_SP,
         stmts,
     };
-    extract_webpack5_modules_with_plan(&bootstrap_body, cm, Some(require_plan), positions)
+    extract_webpack5_modules_with_plan(
+        &bootstrap_body,
+        cm,
+        Some(require_plan),
+        positions,
+        SurroundingItems::default(),
+    )
 }
 
 pub(super) fn detect_runtime_entry_from_module(
@@ -602,62 +620,93 @@ fn plan_webpack_require_fn(stmts: &[Stmt], modules_sym: &Atom) -> Option<Require
         .into_iter()
         .find(|candidate| {
             body_is_webpack_require(&candidate.excluded, candidate.body, &table_id)
-                && direct_entry_sequence_is_movable(&probe_stmts, candidate, unresolved_ctxt)
+                && direct_entry_is_movable(&probe_stmts, candidate, &table_id, unresolved_ctxt)
         })
         .map(|candidate| match candidate.kind {
             RegionFnCandidateKind::Declared(sym) => RequireFnPlan::Declared {
                 stmt_idx: candidate.stmt_idx,
                 sym,
             },
-            RegionFnCandidateKind::DirectEntry {
-                entry_id,
-                seq_element,
-            } => RequireFnPlan::DirectEntry {
+            RegionFnCandidateKind::DirectEntry { entry_id, site } => RequireFnPlan::DirectEntry {
                 entry_id,
                 stmt_idx: candidate.stmt_idx,
-                seq_element,
+                site,
             },
         })
 }
 
-/// A directly invoked require that is one element of a comma sequence
-/// (`sink = function require(id) {...}(1), module.exports = {}`, from an
-/// `output.library` build) is accepted only when every other element can move
-/// to entry.js unchanged. Those elements are entry code: dropping them would
-/// silently lose the library's exports, so a sequence that reads a bootstrap
-/// binding (or `this`) stays unsplit instead.
-fn direct_entry_sequence_is_movable(
+/// The entry code after a directly invoked require (its consumer and every
+/// statement after it, see [`direct_entry_stmts`]) moves to entry.js only when
+/// it means the same there: it shares no bootstrap binding with the runtime
+/// left behind, and it does not observe the bootstrap function (`this`,
+/// `arguments`, a `return`). Dropping that code would lose authored behavior
+/// (a library's exports, the call that starts the app), so a bundle whose
+/// entry code cannot move stays unsplit instead.
+fn direct_entry_is_movable(
     probe_stmts: &[Stmt],
     candidate: &RegionFnCandidate<'_>,
+    table_id: &Id,
     unresolved_ctxt: SyntaxContext,
 ) -> bool {
-    let RegionFnCandidateKind::DirectEntry {
-        seq_element: Some(element_idx),
-        ..
-    } = candidate.kind
-    else {
+    let RegionFnCandidateKind::DirectEntry { site, .. } = candidate.kind else {
         return true;
     };
-    let Some(Stmt::Expr(expr_stmt)) = probe_stmts.get(candidate.stmt_idx) else {
+    let Some(moved) = direct_entry_stmts(probe_stmts, candidate.stmt_idx, site, unresolved_ctxt)
+    else {
         return false;
     };
-    let Expr::Seq(seq) = strip_parens(&expr_stmt.expr) else {
+    if stmts_have_function_level_special_bindings(&moved)
+        || stmts_have_function_level_return(&moved)
+    {
+        return false;
+    }
+    let Some(site_stmt) = probe_stmts.get(candidate.stmt_idx) else {
         return false;
     };
-    seq.exprs.iter().enumerate().all(|(idx, element)| {
-        if idx == element_idx {
-            return match strip_parens(element) {
-                Expr::Assign(_) => assign_targets_are_global(element, unresolved_ctxt),
-                _ => true,
-            };
+    let Some(call) = direct_entry_call(site_stmt, site) else {
+        return false;
+    };
+
+    // Region-level bindings all carry the table's context. One spelled in
+    // both the moved code and what stays behind (the statements before the
+    // call site, the require function, earlier declarators of the site) is
+    // shared with the runtime.
+    let mut runtime = ContextSymCollector::new(table_id.1);
+    probe_stmts[..candidate.stmt_idx].visit_with(&mut runtime);
+    call.callee.visit_with(&mut runtime);
+    if let (
+        DirectEntrySite::Declarator(decl_idx),
+        Stmt::Decl(swc_core::ecma::ast::Decl::Var(var_decl)),
+    ) = (site, site_stmt)
+    {
+        var_decl.decls[..decl_idx].visit_with(&mut runtime);
+    }
+    let mut entry = ContextSymCollector::new(table_id.1);
+    moved.visit_with(&mut entry);
+    entry.syms.is_disjoint(&runtime.syms)
+}
+
+/// Symbols of identifiers that carry one syntax context.
+struct ContextSymCollector {
+    ctxt: SyntaxContext,
+    syms: HashSet<Atom>,
+}
+
+impl ContextSymCollector {
+    fn new(ctxt: SyntaxContext) -> Self {
+        Self {
+            ctxt,
+            syms: HashSet::default(),
         }
-        let mut finder = LocalTargetFinder {
-            unresolved_ctxt,
-            found: false,
-        };
-        element.visit_with(&mut finder);
-        !finder.found
-    })
+    }
+}
+
+impl Visit for ContextSymCollector {
+    fn visit_ident(&mut self, ident: &Ident) {
+        if ident.ctxt == self.ctxt {
+            self.syms.insert(ident.sym.clone());
+        }
+    }
 }
 
 /// How the bootstrap exposes its proven webpack require lifecycle.
@@ -668,13 +717,25 @@ enum RequireFnPlan {
     Declared { stmt_idx: usize, sym: Atom },
     /// A require function invoked directly with the entry module id:
     /// `!function require(id) { ... }(entryId)`. `stmt_idx` is the statement
-    /// holding the call; `seq_element` is the call's element when that
-    /// statement is a comma sequence.
+    /// holding the call.
     DirectEntry {
         entry_id: String,
         stmt_idx: usize,
-        seq_element: Option<usize>,
+        site: DirectEntrySite,
     },
+}
+
+/// Where a directly invoked require call sits in its statement.
+#[derive(Clone, Copy)]
+enum DirectEntrySite {
+    /// The statement's expression: a bare or `!`-prefixed call, or the
+    /// right side of an assignment (`window.lib = function r(id) {...}(1)`).
+    Expr,
+    /// One element of the statement's comma sequence.
+    SeqElement(usize),
+    /// The initializer of the statement's declarator at this index
+    /// (`var lib = function r(id) {...}(1)`).
+    Declarator(usize),
 }
 
 /// Resolved [`Id`] of the region-level `var` declarator binding `sym`.
@@ -813,7 +874,7 @@ enum RegionFnCandidateKind {
     Declared(Atom),
     DirectEntry {
         entry_id: String,
-        seq_element: Option<usize>,
+        site: DirectEntrySite,
     },
 }
 
@@ -854,7 +915,7 @@ fn region_fn_candidates(stmts: &[Stmt]) -> Vec<RegionFnCandidate<'_>> {
                 });
             }
             Stmt::Decl(swc_core::ecma::ast::Decl::Var(var_decl)) => {
-                for declarator in &var_decl.decls {
+                for (decl_idx, declarator) in var_decl.decls.iter().enumerate() {
                     let Pat::Ident(binding) = &declarator.name else {
                         continue;
                     };
@@ -898,9 +959,11 @@ fn region_fn_candidates(stmts: &[Stmt]) -> Vec<RegionFnCandidate<'_>> {
                         // `var lib = function require(id) { ... }(entryId)` —
                         // a library build binding the entry's exports.
                         Expr::Call(call) => {
-                            if let Some(candidate) =
-                                require_candidate_from_call(stmt_idx, call, None)
-                            {
+                            if let Some(candidate) = require_candidate_from_call(
+                                stmt_idx,
+                                call,
+                                DirectEntrySite::Declarator(decl_idx),
+                            ) {
                                 candidates.push(candidate);
                             }
                         }
@@ -927,12 +990,16 @@ fn directly_invoked_require_candidates(stmt_idx: usize, stmt: &Stmt) -> Vec<Regi
             .iter()
             .enumerate()
             .filter_map(|(idx, element)| {
-                require_candidate_from_call(stmt_idx, direct_invoke_call(element)?, Some(idx))
+                require_candidate_from_call(
+                    stmt_idx,
+                    direct_invoke_call(element)?,
+                    DirectEntrySite::SeqElement(idx),
+                )
             })
             .collect();
     }
     direct_invoke_call(expr)
-        .and_then(|call| require_candidate_from_call(stmt_idx, call, None))
+        .and_then(|call| require_candidate_from_call(stmt_idx, call, DirectEntrySite::Expr))
         .into_iter()
         .collect()
 }
@@ -956,7 +1023,7 @@ fn direct_invoke_call(expr: &Expr) -> Option<&CallExpr> {
 fn require_candidate_from_call(
     stmt_idx: usize,
     call: &CallExpr,
-    seq_element: Option<usize>,
+    site: DirectEntrySite,
 ) -> Option<RegionFnCandidate<'_>> {
     if call.args.len() != 1 || call.args[0].spread.is_some() {
         return None;
@@ -991,10 +1058,7 @@ fn require_candidate_from_call(
 
     Some(RegionFnCandidate {
         stmt_idx,
-        kind: RegionFnCandidateKind::DirectEntry {
-            entry_id,
-            seq_element,
-        },
+        kind: RegionFnCandidateKind::DirectEntry { entry_id, site },
         excluded,
         body,
     })
@@ -1795,22 +1859,15 @@ fn extract_modules_from_container(
     })
 }
 
-fn extract_webpack5_modules(
-    bootstrap_body: &swc_core::ecma::ast::FunctionBody,
-    cm: Lrc<SourceMap>,
-    positions: SourcePositions,
-) -> Option<DetectedBundle> {
-    extract_webpack5_modules_with_plan(bootstrap_body, cm, None, positions)
-}
-
 /// `require_plan`, when the caller already gated the region, is reused for
 /// container validation and entry extraction instead of resolving the region
-/// again.
+/// again. `surrounding` is the input's top-level code around a bootstrap IIFE.
 fn extract_webpack5_modules_with_plan(
     bootstrap_body: &swc_core::ecma::ast::FunctionBody,
     cm: Lrc<SourceMap>,
     mut require_plan: Option<RequireFnPlan>,
     positions: SourcePositions,
+    surrounding: SurroundingItems<'_>,
 ) -> Option<DetectedBundle> {
     let span = tracing::info_span!("webpack5: extract_modules");
     let _enter = span.enter();
@@ -1904,19 +1961,31 @@ fn extract_webpack5_modules_with_plan(
         }
     }
 
+    // Code around the bootstrap runs before or after the bundle; entry.js
+    // keeps it, in source order, around the startup.
+    let surrounding = SurroundingCode::collect(surrounding)?;
+    let entry = EntryEmitter {
+        cm: &cm,
+        id_to_filename,
+        str_id_to_filename,
+        positions,
+        surrounding: &surrounding,
+    };
+
     let (direct_entry_id, direct_entry_consumer) = match require_plan.as_ref() {
         Some(RequireFnPlan::DirectEntry {
             entry_id,
             stmt_idx,
-            seq_element,
+            site,
         }) => (
             Some(entry_id.clone()),
-            match seq_element {
-                Some(element_idx) => {
-                    direct_entry_sequence_stmts(&bootstrap_body.stmts, *stmt_idx, *element_idx)
-                }
-                None => direct_entry_consumer_stmts(&bootstrap_body.stmts, *stmt_idx),
-            },
+            direct_entry_stmts(
+                &bootstrap_body.stmts,
+                *stmt_idx,
+                *site,
+                SyntaxContext::empty(),
+            )
+            .filter(|stmts| !is_bare_entry_call(stmts)),
         ),
         _ => (None, None),
     };
@@ -1927,51 +1996,29 @@ fn extract_webpack5_modules_with_plan(
     // Check for a trailing IIFE entry point. A directly invoked require
     // lifecycle is runtime machinery; its call argument identifies the real
     // entry module and its body must never be materialized as entry.js.
-    let has_synthetic_entry = if direct_entry_id.is_some() {
-        // A library build consumes the entry's exports
-        // (`window.lib = function require(id) { ... }(entryId)`); the
-        // assignment is entry code and must survive as entry.js.
+    let mut has_synthetic_entry = if direct_entry_id.is_some() {
+        // The statement holding the call and the statements after it are
+        // entry code (a library's `window.lib = function require(id) { ...
+        // }(entryId)`, the call that starts the app) and must survive as
+        // entry.js.
         direct_entry_consumer.is_some_and(|stmts| {
-            let entry_ranges = spans_byte_ranges(&cm, stmts.iter().map(|stmt| stmt.span()));
-            let code = emit_webpack5_entry_module(
-                stmts,
-                cm.clone(),
-                id_to_filename,
-                str_id_to_filename,
-                Atom::from(DIRECT_ENTRY_REQUIRE),
-                None,
-                positions,
-            );
-            append_synthetic_entry(&mut modules, &mut prepared, entry_ranges, code)
+            let (ranges, code) = entry.emit(stmts, Atom::from(DIRECT_ENTRY_REQUIRE), None);
+            append_synthetic_entry(&mut modules, &mut prepared, ranges, code)
         })
     } else if let Some(entry_body) = trailing_entry_body {
-        let entry_ranges = spans_byte_ranges(&cm, entry_body.iter().map(|s| s.span()));
         let require_sym = match require_plan.as_ref() {
             Some(RequireFnPlan::Declared { sym, .. }) => sym.clone(),
             _ => Atom::from("__webpack_require__"),
         };
-        let code = emit_webpack5_entry_module(
+        let (ranges, code) = entry.emit(
             entry_body,
-            cm.clone(),
-            id_to_filename,
-            str_id_to_filename,
             require_sym,
             Some(Atom::from("__webpack_exports__")),
-            positions,
         );
-        append_synthetic_entry(&mut modules, &mut prepared, entry_ranges, code)
-    } else if let Some(entry) = extract_ncc_inline_entry(bootstrap_body) {
-        let entry_ranges = spans_byte_ranges(&cm, entry.body_stmts.iter().map(|s| s.span()));
-        let code = emit_webpack5_entry_module(
-            entry.body_stmts,
-            cm.clone(),
-            id_to_filename,
-            str_id_to_filename,
-            entry.require_sym,
-            None,
-            positions,
-        );
-        append_synthetic_entry(&mut modules, &mut prepared, entry_ranges, code)
+        append_synthetic_entry(&mut modules, &mut prepared, ranges, code)
+    } else if let Some(ncc) = extract_ncc_inline_entry(bootstrap_body) {
+        let (ranges, code) = entry.emit(ncc.body_stmts, ncc.require_sym, None);
+        append_synthetic_entry(&mut modules, &mut prepared, ranges, code)
     } else {
         false
     };
@@ -1984,27 +2031,36 @@ fn extract_webpack5_modules_with_plan(
             .or_else(|| find_require_s_entry(bootstrap_body))
             .or_else(|| find_require_o_entry(bootstrap_body))
         {
-            for module in &mut modules {
-                if module.id == entry_id {
-                    module.is_entry = true;
-                    break;
+            if surrounding.is_empty() {
+                for module in &mut modules {
+                    if module.id == entry_id {
+                        module.is_entry = true;
+                        break;
+                    }
                 }
+            } else {
+                // The code around the bootstrap needs entry.js; the startup
+                // between its parts is the entry module's require.
+                let (ranges, code) = entry.emit(
+                    vec![entry_module_require(&module_entries, &entry_id)],
+                    Atom::from(DIRECT_ENTRY_REQUIRE),
+                    None,
+                );
+                has_synthetic_entry =
+                    append_synthetic_entry(&mut modules, &mut prepared, ranges, code);
             }
         } else if let Some(startup) =
             extract_webpack5_inline_startup(bootstrap_body, &modules_sym, require_plan.as_ref())
         {
-            let entry_ranges = spans_byte_ranges(&cm, startup.body_stmts.iter().map(|s| s.span()));
-            let code = emit_webpack5_entry_module(
-                startup.body_stmts,
-                cm.clone(),
-                id_to_filename,
-                str_id_to_filename,
-                startup.require_sym,
-                startup.exports_sym,
-                positions,
-            );
-            append_synthetic_entry(&mut modules, &mut prepared, entry_ranges, code);
+            let (ranges, code) =
+                entry.emit(startup.body_stmts, startup.require_sym, startup.exports_sym);
+            has_synthetic_entry = append_synthetic_entry(&mut modules, &mut prepared, ranges, code);
         }
+    }
+    // With no entry.js to hold it, the code around the bootstrap would be in
+    // no output file; the input stays one file instead.
+    if !surrounding.is_empty() && !has_synthetic_entry {
+        return None;
     }
 
     if modules.is_empty() {
@@ -2030,71 +2086,123 @@ fn extract_webpack5_modules_with_plan(
 /// is emitted as entry.js; entry normalization rewrites it to `require`.
 const DIRECT_ENTRY_REQUIRE: &str = "__webpack_require__";
 
-/// The consumer of a directly invoked require call, rewritten to webpack's
-/// unrolled startup: `window.lib = function require(id) {...}(1)` becomes
-/// `var lib = __webpack_require__(1); window.lib = lib;`, a shape `UnEsm`
-/// turns into an import. Only assignments to global names qualify; a target
-/// that reads a bootstrap binding (or `this`) would change meaning once the
-/// statement leaves the bootstrap.
-fn direct_entry_consumer_stmts(stmts: &[Stmt], stmt_idx: usize) -> Option<Vec<Stmt>> {
-    let Stmt::Expr(expr_stmt) = stmts.get(stmt_idx)? else {
-        return None;
-    };
-    if !matches!(strip_parens(&expr_stmt.expr), Expr::Assign(_)) {
-        return None;
-    }
-    let (probe_stmts, unresolved_ctxt) = resolve_probe(stmts)?;
-    let Stmt::Expr(probe_stmt) = probe_stmts.get(stmt_idx)? else {
-        return None;
-    };
-    if !assign_targets_are_global(&probe_stmt.expr, unresolved_ctxt) {
-        return None;
-    }
-
-    let mut names = IdentNameCollector::default();
-    expr_stmt.visit_with(&mut names);
-    unrolled_direct_entry_assignment(&expr_stmt.expr, expr_stmt.span, &names.0)
-}
-
-/// A comma-sequence startup split into statements, in order. The element
-/// holding the call becomes webpack's unrolled form (see
-/// [`direct_entry_consumer_stmts`]), or `__webpack_require__(id);` when the
-/// call is bare. Detection admitted the sequence only when every other element
-/// can move unchanged ([`direct_entry_sequence_is_movable`]).
-fn direct_entry_sequence_stmts(
+/// The entry code a directly invoked require leaves in the bootstrap: the
+/// statement holding the call, in webpack's unrolled startup form, then every
+/// statement after it. `window.lib = function require(id) {...}(1)` becomes
+/// `var lib = __webpack_require__(1); window.lib = lib;` (a shape `UnEsm`
+/// turns into an import), `var lib = function require(id) {...}(1)` becomes
+/// `var lib = __webpack_require__(1)`, a bare call becomes
+/// `__webpack_require__(1);`, and a comma sequence becomes one statement per
+/// element. A final `return` is lowered as in the startup region. Whether the
+/// code can leave the bootstrap is [`direct_entry_is_movable`]'s question.
+/// `require_ctxt` is the context given to the unrolled require name.
+fn direct_entry_stmts(
     stmts: &[Stmt],
     stmt_idx: usize,
-    element_idx: usize,
+    site: DirectEntrySite,
+    require_ctxt: SyntaxContext,
 ) -> Option<Vec<Stmt>> {
-    let Stmt::Expr(expr_stmt) = stmts.get(stmt_idx)? else {
-        return None;
-    };
-    let Expr::Seq(seq) = strip_parens(&expr_stmt.expr) else {
-        return None;
-    };
+    let site_stmt = stmts.get(stmt_idx)?;
+    let trailing = &stmts[stmt_idx + 1..];
     let mut names = IdentNameCollector::default();
-    expr_stmt.visit_with(&mut names);
-    let mut out = Vec::with_capacity(seq.exprs.len() + 1);
-    for (idx, element) in seq.exprs.iter().enumerate() {
-        let span = element.span();
-        if idx != element_idx {
-            out.push(Stmt::Expr(ExprStmt {
-                span,
-                expr: element.clone(),
-            }));
-            continue;
+    site_stmt.visit_with(&mut names);
+    trailing.visit_with(&mut names);
+    let unrolled_call = |call: &CallExpr| direct_entry_require_call(call.clone(), require_ctxt);
+
+    let mut out = Vec::with_capacity(trailing.len() + 2);
+    match (site, site_stmt) {
+        (DirectEntrySite::Expr, Stmt::Expr(expr_stmt)) => {
+            if matches!(strip_parens(&expr_stmt.expr), Expr::Assign(_)) {
+                out.extend(unrolled_direct_entry_assignment(
+                    &expr_stmt.expr,
+                    expr_stmt.span,
+                    &names.0,
+                    require_ctxt,
+                )?);
+            } else {
+                out.push(Stmt::Expr(ExprStmt {
+                    span: expr_stmt.span,
+                    expr: Box::new(Expr::Call(unrolled_call(direct_invoke_call(
+                        &expr_stmt.expr,
+                    )?))),
+                }));
+            }
         }
-        if matches!(strip_parens(element), Expr::Assign(_)) {
-            out.extend(unrolled_direct_entry_assignment(element, span, &names.0)?);
-        } else {
-            let call = direct_invoke_call(element)?.clone();
-            out.push(Stmt::Expr(ExprStmt {
-                span,
-                expr: Box::new(Expr::Call(direct_entry_require_call(call))),
-            }));
+        (DirectEntrySite::SeqElement(element_idx), Stmt::Expr(expr_stmt)) => {
+            let Expr::Seq(seq) = strip_parens(&expr_stmt.expr) else {
+                return None;
+            };
+            for (idx, element) in seq.exprs.iter().enumerate() {
+                let span = element.span();
+                if idx != element_idx {
+                    out.push(Stmt::Expr(ExprStmt {
+                        span,
+                        expr: element.clone(),
+                    }));
+                } else if matches!(strip_parens(element), Expr::Assign(_)) {
+                    out.extend(unrolled_direct_entry_assignment(
+                        element,
+                        span,
+                        &names.0,
+                        require_ctxt,
+                    )?);
+                } else {
+                    out.push(Stmt::Expr(ExprStmt {
+                        span,
+                        expr: Box::new(Expr::Call(unrolled_call(direct_invoke_call(element)?))),
+                    }));
+                }
+            }
         }
+        (
+            DirectEntrySite::Declarator(decl_idx),
+            Stmt::Decl(swc_core::ecma::ast::Decl::Var(var_decl)),
+        ) => {
+            // Earlier declarators are runtime (the module cache); the call's
+            // declarator and later ones are entry code.
+            let mut entry_decl = (**var_decl).clone();
+            entry_decl.decls.drain(..decl_idx);
+            let init = entry_decl.decls.first_mut()?.init.as_mut()?;
+            let Expr::Call(call) = strip_parens(init) else {
+                return None;
+            };
+            **init = Expr::Call(unrolled_call(call));
+            out.push(Stmt::Decl(swc_core::ecma::ast::Decl::Var(Box::new(
+                entry_decl,
+            ))));
+        }
+        _ => return None,
     }
+    out.extend(trailing.iter().cloned());
+    lower_final_return(&mut out);
     Some(out)
+}
+
+/// The directly invoked call at `site` in `stmt`.
+fn direct_entry_call(stmt: &Stmt, site: DirectEntrySite) -> Option<&CallExpr> {
+    match (site, stmt) {
+        (DirectEntrySite::Expr, Stmt::Expr(expr_stmt)) => direct_invoke_call(&expr_stmt.expr),
+        (DirectEntrySite::SeqElement(idx), Stmt::Expr(expr_stmt)) => {
+            let Expr::Seq(seq) = strip_parens(&expr_stmt.expr) else {
+                return None;
+            };
+            direct_invoke_call(seq.exprs.get(idx)?)
+        }
+        (
+            DirectEntrySite::Declarator(idx),
+            Stmt::Decl(swc_core::ecma::ast::Decl::Var(var_decl)),
+        ) => match strip_parens(var_decl.decls.get(idx)?.init.as_ref()?) {
+            Expr::Call(call) => Some(call),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Whether direct-entry code is only the bare unrolled call: then the entry
+/// module itself is marked as the entry instead of writing entry.js.
+fn is_bare_entry_call(stmts: &[Stmt]) -> bool {
+    matches!(stmts, [Stmt::Expr(ExprStmt { expr, .. })] if matches!(&**expr, Expr::Call(_)))
 }
 
 /// `target = function require(id) {...}(1)` as
@@ -2103,6 +2211,7 @@ fn unrolled_direct_entry_assignment(
     expr: &Expr,
     span: Span,
     taken: &HashSet<Atom>,
+    require_ctxt: SyntaxContext,
 ) -> Option<Vec<Stmt>> {
     let binding = Ident::new_no_ctxt(direct_entry_binding_name(expr, taken), DUMMY_SP);
     let mut consumer = Box::new(expr.clone());
@@ -2116,7 +2225,10 @@ fn unrolled_direct_entry_assignment(
             decls: vec![VarDeclarator {
                 span: DUMMY_SP,
                 name: Pat::Ident(binding.into()),
-                init: Some(Box::new(Expr::Call(direct_entry_require_call(call)))),
+                init: Some(Box::new(Expr::Call(direct_entry_require_call(
+                    call,
+                    require_ctxt,
+                )))),
                 definite: false,
             }],
         }))),
@@ -2129,11 +2241,12 @@ fn unrolled_direct_entry_assignment(
 
 /// The directly invoked call with its function-expression callee replaced by
 /// the unrolled require name; the entry-id argument stays.
-fn direct_entry_require_call(call: CallExpr) -> CallExpr {
+fn direct_entry_require_call(call: CallExpr, require_ctxt: SyntaxContext) -> CallExpr {
     CallExpr {
-        callee: Callee::Expr(Box::new(Expr::Ident(Ident::new_no_ctxt(
+        callee: Callee::Expr(Box::new(Expr::Ident(Ident::new(
             Atom::from(DIRECT_ENTRY_REQUIRE),
             DUMMY_SP,
+            require_ctxt,
         )))),
         ..call
     }
@@ -2172,40 +2285,6 @@ struct IdentNameCollector(HashSet<Atom>);
 impl Visit for IdentNameCollector {
     fn visit_ident(&mut self, ident: &Ident) {
         self.0.insert(ident.sym.clone());
-    }
-}
-
-fn assign_targets_are_global(expr: &Expr, unresolved_ctxt: SyntaxContext) -> bool {
-    match strip_parens(expr) {
-        Expr::Assign(assign) if assign.op == AssignOp::Assign => {
-            let mut finder = LocalTargetFinder {
-                unresolved_ctxt,
-                found: false,
-            };
-            assign.left.visit_with(&mut finder);
-            !finder.found && assign_targets_are_global(&assign.right, unresolved_ctxt)
-        }
-        Expr::Call(_) => true,
-        _ => false,
-    }
-}
-
-/// Finds an identifier that is not a free global, or `this`, in an
-/// assignment target.
-struct LocalTargetFinder {
-    unresolved_ctxt: SyntaxContext,
-    found: bool,
-}
-
-impl Visit for LocalTargetFinder {
-    fn visit_ident(&mut self, ident: &Ident) {
-        if ident.ctxt != self.unresolved_ctxt {
-            self.found = true;
-        }
-    }
-
-    fn visit_this_expr(&mut self, _: &swc_core::ecma::ast::ThisExpr) {
-        self.found = true;
     }
 }
 
@@ -2256,30 +2335,228 @@ fn append_synthetic_entry(
     true
 }
 
-fn emit_webpack5_entry_module(
-    body_stmts: Vec<Stmt>,
-    cm: Lrc<SourceMap>,
-    id_to_filename: &HashMap<usize, String>,
-    str_id_to_filename: &HashMap<String, String>,
-    require_sym: Atom,
-    exports_sym: Option<Atom>,
+/// `__webpack_require__(<id>);` for the module `entry_id` names, with the id
+/// spelled as the table spells it so entry normalization rewrites it to the
+/// module's file.
+fn entry_module_require(module_entries: &[Webpack5ModuleDescriptor<'_>], entry_id: &str) -> Stmt {
+    let id = module_entries
+        .iter()
+        .find(|descriptor| descriptor.id == entry_id)
+        .and_then(|descriptor| descriptor.numeric_id)
+        .map_or_else(|| Expr::from(entry_id), Expr::from);
+    Stmt::Expr(ExprStmt {
+        span: DUMMY_SP,
+        expr: Box::new(Expr::Call(CallExpr {
+            callee: Callee::Expr(Box::new(Expr::Ident(Ident::new_no_ctxt(
+                Atom::from(DIRECT_ENTRY_REQUIRE),
+                DUMMY_SP,
+            )))),
+            args: vec![id.into()],
+            ..Default::default()
+        })),
+    })
+}
+
+/// Emits synthetic entry.js programs, with the input's code around the
+/// bootstrap placed before and after the normalized startup.
+struct EntryEmitter<'a> {
+    cm: &'a Lrc<SourceMap>,
+    id_to_filename: &'a HashMap<usize, String>,
+    str_id_to_filename: &'a HashMap<String, String>,
     positions: SourcePositions,
-) -> Option<MappedCode> {
-    let (mut synthetic_module, _) = normalize_extracted_webpack_entry_module(
-        body_stmts,
-        id_to_filename,
-        str_id_to_filename,
-        require_sym,
-        exports_sym,
-    );
-    apply_fixer(&mut synthetic_module).ok()?;
-    emit_module_with_positions(
-        &synthetic_module,
-        cm,
-        Config::default().with_minify(false),
-        positions,
-    )
-    .ok()
+    surrounding: &'a SurroundingCode,
+}
+
+impl EntryEmitter<'_> {
+    /// The entry's source ranges and code.
+    fn emit(
+        &self,
+        body_stmts: Vec<Stmt>,
+        require_sym: Atom,
+        exports_sym: Option<Atom>,
+    ) -> (Vec<(u32, u32)>, Option<MappedCode>) {
+        let ranges = spans_byte_ranges(
+            self.cm,
+            body_stmts
+                .iter()
+                .map(Spanned::span)
+                .chain(self.surrounding.spans()),
+        );
+        let (mut synthetic_module, _, top_level_mark) = normalize_extracted_webpack_entry_module(
+            body_stmts,
+            self.id_to_filename,
+            self.str_id_to_filename,
+            require_sym,
+            exports_sym,
+        );
+        self.surrounding
+            .place_around(&mut synthetic_module, top_level_mark);
+        if apply_fixer(&mut synthetic_module).is_err() {
+            return (ranges, None);
+        }
+        let code = emit_module_with_positions(
+            &synthetic_module,
+            self.cm.clone(),
+            Config::default().with_minify(false),
+            self.positions,
+        )
+        .ok();
+        (ranges, code)
+    }
+}
+
+/// The input's top-level items before and after a bootstrap IIFE.
+#[derive(Clone, Copy, Default)]
+struct SurroundingItems<'a> {
+    before: &'a [ModuleItem],
+    after: &'a [ModuleItem],
+}
+
+/// Authored code around a bootstrap IIFE: a raw banner or footer, or scripts
+/// concatenated with the bundle. It runs before or after the bundle, so it
+/// goes to entry.js verbatim, in source order around the startup.
+#[derive(Default)]
+struct SurroundingCode {
+    before: Vec<ModuleItem>,
+    after: Vec<ModuleItem>,
+    /// Names the code reads as globals or declares at its top level. Moved
+    /// next to them, entry bindings with these names would capture them.
+    names: HashSet<Atom>,
+    /// Every identifier name in the code, which renamed entry bindings avoid.
+    all_names: HashSet<Atom>,
+}
+
+/// Free names entry normalization gives a meaning of its own: the module's
+/// `require` and `exports` (from the runtime's require and exports object),
+/// `global` and `define.amd` (from `require.g` and `require.amdO`), and the
+/// CommonJS `module`.
+const ENTRY_NORMALIZED_NAMES: [&str; 5] = ["require", "exports", "module", "global", "define"];
+
+impl SurroundingCode {
+    /// `None` when the code declares a name entry normalization uses: the
+    /// entry would read that declaration instead of the bundle's runtime.
+    fn collect(items: SurroundingItems<'_>) -> Option<Self> {
+        // Directives and empty statements alone are no reason to write
+        // entry.js.
+        let is_inert = |item: &ModuleItem| match item {
+            ModuleItem::Stmt(Stmt::Empty(_)) => true,
+            ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) => {
+                matches!(&**expr, Expr::Lit(Lit::Str(_)))
+            }
+            _ => false,
+        };
+        if items.before.iter().chain(items.after).all(is_inert) {
+            return Some(Self::default());
+        }
+
+        let mut probe = Module {
+            span: DUMMY_SP,
+            body: items.before.iter().chain(items.after).cloned().collect(),
+            shebang: None,
+        };
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+        probe.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+        let mut names = SurroundingNameCollector {
+            unresolved_ctxt: SyntaxContext::empty().apply_mark(unresolved_mark),
+            top_level_ctxt: SyntaxContext::empty().apply_mark(top_level_mark),
+            names: HashSet::default(),
+            top_level_names: HashSet::default(),
+            all_names: HashSet::default(),
+        };
+        probe.visit_with(&mut names);
+        if ENTRY_NORMALIZED_NAMES
+            .iter()
+            .any(|name| names.top_level_names.contains(&Atom::from(*name)))
+        {
+            return None;
+        }
+
+        Some(Self {
+            before: items.before.to_vec(),
+            after: items.after.to_vec(),
+            names: names.names,
+            all_names: names.all_names,
+        })
+    }
+
+    fn is_empty(&self) -> bool {
+        self.before.is_empty() && self.after.is_empty()
+    }
+
+    fn spans(&self) -> impl Iterator<Item = Span> + '_ {
+        self.before.iter().chain(&self.after).map(Spanned::span)
+    }
+
+    /// Place the code around the normalized entry `module`. Entry top-level
+    /// bindings were bootstrap locals; one whose name the code uses is
+    /// renamed so neither side captures the other.
+    fn place_around(&self, module: &mut Module, top_level_mark: Mark) {
+        if self.is_empty() {
+            return;
+        }
+        let top_level_ctxt = SyntaxContext::empty().apply_mark(top_level_mark);
+        let mut bindings = ContextSymCollector::new(top_level_ctxt);
+        module.visit_with(&mut bindings);
+        let mut conflicts: Vec<Atom> = bindings
+            .syms
+            .into_iter()
+            .filter(|sym| self.names.contains(sym))
+            .collect();
+        conflicts.sort_unstable();
+        let mut taken = IdentNameCollector::default();
+        module.visit_with(&mut taken);
+        let mut taken = taken.0;
+        taken.extend(self.all_names.iter().cloned());
+        let renames: Vec<BindingRename> = conflicts
+            .into_iter()
+            .map(|sym| {
+                let mut suffix = 1;
+                let mut new = Atom::from(format!("{sym}_{suffix}"));
+                while taken.contains(&new) {
+                    suffix += 1;
+                    new = Atom::from(format!("{sym}_{suffix}"));
+                }
+                taken.insert(new.clone());
+                BindingRename {
+                    old: (sym, top_level_ctxt),
+                    new,
+                }
+            })
+            .collect();
+        rename_bindings_in_module(module, &renames);
+
+        let entry_items = std::mem::take(&mut module.body);
+        module.body = self
+            .before
+            .iter()
+            .cloned()
+            .chain(entry_items)
+            .chain(self.after.iter().cloned())
+            .collect();
+    }
+}
+
+/// Splits the identifiers of code around the bootstrap by resolution.
+struct SurroundingNameCollector {
+    unresolved_ctxt: SyntaxContext,
+    top_level_ctxt: SyntaxContext,
+    /// Free names and top-level bindings.
+    names: HashSet<Atom>,
+    top_level_names: HashSet<Atom>,
+    all_names: HashSet<Atom>,
+}
+
+impl Visit for SurroundingNameCollector {
+    fn visit_ident(&mut self, ident: &Ident) {
+        self.all_names.insert(ident.sym.clone());
+        if ident.ctxt == self.top_level_ctxt {
+            self.top_level_names.insert(ident.sym.clone());
+            self.names.insert(ident.sym.clone());
+        } else if ident.ctxt == self.unresolved_ctxt {
+            self.names.insert(ident.sym.clone());
+        }
+    }
 }
 
 /// Normalize a webpack5 runtime entry body into a standalone module.
@@ -2293,7 +2570,7 @@ fn normalize_extracted_webpack_entry_module(
     str_id_to_filename: &HashMap<String, String>,
     require_sym: Atom,
     exports_sym: Option<Atom>,
-) -> (Module, Mark) {
+) -> (Module, Mark, Mark) {
     let mut synthetic_module = build_module_from_stmts(body_stmts);
     let unresolved_mark = Mark::new();
     let top_level_mark = Mark::new();
@@ -2337,7 +2614,7 @@ fn normalize_extracted_webpack_entry_module(
     };
     synthetic_module.visit_mut_with(&mut normalizer);
 
-    (synthetic_module, unresolved_mark)
+    (synthetic_module, unresolved_mark, top_level_mark)
 }
 
 fn extract_trailing_entry_body(
@@ -2589,32 +2866,39 @@ fn extract_webpack5_startup_region(
         return None;
     }
 
-    // The region may end at an enclosing UMD/AMD factory's `return` —
-    // wrapper plumbing, and illegal at the top level of a module. Keep a
-    // side-effectful argument as an expression statement (a minified library
-    // may start up directly in the return, `return r(5)`); drop inert values
-    // like the minified `return {}`. Lowering runs before the anchor analysis
-    // so an inert `return t` does not count as a wrapper use of the anchor.
-    if matches!(entry_region.last(), Some(Stmt::Return(_))) {
-        if let Some(Stmt::Return(ret)) = entry_region.pop() {
-            if let Some(arg) = ret.arg {
-                if matches!(
-                    strip_parens(&arg),
-                    Expr::Call(_) | Expr::New(_) | Expr::Assign(_) | Expr::Await(_) | Expr::Seq(_)
-                ) {
-                    entry_region.push(Stmt::Expr(ExprStmt {
-                        span: ret.span,
-                        expr: arg,
-                    }));
-                }
-            }
-        }
-    }
+    // Lowering runs before the anchor analysis so an inert `return t` does
+    // not count as a wrapper use of the anchor.
+    lower_final_return(&mut entry_region);
     if entry_region.is_empty() {
         return None;
     }
 
     Some((entry_region, require_sym))
+}
+
+/// Entry code may end at an enclosing UMD/AMD factory's `return`: wrapper
+/// plumbing, and illegal at the top level of a module. Keep a side-effectful
+/// argument as an expression statement (a minified library may start up
+/// directly in the return, `return r(5)`); drop inert values like the
+/// minified `return {}`.
+fn lower_final_return(stmts: &mut Vec<Stmt>) {
+    if !matches!(stmts.last(), Some(Stmt::Return(_))) {
+        return;
+    }
+    let Some(Stmt::Return(ret)) = stmts.pop() else {
+        return;
+    };
+    if let Some(arg) = ret.arg {
+        if matches!(
+            strip_parens(&arg),
+            Expr::Call(_) | Expr::New(_) | Expr::Assign(_) | Expr::Await(_) | Expr::Seq(_)
+        ) {
+            stmts.push(Stmt::Expr(ExprStmt {
+                span: ret.span,
+                expr: arg,
+            }));
+        }
+    }
 }
 
 /// If `stmt` begins with an empty-object declarator (`var x = {}` — webpack's
