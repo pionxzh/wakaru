@@ -327,6 +327,10 @@ from the map, the extractor models Cocos's basename retry against named modules
 in the same table; requests still unresolved after that remain intact because
 Cocos can delegate them to a previously loaded `__require` bundle. Registration
 markers are preserved because removing them would change Cocos runtime behavior.
+The frame's `module` argument does not block export recovery
+(`cocos_registration_frame` in
+[rewrite-assumptions.md](rewrite-assumptions.md)), so a script's own reads and
+writes of its exports become ESM bindings.
 
 Ordinary Browserify numeric module tables use an unambiguous dependency-map
 request path as the emitted filename when every hint for that module agrees.

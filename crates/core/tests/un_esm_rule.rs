@@ -7288,6 +7288,81 @@ fn inlined_typescript_enum_initializers_are_recovered_as_mirrors() {
     assert_valid_esm(&output);
 }
 
+/// producer cocos-creator@2.4.15 web-mobile debug=true (typescript 4.1.3):
+/// every project script is framed by `cc._RF.push(module, uuid, script)` and
+/// `cc._RF.pop()`. The frame keeps the `module` handle but never touches an
+/// export property (`cocos_registration_frame`), so self-reads and writes of
+/// exported bindings still recover as ESM.
+const COCOS_SCRIPT: &str = r#"
+"use strict";
+cc._RF.push(module, "3bef5Le3hpAOpiDGBEs58AA", "a");
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.bump = exports.counter = exports.Mode = exports.Shop = exports.Box = void 0;
+exports.Box = {
+  read: function() {
+    return exports.Box.value;
+  },
+  value: 1
+};
+var Shop;
+(function(Shop) {
+  function make() {
+    return "made";
+  }
+  Shop.make = make;
+})(Shop = exports.Shop || (exports.Shop = {}));
+var Mode;
+(function(Mode) {
+  Mode[Mode["A"] = 0] = "A";
+  Mode[Mode["B"] = 1] = "B";
+})(Mode = exports.Mode || (exports.Mode = {}));
+exports.counter = 0;
+function bump() {
+  exports.counter += 1;
+  return exports.counter;
+}
+exports.bump = bump;
+cc._RF.pop();
+"#;
+
+#[test]
+fn cocos_registration_frame_does_not_block_export_storage() {
+    let output = render_pipeline(COCOS_SCRIPT);
+    assert!(!output.contains("exports"), "{output}");
+    assert!(
+        output.contains("cc._RF.push(module,") && output.contains("cc._RF.pop()"),
+        "the registration frame is kept:\n{output}"
+    );
+    assert!(output.contains("return Box.value"), "{output}");
+    assert!(output.contains("counter += 1"), "{output}");
+    assert!(output.contains("const Mode = {"), "{output}");
+}
+
+#[test]
+fn module_outside_a_registration_frame_still_blocks_export_storage() {
+    // A push without its pop, a push inside a function, and `module` passed
+    // to any other call are not registration frames.
+    let body = "exports.Box = { read: function() { return exports.Box.value; }, value: 1 };";
+    for (open, close) in [
+        ("cc._RF.push(module, \"uuid\", \"a\");", ""),
+        (
+            "function register() { cc._RF.push(module, \"uuid\", \"a\"); } register();",
+            "cc._RF.pop();",
+        ),
+        (
+            "track(module); cc._RF.push(module, \"uuid\", \"a\");",
+            "cc._RF.pop();",
+        ),
+    ] {
+        let frame = format!("{open} … {close}");
+        let input = format!("{open}\n{body}\n{close}\n");
+        let output = apply(&input);
+        assert!(output.contains("exports.Box.value"), "{frame}\n{output}");
+    }
+}
+
 /// producer typescript@5.9.3 module=CommonJS target=ES2020: an exported
 /// namespace takes the enum initializer argument, but `UnEnum` only folds
 /// enum bodies, so the initializer must be recovered as a mirror here.

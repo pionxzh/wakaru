@@ -865,6 +865,33 @@ whole so the copy stays visible.
 
 Level: `standard` and above, where `UnEsm` runs.
 
+### `cocos_registration_frame`
+
+Cocos Creator 2.x frames every project script with
+`cc._RF.push(module, uuid, script)` and `cc._RF.pop()` at the top level of its
+factory. The engine's `push` records `module` and the current
+`module.exports`; `pop` replaces `module.exports` with the script's component
+class only when the recorded object is still in place and has no enumerable
+key. Neither reads or writes an `exports` property, so the `module` argument
+does not make an `exports.x` access observe a value the module did not write.
+The engine's frame behaves this way from 2.0 through 2.4.
+
+Only a direct top-level `push` whose first argument is the free `module`, and
+that a later direct top-level `pop` closes, counts as the frame. Any other use
+of `module` is still an escape of the export surface.
+
+The recovered ESM module keeps the frame, including its `module` argument, so
+it runs only where something defines `module`, as before this assumption. The
+rules that rely on it act only on a module that writes an `exports` property,
+which leaves an enumerable key at `pop`, so `pop` returns without replacing
+`module.exports` in the original as well.
+
+Affects: `UnEnum` (exported enum folds beside the frame) and `UnEsm`
+(export-storage classification ignores the frame's `module` argument).
+
+Level: wherever those rules run; `UnEsm` at `standard` and above for
+single-file input, and at every level in unpack mode.
+
 ### `namespace_interop_source_semantics`
 
 rollup's default `output.interop: "default"` builds every external namespace

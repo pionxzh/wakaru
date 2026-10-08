@@ -13,6 +13,9 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use super::cocos_rf::{
+    enclosing_cc_rf_push_span, first_arg_is_unresolved_module, is_cc_rf_method_callee,
+};
 use super::decl_utils::{collect_decl_names, fresh_binding_ident};
 use super::eval_utils::{
     direct_eval_call_source, js_source_mentions_binding, DirectEvalAnalyzer, EvalCallSource,
@@ -260,111 +263,6 @@ fn process_module_items_for_enum(items: &mut Vec<ModuleItem>, unresolved_mark: O
     }
 }
 
-enum CcRfMarker {
-    Push { skippable_span: Option<Span> },
-    Pop,
-}
-
-/// Return the direct top-level `cc._RF.push` whose matching `pop` encloses
-/// the current enum. A push elsewhere in the AST is not evidence that its
-/// bare `module` argument is the Cocos registration marker for this enum.
-fn enclosing_cc_rf_push_span<'a>(
-    before: impl DoubleEndedIterator<Item = &'a ModuleItem>,
-    after: impl Iterator<Item = &'a ModuleItem>,
-    unresolved_mark: Mark,
-) -> Option<Span> {
-    let mut closed_frames = 0usize;
-    let mut enclosing_push_span = None;
-
-    for item in before.rev() {
-        match direct_cc_rf_marker(item, unresolved_mark) {
-            Some(CcRfMarker::Pop) => closed_frames += 1,
-            Some(CcRfMarker::Push { .. }) if closed_frames > 0 => closed_frames -= 1,
-            Some(CcRfMarker::Push { skippable_span }) => {
-                enclosing_push_span = skippable_span;
-                break;
-            }
-            None => {}
-        }
-    }
-
-    let enclosing_push_span = enclosing_push_span?;
-    let mut opened_frames = 0usize;
-    for item in after {
-        match direct_cc_rf_marker(item, unresolved_mark) {
-            Some(CcRfMarker::Push { .. }) => opened_frames += 1,
-            Some(CcRfMarker::Pop) if opened_frames == 0 => {
-                return Some(enclosing_push_span);
-            }
-            Some(CcRfMarker::Pop) => opened_frames -= 1,
-            None => {}
-        }
-    }
-
-    None
-}
-
-fn direct_cc_rf_marker(item: &ModuleItem, unresolved_mark: Mark) -> Option<CcRfMarker> {
-    let ModuleItem::Stmt(Stmt::Expr(expr_stmt)) = item else {
-        return None;
-    };
-    let Expr::Call(call) = strip_parens(&expr_stmt.expr) else {
-        return None;
-    };
-    let Callee::Expr(callee) = &call.callee else {
-        return None;
-    };
-
-    if is_cc_rf_method_callee(callee, "push", unresolved_mark) {
-        return Some(CcRfMarker::Push {
-            skippable_span: first_arg_is_unresolved_module(call, unresolved_mark)
-                .then_some(call.span),
-        });
-    }
-    if is_cc_rf_method_callee(callee, "pop", unresolved_mark) {
-        return Some(CcRfMarker::Pop);
-    }
-    None
-}
-
-fn is_cc_rf_method_callee(callee: &Expr, method: &str, unresolved_mark: Mark) -> bool {
-    let Expr::Member(method_member) = strip_parens(callee) else {
-        return false;
-    };
-    let MemberProp::Ident(method_name) = &method_member.prop else {
-        return false;
-    };
-    if method_name.sym != *method {
-        return false;
-    }
-    let Expr::Member(rf) = strip_parens(&method_member.obj) else {
-        return false;
-    };
-    let MemberProp::Ident(rf_name) = &rf.prop else {
-        return false;
-    };
-    if rf_name.sym != "_RF" {
-        return false;
-    }
-    let Expr::Ident(cc) = strip_parens(&rf.obj) else {
-        return false;
-    };
-    is_unresolved_named(cc, "cc", unresolved_mark)
-}
-
-fn first_arg_is_unresolved_module(call: &CallExpr, unresolved_mark: Mark) -> bool {
-    let Some(first) = call.args.first() else {
-        return false;
-    };
-    if first.spread.is_some() {
-        return false;
-    }
-    matches!(
-        strip_parens(&first.expr),
-        Expr::Ident(ident) if is_unresolved_named(ident, "module", unresolved_mark)
-    )
-}
-
 fn module_items_reference_public_export<'a>(
     items: impl IntoIterator<Item = &'a ModuleItem>,
     public_name: &Atom,
@@ -454,7 +352,8 @@ impl PublicExportUseFinder<'_> {
     }
 
     /// Cocos 2.x `cc._RF.push(module, uuid, script)` stores the CJS module
-    /// handle for uuid / script-name registration. That bare `module` ident
+    /// handle for uuid / script-name registration
+    /// (`cocos_registration_frame`). That bare `module` ident
     /// is not a read of `exports.<public_name>`. Only the direct top-level
     /// push proven to frame this enum is allowed; nested or out-of-range
     /// lookalikes remain observable CommonJS escapes.

@@ -67,6 +67,7 @@ crates/
         lowered_dynamic_import.rs   — lowered `import()` matcher, run by UnInteropRequireWildcard and by a Phase 2 pass for a cross-module helper (not a registered rule)
         un_esm/export_getters.rs    — swc / esbuild / sucrase export getter helpers and webpack `require.d` lowered to per-name definitions
         un_esm/export_storage.rs    — per-name CommonJS export storage model (getter / mirror / property)
+        cocos_rf.rs                 — Cocos Creator 2.x `cc._RF.push/pop` registration-frame matching shared by UnEnum and export storage
         *.rs                        — one file per transformation rule
       unpacker/
         mod.rs                      — unpack_bundle() dispatch

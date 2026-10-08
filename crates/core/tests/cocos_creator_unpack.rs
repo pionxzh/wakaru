@@ -343,3 +343,62 @@ window.__require = function(e, t, n) { return function() {}; }({
         .expect("named entry should exist");
     assert!(entry.contains("require(\"./2048.js\")"), "{entry}");
 }
+
+fn produced_bundle(name: &str) -> String {
+    std::fs::read_to_string(format!(
+        "{}/tests/bundles/cocos-creator-2.4.15/dist/{name}",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .expect("failed to read the Cocos Creator 2.4.15 fixture")
+}
+
+/// producer cocos-creator@2.4.15 web-mobile debug=true|false: the
+/// registration frame passes `module`, which no longer keeps the exported
+/// self-read, the `exports.counter += 1` write, or the namespace initializer
+/// in CommonJS form (`cocos_registration_frame`).
+#[test]
+fn cocos_creator_2_4_scripts_recover_their_exports() {
+    for name in ["index.debug.js", "index.release.js"] {
+        let output = unpack(
+            &produced_bundle(name),
+            DecompileOptions {
+                filename: name.to_string(),
+                ..Default::default()
+            },
+        )
+        .expect("Cocos Creator 2.4.15 bundle should unpack");
+        assert!(
+            !output.warnings.iter().any(|warning| {
+                warning.kind == wakaru_core::UnpackWarningKind::CommonJsExportUnrecovered
+            }),
+            "{name}: {:#?}",
+            output.warnings
+        );
+        let module = |file: &str| {
+            output
+                .modules
+                .iter()
+                .find(|(module_name, _)| module_name == file)
+                .map(|(_, code)| code.as_str())
+                .unwrap_or_else(|| panic!("{name}: missing {file}"))
+        };
+        let provider = module("a.js");
+        assert!(!provider.contains("exports"), "{name}:\n{provider}");
+        assert!(
+            provider.contains("cc._RF.push(module,"),
+            "{name}:\n{provider}"
+        );
+        assert!(
+            provider.contains("export const Mode = {"),
+            "{name}:\n{provider}"
+        );
+        for export in ["Box", "Shop", "Mode", "counter", "bump"] {
+            assert!(provider.contains(export), "{name}: {export}\n{provider}");
+        }
+        assert!(
+            module("b.js").contains(r#""./a.js""#),
+            "{name}:\n{}",
+            module("b.js")
+        );
+    }
+}

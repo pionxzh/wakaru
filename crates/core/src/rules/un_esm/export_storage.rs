@@ -47,6 +47,7 @@ use crate::js_names::{is_reserved_binding_name, is_valid_identifier_name};
 use crate::rules::decl_utils::{collect_decl_names, fresh_binding_ident};
 
 use crate::analysis::BindingId;
+use crate::rules::cocos_rf::framed_cc_rf_push_calls;
 use crate::rules::constructor_sensitivity::static_member_name;
 use crate::rules::eval_utils::{module_has_with_stmt, DirectEvalPresence};
 use crate::rules::un_enum::is_enum_iife_callee;
@@ -185,6 +186,7 @@ pub(crate) fn analyze_export_storage(
     }
     let mut inventory = Inventory::new(unresolved_mark);
     inventory.export_star_statements = export_star_statement_indices(module, unresolved_mark);
+    inventory.cc_rf_push_calls = framed_cc_rf_push_calls(&module.body, unresolved_mark);
     module.visit_with(&mut inventory);
     if !inventory.saw_exports {
         return ExportStorageReport::NoCommonJsExports;
@@ -497,6 +499,9 @@ struct Inventory {
     /// is an ordinary mirror chain here.
     iife_argument_assigns: HashSet<*const AssignExpr>,
     iife_argument_bins: HashSet<*const BinExpr>,
+    /// Cocos registration calls whose `module` argument does not escape the
+    /// export surface (`cocos_registration_frame`).
+    cc_rf_push_calls: HashSet<*const CallExpr>,
     /// The `exports.x` operands of `L = exports.x || (exports.x = {})`; see
     /// [`MirrorFacts::initializer_reads`].
     initializer_reads: HashSet<*const MemberExpr>,
@@ -528,6 +533,7 @@ impl Inventory {
             chain_binding: None,
             iife_argument_assigns: HashSet::default(),
             iife_argument_bins: HashSet::default(),
+            cc_rf_push_calls: HashSet::default(),
             initializer_reads: HashSet::default(),
         }
     }
@@ -1206,6 +1212,14 @@ impl Visit for Inventory {
             }
         }
         if self.record_export_definition(call) {
+            for arg in call.args.iter().skip(1) {
+                arg.visit_with(self);
+            }
+            return;
+        }
+        if self.cc_rf_push_calls.contains(&(call as *const CallExpr)) {
+            // `cocos_registration_frame`: the frame keeps the `module`
+            // handle, and nothing it does reads or writes an export property.
             for arg in call.args.iter().skip(1) {
                 arg.visit_with(self);
             }
