@@ -7288,6 +7288,97 @@ fn inlined_typescript_enum_initializers_are_recovered_as_mirrors() {
     assert_valid_esm(&output);
 }
 
+/// producer typescript@5.9.3 module=CommonJS target=ES2020: an exported
+/// namespace takes the enum initializer argument, but `UnEnum` only folds
+/// enum bodies, so the initializer must be recovered as a mirror here.
+#[test]
+fn typescript_namespace_initializer_is_recovered_as_a_mirror() {
+    let input = r#"
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.Shop = void 0;
+var Shop;
+(function (Shop) {
+    function make() { return "made"; }
+    Shop.make = make;
+})(Shop || (exports.Shop = Shop = {}));
+"#;
+    let output = render_pipeline(input);
+    assert!(!output.contains("exports"), "{output}");
+    assert!(output.contains("Shop || (Shop = {})"), "{output}");
+    assert_valid_esm(&output);
+
+    // producer typescript@4.3.5 module=CommonJS target=ES2020 writes the
+    // older `L = exports.x || (exports.x = {})`; its IIFE parameter has the
+    // same name as the local, which does not shadow the argument.
+    let input = r#"
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.Shop = void 0;
+var Shop;
+(function (Shop) {
+    function make() { return "made"; }
+    Shop.make = make;
+})(Shop = exports.Shop || (exports.Shop = {}));
+"#;
+    let output = render_pipeline(input);
+    assert!(!output.contains("exports"), "{output}");
+    assert!(output.contains("Shop = Shop || {}"), "{output}");
+    assert_valid_esm(&output);
+}
+
+/// producer cocos-creator@2.4.15 web-mobile debug=false minifies with
+/// uglify-es, which drops the unused enum local and leaves the collapsed
+/// `exports.x || (exports.x = {})` argument. With an enum body it stays for
+/// `UnEnum`, whatever other exports the module has.
+#[test]
+fn collapsed_enum_initializer_is_left_for_un_enum() {
+    let input = r#"
+exports.other = 1;
+(function (e) {
+  e[e.None = 0] = "None";
+})(exports.Mode || (exports.Mode = {}));
+"#;
+    let output = render_pipeline(input);
+    assert!(output.contains("export const Mode = {"), "{output}");
+    assert!(!output.contains("exports"), "{output}");
+    assert_valid_esm(&output);
+
+    // Another read keeps `UnEnum` from folding, so property storage still
+    // recovers the name.
+    let input = r#"
+exports.other = 1;
+(function (e) {
+  e[e.None = 0] = "None";
+})(exports.Mode || (exports.Mode = {}));
+log(exports.Mode.None);
+"#;
+    let output = render_pipeline(input);
+    assert!(!output.contains("exports"), "{output}");
+    assert_valid_esm(&output);
+}
+
+#[test]
+fn namespace_initializer_does_not_hide_a_shadowed_read() {
+    // A read under a parameter with the local's name cannot become that
+    // name, so the export falls back to property storage.
+    let input = r#"
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.peek = exports.Shop = void 0;
+var Shop;
+(function (Shop) {
+    Shop.make = function () { return "made"; };
+})(Shop = exports.Shop || (exports.Shop = {}));
+function peek(Shop) { return [Shop, exports.Shop]; }
+exports.peek = peek;
+"#;
+    let output = render_pipeline(input);
+    assert!(!output.contains("exports"), "{output}");
+    assert!(!output.contains("[Shop, Shop]"), "{output}");
+    assert_valid_esm(&output);
+}
+
 #[test]
 fn mirror_storage_recovers_alongside_a_babel_export_star_loop() {
     // The loop's `exports[key]` would fail the storage gate, but the loop

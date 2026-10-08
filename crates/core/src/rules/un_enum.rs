@@ -999,6 +999,21 @@ fn parse_enum_iife_expr_inner(call: &CallExpr, enum_ident: &Ident) -> Option<Vec
         .then_some(members)
 }
 
+/// Whether `callee`, called with the initializer as its sole argument, is an
+/// enum IIFE whose body the exported fold accepts: enum members with literal
+/// values only. A TypeScript namespace IIFE takes the same argument, but its
+/// body declares functions or assigns other values, and is never folded here.
+pub(crate) fn is_enum_iife_callee(callee: &Expr) -> bool {
+    let callee = strip_parens(callee);
+    let members = if let Some((param, stmts)) = extract_enum_iife_body(callee) {
+        parse_enum_body(stmts, param)
+    } else {
+        extract_enum_iife_expr_body(callee)
+            .and_then(|(param, body)| parse_enum_expr_body(body, param))
+    };
+    members.is_some_and(|members| members.iter().all(enum_member_is_literal_only))
+}
+
 fn extract_enum_iife_expr_body(expr: &Expr) -> Option<(&Ident, &Expr)> {
     match expr {
         Expr::Arrow(arrow) => {

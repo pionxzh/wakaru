@@ -49,6 +49,7 @@ use crate::rules::decl_utils::{collect_decl_names, fresh_binding_ident};
 use crate::analysis::BindingId;
 use crate::rules::constructor_sensitivity::static_member_name;
 use crate::rules::eval_utils::{module_has_with_stmt, DirectEvalPresence};
+use crate::rules::un_enum::is_enum_iife_callee;
 use crate::utils::paren::strip_parens;
 use crate::utils::prototype_members::is_prototype_mutating_member_name;
 
@@ -105,6 +106,9 @@ pub(crate) struct ExportStorageDecision {
     /// module computes itself (not a `require` result or an import), that
     /// binding. The storage rewrite exports it live.
     pub(crate) getter: Option<BindingId>,
+    /// The name is initialized as the argument of an enum IIFE that `UnEnum`
+    /// can fold into the export.
+    pub(crate) enum_initializer: bool,
 }
 
 /// Facts about a mirror name that decide whether its local can replace the
@@ -123,6 +127,10 @@ pub(crate) struct MirrorFacts {
     /// `L = exports.x || (exports.x = {})` or `L || (exports.x = L = {})`,
     /// which `UnEnum` folds later.
     pub(crate) enum_initializer: bool,
+    /// Reads that are the `exports.x` operand of `L = exports.x || (…)`.
+    /// They run in the scope of that write of `L`, so no other binding named
+    /// `L` can shadow it there.
+    pub(crate) initializer_reads: usize,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -285,6 +293,7 @@ struct NameFacts {
     calls: Vec<Site>,
     getters: Vec<(GetterTarget, Site)>,
     enum_initializer: bool,
+    initializer_reads: usize,
 }
 
 impl NameFacts {
@@ -482,11 +491,15 @@ struct Inventory {
     /// The binding a property write chain initializes or assigns, keyed by
     /// the address of the chain's next property assignment.
     chain_binding: Option<(*const AssignExpr, BindingId)>,
-    /// Sole arguments of a call to a function or arrow expression, the
-    /// position TypeScript gives an enum or namespace initializer and the
-    /// only one `UnEnum` folds.
+    /// Sole arguments of an enum IIFE, the position TypeScript gives an enum
+    /// initializer and the only one `UnEnum` folds. A namespace IIFE takes
+    /// the same argument, but `UnEnum` does not fold it, so its initializer
+    /// is an ordinary mirror chain here.
     iife_argument_assigns: HashSet<*const AssignExpr>,
     iife_argument_bins: HashSet<*const BinExpr>,
+    /// The `exports.x` operands of `L = exports.x || (exports.x = {})`; see
+    /// [`MirrorFacts::initializer_reads`].
+    initializer_reads: HashSet<*const MemberExpr>,
 }
 
 impl Inventory {
@@ -515,6 +528,7 @@ impl Inventory {
             chain_binding: None,
             iife_argument_assigns: HashSet::default(),
             iife_argument_bins: HashSet::default(),
+            initializer_reads: HashSet::default(),
         }
     }
 
@@ -720,6 +734,9 @@ impl Inventory {
                         if iife_argument {
                             self.facts(&name).enum_initializer = true;
                         }
+                        if let Expr::Member(read) = strip_parens(&bin.left) {
+                            self.initializer_reads.insert(read as *const MemberExpr);
+                        }
                         &bin.right
                     }
                     _ => return,
@@ -743,6 +760,21 @@ impl Inventory {
     /// it is still the argument of the enum IIFE.
     fn note_enum_initializer(&mut self, bin: &BinExpr) {
         if !self.iife_argument_bins.contains(&(bin as *const BinExpr)) {
+            return;
+        }
+        // Collapsed `exports.x || (exports.x = {})`, after a minifier drops
+        // the unused local.
+        if let Some(name) = self.static_exports_name(&bin.left) {
+            if matches!(strip_parens(&bin.right), Expr::Assign(assign)
+                if assign.op == AssignOp::Assign
+                    && matches!(&assign.left,
+                        AssignTarget::Simple(SimpleAssignTarget::Member(member))
+                            if self.static_exports_name_of(member).as_ref() == Some(&name))
+                    && matches!(strip_parens(&assign.right), Expr::Object(object)
+                        if object.props.is_empty()))
+            {
+                self.facts(&name).enum_initializer = true;
+            }
             return;
         }
         let Expr::Ident(local) = strip_parens(&bin.left) else {
@@ -1159,6 +1191,7 @@ impl Visit for Inventory {
         if let (Callee::Expr(callee), [argument]) = (&call.callee, call.args.as_slice()) {
             if argument.spread.is_none()
                 && matches!(strip_parens(callee), Expr::Fn(_) | Expr::Arrow(_))
+                && is_enum_iife_callee(callee)
             {
                 match strip_parens(&argument.expr) {
                     Expr::Assign(assign) => {
@@ -1229,7 +1262,14 @@ impl Visit for Inventory {
         if self.is_exports(&member.obj) {
             if let Some(name) = self.exports_member_name(member) {
                 let site = self.site(member.span);
-                self.facts(&name).reads.push(site);
+                let initializer = self
+                    .initializer_reads
+                    .contains(&(member as *const MemberExpr));
+                let facts = self.facts(&name);
+                facts.reads.push(site);
+                if initializer {
+                    facts.initializer_reads += 1;
+                }
             }
             return;
         }
@@ -1450,6 +1490,7 @@ fn classify(
         accesses,
         mirror: None,
         getter: None,
+        enum_initializer: facts.enum_initializer,
     };
 
     if let Some((target, site)) = facts.getters.first() {
@@ -1489,6 +1530,7 @@ fn classify(
                     .map(|site| site.module_index)
                     .min(),
                 enum_initializer: facts.enum_initializer,
+                initializer_reads: facts.initializer_reads,
             });
             return decision;
         }
@@ -1820,6 +1862,11 @@ fn storage_candidates<'a>(
         let count = |counts: &HashMap<Atom, usize>| counts.get(&decision.name).copied();
         match decision.storage {
             ExportStorage::Property => {
+                if decision.enum_initializer
+                    && un_enum_folds_collapsed_initializer(decision, identifier_counts)
+                {
+                    continue;
+                }
                 if !(only_top_level_writes
                     && accesses.writes == 1
                     && count(&standalone_writes) == Some(1))
@@ -1876,7 +1923,8 @@ fn mirror_local_replaces_reads(
     if decision.accesses.reads + decision.accesses.calls == 0 {
         return true;
     }
-    let shadowed = is_shadowed(&mirror.binding, identifier_counts);
+    let shadowed = decision.accesses.reads + decision.accesses.calls > mirror.initializer_reads
+        && is_shadowed(&mirror.binding, identifier_counts);
     let early = mirror.lexical
         && mirror
             .first_eager_access
@@ -2125,6 +2173,28 @@ fn seed_aliases(
 }
 
 /// Occurrences of every identifier, binding and reference alike.
+/// A collapsed `exports.x || (exports.x = {})` enum argument is left for
+/// `UnEnum` only when its fold preconditions hold: the initializer is the
+/// name's only read and write, and the public name is a legal binding that no
+/// identifier in the module uses. Otherwise `UnEnum` declines and the
+/// property storage rewrite recovers the name instead.
+fn un_enum_folds_collapsed_initializer(
+    decision: &ExportStorageDecision,
+    identifier_counts: &HashMap<BindingId, usize>,
+) -> bool {
+    let accesses = &decision.accesses;
+    accesses.reads == 1
+        && accesses.writes == 1
+        && accesses.calls == 0
+        && accesses.other_writes == 0
+        && accesses.getters == 0
+        && is_valid_identifier_name(&decision.name)
+        && !is_reserved_binding_name(&decision.name)
+        && !identifier_counts
+            .keys()
+            .any(|(sym, _)| *sym == decision.name)
+}
+
 fn count_identifiers(module: &Module) -> HashMap<BindingId, usize> {
     struct Counter(HashMap<BindingId, usize>);
     impl Visit for Counter {

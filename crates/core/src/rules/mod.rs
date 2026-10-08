@@ -49,7 +49,7 @@ mod un_curly_braces;
 mod un_define_property;
 mod un_destructuring;
 mod un_double_negation;
-mod un_enum;
+pub(crate) mod un_enum;
 mod un_es6_class;
 mod un_esbuild_cjs_wrapper;
 mod un_esm;

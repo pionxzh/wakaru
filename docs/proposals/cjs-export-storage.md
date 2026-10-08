@@ -540,9 +540,17 @@ How B was placed and where it differs from the design above:
 - **TypeScript enums.** Both enum and namespace argument shapes,
   `L = exports.x || (exports.x = {})` and `L || (exports.x = L = {})`, stay
   for `UnEnum`, which folds them into `const L = {...}` with an export. Only
-  while they are still the argument of the enum IIFE: Terser can inline the
-  IIFE (`(L = exports.x || (exports.x = {})).A = "A"`), `UnEnum` does not
-  fold that, and the name is an ordinary mirror instead.
+  while they are the argument of an IIFE whose body `UnEnum` folds (enum
+  members with literal values): Terser can inline the IIFE
+  (`(L = exports.x || (exports.x = {})).A = "A"`), and a namespace IIFE
+  declares functions or assigns other values. `UnEnum` folds neither, and the
+  name is an ordinary mirror instead. The `exports.x` read in
+  `L = exports.x || (…)` runs in the scope of that write of `L`, so a
+  namespace IIFE parameter named `L` does not shadow it. A minifier that
+  drops the unused local leaves `exports.x || (exports.x = {})`; that name
+  stays for `UnEnum` only when the initializer is its only access and no
+  identifier in the module has its name, the conditions under which `UnEnum`
+  folds it. Otherwise property storage recovers it.
 - **`UnAssignmentMerging`.** A chain with an `exports` property target and a
   resolved local target stays whole, including inside functions. A chain
   that also writes another export name, whose names no model owns (for
