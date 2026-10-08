@@ -6,7 +6,8 @@ again. The preferred long-term direction is option C; the `.mjs` layouts
 rename too many files. C renames files in every unpack output tree that
 keeps a CommonJS module, so it is a next-major candidate. Revisit when
 users report that recovered output breaks after a rebuild, or when a major
-release is cut.
+release is cut. Discussion:
+[#250](https://github.com/pionxzh/wakaru/issues/250).
 
 ## Problem
 
