@@ -176,7 +176,7 @@ export { Algo };
 
 #[test]
 fn binding_alias_chain_stays_constructible_across_modules() {
-    // shape: hypothetical
+    // shape: wild-observed
     let modules = unpack(
         &[
             ("gadget-def.js", GADGET_DEF),
@@ -198,7 +198,7 @@ new d.init(1, 2);
 
 #[test]
 fn member_new_stays_constructible_across_modules() {
-    // shape: hypothetical
+    // shape: wild-observed
     let modules = unpack(
         &[
             (
