@@ -473,7 +473,9 @@ tradeoff is named
 
 The anonymous, synchronous wrapper must have one ordinary superclass argument.
 The extends call must use the exact resolved constructor and wrapper parameter,
-with a proven TypeScript helper or a tslib namespace. Helper aliases,
+with a proven TypeScript helper or a tslib namespace. In a Cocos Creator
+project script, the free `__extends` counts as the helper
+([`cocos_registration_frame`](rewrite-assumptions.md#cocos_registration_frame)). Helper aliases,
 namespaces, the superclass parameter and the constructor require single,
 stable declarations; namespaces must have only static member reads. Direct
 `eval` or `with` disables this new path. The module's use index is shared with

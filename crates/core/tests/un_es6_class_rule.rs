@@ -2936,6 +2936,58 @@ fn tsc_field_initializers_recover_across_helper_delivery_and_minification() {
     }
 }
 
+/// producer cocos-creator@2.4.15 web-mobile debug=true: a project script
+/// compiled by its bundled TypeScript calls the engine's global `__extends`.
+const COCOS_SCRIPT: &str = r#"
+cc._RF.push(module, "uuid", "b");
+var Main = (function (_super) {
+    __extends(Main, _super);
+    function Main() {
+        var _this = null !== _super && _super.apply(this, arguments) || this;
+        _this.label = "main";
+        return _this;
+    }
+    Main.prototype.start = function () { return _super.prototype.start.call(this); };
+    return Main;
+}(cc.Component));
+exports.default = Main;
+cc._RF.pop();
+"#;
+
+#[test]
+fn cocos_registration_frame_proves_the_global_extends_helper() {
+    let expected = r#"
+cc._RF.push(module, "uuid", "b");
+class Main extends cc.Component {
+    constructor(...args) { super(...args); this.label = "main"; }
+    start() { return super.start(); }
+}
+exports.default = Main;
+cc._RF.pop();
+"#;
+    assert_eq_normalized(&apply(COCOS_SCRIPT), expected);
+    let minimal = apply_minimal(COCOS_SCRIPT);
+    assert!(!minimal.contains("class Main"), "{minimal}");
+}
+
+#[test]
+fn global_extends_needs_a_closed_registration_frame_and_no_writes() {
+    for source in [
+        COCOS_SCRIPT.replace("cc._RF.pop();", ""),
+        COCOS_SCRIPT.replace("cc._RF.push(module, \"uuid\", \"b\");", ""),
+        COCOS_SCRIPT.replace("cc._RF.push(module,", "cc._RF.push(other,"),
+        COCOS_SCRIPT.replace("exports.default = Main;", "__extends = custom;"),
+        COCOS_SCRIPT.replace(
+            "exports.default = Main;",
+            "function swap() { __extends = custom; }",
+        ),
+        format!("var __extends = custom;{COCOS_SCRIPT}"),
+    ] {
+        let output = apply(&source);
+        assert!(!output.contains("class Main extends"), "{output}");
+    }
+}
+
 #[test]
 fn extends_import_cleanup_respects_dynamic_lookup_and_binding_identity() {
     let input = ts_default_inheritance("") + "function inspect() { return eval(' __extends '); }";

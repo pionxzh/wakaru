@@ -24,6 +24,7 @@ use super::callability::{
     pinned_binding_keys_with_alias_sources, required_bindings_from_effects, CallabilityIndex,
     GuardedCallEffect,
 };
+use super::cocos_rf::framed_cc_rf_push_calls;
 use super::decl_utils::{
     class_accessor_descriptor_attributes, class_method_has_invalid_signature,
     ensure_setter_has_value_param, ClassAccessorDescriptorAttributes,
@@ -189,7 +190,8 @@ impl Es6ClassHelperContext {
         unresolved_mark: Mark,
         local_helpers: &LocalHelperContext,
     ) -> Self {
-        let ts_extends_helpers = local_helpers.ts_helpers_of_kind(TsHelperKind::Extends);
+        let mut ts_extends_helpers = local_helpers.ts_helpers_of_kind(TsHelperKind::Extends);
+        ts_extends_helpers.extend(cocos_global_extends_helper(items, unresolved_mark));
         let mut inherits_helpers: HashSet<BindingKey> = local_helpers
             .helpers_of_kind(TranspilerHelperKind::Inherits)
             .into_keys()
@@ -231,6 +233,7 @@ impl Es6ClassHelperContext {
             &tslib_namespaces,
             unresolved_mark,
         ));
+        ts_extends_helpers.extend(cocos_global_extends_helper(items, unresolved_mark));
         let mut inherits_helpers = collect_inherits_helpers_from_items(items);
         inherits_helpers.extend(ts_extends_helpers.iter().cloned());
 
@@ -987,6 +990,17 @@ fn rebuild_flattened_class_wrapper<T: StmtSlot>(
     let mut var = alias.clone();
     var.decls[0].init = Some(Box::new(wrapper));
     Some(var)
+}
+
+/// cocos_registration_frame: the engine installs tslib's `__extends` as a
+/// global, so a Cocos project script's free `__extends` is that helper.
+fn cocos_global_extends_helper(items: &[ModuleItem], unresolved_mark: Mark) -> Option<BindingKey> {
+    (!framed_cc_rf_push_calls(items, unresolved_mark).is_empty()).then(|| {
+        (
+            "__extends".into(),
+            SyntaxContext::empty().apply_mark(unresolved_mark),
+        )
+    })
 }
 
 fn collect_ts_extends_helpers_from_stmts(stmts: &[Stmt]) -> HashSet<BindingKey> {
@@ -1768,6 +1782,7 @@ fn try_iife_to_class(
                 ts_extends_helpers,
                 tslib_namespaces,
                 uses,
+                unresolved_mark,
             );
         }
     }
@@ -2492,6 +2507,7 @@ fn recover_ts_default_inheritance(
     helpers: &HashSet<BindingKey>,
     namespaces: &HashSet<BindingKey>,
     uses: &BindingUseIndex,
+    unresolved_mark: Mark,
 ) {
     if base.sym == "arguments"
         || !uses.has_single_declaration(&base.to_id())
@@ -2535,8 +2551,12 @@ fn recover_ts_default_inheritance(
         { return false; }
         let Callee::Expr(callee) = &call.callee else { return false; };
         match strip_parens(callee) {
+            // A free helper is the Cocos engine global; see
+            // `cocos_global_extends_helper`.
             Expr::Ident(id) => helpers.contains(&id.to_id())
-                && uses.has_single_declaration(&id.to_id()) && !uses.has_direct_write(&id.to_id()),
+                && (uses.has_single_declaration(&id.to_id())
+                    || id.ctxt.outer() == unresolved_mark && !uses.has_declaration(&id.to_id()))
+                && !uses.has_direct_write(&id.to_id()),
             Expr::Member(member) if matches!(&member.prop, MemberProp::Ident(name) if name.sym == "__extends") =>
                 matches!(strip_parens(&member.obj), Expr::Ident(id) if namespaces.contains(&id.to_id())
                     && uses.has_single_declaration(&id.to_id()) && uses.has_only_static_member_reads_any(&id.to_id())),

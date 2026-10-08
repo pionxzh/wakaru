@@ -892,8 +892,15 @@ rules that rely on it act only on a module that writes an `exports` property,
 which leaves an enumerable key at `pop`, so `pop` returns without replacing
 `module.exports` in the original as well.
 
-Affects: `UnEnum` (exported enum folds beside the frame) and `UnEsm`
-(export-storage classification ignores the frame's `module` argument).
+The engine also installs tslib's helpers as globals (`window.__extends`,
+`window.__decorate`, ...). The editor's compiled scripts declare no helpers
+of their own (producer cocos-creator@2.4.15 web-mobile), so a framed script
+calls them as free identifiers. In a module that has a closed frame, a free `__extends`
+that the module never writes is that helper.
+
+Affects: `UnEnum` (exported enum folds beside the frame), `UnEsm`
+(export-storage classification ignores the frame's `module` argument), and
+`UnEs6Class` (the free `__extends` proves TypeScript default inheritance).
 
 Level: wherever those rules run; `UnEsm` at `standard` and above for
 single-file input, and at every level in unpack mode.
