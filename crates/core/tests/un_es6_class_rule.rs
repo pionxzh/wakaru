@@ -2988,6 +2988,121 @@ fn global_extends_needs_a_closed_registration_frame_and_no_writes() {
     }
 }
 
+/// producer cocos-creator@2.4.15 web-mobile debug=true: a component keeps
+/// its decorator calls at the end of the wrapper.
+const COCOS_COMPONENT: &str = r#"
+cc._RF.push(module, "uuid", "b");
+var Main = (function (_super) {
+    __extends(Main, _super);
+    function Main() {
+        var _this = null !== _super && _super.apply(this, arguments) || this;
+        _this.label = "main";
+        return _this;
+    }
+    Main.prototype.start = function () { return this.label; };
+    __decorate([property], Main.prototype, "label", void 0);
+    Main = __decorate([ccclass], Main);
+    return Main;
+}(cc.Component));
+exports.default = Main;
+cc._RF.pop();
+"#;
+
+/// producer cocos-creator@2.4.15 web-mobile debug=false: minification returns
+/// the class decorator's result and renames the inner constructor.
+const COCOS_MINIFIED_COMPONENT: &str = r#"
+cc._RF.push(module, "uuid", "b");
+var a = function (e) {
+    function t() {
+        var t = null !== e && e.apply(this, arguments) || this;
+        t.label = "main";
+        return t;
+    }
+    __extends(t, e);
+    t.prototype.start = function () { return this.label; };
+    __decorate([u], t.prototype, "label", void 0);
+    return __decorate([c], t);
+}(cc.Component);
+exports.default = a;
+cc._RF.pop();
+"#;
+
+#[test]
+fn cocos_component_wrapper_recovers_as_an_anonymous_decorated_class() {
+    let expected = r#"
+cc._RF.push(module, "uuid", "b");
+var Main = class extends cc.Component {
+    constructor(...args) { super(...args); this.label = "main"; }
+    start() { return this.label; }
+};
+__decorate([property], Main.prototype, "label", void 0);
+Main = __decorate([ccclass], Main);
+exports.default = Main;
+cc._RF.pop();
+"#;
+    assert_eq_normalized(&apply(COCOS_COMPONENT), expected);
+    let expected = r#"
+cc._RF.push(module, "uuid", "b");
+var a = class extends cc.Component {
+    constructor(...args) { super(...args); this.label = "main"; }
+    start() { return this.label; }
+};
+__decorate([u], a.prototype, "label", void 0);
+a = __decorate([c], a);
+exports.default = a;
+cc._RF.pop();
+"#;
+    assert_eq_normalized(&apply(COCOS_MINIFIED_COMPONENT), expected);
+    assert!(!apply_minimal(COCOS_COMPONENT).contains("class extends"));
+}
+
+#[test]
+fn decorated_class_members_read_the_reassigned_outer_binding() {
+    // The wrapper reassigns its inner constructor, so a factory that names it
+    // builds the decorated class; the outer binding carries the same value.
+    let factory = "Main.make = function () { return new Main(); }; __decorate";
+    let source = COCOS_COMPONENT.replacen("__decorate", factory, 1);
+    let output = apply(&source);
+    assert!(output.contains("var Main = class extends"), "{output}");
+    assert!(output.contains("static make() {"), "{output}");
+    assert!(output.contains("return new Main();"), "{output}");
+    // Returning the decorator's result leaves the inner constructor
+    // undecorated, which no outer binding holds.
+    let source = COCOS_MINIFIED_COMPONENT
+        .replace("var a =", "var t =")
+        .replace("exports.default = a;", "exports.default = t;")
+        .replacen(
+            "__decorate",
+            "t.make = function () { return new t(); }; __decorate",
+            1,
+        );
+    let output = apply(&source);
+    assert!(!output.contains("class extends"), "{output}");
+}
+
+#[test]
+fn decorator_tail_stays_in_the_wrapper_when_it_cannot_move() {
+    for source in [
+        COCOS_COMPONENT.replace("cc._RF.pop();", ""),
+        COCOS_COMPONENT.replace("exports.default = Main;", "__decorate = custom;"),
+        format!("var __decorate = custom;{COCOS_COMPONENT}"),
+        // The superclass parameter and the wrapper's `this` stay behind.
+        COCOS_COMPONENT.replace("[property]", "[property(_super)]"),
+        COCOS_COMPONENT.replace("[property]", "[property(this)]"),
+        // Moved next to `a`, these would name the outer binding.
+        COCOS_MINIFIED_COMPONENT.replace("[u]", "[u(function (a) { return a; })]"),
+        COCOS_MINIFIED_COMPONENT.replace("[u]", "[u(a)]"),
+        // Not a member decorator call.
+        COCOS_COMPONENT.replace(
+            "Main.prototype, \"label\", void 0",
+            "other, \"label\", void 0",
+        ),
+    ] {
+        let output = apply(&source);
+        assert!(!output.contains("class extends"), "{output}");
+    }
+}
+
 #[test]
 fn extends_import_cleanup_respects_dynamic_lookup_and_binding_identity() {
     let input = ts_default_inheritance("") + "function inspect() { return eval(' __extends '); }";

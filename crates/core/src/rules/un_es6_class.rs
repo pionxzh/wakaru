@@ -8,13 +8,13 @@ use swc_core::common::util::take::Take;
 use swc_core::common::{Mark, Span, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, AwaitExpr, BinaryOp,
-    BindingIdent, CallExpr, Callee, Class, ClassDecl, ClassMember, ClassMethod, ClassProp,
-    ComputedPropName, Constructor, Decl, ExportDecl, ExportSpecifier, Expr, ExprOrSpread, ExprStmt,
-    FnDecl, FnExpr, Function, FunctionBody, Ident, IdentName, ImportSpecifier, Lit, MemberExpr,
-    MemberProp, MetaPropExpr, MethodKind, Module, ModuleDecl, ModuleExportName, ModuleItem, Param,
-    ParamOrTsParamProp, Pat, PropName, RestPat, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt,
-    Super, SuperProp, SuperPropExpr, ThisExpr, UpdateOp, VarDecl, VarDeclKind, VarDeclOrExpr,
-    VarDeclarator, YieldExpr,
+    BindingIdent, CallExpr, Callee, Class, ClassDecl, ClassExpr, ClassMember, ClassMethod,
+    ClassProp, ComputedPropName, Constructor, Decl, ExportDecl, ExportSpecifier, Expr,
+    ExprOrSpread, ExprStmt, FnDecl, FnExpr, Function, FunctionBody, Ident, IdentName,
+    ImportSpecifier, Lit, MemberExpr, MemberProp, MetaPropExpr, MethodKind, Module, ModuleDecl,
+    ModuleExportName, ModuleItem, Param, ParamOrTsParamProp, Pat, PropName, RestPat, ReturnStmt,
+    SeqExpr, SimpleAssignTarget, Stmt, Super, SuperProp, SuperPropExpr, ThisExpr, UpdateOp,
+    VarDecl, VarDeclKind, VarDeclOrExpr, VarDeclarator, YieldExpr,
 };
 use swc_core::ecma::utils::find_pat_ids;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -175,6 +175,8 @@ fn used_ts_extends_imports(
 struct Es6ClassHelperContext {
     inherits_helpers: HashSet<BindingKey>,
     ts_extends_helpers: HashSet<BindingKey>,
+    /// `__decorate` bindings whose wrapper tail may move out of the IIFE.
+    ts_decorate_helpers: HashSet<BindingKey>,
     tslib_namespaces: HashSet<BindingKey>,
     set_prototype_of_helpers: HashSet<BindingKey>,
     create_class_helpers: HashSet<BindingKey>,
@@ -191,7 +193,7 @@ impl Es6ClassHelperContext {
         local_helpers: &LocalHelperContext,
     ) -> Self {
         let mut ts_extends_helpers = local_helpers.ts_helpers_of_kind(TsHelperKind::Extends);
-        ts_extends_helpers.extend(cocos_global_extends_helper(items, unresolved_mark));
+        ts_extends_helpers.extend(cocos_global_helper(items, unresolved_mark, "__extends"));
         let mut inherits_helpers: HashSet<BindingKey> = local_helpers
             .helpers_of_kind(TranspilerHelperKind::Inherits)
             .into_keys()
@@ -214,6 +216,9 @@ impl Es6ClassHelperContext {
         Self {
             inherits_helpers,
             ts_extends_helpers,
+            ts_decorate_helpers: cocos_global_helper(items, unresolved_mark, "__decorate")
+                .into_iter()
+                .collect(),
             tslib_namespaces: local_helpers.tslib_namespaces().clone(),
             set_prototype_of_helpers: collect_set_prototype_of_helpers_from_items(items),
             create_class_helpers,
@@ -233,13 +238,16 @@ impl Es6ClassHelperContext {
             &tslib_namespaces,
             unresolved_mark,
         ));
-        ts_extends_helpers.extend(cocos_global_extends_helper(items, unresolved_mark));
+        ts_extends_helpers.extend(cocos_global_helper(items, unresolved_mark, "__extends"));
         let mut inherits_helpers = collect_inherits_helpers_from_items(items);
         inherits_helpers.extend(ts_extends_helpers.iter().cloned());
 
         Self {
             inherits_helpers,
             ts_extends_helpers,
+            ts_decorate_helpers: cocos_global_helper(items, unresolved_mark, "__decorate")
+                .into_iter()
+                .collect(),
             tslib_namespaces,
             set_prototype_of_helpers: collect_set_prototype_of_helpers_from_items(items),
             create_class_helpers: collect_create_class_helpers_from_items(items, unresolved_mark),
@@ -262,6 +270,7 @@ impl Es6ClassHelperContext {
         Self {
             inherits_helpers,
             ts_extends_helpers,
+            ts_decorate_helpers: HashSet::default(),
             tslib_namespaces,
             set_prototype_of_helpers: collect_set_prototype_of_helpers_from_stmts(stmts),
             create_class_helpers: collect_create_class_helpers_from_stmts(stmts, unresolved_mark),
@@ -275,6 +284,8 @@ impl Es6ClassHelperContext {
             .extend(other.inherits_helpers.iter().cloned());
         self.ts_extends_helpers
             .extend(other.ts_extends_helpers.iter().cloned());
+        self.ts_decorate_helpers
+            .extend(other.ts_decorate_helpers.iter().cloned());
         self.tslib_namespaces
             .extend(other.tslib_namespaces.iter().cloned());
         self.set_prototype_of_helpers
@@ -407,28 +418,39 @@ impl VisitMut for UnEs6ClassInner {
         );
         loop {
             let callability = CallabilityIndex::collect_stmts_with_roots(stmts, &self.pin_roots);
+            let convert = |var_decl: &VarDecl| {
+                try_iife_to_class(
+                    var_decl,
+                    &scoped_inner.reused_var_bindings,
+                    &callability,
+                    &scoped_inner.helpers.inherits_helpers,
+                    &scoped_inner.helpers.tslib_namespaces,
+                    &scoped_inner.helpers.create_class_helpers,
+                    &scoped_inner.helpers.call_super_helpers,
+                    &scoped_inner.helpers.class_call_check_helpers,
+                    &scoped_inner.helpers.set_prototype_of_helpers,
+                    &scoped_inner.helpers.ts_extends_helpers,
+                    scoped_inner.inheritance_uses.as_deref(),
+                    self.unresolved_mark,
+                    self.rewrite_level,
+                    var_decl.span,
+                )
+            };
             let mut converted_this_pass = false;
             let old = std::mem::take(stmts);
             for stmt in old {
                 match stmt {
                     Stmt::Decl(Decl::Var(ref var_decl)) => {
-                        if let Some(class_decl) = try_iife_to_class(
-                            var_decl,
-                            &scoped_inner.reused_var_bindings,
-                            &callability,
-                            &scoped_inner.helpers.inherits_helpers,
-                            &scoped_inner.helpers.tslib_namespaces,
-                            &scoped_inner.helpers.create_class_helpers,
-                            &scoped_inner.helpers.call_super_helpers,
-                            &scoped_inner.helpers.class_call_check_helpers,
-                            &scoped_inner.helpers.set_prototype_of_helpers,
-                            &scoped_inner.helpers.ts_extends_helpers,
-                            scoped_inner.inheritance_uses.as_deref(),
-                            self.unresolved_mark,
-                            self.rewrite_level,
-                            var_decl.span,
-                        ) {
+                        if let Some(class_decl) = convert(var_decl) {
                             stmts.push(Stmt::Decl(Decl::Class(class_decl)));
+                            converted_this_pass = true;
+                        } else if let Some(converted) = try_decorated_iife_to_class(
+                            var_decl,
+                            &scoped_inner.helpers.ts_decorate_helpers,
+                            scoped_inner.inheritance_uses.as_deref(),
+                            convert,
+                        ) {
+                            stmts.extend(converted);
                             converted_this_pass = true;
                         } else {
                             stmts.push(stmt);
@@ -486,28 +508,39 @@ impl VisitMut for UnEs6ClassInner {
         loop {
             let roots = super::callability::pinned_binding_keys(items, &self.pin_exports);
             let callability = CallabilityIndex::collect_module_items_with_roots(items, &roots);
+            let convert = |var_decl: &VarDecl| {
+                try_iife_to_class(
+                    var_decl,
+                    &self.reused_var_bindings,
+                    &callability,
+                    &self.helpers.inherits_helpers,
+                    &self.helpers.tslib_namespaces,
+                    &self.helpers.create_class_helpers,
+                    &self.helpers.call_super_helpers,
+                    &self.helpers.class_call_check_helpers,
+                    &self.helpers.set_prototype_of_helpers,
+                    &self.helpers.ts_extends_helpers,
+                    self.inheritance_uses.as_deref(),
+                    self.unresolved_mark,
+                    self.rewrite_level,
+                    var_decl.span,
+                )
+            };
             let mut converted_this_pass = false;
             let old = std::mem::take(items);
             for item in old {
                 match item {
                     ModuleItem::Stmt(Stmt::Decl(Decl::Var(ref var_decl))) => {
-                        if let Some(class_decl) = try_iife_to_class(
-                            var_decl,
-                            &self.reused_var_bindings,
-                            &callability,
-                            &self.helpers.inherits_helpers,
-                            &self.helpers.tslib_namespaces,
-                            &self.helpers.create_class_helpers,
-                            &self.helpers.call_super_helpers,
-                            &self.helpers.class_call_check_helpers,
-                            &self.helpers.set_prototype_of_helpers,
-                            &self.helpers.ts_extends_helpers,
-                            self.inheritance_uses.as_deref(),
-                            self.unresolved_mark,
-                            self.rewrite_level,
-                            var_decl.span,
-                        ) {
+                        if let Some(class_decl) = convert(var_decl) {
                             items.push(ModuleItem::Stmt(Stmt::Decl(Decl::Class(class_decl))));
+                            converted_this_pass = true;
+                        } else if let Some(converted) = try_decorated_iife_to_class(
+                            var_decl,
+                            &self.helpers.ts_decorate_helpers,
+                            self.inheritance_uses.as_deref(),
+                            convert,
+                        ) {
+                            items.extend(converted.into_iter().map(ModuleItem::Stmt));
                             converted_this_pass = true;
                         } else {
                             items.push(item);
@@ -517,22 +550,7 @@ impl VisitMut for UnEs6ClassInner {
                         span: export_span,
                         decl: Decl::Var(ref var_decl),
                     })) => {
-                        if let Some(class_decl) = try_iife_to_class(
-                            var_decl,
-                            &self.reused_var_bindings,
-                            &callability,
-                            &self.helpers.inherits_helpers,
-                            &self.helpers.tslib_namespaces,
-                            &self.helpers.create_class_helpers,
-                            &self.helpers.call_super_helpers,
-                            &self.helpers.class_call_check_helpers,
-                            &self.helpers.set_prototype_of_helpers,
-                            &self.helpers.ts_extends_helpers,
-                            self.inheritance_uses.as_deref(),
-                            self.unresolved_mark,
-                            self.rewrite_level,
-                            var_decl.span,
-                        ) {
+                        if let Some(class_decl) = convert(var_decl) {
                             items.push(ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(
                                 ExportDecl {
                                     span: export_span,
@@ -992,12 +1010,16 @@ fn rebuild_flattened_class_wrapper<T: StmtSlot>(
     Some(var)
 }
 
-/// cocos_registration_frame: the engine installs tslib's `__extends` as a
-/// global, so a Cocos project script's free `__extends` is that helper.
-fn cocos_global_extends_helper(items: &[ModuleItem], unresolved_mark: Mark) -> Option<BindingKey> {
+/// cocos_registration_frame: the engine installs tslib's helpers as globals,
+/// so a Cocos project script's free `__extends` / `__decorate` is that helper.
+fn cocos_global_helper(
+    items: &[ModuleItem],
+    unresolved_mark: Mark,
+    name: &str,
+) -> Option<BindingKey> {
     (!framed_cc_rf_push_calls(items, unresolved_mark).is_empty()).then(|| {
         (
-            "__extends".into(),
+            name.into(),
             SyntaxContext::empty().apply_mark(unresolved_mark),
         )
     })
@@ -1836,6 +1858,292 @@ fn try_iife_to_class(
     })
 }
 
+/// A wrapper IIFE whose TypeScript decorator calls follow the class members:
+///
+/// ```js
+/// var C = function (_super) {
+///     ...
+///     __decorate([property], C.prototype, "label", void 0);
+///     C = __decorate([ccclass], C);
+///     return C;          // minified: `return __decorate([ccclass], C);`
+/// }(Base);
+/// ```
+struct DecoratedWrapper {
+    /// The same wrapper ending in `return C;`, without the decorator calls.
+    peeled: VarDecl,
+    /// The decorator calls retargeted to the outer binding, with the class
+    /// decorator's result assigned to it.
+    tail: Vec<Stmt>,
+    /// Whether the wrapper assigned the class decorator's result to the inner
+    /// constructor, so members that read it saw the decorated class.
+    inner_reassigned: bool,
+}
+
+fn peel_decorated_wrapper(
+    var: &VarDecl,
+    decorate_helpers: &HashSet<BindingKey>,
+    uses: Option<&BindingUseIndex>,
+) -> Option<DecoratedWrapper> {
+    if decorate_helpers.is_empty() {
+        return None;
+    }
+    let uses = uses?;
+    let [declarator] = var.decls.as_slice() else {
+        return None;
+    };
+    let Pat::Ident(BindingIdent { id: outer, .. }) = &declarator.name else {
+        return None;
+    };
+    let outer = outer.clone();
+    let call = extract_iife_call(declarator.init.as_deref()?)?;
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let (params, stmts): (Vec<&Pat>, &[Stmt]) = match strip_parens(callee) {
+        Expr::Fn(function) => (
+            function
+                .function
+                .params
+                .iter()
+                .map(|param| &param.pat)
+                .collect(),
+            &function.function.body.as_ref()?.stmts,
+        ),
+        Expr::Arrow(arrow) => match &*arrow.body {
+            ArrowFunctionBody::FunctionBody(body) => (arrow.params.iter().collect(), &body.stmts),
+            ArrowFunctionBody::Expr(_) => return None,
+        },
+        _ => return None,
+    };
+    let inner = binding_key(find_inner_constructor_ident(stmts)?);
+    let is_inner =
+        |expr: &Expr| matches!(strip_parens(expr), Expr::Ident(id) if binding_key(id) == inner);
+    // `__decorate([...], target, ...)` through the proven helper; the helper
+    // must stay unwritten in the module.
+    let decorate_call = |expr: &Expr, target: &dyn Fn(&Expr) -> bool, arity: usize| {
+        let Expr::Call(call) = strip_parens(expr) else {
+            return false;
+        };
+        matches!(&call.callee, Callee::Expr(callee) if matches!(strip_parens(callee),
+            Expr::Ident(id) if decorate_helpers.contains(&binding_key(id))
+                && !uses.has_declaration(&binding_key(id))
+                && !uses.has_direct_write(&binding_key(id))))
+            && call.args.len() == arity
+            && call.args.iter().all(|arg| arg.spread.is_none())
+            && matches!(strip_parens(&call.args[0].expr), Expr::Array(_))
+            && target(&call.args[1].expr)
+    };
+    let is_member_target = |expr: &Expr| {
+        is_inner(expr)
+            || matches!(strip_parens(expr), Expr::Member(member) if is_inner(&member.obj)
+                && matches!(&member.prop, MemberProp::Ident(name) if name.sym == "prototype"))
+    };
+
+    // Walk back from the return: the class decorator, then member decorators.
+    let (Stmt::Return(ret), rest) = stmts.split_last()? else {
+        return None;
+    };
+    let returned = ret.arg.as_deref()?;
+    let (class_decorator, inner_reassigned, mut end) = if is_inner(returned) {
+        match rest.last() {
+            Some(Stmt::Expr(ExprStmt { expr, .. })) => match strip_parens(expr) {
+                Expr::Assign(assign)
+                    if assign.op == AssignOp::Assign
+                        && matches!(&assign.left, AssignTarget::Simple(SimpleAssignTarget::Ident(id))
+                            if binding_key(&id.id) == inner)
+                        && decorate_call(&assign.right, &is_inner, 2) =>
+                {
+                    (Some(assign.right.clone()), true, rest.len() - 1)
+                }
+                _ => (None, false, rest.len()),
+            },
+            _ => (None, false, rest.len()),
+        }
+    } else if decorate_call(returned, &is_inner, 2) {
+        (Some(Box::new(returned.clone())), false, rest.len())
+    } else {
+        return None;
+    };
+    let mut member_decorators = 0;
+    while end > 0 {
+        let Stmt::Expr(ExprStmt { expr, .. }) = &rest[end - 1] else {
+            break;
+        };
+        if !decorate_call(expr, &is_member_target, 4) {
+            break;
+        }
+        member_decorators += 1;
+        end -= 1;
+    }
+    if class_decorator.is_none() && member_decorators == 0 {
+        return None;
+    }
+
+    let mut tail: Vec<Stmt> = rest[end..end + member_decorators].to_vec();
+    if let Some(decorated) = class_decorator {
+        tail.push(Stmt::Expr(ExprStmt {
+            span: DUMMY_SP,
+            expr: Box::new(Expr::Assign(AssignExpr {
+                span: DUMMY_SP,
+                op: AssignOp::Assign,
+                left: AssignTarget::Simple(SimpleAssignTarget::Ident(outer.clone().into())),
+                right: decorated,
+            })),
+        }));
+    }
+    // The tail leaves the wrapper's scope: it may name only the constructor,
+    // which becomes the outer binding, and globals.
+    let tail_refs: Vec<&Stmt> = tail.iter().collect();
+    let outer_key = binding_key(&outer);
+    let param_keys: Vec<BindingKey> = params
+        .iter()
+        .flat_map(|param| find_pat_ids(*param))
+        .collect();
+    // Before the wrapper returned, the outer binding was still undefined;
+    // only the built assignment may name it.
+    if !run_keeps_function_context(&tail_refs)
+        || param_keys
+            .iter()
+            .any(|key| count_binding_refs(&tail, key) > 0)
+        || count_binding_refs(&tail, &outer_key) != usize::from(tail.len() > member_decorators)
+        || spells_other_binding(&tail, &outer.sym, &[&inner, &outer_key])
+    {
+        return None;
+    }
+    retarget_binding_references(&mut tail, &inner, &outer);
+
+    let mut peeled = var.clone();
+    let Expr::Call(call) = crate::utils::paren::strip_parens_mut(peeled.decls[0].init.as_mut()?)
+    else {
+        return None;
+    };
+    let Callee::Expr(callee) = &mut call.callee else {
+        return None;
+    };
+    let body = match crate::utils::paren::strip_parens_mut(callee) {
+        Expr::Fn(function) => &mut function.function.body.as_mut()?.stmts,
+        Expr::Arrow(arrow) => match &mut *arrow.body {
+            ArrowFunctionBody::FunctionBody(body) => &mut body.stmts,
+            ArrowFunctionBody::Expr(_) => return None,
+        },
+        _ => return None,
+    };
+    let inner_ident = find_inner_constructor_ident(body)?.clone();
+    body.truncate(end);
+    body.push(Stmt::Return(ReturnStmt {
+        span: DUMMY_SP,
+        arg: Some(Box::new(Expr::Ident(inner_ident))),
+    }));
+    Some(DecoratedWrapper {
+        peeled,
+        tail,
+        inner_reassigned,
+    })
+}
+
+/// Whether an identifier spells `name` but is none of `allowed`. Printed
+/// JavaScript has no context, so renaming onto `name` would capture it.
+fn spells_other_binding(stmts: &Vec<Stmt>, name: &Atom, allowed: &[&BindingKey]) -> bool {
+    struct Finder<'a> {
+        name: &'a Atom,
+        allowed: &'a [&'a BindingKey],
+        found: bool,
+    }
+    impl Visit for Finder<'_> {
+        fn visit_ident(&mut self, id: &Ident) {
+            self.found |= &id.sym == self.name
+                && !self
+                    .allowed
+                    .iter()
+                    .any(|key| key.0 == id.sym && key.1 == id.ctxt);
+        }
+    }
+    let mut finder = Finder {
+        name,
+        allowed,
+        found: false,
+    };
+    stmts.visit_with(&mut finder);
+    finder.found
+}
+
+/// Recover a decorated wrapper through `convert`, the plain wrapper recovery.
+fn try_decorated_class(
+    var: &VarDecl,
+    decorate_helpers: &HashSet<BindingKey>,
+    uses: Option<&BindingUseIndex>,
+    convert: impl Fn(&VarDecl) -> Option<ClassDecl>,
+) -> Option<(ClassDecl, DecoratedWrapper)> {
+    let wrapper = peel_decorated_wrapper(var, decorate_helpers, uses)?;
+    let class_decl = convert(&wrapper.peeled)?;
+    // Members now read the outer binding, which holds the decorated class.
+    let outer = &class_decl.ident;
+    if !wrapper.inner_reassigned
+        && class_members_reference_binding(&class_decl.class.body, &outer.sym, outer.ctxt)
+    {
+        return None;
+    }
+    Some((class_decl, wrapper))
+}
+
+fn try_decorated_iife_to_class(
+    var: &VarDecl,
+    decorate_helpers: &HashSet<BindingKey>,
+    uses: Option<&BindingUseIndex>,
+    convert: impl Fn(&VarDecl) -> Option<ClassDecl>,
+) -> Option<Vec<Stmt>> {
+    let (class_decl, wrapper) = try_decorated_class(var, decorate_helpers, uses, convert)?;
+    Some(decorated_class_stmts(var, class_decl, wrapper))
+}
+
+/// Turn a recovered decorated wrapper into `var C = class extends … {}`
+/// followed by its decorator calls. The class stays anonymous: a class
+/// decorator may return another constructor, and members that name the
+/// class must see the reassigned outer binding, not an immutable inner name.
+fn decorated_class_stmts(
+    var: &VarDecl,
+    class_decl: ClassDecl,
+    wrapper: DecoratedWrapper,
+) -> Vec<Stmt> {
+    let mut declarator = var.decls[0].clone();
+    declarator.init = Some(Box::new(Expr::Class(ClassExpr {
+        ident: None,
+        class: class_decl.class,
+    })));
+    let mut stmts = vec![Stmt::Decl(Decl::Var(Box::new(VarDecl {
+        decls: vec![declarator],
+        ..var.clone()
+    })))];
+    stmts.extend(wrapper.tail);
+    stmts
+}
+
+/// Give every reference to `from` the identity of `to`.
+fn retarget_binding_references<N: VisitMutWith<RetargetBinding>>(
+    node: &mut N,
+    from: &BindingKey,
+    to: &Ident,
+) {
+    node.visit_mut_with(&mut RetargetBinding {
+        from: from.clone(),
+        to: to.clone(),
+    });
+}
+
+struct RetargetBinding {
+    from: BindingKey,
+    to: Ident,
+}
+
+impl VisitMut for RetargetBinding {
+    fn visit_mut_ident(&mut self, id: &mut Ident) {
+        if id.sym == self.from.0 && id.ctxt == self.from.1 {
+            id.sym = self.to.sym.clone();
+            id.ctxt = self.to.ctxt;
+        }
+    }
+}
+
 fn class_members_reference_binding(
     members: &[ClassMember],
     name: &Atom,
@@ -2512,8 +2820,6 @@ fn recover_ts_default_inheritance(
     if base.sym == "arguments"
         || !uses.has_single_declaration(&base.to_id())
         || uses.has_direct_write(&base.to_id())
-        || !uses.has_single_declaration(&constructor.to_id())
-        || uses.has_direct_write(&constructor.to_id())
         || !ts_static_factories_can_rebind(members, constructor, class_name)
     {
         return;
@@ -2528,7 +2834,14 @@ fn recover_ts_default_inheritance(
     let [function] = constructors.as_slice() else {
         return;
     };
-    if function.ident.to_id() != constructor.to_id() {
+    // The inner constructor is scoped to the wrapper body. Index only that
+    // body: a decorated wrapper's class decorator write was already peeled
+    // off and moves onto the outer binding.
+    let local = BindingUseIndex::collect_stmts(original);
+    if function.ident.to_id() != constructor.to_id()
+        || !local.has_single_declaration(&constructor.to_id())
+        || local.has_direct_write(&constructor.to_id())
+    {
         return;
     }
     // A subclass with field initializers keeps the implicit constructor's
@@ -2552,7 +2865,7 @@ fn recover_ts_default_inheritance(
         let Callee::Expr(callee) = &call.callee else { return false; };
         match strip_parens(callee) {
             // A free helper is the Cocos engine global; see
-            // `cocos_global_extends_helper`.
+            // `cocos_global_helper`.
             Expr::Ident(id) => helpers.contains(&id.to_id())
                 && (uses.has_single_declaration(&id.to_id())
                     || id.ctxt.outer() == unresolved_mark && !uses.has_declaration(&id.to_id()))
@@ -4133,11 +4446,22 @@ fn substitute_converted_classes(
             if !self.converted.contains(&binding_key(&binding.id)) {
                 return None;
             }
-            self.try_class(var).or_else(|| {
-                let mut normalized = var.clone();
-                normalize_super_call_apply(&mut normalized, self.level, self.unresolved_mark);
-                self.try_class(&normalized)
-            })
+            self.try_class(var)
+                .or_else(|| {
+                    let mut normalized = var.clone();
+                    normalize_super_call_apply(&mut normalized, self.level, self.unresolved_mark);
+                    self.try_class(&normalized)
+                })
+                // The prediction keeps the class and drops the decorator tail.
+                .or_else(|| {
+                    try_decorated_class(
+                        var,
+                        &self.helpers.ts_decorate_helpers,
+                        self.inheritance,
+                        |peeled| self.try_class(peeled),
+                    )
+                    .map(|(class, _)| class)
+                })
         }
 
         fn try_class(&self, var: &VarDecl) -> Option<ClassDecl> {
@@ -4306,11 +4630,22 @@ impl ConsumedSuperFinder<'_> {
     /// becomes a class. A recognized extends helper is not enough: a later
     /// statement can still make `try_iife_to_class` keep the `.call`.
     fn recovered_super_param(&self, var: &VarDecl) -> Option<(BindingKey, BindingKey)> {
-        let class = self.try_convert(var).or_else(|| {
-            let mut normalized = var.clone();
-            normalize_super_call_apply(&mut normalized, self.level, self.unresolved_mark);
-            self.try_convert(&normalized)
-        })?;
+        let class = self
+            .try_convert(var)
+            .or_else(|| {
+                let mut normalized = var.clone();
+                normalize_super_call_apply(&mut normalized, self.level, self.unresolved_mark);
+                self.try_convert(&normalized)
+            })
+            .or_else(|| {
+                try_decorated_class(
+                    var,
+                    &self.helpers.ts_decorate_helpers,
+                    self.inheritance,
+                    |peeled| self.try_convert(peeled),
+                )
+                .map(|(class, _)| class)
+            })?;
         let [declarator] = var.decls.as_slice() else {
             return None;
         };

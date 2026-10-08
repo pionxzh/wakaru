@@ -402,3 +402,115 @@ fn cocos_creator_2_4_scripts_recover_their_exports() {
         );
     }
 }
+
+/// producer cocos-creator@2.4.15 web-mobile debug=true|false: a component
+/// class keeps its `__decorate` calls, after an anonymous class whose binding
+/// the class decorator reassigns.
+#[test]
+fn cocos_creator_2_4_components_recover_as_decorated_classes() {
+    for name in ["index.debug.js", "index.release.js"] {
+        let output = unpack(
+            &produced_bundle(name),
+            DecompileOptions {
+                filename: name.to_string(),
+                ..Default::default()
+            },
+        )
+        .expect("Cocos Creator 2.4.15 bundle should unpack");
+        for file in ["b.js", "Helloworld.js"] {
+            let code = output
+                .modules
+                .iter()
+                .find(|(module_name, _)| module_name == file)
+                .map(|(_, code)| code.as_str())
+                .unwrap_or_else(|| panic!("{name}: missing {file}"));
+            let class = code
+                .find(" = class extends cc.Component {")
+                .unwrap_or_else(|| panic!("{name} {file}:\n{code}"));
+            let property = code
+                .find("], ")
+                .unwrap_or_else(|| panic!("{name} {file}:\n{code}"));
+            let export = code.find("export default").unwrap();
+            assert!(
+                class < property && property < export,
+                "{name} {file}:\n{code}"
+            );
+            assert!(code.contains("let "), "{name} {file}:\n{code}");
+            assert!(code.contains("super(...args);"), "{name} {file}:\n{code}");
+            assert!(code.contains("= __decorate(["), "{name} {file}:\n{code}");
+            assert!(!code.contains("__extends"), "{name} {file}:\n{code}");
+            assert!(!code.contains(".apply(this"), "{name} {file}:\n{code}");
+        }
+    }
+}
+
+/// hypothetical: two scripts in the producer cocos-creator@2.4.15 debug shape,
+/// one component extending the other's default export.
+#[test]
+fn cocos_creator_component_chain_recovers_both_classes() {
+    let prelude = produced_bundle("index.debug.js");
+    let prelude = &prelude[..prelude.find("}({").unwrap() + 3];
+    let script = |name: &str, base: &str, deps: &str, require: &str| {
+        format!(
+            r#"{name}: [ function(require, module, exports) {{
+    "use strict";
+    cc._RF.push(module, "{name}-uuid", "{name}");
+    Object.defineProperty(exports, "__esModule", {{ value: true }});
+    {require}
+    var _a = cc._decorator, ccclass = _a.ccclass, property = _a.property;
+    var {name} = function(_super) {{
+      __extends({name}, _super);
+      function {name}() {{
+        var _this = null !== _super && _super.apply(this, arguments) || this;
+        _this.speed = 1;
+        return _this;
+      }}
+      {name}.prototype.move = function() {{ return _super.prototype.move.call(this); }};
+      __decorate([ property ], {name}.prototype, "speed", void 0);
+      {name} = __decorate([ ccclass ], {name});
+      return {name};
+    }}({base});
+    exports.default = {name};
+    cc._RF.pop();
+  }}, {{{deps}}} ]"#
+        )
+    };
+    let bundle = format!(
+        "{prelude}\n{},\n{}\n}}, {{}}, [ \"Base\", \"Child\" ]);\n",
+        script("Base", "cc.Component", "", ""),
+        script(
+            "Child",
+            "Base_1.default",
+            r#" "./Base": "Base" "#,
+            r#"var Base_1 = require("./Base");"#
+        ),
+    );
+    let output = unpack(
+        &bundle,
+        DecompileOptions {
+            filename: "chain.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("Cocos Creator bundle should unpack");
+    assert!(
+        !output.warnings.iter().any(|warning| {
+            warning.kind == wakaru_core::UnpackWarningKind::CrossModuleClassCall
+        }),
+        "{:#?}",
+        output.warnings
+    );
+    for (file, base) in [("Base.js", "cc.Component"), ("Child.js", "Base_1")] {
+        let code = output
+            .modules
+            .iter()
+            .find(|(module_name, _)| module_name == file)
+            .map(|(_, code)| code.as_str())
+            .unwrap_or_else(|| panic!("missing {file}"));
+        assert!(
+            code.contains(&format!("= class extends {base}")),
+            "{file}:\n{code}"
+        );
+        assert!(code.contains("return super.move();"), "{file}:\n{code}");
+    }
+}

@@ -526,6 +526,40 @@ prevents a leftover `__extends(Child, Parent)` from trying to replace a native
 class's non-writable `prototype`. Existing recovery across property-only calls
 such as `Object.defineProperty(Child.prototype, ...)` remains unchanged.
 
+### TypeScript decorated wrappers
+
+TypeScript's legacy decorators lower to `__decorate` calls at the end of the
+class wrapper, after the members:
+
+```js
+var C = function (_super) {
+    ...
+    __decorate([property], C.prototype, "label", void 0);
+    C = __decorate([ccclass], C);  // minified: return __decorate([ccclass], C);
+    return C;
+}(cc.Component);
+```
+
+`UnEs6Class` peels that tail off, recovers the rest of the wrapper as usual,
+and emits `var C = class extends ... {}` followed by the calls, retargeted to
+the outer binding and with the class decorator's result assigned to it.
+Decorators stay calls: `@` syntax in plain JavaScript means the standard
+decorators proposal, whose semantics differ from TypeScript's legacy ones. The class stays anonymous because a class
+decorator may return another constructor; a class name would give members an
+immutable inner binding that still holds the undecorated class.
+
+Only the Cocos Creator engine's global `__decorate` is recognized
+([`cocos_registration_frame`](rewrite-assumptions.md#cocos_registration_frame));
+an inline or tslib `__decorate` is not detected as a helper yet. The tail
+must be member decorator calls (`__decorate([...], C.prototype | C, key,
+desc)`) and an optional class decorator, either assigned to `C` before
+`return C` or returned directly. It may name only the inner constructor and
+globals: the wrapper's parameters, `this`, `arguments`, the outer binding,
+or another binding spelled like it keep the wrapper. When the wrapper
+returns the class decorator's result without assigning it, the inner
+constructor stays undecorated, so a member that names it keeps the wrapper
+too. The cross-module super-call prediction recognizes the same wrappers.
+
 ### Private-field backing-map lifetime
 
 `UnClassFields` promotes a backing WeakMap only when one class owns it and

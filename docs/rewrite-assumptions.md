@@ -896,11 +896,13 @@ The engine also installs tslib's helpers as globals (`window.__extends`,
 `window.__decorate`, ...). The editor's compiled scripts declare no helpers
 of their own (producer cocos-creator@2.4.15 web-mobile), so a framed script
 calls them as free identifiers. In a module that has a closed frame, a free `__extends`
-that the module never writes is that helper.
+or `__decorate` that the module never writes is that helper.
 
 Affects: `UnEnum` (exported enum folds beside the frame), `UnEsm`
 (export-storage classification ignores the frame's `module` argument), and
-`UnEs6Class` (the free `__extends` proves TypeScript default inheritance).
+`UnEs6Class` (the free `__extends` proves TypeScript default inheritance, and
+the free `__decorate` lets a component wrapper's decorator calls move out of
+it; see [helper detection](helper-detection.md#typescript-decorated-wrappers)).
 
 Level: wherever those rules run; `UnEsm` at `standard` and above for
 single-file input, and at every level in unpack mode.
