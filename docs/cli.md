@@ -15,6 +15,13 @@ Without `-o`, output goes to stdout. Stdin is also supported:
 cat input.js | wakaru > output.js
 ```
 
+A `.cjs` or `.cts` input is decompiled as CommonJS: its `require()` calls and
+`module.exports` are left alone instead of being recovered as ESM syntax,
+because Node loads such a file as CommonJS however it is written. This is about
+the file being decompiled: `--unpack` still emits one ESM module graph, whatever
+the names its recovered modules carry. Every other input name keeps the normal
+fallback behavior.
+
 ## Unpack bundles and chunks
 
 ```bash

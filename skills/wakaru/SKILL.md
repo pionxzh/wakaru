@@ -197,6 +197,9 @@ reachability sweep is desired.
   module still accesses the listed exports through `exports` or
   `module.exports`. Those accesses throw a `ReferenceError` when they run, so
   treat that module's export surface as incomplete.
+- A `.cjs` or `.cts` input is decompiled as CommonJS: its `require()` calls and
+  `module.exports` stay in place, so its output has no imports to follow. This is
+  about the file being decompiled; `--unpack` still emits an ESM module graph.
 - A `runtime_residual` warning (non-error) means that module still calls a
   bundler runtime helper the output does not define, such as
   `__turbopack_context__.L(...)` (Turbopack chunk loading) or

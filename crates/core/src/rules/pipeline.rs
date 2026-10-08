@@ -303,15 +303,33 @@ runner!(run_un_webpack_interop, |ctx| UnWebpackInterop::new(
     ctx.unresolved_mark
 ));
 fn run_un_esm(module: &mut Module, ctx: RuleRunContext<'_>) {
-    let local_helpers = ctx.local_helpers(module);
     // Single-file decompilation only: with module facts the provider facts
-    // decide (`provider_namespace_repair`), and unpack's first phase stops
-    // here, before those facts exist. The evidence is read before `UnEsm`
-    // removes the `__esModule` marker and unwraps interop calls.
-    let mut relative_namespace = (ctx.module_facts.is_none()
-        && ctx.rewrite_level >= RewriteLevel::Standard
-        && ctx.stop_after != Some("UnEsm"))
-    .then(|| RelativeNamespaceEvidence::collect(module, ctx.unresolved_mark, &local_helpers));
+    // decide (`provider_namespace_repair`), and unpack's first phases stop at
+    // `UnEsm`, before those facts exist. `until("UnEsm")` RUNS `UnEsm` and then
+    // stops, so the stop rule is what tells that phase apart from a decompile.
+    let single_file = ctx.module_facts.is_none() && ctx.stop_after != Some("UnEsm");
+    // A `.cjs` or `.cts` input is CommonJS whatever it contains: Node loads it
+    // that way, so recovering ESM syntax into one produces a file the runtime
+    // it is meant for cannot load. The extension is read through the same
+    // classifier the output validator uses, so the validator and the pipeline
+    // cannot disagree about it.
+    //
+    // In unpack a `.cjs` name is a recovered resource name inside the bundle
+    // rather than the goal of the file being decompiled, and its module graph
+    // is ESM either way, so the gate is for a decompile and not for a phase.
+    if single_file
+        && ctx.current_filename.is_some_and(|filename| {
+            crate::output_validate::filename_source_goal(filename)
+                == crate::output_validate::SourceGoal::Script
+        })
+    {
+        return;
+    }
+    let local_helpers = ctx.local_helpers(module);
+    // The evidence is read before `UnEsm` removes the `__esModule` marker and
+    // unwraps interop calls.
+    let mut relative_namespace = (single_file && ctx.rewrite_level >= RewriteLevel::Standard)
+        .then(|| RelativeNamespaceEvidence::collect(module, ctx.unresolved_mark, &local_helpers));
     let mut rule = UnEsm::new(ctx.unresolved_mark, ctx.rewrite_level)
         .with_current_filename(ctx.current_filename)
         .with_local_helpers(local_helpers);

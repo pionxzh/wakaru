@@ -1118,7 +1118,10 @@ impl Visit for UnresolvedRefCollector {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SourceGoal {
+/// The source goal a filename states on its own, for the validator and the
+/// rewrite pipeline alike: `.mjs`/`.mts` is a module, `.cjs`/`.cts` a script,
+/// and every other name says nothing (#225).
+pub(crate) enum SourceGoal {
     Module,
     Script,
     Ambiguous,
@@ -1182,7 +1185,7 @@ fn classify_source_goals(
     source_goals
 }
 
-fn filename_source_goal(filename: &str) -> SourceGoal {
+pub(crate) fn filename_source_goal(filename: &str) -> SourceGoal {
     let Some(extension) = Path::new(filename)
         .extension()
         .and_then(|extension| extension.to_str())
