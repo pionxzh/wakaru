@@ -594,6 +594,17 @@ bookkeeping per token, which is why extraction discards them by default.
   fact, collected before the interop helpers go, like
   `whole_require_sources`. Keeping the provider CommonJS does not fix the
   interop case, because the `__esModule` object still has to be unwrapped.
+- **A `.cjs` name still gets ESM syntax.** A single-file decompile keeps a
+  `.cjs`/`.cts` input CommonJS (`run_un_esm` stands down), but unpack does
+  not apply that gate. Two inputs reach it: a `.cjs` file passed to
+  `--unpack` (several inputs, or one that is not a bundle), and a recovered
+  module whose id keeps its `.cjs` name (producer `webpack@5.111.1`
+  `optimization.moduleIds: "named"` + Terser). Either way a CommonJS module
+  comes out as `export default ...` in a `.cjs` file, which Node fails to
+  load. Lifting the gate alone is not enough: a harmony module still calls
+  `require.r`/`require.d` until `UnEsm` removes them, so the fix has to
+  decide per module, from what the bundle says it is, whether to keep it
+  CommonJS.
 
 ## Production-build scope
 

@@ -1,9 +1,9 @@
-use std::path::Path;
-
 use swc_core::ecma::ast::{
     Expr, Lit, MetaPropExpr, MetaPropKind, Module, ModuleDecl, ModuleItem, Stmt,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
+
+use crate::output_validate::{filename_source_goal, SourceGoal};
 
 /// Remove an otherwise empty top-level `"use strict"` body, or remove top-level
 /// `"use strict"` expressions when the final output has a trusted Module goal.
@@ -39,15 +39,12 @@ fn is_use_strict_item(item: &ModuleItem) -> bool {
 }
 
 fn is_definitely_module(module: &Module, filename: &str, bare_imports_are_stable: bool) -> bool {
-    match Path::new(filename)
-        .extension()
-        .and_then(|value| value.to_str())
-    {
+    match filename_source_goal(filename) {
         // An explicit script extension conflicts with module-only AST syntax.
         // Preserve source rather than guessing which signal the caller meant.
-        Some("cjs" | "cts") => return false,
-        Some("mjs" | "mts") => return true,
-        _ => {}
+        SourceGoal::Script => return false,
+        SourceGoal::Module => return true,
+        SourceGoal::Ambiguous => {}
     }
 
     if module.body.iter().any(|item| match item {

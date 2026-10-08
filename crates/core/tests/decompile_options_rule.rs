@@ -319,6 +319,85 @@ fn explicit_script_extension_wins_over_conflicting_module_syntax() {
     );
 }
 
+const CJS_INPUT: &str = r#""use strict";
+const value = require("./value.cjs");
+module.exports = { value };
+"#;
+
+fn decompile_cjs_input_as(filename: &str) -> String {
+    decompile(
+        CJS_INPUT,
+        DecompileOptions {
+            filename: filename.to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code
+}
+
+/// Node loads a `.cjs` file as CommonJS whatever it contains, so ESM syntax
+/// recovered into one makes a file its runtime cannot load.
+#[test]
+fn explicit_script_extension_keeps_require_and_module_exports() {
+    for filename in ["fixture.cjs", "fixture.cts", "FIXTURE.CJS"] {
+        let output = decompile_cjs_input_as(filename);
+        assert!(
+            output.contains("require(\"./value.cjs\")") && output.contains("module.exports"),
+            "{filename} must keep its CommonJS shape: {output}"
+        );
+        assert!(
+            !output.contains("import ") && !output.contains("export "),
+            "{filename} must not gain ESM syntax: {output}"
+        );
+    }
+}
+
+/// The gate is the extension, not the content: the same source under a `.js`
+/// name still recovers ESM.
+#[test]
+fn ambiguous_extension_still_recovers_esm_from_commonjs() {
+    let output = decompile_cjs_input_as("fixture.js");
+    assert!(
+        output.contains("import value from") && output.contains("export default"),
+        ".js must still recover ESM: {output}"
+    );
+}
+
+/// Current limitation, not a contract: unpack's first phases also run up to
+/// `UnEsm` with no module facts, and the `.cjs` gate is not applied there, so
+/// a recovered module or an input file named `.cjs` still gets ESM syntax
+/// (`docs/unpacking.md`, Known gaps). Standing down there without handling
+/// the module's bundler runtime calls would leave `require.r(...)` and
+/// `require.d(...)` in a harmony module, so a fix must do more than lift this
+/// gate.
+#[test]
+fn un_esm_phase_does_not_apply_the_script_extension_gate_yet() {
+    let output = common::render_pipeline_until_with_filename(CJS_INPUT, "UnEsm", "version.cjs");
+    assert!(
+        output.contains("import ") && !output.contains("require("),
+        "the unpack phase still recovers ESM for a .cjs name: {output}"
+    );
+}
+
+#[test]
+fn uppercase_module_extension_removes_top_level_use_strict() {
+    let output = decompile(
+        "\"use strict\";\nconsole.log(1);",
+        DecompileOptions {
+            filename: "FIXTURE.MJS".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code;
+
+    assert!(
+        !output.contains("\"use strict\""),
+        "an uppercase .MJS name states the module goal like .mjs: {output}"
+    );
+}
+
 #[test]
 fn direct_strict_functions_remain_parseable_with_simple_parameters() {
     let input = r#"

@@ -1117,10 +1117,10 @@ impl Visit for UnresolvedRefCollector {
     }
 }
 
+/// The source goal a filename states on its own, for the validator, the
+/// rewrite pipeline, and output finalization alike: `.mjs`/`.mts` is a module,
+/// `.cjs`/`.cts` a script (either case), and every other name says nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// The source goal a filename states on its own, for the validator and the
-/// rewrite pipeline alike: `.mjs`/`.mts` is a module, `.cjs`/`.cts` a script,
-/// and every other name says nothing (#225).
 pub(crate) enum SourceGoal {
     Module,
     Script,

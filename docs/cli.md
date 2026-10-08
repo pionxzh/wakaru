@@ -17,10 +17,10 @@ cat input.js | wakaru > output.js
 
 A `.cjs` or `.cts` input is decompiled as CommonJS: its `require()` calls and
 `module.exports` are left alone instead of being recovered as ESM syntax,
-because Node loads such a file as CommonJS however it is written. This is about
-the file being decompiled: `--unpack` still emits one ESM module graph, whatever
-the names its recovered modules carry. Every other input name keeps the normal
-fallback behavior.
+because Node loads such a file as CommonJS however it is written. Every other
+input name still recovers ESM. `--unpack` does not apply this yet: a `.cjs`
+input file, or a recovered module that keeps a `.cjs` name, can still be
+written with ESM syntax that Node cannot load.
 
 ## Unpack bundles and chunks
 

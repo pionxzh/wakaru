@@ -314,9 +314,9 @@ fn run_un_esm(module: &mut Module, ctx: RuleRunContext<'_>) {
     // classifier the output validator uses, so the validator and the pipeline
     // cannot disagree about it.
     //
-    // In unpack a `.cjs` name is a recovered resource name inside the bundle
-    // rather than the goal of the file being decompiled, and its module graph
-    // is ESM either way, so the gate is for a decompile and not for a phase.
+    // Unpack does not apply this gate yet (`docs/unpacking.md`, Known gaps): a
+    // harmony module there still calls `require.r`/`require.d`, which only
+    // `UnEsm` removes, so lifting the gate alone would leave runtime calls.
     if single_file
         && ctx.current_filename.is_some_and(|filename| {
             crate::output_validate::filename_source_goal(filename)
