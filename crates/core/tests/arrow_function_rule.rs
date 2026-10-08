@@ -1726,3 +1726,321 @@ Name = (()=>{
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
+
+/// An anonymous function passed to a constructor-sensitive parameter of a
+/// same-module function declaration stays an ordinary function.
+fn assert_keeps_anonymous_function(output: &str) {
+    assert!(
+        output.contains("function()"),
+        "anonymous function expression must stay constructible:\n{output}"
+    );
+    assert!(
+        !output.contains("()=>{}") && !output.contains("() => {}"),
+        "constructor argument must not become an empty arrow:\n{output}"
+    );
+}
+
+#[test]
+fn declared_extends_argument_stays_function() {
+    let input = r#"
+function declare(Base) {
+    class Child extends Base {}
+    return Child;
+}
+declare(function() {});
+"#;
+    let output = apply(input);
+    assert_keeps_anonymous_function(&output);
+    let piped = apply_pipeline(input);
+    assert_keeps_anonymous_function(&piped);
+}
+
+#[test]
+fn declared_extends_argument_called_before_declaration_stays_function() {
+    // Function declarations are hoisted. The table is built before rewriting,
+    // so the call may appear above the declaration.
+    let input = r#"
+declare(function() {});
+function declare(Base) {
+    class Child extends Base {}
+    return Child;
+}
+"#;
+    assert_keeps_anonymous_function(&apply(input));
+}
+
+#[test]
+fn declared_extends_paren_and_sequence_callee_stay_function() {
+    for input in [
+        r#"
+function declare(Base) {
+    class Child extends Base {}
+    return Child;
+}
+declare((function() {}));
+"#,
+        r#"
+function declare(Base) {
+    class Child extends Base {}
+    return Child;
+}
+(0, declare)(function() {});
+"#,
+        r#"
+function declare(Base) {
+    class Child extends Base {}
+    return Child;
+}
+declare(ready ? function() {} : other);
+"#,
+    ] {
+        assert_keeps_anonymous_function(&apply(input));
+    }
+}
+
+#[test]
+fn declared_new_argument_stays_function() {
+    // The same table: a parameter that is `new`'d keeps its argument too.
+    let input = r#"
+function declare(Base) {
+    return new Base();
+}
+declare(function() {});
+"#;
+    assert_keeps_anonymous_function(&apply(input));
+}
+
+#[test]
+fn declared_call_shifts_arguments_past_this() {
+    let input = r#"
+function declare(Base) {
+    class Child extends Base {}
+    return Child;
+}
+declare.call(function() {
+    return 1;
+}, function() {});
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("function() {}") || output.contains("function(){}"),
+        "argument after this must stay a function:\n{output}"
+    );
+    assert!(
+        output.contains("()=>") || output.contains("() =>"),
+        "this argument is not a constructor parameter:\n{output}"
+    );
+}
+
+#[test]
+fn declared_sensitive_parameter_keeps_only_its_argument() {
+    let input = r#"
+function declare(callback, Base) {
+    callback();
+    class Child extends Base {}
+    return Child;
+}
+declare(function() {
+    return 1;
+}, function() {
+    return items.map(function(value) {
+        return value;
+    });
+});
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("function() {") || output.contains("function(){"),
+        "extends argument must stay a function:\n{output}"
+    );
+    assert!(
+        output.contains("()=>"),
+        "sibling and nested callbacks must still become arrows:\n{output}"
+    );
+    assert!(
+        output.contains("(value)=>") || output.contains("(value) =>"),
+        "nested callback inside the kept function must still become an arrow:\n{output}"
+    );
+}
+
+#[test]
+fn declared_argument_before_spread_stays_function() {
+    let input = r#"
+function declare(Base) {
+    class Child extends Base {}
+    return Child;
+}
+declare(function() {}, ...rest);
+"#;
+    assert_keeps_anonymous_function(&apply(input));
+}
+
+#[test]
+fn exported_declared_extends_argument_stays_function() {
+    let input = r#"
+export function declare(Base) {
+    class Child extends Base {}
+    return Child;
+}
+declare(function() {});
+"#;
+    assert_keeps_anonymous_function(&apply(input));
+    let input = r#"
+export default function declare(Base) {
+    class Child extends Base {}
+    return Child;
+}
+declare(function() {});
+"#;
+    assert_keeps_anonymous_function(&apply(input));
+}
+
+#[test]
+fn property_bag_empty_function_still_converts() {
+    let input = r#"
+const bag = function() {};
+bag.KEY = 0;
+use(bag);
+"#;
+    let output = apply(input);
+    assert!(output.contains("()=>{}"), "{output}");
+    assert!(!output.contains("function()"), "{output}");
+}
+
+#[test]
+fn called_parameter_argument_still_converts() {
+    let input = r#"
+function declare(callback) {
+    return callback();
+}
+declare(function() {
+    return 1;
+});
+"#;
+    let output = apply(input);
+    assert!(output.contains("()=>"), "{output}");
+    assert!(!output.contains("function()"), "{output}");
+}
+
+#[test]
+fn unresolved_callee_argument_still_converts() {
+    let input = r#"
+unknown(function() {
+    return 1;
+});
+"#;
+    let output = apply(input);
+    assert!(output.contains("()=>"), "{output}");
+    assert!(!output.contains("function()"), "{output}");
+}
+
+#[test]
+fn shadowed_declared_parameter_does_not_protect_outer_argument() {
+    // An inner function or parameter with the same short name is a different
+    // `(sym, ctxt)`. The outer call's argument may still become an arrow.
+    let input = r#"
+function declare(callback) {
+    function declare(Base) {
+        class Child extends Base {}
+        return Child;
+    }
+    return callback();
+}
+declare(function() {
+    return 1;
+});
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("function declare(Base)"),
+        "inner declaration stays:\n{output}"
+    );
+    assert!(
+        output.contains("()=>"),
+        "outer argument must still become an arrow:\n{output}"
+    );
+    let input = r#"
+function declare(Base) {
+    function nested(Base) {
+        class Child extends Base {}
+        return Child;
+    }
+    return Base();
+}
+declare(function() {
+    return 1;
+});
+"#;
+    let output = apply(input);
+    assert!(output.contains("()=>"), "{output}");
+    assert!(!output.contains("function()"), "{output}");
+}
+
+#[test]
+fn destructured_extends_parameter_does_not_freeze_argument() {
+    let input = r#"
+function declare({ Base }) {
+    class Child extends Base {}
+    return Child;
+}
+declare(function() {
+    return 1;
+});
+"#;
+    let output = apply(input);
+    assert!(output.contains("()=>"), "{output}");
+    assert!(!output.contains("function()"), "{output}");
+}
+
+#[test]
+fn declared_async_argument_still_converts() {
+    let input = r#"
+function declare(Base) {
+    class Child extends Base {}
+    return Child;
+}
+declare(async function() {
+    return 1;
+});
+"#;
+    let output = apply(input);
+    assert!(output.contains("async ()=>"), "{output}");
+    assert!(!output.contains("async function"), "{output}");
+}
+
+#[test]
+fn declared_argument_count_mismatch_pairs_only_sensitive_slot() {
+    let fewer = r#"
+function declare(callback, Base) {
+    class Child extends Base {}
+    return Child;
+}
+declare(function() {
+    return 1;
+});
+"#;
+    let fewer_out = apply(fewer);
+    assert!(fewer_out.contains("()=>"), "{fewer_out}");
+    assert!(!fewer_out.contains("function()"), "{fewer_out}");
+
+    let extra = r#"
+function declare(callback, Base) {
+    class Child extends Base {}
+    return Child;
+}
+declare(function() {
+    return 1;
+}, function() {}, function() {
+    return 2;
+});
+"#;
+    let output = apply(extra);
+    assert!(
+        output.contains("function()"),
+        "the extends argument stays a function:\n{output}"
+    );
+    assert!(
+        output.matches("()=>").count() >= 2,
+        "the sibling and the extra callback still become arrows:\n{output}"
+    );
+}

@@ -1,11 +1,13 @@
-use crate::collections::HashSet;
+use crate::analysis::binding_uses::BindingId;
+use crate::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 
 use swc_core::ecma::ast::{
     ArrowExpr, ArrowFunctionBody, AssignExpr, AssignTarget, BinExpr, BinaryOp, CallExpr, Callee,
-    Class, Expr, FnExpr, Function, FunctionBody, Ident, KeyValueProp, MemberExpr, MemberProp,
-    MetaPropExpr, MetaPropKind, Module, NewExpr, Pat, ReturnStmt, ThisExpr, VarDeclarator,
+    Class, DefaultDecl, ExportDefaultDecl, Expr, FnDecl, FnExpr, Function, FunctionBody, Ident,
+    KeyValueProp, MemberExpr, MemberProp, MetaPropExpr, MetaPropKind, Module, NewExpr, Pat,
+    ReturnStmt, ThisExpr, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -36,8 +38,13 @@ impl ArrowFunction {
         let create_class = CreateClassHelpers::collect(module, unresolved_mark, local_helpers);
         let constructor_sensitive_values =
             collect_constructor_sensitive_values(module, &create_class);
+        // Collected before rewriting. Function declarations are hoisted, so a
+        // call may appear above the declaration.
+        let declared_parameters =
+            collect_declared_function_parameters(module, &constructor_sensitive_values);
         module.visit_mut_with(&mut ArrowFunctionConverter {
             constructor_sensitive_values: &constructor_sensitive_values,
+            declared_parameters: &declared_parameters,
             create_class: &create_class,
             protect_iife_callee: false,
             protect_next_body_returns: false,
@@ -55,6 +62,9 @@ impl VisitMut for ArrowFunction {
 
 struct ArrowFunctionConverter<'a> {
     constructor_sensitive_values: &'a HashSet<ValueKey>,
+    /// Parameter sensitivity for same-module `FnDecl`s and named
+    /// `export default function`s. Keyed by the function name's `(sym, ctxt)`.
+    declared_parameters: &'a HashMap<BindingId, Vec<bool>>,
     create_class: &'a CreateClassHelpers,
     /// The next call visited is a constructor-sensitive IIFE: its callee's own
     /// `return` values are the result and must stay constructible.
@@ -157,6 +167,9 @@ impl VisitMut for ArrowFunctionConverter<'_> {
     }
 
     fn visit_mut_call_expr(&mut self, call: &mut CallExpr) {
+        // Read the parameter list before rewriting the callee. A literal callee
+        // may itself become an arrow; pairing uses the pre-rewrite parameters.
+        let pairing = call_parameter_pairing(call, self);
         if std::mem::take(&mut self.protect_iife_callee) {
             if let Callee::Expr(callee) = &mut call.callee {
                 visit_iife_callee_protecting_returns(callee, self);
@@ -166,41 +179,25 @@ impl VisitMut for ArrowFunctionConverter<'_> {
         }
 
         let construct_call = is_construct_call(call);
-        // A literal callee provides an exact parameter/argument pairing. Reuse
-        // the module's resolver-based constructor evidence; no named-function
-        // call graph is needed. Spreads do not have fixed positional pairing.
-        let sensitive_parameters: Vec<bool> = if call.args.iter().all(|arg| arg.spread.is_none()) {
-            let sensitive = |pat: &Pat| {
-                pat_value_key(pat)
-                    .is_some_and(|key| self.constructor_sensitive_values.contains(&key))
-            };
-            match &call.callee {
-                Callee::Expr(callee) => match crate::utils::paren::strip_parens(callee) {
-                    Expr::Fn(function) => function
-                        .function
-                        .params
-                        .iter()
-                        .map(|param| sensitive(&param.pat))
-                        .collect(),
-                    Expr::Arrow(arrow) => arrow.params.iter().map(sensitive).collect(),
-                    _ => Vec::new(),
-                },
-                _ => Vec::new(),
-            }
-        } else {
-            Vec::new()
-        };
         let create_class_call = self.create_class.is_call(call);
+        // Pairing stops at the first spread: its runtime length makes later
+        // syntactic positions unknown.
+        let spread_at = call.args.iter().position(|arg| arg.spread.is_some());
         for (index, arg) in call.args.iter_mut().enumerate() {
+            let before_spread = spread_at.is_none_or(|at| index < at);
+            let paired = before_spread
+                && pairing.as_ref().is_some_and(|(offset, flags)| {
+                    index >= *offset && flags.get(index - *offset) == Some(&true)
+                });
             if (construct_call && (index == 0 || index == 2))
                 || (create_class_call && index == 0)
-                || sensitive_parameters.get(index) == Some(&true)
+                || paired
             {
                 // Reflect.construct requires both target and newTarget to be
                 // constructible. createClass defines methods on its first
                 // argument's prototype, and callers construct the result. A
-                // known constructor parameter of a literal callee needs the
-                // same preservation.
+                // known constructor parameter of a literal callee, or of a
+                // same-module function declaration, needs the same preservation.
                 visit_constructor_value_without_converting(&mut arg.expr, self);
             } else {
                 arg.visit_mut_with(self);
@@ -265,6 +262,128 @@ impl VisitMut for ArrowFunctionConverter<'_> {
         // A default-exported function expression remains constructable by
         // consumers. Converting it to an arrow would remove its prototype.
         visit_constructor_value_without_converting(&mut export.expr, self);
+    }
+}
+
+/// Shared argument pairing for a literal callee and a same-module function
+/// declaration. Returns `(argument offset, per-parameter sensitivity)`.
+/// `.call`'s first argument is `this`, so the offset is 1. Aliases and
+/// `.apply` are not positional calls.
+fn call_parameter_pairing(
+    call: &CallExpr,
+    converter: &ArrowFunctionConverter<'_>,
+) -> Option<(usize, Vec<bool>)> {
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let target = peel_paren_and_sequence(callee);
+    if let Expr::Member(member) = target {
+        if static_member_name(&member.prop).as_deref() == Some("call") {
+            let flags = parameter_flags(&member.obj, converter)?;
+            return Some((1, flags));
+        }
+        return None;
+    }
+    parameter_flags(target, converter).map(|flags| (0, flags))
+}
+
+fn parameter_flags(expr: &Expr, converter: &ArrowFunctionConverter<'_>) -> Option<Vec<bool>> {
+    match peel_paren_and_sequence(expr) {
+        Expr::Fn(function) => Some(sensitive_param_flags(
+            function.function.params.iter().map(|param| &param.pat),
+            converter.constructor_sensitive_values,
+        )),
+        Expr::Arrow(arrow) => Some(sensitive_param_flags(
+            arrow.params.iter(),
+            converter.constructor_sensitive_values,
+        )),
+        Expr::Ident(ident) => converter
+            .declared_parameters
+            .get(&(ident.sym.clone(), ident.ctxt))
+            .cloned(),
+        _ => None,
+    }
+}
+
+fn sensitive_param_flags<'a>(
+    pats: impl Iterator<Item = &'a Pat>,
+    sensitive: &HashSet<ValueKey>,
+) -> Vec<bool> {
+    pats.map(|pat| pat_value_key(pat).is_some_and(|key| sensitive.contains(&key)))
+        .collect()
+}
+
+/// Parentheses and a sequence's last expression are the invoked value.
+/// A conditional callee is left alone.
+fn peel_paren_and_sequence(expr: &Expr) -> &Expr {
+    match crate::utils::paren::strip_parens(expr) {
+        Expr::Seq(sequence) => match sequence.exprs.last() {
+            Some(last) => peel_paren_and_sequence(last),
+            None => crate::utils::paren::strip_parens(expr),
+        },
+        other => other,
+    }
+}
+
+fn collect_declared_function_parameters(
+    module: &Module,
+    sensitive: &HashSet<ValueKey>,
+) -> HashMap<BindingId, Vec<bool>> {
+    let mut collector = DeclaredFunctionParams {
+        sensitive,
+        declared: HashMap::default(),
+    };
+    module.visit_with(&mut collector);
+    collector.declared
+}
+
+struct DeclaredFunctionParams<'a> {
+    sensitive: &'a HashSet<ValueKey>,
+    declared: HashMap<BindingId, Vec<bool>>,
+}
+
+impl DeclaredFunctionParams<'_> {
+    fn record(&mut self, ident: &Ident, function: &Function) {
+        let flags = sensitive_param_flags(
+            function.params.iter().map(|param| &param.pat),
+            self.sensitive,
+        );
+        let key = (ident.sym.clone(), ident.ctxt);
+        match self.declared.get_mut(&key) {
+            Some(existing) => or_param_flags(existing, &flags),
+            None => {
+                self.declared.insert(key, flags);
+            }
+        }
+    }
+}
+
+/// When one binding has more than one declaration, OR the flags so a later
+/// declaration cannot clear a slot that was already sensitive.
+fn or_param_flags(existing: &mut Vec<bool>, flags: &[bool]) {
+    if flags.len() > existing.len() {
+        existing.resize(flags.len(), false);
+    }
+    for (index, flag) in flags.iter().enumerate() {
+        if *flag {
+            existing[index] = true;
+        }
+    }
+}
+
+impl Visit for DeclaredFunctionParams<'_> {
+    fn visit_fn_decl(&mut self, decl: &FnDecl) {
+        self.record(&decl.ident, &decl.function);
+        decl.visit_children_with(self);
+    }
+
+    fn visit_export_default_decl(&mut self, decl: &ExportDefaultDecl) {
+        if let DefaultDecl::Fn(func) = &decl.decl {
+            if let Some(ident) = &func.ident {
+                self.record(ident, &func.function);
+            }
+        }
+        decl.visit_children_with(self);
     }
 }
 

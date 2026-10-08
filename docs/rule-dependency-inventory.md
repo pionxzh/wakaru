@@ -554,10 +554,16 @@ rationale, or level gating appear.
   defaults and destructured object-literal values stay ordinary functions.
   Logical-assignment object values receive the same contextual member keys as
   plain assignments.
-  ArrowFunction also pairs arguments of literal function/arrow callees with
-  simple resolved parameters when no spread obscures their positions. Inline
-  function arguments passed to constructor-sensitive parameters stay ordinary
-  functions; unrelated callback arguments remain eligible for arrow recovery.
+  ArrowFunction also pairs arguments of literal function/arrow callees, and of
+  same-module function declarations (including `export function` and a named
+  `export default function`), with simple resolved parameters. Parentheses and
+  a sequence's last expression peel to that callee; `.call` shifts the pairing
+  by one so the receiver is not a parameter. Pairing stops at the first spread
+  argument: its runtime length makes later syntactic positions unknown, so
+  only arguments before it are paired. Inline function arguments passed to
+  constructor-sensitive parameters stay ordinary functions; unrelated callback
+  arguments remain eligible for arrow recovery. The lookup does not follow
+  aliases or `.apply`.
   ObjMethodShorthand is always enabled; its other eligibility checks remain
   unchanged. It also never converts a `constructor` key, without consulting
   the analysis: class-system helpers (`extend(Base, { constructor })`) return
