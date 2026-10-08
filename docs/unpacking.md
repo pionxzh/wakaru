@@ -184,7 +184,12 @@ library build consumes the call (`window.lib = function r(id) { ... }(100)`),
 `var lib = require("./module-100.js"); window.lib = lib;`, which `UnEsm` turns
 into an import. This happens only when the assignment targets name globals; a
 target that reads a bootstrap binding or `this` would change meaning outside
-the bootstrap, so that statement is still dropped.
+the bootstrap, so that statement is still dropped. An `output.library` of type
+`commonjs2` makes Terser merge the call into a comma sequence with
+`module.exports = {}`; each element then becomes its own statement in
+`entry.js`. A sequence is split only when every other element reads nothing
+but globals. Otherwise the bundle stays one file, because dropping those
+elements would lose the library's exports.
 
 Wrapper removal requires an anonymous synchronous, non-generator function or
 synchronous arrow, with no parameters or call arguments. Async and generator

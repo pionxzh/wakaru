@@ -935,6 +935,101 @@ fn directly_invoked_require_assigned_to_a_bootstrap_local_stays_dropped() {
 }
 
 #[test]
+fn sequenced_directly_invoked_require_keeps_the_sequence_as_entry() {
+    // `output.library` commonjs2 adds `module.exports = {}` after the startup,
+    // and Terser merges both into one comma sequence. The other element is
+    // entry code and must survive next to the unrolled require.
+    // shape: producer webpack@5.111.1 mode=production target=node
+    // output.library.type=commonjs2 (Terser); sink renamed to `globalThis.lib`.
+    let source = r#"(()=>{var r={574(r,e,i){var n=i(240);e.describe=n.describe,e.flag="inlined-require-entry"},240(r,e){e.describe=function(r){return"inlined-require-provider:"+r}}};const e={};globalThis.lib=function i(n){const t=e[n];if(void 0!==t)return t.exports;const o=e[n]={exports:{}};return r[n](o,o.exports,i),o.exports}(574),module.exports={}})();"#;
+
+    let pairs = expect_unpack(source, "bundle.js");
+    for name in ["module-240.js", "module-574.js"] {
+        assert!(
+            pairs.iter().any(|(file, _)| file == name),
+            "{name} must be extracted, got {:?}",
+            pairs.iter().map(|(file, _)| file).collect::<Vec<_>>()
+        );
+    }
+    let entry = entry_of(&pairs);
+    assert!(
+        entry.contains(r#"from "./module-574.js""#) && entry.contains("globalThis.lib = lib;"),
+        "the library assignment must survive as an import of the entry module, got:\n{entry}"
+    );
+    assert!(
+        entry.contains("export default {};"),
+        "the other sequence element must stay in entry.js, got:\n{entry}"
+    );
+    assert!(
+        !entry.contains("exports: {}"),
+        "the require runtime body must not become entry code, got:\n{entry}"
+    );
+}
+
+#[test]
+fn sequenced_bare_directly_invoked_require_keeps_the_other_elements() {
+    // shape: hypothetical (a bare call as one element of the sequence).
+    let source = r#"
+(() => {
+    var modules = {
+        1: (module, exports) => {
+            exports.value = 42;
+        }
+    };
+    var cache = {};
+    !function require(id) {
+        var cached = cache[id];
+        if (cached !== undefined) return cached.exports;
+        var module = cache[id] = { exports: {} };
+        modules[id].call(module.exports, module, module.exports, require);
+        return module.exports;
+    }(1), globalThis.ready = true;
+})();
+"#;
+
+    let pairs = expect_unpack(source, "bundle.js");
+    assert!(
+        pairs.iter().any(|(name, _)| name == "module-1.js"),
+        "the genuine webpack module must be extracted, got {:?}",
+        pairs.iter().map(|(name, _)| name).collect::<Vec<_>>()
+    );
+    let entry = entry_of(&pairs);
+    assert!(
+        entry.contains(r#""./module-1.js""#) && entry.contains("globalThis.ready = true"),
+        "entry.js must load the entry module and keep the other element, got:\n{entry}"
+    );
+}
+
+#[test]
+fn sequenced_directly_invoked_require_reading_a_bootstrap_local_stays_unsplit() {
+    // The sequence's other elements read bootstrap bindings (`r`, `i`).
+    // Moved to entry.js they would be free references, and dropping them
+    // would lose the library export, so the bundle is not split.
+    // shape: producer webpack@5.95.0 mode=production target=node
+    // output.library.type=commonjs2 (Terser), a CommonJS entry with one
+    // require: `exports.lib = require(...); exports.flag = true;`.
+    let source = r#"(()=>{var t={7(t){t.exports=function(t){return t+1}}},e={};var r,i={};(r=i).lib=function r(i){var n=e[i];if(void 0!==n)return n.exports;var o=e[i]={exports:{}};return t[i].call(o.exports,o,o.exports,r),o.exports}(7),r.flag=!0,module.exports=i})();"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "bundle.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("unpack should succeed");
+    assert!(
+        !output.modules.iter().any(|(name, _)| name == "module-7.js"),
+        "a sequence that reads bootstrap bindings must not split, got {:?}",
+        output
+            .modules
+            .iter()
+            .map(|(name, _)| name)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn var_bound_directly_invoked_require_marks_called_module_as_entry() {
     // The same library form can bind the entry's exports to a local.
     let source = r#"

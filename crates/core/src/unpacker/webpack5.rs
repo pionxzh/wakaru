@@ -2,7 +2,7 @@ use crate::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
 use swc_core::common::{
-    sync::Lrc, Globals, Mark, SourceMap, Spanned, SyntaxContext, DUMMY_SP, GLOBALS,
+    sync::Lrc, Globals, Mark, SourceMap, Span, Spanned, SyntaxContext, DUMMY_SP, GLOBALS,
 };
 use swc_core::ecma::ast::{
     ArrayLit, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, CallExpr,
@@ -594,23 +594,70 @@ fn plan_webpack_require_fn(stmts: &[Stmt], modules_sym: &Atom) -> Option<Require
     if !region_invokes_table(stmts, modules_sym) {
         return None;
     }
-    let (probe_stmts, _) = resolve_probe(stmts)?;
+    let (probe_stmts, unresolved_ctxt) = resolve_probe(stmts)?;
     // The modules container is always a region-level var declaration; its
     // resolved identity is what candidates must invoke.
     let table_id = region_level_binding_id(&probe_stmts, modules_sym)?;
     region_fn_candidates(&probe_stmts)
         .into_iter()
-        .find(|candidate| body_is_webpack_require(&candidate.excluded, candidate.body, &table_id))
+        .find(|candidate| {
+            body_is_webpack_require(&candidate.excluded, candidate.body, &table_id)
+                && direct_entry_sequence_is_movable(&probe_stmts, candidate, unresolved_ctxt)
+        })
         .map(|candidate| match candidate.kind {
             RegionFnCandidateKind::Declared(sym) => RequireFnPlan::Declared {
                 stmt_idx: candidate.stmt_idx,
                 sym,
             },
-            RegionFnCandidateKind::DirectEntry(entry_id) => RequireFnPlan::DirectEntry {
+            RegionFnCandidateKind::DirectEntry {
+                entry_id,
+                seq_element,
+            } => RequireFnPlan::DirectEntry {
                 entry_id,
                 stmt_idx: candidate.stmt_idx,
+                seq_element,
             },
         })
+}
+
+/// A directly invoked require that is one element of a comma sequence
+/// (`sink = function require(id) {...}(1), module.exports = {}`, from an
+/// `output.library` build) is accepted only when every other element can move
+/// to entry.js unchanged. Those elements are entry code: dropping them would
+/// silently lose the library's exports, so a sequence that reads a bootstrap
+/// binding (or `this`) stays unsplit instead.
+fn direct_entry_sequence_is_movable(
+    probe_stmts: &[Stmt],
+    candidate: &RegionFnCandidate<'_>,
+    unresolved_ctxt: SyntaxContext,
+) -> bool {
+    let RegionFnCandidateKind::DirectEntry {
+        seq_element: Some(element_idx),
+        ..
+    } = candidate.kind
+    else {
+        return true;
+    };
+    let Some(Stmt::Expr(expr_stmt)) = probe_stmts.get(candidate.stmt_idx) else {
+        return false;
+    };
+    let Expr::Seq(seq) = strip_parens(&expr_stmt.expr) else {
+        return false;
+    };
+    seq.exprs.iter().enumerate().all(|(idx, element)| {
+        if idx == element_idx {
+            return match strip_parens(element) {
+                Expr::Assign(_) => assign_targets_are_global(element, unresolved_ctxt),
+                _ => true,
+            };
+        }
+        let mut finder = LocalTargetFinder {
+            unresolved_ctxt,
+            found: false,
+        };
+        element.visit_with(&mut finder);
+        !finder.found
+    })
 }
 
 /// How the bootstrap exposes its proven webpack require lifecycle.
@@ -621,8 +668,13 @@ enum RequireFnPlan {
     Declared { stmt_idx: usize, sym: Atom },
     /// A require function invoked directly with the entry module id:
     /// `!function require(id) { ... }(entryId)`. `stmt_idx` is the statement
-    /// holding the call.
-    DirectEntry { entry_id: String, stmt_idx: usize },
+    /// holding the call; `seq_element` is the call's element when that
+    /// statement is a comma sequence.
+    DirectEntry {
+        entry_id: String,
+        stmt_idx: usize,
+        seq_element: Option<usize>,
+    },
 }
 
 /// Resolved [`Id`] of the region-level `var` declarator binding `sym`.
@@ -759,7 +811,10 @@ fn is_module_object_literal(expr: &Expr) -> bool {
 
 enum RegionFnCandidateKind {
     Declared(Atom),
-    DirectEntry(String),
+    DirectEntry {
+        entry_id: String,
+        seq_element: Option<usize>,
+    },
 }
 
 /// A region-level require-function candidate. Webpack emits either a function
@@ -843,7 +898,9 @@ fn region_fn_candidates(stmts: &[Stmt]) -> Vec<RegionFnCandidate<'_>> {
                         // `var lib = function require(id) { ... }(entryId)` —
                         // a library build binding the entry's exports.
                         Expr::Call(call) => {
-                            if let Some(candidate) = require_candidate_from_call(stmt_idx, call) {
+                            if let Some(candidate) =
+                                require_candidate_from_call(stmt_idx, call, None)
+                            {
                                 candidates.push(candidate);
                             }
                         }
@@ -851,25 +908,33 @@ fn region_fn_candidates(stmts: &[Stmt]) -> Vec<RegionFnCandidate<'_>> {
                     }
                 }
             }
-            _ => {
-                if let Some(candidate) = directly_invoked_require_candidate(stmt_idx, stmt) {
-                    candidates.push(candidate);
-                }
-            }
+            _ => candidates.extend(directly_invoked_require_candidates(stmt_idx, stmt)),
         }
     }
     candidates
 }
 
-fn directly_invoked_require_candidate(
-    stmt_idx: usize,
-    stmt: &Stmt,
-) -> Option<RegionFnCandidate<'_>> {
+fn directly_invoked_require_candidates(stmt_idx: usize, stmt: &Stmt) -> Vec<RegionFnCandidate<'_>> {
     let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
-        return None;
+        return Vec::new();
     };
-    let call = direct_invoke_call(expr)?;
-    require_candidate_from_call(stmt_idx, call)
+    // Terser merges an `output.library` startup into one comma sequence
+    // (`sink = function require(id) {...}(1), module.exports = {}`); each
+    // element can hold the call.
+    if let Expr::Seq(seq) = strip_parens(expr) {
+        return seq
+            .exprs
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, element)| {
+                require_candidate_from_call(stmt_idx, direct_invoke_call(element)?, Some(idx))
+            })
+            .collect();
+    }
+    direct_invoke_call(expr)
+        .and_then(|call| require_candidate_from_call(stmt_idx, call, None))
+        .into_iter()
+        .collect()
 }
 
 /// Unwrap a directly invoked require expression to its call. Besides the bare
@@ -888,7 +953,11 @@ fn direct_invoke_call(expr: &Expr) -> Option<&CallExpr> {
     }
 }
 
-fn require_candidate_from_call(stmt_idx: usize, call: &CallExpr) -> Option<RegionFnCandidate<'_>> {
+fn require_candidate_from_call(
+    stmt_idx: usize,
+    call: &CallExpr,
+    seq_element: Option<usize>,
+) -> Option<RegionFnCandidate<'_>> {
     if call.args.len() != 1 || call.args[0].spread.is_some() {
         return None;
     }
@@ -922,7 +991,10 @@ fn require_candidate_from_call(stmt_idx: usize, call: &CallExpr) -> Option<Regio
 
     Some(RegionFnCandidate {
         stmt_idx,
-        kind: RegionFnCandidateKind::DirectEntry(entry_id),
+        kind: RegionFnCandidateKind::DirectEntry {
+            entry_id,
+            seq_element,
+        },
         excluded,
         body,
     })
@@ -1833,9 +1905,18 @@ fn extract_webpack5_modules_with_plan(
     }
 
     let (direct_entry_id, direct_entry_consumer) = match require_plan.as_ref() {
-        Some(RequireFnPlan::DirectEntry { entry_id, stmt_idx }) => (
+        Some(RequireFnPlan::DirectEntry {
+            entry_id,
+            stmt_idx,
+            seq_element,
+        }) => (
             Some(entry_id.clone()),
-            direct_entry_consumer_stmts(&bootstrap_body.stmts, *stmt_idx),
+            match seq_element {
+                Some(element_idx) => {
+                    direct_entry_sequence_stmts(&bootstrap_body.stmts, *stmt_idx, *element_idx)
+                }
+                None => direct_entry_consumer_stmts(&bootstrap_body.stmts, *stmt_idx),
+            },
         ),
         _ => (None, None),
     };
@@ -1972,37 +2053,90 @@ fn direct_entry_consumer_stmts(stmts: &[Stmt], stmt_idx: usize) -> Option<Vec<St
 
     let mut names = IdentNameCollector::default();
     expr_stmt.visit_with(&mut names);
-    let binding = Ident::new_no_ctxt(
-        direct_entry_binding_name(&expr_stmt.expr, &names.0),
-        DUMMY_SP,
-    );
-    let mut consumer = expr_stmt.expr.clone();
+    unrolled_direct_entry_assignment(&expr_stmt.expr, expr_stmt.span, &names.0)
+}
+
+/// A comma-sequence startup split into statements, in order. The element
+/// holding the call becomes webpack's unrolled form (see
+/// [`direct_entry_consumer_stmts`]), or `__webpack_require__(id);` when the
+/// call is bare. Detection admitted the sequence only when every other element
+/// can move unchanged ([`direct_entry_sequence_is_movable`]).
+fn direct_entry_sequence_stmts(
+    stmts: &[Stmt],
+    stmt_idx: usize,
+    element_idx: usize,
+) -> Option<Vec<Stmt>> {
+    let Stmt::Expr(expr_stmt) = stmts.get(stmt_idx)? else {
+        return None;
+    };
+    let Expr::Seq(seq) = strip_parens(&expr_stmt.expr) else {
+        return None;
+    };
+    let mut names = IdentNameCollector::default();
+    expr_stmt.visit_with(&mut names);
+    let mut out = Vec::with_capacity(seq.exprs.len() + 1);
+    for (idx, element) in seq.exprs.iter().enumerate() {
+        let span = element.span();
+        if idx != element_idx {
+            out.push(Stmt::Expr(ExprStmt {
+                span,
+                expr: element.clone(),
+            }));
+            continue;
+        }
+        if matches!(strip_parens(element), Expr::Assign(_)) {
+            out.extend(unrolled_direct_entry_assignment(element, span, &names.0)?);
+        } else {
+            let call = direct_invoke_call(element)?.clone();
+            out.push(Stmt::Expr(ExprStmt {
+                span,
+                expr: Box::new(Expr::Call(direct_entry_require_call(call))),
+            }));
+        }
+    }
+    Some(out)
+}
+
+/// `target = function require(id) {...}(1)` as
+/// `var target_name = __webpack_require__(1); target = target_name;`.
+fn unrolled_direct_entry_assignment(
+    expr: &Expr,
+    span: Span,
+    taken: &HashSet<Atom>,
+) -> Option<Vec<Stmt>> {
+    let binding = Ident::new_no_ctxt(direct_entry_binding_name(expr, taken), DUMMY_SP);
+    let mut consumer = Box::new(expr.clone());
     let call = replace_direct_invoke_call(&mut consumer, &binding)?;
-    let require = Expr::Call(CallExpr {
-        callee: Callee::Expr(Box::new(Expr::Ident(Ident::new_no_ctxt(
-            Atom::from(DIRECT_ENTRY_REQUIRE),
-            DUMMY_SP,
-        )))),
-        ..call
-    });
     Some(vec![
         Stmt::Decl(swc_core::ecma::ast::Decl::Var(Box::new(VarDecl {
-            span: expr_stmt.span,
+            span,
             ctxt: SyntaxContext::empty(),
             kind: swc_core::ecma::ast::VarDeclKind::Var,
             declare: false,
             decls: vec![VarDeclarator {
                 span: DUMMY_SP,
                 name: Pat::Ident(binding.into()),
-                init: Some(Box::new(require)),
+                init: Some(Box::new(Expr::Call(direct_entry_require_call(call)))),
                 definite: false,
             }],
         }))),
         Stmt::Expr(ExprStmt {
-            span: expr_stmt.span,
+            span,
             expr: consumer,
         }),
     ])
+}
+
+/// The directly invoked call with its function-expression callee replaced by
+/// the unrolled require name; the entry-id argument stays.
+fn direct_entry_require_call(call: CallExpr) -> CallExpr {
+    CallExpr {
+        callee: Callee::Expr(Box::new(Expr::Ident(Ident::new_no_ctxt(
+            Atom::from(DIRECT_ENTRY_REQUIRE),
+            DUMMY_SP,
+        )))),
+        ..call
+    }
 }
 
 /// The innermost assignment target's property name (`lib` for `window.lib`),
