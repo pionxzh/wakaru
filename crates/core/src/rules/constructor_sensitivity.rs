@@ -657,6 +657,34 @@ impl Visit for ConstructorSensitiveUseCollector<'_> {
     }
 }
 
+pub(crate) type ConstructedMemberSuffixes = HashSet<(Atom, Atom)>;
+
+/// `(parent, property)` suffixes of constructor-sensitive keys in `keys`,
+/// excluding a `prototype` parent. Unrelated classes share `prototype`, so
+/// that parent must not keep every `init` as a function expression.
+pub(crate) fn member_suffixes_of(keys: &HashSet<ValueKey>) -> ConstructedMemberSuffixes {
+    keys.iter()
+        .filter_map(ValueKey::property_suffix)
+        .filter(|(parent, _)| parent.as_ref() != "prototype")
+        .map(|(parent, property)| (parent.clone(), property.clone()))
+        .collect()
+}
+
+/// Suffixes from one module after alias propagation. `ValueKey` contexts
+/// belong to this module's `Globals` and are not compared across modules;
+/// only the two property names leave the module.
+///
+/// A one-segment key (`new Name.init`, root `Name`) contributes nothing.
+/// Callers must not invent a parent from the root binding's name.
+pub(crate) fn constructed_member_suffixes(
+    module: &Module,
+    unresolved_mark: Mark,
+) -> ConstructedMemberSuffixes {
+    let local_helpers = LocalHelperContext::collect_with_mark(module, unresolved_mark);
+    let create_class = CreateClassHelpers::collect(module, unresolved_mark, &local_helpers);
+    member_suffixes_of(&collect_constructor_sensitive_values(module, &create_class))
+}
+
 pub(crate) fn collect_constructor_sensitive_values(
     module: &Module,
     create_class: &CreateClassHelpers,

@@ -113,6 +113,7 @@ pub fn trace_rules(
                     module_facts: None,
                     current_filename: Some(&options.filename),
                     call_required_plan: None,
+                    constructed_member_suffixes: None,
                 },
                 &mut observer,
             );

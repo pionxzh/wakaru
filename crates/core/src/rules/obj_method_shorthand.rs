@@ -11,7 +11,7 @@ use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 use super::constructor_sensitivity::{
     assign_target_pat_has_constructor_sensitive_value, assign_target_value_key,
     collect_constructor_sensitive_values, expr_value_key, is_value_preserving_assign_op,
-    pat_has_constructor_sensitive_value, pat_value_key, static_prop_name,
+    member_suffixes_of, pat_has_constructor_sensitive_value, pat_value_key, static_prop_name,
     visit_mut_assign_target_pat_constructor_sensitive_defaults,
     visit_mut_pat_constructor_sensitive_defaults, CreateClassHelpers, ValueKey,
 };
@@ -31,16 +31,18 @@ impl ObjMethodShorthand {
         module: &mut Module,
         unresolved_mark: Mark,
         local_helpers: &LocalHelperContext,
+        bundle_suffixes: Option<&HashSet<(Atom, Atom)>>,
     ) {
         let create_class = CreateClassHelpers::collect(module, unresolved_mark, local_helpers);
         let constructor_sensitive_values =
             collect_constructor_sensitive_values(module, &create_class);
-        let constructed_suffixes = constructor_sensitive_values
-            .iter()
-            .filter_map(ValueKey::property_suffix)
-            .filter(|(parent, _)| parent.as_ref() != "prototype")
-            .map(|(parent, property)| (parent.clone(), property.clone()))
-            .collect();
+        // Local suffixes stay here. Bundle suffixes are names only, collected
+        // on each module's barrier AST; they are not added to the shared
+        // constructor-sensitive roots, so ArrowFunction does not see them.
+        let mut constructed_suffixes = member_suffixes_of(&constructor_sensitive_values);
+        if let Some(bundle_suffixes) = bundle_suffixes {
+            constructed_suffixes.extend(bundle_suffixes.iter().cloned());
+        }
         module.visit_mut_with(&mut ObjMethodShorthandConverter {
             constructor_sensitive_values: &constructor_sensitive_values,
             constructed_suffixes: &constructed_suffixes,
@@ -51,7 +53,7 @@ impl ObjMethodShorthand {
 impl VisitMut for ObjMethodShorthand {
     fn visit_mut_module(&mut self, module: &mut Module) {
         let local_helpers = LocalHelperContext::collect_with_mark(module, self.unresolved_mark);
-        Self::run_with_helpers(module, self.unresolved_mark, &local_helpers);
+        Self::run_with_helpers(module, self.unresolved_mark, &local_helpers, None);
     }
 }
 
@@ -62,8 +64,11 @@ struct ObjMethodShorthandConverter<'a> {
     /// object reached through a different binding in a sibling scope (UMD
     /// IIFEs linked only through a global, a wrapper parameter bound to a
     /// `require` result), so `new C.algo.HMAC.init()` also protects
-    /// `X.HMAC = Base.extend({ init: function () {} })`. A false match only
-    /// keeps a function expression.
+    /// `X.HMAC = Base.extend({ init: function () {} })`. In a multi-module
+    /// unpack the set also includes suffixes from every other module's
+    /// barrier AST. A one-segment key does not contribute. A false match
+    /// only keeps a function expression. Single-file decompile passes an
+    /// empty bundle set.
     constructed_suffixes: &'a HashSet<(Atom, Atom)>,
 }
 
@@ -239,7 +244,9 @@ fn visit_mut_value_expr(
 /// assumption only skips shorthand; it does not invent a TypeError. Only an
 /// inline object argument is linked: a spread argument is not, and neither is
 /// an argument binding (`extend(props)` does not protect `props.init`).
-/// Construction of the property in another module is out of scope.
+/// Construction of the property in another module does not add a call-result
+/// key. A multi-module unpack can still keep the function through the bundle
+/// suffix set when both sides still have two property names.
 fn visit_mut_call(
     call: &mut CallExpr,
     result_keys: &[ValueKey],

@@ -70,6 +70,7 @@ struct RuleRunContext<'a> {
     module_facts: Option<&'a ModuleFactsMap>,
     current_filename: Option<&'a str>,
     call_required_plan: Option<&'a crate::rules::CallRequiredPlan>,
+    constructed_member_suffixes: Option<&'a crate::rules::ConstructedMemberSuffixes>,
     local_helpers: Rc<RefCell<Option<Rc<LocalHelperContext>>>>,
     extracted_function_names: SharedExtractedFunctionNames,
     pre_dead: Option<Rc<PreDeadSet>>,
@@ -476,7 +477,12 @@ runner!(
 runner!(run_obj_shorthand, ObjShorthand);
 fn run_obj_method_shorthand(module: &mut Module, ctx: RuleRunContext<'_>) {
     let local_helpers = ctx.local_helpers(module);
-    ObjMethodShorthand::run_with_helpers(module, ctx.unresolved_mark, local_helpers.as_ref());
+    ObjMethodShorthand::run_with_helpers(
+        module,
+        ctx.unresolved_mark,
+        local_helpers.as_ref(),
+        ctx.constructed_member_suffixes,
+    );
 }
 fn run_un_prototype_class(module: &mut Module, ctx: RuleRunContext<'_>) {
     let pin_exports =
@@ -875,6 +881,10 @@ pub struct RulePipelineOptions<'a> {
     pub module_facts: Option<&'a ModuleFactsMap>,
     pub current_filename: Option<&'a str>,
     pub(crate) call_required_plan: Option<&'a crate::rules::CallRequiredPlan>,
+    /// Suffixes collected on every module's barrier AST. Single-file
+    /// decompile leaves this empty. Not written into constructor-sensitive
+    /// roots.
+    pub(crate) constructed_member_suffixes: Option<&'a crate::rules::ConstructedMemberSuffixes>,
 }
 
 impl Default for RulePipelineOptions<'_> {
@@ -887,6 +897,7 @@ impl Default for RulePipelineOptions<'_> {
             module_facts: None,
             current_filename: None,
             call_required_plan: None,
+            constructed_member_suffixes: None,
         }
     }
 }
@@ -932,6 +943,14 @@ impl<'a> RulePipelineOptions<'a> {
         plan: &'a crate::rules::CallRequiredPlan,
     ) -> Self {
         self.call_required_plan = Some(plan);
+        self
+    }
+
+    pub(crate) fn with_constructed_member_suffixes(
+        mut self,
+        suffixes: &'a crate::rules::ConstructedMemberSuffixes,
+    ) -> Self {
+        self.constructed_member_suffixes = Some(suffixes);
         self
     }
 }
@@ -993,6 +1012,7 @@ fn apply_rules_impl(
         module_facts: options.module_facts,
         current_filename: options.current_filename,
         call_required_plan: options.call_required_plan,
+        constructed_member_suffixes: options.constructed_member_suffixes,
         local_helpers: Rc::new(RefCell::new(None)),
         extracted_function_names: Rc::new(RefCell::new(ExtractedFunctionNames::default())),
         pre_dead,
@@ -1152,6 +1172,7 @@ mod tests {
                 module_facts: None,
                 current_filename: None,
                 call_required_plan: None,
+                constructed_member_suffixes: None,
                 local_helpers: Rc::new(RefCell::new(Some(Rc::new(LocalHelperContext::default())))),
                 extracted_function_names: Default::default(),
                 pre_dead: None,

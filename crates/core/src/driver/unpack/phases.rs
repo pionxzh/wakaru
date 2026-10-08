@@ -174,6 +174,9 @@ struct Phase1Module {
     filename: String,
     facts: crate::facts::ModuleFacts,
     prepared: Option<Phase1PreparedModule>,
+    /// Constructor-sensitive member suffixes from the pre-late barrier AST.
+    /// Empty when fact collection did not produce an AST.
+    constructed_member_suffixes: crate::rules::ConstructedMemberSuffixes,
     warning: Option<UnpackWarning>,
     input_parse_warnings: Vec<UnpackWarning>,
     /// Original source filename recovered from provenance markers (Sentry
@@ -397,6 +400,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 filename: unpacked.module.filename.clone(),
                 facts: crate::facts::ModuleFacts::default(),
                 prepared: None,
+                constructed_member_suffixes: crate::rules::ConstructedMemberSuffixes::default(),
                 warning: Some(detector_failure_warning(&unpacked.module.filename, failure)),
                 input_parse_warnings: Vec::new(),
                 suggested_filename: None,
@@ -424,7 +428,8 @@ pub(super) fn unpack_multi_module_with_plan(
             }
             None => (Globals::new(), None, Vec::new()),
         };
-        let (facts, prepared_parts, warning, suggested_filename) = GLOBALS.set(&globals, || {
+        let (facts, prepared_parts, warning, suggested_filename, constructed_member_suffixes) =
+            GLOBALS.set(&globals, || {
             let (mut module, unresolved_mark) = match prepared_input {
                 Some((mut module, _detector_mark)) => {
                     // The detector's contexts describe its own surgery; give
@@ -457,6 +462,7 @@ pub(super) fn unpack_multi_module_with_plan(
                                         ),
                                     )),
                                     None,
+                                    crate::rules::ConstructedMemberSuffixes::default(),
                                 );
                             }
                         }
@@ -537,6 +543,11 @@ pub(super) fn unpack_multi_module_with_plan(
             // `module`. When the AST will be reused (no-sourcemap path), clone
             // before recovering for facts. When it won't be reused (sourcemap
             // path discards `module`), recover in place and skip the clone.
+            // Same pre-late AST `collect_import_call_edges` reads, inside this
+            // module's `GLOBALS`. Source-map mode has no retained AST at the
+            // barrier, so the suffixes have to be taken here.
+            let constructed_member_suffixes =
+                crate::rules::constructed_member_suffixes(&module, unresolved_mark);
             let (mut facts, prepared) = if can_reuse_phase1_ast {
                 let mut facts_module = module.clone();
                 {
@@ -589,7 +600,13 @@ pub(super) fn unpack_multi_module_with_plan(
             facts.whole_require_sources = whole_require_sources;
             facts.marks_es_module = marks_es_module;
             facts.wildcard_require_sources = wildcard_require_sources;
-            (facts, prepared, None, suggested_filename)
+            (
+                facts,
+                prepared,
+                None,
+                suggested_filename,
+                constructed_member_suffixes,
+            )
         });
         let prepared = prepared_parts.map(|(module, unresolved_mark)| Phase1PreparedModule {
             globals,
@@ -600,6 +617,7 @@ pub(super) fn unpack_multi_module_with_plan(
             filename: unpacked.module.filename.clone(),
             facts,
             prepared,
+            constructed_member_suffixes,
             warning,
             input_parse_warnings,
             suggested_filename,
@@ -621,6 +639,7 @@ pub(super) fn unpack_multi_module_with_plan(
     let mut prepared_parse_warnings = Vec::with_capacity(phase1.len());
     let mut warnings = Vec::new();
     let mut rename_entries = Vec::with_capacity(phase1.len());
+    let mut constructed_member_suffixes = crate::rules::ConstructedMemberSuffixes::default();
     for phase1_module in phase1 {
         rename_entries.push((
             phase1_module.filename.clone(),
@@ -629,6 +648,7 @@ pub(super) fn unpack_multi_module_with_plan(
         module_facts.insert(&phase1_module.filename, phase1_module.facts);
         prepared_modules.push(phase1_module.prepared);
         prepared_parse_warnings.push(phase1_module.input_parse_warnings);
+        constructed_member_suffixes.extend(phase1_module.constructed_member_suffixes);
         if let Some(w) = phase1_module.warning {
             warnings.push(w);
         }
@@ -654,6 +674,7 @@ pub(super) fn unpack_multi_module_with_plan(
     let facts_ref = &module_facts;
     let composition_plan_ref = &commonjs_default_object_composition_plan;
     let call_required_plan_ref = &call_required_plan;
+    let constructed_member_suffixes_ref = &constructed_member_suffixes;
     let sm_ref = &parsed_sourcemap;
     let rename_ref = &rename_map;
     let phase2_inputs: Vec<_> = modules
@@ -734,7 +755,8 @@ pub(super) fn unpack_multi_module_with_plan(
                     .with_rewrite_level(options.level)
                     .with_module_facts(facts_ref)
                     .with_current_filename(&unpacked.module.filename)
-                    .with_call_required_plan(call_required_plan_ref),
+                    .with_call_required_plan(call_required_plan_ref)
+                    .with_constructed_member_suffixes(constructed_member_suffixes_ref),
             );
             // Later rules can expose sequence expressions. The old unpack
             // path cleaned those by running a second full module pipeline;

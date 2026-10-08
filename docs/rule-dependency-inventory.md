@@ -571,7 +571,14 @@ rationale, or level gating appear.
   against `new C.algo.HMAC.init()`) stays a function unless that parent name
   is `prototype`. It covers namespaces the resolver cannot link, such as
   sibling UMD IIFEs that share an object only through a global; a false
-  match only keeps a function expression.
+  match only keeps a function expression. In a multi-module unpack that set
+  also includes suffixes from every other module's barrier AST (after
+  `UnEsm`, before late ESM recovery). The call-result link itself still reads
+  only the current module. Both sides need two property names. Single-file
+  decompile has no bundle set. A provider already recovered as an ESM export,
+  a consumer that destructures the binding straight from an import or
+  `require`, a construct use created only in Phase 2, and a module that failed
+  fact collection are known misses.
 - **Function-to-class callability guards** — IIFE return aliases are recorded
   for both variable initializers and later plain assignments, and so are plain
   identifier aliases (`var a = Foo`). A constructor passed through any of these

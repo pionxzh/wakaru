@@ -50,10 +50,12 @@ Phase 1 (per module, parallel):
     clone barrier AST → recover webpack factory IIFE ESM shapes
     collect_module_facts(&facts_clone)                ← pure AST → facts
     collect_import_call_edges(&barrier_ast)           ← imports still under [[Call]]
+    collect constructed-member suffixes(&barrier_ast) ← names only, same AST
     retain original barrier AST + Globals + unresolved mark
 
 ──── barrier: ModuleFactsMap assembled from all modules;
-     CommonJsDefaultObjectCompositionPlan and CallRequiredPlan built ────
+     CommonJsDefaultObjectCompositionPlan and CallRequiredPlan built;
+     constructed-member suffixes unioned (not stored on ModuleFacts) ────
 
 Phase 2 (per module, parallel):
     resume retained barrier AST
@@ -65,7 +67,8 @@ Phase 2 (per module, parallel):
     run_namespace_decomposition(&mut module, facts)  ← reads cross-module facts
     downgrade_unused_synthetic_imports(&mut module)  ← preserve require effects
     registry rule range resuming after UnEsm, through UnReturn
-      (UnEs6Class / UnPrototypeClass read this module's CallRequiredPlan pins)
+      (UnEs6Class / UnPrototypeClass read this module's CallRequiredPlan pins;
+       ObjMethodShorthand also reads the barrier suffix union)
     targeted late cleanup/recovery
 ```
 
@@ -297,6 +300,19 @@ Neither proof creates a default-object fact available to consumers.
 
 ## Rules that read facts
 
+- **`ObjMethodShorthand` bundle suffixes** — Phase 1, inside each module's
+  `GLOBALS` and on the same pre-late AST as `collect_import_call_edges`,
+  records `(parent, property)` suffixes of constructor-sensitive keys after
+  that module's alias propagation. A `prototype` parent is dropped. The
+  barrier unions the sets. Phase 2 passes the union into `ObjMethodShorthand`
+  only; it is not added to the shared constructor-sensitive roots, so
+  `ArrowFunction` does not see it. The call-result link still reads only the
+  current module. Both the constructed key and the object property need two
+  property names. Single-file decompile passes an empty set. Known misses: a
+  provider `UnEsm` recovered as an ESM export, a consumer that destructures
+  the binding directly from an import or `require`, a construct use that
+  appears only in Phase 2, and a module whose fact collection failed. A false
+  match only keeps a function expression.
 - **`UnEs6Class` / `UnPrototypeClass` cross-file `[[Call]]` pins** — a module
   that still calls an imported constructor with `.call` / `.apply` (including
   `F.call.apply(G, …)`, whose callee is `G`) needs that export to stay an

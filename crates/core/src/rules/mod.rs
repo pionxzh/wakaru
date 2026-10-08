@@ -171,6 +171,7 @@ pub use arrow_function::ArrowFunction;
 pub use arrow_return::ArrowReturn;
 pub(crate) use call_required::{collect_import_call_edges, pinned_export_names, CallRequiredPlan};
 pub use class_expression_to_declaration::ClassExpressionToDeclaration;
+pub(crate) use constructor_sensitivity::{constructed_member_suffixes, ConstructedMemberSuffixes};
 pub use dead_decls::{DeadDecls, DeadUninitializedDecls};
 pub use dead_imports::DeadImports;
 pub use exponent::Exponent;
