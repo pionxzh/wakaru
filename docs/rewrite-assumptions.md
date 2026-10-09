@@ -1127,12 +1127,23 @@ a known source string mentions (an unknown source blocks all).
 `VarDeclToLetConst`, `DeadDecls`, `UnIife`, and `ArrowFunction` follow this
 pattern; each rule documents what it checks.
 
-`with` and direct `eval` are module-wide hazards. A rule that reads a free
-name as the global, renames or removes a binding, or introduces a new binding
-skips the whole module when either construct is present. wakaru does not model
-`with` bodies or eval scopes any finer than that: compilers do not emit them,
-and well under 1% of modules in a huge corpus of production bundles contain
-either. A rule that lacks the check is a bug, not a documented exception.
+A rule that reads a free name as the global, renames or removes a binding, or
+introduces a new binding guards against both constructs at this granularity:
+
+- A `with` statement anywhere in the module skips the rule for the whole
+  module (`module_has_with_stmt`). wakaru does not model `with` bodies.
+- A direct `eval` whose source is unknown blocks the rewrite. A direct `eval`
+  whose source is a static string blocks only the names that source mentions,
+  the best effort above. For a synthesized reference to a global such as
+  `undefined` or `Infinity`, `module_blocks_global_reference(module, name)`
+  applies both `with` and `eval` cases.
+- A rule that cannot cheaply name every binding a known source could reach
+  uses `has_dynamic_scope_construct` instead, and skips on any `with` or
+  direct `eval`.
+
+Compilers do not emit either construct, so this coarse treatment costs little
+recovery on compiled output. A rule in this set that lacks the guard is a bug,
+not a documented exception.
 
 Two boundaries follow from this.
 
