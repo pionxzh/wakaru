@@ -8,6 +8,9 @@ destructuring/default, object-rest, nested async callback, and generator
 delegation snippets through Babel, TypeScript, SWC, and esbuild, then runs
 wakaru over each generated shape.
 
+Add new `for await` or other async variants here rather than starting a new
+matrix: the Babel profiles already carry the plugins async snippets need.
+
 ## Comparison model
 
 Non-mangled shapes are checked with substring needles (`expected` /
