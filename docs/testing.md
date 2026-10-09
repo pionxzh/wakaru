@@ -443,6 +443,12 @@ use `mv` or `INSTA_UPDATE=always`; both produce the same `.snap` as
 scope it to the tests whose diffs you already read. `cargo insta review` is
 interactive and does not work in an agent shell.
 
+A test that pins one snapshot per unpacked module goes through
+`common::assert_each_snapshot`, with `insta::assert_snapshot!` in a closure
+written in the test file. A plain loop stops at the first drifting module, so
+later drifts would only appear after that one is accepted. The helper checks
+every module and then names each failure.
+
 **When snapshots change unexpectedly:** see the "Snapshot Layers" section in
 [debugging.md](debugging.md) for how to trace the cause.
 

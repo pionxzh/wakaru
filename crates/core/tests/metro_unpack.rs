@@ -1,3 +1,5 @@
+mod common;
+
 use wakaru_core::driver::test_support::{unpack, unpack_raw};
 use wakaru_core::unpacker::{metro, try_unpack_bundle, BundleFormat};
 use wakaru_core::DecompileOptions;
@@ -648,10 +650,12 @@ fn metro_raw_snapshots() {
         .expect("raw Metro unpack should succeed");
     let mut modules = output.modules;
     modules.sort_by(|(left, _), (right, _)| left.cmp(right));
-    for (filename, code) in modules {
-        let name = format!("raw_{}", filename.trim_end_matches(".js"));
-        insta::assert_snapshot!(name, code);
-    }
+    common::assert_each_snapshot(
+        modules
+            .iter()
+            .map(|(filename, code)| (format!("raw_{}", filename.trim_end_matches(".js")), code)),
+        |name, code| insta::assert_snapshot!(name, code),
+    );
 }
 
 #[test]
@@ -666,8 +670,13 @@ fn metro_decompiled_snapshots() {
     .expect("Metro unpack should succeed");
     let mut modules = output.modules;
     modules.sort_by(|(left, _), (right, _)| left.cmp(right));
-    for (filename, code) in modules {
-        let name = format!("decompiled_{}", filename.trim_end_matches(".js"));
-        insta::assert_snapshot!(name, code);
-    }
+    common::assert_each_snapshot(
+        modules.iter().map(|(filename, code)| {
+            (
+                format!("decompiled_{}", filename.trim_end_matches(".js")),
+                code,
+            )
+        }),
+        |name, code| insta::assert_snapshot!(name, code),
+    );
 }

@@ -1,3 +1,5 @@
+mod common;
+
 use std::fs;
 
 use wakaru_core::driver::test_support::{unpack, unpack_raw};
@@ -169,10 +171,13 @@ fn wp4_inner_umd_commonjs_branches_recover_defaults() {
 fn wp4_cjs_min_snapshots() {
     let mut pairs = unpack_fixture("wp4-cjs-min/bundle.js");
     pairs.sort_by(|(a, _), (b, _)| a.cmp(b));
-    for (filename, code) in &pairs {
-        let snap_name = format!("wp4_cjs_min__{}", filename.trim_end_matches(".js"));
-        insta::assert_snapshot!(snap_name, code);
-    }
+    common::assert_each_snapshot(
+        pairs.iter().map(|(filename, code)| {
+            let snap_name = format!("wp4_cjs_min__{}", filename.trim_end_matches(".js"));
+            (snap_name, code)
+        }),
+        |name, code| insta::assert_snapshot!(name, code),
+    );
 }
 
 // ========================================================================
@@ -502,10 +507,13 @@ fn wp5_umd_min_library_wrapper() {
 fn wp5_cjs_min_snapshots() {
     let mut pairs = unpack_fixture("wp5-cjs-min/bundle.js");
     pairs.sort_by(|(a, _), (b, _)| a.cmp(b));
-    for (filename, code) in &pairs {
-        let snap_name = format!("wp5_cjs_min__{}", filename.trim_end_matches(".js"));
-        insta::assert_snapshot!(snap_name, code);
-    }
+    common::assert_each_snapshot(
+        pairs.iter().map(|(filename, code)| {
+            let snap_name = format!("wp5_cjs_min__{}", filename.trim_end_matches(".js"));
+            (snap_name, code)
+        }),
+        |name, code| insta::assert_snapshot!(name, code),
+    );
 }
 
 // ========================================================================
@@ -638,26 +646,32 @@ fn wp_path_traversal_sanitized() {
 fn wp4_cjs_dev_snapshots() {
     let mut pairs = unpack_fixture("wp4-cjs/bundle.js");
     pairs.sort_by(|(a, _), (b, _)| a.cmp(b));
-    for (filename, code) in &pairs {
-        let snap_name = format!(
-            "wp4_cjs_dev__{}",
-            filename.replace('/', "_").trim_end_matches(".js")
-        );
-        insta::assert_snapshot!(snap_name, code);
-    }
+    common::assert_each_snapshot(
+        pairs.iter().map(|(filename, code)| {
+            let snap_name = format!(
+                "wp4_cjs_dev__{}",
+                filename.replace('/', "_").trim_end_matches(".js")
+            );
+            (snap_name, code)
+        }),
+        |name, code| insta::assert_snapshot!(name, code),
+    );
 }
 
 #[test]
 fn wp5_cjs_dev_snapshots() {
     let mut pairs = unpack_fixture("wp5-cjs/bundle.js");
     pairs.sort_by(|(a, _), (b, _)| a.cmp(b));
-    for (filename, code) in &pairs {
-        let snap_name = format!(
-            "wp5_cjs_dev__{}",
-            filename.replace('/', "_").trim_end_matches(".js")
-        );
-        insta::assert_snapshot!(snap_name, code);
-    }
+    common::assert_each_snapshot(
+        pairs.iter().map(|(filename, code)| {
+            let snap_name = format!(
+                "wp5_cjs_dev__{}",
+                filename.replace('/', "_").trim_end_matches(".js")
+            );
+            (snap_name, code)
+        }),
+        |name, code| insta::assert_snapshot!(name, code),
+    );
 }
 
 // ========================================================================

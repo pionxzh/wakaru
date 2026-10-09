@@ -1,3 +1,5 @@
+mod common;
+
 use std::fs;
 
 use wakaru_core::driver::test_support::{unpack, unpack_files, unpack_files_raw, UnpackInput};
@@ -280,13 +282,16 @@ fn webpack5_dynamic_entry_and_chunk_unpack_together() {
         "entry should reference the chunk module path:\n{entry}"
     );
 
-    for (filename, code) in &modules {
-        let snap_name = format!(
-            "multi_file_wp5_dynamic__{}",
-            filename.replace(['/', '\\'], "_").trim_end_matches(".js")
-        );
-        insta::assert_snapshot!(snap_name, code);
-    }
+    common::assert_each_snapshot(
+        modules.iter().map(|(filename, code)| {
+            let snap_name = format!(
+                "multi_file_wp5_dynamic__{}",
+                filename.replace(['/', '\\'], "_").trim_end_matches(".js")
+            );
+            (snap_name, code)
+        }),
+        |name, code| insta::assert_snapshot!(name, code),
+    );
 }
 
 #[test]

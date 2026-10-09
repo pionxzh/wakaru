@@ -1,3 +1,5 @@
+mod common;
+
 use std::fs;
 
 use wakaru_core::driver::test_support::{unpack, unpack_raw};
@@ -200,11 +202,13 @@ fn webpack4_unpack_snapshots() {
     // Sort for stable snapshot order
     pairs.sort_by(|(a, _), (b, _)| a.cmp(b));
 
-    for (filename, code) in &pairs {
-        // Use the filename (without extension) as the snapshot name
-        let snap_name = filename.trim_end_matches(".js");
-        insta::assert_snapshot!(snap_name, code);
-    }
+    // Use the filename (without extension) as the snapshot name
+    common::assert_each_snapshot(
+        pairs
+            .iter()
+            .map(|(filename, code)| (filename.trim_end_matches(".js"), code)),
+        |name, code| insta::assert_snapshot!(name, code),
+    );
 }
 
 #[test]
@@ -316,4 +320,24 @@ fn webpack4_unpacks_parenthesized_array_factories() {
         filenames.contains(&"entry.js") && filenames.contains(&"module-1.js"),
         "parenthesized factories should be recognized, got {filenames:?}"
     );
+}
+
+#[test]
+fn assert_each_snapshot_checks_every_pair_and_names_each_failure() {
+    let checked = std::cell::RefCell::new(Vec::new());
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        common::assert_each_snapshot(
+            [("first", "ok"), ("second", "bad"), ("third", "bad")],
+            |name, code| {
+                checked.borrow_mut().push(name.to_string());
+                assert_eq!(code, "ok");
+            },
+        );
+    }));
+    let message = result
+        .expect_err("a failed pair should fail the helper")
+        .downcast::<String>()
+        .expect("panic message should be a String");
+    assert_eq!(*checked.borrow(), ["first", "second", "third"]);
+    assert!(message.contains("2 snapshot(s) failed: second, third"));
 }

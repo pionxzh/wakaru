@@ -317,3 +317,33 @@ pub fn emit_module(module: &Module, cm: Lrc<SourceMap>) -> String {
     }
     String::from_utf8(output).expect("normalization output is not utf-8")
 }
+
+/// Runs `assert` on every `(name, code)` pair, then fails once, naming every
+/// pair whose assertion panicked. A plain loop over `insta::assert_snapshot!`
+/// stops at the first mismatch, so a later drift only shows up after the
+/// first one is accepted.
+///
+/// Pass the snapshot macro in a closure written in the test file: the macro
+/// takes its snapshot directory and file-name prefix from where it expands.
+#[allow(dead_code)]
+pub fn assert_each_snapshot<I, N, C>(snapshots: I, assert: impl Fn(&str, &str))
+where
+    I: IntoIterator<Item = (N, C)>,
+    N: AsRef<str>,
+    C: AsRef<str>,
+{
+    let mut failed = Vec::new();
+    for (name, code) in snapshots {
+        let (name, code) = (name.as_ref(), code.as_ref());
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| assert(name, code)));
+        if result.is_err() {
+            failed.push(name.to_string());
+        }
+    }
+    assert!(
+        failed.is_empty(),
+        "{} snapshot(s) failed: {}",
+        failed.len(),
+        failed.join(", ")
+    );
+}

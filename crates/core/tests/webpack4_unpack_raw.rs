@@ -1,3 +1,5 @@
+mod common;
+
 use std::fs;
 use wakaru_core::unpack_webpack4_raw;
 
@@ -14,8 +16,10 @@ fn webpack4_raw_snapshots() {
 
     pairs.sort_by(|(a, _), (b, _)| a.cmp(b));
 
-    for (filename, code) in &pairs {
-        let snap_name = format!("raw_{}", filename.trim_end_matches(".js"));
-        insta::assert_snapshot!(snap_name, code);
-    }
+    common::assert_each_snapshot(
+        pairs
+            .iter()
+            .map(|(filename, code)| (format!("raw_{}", filename.trim_end_matches(".js")), code)),
+        |name, code| insta::assert_snapshot!(name, code),
+    );
 }
