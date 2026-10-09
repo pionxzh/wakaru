@@ -661,18 +661,19 @@ fn residuals_until(cm: &Lrc<SourceMap>, name: &str, source: &str, stop_after: &s
     }
 }
 
-fn collect_files(root: &Path, out: &mut Vec<PathBuf>) {
+/// A path argument that cannot be read is an error: skipping it would report
+/// zero modules and zero defects, which reads as a clean run.
+fn collect_files(root: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
     if root.is_file() {
         out.push(root.to_path_buf());
-        return;
+        return Ok(());
     }
-    let Ok(entries) = fs::read_dir(root) else {
-        return;
-    };
+    let entries =
+        fs::read_dir(root).map_err(|error| format!("cannot read {}: {error}", root.display()))?;
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            collect_files(&path, out);
+            collect_files(&path, out)?;
         } else if path
             .extension()
             .is_some_and(|e| e == "js" || e == "mjs" || e == "cjs")
@@ -680,12 +681,13 @@ fn collect_files(root: &Path, out: &mut Vec<PathBuf>) {
             out.push(path);
         }
     }
+    Ok(())
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut files = Vec::new();
     for arg in env::args().skip(1) {
-        collect_files(Path::new(&arg), &mut files);
+        collect_files(Path::new(&arg), &mut files)?;
     }
     files.sort();
 
@@ -889,4 +891,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     eprintln!("{}", serde_json::to_string_pretty(&totals)?);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_input_path_is_an_error() {
+        let missing = env::temp_dir().join("name-capture-oracle-missing-input");
+        let mut files = Vec::new();
+        let error = collect_files(&missing, &mut files).expect_err("a missing path must fail");
+        assert!(error.contains("cannot read"), "{error}");
+        assert!(files.is_empty());
+    }
+
+    #[test]
+    fn directory_input_collects_script_files() {
+        let dir = env::temp_dir().join(format!("name-capture-oracle-{}", std::process::id()));
+        fs::create_dir_all(dir.join("nested")).unwrap();
+        fs::write(dir.join("a.js"), "").unwrap();
+        fs::write(dir.join("nested/b.mjs"), "").unwrap();
+        fs::write(dir.join("notes.txt"), "").unwrap();
+        let mut files = Vec::new();
+        collect_files(&dir, &mut files).expect("a readable directory should succeed");
+        files.sort();
+        fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(files, [dir.join("a.js"), dir.join("nested/b.mjs")]);
+    }
 }
