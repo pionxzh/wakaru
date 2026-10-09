@@ -946,6 +946,19 @@ fn collect_helper_exports(
 
     for export in exports {
         let Some(local) = &export.local else {
+            // An anonymous default export has no binding to look up: a
+            // minifier drops the helper's name in `module.exports = function (e) {…}`.
+            if export.kind == ExportKind::Default {
+                let kind = anonymous_default_export_helper_kind(module);
+                exports_any_helper |= kind.is_some();
+                if let Some(kind) = kind.and_then(helper_kind_from_transpiler) {
+                    helper_exports.push(HelperExportFact {
+                        exported: export.exported.clone(),
+                        local: None,
+                        kind,
+                    });
+                }
+            }
             continue;
         };
 
@@ -975,6 +988,23 @@ fn collect_helper_exports(
     }
 
     (helper_exports, exports_any_helper)
+}
+
+/// The helper kind of `export default function (…) {…}` or
+/// `export default <callable>`, matched by body shape like a declaration.
+fn anonymous_default_export_helper_kind(module: &Module) -> Option<TranspilerHelperKind> {
+    module.body.iter().find_map(|item| match item {
+        ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultDecl(decl)) => match &decl.decl {
+            DefaultDecl::Fn(fn_expr) if fn_expr.ident.is_none() => {
+                classify_inline_callable(&Expr::Fn(fn_expr.clone()))
+            }
+            _ => None,
+        },
+        ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(expr)) => {
+            classify_inline_callable(strip_parens(&expr.expr))
+        }
+        _ => None,
+    })
 }
 
 fn collect_ts_helper_exports(

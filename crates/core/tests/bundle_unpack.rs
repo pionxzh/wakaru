@@ -440,6 +440,67 @@ fn webpack5_bundled_tslib_interop_helpers_become_imports() {
     // each provider's `__esModule` flag into a sequence.
     let source = r#"(()=>{var e={393(e,t,r){"use strict";t.run=function(){return["consumer-side",new o.default("w").label(),(0,u.default)("v"),u.default.version,i.twice(3),i.default,Object.keys(i).sort().join(",")]};const n=r(635),o=n.__importDefault(r(805)),u=n.__importDefault(r(30)),i=n.__importStar(r(701))},97(e,t,r){const n=r(393);t.main=function(){return n.run()}},30(e){function t(e){return"<"+String(e)+">"}t.version="format-1",e.exports=t},701(e,t){"use strict";Object.defineProperty(t,"__esModule",{value:!0}),t.twice=function(e){return 2*e},t.default="util-default"},805(e,t){"use strict";Object.defineProperty(t,"__esModule",{value:!0}),t.default=class{constructor(e){this.name=e}label(){return"widget:"+this.name}}},635(e,t,r){"use strict";r.d(t,{__importDefault:()=>a,__importStar:()=>i});var n=Object.create?function(e,t,r,n){void 0===n&&(n=r);var o=Object.getOwnPropertyDescriptor(t,r);o&&!("get"in o?!t.__esModule:o.writable||o.configurable)||(o={enumerable:!0,get:function(){return t[r]}}),Object.defineProperty(e,n,o)}:function(e,t,r,n){void 0===n&&(n=r),e[n]=t[r]},o=Object.create?function(e,t){Object.defineProperty(e,"default",{enumerable:!0,value:t})}:function(e,t){e.default=t},u=function(e){return u=Object.getOwnPropertyNames||function(e){var t=[];for(var r in e)Object.prototype.hasOwnProperty.call(e,r)&&(t[t.length]=r);return t},u(e)};function i(e){if(e&&e.__esModule)return e;var t={};if(null!=e)for(var r=u(e),i=0;i<r.length;i++)"default"!==r[i]&&n(t,e,r[i]);return o(t,e),t}function a(e){return e&&e.__esModule?e:{default:e}}}};const t={};function r(n){const o=t[n];if(void 0!==o)return o.exports;const u=t[n]={exports:{}};return e[n](u,u.exports,r),u.exports}r.d=(e,t)=>{for(var n in t)r.o(t,n)&&!r.o(e,n)&&Object.defineProperty(e,n,{enumerable:!0,get:t[n]})},r.o=(e,t)=>Object.prototype.hasOwnProperty.call(e,t),globalThis.lib=r(97)})();"#;
 
+    // A provider marked `__esModule` keeps its default export for
+    // `__importDefault` and its namespace for `__importStar`; the unmarked
+    // `module.exports = format` is the whole value either way.
+    assert_interop_consumer_imports(
+        source,
+        &[
+            r#"import o from "./module-805.js";"#,
+            r#"import u from "./module-30.js";"#,
+            r#"import * as i from "./module-701.js";"#,
+            "new o(\"w\")",
+            "u.version",
+            "i.default",
+        ],
+        &["__importDefault", "__importStar", "o.default", "u.default"],
+    );
+}
+
+#[test]
+fn webpack5_bundled_babel_runtime_interop_helper_becomes_imports() {
+    // shape: producer @babel/core@7.28.5 with plugin-transform-runtime@7.28.5
+    // and plugin-transform-modules-commonjs@7.28.6, bundled with
+    // @babel/runtime@7.28.6 by webpack@5.111.1 mode=production (Terser); sink
+    // renamed to `globalThis.lib`. Terser leaves the runtime's
+    // `interopRequireDefault` an anonymous `module.exports = function (e) {…}`;
+    // transform-runtime inlines `interopRequireWildcard`.
+    let source = r#"(()=>{var e={393(e,t,r){"use strict";var n=r(994);t.run=function(){return["consumer-side",new o.default("w").label(),(0,u.default)("v"),u.default.version,i.twice(3),i.default,Object.keys(i).sort().join(",")]};var o=n(r(805)),u=n(r(30)),i=function(e){if("function"==typeof WeakMap){var t=new WeakMap;new WeakMap}return function(e){if(e&&e.__esModule)return e;var r,n,o={__proto__:null,default:e};if(null===e||"object"!=typeof e&&"function"!=typeof e)return o;if(r=t){if(r.has(e))return r.get(e);r.set(e,o)}for(const t in e)"default"!==t&&{}.hasOwnProperty.call(e,t)&&((n=(r=Object.defineProperty)&&Object.getOwnPropertyDescriptor(e,t))&&(n.get||n.set)?r(o,t,n):o[t]=e[t]);return o}(e)}(r(701))},97(e,t,r){const n=r(393);t.main=function(){return n.run()}},30(e){function t(e){return"<"+String(e)+">"}t.version="format-1",e.exports=t},701(e,t){"use strict";Object.defineProperty(t,"__esModule",{value:!0}),t.default=void 0,t.twice=function(e){return 2*e},t.default="util-default"},805(e,t){"use strict";Object.defineProperty(t,"__esModule",{value:!0}),t.default=void 0,t.default=class{constructor(e){this.name=e}label(){return"widget:"+this.name}}},994(e){e.exports=function(e){return e&&e.__esModule?e:{default:e}},e.exports.__esModule=!0,e.exports.default=e.exports}};const t={};globalThis.lib=function r(n){const o=t[n];if(void 0!==o)return o.exports;const u=t[n]={exports:{}};return e[n](u,u.exports,r),u.exports}(97)})();"#;
+    assert_interop_consumer_imports(
+        source,
+        &[
+            r#"import o from "./module-805.js";"#,
+            r#"import u from "./module-30.js";"#,
+            r#"import * as i from "./module-701.js";"#,
+            "new o(\"w\")",
+            "u.version",
+        ],
+        &["o.default", "u.default"],
+    );
+}
+
+#[test]
+fn webpack5_bundled_swc_external_interop_helpers_become_imports() {
+    // shape: producer @swc/core@1.16.2 module=commonjs externalHelpers, bundled
+    // with @swc/helpers@0.5.18 by webpack@5.111.1 mode=production (Terser);
+    // sink renamed to `globalThis.lib`. Each helper module exports `_`.
+    let source = r#"(()=>{var e={393(e,t,r){"use strict";Object.defineProperty(t,"run",{enumerable:!0,get:function(){return f}});const n=r(677),o=r(544),u=n._(r(805)),i=n._(r(30)),c=o._(r(701));function f(){return["consumer-side",new u.default("w").label(),(0,i.default)("v"),i.default.version,c.twice(3),c.default,Object.keys(c).sort().join(",")]}},97(e,t,r){const n=r(393);t.main=function(){return n.run()}},30(e){function t(e){return"<"+String(e)+">"}t.version="format-1",e.exports=t},701(e,t){"use strict";function r(e){return 2*e}Object.defineProperty(t,"__esModule",{value:!0}),function(e,t){for(var r in t)Object.defineProperty(e,r,{enumerable:!0,get:Object.getOwnPropertyDescriptor(t,r).get})}(t,{get default(){return n},get twice(){return r}});const n="util-default"},805(e,t){"use strict";Object.defineProperty(t,"__esModule",{value:!0}),Object.defineProperty(t,"default",{enumerable:!0,get:function(){return r}});class r{label(){return"widget:"+this.name}constructor(e){this.name=e}}},677(e,t,r){"use strict";function n(e){return e&&e.__esModule?e:{default:e}}r.d(t,{_:()=>n})},544(e,t,r){"use strict";function n(e){if("function"!=typeof WeakMap)return null;var t=new WeakMap,r=new WeakMap;return(n=function(e){return e?r:t})(e)}function o(e,t){if(!t&&e&&e.__esModule)return e;if(null===e||"object"!=typeof e&&"function"!=typeof e)return{default:e};var r=n(t);if(r&&r.has(e))return r.get(e);var o={__proto__:null},u=Object.defineProperty&&Object.getOwnPropertyDescriptor;for(var i in e)if("default"!==i&&Object.prototype.hasOwnProperty.call(e,i)){var c=u?Object.getOwnPropertyDescriptor(e,i):null;c&&(c.get||c.set)?Object.defineProperty(o,i,c):o[i]=e[i]}return o.default=e,r&&r.set(e,o),o}r.d(t,{_:()=>o})}};const t={};function r(n){const o=t[n];if(void 0!==o)return o.exports;const u=t[n]={exports:{}};return e[n](u,u.exports,r),u.exports}r.d=(e,t)=>{for(var n in t)r.o(t,n)&&!r.o(e,n)&&Object.defineProperty(e,n,{enumerable:!0,get:t[n]})},r.o=(e,t)=>Object.prototype.hasOwnProperty.call(e,t),globalThis.lib=r(97)})();"#;
+    assert_interop_consumer_imports(
+        source,
+        &[
+            r#"import u from "./module-805.js";"#,
+            r#"import i from "./module-30.js";"#,
+            r#"import * as c from "./module-701.js";"#,
+            "new u(\"w\")",
+            "i.version",
+        ],
+        &["._(", "u.default", "i.default"],
+    );
+}
+
+/// Unpacks `source` and checks the consumer `module-393.js`: no require() is
+/// left, and it contains each of `present` and none of `absent`.
+fn assert_interop_consumer_imports(source: &str, present: &[&str], absent: &[&str]) {
     let output =
         unpack(source, DecompileOptions::default()).expect("webpack5 bundle should unpack");
     let findings = validate_output_modules(&output.modules);
@@ -453,29 +514,13 @@ fn webpack5_bundled_tslib_interop_helpers_become_imports() {
         .find(|(name, _)| name == "module-393.js")
         .map(|(_, code)| code)
         .expect("consumer module should exist");
-    for absent in [
-        "require(",
-        "__importDefault",
-        "__importStar",
-        "o.default",
-        "u.default",
-    ] {
+    for absent in std::iter::once(&"require(").chain(absent) {
         assert!(
             !consumer.contains(absent),
             "consumer must not keep `{absent}`:\n{consumer}"
         );
     }
-    // A provider marked `__esModule` keeps its default export for
-    // `__importDefault` and its namespace for `__importStar`; the unmarked
-    // `module.exports = format` is the whole value either way.
-    for present in [
-        r#"import o from "./module-805.js";"#,
-        r#"import u from "./module-30.js";"#,
-        r#"import * as i from "./module-701.js";"#,
-        "new o(\"w\")",
-        "u.version",
-        "i.default",
-    ] {
+    for present in present {
         assert!(
             consumer.contains(present),
             "consumer must contain `{present}`:\n{consumer}"

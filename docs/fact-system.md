@@ -406,9 +406,10 @@ Neither proof creates a default-object fact available to consumers.
 - **`run_cross_module_interop_imports`** — turns a top-level
   `x = helper(require("./p"))` into an import of `./p` when `helper` is
   imported from a module whose facts prove it is a default or wildcard interop
-  helper: TypeScript's `importHelpers` output with tslib bundled as its own
-  module (`__importDefault` matches Babel's `interopRequireDefault` body;
-  `__importStar` is a raw TypeScript helper fact). The import form follows the
+  helper bundled as its own module: tslib under TypeScript's `importHelpers`
+  (`__importDefault` matches Babel's `interopRequireDefault` body;
+  `__importStar` is a raw TypeScript helper fact), `@babel/runtime`, or
+  `@swc/helpers`. The import form follows the
   wrapped provider's facts: a marked provider gives its default export to
   `__importDefault` and its namespace to `__importStar`; for an unmarked one
   the helpers see the whole required value, which is the default export from

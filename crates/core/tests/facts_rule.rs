@@ -973,6 +973,35 @@ export { wrap };
 }
 
 #[test]
+fn anonymous_default_export_helper_fact() {
+    // A minifier drops the helper's name: `module.exports = function (e) {…}`,
+    // as Terser leaves @babel/runtime's `interopRequireDefault`.
+    for source in [
+        "module.exports = function(e) { return e && e.__esModule ? e : { default: e }; };",
+        "export default (e) => e && e.__esModule ? e : { default: e };",
+    ] {
+        let facts = collect_facts(source);
+        assert_eq!(
+            facts.helper_exports,
+            vec![helper_export(
+                "default",
+                None,
+                HelperKind::InteropRequireDefault
+            )]
+        );
+    }
+}
+
+#[test]
+fn anonymous_default_export_fact_requires_helper_shape() {
+    let facts = collect_facts("module.exports = function(e) { return { default: e }; };");
+    assert!(
+        facts.helper_exports.is_empty(),
+        "an anonymous default export without a helper body is not a helper: {facts}"
+    );
+}
+
+#[test]
 fn marks_es_module_reads_the_flag_inside_a_top_level_sequence() {
     let marks = |source: &str| {
         GLOBALS.set(&Default::default(), || {

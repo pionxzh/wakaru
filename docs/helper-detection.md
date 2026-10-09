@@ -234,6 +234,8 @@ Helper utilities include `LocalHelperContext::helpers_of_kind()` (filter by kind
 `collect_module_facts()` records two helper export channels:
 
 - `helper_exports` for semantic transpiler helpers represented by `TranspilerHelperKind` / public `HelperKind`.
+  An anonymous default export (`module.exports = function (e) {…}` after a
+  minifier drops the helper's name) is matched by the same body shapes.
 - `ts_helper_exports` for raw TypeScript/tslib helpers such as `__awaiter`, `__generator`, and `__spreadArray`.
   tslib's ES module build exports `__importStar` as a function declaration;
   that export is a fact only under its public name and with the helper's body
@@ -280,7 +282,9 @@ For example, `UnInteropRequireDefault`:
   facts, so a Phase 2 pass restores the same shape there (see
   [fact-system.md](fact-system.md))
 - In unpack mode, a default or wildcard interop helper bundled as its own
-  module (tslib under TypeScript's `importHelpers`) is likewise proven only by
+  module (tslib under TypeScript's `importHelpers`, `@babel/runtime` under
+  plugin-transform-runtime, `@swc/helpers` under `externalHelpers`) is
+  likewise proven only by
   helper export facts, so the Phase 2 pass `run_cross_module_interop_imports`
   turns `x = helper(require("./p"))` into an import there (see
   [fact-system.md](fact-system.md))
