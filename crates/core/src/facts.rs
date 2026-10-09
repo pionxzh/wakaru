@@ -16,7 +16,7 @@ use std::fmt;
 use swc_core::atoms::Atom;
 use swc_core::common::Mark;
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignTarget, BinaryOp, CallExpr, Callee, Decl, DefaultDecl,
+    ArrowExpr, AssignExpr, AssignTarget, BinaryOp, CallExpr, Callee, Decl, DefaultDecl, ExportDecl,
     ExportSpecifier, Expr, ImportSpecifier, Lit, MemberProp, Module, ModuleDecl, ModuleItem,
     ObjectLit, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt,
 };
@@ -29,10 +29,10 @@ use crate::rules::expr_utils::is_unresolved_ident;
 use crate::rules::helper_matcher::{binding_key, binding_key_from_ident_pat, BindingKey};
 use crate::rules::transpiler_helper_utils::{
     classify_inline_callable, collect_inline_ts_helpers_deep, collect_transpiler_helpers,
-    collect_ts_helper_export_registrars, is_ts_helper_export_registration_call, LocalHelperContext,
-    TranspilerHelperKind, TsHelperKind,
+    collect_ts_helper_export_registrars, is_ts_helper_export_registration_call,
+    ts_import_star_function_matches, LocalHelperContext, TranspilerHelperKind, TsHelperKind,
 };
-use crate::rules::un_esmodule_flag::has_top_level_esmodule_flag;
+use crate::rules::un_esmodule_flag::{has_top_level_esmodule_flag, is_esmodule_expr};
 use crate::utils::paren::strip_parens;
 
 /// How a binding was imported.
@@ -998,7 +998,8 @@ fn collect_ts_helper_exports(
                         .then(|| helper_kind_from_transpiler_ts(*kind))
                         .flatten()
                 })
-            });
+            })
+            .or_else(|| exported_ts_helper_function_kind(module, &export.exported, local));
         let Some(kind) = kind else {
             continue;
         };
@@ -1013,6 +1014,33 @@ fn collect_ts_helper_exports(
     collect_registered_ts_helper_exports(module, &deep_inline_helpers, &mut helper_exports);
 
     helper_exports
+}
+
+/// A tslib helper that tslib's ES module build exports as a function
+/// declaration, recognized when the export keeps the helper's public name
+/// and the declaration has that helper's body shape.
+fn exported_ts_helper_function_kind(
+    module: &Module,
+    exported: &Atom,
+    local: &Atom,
+) -> Option<TypeScriptHelperKind> {
+    let kind = ts_helper_kind_from_name(exported)?;
+    if kind != TypeScriptHelperKind::ImportStar {
+        return None;
+    }
+    module
+        .body
+        .iter()
+        .find_map(|item| match item {
+            ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl)))
+            | ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+                decl: Decl::Fn(fn_decl),
+                ..
+            })) if &fn_decl.ident.sym == local => Some(&fn_decl.function),
+            _ => None,
+        })
+        .filter(|function| ts_import_star_function_matches(function))
+        .map(|_| kind)
 }
 
 fn helper_kind_from_transpiler_ts(kind: TranspilerHelperKind) -> Option<TypeScriptHelperKind> {
@@ -1325,7 +1353,21 @@ pub fn collect_whole_require_sources(module: &Module, unresolved_mark: Mark) -> 
 /// Whether the module marks its `exports` `__esModule` at the top level.
 /// Collected before `UnEsm`, which removes the marker of a module it converts.
 pub fn collect_marks_es_module(module: &Module, unresolved_mark: Mark) -> bool {
+    // A minifier joins the flag with the statements after it into one
+    // top-level sequence, where it still runs unconditionally:
+    // `Object.defineProperty(exports, "__esModule", { value: !0 }), exports.default = …`.
     has_top_level_esmodule_flag(module, unresolved_mark)
+        || module.body.iter().any(|item| {
+            let ModuleItem::Stmt(Stmt::Expr(stmt)) = item else {
+                return false;
+            };
+            let Expr::Seq(seq) = stmt.expr.as_ref() else {
+                return false;
+            };
+            seq.exprs
+                .iter()
+                .any(|expr| is_esmodule_expr(expr, unresolved_mark))
+        })
 }
 
 /// Sources of top-level `var x = wildcard(require("src"))` bindings, where

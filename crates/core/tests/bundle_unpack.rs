@@ -432,6 +432,58 @@ fn webpack5_require_n_default_interop_is_recovered() {
 /// A provider that stays CommonJS keeps its `__esModule` marker, also one
 /// defined only on one branch: a consumer's interop check reads it.
 #[test]
+fn webpack5_bundled_tslib_interop_helpers_become_imports() {
+    // shape: producer tsc@5.9.3 module=CommonJS esModuleInterop importHelpers,
+    // bundled with tslib@2.8.1 by webpack@5.111.1 mode=production (Terser);
+    // sink renamed to `globalThis.lib`. Webpack resolves tslib's `module`
+    // condition, so the helpers come from `tslib.es6.mjs`, and Terser joins
+    // each provider's `__esModule` flag into a sequence.
+    let source = r#"(()=>{var e={393(e,t,r){"use strict";t.run=function(){return["consumer-side",new o.default("w").label(),(0,u.default)("v"),u.default.version,i.twice(3),i.default,Object.keys(i).sort().join(",")]};const n=r(635),o=n.__importDefault(r(805)),u=n.__importDefault(r(30)),i=n.__importStar(r(701))},97(e,t,r){const n=r(393);t.main=function(){return n.run()}},30(e){function t(e){return"<"+String(e)+">"}t.version="format-1",e.exports=t},701(e,t){"use strict";Object.defineProperty(t,"__esModule",{value:!0}),t.twice=function(e){return 2*e},t.default="util-default"},805(e,t){"use strict";Object.defineProperty(t,"__esModule",{value:!0}),t.default=class{constructor(e){this.name=e}label(){return"widget:"+this.name}}},635(e,t,r){"use strict";r.d(t,{__importDefault:()=>a,__importStar:()=>i});var n=Object.create?function(e,t,r,n){void 0===n&&(n=r);var o=Object.getOwnPropertyDescriptor(t,r);o&&!("get"in o?!t.__esModule:o.writable||o.configurable)||(o={enumerable:!0,get:function(){return t[r]}}),Object.defineProperty(e,n,o)}:function(e,t,r,n){void 0===n&&(n=r),e[n]=t[r]},o=Object.create?function(e,t){Object.defineProperty(e,"default",{enumerable:!0,value:t})}:function(e,t){e.default=t},u=function(e){return u=Object.getOwnPropertyNames||function(e){var t=[];for(var r in e)Object.prototype.hasOwnProperty.call(e,r)&&(t[t.length]=r);return t},u(e)};function i(e){if(e&&e.__esModule)return e;var t={};if(null!=e)for(var r=u(e),i=0;i<r.length;i++)"default"!==r[i]&&n(t,e,r[i]);return o(t,e),t}function a(e){return e&&e.__esModule?e:{default:e}}}};const t={};function r(n){const o=t[n];if(void 0!==o)return o.exports;const u=t[n]={exports:{}};return e[n](u,u.exports,r),u.exports}r.d=(e,t)=>{for(var n in t)r.o(t,n)&&!r.o(e,n)&&Object.defineProperty(e,n,{enumerable:!0,get:t[n]})},r.o=(e,t)=>Object.prototype.hasOwnProperty.call(e,t),globalThis.lib=r(97)})();"#;
+
+    let output =
+        unpack(source, DecompileOptions::default()).expect("webpack5 bundle should unpack");
+    let findings = validate_output_modules(&output.modules);
+    assert!(
+        findings.is_empty(),
+        "unexpected graph findings: {findings:#?}"
+    );
+    let consumer = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "module-393.js")
+        .map(|(_, code)| code)
+        .expect("consumer module should exist");
+    for absent in [
+        "require(",
+        "__importDefault",
+        "__importStar",
+        "o.default",
+        "u.default",
+    ] {
+        assert!(
+            !consumer.contains(absent),
+            "consumer must not keep `{absent}`:\n{consumer}"
+        );
+    }
+    // A provider marked `__esModule` keeps its default export for
+    // `__importDefault` and its namespace for `__importStar`; the unmarked
+    // `module.exports = format` is the whole value either way.
+    for present in [
+        r#"import o from "./module-805.js";"#,
+        r#"import u from "./module-30.js";"#,
+        r#"import * as i from "./module-701.js";"#,
+        "new o(\"w\")",
+        "u.version",
+        "i.default",
+    ] {
+        assert!(
+            consumer.contains(present),
+            "consumer must contain `{present}`:\n{consumer}"
+        );
+    }
+}
+
+#[test]
 fn webpack_commonjs_provider_keeps_a_conditional_esmodule_marker() {
     let source = r#"
 (() => {

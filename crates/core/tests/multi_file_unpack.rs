@@ -2050,3 +2050,232 @@ fn collapsed_parent_relative_path_collision_fails_closed() {
         "unexpected error: {error}"
     );
 }
+
+// tslib 2.8.1 `tslib.es6.mjs` interop helpers, as a bundler includes tslib
+// as its own module.
+const TSLIB_INTEROP_HELPERS: &str = r#"
+export var __createBinding = Object.create ? (function(o, m, k, k2) {
+  if (k2 === undefined) k2 = k;
+  var desc = Object.getOwnPropertyDescriptor(m, k);
+  if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+  }
+  Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+  if (k2 === undefined) k2 = k;
+  o[k2] = m[k];
+});
+var __setModuleDefault = Object.create ? (function(o, v) {
+  Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+  o["default"] = v;
+};
+var ownKeys = function(o) {
+  ownKeys = Object.getOwnPropertyNames || function (o) {
+    var ar = [];
+    for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+    return ar;
+  };
+  return ownKeys(o);
+};
+export function __importStar(mod) {
+  if (mod && mod.__esModule) return mod;
+  var result = {};
+  if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+  __setModuleDefault(result, mod);
+  return result;
+}
+export function __importDefault(mod) {
+  return (mod && mod.__esModule) ? mod : { default: mod };
+}
+"#;
+
+fn unpack_tslib_interop_consumer(consumer: &str, providers: &[(&str, &str)]) -> String {
+    let mut inputs = vec![
+        UnpackInput {
+            filename: "tslib.js".to_string(),
+            source: TSLIB_INTEROP_HELPERS.to_string(),
+        },
+        UnpackInput {
+            filename: "consumer.js".to_string(),
+            source: consumer.to_string(),
+        },
+    ];
+    inputs.extend(providers.iter().map(|(filename, source)| UnpackInput {
+        filename: filename.to_string(),
+        source: source.to_string(),
+    }));
+    let output = unpack_files(inputs, DecompileOptions::default())
+        .expect("plain multi-file inputs should decompile through unpack barrier");
+    assert_valid_module_graph(&output.modules);
+    output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "consumer.js")
+        .map(|(_, code)| code.clone())
+        .expect("consumer module should exist")
+}
+
+// The providers of the consumer below, as tsc 5.9 (module CommonJS,
+// esModuleInterop) emits an ESM source with a default export, and an
+// authored CommonJS function export.
+const TSC_DEFAULT_CLASS_PROVIDER: &str = r#""use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+class Widget {
+    constructor(name) { this.name = name; }
+    label() { return "widget:" + this.name; }
+}
+exports.default = Widget;
+"#;
+const MODULE_EXPORTS_FUNCTION_PROVIDER: &str = r#"function format(value) { return "<" + String(value) + ">"; }
+format.version = "format-1";
+module.exports = format;
+"#;
+const TSC_NAMED_AND_DEFAULT_PROVIDER: &str = r#""use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.twice = twice;
+function twice(n) { return n * 2; }
+exports.default = "util-default";
+"#;
+
+#[test]
+fn bundled_tslib_interop_helpers_become_imports() {
+    // shape: producer tsc@5.9.3 module=CommonJS esModuleInterop importHelpers,
+    // with tslib@2.8.1 bundled as its own module by webpack@5.111.1.
+    let consumer = unpack_tslib_interop_consumer(
+        r#""use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.run = run;
+const tslib_1 = require("./tslib.js");
+const widget_js_1 = tslib_1.__importDefault(require("./widget.js"));
+const format_js_1 = tslib_1.__importDefault(require("./format.js"));
+const util = tslib_1.__importStar(require("./util.js"));
+function run() {
+    return [new widget_js_1.default("w").label(), (0, format_js_1.default)("v"), format_js_1.default.version, util.twice(3), util.default];
+}
+"#,
+        &[
+            ("widget.js", TSC_DEFAULT_CLASS_PROVIDER),
+            ("format.js", MODULE_EXPORTS_FUNCTION_PROVIDER),
+            ("util.js", TSC_NAMED_AND_DEFAULT_PROVIDER),
+        ],
+    );
+
+    for absent in ["require(", "__importDefault", "__importStar", ".default"] {
+        assert!(
+            !consumer.contains(absent),
+            "consumer must not keep `{absent}`:\n{consumer}"
+        );
+    }
+    for present in [
+        r#"import widget_js_1 from "./widget.js";"#,
+        r#"import format_js_1 from "./format.js";"#,
+        "new widget_js_1(\"w\")",
+        "format_js_1(\"v\")",
+        "format_js_1.version",
+    ] {
+        assert!(
+            consumer.contains(present),
+            "consumer must contain `{present}`:\n{consumer}"
+        );
+    }
+}
+
+#[test]
+fn bundled_tslib_import_star_of_module_exports_value_keeps_member_reads() {
+    // `__importStar` of an unmarked `module.exports = value` copies the
+    // value's own properties and adds `default: value`: a member read is the
+    // value's property, and `.default` is the value itself.
+    let consumer = unpack_tslib_interop_consumer(
+        r#""use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.run = run;
+const tslib_1 = require("./tslib.js");
+const format = tslib_1.__importStar(require("./format.js"));
+function run() {
+    return [format.version, format.default("v")];
+}
+"#,
+        &[("format.js", MODULE_EXPORTS_FUNCTION_PROVIDER)],
+    );
+
+    assert!(
+        consumer.contains(r#"import format from "./format.js";"#),
+        "consumer must default-import the whole value:\n{consumer}"
+    );
+    for present in ["format.version", "format(\"v\")"] {
+        assert!(
+            consumer.contains(present),
+            "consumer must contain `{present}`:\n{consumer}"
+        );
+    }
+    assert!(
+        !consumer.contains("require(") && !consumer.contains("__importStar"),
+        "consumer must not keep the helper call:\n{consumer}"
+    );
+}
+
+#[test]
+fn bundled_tslib_import_default_with_whole_value_use_stays() {
+    // The helper result itself escapes: `{ default: value }` for an unmarked
+    // provider, which no import binding holds.
+    let consumer = unpack_tslib_interop_consumer(
+        r#""use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.run = run;
+const tslib_1 = require("./tslib.js");
+const format_js_1 = tslib_1.__importDefault(require("./format.js"));
+function run() {
+    return [format_js_1, format_js_1.default("v")];
+}
+"#,
+        &[("format.js", MODULE_EXPORTS_FUNCTION_PROVIDER)],
+    );
+
+    assert!(
+        consumer.contains(r#"__importDefault(require("./format.js"))"#),
+        "a whole-value use keeps the helper call:\n{consumer}"
+    );
+}
+
+#[test]
+fn interop_helper_without_proven_body_stays() {
+    // A module that only names its export `__importDefault` proves nothing.
+    let output = unpack_files(
+        vec![
+            UnpackInput {
+                filename: "tslib.js".to_string(),
+                source: "export function __importDefault(mod) { return { default: mod, wrapped: true }; }\n"
+                    .to_string(),
+            },
+            UnpackInput {
+                filename: "consumer.js".to_string(),
+                source: r#""use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.run = run;
+const tslib_1 = require("./tslib.js");
+const widget_js_1 = tslib_1.__importDefault(require("./widget.js"));
+function run() { return widget_js_1.default; }
+"#
+                .to_string(),
+            },
+            UnpackInput {
+                filename: "widget.js".to_string(),
+                source: TSC_DEFAULT_CLASS_PROVIDER.to_string(),
+            },
+        ],
+        DecompileOptions::default(),
+    )
+    .expect("plain multi-file inputs should decompile through unpack barrier");
+    let consumer = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "consumer.js")
+        .map(|(_, code)| code)
+        .expect("consumer module should exist");
+
+    assert!(
+        consumer.contains(r#"__importDefault(require("./widget.js"))"#),
+        "an unproven helper keeps its call:\n{consumer}"
+    );
+}

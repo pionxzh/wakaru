@@ -64,6 +64,7 @@ Phase 2 (per module, parallel):
     run_provider_namespace_repair(&mut module, facts) ← proven ESM namespace edges
     run_reexport_consolidation(&mut module, facts)
     run_cross_module_lowered_dynamic_imports(...)    ← helper export facts
+    run_cross_module_interop_imports(...)            ← helper export facts
     run_namespace_decomposition(&mut module, facts)  ← reads cross-module facts
     downgrade_unused_synthetic_imports(&mut module)  ← preserve require effects
     registry rule range resuming after UnEsm, through UnReturn
@@ -174,7 +175,8 @@ the whole required value; for an unmarked provider it builds a copy whose
 provider half: a top-level `__esModule` marker (`Object.defineProperty`,
 assignment, or webpack's `require.r(exports)`), read before `UnEsm` removes
 it. The marker matcher is the one `UnEsmoduleFlag` uses, and it does not check
-the descriptor's value. `collect_wildcard_require_sources` is the consumer
+the descriptor's value. The marker also counts as an element of a top-level
+sequence statement, where a minifier joins it with the statements after it. `collect_wildcard_require_sources` is the consumer
 half: sources of top-level `var x = wildcard(require("src"))` bindings, with
 the helper declared or inlined at the call site (a minifier inlines a
 single-use helper), when every `require("src")` call in the module is such an
@@ -401,6 +403,20 @@ Neither proof creates a default-object fact available to consumers.
   as its own module). `UnEsm` restores the same shape with a local helper;
   in Phase 1 it cannot see a helper from another module
   (`lowered_dynamic_import_source_semantics` in rewrite-assumptions.md).
+- **`run_cross_module_interop_imports`** — turns a top-level
+  `x = helper(require("./p"))` into an import of `./p` when `helper` is
+  imported from a module whose facts prove it is a default or wildcard interop
+  helper: TypeScript's `importHelpers` output with tslib bundled as its own
+  module (`__importDefault` matches Babel's `interopRequireDefault` body;
+  `__importStar` is a raw TypeScript helper fact). The import form follows the
+  wrapped provider's facts: a marked provider gives its default export to
+  `__importDefault` and its namespace to `__importStar`; for an unmarked one
+  the helpers see the whole required value, which is the default export from
+  `module.exports = value` or the namespace of a provider with named exports
+  and no default. `.default` reads become the binding; other uses that the
+  import cannot represent keep the call. `UnEsm` makes the same rewrite with a
+  local or `tslib` helper; in Phase 1 it cannot see a helper from another
+  module.
 - **`namespace_decomposition`** — rewrites `import r from "./x"; r.foo()` into
   `import { foo } from "./x"; foo()` when `./x` exports `foo` and no collision
   prevents the rewrite. On a namespace import, `ns.default` becomes a default

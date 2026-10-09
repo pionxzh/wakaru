@@ -63,7 +63,12 @@ fn is_esmodule_stmt(stmt: &Stmt, unresolved_mark: Mark) -> bool {
     let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
         return false;
     };
-    match &**expr {
+    is_esmodule_expr(expr, unresolved_mark)
+}
+
+/// The `__esModule` flag as one expression, wherever it stands.
+pub(crate) fn is_esmodule_expr(expr: &Expr, unresolved_mark: Mark) -> bool {
+    match expr {
         Expr::Call(call) => {
             is_define_property_call(call, unresolved_mark)
                 || is_webpack_require_r_call(call, unresolved_mark)

@@ -51,8 +51,8 @@ use paths::{export_name_to_atom, named_import_is_helper};
 pub(crate) use ts_helpers::{
     collect_inline_ts_helpers_deep, collect_tslib_namespace_bindings, is_tslib_path,
     is_tslib_require_expr_with_mark, is_tslib_spread_array_member, ts_expr_matches_helper_kind,
-    tslib_helper_name_kind, tslib_member_helper_kind, tslib_member_ts_helper_kind,
-    tslib_require_member_name, tslib_require_ts_helper_kind,
+    ts_import_star_function_matches, tslib_helper_name_kind, tslib_member_helper_kind,
+    tslib_member_ts_helper_kind, tslib_require_member_name, tslib_require_ts_helper_kind,
     tslib_require_ts_helper_kind_with_mark,
 };
 use ts_helpers::{

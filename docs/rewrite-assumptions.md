@@ -86,7 +86,8 @@ that observes `this`, even though the recovered form matches the original ESM
 source shape.
 
 Affects: `UnIndirectCall` (member-callee forms), `UnInteropRequireDefault`
-(call sites rewritten from `.default`), and `UnEsm` (default interop recovery,
+and the unpack Phase 2 pass `run_cross_module_interop_imports` (call sites
+rewritten from `.default`), and `UnEsm` (default interop recovery,
 and calls of property-storage exports rewritten from `exports.fn()` to `fn()`
 unless a value written to that export is a function that reads `this`; calls
 of mirror-storage exports rewritten to the local unless its declaration is a

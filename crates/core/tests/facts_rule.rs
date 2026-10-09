@@ -6,8 +6,9 @@ use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::VisitMutWith;
 use wakaru_core::facts::{
     collect_commonjs_default_attached_properties, collect_commonjs_default_object,
-    collect_module_facts, ExportFact, ExportKind, HelperExportFact, HelperKind, ImportFact,
-    ImportKind, ModuleFacts, ModuleFactsMap, TypeScriptHelperExportFact, TypeScriptHelperKind,
+    collect_marks_es_module, collect_module_facts, ExportFact, ExportKind, HelperExportFact,
+    HelperKind, ImportFact, ImportKind, ModuleFacts, ModuleFactsMap, TypeScriptHelperExportFact,
+    TypeScriptHelperKind,
 };
 use wakaru_core::{apply_rules, RulePipelineOptions};
 
@@ -903,6 +904,108 @@ export function __rest(source, excluded) {
         facts.ts_helper_exports.is_empty(),
         "public helper names without matching helper bodies must not become proven facts: {facts}"
     );
+}
+
+#[test]
+fn exported_tslib_import_star_function_fact() {
+    // tslib 2.8.1 `tslib.es6.mjs`, and the same module after webpack@5.111.1
+    // with Terser, which drops the dependency names.
+    let readable = r#"
+var __createBinding = function(o, m, k, k2) { o[k2 === undefined ? k : k2] = m[k]; };
+var __setModuleDefault = function(o, v) { o["default"] = v; };
+var ownKeys = function(o) { return Object.getOwnPropertyNames(o); };
+export function __importStar(mod) {
+  if (mod && mod.__esModule) return mod;
+  var result = {};
+  if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+  __setModuleDefault(result, mod);
+  return result;
+}
+"#;
+    let minified = r#"
+var n = function(e, t, r, n) { e[void 0 === n ? r : n] = t[r]; },
+    o = function(e, t) { e.default = t; },
+    u = function(e) { return Object.getOwnPropertyNames(e); };
+function i(e){if(e&&e.__esModule)return e;var t={};if(null!=e)for(var r=u(e),i=0;i<r.length;i++)"default"!==r[i]&&n(t,e,r[i]);return o(t,e),t}
+export { i as __importStar };
+"#;
+    for (source, local) in [(readable, "__importStar"), (minified, "i")] {
+        let facts = collect_facts(source);
+        assert_eq!(
+            facts.ts_helper_exports,
+            vec![ts_helper_export(
+                "__importStar",
+                Some(local),
+                TypeScriptHelperKind::ImportStar
+            )]
+        );
+    }
+}
+
+#[test]
+fn exported_tslib_import_star_function_fact_requires_name_and_shape() {
+    for source in [
+        // The public name over another body.
+        r#"
+export function __importStar(mod) {
+  if (mod && mod.__esModule) return mod;
+  return { default: mod };
+}
+"#,
+        // The body under another name.
+        r#"
+function wrap(mod) {
+  if (mod && mod.__esModule) return mod;
+  var result = {};
+  for (var k in mod) if (k !== "default") result[k] = mod[k];
+  result["default"] = mod;
+  return result;
+}
+export { wrap };
+"#,
+    ] {
+        let facts = collect_facts(source);
+        assert!(
+            facts.ts_helper_exports.is_empty(),
+            "only the public name with the matching body is a proven helper: {facts}"
+        );
+    }
+}
+
+#[test]
+fn marks_es_module_reads_the_flag_inside_a_top_level_sequence() {
+    let marks = |source: &str| {
+        GLOBALS.set(&Default::default(), || {
+            let cm: Lrc<SourceMap> = Default::default();
+            let fm = cm.new_source_file(
+                FileName::Custom("test.js".to_string()).into(),
+                source.to_string(),
+            );
+            let lexer = Lexer::new(
+                Syntax::Es(EsSyntax::default()),
+                Default::default(),
+                StringInput::from(&*fm),
+                None,
+            );
+            let mut module = Parser::new_from(lexer)
+                .parse_module()
+                .expect("parse failed");
+            let unresolved_mark = Mark::new();
+            module.visit_mut_with(&mut resolver(unresolved_mark, Mark::new(), false));
+            collect_marks_es_module(&module, unresolved_mark)
+        })
+    };
+    // shape: producer webpack@5.111.1 mode=production (Terser) over a tsc
+    // CommonJS module.
+    assert!(marks(
+        r#""use strict";Object.defineProperty(exports,"__esModule",{value:!0}),exports.default="value";"#
+    ));
+    assert!(!marks(
+        r#"if (ready) Object.defineProperty(exports,"__esModule",{value:!0}),exports.default="value";"#
+    ));
+    assert!(!marks(
+        r#"(function(){Object.defineProperty(exports,"__esModule",{value:!0}),exports.default="value"})();"#
+    ));
 }
 
 #[test]

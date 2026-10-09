@@ -911,6 +911,103 @@ fn ts_private_helper_decl_kind(name: &str, init: &Expr) -> Option<TsHelperKind> 
         _ => expr_contains_tsc_private_helper_fn(init, kind).then_some(kind),
     }
 }
+/// tslib's `__importStar` written as a function declaration, as tslib's ES
+/// module build (and a bundle of it) exports it: `if (m && m.__esModule)
+/// return m;` first, then a fresh object that a loop fills with the module's
+/// keys and that receives `default`, returned last. tslib 1.x copies with
+/// `for…in`; 2.x calls `__createBinding` over `ownKeys(m)` and
+/// `__setModuleDefault`, whose names a minifier drops. The public export name
+/// is checked separately by `facts.rs`.
+pub(crate) fn ts_import_star_function_matches(function: &Function) -> bool {
+    if function.is_async || function.is_generator {
+        return false;
+    }
+    let [param] = function.params.as_slice() else {
+        return false;
+    };
+    let Pat::Ident(param) = &param.pat else {
+        return false;
+    };
+    let Some(body) = &function.body else {
+        return false;
+    };
+    let [guard, result, fill @ .., Stmt::Return(ret)] = body.stmts.as_slice() else {
+        return false;
+    };
+    let Some(result) = fresh_object_binding(result) else {
+        return false;
+    };
+    es_module_guard_returns_param(guard, &param.id)
+        && matches!(ret.arg.as_deref().map(strip_parens), Some(Expr::Ident(id)) if binding_key(id) == result)
+        && fill.iter().any(stmt_contains_loop)
+        && collect_ts_helper_body_signals(fill).default_prop
+}
+/// `if (m && m.__esModule) return m;`
+fn es_module_guard_returns_param(stmt: &Stmt, param: &Ident) -> bool {
+    let Stmt::If(if_stmt) = stmt else {
+        return false;
+    };
+    if if_stmt.alt.is_some() {
+        return false;
+    }
+    let Expr::Bin(BinExpr {
+        op: BinaryOp::LogicalAnd,
+        left,
+        right,
+        ..
+    }) = strip_parens(&if_stmt.test)
+    else {
+        return false;
+    };
+    let is_param = |expr: &Expr| matches!(strip_parens(expr), Expr::Ident(id) if binding_key(id) == binding_key(param));
+    let Expr::Member(member) = strip_parens(right) else {
+        return false;
+    };
+    let returned = match if_stmt.cons.as_ref() {
+        Stmt::Return(ret) => ret.arg.as_deref(),
+        Stmt::Block(block) => match block.stmts.as_slice() {
+            [Stmt::Return(ret)] => ret.arg.as_deref(),
+            _ => None,
+        },
+        _ => None,
+    };
+    is_param(left)
+        && is_param(&member.obj)
+        && static_member_prop_name(&member.prop) == Some("__esModule")
+        && returned.is_some_and(is_param)
+}
+/// The binding of `var r = {};` (any declaration kind).
+fn fresh_object_binding(stmt: &Stmt) -> Option<BindingKey> {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return None;
+    };
+    let [decl] = var.decls.as_slice() else {
+        return None;
+    };
+    let Some(Expr::Object(object)) = decl.init.as_deref().map(strip_parens) else {
+        return None;
+    };
+    if !object.props.is_empty() {
+        return None;
+    }
+    var_declarator_binding_key(decl)
+}
+fn stmt_contains_loop(stmt: &Stmt) -> bool {
+    struct LoopFinder(bool);
+    impl Visit for LoopFinder {
+        fn visit_function(&mut self, _: &Function) {}
+        fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+        fn visit_for_stmt(&mut self, _: &swc_core::ecma::ast::ForStmt) {
+            self.0 = true;
+        }
+        fn visit_for_in_stmt(&mut self, _: &swc_core::ecma::ast::ForInStmt) {
+            self.0 = true;
+        }
+    }
+    let mut finder = LoopFinder(false);
+    stmt.visit_with(&mut finder);
+    finder.0
+}
 fn ts_private_helper_name_kind(name: &str, function: &Function) -> Option<TsHelperKind> {
     let kind = match name {
         "_ts_generator" => TsHelperKind::Generator,

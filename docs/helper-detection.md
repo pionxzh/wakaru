@@ -235,6 +235,9 @@ Helper utilities include `LocalHelperContext::helpers_of_kind()` (filter by kind
 
 - `helper_exports` for semantic transpiler helpers represented by `TranspilerHelperKind` / public `HelperKind`.
 - `ts_helper_exports` for raw TypeScript/tslib helpers such as `__awaiter`, `__generator`, and `__spreadArray`.
+  tslib's ES module build exports `__importStar` as a function declaration;
+  that export is a fact only under its public name and with the helper's body
+  shape (`ts_import_star_function_matches`).
 - `ts_helper_namespace_factory_exports` for exported zero-argument CommonJS
   wrapper functions whose bodies both register raw tslib helpers and return the
   corresponding namespace object.
@@ -275,6 +278,11 @@ For example, `UnInteropRequireDefault`:
   [rewrite-assumptions.md](rewrite-assumptions.md)). In unpack mode, a
   wildcard helper bundled as its own module is proven only by helper export
   facts, so a Phase 2 pass restores the same shape there (see
+  [fact-system.md](fact-system.md))
+- In unpack mode, a default or wildcard interop helper bundled as its own
+  module (tslib under TypeScript's `importHelpers`) is likewise proven only by
+  helper export facts, so the Phase 2 pass `run_cross_module_interop_imports`
+  turns `x = helper(require("./p"))` into an import there (see
   [fact-system.md](fact-system.md))
 
 SWC AMD's assignment form `_a = _interopRequireDefault(_a)` — and the modern
