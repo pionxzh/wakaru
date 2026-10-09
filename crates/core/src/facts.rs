@@ -24,6 +24,7 @@ use swc_core::ecma::visit::{Visit, VisitWith};
 
 use crate::analysis::binding_uses::{BindingId, BindingUseIndex};
 use crate::module_path::resolve_relative_specifier;
+use crate::rules::cocos_rf::framed_cc_rf_push_calls;
 use crate::rules::expr_utils::is_unresolved_ident;
 use crate::rules::helper_matcher::{binding_key, binding_key_from_ident_pat, BindingKey};
 use crate::rules::transpiler_helper_utils::{
@@ -207,10 +208,10 @@ pub struct ModuleFacts {
     /// `module.exports`. Unlike a proven object value, absence from this list
     /// is not evidence that a callable property is missing.
     pub commonjs_default_attached_properties: Vec<Atom>,
-    /// True when the module never refers to `module` before `UnEsm`, so
-    /// requiring it returns its `exports` object. A consumer's whole
-    /// `require` value is then the namespace of the recovered exports, with
-    /// `default` as one of its properties.
+    /// True when the module never refers to `module` before `UnEsm`, apart
+    /// from a Cocos registration frame, so requiring it returns its `exports`
+    /// object. A consumer's whole `require` value is then the namespace of
+    /// the recovered exports, with `default` as one of its properties.
     pub require_returns_exports_object: bool,
     /// Sources this module requires as a whole value it uses directly, with
     /// no interop wrapper that would make the binding mean the provider's
@@ -1228,6 +1229,7 @@ pub fn collect_commonjs_default_object(
         exports_uses: 0,
         require_uses: 0,
         has_direct_eval: false,
+        skipped_module_args: HashSet::default(),
     };
     module.visit_with(&mut runtime_surface);
     Some(CommonJsDefaultObjectFact {
@@ -1246,7 +1248,8 @@ pub fn collect_commonjs_default_object(
 
 /// Whether requiring the module returns its `exports` object: no unresolved
 /// `module` reference, including in deferred function bodies, can replace
-/// `module.exports`. Collected before `UnEsm`, which turns both
+/// `module.exports`. The `module` argument of a Cocos registration frame does
+/// not count. Collected before `UnEsm`, which turns both
 /// `exports.default = v` and `module.exports = v` into a default export.
 ///
 /// A module with ESM declarations at this point fails: the webpack runtime
@@ -1265,6 +1268,10 @@ pub fn collect_require_returns_exports_object(module: &Module, unresolved_mark: 
         exports_uses: 0,
         require_uses: 0,
         has_direct_eval: false,
+        // `cocos_registration_frame`: `pop` replaces `module.exports` only
+        // when it has no enumerable key, and the default export this fact
+        // serves comes from an `exports.default` write.
+        skipped_module_args: framed_cc_rf_push_calls(&module.body, unresolved_mark),
     };
     module.visit_with(&mut runtime_surface);
     runtime_surface.module_uses == 0 && !runtime_surface.has_direct_eval
@@ -1489,6 +1496,8 @@ struct CommonJsRuntimeSurfaceCollector {
     /// (conditional, nested, or dynamic) runtime use.
     require_uses: usize,
     has_direct_eval: bool,
+    /// Calls whose first argument, the free `module`, is not counted.
+    skipped_module_args: HashSet<*const CallExpr>,
 }
 
 impl Visit for CommonJsRuntimeSurfaceCollector {
@@ -1498,6 +1507,16 @@ impl Visit for CommonJsRuntimeSurfaceCollector {
                 if is_unresolved_ident(ident, "eval", self.unresolved_mark)))
         {
             self.has_direct_eval = true;
+        }
+        if self
+            .skipped_module_args
+            .contains(&(call as *const CallExpr))
+        {
+            call.callee.visit_with(self);
+            for arg in call.args.iter().skip(1) {
+                arg.visit_with(self);
+            }
+            return;
         }
         call.visit_children_with(self);
     }

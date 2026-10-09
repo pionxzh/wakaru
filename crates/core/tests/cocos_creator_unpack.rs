@@ -445,7 +445,9 @@ fn cocos_creator_2_4_components_recover_as_decorated_classes() {
 }
 
 /// hypothetical: two scripts in the producer cocos-creator@2.4.15 debug shape,
-/// one component extending the other's default export.
+/// one component extending the other's default export. The frame's `module`
+/// argument does not stop the provider's `require` value from being its
+/// `exports` object, so `Base_1.default` becomes the default import.
 #[test]
 fn cocos_creator_component_chain_recovers_both_classes() {
     let prelude = produced_bundle("index.debug.js");
@@ -500,7 +502,7 @@ fn cocos_creator_component_chain_recovers_both_classes() {
         "{:#?}",
         output.warnings
     );
-    for (file, base) in [("Base.js", "cc.Component"), ("Child.js", "Base_1")] {
+    for (file, base) in [("Base.js", "cc.Component {"), ("Child.js", "Base_1 {")] {
         let code = output
             .modules
             .iter()
@@ -512,5 +514,6 @@ fn cocos_creator_component_chain_recovers_both_classes() {
             "{file}:\n{code}"
         );
         assert!(code.contains("return super.move();"), "{file}:\n{code}");
+        assert!(!code.contains(".default"), "{file}:\n{code}");
     }
 }

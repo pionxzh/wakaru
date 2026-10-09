@@ -5,8 +5,8 @@
 //! cross-module facts exist, so it initially chooses a default import. When
 //! the recovered provider is later proven to expose named exports but no
 //! default, the closest faithful ESM edge is a namespace import. The same
-//! holds for a provider with a default export that never refers to `module`:
-//! requiring it returns its `exports` object, where `default` is one property
+//! holds for a provider with a default export that never refers to `module`
+//! outside a Cocos registration frame: requiring it returns its `exports` object, where `default` is one property
 //! among the others, while a default from `module.exports = v` is the whole
 //! required value.
 //!

@@ -890,7 +890,10 @@ The recovered ESM module keeps the frame, including its `module` argument, so
 it runs only where something defines `module`, as before this assumption. The
 rules that rely on it act only on a module that writes an `exports` property,
 which leaves an enumerable key at `pop`, so `pop` returns without replacing
-`module.exports` in the original as well.
+`module.exports` in the original as well. The cross-module fact that requiring
+a module returns its `exports` object skips the argument too: a consumer reads
+it only for a provider whose default export came from an `exports.default`
+write, so another script's `require(...).default` becomes the default import.
 
 The engine also installs tslib's helpers as globals (`window.__extends`,
 `window.__decorate`, ...). The editor's compiled scripts declare no helpers

@@ -151,7 +151,9 @@ mutates the AST or shared state.
 
 `collect_require_returns_exports_object` records that the module has no
 unresolved `module` reference anywhere and no direct eval, so requiring it
-returns its `exports` object. `UnEsm` turns both `exports.default = v` and
+returns its `exports` object. The `module` argument of a Cocos registration
+frame does not count (`cocos_registration_frame` in
+[rewrite-assumptions.md](rewrite-assumptions.md)). `UnEsm` turns both `exports.default = v` and
 `module.exports = v` into a default export; only the first is one property
 of the required value, which a consumer's whole `require` reads as the
 namespace.
