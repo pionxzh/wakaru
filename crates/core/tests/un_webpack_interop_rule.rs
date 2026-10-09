@@ -656,13 +656,25 @@ eval(s);
 }
 
 #[test]
-fn keeps_namespace_rewrite_in_module_with_direct_eval() {
+fn inlines_cached_namespace_in_module_with_direct_eval() {
     let input = r#"
-import * as react from "./react";
-let useId = require.t(react, 2).useId;
-eval(s);
+let ns;
+const react = require("./react");
+let useId = (ns || (ns = require.t(react, 2))).useId;
+async function load(source) {
+  await eval(source);
+  return require.t(react, 2).default;
+}
 "#;
-    assert_eq_normalized(&render(input), input.trim());
+    let expected = r#"
+const react = require("./react");
+let useId = react.useId;
+async function load(source) {
+  await eval(source);
+  return react;
+}
+"#;
+    assert_eq_normalized(&render(input), expected.trim());
 }
 
 #[test]

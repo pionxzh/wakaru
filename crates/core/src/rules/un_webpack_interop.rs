@@ -71,13 +71,14 @@ impl VisitMut for UnWebpackInterop {
         if super::eval_utils::module_has_with_stmt(module) {
             return;
         }
-        // A direct eval skips the has-own and namespace rewrites the same
-        // way. The getter rewrite still runs: the getter and its base are the
-        // temps webpack emits for a harmony default import
-        // (`__webpack_require__.n(dep)`, which the unpacker spells as the
-        // arrow matched below), and evaluated source cannot name a bundler
-        // temp on purpose. It only drops a getter whose inline would rename
-        // the base.
+        // A direct eval skips the has-own rewrite the same way, since it
+        // emits a reference to the global `Object`. The namespace and getter
+        // rewrites still run: the namespace cache, the getter, and the base
+        // they read are the temps webpack emits for a harmony import
+        // (`__webpack_require__.t(dep, 2)` and `__webpack_require__.n(dep)`,
+        // which the unpacker spells as the arrow matched below), and
+        // evaluated source cannot name a bundler temp on purpose. The getter
+        // rewrite only drops a getter whose inline would rename the base.
         let has_direct_eval = super::eval_utils::has_dynamic_scope_construct(module);
         if !has_direct_eval {
             let mut has_own_replacer = WebpackHasOwnReplacer {
@@ -91,19 +92,17 @@ impl VisitMut for UnWebpackInterop {
             return;
         }
 
-        if !has_direct_eval {
-            let initial_ref_counts = collect_binding_ref_counts(module);
-            let namespace_imports = collect_namespace_import_bindings(module);
-            let mut namespace_replacer = WebpackNamespaceReplacer {
-                initial_ref_counts: &initial_ref_counts,
-                module_bindings: &module_bindings,
-                namespace_imports: &namespace_imports,
-                removed_caches: HashSet::default(),
-                unresolved_mark: self.unresolved_mark,
-            };
-            module.visit_mut_with(&mut namespace_replacer);
-            remove_unused_namespace_cache_decls(module, &namespace_replacer.removed_caches);
-        }
+        let initial_ref_counts = collect_binding_ref_counts(module);
+        let namespace_imports = collect_namespace_import_bindings(module);
+        let mut namespace_replacer = WebpackNamespaceReplacer {
+            initial_ref_counts: &initial_ref_counts,
+            module_bindings: &module_bindings,
+            namespace_imports: &namespace_imports,
+            removed_caches: HashSet::default(),
+            unresolved_mark: self.unresolved_mark,
+        };
+        module.visit_mut_with(&mut namespace_replacer);
+        remove_unused_namespace_cache_decls(module, &namespace_replacer.removed_caches);
 
         let mut candidates: HashMap<BindingKey, Ident> = HashMap::default();
         for item in &module.body {

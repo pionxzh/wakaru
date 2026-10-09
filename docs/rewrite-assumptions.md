@@ -1154,7 +1154,8 @@ introduces a new binding guards against both constructs at this granularity:
   every direct `eval` counts.
 - A rewrite that touches only bundler temps keeps the compiler-temp rule
   above, so `UnWebpackInterop` still inlines webpack's interop getter
-  (`__webpack_require__.n`) under a direct `eval`.
+  (`__webpack_require__.n`) and namespace cache (`__webpack_require__.t`)
+  under a direct `eval`.
 
 Compilers do not emit either construct, so this coarse treatment costs little
 recovery on compiled output. A rule in this set that lacks the guard is a bug,
