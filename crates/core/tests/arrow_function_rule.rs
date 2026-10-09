@@ -1756,6 +1756,31 @@ declare(function() {});
 }
 
 #[test]
+fn lowered_mixin_extends_argument_stays_function() {
+    // producer typescript@5.9.3 (target ES5, module CommonJS) then
+    // terser@5.51.2 defaults: `declare(class {})` becomes
+    // `declare(function(){})`, and UnEs6Class turns the `__extends` IIFE in
+    // `declare` back into `class n extends t` before ArrowFunction runs.
+    let input = r#"
+"use strict";var __extends=this&&this.__extends||function(){var t=function(n,e){return t=Object.setPrototypeOf||{__proto__:[]}instanceof Array&&function(t,n){t.__proto__=n}||function(t,n){for(var e in n)Object.prototype.hasOwnProperty.call(n,e)&&(t[e]=n[e])},t(n,e)};return function(n,e){if("function"!=typeof e&&null!==e)throw new TypeError("Class extends value "+String(e)+" is not a constructor or null");function r(){this.constructor=n}t(n,e),n.prototype=null===e?Object.create(e):(r.prototype=e.prototype,new r)}}();function declare(t){var n=function(t){function n(){return null!==t&&t.apply(this,arguments)||this}return __extends(n,t),n.prototype.kind=function(){return"child"},n}(t);return n}Object.defineProperty(exports,"__esModule",{value:!0}),exports.Other=void 0,exports.Other=declare(function(){});
+"#;
+    let expected = r#"
+function declare(t) {
+    class n extends t {
+        kind() {
+            return "child";
+        }
+    }
+    return n;
+}
+export const Other = declare(function() {});
+"#;
+    let output = apply_pipeline(input);
+    let tail = &output[output.find("function declare").expect("declare is kept")..];
+    assert_eq_normalized(tail, expected);
+}
+
+#[test]
 fn declared_extends_argument_called_before_declaration_stays_function() {
     // Function declarations are hoisted. The table is built before rewriting,
     // so the call may appear above the declaration.
