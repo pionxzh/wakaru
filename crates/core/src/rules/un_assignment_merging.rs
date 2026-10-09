@@ -4,7 +4,7 @@ use crate::utils::prototype_members::is_prototype_mutating_member_name;
 
 use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignOp, AssignTarget, Expr, ExprStmt, Ident, Lit, MemberExpr, MemberProp,
+    AssignExpr, AssignOp, AssignTarget, Expr, ExprStmt, Ident, Lit, MemberExpr, MemberProp, Module,
     ModuleItem, SimpleAssignTarget, Stmt, UnaryOp,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -90,6 +90,20 @@ impl UnAssignmentMerging {
 }
 
 impl VisitMut for UnAssignmentMerging {
+    fn visit_mut_module(&mut self, module: &mut Module) {
+        // Splitting re-reads the value and resolves each target after the
+        // previous write. Inside a `with` body an accessor on the object can
+        // observe both, so a module with a `with` statement keeps its chains;
+        // it also stays CommonJS, so UnEsm needs no split export chain
+        // (docs/rewrite-assumptions.md, dynamic-scope skip). A direct eval
+        // cannot run between the writes or define an accessor on a binding,
+        // so it does not block the split.
+        if super::eval_utils::module_has_with_stmt(module) {
+            return;
+        }
+        module.visit_mut_children_with(self);
+    }
+
     fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
         items.visit_mut_children_with(self);
 

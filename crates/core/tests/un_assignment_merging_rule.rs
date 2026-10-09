@@ -449,3 +449,16 @@ fn keeps_chains_that_need_receiver_or_value_captures() {
         assert_eq_normalized(&apply(input), input);
     }
 }
+
+#[test]
+fn keeps_chains_in_module_with_with_statement() {
+    // A setter on `o` can run between the split writes and change the value
+    // the second write reads.
+    let input = r#"
+with (o) {
+    a = b = x;
+}
+exports.a = exports.b = void 0;
+"#;
+    assert_eq_normalized(&apply(input), input);
+}

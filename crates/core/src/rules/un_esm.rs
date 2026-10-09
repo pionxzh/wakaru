@@ -201,6 +201,11 @@ impl VisitMut for UnEsm {
         if self.level < RewriteLevel::Standard {
             return;
         }
+        // ESM is strict code, where a `with` statement is a syntax error, so
+        // such a module stays CommonJS.
+        if super::eval_utils::module_has_with_stmt(module) {
+            return;
+        }
         // Read before the lowering below removes webpack's `require.d` calls.
         let calls_bundler_helper = calls_bundler_require_helper(module, self.unresolved_mark);
         // webpack's `require.d` calls become per-name definitions, which the

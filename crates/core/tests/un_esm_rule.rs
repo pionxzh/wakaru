@@ -7692,3 +7692,21 @@ exports.show = function () { return toast.Z(); };
     );
     assert!(!output.contains("from \"./toast\""), "{output}");
 }
+
+#[test]
+fn keeps_commonjs_module_with_with_statement() {
+    // ESM is strict code, where `with` is a syntax error.
+    let input = r#"
+Object.defineProperty(exports, "__esModule", { value: true });
+var a = require("a");
+with (o) {
+    use(a);
+}
+exports.foo = 1;
+"#;
+    let output = apply(input);
+    assert!(!output.contains("export "), "{output}");
+    assert!(!output.contains("import "), "{output}");
+    assert!(output.contains("__esModule"), "{output}");
+    assert!(output.contains("require(\"a\")"), "{output}");
+}

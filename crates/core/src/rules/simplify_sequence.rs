@@ -4,9 +4,9 @@ use swc_core::atoms::Atom;
 use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignExpr, AssignTarget, BlockStmt, Decl, Expr, ExprStmt, ForHead, ForInStmt, ForOfStmt,
-    ForStmt, Ident, IfStmt, Invalid, Lit, MemberExpr, ModuleItem, ParenExpr, Pat, ReturnStmt,
-    SeqExpr, SimpleAssignTarget, Stmt, SwitchStmt, ThrowStmt, VarDecl, VarDeclKind, VarDeclOrExpr,
-    VarDeclarator, YieldExpr,
+    ForStmt, Ident, IfStmt, Invalid, Lit, MemberExpr, Module, ModuleItem, ParenExpr, Pat,
+    ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, SwitchStmt, ThrowStmt, VarDecl, VarDeclKind,
+    VarDeclOrExpr, VarDeclarator, YieldExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -17,6 +17,8 @@ use crate::utils::paren::strip_parens;
 
 pub struct SimplifySequence {
     level: RewriteLevel,
+    /// The module contains a `with` statement.
+    with_present: bool,
 }
 
 impl SimplifySequence {
@@ -25,13 +27,21 @@ impl SimplifySequence {
     }
 
     pub fn new_with_level(_unresolved_mark: Mark, level: RewriteLevel) -> Self {
-        Self { level }
+        Self {
+            level,
+            with_present: false,
+        }
     }
 }
 
 // Splitting keeps every statement, including ones that do nothing: an
 // expression statement that was already dead in the input stays in the output.
 impl VisitMut for SimplifySequence {
+    fn visit_mut_module(&mut self, module: &mut Module) {
+        self.with_present = super::eval_utils::module_has_with_stmt(module);
+        module.visit_mut_children_with(self);
+    }
+
     fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
         let old_items = std::mem::take(items);
         let mut new_items = Vec::with_capacity(old_items.len());
@@ -40,7 +50,7 @@ impl VisitMut for SimplifySequence {
             match item {
                 ModuleItem::Stmt(stmt) => {
                     new_items.extend(
-                        split_stmt(stmt, self.level)
+                        split_stmt(stmt, self.level, self.with_present)
                             .into_iter()
                             .map(ModuleItem::Stmt),
                     );
@@ -56,7 +66,7 @@ impl VisitMut for SimplifySequence {
         let mut new_stmts = Vec::with_capacity(old_stmts.len());
         for mut stmt in old_stmts {
             stmt.visit_mut_children_with(self);
-            new_stmts.extend(split_stmt(stmt, self.level));
+            new_stmts.extend(split_stmt(stmt, self.level, self.with_present));
         }
         *stmts = new_stmts;
     }
@@ -93,12 +103,18 @@ fn collect_binding_ids_from_pat(pat: &Pat, ids: &mut HashSet<BindingId>) {
     }
 }
 
-fn split_stmt(stmt: Stmt, level: RewriteLevel) -> Vec<Stmt> {
+/// `with_present`: the module contains a `with` statement. Splitting
+/// `(a = e)[k] = v` re-reads `a`, which an accessor on a `with` object can
+/// observe, so such a module keeps the pattern (docs/rewrite-assumptions.md,
+/// dynamic-scope skip).
+fn split_stmt(stmt: Stmt, level: RewriteLevel, with_present: bool) -> Vec<Stmt> {
     match stmt {
         Stmt::Expr(ExprStmt { span, expr }) => {
             // Check assignment-member pattern: (a = expr)[prop] = val
-            if let Some(stmts) = try_split_assign_member(&expr, span) {
-                return stmts;
+            if !with_present {
+                if let Some(stmts) = try_split_assign_member(&expr, span) {
+                    return stmts;
+                }
             }
             match *expr {
                 Expr::Seq(SeqExpr { exprs, .. }) => exprs
@@ -124,7 +140,7 @@ fn split_stmt(stmt: Stmt, level: RewriteLevel) -> Vec<Stmt> {
             arg: Some(arg),
         }) => split_return(span, arg),
         Stmt::Throw(ThrowStmt { span, arg }) => split_throw(span, arg),
-        Stmt::If(if_stmt) => split_if(if_stmt, level),
+        Stmt::If(if_stmt) => split_if(if_stmt, level, with_present),
         Stmt::Switch(switch_stmt) => split_switch(switch_stmt),
         Stmt::Decl(Decl::Var(var)) => split_var_decl(var, level),
         Stmt::For(for_stmt) => split_for_stmt(for_stmt, level),
@@ -399,6 +415,9 @@ fn extract_var_decl_prefix(
                 continue;
             }
             let (pre, last) = split_expr_seq(init);
+            // A direct eval in the prefix runs in the header scope, where it
+            // can reach the header bindings by name; hoisted, it would see
+            // the outer scope instead.
             let keep_unsplit = !pre.is_empty()
                 && (seq_prefix_has_string_lit(&pre)
                     || (!is_var
@@ -407,7 +426,8 @@ fn extract_var_decl_prefix(
                                 &pre,
                                 &header_bindings,
                                 &future_header_names,
-                            ))));
+                            )
+                            || super::eval_utils::has_dynamic_scope_construct(pre.as_slice()))));
             if keep_unsplit {
                 new_decls.push(VarDeclarator {
                     span: decl.span,
@@ -641,10 +661,10 @@ fn split_throw(span: swc_core::common::Span, arg: Box<Expr>) -> Vec<Stmt> {
     stmts
 }
 
-fn split_if(mut if_stmt: IfStmt, level: RewriteLevel) -> Vec<Stmt> {
-    if_stmt.cons = normalize_branch_stmt(*if_stmt.cons, level);
+fn split_if(mut if_stmt: IfStmt, level: RewriteLevel, with_present: bool) -> Vec<Stmt> {
+    if_stmt.cons = normalize_branch_stmt(*if_stmt.cons, level, with_present);
     if let Some(alt) = if_stmt.alt.take() {
-        if_stmt.alt = Some(normalize_branch_stmt(*alt, level));
+        if_stmt.alt = Some(normalize_branch_stmt(*alt, level, with_present));
     }
 
     let (prefix, last_test) = split_expr_seq(if_stmt.test.clone());
@@ -672,8 +692,8 @@ fn split_switch(mut switch_stmt: SwitchStmt) -> Vec<Stmt> {
     stmts
 }
 
-fn normalize_branch_stmt(stmt: Stmt, level: RewriteLevel) -> Box<Stmt> {
-    let mut split = split_stmt(stmt, level);
+fn normalize_branch_stmt(stmt: Stmt, level: RewriteLevel, with_present: bool) -> Box<Stmt> {
+    let mut split = split_stmt(stmt, level, with_present);
     if split.len() == 1 {
         Box::new(split.pop().expect("length checked"))
     } else {

@@ -636,3 +636,42 @@ function run() {
     let output = apply(input);
     assert_eq_normalized(&output, input);
 }
+
+#[test]
+fn keeps_assign_member_pattern_in_module_with_with_statement() {
+    // Split, `a[k]` re-reads `a`, which a getter on `o` can answer.
+    let input = r#"
+with (o) {
+    (a = make())[k] = v;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn keeps_direct_eval_prefix_in_lexical_for_header() {
+    // The eval runs in the header scope, where `i` is in its TDZ; hoisted,
+    // it would read an outer `i`.
+    let input = r#"
+for (let i = (eval(s), 0); i < n; i++) {
+    use(i);
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn hoists_direct_eval_prefix_from_var_for_header() {
+    let input = r#"
+for (var i = (eval(s), 0); i < n; i++) {
+    use(i);
+}
+"#;
+    let expected = r#"
+eval(s);
+for (var i = 0; i < n; i++) {
+    use(i);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
