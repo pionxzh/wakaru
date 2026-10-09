@@ -448,9 +448,11 @@ fn amd_factories_receive_require_and_their_discarded_result_is_exported() {
     assert!(warning.message.contains("`v`"), "{}", warning.message);
     assert_eq!(
         module(&output, "module-101.js").trim(),
-        r#"const s = (req)=>({
+        r#"const s = function(req) {
+    return {
         alpha: 1
-    });
+    };
+};
 if (typeof define === "function" && define.amd) {
     ((n, a = typeof n !== "function" ? n : n(require, exports, module))=>a !== undefined && (module.exports = a))(s);
 } else {

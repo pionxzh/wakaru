@@ -75,37 +75,35 @@ register((function (value) {
 #[test]
 fn direct_eval_without_function_sensitive_names_can_be_arrow() {
     let input = r#"
-const load = function () {
+setTimeout(function () {
   return eval("require('crypto')");
-};
+});
 "#;
     let expected = r#"
-const load = () => {
+setTimeout(() => {
   return eval("require('crypto')");
-};
+});
 "#;
-    let output = apply(input);
-    assert_eq_normalized(&output, expected);
+    assert_eq_normalized(&apply(input), expected);
 }
 
 #[test]
 fn direct_eval_in_nested_function_does_not_block_outer_arrow() {
     let input = r#"
-const outer = function () {
+setTimeout(function () {
   return function () {
     return eval("this");
   };
-};
+});
 "#;
     let expected = r#"
-const outer = () => {
+setTimeout(() => {
   return function () {
     return eval("this");
   };
-};
+});
 "#;
-    let output = apply(input);
-    assert_eq_normalized(&output, expected);
+    assert_eq_normalized(&apply(input), expected);
 }
 
 #[test]
@@ -122,17 +120,16 @@ const outer = function () {
 #[test]
 fn bind_this_eval_mentioning_this_can_be_arrow() {
     let input = r#"
-register(function (value) {
+setTimeout(function (value) {
   return eval("this.value");
 }.bind(this));
 "#;
     let expected = r#"
-register((value) => {
+setTimeout((value) => {
   return eval("this.value");
 });
 "#;
-    let output = apply(input);
-    assert_eq_normalized(&output, expected);
+    assert_eq_normalized(&apply(input), expected);
 }
 
 #[test]
@@ -170,15 +167,14 @@ arr.forEach(x => {
 #[test]
 fn zero_params_arrow() {
     let input = r#"
-const fn = function() { return 42; };
+setTimeout(function() { return 42; });
 "#;
     let expected = r#"
-const fn = () => {
+setTimeout(() => {
     return 42;
-};
+});
 "#;
-    let output = apply(input);
-    assert_eq_normalized(&output, expected);
+    assert_eq_normalized(&apply(input), expected);
 }
 
 #[test]
@@ -541,15 +537,14 @@ new rest.Constructor();
 #[test]
 fn multi_params_arrow() {
     let input = r#"
-const add = function(a, b) { return a + b; };
+list.reduce(function(a, b) { return a + b; });
 "#;
     let expected = r#"
-const add = (a, b) => {
+list.reduce((a, b) => {
     return a + b;
-};
+});
 "#;
-    let output = apply(input);
-    assert_eq_normalized(&output, expected);
+    assert_eq_normalized(&apply(input), expected);
 }
 
 #[test]
@@ -603,21 +598,20 @@ const make = function() {
 #[test]
 fn nested_function_new_target_does_not_block_outer_arrow() {
     let input = r#"
-const outer = function() {
+setTimeout(function() {
     return function() {
         return new.target;
     };
-};
+});
 "#;
     let expected = r#"
-const outer = () => {
+setTimeout(() => {
     return function() {
         return new.target;
     };
-};
+});
 "#;
-    let output = apply(input);
-    assert_eq_normalized(&output, expected);
+    assert_eq_normalized(&apply(input), expected);
 }
 
 #[test]
@@ -626,13 +620,12 @@ fn function_with_arguments_converted_via_arg_rest() {
     // Arrow functions have no own `arguments`, but after ArgRest runs that is no
     // longer a blocker.
     let input = r#"
-const fn = function() { return arguments[0]; };
+use(list.map(function() { return arguments[0]; }));
 "#;
     let expected = r#"
-const fn = (...args) => args[0];
+use(list.map((...args) => args[0]));
 "#;
-    let output = apply_pipeline(input);
-    assert_eq_normalized(&output, expected);
+    assert_eq_normalized(&apply_pipeline(input), expected);
 }
 
 #[test]
@@ -856,45 +849,6 @@ export const Name = (0, function() {});
 }
 
 #[test]
-fn inner_shadow_same_short_name_still_converts() {
-    // Binding identity is (sym, ctxt). An inner `Name` is not the export.
-    let input = r#"
-export const Name = function() {
-    const Name = function() {
-        return 42;
-    };
-    return Name;
-};
-"#;
-    let expected = r#"
-export const Name = function() {
-    const Name = () => {
-        return 42;
-    };
-    return Name;
-};
-"#;
-    let output = apply(input);
-    assert_eq_normalized(&output, expected);
-}
-
-#[test]
-fn exported_helper_callback_argument_still_converts() {
-    let input = r#"
-export const Name = helper(function() {
-    return 1;
-});
-"#;
-    let expected = r#"
-export const Name = helper(() => {
-    return 1;
-});
-"#;
-    let output = apply(input);
-    assert_eq_normalized(&output, expected);
-}
-
-#[test]
 fn exported_iife_call_still_converts_callee() {
     let input = r#"
 export const C = (function(x) {
@@ -942,17 +896,16 @@ fn object_method_value_not_converted_to_arrow() {
 #[test]
 fn bind_this_converted_to_arrow() {
     // `fn.bind(this)` explicitly locks `this`, making the function semantically
-    // equivalent to an arrow — safe to convert
+    // equivalent to an arrow in a callback position.
     let input = r#"
-a(function(x) { this.x = x; }.bind(this));
+setTimeout(function(x) { this.x = x; }.bind(this));
 "#;
     let expected = r#"
-a((x) => {
+setTimeout((x) => {
     this.x = x;
 });
 "#;
-    let output = apply(input);
-    assert_eq_normalized(&output, expected);
+    assert_eq_normalized(&apply(input), expected);
 }
 
 #[test]
@@ -1032,12 +985,12 @@ var f = function(a = eval("arguments")) { return a; };
 fn plain_default_parameter_still_converts() {
     // Control: an initializer without function-only bindings is fine.
     let input = r#"
-var f = function(a = 1, { b = 2 } = {}) { return a + b; };
+list.forEach(function(a = 1, { b = 2 } = {}) { return a + b; });
 "#;
     let expected = r#"
-var f = (a = 1, { b = 2 } = {}) => {
+list.forEach((a = 1, { b = 2 } = {}) => {
     return a + b;
-};
+});
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
@@ -1059,10 +1012,10 @@ a((function(x = arguments[1]) {
 fn bind_this_with_this_in_default_converts() {
     // `.bind(this)` locks the same `this` the initializer would see.
     let input = r#"
-a(function(x = this.y) { this.x = x; }.bind(this));
+setTimeout(function(x = this.y) { this.x = x; }.bind(this));
 "#;
     let expected = r#"
-a((x = this.y) => {
+setTimeout((x = this.y) => {
     this.x = x;
 });
 "#;
@@ -1183,59 +1136,6 @@ e(async function() { return 1; }, []);
     let expected = with_minified_create_class(
         r#"
 e(async () => { return 1; }, []);
-"#,
-    );
-    assert_eq_normalized(&apply(&input), &expected);
-}
-
-#[test]
-fn create_class_later_arguments_still_convert() {
-    let input = with_minified_create_class(
-        r#"
-e(Ctor, function(value) { return value; });
-"#,
-    );
-    let expected = with_minified_create_class(
-        r#"
-e(Ctor, (value) => { return value; });
-"#,
-    );
-    assert_eq_normalized(&apply(&input), &expected);
-}
-
-#[test]
-fn unproven_create_class_name_still_converts() {
-    // The name alone does not prove the helper: this one returns its argument
-    // without touching a prototype.
-    let input = r#"
-function createClass(f) {
-    return f;
-}
-createClass(function() { return 1; });
-"#;
-    let expected = r#"
-function createClass(f) {
-    return f;
-}
-createClass(() => { return 1; });
-"#;
-    assert_eq_normalized(&apply(input), expected);
-}
-
-#[test]
-fn shadowed_create_class_binding_still_converts() {
-    let input = with_minified_create_class(
-        r#"
-function wrap(e) {
-    e(function() { return 1; });
-}
-"#,
-    );
-    let expected = with_minified_create_class(
-        r#"
-function wrap(e) {
-    e(() => { return 1; });
-}
 "#,
     );
     assert_eq_normalized(&apply(&input), &expected);
@@ -1404,76 +1304,6 @@ Name = (()=>{
 }
 
 #[test]
-fn unconstructed_iife_return_still_converts() {
-    let input = r#"
-const Name = (function() {
-    let ctor;
-    ctor = function() {};
-    return ctor;
-})();
-Name();
-"#;
-    let expected = r#"
-const Name = (()=>{
-    let ctor;
-    ctor = ()=>{};
-    return ctor;
-})();
-Name();
-"#;
-    assert_eq_normalized(&apply(input), expected);
-}
-
-#[test]
-fn nested_function_return_does_not_alias_outer_iife() {
-    let input = r#"
-export let Name;
-Name = (function() {
-    let ctor;
-    ctor = function() {};
-    function nested() {
-        return other;
-    }
-    let other = function() {
-        return 1;
-    };
-    use(nested);
-    return ctor;
-})();
-"#;
-    let output = apply(input);
-    assert!(output.contains("ctor = function() {}"), "{output}");
-    assert!(output.contains("other = ()=>"), "{output}");
-}
-
-#[test]
-fn iife_return_shadow_same_short_name_does_not_freeze_inner() {
-    // Binding identity is (sym, ctxt). The inner `ctor` is not the returned one.
-    let input = r#"
-export let Name;
-Name = (function() {
-    let ctor;
-    ctor = function() {
-        const ctor = function() {
-            return 1;
-        };
-        return ctor;
-    };
-    return ctor;
-})();
-"#;
-    let output = apply(input);
-    assert!(
-        output.contains("ctor = function() {"),
-        "outer returned function must stay constructible:\n{output}"
-    );
-    assert!(
-        output.contains("const ctor = ()=>"),
-        "inner shadow must still convert:\n{output}"
-    );
-}
-
-#[test]
 fn every_iife_return_stays_constructible() {
     // `new Name()` can construct any value the IIFE returns, so every branch
     // and every return is a source, as for a conditional outside an IIFE.
@@ -1543,42 +1373,6 @@ Other = (function() {
 }
 
 #[test]
-fn async_and_generator_iife_return_still_converts() {
-    for input in [
-        r#"
-export let Name;
-Name = (async function() {
-    let ctor;
-    ctor = function() {};
-    return ctor;
-})();
-"#,
-        r#"
-export let Name;
-Name = (function*() {
-    let ctor;
-    ctor = function() {};
-    return ctor;
-})();
-"#,
-        r#"
-export let Name;
-Name = (async ()=>{
-    let ctor;
-    ctor = function() {};
-    return ctor;
-})();
-"#,
-    ] {
-        let output = apply(input);
-        assert!(
-            output.contains("ctor = ()=>"),
-            "async/generator IIFE must not freeze the inner function:\n{output}"
-        );
-    }
-}
-
-#[test]
 fn iife_directly_returned_function_stays_constructible() {
     // The returned function has no binding for the analysis to mark, so the
     // converter must protect the IIFE's own return positions.
@@ -1634,57 +1428,6 @@ Name = (()=>function() {})();
 }
 
 #[test]
-fn iife_nested_function_returns_still_convert() {
-    // Only the IIFE's own returns are its result. A nested function's return
-    // and an unconstructed IIFE still convert.
-    let input = r#"
-export let Name;
-Name = (function() {
-    const make = function() {
-        return function() {
-            return 1;
-        };
-    };
-    use(make);
-    return function() {};
-})();
-const plain = (function() {
-    return function() {};
-})();
-plain();
-"#;
-    let expected = r#"
-export let Name;
-Name = (()=>{
-    const make = ()=>{
-        return ()=>{
-            return 1;
-        };
-    };
-    use(make);
-    return function() {};
-})();
-const plain = (()=>{
-    return ()=>{};
-})();
-plain();
-"#;
-    assert_eq_normalized(&apply(input), expected);
-}
-
-#[test]
-fn async_iife_returned_function_still_converts() {
-    let input = r#"
-export let Name;
-Name = (async function() {
-    return function() {};
-})();
-"#;
-    let output = apply(input);
-    assert!(output.contains("return ()=>{}"), "{output}");
-}
-
-#[test]
 fn iife_returned_base_keeps_prototype_through_pipeline() {
     // `Base.prototype.hello = ...` throws on an arrow, which has no prototype.
     let input = r#"
@@ -1698,33 +1441,6 @@ export { Base };
 "#;
     let output = apply_pipeline(input);
     assert!(output.contains("Base = function()"), "{output}");
-}
-
-#[test]
-fn iife_protection_stops_at_the_returned_function_body() {
-    // The returned function stays constructible; what it returns is not the
-    // IIFE's result.
-    let input = r#"
-export let Name;
-Name = (function() {
-    return function() {
-        return function() {
-            return 1;
-        };
-    };
-})();
-"#;
-    let expected = r#"
-export let Name;
-Name = (()=>{
-    return function() {
-        return ()=>{
-            return 1;
-        };
-    };
-})();
-"#;
-    assert_eq_normalized(&apply(input), expected);
 }
 
 /// An anonymous function passed to a constructor-sensitive parameter of a
@@ -1836,28 +1552,6 @@ declare(function() {});
 }
 
 #[test]
-fn declared_call_shifts_arguments_past_this() {
-    let input = r#"
-function declare(Base) {
-    class Child extends Base {}
-    return Child;
-}
-declare.call(function() {
-    return 1;
-}, function() {});
-"#;
-    let output = apply(input);
-    assert!(
-        output.contains("function() {}") || output.contains("function(){}"),
-        "argument after this must stay a function:\n{output}"
-    );
-    assert!(
-        output.contains("()=>") || output.contains("() =>"),
-        "this argument is not a constructor parameter:\n{output}"
-    );
-}
-
-#[test]
 fn declared_sensitive_parameter_keeps_only_its_argument() {
     let input = r#"
 function declare(callback, Base) {
@@ -1921,36 +1615,12 @@ declare(function() {});
 }
 
 #[test]
-fn property_bag_empty_function_still_converts() {
-    let input = r#"
-const bag = function() {};
-bag.KEY = 0;
-use(bag);
-"#;
-    let output = apply(input);
-    assert!(output.contains("()=>{}"), "{output}");
-    assert!(!output.contains("function()"), "{output}");
-}
-
-#[test]
 fn called_parameter_argument_still_converts() {
     let input = r#"
 function declare(callback) {
     return callback();
 }
 declare(function() {
-    return 1;
-});
-"#;
-    let output = apply(input);
-    assert!(output.contains("()=>"), "{output}");
-    assert!(!output.contains("function()"), "{output}");
-}
-
-#[test]
-fn unresolved_callee_argument_still_converts() {
-    let input = r#"
-unknown(function() {
     return 1;
 });
 "#;
@@ -2002,22 +1672,6 @@ declare(function() {
 }
 
 #[test]
-fn destructured_extends_parameter_does_not_freeze_argument() {
-    let input = r#"
-function declare({ Base }) {
-    class Child extends Base {}
-    return Child;
-}
-declare(function() {
-    return 1;
-});
-"#;
-    let output = apply(input);
-    assert!(output.contains("()=>"), "{output}");
-    assert!(!output.contains("function()"), "{output}");
-}
-
-#[test]
 fn declared_async_argument_still_converts() {
     let input = r#"
 function declare(Base) {
@@ -2033,39 +1687,259 @@ declare(async function() {
     assert!(!output.contains("async function"), "{output}");
 }
 
-#[test]
-fn declared_argument_count_mismatch_pairs_only_sensitive_slot() {
-    let fewer = r#"
-function declare(callback, Base) {
-    class Child extends Base {}
-    return Child;
-}
-declare(function() {
-    return 1;
-});
-"#;
-    let fewer_out = apply(fewer);
-    assert!(fewer_out.contains("()=>"), "{fewer_out}");
-    assert!(!fewer_out.contains("function()"), "{fewer_out}");
+// Positive evidence. A function converts only where its value provably never
+// reaches `new`, or where it is a callback of a built-in that only calls it
+// (`builtin_callbacks_not_constructed`). Everything else keeps `function`.
 
-    let extra = r#"
-function declare(callback, Base) {
-    class Child extends Base {}
-    return Child;
+fn assert_arrow(output: &str, marker: &str) {
+    assert!(output.contains(marker), "expected `{marker}`:\n{output}");
 }
-declare(function() {
-    return 1;
-}, function() {}, function() {
-    return 2;
+
+fn assert_function(output: &str, marker: &str) {
+    assert!(
+        output.contains(marker),
+        "expected `{marker}` to stay a function:\n{output}"
+    );
+}
+
+#[test]
+fn immediately_invoked_callee_converts() {
+    let output = apply(
+        r#"
+(function () { use(1); })();
+(function () { use(2); }).call(ctx);
+"#,
+    );
+    assert!(!output.contains("function"), "{output}");
+}
+
+#[test]
+fn call_only_binding_converts() {
+    let output = apply(
+        r#"
+function outer() {
+    var helper = function (x) { return x + 1; };
+    return helper(1) + helper.call(null, 2) + typeof helper;
+}
+"#,
+    );
+    assert_arrow(&output, "var helper = (x)=>");
+}
+
+#[test]
+fn binding_that_escapes_stays_function() {
+    let output = apply(
+        r#"
+function outer() {
+    var escapes = function () { return 1; };
+    var written = function () { return 2; };
+    written = other;
+    var bound = function () { return 3; };
+    use(bound.bind(null), escapes, written());
+    var proto = function () { return 4; };
+    proto();
+    return proto.prototype;
+}
+"#,
+    );
+    assert_function(&output, "var escapes = function");
+    assert_function(&output, "var written = function");
+    assert_function(&output, "var bound = function");
+    assert_function(&output, "var proto = function");
+}
+
+#[test]
+fn script_top_level_binding_stays_function() {
+    // Another script on the page shares this scope and may construct it.
+    let output = apply(
+        r#"
+var helper = function () { return 1; };
+helper();
+"#,
+    );
+    assert_function(&output, "var helper = function");
+}
+
+#[test]
+fn module_top_level_binding_converts_unless_exported() {
+    let output = apply(
+        r#"
+var helper = function () { return 1; };
+export const value = helper();
+export const exported = function () { return 2; };
+exported();
+"#,
+    );
+    assert_arrow(&output, "var helper = ()=>");
+    assert_function(&output, "export const exported = function");
+}
+
+#[test]
+fn dynamic_scope_blocks_call_only_evidence() {
+    let output = apply(
+        r#"
+function outer(code) {
+    var helper = function () { return 1; };
+    helper();
+    return eval(code);
+}
+"#,
+    );
+    assert_function(&output, "var helper = function");
+}
+
+#[test]
+fn callback_to_parameter_that_is_only_called_converts() {
+    let output = apply(
+        r#"
+function each(list, fn) { for (var i = 0; i < list.length; i++) fn(list[i]); }
+var apply1 = (f) => f.call(null, 1);
+each(items, function (item) { use(item); });
+apply1(function (value) { use(value); });
+(function (cb) { cb(); })(function () { use(0); });
+"#,
+    );
+    assert!(!output.contains("function ("), "{output}");
+    assert_arrow(&output, "each(items, (item)=>");
+}
+
+#[test]
+fn callback_to_parameter_without_proof_stays_function() {
+    let output = apply(
+        r#"
+function keep(fn) { store.push(fn); }
+function viaArguments(fn) { arguments[0](); }
+function each(fn) { fn(); }
+function rebound(fn) { fn(); }
+rebound = other;
+keep(function () { use(1); });
+viaArguments(function () { use(2); });
+each(...rest, function () { use(3); });
+rebound(function () { use(4); });
+"#,
+    );
+    for marker in [
+        "keep(function",
+        "viaArguments(function",
+        "each(...rest, function",
+        "rebound(function",
+    ] {
+        assert_function(&output, marker);
+    }
+}
+
+#[test]
+fn async_function_converts_in_any_position() {
+    // An async function is never constructible.
+    let output = apply(
+        r#"
+obj.load = async function () { return 1; };
+export const exported = async function () { return 2; };
+"#,
+    );
+    assert_arrow(&output, "obj.load = async ()=>");
+    assert_arrow(&output, "export const exported = async ()=>");
+}
+
+#[test]
+fn builtin_callbacks_convert_in_callback_positions() {
+    let output = apply(
+        r#"
+list.map(function (x) { return x * 2; });
+p.then(function (v) { return v; }, function (e) { throw e; });
+s["replace"](/a/g, function (m) { return m; });
+setTimeout(function () { use(1); }, 10);
+new Promise(function (resolve) { resolve(1); });
+"#,
+    );
+    assert!(!output.contains("function"), "{output}");
+}
+
+#[test]
+fn builtin_callbacks_require_the_callback_position_and_a_global() {
+    let output = apply(
+        r#"
+list.reduce(function (a, b) { return a + b; }, function () { return 0; });
+s.replace(function () { return 1; }, x);
+emitter.on("x", function () { use(1); });
+function shadow(setTimeout, Promise) {
+    setTimeout(function () { use(2); });
+    new Promise(function () { use(3); });
+}
+"#,
+    );
+    assert_arrow(&output, "list.reduce((a, b)=>");
+    for marker in [
+        "}, function() {\n    return 0;",
+        "s.replace(function",
+        "emitter.on(\"x\", function",
+        "setTimeout(function",
+        "new Promise(function",
+    ] {
+        assert_function(&output, marker);
+    }
+}
+
+#[test]
+fn unknown_callee_argument_stays_function() {
+    let output = apply(
+        r#"
+unknown(function () { return 1; });
+export default function () {}
+export const Name = helper(function () { return 2; });
+"#,
+    );
+    assert_function(&output, "unknown(function");
+    assert_function(&output, "helper(function");
+}
+
+#[test]
+fn lowered_callbacks_recover_through_the_pipeline() {
+    // shape: producer @babel/core@7.28.5 @babel/preset-env@7.28.5 targets ie 11
+    // (async transforms excluded). The callback of a same-module function that
+    // only calls it, and built-in array callbacks, become arrows; Babel names
+    // the bound arrows, and a named function expression stays a function.
+    let input = r#"
+"use strict";
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
 });
+exports.load = void 0;
+exports.total = total;
+function total(items, scale) {
+  var double = function double(x) {
+    return x * 2;
+  };
+  var run = function run(fn) {
+    return fn();
+  };
+  return run(function () {
+    return items.map(function (item) {
+      return double(item) * scale;
+    }).reduce(function (a, b) {
+      return a + b;
+    }, 0);
+  });
+}
+var load = exports.load = async function load() {
+  return fetch("/x");
+};
 "#;
-    let output = apply(extra);
-    assert!(
-        output.contains("function()"),
-        "the extends argument stays a function:\n{output}"
-    );
-    assert!(
-        output.matches("()=>").count() >= 2,
-        "the sibling and the extra callback still become arrows:\n{output}"
-    );
+    let expected = r#"
+export { total };
+function total(items, scale) {
+    const double = function double(item) {
+        return item * 2;
+    };
+    const run = function run(fn) {
+        return fn();
+    };
+    return run(()=>items.map((item)=>double(item) * scale).reduce((acc, item)=>acc + item, 0));
+}
+export const load = async function load() {
+    return fetch("/x");
+};
+"#;
+    assert_eq_normalized(&apply_pipeline(input), expected);
 }

@@ -97,7 +97,7 @@ class k {
                             t = e.slice();
                         }
                         t.push(n);
-                        return ()=>{
+                        return function() {
                             if (r && e !== E) {
                                 r = false;
                                 if (t === e) {
@@ -124,7 +124,9 @@ const T = forwardRef !== undefined;
 let S = 0;
 const O = {};
 function C() {}
-export function connectAdvanced(e, { getDisplayName = (e)=>`ConnectAdvanced(${e})`, methodName = "connectAdvanced", renderCountProp, shouldHandleStateChanges = true, storeKey = "store", withRef = false, ...rest } = {}) {
+export function connectAdvanced(e, { getDisplayName = function(e) {
+    return `ConnectAdvanced(${e})`;
+}, methodName = "connectAdvanced", renderCountProp, shouldHandleStateChanges = true, storeKey = "store", withRef = false, ...rest } = {}) {
     const M = `${storeKey}Subscription`;
     const A = S++;
     const L = {
@@ -312,7 +314,7 @@ function R(e, t) {
     return true;
 }
 function M(e) {
-    return (t, n)=>{
+    return function(t, n) {
         const r = e(t, n);
         function o() {
             return r;
@@ -328,16 +330,16 @@ function A(e) {
     return e.length !== 1;
 }
 function L(e, t) {
-    return (t, n)=>{
+    return function(t, n) {
         n.displayName;
-        const r = (e, t)=>{
+        const r = function(e, t) {
             if (r.dependsOnOwnProps) {
                 return r.mapToProps(e, t);
             }
             return r.mapToProps(e);
         };
         r.dependsOnOwnProps = true;
-        r.mapToProps = (t, n)=>{
+        r.mapToProps = function(t, n) {
             r.mapToProps = e;
             r.dependsOnOwnProps = A(e);
             let o = r(t, n);
@@ -352,12 +354,12 @@ function L(e, t) {
     };
 }
 const I = [
-    (e)=>{
+    function(e) {
         if (typeof e === "function") {
             return L(e);
         }
     },
-    (e)=>{
+    function(e) {
         if (e) {
             return undefined;
         }
@@ -365,19 +367,19 @@ const I = [
                 dispatch
             }));
     },
-    (e)=>{
+    function(e) {
         if (e && typeof e === "object") {
             return M((t)=>bindActionCreators(e, t));
         }
     }
 ];
 const D = [
-    (e)=>{
+    function(e) {
         if (typeof e === "function") {
             return L(e);
         }
     },
-    (e)=>{
+    function(e) {
         if (e) {
             return undefined;
         }
@@ -392,14 +394,14 @@ function F(e, t, n) {
     };
 }
 const z = [
-    (e)=>{
+    function(e) {
         if (typeof e === "function") {
-            return ((e)=>(t, n)=>{
+            return ((e)=>function(t, n) {
                     n.displayName;
                     let r;
                     const { pure, areMergedPropsEqual } = n;
                     let a = false;
-                    return (t, n, u)=>{
+                    return function(t, n, u) {
                         const l = e(t, n, u);
                         if (a) {
                             if (!(pure && areMergedPropsEqual(l, r))) {
@@ -414,15 +416,19 @@ const z = [
                 })(e);
         }
     },
-    (e)=>{
+    function(e) {
         if (e) {
             return undefined;
         }
-        return ()=>F;
+        return function() {
+            return F;
+        };
     }
 ];
 function q(e, t, n, r) {
-    return (o, i)=>n(e(o, i), t(r, i), i);
+    return function(o, i) {
+        return n(e(o, i), t(r, i), i);
+    };
 }
 function U(e, t, n, r, { areStatesEqual, areOwnPropsEqual, areStatePropsEqual }) {
     let i;
@@ -465,7 +471,7 @@ function U(e, t, n, r, { areStatesEqual, areOwnPropsEqual, areStatePropsEqual })
         }
         return c;
     }
-    return (o, s)=>{
+    return function(o, s) {
         if (p) {
             return h(o, s);
         }
@@ -491,7 +497,7 @@ function W(e, t, n) {
             return o;
         }
     }
-    return (t, r)=>{
+    return function(t, r) {
         throw new Error(`Invalid value of type ${typeof e} for ${n} argument when connecting component ${r.wrappedComponentName}.`);
     };
 }

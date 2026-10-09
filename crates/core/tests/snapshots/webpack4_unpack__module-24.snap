@@ -1,5 +1,6 @@
 ---
 source: crates/core/tests/webpack4_unpack.rs
+assertion_line: 210
 expression: code
 ---
 import r from "./module-4.js";
@@ -58,7 +59,7 @@ export class Link extends Component {
     constructor(...i_1){
         super(...i_1);
         var r = this;
-        this.handleClick = (e)=>{
+        this.handleClick = function(e) {
             if (r.props.onClick) {
                 r.props.onClick(e);
             }
@@ -235,7 +236,7 @@ Route.childContextTypes = {
 export const NavLink = function({ to, exact, strict, location, activeClassName, className, activeStyle, style, isActive, "aria-current": aria_current, ...rest }) {
     const p = (to === undefined ? "undefined" : typeof to) === "object" ? to.pathname : to;
     const h = p && p.replace(/([.+*?=^!:${}()[\]|/\\])/g, "\\$1");
-    return <Route path={h} exact={exact} strict={strict} location={location} children={({ location, match })=>{
+    return <Route path={h} exact={exact} strict={strict} location={location} children={function({ location, match }) {
         const o = !!(isActive ? isActive(match, location) : match);
         return <Link to={to} className={o ? [
             className,
@@ -435,31 +436,37 @@ const Z = (e)=>{
     }
     return createPath(e);
 };
-const ee = (e)=>()=>{
+const ee = (e)=>function() {
         b(false, "You cannot %s with <StaticRouter>", e);
     };
-const te = ()=>{};
+const te = function() {};
 export class StaticRouter extends Component {
     constructor(...i){
         super(...i);
         var r = this;
-        this.createHref = (e)=>X(r.props.basename + Z(e));
-        this.handlePush = (e)=>{
+        this.createHref = function(e) {
+            return X(r.props.basename + Z(e));
+        };
+        this.handlePush = function(e) {
             const r_props = r.props;
             const { basename, context } = r_props;
             context.action = "PUSH";
             context.location = J(basename, createLocation(e));
             context.url = Z(context.location);
         };
-        this.handleReplace = (e)=>{
+        this.handleReplace = function(e) {
             const r_props = r.props;
             const { basename, context } = r_props;
             context.action = "REPLACE";
             context.location = J(basename, createLocation(e));
             context.url = Z(context.location);
         };
-        this.handleListen = ()=>te;
-        this.handleBlock = ()=>te;
+        this.handleListen = function() {
+            return te;
+        };
+        this.handleBlock = function() {
+            return te;
+        };
     }
     getChildContext() {
         return {
@@ -530,7 +537,7 @@ export class Switch extends Component {
         const location = this.props.location || route.location;
         let computedMatch;
         let o;
-        Children.forEach(children, (t)=>{
+        Children.forEach(children, function(t) {
             if (computedMatch == null && isValidElement(t)) {
                 const i = t.props;
                 const { path, exact, strict, sensitive, from } = i;
@@ -564,11 +571,15 @@ Switch.propTypes = {
 };
 export const matchPath = a;
 export const withRouter = function(e) {
-    const TComponent = ({ wrappedComponentRef, ...rest })=><Route children={(t)=>createElement(e, {
+    const TComponent = function({ wrappedComponentRef, ...rest }) {
+        return <Route children={function(t) {
+            return createElement(e, {
                 ...rest,
                 ...t,
                 ref: wrappedComponentRef
-            })}/>;
+            });
+        }}/>;
+    };
     TComponent.displayName = `withRouter(${e.displayName || e.name})`;
     TComponent.WrappedComponent = e;
     TComponent.propTypes = {

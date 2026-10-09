@@ -1,5 +1,6 @@
 ---
 source: crates/core/tests/webpack4_unpack.rs
+assertion_line: 210
 expression: code
 ---
 export let unstable_now;
@@ -12,7 +13,7 @@ let u;
 if (typeof window === "undefined" || typeof MessageChannel !== "function") {
     let l = null;
     let c = null;
-    const s = ()=>{
+    const s = function() {
         if (l !== null) {
             try {
                 const e = unstable_now();
@@ -28,7 +29,7 @@ if (typeof window === "undefined" || typeof MessageChannel !== "function") {
     unstable_now = function() {
         return Date.now() - f;
     };
-    r = (e)=>{
+    r = function(e) {
         if (l !== null) {
             setTimeout(r, 0, e);
         } else {
@@ -36,13 +37,15 @@ if (typeof window === "undefined" || typeof MessageChannel !== "function") {
             setTimeout(s, 0);
         }
     };
-    o = (e, t)=>{
+    o = function(e, t) {
         c = setTimeout(e, t);
     };
-    i = ()=>{
+    i = function() {
         clearTimeout(c);
     };
-    a = ()=>false;
+    a = function() {
+        return false;
+    };
     u = unstable_forceFrameRate = function() {};
 } else {
     const { performance, Date, setTimeout, clearTimeout } = window;
@@ -70,7 +73,9 @@ if (typeof window === "undefined" || typeof MessageChannel !== "function") {
     let w = -1;
     let E = 5;
     let x = 0;
-    a = ()=>unstable_now() >= x;
+    a = function() {
+        return unstable_now() >= x;
+    };
     u = function() {};
     unstable_forceFrameRate = function(e) {
         if (e < 0 || e > 125) {
@@ -81,7 +86,7 @@ if (typeof window === "undefined" || typeof MessageChannel !== "function") {
     };
     const k = new MessageChannel;
     const T = k.port2;
-    k.port1.onmessage = ()=>{
+    k.port1.onmessage = function() {
         if (g !== null) {
             const e = unstable_now();
             x = e + E;
@@ -100,19 +105,19 @@ if (typeof window === "undefined" || typeof MessageChannel !== "function") {
             b = false;
         }
     };
-    r = (e)=>{
+    r = function(e) {
         g = e;
         if (!b) {
             b = true;
             T.postMessage(null);
         }
     };
-    o = (e, n)=>{
-        w = setTimeout(()=>{
+    o = function(e, n) {
+        w = setTimeout(function() {
             e(unstable_now());
         }, n);
     };
-    i = ()=>{
+    i = function() {
         clearTimeout(w);
         w = -1;
     };

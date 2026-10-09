@@ -18,7 +18,6 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::utils::{find_pat_ids, ExprFactory};
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use super::constructor_sensitivity::static_member_name;
 use crate::analysis::binding_id;
 use crate::analysis::binding_uses::{BindingId, BindingUseIndex, UseKind};
 use crate::commonjs_export_residual::{
@@ -28,6 +27,7 @@ use crate::facts::{collect_module_facts, ModuleFactsMap};
 use crate::js_names::{is_reserved_binding_name, is_valid_identifier_name};
 use crate::module_path::resolve_relative_specifier;
 use crate::provider_namespace_repair::run_provider_namespace_repair;
+use crate::utils::member::static_member_name;
 use crate::utils::paren::strip_parens;
 use crate::utils::prototype_members::is_prototype_mutating_member_name;
 

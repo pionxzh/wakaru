@@ -5,9 +5,9 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
-use crate::rules::constructor_sensitivity::static_member_name;
 use crate::rules::expr_utils::is_unresolved_ident;
 use crate::rules::un_esmodule_flag::is_marker_stmt;
+use crate::utils::member::static_member_name;
 use crate::utils::paren::strip_parens;
 
 /// Name reported for a use of the whole `exports` object.

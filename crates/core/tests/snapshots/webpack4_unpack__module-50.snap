@@ -221,7 +221,9 @@ function I(e, t, n) {
     const { result, keyPrefix } = e;
     e = e.func.call(e.context, t, e.count++);
     if (Array.isArray(e)) {
-        D(e, result, n, (e)=>e);
+        D(e, result, n, function(e) {
+            return e;
+        });
     } else if (e != null) {
         if (isValidElement(e)) {
             e = ((e, key)=>({
@@ -282,11 +284,15 @@ export const Children = {
         N(t);
     },
     count: function(e) {
-        return M(e, ()=>null, null);
+        return M(e, function() {
+            return null;
+        }, null);
     },
     toArray: function(e) {
         const t = [];
-        D(e, t, null, (e)=>e);
+        D(e, t, null, function(e) {
+            return e;
+        });
         return t;
     },
     only: function(e) {

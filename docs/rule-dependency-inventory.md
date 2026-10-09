@@ -529,46 +529,30 @@ rationale, or level gating appear.
   binding gets the same check: if another binding shares its name, choose an
   unused suffix and rename only the copy binding and its resolved references
   before removing the loop. This applies to functions and constructors.
-- **ArrowFunction** — consults the shared constructor-sensitive value
-  analysis before replacing ordinary function values with non-constructible
-  arrow syntax. The analysis recognizes
-  `new`, `Reflect.construct`, `extends`, `instanceof`, `.prototype`, and the
-  first argument of a proven `createClass` helper (runtime-path import,
-  same-module helper body, or unresolved `_createClass`), then propagates
-  requirements backward through exact static-member aliases. Plain binding
-  aliases also carry member suffixes (`alias = namespace; new alias.C()`
-  protects `namespace.C`) without recursively extending cyclic member paths.
-  Both the use-site marking and the alias graph walk the same value wrapper
-  shapes the converter protects syntactically — parentheses, sequence results,
-  conditional/logical branches, assignment results, and `.bind` targets — so
-  `new (cond ? f : g)()` and `bound = f.bind(x); new bound()` protect the
-  underlying bindings. The alias graph also follows an immediately invoked
-  synchronous function or arrow, including `(0, f)()`, `.call`, and `.apply`,
-  to every value its own `return` statements can produce, so
-  `Name = (function () { return ctor; })()` protects `ctor`. ArrowFunction
-  protects the same IIFE shapes syntactically: when the IIFE's result is
-  constructor-sensitive, a function expression it returns directly stays
-  ordinary, while the callee itself and functions nested in it may still
-  convert. After the fixpoint, each sensitive member key is copied once onto
-  the member aliases of its root binding (`Word = ns.Word = extend({...});
-  new Word.init()` protects `ns.Word.init`); those copies are not propagated
-  further.
-  Aliases are also recorded for logical assignments
-  (`cached ||= ctor`) and object-destructuring bindings (`const { C } = ns`,
-  including renames, nested patterns, defaults, and rest bindings). A shared
-  pattern-default walker keeps the analysis and the mutator aligned for
-  anonymous sources that have no `ValueKey`; constructor-sensitive inline
-  defaults stay ordinary functions.
-  ArrowFunction also pairs arguments of literal function/arrow callees, and of
-  same-module function declarations (including `export function` and a named
-  `export default function`), with simple resolved parameters. Parentheses and
-  a sequence's last expression peel to that callee; `.call` shifts the pairing
-  by one so the receiver is not a parameter. Pairing stops at the first spread
-  argument: its runtime length makes later syntactic positions unknown, so
-  only arguments before it are paired. Inline function arguments passed to
-  constructor-sensitive parameters stay ordinary functions; unrelated callback
-  arguments remain eligible for arrow recovery. The lookup does not follow
-  aliases or `.apply`.
+- **ArrowFunction** — converts a function expression only where positive
+  evidence shows its value never reaches `new`, because an arrow has no
+  `[[Construct]]` or `prototype` and "never constructed" cannot be decided
+  for an arbitrary value. The evidence: an immediately invoked callee
+  (through parentheses, a sequence's last expression, `.call`, `.apply`); a
+  binding declared once, never written, not exported by its declaration, and
+  used only as `f()`, `f.call`, `f.apply`, or `typeof f` (from the
+  module-wide binding use index); an inline argument whose same-module callee
+  (a literal function, or a function binding declared once and never
+  written, that does not read its own `arguments`) uses the matching simple
+  parameter only that way, paired up to the first spread; an async function;
+  and `builtin_callbacks_not_constructed`. A `with` statement or direct
+  `eval` anywhere in the module disables the binding and parameter evidence.
+  A binding the resolver placed in a script's top-level scope is shared with
+  other scripts and never qualifies; the module counts as a script unless it
+  has import/export syntax. A function inside a top-level IIFE keeps its
+  function-scope context after a rule unwraps the IIFE, so it still
+  qualifies. Value wrappers that pass a value along unchanged — parentheses,
+  a sequence's last expression, conditional and logical branches — are
+  followed, and `function () {}.bind(this)` converts in the same positions.
+  Everything else, including object property values, returned functions,
+  member assignments, and callbacks to other APIs, stays a function. Vue SFC
+  recovery restores lowered arrows on its own analysis copy (see
+  [vue-decompile.md](vue-decompile.md)).
 - **Object-literal function values** — no rule rewrites `key: function () {}`
   to method shorthand. Method shorthand drops `[[Construct]]` and
   `prototype`, construction of a property can happen behind a helper or in
@@ -587,15 +571,14 @@ rationale, or level gating appear.
   calls are seeded as required roots from `CallRequiredPlan` (see
   fact-system.md).
 - **ArrowFunction → ArrowReturn** — hard chain. ArrowFunction is `standard+`
-  even though it checks known blockers (`this`, `arguments`, named function
-  expressions, `new.target`, and ordinary-function values required by `new`,
-  `Reflect.construct`, `extends`, `instanceof`, `.prototype` observation, or
-  a `createClass` helper's first argument).
+  even though each conversion has positive evidence and checks the
+  function-only blockers (`this`, `arguments`, named function expressions,
+  `new.target`, direct eval).
   The `this`/`arguments`/`new.target`/direct-eval checks cover parameter
   initializers and destructuring defaults as well as the body; both run in
   the function's own activation.
-  Arrows lack `prototype` and cannot be constructed, so broad conversion is not
-  a `minimal`-safe transform.
+  The built-in callback positions rest on an assumption, so the rule stays
+  out of `minimal`.
 - **UnForOf** — `standard+`. TypeScript/Babel/SWC helper recovery is
   conservative: it requires the full emitted cleanup wrapper before removing
   iterator/error temporaries. Closure Compiler is a separate exact producer

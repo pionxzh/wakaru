@@ -57,7 +57,7 @@ export function createStore(e, t, n) {
         let t = true;
         h();
         d.push(e);
-        return ()=>{
+        return function() {
             if (t) {
                 if (p) {
                     throw new Error("You may not unsubscribe from a store listener while the reducer is executing. See https://redux.js.org/api-reference/store#subscribe(listener) for more details.");
@@ -163,7 +163,7 @@ export function combineReducers(e) {
     } catch (error) {
         u = error;
     }
-    return (e = {}, t)=>{
+    return function(e = {}, t) {
         if (u) {
             throw u;
         }
@@ -209,7 +209,9 @@ export function bindActionCreators(e, t) {
 }
 export function compose(...t_1) {
     if (t_1.length === 0) {
-        return (e)=>e;
+        return function(e) {
+            return e;
+        };
     }
     if (t_1.length === 1) {
         return t_1[0];
@@ -219,9 +221,10 @@ export function compose(...t_1) {
         });
 }
 export function applyMiddleware(...t) {
-    return (e)=>(...r)=>{
+    return function(e) {
+        return function(...r) {
             const i = e(...r);
-            let u = ()=>{
+            let u = function() {
                 throw new Error("Dispatching while constructing your middleware is not allowed. Other middleware would not be applied to this dispatch.");
             };
             const l = {
@@ -237,4 +240,5 @@ export function applyMiddleware(...t) {
                 dispatch: u
             };
         };
+    };
 }

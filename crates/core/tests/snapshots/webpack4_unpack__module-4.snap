@@ -1,6 +1,7 @@
 ---
 source: crates/core/tests/webpack4_unpack.rs
+assertion_line: 210
 expression: code
 ---
-const r = ()=>{};
+const r = function() {};
 export default r;

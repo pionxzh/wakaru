@@ -38,6 +38,15 @@ JavaScript fallback artifacts.
 skips the normal decompile pipeline that normalizes imports, aliases, and
 render calls before Vue recovery runs.
 
+Vue recovery parses the decompiled JavaScript into its own analysis copy.
+Before matching, it turns every function expression that could be an arrow
+(no own `this`, `arguments`, `new.target`, name, or generator) back into an
+arrow, outside object property values. The template compiler emits render
+functions, slots, and handlers as arrows, and an ES5-lowered build turns them
+into functions that the JavaScript output keeps, because the pipeline's
+`ArrowFunction` converts only values it can prove are never constructed. The
+copy is never emitted as JavaScript.
+
 ## Playground preview
 
 In the browser playground, enable the experimental **Vue SFC** switch after

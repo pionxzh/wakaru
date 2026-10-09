@@ -23,7 +23,7 @@ function c(e = 10, t) {
         l = (l + 1) % e;
         r++;
     };
-    const take = ()=>{
+    const take = function() {
         if (r != 0) {
             const t = n[c];
             n[c] = null;
@@ -32,7 +32,7 @@ function c(e = 10, t) {
             return t;
         }
     };
-    const flush = ()=>{
+    const flush = function() {
         const e = [];
         while(r){
             e.push(take());

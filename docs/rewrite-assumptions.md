@@ -368,6 +368,38 @@ inlining).
 
 Level: `standard` and above. `minimal` preserves captured builtin aliases.
 
+### `builtin_callbacks_not_constructed`
+
+A function passed inline as the callback of a built-in API is only called by
+that API, never constructed. `ArrowFunction` turns a function into an arrow
+only where its value provably never reaches `new` (an immediately invoked
+callee, a binding that is only called, a callback whose same-module callee
+only calls the parameter, an async function). Under this assumption it also
+converts callbacks in these positions:
+
+- the first argument of an unresolved `setTimeout`, `setInterval`,
+  `setImmediate`, `queueMicrotask`, `requestAnimationFrame`, or
+  `requestIdleCallback`, and the executor of an unresolved `new Promise`;
+- the callback argument of a method named `map`, `forEach`, `filter`, `some`,
+  `every`, `find`, `findIndex`, `findLast`, `findLastIndex`, `flatMap`,
+  `sort`, `reduce`, `reduceRight`, `catch`, or `finally` (first argument),
+  `then` (first two), or `replace` / `replaceAll` (second).
+
+```js
+items.map(function (item) { return item.id; });
+// → items.map((item) => item.id)
+```
+
+The AST does not prove that the receiver of `.map` is an array or that the
+global timer is the host's. A receiver whose own `map` or `then` constructs
+its callback turns the conversion into a `TypeError`. The list is closed: a
+name joins it with evidence that lowered code passes it callbacks, never as a
+guess about a library API (`.on`, `.each`, and similar stay functions).
+
+Affects: `ArrowFunction`.
+
+Level: `standard` and above, like the whole rule.
+
 ### `terser_unsafe_proto`
 
 The literal receiver in a prototype-call shape came from Terser's

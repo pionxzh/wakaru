@@ -1172,9 +1172,14 @@ pub(super) fn parse_module(source: &str, cm: Lrc<SourceMap>) -> Result<Module> {
         None,
     );
     let mut parser = Parser::new_from(lexer);
-    parser
+    let mut module = parser
         .parse_module()
-        .map_err(|error| anyhow!("failed to parse decompiled Vue module: {error:?}"))
+        .map_err(|error| anyhow!("failed to parse decompiled Vue module: {error:?}"))?;
+    // Decompiled JavaScript keeps ES5-lowered render closures, slots, and
+    // handlers as functions; the matchers read Vue compiler output, which uses
+    // arrows. This module is only analyzed, never emitted as JavaScript.
+    crate::rules::convert_lowered_vue_arrows(&mut module);
+    Ok(module)
 }
 
 fn find_render_source<'a>(

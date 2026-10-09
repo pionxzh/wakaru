@@ -1,85 +1,67 @@
-# Learning: strict positive-proof arrow recovery is too conservative for Standard
+# Learning: arrow recovery needs positive evidence, and async functions need none
 
-**TL;DR — Do not limit Standard-level `function` → arrow recovery to locally
-call-only bindings and immediate invocations. That policy avoids having to
-enumerate every possible constructor escape, but it also removes most useful
-arrow recovery from exported functions and callbacks. The experiment caused 25
-core-suite failures and reduced the reproduction-matrix baseline from
-1778/1826 (97.4%) to 1744/1826 (95.5%). Keep the broad generated-code heuristic
-at Standard, with explicit hard guards for observable ordinary-function
-semantics.**
+**TL;DR — `ArrowFunction` converts a `function` expression only where positive
+evidence shows the value never reaches `new`. A first attempt at this policy
+was reverted because it lost every recovered async arrow; the adopted policy
+adds the evidence that attempt lacked (async functions, callbacks whose
+same-module callee only calls them, and a closed list of built-in callback
+positions) and keeps the reproduction matrices unchanged. Do not go back to
+converting by shape and blocking visible construct uses.**
 
-## Why the stricter policy was attractive
+## Why shape plus a blacklist failed
 
-An ordinary function and an arrow differ in observable ways even when the body
-does not mention `this` or `arguments`: ordinary functions can be constructed,
-have a `.prototype`, and can participate as constructors in `instanceof`,
-`extends`, and `Reflect.construct`. A negative guard for every dangerous use can
-look like a list that will grow forever.
+An ordinary function and an arrow differ observably even when the body does not
+mention `this` or `arguments`: a function can be constructed and has a
+`prototype`. The earlier rule converted by shape and blocked a growing list of
+visible construct uses: `new`, `Reflect.construct`, `extends`, `instanceof`,
+`.prototype`, a `createClass` helper's first argument, propagated backward
+through aliases, IIFE returns, and parameters of same-module callees. Each
+counterexample added another link, and each link still left the general case
+open: a value passed to unknown code, exported, stored, or reached through a
+dynamic property can be constructed where the module cannot see it. The same
+happened to `ObjMethodShorthand`, which was removed
+([obj-method-shorthand-removal.md](obj-method-shorthand-removal.md)).
 
-The proposed alternative was positive proof:
+## The first positive-proof attempt
 
-- Standard converts only an immediate function callee or a binding whose every
-  visible use is a direct call.
-- Standard preserves callbacks, exported functions, and other escaping values.
-- Aggressive retains the existing broad conversion.
+The first attempt converted only an immediately invoked callee and a binding
+whose every visible use is a direct call, at `standard`, and kept the broad
+conversion at `aggressive`. It failed 25 core tests, mostly readability
+snapshots, and lowered the reproduction-matrix aggregate from 1778/1826 to
+1744/1826. All 34 lost rows were in the async/await matrix: recovered async
+arrows printed as async ordinary functions. Vue setup-render recovery also
+assumed the returned render closure was an arrow. The attempt was reverted.
 
-This is locally principled, but it cannot recover an original arrow once a
-compiler has lowered an arrow that does not use lexical `this`/`arguments` to an
-otherwise ordinary anonymous function. There is no remaining AST marker that
-distinguishes it from a source-level function expression.
+## What the adopted policy adds
 
-## What was built and measured
+- **Async functions convert anywhere.** An async function has no
+  `[[Construct]]` and no `prototype`, so the arrow changes nothing a caller can
+  observe beyond what the existing `this`/`arguments` checks already cover.
+  This alone covers the rows the first attempt lost.
+- **Callbacks of a same-module callee that only calls the parameter.** The
+  argument's value reaches only that parameter, and every use of the
+  parameter is a call.
+- **Built-in callback positions** (`builtin_callbacks_not_constructed` in
+  [rewrite-assumptions.md](../rewrite-assumptions.md)): timer globals,
+  `new Promise`, and array/Promise/string method names, at fixed argument
+  positions. This is a name list, which the first write-up advised against.
+  It is acceptable here because the list is closed and names language or host
+  built-ins whose callbacks lowered code passes inline; it does not grow with
+  library APIs.
+- **Script scope.** A binding in a script's top-level scope is shared with
+  other scripts and never counts as call-only; a module's top-level bindings
+  and functions from an unwrapped top-level IIFE do.
+- **Vue recovery** restores lowered arrows on its own analysis copy instead of
+  depending on the pipeline's output ([vue-decompile.md](../vue-decompile.md)).
 
-The experiment implemented the level-aware policy above, added positive and
-negative unit tests, and ran the entire core suite and reproduction matrices.
-
-- Core suite: 3122 tests run, 3097 passed, **25 failed**.
-- Fourteen failures were Bun/Webpack/ESM snapshot groups with broad readability
-  regressions: exported helpers and callbacks stayed as block-bodied functions.
-- The remaining failures were mostly direct expected-output assertions in
-  `ArrowReturn`, sliced-parameter recovery, SmartInline, and bundle tests. One
-  real structural coupling was found and prototyped away: Vue setup-render
-  recovery assumed the returned render closure was already an arrow.
-- Aggregate reproduction rate: **1778/1826 (97.4%) → 1744/1826 (95.5%)**.
-- All 34 lost rows were in the async/await matrix:
-  **402/415 (96.9%) → 368/415 (88.7%)**. They were recovered async-arrow inputs
-  that the strict policy could only print as async ordinary functions.
-- Closure Compiler execution equivalence remained 15/15, so the stricter policy
-  did not improve that matrix beyond the explicit constructor guards.
-
-The policy and the Vue generalization were reverted after measurement. The
-fixture snapshots and matrix baseline were not updated.
-
-## What to do instead
-
-Keep Standard's broad arrow recovery as a generated-code assumption, but treat
-observable ordinary-function requirements as hard blockers:
-
-- lexical/function-only body semantics: `this`, `arguments`, `new.target`,
-  direct `eval`, generators, duplicate parameters, and named function
-  expressions;
-- statically visible constructor semantics: `new`, `.prototype`, `instanceof`,
-  class `extends`, and the target/newTarget positions of `Reflect.construct`;
-- propagate those constructor requirements backward through simple binding,
-  assignment, member-path, conditional/logical, sequence, and `.bind` value
-  flows.
-
-This is intentionally not a proof against arbitrary dynamic escape. A function
-passed to unknown code, exported, accessed through a dynamic property name, or
-reached through `eval` can still be treated as a constructor outside the visible
-AST. Eliminating that residual assumption requires the strict policy and its
-measured recovery loss.
-
-When adding a blocker, add a reproduced semantic counterexample and extend the
-central constructor-sensitive value analysis. Do not add callee-name allowlists
-or one-off package checks. The relevant direct JavaScript operations are a
-small semantic category; producer-specific spellings are the unbounded list to
-avoid.
+With these, the reproduction-matrix aggregate stayed at 2830/2991, including
+the async/await matrix. What stays a function: member assignments
+(`obj.x = function`), returned functions, object property values, escaping
+bindings, and callbacks to library APIs. For ES5-era source those were
+functions to begin with.
 
 ## When to reconsider
 
-Revisit positive-proof recovery only as an explicit new policy mode, or if
-producer metadata/source maps can reliably distinguish lowered arrows from
-source ordinary functions. Do not silently change Standard again without
-measuring the full suite, fixture snapshots, and reproduction matrices.
+Add evidence, not blockers: a new proof that a value cannot reach `new`, or a
+built-in callback position shown in lowered output. Do not reintroduce a
+construct-use blacklist to win back conversions of values that escape.

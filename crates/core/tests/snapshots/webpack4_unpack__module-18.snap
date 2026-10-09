@@ -1,5 +1,6 @@
 ---
 source: crates/core/tests/webpack4_unpack.rs
+assertion_line: 210
 expression: code
 ---
 import { Component } from "./module-50.js";
@@ -23,7 +24,7 @@ export class ConnectedRouter extends Component {
     constructor(...i){
         super(...i);
         var r = this;
-        this.handleLocationChange = (payload)=>{
+        this.handleLocationChange = function(payload) {
             r.store.dispatch({
                 type: LOCATION_CHANGE,
                 payload
@@ -63,7 +64,7 @@ export const getLocation = function(e) {
 export const createMatchSelector = function(e) {
     let t = null;
     let n = null;
-    return (r)=>{
+    return function(r) {
         const pathname = (getLocation(r) || {}).pathname;
         if (pathname === t) {
             return n;
@@ -78,13 +79,15 @@ export const createMatchSelector = function(e) {
 };
 export const CALL_HISTORY_METHOD = "@@router/CALL_HISTORY_METHOD";
 function g(method) {
-    return (...args)=>({
+    return function(...args) {
+        return {
             type: CALL_HISTORY_METHOD,
             payload: {
                 method,
                 args
             }
-        });
+        };
+    };
 }
 export const push = g("push");
 export const replace = g("replace");
@@ -99,7 +102,9 @@ export const routerActions = {
     goForward
 };
 export function routerMiddleware(e) {
-    return ()=>(t)=>(n)=>{
+    return function() {
+        return function(t) {
+            return function(n) {
                 if (n.type !== CALL_HISTORY_METHOD) {
                     return t(n);
                 }
@@ -107,4 +112,6 @@ export function routerMiddleware(e) {
                 const { method, args } = n_payload;
                 e[method](...args);
             };
+        };
+    };
 }

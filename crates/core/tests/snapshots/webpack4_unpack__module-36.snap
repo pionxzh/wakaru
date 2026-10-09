@@ -1,5 +1,6 @@
 ---
 source: crates/core/tests/webpack4_unpack.rs
+assertion_line: 210
 expression: code
 ---
 import "./module-13.js";
@@ -12,20 +13,26 @@ const u = {
     error: ""
 };
 r = {};
-r[FETCH_DATA + START] = (e)=>({
+r[FETCH_DATA + START] = function(e) {
+    return {
         ...e,
         isLoading: true
-    });
-r[FETCH_DATA + SUCCESS] = (e, data)=>({
+    };
+};
+r[FETCH_DATA + SUCCESS] = function(e, data) {
+    return {
         ...e,
         isLoading: false,
         data
-    });
-r[FETCH_DATA + ERROR] = (e, error)=>({
+    };
+};
+r[FETCH_DATA + ERROR] = function(e, error) {
+    return {
         ...e,
         isLoading: false,
         error
-    });
+    };
+};
 const l = r;
 export default function(e = u, t) {
     const n = l[t.type];

@@ -2417,7 +2417,9 @@ module.exports = exports.default;
 "#;
     let expected = r#"
 "use strict";
-const _default = (a)=>a;
+const _default = function(a) {
+    return a;
+};
 export default _default;
 "#;
     let output = apply(input);

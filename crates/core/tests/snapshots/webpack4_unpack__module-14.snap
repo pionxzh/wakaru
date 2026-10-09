@@ -1,5 +1,6 @@
 ---
 source: crates/core/tests/webpack4_unpack.rs
+assertion_line: 210
 expression: code
 ---
 import r from "./module-40.js";
@@ -79,7 +80,7 @@ function l(e, t) {
             n[o] = new RegExp(`^(?:${e[o].pattern})\$`, d(t));
         }
     }
-    return (t, o)=>{
+    return function(t, o) {
         let i = "";
         const l = t || {};
         const c = (o || {}).pretty ? a : encodeURIComponent;

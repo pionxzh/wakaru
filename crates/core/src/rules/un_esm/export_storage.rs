@@ -48,9 +48,9 @@ use crate::rules::decl_utils::{collect_decl_names, fresh_binding_ident};
 
 use crate::analysis::BindingId;
 use crate::rules::cocos_rf::framed_cc_rf_push_calls;
-use crate::rules::constructor_sensitivity::static_member_name;
 use crate::rules::eval_utils::{module_has_with_stmt, DirectEvalPresence};
 use crate::rules::un_enum::is_enum_iife_callee;
+use crate::utils::member::static_member_name;
 use crate::utils::paren::strip_parens;
 use crate::utils::prototype_members::is_prototype_mutating_member_name;
 

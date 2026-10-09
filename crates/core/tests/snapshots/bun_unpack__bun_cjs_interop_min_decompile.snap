@@ -1,5 +1,6 @@
 ---
 source: crates/core/tests/bun_unpack.rs
+assertion_line: 69
 expression: output
 ---
 const { getPrototypeOf, defineProperty, getOwnPropertyNames } = Object;
@@ -137,7 +138,7 @@ export async function main() {
     let s = new g({
         count: 0
     });
-    s.subscribe((n, r)=>{
+    s.subscribe(function(n, r) {
         if (n === m) {
             _.info(`${r.key} = ${r.value}`);
         }

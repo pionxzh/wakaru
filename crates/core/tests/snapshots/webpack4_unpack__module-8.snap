@@ -222,7 +222,7 @@ function w() {
     return {
         setPrompt: function(t) {
             e = t;
-            return ()=>{
+            return function() {
                 if (e === t) {
                     e = null;
                 }
@@ -252,7 +252,7 @@ function w() {
                 }
             }
             t.push(r);
-            return ()=>{
+            return function() {
                 n = false;
                 t = t.filter((e)=>e !== r);
             };
@@ -320,7 +320,7 @@ export function createBrowserHistory(e = {}) {
             R = false;
             P();
         } else {
-            C.confirmTransitionTo(e, "POP", getUserConfirmation, (t)=>{
+            C.confirmTransitionTo(e, "POP", getUserConfirmation, function(t) {
                 if (t) {
                     P({
                         action: "POP",
@@ -379,7 +379,7 @@ export function createBrowserHistory(e = {}) {
         createHref,
         push: function(e, r) {
             const o = createLocation(e, r, O(), q.location);
-            C.confirmTransitionTo(o, "PUSH", getUserConfirmation, (e)=>{
+            C.confirmTransitionTo(o, "PUSH", getUserConfirmation, function(e) {
                 if (e) {
                     const r = createHref(o);
                     const { key, state } = o;
@@ -408,7 +408,7 @@ export function createBrowserHistory(e = {}) {
         },
         replace: function(e, r) {
             const o = createLocation(e, r, O(), q.location);
-            C.confirmTransitionTo(o, "REPLACE", getUserConfirmation, (e)=>{
+            C.confirmTransitionTo(o, "REPLACE", getUserConfirmation, function(e) {
                 if (e) {
                     const r = createHref(o);
                     const { key, state } = o;
@@ -448,7 +448,7 @@ export function createBrowserHistory(e = {}) {
                 F(1);
                 z = true;
             }
-            return ()=>{
+            return function() {
                 if (z) {
                     z = false;
                     F(-1);
@@ -459,7 +459,7 @@ export function createBrowserHistory(e = {}) {
         listen: function(e) {
             const t = C.appendListener(e);
             F(1);
-            return ()=>{
+            return function() {
                 F(-1);
                 t();
             };
@@ -555,7 +555,7 @@ export function createHashHistory(e = {}) {
                     T = false;
                     k();
                 } else {
-                    g.confirmTransitionTo(e, "POP", getUserConfirmation, (t)=>{
+                    g.confirmTransitionTo(e, "POP", getUserConfirmation, function(t) {
                         if (t) {
                             k({
                                 action: "POP",
@@ -619,7 +619,7 @@ export function createHashHistory(e = {}) {
         },
         push: function(e, t) {
             const n = createLocation(e, undefined, undefined, q.location);
-            g.confirmTransitionTo(n, "PUSH", getUserConfirmation, (e)=>{
+            g.confirmTransitionTo(n, "PUSH", getUserConfirmation, function(e) {
                 if (e) {
                     const t = createPath(n);
                     const r = encodePath(l + t);
@@ -644,7 +644,7 @@ export function createHashHistory(e = {}) {
         },
         replace: function(e, t) {
             const n = createLocation(e, undefined, undefined, q.location);
-            g.confirmTransitionTo(n, "REPLACE", getUserConfirmation, (e)=>{
+            g.confirmTransitionTo(n, "REPLACE", getUserConfirmation, function(e) {
                 if (e) {
                     const t = createPath(n);
                     const r = encodePath(l + t);
@@ -676,7 +676,7 @@ export function createHashHistory(e = {}) {
                 F(1);
                 z = true;
             }
-            return ()=>{
+            return function() {
                 if (z) {
                     z = false;
                     F(-1);
@@ -687,7 +687,7 @@ export function createHashHistory(e = {}) {
         listen: function(e) {
             const t = g.appendListener(e);
             F(1);
-            return ()=>{
+            return function() {
                 F(-1);
                 t();
             };
@@ -716,7 +716,7 @@ export function createMemoryHistory({ getUserConfirmation, initialEntries = [
     function y(e) {
         const t = M(g.index + e, 0, g.entries.length - 1);
         const r = g.entries[t];
-        s.confirmTransitionTo(r, "POP", getUserConfirmation, (e)=>{
+        s.confirmTransitionTo(r, "POP", getUserConfirmation, function(e) {
             if (e) {
                 f({
                     action: "POP",
@@ -737,7 +737,7 @@ export function createMemoryHistory({ getUserConfirmation, initialEntries = [
         createHref,
         push: function(e, t) {
             const r = createLocation(e, t, d(), g.location);
-            s.confirmTransitionTo(r, "PUSH", getUserConfirmation, (e)=>{
+            s.confirmTransitionTo(r, "PUSH", getUserConfirmation, function(e) {
                 if (e) {
                     const t = g.index + 1;
                     const n = g.entries.slice(0);
@@ -757,7 +757,7 @@ export function createMemoryHistory({ getUserConfirmation, initialEntries = [
         },
         replace: function(e, t) {
             const r = createLocation(e, t, d(), g.location);
-            s.confirmTransitionTo(r, "REPLACE", getUserConfirmation, (e)=>{
+            s.confirmTransitionTo(r, "REPLACE", getUserConfirmation, function(e) {
                 if (e) {
                     g.entries[g.index] = r;
                     f({

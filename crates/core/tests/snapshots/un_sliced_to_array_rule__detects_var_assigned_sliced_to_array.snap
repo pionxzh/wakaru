@@ -1,6 +1,6 @@
 ---
 source: crates/core/tests/un_sliced_to_array_rule.rs
-assertion_line: 670
+assertion_line: 715
 expression: output
 ---
 function _arrayWithHoles(arr) {
@@ -8,6 +8,8 @@ function _arrayWithHoles(arr) {
         return arr;
     }
 }
-const _slicedToArray = (arr, i)=>_arrayWithHoles(arr) || _iterableToArrayLimit(arr, i) || _unsupportedIterableToArray(arr, i) || _nonIterableRest();
+const _slicedToArray = function(arr, i) {
+    return _arrayWithHoles(arr) || _iterableToArrayLimit(arr, i) || _unsupportedIterableToArray(arr, i) || _nonIterableRest();
+};
 const _ref = _slicedToArray(pair, 2);
 const key = _ref[0];

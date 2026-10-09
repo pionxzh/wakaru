@@ -1,5 +1,6 @@
 ---
 source: crates/core/tests/bun_unpack.rs
+assertion_line: 60
 expression: output
 ---
 const __hasOwnProp = Object.prototype.hasOwnProperty;
@@ -136,7 +137,7 @@ async function main() {
     const store = new $Store({
         count: 0
     });
-    store.subscribe((type, payload)=>{
+    store.subscribe(function(type, payload) {
         if (type === $CHANGE) {
             log.info(`${payload.key} = ${payload.value}`);
         }

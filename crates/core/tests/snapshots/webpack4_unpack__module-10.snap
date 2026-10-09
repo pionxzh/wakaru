@@ -47,7 +47,9 @@ function u(e, t, n = "iterator") {
         }
         return c;
     }
-    return r.t(l, (e)=>l(null, e), n, true);
+    return r.t(l, function(e) {
+        return l(null, e);
+    }, n, true);
 }
 export function b(e, t, ...r) {
     const s = {
@@ -55,7 +57,9 @@ export function b(e, t, ...r) {
         value: l.s(e)
     };
     let f;
-    const d = (e)=>f = e;
+    const d = function(e) {
+        return f = e;
+    };
     return u({
         q1: function() {
             return [
@@ -91,8 +95,12 @@ export function d(e, t, ...r) {
         });
     let d;
     let p;
-    const h = (e)=>d = e;
-    const m = (e)=>p = e;
+    const h = function(e) {
+        return d = e;
+    };
+    const m = function(e) {
+        return p = e;
+    };
     return u({
         q1: function() {
             return [
@@ -142,8 +150,12 @@ export function f(e, t, n, ...s) {
         done: false,
         value: l.e(r.m, e)
     };
-    const v = (e)=>p = e;
-    const b = (e)=>h = e;
+    const v = function(e) {
+        return p = e;
+    };
+    const b = function(e) {
+        return h = e;
+    };
     return u({
         q1: function() {
             return [

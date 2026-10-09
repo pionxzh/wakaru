@@ -59,15 +59,23 @@ var h = {
     },
     default: function(e) {
         if ((e === undefined ? "undefined" : typeof e) === "symbol") {
-            return (t)=>t.type === e;
+            return function(t) {
+                return t.type === e;
+            };
         }
-        return (t)=>t.type === String(e);
+        return function(t) {
+            return t.type === String(e);
+        };
     },
     array: function(e) {
-        return (t)=>e.some((e)=>m(e)(t));
+        return function(t) {
+            return e.some((e)=>m(e)(t));
+        };
     },
     predicate: function(e) {
-        return (t)=>e(t);
+        return function(t) {
+            return e(t);
+        };
     }
 };
 function m(e) {
@@ -76,7 +84,9 @@ function m(e) {
 const y = (fn)=>({
         fn
     });
-function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymous", w) {
+function v(e, t = function() {
+    return o.u;
+}, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymous", w) {
     o.h(e, is.iterator, f);
     var E = o.n(z, o.z("[...effects]", "all([...effects])"));
     var h_sagaMonitor = h.sagaMonitor;
@@ -103,7 +113,7 @@ ${e.stack}`;
         i.name = t;
         a = {};
         a.done = a.done || {};
-        a.done.get = ()=>{
+        a.done.get = function() {
             if (n._deferredEnd) {
                 return n._deferredEnd.promise;
             }
@@ -121,12 +131,22 @@ ${e.stack}`;
         i.cont = r;
         i.joiners = [];
         i.cancel = N;
-        i.isRunning = ()=>n._isRunning;
-        i.isCancelled = ()=>n._isCancelled;
-        i.isAborted = ()=>n._isAborted;
-        i.result = ()=>n._result;
-        i.error = ()=>n._error;
-        i.setContext = (e)=>{
+        i.isRunning = function() {
+            return n._isRunning;
+        };
+        i.isCancelled = function() {
+            return n._isCancelled;
+        };
+        i.isAborted = function() {
+            return n._isAborted;
+        };
+        i.result = function() {
+            return n._result;
+        };
+        i.error = function() {
+            return n._error;
+        };
+        i.setContext = function(e) {
             o.h(e, is.object, o.k("task", e));
             o.v.assign(P, e);
         };
@@ -163,7 +183,7 @@ ${e.stack}`;
         }
         function addTask(e) {
             r.push(e);
-            e.cont = (l, c)=>{
+            e.cont = function(l, c) {
                 if (!a) {
                     o.w(r, e);
                     e.cont = o.u;
@@ -314,7 +334,7 @@ ${e.stack}`;
             }
         }
         w.cancel = o.u;
-        h.cancel = ()=>{
+        h.cancel = function() {
             if (!b) {
                 b = true;
                 try {
@@ -344,7 +364,7 @@ ${e.stack}`;
         if (k = asEffect.take(effect)) {
             return (({ channel, pattern, maybe }, t)=>{
                 channel = channel || C;
-                const a = (e)=>{
+                const a = function(e) {
                     if (e instanceof Error) {
                         return t(e, true);
                     }
@@ -363,7 +383,7 @@ ${e.stack}`;
         }
         if (k = asEffect.put(effect)) {
             return (({ channel, action, resolve }, t)=>{
-                a.a(()=>{
+                a.a(function() {
                     let e;
                     try {
                         e = (channel ? channel.put : n)(action);
@@ -389,7 +409,7 @@ ${e.stack}`;
                 const a = Object.keys(e);
                 const u = {};
                 a.forEach((t)=>{
-                    const l = (u, l)=>{
+                    const l = function(u, l) {
                         if (!r) {
                             if (l) {
                                 n.cancel();
@@ -410,7 +430,7 @@ ${e.stack}`;
                     l.cancel = o.u;
                     u[t] = l;
                 });
-                n.cancel = ()=>{
+                n.cancel = function() {
                     if (!r) {
                         r = true;
                         a.forEach((e)=>u[e].cancel());
@@ -443,7 +463,7 @@ ${e.stack}`;
         if (k = asEffect.cps(effect)) {
             return (({ context, fn, args }, t)=>{
                 try {
-                    const a = (e, n)=>{
+                    const a = function(e, n) {
                         if (is.undef(e)) {
                             return t(n);
                         }
@@ -451,7 +471,9 @@ ${e.stack}`;
                     };
                     fn.apply(context, args.concat(a));
                     if (a.cancel) {
-                        t.cancel = ()=>a.cancel();
+                        t.cancel = function() {
+                            return a.cancel();
+                        };
                     }
                 } catch (error) {
                     return t(error, true);
@@ -468,7 +490,9 @@ ${e.stack}`;
                         task,
                         cb
                     };
-                    cb.cancel = ()=>o.w(e.joiners, n);
+                    cb.cancel = function() {
+                        return o.w(e.joiners, n);
+                    };
                     e.joiners.push(n);
                 } else {
                     if (e.isAborted()) {
@@ -538,7 +562,9 @@ ${e.stack}`;
         if (is.func(n)) {
             t.cancel = n;
         } else if (is.func(e.abort)) {
-            t.cancel = ()=>e.abort();
+            t.cancel = function() {
+                return e.abort();
+            };
         }
         e.then(t, (e)=>t(e, true));
     }
@@ -561,7 +587,7 @@ ${e.stack}`;
                 return i;
             }
             if (a) {
-                return o.t(()=>{
+                return o.t(function() {
                     throw a;
                 });
             }
@@ -571,7 +597,7 @@ ${e.stack}`;
                     done: false,
                     value: i
                 };
-                return (n)=>{
+                return function(n) {
                     if (e) {
                         return ((value)=>({
                                 done: true,
@@ -614,7 +640,7 @@ ${e.stack}`;
         const l = {};
         const s = {};
         r.forEach((t)=>{
-            const f = (s, f)=>{
+            const f = function(s, f) {
                 if (!u) {
                     if (f || i.e(s) || s === CHANNEL_END || s === p) {
                         n.cancel();
@@ -634,7 +660,7 @@ ${e.stack}`;
             f.cancel = o.u;
             s[t] = f;
         });
-        n.cancel = ()=>{
+        n.cancel = function() {
             if (!u) {
                 u = true;
                 r.forEach((e)=>s[e].cancel());
@@ -721,7 +747,8 @@ export default function({ context = {}, ...rest } = {}) {
             logger,
             onError
         });
-        return (e)=>(t)=>{
+        return function(e) {
+            return function(t) {
                 if (sagaMonitor && sagaMonitor.actionDispatched) {
                     sagaMonitor.actionDispatched(t);
                 }
@@ -729,11 +756,12 @@ export default function({ context = {}, ...rest } = {}) {
                 f.emit(t);
                 return n;
             };
+        };
     }
-    c.run = ()=>{
+    c.run = function() {
         throw new Error("Before running a Saga, you must mount the Saga middleware on the Store using applyMiddleware");
     };
-    c.setContext = (e)=>{
+    c.setContext = function(e) {
         o.h(e, is.object, o.k("sagaMiddleware", e));
         o.v.assign(context, e);
     };

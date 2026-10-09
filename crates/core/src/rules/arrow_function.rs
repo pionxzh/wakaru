@@ -1,26 +1,36 @@
-use crate::analysis::binding_uses::BindingId;
+use crate::analysis::binding_uses::{BindingId, BindingUseIndex, UseKind};
 use crate::collections::{HashMap, HashSet};
+use crate::utils::member::static_member_name;
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 
 use swc_core::ecma::ast::{
-    ArrowExpr, ArrowFunctionBody, AssignExpr, AssignTarget, BinExpr, BinaryOp, CallExpr, Callee,
-    Class, DefaultDecl, ExportDefaultDecl, Expr, FnDecl, FnExpr, Function, FunctionBody, Ident,
-    KeyValueProp, MemberExpr, MemberProp, MetaPropExpr, MetaPropKind, Module, NewExpr, Pat,
-    ReturnStmt, ThisExpr, VarDeclarator,
+    ArrowExpr, ArrowFunctionBody, BinaryOp, CallExpr, Callee, Decl, Expr, FnDecl, FnExpr, Function,
+    Ident, KeyValueProp, MemberProp, MetaPropExpr, MetaPropKind, Module, ModuleDecl, ModuleItem,
+    NewExpr, Pat, ThisExpr, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use super::constructor_sensitivity::{
-    assign_target_value_key, collect_constructor_sensitive_values, is_bind_call, is_construct_call,
-    is_sync_iife_call, pat_value_key, static_member_name,
-    visit_mut_assign_target_pat_constructor_sensitive_defaults,
-    visit_mut_pat_constructor_sensitive_defaults, CreateClassHelpers, ValueKey,
-};
 use super::decl_utils::has_duplicate_param_names;
-use super::eval_utils::{direct_eval_call_source, js_source_mentions_binding, EvalCallSource};
-use super::transpiler_helper_utils::LocalHelperContext;
+use super::eval_utils::{
+    direct_eval_call_source, has_dynamic_scope_construct, js_source_mentions_binding,
+    EvalCallSource,
+};
 
+/// Rewrites `function` expressions to arrows where positive evidence shows the
+/// value is never constructed. An arrow has no `[[Construct]]` and no
+/// `prototype`, and "never constructed" cannot be decided for an arbitrary
+/// value, so a function in any other position stays a function. The evidence:
+///
+/// - an immediately invoked callee;
+/// - a binding declared once, never written, not exported, and only called
+///   (`f()`, `f.call()`, `f.apply()`, `typeof f`); a binding declared at the
+///   top level of a script is a shared global and does not qualify;
+/// - an inline argument whose same-module callee only calls the matching
+///   simple parameter;
+/// - an async function, which is never constructible;
+/// - `builtin_callbacks_not_constructed`: an inline callback of a timer
+///   global, `new Promise`, or a built-in array/Promise/string method name.
 pub struct ArrowFunction {
     unresolved_mark: Mark,
 }
@@ -29,222 +39,381 @@ impl ArrowFunction {
     pub fn new(unresolved_mark: Mark) -> Self {
         Self { unresolved_mark }
     }
-
-    pub(crate) fn run_with_helpers(
-        module: &mut Module,
-        unresolved_mark: Mark,
-        local_helpers: &LocalHelperContext,
-    ) {
-        let create_class = CreateClassHelpers::collect(module, unresolved_mark, local_helpers);
-        let constructor_sensitive_values =
-            collect_constructor_sensitive_values(module, &create_class);
-        // Collected before rewriting. Function declarations are hoisted, so a
-        // call may appear above the declaration.
-        let declared_parameters =
-            collect_declared_function_parameters(module, &constructor_sensitive_values);
-        module.visit_mut_with(&mut ArrowFunctionConverter {
-            constructor_sensitive_values: &constructor_sensitive_values,
-            declared_parameters: &declared_parameters,
-            create_class: &create_class,
-            protect_iife_callee: false,
-            protect_next_body_returns: false,
-            protect_returns: false,
-        });
-    }
 }
 
 impl VisitMut for ArrowFunction {
     fn visit_mut_module(&mut self, module: &mut Module) {
-        let local_helpers = LocalHelperContext::collect_with_mark(module, self.unresolved_mark);
-        Self::run_with_helpers(module, self.unresolved_mark, &local_helpers);
+        let evidence = Evidence::collect(module, self.unresolved_mark);
+        module.visit_mut_with(&mut ArrowFunctionConverter {
+            evidence: &evidence,
+        });
     }
 }
 
+/// Global functions whose first argument is a callback the host only calls.
+const CALLBACK_GLOBALS: &[&str] = &[
+    "setTimeout",
+    "setInterval",
+    "setImmediate",
+    "queueMicrotask",
+    "requestAnimationFrame",
+    "requestIdleCallback",
+];
+
+/// Argument positions of the callback a built-in method only calls. The list
+/// is closed: a name joins it with evidence that the callbacks it receives
+/// are lowered functions, not with a guess about a library API.
+fn builtin_callback_positions(method: &str) -> &'static [usize] {
+    match method {
+        "map" | "forEach" | "filter" | "some" | "every" | "find" | "findIndex" | "findLast"
+        | "findLastIndex" | "flatMap" | "sort" | "reduce" | "reduceRight" | "catch" | "finally" => {
+            &[0]
+        }
+        "then" => &[0, 1],
+        "replace" | "replaceAll" => &[1],
+        _ => &[],
+    }
+}
+
+struct Evidence {
+    unresolved_mark: Mark,
+    uses: BindingUseIndex,
+    /// `with` or direct `eval` can reach any binding by name.
+    dynamic_scope: bool,
+    /// The module has import/export syntax, so its top-level bindings are
+    /// module-scoped rather than shared script globals.
+    is_es_module: bool,
+    exported_declarations: HashSet<BindingId>,
+    /// Simple parameters of same-module functions, by the function's binding;
+    /// `None` for a parameter that is not a plain identifier. Functions that
+    /// read their own `arguments` are left out.
+    function_params: HashMap<BindingId, Vec<Option<BindingId>>>,
+}
+
+impl Evidence {
+    fn collect(module: &Module, unresolved_mark: Mark) -> Self {
+        let mut params = FunctionParamCollector::default();
+        module.visit_with(&mut params);
+        Self {
+            unresolved_mark,
+            uses: BindingUseIndex::collect(module),
+            dynamic_scope: has_dynamic_scope_construct(module),
+            is_es_module: module
+                .body
+                .iter()
+                .any(|item| matches!(item, ModuleItem::ModuleDecl(_))),
+            exported_declarations: exported_declarations(module),
+            function_params: params.params,
+        }
+    }
+
+    /// Whether every use of the binding calls it, so its value cannot reach
+    /// a `new`.
+    fn is_call_only(&self, binding: &BindingId) -> bool {
+        !self.dynamic_scope
+            && !self.exported_declarations.contains(binding)
+            && !self.is_shared_script_global(binding)
+            && self.uses.has_single_declaration(binding)
+            && self
+                .uses
+                .use_sites(binding)
+                .iter()
+                .all(|site| match &site.kind {
+                    UseKind::CallCallee | UseKind::TypeofOperand => true,
+                    UseKind::StaticMemberRead(name) => name == "call" || name == "apply",
+                    _ => false,
+                })
+    }
+
+    /// A binding the resolver placed in the input's top-level scope. In a
+    /// script that scope is shared with every other script on the page.
+    /// Functions in a top-level IIFE that a rule unwrapped keep their
+    /// function-scope context, whose mark descends from the top-level mark.
+    fn is_shared_script_global(&self, binding: &BindingId) -> bool {
+        if self.is_es_module {
+            return false;
+        }
+        let mark = binding.1.outer();
+        mark == Mark::root() || mark.parent() == Mark::root()
+    }
+
+    fn is_global(&self, ident: &Ident) -> bool {
+        ident.ctxt.outer() == self.unresolved_mark
+    }
+
+    /// Argument positions of `call` that receive a value the callee is known
+    /// to only call.
+    fn callback_positions(&self, call: &CallExpr) -> Vec<usize> {
+        let Callee::Expr(callee) = &call.callee else {
+            return Vec::new();
+        };
+        let spread_at = call
+            .args
+            .iter()
+            .position(|arg| arg.spread.is_some())
+            .unwrap_or(call.args.len());
+        let mut positions = match crate::utils::paren::strip_parens(callee) {
+            Expr::Ident(ident)
+                if self.is_global(ident) && CALLBACK_GLOBALS.contains(&ident.sym.as_ref()) =>
+            {
+                vec![0]
+            }
+            Expr::Member(member) => static_member_name(&member.prop)
+                .map(|name| builtin_callback_positions(&name).to_vec())
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        if let Some(params) = self.callee_params(callee) {
+            for (index, param) in params.iter().enumerate() {
+                if param.as_ref().is_some_and(|param| self.is_call_only(param)) {
+                    positions.push(index);
+                }
+            }
+        }
+        positions.retain(|index| *index < spread_at);
+        positions
+    }
+
+    /// Parameters of a same-module function the call invokes directly: a
+    /// literal callee or a binding that is declared once and never written.
+    fn callee_params(&self, callee: &Expr) -> Option<Vec<Option<BindingId>>> {
+        if self.dynamic_scope {
+            return None;
+        }
+        match crate::utils::paren::strip_parens(callee) {
+            Expr::Fn(function) => function_params(&function.function),
+            Expr::Arrow(arrow) => Some(arrow.params.iter().map(pat_binding).collect()),
+            Expr::Ident(ident) => {
+                let binding = (ident.sym.clone(), ident.ctxt);
+                let written = self
+                    .uses
+                    .use_sites(&binding)
+                    .iter()
+                    .any(|site| matches!(site.kind, UseKind::Write | UseKind::ReadWrite));
+                if written || !self.uses.has_single_declaration(&binding) {
+                    return None;
+                }
+                self.function_params.get(&binding).cloned()
+            }
+            _ => None,
+        }
+    }
+
+    fn is_promise_executor(&self, new_expr: &NewExpr) -> bool {
+        matches!(
+            crate::utils::paren::strip_parens(&new_expr.callee),
+            Expr::Ident(ident) if self.is_global(ident) && ident.sym == "Promise"
+        )
+    }
+}
+
+fn pat_binding(pat: &Pat) -> Option<BindingId> {
+    match pat {
+        Pat::Ident(binding) => Some((binding.id.sym.clone(), binding.id.ctxt)),
+        _ => None,
+    }
+}
+
+/// `None` when the function reads its own `arguments`: a parameter is then not
+/// the only way the body reaches an argument.
+fn function_params(function: &Function) -> Option<Vec<Option<BindingId>>> {
+    let mut reads_arguments = HasArguments(false);
+    visit_params_and_body(function, &mut reads_arguments);
+    if reads_arguments.0 {
+        return None;
+    }
+    Some(
+        function
+            .params
+            .iter()
+            .map(|param| pat_binding(&param.pat))
+            .collect(),
+    )
+}
+
+#[derive(Default)]
+struct FunctionParamCollector {
+    params: HashMap<BindingId, Vec<Option<BindingId>>>,
+}
+
+impl FunctionParamCollector {
+    fn record(&mut self, name: &Ident, params: Option<Vec<Option<BindingId>>>) {
+        if let Some(params) = params {
+            self.params.insert((name.sym.clone(), name.ctxt), params);
+        }
+    }
+}
+
+impl Visit for FunctionParamCollector {
+    fn visit_fn_decl(&mut self, decl: &FnDecl) {
+        self.record(&decl.ident, function_params(&decl.function));
+        decl.visit_children_with(self);
+    }
+
+    fn visit_var_declarator(&mut self, decl: &VarDeclarator) {
+        if let (Pat::Ident(name), Some(init)) = (&decl.name, &decl.init) {
+            match crate::utils::paren::strip_parens(init) {
+                Expr::Fn(function) => self.record(&name.id, function_params(&function.function)),
+                Expr::Arrow(arrow) => self.record(
+                    &name.id,
+                    Some(arrow.params.iter().map(pat_binding).collect()),
+                ),
+                _ => {}
+            }
+        }
+        decl.visit_children_with(self);
+    }
+}
+
+/// Bindings exported by their declaration (`export const f = ...`,
+/// `export function f() {}`): a consumer module can construct them.
+fn exported_declarations(module: &Module) -> HashSet<BindingId> {
+    let mut exported = HashSet::default();
+    for item in &module.body {
+        let ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) = item else {
+            continue;
+        };
+        match &export.decl {
+            Decl::Var(var) => {
+                for decl in &var.decls {
+                    if let Some(binding) = pat_binding(&decl.name) {
+                        exported.insert(binding);
+                    }
+                }
+            }
+            Decl::Fn(function) => {
+                exported.insert((function.ident.sym.clone(), function.ident.ctxt));
+            }
+            _ => {}
+        }
+    }
+    exported
+}
+
 struct ArrowFunctionConverter<'a> {
-    constructor_sensitive_values: &'a HashSet<ValueKey>,
-    /// Parameter sensitivity for same-module `FnDecl`s and named
-    /// `export default function`s. Keyed by the function name's `(sym, ctxt)`.
-    declared_parameters: &'a HashMap<BindingId, Vec<bool>>,
-    create_class: &'a CreateClassHelpers,
-    /// The next call visited is a constructor-sensitive IIFE: its callee's own
-    /// `return` values are the result and must stay constructible.
-    protect_iife_callee: bool,
-    /// The next function body entered is that IIFE callee's body.
-    protect_next_body_returns: bool,
-    /// Returns in the current function body are the protected IIFE's result.
-    protect_returns: bool,
+    evidence: &'a Evidence,
+}
+
+impl ArrowFunctionConverter<'_> {
+    /// Converts the function a value position holds, through the wrappers
+    /// that pass a value along unchanged.
+    fn convert_value(&mut self, expr: &mut Expr) {
+        match expr {
+            Expr::Paren(paren) => self.convert_value(&mut paren.expr),
+            Expr::Seq(sequence) => {
+                if let Some(last) = sequence.exprs.last_mut() {
+                    self.convert_value(last);
+                }
+            }
+            Expr::Cond(conditional) => {
+                self.convert_value(&mut conditional.cons);
+                self.convert_value(&mut conditional.alt);
+            }
+            Expr::Bin(binary)
+                if matches!(
+                    binary.op,
+                    BinaryOp::LogicalOr | BinaryOp::LogicalAnd | BinaryOp::NullishCoalescing
+                ) =>
+            {
+                self.convert_value(&mut binary.left);
+                self.convert_value(&mut binary.right);
+            }
+            Expr::Fn(fn_expr) => {
+                if let Some(arrow) = try_convert_to_arrow(fn_expr) {
+                    *expr = Expr::Arrow(arrow);
+                }
+            }
+            // `function () {}.bind(this)`
+            Expr::Call(call) => {
+                if let Some(arrow) = try_convert_bind_this(call) {
+                    *expr = Expr::Arrow(arrow);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The invoked function of an IIFE: parentheses, a sequence's last
+    /// expression, and the receiver of `.call` / `.apply`.
+    fn convert_callee(&mut self, callee: &mut Expr) {
+        match callee {
+            Expr::Paren(paren) => self.convert_callee(&mut paren.expr),
+            Expr::Seq(sequence) => {
+                if let Some(last) = sequence.exprs.last_mut() {
+                    self.convert_callee(last);
+                }
+            }
+            Expr::Member(member)
+                if static_member_name(&member.prop)
+                    .is_some_and(|name| name == "call" || name == "apply") =>
+            {
+                self.convert_callee(&mut member.obj);
+            }
+            Expr::Fn(fn_expr) => {
+                if let Some(arrow) = try_convert_to_arrow(fn_expr) {
+                    *callee = Expr::Arrow(arrow);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 impl VisitMut for ArrowFunctionConverter<'_> {
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         expr.visit_mut_children_with(self);
-
+        // An async function has no [[Construct]] either.
         if let Expr::Fn(fn_expr) = expr {
-            if let Some(arrow) = try_convert_to_arrow(fn_expr) {
-                *expr = Expr::Arrow(arrow);
-            }
-            return;
-        }
-
-        // Handle `function(...) { ... }.bind(this)` → arrow function
-        if let Expr::Call(call_expr) = expr {
-            if let Some(arrow) = try_convert_bind_this(call_expr) {
-                *expr = Expr::Arrow(arrow);
-            }
-        }
-    }
-
-    fn visit_mut_var_declarator(&mut self, decl: &mut VarDeclarator) {
-        let constructor_sensitive_values = self.constructor_sensitive_values;
-        visit_mut_pat_constructor_sensitive_defaults(
-            &mut decl.name,
-            constructor_sensitive_values,
-            &mut |expr, is_constructor_sensitive| {
-                if is_constructor_sensitive {
-                    visit_constructor_value_without_converting(expr, self);
-                } else {
-                    expr.visit_mut_with(self);
+            if fn_expr.function.is_async {
+                if let Some(arrow) = try_convert_to_arrow(fn_expr) {
+                    *expr = Expr::Arrow(arrow);
                 }
-            },
-        );
-        let Some(init) = &mut decl.init else {
-            return;
-        };
-
-        if pat_value_key(&decl.name)
-            .is_some_and(|key| self.constructor_sensitive_values.contains(&key))
-        {
-            visit_constructor_value_without_converting(init, self);
-            return;
-        }
-
-        init.visit_mut_with(self);
-    }
-
-    fn visit_mut_assign_expr(&mut self, expr: &mut AssignExpr) {
-        match &mut expr.left {
-            AssignTarget::Simple(target) => target.visit_mut_with(self),
-            AssignTarget::Pat(pat) => {
-                let constructor_sensitive_values = self.constructor_sensitive_values;
-                visit_mut_assign_target_pat_constructor_sensitive_defaults(
-                    pat,
-                    constructor_sensitive_values,
-                    &mut |expr, is_constructor_sensitive| {
-                        if is_constructor_sensitive {
-                            visit_constructor_value_without_converting(expr, self);
-                        } else {
-                            expr.visit_mut_with(self);
-                        }
-                    },
-                );
             }
-        }
-        if assign_target_value_key(&expr.left)
-            .is_some_and(|key| self.constructor_sensitive_values.contains(&key))
-        {
-            visit_constructor_value_without_converting(&mut expr.right, self);
-            return;
-        }
-        expr.right.visit_mut_with(self);
-    }
-
-    fn visit_mut_function_body(&mut self, body: &mut FunctionBody) {
-        // Each body owns its returns: only the protected IIFE callee's body
-        // takes the flag, and a nested function body starts unprotected.
-        let saved = self.protect_returns;
-        self.protect_returns = std::mem::take(&mut self.protect_next_body_returns);
-        body.visit_mut_children_with(self);
-        self.protect_returns = saved;
-    }
-
-    fn visit_mut_return_stmt(&mut self, stmt: &mut ReturnStmt) {
-        match &mut stmt.arg {
-            Some(arg) if self.protect_returns => {
-                visit_constructor_value_without_converting(arg, self);
-            }
-            _ => stmt.visit_mut_children_with(self),
         }
     }
 
     fn visit_mut_call_expr(&mut self, call: &mut CallExpr) {
-        // Read the parameter list before rewriting the callee. A literal callee
-        // may itself become an arrow; pairing uses the pre-rewrite parameters.
-        let pairing = call_parameter_pairing(call, self);
-        if std::mem::take(&mut self.protect_iife_callee) {
-            if let Callee::Expr(callee) = &mut call.callee {
-                visit_iife_callee_protecting_returns(callee, self);
-            }
-        } else {
-            call.callee.visit_mut_with(self);
+        // Decide on the pre-rewrite callee: a literal callee may itself
+        // become an arrow.
+        let callbacks = self.evidence.callback_positions(call);
+        call.visit_mut_children_with(self);
+        if let Callee::Expr(callee) = &mut call.callee {
+            self.convert_callee(callee);
         }
-
-        let construct_call = is_construct_call(call);
-        let create_class_call = self.create_class.is_call(call);
-        // Pairing stops at the first spread: its runtime length makes later
-        // syntactic positions unknown.
-        let spread_at = call.args.iter().position(|arg| arg.spread.is_some());
-        for (index, arg) in call.args.iter_mut().enumerate() {
-            let before_spread = spread_at.is_none_or(|at| index < at);
-            let paired = before_spread
-                && pairing.as_ref().is_some_and(|(offset, flags)| {
-                    index >= *offset && flags.get(index - *offset) == Some(&true)
-                });
-            if (construct_call && (index == 0 || index == 2))
-                || (create_class_call && index == 0)
-                || paired
-            {
-                // Reflect.construct requires both target and newTarget to be
-                // constructible. createClass defines methods on its first
-                // argument's prototype, and callers construct the result. A
-                // known constructor parameter of a literal callee, or of a
-                // same-module function declaration, needs the same preservation.
-                visit_constructor_value_without_converting(&mut arg.expr, self);
-            } else {
-                arg.visit_mut_with(self);
+        for index in callbacks {
+            if let Some(arg) = call.args.get_mut(index) {
+                self.convert_value(&mut arg.expr);
             }
         }
     }
 
     fn visit_mut_new_expr(&mut self, expr: &mut NewExpr) {
-        visit_constructor_value_without_converting(&mut expr.callee, self);
-        expr.args.visit_mut_with(self);
-        expr.type_args.visit_mut_with(self);
-    }
-
-    fn visit_mut_bin_expr(&mut self, expr: &mut BinExpr) {
-        if expr.op == BinaryOp::InstanceOf {
-            expr.left.visit_mut_with(self);
-            visit_constructor_value_without_converting(&mut expr.right, self);
-        } else {
-            expr.visit_mut_children_with(self);
-        }
-    }
-
-    fn visit_mut_class(&mut self, class: &mut Class) {
-        let mut super_class = class.super_class.take();
-        class.visit_mut_children_with(self);
-        if let Some(super_class) = &mut super_class {
-            visit_constructor_value_without_converting(super_class, self);
-        }
-        class.super_class = super_class;
-    }
-
-    fn visit_mut_member_expr(&mut self, member: &mut MemberExpr) {
-        if static_member_name(&member.prop).is_some_and(|name| name == "prototype") {
-            visit_constructor_value_without_converting(&mut member.obj, self);
-            if let MemberProp::Computed(computed) = &mut member.prop {
-                computed.expr.visit_mut_with(self);
+        expr.visit_mut_children_with(self);
+        if self.evidence.is_promise_executor(expr) {
+            if let Some(executor) = expr.args.as_mut().and_then(|args| args.first_mut()) {
+                if executor.spread.is_none() {
+                    self.convert_value(&mut executor.expr);
+                }
             }
-        } else {
-            member.visit_mut_children_with(self);
+        }
+    }
+
+    fn visit_mut_var_declarator(&mut self, decl: &mut VarDeclarator) {
+        decl.visit_mut_children_with(self);
+        let Some(binding) = pat_binding(&decl.name) else {
+            return;
+        };
+        if let Some(init) = &mut decl.init {
+            if self.evidence.is_call_only(&binding) {
+                self.convert_value(init);
+            }
         }
     }
 
     fn visit_mut_key_value_prop(&mut self, prop: &mut KeyValueProp) {
-        // Object property function values stay function expressions: an
-        // arrow would drop the `[[Construct]]` and `prototype` a caller of
-        // the property may rely on. Still recurse into the function body so
-        // inner expressions are processed.
+        // Object property function values stay function expressions: a caller
+        // of the property may construct it. Still recurse into the function
+        // body so inner expressions are processed.
         prop.key.visit_mut_with(self);
         if let Expr::Fn(fn_expr) = prop.value.as_mut() {
             if let Some(body) = &mut fn_expr.function.body {
@@ -253,256 +422,6 @@ impl VisitMut for ArrowFunctionConverter<'_> {
         } else {
             prop.value.visit_mut_with(self);
         }
-    }
-
-    fn visit_mut_export_default_expr(
-        &mut self,
-        export: &mut swc_core::ecma::ast::ExportDefaultExpr,
-    ) {
-        // A default-exported function expression remains constructable by
-        // consumers. Converting it to an arrow would remove its prototype.
-        visit_constructor_value_without_converting(&mut export.expr, self);
-    }
-}
-
-/// Shared argument pairing for a literal callee and a same-module function
-/// declaration. Returns `(argument offset, per-parameter sensitivity)`.
-/// `.call`'s first argument is `this`, so the offset is 1. Aliases and
-/// `.apply` are not positional calls.
-fn call_parameter_pairing(
-    call: &CallExpr,
-    converter: &ArrowFunctionConverter<'_>,
-) -> Option<(usize, Vec<bool>)> {
-    let Callee::Expr(callee) = &call.callee else {
-        return None;
-    };
-    let target = peel_paren_and_sequence(callee);
-    if let Expr::Member(member) = target {
-        if static_member_name(&member.prop).as_deref() == Some("call") {
-            let flags = parameter_flags(&member.obj, converter)?;
-            return Some((1, flags));
-        }
-        return None;
-    }
-    parameter_flags(target, converter).map(|flags| (0, flags))
-}
-
-fn parameter_flags(expr: &Expr, converter: &ArrowFunctionConverter<'_>) -> Option<Vec<bool>> {
-    match peel_paren_and_sequence(expr) {
-        Expr::Fn(function) => Some(sensitive_param_flags(
-            function.function.params.iter().map(|param| &param.pat),
-            converter.constructor_sensitive_values,
-        )),
-        Expr::Arrow(arrow) => Some(sensitive_param_flags(
-            arrow.params.iter(),
-            converter.constructor_sensitive_values,
-        )),
-        Expr::Ident(ident) => converter
-            .declared_parameters
-            .get(&(ident.sym.clone(), ident.ctxt))
-            .cloned(),
-        _ => None,
-    }
-}
-
-fn sensitive_param_flags<'a>(
-    pats: impl Iterator<Item = &'a Pat>,
-    sensitive: &HashSet<ValueKey>,
-) -> Vec<bool> {
-    pats.map(|pat| pat_value_key(pat).is_some_and(|key| sensitive.contains(&key)))
-        .collect()
-}
-
-/// Parentheses and a sequence's last expression are the invoked value.
-/// A conditional callee is left alone.
-fn peel_paren_and_sequence(expr: &Expr) -> &Expr {
-    match crate::utils::paren::strip_parens(expr) {
-        Expr::Seq(sequence) => match sequence.exprs.last() {
-            Some(last) => peel_paren_and_sequence(last),
-            None => crate::utils::paren::strip_parens(expr),
-        },
-        other => other,
-    }
-}
-
-fn collect_declared_function_parameters(
-    module: &Module,
-    sensitive: &HashSet<ValueKey>,
-) -> HashMap<BindingId, Vec<bool>> {
-    let mut collector = DeclaredFunctionParams {
-        sensitive,
-        declared: HashMap::default(),
-    };
-    module.visit_with(&mut collector);
-    collector.declared
-}
-
-struct DeclaredFunctionParams<'a> {
-    sensitive: &'a HashSet<ValueKey>,
-    declared: HashMap<BindingId, Vec<bool>>,
-}
-
-impl DeclaredFunctionParams<'_> {
-    fn record(&mut self, ident: &Ident, function: &Function) {
-        let flags = sensitive_param_flags(
-            function.params.iter().map(|param| &param.pat),
-            self.sensitive,
-        );
-        let key = (ident.sym.clone(), ident.ctxt);
-        match self.declared.get_mut(&key) {
-            Some(existing) => or_param_flags(existing, &flags),
-            None => {
-                self.declared.insert(key, flags);
-            }
-        }
-    }
-}
-
-/// When one binding has more than one declaration, OR the flags so a later
-/// declaration cannot clear a slot that was already sensitive.
-fn or_param_flags(existing: &mut Vec<bool>, flags: &[bool]) {
-    if flags.len() > existing.len() {
-        existing.resize(flags.len(), false);
-    }
-    for (index, flag) in flags.iter().enumerate() {
-        if *flag {
-            existing[index] = true;
-        }
-    }
-}
-
-impl Visit for DeclaredFunctionParams<'_> {
-    fn visit_fn_decl(&mut self, decl: &FnDecl) {
-        self.record(&decl.ident, &decl.function);
-        decl.visit_children_with(self);
-    }
-
-    fn visit_export_default_decl(&mut self, decl: &ExportDefaultDecl) {
-        if let DefaultDecl::Fn(func) = &decl.decl {
-            if let Some(ident) = &func.ident {
-                self.record(ident, &func.function);
-            }
-        }
-        decl.visit_children_with(self);
-    }
-}
-
-fn visit_constructor_value_without_converting(
-    expr: &mut Expr,
-    converter: &mut ArrowFunctionConverter<'_>,
-) {
-    match expr {
-        Expr::Fn(fn_expr) if fn_expr.function.is_async => {
-            fn_expr.visit_mut_children_with(converter);
-            if let Some(arrow) = try_convert_to_arrow(fn_expr) {
-                *expr = Expr::Arrow(arrow);
-            }
-        }
-        Expr::Fn(fn_expr) => {
-            if let Some(body) = &mut fn_expr.function.body {
-                body.visit_mut_with(converter);
-            }
-        }
-        Expr::Paren(paren) => {
-            visit_constructor_value_without_converting(&mut paren.expr, converter);
-        }
-        Expr::Seq(sequence) => {
-            if let Some((last, prefix)) = sequence.exprs.split_last_mut() {
-                for expr in prefix {
-                    expr.visit_mut_with(converter);
-                }
-                visit_constructor_value_without_converting(last, converter);
-            }
-        }
-        Expr::Cond(conditional) => {
-            conditional.test.visit_mut_with(converter);
-            visit_constructor_value_without_converting(&mut conditional.cons, converter);
-            visit_constructor_value_without_converting(&mut conditional.alt, converter);
-        }
-        Expr::Bin(binary)
-            if matches!(
-                binary.op,
-                BinaryOp::LogicalOr | BinaryOp::LogicalAnd | BinaryOp::NullishCoalescing
-            ) =>
-        {
-            visit_constructor_value_without_converting(&mut binary.left, converter);
-            visit_constructor_value_without_converting(&mut binary.right, converter);
-        }
-        Expr::Call(call) if is_bind_call(call) => {
-            let Callee::Expr(callee) = &mut call.callee else {
-                unreachable!();
-            };
-            let Expr::Member(member) = callee.as_mut() else {
-                unreachable!();
-            };
-            visit_constructor_value_without_converting(&mut member.obj, converter);
-            call.args.visit_mut_with(converter);
-            call.type_args.visit_mut_with(converter);
-        }
-        // An IIFE evaluates to what its callee returns, the same shapes
-        // `constructor_sensitivity` follows for returned bindings. A
-        // directly returned function has no binding to mark, so protect the
-        // callee's return positions here.
-        Expr::Call(call) if is_sync_iife_call(call) => {
-            converter.protect_iife_callee = true;
-            expr.visit_mut_with(converter);
-        }
-        _ => expr.visit_mut_with(converter),
-    }
-}
-
-/// Mirrors `iife_callee_function`: parens, a sequence's last expression, and
-/// the receiver of `.call` / `.apply` lead to the invoked function. The
-/// callee itself may still become an arrow; only its returns are protected.
-fn visit_iife_callee_protecting_returns(
-    callee: &mut Expr,
-    converter: &mut ArrowFunctionConverter<'_>,
-) {
-    match callee {
-        Expr::Paren(paren) => visit_iife_callee_protecting_returns(&mut paren.expr, converter),
-        Expr::Seq(sequence) => {
-            if let Some((last, prefix)) = sequence.exprs.split_last_mut() {
-                for expr in prefix {
-                    expr.visit_mut_with(converter);
-                }
-                visit_iife_callee_protecting_returns(last, converter);
-            }
-        }
-        Expr::Member(member)
-            if static_member_name(&member.prop)
-                .is_some_and(|name| name == "call" || name == "apply") =>
-        {
-            visit_iife_callee_protecting_returns(&mut member.obj, converter);
-            if let MemberProp::Computed(computed) = &mut member.prop {
-                computed.expr.visit_mut_with(converter);
-            }
-        }
-        Expr::Fn(fn_expr) if !fn_expr.function.is_async && !fn_expr.function.is_generator => {
-            // Parameter defaults can hold function bodies of their own, so
-            // arm the flag only for this function's body.
-            fn_expr.function.params.visit_mut_with(converter);
-            fn_expr.function.decorators.visit_mut_with(converter);
-            if let Some(body) = &mut fn_expr.function.body {
-                converter.protect_next_body_returns = true;
-                body.visit_mut_with(converter);
-            }
-            if let Some(arrow) = try_convert_to_arrow(fn_expr) {
-                *callee = Expr::Arrow(arrow);
-            }
-        }
-        Expr::Arrow(arrow) if !arrow.is_async && !arrow.is_generator => {
-            arrow.params.visit_mut_with(converter);
-            match arrow.body.as_mut() {
-                ArrowFunctionBody::Expr(expr) => {
-                    visit_constructor_value_without_converting(expr, converter);
-                }
-                ArrowFunctionBody::FunctionBody(body) => {
-                    converter.protect_next_body_returns = true;
-                    body.visit_mut_with(converter);
-                }
-            }
-        }
-        callee => callee.visit_mut_with(converter),
     }
 }
 
@@ -768,4 +687,41 @@ impl Visit for HasArguments {
     }
 
     fn visit_function(&mut self, _: &Function) {}
+}
+
+/// Converts every function expression that `try_convert_to_arrow` accepts,
+/// without constructor evidence, except object property values. Only for
+/// the private module copy Vue SFC recovery analyzes: Vue's template compiler
+/// emits render functions, slots, and handlers as arrows, so a function there
+/// is an ES5-lowered arrow. Never apply it to emitted JavaScript.
+pub(crate) fn convert_lowered_vue_arrows(module: &mut Module) {
+    struct Converter;
+    impl VisitMut for Converter {
+        fn visit_mut_expr(&mut self, expr: &mut Expr) {
+            expr.visit_mut_children_with(self);
+            match expr {
+                Expr::Fn(fn_expr) => {
+                    if let Some(arrow) = try_convert_to_arrow(fn_expr) {
+                        *expr = Expr::Arrow(arrow);
+                    }
+                }
+                Expr::Call(call) => {
+                    if let Some(arrow) = try_convert_bind_this(call) {
+                        *expr = Expr::Arrow(arrow);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        fn visit_mut_key_value_prop(&mut self, prop: &mut KeyValueProp) {
+            prop.key.visit_mut_with(self);
+            if let Expr::Fn(fn_expr) = prop.value.as_mut() {
+                fn_expr.visit_mut_children_with(self);
+            } else {
+                prop.value.visit_mut_with(self);
+            }
+        }
+    }
+    module.visit_mut_with(&mut Converter);
 }

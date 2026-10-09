@@ -7,7 +7,6 @@ mod call_required;
 mod callability;
 mod class_expression_to_declaration;
 pub(crate) mod cocos_rf;
-pub(crate) mod constructor_sensitivity;
 pub(crate) mod cross_module_helper_refs;
 pub(crate) mod cross_module_interop_import;
 pub(crate) mod dead_decls;
@@ -168,6 +167,7 @@ impl RewritePolicy {
 }
 
 pub use arg_rest::ArgRest;
+pub(crate) use arrow_function::convert_lowered_vue_arrows;
 pub use arrow_function::ArrowFunction;
 pub use arrow_return::ArrowReturn;
 pub(crate) use call_required::{collect_import_call_edges, pinned_export_names, CallRequiredPlan};

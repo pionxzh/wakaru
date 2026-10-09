@@ -18,7 +18,9 @@ function c() {
     return {
         subscribe: function(t) {
             e.push(t);
-            return ()=>w(e, t);
+            return function() {
+                return w(e, t);
+            };
         },
         emit: function(t) {
             const n = e.slice();
@@ -51,7 +53,9 @@ function d(e = a_1.fixed()) {
                 o(a);
             } else if (e.isEmpty()) {
                 __takers__.push(o);
-                o.cancel = ()=>w(__takers__, o);
+                o.cancel = function() {
+                    return w(__takers__, o);
+                };
             } else {
                 o(e.take());
             }
@@ -105,7 +109,7 @@ function p(e, t = a_1.none(), n) {
         h_1(n, q.func, "Invalid match function passed to eventChannel");
     }
     const i = d(t);
-    const close = ()=>{
+    const close = function() {
         if (!i.__closed__) {
             if (u) {
                 u();
@@ -113,7 +117,7 @@ function p(e, t = a_1.none(), n) {
             i.close();
         }
     };
-    var u = e((e)=>{
+    var u = e(function(e) {
         if (l(e)) {
             close();
         } else if (!(n && !n(e))) {
@@ -134,13 +138,17 @@ function p(e, t = a_1.none(), n) {
 }
 export { p as d };
 function h(e) {
-    const t = p((t)=>e((e)=>{
+    const t = p(function(t) {
+        return e(function(e) {
             if (e[c_1]) {
                 t(e);
             } else {
-                a_2(()=>t(e));
+                a_2(function() {
+                    return t(e);
+                });
             }
-        }));
+        });
+    });
     return {
         ...t,
         take: function(e, n) {

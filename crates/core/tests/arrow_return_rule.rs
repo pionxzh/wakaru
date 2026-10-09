@@ -62,14 +62,13 @@ const noop = () => {
 
 #[test]
 fn pipeline_simplifies_new_arrows_created_by_arrow_function() {
-    // Named exports stay constructable, so this pipeline lock uses a
-    // non-exported binding. ArrowFunction still creates the arrow that
-    // ArrowReturn then simplifies.
+    // ArrowFunction converts a built-in callback, and ArrowReturn then
+    // simplifies the arrow it created.
     let input = r#"
-const double = function(x) { return x * 2; };
+list.map(function(x) { return x * 2; });
 "#;
     let expected = r#"
-const double = x => x * 2;
+list.map(x => x * 2);
 "#;
     assert_eq_normalized(&apply_pipeline(input), expected);
 }

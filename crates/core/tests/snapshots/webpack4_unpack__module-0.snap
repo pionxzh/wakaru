@@ -18,7 +18,9 @@ const s = i("SAGA_ACTION");
 export { s as c };
 const f = i("SELF_CANCELLATION");
 export { f as d };
-const d = (e)=>()=>e;
+const d = (e)=>function() {
+        return e;
+    };
 export const r = d(true);
 const h = function() {};
 export { h as u };
@@ -141,7 +143,9 @@ export function m(e, t = true) {
     const r = new Promise((resolve)=>{
         n = setTimeout(()=>resolve(t), e);
     });
-    r[c] = ()=>clearTimeout(n);
+    r[c] = function() {
+        return clearTimeout(n);
+    };
     return r;
 }
 export function j() {
@@ -174,13 +178,15 @@ const C = ((e = 0)=>function() {
         return ++e;
     })();
 export { C as y };
-const P = (e)=>{
+const P = function(e) {
     throw e;
 };
-const _ = (value)=>({
+const _ = function(value) {
+    return {
         value,
         done: true
-    });
+    };
+};
 export function t(next, t = P, name = "", r) {
     const o = {
         name,
@@ -192,7 +198,9 @@ export function t(next, t = P, name = "", r) {
         o[u] = true;
     }
     if (typeof Symbol !== "undefined") {
-        o[Symbol.iterator] = ()=>o;
+        o[Symbol.iterator] = function() {
+            return o;
+        };
     }
     return o;
 }
@@ -225,12 +233,14 @@ const L = function(e, t) {
 };
 export { L as k };
 export const A = function(e) {
-    return (t)=>e(Object.defineProperty(t, s, {
+    return function(t) {
+        return e(Object.defineProperty(t, s, {
             value: true
         }));
+    };
 };
 const D = function e(t) {
-    return (...r)=>{
+    return function(...r) {
         const i = [];
         const a = t(...r);
         return {

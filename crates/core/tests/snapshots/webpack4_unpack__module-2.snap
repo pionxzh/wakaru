@@ -1,5 +1,6 @@
 ---
 source: crates/core/tests/webpack4_unpack.rs
+assertion_line: 210
 expression: code
 ---
 import * as r from "./module-0.js";
@@ -195,7 +196,9 @@ n.resolve = function() {
     return e;
 };
 n.sync = r.n(n.resolve, r.z("put.sync", "put.resolve"));
-const H = (e)=>(t)=>t && t[o] && t[e];
+const H = (e)=>function(t) {
+        return t && t[o] && t[e];
+    };
 var W = {
     take: H(i),
     put: H(a),

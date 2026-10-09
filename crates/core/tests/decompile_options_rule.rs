@@ -615,9 +615,9 @@ const fn = function() {
 #[test]
 fn standard_keeps_arrow_function_recovery() {
     let input = r#"
-const fn = function() {
+setTimeout(function() {
   return value;
-};
+});
 "#;
 
     let output = decompile(
@@ -632,7 +632,7 @@ const fn = function() {
     .code;
 
     let expected = r#"
-const fn = () => value;
+setTimeout(() => value);
 "#;
     assert_eq_normalized(&output, expected.trim());
 }
