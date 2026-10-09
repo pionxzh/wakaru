@@ -3094,6 +3094,48 @@ try { run(); } catch (e) { eval("report(e)"); }
     assert_eq_normalized(&apply(input), input);
 }
 
+// One input that every unguarded pass family renames: destructuring,
+// member-init, value-position, and React hook names.
+const DYNAMIC_SCOPE_RENAMES: &str = r#"
+var n = foo.bar;
+function f(t, e) {
+    var { a: r } = t;
+    var [i, o] = useState(0);
+    DYNAMIC;
+    use(r);
+    return { error: e, i, o };
+}
+"#;
+
+#[test]
+fn renames_dynamic_scope_probe_without_with_or_eval() {
+    let input = DYNAMIC_SCOPE_RENAMES.replace("DYNAMIC;", "");
+    let output = apply(&input);
+    for renamed in ["foo_bar", "{ a }", "setI", "error"] {
+        assert!(output.contains(renamed), "{renamed}: {output}");
+    }
+}
+
+#[test]
+fn skips_module_with_unknown_direct_eval() {
+    let input = DYNAMIC_SCOPE_RENAMES.replace("DYNAMIC;", "eval(s);");
+    assert_eq_normalized(&apply(&input), &input);
+}
+
+#[test]
+fn skips_module_with_with_statement() {
+    let input = DYNAMIC_SCOPE_RENAMES.replace("DYNAMIC;", "with (o) { r; }");
+    assert_eq_normalized(&apply(&input), &input);
+}
+
+#[test]
+fn skips_module_with_known_direct_eval() {
+    // The coarse skip does not read the source: these passes cannot cheaply
+    // name every binding it could reach.
+    let input = DYNAMIC_SCOPE_RENAMES.replace("DYNAMIC;", r#"eval("r");"#);
+    assert_eq_normalized(&apply(&input), &input);
+}
+
 #[test]
 fn role_renames_reduce_callback_parameters() {
     let input = r#"
@@ -3218,6 +3260,14 @@ for (let t = 0; t < items.length; t++) {
 
 fn apply_second_pass(input: &str) -> String {
     render_rule(input, SmartRenameSecondPass::new)
+}
+
+#[test]
+fn second_pass_skips_module_with_direct_eval() {
+    let input = DYNAMIC_SCOPE_RENAMES.replace("DYNAMIC;", "eval(s);");
+    assert_eq_normalized(&apply_second_pass(&input), &input);
+    let control = DYNAMIC_SCOPE_RENAMES.replace("DYNAMIC;", "");
+    assert_ne!(apply_second_pass(&control), apply_second_pass(&input));
 }
 
 #[test]

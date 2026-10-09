@@ -51,6 +51,17 @@ impl SmartRename {
 
 impl VisitMut for SmartRename {
     fn visit_mut_module(&mut self, module: &mut Module) {
+        // Every pass renames input bindings, which a `with` statement or a
+        // direct eval can still reach by their old names, so the module keeps
+        // its names (docs/rewrite-assumptions.md, dynamic-scope skip). The
+        // import-snapshot pass names the bindings a known eval source could
+        // mention and keeps that best effort. Per-function passes run only
+        // through the descent below, so returning here skips them too.
+        if has_dynamic_scope_construct(module) {
+            let mut cached_names = collect_names_in_module(&module.body);
+            import_snapshot_alias_rename_module(module, &mut cached_names);
+            return;
+        }
         let previous_pending_names = std::mem::replace(
             &mut self.pending_value_position_names,
             collect_value_position_rename_map_module(module),
@@ -137,6 +148,11 @@ impl SmartRenameSecondPass {
 
 impl VisitMut for SmartRenameSecondPass {
     fn visit_mut_module(&mut self, module: &mut Module) {
+        // Same dynamic-scope skip as `SmartRename`; this pass has no
+        // import-snapshot rename to keep.
+        if has_dynamic_scope_construct(module) {
+            return;
+        }
         let previous_pending_names = std::mem::replace(
             &mut self.pending_value_position_names,
             collect_value_position_rename_map_module(module),
@@ -2753,9 +2769,6 @@ fn key_as_ident_target(key: &PropName) -> Option<String> {
 /// `value_named` holds bindings value-position renames just named; their
 /// new name can still look short (`fn`) but is the better evidence.
 fn call_site_param_rename_module(module: &mut Module, value_named: &HashSet<BindingId>) {
-    if has_dynamic_scope_construct(module) {
-        return;
-    }
     let mut functions = CallSiteFunctionCollector::default();
     module.visit_with(&mut functions);
     if functions.candidates.iter().all(|c| c.binding.is_none()) {
@@ -3187,9 +3200,6 @@ impl Visit for CallSiteUseCollector<'_> {
 // ============================================================
 
 fn role_rename_module(module: &mut Module, unresolved_mark: Mark) {
-    if has_dynamic_scope_construct(module) {
-        return;
-    }
     let mut collector = RoleCollector {
         unresolved_mark,
         scopes: Vec::new(),
