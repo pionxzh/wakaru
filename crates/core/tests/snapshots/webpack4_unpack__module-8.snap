@@ -1,5 +1,6 @@
 ---
 source: crates/core/tests/webpack4_unpack.rs
+assertion_line: 210
 expression: code
 ---
 import { a as a_1 } from "./module-7.js";
@@ -219,7 +220,7 @@ function w() {
     let e = null;
     let t = [];
     return {
-        setPrompt (t) {
+        setPrompt: function(t) {
             e = t;
             return ()=>{
                 if (e === t) {
@@ -227,7 +228,7 @@ function w() {
                 }
             };
         },
-        confirmTransitionTo (t, n, r, o) {
+        confirmTransitionTo: function(t, n, r, o) {
             if (e != null) {
                 const i = typeof e === "function" ? e(t, n) : e;
                 if (typeof i === "string") {
@@ -243,7 +244,7 @@ function w() {
                 o(true);
             }
         },
-        appendListener (e) {
+        appendListener: function(e) {
             let n = true;
             function r() {
                 if (n) {
@@ -256,7 +257,7 @@ function w() {
                 t = t.filter((e)=>e !== r);
             };
         },
-        notifyListeners (...n) {
+        notifyListeners: function(...n) {
             t.forEach((e)=>e(...n));
         }
     };
@@ -376,7 +377,7 @@ export function createBrowserHistory(e = {}) {
         action: "POP",
         location: M,
         createHref,
-        push (e, r) {
+        push: function(e, r) {
             const o = createLocation(e, r, O(), q.location);
             C.confirmTransitionTo(o, "PUSH", getUserConfirmation, (e)=>{
                 if (e) {
@@ -405,7 +406,7 @@ export function createBrowserHistory(e = {}) {
                 }
             });
         },
-        replace (e, r) {
+        replace: function(e, r) {
             const o = createLocation(e, r, O(), q.location);
             C.confirmTransitionTo(o, "REPLACE", getUserConfirmation, (e)=>{
                 if (e) {
@@ -435,13 +436,13 @@ export function createBrowserHistory(e = {}) {
             });
         },
         go: I,
-        goBack () {
+        goBack: function() {
             I(-1);
         },
-        goForward () {
+        goForward: function() {
             I(1);
         },
-        block (e = false) {
+        block: function(e = false) {
             const t = C.setPrompt(e);
             if (!z) {
                 F(1);
@@ -455,7 +456,7 @@ export function createBrowserHistory(e = {}) {
                 return t();
             };
         },
-        listen (e) {
+        listen: function(e) {
             const t = C.appendListener(e);
             F(1);
             return ()=>{
@@ -469,13 +470,13 @@ export function createBrowserHistory(e = {}) {
 const C = "hashchange";
 const P = {
     hashbang: {
-        encodePath (e) {
+        encodePath: function(e) {
             if (e.charAt(0) === "!") {
                 return e;
             }
             return `!/${encodePath(e)}`;
         },
-        decodePath (e) {
+        decodePath: function(e) {
             if (e.charAt(0) === "!") {
                 return e.substr(1);
             }
@@ -608,7 +609,7 @@ export function createHashHistory(e = {}) {
         length: window_history.length,
         action: "POP",
         location: A,
-        createHref (e) {
+        createHref: function(e) {
             const t = document.querySelector("base");
             let n = "";
             if (t && t.getAttribute("href")) {
@@ -616,7 +617,7 @@ export function createHashHistory(e = {}) {
             }
             return `${n}#${encodePath(l + createPath(e))}`;
         },
-        push (e, t) {
+        push: function(e, t) {
             const n = createLocation(e, undefined, undefined, q.location);
             g.confirmTransitionTo(n, "PUSH", getUserConfirmation, (e)=>{
                 if (e) {
@@ -641,7 +642,7 @@ export function createHashHistory(e = {}) {
                 }
             });
         },
-        replace (e, t) {
+        replace: function(e, t) {
             const n = createLocation(e, undefined, undefined, q.location);
             g.confirmTransitionTo(n, "REPLACE", getUserConfirmation, (e)=>{
                 if (e) {
@@ -663,13 +664,13 @@ export function createHashHistory(e = {}) {
             });
         },
         go: I,
-        goBack () {
+        goBack: function() {
             I(-1);
         },
-        goForward () {
+        goForward: function() {
             I(1);
         },
-        block (e = false) {
+        block: function(e = false) {
             const t = g.setPrompt(e);
             if (!z) {
                 F(1);
@@ -683,7 +684,7 @@ export function createHashHistory(e = {}) {
                 return t();
             };
         },
-        listen (e) {
+        listen: function(e) {
             const t = g.appendListener(e);
             F(1);
             return ()=>{
@@ -734,7 +735,7 @@ export function createMemoryHistory({ getUserConfirmation, initialEntries = [
         index: p,
         entries: h,
         createHref,
-        push (e, t) {
+        push: function(e, t) {
             const r = createLocation(e, t, d(), g.location);
             s.confirmTransitionTo(r, "PUSH", getUserConfirmation, (e)=>{
                 if (e) {
@@ -754,7 +755,7 @@ export function createMemoryHistory({ getUserConfirmation, initialEntries = [
                 }
             });
         },
-        replace (e, t) {
+        replace: function(e, t) {
             const r = createLocation(e, t, d(), g.location);
             s.confirmTransitionTo(r, "REPLACE", getUserConfirmation, (e)=>{
                 if (e) {
@@ -767,20 +768,20 @@ export function createMemoryHistory({ getUserConfirmation, initialEntries = [
             });
         },
         go: y,
-        goBack () {
+        goBack: function() {
             y(-1);
         },
-        goForward () {
+        goForward: function() {
             y(1);
         },
-        canGo (e) {
+        canGo: function(e) {
             const t = g.index + e;
             return t >= 0 && t < g.entries.length;
         },
-        block (e = false) {
+        block: function(e = false) {
             return s.setPrompt(e);
         },
-        listen (e) {
+        listen: function(e) {
             return s.appendListener(e);
         }
     };

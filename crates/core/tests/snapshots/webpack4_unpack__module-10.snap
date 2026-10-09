@@ -1,5 +1,6 @@
 ---
 source: crates/core/tests/webpack4_unpack.rs
+assertion_line: 210
 expression: code
 ---
 import * as r from "./module-0.js";
@@ -56,14 +57,14 @@ export function b(e, t, ...r) {
     let f;
     const d = (e)=>f = e;
     return u({
-        q1 () {
+        q1: function() {
             return [
                 "q2",
                 s,
                 d
             ];
         },
-        q2 () {
+        q2: function() {
             if (f === a_1) {
                 return [
                     i
@@ -93,14 +94,14 @@ export function d(e, t, ...r) {
     const h = (e)=>d = e;
     const m = (e)=>p = e;
     return u({
-        q1 () {
+        q1: function() {
             return [
                 "q2",
                 s,
                 m
             ];
         },
-        q2 () {
+        q2: function() {
             if (p === a_1) {
                 return [
                     i
@@ -121,7 +122,7 @@ export function d(e, t, ...r) {
                 h
             ];
         },
-        q3 () {
+        q3: function() {
             return [
                 "q1",
                 f(p),
@@ -144,14 +145,14 @@ export function f(e, t, n, ...s) {
     const v = (e)=>p = e;
     const b = (e)=>h = e;
     return u({
-        q1 () {
+        q1: function() {
             return [
                 "q2",
                 m,
                 b
             ];
         },
-        q2 () {
+        q2: function() {
             return [
                 "q3",
                 {
@@ -161,7 +162,7 @@ export function f(e, t, n, ...s) {
                 v
             ];
         },
-        q3 () {
+        q3: function() {
             if (p === a_1) {
                 return [
                     i
@@ -175,7 +176,7 @@ export function f(e, t, n, ...s) {
                     }))(p)
             ];
         },
-        q4 () {
+        q4: function() {
             return [
                 "q2",
                 y

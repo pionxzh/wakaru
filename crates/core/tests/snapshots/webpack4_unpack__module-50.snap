@@ -1,5 +1,6 @@
 ---
 source: crates/core/tests/webpack4_unpack.rs
+assertion_line: 210
 expression: code
 ---
 import assign from "./module-29.js";
@@ -24,12 +25,12 @@ function v(e) {
     return `Minified React error #${e}; visit ${t} for the full message or use the non-minified dev environment for full errors and additional helpful warnings.`;
 }
 const b = {
-    isMounted () {
+    isMounted: function() {
         return false;
     },
-    enqueueForceUpdate () {},
-    enqueueReplaceState () {},
-    enqueueSetState () {}
+    enqueueForceUpdate: function() {},
+    enqueueReplaceState: function() {},
+    enqueueSetState: function() {}
 };
 const g = {};
 export class Component {
@@ -265,7 +266,7 @@ export const __SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED = {
     assign
 };
 export const Children = {
-    map (e, t, n) {
+    map: function(e, t, n) {
         if (e == null) {
             return e;
         }
@@ -273,22 +274,22 @@ export const Children = {
         D(e, r, null, t, n);
         return r;
     },
-    forEach (e, t, n) {
+    forEach: function(e, t, n) {
         if (e == null) {
             return e;
         }
         M(e, L, t = R(null, null, t, n));
         N(t);
     },
-    count (e) {
+    count: function(e) {
         return M(e, ()=>null, null);
     },
-    toArray (e) {
+    toArray: function(e) {
         const t = [];
         D(e, t, null, (e)=>e);
         return t;
     },
-    only (e) {
+    only: function(e) {
         if (!isValidElement(e)) {
             throw Error(v(143));
         }

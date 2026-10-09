@@ -1,5 +1,6 @@
 ---
 source: crates/core/tests/webpack4_unpack.rs
+assertion_line: 210
 expression: code
 ---
 import { Children, Component, forwardRef } from "./module-50.js";
@@ -51,7 +52,7 @@ export function createProvider(e = "store") {
 export const Provider = createProvider();
 const E = null;
 const x = {
-    notify () {}
+    notify: function() {}
 };
 class k {
     constructor(e, t, n){
@@ -78,19 +79,19 @@ class k {
                 let e = [];
                 let t = [];
                 return {
-                    clear () {
+                    clear: function() {
                         t = E;
                         e = E;
                     },
-                    notify () {
+                    notify: function() {
                         for(let n = e = t, r = 0; r < n.length; r++){
                             n[r]();
                         }
                     },
-                    get () {
+                    get: function() {
                         return t;
                     },
-                    subscribe (n) {
+                    subscribe: function(n) {
                         let r = true;
                         if (t === e) {
                             t = e.slice();
@@ -204,7 +205,7 @@ export function connectAdvanced(e, { getDisplayName = (e)=>`ConnectAdvanced(${e}
                 const t = e(this.store.dispatch, a);
                 this.selector = ((e, t)=>{
                     var n = {
-                        run (r) {
+                        run: function(r) {
                             try {
                                 const o = e(t.getState(), r);
                                 if (o !== n.props || n.error) {
@@ -503,7 +504,7 @@ export const connect = (({ connectHOC = connectAdvanced, mapStateToPropsFactorie
         const initMergeProps = W(n, mergePropsFactories, "mergeProps");
         return connectHOC(selectorFactory, {
             methodName: "connect",
-            getDisplayName (e) {
+            getDisplayName: function(e) {
                 return `Connect(${e})`;
             },
             shouldHandleStateChanges: Boolean(e),

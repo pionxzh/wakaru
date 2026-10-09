@@ -104,8 +104,7 @@ FlipComparisons ──┐
 RemoveVoid ───────┼→ UnParameters
 UnConditionals ───┤
 UnCurlyBraces ────┘
-VarDeclToLetConst ──┬→ UnPrototypeClass
-ObjMethodShorthand ─┘
+VarDeclToLetConst ──→ UnPrototypeClass
 ```
 
 | Edge | Status | Evidence |
@@ -530,9 +529,9 @@ rationale, or level gating appear.
   binding gets the same check: if another binding shares its name, choose an
   unused suffix and rename only the copy binding and its resolved references
   before removing the loop. This applies to functions and constructors.
-- **ObjMethodShorthand / ArrowFunction** — both consult the shared
-  constructor-sensitive value analysis before replacing ordinary function
-  values with non-constructible method or arrow syntax. The analysis recognizes
+- **ArrowFunction** — consults the shared constructor-sensitive value
+  analysis before replacing ordinary function values with non-constructible
+  arrow syntax. The analysis recognizes
   `new`, `Reflect.construct`, `extends`, `instanceof`, `.prototype`, and the
   first argument of a proven `createClass` helper (runtime-path import,
   same-module helper body, or unresolved `_createClass`), then propagates
@@ -540,7 +539,7 @@ rationale, or level gating appear.
   aliases also carry member suffixes (`alias = namespace; new alias.C()`
   protects `namespace.C`) without recursively extending cyclic member paths.
   Both the use-site marking and the alias graph walk the same value wrapper
-  shapes the converters protect syntactically — parentheses, sequence results,
+  shapes the converter protects syntactically — parentheses, sequence results,
   conditional/logical branches, assignment results, and `.bind` targets — so
   `new (cond ? f : g)()` and `bound = f.bind(x); new bound()` protect the
   underlying bindings. The alias graph also follows an immediately invoked
@@ -553,18 +552,13 @@ rationale, or level gating appear.
   convert. After the fixpoint, each sensitive member key is copied once onto
   the member aliases of its root binding (`Word = ns.Word = extend({...});
   new Word.init()` protects `ns.Word.init`); those copies are not propagated
-  further. ObjMethodShorthand also checks an inline object argument of a call
-  against the call result's keys and the receiver's key
-  (`call_result_exposes_argument_properties`): `Word = extend({ init })`
-  checks `Word.init`, and `Lib.mixin({ make })` checks `Lib.make`.
+  further.
   Aliases are also recorded for logical assignments
   (`cached ||= ctor`) and object-destructuring bindings (`const { C } = ns`,
   including renames, nested patterns, defaults, and rest bindings). A shared
-  pattern-default walker keeps the analysis and both mutators aligned for
+  pattern-default walker keeps the analysis and the mutator aligned for
   anonymous sources that have no `ValueKey`; constructor-sensitive inline
-  defaults and destructured object-literal values stay ordinary functions.
-  Logical-assignment object values receive the same contextual member keys as
-  plain assignments.
+  defaults stay ordinary functions.
   ArrowFunction also pairs arguments of literal function/arrow callees, and of
   same-module function declarations (including `export function` and a named
   `export default function`), with simple resolved parameters. Parentheses and
@@ -575,27 +569,11 @@ rationale, or level gating appear.
   constructor-sensitive parameters stay ordinary functions; unrelated callback
   arguments remain eligible for arrow recovery. The lookup does not follow
   aliases or `.apply`.
-  ObjMethodShorthand is always enabled; its other eligibility checks remain
-  unchanged. It also never converts a `constructor` key, without consulting
-  the analysis: class-system helpers (`extend(Base, { constructor })`) return
-  that property as the class, and `new this.constructor()` reads it from a
-  prototype object, so its construction is usually invisible to the module.
-  An object in an assignment chain gets every target's key
-  (`S.fn = S.prototype = { init }` checks `S.fn.init` too), and an
-  assignment result names its value (`(T.Tween = E).prototype` is
-  `E.prototype`). Last, a name guard: a property whose last two key names
-  match those of a constructor-sensitive key (`X.HMAC = extend({ init })`
-  against `new C.algo.HMAC.init()`) stays a function unless that parent name
-  is `prototype`. It covers namespaces the resolver cannot link, such as
-  sibling UMD IIFEs that share an object only through a global; a false
-  match only keeps a function expression. In a multi-module unpack that set
-  also includes suffixes from every other module's barrier AST (after
-  `UnEsm`, before late ESM recovery). The call-result link itself still reads
-  only the current module. Both sides need two property names. Single-file
-  decompile has no bundle set. A provider already recovered as an ESM export,
-  a consumer that destructures the binding straight from an import or
-  `require`, a construct use created only in Phase 2, and a module that failed
-  fact collection are known misses.
+- **Object-literal function values** — no rule rewrites `key: function () {}`
+  to method shorthand. Method shorthand drops `[[Construct]]` and
+  `prototype`, construction of a property can happen behind a helper or in
+  another module, and the gain is a few characters per property (see
+  [the removal learning](learnings/obj-method-shorthand-removal.md)).
 - **Function-to-class callability guards** — IIFE return aliases are recorded
   for both variable initializers and later plain assignments, and so are plain
   identifier aliases (`var a = Foo`). A constructor passed through any of these
@@ -664,7 +642,6 @@ rationale, or level gating appear.
   class would bake the collected methods into its own non-writable `prototype`
   instead of the replacement object. Exact `Object.create` inheritance writes
   consumed by the recovery remain eligible.
-  ObjMethodShorthand remains an upstream normalizer for method bodies.
 
 ### Cleanup and renaming
 

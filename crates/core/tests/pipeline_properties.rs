@@ -532,3 +532,26 @@ fn class_temporary_initialization_recovers_direct_export() {
     common::assert_eq_normalized(&render(source), expected);
     assert_pipeline_pair_valid(&[("provider.js", source)]);
 }
+
+#[test]
+fn object_property_functions_stay_constructible_at_every_level() {
+    // Method shorthand drops [[Construct]] and `prototype`, and no analysis
+    // can prove that a property value is never constructed: the construction
+    // can sit behind a helper (`extend`, `_createClass`) or in another module.
+    let source = r#"
+var Base = { extend: function (props) { return props; } };
+var Word = Base.extend({ init: function (hi) { this.hi = hi; } });
+var registry = { make: function () { return 1; } };
+module.exports = [new Word.init(1).hi, registry.make()];
+"#;
+    for level in [
+        wakaru_core::RewriteLevel::Minimal,
+        wakaru_core::RewriteLevel::Standard,
+        wakaru_core::RewriteLevel::Aggressive,
+    ] {
+        let output = common::render_with_level(source, level);
+        for property in ["extend: function", "init: function", "make: function"] {
+            assert!(output.contains(property), "{level:?}: {property}\n{output}");
+        }
+    }
+}

@@ -1,5 +1,6 @@
 ---
 source: crates/core/tests/webpack4_unpack.rs
+assertion_line: 210
 expression: code
 ---
 const i = function(e) {
@@ -36,61 +37,61 @@ function b(e, t) {
     return q.notUndef(e) && hasOwnProperty.call(e, t);
 }
 export var q = {
-    undef (e) {
+    undef: function(e) {
         return e === null || e === undefined;
     },
-    notUndef (e) {
+    notUndef: function(e) {
         return e !== null && e !== undefined;
     },
-    func (e) {
+    func: function(e) {
         return typeof e === "function";
     },
-    number (e) {
+    number: function(e) {
         return typeof e === "number";
     },
-    string (e) {
+    string: function(e) {
         return typeof e === "string";
     },
     array: Array.isArray,
-    object (e) {
+    object: function(e) {
         return e && !q.array(e) && (e === undefined ? "undefined" : typeof e) === "object";
     },
-    promise (e) {
+    promise: function(e) {
         return e && q.func(e.then);
     },
-    iterator (e) {
+    iterator: function(e) {
         return e && q.func(e.next) && q.func(e.throw);
     },
-    iterable (e) {
+    iterable: function(e) {
         if (e && q.func(Symbol)) {
             return q.func(e[Symbol.iterator]);
         }
         return q.array(e);
     },
-    task (e) {
+    task: function(e) {
         return e && e[a];
     },
-    observable (e) {
+    observable: function(e) {
         return e && q.func(e.subscribe);
     },
-    buffer (e) {
+    buffer: function(e) {
         return e && q.func(e.isEmpty) && q.func(e.take) && q.func(e.put);
     },
-    pattern (e) {
+    pattern: function(e) {
         return e && (q.string(e) || (e === undefined ? "undefined" : typeof e) === "symbol" || q.func(e) || q.array(e));
     },
-    channel (e) {
+    channel: function(e) {
         return e && q.func(e.take) && q.func(e.close);
     },
-    helper (e) {
+    helper: function(e) {
         return e && e[u];
     },
-    stringableFunc (e) {
+    stringableFunc: function(e) {
         return q.func(e) && b(e, "toString");
     }
 };
 export const v = {
-    assign (e, t) {
+    assign: function(e, t) {
         for(const n in t){
             if (b(t, n)) {
                 e[n] = t[n];
@@ -105,7 +106,7 @@ export function w(e, t) {
     }
 }
 const x = {
-    from (e) {
+    from: function(e) {
         const t = Array(e.length);
         for(const n in e){
             if (b(e, n)) {
@@ -149,22 +150,22 @@ export function j() {
     let r;
     return {
         [a]: true,
-        isRunning () {
+        isRunning: function() {
             return t;
         },
-        result () {
+        result: function() {
             return n;
         },
-        error () {
+        error: function() {
             return r;
         },
-        setRunning (e) {
+        setRunning: function(e) {
             return t = e;
         },
-        setResult (e) {
+        setResult: function(e) {
             return n = e;
         },
-        setError (e) {
+        setError: function(e) {
             return r = e;
         }
     };
@@ -233,19 +234,19 @@ const D = function e(t) {
         const i = [];
         const a = t(...r);
         return {
-            next (e) {
+            next: function(e) {
                 i.push(e);
                 return a.next(e);
             },
-            clone () {
+            clone: function() {
                 const n = e(t)(...r);
                 i.forEach((e)=>n.next(e));
                 return n;
             },
-            return (e) {
+            return: function(e) {
                 return a.return(e);
             },
-            throw (e) {
+            throw: function(e) {
                 return a.throw(e);
             }
         };

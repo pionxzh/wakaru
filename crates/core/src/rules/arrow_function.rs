@@ -241,10 +241,10 @@ impl VisitMut for ArrowFunctionConverter<'_> {
     }
 
     fn visit_mut_key_value_prop(&mut self, prop: &mut KeyValueProp) {
-        // Object property function values are handled by ObjMethodShorthand.
-        // ArrowFunction must not convert them to arrows — that would produce
-        // `{"foo": () => {}}` which is not method syntax.
-        // We still recurse into the function body so inner expressions are processed.
+        // Object property function values stay function expressions: an
+        // arrow would drop the `[[Construct]]` and `prototype` a caller of
+        // the property may rely on. Still recurse into the function body so
+        // inner expressions are processed.
         prop.key.visit_mut_with(self);
         if let Expr::Fn(fn_expr) = prop.value.as_mut() {
             if let Some(body) = &mut fn_expr.function.body {

@@ -1351,8 +1351,8 @@ fn extract_define_property(stmt: &Stmt, ctor_binding: &BindingKey) -> Option<Vec
                 }
                 (&kv.key, fn_expr.function.as_ref())
             }
-            // ObjMethodShorthand runs before UnPrototypeClass in the full
-            // pipeline, so descriptor callbacks can already be method props.
+            // Descriptor callbacks written with method syntax (`get() {}`)
+            // are method props.
             swc_core::ecma::ast::Prop::Method(method) => (&method.key, method.function.as_ref()),
             _ => continue,
         };

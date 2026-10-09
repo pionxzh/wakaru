@@ -41,14 +41,6 @@ impl ValueKey {
         key.properties.push(property);
         key
     }
-
-    /// The last two property names (`HMAC.init` of `C_algo.HMAC.init`).
-    pub(crate) fn property_suffix(&self) -> Option<(&Atom, &Atom)> {
-        match self.properties.as_slice() {
-            [.., parent, property] => Some((parent, property)),
-            _ => None,
-        }
-    }
 }
 
 pub(crate) fn static_member_name(prop: &MemberProp) -> Option<Atom> {
@@ -227,21 +219,6 @@ pub(crate) fn object_pat_has_constructor_sensitive_value(
             pat_has_constructor_sensitive_value(&rest.arg, constructor_sensitive_values)
         }
     })
-}
-
-pub(crate) fn assign_target_pat_has_constructor_sensitive_value(
-    pat: &AssignTargetPat,
-    constructor_sensitive_values: &HashSet<ValueKey>,
-) -> bool {
-    match pat {
-        AssignTargetPat::Array(array) => array.elems.iter().flatten().any(|element| {
-            pat_has_constructor_sensitive_value(element, constructor_sensitive_values)
-        }),
-        AssignTargetPat::Object(object) => {
-            object_pat_has_constructor_sensitive_value(object, constructor_sensitive_values)
-        }
-        AssignTargetPat::Invalid(_) => false,
-    }
 }
 
 pub(crate) fn visit_mut_pat_constructor_sensitive_defaults(
@@ -655,34 +632,6 @@ impl Visit for ConstructorSensitiveUseCollector<'_> {
         }
         call.visit_children_with(self);
     }
-}
-
-pub(crate) type ConstructedMemberSuffixes = HashSet<(Atom, Atom)>;
-
-/// `(parent, property)` suffixes of constructor-sensitive keys in `keys`,
-/// excluding a `prototype` parent. Unrelated classes share `prototype`, so
-/// that parent must not keep every `init` as a function expression.
-pub(crate) fn member_suffixes_of(keys: &HashSet<ValueKey>) -> ConstructedMemberSuffixes {
-    keys.iter()
-        .filter_map(ValueKey::property_suffix)
-        .filter(|(parent, _)| parent.as_ref() != "prototype")
-        .map(|(parent, property)| (parent.clone(), property.clone()))
-        .collect()
-}
-
-/// Suffixes from one module after alias propagation. `ValueKey` contexts
-/// belong to this module's `Globals` and are not compared across modules;
-/// only the two property names leave the module.
-///
-/// A one-segment key (`new Name.init`, root `Name`) contributes nothing.
-/// Callers must not invent a parent from the root binding's name.
-pub(crate) fn constructed_member_suffixes(
-    module: &Module,
-    unresolved_mark: Mark,
-) -> ConstructedMemberSuffixes {
-    let local_helpers = LocalHelperContext::collect_with_mark(module, unresolved_mark);
-    let create_class = CreateClassHelpers::collect(module, unresolved_mark, &local_helpers);
-    member_suffixes_of(&collect_constructor_sensitive_values(module, &create_class))
 }
 
 pub(crate) fn collect_constructor_sensitive_values(

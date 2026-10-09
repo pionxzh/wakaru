@@ -1,5 +1,6 @@
 ---
 source: crates/core/tests/webpack4_unpack.rs
+assertion_line: 210
 expression: code
 ---
 import { a } from "./module-21.js";
@@ -96,7 +97,7 @@ export function createStore(e, t, n) {
         dispatch: v,
         subscribe,
         getState,
-        replaceReducer (e) {
+        replaceReducer: function(e) {
             if (typeof e !== "function") {
                 throw new Error("Expected the nextReducer to be a function.");
             }
@@ -108,7 +109,7 @@ export function createStore(e, t, n) {
         [a]: function() {
             const t = subscribe;
             return {
-                subscribe (e) {
+                subscribe: function(e) {
                     if ((e === undefined ? "undefined" : typeof e) !== "object" || e === null) {
                         throw new TypeError("Expected the observer to be an object.");
                     }
@@ -225,7 +226,7 @@ export function applyMiddleware(...t) {
             };
             const l = {
                 getState: i.getState,
-                dispatch () {
+                dispatch: function() {
                     return u(...arguments);
                 }
             };

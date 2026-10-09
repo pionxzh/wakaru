@@ -1,5 +1,6 @@
 ---
 source: crates/core/tests/webpack4_unpack.rs
+assertion_line: 210
 expression: code
 ---
 import * as o from "./module-0.js";
@@ -43,29 +44,29 @@ export const utils = {
 };
 const f = "proc first argument (Saga function result) must be an iterator";
 var CHANNEL_END = {
-    toString () {
+    toString: function() {
         return "@@redux-saga/CHANNEL_END";
     }
 };
 const p = {
-    toString () {
+    toString: function() {
         return "@@redux-saga/TASK_CANCEL";
     }
 };
 var h = {
-    wildcard () {
+    wildcard: function() {
         return o.r;
     },
-    default (e) {
+    default: function(e) {
         if ((e === undefined ? "undefined" : typeof e) === "symbol") {
             return (t)=>t.type === e;
         }
         return (t)=>t.type === String(e);
     },
-    array (e) {
+    array: function(e) {
         return (t)=>e.some((e)=>m(e)(t));
     },
-    predicate (e) {
+    predicate: function(e) {
         return (t)=>e(t);
     }
 };
@@ -143,7 +144,7 @@ ${e.stack}`;
     })(b, g, e, w);
     var j = {
         name: g,
-        cancel () {
+        cancel: function() {
             if (j.isRunning && !j.isCancelled) {
                 j.isCancelled = true;
                 M(p);
@@ -195,10 +196,10 @@ ${e.stack}`;
             addTask,
             cancelAll,
             abort,
-            getTasks () {
+            getTasks: function() {
                 return r;
             },
-            taskNames () {
+            taskNames: function() {
                 return r.map((e)=>e.name);
             }
         };

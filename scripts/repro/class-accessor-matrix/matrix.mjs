@@ -127,7 +127,7 @@ Object.defineProperty(Widget.prototype, "value", {
 var widget = new Widget();
 widget.value = 1;
 `,
-    expected: ["Object.defineProperty(", "set ("],
+    expected: ["Object.defineProperty(", "set:"],
     rejected: ["class "],
     execute: {},
   },
@@ -145,7 +145,7 @@ use(descriptor.enumerable, descriptor.configurable);
 var widget = new Widget();
 widget.value = 1;
 `,
-    expected: ["Object.defineProperty(", "set ("],
+    expected: ["Object.defineProperty(", "set:"],
     rejected: ["class "],
     execute: {},
   },

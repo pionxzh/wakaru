@@ -525,7 +525,7 @@ function demo(flag) {
     return Foo;
 }
 "#;
-    let before = render_pipeline_until(input, "ObjMethodShorthand");
+    let before = render_pipeline_until(input, "ObjShorthand");
     let after = render_pipeline_until(input, "UnPrototypeClass");
     assert_eq_normalized(&after, &before);
 }
@@ -538,7 +538,7 @@ consume(readFoo());
 var Foo = function() {};
 Foo.prototype.run = function() { return true; };
 "#;
-    let before = render_pipeline_until(input, "ObjMethodShorthand");
+    let before = render_pipeline_until(input, "ObjShorthand");
     let after = render_pipeline_until(input, "UnPrototypeClass");
     assert_eq_normalized(&after, &before);
 }
@@ -822,7 +822,7 @@ class Foo {
 }
 
 #[test]
-fn define_property_zero_param_setter_survives_obj_method_shorthand() {
+fn define_property_zero_param_setter_recovers_as_class_setter() {
     let input = r#"
 function Foo() {}
 Object.defineProperty(Foo.prototype, "value", {

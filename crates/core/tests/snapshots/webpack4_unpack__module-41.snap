@@ -1,5 +1,6 @@
 ---
 source: crates/core/tests/webpack4_unpack.rs
+assertion_line: 210
 expression: code
 ---
 export default function(e) {
@@ -10,13 +11,13 @@ export default function(e) {
         }
         Object.defineProperty(t, "loaded", {
             enumerable: true,
-            get () {
+            get: function() {
                 return t.l;
             }
         });
         Object.defineProperty(t, "id", {
             enumerable: true,
-            get () {
+            get: function() {
                 return t.i;
             }
         });

@@ -148,7 +148,7 @@ class C {
     }
 }
 const b = {
-    k() {
+    k: function() {
         return this;
     }
 };
@@ -185,7 +185,7 @@ const o = {
         return 1;
     },
     arrow: ()=>this,
-    other() {
+    other: function() {
         return 2;
     }
 };

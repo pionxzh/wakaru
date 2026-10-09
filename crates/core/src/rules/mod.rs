@@ -23,7 +23,6 @@ mod import_dedup;
 pub(crate) mod lowered_dynamic_import;
 pub(crate) mod match_context;
 mod merge_declaration_init;
-mod obj_method_shorthand;
 mod obj_shorthand;
 mod object_assign_spread;
 mod pipeline;
@@ -173,7 +172,6 @@ pub use arrow_function::ArrowFunction;
 pub use arrow_return::ArrowReturn;
 pub(crate) use call_required::{collect_import_call_edges, pinned_export_names, CallRequiredPlan};
 pub use class_expression_to_declaration::ClassExpressionToDeclaration;
-pub(crate) use constructor_sensitivity::{constructed_member_suffixes, ConstructedMemberSuffixes};
 pub use dead_decls::{DeadDecls, DeadUninitializedDecls};
 pub use dead_imports::DeadImports;
 pub use exponent::Exponent;
@@ -183,7 +181,6 @@ pub use extract_inlined_function::{
 pub use flip_comparisons::FlipComparisons;
 pub use import_dedup::ImportDedup;
 pub use merge_declaration_init::MergeDeclarationInit;
-pub use obj_method_shorthand::ObjMethodShorthand;
 pub use obj_shorthand::ObjShorthand;
 pub use object_assign_spread::ObjectAssignSpread;
 pub use pipeline::{

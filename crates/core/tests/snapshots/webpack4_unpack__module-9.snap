@@ -1,5 +1,6 @@
 ---
 source: crates/core/tests/webpack4_unpack.rs
+assertion_line: 210
 expression: code
 ---
 import { r as isEmpty, u as u_1 } from "./module-0.js";
@@ -39,10 +40,10 @@ function c(e = 10, t) {
         return e;
     };
     return {
-        isEmpty () {
+        isEmpty: function() {
             return r == 0;
         },
-        put (f) {
+        put: function(f) {
             if (r < e) {
                 s(f);
             } else {
@@ -71,19 +72,19 @@ function c(e = 10, t) {
     };
 }
 const s = {
-    none () {
+    none: function() {
         return l;
     },
-    fixed (e) {
+    fixed: function(e) {
         return c(e, i);
     },
-    dropping (e) {
+    dropping: function(e) {
         return c(e, 2);
     },
-    sliding (e) {
+    sliding: function(e) {
         return c(e, a);
     },
-    expanding (e) {
+    expanding: function(e) {
         return c(e, u);
     }
 };

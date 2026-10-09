@@ -3499,8 +3499,8 @@ fn try_parse_object_define_property(
                 };
                 (&kv.key, fn_expr.function.as_ref())
             }
-            // Native descriptor method syntax and ObjMethodShorthand both
-            // store the callback as a MethodProp under swc_core 77.
+            // Native descriptor method syntax (`get() {}`) stores the
+            // callback as a MethodProp under swc_core 77.
             swc_core::ecma::ast::Prop::Method(method) => (&method.key, method.function.as_ref()),
             _ => continue,
         };

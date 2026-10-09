@@ -137,7 +137,7 @@ const api = {
 "#;
     let expected = r#"
 const api = {
-  visit(entry) {
+  visit: function(entry) {
     for (let queue = [{ entry }], index = 0; index < queue.length; index++) {
       const entry = queue[index].entry;
       consume(entry);

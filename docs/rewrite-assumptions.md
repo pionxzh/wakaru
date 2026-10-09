@@ -509,50 +509,6 @@ recovery is a separate, provenance-checked path and does not depend on this.
 Level: `standard` and above. `minimal` rewrites only chains whose substitutions
 are primitives by syntax, as for `string_coercion_hint`.
 
-### `call_result_exposes_argument_properties`
-
-A call may copy the properties of an inline object argument onto its result or
-onto its receiver. `ObjMethodShorthand` keeps such a property a `function`
-expression when the same module constructs the matching property of either one.
-That link reads only the current module's AST:
-
-```js
-var Word = extend({
-    init: function (hi, lo) { this.hi = hi; },
-    describe: function () { return this.hi; }
-});
-new Word.init(1, 2);
-
-Lib.mixin({
-    make: function (first, second) { this.first = first; }
-});
-new Lib.make(alpha, beta);
-```
-
-The AST does not prove that `extend` copies `init` onto its return value, or
-that `mixin` copies `make` onto `Lib`. CryptoJS `Base.extend` does the first
-(`mixIn`, then `subtype.init.prototype = subtype`). A one-argument mixin that
-copies onto its receiver does the second. When the assumption is wrong, the property stays a function expression
-instead of becoming a method. That skips shorthand only; it does not introduce
-a `TypeError`. Only an inline object argument is linked (see
-`visit_mut_call` in `rules/obj_method_shorthand.rs`). A property
-that is not constructed on the result or the receiver still becomes a method.
-Construction of the property in another module does not add a call-result key.
-In a multi-module unpack, the name guard also consults suffixes collected from
-every module's barrier AST (after `UnEsm`, before late ESM recovery). Both the
-constructed key and the object property's value key need two property names;
-a one-segment key does not borrow its root binding's name as a parent. A
-single-file decompile has no bundle suffix set. Known misses: a provider
-`UnEsm` has already turned into an ESM export (`exports.Name = call({ init })`),
-a consumer that destructures the constructed binding directly from an import
-or `require`, a construct use that appears only in Phase 2 (`extends` of an
-IIFE argument recovered by `UnEs6Class`), and a module whose fact collection
-failed.
-
-Affects: `ObjMethodShorthand`, via the shared constructor-sensitivity set.
-
-Level: every level. The rule is `always_enabled`.
-
 ### `concat_arguments_are_arrays`
 
 Unknown arguments in an array-literal `.concat(...)` call are ordinary arrays,

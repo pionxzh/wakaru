@@ -1,5 +1,6 @@
 ---
 source: crates/core/tests/webpack4_unpack.rs
+assertion_line: 210
 expression: code
 ---
 import { b, c as c_1, h as h_1, p as p_1, q, w } from "./module-0.js";
@@ -15,11 +16,11 @@ export { l as e };
 function c() {
     const e = [];
     return {
-        subscribe (t) {
+        subscribe: function(t) {
             e.push(t);
             return ()=>w(e, t);
         },
-        emit (t) {
+        emit: function(t) {
             const n = e.slice();
             for(let r = 0, o = n.length; r < o; r++){
                 n[r](t);
@@ -43,7 +44,7 @@ function d(e = a_1.fixed()) {
     }
     h_1(e, q.buffer, s);
     return {
-        take (o) {
+        take: function(o) {
             i();
             h_1(o, q.func, "channel.take's callback must be a function");
             if (__closed__ && e.isEmpty()) {
@@ -55,7 +56,7 @@ function d(e = a_1.fixed()) {
                 o(e.take());
             }
         },
-        put (o) {
+        put: function(o) {
             i();
             h_1(o, q.notUndef, f);
             if (!__closed__) {
@@ -71,7 +72,7 @@ function d(e = a_1.fixed()) {
                 }
             }
         },
-        flush (n) {
+        flush: function(n) {
             i();
             h_1(n, q.func, "channel.flush' callback must be a function");
             if (__closed__ && e.isEmpty()) {
@@ -80,7 +81,7 @@ function d(e = a_1.fixed()) {
                 n(e.flush());
             }
         },
-        close () {
+        close: function() {
             i();
             if (!__closed__ && (__closed__ = true, __takers__.length)) {
                 const e = __takers__;
@@ -142,7 +143,7 @@ function h(e) {
         }));
     return {
         ...t,
-        take (e, n) {
+        take: function(e, n) {
             if (arguments.length > 1) {
                 h_1(n, q.func, "channel.take's matcher argument must be a function");
                 e[b] = n;
