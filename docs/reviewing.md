@@ -11,6 +11,11 @@ Include the worktree, base and HEAD, whether uncommitted changes are included,
 the intended behavior, known open items, and completed verification. Preserve
 the user's scope and previously stated limits on commit, push, and integration.
 
+When the work changes output, the handoff lists for each commit what output
+changes at each rewrite level. Include changes the task did not name, such as
+a related shape now recovered at a lower level. A summary that names only the
+decisions implemented hides scope the reviewer has to check.
+
 Confirm the checkout matches that handoff before reviewing. If implementation
 is still in progress, identify the snapshot you inspected and label findings
 against it as provisional. Do not describe an intermediate failure as a defect
