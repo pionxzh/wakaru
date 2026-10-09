@@ -631,12 +631,29 @@ layout directly is a proposal:
 
 ## Known gaps
 
-- **Other unpackers may drop the code around the bundle.** webpack 5 and
-  Browserify keep top-level statements before or after the bundle statement
+- **Code around some bundles is still dropped or blocks the split.**
+  webpack 5 and Browserify keep top-level code around the bundle statement
   in `entry.js` (see [Webpack 5 code around the
-  bootstrap](#webpack-5-code-around-the-bootstrap)). Whether webpack 4, AMD,
-  SystemJS, Closure, Metro, and Turbopack lose that code is unchecked, as is
-  code outside a UMD or AMD wrapper that detection unwraps.
+  bootstrap](#webpack-5-code-around-the-bootstrap)). Elsewhere:
+  - an async chunk with a BannerPlugin `raw: true` banner at the report
+    stage (producer `webpack@5.111.1`) is split and the banner is dropped:
+    a chunk has no `entry.js` to hold it;
+  - a SystemJS bundle with `output.banner` or `output.footer` set to code
+    (producer `rollup@4.63.6` `format: "system"`, unminified) drops it;
+  - a UMD library (producer `webpack@5.111.1` `output.library.type: "umd"`
+    + Terser) with an ES module entry keeps `require.r(o)` in `entry.js`,
+    which throws, because the factory returns the exports object; a banner
+    at the report stage, outside the wrapper, is dropped. When the startup
+    calls require once, Terser inlines it into the factory's `return`, and
+    the bundle is not detected;
+  - a banner that Terser merges with the bundle into one comma sequence
+    (BannerPlugin's default stage; every webpack 4 raw banner, since its
+    BannerPlugin has no stage) keeps the bundle from being detected, as does
+    a Terser-minified Browserify prelude (`!function r(e,n,t){…}({…},{},[1])`,
+    producer `browserify@17.0.1` + `terser@5.51.2`). Nothing is lost there,
+    but the input stays one file.
+
+  AMD, Closure, Metro, and Turbopack were not checked with a producer.
 - **Relative `require` inside a top-level expression.** A module binding
   assigned inside an expression (`r = f((e = require("./m")).x)`) is not
   turned into an import. The `require` stays in the ESM output, where it
