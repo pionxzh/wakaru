@@ -288,6 +288,46 @@ function initialize(source) {
 }
 
 #[test]
+fn parameter_rename_beside_loop_body_declaration_does_not_introduce_tdz() {
+    // The loop body's `var entry` becomes a block-scoped declaration while the
+    // `for` init reads the parameter. Renaming the parameter to `entry` must
+    // not let the init read the body's binding before its declaration.
+    let source = r#"
+const api = {
+  visit: function (v) {
+    for (
+      var queue = [{ entry: v }], index = 0;
+      index < queue.length;
+      index++
+    ) {
+      var entry = queue[index].entry;
+      consume(entry);
+    }
+  },
+};
+"#;
+    let output = decompile(
+        source,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            diagnostics: true,
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed");
+    let tdz_warnings: Vec<_> = output
+        .warnings
+        .iter()
+        .filter(|warning| warning.kind == UnpackWarningKind::TdzViolation)
+        .collect();
+    assert!(
+        tdz_warnings.is_empty(),
+        "parameter rename beside a loop body declaration introduced TDZ warnings: {tdz_warnings:#?}\n--- output ---\n{}",
+        output.code
+    );
+}
+
+#[test]
 fn import_and_export_alias_recovery_does_not_introduce_tdz() {
     let source = r#"
 import primary from "pkg";
