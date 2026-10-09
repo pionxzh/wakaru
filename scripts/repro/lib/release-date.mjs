@@ -5,7 +5,11 @@
 // Installers pass `npm install --before <cutoff>` instead, so the tree
 // resolves as of a cutoff after the newest spec's publish time. The window
 // admits same-day patch releases, such as `@babel/runtime@7.12.18`, published
-// an hour after 7.12.17 to fix exports that break under Node 17+.
+// an hour after 7.12.17 to fix exports that break under Node 17+. The same
+// window also lets a later patch in: 7.13.16 resolves 7.13.17's helpers. That
+// cost is accepted. Pinning only `@babel/helpers` and `@babel/runtime` was
+// rejected: it pairs 7.12 helpers with 7.29 plugins, which emit `_callSuper`
+// instead of `_createSuper` and crash on async functions.
 export const RESOLUTION_WINDOW_DAYS = 1;
 
 export function parseExactSpec(spec) {

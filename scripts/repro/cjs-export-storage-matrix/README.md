@@ -107,3 +107,7 @@ driver observe the behavior the case is about: call the mutator, then read the
 export through `m`. Reading `m.x` after a mutation is what distinguishes a
 live export from a snapshot. Every producer runs every case; a case that a
 producer cannot express shows up as `p≠` or `c-err`, not as a wakaru failure.
+
+Cases come from producers only. Hand-written CommonJS stays out of the matrix:
+it is rare in this role, it often should stay CommonJS, and it is judged case
+by case (export-storage decision 2 in `docs/proposals/cjs-export-storage.md`).

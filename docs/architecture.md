@@ -216,6 +216,13 @@ After `resolver()` runs, binding identifiers and references carry a
 | Introduce or rename a binding | Give it a fresh context for identity and prove the emitted name is free (below); context alone never prevents capture |
 | Emit a name that is not a binding (a JSX intrinsic tag, the `exported` half of a specifier, a property name) | No context; these are strings after printing |
 
+The table covers identifiers only. `ArrowExpr`, `VarDecl`, and `PrivateProp`
+also have a `ctxt` field, but it belongs to the node, not to a binding: no
+rule reads it to match a name, and the resolver marks an arrow's empty `ctxt`
+itself when it runs again. A rule that builds one of these nodes leaves
+`SyntaxContext::empty()` there. An `Ident` the rule rebuilds still follows the
+table.
+
 For global recognition, the visitor takes `unresolved_mark: Mark` and guards
 the name match:
 
@@ -300,6 +307,11 @@ When unpacking bundles, the driver runs a two-phase pipeline:
    namespace decomposition, fact-aware helper recovery) → run the registry
    range resuming after `UnEsm`, through `UnReturn` → targeted late
    cleanup/recovery → emit.
+
+No step after the late range may change a module's exports or imports
+without a diagnostic. When a rule emits a duplicate or undeclared export, fix
+that rule; do not add a late pass that hides it. `debug validate` reports what
+remains.
 
 The late pass uses facts from Phase 1 to inform cross-module rewrites (e.g.,
 repairing a proven CommonJS object or callable-property edge, preserving one

@@ -392,6 +392,17 @@ rationale, or level gating appear.
   arrows runs at all levels. Positional argument/parameter pairing stops at
   the first spread argument: its runtime length makes later syntactic
   positions unknown, so only arguments before it are extracted or renamed.
+  The `(() => X)()` unwrap, literal extraction, and `.call` strip stay on
+  purpose. Each is exact on producer output: the tsc async-arrow `__awaiter`
+  IIFE, Terser's class-field and statement-body inlining with its `0`
+  argument, Babel's PURE `createClass` IIFE, devalue's `__BUILD_MANIFEST`,
+  and CoffeeScript/lodash `.call(this)`. The unwrap is also what exposes
+  classes to UnEs6Class. The `.call` strip needs an effect-free `thisArg`.
+  Parameter renaming copies only identifier arguments of three or more
+  characters, never `undefined`/`NaN`/`Infinity`. Skipping host globals such
+  as `window` was tried and rejected: it lost the `window_1` name. For an
+  A/B, note that unpack's late ESM range runs UnIife again, so turning it off
+  in the pipeline alone does not remove it.
 
 ### Complex pattern restoration
 

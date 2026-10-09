@@ -386,6 +386,8 @@ impl IndexedReturnContext {
             return;
         }
         let ctxt = SyntaxContext::empty().apply_mark(Mark::new());
+        // `_item` names stay unique across the module, not per scope, so a
+        // text search for one finds only that binding.
         let mut suffix = 0;
         let bindings: Vec<_> = (0..length)
             .map(|_| loop {

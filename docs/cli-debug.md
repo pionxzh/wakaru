@@ -199,7 +199,11 @@ ECMAScript built-ins and module-runtime names are never reported. For the
 structural proof, well-known host globals declared by shim modules are excluded
 too. Other writes to undeclared identifiers remain environment-dependent host
 global accesses unless input or sibling-declaration evidence proves the name
-wrong.
+wrong. There is no general free-identifier report without that evidence: host
+globals would make it mostly noise. The sibling match compares spellings only,
+which is why `--input` evidence overrides it. Leftover transpiler helpers are
+not findings either; they are an output-quality question, not a broken
+reference.
 
 Human-readable findings use:
 

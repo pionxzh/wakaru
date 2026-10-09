@@ -137,8 +137,11 @@ each pass on its own trigger or to leave the recovery alone.
   samples on the large bundle were threads blocked in `open`/`close`/`write`
   while creating thousands of output files, about half a second of wall time
   that runs after Phase 2 instead of overlapping it. Writing each module as it
-  finishes would hide most of it; the cost is error-handling semantics and the
-  `write_if_changed` path.
+  finishes was built as provisional per-file output staging and measured
+  slower on the large and medium bundles: it moved the filesystem work
+  earlier instead of removing it. Reopen this lead only with a design that
+  removes filesystem work. Publishing the whole output directory at once is
+  untested.
 - Few-module bundles: one module can hold 60% of Phase 2 CPU, and `UnEsm`,
   `UnObjectRest`, `UnComputedProperties`, and `UnObjectSpread` each spend tens
   of milliseconds on it. Profile that module alone for superlinear behavior

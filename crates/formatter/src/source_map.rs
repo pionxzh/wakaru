@@ -6,6 +6,12 @@
 //! exact position table for token starts and ends, which is where the
 //! emitter places its mappings. Each mapping moves through that table;
 //! mappings at positions the formatter removed are dropped.
+//!
+//! Token alignment is a workaround: oxc_formatter's IR carries no source
+//! positions (oxc-project/oxc#23065). When oxc ships them, replace this
+//! implementation and keep the tests. A file whose tokens cannot be aligned
+//! stays unformatted with its original map and a warning, because a wrong
+//! map is worse than no formatting.
 
 use std::borrow::Cow;
 
