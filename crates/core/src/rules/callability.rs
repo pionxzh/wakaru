@@ -2,9 +2,10 @@ use crate::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
-    ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BindingIdent, CallExpr,
-    Callee, Class, Decl, DefaultDecl, ExportSpecifier, Expr, FnDecl, Function, ModuleDecl,
-    ModuleExportName, ModuleItem, Pat, ReturnStmt, SimpleAssignTarget, Stmt, VarDeclarator,
+    ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BinaryOp, BindingIdent,
+    CallExpr, Callee, Class, Decl, DefaultDecl, ExportSpecifier, Expr, FnDecl, Function,
+    ModuleDecl, ModuleExportName, ModuleItem, Pat, ReturnStmt, SimpleAssignTarget, Stmt,
+    VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -66,6 +67,14 @@ pub(crate) enum GuardedCallEffectKind {
         target: BindingKey,
         source: BindingKey,
     },
+    /// `||` / comma-tail value edge. Closed only from a live `.call` / `.apply`
+    /// seed (and the ordinary alias closure of that seed), never from export
+    /// roots. Guards stay empty: the edge is structural and must outlive the
+    /// IIFE a class recovery deletes.
+    ValueAlias {
+        target: BindingKey,
+        source: BindingKey,
+    },
 }
 
 fn collect<N>(node: &N, roots: &HashSet<BindingKey>) -> CallabilityIndex
@@ -74,38 +83,29 @@ where
 {
     let mut collector = CallabilityCollector::default();
     node.visit_with(&mut collector);
-    // Seed before propagation. A root that is only an export name has no local
-    // `.call`, but the binding it evaluates to (IIFE return) still needs [[Call]].
-    collector.required.extend(roots.iter().cloned());
+    // `.call` / `.apply` seeds walk ordinary aliases and value aliases.
+    // Export roots walk ordinary aliases only, so a decorator `||` tail cannot
+    // pin a constructor that no same-file call actually reaches.
+    let ordinary = alias_map(&collector.aliases);
+    let value = alias_map(&collector.value_aliases);
+    let mut required = collector.required;
+    close_required(&mut required, &ordinary, &value, true);
+    let mut from_roots = roots.clone();
+    close_required(&mut from_roots, &ordinary, &value, false);
+    required.extend(from_roots);
 
-    let mut sources_by_target: HashMap<BindingKey, Vec<BindingKey>> = HashMap::default();
-    for (target, source) in collector.aliases {
-        sources_by_target.entry(target).or_default().push(source);
-    }
-
-    let mut pending = collector.required.iter().cloned().collect::<Vec<_>>();
-    while let Some(target) = pending.pop() {
-        let Some(sources) = sources_by_target.get(&target) else {
-            continue;
-        };
-        for source in sources {
-            if collector.required.insert(source.clone()) {
-                pending.push(source.clone());
-            }
-        }
-    }
-
-    CallabilityIndex {
-        required: collector.required,
-    }
+    CallabilityIndex { required }
 }
 
 #[derive(Default)]
 struct CallabilityCollector {
     required: HashSet<BindingKey>,
     /// `target` evaluates to `source`: requiring `target.[[Call]]` therefore
-    /// requires `source.[[Call]]` too.
+    /// requires `source.[[Call]]` too. Export roots may follow these edges.
     aliases: Vec<(BindingKey, BindingKey)>,
+    /// Comma-tail and `||` edges. Live `.call` / `.apply` seeds may follow
+    /// them; export roots may not.
+    value_aliases: Vec<(BindingKey, BindingKey)>,
     /// Set only by [`module_guarded_call_effects`]. The index path leaves this
     /// empty so propagation stays on `required` and `aliases`.
     effects: Vec<GuardedCallEffect>,
@@ -150,6 +150,21 @@ impl CallabilityCollector {
             });
         }
         self.aliases.push((target, source));
+    }
+
+    /// Structural value edge. Empty guards: blanking a converted IIFE must not
+    /// drop the path from a `.call` that still exists outside that IIFE.
+    fn note_value_alias(&mut self, target: BindingKey, source: BindingKey) {
+        if self.record_effects {
+            self.effects.push(GuardedCallEffect {
+                guards: Vec::new(),
+                kind: GuardedCallEffectKind::ValueAlias {
+                    target: target.clone(),
+                    source: source.clone(),
+                },
+            });
+        }
+        self.value_aliases.push((target, source));
     }
 
     fn record_iife_param_aliases(&mut self, call: &CallExpr) {
@@ -209,39 +224,59 @@ impl CallabilityCollector {
         };
 
         let mut returns = IifeReturnCollector::default();
+        let mut value_returns = ValueReturnCollector::default();
         match strip_parens(callee) {
             Expr::Fn(function) => {
                 let Some(body) = &function.function.body else {
                     return;
                 };
                 body.visit_with(&mut returns);
+                body.visit_with(&mut value_returns);
             }
             Expr::Arrow(arrow) => match arrow.body.as_ref() {
-                ArrowFunctionBody::FunctionBody(body) => body.visit_with(&mut returns),
+                ArrowFunctionBody::FunctionBody(body) => {
+                    body.visit_with(&mut returns);
+                    body.visit_with(&mut value_returns);
+                }
                 ArrowFunctionBody::Expr(expr) => {
                     if let Some(source) = expr_binding_key(strip_parens(expr)) {
                         returns.bindings.insert(source);
                     }
+                    value_returns.bindings.extend(value_alias_bindings(expr));
                 }
             },
             _ => return,
         }
 
-        for source in returns.bindings {
-            self.note_alias(target.clone(), source);
+        // Bare `return ident` stays an ordinary alias so an export root can
+        // still reach that constructor. Comma / `||` tails are value aliases.
+        for source in &returns.bindings {
+            self.note_alias(target.clone(), source.clone());
+        }
+        for source in value_returns.bindings {
+            if source == target || returns.bindings.contains(&source) {
+                continue;
+            }
+            self.note_value_alias(target.clone(), source);
         }
     }
 
-    /// `var t = e` / `t = e`. Requiring `t` requires `e`, including when `t` is
-    /// only reached through an IIFE return.
+    /// `var t = e` / `t = e`, plus comma-tail and `||` values of that initializer.
+    /// A bare ident stays an ordinary alias. Value edges do not unwrap assignments:
+    /// `Fallback = Ctor` is its own assignment and already records `Fallback → Ctor`.
     fn record_direct_ident_alias(&mut self, target: BindingKey, init: &Expr) {
-        let Some(source) = expr_binding_key(strip_parens(init)) else {
-            return;
-        };
-        if source == target {
-            return;
+        let bare = expr_binding_key(strip_parens(init));
+        if let Some(source) = &bare {
+            if source != &target {
+                self.note_alias(target.clone(), source.clone());
+            }
         }
-        self.note_alias(target, source);
+        for source in value_alias_bindings(init) {
+            if source == target || bare.as_ref() == Some(&source) {
+                continue;
+            }
+            self.note_value_alias(target.clone(), source);
+        }
     }
 
     fn in_constructor(&self) -> bool {
@@ -472,24 +507,34 @@ pub(crate) fn module_guarded_call_effects(
     collector.effects
 }
 
-/// Required bindings after dropping effects guarded by `blanked`, then seeding `roots`.
+/// Required bindings after dropping effects guarded by `blanked`.
+///
+/// `.call` / `.apply` seeds close through ordinary aliases and value aliases.
+/// `roots` close through ordinary aliases only, matching [`collect`].
 pub(crate) fn required_bindings_from_effects(
     effects: &[GuardedCallEffect],
     blanked: &HashSet<BindingKey>,
     roots: &HashSet<BindingKey>,
 ) -> HashSet<BindingKey> {
-    let mut required = roots.clone();
-    let mut sources_by_target: HashMap<BindingKey, Vec<BindingKey>> = HashMap::default();
+    let mut call_seeds = HashSet::default();
+    let mut ordinary: HashMap<BindingKey, Vec<BindingKey>> = HashMap::default();
+    let mut value: HashMap<BindingKey, Vec<BindingKey>> = HashMap::default();
     for effect in effects {
         if effect.guards.iter().any(|guard| blanked.contains(guard)) {
             continue;
         }
         match &effect.kind {
             GuardedCallEffectKind::Required(binding) => {
-                required.insert(binding.clone());
+                call_seeds.insert(binding.clone());
             }
             GuardedCallEffectKind::Alias { target, source } => {
-                sources_by_target
+                ordinary
+                    .entry(target.clone())
+                    .or_default()
+                    .push(source.clone());
+            }
+            GuardedCallEffectKind::ValueAlias { target, source } => {
+                value
                     .entry(target.clone())
                     .or_default()
                     .push(source.clone());
@@ -497,18 +542,80 @@ pub(crate) fn required_bindings_from_effects(
         }
     }
 
+    close_required(&mut call_seeds, &ordinary, &value, true);
+    let mut from_roots = roots.clone();
+    close_required(&mut from_roots, &ordinary, &value, false);
+    call_seeds.extend(from_roots);
+    call_seeds
+}
+
+fn alias_map(pairs: &[(BindingKey, BindingKey)]) -> HashMap<BindingKey, Vec<BindingKey>> {
+    let mut sources_by_target: HashMap<BindingKey, Vec<BindingKey>> = HashMap::default();
+    for (target, source) in pairs {
+        sources_by_target
+            .entry(target.clone())
+            .or_default()
+            .push(source.clone());
+    }
+    sources_by_target
+}
+
+/// `walk_value` is set for `.call` / `.apply` seeds. Export roots pass `false`
+/// so a decorator `||` cannot pin a constructor that nobody calls.
+fn close_required(
+    required: &mut HashSet<BindingKey>,
+    ordinary: &HashMap<BindingKey, Vec<BindingKey>>,
+    value: &HashMap<BindingKey, Vec<BindingKey>>,
+    walk_value: bool,
+) {
     let mut pending: Vec<BindingKey> = required.iter().cloned().collect();
     while let Some(target) = pending.pop() {
-        let Some(sources) = sources_by_target.get(&target) else {
-            continue;
-        };
-        for source in sources {
-            if required.insert(source.clone()) {
-                pending.push(source.clone());
+        if let Some(sources) = ordinary.get(&target) {
+            for source in sources {
+                if required.insert(source.clone()) {
+                    pending.push(source.clone());
+                }
+            }
+        }
+        if walk_value {
+            if let Some(sources) = value.get(&target) {
+                for source in sources {
+                    if required.insert(source.clone()) {
+                        pending.push(source.clone());
+                    }
+                }
             }
         }
     }
-    required
+}
+
+/// Idents a value expression may evaluate to, for a live `.call` seed.
+///
+/// Parens are stripped. A comma sequence contributes only its last item.
+/// `||` contributes both sides, and a side that is itself `||` is walked
+/// again. Calls, members, conditionals, `&&`, `??`, functions, arrows, and
+/// classes contribute nothing — an assignment's value is not unwrapped,
+/// because `Fallback = Ctor` is recorded as its own ordinary alias.
+fn value_alias_bindings(expr: &Expr) -> Vec<BindingKey> {
+    fn walk(expr: &Expr, out: &mut Vec<BindingKey>) {
+        match strip_parens(expr) {
+            Expr::Ident(ident) => out.push(binding_key(ident)),
+            Expr::Seq(sequence) => {
+                if let Some(last) = sequence.exprs.last() {
+                    walk(last, out);
+                }
+            }
+            Expr::Bin(binary) if binary.op == BinaryOp::LogicalOr => {
+                walk(&binary.left, out);
+                walk(&binary.right, out);
+            }
+            _ => {}
+        }
+    }
+
+    let mut bindings = Vec::new();
+    walk(expr, &mut bindings);
+    bindings
 }
 
 fn pat_binding_key(pat: &Pat) -> Option<BindingKey> {
@@ -556,10 +663,33 @@ impl Visit for IifeReturnCollector {
     fn visit_class(&mut self, _: &Class) {}
 }
 
+/// Comma / `||` idents returned from an IIFE, without entering nested functions.
+#[derive(Default)]
+struct ValueReturnCollector {
+    bindings: Vec<BindingKey>,
+}
+
+impl Visit for ValueReturnCollector {
+    fn visit_return_stmt(&mut self, statement: &ReturnStmt) {
+        let Some(argument) = statement.arg.as_deref() else {
+            return;
+        };
+        self.bindings.extend(value_alias_bindings(argument));
+    }
+
+    fn visit_function(&mut self, _: &Function) {}
+
+    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+
+    fn visit_class(&mut self, _: &Class) {}
+}
+
 /// Bindings reachable by IIFE-return aliases from `roots`, including `roots`.
 ///
 /// Natural `.call` sites are not seeds. Nested class recovery uses this so a
 /// pinned `var Outer = (function () { return Foo })()` also pins `Foo`.
+/// Value aliases are not included: an export root must not cross a decorator
+/// `||` or a comma tail.
 pub(crate) fn alias_closure_of_roots(
     items: &[ModuleItem],
     roots: &HashSet<BindingKey>,

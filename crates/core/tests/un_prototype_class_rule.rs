@@ -1376,6 +1376,201 @@ Object.defineProperty(Foo.prototype, "self", {
     assert_eq_normalized(&apply_resolved(input), expected);
 }
 
+/// Decorator factory whose value is `Decorator(...) || Fallback`, with the
+/// subclass call nested in an argument rather than `var Child = IIFE`.
+/// `var Child = IIFE` is recovered to `extends` and would consume the `.call`.
+///
+/// Reproduce the producer with Babel 7 then Terser (no extra config file):
+/// `@babel/core@7.26.10`, `@babel/plugin-proposal-decorators@7.25.9`
+/// (`{ legacy: true }`), `@babel/plugin-transform-class-properties@7.25.9`
+/// (`{ loose: true }`), `@babel/plugin-transform-classes@7.25.9`
+/// (`{ loose: true }`), then `terser@5.36.0` with `compress.passes = 2` and
+/// `mangle: false`. Plugin order is decorators, class properties, classes.
+/// Terser turns the loose `_proto.method =` temp into
+/// `Entry.prototype.takeEffect = …` inside `return …, Entry`, and the
+/// subclass stays `function (_Entry2) { _Entry2.call(this, ...args) }(Entry)`.
+/// That is the input this helper shrinks.
+fn decorator_factory_with_subclass(subclass_body: &str, comma_return: bool) -> String {
+    let factory_body = if comma_return {
+        r#"
+        function e() {
+            this.flag = true;
+        }
+        return e.prototype.run = function () {}, e;
+        "#
+    } else {
+        r#"
+        function e() {
+            this.flag = true;
+        }
+        e.prototype.run = function () {};
+        return e;
+        "#
+    };
+    format!(
+        r#"
+var Field = {{}};
+var Desc = {{ initializer: function () {{ return true; }} }};
+var Ctor;
+var Fallback;
+var slot;
+var Decorated;
+var Child;
+Decorated = Decorator((slot = applyDecoratedDescriptor((Ctor = function () {{
+    {factory_body}
+}}()).prototype, "flag", [Field], Desc), Fallback = Ctor)) || Fallback;
+Child = function (e) {{
+    {subclass_body}
+}}(Decorated);
+"#
+    )
+}
+
+#[test]
+fn decorator_factory_call_keeps_inner_constructor_as_function() {
+    let input = decorator_factory_with_subclass(
+        r#"
+        function t() {
+            return e.call(this) || this;
+        }
+        inheritsLoose(t, e);
+        return t;
+        "#,
+        false,
+    );
+    let output = apply_resolved(&input);
+    assert!(
+        !output.contains("class e"),
+        "a same-file .call through || must keep the factory constructor callable:\n{output}"
+    );
+    assert!(
+        output.contains("e.call(this)"),
+        "the subclass must keep the function .call:\n{output}"
+    );
+    assert!(
+        !output.contains("super("),
+        "this shape must not invent super():\n{output}"
+    );
+}
+
+#[test]
+fn decorator_factory_call_apply_keeps_constructor_in_pipeline() {
+    let input = decorator_factory_with_subclass(
+        r#"
+        function t() {
+            var n = e.call.apply(e, [this].concat(arguments)) || this;
+            return n;
+        }
+        inheritsLoose(t, e);
+        return t;
+        "#,
+        true,
+    );
+    let output = common::render_pipeline(&input);
+    assert!(
+        !output.contains("class e"),
+        "pipeline must not class-ify a constructor still reached by .call:\n{output}"
+    );
+    assert!(
+        output.contains(".call("),
+        "the leftover call must remain after concat spread:\n{output}"
+    );
+    assert!(!output.contains("super("), "{output}");
+}
+
+#[test]
+fn decorator_factory_inherits_loose_without_call_still_recovers() {
+    let input = decorator_factory_with_subclass(
+        r#"
+        function t() {}
+        inheritsLoose(t, e);
+        return t;
+        "#,
+        false,
+    );
+    let output = apply_resolved(&input);
+    assert!(
+        output.contains("class e"),
+        "inheritsLoose alone must not pin the factory constructor:\n{output}"
+    );
+}
+
+#[test]
+fn comma_value_alias_uses_only_the_last_item() {
+    let head_called = r#"
+function Ctor() { this.flag = true; }
+Ctor.prototype.run = function () { return this.flag; };
+function other() { this.flag = false; }
+other.prototype.read = function () { return this.flag; };
+var x = (Ctor, other);
+function make() { return x.call(this); }
+"#;
+    let output = apply_resolved(head_called);
+    assert!(output.contains("class Ctor"), "{output}");
+    assert!(!output.contains("class other"), "{output}");
+    assert!(output.contains("x.call(this)"), "{output}");
+
+    let tail_called = r#"
+function Ctor() { this.flag = true; }
+Ctor.prototype.run = function () { return this.flag; };
+function other() { this.flag = false; }
+other.prototype.read = function () { return this.flag; };
+var x = (other, Ctor);
+function make() { return x.call(this); }
+"#;
+    let output = apply_resolved(tail_called);
+    assert!(output.contains("class other"), "{output}");
+    assert!(!output.contains("class Ctor"), "{output}");
+    assert!(output.contains("x.call(this)"), "{output}");
+}
+
+#[test]
+fn helper_call_does_not_pin_parent_constructor() {
+    // `.call` on the helper result must not reach the helper's argument.
+    // Entering the call would pin Parent and this assertion would fail.
+    let input = r#"
+function Parent() { this.flag = true; }
+Parent.prototype.run = function () { return this.flag; };
+var t = helper(Parent);
+function make() { return t.call(this, 1); }
+"#;
+    let output = apply_resolved(input);
+    assert!(
+        output.contains("class Parent"),
+        "a helper's .call must not keep Parent as a function:\n{output}"
+    );
+    assert!(output.contains("t.call(this, 1)"), "{output}");
+}
+
+#[test]
+fn shadowed_parameter_call_does_not_pin_decorator_factory() {
+    let input = r#"
+var Field = {};
+var Desc = { initializer: function () { return true; } };
+var Ctor;
+var Fallback;
+var slot;
+var Decorated;
+Decorated = Decorator((slot = applyDecoratedDescriptor((Ctor = function () {
+    function e() {
+        this.flag = true;
+    }
+    e.prototype.run = function () {};
+    return e;
+}()).prototype, "flag", [Field], Desc), Fallback = Ctor)) || Fallback;
+function make(e) {
+    return e.call(this);
+}
+make(Unrelated);
+"#;
+    let output = apply_resolved(input);
+    assert!(
+        output.contains("class e"),
+        "a same short name in another parameter must not pin the factory:\n{output}"
+    );
+    assert!(output.contains("e.call(this)"), "{output}");
+}
+
 #[test]
 fn assigned_iife_result_keeps_returned_constructor_callable() {
     let input = r#"

@@ -3516,6 +3516,58 @@ new Child();
 }
 
 #[test]
+fn logical_or_alias_does_not_permanently_block_base_after_super_rewrite() {
+    // The `.call` reaches Foo through `Decorator(Foo) || Foo`, not a bare alias.
+    // Recovering Child consumes that call; the next fixpoint pass must still
+    // recover Foo. An unguarded value edge must not keep Foo a function.
+    let input = r#"
+var __extends = (this && this.__extends) || (function () {
+    var extendStatics = function (d, b) {
+        extendStatics = Object.setPrototypeOf ||
+            ({ __proto__: [] } instanceof Array && function (d, b) { d.__proto__ = b; }) ||
+            function (d, b) { for (var p in b) if (Object.prototype.hasOwnProperty.call(b, p)) d[p] = b[p]; };
+        return extendStatics(d, b);
+    };
+    return function (d, b) {
+        if (typeof b !== "function" && b !== null)
+            throw new TypeError("Class extends value " + String(b) + " is not a constructor or null");
+        extendStatics(d, b);
+        function __() { this.constructor = d; }
+        d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+    };
+})();
+var Foo = /** @class */ (function () {
+    function Foo() {}
+    Foo.prototype.start = function () { this.onStart(); };
+    Foo.prototype.onStart = function () {};
+    return Foo;
+}());
+var Decorated = Decorator(Foo) || Foo;
+var Child = /** @class */ (function (_super) {
+    __extends(Child, _super);
+    function Child() {
+        return _super.call(this) || this;
+    }
+    return Child;
+}(Decorated));
+new Child();
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("class Foo"),
+        "after the .call becomes super(), Foo must still recover:\n{output}"
+    );
+    assert!(output.contains("class Child extends Decorated"), "{output}");
+    // A constructor that is only `super()` is omitted. The leftover call must
+    // not stay behind as `_super.call`.
+    assert!(
+        !output.contains("_super.call"),
+        "recovering Child must consume the .call:\n{output}"
+    );
+    assert!(!output.contains(".call(this)"), "{output}");
+}
+
+#[test]
 fn argument_after_spread_may_feed_callable_iife_parameter() {
     let input = r#"
 var xs = [];

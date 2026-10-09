@@ -623,6 +623,44 @@ Child.call(this);
 }
 
 #[test]
+fn logical_or_alias_cascades_a_pinned_subclass_to_the_base() {
+    let base = class_iife("Foo");
+    // `Other` gives the probe a root set where Child converts first, so the
+    // debug fixpoint check also covers the `||` edge after that call becomes super().
+    let child = r#"
+import { Foo } from "./base.js";
+var Mid = (function (_super) {
+    __extends(t, _super);
+    function t() { return _super.call(this) || this; }
+    t.prototype.mid = function () { return 1; };
+    return t;
+})(Foo);
+var Decorated = Decorator(Mid) || Mid;
+var Child = (function (_super) {
+    __extends(t, _super);
+    function t() { return _super.call(this) || this; }
+    t.prototype.pong = function () { return 2; };
+    return t;
+})(Decorated);
+function Other() {}
+export { Child, Other };
+"#;
+    let grand = r#"
+import { Child } from "./child.js";
+Child.call(this);
+"#;
+    let modules = unpack(
+        &[("base.js", &base), ("child.js", child), ("grand.js", grand)],
+        false,
+    );
+    assert_stays_function(code(&modules, "base.js"), "Foo");
+    let child_out = code(&modules, "child.js");
+    assert_stays_function(child_out, "Mid");
+    assert_stays_function(child_out, "Child");
+    assert!(child_out.contains(".call"), "{child_out}");
+}
+
+#[test]
 fn flattened_wrapper_respects_the_pin() {
     let base = r#"
 "use strict";
