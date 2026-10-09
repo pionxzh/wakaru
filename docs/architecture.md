@@ -308,6 +308,12 @@ When unpacking bundles, the driver runs a two-phase pipeline:
    range resuming after `UnEsm`, through `UnReturn` → targeted late
    cleanup/recovery → emit.
 
+Unpack stops the registry at `UnReturn`. The registry's later Cleanup rules
+(such as `UnConditionals2`) do not run there; the targeted late cleanup in
+`driver/unpack/phases.rs` runs hand-picked counterparts instead. A change to
+one of those Cleanup rules that should reach unpack output needs the matching
+change in that cleanup, or it shows in single-file output only.
+
 No step after the late range may change a module's exports or imports
 without a diagnostic. When a rule emits a duplicate or undeclared export, fix
 that rule; do not add a late pass that hides it. `debug validate` reports what

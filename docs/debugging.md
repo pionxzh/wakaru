@@ -69,6 +69,10 @@ source module: original ESM import reads and link checks are preserved, while
 the unpack pipeline may remove unused imports that Wakaru recovered from bundle
 edges.
 
+A single-file trace also has no cross-module facts, so rules that consume them
+(fact-aware helper recovery, provider-dependent import rewrites) can look as if
+they never fire. Measure such a rule in `--unpack` mode before calling it dead.
+
 ## Validating Unpacked Output
 
 The command signature, current output formats, and exit behavior are documented
