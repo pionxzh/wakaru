@@ -65,33 +65,45 @@ impl VisitMut for UnWebpackInterop {
     fn visit_mut_module(&mut self, module: &mut Module) {
         // Every rewrite reads `require` as the webpack runtime, and the
         // namespace and getter rewrites also remove or rename bindings and
-        // emit new references; a `with` statement or a direct eval anywhere
-        // in the module can observe or rebind those names, so the module is
-        // left as is (docs/rewrite-assumptions.md, dynamic-scope skip).
-        if super::eval_utils::has_dynamic_scope_construct(module) {
+        // emit new references; a `with` statement anywhere in the module can
+        // observe or rebind those names, so the module is left as is
+        // (docs/rewrite-assumptions.md, dynamic-scope skip).
+        if super::eval_utils::module_has_with_stmt(module) {
             return;
         }
-        let mut has_own_replacer = WebpackHasOwnReplacer {
-            unresolved_mark: self.unresolved_mark,
-        };
-        module.visit_mut_with(&mut has_own_replacer);
+        // A direct eval skips the has-own and namespace rewrites the same
+        // way. The getter rewrite still runs: the getter and its base are the
+        // temps webpack emits for a harmony default import
+        // (`__webpack_require__.n(dep)`, which the unpacker spells as the
+        // arrow matched below), and evaluated source cannot name a bundler
+        // temp on purpose. It only drops a getter whose inline would rename
+        // the base.
+        let has_direct_eval = super::eval_utils::has_dynamic_scope_construct(module);
+        if !has_direct_eval {
+            let mut has_own_replacer = WebpackHasOwnReplacer {
+                unresolved_mark: self.unresolved_mark,
+            };
+            module.visit_mut_with(&mut has_own_replacer);
+        }
 
         let module_bindings = collect_module_bindings(module, self.unresolved_mark);
         if module_bindings.is_empty() {
             return;
         }
 
-        let initial_ref_counts = collect_binding_ref_counts(module);
-        let namespace_imports = collect_namespace_import_bindings(module);
-        let mut namespace_replacer = WebpackNamespaceReplacer {
-            initial_ref_counts: &initial_ref_counts,
-            module_bindings: &module_bindings,
-            namespace_imports: &namespace_imports,
-            removed_caches: HashSet::default(),
-            unresolved_mark: self.unresolved_mark,
-        };
-        module.visit_mut_with(&mut namespace_replacer);
-        remove_unused_namespace_cache_decls(module, &namespace_replacer.removed_caches);
+        if !has_direct_eval {
+            let initial_ref_counts = collect_binding_ref_counts(module);
+            let namespace_imports = collect_namespace_import_bindings(module);
+            let mut namespace_replacer = WebpackNamespaceReplacer {
+                initial_ref_counts: &initial_ref_counts,
+                module_bindings: &module_bindings,
+                namespace_imports: &namespace_imports,
+                removed_caches: HashSet::default(),
+                unresolved_mark: self.unresolved_mark,
+            };
+            module.visit_mut_with(&mut namespace_replacer);
+            remove_unused_namespace_cache_decls(module, &namespace_replacer.removed_caches);
+        }
 
         let mut candidates: HashMap<BindingKey, Ident> = HashMap::default();
         for item in &module.body {
@@ -148,6 +160,14 @@ impl VisitMut for UnWebpackInterop {
         }
 
         let mut to_inline = to_inline;
+        if has_direct_eval {
+            to_inline.retain(|getter, base| {
+                !binding_replacement_would_be_shadowed(module, getter, &base.sym)
+            });
+            if to_inline.is_empty() {
+                return;
+            }
+        }
         let renames = build_shadow_avoidance_renames(module, &mut to_inline);
         if !renames.is_empty() {
             rename_bindings_in_module(module, &renames);

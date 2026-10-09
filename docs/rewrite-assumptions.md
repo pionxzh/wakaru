@@ -1152,6 +1152,9 @@ introduces a new binding guards against both constructs at this granularity:
   `require`; SmartRename never names a binding `require`. Part of a module
   (`node_has_dynamic_scope_construct`) cannot see that declaration, so there
   every direct `eval` counts.
+- A rewrite that touches only bundler temps keeps the compiler-temp rule
+  above, so `UnWebpackInterop` still inlines webpack's interop getter
+  (`__webpack_require__.n`) under a direct `eval`.
 
 Compilers do not emit either construct, so this coarse treatment costs little
 recovery on compiled output. A rule in this set that lacks the guard is a bug,

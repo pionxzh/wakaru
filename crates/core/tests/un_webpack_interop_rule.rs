@@ -588,12 +588,79 @@ var parse = _r.parse;
 // ── Dynamic scope ──────────────────────────────────────────────────
 
 #[test]
-fn keeps_getter_and_has_own_in_module_with_direct_eval() {
+fn inlines_getter_but_keeps_has_own_in_module_with_direct_eval() {
     let input = r#"
 var _lib = require("./lib");
 var _lib2 = () => _lib && _lib.__esModule ? _lib.default : _lib;
 eval(s);
 console.log(_lib2(), require.o(a, b));
+"#;
+    let expected = r#"
+var _lib = require("./lib");
+eval(s);
+console.log(_lib, require.o(a, b));
+"#;
+    assert_eq_normalized(&render(input), expected.trim());
+}
+
+#[test]
+fn inlines_getter_used_inside_function_with_direct_eval() {
+    let input = r#"
+import _lib from "./lib";
+var _lib2 = () => { if (_lib && _lib.__esModule) { return _lib.default; } return _lib; };
+let colors = _lib2();
+async function parse(source) {
+  await eval(source);
+  return _lib2.a;
+}
+"#;
+    let expected = r#"
+import _lib from "./lib";
+let colors = _lib;
+async function parse(source) {
+  await eval(source);
+  return _lib;
+}
+"#;
+    assert_eq_normalized(&render(input), expected.trim());
+}
+
+#[test]
+fn inlines_require_n_getter_in_module_with_direct_eval() {
+    let input = r#"
+var _lib = require("./lib");
+var _lib2 = require.n(_lib);
+eval(s);
+console.log(_lib2());
+"#;
+    let expected = r#"
+var _lib = require("./lib");
+eval(s);
+console.log(_lib);
+"#;
+    assert_eq_normalized(&render(input), expected.trim());
+}
+
+#[test]
+fn keeps_getter_that_needs_a_base_rename_in_module_with_direct_eval() {
+    let input = r#"
+var r = require("./lib");
+var o = () => r && r.__esModule ? r.default : r;
+function compile(pattern) {
+  var r = {};
+  return o()(pattern, r);
+}
+eval(s);
+"#;
+    assert_eq_normalized(&render(input), input.trim());
+}
+
+#[test]
+fn keeps_namespace_rewrite_in_module_with_direct_eval() {
+    let input = r#"
+import * as react from "./react";
+let useId = require.t(react, 2).useId;
+eval(s);
 "#;
     assert_eq_normalized(&render(input), input.trim());
 }
