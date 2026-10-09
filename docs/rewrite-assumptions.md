@@ -1131,19 +1131,26 @@ A rule that reads a free name as the global, renames or removes a binding, or
 introduces a new binding guards against both constructs at this granularity:
 
 - A `with` statement anywhere in the module skips the rule for the whole
-  module (`module_has_with_stmt`). wakaru does not model `with` bodies.
+  module (`module_has_with_stmt`). wakaru does not model `with` bodies. A
+  rule may skip less when it can tell which rewrites a `with` body could
+  observe; `VarDeclToLetConst` keeps only the `var`s inside the body.
 - A direct `eval` whose source is unknown blocks the rewrite. A direct `eval`
   whose source is a static string blocks only the names that source mentions,
   the best effort above. For a synthesized reference to a global such as
   `undefined` or `Infinity`, `module_blocks_global_reference(module, name)`
-  applies both `with` and `eval` cases.
+  applies both `with` and `eval` cases. A rule that matches `undefined` read
+  as the global uses `module_reads_rebindable_undefined`, which also lets a
+  module that spells it only `void 0` through.
 - A rule that cannot cheaply name every binding a known source could reach
   uses `has_dynamic_scope_construct` instead, and skips on any `with` or
-  direct `eval`.
+  direct `eval`. This is the default for a rule that adds the guard: the
+  skip covers every name at once, so the rule needs no per-name analysis.
 
 Compilers do not emit either construct, so this coarse treatment costs little
 recovery on compiled output. A rule in this set that lacks the guard is a bug,
-not a documented exception.
+not a documented exception. `UnEsm` also keeps a module with a `with`
+statement CommonJS, because ESM is strict code, where `with` is a syntax
+error.
 
 Two boundaries follow from this.
 
