@@ -134,6 +134,8 @@ Write tests before implementation when the input→output is known:
 
 For bugfixes to existing rules: add a regression test that reproduces the exact bug.
 
+A new or widened matcher also needs one test that runs the producer's shape through the full pipeline (`render` / `render_with_level`): an earlier rule can reshape the input before the matcher sees it, and an isolated `render_rule` test cannot show that. See `docs/testing.md#choosing-render-vs-render_rule`.
+
 ### Adding a new rule
 
 1. Create `crates/core/tests/my_rule_rule.rs` with test cases (they will fail)
@@ -230,7 +232,7 @@ under that document's handoff rules.
    - Per-rule tests can all pass while rules undo each other's work on real-world module shapes; this suite catches that class. Read the full diff report, not just the tail.
    - Reference updates (`--update`) require reviewing every changed file: better, not just different.
    - If the drift should be rename-only, prove it with `wakaru debug normalize --rename` before reading hunks (recipe in `docs/testing.md`).
-   - If the sibling checkout `../wakaru-private-artificial` exists, also run the checks its `README.md` lists for your change.
+   - If the sibling checkout `../wakaru-private-artificial` exists, also run the checks its `README.md` lists for your change. Before the change merges into main, run them unfiltered on the rebased commit.
 5. Run formatting and lint checks:
    - `cargo fmt --check`
    - `cargo clippy -p wakaru-core --all-targets -- -D warnings` for core/rule changes

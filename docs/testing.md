@@ -155,7 +155,8 @@ with this change.
 
    If the sibling `wakaru-private-artificial` repository is checked out, also
    run the checks its `README.md` lists for your change, against your
-   worktree's binary.
+   worktree's binary. Before the change merges into main, run them unfiltered
+   against the binary of the rebased commit.
 
 7. Docs freshness: if your change makes any statement in `docs/` or
    `AGENTS.md` false (a renamed flag, a moved file, a new rule ordering, a
@@ -413,10 +414,11 @@ fn apply(input: &str) -> String {
 | Helper | Purpose |
 |---|---|
 | `render(source)` | Full decompile pipeline (all rules) |
+| `render_with_level(source, level)` | Full pipeline at a rewrite level |
 | `render_rule(source, builder)` | Single rule in isolation (resolver + one rule + fixer) |
 | `render_rule_with_filename(source, filename, builder)` | Same as `render_rule` but with custom filename (for `.ts`/`.tsx` parsing) |
 | `inspect_rule_output(source, builder, inspect)` | Single rule, then inspect the module instead of emitting; `SpanText::starting_at(span)` resolves a node's span to input text (for span-propagation tests) |
-| `render_pipeline_until(source, stop_after)` | Pipeline up to a specific rule (inclusive) |
+| `render_pipeline_until(source, stop_after)` | Pipeline up to a specific rule (inclusive); `render_pipeline_until_with_level` takes a level |
 | `render_pipeline_between(source, start, stop)` | Pipeline from `start` through `stop` (inclusive) |
 | `trace_pipeline(source, options)` | Collect `RuleTraceEvent`s for debugging |
 | `changed_rules(source)` | List which rule names changed the output |
@@ -481,6 +483,17 @@ to an earlier rule that reshapes the inlined `_inherits` tail breaks class
 recovery in the pipeline while every class test stays green. When a change
 alters a shape another rule matches, add a `render` or
 `render_pipeline_between` test that runs both.
+
+**A new or widened matcher needs one test through the pipeline.** A
+`render_rule` test proves the matcher accepts a shape, not that the shape
+reaches the rule. An earlier rule may rewrite it first: UnConditionals runs
+before UnArrayConcatSpreadRest and turns a helper's ternary `return` into
+`if`/`return`. The isolated test still passes, so nothing signals the gap.
+When a change adds or widens a match on a producer shape (a helper body, a
+temp chain, a call pattern), add at least one test that feeds that shape, as
+the producer emits it, through `render` (`render_with_level` when the rewrite
+is level-gated) and asserts the recovered form. Cover each producer variant
+the matcher accepts, not only the one you checked end to end.
 
 When in doubt, check with `debug trace` on the raw input to see what the AST
 looks like when your rule receives it.
