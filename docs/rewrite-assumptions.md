@@ -4,6 +4,10 @@ See also: [Architecture](architecture.md) for pipeline stages and rewrite
 levels, [Rule dependency inventory](rule-dependency-inventory.md) for per-rule
 safety classifications.
 
+This document states contracts in terms of behavior. It names a rule or pass
+by what it does, not by file or function; code pointers belong in
+[Architecture](architecture.md) or [Code map](code-map.md).
+
 ## Purpose
 
 `RewriteLevel` controls how aggressively wakaru recovers original source, but

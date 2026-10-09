@@ -112,6 +112,17 @@ When `--json` or `--summary` is provided, the runner updates that file after
 each processed test. Interrupted runs leave `complete: false` in the report, so
 the last saved result is still inspectable.
 
+Two runner speedups were measured and rejected:
+
+- A decompile cache keyed by the transformed source. Duplicates come from
+  generated test families whose files differ only in metadata comments, which
+  a minifier strips. Within one slice process they are 6–10% of decompile
+  jobs, and the matrix wall time is bounded by its slowest job, so the saving
+  is seconds. Sharing the cache across slices needs a cross-process cache for
+  a few more percent.
+- Batched producer transforms. Producers already run in-process (Terser is an
+  imported module), so there is no per-call process spawn to remove.
+
 ## Pipelines
 
 `--pipeline` selects the producer that creates the code Wakaru decompiles:

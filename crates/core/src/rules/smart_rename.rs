@@ -62,6 +62,19 @@ where
     super::rename_utils::rename_bindings(node, &without_require_target(renames));
 }
 
+/// Heuristic naming. Every pass follows the same trade-offs:
+///
+/// - A misleading name costs a reader more than a short minified one, so a
+///   pass may give up a few correct names to avoid wrong ones. When a filter
+///   would cost many correct names, measure where it pays off instead of
+///   dropping it or accepting the wrong names.
+/// - Structural recovery outranks a guessed name. A rewrite that loses a
+///   name derived from member access or a value position is not a
+///   regression, and such names get no regression assertion.
+/// - Destructuring runs before value-position naming, so when a destructured
+///   key and a value-position hint disagree, the key wins
+///   (`const { payload: t } = e; return { location: t }` names `t`
+///   `payload`). This is for consistency; neither order reads better.
 pub struct SmartRename {
     unresolved_mark: Mark,
     pending_value_position_names: HashMap<BindingId, String>,

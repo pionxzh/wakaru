@@ -41,6 +41,10 @@ platform binaries and, once all of them succeed, publishes everything:
 - **npm**: the platform packages, `@wakaru/cli`, and the bare `wakaru` alias.
 - **GitHub Release** with the archives attached and auto-generated notes.
 
+Every publish job waits for the whole build matrix, so a failed build leg
+publishes nothing. Delete the tag, fix the build, and tag the same version
+again. Do not drop a matrix leg to get the release out.
+
 After the workflow finishes, replace the generated release notes with the
 reviewed ones (`gh release edit vX.Y.Z --notes-file notes.md`). Past releases
 use a short lede naming the headliners, a few themed sections, and the compare

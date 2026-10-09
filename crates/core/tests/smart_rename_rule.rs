@@ -3627,3 +3627,20 @@ function f(e) {
 "#;
     assert_eq_normalized(&apply(input), input);
 }
+
+#[test]
+fn destructured_key_wins_over_value_position_hint() {
+    let input = r#"
+export function f(e) {
+    const { payload: t } = e;
+    return { location: t };
+}
+"#;
+    let expected = r#"
+export function f(e) {
+    const { payload } = e;
+    return { location: payload };
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}

@@ -34,6 +34,19 @@ the registry defines *what*.
 | Agent / tool integration | [../skills/wakaru/SKILL.md](../skills/wakaru/SKILL.md) — the CLI-based agent surface |
 | Docs site content or deployment (`docs-site/`) | [docs-site.md](docs-site.md) — basePath gotchas, deploy pattern, sync obligations, content conventions |
 | Cutting a release | [releasing.md](releasing.md) |
+| Bumping `swc_core` | [swc-upgrades.md](swc-upgrades.md) — how to read a bump, workaround removal, checklist, filing swc issues |
+
+## Writing these docs
+
+- State what holds now. Policy text carries no decision dates, and history
+  stays in Git, not in the doc.
+- Write the invariant, not the event that revealed it.
+- No personal names; say "the preferred direction", not who preferred it.
+- No enforcement lines such as "do not reopen this"; the rule and its reason
+  are enough, and other docs point to the section.
+- [rewrite-assumptions.md](rewrite-assumptions.md) describes behavior: name a
+  pass by what it does, and put code pointers in
+  [architecture.md](architecture.md) or [code-map.md](code-map.md).
 
 ## Data directories
 

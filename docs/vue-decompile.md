@@ -11,7 +11,7 @@ Run:
 
 ```bash
 cargo run -p wakaru-cli -- input.js --vue-sfc -o output.js
-cargo run -p wakaru-cli -- --unpack bundle.js --vue-sfc -o unpacked/
+cargo run -p wakaru-cli -- bundle.js --unpack --vue-sfc -o unpacked/
 ```
 
 In single-file mode without `-o`, stdout remains decompiled JavaScript.

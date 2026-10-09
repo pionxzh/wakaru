@@ -87,7 +87,7 @@ and write when attributing a finding; `--input` only filters free-identifier
 findings, not const/import writes.
 
 ```bash
-cargo run -p wakaru-cli -- --unpack bundle.js -o out/
+cargo run -p wakaru-cli -- bundle.js --unpack -o out/
 cargo run -p wakaru-cli -- debug validate out/          # human-readable
 cargo run -p wakaru-cli -- debug validate out/ --json   # machine-readable
 cargo run -p wakaru-cli -- debug validate out/ --input bundle.js  # + free identifiers not free in the input

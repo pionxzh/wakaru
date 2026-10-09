@@ -343,6 +343,11 @@ the behavior became "rename but alias-preserve the public name"). A name like
 `public_export_name_survives_rename` stays true across implementations and
 tells the reader what actually matters.
 
+**Removing a behavior removes its tests.** Do not turn them into negative
+tests that check the input now passes through unchanged: once the code path
+is gone, such a test guards nothing. Keep or add a test only for a contract
+that remains, such as a producer fix that must not emit the old leftover.
+
 **Use synthetic code, not real data.** Write the shape that triggers the bug
 with neutral names (`Lib.mixin`, `first`/`second`, `module-11111`,
 `lazy-beta.js`). Do not copy identifiers, strings, module ids, or file names
@@ -469,6 +474,13 @@ but some rules depend on earlier normalization:
   bracket notation, indirect calls, or comma expressions, those are normalized
   before your rule runs in the real pipeline. Either pre-normalize the test
   input manually, or use `render` / `render_pipeline_until`.
+
+The reverse also holds: an isolated test cannot see an earlier rule break the
+shape a later rule consumes. UnEs6Class tests run UnEs6Class alone, so a change
+to an earlier rule that reshapes the inlined `_inherits` tail breaks class
+recovery in the pipeline while every class test stays green. When a change
+alters a shape another rule matches, add a `render` or
+`render_pipeline_between` test that runs both.
 
 When in doubt, check with `debug trace` on the raw input to see what the AST
 looks like when your rule receives it.

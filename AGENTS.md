@@ -32,6 +32,7 @@ reading everything:
 | Agent / tool integration | `skills/wakaru/SKILL.md` — CLI-based agent surface |
 | Docs site content or deployment (`docs-site/`) | `docs/docs-site.md` — basePath gotchas, deploy pattern, sync obligations, content conventions |
 | Cutting a release | `docs/releasing.md` |
+| Bumping `swc_core` | `docs/swc-upgrades.md` — how to read a bump, workaround removal, checklist, filing swc issues |
 
 `docs/README.md` carries this same map for agents and tools that do not
 auto-load this file.
@@ -43,7 +44,7 @@ All `cargo` commands run from the repo root.
 ```bash
 cargo build                                                 # debug build
 cargo run -p wakaru-cli -- input.js -o output.js            # decompile single file
-cargo run -p wakaru-cli -- --unpack bundle.js -o unpacked/  # unpack bundle
+cargo run -p wakaru-cli -- bundle.js --unpack -o unpacked/  # unpack bundle
 cargo run -p wakaru-cli -- --unpack --raw bundle.js -o raw/ # raw extraction (no rules)
 cargo run -p wakaru-cli -- input.js -m input.js.map         # with source map
 cargo run -p wakaru-cli -- debug trace path/to/module.js    # debug: per-rule diffs
