@@ -121,6 +121,52 @@ fn parses_debug_trace_command() {
     }
 }
 
+fn parse_trace_args(extra: &[&str]) -> TraceArgs {
+    let cli = Cli::try_parse_from(["wakaru", "debug", "trace", "input.js"].iter().chain(extra))
+        .expect("debug trace command should parse");
+    match cli.command {
+        Some(Command::Debug(DebugArgs {
+            command: DebugCommand::Trace(args),
+        })) => args,
+        other => panic!("expected debug trace command, got {other:?}"),
+    }
+}
+
+const PRE_EXISTING_DEAD_HELPER: &str = "function _helper() { return 1; }\nexport const x = 2;\n";
+
+#[test]
+fn debug_trace_uses_the_decompile_dce_default() {
+    let options = trace_decompile_options(&parse_trace_args(&[]), None);
+    assert_eq!(options.dce_mode, DceMode::TransformOnly);
+
+    // Transform-only DCE keeps dead code that was already in the input.
+    let events = trace_rules(
+        PRE_EXISTING_DEAD_HELPER,
+        options,
+        RuleTraceOptions::default(),
+    )
+    .expect("trace should succeed");
+    assert!(events.iter().all(|event| event.rule != "DeadDecls"));
+}
+
+#[test]
+fn debug_trace_dce_flag_traces_the_full_sweep() {
+    let options = trace_decompile_options(&parse_trace_args(&["--dce"]), None);
+    assert_eq!(options.dce_mode, DceMode::Full);
+
+    let events = trace_rules(
+        PRE_EXISTING_DEAD_HELPER,
+        options,
+        RuleTraceOptions::default(),
+    )
+    .expect("trace should succeed");
+    let dead_decls = events
+        .iter()
+        .find(|event| event.rule == "DeadDecls")
+        .expect("DeadDecls should remove the dead helper");
+    assert!(!dead_decls.after.contains("_helper"));
+}
+
 #[test]
 fn debug_trace_reports_an_empty_traced_range() {
     let changed_only = trace_output_text(&[], false);

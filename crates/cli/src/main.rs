@@ -309,6 +309,11 @@ struct TraceArgs {
     /// Rewrite aggressiveness level.
     #[arg(long, default_value = "standard", value_enum)]
     level: CliRewriteLevel,
+
+    /// Remove all dead code (full reachability sweep). By default, only
+    /// transform-induced dead code is removed, as in a normal decompile.
+    #[arg(long)]
+    dce: bool,
 }
 
 fn main() -> Result<()> {
@@ -353,11 +358,7 @@ fn run_unpack(cli: Cli) -> Result<()> {
         Styled::for_stderr()
     };
 
-    let dce_mode = if cli.dce {
-        DceMode::Full
-    } else {
-        DceMode::TransformOnly
-    };
+    let dce_mode = dce_mode_for_flag(cli.dce);
 
     let out_dir = cli.output.expect("checked above");
     let check_existing_writes = ensure_output_dir(&out_dir, cli.force)?;
@@ -605,11 +606,7 @@ fn run_single(cli: Cli) -> Result<()> {
         .cloned();
     let output_filename = filename.clone();
     let sourcemap_bytes = read_sourcemap(cli.sourcemap.as_ref())?;
-    let dce_mode = if cli.dce {
-        DceMode::Full
-    } else {
-        DceMode::TransformOnly
-    };
+    let dce_mode = dce_mode_for_flag(cli.dce);
     let output_path = cli.output.clone();
     let vue_file_output = cli.vue_sfc
         && output_path
@@ -1042,16 +1039,33 @@ fn run_normalize(args: NormalizeArgs) -> Result<()> {
     Ok(())
 }
 
+/// `--dce` selects the full sweep; without it, only dead code the transforms
+/// created is removed.
+fn dce_mode_for_flag(dce: bool) -> DceMode {
+    if dce {
+        DceMode::Full
+    } else {
+        DceMode::TransformOnly
+    }
+}
+
+/// Trace runs the same DCE mode as a normal decompile, so its last rule's
+/// output matches the CLI's.
+fn trace_decompile_options(args: &TraceArgs, sourcemap: Option<Vec<u8>>) -> DecompileOptions {
+    DecompileOptions {
+        filename: args.input.to_string_lossy().to_string(),
+        sourcemap,
+        level: args.level.into(),
+        dce_mode: dce_mode_for_flag(args.dce),
+        ..Default::default()
+    }
+}
+
 fn run_trace(args: TraceArgs, force: bool) -> Result<()> {
     let input = fs::read_to_string(&args.input)
         .with_context(|| format!("failed to read {}", args.input.display()))?;
     let sourcemap_bytes = read_sourcemap(args.sourcemap.as_ref())?;
-    let options = DecompileOptions {
-        filename: args.input.to_string_lossy().to_string(),
-        sourcemap: sourcemap_bytes,
-        level: args.level.into(),
-        ..Default::default()
-    };
+    let options = trace_decompile_options(&args, sourcemap_bytes);
     let events = trace_rules(
         &input,
         options,

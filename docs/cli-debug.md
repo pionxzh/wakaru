@@ -35,6 +35,7 @@ published Rust `wakaru::debug` namespace is governed by its rustdoc and
 wakaru debug trace input.js
 wakaru debug trace input.js --from RemoveVoid --until UnEsm
 wakaru debug trace input.js --all
+wakaru debug trace input.js --dce
 wakaru debug trace input.js -o trace.txt --force
 ```
 
@@ -42,7 +43,9 @@ Runs the normal single-file rule pipeline and prints the initial source plus a
 unified diff for each rule that changes the rendered output. `--all` includes
 unchanged rules; `--from` and `--until` select an inclusive rule range;
 `--level` selects the rewrite level; `-m` / `--source-map` supplies a source
-map. Output goes to stdout unless `-o` is supplied. A `--from` rule that the
+map. Dead-code removal matches a normal decompile: only dead code the
+transforms created is removed, and `--dce` switches to the full sweep. Output
+goes to stdout unless `-o` is supplied. A `--from` rule that the
 pipeline runs after the `--until` rule is rejected as an option error. When
 no rule in the traced range changed the rendered output, the command prints a
 single note line saying so instead of an empty trace.
