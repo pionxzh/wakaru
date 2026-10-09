@@ -400,7 +400,8 @@ Neither proof creates a default-object fact available to consumers.
   `import()`, `Promise.resolve().then(() => _(require(x)))`, when `_` is
   imported from a module whose helper export fact proves it is the wildcard
   interop helper (swc's `externalHelpers` output, with `@swc/helpers` bundled
-  as its own module). `UnEsm` restores the same shape with a local helper;
+  as its own module, or tslib's `__importStar` under TypeScript's
+  `importHelpers`). `UnEsm` restores the same shape with a local helper;
   in Phase 1 it cannot see a helper from another module
   (`lowered_dynamic_import_source_semantics` in rewrite-assumptions.md).
 - **`run_cross_module_interop_imports`** — turns a top-level

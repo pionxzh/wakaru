@@ -1189,6 +1189,34 @@ fn cross_module_wildcard_helper_lowered_dynamic_import_becomes_import_call() {
 }
 
 #[test]
+fn cross_module_tslib_import_star_lowered_dynamic_import_becomes_import_call() {
+    // shape: producer tsc@5.9.3 module=CommonJS esModuleInterop importHelpers,
+    // bundled with tslib@2.8.1 by webpack@5.111.1 mode=production (Terser);
+    // sink renamed to `globalThis.lib`. tsc takes `__importStar` from tslib
+    // only in a file that also has a static import.
+    let source = r#"(()=>{var e={393(e,t,r){"use strict";t.load=async function(){const e=await Promise.resolve().then(()=>n.__importStar(r(339)));return["lazy-consumer",new o.default("w").label(),e.default,e.kind]};const n=r(635),o=n.__importDefault(r(805))},97(e,t,r){const n=r(393);t.load=function(){return n.load()}},339(e,t){"use strict";Object.defineProperty(t,"__esModule",{value:!0}),t.kind=void 0,t.default="lazy-default",t.kind="lazy-kind"},805(e,t){"use strict";Object.defineProperty(t,"__esModule",{value:!0}),t.default=class{constructor(e){this.name=e}label(){return"widget:"+this.name}}},635(e,t,r){"use strict";r.d(t,{__importDefault:()=>i,__importStar:()=>u});var n=Object.create?function(e,t,r,n){void 0===n&&(n=r);var o=Object.getOwnPropertyDescriptor(t,r);o&&!("get"in o?!t.__esModule:o.writable||o.configurable)||(o={enumerable:!0,get:function(){return t[r]}}),Object.defineProperty(e,n,o)}:function(e,t,r,n){void 0===n&&(n=r),e[n]=t[r]},o=Object.create?function(e,t){Object.defineProperty(e,"default",{enumerable:!0,value:t})}:function(e,t){e.default=t},a=function(e){return a=Object.getOwnPropertyNames||function(e){var t=[];for(var r in e)Object.prototype.hasOwnProperty.call(e,r)&&(t[t.length]=r);return t},a(e)};function u(e){if(e&&e.__esModule)return e;var t={};if(null!=e)for(var r=a(e),u=0;u<r.length;u++)"default"!==r[u]&&n(t,e,r[u]);return o(t,e),t}function i(e){return e&&e.__esModule?e:{default:e}}}};const t={};function r(n){const o=t[n];if(void 0!==o)return o.exports;const a=t[n]={exports:{}};return e[n](a,a.exports,r),a.exports}r.d=(e,t)=>{for(var n in t)r.o(t,n)&&!r.o(e,n)&&Object.defineProperty(e,n,{enumerable:!0,get:t[n]})},r.o=(e,t)=>Object.prototype.hasOwnProperty.call(e,t),globalThis.lib=r(97)})();"#;
+    let output = wakaru_core::driver::test_support::unpack(
+        source,
+        wakaru_core::DecompileOptions {
+            filename: "bundle.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("unpack should succeed");
+    let (_, consumer) = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "module-393.js")
+        .expect("consumer module");
+    assert!(
+        consumer.contains(r#"await import("./module-339.js")"#),
+        "{consumer}"
+    );
+    assert!(!consumer.contains("require"), "{consumer}");
+    assert!(!consumer.contains("__importStar"), "{consumer}");
+}
+
+#[test]
 fn cross_module_call_of_a_non_helper_is_not_a_lowered_import() {
     // The provider's `_` is an ordinary function, so its export fact proves
     // no helper identity.

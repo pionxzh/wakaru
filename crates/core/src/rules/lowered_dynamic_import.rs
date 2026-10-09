@@ -32,13 +32,14 @@ use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::arrow_function::has_this_or_arguments;
 use super::cross_module_helper_refs::{
-    collect_cross_module_helper_refs, cross_module_member_helper_kind,
+    collect_cross_module_helper_refs, collect_cross_module_ts_helper_refs,
+    cross_module_member_helper_kind, cross_module_ts_member_helper,
 };
 use super::eval_utils::{module_blocks_global_reference, node_has_dynamic_scope_construct};
 use super::helper_matcher::binding_key;
 use super::transpiler_helper_utils::TranspilerHelperKind;
 use super::un_interop_require_wildcard::is_canonical_interop_flag;
-use crate::facts::ModuleFactsMap;
+use crate::facts::{ModuleFactsMap, TypeScriptHelperKind};
 use crate::utils::paren::strip_parens;
 
 /// Restores lowered `import()` calls whose wildcard helper is imported from
@@ -53,7 +54,19 @@ pub(crate) fn run_cross_module_lowered_dynamic_imports(
     let refs = collect_cross_module_helper_refs(module, module_facts, current_filename, |kind| {
         kind == TranspilerHelperKind::InteropRequireWildcard
     });
-    if refs.direct.is_empty() && refs.namespaces.is_empty() {
+    // tslib's `__importStar` is a raw TypeScript helper fact, not the
+    // semantic wildcard kind.
+    let ts_refs = collect_cross_module_ts_helper_refs(
+        module,
+        module_facts,
+        current_filename,
+        TypeScriptHelperKind::ImportStar,
+    );
+    if refs.direct.is_empty()
+        && refs.namespaces.is_empty()
+        && ts_refs.direct.is_empty()
+        && ts_refs.namespaces.is_empty()
+    {
         return;
     }
     if module_blocks_global_reference(module, "Promise") {
@@ -61,8 +74,14 @@ pub(crate) fn run_cross_module_lowered_dynamic_imports(
     }
     let matcher = LoweredImportMatcher {
         is_wildcard_helper: |callee: &Expr| match callee {
-            Expr::Ident(helper) => refs.direct.contains_key(&binding_key(helper)),
-            callee => cross_module_member_helper_kind(callee, &refs.namespaces).is_some(),
+            Expr::Ident(helper) => {
+                refs.direct.contains_key(&binding_key(helper))
+                    || ts_refs.direct.contains(&binding_key(helper))
+            }
+            callee => {
+                cross_module_member_helper_kind(callee, &refs.namespaces).is_some()
+                    || cross_module_ts_member_helper(callee, &ts_refs.namespaces)
+            }
         },
         unresolved_mark: Some(unresolved_mark),
     };
