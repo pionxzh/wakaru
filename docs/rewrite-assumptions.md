@@ -548,6 +548,59 @@ Affects: `ObjMethodShorthand`, via the shared constructor-sensitivity set.
 
 Level: every level. The rule is `always_enabled`.
 
+### `create_class_descriptor_value_is_installed`
+
+A proven `createClass` helper (`CreateClassHelpers::is_call`: runtime path,
+same-module helper body, or unresolved `_createClass` — not the English name)
+copies each `{ key, value }` object in an **inline array argument** onto the
+constructor. The same walk also treats a call as that helper when the callee
+is recorded by `nested_create_class_helpers`. That scan covers the whole
+module, at any depth, including module-top-level bindings. It records function
+declarations (including `export function`), named function expressions, and
+`var` / `let` / `const` initialized with a function expression (parentheses
+allowed), when the function's body matches `is_create_class_function`, the
+same predicate `CreateClassHelpers` applies to a top-level declaration. It
+does not record arrow functions or an anonymous function that is not bound
+that way. Besides runtime-path `import` / `require` bindings,
+`CreateClassHelpers` records only non-exported top-level function
+declarations and IIFE-shaped `var` helpers whose bodies match, so a top-level
+`var install = function …` is seen only by this scan.
+
+The third argument is installed on `Ctor.<key>`. The second argument is
+installed on `Ctor.prototype.<key>`. `ObjMethodShorthand` keeps that `value`
+a function expression only when the exact installed member is already in the
+constructor-sensitive set. `CreateClassHelpers::is_call` also marks the
+helper's first argument sensitive; a callee found only by the module-wide
+scan does not. Either way, the constructor binding itself does not keep every
+method. The `value` function is not added to the shared set, so
+`ArrowFunction` does not see it. Arguments that are not those array literals
+keep the call-result key link above. A spread in any of the first three
+arguments skips the descriptor walk.
+
+A false match only skips shorthand. Legal `class` source does not construct
+its methods, so this walk does not need to keep one. If a descriptor `value`
+is kept, the installed member was already constructor-sensitive for another
+reason, such as a conditional `new`, a `.prototype` read, or `instanceof`.
+Keeping the function expression leaves the member exactly as the compiled
+input installs it.
+
+Known misses, left as method shorthand:
+
+- a descriptor array passed through a temporary, including `e = [...]` left
+  for an inlined `_defineProperties` loop
+- `new` on the outer binding when that binding is the helper call
+  (`var Model = helper(Ctor, …)`) or the wrapper `return`s the helper call
+  (`return helper(Ctor, …)`), because the IIFE-return alias does not treat
+  the helper result as `Ctor`
+- a spread in any of the first three arguments
+  (`helper(Ctor, ...extra, array)`)
+- a static method `UnEs6Class` already recovered
+- `new inst.key()` / `new this.key()`, which do not reach `Ctor.prototype.key`
+
+Affects: `ObjMethodShorthand`.
+
+Level: every level. The rule is `always_enabled`.
+
 ### `concat_arguments_are_arrays`
 
 Unknown arguments in an array-literal `.concat(...)` call are ordinary arrays,

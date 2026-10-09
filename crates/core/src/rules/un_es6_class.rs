@@ -1335,7 +1335,7 @@ fn detect_create_class_fn(ident: &Ident, function: &Function) -> Option<BindingK
     }
 }
 
-fn is_create_class_function(function: &Function) -> bool {
+pub(crate) fn is_create_class_function(function: &Function) -> bool {
     use swc_core::ecma::visit::{Visit, VisitWith};
 
     let Some(first_param) = function.params.first() else {

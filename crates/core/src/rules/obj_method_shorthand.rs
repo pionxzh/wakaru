@@ -3,10 +3,10 @@ use crate::collections::HashSet;
 use swc_core::atoms::Atom;
 use swc_core::common::Mark;
 use swc_core::ecma::ast::{
-    AssignExpr, AssignTarget, BinaryOp, CallExpr, Callee, Expr, MethodProp, Module, ObjectLit,
-    Prop, PropName, PropOrSpread, VarDeclarator,
+    ArrayLit, AssignExpr, AssignTarget, BinaryOp, CallExpr, Callee, Expr, FnDecl, FnExpr, Lit,
+    MethodProp, Module, ObjectLit, Prop, PropName, PropOrSpread, VarDeclarator,
 };
-use swc_core::ecma::visit::{VisitMut, VisitMutWith};
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::constructor_sensitivity::{
     assign_target_pat_has_constructor_sensitive_value, assign_target_value_key,
@@ -16,7 +16,10 @@ use super::constructor_sensitivity::{
     visit_mut_pat_constructor_sensitive_defaults, CreateClassHelpers, ValueKey,
 };
 use super::decl_utils::has_duplicate_param_names;
+use super::helper_matcher::{binding_key, binding_key_from_ident_pat, BindingKey};
 use super::transpiler_helper_utils::LocalHelperContext;
+use super::un_es6_class::is_create_class_function;
+use crate::utils::paren::strip_parens;
 
 pub struct ObjMethodShorthand {
     unresolved_mark: Mark,
@@ -43,9 +46,12 @@ impl ObjMethodShorthand {
         if let Some(bundle_suffixes) = bundle_suffixes {
             constructed_suffixes.extend(bundle_suffixes.iter().cloned());
         }
+        let nested_helpers = nested_create_class_helpers(module);
         module.visit_mut_with(&mut ObjMethodShorthandConverter {
             constructor_sensitive_values: &constructor_sensitive_values,
             constructed_suffixes: &constructed_suffixes,
+            create_class: &create_class,
+            nested_helpers: &nested_helpers,
         });
     }
 }
@@ -70,6 +76,13 @@ struct ObjMethodShorthandConverter<'a> {
     /// only keeps a function expression. Single-file decompile passes an
     /// empty bundle set.
     constructed_suffixes: &'a HashSet<(Atom, Atom)>,
+    /// Proven `createClass` callees. A descriptor `value` is kept only when
+    /// that helper installs it onto a member this module constructs.
+    create_class: &'a CreateClassHelpers,
+    /// Bindings whose bodies match `is_create_class_function`, at any depth,
+    /// including a top-level `var`/`let`/`const` initialized with `function`.
+    /// Not fed to `UnEs6Class`, so class recovery stays put.
+    nested_helpers: &'a HashSet<BindingKey>,
 }
 
 impl ObjMethodShorthandConverter<'_> {
@@ -253,6 +266,10 @@ fn visit_mut_call(
     converter: &mut ObjMethodShorthandConverter<'_>,
 ) {
     call.callee.visit_mut_with(converter);
+    // Only the inline descriptor arrays are taken over. Every other argument
+    // keeps the call-result key link, so a helper-shaped function that copies
+    // an object literal onto its result still preserves `new result.prop`.
+    let descriptor_ctor = create_class_descriptor_ctor(call, converter);
     let mut keys = result_keys.to_vec();
     if call
         .args
@@ -265,7 +282,15 @@ fn visit_mut_call(
             }
         }
     }
-    for arg in &mut call.args {
+    for (index, arg) in call.args.iter_mut().enumerate() {
+        if let Some(ctor) = &descriptor_ctor {
+            if arg.spread.is_none()
+                && (index == 1 || index == 2)
+                && visit_descriptor_array(&mut arg.expr, ctor, index == 1, converter)
+            {
+                continue;
+            }
+        }
         if arg.spread.is_some() || keys.is_empty() {
             arg.visit_mut_with(converter);
             continue;
@@ -334,6 +359,174 @@ fn visit_mut_object_value(
                 .any(|key| converter.is_constructor_sensitive(key));
         try_convert_prop(prop, constructor_sensitive);
     }
+}
+
+/// Module-wide scan for functions whose bodies match
+/// `is_create_class_function`. Besides runtime-path `import` / `require`
+/// bindings, `CreateClassHelpers` records only non-exported top-level
+/// function declarations and IIFE-shaped `var` helpers whose bodies match,
+/// so this also records nested declarations and a top-level
+/// `var`/`let`/`const` initialized with `function`.
+fn nested_create_class_helpers(module: &Module) -> HashSet<BindingKey> {
+    struct Finder {
+        helpers: HashSet<BindingKey>,
+    }
+    impl Visit for Finder {
+        fn visit_fn_decl(&mut self, decl: &FnDecl) {
+            if is_create_class_function(&decl.function) {
+                self.helpers.insert(binding_key(&decl.ident));
+            }
+            decl.visit_children_with(self);
+        }
+
+        fn visit_fn_expr(&mut self, expr: &FnExpr) {
+            if is_create_class_function(&expr.function) {
+                if let Some(ident) = &expr.ident {
+                    self.helpers.insert(binding_key(ident));
+                }
+            }
+            expr.visit_children_with(self);
+        }
+
+        fn visit_var_declarator(&mut self, decl: &VarDeclarator) {
+            if let Some(init) = decl.init.as_deref() {
+                if let Expr::Fn(function) = strip_parens(init) {
+                    if is_create_class_function(&function.function) {
+                        if let Some(key) = binding_key_from_ident_pat(&decl.name) {
+                            self.helpers.insert(key);
+                        }
+                    }
+                }
+            }
+            decl.visit_children_with(self);
+        }
+    }
+    let mut finder = Finder {
+        helpers: HashSet::default(),
+    };
+    module.visit_with(&mut finder);
+    finder.helpers
+}
+
+fn is_nested_helper_call(call: &CallExpr, converter: &ObjMethodShorthandConverter<'_>) -> bool {
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    let Expr::Ident(ident) = strip_parens(callee) else {
+        return false;
+    };
+    converter.nested_helpers.contains(&binding_key(ident))
+}
+
+fn create_class_descriptor_ctor(
+    call: &CallExpr,
+    converter: &ObjMethodShorthandConverter<'_>,
+) -> Option<ValueKey> {
+    if !converter.create_class.is_call(call) && !is_nested_helper_call(call, converter) {
+        return None;
+    }
+    // A spread in the first three arguments makes later positions unreliable.
+    if call.args.iter().take(3).any(|arg| arg.spread.is_some()) {
+        return None;
+    }
+    call.args
+        .first()
+        .filter(|arg| arg.spread.is_none())
+        .and_then(|arg| expr_value_key(&arg.expr))
+}
+
+/// Returns whether `expr` is an array literal of descriptors (parentheses
+/// allowed). Other expressions are not visited, so the caller can keep the
+/// call-result key link.
+fn visit_descriptor_array(
+    expr: &mut Expr,
+    ctor: &ValueKey,
+    on_prototype: bool,
+    converter: &mut ObjMethodShorthandConverter<'_>,
+) -> bool {
+    match expr {
+        Expr::Paren(paren) => {
+            visit_descriptor_array(&mut paren.expr, ctor, on_prototype, converter)
+        }
+        Expr::Array(array) => {
+            visit_descriptor_elements(array, ctor, on_prototype, converter);
+            true
+        }
+        _ => false,
+    }
+}
+
+fn visit_descriptor_elements(
+    array: &mut ArrayLit,
+    ctor: &ValueKey,
+    on_prototype: bool,
+    converter: &mut ObjMethodShorthandConverter<'_>,
+) {
+    for element in &mut array.elems {
+        let Some(element) = element else {
+            continue;
+        };
+        if element.spread.is_some() {
+            element.visit_mut_with(converter);
+            continue;
+        }
+        let Expr::Object(object) = element.expr.as_mut() else {
+            element.visit_mut_with(converter);
+            continue;
+        };
+        let installed = descriptor_installed_name(object);
+        let constructed = installed.is_some_and(|name| {
+            let mut member = ctor.clone();
+            if on_prototype {
+                member = member.with_property("prototype".into());
+            }
+            member = member.with_property(name);
+            // Exact key only. CreateClassHelpers may mark the constructor
+            // binding itself; that must not keep every method on it. A
+            // helper seen only by the module-wide scan does not mark it.
+            converter.constructor_sensitive_values.contains(&member)
+        });
+        for prop in &mut object.props {
+            let PropOrSpread::Prop(prop) = prop else {
+                prop.visit_mut_with(converter);
+                continue;
+            };
+            if constructed && is_descriptor_value_prop(prop) {
+                if let Prop::KeyValue(key_value) = prop.as_mut() {
+                    key_value.key.visit_mut_with(converter);
+                    key_value.value.visit_mut_with(converter);
+                }
+                continue;
+            }
+            prop.visit_mut_with(converter);
+        }
+    }
+}
+
+fn descriptor_installed_name(object: &ObjectLit) -> Option<Atom> {
+    for prop in &object.props {
+        let PropOrSpread::Prop(prop) = prop else {
+            continue;
+        };
+        let Prop::KeyValue(key_value) = prop.as_ref() else {
+            continue;
+        };
+        if static_prop_name(&key_value.key).as_deref() != Some("key") {
+            continue;
+        }
+        let Expr::Lit(Lit::Str(value)) = strip_parens(key_value.value.as_ref()) else {
+            return None;
+        };
+        return value.value.as_str().map(Atom::from);
+    }
+    None
+}
+
+fn is_descriptor_value_prop(prop: &Prop) -> bool {
+    let Prop::KeyValue(key_value) = prop else {
+        return false;
+    };
+    static_prop_name(&key_value.key).as_deref() == Some("value")
 }
 
 fn try_convert_prop(prop: &mut Prop, constructor_sensitive: bool) {
