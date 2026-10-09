@@ -593,9 +593,10 @@ fn close_required(
 ///
 /// Parens are stripped. A comma sequence contributes only its last item.
 /// `||` contributes both sides, and a side that is itself `||` is walked
-/// again. Calls, members, conditionals, `&&`, `??`, functions, arrows, and
-/// classes contribute nothing — an assignment's value is not unwrapped,
-/// because `Fallback = Ctor` is recorded as its own ordinary alias.
+/// again. A plain `=` assignment contributes its right side, so a CommonJS
+/// chain `var Ctor = exports.Ctor = Decorator(…) || Fallback` reaches
+/// `Fallback`. Calls, members, conditionals, `&&`, `??`, compound
+/// assignments, functions, arrows, and classes contribute nothing.
 fn value_alias_bindings(expr: &Expr) -> Vec<BindingKey> {
     fn walk(expr: &Expr, out: &mut Vec<BindingKey>) {
         match strip_parens(expr) {
@@ -609,6 +610,7 @@ fn value_alias_bindings(expr: &Expr) -> Vec<BindingKey> {
                 walk(&binary.left, out);
                 walk(&binary.right, out);
             }
+            Expr::Assign(assign) if assign.op == AssignOp::Assign => walk(&assign.right, out),
             _ => {}
         }
     }

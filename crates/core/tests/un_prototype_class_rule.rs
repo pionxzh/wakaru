@@ -1454,6 +1454,43 @@ fn decorator_factory_call_keeps_inner_constructor_as_function() {
 }
 
 #[test]
+fn decorator_factory_behind_exports_chain_keeps_constructor_callable() {
+    // shape: producer @babel/core@7.28.5 with plugin-proposal-decorators@7.28.0
+    // (legacy), plugin-transform-class-properties@7.28.6 (loose),
+    // plugin-transform-classes@7.28.6 (loose), and
+    // plugin-transform-modules-commonjs@7.28.6, then terser@5.51.2 defaults.
+    // At minimal the CommonJS export stays an assignment chain, so the
+    // decorator value reaches the binding through `exports.Decorated = …`.
+    let input = r#"
+var Field = {};
+var Desc = { initializer: function () { return true; } };
+var Ctor;
+var Fallback;
+var slot;
+var Decorated = exports.Decorated = Decorator((slot = applyDecoratedDescriptor((Ctor = function () {
+    function e() {
+        this.flag = true;
+    }
+    e.prototype.run = function () {};
+    return e;
+}()).prototype, "flag", [Field], Desc), Fallback = Ctor)) || Fallback;
+var Child = exports.Child = Decorator(function (e) {
+    function t() {
+        return e.call(this) || this;
+    }
+    inheritsLoose(t, e);
+    return t;
+}(Decorated));
+"#;
+    let output = apply_resolved(input);
+    assert!(
+        !output.contains("class e"),
+        "a same-file .call through an exports chain must keep the constructor callable:\n{output}"
+    );
+    assert!(output.contains("e.call(this)"), "{output}");
+}
+
+#[test]
 fn decorator_factory_call_apply_keeps_constructor_in_pipeline() {
     let input = decorator_factory_with_subclass(
         r#"

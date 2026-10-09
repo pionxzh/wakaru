@@ -589,9 +589,14 @@ rationale, or level gating appear.
   for both variable initializers and later plain assignments, and so are plain
   identifier aliases (`var a = Foo`). A constructor passed through any of these
   to a binding used with `.call`/`.apply` remains an ordinary function until
-  that call is consumed by a proven rewrite. In multi-module unpack, exports
-  another module still calls are seeded as required roots from
-  `CallRequiredPlan` (see fact-system.md).
+  that call is consumed by a proven rewrite. A same-file `.call`/`.apply`
+  also follows value edges: the last item of a comma sequence, both sides of
+  `||`, and the right side of a plain `=` assignment, in an initializer or an
+  IIFE return. A Babel legacy-decorator factory reaches its constructor that
+  way (`var C = exports.C = Decorator(…) || Fallback`). Exported roots do not
+  follow value edges. In multi-module unpack, exports another module still
+  calls are seeded as required roots from `CallRequiredPlan` (see
+  fact-system.md).
 - **ArrowFunction → ArrowReturn** — hard chain. ArrowFunction is `standard+`
   even though it checks known blockers (`this`, `arguments`, named function
   expressions, `new.target`, and ordinary-function values required by `new`,
