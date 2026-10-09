@@ -34,7 +34,7 @@ use super::arrow_function::has_this_or_arguments;
 use super::cross_module_helper_refs::{
     collect_cross_module_helper_refs, cross_module_member_helper_kind,
 };
-use super::eval_utils::{has_dynamic_scope_construct, module_blocks_global_reference};
+use super::eval_utils::{module_blocks_global_reference, node_has_dynamic_scope_construct};
 use super::helper_matcher::binding_key;
 use super::transpiler_helper_utils::TranspilerHelperKind;
 use super::un_interop_require_wildcard::is_canonical_interop_flag;
@@ -128,7 +128,8 @@ impl<F: Fn(&Expr) -> bool> LoweredImportMatcher<F> {
         let specifier = self.wildcard_require_specifier(returned)?;
         match (passed, params.as_slice()) {
             (None, []) => (!(is_function
-                && (has_this_or_arguments(specifier) || has_dynamic_scope_construct(specifier))))
+                && (has_this_or_arguments(specifier)
+                    || node_has_dynamic_scope_construct(specifier))))
             .then_some(specifier),
             (Some(passed), [Pat::Ident(param)]) => {
                 reads_binding(specifier, &param.id).then_some(passed)

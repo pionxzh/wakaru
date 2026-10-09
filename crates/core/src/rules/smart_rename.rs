@@ -28,10 +28,39 @@ use super::expr_utils::is_unresolved_ident;
 use super::extract_inlined_function::SharedExtractedFunctionNames;
 use super::helper_matcher::static_member_prop_name;
 use super::rename_utils::{
-    collect_exported_binding_ids, collect_jsx_tag_bindings, collect_module_names, rename_bindings,
-    rename_bindings_in_module, starts_with_lowercase, BindingId, BindingRename, RenameShadowIndex,
+    collect_exported_binding_ids, collect_jsx_tag_bindings, collect_module_names,
+    starts_with_lowercase, BindingId, BindingRename, BindingRenamer, RenameShadowIndex,
 };
 use super::ObjShorthand;
+
+/// SmartRename never names a binding `require`. `has_dynamic_scope_construct`
+/// lets through a direct eval that only reads `require`
+/// (`eval("require('x')")`) while the module declares no binding of that
+/// name; a new local named `require` would capture that read.
+fn without_require_target(renames: &[BindingRename]) -> std::borrow::Cow<'_, [BindingRename]> {
+    if renames.iter().any(|rename| rename.new == "require") {
+        std::borrow::Cow::Owned(
+            renames
+                .iter()
+                .filter(|rename| rename.new != "require")
+                .cloned()
+                .collect(),
+        )
+    } else {
+        std::borrow::Cow::Borrowed(renames)
+    }
+}
+
+fn rename_bindings_in_module(module: &mut Module, renames: &[BindingRename]) {
+    super::rename_utils::rename_bindings_in_module(module, &without_require_target(renames));
+}
+
+fn rename_bindings<T>(node: &mut T, renames: &[BindingRename])
+where
+    T: VisitMutWith<BindingRenamer>,
+{
+    super::rename_utils::rename_bindings(node, &without_require_target(renames));
+}
 
 pub struct SmartRename {
     unresolved_mark: Mark,

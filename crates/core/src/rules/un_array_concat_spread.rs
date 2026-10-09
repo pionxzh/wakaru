@@ -15,7 +15,7 @@ use crate::analysis::{binding_id, BindingId};
 use crate::collections::{HashMap, HashSet};
 
 use super::arg_rest::find_rest_array_copy_proof;
-use super::eval_utils::has_dynamic_scope_construct;
+use super::eval_utils::{has_dynamic_scope_construct, node_has_dynamic_scope_construct};
 use super::helper_matcher::{binding_key, static_member_prop_name, BindingKey};
 use super::un_for_of::{collect_closure_jscomp_namespaces, strip_closure_indirect_call};
 use super::RewriteLevel;
@@ -114,7 +114,7 @@ impl UnArrayConcatSpreadRest {
         params: &[&Pat],
         fixed_param_count: Option<usize>,
     ) {
-        if has_dynamic_scope_construct(body) {
+        if node_has_dynamic_scope_construct(body) {
             return;
         }
 

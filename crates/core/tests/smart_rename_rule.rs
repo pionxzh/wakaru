@@ -3596,3 +3596,34 @@ export function report() {
     assert!(!output.contains("const __proto__"), "{output}");
     assert!(output.contains("__proto__: e"), "{output}");
 }
+
+#[test]
+fn renames_module_whose_eval_only_reads_require() {
+    for eval in [
+        r#"var crypto = eval("require('crypto')");"#,
+        r#"var load = eval("quire".replace(/^/, "re"));"#,
+    ] {
+        let input = DYNAMIC_SCOPE_RENAMES.replace("DYNAMIC;", eval);
+        let output = apply(&input);
+        assert!(output.contains("foo_bar"), "{eval}: {output}");
+    }
+}
+
+#[test]
+fn skips_require_read_eval_when_module_declares_require() {
+    let input = DYNAMIC_SCOPE_RENAMES.replace(
+        "DYNAMIC;",
+        r#"var require = load; var crypto = eval("require('crypto')");"#,
+    );
+    assert_eq_normalized(&apply(&input), &input);
+}
+
+#[test]
+fn never_renames_a_binding_to_require() {
+    let input = r#"
+function f(e) {
+    return { require: e };
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}

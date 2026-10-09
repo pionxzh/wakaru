@@ -180,6 +180,57 @@ fn eval_hidden_require_string(call: &swc_core::ecma::ast::CallExpr) -> Option<St
     None
 }
 
+/// Whether a known eval source only reads CommonJS `require`: `require`,
+/// `require("x")`, or either followed by static member reads, optionally
+/// ending in `;`. Generated code uses these shapes to hide a `require` call
+/// from bundlers (`eval("require('crypto')")`, and the
+/// `eval("quire".replace(/^/, "re"))` form `eval_static_string` resolves).
+/// Such a source declares and assigns nothing.
+pub(crate) fn is_require_read_source(source: &str) -> bool {
+    let source = source.trim();
+    let source = source.strip_suffix(';').unwrap_or(source);
+    let Some(mut rest) = source.strip_prefix("require") else {
+        return false;
+    };
+    if let Some(call) = rest.trim_start().strip_prefix('(') {
+        let call = call.trim_start();
+        let Some(quote) = call.chars().next().filter(|ch| matches!(ch, '"' | '\'')) else {
+            return false;
+        };
+        let body = &call[1..];
+        let Some(end) = body.find(quote) else {
+            return false;
+        };
+        if body[..end].contains(['\\', '\n', '\r']) {
+            return false;
+        }
+        let Some(after) = body[end + 1..].trim_start().strip_prefix(')') else {
+            return false;
+        };
+        rest = after;
+    }
+    loop {
+        rest = rest.trim_start();
+        if rest.is_empty() {
+            return true;
+        }
+        let Some(member) = rest.strip_prefix('.') else {
+            return false;
+        };
+        let member = member.trim_start();
+        if member.starts_with(|ch: char| ch.is_ascii_digit()) {
+            return false;
+        }
+        let len = member
+            .find(|ch: char| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
+            .unwrap_or(member.len());
+        if len == 0 {
+            return false;
+        }
+        rest = &member[len..];
+    }
+}
+
 pub(crate) fn js_source_mentions_binding(source: &str, name: &Atom) -> bool {
     let name = name.as_ref();
     if name.is_empty() {
@@ -222,24 +273,42 @@ pub(crate) fn module_has_with_stmt(module: &Module) -> bool {
     finder.0
 }
 
-/// Whether `node` contains a `with` statement or a direct `eval` call
+/// Whether the module contains a `with` statement or a direct `eval` call
 /// anywhere. This is the coarse module-wide skip from the dynamic-scope
 /// policy for a rule that removes, renames, or introduces bindings and
 /// cannot cheaply name every binding a known eval source could mention;
 /// rules that can, use `DirectEvalAnalyzer` with `js_source_mentions_binding`
 /// and keep the known-source best effort instead.
-pub(crate) fn has_dynamic_scope_construct<T>(node: &T) -> bool
+///
+/// A direct eval whose known source only reads CommonJS `require`
+/// (`is_require_read_source`) does not count while the module declares no
+/// binding named `require`: no rule in this set can then rename or remove
+/// the binding it reads, and SmartRename never names a binding `require`.
+pub(crate) fn has_dynamic_scope_construct(module: &Module) -> bool {
+    let mut finder = DynamicScopeConstructFinder::default();
+    module.visit_with(&mut finder);
+    finder.found
+        || (finder.require_read_eval
+            && super::rename_utils::module_declares_binding_named(module, "require"))
+}
+
+/// `has_dynamic_scope_construct` for part of a module, which cannot see
+/// whether a binding the part reads is declared outside it, so every direct
+/// eval counts.
+pub(crate) fn node_has_dynamic_scope_construct<T>(node: &T) -> bool
 where
     T: VisitWith<DynamicScopeConstructFinder> + ?Sized,
 {
     let mut finder = DynamicScopeConstructFinder::default();
     node.visit_with(&mut finder);
-    finder.found
+    finder.found || finder.require_read_eval
 }
 
 #[derive(Default)]
 pub(crate) struct DynamicScopeConstructFinder {
     found: bool,
+    /// Saw a direct eval whose known source only reads `require`.
+    require_read_eval: bool,
 }
 
 impl Visit for DynamicScopeConstructFinder {
@@ -251,8 +320,12 @@ impl Visit for DynamicScopeConstructFinder {
         if self.found {
             return;
         }
-        if is_direct_eval_call(call) {
-            self.found = true;
+        if let Some(source) = direct_eval_call_source(call) {
+            if matches!(&source, EvalCallSource::Known(source) if is_require_read_source(source)) {
+                self.require_read_eval = true;
+            } else {
+                self.found = true;
+            }
             return;
         }
         call.visit_children_with(self);
@@ -357,4 +430,41 @@ impl Visit for ReceiverSensitivityAnalyzer {
     // Nested ordinary functions establish their own receiver. Arrows retain
     // the default traversal because they capture this function's receiver.
     fn visit_function(&mut self, _: &Function) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_require_read_source;
+
+    #[test]
+    fn require_read_sources() {
+        for source in [
+            "require",
+            "require('crypto')",
+            "require(\"buffer\").Buffer",
+            " require ( 'a' ) . b . c ; ",
+            "require.resolve",
+        ] {
+            assert!(is_require_read_source(source), "{source}");
+        }
+    }
+
+    #[test]
+    fn other_sources_are_not_require_reads() {
+        for source in [
+            "",
+            "requireX",
+            "require(name)",
+            "require('a', b)",
+            "require('a')(b)",
+            "require('a')[b]",
+            "require('a'); x = 1",
+            "require('a\\'b')",
+            "require('a').0",
+            "var require = 1",
+            "require = f",
+        ] {
+            assert!(!is_require_read_source(source), "{source}");
+        }
+    }
 }

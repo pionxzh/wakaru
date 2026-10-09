@@ -675,3 +675,15 @@ for (var i = 0; i < n; i++) {
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
+
+#[test]
+fn keeps_require_read_eval_prefix_in_lexical_for_header() {
+    // A header prefix cannot see whether `require` is declared outside it,
+    // so every direct eval keeps it in place.
+    let input = r#"
+for (let i = (eval("require('a')"), 0); i < n; i++) {
+    use(i);
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}

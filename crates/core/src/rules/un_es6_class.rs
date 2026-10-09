@@ -29,7 +29,7 @@ use super::decl_utils::{
     class_accessor_descriptor_attributes, class_method_has_invalid_signature,
     ensure_setter_has_value_param, ClassAccessorDescriptorAttributes,
 };
-use super::eval_utils::has_dynamic_scope_construct;
+use super::eval_utils::node_has_dynamic_scope_construct;
 use super::expr_utils::is_unresolved_ident;
 use super::helper_matcher::{
     binding_key, remove_import_specifiers_by_binding, remove_unused_helper_declarations, BindingKey,
@@ -92,7 +92,7 @@ impl VisitMut for UnEs6Class {
         // statement or a direct eval anywhere can still reach the old names,
         // so the module is left as is (docs/rewrite-assumptions.md,
         // dynamic-scope skip).
-        if has_dynamic_scope_construct(items.as_slice()) {
+        if node_has_dynamic_scope_construct(items.as_slice()) {
             self.module_helper_context = None;
             return;
         }
@@ -125,7 +125,7 @@ impl VisitMut for UnEs6Class {
     }
 
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
-        if has_dynamic_scope_construct(stmts.as_slice()) {
+        if node_has_dynamic_scope_construct(stmts.as_slice()) {
             return;
         }
         // Non-module context: scan local scope for helpers
@@ -4197,7 +4197,7 @@ pub(crate) fn super_params_consumed_by_class_recovery(
     let helpers = Es6ClassHelperContext::from_local_helpers(items, unresolved_mark, &local_helpers);
     // `UnEs6Class` leaves the whole module unchanged when `with` or direct
     // `eval` is present, so none of these calls become `super()`.
-    if has_dynamic_scope_construct(items) {
+    if node_has_dynamic_scope_construct(items) {
         return Vec::new();
     }
     let reused = reused_var_bindings_in_items(items);

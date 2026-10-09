@@ -96,3 +96,16 @@ with (o) {
 "#;
     assert_eq_normalized(&apply(input), input);
 }
+
+#[test]
+fn converts_math_pow_when_eval_only_reads_require() {
+    let input = r#"
+var crypto = eval("require('crypto')");
+x = Math.pow(a, b);
+"#;
+    let expected = r#"
+var crypto = eval("require('crypto')");
+x = a ** b;
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}

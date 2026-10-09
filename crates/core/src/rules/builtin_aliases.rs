@@ -10,7 +10,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use super::eval_utils::has_dynamic_scope_construct;
+use super::eval_utils::{has_dynamic_scope_construct, node_has_dynamic_scope_construct};
 use super::helper_matcher::{
     binding_key, collect_refs, remove_var_declarators_by_binding, var_declarator_binding_key,
     BindingKey,
@@ -389,7 +389,7 @@ pub(crate) fn inline_builtin_aliases_stmts(
         return stmts;
     }
 
-    if has_dynamic_scope_construct(stmts.as_slice()) {
+    if node_has_dynamic_scope_construct(stmts.as_slice()) {
         return stmts;
     }
 

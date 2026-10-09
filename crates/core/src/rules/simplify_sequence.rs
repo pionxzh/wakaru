@@ -427,7 +427,9 @@ fn extract_var_decl_prefix(
                                 &header_bindings,
                                 &future_header_names,
                             )
-                            || super::eval_utils::has_dynamic_scope_construct(pre.as_slice()))));
+                            || super::eval_utils::node_has_dynamic_scope_construct(
+                                pre.as_slice(),
+                            ))));
             if keep_unsplit {
                 new_decls.push(VarDeclarator {
                     span: decl.span,

@@ -1145,6 +1145,13 @@ introduces a new binding guards against both constructs at this granularity:
   uses `has_dynamic_scope_construct` instead, and skips on any `with` or
   direct `eval`. This is the default for a rule that adds the guard: the
   skip covers every name at once, so the rule needs no per-name analysis.
+  The one direct `eval` it lets through is a known source that only reads
+  CommonJS `require` (`eval("require('crypto')")`, or the
+  `eval("quire".replace(/^/, "re"))` form generated code uses to hide a
+  `require` call from bundlers), while the module declares no binding named
+  `require`; SmartRename never names a binding `require`. Part of a module
+  (`node_has_dynamic_scope_construct`) cannot see that declaration, so there
+  every direct `eval` counts.
 
 Compilers do not emit either construct, so this coarse treatment costs little
 recovery on compiled output. A rule in this set that lacks the guard is a bug,
