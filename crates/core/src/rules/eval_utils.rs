@@ -1,6 +1,7 @@
 use swc_core::atoms::Atom;
+use swc_core::common::Mark;
 use swc_core::ecma::ast::{
-    CallExpr, Callee, Expr, Function, Lit, Module, SuperPropExpr, ThisExpr, WithStmt,
+    CallExpr, Callee, Expr, Function, Ident, Lit, Module, SuperPropExpr, ThisExpr, WithStmt,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -282,6 +283,34 @@ pub(crate) fn module_blocks_global_reference(module: &Module, name: &str) -> boo
             .known_direct_eval_sources
             .iter()
             .any(|source| js_source_mentions_binding(source, &Atom::from(name)))
+}
+
+/// The dynamic-scope skip for a rule that reads `undefined` as the global:
+/// the module reads `undefined` by name, and a `with` statement or a direct
+/// eval can rebind it (`module_blocks_global_reference`). A rule that also
+/// accepts `void 0` keeps that form, and a module whose `undefined` is
+/// spelled `void 0` throughout, as compilers emit it, keeps the rule.
+pub(crate) fn module_reads_rebindable_undefined(module: &Module, unresolved_mark: Mark) -> bool {
+    struct Finder {
+        unresolved_mark: Mark,
+        found: bool,
+    }
+    impl Visit for Finder {
+        fn visit_ident(&mut self, ident: &Ident) {
+            if ident.sym == "undefined" && ident.ctxt.outer() == self.unresolved_mark {
+                self.found = true;
+            }
+        }
+    }
+    if !has_dynamic_scope_construct(module) {
+        return false;
+    }
+    let mut finder = Finder {
+        unresolved_mark,
+        found: false,
+    };
+    module.visit_with(&mut finder);
+    finder.found && module_blocks_global_reference(module, "undefined")
 }
 
 /// Whether calling `function` can observe its receiver: it reads `this`,

@@ -130,3 +130,66 @@ function foo() {
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
+#[test]
+fn keeps_tail_return_undefined_when_eval_can_rebind_it() {
+    let input = r#"
+function f(s) {
+    eval(s);
+    g();
+    return undefined;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn keeps_tail_return_undefined_in_module_with_with_statement() {
+    let input = r#"
+function h() {
+    with (o) {
+        return function() {
+            g();
+            return undefined;
+        };
+    }
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn drops_tail_return_void_0_when_module_has_direct_eval() {
+    // `void 0` cannot be rebound, so a module that never names `undefined`
+    // keeps the rewrite.
+    let input = r#"
+function f(s) {
+    eval(s);
+    g();
+    return void 0;
+}
+"#;
+    let expected = r#"
+function f(s) {
+    eval(s);
+    g();
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn drops_tail_return_undefined_when_known_eval_source_does_not_name_it() {
+    let input = r#"
+function f() {
+    eval("g()");
+    return undefined;
+}
+"#;
+    let expected = r#"
+function f() {
+    eval("g()");
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}

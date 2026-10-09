@@ -20,6 +20,8 @@ pub struct UnArgumentSpread {
     level: RewriteLevel,
     isolation: TempIsolation,
     consumed_uninitialized_bindings: HashSet<BindingId>,
+    /// The module contains a `with` statement or a direct eval.
+    dynamic_scope: bool,
 }
 
 impl UnArgumentSpread {
@@ -29,6 +31,7 @@ impl UnArgumentSpread {
             level,
             isolation: TempIsolation::default(),
             consumed_uninitialized_bindings: HashSet::default(),
+            dynamic_scope: false,
         }
     }
 }
@@ -50,6 +53,7 @@ impl VisitMut for UnArgumentSpread {
         if self.level < RewriteLevel::Standard {
             return;
         }
+        self.dynamic_scope = super::eval_utils::has_dynamic_scope_construct(module);
         self.isolation = TempIsolation::collect(module);
         self.consumed_uninitialized_bindings.clear();
         module.visit_mut_children_with(self);
@@ -103,9 +107,12 @@ impl VisitMut for UnArgumentSpread {
             &[false]
         };
         for &drop_receiver in choices {
-            let Ok(rewritten) =
-                try_convert_apply(call.clone(), self.unresolved_mark, drop_receiver)
-            else {
+            let Ok(rewritten) = try_convert_apply(
+                call.clone(),
+                self.unresolved_mark,
+                drop_receiver,
+                self.dynamic_scope,
+            ) else {
                 return;
             };
             if self.isolation.accept_expr_rewrite(
@@ -157,6 +164,7 @@ fn try_convert_apply(
     call: CallExpr,
     unresolved_mark: Mark,
     drop_receiver: bool,
+    dynamic_scope: bool,
 ) -> Result<Expr, CallExpr> {
     // callee must be a member expression ending in `.apply`
     let callee_member = match &call.callee {
@@ -220,7 +228,14 @@ fn try_convert_apply(
         return Err(call);
     }
 
-    // Pattern 1: callee obj is not a member expression, first arg must be null/undefined
+    // Pattern 1: callee obj is not a member expression, first arg must be null/undefined.
+    // Inside a `with` body the bare call `fn(...)` passes the object as `this`
+    // when `fn` resolves through it, and a direct eval can rebind `undefined`;
+    // such a module keeps the `apply` call (docs/rewrite-assumptions.md,
+    // dynamic-scope skip).
+    if dynamic_scope {
+        return Err(call);
+    }
     if matches!(first_arg, Expr::Lit(Lit::Null(_)))
         || is_unresolved_undefined(first_arg, unresolved_mark)
     {

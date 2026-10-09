@@ -673,3 +673,38 @@ function collect(output, args) {
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
+
+#[test]
+fn keeps_unbound_apply_in_module_with_with_statement() {
+    // `fn(...args)` would pass `o` as `this` when `fn` resolves through it.
+    let input = r#"
+with (o) {
+    g(fn.apply(null, args));
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn keeps_unbound_apply_in_module_with_direct_eval() {
+    let input = r#"
+function f(s, fn, args) {
+    eval(s);
+    return fn.apply(undefined, args);
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn recovers_receiver_apply_in_module_with_direct_eval() {
+    let input = r#"
+eval(s);
+obj.fn.apply(obj, args);
+"#;
+    let expected = r#"
+eval(s);
+obj.fn(...args);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}

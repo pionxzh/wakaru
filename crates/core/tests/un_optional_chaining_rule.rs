@@ -1834,3 +1834,35 @@ function f(o) {
     let output = apply_with_level(input, RewriteLevel::Standard);
     assert_eq_normalized(&output, expected);
 }
+
+#[test]
+fn keeps_undefined_checks_when_eval_can_rebind_undefined() {
+    let input = r#"
+eval(s);
+g(a === null || a === undefined ? undefined : a.b);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn keeps_undefined_checks_in_module_with_with_statement() {
+    let input = r#"
+with (o) {
+    g(a === null || a === undefined ? void 0 : a.b);
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn recovers_void_0_checks_in_module_with_direct_eval() {
+    let input = r#"
+eval(s);
+g(a === null || a === void 0 ? void 0 : a.b);
+"#;
+    let expected = r#"
+eval(s);
+g(a?.b);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}

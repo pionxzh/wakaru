@@ -137,3 +137,36 @@ big === -2n;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
+#[test]
+fn keeps_global_constant_comparisons_in_module_with_direct_eval() {
+    // A literal still flips; `undefined`, `NaN`, and `Infinity` reads keep
+    // their order.
+    let input = r#"
+eval(s);
+if (NaN < x()) g();
+if (undefined === y) g();
+if (1 === undefined) g();
+if (-Infinity > z) g();
+if (null == w) g();
+"#;
+    let expected = r#"
+eval(s);
+if (NaN < x()) g();
+if (undefined === y) g();
+if (1 === undefined) g();
+if (-Infinity > z) g();
+if (w == null) g();
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn keeps_global_constant_comparisons_in_module_with_with_statement() {
+    let input = r#"
+with (o) {
+    if (NaN < x()) g();
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}

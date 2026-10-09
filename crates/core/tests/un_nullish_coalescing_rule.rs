@@ -637,3 +637,35 @@ const x = value ?? fallback;
     let output = apply_with_level(input, RewriteLevel::Minimal);
     assert_eq_normalized(&output, expected);
 }
+
+#[test]
+fn keeps_undefined_checks_when_eval_can_rebind_undefined() {
+    let input = r#"
+eval(s);
+g(x !== null && x !== undefined ? x : 1);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn keeps_undefined_checks_in_module_with_with_statement() {
+    let input = r#"
+with (o) {
+    g(x !== null && x !== undefined ? x : 1);
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn recovers_void_0_checks_in_module_with_direct_eval() {
+    let input = r#"
+eval(s);
+g(x !== null && x !== void 0 ? x : 1);
+"#;
+    let expected = r#"
+eval(s);
+g(x ?? 1);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}

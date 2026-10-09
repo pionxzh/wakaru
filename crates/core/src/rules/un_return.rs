@@ -1,6 +1,7 @@
 use swc_core::common::Mark;
 use swc_core::ecma::ast::{
-    ArrowExpr, ArrowFunctionBody, Expr, ExprStmt, Function, ReturnStmt, Stmt, UnaryExpr, UnaryOp,
+    ArrowExpr, ArrowFunctionBody, Expr, ExprStmt, Function, Module, ReturnStmt, Stmt, UnaryExpr,
+    UnaryOp,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -17,6 +18,16 @@ impl UnReturn {
 }
 
 impl VisitMut for UnReturn {
+    fn visit_mut_module(&mut self, module: &mut Module) {
+        // `return undefined` is dropped as returning the global; once a
+        // `with` statement or a direct eval can rebind that name, the module
+        // is left as is (docs/rewrite-assumptions.md, dynamic-scope skip).
+        if super::eval_utils::module_reads_rebindable_undefined(module, self.unresolved_mark) {
+            return;
+        }
+        module.visit_mut_children_with(self);
+    }
+
     fn visit_mut_function(&mut self, function: &mut Function) {
         function.visit_mut_children_with(self);
         if let Some(body) = &mut function.body {

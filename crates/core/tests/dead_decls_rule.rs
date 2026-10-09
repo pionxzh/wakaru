@@ -313,7 +313,7 @@ fn direct_eval_does_not_keep_unrelated_function_temps() {
     let input = r#"
 function read(options) {
   var tmp;
-  return (tmp = options.value) !== null && tmp !== undefined ? tmp : "fallback";
+  return (tmp = options.value) !== null && tmp !== void 0 ? tmp : "fallback";
 }
 function run(source) {
   var keep;

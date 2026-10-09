@@ -89,3 +89,47 @@ fn array_destructuring_undefined_init_preserved() {
     let input = r#"let [] = undefined"#;
     assert_eq_normalized(&apply(input), input);
 }
+
+#[test]
+fn keeps_undefined_init_in_module_with_direct_eval() {
+    // `eval(s)` can assign `x` before the declaration resets it.
+    let input = r#"
+eval(s);
+var x = undefined;
+use(x);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn keeps_let_undefined_init_when_eval_can_rebind_undefined() {
+    let input = r#"
+function f(s) {
+    eval(s);
+    let x = undefined;
+    let y = void 0;
+    return [x, y];
+}
+"#;
+    let expected = r#"
+function f(s) {
+    eval(s);
+    let x = undefined;
+    let y;
+    return [x, y];
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn keeps_undefined_init_in_with_body() {
+    // Inside the body the initializer writes `o.x` when `o` has `x`.
+    let input = r#"
+with (o) {
+    var x = void 0;
+    use(x);
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}

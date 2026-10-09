@@ -36,6 +36,12 @@ impl UnNullishCoalescing {
 
 impl VisitMut for UnNullishCoalescing {
     fn visit_mut_module(&mut self, module: &mut Module) {
+        // The null checks accept `undefined` read as the global; once a
+        // `with` statement or a direct eval can rebind that name, the module
+        // is left as is (docs/rewrite-assumptions.md, dynamic-scope skip).
+        if super::eval_utils::module_reads_rebindable_undefined(module, self.unresolved_mark) {
+            return;
+        }
         // Temps are hoisted `var _a;`, or `let _a;` declared before every use
         // in the same function (VarDeclToLetConst's rewrite of the former); an
         // uninitialized `let` elsewhere may be in its TDZ where the pattern
