@@ -150,3 +150,29 @@ function collect(Array, ...args) {
 "#;
     assert_eq_normalized(&apply(input), input);
 }
+
+#[test]
+fn keeps_copy_loop_in_module_with_direct_eval() {
+    // `eval(s)` can read `rest` by name after the loop.
+    let input = r#"
+function foo(...args) {
+    for (var _len = args.length, rest = Array(_len), _key = 0; _key < _len; _key++) rest[_key] = args[_key];
+    eval(s);
+    return rest;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn keeps_copy_loop_in_module_with_with_statement() {
+    let input = r#"
+function foo(...args) {
+    for (var _len = args.length, rest = Array(_len), _key = 0; _key < _len; _key++) rest[_key] = args[_key];
+    with (o) {
+        return rest;
+    }
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}

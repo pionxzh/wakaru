@@ -75,3 +75,24 @@ function calculate(Math) {
 "#;
     assert_eq_normalized(&apply(input), input);
 }
+
+#[test]
+fn keeps_math_pow_in_module_with_direct_eval() {
+    let input = r#"
+function f(a, b, s) {
+    eval(s);
+    return Math.pow(a, b);
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn keeps_math_pow_in_module_with_with_statement() {
+    let input = r#"
+with (o) {
+    x = Math.pow(a, b);
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}

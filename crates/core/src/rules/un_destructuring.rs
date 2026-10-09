@@ -116,6 +116,15 @@ enum PropKey {
 
 impl VisitMut for UnDestructuring {
     fn visit_mut_module(&mut self, module: &mut Module) {
+        // Group reconstruction removes the ref and temp bindings it folds,
+        // reads `undefined` as the global, and nests parameter patterns; a
+        // `with` statement or a direct eval anywhere in the module can still
+        // reach those names, so the module is left as is
+        // (docs/rewrite-assumptions.md, dynamic-scope skip). The test-hoist
+        // pre-pass only prepares groups, so it is skipped with them.
+        if super::eval_utils::has_dynamic_scope_construct(module) {
+            return;
+        }
         if self.sliced_to_array_helpers.is_none() {
             let local_helpers = LocalHelperContext::collect_with_mark(module, self.unresolved_mark);
             self.sliced_to_array_helpers = Some(collect_sliced_to_array_helpers(&local_helpers));

@@ -1,6 +1,6 @@
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
-    Callee, Expr, MemberProp, ObjectLit, Prop, PropName, PropOrSpread, SpreadElement,
+    Callee, Expr, MemberProp, Module, ObjectLit, Prop, PropName, PropOrSpread, SpreadElement,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -31,6 +31,16 @@ impl ObjectAssignSpread {
 }
 
 impl VisitMut for ObjectAssignSpread {
+    fn visit_mut_module(&mut self, module: &mut Module) {
+        // `Object` is read as the builtin; a `with` statement or a direct eval
+        // anywhere in the module can rebind it, so the module is left as is
+        // (docs/rewrite-assumptions.md, dynamic-scope skip).
+        if super::eval_utils::has_dynamic_scope_construct(module) {
+            return;
+        }
+        module.visit_mut_children_with(self);
+    }
+
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         // Bottom-up: transform inner Object.assign calls first so that their
         // results (plain object literals) can be inlined by an outer transform.

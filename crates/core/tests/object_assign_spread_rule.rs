@@ -169,3 +169,24 @@ function build(Object) {
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
+#[test]
+fn keeps_object_assign_in_module_with_direct_eval() {
+    let input = r#"
+function f(a, s) {
+    eval(s);
+    return Object.assign({}, a);
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn keeps_object_assign_in_module_with_with_statement() {
+    let input = r#"
+with (o) {
+    x = Object.assign({}, a);
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}

@@ -103,3 +103,26 @@ use(utils);
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
+
+#[test]
+fn keeps_require_d_calls_in_module_with_direct_eval() {
+    let input = r#"
+eval(s);
+const utils = {};
+require.d(utils, "TASK", ()=>o.e);
+require.d(utils, "SAGA_ACTION", ()=>o.c);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn keeps_require_d_calls_in_module_with_with_statement() {
+    let input = r#"
+with (o) {
+    var utils = {};
+    require.d(utils, "TASK", ()=>o.e);
+    require.d(utils, "SAGA_ACTION", ()=>o.c);
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}

@@ -1816,3 +1816,44 @@ function demo(items) {
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
+
+#[test]
+fn keeps_ref_group_in_module_with_direct_eval() {
+    // `eval("t")` would throw once the ref binding is folded away.
+    let input = r#"
+function f(e) {
+    const t = e;
+    const n = t.a;
+    const r = n === void 0 ? 1 : n;
+    eval("t");
+    return r;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn keeps_ref_group_in_module_with_with_statement() {
+    let input = r#"
+with (o) {
+    const t = e;
+    const n = t.a;
+    const r = n === undefined ? 1 : n;
+    use(r);
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn keeps_param_nesting_in_module_with_direct_eval() {
+    let input = r#"
+function f({ a: t = {} }, s) {
+    const x = t.b;
+    const y = x === void 0 ? 1 : x;
+    eval(s);
+    return y;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}

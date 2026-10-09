@@ -485,3 +485,40 @@ function init(Object) {
 "#;
     assert_eq_normalized(&apply(input), input);
 }
+
+#[test]
+fn keeps_define_properties_in_module_with_direct_eval() {
+    let input = r#"
+eval(s);
+const utils = {};
+Object.defineProperties(utils, {
+  TASK: {
+    enumerable: true,
+    get: ()=>o.e
+  },
+  SAGA_ACTION: {
+    enumerable: true,
+    get: ()=>o.c
+  }
+});
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn keeps_require_d_map_in_module_with_with_statement() {
+    let input = r#"
+with (o) {}
+var r = {};
+require.r(r);
+require.d(r, {
+  a: function() {
+    return 1;
+  },
+  b: function() {
+    return 2;
+  }
+});
+"#;
+    assert_eq_normalized(&apply(input), input);
+}

@@ -63,6 +63,14 @@ struct UsageStats {
 
 impl VisitMut for UnWebpackInterop {
     fn visit_mut_module(&mut self, module: &mut Module) {
+        // Every rewrite reads `require` as the webpack runtime, and the
+        // namespace and getter rewrites also remove or rename bindings and
+        // emit new references; a `with` statement or a direct eval anywhere
+        // in the module can observe or rebind those names, so the module is
+        // left as is (docs/rewrite-assumptions.md, dynamic-scope skip).
+        if super::eval_utils::has_dynamic_scope_construct(module) {
+            return;
+        }
         let mut has_own_replacer = WebpackHasOwnReplacer {
             unresolved_mark: self.unresolved_mark,
         };

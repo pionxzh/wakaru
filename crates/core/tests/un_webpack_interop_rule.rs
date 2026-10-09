@@ -584,3 +584,28 @@ var parse = _r.parse;
 "#;
     assert_eq_normalized(&render(input), expected.trim());
 }
+
+// ── Dynamic scope ──────────────────────────────────────────────────
+
+#[test]
+fn keeps_getter_and_has_own_in_module_with_direct_eval() {
+    let input = r#"
+var _lib = require("./lib");
+var _lib2 = () => _lib && _lib.__esModule ? _lib.default : _lib;
+eval(s);
+console.log(_lib2(), require.o(a, b));
+"#;
+    assert_eq_normalized(&render(input), input.trim());
+}
+
+#[test]
+fn keeps_getter_and_has_own_in_module_with_with_statement() {
+    let input = r#"
+var _lib = require("./lib");
+var _lib2 = () => _lib && _lib.__esModule ? _lib.default : _lib;
+with (o) {
+    console.log(_lib2(), require.o(a, b));
+}
+"#;
+    assert_eq_normalized(&render(input), input.trim());
+}

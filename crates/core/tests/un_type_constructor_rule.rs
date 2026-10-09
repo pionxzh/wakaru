@@ -140,3 +140,22 @@ const b = +42;
     let output = apply(input);
     assert_eq_normalized(&output, input);
 }
+
+#[test]
+fn keeps_coercions_in_module_with_direct_eval() {
+    let input = r#"
+eval(s);
+use(+a, b + "", [, , ,]);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn keeps_coercions_in_module_with_with_statement() {
+    let input = r#"
+with (o) {
+    use(+a, b + "", [, , ,]);
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}

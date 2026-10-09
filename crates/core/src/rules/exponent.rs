@@ -1,5 +1,5 @@
 use swc_core::common::Mark;
-use swc_core::ecma::ast::{BinaryOp, Callee, Expr, MemberProp};
+use swc_core::ecma::ast::{BinaryOp, Callee, Expr, MemberProp, Module};
 use swc_core::ecma::utils::ExprFactory;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -17,6 +17,16 @@ impl Exponent {
 }
 
 impl VisitMut for Exponent {
+    fn visit_mut_module(&mut self, module: &mut Module) {
+        // `Math` is read as the builtin; a `with` statement or a direct eval
+        // anywhere in the module can rebind it, so the module is left as is
+        // (docs/rewrite-assumptions.md, dynamic-scope skip).
+        if super::eval_utils::has_dynamic_scope_construct(module) {
+            return;
+        }
+        module.visit_mut_children_with(self);
+    }
+
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         expr.visit_mut_children_with(self);
 

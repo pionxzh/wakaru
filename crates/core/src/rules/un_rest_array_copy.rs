@@ -2,7 +2,7 @@ use swc_core::atoms::Atom;
 use swc_core::common::Mark;
 use swc_core::ecma::ast::{
     ArrowExpr, AssignOp, AssignTarget, BindingIdent, Callee, Expr, Function, FunctionBody, Ident,
-    MemberProp, ObjectPatProp, Pat, SimpleAssignTarget, Stmt, UpdateOp, VarDeclOrExpr,
+    MemberProp, Module, ObjectPatProp, Pat, SimpleAssignTarget, Stmt, UpdateOp, VarDeclOrExpr,
     VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -53,6 +53,18 @@ impl UnRestArrayCopy {
 }
 
 impl VisitMut for UnRestArrayCopy {
+    fn visit_mut_module(&mut self, module: &mut Module) {
+        // The rewrite reads `Array` as the builtin, removes the copy binding,
+        // and points its references at the rest parameter; a `with`
+        // statement or a direct eval anywhere in the module can still reach
+        // the copy by name, so the module is left as is
+        // (docs/rewrite-assumptions.md, dynamic-scope skip).
+        if super::eval_utils::has_dynamic_scope_construct(module) {
+            return;
+        }
+        module.visit_mut_children_with(self);
+    }
+
     fn visit_mut_function(&mut self, func: &mut Function) {
         // Bottom-up: handle nested functions first
         func.visit_mut_children_with(self);

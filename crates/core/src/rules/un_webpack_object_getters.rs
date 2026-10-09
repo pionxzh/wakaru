@@ -23,6 +23,13 @@ impl UnWebpackObjectGetters {
 
 impl VisitMut for UnWebpackObjectGetters {
     fn visit_mut_module(&mut self, module: &mut Module) {
+        // Every rewrite reads `Object` or `require` as the global; a `with`
+        // statement or a direct eval anywhere in the module can rebind them,
+        // so the module is left as is (docs/rewrite-assumptions.md,
+        // dynamic-scope skip).
+        if super::eval_utils::has_dynamic_scope_construct(module) {
+            return;
+        }
         module.visit_mut_children_with(self);
         rewrite_module_items(&mut module.body, self.unresolved_mark);
     }

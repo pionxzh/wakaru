@@ -1,7 +1,7 @@
 use swc_core::common::{Mark, Span, Spanned, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrayLit, BinExpr, BinaryOp, CallExpr, Expr, ExprOrSpread, Ident, Lit, Number, Str, UnaryExpr,
-    UnaryOp,
+    ArrayLit, BinExpr, BinaryOp, CallExpr, Expr, ExprOrSpread, Ident, Lit, Module, Number, Str,
+    UnaryExpr, UnaryOp,
 };
 use swc_core::ecma::utils::ExprFactory;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
@@ -26,6 +26,17 @@ impl UnTypeConstructor {
 }
 
 impl VisitMut for UnTypeConstructor {
+    fn visit_mut_module(&mut self, module: &mut Module) {
+        // The rewrites emit references to the globals `Number`, `String`, and
+        // `Array`; a `with` statement or a direct eval anywhere in the module
+        // can rebind them, so the module is left as is
+        // (docs/rewrite-assumptions.md, dynamic-scope skip).
+        if super::eval_utils::has_dynamic_scope_construct(module) {
+            return;
+        }
+        module.visit_mut_children_with(self);
+    }
+
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         if self.level < RewriteLevel::Aggressive {
             return;
