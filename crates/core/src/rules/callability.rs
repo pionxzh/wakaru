@@ -109,6 +109,7 @@ where
 {
     let mut collector = CallabilityCollector::default();
     node.visit_with(&mut collector);
+    collector.resolve_named_calls();
     // `.call` / `.apply` seeds walk ordinary aliases and value aliases.
     // Export roots walk ordinary aliases only, so a decorator `||` tail cannot
     // pin a constructor that no same-file call actually reaches.
@@ -198,6 +199,20 @@ struct CallabilityCollector {
     pending_constructor: bool,
     /// `true` while the current function is the IIFE's constructor.
     in_constructor: Vec<bool>,
+    /// Parameters of named functions (`function F(p)`, `var F = function (p)`
+    /// or an arrow), by the function's binding.
+    function_params: HashMap<BindingKey, Vec<Option<BindingKey>>>,
+    /// Direct calls `F(x, …)` of an identifier, resolved against
+    /// `function_params` once the walk has seen every declaration.
+    named_calls: Vec<NamedCall>,
+}
+
+/// `F(args…)`: each argument's binding (if it is a bare identifier) and
+/// whether it is spread, with the guards active at the call.
+struct NamedCall {
+    callee: BindingKey,
+    args: Vec<(bool, Option<BindingKey>)>,
+    guards: Vec<BindingKey>,
 }
 
 struct IifeConsumeScope {
@@ -252,33 +267,39 @@ impl CallabilityCollector {
             return;
         };
         let inner = strip_parens(callee);
-        let params: Vec<&Pat> = match inner {
+        let params: Vec<Option<BindingKey>> = match inner {
             Expr::Fn(function) => function
                 .function
                 .params
                 .iter()
-                .map(|param| &param.pat)
+                .map(|param| pat_binding_key(&param.pat))
                 .collect(),
-            Expr::Arrow(arrow) => arrow.params.iter().collect(),
+            Expr::Arrow(arrow) => arrow.params.iter().map(pat_binding_key).collect(),
             _ => return,
         };
+        self.note_argument_aliases(&params, &call_argument_keys(call));
+    }
 
+    /// A parameter evaluates to the argument passed at its position, so
+    /// requiring the parameter requires each such argument.
+    fn note_argument_aliases(
+        &mut self,
+        params: &[Option<BindingKey>],
+        args: &[(bool, Option<BindingKey>)],
+    ) {
         let mut spreads_seen = 0;
-        for (argument_index, argument) in call.args.iter().enumerate() {
-            if argument.spread.is_some() {
+        for (argument_index, (spread, argument_key)) in args.iter().enumerate() {
+            if *spread {
                 spreads_seen += 1;
                 continue;
             }
-            let Some(argument_key) = expr_binding_key(strip_parens(&argument.expr)) else {
+            let Some(argument_key) = argument_key else {
                 continue;
             };
 
             if spreads_seen == 0 {
-                if let Some(parameter_key) = params
-                    .get(argument_index)
-                    .and_then(|parameter| pat_binding_key(parameter))
-                {
-                    self.note_alias(parameter_key, argument_key);
+                if let Some(Some(parameter_key)) = params.get(argument_index) {
+                    self.note_alias(parameter_key.clone(), argument_key.clone());
                 }
                 continue;
             }
@@ -287,12 +308,27 @@ impl CallabilityCollector {
             // argument may therefore feed any parameter from its minimum
             // position onward; keep every such source callable.
             let minimum_parameter_index = argument_index - spreads_seen;
-            for parameter in params.iter().skip(minimum_parameter_index) {
-                if let Some(parameter_key) = pat_binding_key(parameter) {
-                    self.note_alias(parameter_key, argument_key.clone());
-                }
+            for parameter_key in params.iter().skip(minimum_parameter_index).flatten() {
+                self.note_alias(parameter_key.clone(), argument_key.clone());
             }
         }
+    }
+
+    /// A mixin applies its parameter (`function M(Base) { … _super.apply(this,
+    /// arguments) … }(Base)`), so `M(Model)` must keep `Model` callable. Only
+    /// direct calls of a named function in the walked scope are followed; an
+    /// extra edge only keeps a function.
+    fn resolve_named_calls(&mut self) {
+        let calls = std::mem::take(&mut self.named_calls);
+        let saved_guards = std::mem::take(&mut self.guard_stack);
+        for call in calls {
+            let Some(params) = self.function_params.get(&call.callee).cloned() else {
+                continue;
+            };
+            self.guard_stack = call.guards;
+            self.note_argument_aliases(&params, &call.args);
+        }
+        self.guard_stack = saved_guards;
     }
 
     fn record_iife_result_alias(&mut self, target: BindingKey, init: &Expr) {
@@ -404,7 +440,22 @@ impl Visit for CallabilityCollector {
         }
         if let (Some(target), Some(init)) = (name, declarator.init.as_deref()) {
             self.record_iife_result_alias(target.clone(), init);
-            self.record_direct_ident_alias(target, init);
+            self.record_direct_ident_alias(target.clone(), init);
+            let params: Option<Vec<Option<BindingKey>>> = match strip_parens(init) {
+                Expr::Fn(function) => Some(
+                    function
+                        .function
+                        .params
+                        .iter()
+                        .map(|param| pat_binding_key(&param.pat))
+                        .collect(),
+                ),
+                Expr::Arrow(arrow) => Some(arrow.params.iter().map(pat_binding_key).collect()),
+                _ => None,
+            };
+            if let Some(params) = params {
+                self.function_params.insert(target, params);
+            }
         }
         if owner.is_some() {
             self.guard_stack.pop();
@@ -420,6 +471,14 @@ impl Visit for CallabilityCollector {
     }
 
     fn visit_fn_decl(&mut self, decl: &FnDecl) {
+        self.function_params.insert(
+            binding_key(&decl.ident),
+            decl.function
+                .params
+                .iter()
+                .map(|param| pat_binding_key(&param.pat))
+                .collect(),
+        );
         if let Some(scope) = self.iife_scopes.last_mut() {
             if self.function_depth == scope.base_depth + 1 && !scope.saw_constructor {
                 scope.saw_constructor = true;
@@ -517,8 +576,29 @@ impl Visit for CallabilityCollector {
             }
         }
         self.record_iife_param_aliases(call);
+        if let Callee::Expr(callee) = &call.callee {
+            if let Expr::Ident(callee) = strip_parens(callee) {
+                self.named_calls.push(NamedCall {
+                    callee: binding_key(callee),
+                    args: call_argument_keys(call),
+                    guards: self.guard_stack.clone(),
+                });
+            }
+        }
         call.visit_children_with(self);
     }
+}
+
+fn call_argument_keys(call: &CallExpr) -> Vec<(bool, Option<BindingKey>)> {
+    call.args
+        .iter()
+        .map(|argument| {
+            (
+                argument.spread.is_some(),
+                expr_binding_key(strip_parens(&argument.expr)),
+            )
+        })
+        .collect()
 }
 
 /// `F.call` / `F.apply`, or the callee of `F.call.apply(G, …)` which is `G`.
@@ -612,6 +692,7 @@ pub(crate) fn module_guarded_call_effects(
         ..CallabilityCollector::default()
     };
     items.visit_with(&mut collector);
+    collector.resolve_named_calls();
     collector.effects
 }
 

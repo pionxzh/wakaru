@@ -567,7 +567,13 @@ rationale, or level gating appear.
   `||`, and the right side of a plain `=` assignment, in an initializer or an
   IIFE return. A Babel legacy-decorator factory reaches its constructor that
   way (`var C = exports.C = Decorator(…) || Fallback`). Exported roots do not
-  follow value edges. In multi-module unpack, exports another module still
+  follow value edges. A parameter of a named function (`function F(p)`, or a
+  `var F` bound to a function or arrow) is also an alias of the identifier
+  each direct `F(x)` call in the scope passes at its position, so a mixin
+  `function M(Base) { return function (_super) { … _super.apply(…) … }(Base); }`
+  keeps `M(Model)`'s `Model` a function while that subclass stays lowered.
+  Aliased (`var G = F; G(x)`) and cross-module calls are not followed.
+  In multi-module unpack, exports another module still
   calls are seeded as required roots from `CallRequiredPlan` (see
   fact-system.md).
 - **Constructed class members** — the same `CallabilityIndex` walk records

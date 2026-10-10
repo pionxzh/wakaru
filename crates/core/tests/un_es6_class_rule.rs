@@ -1,6 +1,8 @@
 mod common;
 
-use common::{assert_eq_normalized, render, render_pipeline_between, render_rule};
+use common::{
+    assert_eq_normalized, render, render_pipeline_between, render_rule, render_with_level,
+};
 use wakaru_core::rules::UnEs6Class;
 use wakaru_core::{DecompileOptions, RewriteLevel, UnpackWarningKind};
 
@@ -126,6 +128,116 @@ function Speaking(t) {
     let output = apply(input);
     assert!(output.contains("__extends(t, _super)"), "got:\n{output}");
     assert!(!output.contains("class t"), "got:\n{output}");
+}
+
+fn mixin_of_model(declare_mixin: &str) -> String {
+    format!(
+        r#"
+import {{ __extends }} from "tslib";
+var Model = (function () {{
+    function Model(id) {{ this.id = id; }}
+    Model.prototype.describe = function () {{ return "model " + this.id; }};
+    return Model;
+}}());
+{declare_mixin} {{
+    return (function (_super) {{
+        __extends(class_1, _super);
+        function class_1() {{
+            return _super !== null && _super.apply(this, arguments) || this;
+        }}
+        class_1.prototype.tag = function () {{ return "tag " + this.id; }};
+        return class_1;
+    }}(Base));
+}}
+var Record = Tagged(Model);
+"#
+    )
+}
+
+#[test]
+fn base_passed_to_a_lowered_mixin_stays_callable() {
+    // Minimal keeps the default constructor frame, so `_super.apply` still
+    // calls whatever `Tagged` receives: `Model` must keep `[[Call]]`.
+    for declare in [
+        "function Tagged(Base)",
+        "var Tagged = function (Base)",
+        "var Tagged = (Base) =>",
+    ] {
+        let input = mixin_of_model(declare);
+        let minimal = apply_minimal(&input);
+        assert!(!minimal.contains("class Model"), "{minimal}");
+        assert!(
+            minimal.contains("_super.apply(this, arguments)"),
+            "{minimal}"
+        );
+    }
+}
+
+#[test]
+fn base_passed_to_a_recovered_mixin_becomes_a_class() {
+    let input = mixin_of_model("function Tagged(Base)");
+    let output = apply(&input);
+    assert!(output.contains("class Model"), "{output}");
+    assert!(
+        output.contains("return class class_1 extends Base"),
+        "{output}"
+    );
+}
+
+#[test]
+fn base_passed_to_a_lowered_mixin_pipeline_typescript() {
+    // producer typescript@5.9.3 {"module":"CommonJS","target":"ES5"}
+    let input = r#"
+"use strict";
+var __extends = (this && this.__extends) || (function () {
+    var extendStatics = function (d, b) {
+        extendStatics = Object.setPrototypeOf ||
+            ({ __proto__: [] } instanceof Array && function (d, b) { d.__proto__ = b; }) ||
+            function (d, b) { for (var p in b) if (Object.prototype.hasOwnProperty.call(b, p)) d[p] = b[p]; };
+        return extendStatics(d, b);
+    };
+    return function (d, b) {
+        if (typeof b !== "function" && b !== null)
+            throw new TypeError("Class extends value " + String(b) + " is not a constructor or null");
+        extendStatics(d, b);
+        function __() { this.constructor = d; }
+        d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.out = exports.Model = void 0;
+exports.Tagged = Tagged;
+var Model = /** @class */ (function () {
+    function Model(id) {
+        this.id = id;
+    }
+    return Model;
+}());
+exports.Model = Model;
+function Tagged(Base) {
+    return /** @class */ (function (_super) {
+        __extends(class_1, _super);
+        function class_1() {
+            return _super !== null && _super.apply(this, arguments) || this;
+        }
+        class_1.prototype.tag = function () { return "tag " + this.id; };
+        return class_1;
+    }(Base));
+}
+exports.out = new (Tagged(Model))(1).tag();
+"#;
+    let minimal = render_with_level(input, RewriteLevel::Minimal);
+    assert!(!minimal.contains("class Model"), "{minimal}");
+    assert!(
+        minimal.contains("_super.apply(this, arguments)"),
+        "{minimal}"
+    );
+    let standard = render(input);
+    assert!(standard.contains("export class Model"), "{standard}");
+    assert!(
+        standard.contains("return class class_1 extends Base"),
+        "{standard}"
+    );
 }
 
 #[test]
