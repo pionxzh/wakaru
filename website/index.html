@@ -100,7 +100,7 @@
         <div class="col">
           <h3 class="mono-h"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/></svg>bundlers</h3>
           <p>webpack 4/5 (including Vercel ncc CommonJS output with an IIFE webpack
-             bootstrap), esbuild, Bun, Metro, Browserify (including Cocos Creator 2.x),
+             bootstrap), Turbopack production chunks, esbuild, Bun, Metro, Browserify (including Cocos Creator 2.x),
              Closure ModuleManager, SystemJS, AMD/UMD, and scope-hoisted ESM output
              (Rollup, Vite), plus Bun single-file executables.</p>
         </div>
@@ -275,7 +275,7 @@
       <details>
         <summary>How do I decompile a webpack bundle and extract its modules?</summary>
         <p>Run <code>npx wakaru bundle.js --unpack -o out/</code>. Wakaru detects webpack 4/5,
-           esbuild, Bun, Metro, Browserify and Cocos Creator 2.x, Closure ModuleManager, SystemJS,
+           Turbopack, esbuild, Bun, Metro, Browserify and Cocos Creator 2.x, Closure ModuleManager, SystemJS,
            AMD/UMD, and scope-hoisted Rollup/Vite output, plus Bun single-file executables, then
            splits the bundle into individual modules and decompiles each one.</p>
         <p class="faq-more"><a href="/docs/guides/unminify-a-webpack-bundle">Docs: Unminify a webpack bundle</a>
