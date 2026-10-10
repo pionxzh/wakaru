@@ -2932,15 +2932,22 @@ fn recover_ts_default_inheritance(
         return;
     }
     // A subclass with field initializers keeps the implicit constructor's
-    // frame, so its replacement still forwards every argument.
-    let field_constructor = if is_ts_default_derived_constructor(&function.function, base) {
-        None
+    // frame, so its replacement still forwards every argument. Any other
+    // constructor was already rebuilt around `super(...)` and stays; the
+    // capture check rejects one that still reads the superclass parameter.
+    enum Frame {
+        Default,
+        Fields(Constructor),
+        Explicit,
+    }
+    let frame = if is_ts_default_derived_constructor(&function.function, base) {
+        Frame::Default
+    } else if let Some(replacement) =
+        ts_field_initializer_constructor(&function.function, base, uses)
+    {
+        Frame::Fields(replacement)
     } else {
-        let Some(replacement) = ts_field_initializer_constructor(&function.function, base, uses)
-        else {
-            return;
-        };
-        Some(replacement)
+        Frame::Explicit
     };
     let extends_calls = original.iter().filter(|stmt| {
         let Stmt::Expr(statement) = stmt else { return false; };
@@ -2976,10 +2983,18 @@ fn recover_ts_default_inheritance(
     let [position] = positions.as_slice() else {
         return;
     };
-    match field_constructor {
-        Some(replacement) => members[*position] = ClassMember::Constructor(replacement),
-        None => {
+    match frame {
+        Frame::Default => {
             members.remove(*position);
+        }
+        Frame::Fields(replacement) => members[*position] = ClassMember::Constructor(replacement),
+        Frame::Explicit => {
+            let ClassMember::Constructor(ctor) = &members[*position] else {
+                unreachable!()
+            };
+            if !ctor.body.as_ref().is_some_and(constructor_calls_super) {
+                return;
+            }
         }
     }
     for member in members {

@@ -479,8 +479,9 @@ rewrite mode all preserve the lowered form.
 `UnEs6Class` can consume the canonical `base !== null &&
 base.apply(this, arguments) || this` default constructor at `standard` and
 above, then recover `base.prototype.method.call(this, ...)` and static
-`base.method.call(this, ...)` as native `super` calls. The source-recovery
-tradeoff is named
+`base.method.call(this, ...)` as native `super` calls. A wrapper with an
+explicit constructor gets the same method-call recovery at `standard` once its
+constructor has become `super(...)`. The source-recovery tradeoff is named
 [`native_class_inheritance`](rewrite-assumptions.md#native_class_inheritance).
 
 An explicit constructor's `var _this = base.call(this, ...) || this` becomes
@@ -499,8 +500,8 @@ stable declarations; namespaces must have only static member reads. Direct
 `eval` or `with` disables this new path. The module's use index is shared with
 nested visitors so writes outside the immediate wrapper still disqualify it.
 
-Only the exact parameterless, single-return default constructor is consumed,
-plus the frame TypeScript emits for a subclass with field initializers and no
+Of the default frames, only the exact parameterless, single-return default
+constructor is consumed, plus the frame TypeScript emits for a subclass with field initializers and no
 constructor (without `downlevelIteration`): `var _this = <frame>;`, then
 expression statements, then `return _this;`. That one becomes
 `constructor(...args) { super(...args); ... }`, with the alias rewritten to
@@ -509,9 +510,11 @@ no writes, and an initializer that reads the function's own `this` keeps the
 wrapper, because that `this` is the receiver, not the parent's result.
 Superclass method calls require `this` as their first non-spread argument and
 a static method name. Lexical arrows share the method's `super`; ordinary
-nested functions and classes do not. Remaining superclass captures, references
-to the removed inner constructor binding, custom constructor bodies, `.apply`
-method calls and dynamic method names retain the wrapper. The constructor
+nested functions and classes do not. Constructor bodies are not rewritten: a
+superclass method call there could run before `super()`, where native `super`
+cannot read `this`. Remaining superclass captures (including any left in an
+explicit constructor), references to the removed inner constructor binding,
+`.apply` method calls and dynamic method names retain the wrapper. The constructor
 reference exception is a static, synchronous method with exactly one statement:
 `return new C(...)`. Its sole reference to the original constructor is rebound
 to the recovered class using resolver identity. A differently named outer

@@ -2827,6 +2827,134 @@ class Child extends Parent { value(base) { return base.prototype.value.call(this
     assert_eq_normalized(&apply(&input), expected);
 }
 
+fn ts_explicit_inheritance(method: &str) -> String {
+    format!(
+        r#"import {{ __extends }} from "tslib";
+var Child = (function (base) {{
+    __extends(Child, base);
+    function Child(size) {{
+        var _this = base.call(this) || this;
+        _this.size = size;
+        return _this;
+    }}
+    {method}
+    return Child;
+}})(Parent);"#
+    )
+}
+
+#[test]
+fn ts_explicit_constructor_recovers_superclass_method_calls_at_standard() {
+    let input = ts_explicit_inheritance(
+        r#"
+Child.prototype.value = function (arg) { return base.prototype.value.call(this, arg); };
+Child.value = function (arg) { return base.value.call(this, arg); };
+Child.prototype.lazy = function () { return () => base.prototype.value.call(this); };
+"#,
+    );
+    let expected = r#"import "tslib";
+class Child extends Parent {
+    constructor(size) { super(); this.size = size; }
+    value(arg) { return super.value(arg); }
+    static value(arg) { return super.value(arg); }
+    lazy() { return () => super.value(); }
+}"#;
+    assert_eq_normalized(&apply(&input), expected);
+    let minimal = apply_minimal(&input);
+    assert!(minimal.contains("__extends(Child, base)"), "{minimal}");
+    assert!(!minimal.contains("class Child extends"), "{minimal}");
+}
+
+#[test]
+fn ts_explicit_constructor_preserves_unconsumed_superclass_uses() {
+    for method in [
+        "Child.prototype.value = function () { return base; };",
+        "Child.prototype.value = function () { return function () { return base.prototype.value.call(this); }; };",
+        "Child.prototype.value = function () { return base.prototype.value.call(other); };",
+        "Child.prototype.value = function () { return base.prototype.value.apply(this, arguments); };",
+        "Child.value = function () { return base.prototype.value.call(this); };",
+    ] {
+        let input = ts_explicit_inheritance(method);
+        assert!(
+            !apply(&input).contains("class Child extends"),
+            "{}",
+            apply(&input)
+        );
+    }
+    // `super.init()` before `super()` would read `this` in its TDZ, so a
+    // superclass method call in the constructor keeps the wrapper.
+    let input = ts_explicit_inheritance("Child.prototype.value = function () { return 1; };")
+        .replace(
+            "_this.size = size;",
+            "base.prototype.init.call(_this); _this.size = size;",
+        );
+    assert!(
+        !apply(&input).contains("class Child extends"),
+        "{}",
+        apply(&input)
+    );
+}
+
+#[test]
+fn ts_explicit_constructor_pipeline_recovers_base_and_subclass() {
+    // producer typescript@5.9.3 {"module":"CommonJS","target":"ES5"}
+    let input = r#"
+"use strict";
+var __extends = (this && this.__extends) || (function () {
+    var extendStatics = function (d, b) {
+        extendStatics = Object.setPrototypeOf ||
+            ({ __proto__: [] } instanceof Array && function (d, b) { d.__proto__ = b; }) ||
+            function (d, b) { for (var p in b) if (Object.prototype.hasOwnProperty.call(b, p)) d[p] = b[p]; };
+        return extendStatics(d, b);
+    };
+    return function (d, b) {
+        if (typeof b !== "function" && b !== null)
+            throw new TypeError("Class extends value " + String(b) + " is not a constructor or null");
+        extendStatics(d, b);
+        function __() { this.constructor = d; }
+        d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.Square = exports.Shape = void 0;
+var Shape = /** @class */ (function () {
+    function Shape() {
+    }
+    Shape.prototype.area = function () { return 1; };
+    return Shape;
+}());
+exports.Shape = Shape;
+var Square = /** @class */ (function (_super) {
+    __extends(Square, _super);
+    function Square(size) {
+        var _this = _super.call(this) || this;
+        _this.size = size;
+        return _this;
+    }
+    Square.prototype.area = function () { return _super.prototype.area.call(this) * this.size; };
+    return Square;
+}(Shape));
+exports.Square = Square;
+"#;
+    let expected = r#"
+export class Shape {
+    area() {
+        return 1;
+    }
+}
+export class Square extends Shape {
+    constructor(size){
+        super();
+        this.size = size;
+    }
+    area() {
+        return super.area() * this.size;
+    }
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
 #[test]
 fn tsc_default_inheritance_recovers_across_helper_delivery_and_minification() {
     for input in [

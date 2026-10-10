@@ -683,7 +683,9 @@ Recovering `class Child extends Parent { ... }` removes the default
 constructor, or rebuilds the field-initializer one as
 `constructor(...args) { super(...args); this.x = ...; }`, and uses native
 construction. It also recovers proven instance/static superclass
-method calls as `super.method(...)`. These changes are intentionally observable:
+method calls as `super.method(...)`, in these classes and in classes whose
+explicit constructor already became `super(...)` (below). These changes are
+intentionally observable:
 
 - With `Parent = null`, the lowered constructor can return `this`; the native
   default derived constructor throws when instantiated.
@@ -704,8 +706,8 @@ frame and stable helper bindings; this does not authorize deleting arbitrary
 null guards or rewriting captured superclass references.
 
 Affects: `UnEs6Class` recovery of the TypeScript default derived constructor
-(with or without field initializers) and its instance/static superclass
-method calls. See
+(with or without field initializers), and of instance/static superclass
+method calls in those classes and in classes with an explicit constructor. See
 [helper detection](helper-detection.md#typescript-default-inheritance) for
 recognition and rejection boundaries.
 
@@ -715,7 +717,8 @@ predicted to become `class extends`; a wrong prediction is reported as
 `cross_module_class_call` ([fact system](fact-system.md#rules-that-read-facts)).
 
 Level: `standard` and above. `minimal` preserves this lowered constructor and
-wrapper, and keeps every cross-module `.call` / `.apply` target a function.
+wrapper, keeps a wrapper whose methods make superclass method calls, and keeps
+every cross-module `.call` / `.apply` target a function.
 Other existing class recoveries have their own boundaries; this is not a claim
 that `minimal` preserves every lowered class. In particular, an explicit
 TypeScript constructor (`var _this = _super.call(this, m) || this`) in a class
