@@ -237,8 +237,14 @@ const vueProfileRunners = VUE_SFC_COMPILE_PROFILES.map((profile) => ({
 
 // ES5 builds lower the compiler's render closures, slots, and handlers to
 // `function` expressions. `modules: false` keeps the import/export syntax, as
-// in the module body a bundler sees after babel-loader.
-function es5Lowered(runVue) {
+// in the module body a bundler sees after babel-loader; `systemjs` is Babel's
+// own System.register transform (see README for its known gap).
+const ES5_LOWERINGS = [
+  { name: "babel-preset-env-ie11", modules: false },
+  { name: "babel-preset-env-ie11-systemjs", modules: "systemjs" },
+];
+
+function es5Lowered(runVue, modules) {
   return batchRunner(async () => {
     await runVue.prewarm?.();
     const compiled = allSources.map((source) => {
@@ -250,7 +256,7 @@ function es5Lowered(runVue) {
     });
     const valid = compiled.filter((code) => code !== null);
     if (valid.length === 0) return new Map();
-    const lowered = await babelPresetEnvBatch(valid, { modules: false });
+    const lowered = await babelPresetEnvBatch(valid, { modules });
     const map = new Map();
     for (let i = 0; i < allSources.length; i++) {
       if (compiled[i] !== null) map.set(allSources[i], lowered.get(compiled[i]));
@@ -261,7 +267,9 @@ function es5Lowered(runVue) {
 
 const transformers = vueProfileRunners.flatMap(({ name, run }) => [
   ...withTerserVariants(name, allSources, run),
-  ...withTerserVariants(`${name}-babel-preset-env-ie11`, allSources, es5Lowered(run)),
+  ...ES5_LOWERINGS.flatMap((lowering) =>
+    withTerserVariants(`${name}-${lowering.name}`, allSources, es5Lowered(run, lowering.modules)),
+  ),
 ]);
 
 function linkedScopedSlotPrograms(snippet, recovered) {
