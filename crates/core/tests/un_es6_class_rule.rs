@@ -82,6 +82,173 @@ class Child extends Animal {
     assert_eq_normalized(&apply(input), expected);
 }
 
+// ============================================================
+// Class IIFE in return position (mixins)
+// ============================================================
+
+#[test]
+fn returned_extends_iife_becomes_class_expression() {
+    let input = r#"
+function Speaking(Base) {
+    return (function(_super) {
+        __extends(t, _super);
+        function t(name) { _super.call(this, name); }
+        t.prototype.speak = function speak() { return 'hi'; }
+        return t;
+    }(Base));
+}
+"#;
+    let expected = r#"
+function Speaking(Base) {
+    return class t extends Base {
+        constructor(name) { super(name); }
+        speak() { return 'hi'; }
+    };
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+    assert_eq_normalized(&apply_minimal(input), expected);
+}
+
+#[test]
+fn returned_iife_keeps_lowered_when_superclass_spells_inner_name() {
+    // `class t extends t` reads the class's own binding in its TDZ.
+    let input = r#"
+function Speaking(t) {
+    return (function(_super) {
+        __extends(t, _super);
+        function t(name) { _super.call(this, name); }
+        t.prototype.speak = function speak() { return 'hi'; }
+        return t;
+    }(t));
+}
+"#;
+    let output = apply(input);
+    assert!(output.contains("__extends(t, _super)"), "got:\n{output}");
+    assert!(!output.contains("class t"), "got:\n{output}");
+}
+
+#[test]
+fn returned_extends_iife_pipeline_typescript_mixin() {
+    // producer typescript@5.9.3 {"module":"CommonJS","target":"ES5"}
+    let input = r#"
+"use strict";
+var __extends = (this && this.__extends) || (function () {
+    var extendStatics = function (d, b) {
+        extendStatics = Object.setPrototypeOf ||
+            ({ __proto__: [] } instanceof Array && function (d, b) { d.__proto__ = b; }) ||
+            function (d, b) { for (var p in b) if (Object.prototype.hasOwnProperty.call(b, p)) d[p] = b[p]; };
+        return extendStatics(d, b);
+    };
+    return function (d, b) {
+        if (typeof b !== "function" && b !== null)
+            throw new TypeError("Class extends value " + String(b) + " is not a constructor or null");
+        extendStatics(d, b);
+        function __() { this.constructor = d; }
+        d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.NamedShape = exports.Shape = void 0;
+exports.Named = Named;
+var Shape = /** @class */ (function () {
+    function Shape(size) {
+        this.size = size;
+    }
+    Shape.prototype.area = function () { return this.size * this.size; };
+    return Shape;
+}());
+exports.Shape = Shape;
+function Named(Base) {
+    return /** @class */ (function (_super) {
+        __extends(class_1, _super);
+        function class_1() {
+            var args = [];
+            for (var _i = 0; _i < arguments.length; _i++) {
+                args[_i] = arguments[_i];
+            }
+            var _this = _super.apply(this, args) || this;
+            _this.label = "shape";
+            return _this;
+        }
+        class_1.prototype.describe = function () { return this.label + " " + this.area(); };
+        return class_1;
+    }(Base));
+}
+exports.NamedShape = Named(Shape);
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("return class class_1 extends Base {"),
+        "got:\n{output}"
+    );
+    assert!(output.contains("super(...args);"), "got:\n{output}");
+    assert!(!output.contains("__extends"), "got:\n{output}");
+    assert!(!output.contains("_super"), "got:\n{output}");
+}
+
+#[test]
+fn typescript_rest_args_super_apply_becomes_super_spread() {
+    // producer typescript@5.9.3 {"target":"ES5"}: `constructor(...args) { super(...args); }`
+    let input = r#"
+var Child = (function(_super) {
+    __extends(t, _super);
+    function t() {
+        var args = [];
+        for (var _i = 0; _i < arguments.length; _i++) {
+            args[_i] = arguments[_i];
+        }
+        var _this = _super.apply(this, args) || this;
+        _this.x = 1;
+        return _this;
+    }
+    return t;
+}(Base));
+"#;
+    let expected = r#"
+class Child extends Base {
+    constructor() {
+        var args = [];
+        for (var _i = 0; _i < arguments.length; _i++) {
+            args[_i] = arguments[_i];
+        }
+        super(...args);
+        this.x = 1;
+    }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+    assert_eq_normalized(&apply_minimal(input), expected);
+}
+
+#[test]
+fn super_apply_keeps_lowered_when_rest_copy_changes_after_loop() {
+    for change in ["args = other;", "args.push(1);", "use(args);"] {
+        let input = format!(
+            r#"
+var Child = (function(_super) {{
+    __extends(t, _super);
+    function t() {{
+        var args = [];
+        for (var _i = 0; _i < arguments.length; _i++) {{
+            args[_i] = arguments[_i];
+        }}
+        {change}
+        var _this = _super.apply(this, args) || this;
+        return _this;
+    }}
+    return t;
+}}(Base));
+"#
+        );
+        let output = apply(&input);
+        assert!(
+            output.contains("_super.apply(this, args)"),
+            "got:\n{output}"
+        );
+    }
+}
+
 #[test]
 fn typescript_extends_helper_var_is_recovered() {
     let input = r#"

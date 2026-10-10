@@ -456,6 +456,17 @@ impl VisitMut for UnEs6ClassInner {
                             stmts.push(stmt);
                         }
                     }
+                    Stmt::Return(ref ret) => {
+                        if let Some(class) = try_returned_iife_to_class(ret, convert) {
+                            stmts.push(Stmt::Return(ReturnStmt {
+                                span: ret.span,
+                                arg: Some(Box::new(Expr::Class(class))),
+                            }));
+                            converted_this_pass = true;
+                        } else {
+                            stmts.push(stmt);
+                        }
+                    }
                     other => stmts.push(other),
                 }
             }
@@ -1846,6 +1857,71 @@ fn try_iife_to_class(
             implements: vec![],
         }),
     })
+}
+
+/// `return function (_super) { …; return C; }(Base)`, the ES5 form of a
+/// returned `class extends Base {…}` such as a mixin's. The wrapper is
+/// recovered as if bound to its inner constructor, so the class expression
+/// keeps the name the lowered function carried (`class_1`, `_class`).
+fn try_returned_iife_to_class(
+    ret: &ReturnStmt,
+    convert: impl Fn(&VarDecl) -> Option<ClassDecl>,
+) -> Option<ClassExpr> {
+    let arg = ret.arg.as_deref()?;
+    let call = extract_iife_call(arg)?;
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let body = match strip_parens(callee) {
+        Expr::Fn(fn_expr) => &fn_expr.function.body.as_ref()?.stmts,
+        Expr::Arrow(arrow) => match &*arrow.body {
+            ArrowFunctionBody::FunctionBody(body) => &body.stmts,
+            ArrowFunctionBody::Expr(_) => return None,
+        },
+        _ => return None,
+    };
+    let name = find_inner_constructor_ident(body)?.clone();
+    let var = VarDecl {
+        span: ret.span,
+        ctxt: SyntaxContext::empty(),
+        kind: VarDeclKind::Var,
+        declare: false,
+        decls: vec![VarDeclarator {
+            span: DUMMY_SP,
+            name: Pat::Ident(name.into()),
+            init: Some(Box::new(arg.clone())),
+            definite: false,
+        }],
+    };
+    let ClassDecl { ident, class, .. } = convert(&var)?;
+    // The heritage expression runs inside the class scope, where the class
+    // name is in its TDZ: a superclass printed with that name would read it.
+    if class
+        .super_class
+        .as_deref()
+        .is_some_and(|super_class| expr_spells_name(super_class, &ident.sym))
+    {
+        return None;
+    }
+    Some(ClassExpr {
+        ident: Some(ident),
+        class,
+    })
+}
+
+fn expr_spells_name(expr: &Expr, name: &Atom) -> bool {
+    struct Finder<'a> {
+        name: &'a Atom,
+        found: bool,
+    }
+    impl Visit for Finder<'_> {
+        fn visit_ident(&mut self, id: &Ident) {
+            self.found |= id.sym == *self.name;
+        }
+    }
+    let mut finder = Finder { name, found: false };
+    expr.visit_with(&mut finder);
+    finder.found
 }
 
 fn class_has_constructed_method(
@@ -5485,6 +5561,7 @@ fn build_constructor(
         // Rewrite `superParam.call(this, ...)` → `super(...)` in the constructor body
         body.visit_mut_with(&mut SuperCallRewriter {
             super_param_name: sp,
+            rest_copy: sole_rest_copy_read(&body, function.params.len(), unresolved_mark),
         });
         // Rewrite `(ctor.__proto__ || Object.getPrototypeOf(ctor)).apply(this, arguments)` → `super(...arguments)`
         // This pattern appears in inlined Babel classes where _inherits is baked in.
@@ -5798,10 +5875,29 @@ impl VisitMut for SuperOrThisSimplifier {
     fn visit_mut_arrow_expr(&mut self, _: &mut ArrowExpr) {}
 }
 
+/// The `arguments`-copy Array of a rest-parameter constructor
+/// (`var args = []; for (…) args[_i] = arguments[_i];`), when the body reads
+/// it once after the copy loop and nowhere before it. That one read can only
+/// be `superParam.apply(this, args)`, so spreading it passes the same values.
+fn sole_rest_copy_read(
+    body: &FunctionBody,
+    fixed_param_count: usize,
+    unresolved_mark: Mark,
+) -> Option<BindingKey> {
+    let proof =
+        super::arg_rest::find_rest_array_copy_proof(body, fixed_param_count, unresolved_mark)?;
+    let key = binding_key(&proof.binding);
+    let before = count_binding_refs(&body.stmts[..proof.start_stmt], &key);
+    let after = count_binding_refs(&body.stmts[proof.ready_stmt..], &key);
+    (before == 0 && after == 1).then_some(key)
+}
+
 /// Rewrites `superParam.call(this, args...)` → `super(args...)`
 /// and `superParam.apply(this, arguments)` → `super(...arguments)` in constructor bodies.
 struct SuperCallRewriter<'a> {
     super_param_name: &'a str,
+    /// A proven rest-argument copy that `.apply` may spread.
+    rest_copy: Option<BindingKey>,
 }
 
 impl VisitMut for SuperCallRewriter<'_> {
@@ -5856,9 +5952,11 @@ impl VisitMut for SuperCallRewriter<'_> {
                 if !matches!(call.args[0].expr.as_ref(), Expr::This(..)) {
                     return;
                 }
-                // Second arg must be `arguments` or an array literal for safe conversion
+                // Second arg must be `arguments`, an array literal, or the
+                // proven rest copy for safe conversion
                 let second = strip_parens(&call.args[1].expr);
-                let is_safe = matches!(second, Expr::Ident(id) if id.sym.as_ref() == "arguments")
+                let is_safe = matches!(second, Expr::Ident(id) if id.sym.as_ref() == "arguments"
+                    || self.rest_copy.as_ref() == Some(&binding_key(id)))
                     || matches!(second, Expr::Array(_));
                 if !is_safe {
                     return;

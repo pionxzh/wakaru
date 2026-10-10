@@ -720,7 +720,8 @@ Other existing class recoveries have their own boundaries; this is not a claim
 that `minimal` preserves every lowered class. In particular, an explicit
 TypeScript constructor (`var _this = _super.call(this, m) || this`) in a class
 without superclass method calls becomes `super(m)` at every level, `minimal`
-included. That recovery carries the same native-parent and overridden-`.call`
+included, and so does `_super.apply(this, args)` over a proven rest-argument
+copy. That recovery carries the same native-parent and overridden-`.call`
 differences listed above. With a native parent such as `Error` it also changes
 `instanceof` and method lookup on instances, in the direction of the source.
 

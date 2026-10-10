@@ -324,7 +324,9 @@ Neither proof creates a default-object fact available to consumers.
   describes a later rewrite instead of the barrier AST. A misprediction that
   claims conversion leaves the original bug in place (base becomes a class, the
   consumer keeps `.call`). Keep the probe (`super_params_consumed_by_class_recovery`)
-  in step with `UnEs6Class` and the spread rules that run before it.
+  in step with `UnEs6Class` and the spread rules that run before it. The
+  probe covers `var C = IIFE` wrappers only; a wrapper in `return` position
+  (a mixin's returned class) is never predicted, so its base stays pinned.
   `Minimal` makes no prediction: every cross-file `.call` / `.apply` target
   stays a function. At `Standard` and above, the plan remembers definitions it
   left unpinned only on a prediction; after Phase 2, a module that still calls

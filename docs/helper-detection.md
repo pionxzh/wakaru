@@ -483,6 +483,12 @@ above, then recover `base.prototype.method.call(this, ...)` and static
 tradeoff is named
 [`native_class_inheritance`](rewrite-assumptions.md#native_class_inheritance).
 
+An explicit constructor's `var _this = base.call(this, ...) || this` becomes
+`super(...)` at every level. `base.apply(this, args)` does too when `args` is
+the canonical rest-argument copy (`var args = []; for (...) args[_i] =
+arguments[_i];`) and the body reads it only once after the copy loop, so that
+read is the `.apply` argument.
+
 The anonymous, synchronous wrapper must have one ordinary superclass argument.
 The extends call must use the exact resolved constructor and wrapper parameter,
 with a proven TypeScript helper or a tslib namespace. In a Cocos Creator
