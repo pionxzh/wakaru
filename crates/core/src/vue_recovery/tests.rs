@@ -3,6 +3,7 @@ use crate::vue_template::{VueAttr, VueExpr};
 
 mod attrs_events;
 mod computed;
+mod es5_lowered;
 mod helper_aliases;
 mod recognition;
 mod ref_values;

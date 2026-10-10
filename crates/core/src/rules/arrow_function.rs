@@ -691,9 +691,12 @@ impl Visit for HasArguments {
 
 /// Converts every function expression that `try_convert_to_arrow` accepts,
 /// without constructor evidence, except object property values. Only for
-/// the private module copy Vue SFC recovery analyzes: Vue's template compiler
-/// emits render functions, slots, and handlers as arrows, so a function there
-/// is an ES5-lowered arrow. Never apply it to emitted JavaScript.
+/// the module Vue SFC recovery parses: Vue's template compiler emits render
+/// functions, slots, and handlers as arrows, and the recovery matchers read
+/// arrows only. The recovered `<script setup>` is printed from that module,
+/// so authored setup functions convert too, constructed or not; that is
+/// accepted for best-effort SFC output (`docs/vue-sfc-recovery-status.md`).
+/// Never apply it to emitted JavaScript.
 pub(crate) fn convert_lowered_vue_arrows(module: &mut Module) {
     struct Converter;
     impl VisitMut for Converter {

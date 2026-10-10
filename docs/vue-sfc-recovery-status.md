@@ -72,6 +72,15 @@ render JavaScript."
   organization are not recovered.
 - There is no source-map-backed mapping from recovered SFC sections to original
   source locations.
+- ES5-lowered builds keep render closures, slots, and handlers as `function`
+  expressions in the JavaScript output. Before matching, Vue recovery turns
+  every `function` expression in its own parse of that output into an arrow
+  when the function uses no `this`, `arguments`, or `new.target`. The
+  recovered `<script setup>` is printed from that parse, so an authored setup
+  function the JavaScript output keeps as `function` can come out as an arrow,
+  even when the code constructs it with `new`. This is accepted: the SFC is
+  best-effort output, and teaching each matcher to read `function`
+  expressions was judged not worth its cost.
 
 ## Public Corpus Workflow
 

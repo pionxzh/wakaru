@@ -1177,7 +1177,9 @@ pub(super) fn parse_module(source: &str, cm: Lrc<SourceMap>) -> Result<Module> {
         .map_err(|error| anyhow!("failed to parse decompiled Vue module: {error:?}"))?;
     // Decompiled JavaScript keeps ES5-lowered render closures, slots, and
     // handlers as functions; the matchers read Vue compiler output, which uses
-    // arrows. This module is only analyzed, never emitted as JavaScript.
+    // arrows. This module is never emitted as JavaScript, but the recovered
+    // `<script setup>` is printed from it, so authored setup functions come
+    // out as arrows too (accepted; see `convert_lowered_vue_arrows`).
     crate::rules::convert_lowered_vue_arrows(&mut module);
     Ok(module)
 }
