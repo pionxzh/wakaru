@@ -61,6 +61,9 @@ impl GtmValue {
     }
 }
 
+/// The arrays `data.resource` carries in every container; together they are the detection shape.
+const RESOURCE_KEYS: [&str; 4] = ["macros", "tags", "predicates", "rules"];
+
 /// One file the container was split into, with its path relative to the output directory.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GtmFile {
@@ -76,7 +79,7 @@ pub struct GtmExternalScript {
     pub url: String,
 }
 
-/// A macro that was used somewhere but is missing from the container.
+/// One entry of the container's macro array, by index, as the generated `index.md` lists it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GtmMacroRef {
     pub index: u64,
@@ -89,14 +92,25 @@ pub struct GtmContainer {
     pub version: Option<String>,
     pub files: Vec<GtmFile>,
     pub external_scripts: Vec<GtmExternalScript>,
-    /// Macro references found in the emitted code, so a reader can answer "what is 30?".
+    /// Every macro that names its `function`, so a reader of `__gtm_macro_30` can answer "what is
+    /// 30?".
     pub macros: Vec<GtmMacroRef>,
     /// Escape modes this module does not understand, and anything else skipped.
     pub warnings: Vec<String>,
 }
 
 /// Reads a container out of source text, for callers that have not parsed the input yet.
+///
+/// Every `--unpack` input passes through here, so text that cannot hold the container's keys is
+/// rejected before it is parsed; the structural check in [`extract`] still decides.
 pub fn extract_from_source(source: &str, filename: &str) -> Option<GtmContainer> {
+    if !RESOURCE_KEYS
+        .iter()
+        .chain(std::iter::once(&"resource"))
+        .all(|key| source.contains(key))
+    {
+        return None;
+    }
     let source_map: Lrc<SourceMap> = Default::default();
     let module = crate::driver::io::parse_js(source, filename, source_map).ok()?;
     extract(&module)
@@ -104,14 +118,20 @@ pub fn extract_from_source(source: &str, filename: &str) -> Option<GtmContainer>
 
 /// Look for a GTM container in a parsed module and split it into readable files.
 ///
-/// Returns `None` when the module has no `var data = {…}` whose `resource` object has both a `macros`
-/// and a `tags` array — the object shape the format is recognizable by. Detection does not look at the
-/// file name or the URL, so a container saved by hand is recognized too.
+/// Returns `None` when the module has no `var data = {…}` whose `resource` object has `macros`,
+/// `tags`, `predicates` and `rules` arrays — the object shape the format is recognizable by. Detection
+/// does not look at the file name or the URL, so a container saved by hand is recognized too.
 pub fn extract(module: &Module) -> Option<GtmContainer> {
     let mut finder = DataObjectFinder::default();
     module.visit_with(&mut finder);
     let data = GtmValue::from_object(&finder.data?);
     let resource = data.get("resource")?;
+    if !RESOURCE_KEYS
+        .iter()
+        .all(|key| resource.get(key).and_then(GtmValue::as_array).is_some())
+    {
+        return None;
+    }
     let macros = resource.get("macros")?.as_array()?;
     let tags = resource.get("tags")?.as_array()?;
 
@@ -191,8 +211,9 @@ pub fn extract(module: &Module) -> Option<GtmContainer> {
 /// `["escape", ["macro", n], 8 | 16]` sits in code position, so the identifier drops in as a
 /// reference. `["escape", ["macro", n], 7]` sits inside a string literal, where a bare identifier
 /// would become plain text and lose the data flow, so the literal is closed and the reference
-/// concatenated instead. Any other mode keeps a comment placeholder and is reported as a warning
-/// rather than guessed at.
+/// concatenated instead. Any other mode is reported as a warning rather than guessed at, and keeps
+/// the reference as the identifier `__gtm_macro_<n>_escape_<mode>`: a comment would not survive the
+/// pipeline, and dropping it would delete an argument or operand without a trace in the code.
 fn join_template(value: &GtmValue, warnings: &mut Vec<String>) -> String {
     let Some(parts) = value.as_array() else {
         return String::new();
@@ -222,9 +243,7 @@ fn join_template(value: &GtmValue, warnings: &mut Vec<String>) -> String {
                         warnings.push(format!(
                             "macro {macro_index} uses escape mode {mode}, which is not understood"
                         ));
-                        out.push_str(&format!(
-                            "/* gtm: __gtm_macro_{macro_index} (unsupported escape mode {mode}) */"
-                        ));
+                        out.push_str(&format!("__gtm_macro_{macro_index}_escape_{mode}"));
                     }
                 }
             }
@@ -261,24 +280,47 @@ fn escape_mode(items: &[GtmValue]) -> Option<u64> {
 
 /// The quote character of the string literal a mode-7 macro sits inside, so the substitution can
 /// close and reopen it with the same one.
+///
+/// The scan covers only the current script — from the end of the last `<script…>` open tag, or the
+/// whole text for a Custom JS body — and tracks string and comment state, so an apostrophe in the
+/// markup around the script, or a quote of the other kind inside the literal, does not decide it.
+/// Regular expression literals are not tracked.
 fn enclosing_quote(out: &str) -> char {
-    let bytes = out.as_bytes();
-    let mut quote = '"';
-    for (index, byte) in bytes.iter().enumerate() {
-        if *byte != b'"' && *byte != b'\'' {
-            continue;
-        }
-        let mut backslashes = 0;
-        let mut cursor = index;
-        while cursor > 0 && bytes[cursor - 1] == b'\\' {
-            backslashes += 1;
-            cursor -= 1;
-        }
-        if backslashes % 2 == 0 {
-            quote = *byte as char;
+    let start = out
+        .rfind("<script")
+        .and_then(|open| out[open..].find('>').map(|end| open + end + 1))
+        .unwrap_or(0);
+    let mut chars = out[start..].chars().peekable();
+    let mut quote = None;
+    while let Some(c) = chars.next() {
+        match quote {
+            Some(open) => {
+                if c == '\\' {
+                    chars.next();
+                } else if c == open {
+                    quote = None;
+                }
+            }
+            None => match c {
+                '"' | '\'' | '`' => quote = Some(c),
+                '/' if chars.peek() == Some(&'/') => {
+                    while chars.next_if(|next| *next != '\n').is_some() {}
+                }
+                '/' if chars.peek() == Some(&'*') => {
+                    chars.next();
+                    let mut previous = '\0';
+                    for next in chars.by_ref() {
+                        if previous == '*' && next == '/' {
+                            break;
+                        }
+                        previous = next;
+                    }
+                }
+                _ => {}
+            },
         }
     }
-    quote
+    quote.unwrap_or('"')
 }
 
 struct GtmScript {
@@ -288,7 +330,8 @@ struct GtmScript {
 
 /// Picks the `<script>` tags GTM rewrote out of a Custom HTML tag. Only `type="text/gtmscript"`
 /// scripts carry the code the tag adds; an external one moved its `src` into `data-gtmsrc` and has no
-/// body, so the file numbers are the scripts' positions in the tag and can have gaps. Other tags — including the ordinary `<noscript>` fallbacks GTM also writes — are left alone.
+/// body, so the file numbers are the scripts' positions in the tag and can have gaps. Other tags —
+/// including the ordinary `<noscript>` fallbacks GTM also writes — are left alone.
 fn split_gtm_scripts(html: &str) -> Vec<GtmScript> {
     const CLOSE: &str = "</script>";
     let mut scripts = Vec::new();
@@ -540,8 +583,7 @@ var data = {"resource":{"version":"40","macros":[
         // the mode the module does not understand keeps a placeholder instead of a guess
         assert_eq!(
             html.source,
-            "var t=\"\" + __gtm_macro_1 + \"\";\
-             code(__gtm_macro_0,/* gtm: __gtm_macro_9 (unsupported escape mode 12) */);"
+            "var t=\"\" + __gtm_macro_1 + \"\";code(__gtm_macro_0,__gtm_macro_9_escape_12);"
         );
 
         let second = container
@@ -577,7 +619,7 @@ var data = {"resource":{"version":"40","macros":[
     #[test]
     fn ignores_scripts_that_are_not_gtm_rewritten() {
         let container = extract(&parse(
-            r#"(function(){var data={"resource":{"version":"1","macros":[],"tags":[
+            r#"(function(){var data={"resource":{"version":"1","macros":[],"predicates":[],"rules":[],"tags":[
                 {"function":"__html","tag_id":3,"vtp_html":["template","<script>plain()</script><noscript><img src=\"//x\"></noscript>"]}
             ]}};})();"#,
         ))
@@ -592,8 +634,60 @@ var data = {"resource":{"version":"40","macros":[
     fn a_module_without_a_resource_object_is_not_a_container() {
         assert!(extract(&parse("var data = {\"other\": 1};")).is_none());
         assert!(extract(&parse(
-            "var config = {\"resource\": {\"macros\": [], \"tags\": []}};"
+            "var config = {\"resource\": {\"macros\": [], \"tags\": [], \"predicates\": [], \"rules\": []}};"
         ))
         .is_none());
+        // `macros` and `tags` alone are ordinary words for application data
+        assert!(extract(&parse(
+            "var data = {\"resource\": {\"macros\": [], \"tags\": []}};"
+        ))
+        .is_none());
+    }
+
+    #[test]
+    fn text_without_the_resource_keys_is_rejected_before_parsing() {
+        // not valid JavaScript: a parse would fail too, but the key check answers first
+        assert!(
+            extract_from_source("var data = {resource: {macros: [], tags: [}", "x.js").is_none()
+        );
+        assert!(extract_from_source(CONTAINER, "gtm.js").is_some());
+    }
+
+    fn html_tag_source(container: &str) -> String {
+        extract(&parse(container))
+            .expect("container detected")
+            .files
+            .into_iter()
+            .find(|file| file.path.starts_with("tags/"))
+            .expect("tag file")
+            .source
+    }
+
+    #[test]
+    fn mode_7_uses_the_quote_that_opened_the_literal() {
+        // the single-quoted literal holds a double quote before the reference, and the markup
+        // around the script holds an apostrophe; neither decides the enclosing quote
+        let source = html_tag_source(
+            r#"var data={"resource":{"macros":[{"function":"__v"}],"predicates":[],"rules":[],"tags":[
+                {"function":"__html","tag_id":4,"vtp_html":["template","<p>don't</p><script type=\"text/gtmscript\">/* it's */ var t='say \"hi\" ",["escape",["macro",0],7],"';</script>"]}
+            ]}};"#,
+        );
+        assert_eq!(
+            source,
+            "/* it's */ var t='say \"hi\" ' + __gtm_macro_0 + '';"
+        );
+    }
+
+    #[test]
+    fn mode_7_after_an_earlier_substitution_stays_in_the_same_literal() {
+        let source = html_tag_source(
+            r#"var data={"resource":{"macros":[{"function":"__v"}],"predicates":[],"rules":[],"tags":[
+                {"function":"__html","tag_id":4,"vtp_html":["template","<script type=\"text/gtmscript\">var u='a=",["escape",["macro",0],7],"&b=",["escape",["macro",0],7],"';</script>"]}
+            ]}};"#,
+        );
+        assert_eq!(
+            source,
+            "var u='a=' + __gtm_macro_0 + '&b=' + __gtm_macro_0 + '';"
+        );
     }
 }

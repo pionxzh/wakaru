@@ -32,6 +32,7 @@ wakaru bundle.js --unpack=inspect -o out/     # finer boundaries for static insp
 wakaru entry.js chunk.js --unpack -o out/     # unpack multiple explicit files
 wakaru dist/ --unpack -o out/                 # recursively scan a directory
 wakaru ./compiled-app --unpack -o out/        # extract a Bun single-file executable
+wakaru gtm.js --unpack -o out/                # split a Google Tag Manager container
 ```
 
 Directory inputs are supported only with `--unpack`. Wakaru recursively scans
@@ -52,6 +53,16 @@ only `.js`, `.mjs`, and `.cjs` candidates, and stdin remains text input. Use
 `wakaru bun extract` for its exact bytes.
 See [bun-standalone.md](bun-standalone.md) for the container format, safety
 properties, and current limits.
+
+An explicit file can also be a Google Tag Manager container (`gtm.js`).
+Wakaru recognizes it by the shape of its `data.resource` object, skips the GTM
+runtime, and writes each Custom JS variable to `macros/jsm-<n>.js`, each
+inline Custom HTML script to `tags/html-<tag_id>-<n>.js`, and an `index.md`
+listing the macros and external script URLs. Each JavaScript piece is
+decompiled like a single file; `--raw` writes it as extracted. Container pieces
+appear in `--json` output as modules, but `--provenance`, `--emit-source-map`,
+and `--vue-sfc` do not cover them. Directory scans and stdin do not detect
+containers. See [gtm.md](gtm.md) for macro references and current limits.
 
 Unpacked output follows Node's rules for ESM and CommonJS, except for the
 cases listed in [Known gaps](unpacking.md#known-gaps). A module that stays
@@ -328,7 +339,7 @@ result from a run that produced nothing.
 
 | Error-class (`is_error: true`) | Non-error |
 |---|---|
-| `raw_normalization_failed`, `fact_collection_failed`, `webpack_factory_recovery_failed`, `decompile_failed`, `duplicate_declaration`, `output_parse_recovered`, `output_parse_failed` | `input_parse_recovered`, `tdz_violation`, `import_cycle`, `cross_module_class_call`, `commonjs_export_unrecovered`, `runtime_residual` |
+| `raw_normalization_failed`, `fact_collection_failed`, `webpack_factory_recovery_failed`, `decompile_failed`, `duplicate_declaration`, `output_parse_recovered`, `output_parse_failed` | `input_parse_recovered`, `tdz_violation`, `import_cycle`, `cross_module_class_call`, `commonjs_export_unrecovered`, `runtime_residual`, `gtm_unsupported_escape` |
 
 `duplicate_declaration` and the `output_parse_*` checks run only with
 `--diagnostics`. Without it, Wakaru does not re-parse emitted modules, so a

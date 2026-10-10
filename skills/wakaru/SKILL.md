@@ -28,6 +28,10 @@ mangled locals stay short unless a source map is provided.
   SystemJS/AMD/Rollup/Vite bundle and need the individual modules.
 - You have a Bun single-file PE, Mach-O, or ELF executable and need its embedded
   JavaScript without running it.
+- You have a Google Tag Manager container (`gtm.js`) and need its Custom HTML
+  and Custom JavaScript code as separate files: `wakaru gtm.js --unpack -o out/`
+  writes `macros/`, `tags/`, and an `index.md` that says what each
+  `__gtm_macro_<n>` is.
 - You need every file stored in a Bun single-file executable, including binary assets,
   WebAssembly, native add-ons, or embedded databases.
 - You have compiled Vue 3 component JavaScript and want a best-effort `.vue`

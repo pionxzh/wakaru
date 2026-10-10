@@ -31,6 +31,7 @@ wakaru bundle.js --unpack -o out/
 wakaru entry.js chunk.js --unpack -o out/     # multiple explicit files
 wakaru dist/ --unpack -o out/                 # recursively scan a directory
 wakaru ./compiled-app --unpack -o out/        # Bun single-file executable
+wakaru gtm.js --unpack -o out/                # Google Tag Manager container
 ```
 
 Variants:
@@ -90,6 +91,15 @@ wakaru bun extract ./compiled-app -o extracted/ --include-internals
 file record below `extracted/files/` plus a `manifest.json`. It never parses
 or executes the contents. `--include-internals` also writes Bun's opaque
 source-map, bytecode, and module-info regions. Bun 1.3.3+ is supported.
+
+## Google Tag Manager containers
+
+`--unpack` on a saved `gtm.js` container skips the GTM runtime and writes the
+code the site added: each Custom JS variable to `macros/jsm-<n>.js`, each
+inline Custom HTML script to `tags/html-<tag_id>-<n>.js`, and an `index.md`
+that lists the macros and the external script URLs. Macro references read
+`__gtm_macro_<n>`, where `<n>` is the row in `index.md`. Pass `--raw` to keep
+each piece as extracted.
 
 ## Rewrite level
 

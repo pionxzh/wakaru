@@ -2369,15 +2369,10 @@ fn unpacking_a_gtm_container_writes_its_pieces_and_keeps_macro_references() {
         &out_dir,
         &containers,
         CodeFormatter::None,
-        GtmWriteOptions {
-            check_existing_writes: false,
-            level: RewriteLevel::Standard,
-            dce_mode: DceMode::TransformOnly,
-            diagnostics: false,
-            announce: false,
-        },
+        gtm_write_options(false),
     )
-    .expect("write container files");
+    .expect("write container files")
+    .artifacts;
 
     assert_eq!(
         artifacts.len(),
@@ -2396,5 +2391,124 @@ fn unpacking_a_gtm_container_writes_its_pieces_and_keeps_macro_references() {
     assert!(index.contains("| 1 | `__v` | order_amount |"), "{index}");
     assert!(index.contains("| 9 | //example.com/loader.js |"), "{index}");
 
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+fn gtm_write_options(raw: bool) -> GtmWriteOptions {
+    GtmWriteOptions {
+        check_existing_writes: false,
+        raw,
+        level: RewriteLevel::Standard,
+        dce_mode: DceMode::TransformOnly,
+        diagnostics: false,
+        announce: false,
+    }
+}
+
+/// Writes `source` as `gtm.js` in a fresh directory and returns it with a canonical output directory.
+fn gtm_test_dir(name: &str, source: &str) -> (PathBuf, PathBuf, PathBuf) {
+    let dir = temp_test_dir(name);
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input = dir.join("gtm.js");
+    fs::write(&input, source).expect("write container");
+    let out_dir = dir.join("out");
+    fs::create_dir_all(&out_dir).expect("create output dir");
+    let out_dir = canonicalize_output_dir(&out_dir).expect("canonicalize output dir");
+    (dir, input, out_dir)
+}
+
+#[test]
+fn unpacking_without_inputs_reads_stdin_through_the_bundle_pipeline() {
+    let (containers, bundles) = classify_gtm_inputs(&[]);
+    assert!(
+        !only_gtm_inputs(&containers, &bundles),
+        "no inputs means stdin, not an empty container run"
+    );
+}
+
+#[test]
+fn raw_gtm_pieces_are_written_as_extracted() {
+    let (dir, input, out_dir) = gtm_test_dir("gtm-raw", SYNTHETIC_GTM_CONTAINER);
+    let (containers, _) = classify_gtm_inputs(std::slice::from_ref(&input));
+    write_gtm_outputs(
+        &out_dir,
+        &containers,
+        CodeFormatter::None,
+        gtm_write_options(true),
+    )
+    .expect("write container files");
+    assert_eq!(
+        fs::read_to_string(out_dir.join("macros/jsm-0.js")).expect("read the macro"),
+        "var a=1;return a;"
+    );
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn gtm_pieces_report_escape_warnings_and_parse_failures() {
+    let (dir, input, out_dir) = gtm_test_dir(
+        "gtm-warnings",
+        r#"var data = {"resource":{"macros":[{"function":"__v"}],"predicates":[],"rules":[],"tags":[
+  {"function":"__html","tag_id":2,"vtp_html":["template","<script type=\"text/gtmscript\">f(",["escape",["macro",0],12],");</script><script type=\"text/gtmscript\">}</script>"]}
+]}};"#,
+    );
+    let (containers, _) = classify_gtm_inputs(std::slice::from_ref(&input));
+    let output = write_gtm_outputs(
+        &out_dir,
+        &containers,
+        CodeFormatter::None,
+        gtm_write_options(false),
+    )
+    .expect("write container files");
+
+    let kinds: Vec<(&str, &str, bool)> = output
+        .warnings
+        .iter()
+        .map(|w| (w.filename.as_str(), w.kind.as_str(), w.is_error))
+        .collect();
+    let input_name = input.display().to_string();
+    assert!(
+        kinds.contains(&(input_name.as_str(), "gtm_unsupported_escape", false)),
+        "{kinds:?}"
+    );
+    assert!(
+        kinds.contains(&("tags/html-2-1.js", "decompile_failed", true)),
+        "{kinds:?}"
+    );
+    // the placeholder keeps the argument instead of leaving a comment the pipeline drops
+    let tag = fs::read_to_string(out_dir.join("tags/html-2-0.js")).expect("read the tag");
+    assert!(tag.contains("f(__gtm_macro_0_escape_12)"), "{tag}");
+    // the piece that did not parse is still written as extracted, and listed as a module
+    assert_eq!(
+        fs::read_to_string(out_dir.join("tags/html-2-1.js")).expect("read the fragment"),
+        "}"
+    );
+    assert_eq!(output.artifacts.len(), 2);
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn unpacking_a_gtm_container_next_to_a_bundle_writes_both() {
+    let (dir, input, out_dir) = gtm_test_dir("gtm-mixed", SYNTHETIC_GTM_CONTAINER);
+    let bundle = dir.join("bundle.js");
+    fs::write(
+        &bundle,
+        "(function(modules){var c={};function r(i){if(c[i])return c[i].exports;var m=c[i]={exports:{}};modules[i].call(m.exports,m,m.exports,r);return m.exports}return r(0)})([function(module,exports,require){console.log(require(1))},function(module){module.exports=42}]);",
+    )
+    .expect("write bundle");
+    let cli = Cli::try_parse_from([
+        "wakaru".as_ref(),
+        input.as_os_str(),
+        bundle.as_os_str(),
+        "--unpack".as_ref(),
+        "-o".as_ref(),
+        out_dir.as_os_str(),
+        "--force".as_ref(),
+    ])
+    .expect("parse");
+    run_unpack(cli).expect("unpack");
+    assert!(out_dir.join("macros/jsm-0.js").is_file());
+    assert!(out_dir.join("index.md").is_file());
+    assert!(out_dir.join("module-0.js").is_file());
     fs::remove_dir_all(&dir).expect("remove temp dir");
 }

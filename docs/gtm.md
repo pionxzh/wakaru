@@ -7,8 +7,11 @@ runtime, which is the same in every container. The container data is the part
 worth reading — marketing teams add Custom HTML tags and Custom JS variables
 through GTM, often outside the normal code review process.
 
-`--unpack` recognizes a container by that object shape, read from the AST and
-not from the file name, so a container saved by hand works too. The runtime is
+`--unpack` recognizes a container by that object shape — a `var data = {…}`
+whose `resource` carries `macros`, `tags`, `predicates` and `rules` arrays —
+read from the AST and not from the file name, so a container saved by hand
+works too. Only explicit file inputs are checked; directory scans and stdin
+are not. The runtime is
 skipped: it is the same library in every file, and running wakaru without
 `--unpack` still decompiles the whole input.
 
@@ -25,7 +28,10 @@ The pieces are written under `-o`:
 | `index.md` | every macro index with its `function` type and name, and the URLs of external scripts |
 
 Each JavaScript piece then goes through the normal pipeline, so the emitted
-code is decompiled like any other file.
+code is decompiled like any other file; `--raw` writes it as extracted. A piece
+the pipeline cannot parse is written as extracted and reported as
+`decompile_failed`, which makes the run exit nonzero like any failed module.
+In `--json` output the JavaScript pieces are modules; `index.md` is not.
 
 ## Macro references
 
@@ -43,8 +49,15 @@ The mode says where the reference sits:
   text and a reader (or a SAST tool) would lose the data flow, so the literal
   is closed and the reference concatenated with the same quote character. The
   pipeline may then fold it into a template literal.
-- **anything else** — kept as a comment placeholder, and reported as a warning.
-  Mode `12` occurs in real containers and its meaning is not established yet.
+- **anything else** — kept as the identifier `__gtm_macro_<n>_escape_<mode>`
+  and reported as a `gtm_unsupported_escape` warning. A comment would not
+  survive the pipeline, and dropping the reference would delete an argument or
+  operand. Mode `12` occurs in real containers and its meaning is not
+  established yet. Only the first mode of an escape is read.
+
+For mode 7 the quote character comes from a scan of the current script that
+tracks string and comment state. Regular expression literals are not tracked,
+so a quote inside a regex before the reference can still pick the wrong one.
 
 ## Custom HTML tags
 

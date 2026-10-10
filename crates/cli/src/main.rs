@@ -369,30 +369,31 @@ fn run_unpack(cli: Cli) -> Result<()> {
     // A Google Tag Manager container is not a bundle — its "modules" are template arrays — so it is
     // split into files here and every piece goes through the pipeline on its own.
     let (gtm_inputs, bundle_inputs) = classify_gtm_inputs(&cli.inputs);
-    let mut gtm_artifacts = Vec::new();
-    if !gtm_inputs.is_empty() {
-        gtm_artifacts = write_gtm_outputs(
-            &out_dir,
-            &gtm_inputs,
-            js_formatter,
-            GtmWriteOptions {
-                check_existing_writes,
-                level: cli.level.into(),
-                dce_mode,
-                diagnostics: cli.diagnostics,
-                announce: !cli.json,
-            },
-        )?;
+    let gtm = write_gtm_outputs(
+        &out_dir,
+        &gtm_inputs,
+        js_formatter,
+        GtmWriteOptions {
+            check_existing_writes,
+            raw: cli.raw,
+            level: cli.level.into(),
+            dce_mode,
+            diagnostics: cli.diagnostics,
+            announce: !cli.json,
+        },
+    )?;
+    if !cli.json {
+        print_warnings(&gtm.warnings, &styled);
     }
-    if bundle_inputs.is_empty() {
+    if only_gtm_inputs(&gtm_inputs, &bundle_inputs) {
         if cli.json {
             let json = json_unpack_output_for_artifacts(
                 &[],
                 wakaru::OutputSafety::Normal,
-                &gtm_artifacts,
-                &[],
-                gtm_artifacts.len(),
-                0,
+                &gtm.artifacts,
+                &gtm.warnings,
+                gtm.artifacts.len(),
+                error_module_names(gtm.warnings.iter()).len(),
                 start.elapsed(),
             );
             println!(
@@ -400,7 +401,7 @@ fn run_unpack(cli: Cli) -> Result<()> {
                 serde_json::to_string(&json).expect("JSON serialization")
             );
         }
-        return Ok(());
+        return error_modules_result(&error_module_names(gtm.warnings.iter()));
     }
     let execution = run_public_unpack(
         &bundle_inputs,
@@ -425,14 +426,7 @@ fn run_unpack(cli: Cli) -> Result<()> {
     if !cli.json {
         print_warnings(&output.warnings, &styled);
     }
-    let error_modules: Vec<&str> = output
-        .warnings
-        .iter()
-        .filter(|w| w.is_error)
-        .map(|w| w.filename.as_str())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
+    let error_modules = error_module_names(output.warnings.iter().chain(&gtm.warnings));
 
     let provenance = output.provenance;
     let module_sources = cli
@@ -447,7 +441,7 @@ fn run_unpack(cli: Cli) -> Result<()> {
             (filename, code, source_map)
         })
         .collect();
-    let total_modules = modules.len();
+    let total_modules = modules.len() + gtm.artifacts.len();
     let artifacts: Vec<CliOutputArtifact> = modules
         .into_par_iter()
         .flat_map(|(filename, code, source_map)| {
@@ -570,11 +564,19 @@ fn run_unpack(cli: Cli) -> Result<()> {
     }
 
     if cli.json {
+        let artifacts: Vec<CliOutputArtifact> =
+            artifacts.into_iter().chain(gtm.artifacts).collect();
+        let warnings: Vec<CliWarning> = output
+            .warnings
+            .iter()
+            .chain(&gtm.warnings)
+            .cloned()
+            .collect();
         let json = json_unpack_output_for_artifacts(
             &output.detected_formats,
             output.safety,
             &artifacts,
-            &output.warnings,
+            &warnings,
             total_modules,
             error_modules.len(),
             elapsed,
@@ -609,6 +611,20 @@ fn run_unpack(cli: Cli) -> Result<()> {
         );
     }
 
+    error_modules_result(&error_modules)
+}
+
+/// The distinct modules with at least one error-class warning, which `failed` counts.
+fn error_module_names<'a>(warnings: impl Iterator<Item = &'a CliWarning>) -> Vec<&'a str> {
+    warnings
+        .filter(|w| w.is_error)
+        .map(|w| w.filename.as_str())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn error_modules_result(error_modules: &[&str]) -> Result<()> {
     if !error_modules.is_empty() {
         bail!(
             "errors in {} module(s): {}",
@@ -1411,7 +1427,6 @@ fn adapt_public_decompile_output(output: wakaru::DecompileOutput) -> CliDecompil
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 /// Inputs that are Google Tag Manager containers, with the container read out of each, and the rest
 /// of the inputs, which belong to the bundle pipeline.
 fn classify_gtm_inputs(
@@ -1436,44 +1451,74 @@ fn classify_gtm_inputs(
     (containers, bundles)
 }
 
+/// Whether every input was a container, so the bundle pipeline has nothing to do. No inputs at all
+/// means stdin, which belongs to the bundle pipeline.
+fn only_gtm_inputs(
+    gtm_inputs: &[(PathBuf, wakaru_core::gtm::GtmContainer)],
+    bundle_inputs: &[PathBuf],
+) -> bool {
+    !gtm_inputs.is_empty() && bundle_inputs.is_empty()
+}
+
 /// How a container's pieces are written: the same choices the bundle pipeline takes from the CLI.
 struct GtmWriteOptions {
     check_existing_writes: bool,
+    raw: bool,
     level: RewriteLevel,
     dce_mode: DceMode,
     diagnostics: bool,
     announce: bool,
 }
 
-/// Writes the files a container was split into, decompiling the JavaScript ones, and returns them as
-/// artifacts so that `--json` describes a container run like any other unpack.
+/// What the container pieces add to an unpack run's report.
+struct GtmOutput {
+    /// The JavaScript pieces as written; `index.md` is written too but is not a module.
+    artifacts: Vec<CliOutputArtifact>,
+    warnings: Vec<CliWarning>,
+}
+
+/// Escape modes the extractor reports but does not rewrite. Not an error: the piece is written with
+/// a placeholder identifier and decompiles normally.
+const GTM_ESCAPE_WARNING_KIND: &str = "gtm_unsupported_escape";
+
+/// Writes the files a container was split into, decompiling the JavaScript ones unless `raw`, and
+/// returns them as artifacts so that `--json` describes a container run like any other unpack.
 fn write_gtm_outputs(
     out_dir: &Path,
     gtm_inputs: &[(PathBuf, wakaru_core::gtm::GtmContainer)],
     formatter: CodeFormatter,
     options: GtmWriteOptions,
-) -> Result<Vec<CliOutputArtifact>> {
+) -> Result<GtmOutput> {
     let GtmWriteOptions {
         check_existing_writes,
+        raw,
         level,
         dce_mode,
         diagnostics,
         announce,
     } = options;
     let mut seen = std::collections::HashSet::new();
-    let mut artifacts = Vec::new();
+    let mut output = GtmOutput {
+        artifacts: Vec::new(),
+        warnings: Vec::new(),
+    };
     for (input, container) in gtm_inputs {
+        let input_name = input.display().to_string();
         if announce {
             eprintln!(
-                "gtm: {} container version {} -> {} files",
-                input.display(),
+                "gtm: {input_name} container version {} -> {} files",
                 container.version.as_deref().unwrap_or("unknown"),
                 container.files.len()
             );
-            for warning in &container.warnings {
-                eprintln!("warning: {}: {warning}", input.display());
-            }
         }
+        output
+            .warnings
+            .extend(container.warnings.iter().map(|message| CliWarning {
+                filename: input_name.clone(),
+                kind: GTM_ESCAPE_WARNING_KIND.to_string(),
+                is_error: false,
+                message: message.clone(),
+            }));
         for file in &container.files {
             let path = resolve_unpack_output_path(out_dir, &file.path, &mut seen)?;
             if !file.path.ends_with(".js") {
@@ -1481,50 +1526,52 @@ fn write_gtm_outputs(
                 write_new_file(&path, &file.source, check_existing_writes)?;
                 continue;
             }
-            let rewrite = wakaru::RewriteOptions::default()
-                .with_level(public_rewrite_level(level))
-                .with_dce(public_dce_mode(dce_mode));
-            let decompiled = wakaru::decompile(
-                wakaru::Source::new(file.path.clone(), file.source.clone()),
-                wakaru::DecompileOptions::default()
-                    .with_rewrite(rewrite)
-                    .with_diagnostics(diagnostics),
-            );
-            // A body the pipeline cannot parse — a script tag holding a fragment, for instance — is
-            // still what the container holds, so it is written as extracted and the run goes on.
-            let (code, decompiled_ok) = match decompiled {
-                Ok(output) => (
-                    format_cli_output_with_source_map(
-                        output.module.code,
-                        None,
-                        &file.path,
-                        formatter,
-                    )
-                    .0,
-                    true,
-                ),
-                Err(error) => {
-                    if announce {
-                        eprintln!("warning: {}: {error}", file.path);
+            let code = if raw {
+                file.source.clone()
+            } else {
+                let rewrite = wakaru::RewriteOptions::default()
+                    .with_level(public_rewrite_level(level))
+                    .with_dce(public_dce_mode(dce_mode));
+                let decompiled = wakaru::decompile(
+                    wakaru::Source::new(file.path.clone(), file.source.clone()),
+                    wakaru::DecompileOptions::default()
+                        .with_rewrite(rewrite)
+                        .with_diagnostics(diagnostics),
+                );
+                match decompiled {
+                    Ok(decompiled) => {
+                        let adapted = adapt_public_decompile_output(decompiled);
+                        output.warnings.extend(adapted.warnings);
+                        format_cli_output_with_source_map(adapted.code, None, &file.path, formatter)
+                            .0
                     }
-                    (file.source.clone(), false)
+                    // A body the pipeline cannot parse — a script tag holding a fragment, for
+                    // instance — is still what the container holds, so it is written as extracted
+                    // and reported like any module that failed to decompile.
+                    Err(error) => {
+                        output.warnings.push(CliWarning::new(
+                            file.path.clone(),
+                            wakaru::DiagnosticCode::DecompileFailed,
+                            wakaru::DiagnosticSeverity::Error,
+                            error.to_string(),
+                        ));
+                        file.source.clone()
+                    }
                 }
             };
             write_new_file(&path, &code, check_existing_writes)?;
-            if decompiled_ok {
-                artifacts.push(CliOutputArtifact {
-                    filename: file.path.clone(),
-                    code,
-                    kind: JsonModuleKind::JavaScript,
-                    status: JsonModuleStatus::Decompiled,
-                    source_filename: Some(input.display().to_string()),
-                    source_map_filename: None,
-                    source_map: None,
-                });
-            }
+            output.artifacts.push(CliOutputArtifact {
+                filename: file.path.clone(),
+                code,
+                kind: JsonModuleKind::JavaScript,
+                status: JsonModuleStatus::Decompiled,
+                source_filename: Some(input_name.clone()),
+                source_map_filename: None,
+                source_map: None,
+            });
         }
     }
-    Ok(artifacts)
+    Ok(output)
 }
 
 fn write_new_file(path: &Path, content: &str, check_existing_writes: bool) -> Result<()> {
@@ -1535,6 +1582,7 @@ fn write_new_file(path: &Path, content: &str, check_existing_writes: bool) -> Re
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_public_unpack(
     paths: &[PathBuf],
     raw: bool,
