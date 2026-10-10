@@ -40,6 +40,7 @@ use vue::{
     vue_js_output_filename, vue_output_filename_for_component, vue_sfc_artifact_summary,
     vue_sfc_js_artifact_status,
 };
+use wakaru_formatter::CodeFormatter;
 
 // AST processing allocates and frees many small nodes across Rayon workers.
 // Keep this allocator choice in the executable; library users own theirs.
@@ -365,8 +366,44 @@ fn run_unpack(cli: Cli) -> Result<()> {
     let out_dir = canonicalize_output_dir(&out_dir)?;
 
     let start = Instant::now();
+    // A Google Tag Manager container is not a bundle — its "modules" are template arrays — so it is
+    // split into files here and every piece goes through the pipeline on its own.
+    let (gtm_inputs, bundle_inputs) = classify_gtm_inputs(&cli.inputs);
+    let mut gtm_artifacts = Vec::new();
+    if !gtm_inputs.is_empty() {
+        gtm_artifacts = write_gtm_outputs(
+            &out_dir,
+            &gtm_inputs,
+            js_formatter,
+            GtmWriteOptions {
+                check_existing_writes,
+                level: cli.level.into(),
+                dce_mode,
+                diagnostics: cli.diagnostics,
+                announce: !cli.json,
+            },
+        )?;
+    }
+    if bundle_inputs.is_empty() {
+        if cli.json {
+            let json = json_unpack_output_for_artifacts(
+                &[],
+                wakaru::OutputSafety::Normal,
+                &gtm_artifacts,
+                &[],
+                gtm_artifacts.len(),
+                0,
+                start.elapsed(),
+            );
+            println!(
+                "{}",
+                serde_json::to_string(&json).expect("JSON serialization")
+            );
+        }
+        return Ok(());
+    }
     let execution = run_public_unpack(
-        &cli.inputs,
+        &bundle_inputs,
         cli.raw,
         unpack_mode,
         dce_mode,
@@ -1375,6 +1412,129 @@ fn adapt_public_decompile_output(output: wakaru::DecompileOutput) -> CliDecompil
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Inputs that are Google Tag Manager containers, with the container read out of each, and the rest
+/// of the inputs, which belong to the bundle pipeline.
+fn classify_gtm_inputs(
+    inputs: &[PathBuf],
+) -> (Vec<(PathBuf, wakaru_core::gtm::GtmContainer)>, Vec<PathBuf>) {
+    let mut containers = Vec::new();
+    let mut bundles = Vec::new();
+    for input in inputs {
+        // a directory belongs to the bundle scanner, and only a container has the data object
+        let container = input
+            .is_file()
+            .then(|| fs::read_to_string(input).ok())
+            .flatten()
+            .and_then(|source| {
+                wakaru_core::gtm::extract_from_source(&source, &input.display().to_string())
+            });
+        match container {
+            Some(container) => containers.push((input.clone(), container)),
+            None => bundles.push(input.clone()),
+        }
+    }
+    (containers, bundles)
+}
+
+/// How a container's pieces are written: the same choices the bundle pipeline takes from the CLI.
+struct GtmWriteOptions {
+    check_existing_writes: bool,
+    level: RewriteLevel,
+    dce_mode: DceMode,
+    diagnostics: bool,
+    announce: bool,
+}
+
+/// Writes the files a container was split into, decompiling the JavaScript ones, and returns them as
+/// artifacts so that `--json` describes a container run like any other unpack.
+fn write_gtm_outputs(
+    out_dir: &Path,
+    gtm_inputs: &[(PathBuf, wakaru_core::gtm::GtmContainer)],
+    formatter: CodeFormatter,
+    options: GtmWriteOptions,
+) -> Result<Vec<CliOutputArtifact>> {
+    let GtmWriteOptions {
+        check_existing_writes,
+        level,
+        dce_mode,
+        diagnostics,
+        announce,
+    } = options;
+    let mut seen = std::collections::HashSet::new();
+    let mut artifacts = Vec::new();
+    for (input, container) in gtm_inputs {
+        if announce {
+            eprintln!(
+                "gtm: {} container version {} -> {} files",
+                input.display(),
+                container.version.as_deref().unwrap_or("unknown"),
+                container.files.len()
+            );
+            for warning in &container.warnings {
+                eprintln!("warning: {}: {warning}", input.display());
+            }
+        }
+        for file in &container.files {
+            let path = resolve_unpack_output_path(out_dir, &file.path, &mut seen)?;
+            if !file.path.ends_with(".js") {
+                // the index is not JavaScript and has no pipeline to go through
+                write_new_file(&path, &file.source, check_existing_writes)?;
+                continue;
+            }
+            let rewrite = wakaru::RewriteOptions::default()
+                .with_level(public_rewrite_level(level))
+                .with_dce(public_dce_mode(dce_mode));
+            let decompiled = wakaru::decompile(
+                wakaru::Source::new(file.path.clone(), file.source.clone()),
+                wakaru::DecompileOptions::default()
+                    .with_rewrite(rewrite)
+                    .with_diagnostics(diagnostics),
+            );
+            // A body the pipeline cannot parse — a script tag holding a fragment, for instance — is
+            // still what the container holds, so it is written as extracted and the run goes on.
+            let (code, decompiled_ok) = match decompiled {
+                Ok(output) => (
+                    format_cli_output_with_source_map(
+                        output.module.code,
+                        None,
+                        &file.path,
+                        formatter,
+                    )
+                    .0,
+                    true,
+                ),
+                Err(error) => {
+                    if announce {
+                        eprintln!("warning: {}: {error}", file.path);
+                    }
+                    (file.source.clone(), false)
+                }
+            };
+            write_new_file(&path, &code, check_existing_writes)?;
+            if decompiled_ok {
+                artifacts.push(CliOutputArtifact {
+                    filename: file.path.clone(),
+                    code,
+                    kind: JsonModuleKind::JavaScript,
+                    status: JsonModuleStatus::Decompiled,
+                    source_filename: Some(input.display().to_string()),
+                    source_map_filename: None,
+                    source_map: None,
+                });
+            }
+        }
+    }
+    Ok(artifacts)
+}
+
+fn write_new_file(path: &Path, content: &str, check_existing_writes: bool) -> Result<()> {
+    if check_existing_writes {
+        write_if_changed(path, content)
+    } else {
+        write_file(path, content)
+    }
+}
+
 fn run_public_unpack(
     paths: &[PathBuf],
     raw: bool,

@@ -2,7 +2,7 @@ mod diagnostics;
 mod discovery;
 mod error;
 mod export_storage;
-mod io;
+pub(crate) mod io;
 mod line_index;
 mod normalize;
 mod output;

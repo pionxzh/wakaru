@@ -2266,3 +2266,62 @@ fn debug_enumerate_chunks_reports_webpack_fixture_without_unpacking() {
     assert_eq!(asset.urls[0].url, "chunk-1.js");
     assert_eq!(asset.urls[0].source, "ensure_call");
 }
+
+/// A container holds templates, not modules, so `--unpack` splits it instead of unpacking it.
+const SYNTHETIC_GTM_CONTAINER: &str = r#"
+(function(){var data = {"resource":{"version":"40","macros":[
+  {"function":"__jsm","vtp_javascript":["template","var a=1;return a;"]},
+  {"function":"__v","vtp_name":"order_amount"}
+],"predicates":[],"rules":[],"tags":[
+  {"function":"__html","tag_id":7,"vtp_html":["template","\n<script type=\"text/gtmscript\">track(\"",["escape",["macro",1],7],"\"," ,["escape",["macro",0],8],");</script>"]},
+  {"function":"__html","tag_id":9,"vtp_html":["template","<script type=\"text/gtmscript\" data-gtmsrc=\"//example.com/loader.js\"></script>"]}
+]},"runtime":"var runtime=1;"};})();"#;
+
+#[test]
+fn unpacking_a_gtm_container_writes_its_pieces_and_keeps_macro_references() {
+    let dir = temp_test_dir("gtm-container");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input = dir.join("gtm.js");
+    fs::write(&input, SYNTHETIC_GTM_CONTAINER).expect("write container");
+    let out_dir = dir.join("out");
+    fs::create_dir_all(&out_dir).expect("create output dir");
+    // the CLI canonicalizes the output directory before it writes anything, and so must the test
+    let out_dir = canonicalize_output_dir(&out_dir).expect("canonicalize output dir");
+
+    let (containers, bundles) = classify_gtm_inputs(std::slice::from_ref(&input));
+    assert_eq!(bundles.len(), 0, "a container is not a bundle");
+    assert_eq!(containers.len(), 1, "the container is recognized");
+
+    let artifacts = write_gtm_outputs(
+        &out_dir,
+        &containers,
+        CodeFormatter::None,
+        GtmWriteOptions {
+            check_existing_writes: false,
+            level: RewriteLevel::Standard,
+            dce_mode: DceMode::TransformOnly,
+            diagnostics: false,
+            announce: false,
+        },
+    )
+    .expect("write container files");
+
+    assert_eq!(
+        artifacts.len(),
+        2,
+        "the two script bodies are artifacts, the index is not"
+    );
+    assert!(out_dir.join("macros/jsm-0.js").is_file());
+    assert!(out_dir.join("tags/html-7-0.js").is_file());
+    assert!(out_dir.join("index.md").is_file());
+    let tag = fs::read_to_string(out_dir.join("tags/html-7-0.js")).expect("read the tag");
+    assert!(
+        tag.contains("__gtm_macro_1") && tag.contains("__gtm_macro_0"),
+        "both macro references survive into the decompiled script: {tag}"
+    );
+    let index = fs::read_to_string(out_dir.join("index.md")).expect("read the index");
+    assert!(index.contains("| 1 | `__v` | order_amount |"), "{index}");
+    assert!(index.contains("| 9 | //example.com/loader.js |"), "{index}");
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
