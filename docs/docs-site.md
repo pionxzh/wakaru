@@ -57,6 +57,14 @@ to `main` that touch `docs-site/**`. Secrets: `VERCEL_TOKEN` and
 The Vercel project is `wakaru-docs`; `website/vercel.json` proxies `/docs`
 and `/docs/(.*)` to it. The landing page stays static and no-build.
 
+The landing page deploys the same way, from `.github/workflows/landing.yml`
+on pushes to `main` that touch `website/**`, with `VERCEL_LANDING_PROJECT_ID`.
+Its Vercel project `wakaru` keeps Root Directory `website/`, so that workflow
+runs the CLI from the repository root. None of the three projects is connected
+to the GitHub repository: a connected project builds a preview for every pull
+request, and Fork Protection then posts an authorization request on each
+external one.
+
 Local preview: `cd docs-site && npm run dev`, then open
 `localhost:3000/docs` (the bare root is not served).
 
