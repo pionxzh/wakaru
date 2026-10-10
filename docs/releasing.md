@@ -26,6 +26,10 @@ Before tagging:
 5. Review `npm/README.md` against the release: its claims must match what the
    tagged version actually ships (e.g. a bundler format merged after the
    previous tag needs adding; an unreleased one must not appear).
+6. If any change since the previous tag removed, renamed, or changed the type
+   or meaning of a field covered by
+   [machine-readable output compatibility](cli.md#machine-readable-output-compatibility),
+   the release needs a new major version.
 
 Pushing the tag runs `.github/workflows/rust-release.yml`, which builds the
 platform binaries and, once all of them succeed, publishes everything:

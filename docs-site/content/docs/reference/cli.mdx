@@ -143,6 +143,12 @@ Any warning with `is_error: true` makes Wakaru exit nonzero, but it still
 writes every artifact and the JSON first. In unpack JSON, `failed` counts the
 modules with such a warning; the other modules are still usable.
 
+Within one major version, the `--version` line, the `--json` object,
+`provenance.json`, and the exit status rules change only by addition: new
+fields, and new values for category fields such as `kind` and `status`.
+Ignore fields you do not know, and treat an unknown category value as unknown
+rather than as an error.
+
 ## Diagnostics
 
 ```bash

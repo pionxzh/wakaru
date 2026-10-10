@@ -1123,6 +1123,153 @@ fn json_decompile_omits_vue_fields_for_plain_js() {
     );
 }
 
+/// Sorted keys of a JSON object. The machine-readable output contract in
+/// docs/cli.md lets a minor release add a key here; removing or renaming one
+/// needs a major version.
+fn object_keys(value: &serde_json::Value) -> Vec<&str> {
+    let mut keys: Vec<&str> = value
+        .as_object()
+        .expect("JSON object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort_unstable();
+    keys
+}
+
+#[test]
+fn version_line_is_binary_name_and_package_version() {
+    use clap::CommandFactory;
+
+    assert_eq!(
+        Cli::command().render_version(),
+        format!("wakaru {}\n", env!("CARGO_PKG_VERSION"))
+    );
+}
+
+#[test]
+fn json_unpack_output_keeps_contract_fields() {
+    let artifacts = vec![CliOutputArtifact {
+        filename: "src/App.vue".to_string(),
+        code: "<template />".to_string(),
+        kind: JsonModuleKind::VueSfc,
+        status: JsonModuleStatus::RecoveredVueSfc,
+        source_filename: Some("src/App.vue".to_string()),
+        source_map_filename: None,
+        source_map: None,
+    }];
+    let json = serde_json::to_value(json_unpack_output_for_artifacts(
+        &[],
+        wakaru::OutputSafety::Normal,
+        &artifacts,
+        &[],
+        1,
+        0,
+        Duration::from_millis(1),
+    ))
+    .expect("serialize unpack json");
+
+    assert_eq!(
+        object_keys(&json),
+        [
+            "detected_formats",
+            "elapsed_ms",
+            "failed",
+            "modules",
+            "safety",
+            "total",
+            "warnings"
+        ]
+    );
+    assert_eq!(
+        object_keys(&json["modules"][0]),
+        ["filename", "kind", "source_filename", "status"]
+    );
+    let warning =
+        serde_json::to_value(JsonWarning::new("a.js", "decompile_failed", true, "failed"))
+            .expect("serialize warning");
+    assert_eq!(
+        object_keys(&warning),
+        ["filename", "is_error", "kind", "message"]
+    );
+}
+
+#[test]
+fn json_decompile_output_keeps_contract_fields() {
+    let json = serde_json::to_value(JsonDecompileOutput {
+        code: Some("export {};".to_string()),
+        source_map: Some("{}".to_string()),
+        kind: Some(JsonModuleKind::JavaScript),
+        status: Some(JsonModuleStatus::VueSfcSourceJs),
+        source_filename: Some("App.vue".to_string()),
+        vue_sidecar_filename: Some("App.vue".to_string()),
+        warnings: Vec::new(),
+        elapsed_ms: 1,
+    })
+    .expect("serialize decompile json");
+
+    assert_eq!(
+        object_keys(&json),
+        [
+            "code",
+            "elapsed_ms",
+            "kind",
+            "source_filename",
+            "source_map",
+            "status",
+            "vue_sidecar_filename",
+            "warnings"
+        ]
+    );
+}
+
+#[test]
+fn provenance_json_keeps_contract_fields() {
+    let dir = temp_test_dir("provenance-contract");
+    let out_dir = dir.join("out");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input_path = dir.join("bundle.js");
+    fs::write(&input_path, webpack5_vue_sfc_bundle_source()).expect("write webpack bundle");
+    let input = input_path.to_str().expect("input path should be utf8");
+
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input,
+        "--unpack=strict",
+        "--provenance",
+        "--emit-source-map",
+        "-o",
+        out_dir.to_str().expect("output path should be utf8"),
+    ])
+    .expect("provenance unpack cli should parse");
+    run_default(cli).expect("provenance unpack should succeed");
+
+    let provenance: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(out_dir.join("provenance.json")).expect("read provenance.json"),
+    )
+    .expect("parse provenance.json");
+    assert_eq!(object_keys(&provenance), ["format", "modules", "strategy"]);
+    let modules = provenance["modules"].as_object().expect("modules object");
+    assert!(
+        modules.len() > 1,
+        "webpack bundle should split: {modules:?}"
+    );
+    for (name, entry) in modules {
+        assert_eq!(
+            object_keys(entry),
+            ["extraction", "input", "ranges"],
+            "provenance entry for {name}"
+        );
+        assert_eq!(entry["input"], input);
+        for range in entry["ranges"].as_array().expect("ranges array") {
+            let range = range.as_array().expect("range pair");
+            assert!(range.len() == 2 && range.iter().all(serde_json::Value::is_u64));
+        }
+    }
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
 #[test]
 fn provenance_names_ignore_interleaved_vue_sfc_sidecars() {
     let out_dir = PathBuf::from("/tmp/wakaru-out");

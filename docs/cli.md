@@ -318,6 +318,31 @@ result from a run that produced nothing.
 `--diagnostics`. Without it, Wakaru does not re-parse emitted modules, so a
 zero exit does not prove that every output file parses.
 
+## Machine-readable output compatibility
+
+Within one major version, these outputs change only by addition:
+
+- the `wakaru --version` line, `wakaru <version>`;
+- the `--json` object on stdout, for single-file and unpack runs;
+- `provenance.json`;
+- the exit status rules in the previous section.
+
+Addition means two things. Any object can gain a new field. A string field
+that names a category can gain a new value: module `kind` and `status`,
+warning `kind`, `safety`, `detected_formats` entries, and the provenance
+`format`, `strategy`, and `extraction`. An existing field keeps its name,
+type, and meaning, and is never removed. Optional fields such as
+`source_filename` and `context_ranges` stay absent when they do not apply.
+
+Consumers should ignore fields they do not know, and treat an unknown category
+value as unknown rather than as a parse error. Removing or renaming a field,
+or changing its type or meaning, needs a new major version.
+
+Recovered module code is not covered: any release can change it. Pin an exact
+version only when you need byte-identical module output. Human-readable output
+on stderr is not covered either. `debug` subcommands follow
+their own [compatibility policy](cli-debug.md#compatibility-policy).
+
 ## Diagnostics and profiling
 
 ```bash
