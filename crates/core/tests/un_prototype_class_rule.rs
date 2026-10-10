@@ -1623,3 +1623,163 @@ Constructor = function() {
     let output = common::render_pipeline(input);
     assert!(!output.contains("class Inner"), "{output}");
 }
+
+// ============================================================
+// A member the module constructs keeps its function assignment
+// ============================================================
+
+#[test]
+fn constructed_static_member_stays_assignment() {
+    // shape: hypothetical (a constructor hung on another constructor)
+    let input = r#"
+function Shape(name) { this.name = name; }
+Shape.prototype.describe = function() { return this.name; };
+Shape.Point = function(x) { this.x = x; };
+Shape.create = function(name) { return new Shape(name); };
+export function make() { return new Shape.Point(1); }
+"#;
+    let expected = r#"
+class Shape {
+    constructor(name) { this.name = name; }
+    describe() { return this.name; }
+    static create(name) { return new Shape(name); }
+}
+Shape.Point = function(x) { this.x = x; };
+export function make() { return new Shape.Point(1); }
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
+#[test]
+fn static_member_with_prototype_writes_stays_assignment() {
+    // shape: producer spark-md5@3.0.2 as published (`SparkMD5.ArrayBuffer`)
+    let input = r#"
+function Hasher() { this.reset(); }
+Hasher.prototype.reset = function() { this.n = 0; };
+Hasher.Buffer = function() { this.reset(); };
+Hasher.Buffer.prototype.reset = function() { this.n = 1; };
+"#;
+    let expected = r#"
+class Hasher {
+    constructor() { this.reset(); }
+    reset() { this.n = 0; }
+}
+Hasher.Buffer = function() { this.reset(); };
+Hasher.Buffer.prototype.reset = function() { this.n = 1; };
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
+#[test]
+fn constructed_static_member_through_alias_stays_assignment() {
+    let input = r#"
+function Shape() {}
+Shape.prototype.area = function() { return 0; };
+Shape.Point = function() { this.x = 1; };
+var S = Shape;
+export function make() { return new S.Point(); }
+"#;
+    let expected = r#"
+class Shape {
+    area() { return 0; }
+}
+Shape.Point = function() { this.x = 1; };
+var S = Shape;
+export function make() { return new S.Point(); }
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
+#[test]
+fn constructed_prototype_member_stays_assignment() {
+    let input = r#"
+function Shape() {}
+Shape.prototype.area = function() { return 0; };
+Shape.prototype.Part = function() { this.p = 1; };
+export function make() { return new Shape.prototype.Part(); }
+"#;
+    let expected = r#"
+class Shape {
+    area() { return 0; }
+}
+Shape.prototype.Part = function() { this.p = 1; };
+export function make() { return new Shape.prototype.Part(); }
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
+#[test]
+fn instanceof_static_member_stays_assignment() {
+    let input = r#"
+function Shape() {}
+Shape.prototype.area = function() { return 0; };
+Shape.Point = function() {};
+export function isPoint(v) { return v instanceof Shape.Point; }
+"#;
+    let expected = r#"
+class Shape {
+    area() { return 0; }
+}
+Shape.Point = function() {};
+export function isPoint(v) { return v instanceof Shape.Point; }
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
+#[test]
+fn called_static_member_still_becomes_static_method() {
+    let input = r#"
+function Shape() {}
+Shape.prototype.area = function() { return 0; };
+Shape.create = function() { return new Shape(); };
+export function make() { return Shape.create(); }
+"#;
+    let expected = r#"
+class Shape {
+    area() { return 0; }
+    static create() { return new Shape(); }
+}
+export function make() { return Shape.create(); }
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
+#[test]
+fn construction_through_shadowing_binding_does_not_keep_member() {
+    let input = r#"
+function Shape() {}
+Shape.prototype.area = function() { return 0; };
+Shape.Point = function() {};
+export function make(Shape) { return new Shape.Point(); }
+"#;
+    let expected = r#"
+class Shape {
+    area() { return 0; }
+    static Point() {}
+}
+export function make(Shape) { return new Shape.Point(); }
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
+#[test]
+fn pipeline_keeps_constructed_static_member_constructible() {
+    // shape: producer spark-md5@3.0.2 as published, reduced
+    let input = r#"
+(function (factory) {
+    module.exports = factory();
+})(function () {
+    function Hasher() { this.reset(); }
+    Hasher.prototype.reset = function () { this.n = 0; return this; };
+    Hasher.hash = function (s) { return new Hasher().reset().n + s.length; };
+    Hasher.Buffer = function () { this.reset(); };
+    Hasher.Buffer.prototype.reset = function () { this.n = 1; return this; };
+    return Hasher;
+});
+"#;
+    let output = render(input);
+    assert!(output.contains("class Hasher"), "{output}");
+    assert!(output.contains("static hash("), "{output}");
+    assert!(output.contains("Hasher.Buffer = function"), "{output}");
+    assert!(!output.contains("static Buffer"), "{output}");
+}

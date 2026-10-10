@@ -496,6 +496,15 @@ fn find_candidates(
             if let Some((method_name, fn_expr, is_static)) =
                 extract_method_assignment(stmt, binding)
             {
+                // A method has no [[Construct]] or `prototype`. A member this
+                // scope constructs (`new Foo.Inner()`, `Foo.Inner.prototype`)
+                // keeps its assignment in place, after the class
+                // (docs/rewrite-assumptions.md, `class_members_not_constructed`).
+                if prop_name_str(&method_name)
+                    .is_some_and(|name| callability.member_constructed(binding, is_static, name))
+                {
+                    continue;
+                }
                 let method = build_class_method_from_fn(method_name, fn_expr, is_static);
                 candidate.members.push(ClassMember::Method(method));
                 candidate.consumed_indices.insert(i);
@@ -1071,6 +1080,14 @@ fn get_prototype_method_target(stmt: &Stmt) -> Option<BindingKey> {
     }
 
     Some(binding_key(obj_id))
+}
+
+fn prop_name_str(prop: &PropName) -> Option<&str> {
+    match prop {
+        PropName::Ident(ident) => Some(ident.sym.as_ref()),
+        PropName::Str(str_lit) => str_lit.value.as_str(),
+        _ => None,
+    }
 }
 
 /// Extract a method assignment: `Foo.prototype.method = function() {}` or `Foo.staticMethod = function() {}`.

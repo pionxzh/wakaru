@@ -570,6 +570,13 @@ rationale, or level gating appear.
   follow value edges. In multi-module unpack, exports another module still
   calls are seeded as required roots from `CallRequiredPlan` (see
   fact-system.md).
+- **Constructed class members** — the same `CallabilityIndex` walk records
+  members the scope constructs or whose `prototype` it reads (`new C.k`,
+  `C.k.prototype`, `instanceof`, `extends`, and the `C.prototype.k` forms),
+  closed over the same ordinary and value alias edges. `UnPrototypeClass`
+  leaves such a member's assignment after the class; `UnEs6Class` keeps the
+  whole wrapper (`class_members_not_constructed` in
+  [rewrite-assumptions.md](rewrite-assumptions.md)).
 - **ArrowFunction → ArrowReturn** — hard chain. ArrowFunction is `standard+`
   even though each conversion has positive evidence and checks the
   function-only blockers (`this`, `arguments`, named function expressions,

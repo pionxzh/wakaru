@@ -4168,3 +4168,89 @@ class Bar extends Base {
 "#;
     assert_eq_normalized(&render(input), expected);
 }
+
+// ============================================================
+// A member the module constructs keeps the class lowered
+// ============================================================
+
+const CREATE_CLASS_HELPERS: &str = r#"
+function _defineProperties(e, r) { for (var t = 0; t < r.length; t++) { var o = r[t]; o.enumerable = o.enumerable || !1, o.configurable = !0, "value" in o && (o.writable = !0), Object.defineProperty(e, o.key, o); } }
+function _createClass(e, r, t) { return r && _defineProperties(e.prototype, r), t && _defineProperties(e, t), Object.defineProperty(e, "prototype", { writable: !1 }), e; }
+"#;
+
+#[test]
+fn create_class_constructed_static_descriptor_keeps_wrapper() {
+    // shape: producer @babel/core@7.28.5 @babel/preset-env@7.28.5 (ES5, CommonJS), reduced;
+    // the source constructs a static method (`new Platform.createInstance()`)
+    let input = format!(
+        "{CREATE_CLASS_HELPERS}{}",
+        r#"
+var Platform = function () {
+  function Platform() {}
+  return _createClass(Platform, [{ key: "label", value: function label() { return "label"; } }],
+    [{ key: "createInstance", value: function createInstance() { return { kind: "platform" }; } }]);
+}();
+export function make() { return new Platform.createInstance(); }
+"#
+    );
+    let output = apply(&input);
+    assert!(output.contains("_createClass(Platform"), "{output}");
+    assert!(!output.contains("class Platform"), "{output}");
+}
+
+#[test]
+fn ts_iife_constructed_static_member_keeps_wrapper() {
+    // shape: producer typescript@5.9.3 (target ES5, module CommonJS), reduced
+    let input = r#"
+var Proxy = /** @class */ (function () {
+    function Proxy() { this.kind = "proxy"; }
+    Proxy.prototype.describe = function () { return "proxy " + this.kind; };
+    Proxy.createInstance = function () { return new Proxy(); };
+    return Proxy;
+}());
+export function make() { return new Proxy.createInstance(); }
+"#;
+    let output = apply(input);
+    assert!(!output.contains("class Proxy"), "{output}");
+    assert!(
+        output.contains("Proxy.createInstance = function"),
+        "{output}"
+    );
+}
+
+#[test]
+fn create_class_called_static_descriptor_still_recovers() {
+    let input = format!(
+        "{CREATE_CLASS_HELPERS}{}",
+        r#"
+var Platform = function () {
+  function Platform() {}
+  return _createClass(Platform, [{ key: "label", value: function label() { return "label"; } }],
+    [{ key: "createInstance", value: function createInstance() { return { kind: "platform" }; } }]);
+}();
+export function make() { return Platform.createInstance(); }
+"#
+    );
+    let output = apply(&input);
+    assert!(output.contains("class Platform"), "{output}");
+    assert!(output.contains("static createInstance()"), "{output}");
+}
+
+#[test]
+fn pipeline_keeps_constructed_create_class_member_constructible() {
+    // shape: producer @babel/core@7.28.5 @babel/preset-env@7.28.5 (ES5, CommonJS), reduced
+    let input = format!(
+        "{CREATE_CLASS_HELPERS}{}",
+        r#"
+var Proxy = exports.Proxy = function () {
+  function Proxy() { this.kind = "proxy"; }
+  return _createClass(Proxy, [{ key: "describe", value: function describe() { return "proxy " + this.kind; } }],
+    [{ key: "createInstance", value: function createInstance() { return new Proxy(); } }]);
+}();
+exports.make = function () { return new Proxy.createInstance(); };
+"#
+    );
+    let output = render(&input);
+    assert!(!output.contains("static createInstance"), "{output}");
+    assert!(output.contains("new Proxy.createInstance()"), "{output}");
+}

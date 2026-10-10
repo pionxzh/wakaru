@@ -2,16 +2,18 @@ use crate::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
-    ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BinaryOp, BindingIdent,
-    CallExpr, Callee, Class, Decl, DefaultDecl, ExportSpecifier, Expr, FnDecl, Function,
-    ModuleDecl, ModuleExportName, ModuleItem, Pat, ReturnStmt, SimpleAssignTarget, Stmt,
-    VarDeclarator,
+    ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp,
+    BindingIdent, CallExpr, Callee, Class, Decl, DefaultDecl, ExportSpecifier, Expr, FnDecl,
+    Function, MemberExpr, ModuleDecl, ModuleExportName, ModuleItem, NewExpr, Pat, ReturnStmt,
+    SimpleAssignTarget, Stmt, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
 use crate::utils::paren::strip_parens;
 
-use super::helper_matcher::{binding_key, expr_binding_key, member_prop_name, BindingKey};
+use super::helper_matcher::{
+    binding_key, expr_binding_key, member_prop_name, static_member_prop_name, BindingKey,
+};
 
 /// Bindings whose current uses still require an ordinary function's
 /// `[[Call]]`. Function-to-class rules must not recover these bindings until
@@ -22,9 +24,17 @@ use super::helper_matcher::{binding_key, expr_binding_key, member_prop_name, Bin
 /// class shape, requiring `new` is an accepted function-to-class change
 /// (`docs/rewrite-assumptions.md`, `native_class_inheritance`). Rules that
 /// rebuild a class shape themselves must find their own class evidence.
+///
+/// The same walk records constructor members the scope constructs, which
+/// class recovery must not turn into methods (`member_constructed`).
 pub(crate) struct CallabilityIndex {
     required: HashSet<BindingKey>,
+    constructed_members: HashSet<MemberKey>,
 }
+
+/// A member of a constructor binding: the binding, whether the member is
+/// static (`C.k`) or on the prototype (`C.prototype.k`), and its name.
+type MemberKey = (BindingKey, bool, Atom);
 
 impl CallabilityIndex {
     pub(crate) fn collect_stmts(stmts: &[Stmt]) -> Self {
@@ -47,6 +57,22 @@ impl CallabilityIndex {
 
     pub(crate) fn requires_call(&self, binding: &BindingKey) -> bool {
         self.required.contains(binding)
+    }
+
+    /// Whether the scope constructs this member of `owner` or reads its
+    /// `prototype`: `new C.k`, `C.k.prototype`, `x instanceof C.k`,
+    /// `extends C.k`, and the `C.prototype.k` forms, through the same aliases
+    /// as `requires_call`. A method has no `[[Construct]]` or `prototype`, so
+    /// class recovery keeps such a member a function. Construction the scope
+    /// cannot see is not covered.
+    pub(crate) fn member_constructed(
+        &self,
+        owner: &BindingKey,
+        is_static: bool,
+        name: &str,
+    ) -> bool {
+        self.constructed_members
+            .contains(&(owner.clone(), is_static, Atom::from(name)))
     }
 }
 
@@ -93,13 +119,67 @@ where
     let mut from_roots = roots.clone();
     close_required(&mut from_roots, &ordinary, &value, false);
     required.extend(from_roots);
+    let constructed_members =
+        close_constructed_members(collector.constructed_members, &ordinary, &value);
 
-    CallabilityIndex { required }
+    CallabilityIndex {
+        required,
+        constructed_members,
+    }
+}
+
+/// `target` evaluates to `source`, so constructing `target.k` constructs
+/// `source.k`. Both ordinary and value aliases count: a missed edge turns a
+/// constructible member into a method, an extra one only keeps a function.
+fn close_constructed_members(
+    mut members: HashSet<MemberKey>,
+    ordinary: &HashMap<BindingKey, Vec<BindingKey>>,
+    value: &HashMap<BindingKey, Vec<BindingKey>>,
+) -> HashSet<MemberKey> {
+    let mut pending: Vec<MemberKey> = members.iter().cloned().collect();
+    while let Some((target, is_static, name)) = pending.pop() {
+        for sources in [ordinary.get(&target), value.get(&target)]
+            .into_iter()
+            .flatten()
+        {
+            for source in sources {
+                let member = (source.clone(), is_static, name.clone());
+                if members.insert(member.clone()) {
+                    pending.push(member);
+                }
+            }
+        }
+    }
+    members
+}
+
+/// `C.k` → `(C, static, k)`; `C.prototype.k` → `(C, prototype, k)`.
+fn member_key(expr: &Expr) -> Option<MemberKey> {
+    let Expr::Member(member) = strip_parens(expr) else {
+        return None;
+    };
+    let name = static_member_prop_name(&member.prop)?;
+    if name == "prototype" {
+        return None;
+    }
+    match strip_parens(&member.obj) {
+        Expr::Ident(owner) => Some((binding_key(owner), true, Atom::from(name))),
+        Expr::Member(inner) if member_prop_name(&inner.prop, "prototype") => {
+            let Expr::Ident(owner) = strip_parens(&inner.obj) else {
+                return None;
+            };
+            Some((binding_key(owner), false, Atom::from(name)))
+        }
+        _ => None,
+    }
 }
 
 #[derive(Default)]
 struct CallabilityCollector {
     required: HashSet<BindingKey>,
+    /// Members constructed or whose `prototype` is read; see
+    /// [`CallabilityIndex::member_constructed`].
+    constructed_members: HashSet<MemberKey>,
     /// `target` evaluates to `source`: requiring `target.[[Call]]` therefore
     /// requires `source.[[Call]]` too. Export roots may follow these edges.
     aliases: Vec<(BindingKey, BindingKey)>,
@@ -370,6 +450,9 @@ impl Visit for CallabilityCollector {
     }
 
     fn visit_class(&mut self, class: &Class) {
+        if let Some(member) = class.super_class.as_deref().and_then(member_key) {
+            self.constructed_members.insert(member);
+        }
         self.pending_constructor = false;
         self.in_constructor.push(false);
         class.visit_children_with(self);
@@ -385,6 +468,31 @@ impl Visit for CallabilityCollector {
             }
         }
         assignment.visit_children_with(self);
+    }
+
+    fn visit_new_expr(&mut self, new: &NewExpr) {
+        if let Some(member) = member_key(&new.callee) {
+            self.constructed_members.insert(member);
+        }
+        new.visit_children_with(self);
+    }
+
+    fn visit_member_expr(&mut self, member: &MemberExpr) {
+        if member_prop_name(&member.prop, "prototype") {
+            if let Some(owner_member) = member_key(&member.obj) {
+                self.constructed_members.insert(owner_member);
+            }
+        }
+        member.visit_children_with(self);
+    }
+
+    fn visit_bin_expr(&mut self, bin: &BinExpr) {
+        if bin.op == BinaryOp::InstanceOf {
+            if let Some(member) = member_key(&bin.right) {
+                self.constructed_members.insert(member);
+            }
+        }
+        bin.visit_children_with(self);
     }
 
     fn visit_call_expr(&mut self, call: &CallExpr) {

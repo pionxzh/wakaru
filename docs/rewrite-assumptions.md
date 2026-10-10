@@ -724,6 +724,42 @@ included. That recovery carries the same native-parent and overridden-`.call`
 differences listed above. With a native parent such as `Error` it also changes
 `instanceof` and method lookup on instances, in the direction of the source.
 
+### `class_members_not_constructed`
+
+A function member that class recovery turns into a method is not constructed
+where the module cannot see it. A method has no `[[Construct]]` and no
+`prototype`, so `new Foo.Inner()` or `Foo.Inner.prototype.x = …` throws once
+`Foo.Inner = function () {}` becomes `static Inner() {}`.
+
+`UnPrototypeClass` and `UnEs6Class` keep a member a function when the same
+scope constructs it or reads its `prototype`: `new C.k`, `C.k.prototype`,
+`x instanceof C.k`, `class extends C.k`, and the `C.prototype.k` forms, also
+through identifier aliases and IIFE results. `UnPrototypeClass` leaves that
+member's assignment after the class. `UnEs6Class` leaves the whole wrapper,
+because a `_createClass` descriptor defines a non-enumerable property that an
+assignment after the class would not reproduce.
+
+```js
+function Hasher() { this.reset(); }
+Hasher.prototype.reset = function () { this.n = 0; };
+Hasher.Buffer = function () { this.reset(); };
+Hasher.Buffer.prototype.reset = function () { this.n = 1; };
+// → class Hasher { constructor() { this.reset(); } reset() { this.n = 0; } }
+//   Hasher.Buffer = function () { this.reset(); };
+//   Hasher.Buffer.prototype.reset = function () { this.n = 1; };
+```
+
+Construction the scope cannot see is assumed absent: another module or a
+consumer constructing a member of an exported class, a computed key, or a
+receiver reached through an instance. Requiring positive evidence instead
+(the class does not escape and the member is only called) was measured and
+not adopted: static members are mostly the API of exported classes, and on a
+large corpus of real sites about 8% of them had that evidence.
+
+Affects: `UnPrototypeClass`, `UnEs6Class`.
+
+Level: every level, like both rules.
+
 ### `commonjs_exports_data_properties`
 
 Properties that compiler-emitted code writes on the module's own `exports` /

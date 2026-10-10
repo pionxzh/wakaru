@@ -1790,6 +1790,14 @@ fn try_iife_to_class(
             );
         }
     }
+    // A method has no [[Construct]] or `prototype`. A member this scope
+    // constructs (`new Foo.make()`, `Foo.make.prototype`) keeps the wrapper,
+    // whose descriptor or assignment still defines an ordinary function
+    // (docs/rewrite-assumptions.md, `class_members_not_constructed`).
+    let owners = [binding_key(class_name), binding_key(inner_ctor_ident)];
+    if class_has_constructed_method(&class_body, &owners, callability) {
+        return None;
+    }
     // Removing the IIFE also removes its parameter bindings. Constructor
     // rewriting can consume some superclass uses while leaving guards or
     // method closures that still capture the parameter. Preserve that scope
@@ -1837,6 +1845,27 @@ fn try_iife_to_class(
             super_type_params: None,
             implements: vec![],
         }),
+    })
+}
+
+fn class_has_constructed_method(
+    class_body: &[ClassMember],
+    owners: &[BindingKey],
+    callability: &CallabilityIndex,
+) -> bool {
+    class_body.iter().any(|member| {
+        let ClassMember::Method(method) = member else {
+            return false;
+        };
+        if method.kind != MethodKind::Method {
+            return false;
+        }
+        let Some(name) = prop_name_atom(&method.key) else {
+            return false;
+        };
+        owners
+            .iter()
+            .any(|owner| callability.member_constructed(owner, method.is_static, &name))
     })
 }
 
