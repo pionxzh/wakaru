@@ -59,6 +59,7 @@ async function runMatrixAsync(config) {
     validateRecovered,
     prewarm,
     wakaruArgs = [],
+    outputExtension,
   } = config;
   const showDetails = process.argv.includes("--details");
   const jsonMode = process.argv.includes("--json");
@@ -102,7 +103,7 @@ async function runMatrixAsync(config) {
     // --dump <snippet> <tool>: print full lowered + recovered for one shape
     if (dumpShape) {
       const dumpTool = process.argv[process.argv.indexOf("--dump") + 2] ?? "";
-      dumpSingleShape(filteredSnippets, transformers, tmpRoot, rewriteLevel, dumpShape, dumpTool, wakaruArgs);
+      dumpSingleShape(filteredSnippets, transformers, tmpRoot, rewriteLevel, dumpShape, dumpTool, wakaruArgs, outputExtension);
       return;
     }
 
@@ -117,7 +118,7 @@ async function runMatrixAsync(config) {
         if (!shape.transformError) allLowered.push(shape.lowered);
       }
     }
-    await decompileAll(allLowered, rewriteLevel, wakaruArgs);
+    await decompileAll(allLowered, rewriteLevel, wakaruArgs, outputExtension);
 
     // Let the matrix prewarm any comparison-time work (e.g. structural
     // normalization of recovered output) concurrently, before the synchronous
@@ -151,6 +152,7 @@ async function runMatrixAsync(config) {
           expectedNeedles,
           validateRecovered,
           wakaruArgs,
+          outputExtension,
           execVerdicts,
         );
         if (!result.recovered && result.failure) {
@@ -252,7 +254,7 @@ async function runMatrixAsync(config) {
   }
 }
 
-function dumpSingleShape(snippets, transformers, tmpRoot, rewriteLevel, snippetName, toolHint, wakaruArgs = []) {
+function dumpSingleShape(snippets, transformers, tmpRoot, rewriteLevel, snippetName, toolHint, wakaruArgs = [], outputExtension) {
   const snippet = snippets.find((s) => s.name === snippetName || s.name.includes(snippetName));
   if (!snippet) {
     const available = snippets.map((s) => s.name).join(", ");
@@ -287,6 +289,7 @@ function dumpSingleShape(snippets, transformers, tmpRoot, rewriteLevel, snippetN
         tmpRoot,
         rewriteLevel,
         wakaruArgs,
+        outputExtension,
       );
       console.log(recovered);
     } catch (error) {
@@ -353,6 +356,7 @@ function runShape(
   expectedNeedles,
   validateRecovered,
   wakaruArgs,
+  outputExtension,
   execVerdicts = new Map(),
 ) {
   if (shape.transformError) {
@@ -361,7 +365,7 @@ function runShape(
 
   let recovered;
   try {
-    recovered = runWakaru(shape.lowered, `${snippet.name}-${shape.label.replaceAll(" ", "-")}.js`, tmpRoot, rewriteLevel, wakaruArgs);
+    recovered = runWakaru(shape.lowered, `${snippet.name}-${shape.label.replaceAll(" ", "-")}.js`, tmpRoot, rewriteLevel, wakaruArgs, outputExtension);
   } catch (error) {
     return { recovered: false, status: "wakaru-failed", notes: error.message, lowered: shape.lowered };
   }
@@ -506,7 +510,7 @@ async function printFailureClusters(name, rewriteLevel, rows) {
   });
 }
 
-function runWakaru(source, name, tmpRoot, rewriteLevel, wakaruArgs = []) {
+function runWakaru(source, name, tmpRoot, rewriteLevel, wakaruArgs = [], outputExtension) {
   const cached = decompileCache.get(decompileKey(rewriteLevel, source, wakaruArgs));
   if (cached !== undefined) {
     if (cached instanceof Error) throw cached;
@@ -515,7 +519,12 @@ function runWakaru(source, name, tmpRoot, rewriteLevel, wakaruArgs = []) {
   // Uncached fallback (e.g. the synchronous --dump path).
   const input = join(tmpRoot, name);
   writeFileSync(input, source);
-  return runWakaruArgs(["--level", rewriteLevel, ...wakaruArgs, input]);
+  if (!outputExtension) {
+    return runWakaruArgs(["--level", rewriteLevel, ...wakaruArgs, input]);
+  }
+  const output = join(tmpRoot, `${name}.out${outputExtension}`);
+  runWakaruArgs(["--level", rewriteLevel, ...wakaruArgs, "--force", "-o", output, input]);
+  return readFileSync(output, "utf8");
 }
 
 export function parseReproJobs(value, optionName = "WAKARU_REPRO_JOBS") {
@@ -557,19 +566,35 @@ export async function runPool(items, worker, concurrency = defaultConcurrency())
 
 // Decompile every (unique) source concurrently and fill decompileCache, so the
 // comparison loop runs against in-memory results instead of serial spawns.
-async function decompileAll(sources, rewriteLevel, wakaruArgs = []) {
+//
+// `outputExtension` is for matrices whose artifact is not the JavaScript on
+// stdout: `--vue-sfc` writes the recovered SFC only to a `-o` path ending in
+// `.vue`, so those runs write to a temporary file and read it back.
+async function decompileAll(sources, rewriteLevel, wakaruArgs = [], outputExtension) {
   const { command, prefix } = resolveWakaruCmd();
   const pending = [...new Set(sources)].filter(
     (source) => !decompileCache.has(decompileKey(rewriteLevel, source, wakaruArgs)),
   );
-  await runPool(pending, async (source) => {
-    const key = decompileKey(rewriteLevel, source, wakaruArgs);
-    try {
-      decompileCache.set(key, await spawnCapture(command, [...prefix, "--level", rewriteLevel, ...wakaruArgs, "-"], source));
-    } catch (error) {
-      decompileCache.set(key, error instanceof Error ? error : new Error(String(error)));
-    }
-  });
+  const outputRoot = outputExtension && mkdtempSync(join(tmpdir(), "wakaru-output-"));
+  try {
+    await runPool(pending, async (source, index) => {
+      const key = decompileKey(rewriteLevel, source, wakaruArgs);
+      const args = [...prefix, "--level", rewriteLevel, ...wakaruArgs];
+      try {
+        if (outputRoot) {
+          const output = join(outputRoot, `${index}${outputExtension}`);
+          await spawnCapture(command, [...args, "-o", output, "-"], source);
+          decompileCache.set(key, readFileSync(output, "utf8"));
+        } else {
+          decompileCache.set(key, await spawnCapture(command, [...args, "-"], source));
+        }
+      } catch (error) {
+        decompileCache.set(key, error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+  } finally {
+    if (outputRoot) rmSync(outputRoot, { recursive: true, force: true });
+  }
 }
 
 // ── Execution-equivalence checks ──────────────────────────────
@@ -887,6 +912,8 @@ export function babelPresetEnvBatch(sources, options = {}) {
   const coreVersion = options.core ?? "7.29.7";
   const presetVersion = options.preset ?? "7.29.7";
   const targets = options.targets ?? { ie: "11" };
+  // Babel's own default ("auto") when omitted; `false` keeps ES module syntax.
+  const modules = options.modules ?? "auto";
   const toolDir = ensureNodeTool(`babel-${coreVersion}-preset-env`, [
     `@babel/core@${coreVersion}`,
     `@babel/preset-env@${presetVersion}`,
@@ -898,12 +925,13 @@ const presetEnvModule = await import("@babel/preset-env");
 const babel = babelModule.default ?? babelModule;
 const presetEnv = presetEnvModule.default ?? presetEnvModule;
 const targets = JSON.parse(process.env.MATRIX_TARGETS || "{}");
+const modules = JSON.parse(process.env.MATRIX_MODULES || '"auto"');
 const sources = JSON.parse(fs.readFileSync(0, "utf8"));
 const results = sources.map(source => {
   try {
     return { code: babel.transformSync(source, {
       filename: "input.js", babelrc: false, configFile: false, comments: false, compact: false,
-      presets: [[presetEnv, { targets }]],
+      presets: [[presetEnv, { targets, modules }]],
     }).code };
   } catch (e) { return { error: e.message }; }
 });
@@ -912,7 +940,7 @@ process.stdout.write(JSON.stringify(results));
   return runNodeBatch(helperSource, sources, {
     label: "babelPresetEnvBatch",
     cwd: toolDir,
-    env: { MATRIX_TARGETS: JSON.stringify(targets) },
+    env: { MATRIX_TARGETS: JSON.stringify(targets), MATRIX_MODULES: JSON.stringify(modules) },
   });
 }
 

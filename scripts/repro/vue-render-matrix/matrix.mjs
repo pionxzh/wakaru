@@ -3,7 +3,7 @@
 import { runNodeBatchSync } from "../lib/tool-process.mjs";
 
 import {
-  runMatrix, batchRunner, withTerserVariants, ensureNodeTool,
+  runMatrix, batchRunner, withTerserVariants, ensureNodeTool, babelPresetEnvBatch,
 } from "../lib/runner.mjs";
 import { prewarmNormalize, structurallyEqual } from "../lib/compare.mjs";
 import { VUE_SFC_COMPILE_PROFILES } from "../lib/vue-sfc-compiler.mjs";
@@ -230,13 +230,39 @@ process.stdout.write(JSON.stringify(results));
   });
 }
 
-const transformers = VUE_SFC_COMPILE_PROFILES.flatMap((profile) =>
-  withTerserVariants(
-    `vue-${VUE_COMPILER_VERSION}-${profile.name}`,
-    allSources,
-    batchRunner(() => vueSfcBatch(allSources, profile)),
-  ),
-);
+const vueProfileRunners = VUE_SFC_COMPILE_PROFILES.map((profile) => ({
+  name: `vue-${VUE_COMPILER_VERSION}-${profile.name}`,
+  run: batchRunner(() => vueSfcBatch(allSources, profile)),
+}));
+
+// ES5 builds lower the compiler's render closures, slots, and handlers to
+// `function` expressions. `modules: false` keeps the import/export syntax, as
+// in the module body a bundler sees after babel-loader.
+function es5Lowered(runVue) {
+  return batchRunner(async () => {
+    await runVue.prewarm?.();
+    const compiled = allSources.map((source) => {
+      try {
+        return runVue(source);
+      } catch {
+        return null;
+      }
+    });
+    const valid = compiled.filter((code) => code !== null);
+    if (valid.length === 0) return new Map();
+    const lowered = await babelPresetEnvBatch(valid, { modules: false });
+    const map = new Map();
+    for (let i = 0; i < allSources.length; i++) {
+      if (compiled[i] !== null) map.set(allSources[i], lowered.get(compiled[i]));
+    }
+    return map;
+  });
+}
+
+const transformers = vueProfileRunners.flatMap(({ name, run }) => [
+  ...withTerserVariants(name, allSources, run),
+  ...withTerserVariants(`${name}-babel-preset-env-ie11`, allSources, es5Lowered(run)),
+]);
 
 function linkedScopedSlotPrograms(snippet, recovered) {
   if (snippet.name !== "scoped-slots-with-destructuring") return null;
@@ -251,6 +277,9 @@ runMatrix({
   snippets,
   transformers,
   wakaruArgs: ["--vue-sfc"],
+  // Without `-o`, `--vue-sfc` prints decompiled JavaScript; only a `.vue`
+  // output path receives the recovered SFC.
+  outputExtension: ".vue",
   validateRecovered({ snippet, shape, recovered }) {
     if (snippet.name === "script-setup-event-and-class") {
       const clickBinding = setupDirectiveBinding(recovered, {

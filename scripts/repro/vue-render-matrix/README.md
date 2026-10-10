@@ -29,7 +29,13 @@ is tested as production inline-template (the Vite/vue-loader default),
 production external-render fallback, and development external-render output.
 Each profile also runs through Terser compression and compression+mangling
 because patch flags, comments, hoists, and renamed bindings all affect the
-shapes Wakaru must recover.
+shapes Wakaru must recover. A Babel preset-env pass (IE 11 targets, ES module
+syntax kept) adds the ES5-lowered form of every profile, where render
+closures, slots, and handlers are `function` expressions instead of arrows.
+
+Without `-o`, `--vue-sfc` prints decompiled JavaScript, so the harness writes
+each run to a temporary `.vue` output path and compares that file. A run where
+recovery fails exits non-zero and shows up as `wakaru-failed`.
 
 By default the script asks Cargo to refresh `target/debug/wakaru(.exe)` once,
 then uses that binary for the matrix. Set `WAKARU` to test a specific binary.
