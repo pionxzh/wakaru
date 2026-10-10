@@ -1448,3 +1448,38 @@ export function make(kind) {
         code(&modules, "base.js")
     );
 }
+
+#[test]
+fn rest_argument_apply_is_consumed_like_super_spread() {
+    // producer typescript@5.9.3 {"target":"ES5"}: `constructor(...args) { super(...args); }`
+    let base = class_iife("Foo");
+    let child = r#"
+import { __extends } from "tslib";
+import { Foo } from "./base.js";
+var Child = (function (_super) {
+    __extends(Child, _super);
+    function Child() {
+        var args = [];
+        for (var _i = 0; _i < arguments.length; _i++) {
+            args[_i] = arguments[_i];
+        }
+        var _this = _super.apply(this, args) || this;
+        _this.ready = true;
+        return _this;
+    }
+    return Child;
+})(Foo);
+export { Child };
+"#;
+    let modules = unpack(&[("base.js", &base), ("child.js", child)], false);
+    assert!(
+        code(&modules, "child.js").contains("class Child extends"),
+        "{}",
+        code(&modules, "child.js")
+    );
+    assert!(
+        code(&modules, "base.js").contains("class Foo"),
+        "the rest-argument apply becomes super(...args):\n{}",
+        code(&modules, "base.js")
+    );
+}
