@@ -8,7 +8,9 @@ detector-owned facts, and [cli.md](cli.md) for user-facing options.
 
 The dispatch implementation in `crates/core/src/unpacker/mod.rs` defines
 detection order. Bun executable container parsing is a separate intake layer;
-see [bun-standalone.md](bun-standalone.md).
+see [bun-standalone.md](bun-standalone.md). Google Tag Manager containers are
+another one — their parts are templates, not modules — and are described in
+[gtm.md](gtm.md).
 
 ## Detection order and supported shapes
 

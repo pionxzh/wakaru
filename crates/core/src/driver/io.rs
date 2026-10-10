@@ -36,7 +36,7 @@ impl fmt::Display for ParseDiagnostic {
     }
 }
 
-pub(super) fn parse_js(source: &str, filename: &str, cm: Lrc<SourceMap>) -> Result<Module> {
+pub(crate) fn parse_js(source: &str, filename: &str, cm: Lrc<SourceMap>) -> Result<Module> {
     Ok(parse_js_with_recovery(source, filename, cm)?.module)
 }
 
