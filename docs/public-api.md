@@ -33,8 +33,9 @@ Two root operations — `decompile(Source, DecompileOptions)` and
 `unpack(Vec<Source>, UnpackOptions)`, with `UnpackJob` as unpack's
 incremental-intake form — plus optional namespaces: `bun` (single-file
 executable extraction), `debug` (normalize, rule tracing, rule metadata),
-`sourcemap` (embedded-source extraction), and `vue` (experimental standalone
-SFC recovery). See rustdoc for everything else.
+`gtm` (Google Tag Manager container extraction), `sourcemap`
+(embedded-source extraction), and `vue` (experimental standalone SFC
+recovery). See rustdoc for everything else.
 
 ## Design decisions
 
@@ -79,6 +80,9 @@ SFC recovery). See rustdoc for everything else.
   `DceMode::TransformOnly`; the library default is `Off`).
 - Filesystem path validation, output-directory writes, filename collision
   handling, and source-map extraction to disk remain CLI responsibilities.
+- Container namespaces (`bun`, `gtm`) only extract: they return the pieces
+  as data, and the caller feeds them to `decompile` or `unpack`. Output file
+  names for the pieces and GTM's `index.md` are CLI layout, not façade API.
 - Tracing remains the observability mechanism for phase and per-rule timings,
   but span names, fields, and nesting are instrumentation details, not a
   stable contract.

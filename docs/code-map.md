@@ -18,6 +18,7 @@ crates/
       source.rs, options.rs         — owned inputs and private builder options
       output.rs, error.rs           — artifacts, reports, diagnostics, fatal errors
       debug.rs, sourcemap.rs, vue.rs — standalone auxiliary namespaces
+      bun.rs, gtm.rs                — container extraction namespaces (Bun executables, GTM containers)
 
   cli/
     src/
@@ -45,7 +46,7 @@ crates/
         io.rs                       — parse/print helpers
         types.rs                    — driver options, outputs, and warning types
       facts.rs                      — post-Stage-2 cross-module fact extraction
-      gtm.rs                        — Google Tag Manager container split (CLI `--unpack` intake)
+      gtm.rs                        — Google Tag Manager container extraction (façade: `wakaru::gtm`)
       commonjs_default_object_composition.rs — exact mutable-default composition recovery
       commonjs_export_residual.rs   — `exports` accesses left in ESM output (`commonjs_export_unrecovered`)
       sourcemap_rename.rs           — source-map-driven name recovery

@@ -7,10 +7,10 @@
 //! normal review process.
 //!
 //! The data object stores editable text as *template arrays* — `["template", "literal", <escape>,
-//! …]` — where an escape is `["escape", ["macro", n], mode]`: a reference to the macro at index `n`.
-//! This module joins those arrays back into strings, substituting `__gtm_macro_<n>` for the index the
-//! generated `index.md` documents, and emits one file per Custom JS macro and per script tag found in
-//! a Custom HTML tag.
+//! …]` — where an escape is `["escape", ["macro", n], mode, …]`: a reference to the macro at index
+//! `n`. This module joins those arrays back into strings, substituting `__gtm_macro_<n>`, and returns
+//! the Custom JS bodies and the Custom HTML scripts as separate pieces. The `wakaru` façade exposes
+//! the result as `wakaru::gtm`; file names and the index are the CLI's.
 
 use swc_core::common::{sync::Lrc, SourceMap};
 use swc_core::ecma::ast::{
@@ -21,7 +21,7 @@ use swc_core::ecma::visit::{Visit, VisitWith};
 /// A value read out of the container's `data.resource` object. Only what the extraction needs is
 /// modelled; anything else is kept as [`GtmValue::Other`] so it can be ignored without panicking.
 #[derive(Clone, Debug, PartialEq)]
-pub enum GtmValue {
+enum GtmValue {
     Str(String),
     Num(f64),
     Bool(bool),
@@ -64,46 +64,67 @@ impl GtmValue {
 /// The arrays `data.resource` carries in every container; together they are the detection shape.
 const RESOURCE_KEYS: [&str; 4] = ["macros", "tags", "predicates", "rules"];
 
-/// One file the container was split into, with its path relative to the output directory.
+/// The container field a piece of text came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GtmField {
+    /// `vtp_javascript` of the Custom JS macro at this index of the macro array.
+    CustomJavaScriptMacro { macro_index: usize },
+    /// `vtp_html` of the Custom HTML tag with this `tag_id`.
+    CustomHtmlTag { tag_id: u64 },
+}
+
+/// One piece of JavaScript: a Custom JS body, or one inline script of a Custom HTML tag.
 #[derive(Clone, Debug, PartialEq)]
-pub struct GtmFile {
-    pub path: String,
+pub struct GtmScript {
+    pub field: GtmField,
+    /// The script's position among the tag's scripts, counting external ones; `0` for a Custom JS
+    /// body.
+    pub position: usize,
     pub source: String,
 }
 
-/// A Custom HTML tag that loads an external script through `data-gtmsrc`. There is no body to write,
-/// so the URL only shows up in the index.
+/// A Custom HTML script loaded from a URL (`data-gtmsrc` or `src`). It has no body.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GtmExternalScript {
     pub tag_id: u64,
+    pub position: usize,
     pub url: String,
 }
 
-/// One entry of the container's macro array, by index, as the generated `index.md` lists it.
+/// One entry of the container's macro array that names its `function`.
 #[derive(Clone, Debug, PartialEq)]
-pub struct GtmMacroRef {
-    pub index: u64,
-    pub function: Option<String>,
+pub struct GtmMacro {
+    pub index: usize,
+    pub function: String,
     pub name: Option<String>,
+}
+
+/// A template part the extraction does not understand: an escape whose modes are unknown, or a
+/// part that is neither text nor a macro reference (`macro_index` is `None` then).
+#[derive(Clone, Debug, PartialEq)]
+pub struct GtmUnsupportedPart {
+    pub field: GtmField,
+    pub macro_index: Option<u64>,
+    pub modes: Vec<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct GtmContainer {
     pub version: Option<String>,
-    pub files: Vec<GtmFile>,
-    pub external_scripts: Vec<GtmExternalScript>,
     /// Every macro that names its `function`, so a reader of `__gtm_macro_30` can answer "what is
     /// 30?".
-    pub macros: Vec<GtmMacroRef>,
-    /// Escape modes this module does not understand, and anything else skipped.
-    pub warnings: Vec<String>,
+    pub macros: Vec<GtmMacro>,
+    /// Custom JS bodies in macro order, then Custom HTML scripts in tag order.
+    pub scripts: Vec<GtmScript>,
+    pub external_scripts: Vec<GtmExternalScript>,
+    pub unsupported_parts: Vec<GtmUnsupportedPart>,
 }
 
-/// Reads a container out of source text, for callers that have not parsed the input yet.
+/// Reads a container out of source text.
 ///
 /// Every `--unpack` input passes through here, so text that cannot hold the container's keys is
 /// rejected before it is parsed; the structural check in [`extract`] still decides.
-pub fn extract_from_source(source: &str, filename: &str) -> Option<GtmContainer> {
+pub fn extract_from_source(source: &str) -> Option<GtmContainer> {
     if !RESOURCE_KEYS
         .iter()
         .chain(std::iter::once(&"resource"))
@@ -112,16 +133,16 @@ pub fn extract_from_source(source: &str, filename: &str) -> Option<GtmContainer>
         return None;
     }
     let source_map: Lrc<SourceMap> = Default::default();
-    let module = crate::driver::io::parse_js(source, filename, source_map).ok()?;
+    let module = crate::driver::io::parse_js(source, "gtm.js", source_map).ok()?;
     extract(&module)
 }
 
-/// Look for a GTM container in a parsed module and split it into readable files.
+/// Look for a GTM container in a parsed module and split it into pieces.
 ///
 /// Returns `None` when the module has no `var data = {…}` whose `resource` object has `macros`,
 /// `tags`, `predicates` and `rules` arrays — the object shape the format is recognizable by. Detection
 /// does not look at the file name or the URL, so a container saved by hand is recognized too.
-pub fn extract(module: &Module) -> Option<GtmContainer> {
+fn extract(module: &Module) -> Option<GtmContainer> {
     let mut finder = DataObjectFinder::default();
     module.visit_with(&mut finder);
     let data = GtmValue::from_object(&finder.data?);
@@ -141,19 +162,18 @@ pub fn extract(module: &Module) -> Option<GtmContainer> {
             GtmValue::Num(value) => Some(format!("{}", *value as u64)),
             _ => None,
         }),
-        files: Vec::new(),
-        external_scripts: Vec::new(),
         macros: Vec::new(),
-        warnings: Vec::new(),
+        scripts: Vec::new(),
+        external_scripts: Vec::new(),
+        unsupported_parts: Vec::new(),
     };
 
-    for (index, macro_value) in macros.iter().enumerate() {
-        let macro_index = index as u64;
+    for (macro_index, macro_value) in macros.iter().enumerate() {
         let function = macro_value.get("function").and_then(GtmValue::as_str);
         if let Some(function) = function {
-            container.macros.push(GtmMacroRef {
+            container.macros.push(GtmMacro {
                 index: macro_index,
-                function: Some(function.to_string()),
+                function: function.to_string(),
                 name: macro_value
                     .get("vtp_name")
                     .and_then(GtmValue::as_str)
@@ -161,13 +181,15 @@ pub fn extract(module: &Module) -> Option<GtmContainer> {
             });
         }
         // Custom JS is the only macro whose body is code worth reading; everything else is a value
-        // that the index already describes.
+        // that the macro list already describes.
         if function == Some("__jsm") {
             if let Some(source) = macro_value.get("vtp_javascript") {
-                let joined = join_template(source, &mut container.warnings);
-                container.files.push(GtmFile {
-                    path: format!("macros/jsm-{macro_index}.js"),
-                    source: joined,
+                let field = GtmField::CustomJavaScriptMacro { macro_index };
+                let source = join_template(source, field, &mut container.unsupported_parts);
+                container.scripts.push(GtmScript {
+                    field,
+                    position: 0,
+                    source,
                 });
             }
         }
@@ -185,24 +207,24 @@ pub fn extract(module: &Module) -> Option<GtmContainer> {
         let Some(html) = tag_value.get("vtp_html") else {
             continue;
         };
-        let html = join_template(html, &mut container.warnings);
-        for (script_index, script) in split_gtm_scripts(&html).into_iter().enumerate() {
+        let field = GtmField::CustomHtmlTag { tag_id };
+        let html = join_template(html, field, &mut container.unsupported_parts);
+        for (position, script) in split_gtm_scripts(&html).into_iter().enumerate() {
             match script.url {
-                Some(url) => container
-                    .external_scripts
-                    .push(GtmExternalScript { tag_id, url }),
-                None => container.files.push(GtmFile {
-                    path: format!("tags/html-{tag_id}-{script_index}.js"),
+                Some(url) => container.external_scripts.push(GtmExternalScript {
+                    tag_id,
+                    position,
+                    url,
+                }),
+                None => container.scripts.push(GtmScript {
+                    field,
+                    position,
                     source: script.body,
                 }),
             }
         }
     }
 
-    container.files.push(GtmFile {
-        path: "index.md".to_string(),
-        source: render_index(&container),
-    });
     Some(container)
 }
 
@@ -217,10 +239,14 @@ pub fn extract(module: &Module) -> Option<GtmContainer> {
 /// - `9` (inside a regular expression literal), `3` (an HTML attribute value) and `12` (a URL
 ///   component): the reference is text there, and the identifier is written as that text.
 ///
-/// Any other combination is reported as a warning rather than guessed at, and keeps the reference
-/// as the identifier `__gtm_macro_<n>_escape_<modes>`: a comment would not survive the pipeline,
-/// and dropping it would delete an argument or operand without a trace in the code.
-fn join_template(value: &GtmValue, warnings: &mut Vec<String>) -> String {
+/// Any other combination is reported rather than guessed at, and keeps the reference as the
+/// identifier `__gtm_macro_<n>_escape_<modes>`: a comment would not survive the pipeline, and
+/// dropping it would delete an argument or operand without a trace in the code.
+fn join_template(
+    value: &GtmValue,
+    field: GtmField,
+    unsupported: &mut Vec<GtmUnsupportedPart>,
+) -> String {
     if let GtmValue::Str(text) = value {
         return text.clone();
     }
@@ -232,37 +258,42 @@ fn join_template(value: &GtmValue, warnings: &mut Vec<String>) -> String {
     }
     let mut out = String::new();
     for part in &parts[1..] {
-        match part {
-            GtmValue::Str(text) => out.push_str(text),
-            GtmValue::Array(items) => {
-                let Some(macro_index) = macro_reference(items) else {
-                    warnings
-                        .push("template part that is neither text nor a macro reference".into());
-                    continue;
-                };
-                match escape_modes(items).as_slice() {
-                    [] | [8] | [16] | [8, 16] | [9] | [3] | [12] => {
-                        out.push_str(&format!("__gtm_macro_{macro_index}"))
-                    }
-                    [7] => {
-                        let quote = enclosing_quote(&out);
-                        out.push_str(&format!("{quote} + __gtm_macro_{macro_index} + {quote}"));
-                    }
-                    modes => {
-                        let modes = modes
-                            .iter()
-                            .map(u64::to_string)
-                            .collect::<Vec<_>>()
-                            .join("_");
-                        warnings.push(format!(
-                            "macro {macro_index} uses escape mode {modes}, which is not understood"
-                        ));
-                        out.push_str(&format!("__gtm_macro_{macro_index}_escape_{modes}"));
-                    }
-                }
+        let items = match part {
+            GtmValue::Str(text) => {
+                out.push_str(text);
+                continue;
             }
-            _ => {
-                warnings.push("template part that is neither text nor a macro reference".into());
+            GtmValue::Array(items) => items,
+            _ => &Vec::new(),
+        };
+        let Some(macro_index) = macro_reference(items) else {
+            unsupported.push(GtmUnsupportedPart {
+                field,
+                macro_index: None,
+                modes: Vec::new(),
+            });
+            continue;
+        };
+        match escape_modes(items).as_slice() {
+            [] | [8] | [16] | [8, 16] | [9] | [3] | [12] => {
+                out.push_str(&format!("__gtm_macro_{macro_index}"))
+            }
+            [7] => {
+                let quote = enclosing_quote(&out);
+                out.push_str(&format!("{quote} + __gtm_macro_{macro_index} + {quote}"));
+            }
+            modes => {
+                let joined = modes
+                    .iter()
+                    .map(u64::to_string)
+                    .collect::<Vec<_>>()
+                    .join("_");
+                out.push_str(&format!("__gtm_macro_{macro_index}_escape_{joined}"));
+                unsupported.push(GtmUnsupportedPart {
+                    field,
+                    macro_index: Some(macro_index),
+                    modes: modes.to_vec(),
+                });
             }
         }
     }
@@ -361,7 +392,7 @@ fn enclosing_quote(out: &str) -> char {
     quote.unwrap_or('"')
 }
 
-struct GtmScript {
+struct ScriptElement {
     body: String,
     url: Option<String>,
 }
@@ -383,7 +414,7 @@ const JAVASCRIPT_TYPES: [&str; 6] = [
 /// body and its URL goes to the index, which is why the file numbers — the scripts' positions in the
 /// tag — can have gaps. Scripts of another `type` (JSON, templates) and other elements, such as the
 /// `<noscript>` fallbacks, are left alone.
-fn split_gtm_scripts(html: &str) -> Vec<GtmScript> {
+fn split_gtm_scripts(html: &str) -> Vec<ScriptElement> {
     // ASCII lowercasing keeps byte offsets, so positions found in `lower` index `html` too
     let lower = html.to_ascii_lowercase();
     let mut scripts = Vec::new();
@@ -426,11 +457,11 @@ fn split_gtm_scripts(html: &str) -> Vec<GtmScript> {
             continue;
         }
         match attribute("data-gtmsrc").or_else(|| attribute("src")) {
-            Some(url) => scripts.push(GtmScript {
+            Some(url) => scripts.push(ScriptElement {
                 body: String::new(),
                 url: Some(url.to_string()),
             }),
-            None => scripts.push(GtmScript {
+            None => scripts.push(ScriptElement {
                 body: html[body_start..body_end].to_string(),
                 url: None,
             }),
@@ -477,42 +508,6 @@ fn parse_attributes(source: &str) -> Vec<(String, String)> {
         }
     }
     attributes
-}
-
-fn render_index(container: &GtmContainer) -> String {
-    let mut out = String::from("# Google Tag Manager container\n\n");
-    if let Some(version) = &container.version {
-        out.push_str(&format!("Container version: `{version}`\n"));
-    }
-    out.push_str(
-        "\nCustom JS macros and Custom HTML scripts were written next to this file. Macro references\n\
-         read `__gtm_macro_<n>`, where `<n>` is the index in the table below.\n\n## Macros\n\n\
-         | # | function | name |\n|---|---|---|\n",
-    );
-    for macro_ref in &container.macros {
-        out.push_str(&format!(
-            "| {} | `{}` | {} |\n",
-            macro_ref.index,
-            macro_ref.function.as_deref().unwrap_or(""),
-            macro_ref.name.as_deref().unwrap_or("")
-        ));
-    }
-    out.push_str("\n## External scripts\n\n");
-    if container.external_scripts.is_empty() {
-        out.push_str("None.\n");
-    } else {
-        out.push_str("| tag | url |\n|---|---|\n");
-        for script in &container.external_scripts {
-            out.push_str(&format!("| {} | {} |\n", script.tag_id, script.url));
-        }
-    }
-    if !container.warnings.is_empty() {
-        out.push_str("\n## Warnings\n\n");
-        for warning in &container.warnings {
-            out.push_str(&format!("- {warning}\n"));
-        }
-    }
-    out
 }
 
 #[derive(Default)]
@@ -641,78 +636,75 @@ var data = {"resource":{"version":"40","macros":[
 ]},"runtime":"var runtime=1;"};
 })(window,document);"#;
 
+    /// Each script as `jsm-<macro index>` or `html-<tag_id>-<position>`, with its source.
+    fn labelled(container: &GtmContainer) -> Vec<(String, &str)> {
+        container
+            .scripts
+            .iter()
+            .map(|script| {
+                let label = match script.field {
+                    GtmField::CustomJavaScriptMacro { macro_index } => format!("jsm-{macro_index}"),
+                    GtmField::CustomHtmlTag { tag_id } => {
+                        format!("html-{tag_id}-{}", script.position)
+                    }
+                };
+                (label, script.source.as_str())
+            })
+            .collect()
+    }
+
     #[test]
-    fn splits_a_container_into_files() {
+    fn splits_a_container_into_pieces() {
         let container = extract(&parse(CONTAINER)).expect("container detected");
 
         assert_eq!(container.version.as_deref(), Some("40"));
-        let paths: Vec<&str> = container
-            .files
-            .iter()
-            .map(|file| file.path.as_str())
-            .collect();
         assert_eq!(
-            paths,
+            labelled(&container),
             vec![
-                "macros/jsm-0.js",
-                "tags/html-7-0.js",
-                // the number is the script's position inside its tag, so tag 9 starts at 1: its
-                // first script is the external one, which has no body to write
-                "tags/html-9-1.js",
-                "index.md",
+                (
+                    "jsm-0".to_string(),
+                    "(function(){var a=localStorage.getItem(\"x\");return a})();"
+                ),
+                // mode 7 closes the literal it sits in, mode 8 drops the identifier in as a
+                // reference, and the mode the module does not understand keeps a placeholder
+                // instead of a guess
+                (
+                    "html-7-0".to_string(),
+                    "var t=\"\" + __gtm_macro_1 + \"\";code(__gtm_macro_0,__gtm_macro_9_escape_2);"
+                ),
+                // the position counts the external script before it, so tag 9 starts at 1
+                ("html-9-1".to_string(), "beat();"),
             ]
         );
-
-        let macro_file = container
-            .files
-            .iter()
-            .find(|file| file.path == "macros/jsm-0.js")
-            .expect("macro file");
-        assert_eq!(
-            macro_file.source,
-            "(function(){var a=localStorage.getItem(\"x\");return a})();"
-        );
-
-        let html = container
-            .files
-            .iter()
-            .find(|file| file.path == "tags/html-7-0.js")
-            .expect("html file");
-        // mode 7 closes the literal it sits in, mode 8 drops the identifier in as a reference, and
-        // the mode the module does not understand keeps a placeholder instead of a guess
-        assert_eq!(
-            html.source,
-            "var t=\"\" + __gtm_macro_1 + \"\";code(__gtm_macro_0,__gtm_macro_9_escape_2);"
-        );
-
-        let second = container
-            .files
-            .iter()
-            .find(|file| file.path == "tags/html-9-1.js")
-            .expect("second script of tag 9");
-        assert_eq!(second.source, "beat();");
         assert_eq!(
             container.external_scripts,
             vec![GtmExternalScript {
                 tag_id: 9,
+                position: 0,
                 url: "//example.com/loader.js".to_string()
             }]
         );
-        assert_eq!(container.warnings.len(), 1);
-        assert!(container.warnings[0].contains("escape mode 2"));
-    }
-
-    #[test]
-    fn index_names_the_macros_and_the_external_scripts() {
-        let container = extract(&parse(CONTAINER)).expect("container detected");
-        let index = container
-            .files
+        assert_eq!(
+            container.unsupported_parts,
+            vec![GtmUnsupportedPart {
+                field: GtmField::CustomHtmlTag { tag_id: 7 },
+                macro_index: Some(9),
+                modes: vec![2],
+            }]
+        );
+        let names: Vec<(usize, &str, Option<&str>)> = container
+            .macros
             .iter()
-            .find(|file| file.path == "index.md")
-            .expect("index");
-        assert!(index.source.contains("| 1 | `__v` | order_amount |"));
-        assert!(index.source.contains("| 2 | `__v` |  |"));
-        assert!(index.source.contains("| 9 | //example.com/loader.js |"));
+            .map(|m| (m.index, m.function.as_str(), m.name.as_deref()))
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                (0, "__jsm", None),
+                (1, "__v", Some("order_amount")),
+                (2, "__v", None)
+            ]
+        );
     }
 
     #[test]
@@ -732,19 +724,17 @@ var data = {"resource":{"version":"40","macros":[
     #[test]
     fn text_without_the_resource_keys_is_rejected_before_parsing() {
         // not valid JavaScript: a parse would fail too, but the key check answers first
-        assert!(
-            extract_from_source("var data = {resource: {macros: [], tags: [}", "x.js").is_none()
-        );
-        assert!(extract_from_source(CONTAINER, "gtm.js").is_some());
+        assert!(extract_from_source("var data = {resource: {macros: [], tags: [}").is_none());
+        assert!(extract_from_source(CONTAINER).is_some());
     }
 
     fn html_tag_source(container: &str) -> String {
         extract(&parse(container))
             .expect("container detected")
-            .files
+            .scripts
             .into_iter()
-            .find(|file| file.path.starts_with("tags/"))
-            .expect("tag file")
+            .find(|script| matches!(script.field, GtmField::CustomHtmlTag { .. }))
+            .expect("tag script")
             .source
     }
 
@@ -784,12 +774,10 @@ var data = {"resource":{"version":"40","macros":[
         )
     }
 
-    fn tag_files(container: &GtmContainer) -> Vec<(&str, &str)> {
-        container
-            .files
-            .iter()
-            .filter(|file| file.path.starts_with("tags/"))
-            .map(|file| (file.path.as_str(), file.source.as_str()))
+    fn tag_files(container: &GtmContainer) -> Vec<(String, &str)> {
+        labelled(container)
+            .into_iter()
+            .filter(|(label, _)| label.starts_with("html-"))
             .collect()
     }
 
@@ -803,7 +791,7 @@ var data = {"resource":{"version":"40","macros":[
         .expect("container detected");
         assert_eq!(
             tag_files(&container),
-            vec![("tags/html-4-0.js", "track();")]
+            vec![("html-4-0".to_string(), "track();")]
         );
     }
 
@@ -816,12 +804,16 @@ var data = {"resource":{"version":"40","macros":[
         .expect("container detected");
         assert_eq!(
             tag_files(&container),
-            vec![("tags/html-4-0.js", "a();"), ("tags/html-4-1.js", "b();")]
+            vec![
+                ("html-4-0".to_string(), "a();"),
+                ("html-4-1".to_string(), "b();")
+            ]
         );
         assert_eq!(
             container.external_scripts,
             vec![GtmExternalScript {
                 tag_id: 4,
+                position: 2,
                 url: "https://cdn.example/x.js".to_string()
             }]
         );
@@ -837,9 +829,16 @@ var data = {"resource":{"version":"40","macros":[
         .expect("container detected");
         assert_eq!(
             tag_files(&container),
-            vec![("tags/html-4-0.js", "s=s.replace(/__gtm_macro_0/i,\"x\");")]
+            vec![(
+                "html-4-0".to_string(),
+                "s=s.replace(/__gtm_macro_0/i,\"x\");"
+            )]
         );
-        assert!(container.warnings.is_empty(), "{:?}", container.warnings);
+        assert!(
+            container.unsupported_parts.is_empty(),
+            "{:?}",
+            container.unsupported_parts
+        );
     }
 
     #[test]
@@ -850,9 +849,9 @@ var data = {"resource":{"version":"40","macros":[
         .expect("container detected");
         assert_eq!(
             tag_files(&container),
-            vec![("tags/html-4-0.js", "f(__gtm_macro_0_escape_7_12);")]
+            vec![("html-4-0".to_string(), "f(__gtm_macro_0_escape_7_12);")]
         );
-        assert!(container.warnings[0].contains("escape mode 7_12"));
+        assert_eq!(container.unsupported_parts[0].modes, vec![7, 12]);
     }
 
     #[test]

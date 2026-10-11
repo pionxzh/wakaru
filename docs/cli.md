@@ -54,15 +54,18 @@ only `.js`, `.mjs`, and `.cjs` candidates, and stdin remains text input. Use
 See [bun-standalone.md](bun-standalone.md) for the container format, safety
 properties, and current limits.
 
-An explicit file can also be a Google Tag Manager container (`gtm.js`).
-Wakaru recognizes it by the shape of its `data.resource` object, skips the GTM
-runtime, and writes each Custom JS variable to `macros/jsm-<n>.js`, each
-inline Custom HTML script to `tags/html-<tag_id>-<n>.js`, and an `index.md`
-listing the macros and external script URLs. Each JavaScript piece is
-decompiled like a single file; `--raw` writes it as extracted. Container pieces
-appear in `--json` output as modules, but `--provenance`, `--emit-source-map`,
-and `--vue-sfc` do not cover them. Directory scans and stdin do not detect
-containers. See [gtm.md](gtm.md) for macro references and current limits.
+An explicit file or stdin can also be a Google Tag Manager container
+(`gtm.js`). Wakaru recognizes it by the shape of its `data.resource` object,
+skips the GTM runtime, and writes each Custom JS variable to
+`macros/jsm-<n>.js`, each inline Custom HTML script to
+`tags/html-<tag_id>-<n>.js`, and an `index.md` listing the macros and external
+script URLs. With more than one input, a container's files go under a
+directory named after its input file. Each script is decompiled on its own as
+a single file, without bundle detection; `--raw` writes it as extracted.
+Container scripts appear in `--json` output as modules, but `--provenance`,
+`--emit-source-map`, and `--vue-sfc` do not cover them. Directory scans do not
+detect containers. See [gtm.md](gtm.md) for macro references and current
+limits.
 
 Unpacked output follows Node's rules for ESM and CommonJS, except for the
 cases listed in [Known gaps](unpacking.md#known-gaps). A module that stays

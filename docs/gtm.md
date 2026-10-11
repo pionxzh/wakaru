@@ -10,8 +10,8 @@ through GTM, often outside the normal code review process.
 `--unpack` recognizes a container by that object shape — a `var data = {…}`
 whose `resource` carries `macros`, `tags`, `predicates` and `rules` arrays —
 read from the AST and not from the file name, so a container saved by hand
-works too. Only explicit file inputs are checked; directory scans and stdin
-are not. The runtime is skipped: it is the same library in every file, and
+works too. Explicit file inputs and stdin are checked; directory scans are
+not. The runtime is skipped: it is the same library in every file, and
 running wakaru without `--unpack` still decompiles the whole input.
 
 ```
@@ -26,11 +26,23 @@ The pieces are written under `-o`:
 | `tags/html-<tag_id>-<n>.js` | one inline script from a Custom HTML tag, in the order it appears in the tag |
 | `index.md` | every macro index with its `function` type and name, and the URLs of external scripts |
 
-Each JavaScript piece then goes through the normal pipeline, so the emitted
-code is decompiled like any other file; `--raw` writes it as extracted. A piece
-the pipeline cannot parse is written as extracted and reported as
-`decompile_failed`, which makes the run exit nonzero like any failed module.
-In `--json` output the JavaScript pieces are modules; `index.md` is not.
+With more than one input, a container's files go under a directory named after
+its input file (`gtm/macros/…`), with `-2`, `-3`… added when two inputs share a
+file name.
+
+Each script is then decompiled on its own, as a single file. It does not go
+through bundle detection: a script is not a bundle, and the heuristic
+scope-hoist split would cut an ordinary IIFE apart. `--raw` writes each script
+as extracted. A script the pipeline cannot parse is written as extracted and
+reported as `decompile_failed`, which makes the run exit nonzero like any
+failed module. In `--json` output the scripts are modules; `index.md` is not.
+They have no provenance entries and no output source maps.
+
+The Rust façade exposes the extraction as `wakaru::gtm::extract_container`: it
+returns the scripts, macros, external URLs and unsupported template parts as
+data, and the caller decompiles the scripts. File names and `index.md` are CLI
+layout. The parsing lives in `crates/core/src/gtm.rs`; the CLI wiring is
+`push_explicit_source` and `decompile_gtm_scripts` in `crates/cli/src/main.rs`.
 
 ## Macro references
 
