@@ -350,9 +350,10 @@ rationale, or level gating appear.
   Exp 5); pass 3 after UnEsm (catches `require.n(importBinding)` shapes
   exposed by import conversion).
 - **UnEsm** — the module-system barrier. The rule runs at every level; its
-  runner stands it down below `standard` on single-file input, because no
-  named assumption yet covers changing what an unseen consumer's `require`
-  returns. Unpack recovers every module of the bundle together and needs
+  runner stands it down below `standard` on single-file input, because
+  converting it changes what an unseen consumer's `require` returns
+  (`single_file_esm_consumers` in
+  [rewrite-assumptions.md](rewrite-assumptions.md)). Unpack recovers every module of the bundle together and needs
   `UnEsm` to remove the bundler runtime calls, so it runs at every level
   there. Its confirmed
   prerequisite chain is diagrammed above; multi-module unpack extracts

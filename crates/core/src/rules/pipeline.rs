@@ -328,7 +328,8 @@ fn run_un_esm(module: &mut Module, ctx: RuleRunContext<'_>) {
     // A single file stays in the module system it was written in below
     // standard. Its consumers are outside the output, so turning
     // `module.exports = x` into `export default x` changes what their
-    // `require` returns, and no named assumption covers that yet. Unpack
+    // `require` returns (`single_file_esm_consumers`, a standard
+    // assumption). Unpack
     // recovers every module of the bundle together, consumers included, and
     // a factory still calls the bundler runtime (`require.r`, `require.d`)
     // that only `UnEsm` removes, so unpack runs it at every level.

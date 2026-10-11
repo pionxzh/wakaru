@@ -108,7 +108,8 @@ whose callee the module cannot see still drop the wrapper.
 
 Level: receiver-changing `UnIndirectCall` forms require `standard` or above,
 in unpack mode too. `UnEsm` forms apply wherever `UnEsm` runs: `standard` and
-above for single-file input, and every level in unpack mode. Below `standard`,
+above for single-file input (`single_file_esm_consumers`), and every level in
+unpack mode. Below `standard`,
 `(0, o.m)()` keeps its wrapper until `UnEsm` or unpack's namespace
 decomposition replaces `o.m` with a binding, which has no receiver to lose. Explicit transpiler-helper recovery in
 `UnInteropRequireDefault` applies whenever that helper is recognized around a
@@ -768,6 +769,36 @@ Affects: `UnPrototypeClass`, `UnEs6Class`.
 
 Level: every level, like both rules.
 
+### `single_file_esm_consumers`
+
+The consumers of a single input file can load it as an ES module. They are
+not in the output, so converting the file from CommonJS to ESM changes its
+interface toward them, not only its body:
+
+```js
+module.exports = format; // consumer: require("./format")(v)
+export default format;   // the consumer's require fails, or returns the
+                         // module namespace object, so the call throws
+```
+
+A consumer's `require` of an ES module either fails or returns the module
+namespace object instead of `module.exports`, and the ESM loader resolves and
+evaluates the file differently from `require`. Nothing inside the file shows
+how its consumers load it.
+
+Unpack mode does not rely on this. It recovers a bundle's modules together,
+so every consumer the bundle contains is converted with its provider, and an
+unpacked module still calls the bundler runtime (`require.r`, `require.d`)
+that only `UnEsm` removes.
+
+Affects: whether the `UnEsm` runner converts single-file input at all. Every
+assumption below that names `UnEsm` applies to single-file input only where
+this one is accepted.
+
+Level: `standard` and above. Below `standard`, single-file input keeps the
+module system it was written in. Unpack mode converts at every level without
+it.
+
 ### `commonjs_exports_data_properties`
 
 Properties that compiler-emitted code writes on the module's own `exports` /
@@ -806,9 +837,8 @@ and receivers each accepts is documented in `rules/un_assignment_merging.rs`
 and `rules/un_esm/export_storage.rs`.
 
 Level: `UnAssignmentMerging` relies on it at every level. `UnEsm` relies on it
-wherever it runs: `standard` and above for single-file input, because `UnEsm`
-does not run at `minimal` there. In unpack mode the module recovery converts
-CommonJS at every level, so the recovery depends on it at every level.
+wherever it runs: `standard` and above for single-file input
+(`single_file_esm_consumers`), and every level in unpack mode.
 
 ### `import_hoisting_eagerness`
 
@@ -869,9 +899,8 @@ unpacker's writer relocation, which moves a top-level state writer into the
 module that owns the state.
 
 Level: wherever CommonJS becomes ESM: `standard` and above for single-file
-input, because `UnEsm` does not run at `minimal` there. In unpack mode the
-module recovery converts CommonJS at every level, so this applies at every
-level. This is inherent to emitting ESM from CommonJS.
+input (`single_file_esm_consumers`), and every level in unpack mode. This is
+inherent to emitting ESM from CommonJS.
 
 ### `commonjs_export_mirror_coverage`
 
@@ -906,8 +935,8 @@ Affects: `UnEsm` (mirror-storage recovery) and `UnAssignmentMerging`, which
 keeps a chain that writes both an `exports` property and a resolved local
 whole so the copy stays visible.
 
-Level: wherever `UnEsm` runs: `standard` and above for single-file input, and
-every level in unpack mode.
+Level: wherever `UnEsm` runs: `standard` and above for single-file input
+(`single_file_esm_consumers`), and every level in unpack mode.
 
 ### `cocos_registration_frame`
 
@@ -946,7 +975,8 @@ the free `__decorate` lets a component wrapper's decorator calls move out of
 it; see [helper detection](helper-detection.md#typescript-decorated-wrappers)).
 
 Level: wherever those rules run; `UnEsm` at `standard` and above for
-single-file input, and at every level in unpack mode.
+single-file input (`single_file_esm_consumers`), and at every level in unpack
+mode.
 
 ### `namespace_interop_source_semantics`
 
@@ -1023,8 +1053,9 @@ Affects: `UnInteropRequireWildcard` when `UnEsm` runs it on a module it
 converts, and the Phase 2 pass `run_cross_module_lowered_dynamic_imports`
 for a helper imported from another module of a bundle.
 
-Level: wherever `UnEsm` runs: `standard` and above for single-file input, and
-every level in unpack mode, where the Phase 2 pass also runs.
+Level: wherever `UnEsm` runs: `standard` and above for single-file input
+(`single_file_esm_consumers`), and every level in unpack mode, where the
+Phase 2 pass also runs.
 
 ### `relative_require_esm_provider`
 
