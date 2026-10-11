@@ -416,6 +416,25 @@ function te() {
     assert!(target_facts.receiver_observing_exports.is_empty());
 }
 
+/// An export whose value is a wrapping call counts by the function literals
+/// passed to it; a call with none says nothing about a receiver.
+#[test]
+fn wrapping_call_export_follows_its_function_literals() {
+    // shape: producer @babel/core@7.28.5 @babel/plugin-transform-async-to-generator@7.28.6
+    // on `exports.describe = async function () { return this.label; }`, after
+    // `UnEsm`; `make` and `count` are hypothetical controls.
+    let target_facts = facts_for(
+        r#"
+export const describe = _asyncToGenerator(function* () {
+  return this.label;
+});
+export const make = build();
+export const count = wrap(function () { return 1; });
+"#,
+    );
+    assert_eq!(target_facts.receiver_observing_exports, vec!["describe"]);
+}
+
 /// A receiver forwarded to a function the module cannot see may be read
 /// there, so the export keeps its member calls.
 #[test]

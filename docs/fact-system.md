@@ -424,8 +424,9 @@ Neither proof creates a default-object fact available to consumers.
   `` r.foo`…` `` keeps that member call and the namespace import, at every
   level: the call passes `r` as `this`. Reads and receiverless `(0, r.foo)()`
   calls of it still decompose. A function that only forwards `this`
-  (`g.apply(this, arguments)`, Babel's async wrapper) is listed when what it
-  forwards to reads `this`; `call_receiver_independence` in
+  (`g.apply(this, arguments)`, Babel's async wrapper), or an export whose value
+  is a wrapping call (`_asyncToGenerator(function* () { … })`), is listed when
+  what it forwards to reads `this`; `call_receiver_independence` in
   [rewrite-assumptions.md](rewrite-assumptions.md) has the rule. A
   recognized transpiler helper is not listed.
 - **`UnObjectSpread`** — in multi-module unpack, recognizes object spread

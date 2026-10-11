@@ -843,7 +843,11 @@ pub fn collect_module_facts(module: &Module) -> ModuleFacts {
 /// loop.
 fn collect_receiver_observing_exports(module: &Module, facts: &ModuleFacts) -> Vec<Atom> {
     let mut functions: HashMap<Atom, &Function> = HashMap::default();
+    // `export const f = wrap(function () { … })`: Babel's lowered async
+    // function expression is `_asyncToGenerator(function* () { … })`.
+    let mut wrapped: HashMap<Atom, &CallExpr> = HashMap::default();
     let mut default_function = None;
+    let mut default_wrapped = None;
     for item in &module.body {
         match item {
             ModuleItem::Stmt(Stmt::Decl(Decl::Fn(function)))
@@ -860,8 +864,14 @@ fn collect_receiver_observing_exports(module: &Module, facts: &ModuleFacts) -> V
             })) => {
                 for decl in &var.decls {
                     if let (Pat::Ident(binding), Some(init)) = (&decl.name, &decl.init) {
-                        if let Expr::Fn(function) = strip_parens(init) {
-                            functions.insert(binding.id.sym.clone(), &function.function);
+                        match strip_parens(init) {
+                            Expr::Fn(function) => {
+                                functions.insert(binding.id.sym.clone(), &function.function);
+                            }
+                            Expr::Call(call) => {
+                                wrapped.insert(binding.id.sym.clone(), call);
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -875,8 +885,10 @@ fn collect_receiver_observing_exports(module: &Module, facts: &ModuleFacts) -> V
                 }
             }
             ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(export)) => {
-                if let Expr::Fn(function) = strip_parens(&export.expr) {
-                    default_function = Some(&*function.function);
+                match strip_parens(&export.expr) {
+                    Expr::Fn(function) => default_function = Some(&*function.function),
+                    Expr::Call(call) => default_wrapped = Some(call),
+                    _ => {}
                 }
             }
             _ => {}
@@ -898,18 +910,19 @@ fn collect_receiver_observing_exports(module: &Module, facts: &ModuleFacts) -> V
         if is_helper(&export.exported) || names.contains(&export.exported) {
             continue;
         }
-        let function = match &export.local {
-            Some(local) => functions.get(local).copied(),
-            None if export.kind == ExportKind::Default => default_function,
-            None => None,
+        let (function, call) = match &export.local {
+            Some(local) => (functions.get(local).copied(), wrapped.get(local).copied()),
+            None if export.kind == ExportKind::Default => (default_function, default_wrapped),
+            None => (None, None),
         };
-        let observes = function.is_some_and(|function| {
-            ReceiverFlow {
-                functions: &functions,
-                visiting: HashSet::default(),
-            }
-            .function_observes(function)
-        });
+        let mut flow = ReceiverFlow {
+            functions: &functions,
+            visiting: HashSet::default(),
+        };
+        // A call with no function literal says nothing about a receiver: its
+        // value may not even be a function.
+        let observes = function.is_some_and(|function| flow.function_observes(function))
+            || call.is_some_and(|call| flow.wrapped_literals_observe(call) == Some(true));
         if observes {
             names.push(export.exported.clone());
         }
@@ -984,17 +997,25 @@ impl ReceiverFlow<'_> {
             }
             Expr::Fn(function) => self.function_observes(&function.function),
             Expr::Arrow(_) => false,
-            Expr::Call(call) => {
-                let mut literals = FunctionLiterals::default();
-                call.args.visit_with(&mut literals);
-                literals.found.is_empty()
-                    || literals
-                        .found
-                        .iter()
-                        .any(|function| self.function_observes(function))
-            }
+            Expr::Call(call) => self.wrapped_literals_observe(call).unwrap_or(true),
             _ => true,
         }
+    }
+
+    /// Whether a function literal passed to `call` observes the receiver the
+    /// call's result forwards to it; `None` when the call takes none.
+    fn wrapped_literals_observe(&mut self, call: &CallExpr) -> Option<bool> {
+        let mut literals = FunctionLiterals::default();
+        call.args.visit_with(&mut literals);
+        if literals.found.is_empty() {
+            return None;
+        }
+        Some(
+            literals
+                .found
+                .iter()
+                .any(|function| self.function_observes(function)),
+        )
     }
 }
 

@@ -101,8 +101,11 @@ when the provider's facts show that `fn` is a function that reads `this`. A
 function that only forwards its receiver (`g.apply(this, arguments)`) counts
 by what it forwards to: a same-module function, or the function literals
 passed to a wrapping call, which is taken to pass the receiver on without
-reading it, as Babel's async wrapper around `_asyncToGenerator` does. A
-forwarding target the module cannot see counts as reading `this`. A
+reading it, as Babel's async wrapper around `_asyncToGenerator` does. An
+export whose value is such a wrapping call (Babel's lowered async function
+expression, `_asyncToGenerator(function* () { … })`) counts the same way; a
+call that takes no function literal does not count. A forwarding target the
+module cannot see counts as reading `this`. A
 recognized transpiler helper never counts: `_extends` and `__assign` forward
 `this` to code that ignores it.
 
