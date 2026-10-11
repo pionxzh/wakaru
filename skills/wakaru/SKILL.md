@@ -93,7 +93,9 @@ wakaru bun extract ./compiled-app -o raw/     # dump every embedded Bun file byt
 Bun single-file executable extraction requires an explicit executable path
 (directory scans and stdin handle JavaScript only). `--unpack` selects the
 JavaScript-like records and sends them through
-bundle splitting. Prefer `--raw` when comparing their shipped representation.
+bundle splitting. Prefer `--raw` when comparing their shipped representation:
+it still splits statements and declarations so the chunks link as ESM, so use
+`wakaru bun extract` when the exact bytes matter.
 
 Use `wakaru bun extract` instead when the task needs the container itself. It
 writes every validated file record below `raw/files/` without decoding or
@@ -170,7 +172,7 @@ npx wakaru deobfuscated.js --unpack -o out/
 - `--unpack=inspect` — recursively retain finer scope-hoist boundaries for
   static inspection. The resulting module graph may not preserve runtime
   initialization order; the CLI prints a warning whenever this mode is used.
-  Add `--raw` independently to skip readability transforms; `--level` has
+  Add `--raw` independently to skip the readability pipeline; `--level` has
   no effect with `--raw`.
 
 By default, Wakaru removes only dead code introduced by its own transforms and

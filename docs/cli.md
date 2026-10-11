@@ -26,7 +26,7 @@ written with ESM syntax that Node cannot load.
 
 ```bash
 wakaru bundle.js --unpack -o out/
-wakaru bundle.js --unpack --raw -o out/       # raw split, no readability transforms
+wakaru bundle.js --unpack --raw -o out/       # raw split, skips the readability pipeline
 wakaru bundle.js --unpack=strict -o out/      # structural detection only, no heuristic fallback
 wakaru bundle.js --unpack=inspect -o out/     # finer boundaries for static inspection
 wakaru entry.js chunk.js --unpack -o out/     # unpack multiple explicit files
@@ -48,7 +48,8 @@ assets; use `wakaru bun extract` when every embedded file is needed. Bun's
 internal source-map blobs are not accepted as v3 input maps. Executable
 discovery is limited to explicit file paths: directory scans still consider
 only `.js`, `.mjs`, and `.cjs` candidates, and stdin remains text input. Use
-`--raw` to preserve the exact embedded JavaScript before readability rewrites.
+`--raw` to keep the embedded JavaScript close to its shipped form, and
+`wakaru bun extract` for its exact bytes.
 See [bun-standalone.md](bun-standalone.md) for the container format, safety
 properties, and current limits.
 
@@ -148,9 +149,14 @@ Generated modules yield to these reserved physical-input paths during collision
 deduplication. Two physical ESM identities that normalize to the same path
 (including a plain input colliding with a facade) fail as ambiguous instead of
 silently suffixing either identity. Script-loaded bundle inputs do not reserve
-their physical filenames. `--raw` only skips readability transforms, so
-`--level` does not apply to it. It retains provisional extraction names, and
-does not apply public-path reservations or promise a usable module graph.
+their physical filenames. `--raw` skips the readability pipeline, so `--level`
+does not apply to it. Modules from a scope-hoisted split (esbuild, Bun, Vite,
+Rollup) are still normalized so they link as ESM: `UnEsm` runs at its minimal
+level together with the rules it needs, which add braces to single-statement
+bodies and split sequence statements, chained assignments, and multi-declarator
+`var` statements. Modules of other formats are printed as extracted. Raw output
+retains provisional extraction names, and does not apply public-path
+reservations or promise a usable module graph.
 
 `--unpack=inspect` recursively retains fine-grained scope-hoist boundaries,
 including synthetic clusters whose emitted ESM imports form a cycle. The

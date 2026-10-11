@@ -792,8 +792,8 @@ fn import_cycle_warning_closes_a_self_cycle_witness() {
     );
 }
 
-/// Raw output skips readability rewrites: its normalization only makes the
-/// module linkable as ESM. It turns a factory's `.call` wrapper into an arrow
+/// Raw output skips the readability pipeline: its normalization only makes
+/// the module linkable as ESM. It turns a factory's `.call` wrapper into an arrow
 /// so the wrapped body can be recovered, and leaves the module's own
 /// functions, arrows, and captured builtin aliases as written.
 #[test]

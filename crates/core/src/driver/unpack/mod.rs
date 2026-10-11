@@ -537,8 +537,8 @@ pub fn unpack_prepared_inputs_with_policy(
                     .collect::<HashSet<_>>();
                 let detected = if raw {
                     let result = detected.materialize()?;
-                    // Raw output skips readability rewrites, so `--level` does
-                    // not apply to it.
+                    // Raw output skips the readability pipeline, so `--level`
+                    // does not apply to it.
                     DetectedBundle::from_result(maybe_split_scope_hoisted_modules(
                         result,
                         scope_hoist_policy.recursive(),
@@ -857,9 +857,12 @@ fn normalize_raw_unpacked_module(source: &str, filename: &str) -> Result<String>
         let unresolved_mark = Mark::new();
         let top_level_mark = Mark::new();
         module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
-        // Raw output skips readability rewrites, so `--level` does not apply:
-        // the module is only made linkable as ESM, with the rules that do
-        // that at their minimal level.
+        // Raw output skips the readability pipeline, so `--level` does not
+        // apply: the module is only made linkable as ESM, at the minimal
+        // level. The late recovery below is required: its rule range holds
+        // `UnEsm`'s prerequisites, which split `var a = require(…), b = …`
+        // so the require becomes an import. They also add braces and split
+        // sequences module-wide.
         module.visit_mut_with(
             &mut UnEsm::new(unresolved_mark, RewriteLevel::Minimal)
                 .with_current_filename(Some(filename)),
