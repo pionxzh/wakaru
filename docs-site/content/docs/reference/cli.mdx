@@ -66,7 +66,9 @@ wakaru bundle.js --unpack --provenance -o out/
 `--provenance` adds `provenance.json`, linking recovered filenames to their
 source inputs and byte ranges. Each range is `[start, end)`: the start byte
 is included, and the end byte is excluded. These are extraction regions,
-not line-by-line mappings of the rewritten output.
+not line-by-line mappings of the rewritten output. Each module's `input` is
+the path exactly as you passed it, or the directory argument joined with the
+file's path below it for a directory input.
 
 See [Read an unpacked bundle](/guides/read-an-unpacked-bundle#check-the-original-bundle)
 for an example, or use [source maps](/guides/source-maps) to trace output positions.

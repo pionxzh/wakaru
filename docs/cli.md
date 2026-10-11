@@ -77,6 +77,16 @@ end, `[start, end)`. They identify the input regions used to recover a module,
 not a position-by-position mapping of the rewritten code. Use
 `--emit-source-map` for output position mappings.
 
+`input` is the input path exactly as passed on the command line. Wakaru does
+not make it absolute or resolve symlinks, and converts non-UTF-8 path bytes
+lossily. A file found by scanning a directory input is the directory argument
+joined with the file's path below it: `./dist` gives `./dist/sub/a.js`. Stdin
+is `<stdin>`. A module from a Bun single-file executable is
+`<executable path>#bun/<embedded path>`, with Bun's `/$bunfs/root/` prefix
+removed from the embedded path. Its ranges index the embedded
+file's bytes, not the executable's. All ranges of a module refer to its one
+`input`. A file passed twice yields two inputs with the same `input` string.
+
 ## Extract every file from a Bun single-file executable
 
 ```bash

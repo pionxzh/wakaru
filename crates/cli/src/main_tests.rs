@@ -1270,6 +1270,79 @@ fn provenance_json_keeps_contract_fields() {
     fs::remove_dir_all(&dir).expect("remove temp dir");
 }
 
+/// Write a bundle at `dist/alpha.js` and a chunk at `dist/sub/beta.js`.
+fn write_provenance_input_tree(dir: &Path) -> PathBuf {
+    let dist = dir.join("dist");
+    fs::create_dir_all(dist.join("sub")).expect("create input tree");
+    fs::write(dist.join("alpha.js"), webpack5_vue_sfc_bundle_source()).expect("write bundle");
+    fs::write(dist.join("sub").join("beta.js"), webpack5_chunk_source()).expect("write chunk");
+    dist
+}
+
+/// Run a provenance unpack and return each module's `input`, sorted and deduplicated.
+fn provenance_inputs(inputs: &[&str], out_dir: &Path) -> Vec<String> {
+    let mut args = vec!["wakaru"];
+    args.extend_from_slice(inputs);
+    args.extend([
+        "--unpack",
+        "--provenance",
+        "-o",
+        out_dir.to_str().expect("output path should be utf8"),
+    ]);
+    let cli = Cli::try_parse_from(args).expect("provenance unpack cli should parse");
+    run_default(cli).expect("provenance unpack should succeed");
+
+    let provenance: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(out_dir.join("provenance.json")).expect("read provenance.json"),
+    )
+    .expect("parse provenance.json");
+    let mut names = provenance["modules"]
+        .as_object()
+        .expect("modules object")
+        .values()
+        .map(|entry| entry["input"].as_str().expect("input string").to_string())
+        .collect::<Vec<_>>();
+    names.sort();
+    names.dedup();
+    names
+}
+
+#[test]
+fn provenance_input_is_each_explicit_path_as_passed() {
+    let dir = temp_test_dir("provenance-input-files");
+    let dist = write_provenance_input_tree(&dir);
+    // A `.` component shows the path is not normalized.
+    let alpha = dist.join(".").join("alpha.js");
+    let beta = dist.join("sub").join("beta.js");
+    let alpha = alpha.to_str().expect("input path should be utf8");
+    let beta = beta.to_str().expect("input path should be utf8");
+
+    let inputs = provenance_inputs(&[alpha, beta], &dir.join("out"));
+    let mut expected = vec![alpha.to_string(), beta.to_string()];
+    expected.sort();
+    assert_eq!(inputs, expected);
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn provenance_input_joins_directory_argument_with_file_path() {
+    let dir = temp_test_dir("provenance-input-dir");
+    write_provenance_input_tree(&dir);
+    let dist = dir.join(".").join("dist");
+    let dist_arg = dist.to_str().expect("input path should be utf8");
+
+    let inputs = provenance_inputs(&[dist_arg], &dir.join("out"));
+    let expected = [dist.join("alpha.js"), dist.join("sub").join("beta.js")].map(|path| {
+        path.to_str()
+            .expect("input path should be utf8")
+            .to_string()
+    });
+    assert_eq!(inputs, expected);
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
 #[test]
 fn provenance_names_ignore_interleaved_vue_sfc_sidecars() {
     let out_dir = PathBuf::from("/tmp/wakaru-out");
