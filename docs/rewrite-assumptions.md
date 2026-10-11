@@ -95,7 +95,16 @@ sites rewritten from `.default`), and `UnEsm` (default interop recovery,
 and calls of property-storage exports rewritten from `exports.fn()` to `fn()`
 unless a value written to that export is a function that reads `this`; calls
 of mirror-storage exports rewritten to the local unless its declaration is a
-function that reads `this`).
+function that reads `this`). Unpack's namespace decomposition rewrites a
+consumer's `ns.fn()` to `fn()` on the same terms: it keeps the member call
+when the provider's facts show that `fn` is a function that reads `this`. A
+function that only forwards its receiver (`g.apply(this, arguments)`) counts
+by what it forwards to: a same-module function, or the function literals
+passed to a wrapping call, which is taken to pass the receiver on without
+reading it, as Babel's async wrapper around `_asyncToGenerator` does. A
+forwarding target the module cannot see counts as reading `this`. A
+recognized transpiler helper never counts: `_extends` and `__assign` forward
+`this` to code that ignores it.
 
 `UnIndirectCall` keeps `(0, o.m)()` and `Object(o.m)()` when `o` is a
 same-module binding whose member `m` is an ordinary function that reads

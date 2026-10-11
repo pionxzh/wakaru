@@ -18,8 +18,8 @@ use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignExpr, AssignTarget, CallExpr, Callee, CatchClause, Expr, Function, Ident, ImportDecl,
     ImportDefaultSpecifier, ImportNamedSpecifier, ImportSpecifier, JSXElementName, JSXObject, Lit,
-    MemberExpr, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, Param, Pat,
-    SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp, UpdateExpr,
+    MemberExpr, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, OptCall, Param, Pat,
+    SimpleAssignTarget, Stmt, TaggedTpl, UnaryExpr, UnaryOp, UpdateExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -165,6 +165,7 @@ fn find_decomposition_candidates(
             target_ctxt: local_ctxt,
             default_export,
             accessed_props: HashSet::default(),
+            receiver_calls: HashSet::default(),
             safe: true,
             in_import_decl: false,
         };
@@ -181,7 +182,19 @@ fn find_decomposition_candidates(
             item.visit_with(&mut analyzer);
         }
 
-        if !analyzer.safe || analyzer.accessed_props.is_empty() {
+        if !analyzer.safe {
+            continue;
+        }
+        // `t.p()` passes the namespace as `this`. When the provider's `p`
+        // observes its receiver, a bare `p()` would call it with `this`
+        // undefined, so `p` stays a member of the kept namespace import.
+        let mut keeps_namespace = false;
+        for name in &target_facts.receiver_observing_exports {
+            if analyzer.receiver_calls.contains(name) && analyzer.accessed_props.remove(name) {
+                keeps_namespace = true;
+            }
+        }
+        if analyzer.accessed_props.is_empty() {
             continue;
         }
 
@@ -293,7 +306,7 @@ fn find_decomposition_candidates(
             }
         }
 
-        let mut remove_original = true;
+        let mut remove_original = !keeps_namespace;
 
         // If too many aliases are needed, keep the namespace import and decompose
         // only properties that can use clean local names. This still enables
@@ -445,6 +458,9 @@ struct UsageAnalyzer<'a> {
     /// then takes the target's own name.
     default_export: bool,
     accessed_props: HashSet<Atom>,
+    /// Properties called with the binding as their receiver: `t.p()`,
+    /// `t.p?.()`, and the tag of `` t.p`…` ``.
+    receiver_calls: HashSet<Atom>,
     safe: bool,
     in_import_decl: bool,
 }
@@ -460,6 +476,14 @@ impl UsageAnalyzer<'_> {
 
     fn is_target_member_expr(&self, expr: &Expr) -> bool {
         matches!(expr, Expr::Member(member) if self.is_target_member(member))
+    }
+
+    fn record_receiver_call(&mut self, callee: &Expr) {
+        if let Expr::Member(member) = strip_parens(callee) {
+            if let (true, MemberProp::Ident(prop)) = (self.is_target_member(member), &member.prop) {
+                self.receiver_calls.insert(prop.sym.clone());
+            }
+        }
     }
 
     fn is_target_member_assign_target(&self, target: &AssignTarget) -> bool {
@@ -479,6 +503,9 @@ impl Visit for UsageAnalyzer<'_> {
     }
 
     fn visit_call_expr(&mut self, call: &CallExpr) {
+        if let Callee::Expr(callee) = &call.callee {
+            self.record_receiver_call(callee);
+        }
         if is_jsx_factory_callee(&call.callee) {
             if let Some(first_arg) = call.args.first() {
                 if first_arg.spread.is_none() {
@@ -500,6 +527,16 @@ impl Visit for UsageAnalyzer<'_> {
             }
         }
         call.visit_children_with(self);
+    }
+
+    fn visit_opt_call(&mut self, call: &OptCall) {
+        self.record_receiver_call(&call.callee);
+        call.visit_children_with(self);
+    }
+
+    fn visit_tagged_tpl(&mut self, tagged: &TaggedTpl) {
+        self.record_receiver_call(&tagged.tag);
+        tagged.visit_children_with(self);
     }
 
     fn visit_assign_expr(&mut self, assign: &AssignExpr) {

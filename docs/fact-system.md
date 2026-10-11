@@ -114,7 +114,8 @@ distinguishable from an authored ESM dependency downstream.
   require_returns_exports_object, whole_require_sources, marks_es_module,
   wildcard_require_sources, has_export_all, export_star_sources, reexports, import_call_edges,
   default_object_ident_properties, ts_helper_exports,
-  ts_helper_namespace_factory_exports, passthrough_target }`
+  ts_helper_namespace_factory_exports, receiver_observing_exports,
+  passthrough_target }`
 - `ModuleFactsMap` — keyed by normalized module specifier
   (handles `./foo`, `foo`, `foo.js` variants)
 
@@ -417,7 +418,16 @@ Neither proof creates a default-object fact available to consumers.
   collisions would force aliasing. For imports synthesized from `require()`, it
   also discards an otherwise-inert top-level binding read left by interop-helper
   removal when the original namespace/default specifier can be removed in full;
-  substantive whole-object reads and every write still fail closed.
+  substantive whole-object reads and every write still fail closed. A name
+  the provider's `receiver_observing_exports` lists (a function that reads
+  `this`) and that the consumer calls as `r.foo()`, `r.foo?.()`, or a tag of
+  `` r.foo`…` `` keeps that member call and the namespace import, at every
+  level: the call passes `r` as `this`. Reads and receiverless `(0, r.foo)()`
+  calls of it still decompose. A function that only forwards `this`
+  (`g.apply(this, arguments)`, Babel's async wrapper) is listed when what it
+  forwards to reads `this`; `call_receiver_independence` in
+  [rewrite-assumptions.md](rewrite-assumptions.md) has the rule. A
+  recognized transpiler helper is not listed.
 - **`UnObjectSpread`** — in multi-module unpack, recognizes object spread
   helpers imported from a helper module whose default/named export fact proves
   it is Babel's `extends` or `objectSpread` helper. This covers helpers split

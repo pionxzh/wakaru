@@ -16,15 +16,17 @@ use std::fmt;
 use swc_core::atoms::Atom;
 use swc_core::common::Mark;
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignTarget, BinaryOp, CallExpr, Callee, Decl, DefaultDecl, ExportDecl,
-    ExportSpecifier, Expr, ImportSpecifier, Lit, MemberProp, Module, ModuleDecl, ModuleItem,
-    ObjectLit, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt,
+    ArrowExpr, AssignExpr, AssignOp, AssignTarget, BinaryOp, CallExpr, Callee, Decl, DefaultDecl,
+    ExportDecl, ExportSpecifier, Expr, Function, ImportSpecifier, Lit, MemberProp, Module,
+    ModuleDecl, ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread, ReturnStmt,
+    SimpleAssignTarget, Stmt, SuperPropExpr, ThisExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
 use crate::analysis::binding_uses::{BindingId, BindingUseIndex};
 use crate::module_path::resolve_relative_specifier;
 use crate::rules::cocos_rf::framed_cc_rf_push_calls;
+use crate::rules::eval_utils::{direct_eval_call_source, function_observes_receiver};
 use crate::rules::expr_utils::is_unresolved_ident;
 use crate::rules::helper_matcher::{binding_key, binding_key_from_ident_pat, BindingKey};
 use crate::rules::transpiler_helper_utils::{
@@ -242,6 +244,10 @@ pub struct ModuleFacts {
     /// Exported zero-argument functions proven to return a CommonJS namespace
     /// object containing registered TypeScript helpers.
     pub ts_helper_namespace_factory_exports: Vec<Atom>,
+    /// Exported names whose value is a function that observes its receiver
+    /// (reads `this`). A consumer's `ns.name()` passes the namespace as that
+    /// receiver, so the call keeps its member form.
+    pub receiver_observing_exports: Vec<Atom>,
     /// If this module is a passthrough re-export (`export default require("./X.js")`),
     /// this is the target module specifier. Importers can be redirected to the target.
     pub passthrough_target: Option<Atom>,
@@ -819,10 +825,255 @@ pub fn collect_module_facts(module: &Module) -> ModuleFacts {
     facts.default_object_helper_exports = collect_default_object_helper_exports(module);
     facts.ts_helper_exports = collect_ts_helper_exports(module, &facts.exports);
     facts.ts_helper_namespace_factory_exports = collect_ts_helper_namespace_factory_exports(module);
+    facts.receiver_observing_exports = collect_receiver_observing_exports(module, &facts);
     facts.is_helper_module = exports_any_helper
         || !facts.default_object_helper_exports.is_empty()
         || !facts.ts_helper_exports.is_empty();
     facts
+}
+
+/// Exports whose value is a top-level function, declared or assigned as a
+/// function expression, that observes its receiver. A binding that may hold
+/// another value as well still counts: keeping a member call is the faithful
+/// default, and only dropping the receiver needs proof.
+///
+/// A recognized transpiler helper is left out. It reads `this` only to
+/// forward it to code that ignores it: Babel's `_extends` and tslib's
+/// `__assign` end in `.apply(this, arguments)` on `Object.assign` or a copy
+/// loop.
+fn collect_receiver_observing_exports(module: &Module, facts: &ModuleFacts) -> Vec<Atom> {
+    let mut functions: HashMap<Atom, &Function> = HashMap::default();
+    let mut default_function = None;
+    for item in &module.body {
+        match item {
+            ModuleItem::Stmt(Stmt::Decl(Decl::Fn(function)))
+            | ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+                decl: Decl::Fn(function),
+                ..
+            })) => {
+                functions.insert(function.ident.sym.clone(), &function.function);
+            }
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var)))
+            | ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+                decl: Decl::Var(var),
+                ..
+            })) => {
+                for decl in &var.decls {
+                    if let (Pat::Ident(binding), Some(init)) = (&decl.name, &decl.init) {
+                        if let Expr::Fn(function) = strip_parens(init) {
+                            functions.insert(binding.id.sym.clone(), &function.function);
+                        }
+                    }
+                }
+            }
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultDecl(export)) => {
+                if let DefaultDecl::Fn(function) = &export.decl {
+                    if let Some(ident) = &function.ident {
+                        functions.insert(ident.sym.clone(), &function.function);
+                    }
+                    default_function = Some(&*function.function);
+                }
+            }
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(export)) => {
+                if let Expr::Fn(function) = strip_parens(&export.expr) {
+                    default_function = Some(&*function.function);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let is_helper = |name: &Atom| {
+        facts
+            .helper_exports
+            .iter()
+            .any(|helper| helper.exported == *name)
+            || facts
+                .ts_helper_exports
+                .iter()
+                .any(|helper| helper.exported == *name)
+    };
+    let mut names = Vec::new();
+    for export in &facts.exports {
+        if is_helper(&export.exported) || names.contains(&export.exported) {
+            continue;
+        }
+        let function = match &export.local {
+            Some(local) => functions.get(local).copied(),
+            None if export.kind == ExportKind::Default => default_function,
+            None => None,
+        };
+        let observes = function.is_some_and(|function| {
+            ReceiverFlow {
+                functions: &functions,
+                visiting: HashSet::default(),
+            }
+            .function_observes(function)
+        });
+        if observes {
+            names.push(export.exported.clone());
+        }
+    }
+    names
+}
+
+/// Follows a receiver a function only forwards. In
+/// `function f() { return g.apply(this, arguments); }`, `f` observes its
+/// receiver exactly when `g` does. Babel lowers an async function that way:
+///
+/// ```js
+/// function f() { return _f.apply(this, arguments); }
+/// function _f() {
+///   return (_f = _asyncToGenerator(regeneratorRuntime.mark(function* () { … })))
+///     .apply(this, arguments);
+/// }
+/// ```
+///
+/// A forwarding target is followed to a same-module function, or to the
+/// function literals inside a wrapping call. The wrapping call (here the
+/// async helper) is taken to pass the receiver on without reading it, as the
+/// transpiler helpers that build these wrappers do. Any other target counts
+/// as observing.
+struct ReceiverFlow<'a> {
+    functions: &'a HashMap<Atom, &'a Function>,
+    visiting: HashSet<Atom>,
+}
+
+impl ReceiverFlow<'_> {
+    fn function_observes(&mut self, function: &Function) -> bool {
+        if !function_observes_receiver(function) {
+            return false;
+        }
+        let mut uses = ReceiverUses::default();
+        function.params.visit_with(&mut uses);
+        function.body.visit_with(&mut uses);
+        uses.direct
+            || uses
+                .forwarded_to
+                .iter()
+                .any(|target| self.target_observes(target))
+    }
+
+    fn target_observes(&mut self, target: &Expr) -> bool {
+        match strip_parens(target) {
+            Expr::Ident(ident) => {
+                let Some(function) = self.functions.get(&ident.sym).copied() else {
+                    return true;
+                };
+                if !self.visiting.insert(ident.sym.clone()) {
+                    return false;
+                }
+                // Babel's async wrapper replaces itself on the first call
+                // (`_f = _asyncToGenerator(function* () { … })`) and then
+                // forwards to the replacement.
+                let mut replacements = Replacements {
+                    name: &ident.sym,
+                    values: Vec::new(),
+                };
+                function.body.visit_with(&mut replacements);
+                let observes = self.function_observes(function)
+                    || replacements
+                        .values
+                        .iter()
+                        .any(|value| self.target_observes(value));
+                self.visiting.remove(&ident.sym);
+                observes
+            }
+            Expr::Assign(assign) if assign.op == AssignOp::Assign => {
+                self.target_observes(&assign.right)
+            }
+            Expr::Fn(function) => self.function_observes(&function.function),
+            Expr::Arrow(_) => false,
+            Expr::Call(call) => {
+                let mut literals = FunctionLiterals::default();
+                call.args.visit_with(&mut literals);
+                literals.found.is_empty()
+                    || literals
+                        .found
+                        .iter()
+                        .any(|function| self.function_observes(function))
+            }
+            _ => true,
+        }
+    }
+}
+
+/// How a function uses its own receiver: directly, or only as the first
+/// argument of `target.apply(this, …)` / `target.call(this, …)`.
+#[derive(Default)]
+struct ReceiverUses {
+    direct: bool,
+    forwarded_to: Vec<Expr>,
+}
+
+impl Visit for ReceiverUses {
+    fn visit_this_expr(&mut self, _: &ThisExpr) {
+        self.direct = true;
+    }
+
+    fn visit_super_prop_expr(&mut self, _: &SuperPropExpr) {
+        self.direct = true;
+    }
+
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if direct_eval_call_source(call).is_some() {
+            self.direct = true;
+            return;
+        }
+        if let Callee::Expr(callee) = &call.callee {
+            if let Expr::Member(member) = strip_parens(callee) {
+                let forwards = matches!(&member.prop, MemberProp::Ident(prop) if prop.sym == "apply" || prop.sym == "call")
+                    && call.args.first().is_some_and(|first| {
+                        first.spread.is_none() && matches!(strip_parens(&first.expr), Expr::This(_))
+                    });
+                if forwards {
+                    self.forwarded_to.push((*member.obj).clone());
+                    member.obj.visit_with(self);
+                    for argument in &call.args[1..] {
+                        argument.visit_with(self);
+                    }
+                    return;
+                }
+            }
+        }
+        call.visit_children_with(self);
+    }
+
+    // Nested ordinary functions have their own receiver; arrows share it.
+    fn visit_function(&mut self, _: &Function) {}
+}
+
+/// Values assigned to `name` (`name = value`), outside nested functions.
+struct Replacements<'a> {
+    name: &'a Atom,
+    values: Vec<Expr>,
+}
+
+impl Visit for Replacements<'_> {
+    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+        if assign.op == AssignOp::Assign {
+            if let AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) = &assign.left {
+                if binding.id.sym == *self.name {
+                    self.values.push((*assign.right).clone());
+                }
+            }
+        }
+        assign.visit_children_with(self);
+    }
+
+    fn visit_function(&mut self, _: &Function) {}
+}
+
+/// Function literals in an expression, outside any nested function.
+#[derive(Default)]
+struct FunctionLiterals {
+    found: Vec<Function>,
+}
+
+impl Visit for FunctionLiterals {
+    fn visit_function(&mut self, function: &Function) {
+        self.found.push(function.clone());
+    }
 }
 
 fn collect_ts_helper_namespace_factory_exports(module: &Module) -> Vec<Atom> {

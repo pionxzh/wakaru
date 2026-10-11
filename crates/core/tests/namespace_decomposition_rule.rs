@@ -217,6 +217,220 @@ const w = (0, other.helper)(2);
     assert_eq_normalized(&run_decomp(input, &facts), expected.trim());
 }
 
+/// `t.describe()` passes the namespace as `this`, and the provider's
+/// `describe` reads it, so that name keeps its member call while the others
+/// decompose.
+#[test]
+fn receiver_reading_export_called_through_namespace_stays_a_member_call() {
+    let target_facts = facts_for(
+        r#"
+export const label = "x";
+export const describe = function () { return this.label; };
+export function plain() { return 1; }
+"#,
+    );
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./module-11.js", target_facts);
+
+    let input = r#"
+import * as t from "./module-11.js";
+const a = t.describe();
+const b = t.plain();
+const c = t.label;
+"#;
+    let expected = r#"
+import * as t from "./module-11.js";
+import { label, plain } from "./module-11.js";
+const a = t.describe();
+const b = plain();
+const c = label;
+"#;
+    assert_eq_normalized(&run_decomp(input, &facts), expected.trim());
+}
+
+/// Reading the function or calling it without a receiver passes no `this`
+/// either way, so those uses still decompose.
+#[test]
+fn receiver_reading_export_without_a_member_call_decomposes() {
+    let target_facts = facts_for(
+        r#"
+export const describe = function () { return this.label; };
+"#,
+    );
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./module-11.js", target_facts);
+
+    let input = r#"
+import * as t from "./module-11.js";
+const f = t.describe;
+const v = (0, t.describe)();
+"#;
+    let expected = r#"
+import { describe } from "./module-11.js";
+const f = describe;
+const v = describe();
+"#;
+    assert_eq_normalized(&run_decomp(input, &facts), expected.trim());
+}
+
+/// Function declarations, renamed exports, the default export, a tagged
+/// template, and an optional call all count.
+#[test]
+fn receiver_reading_exports_keep_every_receiver_passing_call() {
+    let target_facts = facts_for(
+        r#"
+function run() { return this; }
+export { run as go };
+export default function () { return this; }
+"#,
+    );
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./module-11.js", target_facts);
+
+    let input = r#"
+import * as t from "./module-11.js";
+t.go();
+t.default();
+t.go`x`;
+t.go?.();
+"#;
+    let expected = r#"
+import * as t from "./module-11.js";
+t.go();
+t.default();
+t.go`x`;
+t.go?.();
+"#;
+    assert_eq_normalized(&run_decomp(input, &facts), expected.trim());
+}
+
+/// Babel's `_extends` reads `this` only to forward it to `Object.assign` or
+/// a copy loop, neither of which reads it, so its calls still decompose.
+#[test]
+fn receiver_forwarding_helper_export_decomposes() {
+    // shape: webpack 4 module holding Babel's `_extends`, as recovered in the
+    // webpack4_unpack fixture (`module-7.js`).
+    let target_facts = facts_for(
+        r#"
+export function a() {
+    return (a = Object.assign ? Object.assign.bind() : function(e) {
+        for(let t = 1; t < arguments.length; t++){
+            const n = arguments[t];
+            for(const r in n){
+                if (Object.prototype.hasOwnProperty.call(n, r)) {
+                    e[r] = n[r];
+                }
+            }
+        }
+        return e;
+    }).apply(this, arguments);
+}
+"#,
+    );
+    assert!(target_facts.receiver_observing_exports.is_empty());
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./module-7.js", target_facts);
+
+    let input = r#"
+import * as r from "./module-7.js";
+const v = r.a(q, e);
+"#;
+    let expected = r#"
+import { a } from "./module-7.js";
+const v = a(q, e);
+"#;
+    assert_eq_normalized(&run_decomp(input, &facts), expected.trim());
+}
+
+/// Babel's async wrapper only forwards `this` to the generator it builds, so
+/// the export observes its receiver exactly when that generator does.
+#[test]
+fn async_wrapper_export_follows_its_generator() {
+    // shape: producer @babel/core@7.28.5 @babel/plugin-transform-async-to-generator@7.28.6
+    // on `export async function fetchData(a) { return await load(a); }` and
+    // `export async function describe() { return await this.label; }`.
+    let target_facts = facts_for(
+        r#"
+function asyncGeneratorStep(n, t, e, r, o, a, c) { try { var i = n[a](c), u = i.value; } catch (n) { return void e(n); } i.done ? t(u) : Promise.resolve(u).then(r, o); }
+function _asyncToGenerator(n) { return function () { var t = this, e = arguments; return new Promise(function (r, o) { var a = n.apply(t, e); function _next(n) { asyncGeneratorStep(a, r, o, _next, _throw, "next", n); } function _throw(n) { asyncGeneratorStep(a, r, o, _next, _throw, "throw", n); } _next(void 0); }); }; }
+export function fetchData(_x) {
+  return _fetchData.apply(this, arguments);
+}
+function _fetchData() {
+  _fetchData = _asyncToGenerator(function* (a) {
+    return yield load(a);
+  });
+  return _fetchData.apply(this, arguments);
+}
+export function describe() {
+  return _describe.apply(this, arguments);
+}
+function _describe() {
+  _describe = _asyncToGenerator(function* () {
+    return yield this.label;
+  });
+  return _describe.apply(this, arguments);
+}
+"#,
+    );
+    assert_eq!(target_facts.receiver_observing_exports, vec!["describe"]);
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./module-11.js", target_facts);
+
+    let input = r#"
+import * as t from "./module-11.js";
+t.fetchData(1);
+t.describe();
+"#;
+    let expected = r#"
+import * as t from "./module-11.js";
+import { fetchData } from "./module-11.js";
+fetchData(1);
+t.describe();
+"#;
+    assert_eq_normalized(&run_decomp(input, &facts), expected.trim());
+}
+
+/// The minified wrapper forwards inside its own replacement, and the async
+/// helper is imported, so only the generator literal is visible.
+#[test]
+fn minified_async_wrapper_with_imported_helper_decomposes() {
+    // shape: hypothetical, reduced from Terser output of a Babel async wrapper
+    // whose `_asyncToGenerator` and regenerator runtime come from other modules.
+    let target_facts = facts_for(
+        r#"
+import J from "./async-to-generator.js";
+import V from "./regenerator.js";
+export function fetchData(U) {
+    return te.apply(this, arguments);
+}
+function te() {
+    return (te = J(V.mark(function U(B) {
+        return V.wrap(function(U) {
+            return U.abrupt("return", load(B));
+        }, U);
+    }))).apply(this, arguments);
+}
+"#,
+    );
+    assert!(target_facts.receiver_observing_exports.is_empty());
+}
+
+/// A receiver forwarded to a function the module cannot see may be read
+/// there, so the export keeps its member calls.
+#[test]
+fn receiver_forwarded_to_unknown_function_counts_as_observed() {
+    let target_facts = facts_for(
+        r#"
+import impl from "./impl.js";
+export function run() {
+    return impl.apply(this, arguments);
+}
+"#,
+    );
+    assert_eq!(target_facts.receiver_observing_exports, vec!["run"]);
+}
+
 #[test]
 fn reserved_export_name_uses_safe_import_alias() {
     let target_facts = facts_for(
