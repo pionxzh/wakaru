@@ -33,6 +33,32 @@ fn minimal_does_not_convert_bare_require_to_import() {
     assert_eq_normalized(&output, input);
 }
 
+/// `UnEsm` itself runs at every level; only the single-file runner stands it
+/// down below standard. TypeScript calls a module's own exported binding as
+/// `(0, exports.foo)()` (producer typescript@5.9.3 `--module commonjs`), and
+/// below standard `UnIndirectCall` keeps that member callee. Once the read
+/// becomes the export's local, `UnEsm` drops the wrapper.
+#[test]
+fn minimal_un_esm_calls_export_locals_directly() {
+    let input = r#"
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.v = exports.foo = void 0;
+const foo = () => 1;
+exports.foo = foo;
+exports.v = (0, exports.foo)();
+"#;
+    let expected = r#"
+"use strict";
+export const foo = () => 1;
+export const v = foo();
+"#;
+    let output = common::render_rule(input, |mark| {
+        wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Minimal)
+    });
+    assert_eq_normalized(&output, expected);
+}
+
 #[test]
 fn local_require_binding_not_converted_to_import() {
     let input = r#"

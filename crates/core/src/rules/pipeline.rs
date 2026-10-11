@@ -325,10 +325,20 @@ fn run_un_esm(module: &mut Module, ctx: RuleRunContext<'_>) {
     {
         return;
     }
+    // A single file stays in the module system it was written in below
+    // standard. Its consumers are outside the output, so turning
+    // `module.exports = x` into `export default x` changes what their
+    // `require` returns, and no named assumption covers that yet. Unpack
+    // recovers every module of the bundle together, consumers included, and
+    // a factory still calls the bundler runtime (`require.r`, `require.d`)
+    // that only `UnEsm` removes, so unpack runs it at every level.
+    if single_file && ctx.rewrite_level < RewriteLevel::Standard {
+        return;
+    }
     let local_helpers = ctx.local_helpers(module);
     // The evidence is read before `UnEsm` removes the `__esModule` marker and
     // unwraps interop calls.
-    let mut relative_namespace = (single_file && ctx.rewrite_level >= RewriteLevel::Standard)
+    let mut relative_namespace = single_file
         .then(|| RelativeNamespaceEvidence::collect(module, ctx.unresolved_mark, &local_helpers));
     let mut rule = UnEsm::new(ctx.unresolved_mark, ctx.rewrite_level)
         .with_current_filename(ctx.current_filename)

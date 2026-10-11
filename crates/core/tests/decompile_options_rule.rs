@@ -590,6 +590,411 @@ const ref = s.useRef(0);
     assert_eq_normalized(&output, expected);
 }
 
+/// webpack 5 output in which a consumer calls the provider's exports through
+/// `(0, ns.member)(…)`, once on a plain function and once on a prototype
+/// method that reads `this`.
+const WEBPACK_INDIRECT_CALL_BUNDLE: &str = r#"
+(() => {
+  var __webpack_modules__ = {
+    10: (e, t, r) => {
+      "use strict";
+      r.r(t);
+      r.d(t, { helper: () => n, Widget: () => o });
+      function o() {}
+      o.prototype.receiver = function () { return this === undefined ? "u" : "p"; };
+      function n(a) { return a + 1; }
+    },
+    20: (e, t, r) => {
+      "use strict";
+      var o = r(10);
+      function d() { return (0, o.Widget.prototype.receiver)(); }
+      t.detached = d;
+      t.v = (0, o.helper)(1);
+    },
+  };
+  var __webpack_module_cache__ = {};
+  function __webpack_require__(id) {
+    var c = __webpack_module_cache__[id];
+    if (c !== undefined) return c.exports;
+    var m = (__webpack_module_cache__[id] = { exports: {} });
+    __webpack_modules__[id](m, m.exports, __webpack_require__);
+    return m.exports;
+  }
+  __webpack_require__.d = (e, d) => { for (var k in d) if (__webpack_require__.o(d, k) && !__webpack_require__.o(e, k)) Object.defineProperty(e, k, { enumerable: true, get: d[k] }); };
+  __webpack_require__.o = (o, p) => Object.prototype.hasOwnProperty.call(o, p);
+  __webpack_require__.r = (e) => { if (typeof Symbol !== "undefined" && Symbol.toStringTag) Object.defineProperty(e, Symbol.toStringTag, { value: "Module" }); Object.defineProperty(e, "__esModule", { value: true }); };
+  var __webpack_exports__ = __webpack_require__(20);
+  module.exports = __webpack_exports__;
+})();
+"#;
+
+/// webpack 5 output whose provider is Babel's `_extends` helper reading
+/// `Object.assign` through a captured alias. Only `UnBuiltinAliases`, which
+/// runs at standard and above, exposes the helper's identity.
+const WEBPACK_ALIASED_HELPER_BUNDLE: &str = r#"
+(() => {
+  var __webpack_modules__ = {
+    11: (e, t) => {
+      var assign = Object.assign;
+      function _extends() {
+        _extends = assign ? assign.bind() : function (target) {
+          for (var i = 1; i < arguments.length; i++) {
+            var source = arguments[i];
+            for (var key in source) {
+              if (Object.prototype.hasOwnProperty.call(source, key)) {
+                target[key] = source[key];
+              }
+            }
+          }
+          return target;
+        };
+        return _extends.apply(this, arguments);
+      }
+      e.exports = _extends;
+    },
+    20: (e, t, r) => {
+      var ext = r(11);
+      var a = { x: 1 };
+      t.v = ext({}, a);
+    },
+  };
+  var __webpack_module_cache__ = {};
+  function __webpack_require__(id) {
+    var c = __webpack_module_cache__[id];
+    if (c !== undefined) return c.exports;
+    var m = (__webpack_module_cache__[id] = { exports: {} });
+    __webpack_modules__[id](m, m.exports, __webpack_require__);
+    return m.exports;
+  }
+  var __webpack_exports__ = __webpack_require__(20);
+  module.exports = __webpack_exports__;
+})();
+"#;
+
+/// Unpacks at `level`, once reusing the Phase 1 AST and once through the
+/// source-map path that reparses each module, and returns `module-20.js` from
+/// both runs.
+fn unpack_consumer_both_paths(bundle: &str, level: RewriteLevel) -> [String; 2] {
+    [false, true].map(|emit_source_map| {
+        let output = wakaru_core::driver::test_support::unpack(
+            bundle,
+            DecompileOptions {
+                filename: "bundle.js".to_string(),
+                level,
+                emit_source_map,
+                ..Default::default()
+            },
+        )
+        .expect("unpack should succeed");
+        output
+            .modules
+            .into_iter()
+            .find(|(filename, _)| filename == "module-20.js")
+            .map(|(_, code)| code)
+            .expect("expected the consumer module")
+    })
+}
+
+/// The rules before `UnEsm` follow the requested level in unpack mode too: at
+/// minimal, the member call `(0, ns.Widget.prototype.receiver)()` keeps its
+/// missing receiver, while `UnEsm` still recovers the module as ESM. The call
+/// on the plain export loses its `(0, …)` once `UnEsm` has made the callee an
+/// imported binding.
+#[test]
+fn minimal_unpack_keeps_receiverless_member_call() {
+    let expected = r#"
+import { Widget, helper } from "./module-10.js";
+export function detached() {
+    return (0, Widget.prototype.receiver)();
+}
+export const v = helper(1);
+"#;
+    for output in unpack_consumer_both_paths(WEBPACK_INDIRECT_CALL_BUNDLE, RewriteLevel::Minimal) {
+        assert_eq_normalized(&output, expected.trim());
+    }
+}
+
+/// webpack 5 output around a module TypeScript compiled to CommonJS
+/// (producer typescript@5.9.3 `--module commonjs`), which calls its own
+/// exported bindings as `(0, exports.foo)()`.
+const WEBPACK_TSC_SELF_EXPORT_CALL_BUNDLE: &str = r#"
+(() => {
+  var __webpack_modules__ = {
+    10: (module, exports) => {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.baz = exports.foo = void 0;
+exports.bar = bar;
+const foo = () => 1;
+exports.foo = foo;
+function bar() { return (0, exports.foo)(); }
+let baz = function () { return 2; };
+exports.baz = baz;
+(0, exports.baz)();
+
+    },
+    20: (module, exports, r) => {
+      var a = r(10);
+      exports.v = (0, a.bar)() + (0, a.foo)();
+    },
+  };
+  var __webpack_module_cache__ = {};
+  function __webpack_require__(id) {
+    var c = __webpack_module_cache__[id];
+    if (c !== undefined) return c.exports;
+    var m = (__webpack_module_cache__[id] = { exports: {} });
+    __webpack_modules__[id](m, m.exports, __webpack_require__);
+    return m.exports;
+  }
+  var __webpack_exports__ = __webpack_require__(20);
+  module.exports = __webpack_exports__;
+})();
+"#;
+
+/// Below standard `UnIndirectCall` keeps `(0, exports.foo)()`. `UnEsm` drops
+/// the wrapper once the read becomes the export's local, as the standard
+/// pipeline's earlier member fold did.
+#[test]
+fn minimal_unpack_calls_own_exports_directly() {
+    let output = wakaru_core::driver::test_support::unpack(
+        WEBPACK_TSC_SELF_EXPORT_CALL_BUNDLE,
+        DecompileOptions {
+            filename: "bundle.js".to_string(),
+            level: RewriteLevel::Minimal,
+            ..Default::default()
+        },
+    )
+    .expect("unpack should succeed");
+    let code = output
+        .modules
+        .into_iter()
+        .find(|(filename, _)| filename == "module-10.js")
+        .map(|(_, code)| code)
+        .expect("expected the provider module");
+
+    let expected = r#"
+export { bar };
+export const foo = ()=>1;
+function bar() {
+    return foo();
+}
+export let baz = function() {
+    return 2;
+};
+baz();
+"#;
+    assert_eq_normalized(&code, expected.trim());
+}
+
+/// Phase 1 recovers each module for its facts at the requested level. At
+/// minimal the provider is not proven to be `_extends`, as in a single-file
+/// decompile, so the consumer keeps the call instead of becoming a spread.
+#[test]
+fn minimal_unpack_facts_need_minimal_helper_proof() {
+    let expected = r#"
+import ext from "./module-11.js";
+const a = {
+    x: 1
+};
+export const v = ext({}, a);
+"#;
+    for output in unpack_consumer_both_paths(WEBPACK_ALIASED_HELPER_BUNDLE, RewriteLevel::Minimal) {
+        assert_eq_normalized(&output, expected.trim());
+    }
+}
+
+#[test]
+fn standard_unpack_facts_prove_aliased_helper() {
+    let expected = r#"
+import ext from "./module-11.js";
+const a = {
+    x: 1
+};
+export const v = {
+    ...a
+};
+"#;
+    for output in unpack_consumer_both_paths(WEBPACK_ALIASED_HELPER_BUNDLE, RewriteLevel::Standard)
+    {
+        assert_eq_normalized(&output, expected.trim());
+    }
+}
+
+/// webpack 5 output whose module body passes `exports` into a function IIFE.
+const WEBPACK_FUNCTION_IIFE_BUNDLE: &str = r#"
+(() => {
+  var __webpack_modules__ = {
+    10: (e, t) => {
+      (function (n) {
+        n.a = 1;
+      })(t);
+    },
+  };
+  var __webpack_module_cache__ = {};
+  function __webpack_require__(id) {
+    var c = __webpack_module_cache__[id];
+    if (c !== undefined) return c.exports;
+    var m = (__webpack_module_cache__[id] = { exports: {} });
+    __webpack_modules__[id](m, m.exports, __webpack_require__);
+    return m.exports;
+  }
+  var __webpack_exports__ = __webpack_require__(10);
+  module.exports = __webpack_exports__;
+})();
+"#;
+
+/// The late ESM recovery after `UnIife2` runs `ArrowFunction` only where the
+/// registry does, at standard and above, so a minimal unpack keeps the
+/// function expression as a single-file decompile does.
+#[test]
+fn minimal_unpack_keeps_function_expressions() {
+    let output = wakaru_core::driver::test_support::unpack(
+        WEBPACK_FUNCTION_IIFE_BUNDLE,
+        DecompileOptions {
+            filename: "bundle.js".to_string(),
+            level: RewriteLevel::Minimal,
+            ..Default::default()
+        },
+    )
+    .expect("unpack should succeed");
+    let code = output
+        .modules
+        .into_iter()
+        .find(|(filename, _)| filename == "module-10.js")
+        .map(|(_, code)| code)
+        .expect("expected the module");
+
+    let expected = r#"
+const _webpackExports = {};
+(function(n) {
+    n.a = 1;
+})(_webpackExports);
+export default _webpackExports;
+"#;
+    assert_eq_normalized(&code, expected.trim());
+}
+
+/// webpack 4 output whose harmony module body sits in a
+/// `(function (t) { … }).call(this, require(1))` wrapper.
+const WEBPACK4_CALL_WRAPPER_BUNDLE: &str = r#"
+!function(modules) {
+  var installed = {};
+  function __webpack_require__(id) {
+    if (installed[id]) return installed[id].exports;
+    var module = installed[id] = { i: id, l: false, exports: {} };
+    modules[id].call(module.exports, module, module.exports, __webpack_require__);
+    module.l = true;
+    return module.exports;
+  }
+  __webpack_require__.d = function(exports, name, getter) {
+    if (!__webpack_require__.o(exports, name)) Object.defineProperty(exports, name, { enumerable: true, get: getter });
+  };
+  __webpack_require__.r = function(exports) {
+    if (typeof Symbol !== "undefined" && Symbol.toStringTag) Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
+    Object.defineProperty(exports, "__esModule", { value: true });
+  };
+  __webpack_require__.o = function(object, property) { return Object.prototype.hasOwnProperty.call(object, property); };
+  __webpack_require__.s = 0;
+  return __webpack_require__(0);
+}([
+  function(module, exports, require) {
+    "use strict";
+    require.r(exports);
+    (function(t) {
+      require.d(exports, "VERSION", function() { return o; });
+      require.d(exports, "twice", function() { return i; });
+      const o = "2.1.0";
+      function i(n) { return [n].map(function(x) { return x * 2; }); }
+    }).call(this, require(1));
+  },
+  function(module, exports) {
+    exports.x = 1;
+  }
+]);
+"#;
+
+/// Below standard the late ESM recovery turns only the factory's `.call`
+/// wrapper into an arrow, so the body is recovered as ESM while its own
+/// callbacks stay function expressions.
+#[test]
+fn minimal_unpack_recovers_module_inside_call_wrapper() {
+    let output = wakaru_core::driver::test_support::unpack(
+        WEBPACK4_CALL_WRAPPER_BUNDLE,
+        DecompileOptions {
+            filename: "bundle.js".to_string(),
+            level: RewriteLevel::Minimal,
+            ..Default::default()
+        },
+    )
+    .expect("unpack should succeed");
+    let code = output
+        .modules
+        .into_iter()
+        .find(|(filename, _)| filename == "entry.js")
+        .map(|(_, code)| code)
+        .expect("expected the entry module");
+
+    let expected = r#"
+import "./module-1.js";
+export const VERSION = "2.1.0";
+export function twice(n) {
+    return [
+        n
+    ].map(function(x) {
+        return x * 2;
+    });
+}
+"#;
+    assert_eq_normalized(&code, expected.trim());
+}
+
+/// The late ESM recovery runs `SmartRename` only where the registry does, at
+/// standard and above, so a minimal unpack keeps the local names.
+#[test]
+fn minimal_unpack_keeps_local_names() {
+    let bundle = r#"
+(() => {
+  var __webpack_modules__ = {
+    10: (e, t) => {
+      const { privateValue: b } = globalThis.source;
+      t.v = b;
+    },
+  };
+  var __webpack_module_cache__ = {};
+  function __webpack_require__(id) {
+    var c = __webpack_module_cache__[id];
+    if (c !== undefined) return c.exports;
+    var m = (__webpack_module_cache__[id] = { exports: {} });
+    __webpack_modules__[id](m, m.exports, __webpack_require__);
+    return m.exports;
+  }
+  var __webpack_exports__ = __webpack_require__(10);
+  module.exports = __webpack_exports__;
+})();
+"#;
+    let output = wakaru_core::driver::test_support::unpack(
+        bundle,
+        DecompileOptions {
+            filename: "bundle.js".to_string(),
+            level: RewriteLevel::Minimal,
+            ..Default::default()
+        },
+    )
+    .expect("unpack should succeed");
+    let code = output
+        .modules
+        .into_iter()
+        .find(|(filename, _)| filename == "module-10.js")
+        .map(|(_, code)| code)
+        .expect("expected the module");
+
+    let expected = r#"
+const { privateValue: b } = globalThis.source;
+export { b as v };
+"#;
+    assert_eq_normalized(&code, expected.trim());
+}
+
 #[test]
 fn minimal_preserves_function_expressions() {
     let input = r#"

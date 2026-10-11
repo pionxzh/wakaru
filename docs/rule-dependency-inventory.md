@@ -160,7 +160,12 @@ rationale, or level gating appear.
   `(0, obj.method)()` → `obj.method()` changes the receiver `this`; a
   same-module `obj` whose `method` visibly reads `this` keeps the wrapper at
   every level (`call_receiver_independence`). Enables
-  interop helper detection downstream (`(0, x.default)()`).
+  interop helper detection downstream (`(0, x.default)()`). Below `standard`
+  a member callee keeps its wrapper until a later pass replaces the member
+  with a binding: `UnEsm` (an `exports.name` read becomes the export's local)
+  and unpack's namespace decomposition (`ns.name` becomes an imported
+  binding) drop the wrapper when they do. Until then fact-aware helper
+  recovery cannot see the call.
 - **UnBracketNotation** — critical early normalizer: the interop rules,
   UnObjectRest, UnWebpackInterop, and UnEsm all pattern-match dot-form
   `.default` / `.__esModule`.
@@ -344,7 +349,12 @@ rationale, or level gating appear.
   UnAsyncAwait (async/regenerator recovery exposes interop getter shapes,
   Exp 5); pass 3 after UnEsm (catches `require.n(importBinding)` shapes
   exposed by import conversion).
-- **UnEsm** — the module-system barrier. `standard+`. Its confirmed
+- **UnEsm** — the module-system barrier. The rule runs at every level; its
+  runner stands it down below `standard` on single-file input, because no
+  named assumption yet covers changing what an unseen consumer's `require`
+  returns. Unpack recovers every module of the bundle together and needs
+  `UnEsm` to remove the bundler runtime calls, so it runs at every level
+  there. Its confirmed
   prerequisite chain is diagrammed above; multi-module unpack extracts
   cross-module facts from its output (see
   [fact-system.md](fact-system.md)). Historical experiments that placed it
@@ -550,7 +560,10 @@ rationale, or level gating appear.
   a sequence's last expression, conditional and logical branches — are
   followed, and `function () {}.bind(this)` converts in the same positions.
   Everything else, including object property values, returned functions,
-  member assignments, and callbacks to other APIs, stays a function. Vue SFC
+  member assignments, and callbacks to other APIs, stays a function. Unpack's
+  late ESM recovery runs it at `standard` and above like the registry; below
+  that it converts only a top-level `(function () { … }).call(…)` factory
+  wrapper, so the wrapped module body can still be recovered. Vue SFC
   recovery restores lowered arrows on its own analysis copy (see
   [vue-decompile.md](vue-decompile.md)).
 - **Object-literal function values** — no rule rewrites `key: function () {}`
@@ -671,7 +684,8 @@ rationale, or level gating appear.
   `VarDeclToLetConst` without rerunning that broader rule or scanning once per
   binding; modules with no merged `let` skip the recheck.
 - **SmartRename** — after SmartInline (aliases removed, names stabilized).
-  Candidate consumer of source-map-recovered names.
+  Candidate consumer of source-map-recovered names. Unpack's late ESM
+  recovery runs it at `standard` and above, like the registry.
 - **UnReturn** — removes tail `return undefined`; runs before the final
   UnConditionals pass, which can simplify patterns this exposes.
 

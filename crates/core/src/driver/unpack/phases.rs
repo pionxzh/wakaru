@@ -528,6 +528,7 @@ pub(super) fn unpack_multi_module_with_plan(
                     &mut module,
                     unresolved_mark,
                     RulePipelineOptions::until("UnEsm")
+                        .with_rewrite_level(options.level)
                         .with_current_filename(&unpacked.module.filename),
                 );
             }
@@ -547,7 +548,7 @@ pub(super) fn unpack_multi_module_with_plan(
                     recover_late_esm_from_factory_iifes(
                         &mut facts_module,
                         unresolved_mark,
-                        RewriteLevel::Standard,
+                        options.level,
                         &unpacked.module.filename,
                         LateEsmRecoveryOptions::default(),
                     );
@@ -575,7 +576,7 @@ pub(super) fn unpack_multi_module_with_plan(
                     recover_late_esm_from_factory_iifes(
                         &mut module,
                         unresolved_mark,
-                        RewriteLevel::Standard,
+                        options.level,
                         &unpacked.module.filename,
                         LateEsmRecoveryOptions::default(),
                     );
@@ -966,6 +967,7 @@ pub(super) fn unpack_multi_module_with_plan(
                         &mut module,
                         unresolved_mark,
                         RulePipelineOptions::until("UnEsm")
+                            .with_rewrite_level(options.level)
                             .with_current_filename(&unpacked.module.filename),
                     );
                 }

@@ -17,7 +17,7 @@ use swc_core::atoms::Atom;
 use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignExpr, AssignTarget, CallExpr, Callee, CatchClause, Expr, Function, Ident, ImportDecl,
-    ImportDefaultSpecifier, ImportNamedSpecifier, ImportSpecifier, JSXElementName, JSXObject,
+    ImportDefaultSpecifier, ImportNamedSpecifier, ImportSpecifier, JSXElementName, JSXObject, Lit,
     MemberExpr, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, Param, Pat,
     SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp, UpdateExpr,
 };
@@ -773,7 +773,42 @@ struct UsageRewriter<'a> {
     decomp_map: &'a HashMap<(Atom, SyntaxContext), HashMap<Atom, (Atom, SyntaxContext)>>,
 }
 
+impl UsageRewriter<'_> {
+    fn rewrites_member(&self, expr: &Expr) -> bool {
+        let Expr::Member(member) = strip_parens(expr) else {
+            return false;
+        };
+        let Expr::Ident(obj) = member.obj.as_ref() else {
+            return false;
+        };
+        let MemberProp::Ident(prop) = &member.prop else {
+            return false;
+        };
+        self.decomp_map
+            .get(&(obj.sym.clone(), obj.ctxt))
+            .is_some_and(|prop_map| prop_map.contains_key(&prop.sym))
+    }
+}
+
 impl VisitMut for UsageRewriter<'_> {
+    fn visit_mut_call_expr(&mut self, call: &mut CallExpr) {
+        // Below standard `UnIndirectCall` keeps `(0, r.x)(…)`, since a member
+        // call would gain a receiver. Calling the imported binding has none,
+        // so the wrapper goes with the member.
+        if let Callee::Expr(callee) = &mut call.callee {
+            if let Expr::Seq(seq) = strip_parens(callee) {
+                if seq.exprs.len() == 2
+                    && matches!(seq.exprs[0].as_ref(), Expr::Lit(Lit::Num(num)) if num.value == 0.0)
+                    && self.rewrites_member(&seq.exprs[1])
+                {
+                    let member = seq.exprs[1].clone();
+                    *callee = member;
+                }
+            }
+        }
+        call.visit_mut_children_with(self);
+    }
+
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         expr.visit_mut_children_with(self);
 

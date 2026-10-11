@@ -198,9 +198,6 @@ impl SourceEntry {
 
 impl VisitMut for UnEsm {
     fn visit_mut_module(&mut self, module: &mut swc_core::ecma::ast::Module) {
-        if self.level < RewriteLevel::Standard {
-            return;
-        }
         // ESM is strict code, where a `with` statement is a syntax error, so
         // such a module stays CommonJS.
         if super::eval_utils::module_has_with_stmt(module) {
@@ -233,6 +230,17 @@ impl VisitMut for UnEsm {
         }
         if let Some(hidden) = hidden_requires {
             hoist_barrier::restore_requires(module, hidden, self.unresolved_mark);
+        }
+        // Below standard, `UnIndirectCall` keeps the member in
+        // `(0, ns.name)(…)` because a member call would gain a receiver. The
+        // conversion above replaces the member with the imported binding,
+        // leaving `(0, name)(…)`, which calls with no receiver exactly as
+        // `name(…)` does.
+        if self.level < RewriteLevel::Standard {
+            module.visit_mut_with(&mut super::UnIndirectCall::new(
+                self.unresolved_mark,
+                self.level,
+            ));
         }
     }
 }

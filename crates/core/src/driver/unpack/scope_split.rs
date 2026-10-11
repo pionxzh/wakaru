@@ -24,6 +24,7 @@ pub(super) fn maybe_split_scope_hoisted_modules(
     enabled: bool,
     render_mode: scope_hoist::ScopeHoistRenderMode,
     positions: SourcePositions,
+    level: RewriteLevel,
 ) -> UnpackResult {
     maybe_split_scope_hoisted_modules_excluding(
         result,
@@ -31,6 +32,7 @@ pub(super) fn maybe_split_scope_hoisted_modules(
         render_mode,
         &HashSet::default(),
         positions,
+        level,
     )
 }
 
@@ -40,6 +42,7 @@ pub(super) fn maybe_split_scope_hoisted_modules_excluding(
     render_mode: scope_hoist::ScopeHoistRenderMode,
     excluded_filenames: &HashSet<String>,
     positions: SourcePositions,
+    level: RewriteLevel,
 ) -> UnpackResult {
     if !enabled {
         return result;
@@ -58,7 +61,7 @@ pub(super) fn maybe_split_scope_hoisted_modules_excluding(
             modules.push(module);
             continue;
         }
-        match split_nested_scope_hoisted_module(&module, render_mode, positions) {
+        match split_nested_scope_hoisted_module(&module, render_mode, positions, level) {
             Some(split) => {
                 let parent_filename = module.filename.clone();
                 let split_modules = namespace_scope_hoisted_split(&module, split.modules);
@@ -91,6 +94,7 @@ fn split_nested_scope_hoisted_module(
     module: &UnpackedModule,
     render_mode: scope_hoist::ScopeHoistRenderMode,
     positions: SourcePositions,
+    level: RewriteLevel,
 ) -> Option<UnpackResult> {
     let raw_split = scope_hoist::split_scope_hoisted_with_mode(
         &module.code,
@@ -105,8 +109,14 @@ fn split_nested_scope_hoisted_module(
         return None;
     }
 
-    split_esm_recovered_scope_hoisted_module(&module.code, &module.filename, render_mode, positions)
-        .filter(is_usable_nested_split)
+    split_esm_recovered_scope_hoisted_module(
+        &module.code,
+        &module.filename,
+        render_mode,
+        positions,
+        level,
+    )
+    .filter(is_usable_nested_split)
 }
 
 fn is_usable_nested_split(split: &UnpackResult) -> bool {
@@ -126,6 +136,7 @@ fn split_esm_recovered_scope_hoisted_module(
     filename: &str,
     render_mode: scope_hoist::ScopeHoistRenderMode,
     positions: SourcePositions,
+    level: RewriteLevel,
 ) -> Option<UnpackResult> {
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
@@ -136,12 +147,14 @@ fn split_esm_recovered_scope_hoisted_module(
         apply_rules(
             &mut module,
             unresolved_mark,
-            RulePipelineOptions::until("UnEsm").with_current_filename(filename),
+            RulePipelineOptions::until("UnEsm")
+                .with_rewrite_level(level)
+                .with_current_filename(filename),
         );
         recover_late_esm_from_factory_iifes(
             &mut module,
             unresolved_mark,
-            RewriteLevel::Standard,
+            level,
             filename,
             LateEsmRecoveryOptions {
                 smart_rename: false,
@@ -638,6 +651,7 @@ mod tests {
             false,
             scope_hoist::ScopeHoistRenderMode::Executable,
             SourcePositions::Discard,
+            RewriteLevel::Aggressive,
         );
 
         assert_eq!(output.modules.len(), 1);
@@ -666,6 +680,7 @@ mod tests {
             true,
             scope_hoist::ScopeHoistRenderMode::Executable,
             SourcePositions::Discard,
+            RewriteLevel::Aggressive,
         );
         let names: HashSet<_> = output
             .modules
@@ -709,6 +724,7 @@ mod tests {
                 true,
                 render_mode,
                 crate::unpacker::SourcePositions::Discard,
+                RewriteLevel::Aggressive,
             )
         };
 
@@ -926,6 +942,40 @@ console.log(value);
         assert!(
             !scope_split_modules_parse(&modules),
             "invalid nested split output should be rejected before CLI unpack fails"
+        );
+    }
+
+    #[test]
+    fn esm_recovered_nested_split_runs_rules_at_requested_level() {
+        let code = nested_scope_hoist_fixture().replace(
+            "function helperA1() { return 1; }",
+            "function helperA1() { return (0, Math.max)(1, 2); }",
+        );
+        let render = |level| {
+            split_esm_recovered_scope_hoisted_module(
+                &code,
+                "module-100.js",
+                scope_hoist::ScopeHoistRenderMode::Executable,
+                SourcePositions::Discard,
+                level,
+            )
+            .expect("fixture should split")
+            .modules
+            .into_iter()
+            .map(|module| module.code)
+            .collect::<Vec<_>>()
+            .join("\n")
+        };
+
+        let minimal = render(RewriteLevel::Minimal);
+        assert!(
+            minimal.contains("(0, Math.max)(1, 2)"),
+            "minimal keeps the receiverless member call:\n{minimal}"
+        );
+        let standard = render(RewriteLevel::Standard);
+        assert!(
+            standard.contains("Math.max(1, 2)") && !standard.contains("(0, Math.max)"),
+            "standard folds the member call:\n{standard}"
         );
     }
 

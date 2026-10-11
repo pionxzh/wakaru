@@ -106,12 +106,15 @@ value such as `var C = class {}`). Terser emits that shape for
 pass `o` as the receiver. Import bindings, parameters, and other roots
 whose callee the module cannot see still drop the wrapper.
 
-Level: receiver-changing `UnIndirectCall` and `UnEsm` forms require `standard`
-or above. Explicit transpiler-helper recovery in `UnInteropRequireDefault`
-applies whenever that helper is recognized around a helper runtime `require`;
-around any other `require` outside a function or class body it runs inside
-`UnEsm`, at `standard` or above. Inside one, the `require` stays and so does
-the call.
+Level: receiver-changing `UnIndirectCall` forms require `standard` or above,
+in unpack mode too. `UnEsm` forms apply wherever `UnEsm` runs: `standard` and
+above for single-file input, and every level in unpack mode. Below `standard`,
+`(0, o.m)()` keeps its wrapper until `UnEsm` or unpack's namespace
+decomposition replaces `o.m` with a binding, which has no receiver to lose. Explicit transpiler-helper recovery in
+`UnInteropRequireDefault` applies whenever that helper is recognized around a
+helper runtime `require`; around any other `require` outside a function or
+class body it runs inside `UnEsm`, at the same levels. Inside one, the
+`require` stays and so does the call.
 
 ### `iterator_materialization_independence`
 
@@ -902,7 +905,8 @@ Affects: `UnEsm` (mirror-storage recovery) and `UnAssignmentMerging`, which
 keeps a chain that writes both an `exports` property and a resolved local
 whole so the copy stays visible.
 
-Level: `standard` and above, where `UnEsm` runs.
+Level: wherever `UnEsm` runs: `standard` and above for single-file input, and
+every level in unpack mode.
 
 ### `cocos_registration_frame`
 
@@ -1018,7 +1022,8 @@ Affects: `UnInteropRequireWildcard` when `UnEsm` runs it on a module it
 converts, and the Phase 2 pass `run_cross_module_lowered_dynamic_imports`
 for a helper imported from another module of a bundle.
 
-Level: `standard` and above, where `UnEsm` runs.
+Level: wherever `UnEsm` runs: `standard` and above for single-file input, and
+every level in unpack mode, where the Phase 2 pass also runs.
 
 ### `relative_require_esm_provider`
 

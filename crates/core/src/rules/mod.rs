@@ -167,8 +167,8 @@ impl RewritePolicy {
 }
 
 pub use arg_rest::ArgRest;
-pub(crate) use arrow_function::convert_lowered_vue_arrows;
 pub use arrow_function::ArrowFunction;
+pub(crate) use arrow_function::{convert_lowered_vue_arrows, convert_top_level_call_wrappers};
 pub use arrow_return::ArrowReturn;
 pub(crate) use call_required::{collect_import_call_edges, pinned_export_names, CallRequiredPlan};
 pub use class_expression_to_declaration::ClassExpressionToDeclaration;

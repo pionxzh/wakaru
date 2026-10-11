@@ -192,6 +192,31 @@ const p = createStore(u, applyMiddleware(d));
     assert_eq_normalized(&run_decomp(input, &facts), expected.trim());
 }
 
+/// Below standard `UnIndirectCall` keeps `(0, r.x)(…)`. Calling the imported
+/// binding has no receiver either, so the wrapper goes with the member.
+#[test]
+fn decomposed_indirect_call_drops_comma_wrapper() {
+    let target_facts = facts_for(
+        r#"
+export function helper() {}
+"#,
+    );
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./module-11.js", target_facts);
+
+    let input = r#"
+import r from "./module-11.js";
+const v = (0, r.helper)(1);
+const w = (0, other.helper)(2);
+"#;
+    let expected = r#"
+import { helper } from "./module-11.js";
+const v = helper(1);
+const w = (0, other.helper)(2);
+"#;
+    assert_eq_normalized(&run_decomp(input, &facts), expected.trim());
+}
+
 #[test]
 fn reserved_export_name_uses_safe_import_alias() {
     let target_facts = facts_for(

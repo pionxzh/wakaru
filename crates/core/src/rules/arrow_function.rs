@@ -7,7 +7,7 @@ use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, ArrowFunctionBody, BinaryOp, CallExpr, Callee, Decl, Expr, FnDecl, FnExpr, Function,
     Ident, KeyValueProp, MemberProp, MetaPropExpr, MetaPropKind, Module, ModuleDecl, ModuleItem,
-    NewExpr, Pat, ThisExpr, VarDeclarator,
+    NewExpr, Pat, Stmt, ThisExpr, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -421,6 +421,46 @@ impl VisitMut for ArrowFunctionConverter<'_> {
             }
         } else {
             prop.value.visit_mut_with(self);
+        }
+    }
+}
+
+/// Converts the callee of each top-level `(function (…) { … }).call(…)`
+/// statement to an arrow and leaves every other function alone.
+///
+/// A bundler wraps a module body this way to pass it values (webpack 4's
+/// `ProvidePlugin` and harmony wrappers pass `this` and a required module).
+/// The wrapper is runtime glue, not source: removing it is part of
+/// recovering the module, which unpack does at every level, while converting
+/// the module's own functions is `ArrowFunction`'s readability rewrite.
+pub(crate) fn convert_top_level_call_wrappers(module: &mut Module) {
+    for item in &mut module.body {
+        let ModuleItem::Stmt(Stmt::Expr(stmt)) = item else {
+            continue;
+        };
+        let Expr::Call(call) = stmt.expr.as_mut() else {
+            continue;
+        };
+        if call.args.is_empty() || call.args[0].spread.is_some() {
+            continue;
+        }
+        let Callee::Expr(callee) = &mut call.callee else {
+            continue;
+        };
+        let Expr::Member(member) = callee.as_mut() else {
+            continue;
+        };
+        if static_member_name(&member.prop).is_none_or(|name| name != "call") {
+            continue;
+        }
+        let target = match member.obj.as_mut() {
+            Expr::Paren(paren) => paren.expr.as_mut(),
+            other => other,
+        };
+        if let Expr::Fn(fn_expr) = target {
+            if let Some(arrow) = try_convert_to_arrow(fn_expr) {
+                *target = Expr::Arrow(arrow);
+            }
         }
     }
 }

@@ -542,6 +542,7 @@ pub fn unpack_prepared_inputs_with_policy(
                         scope_hoist_policy.recursive(),
                         scope_hoist_policy.render_mode(),
                         SourcePositions::Discard,
+                        options.level,
                     ))
                 } else {
                     maybe_split_detected_bundle(
@@ -549,6 +550,7 @@ pub fn unpack_prepared_inputs_with_policy(
                         scope_hoist_policy.recursive(),
                         options.emit_source_map,
                         scope_hoist_policy.render_mode(),
+                        options.level,
                     )?
                 };
                 let (result, prepared, module_failures, module_notes) = detected.into_parts();
@@ -879,14 +881,22 @@ fn recover_late_esm_from_factory_iifes(
     current_filename: &str,
     options: LateEsmRecoveryOptions,
 ) {
-    module.visit_mut_with(&mut ArrowFunction::new(unresolved_mark));
+    // `ArrowFunction` and `SmartRename` are gated like their registry
+    // entries. Below standard only a factory's top-level `.call(…)` wrapper
+    // becomes an arrow, so that `UnIife` can drop its receiver argument and
+    // the body can be recovered as ESM.
+    if level >= RewriteLevel::Standard {
+        module.visit_mut_with(&mut ArrowFunction::new(unresolved_mark));
+    } else {
+        crate::rules::convert_top_level_call_wrappers(module);
+    }
     module.visit_mut_with(&mut ArrowReturn);
     module.visit_mut_with(&mut UnIife::new(level));
     let pipeline_options = RulePipelineOptions::between("UnCurlyBraces", "UnEsm")
         .with_rewrite_level(level)
         .with_current_filename(current_filename);
     apply_rules(module, unresolved_mark, pipeline_options);
-    if options.smart_rename {
+    if options.smart_rename && level >= RewriteLevel::Standard {
         module.visit_mut_with(&mut SmartRename::new(unresolved_mark));
     }
     if options.export_rename {
@@ -915,6 +925,7 @@ fn maybe_split_detected_bundle(
     split_nested_scope: bool,
     materialize: bool,
     render_mode: scope_hoist::ScopeHoistRenderMode,
+    level: RewriteLevel,
 ) -> Result<DetectedBundle> {
     if !split_nested_scope && !materialize {
         return Ok(result);
@@ -932,6 +943,7 @@ fn maybe_split_detected_bundle(
             render_mode,
             &excluded,
             SourcePositions::from_output_source_maps(materialize),
+            level,
         );
         detected.prepared = std::iter::repeat_with(|| None)
             .take(detected.result.modules.len())
