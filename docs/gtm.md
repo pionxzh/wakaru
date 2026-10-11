@@ -11,9 +11,8 @@ through GTM, often outside the normal code review process.
 whose `resource` carries `macros`, `tags`, `predicates` and `rules` arrays —
 read from the AST and not from the file name, so a container saved by hand
 works too. Only explicit file inputs are checked; directory scans and stdin
-are not. The runtime is
-skipped: it is the same library in every file, and running wakaru without
-`--unpack` still decompiles the whole input.
+are not. The runtime is skipped: it is the same library in every file, and
+running wakaru without `--unpack` still decompiles the whole input.
 
 ```
 wakaru gtm.js --unpack=auto -o out/
@@ -24,7 +23,7 @@ The pieces are written under `-o`:
 | Path | What it is |
 |---|---|
 | `macros/jsm-<n>.js` | the body of a Custom JS variable, `n` being its index in the container's macro array |
-| `tags/html-<tag_id>-<n>.js` | one script from a Custom HTML tag, in the order it appears in the tag |
+| `tags/html-<tag_id>-<n>.js` | one inline script from a Custom HTML tag, in the order it appears in the tag |
 | `index.md` | every macro index with its `function` type and name, and the URLs of external scripts |
 
 Each JavaScript piece then goes through the normal pipeline, so the emitted
@@ -36,37 +35,49 @@ In `--json` output the JavaScript pieces are modules; `index.md` is not.
 ## Macro references
 
 A container stores editable text as template arrays — `["template", "literal",
-<escape>, …]` — where an escape is `["escape", ["macro", n], mode]`, a
-reference to the macro at index `n`. The generated code does not resolve those
-references, because a macro can be a constant with no name and a resolved name
-would change every time the container is edited. The text keeps the identifier
-`__gtm_macro_<n>` and `index.md` says what `n` is.
+<escape>, …]` — where an escape is `["escape", ["macro", n], mode, …]`, a
+reference to the macro at index `n`. A field with no reference is stored as a
+plain string instead. The generated code does not resolve references, because
+a macro can be a constant with no name and a resolved name would change every
+time the container is edited. The text keeps the identifier `__gtm_macro_<n>`
+and `index.md` says what `n` is.
 
-The mode says where the reference sits:
+The modes say where the reference sits. These were read from public
+containers (wild-observed):
 
-- **8 and 16** — code position, so `__gtm_macro_<n>` drops in as it is.
-- **7** — inside a string literal. A bare identifier there would become plain
-  text and a reader (or a SAST tool) would lose the data flow, so the literal
-  is closed and the reference concatenated with the same quote character. The
-  pipeline may then fold it into a template literal.
-- **anything else** — kept as the identifier `__gtm_macro_<n>_escape_<mode>`
-  and reported as a `gtm_unsupported_escape` warning. A comment would not
-  survive the pipeline, and dropping the reference would delete an argument or
-  operand. Mode `12` occurs in real containers and its meaning is not
-  established yet. Only the first mode of an escape is read.
+| Modes | Position | Written as |
+|---|---|---|
+| `8, 16` | code | `__gtm_macro_<n>`, a reference |
+| `7` | inside a string literal | the literal closed and the reference concatenated with the same quote, so the data flow stays visible; the pipeline may fold it into a template literal |
+| `9` | inside a regular expression literal | `__gtm_macro_<n>` as text of the pattern |
+| `3` | an HTML attribute value | `__gtm_macro_<n>` as text |
+| `12` | a URL component, such as a query parameter | `__gtm_macro_<n>` as text |
+| anything else | unknown | the identifier `__gtm_macro_<n>_escape_<modes>` and a `gtm_unsupported_escape` warning |
+
+An unknown combination keeps an identifier rather than a comment: a comment
+would not survive the pipeline, and dropping the reference would delete an
+argument or operand.
 
 For mode 7 the quote character comes from a scan of the current script that
-tracks string and comment state. Regular expression literals are not tracked,
-so a quote inside a regex before the reference can still pick the wrong one.
+tracks strings, comments and regular expression literals. A `/` counts as the
+start of a regular expression after punctuation that cannot end an operand; a
+regular expression right after a keyword such as `return` is read as division
+and can still mislead the scan.
 
 ## Custom HTML tags
 
-GTM rewrites the script tags it manages: an inline script carries
+GTM rewrites most script elements it serves: an inline script gets
 `type="text/gtmscript"`, and an external one moves its `src` into
-`data-gtmsrc` and has no body, so its URL is listed in `index.md` instead. A tag
-can hold several scripts, which is why they are numbered rather than
-concatenated; the number is the position in the tag, so a tag whose first script
-is external starts at `-1` (its only file may be `html-41-1.js`).
+`data-gtmsrc`. Tags also keep plain `<script>` and `<script src>` elements, so
+both forms are taken. A script is JavaScript when it has no `type`,
+`text/gtmscript`, or a JavaScript MIME type or `module`; other types (JSON
+data, templates) and other elements, such as `<noscript>` fallbacks, are
+skipped. An external script has no body, so its URL is listed in `index.md`.
+
+A tag can hold several scripts, which is why they are numbered rather than
+concatenated; the number is the position among the tag's scripts, so a tag
+whose first script is external starts at `-1` (its only file may be
+`html-41-1.js`).
 
 Custom template opcode decompilation is not implemented: a custom template
 stored as compiled opcodes is left alone.

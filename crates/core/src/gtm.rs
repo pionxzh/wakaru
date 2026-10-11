@@ -206,15 +206,24 @@ pub fn extract(module: &Module) -> Option<GtmContainer> {
     Some(container)
 }
 
-/// Joins a template array (`["template", …]`) back into a string.
+/// Joins a template array (`["template", …]`) back into a string. A field with no macro
+/// reference is stored as a plain string instead, and is returned as it is.
 ///
-/// `["escape", ["macro", n], 8 | 16]` sits in code position, so the identifier drops in as a
-/// reference. `["escape", ["macro", n], 7]` sits inside a string literal, where a bare identifier
-/// would become plain text and lose the data flow, so the literal is closed and the reference
-/// concatenated instead. Any other mode is reported as a warning rather than guessed at, and keeps
-/// the reference as the identifier `__gtm_macro_<n>_escape_<mode>`: a comment would not survive the
-/// pipeline, and dropping it would delete an argument or operand without a trace in the code.
+/// The escape modes say where a reference sits:
+///
+/// - `8, 16`: code position, so the identifier drops in as a reference.
+/// - `7`: inside a string literal, where a bare identifier would become plain text and lose the
+///   data flow, so the literal is closed and the reference concatenated instead.
+/// - `9` (inside a regular expression literal), `3` (an HTML attribute value) and `12` (a URL
+///   component): the reference is text there, and the identifier is written as that text.
+///
+/// Any other combination is reported as a warning rather than guessed at, and keeps the reference
+/// as the identifier `__gtm_macro_<n>_escape_<modes>`: a comment would not survive the pipeline,
+/// and dropping it would delete an argument or operand without a trace in the code.
 fn join_template(value: &GtmValue, warnings: &mut Vec<String>) -> String {
+    if let GtmValue::Str(text) = value {
+        return text.clone();
+    }
     let Some(parts) = value.as_array() else {
         return String::new();
     };
@@ -231,19 +240,24 @@ fn join_template(value: &GtmValue, warnings: &mut Vec<String>) -> String {
                         .push("template part that is neither text nor a macro reference".into());
                     continue;
                 };
-                match escape_mode(items) {
-                    Some(8) | Some(16) | None => {
+                match escape_modes(items).as_slice() {
+                    [] | [8] | [16] | [8, 16] | [9] | [3] | [12] => {
                         out.push_str(&format!("__gtm_macro_{macro_index}"))
                     }
-                    Some(7) => {
+                    [7] => {
                         let quote = enclosing_quote(&out);
                         out.push_str(&format!("{quote} + __gtm_macro_{macro_index} + {quote}"));
                     }
-                    Some(mode) => {
+                    modes => {
+                        let modes = modes
+                            .iter()
+                            .map(u64::to_string)
+                            .collect::<Vec<_>>()
+                            .join("_");
                         warnings.push(format!(
-                            "macro {macro_index} uses escape mode {mode}, which is not understood"
+                            "macro {macro_index} uses escape mode {modes}, which is not understood"
                         ));
-                        out.push_str(&format!("__gtm_macro_{macro_index}_escape_{mode}"));
+                        out.push_str(&format!("__gtm_macro_{macro_index}_escape_{modes}"));
                     }
                 }
             }
@@ -271,10 +285,12 @@ fn macro_reference(items: &[GtmValue]) -> Option<u64> {
     }
 }
 
-fn escape_mode(items: &[GtmValue]) -> Option<u64> {
-    match items.first()? {
-        GtmValue::Str(kind) if kind == "escape" => items.get(2)?.as_u64(),
-        _ => None,
+fn escape_modes(items: &[GtmValue]) -> Vec<u64> {
+    match items.first() {
+        Some(GtmValue::Str(kind)) if kind == "escape" => {
+            items[2..].iter().filter_map(GtmValue::as_u64).collect()
+        }
+        _ => Vec::new(),
     }
 }
 
@@ -282,42 +298,64 @@ fn escape_mode(items: &[GtmValue]) -> Option<u64> {
 /// close and reopen it with the same one.
 ///
 /// The scan covers only the current script — from the end of the last `<script…>` open tag, or the
-/// whole text for a Custom JS body — and tracks string and comment state, so an apostrophe in the
-/// markup around the script, or a quote of the other kind inside the literal, does not decide it.
-/// Regular expression literals are not tracked.
+/// whole text for a Custom JS body — and tracks string, comment and regular expression state, so an
+/// apostrophe in the markup around the script, a quote of the other kind inside the literal, or a
+/// quote or `//` inside a regular expression does not decide it. A `/` starts a regular expression
+/// after punctuation that cannot end an operand; after a keyword such as `return` it is read as
+/// division.
 fn enclosing_quote(out: &str) -> char {
     let start = out
+        .to_ascii_lowercase()
         .rfind("<script")
         .and_then(|open| out[open..].find('>').map(|end| open + end + 1))
         .unwrap_or(0);
     let mut chars = out[start..].chars().peekable();
     let mut quote = None;
+    // the last character of code outside strings, comments and whitespace
+    let mut previous = '(';
     while let Some(c) = chars.next() {
-        match quote {
-            Some(open) => {
-                if c == '\\' {
-                    chars.next();
-                } else if c == open {
-                    quote = None;
+        if let Some(open) = quote {
+            if c == '\\' {
+                chars.next();
+            } else if c == open {
+                quote = None;
+                previous = c;
+            }
+            continue;
+        }
+        match c {
+            '"' | '\'' | '`' => quote = Some(c),
+            '/' if chars.peek() == Some(&'/') => {
+                while chars.next_if(|next| *next != '\n').is_some() {}
+            }
+            '/' if chars.peek() == Some(&'*') => {
+                chars.next();
+                let mut last = '\0';
+                for next in chars.by_ref() {
+                    if last == '*' && next == '/' {
+                        break;
+                    }
+                    last = next;
                 }
             }
-            None => match c {
-                '"' | '\'' | '`' => quote = Some(c),
-                '/' if chars.peek() == Some(&'/') => {
-                    while chars.next_if(|next| *next != '\n').is_some() {}
-                }
-                '/' if chars.peek() == Some(&'*') => {
-                    chars.next();
-                    let mut previous = '\0';
-                    for next in chars.by_ref() {
-                        if previous == '*' && next == '/' {
-                            break;
+            '/' if "(,=:[!&|?{};+-*%<>~^".contains(previous) => {
+                let mut in_class = false;
+                while let Some(next) = chars.next() {
+                    match next {
+                        '\\' => {
+                            chars.next();
                         }
-                        previous = next;
+                        '[' => in_class = true,
+                        ']' => in_class = false,
+                        '/' if !in_class => break,
+                        '\n' => break,
+                        _ => {}
                     }
                 }
-                _ => {}
-            },
+                previous = ')';
+            }
+            c if c.is_whitespace() => {}
+            c => previous = c,
         }
     }
     quote.unwrap_or('"')
@@ -328,56 +366,117 @@ struct GtmScript {
     url: Option<String>,
 }
 
-/// Picks the `<script>` tags GTM rewrote out of a Custom HTML tag. Only `type="text/gtmscript"`
-/// scripts carry the code the tag adds; an external one moved its `src` into `data-gtmsrc` and has no
-/// body, so the file numbers are the scripts' positions in the tag and can have gaps. Other tags —
-/// including the ordinary `<noscript>` fallbacks GTM also writes — are left alone.
+/// `type` values a browser runs as classic or module JavaScript, besides GTM's own
+/// `text/gtmscript` and a missing `type`.
+const JAVASCRIPT_TYPES: [&str; 6] = [
+    "text/javascript",
+    "application/javascript",
+    "application/x-javascript",
+    "text/ecmascript",
+    "application/ecmascript",
+    "module",
+];
+
+/// Picks the JavaScript `<script>` elements out of a Custom HTML tag. GTM rewrites most of them to
+/// `type="text/gtmscript"` and moves an external one's `src` into `data-gtmsrc`, but tags also keep
+/// plain `<script>` and `<script src>` elements, so both forms are taken. An external script has no
+/// body and its URL goes to the index, which is why the file numbers — the scripts' positions in the
+/// tag — can have gaps. Scripts of another `type` (JSON, templates) and other elements, such as the
+/// `<noscript>` fallbacks, are left alone.
 fn split_gtm_scripts(html: &str) -> Vec<GtmScript> {
-    const CLOSE: &str = "</script>";
+    // ASCII lowercasing keeps byte offsets, so positions found in `lower` index `html` too
+    let lower = html.to_ascii_lowercase();
     let mut scripts = Vec::new();
-    // offsets are kept against `html` throughout: a tag can be preceded by text (a newline, usually),
-    // and measuring the body from the start of the tag instead skewed it by that much
     let mut cursor = 0;
-    while let Some(start) = html[cursor..].find("<script") {
+    while let Some(start) = lower[cursor..].find("<script") {
         let open_start = cursor + start;
-        let Some(open_end) = html[open_start..].find('>') else {
-            break;
-        };
-        let attributes = &html[open_start..open_start + open_end];
-        let body_start = open_start + open_end + 1;
-        let Some(body_end) = html[body_start..].find(CLOSE) else {
-            break;
-        };
-        let body = &html[body_start..body_start + body_end];
-        if attributes.contains("text/gtmscript") {
-            match attribute_value(attributes, "data-gtmsrc") {
-                Some(url) => scripts.push(GtmScript {
-                    body: String::new(),
-                    url: Some(url),
-                }),
-                None => scripts.push(GtmScript {
-                    body: body.to_string(),
-                    url: None,
-                }),
-            }
+        let name_end = open_start + "<script".len();
+        // `<scripts>` or `<script-loader>` is another element
+        if !lower[name_end..].starts_with(|c: char| c.is_ascii_whitespace() || c == '>' || c == '/')
+        {
+            cursor = name_end;
+            continue;
         }
-        cursor = body_start + body_end + CLOSE.len();
+        let Some(open_end) = html[name_end..].find('>') else {
+            break;
+        };
+        let attributes = parse_attributes(&html[name_end..name_end + open_end]);
+        let body_start = name_end + open_end + 1;
+        let body_end = lower[body_start..]
+            .find("</script")
+            .map_or(html.len(), |end| body_start + end);
+        cursor = lower[body_end..]
+            .find('>')
+            .map_or(html.len(), |end| body_end + end + 1);
+
+        let attribute = |name: &str| {
+            attributes
+                .iter()
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| value.trim())
+        };
+        let is_javascript = match attribute("type") {
+            None | Some("") => true,
+            Some(kind) => {
+                let kind = kind.to_ascii_lowercase();
+                kind == "text/gtmscript" || JAVASCRIPT_TYPES.contains(&kind.as_str())
+            }
+        };
+        if !is_javascript {
+            continue;
+        }
+        match attribute("data-gtmsrc").or_else(|| attribute("src")) {
+            Some(url) => scripts.push(GtmScript {
+                body: String::new(),
+                url: Some(url.to_string()),
+            }),
+            None => scripts.push(GtmScript {
+                body: html[body_start..body_end].to_string(),
+                url: None,
+            }),
+        }
     }
     scripts
 }
 
-fn attribute_value(attributes: &str, name: &str) -> Option<String> {
-    let start = attributes.find(name)?;
-    let rest = &attributes[start + name.len()..];
-    let rest = rest.trim_start();
-    let rest = rest.strip_prefix('=')?.trim_start();
-    let quote = rest.chars().next()?;
-    if quote != '"' && quote != '\'' {
-        return None;
+/// The attributes of an open tag, names lowercased, with `""` for one that has no value.
+fn parse_attributes(source: &str) -> Vec<(String, String)> {
+    let mut attributes = Vec::new();
+    let mut rest = source;
+    loop {
+        rest = rest.trim_start_matches(|c: char| c.is_ascii_whitespace() || c == '/');
+        if rest.is_empty() {
+            break;
+        }
+        let name_end = rest
+            .find(|c: char| c.is_ascii_whitespace() || c == '=' || c == '/')
+            .unwrap_or(rest.len());
+        let name = rest[..name_end].to_ascii_lowercase();
+        rest = rest[name_end..].trim_start();
+        let mut value = String::new();
+        if let Some(after) = rest.strip_prefix('=') {
+            let after = after.trim_start();
+            match after.chars().next() {
+                Some(quote @ ('"' | '\'')) => {
+                    let inner = &after[1..];
+                    let end = inner.find(quote).unwrap_or(inner.len());
+                    value = inner[..end].to_string();
+                    rest = inner.get(end + 1..).unwrap_or("");
+                }
+                _ => {
+                    let end = after
+                        .find(|c: char| c.is_ascii_whitespace())
+                        .unwrap_or(after.len());
+                    value = after[..end].to_string();
+                    rest = &after[end..];
+                }
+            }
+        }
+        if !name.is_empty() {
+            attributes.push((name, value));
+        }
     }
-    let value = &rest[1..];
-    let end = value.find(quote)?;
-    Some(value[..end].to_string())
+    attributes
 }
 
 fn render_index(container: &GtmContainer) -> String {
@@ -532,11 +631,11 @@ mod tests {
     const CONTAINER: &str = r#"
 (function(w,d,s,l,i){w[l]=w[l]||[];
 var data = {"resource":{"version":"40","macros":[
-  {"function":"__jsm","vtp_javascript":["template","var a=localStorage.getItem(\"x\");return a;"]},
+  {"function":"__jsm","vtp_javascript":["template","(function(){var a=localStorage.getItem(\"x\");return a})();"]},
   {"function":"__v","vtp_name":"order_amount","vtp_dataLayerVersion":2},
   {"function":"__v","vtp_dataLayerVersion":1}
 ],"predicates":[{"function":"_eq"}],"rules":[{"function":"_r"}],"tags":[
-  {"function":"__html","tag_id":7,"vtp_html":["template","<script type=\"text/gtmscript\">var t=\"",["escape",["macro",1],7],"\";code(",["escape",["macro",0],8],",",["escape",["macro",9],12],");</script>"]},
+  {"function":"__html","tag_id":7,"vtp_html":["template","<script type=\"text/gtmscript\">var t=\"",["escape",["macro",1],7],"\";code(",["escape",["macro",0],8],",",["escape",["macro",9],2],");</script>"]},
   {"function":"__html","tag_id":9,"vtp_html":["template","\n<script type=\"text/gtmscript\" data-gtmsrc=\"//example.com/loader.js\"></script>\n<script type=\"text/gtmscript\">beat();</script>"]},
   {"function":"__ua","tag_id":11,"vtp_trackingId":"UA-1"}
 ]},"runtime":"var runtime=1;"};
@@ -571,7 +670,7 @@ var data = {"resource":{"version":"40","macros":[
             .expect("macro file");
         assert_eq!(
             macro_file.source,
-            "var a=localStorage.getItem(\"x\");return a;"
+            "(function(){var a=localStorage.getItem(\"x\");return a})();"
         );
 
         let html = container
@@ -583,7 +682,7 @@ var data = {"resource":{"version":"40","macros":[
         // the mode the module does not understand keeps a placeholder instead of a guess
         assert_eq!(
             html.source,
-            "var t=\"\" + __gtm_macro_1 + \"\";code(__gtm_macro_0,__gtm_macro_9_escape_12);"
+            "var t=\"\" + __gtm_macro_1 + \"\";code(__gtm_macro_0,__gtm_macro_9_escape_2);"
         );
 
         let second = container
@@ -600,7 +699,7 @@ var data = {"resource":{"version":"40","macros":[
             }]
         );
         assert_eq!(container.warnings.len(), 1);
-        assert!(container.warnings[0].contains("escape mode 12"));
+        assert!(container.warnings[0].contains("escape mode 2"));
     }
 
     #[test]
@@ -614,20 +713,6 @@ var data = {"resource":{"version":"40","macros":[
         assert!(index.source.contains("| 1 | `__v` | order_amount |"));
         assert!(index.source.contains("| 2 | `__v` |  |"));
         assert!(index.source.contains("| 9 | //example.com/loader.js |"));
-    }
-
-    #[test]
-    fn ignores_scripts_that_are_not_gtm_rewritten() {
-        let container = extract(&parse(
-            r#"(function(){var data={"resource":{"version":"1","macros":[],"predicates":[],"rules":[],"tags":[
-                {"function":"__html","tag_id":3,"vtp_html":["template","<script>plain()</script><noscript><img src=\"//x\"></noscript>"]}
-            ]}};})();"#,
-        ))
-        .expect("container detected");
-        assert!(container
-            .files
-            .iter()
-            .all(|file| file.path != "tags/html-3-0.js"));
     }
 
     #[test]
@@ -688,6 +773,99 @@ var data = {"resource":{"version":"40","macros":[
         assert_eq!(
             source,
             "var u='a=' + __gtm_macro_0 + '&b=' + __gtm_macro_0 + '';"
+        );
+    }
+
+    fn gtm_tag(vtp_html: &str) -> String {
+        format!(
+            r#"var data={{"resource":{{"macros":[{{"function":"__v"}}],"predicates":[],"rules":[],"tags":[
+                {{"function":"__html","tag_id":4,"vtp_html":{vtp_html}}}
+            ]}}}};"#
+        )
+    }
+
+    fn tag_files(container: &GtmContainer) -> Vec<(&str, &str)> {
+        container
+            .files
+            .iter()
+            .filter(|file| file.path.starts_with("tags/"))
+            .map(|file| (file.path.as_str(), file.source.as_str()))
+            .collect()
+    }
+
+    #[test]
+    fn a_field_without_macro_references_is_a_plain_string() {
+        // wild-observed: a Custom HTML tag that references no macro stores `vtp_html` as a string,
+        // not a template array
+        let container = extract(&parse(&gtm_tag(
+            r#""<script type=\"text/gtmscript\">track();</script>""#,
+        )))
+        .expect("container detected");
+        assert_eq!(
+            tag_files(&container),
+            vec![("tags/html-4-0.js", "track();")]
+        );
+    }
+
+    #[test]
+    fn plain_script_elements_are_taken_too() {
+        // wild-observed: GTM leaves some `<script>` and `<script src>` elements unrewritten
+        let container = extract(&parse(&gtm_tag(
+            r#""<SCRIPT>a();</SCRIPT><script type=\"text/javascript\">b();</script><script async src=\"https://cdn.example/x.js\"></script><script type=\"application/ld+json\">{}</script><scripts>c()</scripts><noscript><img src=\"//p\"></noscript>""#,
+        )))
+        .expect("container detected");
+        assert_eq!(
+            tag_files(&container),
+            vec![("tags/html-4-0.js", "a();"), ("tags/html-4-1.js", "b();")]
+        );
+        assert_eq!(
+            container.external_scripts,
+            vec![GtmExternalScript {
+                tag_id: 4,
+                url: "https://cdn.example/x.js".to_string()
+            }]
+        );
+    }
+
+    #[test]
+    fn regex_attribute_and_url_modes_write_the_reference_as_text() {
+        // wild-observed: mode 9 sits inside a regular expression literal, 3 inside an HTML
+        // attribute value and 12 inside a URL; none is code position, and none is a warning
+        let container = extract(&parse(&gtm_tag(
+            r#"["template","<img src=\"//p.example/?a=",["escape",["macro",0],12],"\" alt=\"",["escape",["macro",0],3],"\"><script>s=s.replace(/",["escape",["macro",0],9],"/i,\"x\");</script>"]"#,
+        )))
+        .expect("container detected");
+        assert_eq!(
+            tag_files(&container),
+            vec![("tags/html-4-0.js", "s=s.replace(/__gtm_macro_0/i,\"x\");")]
+        );
+        assert!(container.warnings.is_empty(), "{:?}", container.warnings);
+    }
+
+    #[test]
+    fn an_unknown_mode_combination_names_every_mode() {
+        let container = extract(&parse(&gtm_tag(
+            r#"["template","<script>f(",["escape",["macro",0],7,12],");</script>"]"#,
+        )))
+        .expect("container detected");
+        assert_eq!(
+            tag_files(&container),
+            vec![("tags/html-4-0.js", "f(__gtm_macro_0_escape_7_12);")]
+        );
+        assert!(container.warnings[0].contains("escape mode 7_12"));
+    }
+
+    #[test]
+    fn mode_7_skips_quotes_and_slashes_inside_a_regular_expression() {
+        // a `//` and a quote inside the regex must not read as a comment or a string
+        let source = html_tag_source(
+            r#"var data={"resource":{"macros":[{"function":"__v"}],"predicates":[],"rules":[],"tags":[
+                {"function":"__html","tag_id":4,"vtp_html":["template","<script type=\"text/gtmscript\">if(/^https?:\\/\\/[\"']/.test(u))x='a",["escape",["macro",0],7],"';</script>"]}
+            ]}};"#,
+        );
+        assert_eq!(
+            source,
+            r#"if(/^https?:\/\/["']/.test(u))x='a' + __gtm_macro_0 + '';"#
         );
     }
 }

@@ -2343,7 +2343,7 @@ fn debug_enumerate_chunks_reports_webpack_fixture_without_unpacking() {
 /// A container holds templates, not modules, so `--unpack` splits it instead of unpacking it.
 const SYNTHETIC_GTM_CONTAINER: &str = r#"
 (function(){var data = {"resource":{"version":"40","macros":[
-  {"function":"__jsm","vtp_javascript":["template","var a=1;return a;"]},
+  {"function":"__jsm","vtp_javascript":["template","(function(){var a=1;return a})();"]},
   {"function":"__v","vtp_name":"order_amount"}
 ],"predicates":[],"rules":[],"tags":[
   {"function":"__html","tag_id":7,"vtp_html":["template","\n<script type=\"text/gtmscript\">track(\"",["escape",["macro",1],7],"\"," ,["escape",["macro",0],8],");</script>"]},
@@ -2439,7 +2439,7 @@ fn raw_gtm_pieces_are_written_as_extracted() {
     .expect("write container files");
     assert_eq!(
         fs::read_to_string(out_dir.join("macros/jsm-0.js")).expect("read the macro"),
-        "var a=1;return a;"
+        "(function(){var a=1;return a})();"
     );
     fs::remove_dir_all(&dir).expect("remove temp dir");
 }
@@ -2449,7 +2449,7 @@ fn gtm_pieces_report_escape_warnings_and_parse_failures() {
     let (dir, input, out_dir) = gtm_test_dir(
         "gtm-warnings",
         r#"var data = {"resource":{"macros":[{"function":"__v"}],"predicates":[],"rules":[],"tags":[
-  {"function":"__html","tag_id":2,"vtp_html":["template","<script type=\"text/gtmscript\">f(",["escape",["macro",0],12],");</script><script type=\"text/gtmscript\">}</script>"]}
+  {"function":"__html","tag_id":2,"vtp_html":["template","<script type=\"text/gtmscript\">f(",["escape",["macro",0],2],");</script><script type=\"text/gtmscript\">}</script>"]}
 ]}};"#,
     );
     let (containers, _) = classify_gtm_inputs(std::slice::from_ref(&input));
@@ -2477,7 +2477,7 @@ fn gtm_pieces_report_escape_warnings_and_parse_failures() {
     );
     // the placeholder keeps the argument instead of leaving a comment the pipeline drops
     let tag = fs::read_to_string(out_dir.join("tags/html-2-0.js")).expect("read the tag");
-    assert!(tag.contains("f(__gtm_macro_0_escape_12)"), "{tag}");
+    assert!(tag.contains("f(__gtm_macro_0_escape_2)"), "{tag}");
     // the piece that did not parse is still written as extracted, and listed as a module
     assert_eq!(
         fs::read_to_string(out_dir.join("tags/html-2-1.js")).expect("read the fragment"),
