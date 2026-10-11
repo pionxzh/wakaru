@@ -537,12 +537,14 @@ pub fn unpack_prepared_inputs_with_policy(
                     .collect::<HashSet<_>>();
                 let detected = if raw {
                     let result = detected.materialize()?;
+                    // Raw output skips readability rewrites, so `--level` does
+                    // not apply to it.
                     DetectedBundle::from_result(maybe_split_scope_hoisted_modules(
                         result,
                         scope_hoist_policy.recursive(),
                         scope_hoist_policy.render_mode(),
                         SourcePositions::Discard,
-                        options.level,
+                        RewriteLevel::Minimal,
                     ))
                 } else {
                     maybe_split_detected_bundle(
@@ -855,18 +857,22 @@ fn normalize_raw_unpacked_module(source: &str, filename: &str) -> Result<String>
         let unresolved_mark = Mark::new();
         let top_level_mark = Mark::new();
         module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+        // Raw output skips readability rewrites, so `--level` does not apply:
+        // the module is only made linkable as ESM, with the rules that do
+        // that at their minimal level.
         module.visit_mut_with(
-            &mut UnEsm::new(unresolved_mark, RewriteLevel::Standard)
+            &mut UnEsm::new(unresolved_mark, RewriteLevel::Minimal)
                 .with_current_filename(Some(filename)),
         );
         recover_late_esm_from_factory_iifes(
             &mut module,
             unresolved_mark,
-            RewriteLevel::Standard,
+            RewriteLevel::Minimal,
             filename,
             LateEsmRecoveryOptions {
                 smart_rename: false,
                 export_rename: false,
+                arrow_functions: false,
             },
         );
         apply_fixer(&mut module)?;
@@ -881,12 +887,12 @@ fn recover_late_esm_from_factory_iifes(
     current_filename: &str,
     options: LateEsmRecoveryOptions,
 ) {
-    // `ArrowFunction` and `SmartRename` are gated like their registry
-    // entries. Below standard only a factory's top-level `.call(…)` wrapper
-    // becomes an arrow, so that `UnIife` can drop its receiver argument and
-    // the body can be recovered as ESM.
-    if level >= RewriteLevel::Standard {
-        module.visit_mut_with(&mut ArrowFunction::new(unresolved_mark));
+    // A factory's `.call(this, …)` wrapper is an IIFE callee, which
+    // `ArrowFunction` converts at every level, so `UnIife` can drop its
+    // receiver argument and the body can be recovered as ESM. Raw output
+    // converts only that wrapper.
+    if options.arrow_functions {
+        module.visit_mut_with(&mut ArrowFunction::new_with_level(unresolved_mark, level));
     } else {
         crate::rules::convert_top_level_call_wrappers(module);
     }
@@ -896,6 +902,7 @@ fn recover_late_esm_from_factory_iifes(
         .with_rewrite_level(level)
         .with_current_filename(current_filename);
     apply_rules(module, unresolved_mark, pipeline_options);
+    // Gated like its registry entry.
     if options.smart_rename && level >= RewriteLevel::Standard {
         module.visit_mut_with(&mut SmartRename::new(unresolved_mark));
     }
@@ -909,6 +916,9 @@ fn recover_late_esm_from_factory_iifes(
 struct LateEsmRecoveryOptions {
     smart_rename: bool,
     export_rename: bool,
+    /// Runs `ArrowFunction` over the module. Raw output, which skips
+    /// readability rewrites, converts only a factory's `.call` wrapper.
+    arrow_functions: bool,
 }
 
 impl Default for LateEsmRecoveryOptions {
@@ -916,6 +926,7 @@ impl Default for LateEsmRecoveryOptions {
         Self {
             smart_rename: true,
             export_rename: true,
+            arrow_functions: true,
         }
     }
 }

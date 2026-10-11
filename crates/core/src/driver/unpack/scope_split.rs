@@ -159,6 +159,7 @@ fn split_esm_recovered_scope_hoisted_module(
             LateEsmRecoveryOptions {
                 smart_rename: false,
                 export_rename: false,
+                arrow_functions: true,
             },
         );
         scope_hoist::split_scope_hoisted_module_with_mode(

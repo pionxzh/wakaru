@@ -826,7 +826,7 @@ const WEBPACK_FUNCTION_IIFE_BUNDLE: &str = r#"
   var __webpack_modules__ = {
     10: (e, t) => {
       (function (n) {
-        n.a = 1;
+        n.a = [1].map(function (x) { return x; });
       })(t);
     },
   };
@@ -843,11 +843,12 @@ const WEBPACK_FUNCTION_IIFE_BUNDLE: &str = r#"
 })();
 "#;
 
-/// The late ESM recovery after `UnIife2` runs `ArrowFunction` only where the
-/// registry does, at standard and above, so a minimal unpack keeps the
-/// function expression as a single-file decompile does.
+/// The late ESM recovery after `UnIife2` runs `ArrowFunction` at the
+/// requested level. At minimal the IIFE callee, proven never constructed,
+/// becomes an arrow, while the `.map` callback, which only
+/// `builtin_callbacks_not_constructed` covers, stays a function.
 #[test]
-fn minimal_unpack_keeps_function_expressions() {
+fn minimal_unpack_converts_only_proven_functions() {
     let output = wakaru_core::driver::test_support::unpack(
         WEBPACK_FUNCTION_IIFE_BUNDLE,
         DecompileOptions {
@@ -866,8 +867,12 @@ fn minimal_unpack_keeps_function_expressions() {
 
     let expected = r#"
 const _webpackExports = {};
-(function(n) {
-    n.a = 1;
+((n)=>{
+    n.a = [
+        1
+    ].map(function(x) {
+        return x;
+    });
 })(_webpackExports);
 export default _webpackExports;
 "#;

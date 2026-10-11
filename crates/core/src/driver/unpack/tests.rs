@@ -791,3 +791,43 @@ fn import_cycle_warning_closes_a_self_cycle_witness() {
         "local import cycle across 1 modules; cycle witness: self.js -> self.js"
     );
 }
+
+/// Raw output skips readability rewrites: its normalization only makes the
+/// module linkable as ESM. It turns a factory's `.call` wrapper into an arrow
+/// so the wrapped body can be recovered, and leaves the module's own
+/// functions, arrows, and captured builtin aliases as written.
+#[test]
+fn raw_normalization_recovers_esm_without_readability_rewrites() {
+    let source = r#"
+"use strict";
+require.r(exports);
+(function (t) {
+  require.d(exports, "copy", function () { return copy; });
+  var assign = Object.assign;
+  function copy(value) {
+    return [value].map(function (x) { return assign({}, x); });
+  }
+  var twice = (n) => n * 2;
+  exports.twice = twice;
+}).call(this, require("./dep.js"));
+"#;
+    let output =
+        normalize_raw_unpacked_module(source, "module.js").expect("raw normalization succeeds");
+
+    assert!(
+        !output.contains("require.d(") && !output.contains("require.r("),
+        "raw output is linkable ESM:\n{output}"
+    );
+    assert!(
+        output.contains("export { copy }") && output.contains("function copy(value)"),
+        "the wrapped body is recovered:\n{output}"
+    );
+    assert!(
+        output.contains("= Object.assign;") && output.contains(".map(function(x)"),
+        "builtin aliases and callbacks stay as written:\n{output}"
+    );
+    assert!(
+        output.contains("(n)=>n * 2"),
+        "expression-bodied arrows stay as written:\n{output}"
+    );
+}

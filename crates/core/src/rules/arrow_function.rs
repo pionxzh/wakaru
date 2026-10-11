@@ -16,6 +16,7 @@ use super::eval_utils::{
     direct_eval_call_source, has_dynamic_scope_construct, js_source_mentions_binding,
     EvalCallSource,
 };
+use super::RewriteLevel;
 
 /// Rewrites `function` expressions to arrows where positive evidence shows the
 /// value is never constructed. An arrow has no `[[Construct]]` and no
@@ -29,21 +30,33 @@ use super::eval_utils::{
 /// - an inline argument whose same-module callee only calls the matching
 ///   simple parameter;
 /// - an async function, which is never constructible;
-/// - `builtin_callbacks_not_constructed`: an inline callback of a timer
-///   global, `new Promise`, or a built-in array/Promise/string method name.
+/// - `builtin_callbacks_not_constructed`, at standard and above: an inline
+///   callback of a timer global, `new Promise`, or a built-in
+///   array/Promise/string method name.
+///
+/// Every other kind of evidence is proven inside the module, so it applies at
+/// every level.
 pub struct ArrowFunction {
     unresolved_mark: Mark,
+    level: RewriteLevel,
 }
 
 impl ArrowFunction {
     pub fn new(unresolved_mark: Mark) -> Self {
-        Self { unresolved_mark }
+        Self::new_with_level(unresolved_mark, RewriteLevel::Standard)
+    }
+
+    pub fn new_with_level(unresolved_mark: Mark, level: RewriteLevel) -> Self {
+        Self {
+            unresolved_mark,
+            level,
+        }
     }
 }
 
 impl VisitMut for ArrowFunction {
     fn visit_mut_module(&mut self, module: &mut Module) {
-        let evidence = Evidence::collect(module, self.unresolved_mark);
+        let evidence = Evidence::collect(module, self.unresolved_mark, self.level);
         module.visit_mut_with(&mut ArrowFunctionConverter {
             evidence: &evidence,
         });
@@ -77,6 +90,8 @@ fn builtin_callback_positions(method: &str) -> &'static [usize] {
 
 struct Evidence {
     unresolved_mark: Mark,
+    /// `builtin_callbacks_not_constructed` is accepted.
+    builtin_callbacks: bool,
     uses: BindingUseIndex,
     /// `with` or direct `eval` can reach any binding by name.
     dynamic_scope: bool,
@@ -91,11 +106,12 @@ struct Evidence {
 }
 
 impl Evidence {
-    fn collect(module: &Module, unresolved_mark: Mark) -> Self {
+    fn collect(module: &Module, unresolved_mark: Mark, level: RewriteLevel) -> Self {
         let mut params = FunctionParamCollector::default();
         module.visit_with(&mut params);
         Self {
             unresolved_mark,
+            builtin_callbacks: level >= RewriteLevel::Standard,
             uses: BindingUseIndex::collect(module),
             dynamic_scope: has_dynamic_scope_construct(module),
             is_es_module: module
@@ -153,6 +169,7 @@ impl Evidence {
             .position(|arg| arg.spread.is_some())
             .unwrap_or(call.args.len());
         let mut positions = match crate::utils::paren::strip_parens(callee) {
+            _ if !self.builtin_callbacks => Vec::new(),
             Expr::Ident(ident)
                 if self.is_global(ident) && CALLBACK_GLOBALS.contains(&ident.sym.as_ref()) =>
             {
@@ -200,10 +217,11 @@ impl Evidence {
     }
 
     fn is_promise_executor(&self, new_expr: &NewExpr) -> bool {
-        matches!(
-            crate::utils::paren::strip_parens(&new_expr.callee),
-            Expr::Ident(ident) if self.is_global(ident) && ident.sym == "Promise"
-        )
+        self.builtin_callbacks
+            && matches!(
+                crate::utils::paren::strip_parens(&new_expr.callee),
+                Expr::Ident(ident) if self.is_global(ident) && ident.sym == "Promise"
+            )
     }
 }
 
@@ -343,9 +361,15 @@ impl ArrowFunctionConverter<'_> {
                     self.convert_callee(last);
                 }
             }
+            // `f.call(…)` runs `f`. In `f.call.apply(…)`, `f` only supplies
+            // `Function.prototype.call` and never runs.
             Expr::Member(member)
                 if static_member_name(&member.prop)
-                    .is_some_and(|name| name == "call" || name == "apply") =>
+                    .is_some_and(|name| name == "call" || name == "apply")
+                    && !matches!(
+                        crate::utils::paren::strip_parens(&member.obj),
+                        Expr::Member(_)
+                    ) =>
             {
                 self.convert_callee(&mut member.obj);
             }
@@ -431,8 +455,9 @@ impl VisitMut for ArrowFunctionConverter<'_> {
 /// A bundler wraps a module body this way to pass it values (webpack 4's
 /// `ProvidePlugin` and harmony wrappers pass `this` and a required module).
 /// The wrapper is runtime glue, not source: removing it is part of
-/// recovering the module, which unpack does at every level, while converting
-/// the module's own functions is `ArrowFunction`'s readability rewrite.
+/// recovering the module as ESM, which raw output still does, while
+/// converting the module's own functions is `ArrowFunction`'s readability
+/// rewrite, which raw output skips.
 pub(crate) fn convert_top_level_call_wrappers(module: &mut Module) {
     for item in &mut module.body {
         let ModuleItem::Stmt(Stmt::Expr(stmt)) = item else {

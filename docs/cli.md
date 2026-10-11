@@ -138,9 +138,9 @@ Generated modules yield to these reserved physical-input paths during collision
 deduplication. Two physical ESM identities that normalize to the same path
 (including a plain input colliding with a facade) fail as ambiguous instead of
 silently suffixing either identity. Script-loaded bundle inputs do not reserve
-their physical filenames. `--raw` only skips readability transforms, retains
-provisional extraction names, and does not apply public-path reservations or
-promise a usable module graph.
+their physical filenames. `--raw` only skips readability transforms, so
+`--level` does not apply to it. It retains provisional extraction names, and
+does not apply public-path reservations or promise a usable module graph.
 
 `--unpack=inspect` recursively retains fine-grained scope-hoist boundaries,
 including synthetic clusters whose emitted ESM imports form a cycle. The

@@ -401,7 +401,8 @@ guess about a library API (`.on`, `.each`, and similar stay functions).
 
 Affects: `ArrowFunction`.
 
-Level: `standard` and above, like the whole rule.
+Level: `standard` and above. The rule's other evidence is proven inside the
+module and applies at every level.
 
 ### `terser_unsafe_proto`
 

@@ -560,10 +560,14 @@ rationale, or level gating appear.
   a sequence's last expression, conditional and logical branches — are
   followed, and `function () {}.bind(this)` converts in the same positions.
   Everything else, including object property values, returned functions,
-  member assignments, and callbacks to other APIs, stays a function. Unpack's
-  late ESM recovery runs it at `standard` and above like the registry; below
-  that it converts only a top-level `(function () { … }).call(…)` factory
-  wrapper, so the wrapped module body can still be recovered. Vue SFC
+  member assignments, and callbacks to other APIs, stays a function. In
+  `f.call.apply(…)`, `f` only supplies `Function.prototype.call` and is no
+  callee. The rule runs at every level; only the
+  `builtin_callbacks_not_constructed` positions need `standard`. Unpack's
+  late ESM recovery runs it at the requested level. Raw output's
+  normalization, which skips readability rewrites, converts only a top-level
+  `(function () { … }).call(…)` factory wrapper, so the wrapped module body
+  can still be recovered as ESM. Vue SFC
   recovery restores lowered arrows on its own analysis copy (see
   [vue-decompile.md](vue-decompile.md)).
 - **Object-literal function values** — no rule rewrites `key: function () {}`
@@ -596,10 +600,10 @@ rationale, or level gating appear.
   leaves such a member's assignment after the class; `UnEs6Class` keeps the
   whole wrapper (`class_members_not_constructed` in
   [rewrite-assumptions.md](rewrite-assumptions.md)).
-- **ArrowFunction → ArrowReturn** — hard chain. ArrowFunction is `standard+`
-  even though each conversion has positive evidence and checks the
-  function-only blockers (`this`, `arguments`, named function expressions,
-  `new.target`, direct eval).
+- **ArrowFunction → ArrowReturn** — hard chain. ArrowFunction runs at every
+  level: each conversion has positive evidence and checks the function-only
+  blockers (`this`, `arguments`, named function expressions, `new.target`,
+  direct eval); only the built-in callback positions need `standard`.
   The `this`/`arguments`/`new.target`/direct-eval checks cover parameter
   initializers and destructuring defaults as well as the body; both run in
   the function's own activation.

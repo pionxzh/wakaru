@@ -1,7 +1,7 @@
 mod common;
 
-use common::{assert_eq_normalized, render_pipeline, render_rule};
-use wakaru_core::rules::ArrowFunction;
+use common::{assert_eq_normalized, render_pipeline, render_rule, render_with_level};
+use wakaru_core::rules::{ArrowFunction, RewriteLevel};
 
 fn apply(input: &str) -> String {
     render_rule(input, ArrowFunction::new)
@@ -9,6 +9,60 @@ fn apply(input: &str) -> String {
 
 fn apply_pipeline(input: &str) -> String {
     render_pipeline(input)
+}
+
+/// `f.call.apply(…)` reads `Function.prototype.call` from `f` and never runs
+/// `f`, so it is no IIFE callee.
+#[test]
+fn call_apply_receiver_stays_function() {
+    let input = r#"
+(function () {}).call.apply(value, args);
+(function () { return run(); }).call(value);
+"#;
+    let expected = r#"
+(function () {}).call.apply(value, args);
+(() => { return run(); }).call(value);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+/// Below standard only evidence proven inside the module applies:
+/// `builtin_callbacks_not_constructed` needs standard.
+#[test]
+fn minimal_skips_builtin_callback_evidence() {
+    let input = r#"
+items.map(function (item) { return item.id; });
+setTimeout(function () { tick(); });
+(function () { run(); })();
+"#;
+    let expected = r#"
+items.map(function (item) { return item.id; });
+setTimeout(function () { tick(); });
+(() => { run(); })();
+"#;
+    let output = render_rule(input, |mark| {
+        ArrowFunction::new_with_level(mark, RewriteLevel::Minimal)
+    });
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn minimal_pipeline_converts_only_proven_functions() {
+    let input = r#"
+function outer(items) {
+  const f = function (a) { return a + 1; };
+  return items.map(function (item) { return f(item); });
+}
+"#;
+    let expected = r#"
+function outer(items) {
+    const f = (a)=>a + 1;
+    return items.map(function(item) {
+        return f(item);
+    });
+}
+"#;
+    assert_eq_normalized(&render_with_level(input, RewriteLevel::Minimal), expected);
 }
 
 #[test]

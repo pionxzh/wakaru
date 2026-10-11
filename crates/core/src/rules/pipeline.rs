@@ -494,8 +494,9 @@ runner!(run_arg_rest, |ctx| ArgRest::new(ctx.rewrite_level));
 runner!(run_un_rest_array_copy, |ctx| UnRestArrayCopy::new(
     ctx.unresolved_mark
 ));
-runner!(run_arrow_function, |ctx| ArrowFunction::new(
-    ctx.unresolved_mark
+runner!(run_arrow_function, |ctx| ArrowFunction::new_with_level(
+    ctx.unresolved_mark,
+    ctx.rewrite_level
 ));
 runner!(run_un_namespace, UnNamespace);
 runner!(run_arrow_return, ArrowReturn);
@@ -746,7 +747,7 @@ define_rule_registry! {
     ("Exponent", Modernization, run_exponent, always_enabled),
     ("ArgRest", Modernization, run_arg_rest, always_enabled),
     ("UnRestArrayCopy", Modernization, run_un_rest_array_copy, always_enabled),
-    ("ArrowFunction", Modernization, run_arrow_function, standard_or_above),
+    ("ArrowFunction", Modernization, run_arrow_function, always_enabled),
     // TypeScript runtime namespaces use augmentation IIFEs. Run after UnEnum
     // has consumed genuine literal enum shapes and after ArrowFunction has
     // removed safe function-only semantics from eligible wrappers.
