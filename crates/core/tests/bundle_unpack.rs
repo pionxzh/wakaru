@@ -486,9 +486,11 @@ fn webpack5_bundled_babel_runtime_interop_of_a_commonjs_provider_becomes_a_defau
     // CommonJS. The interop's `.default` is its `module.exports`, which is the
     // default import of a CommonJS module.
     let source = r#"(()=>{var e={393(e,t,r){"use strict";var n=r(994);t.run=function(){return["consumer-side",new o.default("w").label(),(0,u.default)("v"),u.default.version,i.twice(3),i.default,Object.keys(i).sort().join(",")]};var o=n(r(805)),u=n(r(30)),i=function(e){if("function"==typeof WeakMap){var t=new WeakMap;new WeakMap}return function(e){if(e&&e.__esModule)return e;var r,n,o={__proto__:null,default:e};if(null===e||"object"!=typeof e&&"function"!=typeof e)return o;if(r=t){if(r.has(e))return r.get(e);r.set(e,o)}for(const t in e)"default"!==t&&{}.hasOwnProperty.call(e,t)&&((n=(r=Object.defineProperty)&&Object.getOwnPropertyDescriptor(e,t))&&(n.get||n.set)?r(o,t,n):o[t]=e[t]);return o}(e)}(r(701))},97(e,t,r){const n=r(393);t.main=function(){return n.run()}},30(e,t,r){function n(e){return"<"+String(e)+">"}n.version="format-1",n.lazy=function(){return r(805)},e.exports=n},701(e,t){"use strict";Object.defineProperty(t,"__esModule",{value:!0}),t.default=void 0,t.twice=function(e){return 2*e},t.default="util-default"},805(e,t){"use strict";Object.defineProperty(t,"__esModule",{value:!0}),t.default=void 0,t.default=class{constructor(e){this.name=e}label(){return"widget:"+this.name}}},994(e){e.exports=function(e){return e&&e.__esModule?e:{default:e}},e.exports.__esModule=!0,e.exports.default=e.exports}};const t={};globalThis.lib=function r(n){const o=t[n];if(void 0!==o)return o.exports;const u=t[n]={exports:{}};return e[n](u,u.exports,r),u.exports}(97)})();"#;
-    // `validate_output_modules` reads every import target as ESM, so it is
-    // not used here: Node runs the syntaxless provider as CommonJS.
     let output = unpack(source, DecompileOptions::default()).expect("bundle should unpack");
+    // Node runs the syntaxless provider as CommonJS, and so does the
+    // validator.
+    let findings = validate_output_modules(&output.modules);
+    assert!(findings.is_empty(), "{findings:#?}");
     let module = |filename: &str| {
         output
             .modules
@@ -4103,8 +4105,6 @@ fn kept_require_of_a_function_with_named_exports_reads_default_per_use() {
 }
 
 #[test]
-fn imported_call_of_a_require_outside_a_top_level_var_keeps_the_module_commonjs() {
-#[test]
 fn kept_require_of_a_function_with_named_exports_reports_uses_it_cannot_redirect() {
     // hypothetical: each consumer use below keeps the namespace after the
     // `.default` rewrite, so the binding is left alone and reported.
@@ -4148,6 +4148,8 @@ fn kept_require_of_a_function_with_named_exports_reports_uses_it_cannot_redirect
     );
 }
 
+#[test]
+fn imported_call_of_a_require_outside_a_top_level_var_keeps_the_module_commonjs() {
     // hypothetical: the cross-module interop pass reads only
     // `var x = helper(require(p))`, so these requires would stay in ESM.
     for consumer in [

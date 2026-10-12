@@ -1037,7 +1037,9 @@ fn mjs_and_mts_extensions_force_module_goal() {
 }
 
 #[test]
-fn static_and_dynamic_import_targets_use_module_goal() {
+fn syntaxless_import_targets_follow_node_syntax_detection() {
+    // With no `package.json`, Node runs a `.js` file without module syntax
+    // as CommonJS, also when an ES module imports it.
     let findings = kinds(&[
         ("static-entry.js", "import \"./static-leaf.js\";\n"),
         ("static-leaf.js", "with ({ value: 1 }) { value; }\n"),
@@ -1049,13 +1051,37 @@ fn static_and_dynamic_import_targets_use_module_goal() {
         ),
         ("reexport-leaf.js", "with ({ value: 1 }) { value; }\n"),
     ]);
+    assert_eq!(findings, vec![]);
+}
+
+#[test]
+fn imports_of_a_commonjs_sibling_are_not_checked_against_esm_exports() {
+    // Node gives the importer `module.exports` as the default and the names
+    // cjs-module-lexer detects; the provider keeps its CommonJS runtime.
+    let findings = kinds(&[
+        (
+            "entry.js",
+            "import provider, { value } from \"./provider.js\";\nconsole.log(provider, value);\n",
+        ),
+        (
+            "provider.js",
+            "const dep = require(\"./dep.js\");\nexports.value = dep.x;\n",
+        ),
+        ("dep.js", "export const x = 1;\n"),
+    ]);
+    assert_eq!(findings, vec![]);
+
+    // An ES module provider is still checked.
+    let findings = kinds(&[
+        (
+            "entry.js",
+            "import provider from \"./provider.js\";\nconsole.log(provider);\n",
+        ),
+        ("provider.js", "export const value = 1;\n"),
+    ]);
     assert_eq!(
         findings,
-        vec![
-            (OutputFindingKind::ParseError, "static-leaf.js".into()),
-            (OutputFindingKind::ParseError, "dynamic-leaf.js".into()),
-            (OutputFindingKind::ParseError, "reexport-leaf.js".into()),
-        ]
+        vec![(OutputFindingKind::MissingImportedName, "entry.js".into())]
     );
 }
 

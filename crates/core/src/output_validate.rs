@@ -128,7 +128,7 @@ pub fn validate_output_modules_with_inputs(
 
 fn validate_inner(modules: &[(String, String)], inputs: &[(String, String)]) -> Vec<OutputFinding> {
     let filenames: HashSet<&str> = modules.iter().map(|(name, _)| name.as_str()).collect();
-    let source_goals = classify_source_goals(modules, &filenames);
+    let source_goals = classify_source_goals(modules);
     let mut findings = Vec::new();
     let mut infos = Vec::new();
 
@@ -537,6 +537,10 @@ struct ModuleInfo {
     /// The export set is unknowable: `export * from` an external package or
     /// a module outside the validated set.
     open_exports: bool,
+    /// A CommonJS module or classic script. An ES module importer gets
+    /// `module.exports` as its default and the names Node's
+    /// cjs-module-lexer detects, which this validator does not model.
+    commonjs: bool,
     named_imports: Vec<NamedImport>,
     /// Names declared at module scope by `var`/`let`/`const`/`using`,
     /// function, and class declarations (import bindings excluded).
@@ -625,6 +629,9 @@ fn resolve_export_inner(
     let Some(info) = infos.get(filename).copied() else {
         return ResolvedExport::Unknown;
     };
+    if info.commonjs {
+        return ResolvedExport::Unknown;
+    }
 
     if let Some(explicit) = info.explicit_resolutions.get(name) {
         return match explicit {
@@ -703,6 +710,7 @@ fn analyze_module(
         explicit_resolutions: HashMap::default(),
         star_targets: Vec::new(),
         open_exports: false,
+        commonjs: !is_esm,
         named_imports: Vec::new(),
         module_scope_names: HashSet::default(),
         unresolved_refs: Vec::new(),
@@ -1127,58 +1135,25 @@ pub(crate) enum SourceGoal {
     Ambiguous,
 }
 
-/// Classify each emitted file's source goal. Explicit `.mjs` / `.mts` names,
-/// module syntax, module-only parses, and in-set import targets select ESM.
-/// Explicit `.cjs` / `.cts` names remain script/CommonJS even when imported by
-/// an ESM file. All other syntaxless files may fall back to classic script.
-fn classify_source_goals(
-    modules: &[(String, String)],
-    filenames: &HashSet<&str>,
-) -> HashMap<String, SourceGoal> {
+/// Classify each emitted file's source goal the way Node does for an output
+/// tree with no `package.json`: explicit `.mjs` / `.mts` names, module
+/// syntax, and module-only parses select ESM, and explicit `.cjs` / `.cts`
+/// names select script/CommonJS. Every other file is CommonJS or a classic
+/// script under Node's syntax detection, also when an ESM file imports it:
+/// Node gives its importer `module.exports` as the default export.
+fn classify_source_goals(modules: &[(String, String)]) -> HashMap<String, SourceGoal> {
     let mut source_goals: HashMap<String, SourceGoal> = modules
         .iter()
         .map(|(filename, _)| (filename.clone(), filename_source_goal(filename)))
         .collect();
-    let mut referenced_targets = Vec::new();
-
     for (filename, source) in modules {
-        match source_goals
-            .get(filename)
-            .copied()
-            .unwrap_or(SourceGoal::Ambiguous)
-        {
-            SourceGoal::Module => {
-                if let Ok(parsed) = parse_program(filename, source, true) {
-                    referenced_targets.extend(esm_target_specifiers(filename, &parsed.module));
-                }
-            }
-            SourceGoal::Script => {
-                if let Ok(parsed) = parse_program(filename, source, false) {
-                    referenced_targets.extend(esm_target_specifiers(filename, &parsed.module));
-                }
-            }
-            SourceGoal::Ambiguous => match parse_program(filename, source, true) {
-                Ok(parsed) => {
-                    if has_module_syntax(&parsed.module)
-                        || parse_program(filename, source, false).is_err()
-                    {
-                        source_goals.insert(filename.clone(), SourceGoal::Module);
-                    }
-                    referenced_targets.extend(esm_target_specifiers(filename, &parsed.module));
-                }
-                Err(_) => {
-                    if let Ok(parsed) = parse_program(filename, source, false) {
-                        referenced_targets.extend(esm_target_specifiers(filename, &parsed.module));
-                    }
-                }
-            },
+        if source_goals.get(filename) != Some(&SourceGoal::Ambiguous) {
+            continue;
         }
-    }
-
-    for (from_filename, specifier) in referenced_targets {
-        if let Some(target) = resolve_in_set(&from_filename, &specifier, filenames) {
-            if source_goals.get(&target) != Some(&SourceGoal::Script) {
-                source_goals.insert(target, SourceGoal::Module);
+        if let Ok(parsed) = parse_program(filename, source, true) {
+            if has_module_syntax(&parsed.module) || parse_program(filename, source, false).is_err()
+            {
+                source_goals.insert(filename.clone(), SourceGoal::Module);
             }
         }
     }
@@ -1198,68 +1173,6 @@ pub(crate) fn filename_source_goal(filename: &str) -> SourceGoal {
         SourceGoal::Script
     } else {
         SourceGoal::Ambiguous
-    }
-}
-
-fn esm_target_specifiers(filename: &str, module: &Module) -> Vec<(String, String)> {
-    let mut collector = EsmTargetSpecifierCollector {
-        filename: filename.to_string(),
-        specifiers: Vec::new(),
-    };
-    module.visit_with(&mut collector);
-    collector.specifiers
-}
-
-struct EsmTargetSpecifierCollector {
-    specifiers: Vec<(String, String)>,
-    filename: String,
-}
-
-impl Visit for EsmTargetSpecifierCollector {
-    fn visit_module(&mut self, module: &Module) {
-        module.visit_children_with(self);
-    }
-
-    fn visit_import_decl(&mut self, import: &swc_core::ecma::ast::ImportDecl) {
-        if let Some(specifier) = import.src.value.as_str() {
-            self.specifiers
-                .push((self.filename.clone(), specifier.to_string()));
-        }
-    }
-
-    fn visit_named_export(&mut self, export: &swc_core::ecma::ast::NamedExport) {
-        if let Some(source) = export.src.as_ref() {
-            if let Some(specifier) = source.value.as_str() {
-                self.specifiers
-                    .push((self.filename.clone(), specifier.to_string()));
-            }
-        }
-        export.visit_children_with(self);
-    }
-
-    fn visit_export_all(&mut self, export: &swc_core::ecma::ast::ExportAll) {
-        if let Some(specifier) = export.src.value.as_str() {
-            self.specifiers
-                .push((self.filename.clone(), specifier.to_string()));
-        }
-    }
-
-    fn visit_call_expr(&mut self, call: &CallExpr) {
-        if matches!(call.callee, Callee::Import(_)) {
-            if let Some(argument) = call
-                .args
-                .first()
-                .filter(|argument| argument.spread.is_none())
-            {
-                if let Expr::Lit(Lit::Str(specifier)) = argument.expr.as_ref() {
-                    if let Some(specifier) = specifier.value.as_str() {
-                        self.specifiers
-                            .push((self.filename.clone(), specifier.to_string()));
-                    }
-                }
-            }
-        }
-        call.visit_children_with(self);
     }
 }
 

@@ -176,10 +176,12 @@ imported or `const` bindings. It also reports unresolved `module` / `exports`
 runtime uses left in ESM output. Direct safe `typeof module` / `typeof exports`
 probes are excluded.
 
-`.mjs` / `.mts` files and in-tree static or dynamic import targets use the
-module source goal even when they contain no import/export declaration.
-Explicit `.cjs` / `.cts` files retain the script/CommonJS source goal even when
-imported by ESM.
+Each file's source goal follows Node's rules for an output tree with no
+`package.json`: `.mjs` / `.mts` files and files with module syntax are ESM,
+`.cjs` / `.cts` files are CommonJS, and any other file is CommonJS or a
+classic script, also when an ESM file imports it. An import of such a file is
+not checked against its exports: Node gives the importer `module.exports` as
+the default and the names cjs-module-lexer detects.
 
 Const/import-write findings use resolved binding identity, but do not analyze
 reachability, logical-assignment short circuits, or caught exceptions. They
