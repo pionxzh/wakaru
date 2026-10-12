@@ -1604,6 +1604,129 @@ fn member_read(object: Ident, name: &Atom) -> Expr {
     })
 }
 
+/// Turns each `require.r(exports);` statement into the `__esModule`
+/// definition it makes, for a harmony module that stays CommonJS: the split
+/// output has no webpack runtime to call. The `Symbol.toStringTag` the
+/// runtime also defines only names the object, so it is left out.
+pub(super) fn lower_webpack_esmodule_marker(module: &mut Module, unresolved_mark: Mark) {
+    for item in &mut module.body {
+        let ModuleItem::Stmt(Stmt::Expr(statement)) = item else {
+            continue;
+        };
+        let Expr::Call(call) = strip_parens(&statement.expr) else {
+            continue;
+        };
+        let Callee::Expr(callee) = &call.callee else {
+            continue;
+        };
+        let is_marker = matches!(strip_parens(callee), Expr::Member(member)
+            if matches!(strip_parens(&member.obj), Expr::Ident(object)
+                if is_unresolved_ident(object, "require", unresolved_mark))
+                && member.prop.as_ident().is_some_and(|prop| prop.sym == "r"))
+            && matches!(call.args.as_slice(), [arg]
+                if arg.spread.is_none() && matches!(strip_parens(&arg.expr), Expr::Ident(exports)
+                    if is_unresolved_ident(exports, "exports", unresolved_mark)));
+        if !is_marker {
+            continue;
+        }
+        let descriptor = Expr::Object(ObjectLit {
+            span: DUMMY_SP,
+            props: vec![key_value("value", bool_lit(true))],
+        });
+        *item = object_define_property(
+            statement.span,
+            vec![
+                exports_ident(unresolved_mark),
+                Box::new(Expr::Lit(Lit::Str("__esModule".into()))),
+                Box::new(descriptor),
+            ],
+            unresolved_mark,
+        );
+    }
+}
+
+/// Rewrites the arrow getters of the top-level `Object.defineProperty(exports,
+/// "name", { get: () => x })` definitions as `get() { return x; }`, for a
+/// module that stays CommonJS. An ES module importer of a CommonJS module
+/// sees only the names Node's `cjs-module-lexer` finds, and the lexer finds
+/// a getter written as a method or a function expression, not as an arrow.
+/// An arrow that reads `this` or `arguments` would read another value from a
+/// method, so it stays.
+pub(super) fn lexer_visible_export_getters(module: &mut Module, unresolved_mark: Mark) {
+    for item in &mut module.body {
+        let ModuleItem::Stmt(Stmt::Expr(statement)) = item else {
+            continue;
+        };
+        let Expr::Call(call) = &mut *statement.expr else {
+            continue;
+        };
+        let Callee::Expr(callee) = &call.callee else {
+            continue;
+        };
+        let is_define = matches!(strip_parens(callee), Expr::Member(member)
+            if matches!(strip_parens(&member.obj), Expr::Ident(object)
+                if is_unresolved_ident(object, "Object", unresolved_mark))
+                && member.prop.as_ident().is_some_and(|prop| prop.sym == "defineProperty"));
+        if !is_define || call.args.len() != 3 {
+            continue;
+        }
+        if !matches!(strip_parens(&call.args[0].expr), Expr::Ident(exports)
+            if is_unresolved_ident(exports, "exports", unresolved_mark))
+        {
+            continue;
+        }
+        let Expr::Object(descriptor) = &mut *call.args[2].expr else {
+            continue;
+        };
+        for prop in &mut descriptor.props {
+            let PropOrSpread::Prop(prop) = prop else {
+                continue;
+            };
+            let Prop::KeyValue(KeyValueProp { key, value }) = &**prop else {
+                continue;
+            };
+            if !matches!(key, PropName::Ident(name) if name.sym == "get") {
+                continue;
+            }
+            let Expr::Arrow(arrow) = &**value else {
+                continue;
+            };
+            let swc_core::ecma::ast::ArrowFunctionBody::Expr(body) = &*arrow.body else {
+                continue;
+            };
+            if !arrow.params.is_empty()
+                || arrow.is_async
+                || arrow.is_generator
+                || crate::rules::arrow_function::has_this_or_arguments(&**body)
+            {
+                continue;
+            }
+            let function = Function {
+                params: vec![],
+                decorators: vec![],
+                span: DUMMY_SP,
+                ctxt: SyntaxContext::empty().apply_mark(Mark::new()),
+                this_param: None,
+                body: Some(FunctionBody {
+                    span: DUMMY_SP,
+                    stmts: vec![Stmt::Return(ReturnStmt {
+                        span: DUMMY_SP,
+                        arg: Some(body.clone()),
+                    })],
+                }),
+                is_generator: false,
+                is_async: false,
+                type_params: None,
+                return_type: None,
+            };
+            **prop = Prop::Method(MethodProp {
+                key: PropName::Ident(IdentName::new("get".into(), DUMMY_SP)),
+                function: Box::new(function),
+            });
+        }
+    }
+}
+
 fn object_define_property(span: Span, args: Vec<Box<Expr>>, unresolved_mark: Mark) -> ModuleItem {
     let callee = Expr::Member(MemberExpr {
         span: DUMMY_SP,

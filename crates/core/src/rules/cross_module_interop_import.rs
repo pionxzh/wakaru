@@ -305,6 +305,15 @@ fn import_plan(interop: Interop, provider: &ModuleFacts) -> Option<ImportPlan> {
             Interop::Star => Some(plan(true, false, true, true)),
         };
     }
+    // An unmarked provider that stayed CommonJS: the default interop's
+    // `.default` is its `module.exports`, which is what a default import of
+    // a CommonJS module reads.
+    if provider.stays_commonjs {
+        return match interop {
+            Interop::Default => Some(plan(false, true, false, false)),
+            Interop::Star => None,
+        };
+    }
     // The whole required value of an unmarked provider. A default export of
     // a module that never refers to `module` comes from `exports.default`
     // (or an ESM source), one property of that value: not proven either way.

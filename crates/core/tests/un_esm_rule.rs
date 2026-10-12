@@ -621,17 +621,14 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
     for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) exports[p] = m[p];
 };
 __exportStar(require("./provider.js"), exports);
-__exportStar(require("./other.js"), target);
+__exportStar(other, target);
 "#;
     let output = apply(input);
     assert!(
         output.contains(r#"export * from "./provider.js";"#),
         "{output}"
     );
-    assert!(
-        output.contains(r#"__exportStar(require("./other.js"), target)"#),
-        "{output}"
-    );
+    assert!(output.contains("__exportStar(other, target)"), "{output}");
     assert!(output.contains("var __exportStar = "), "{output}");
 }
 
@@ -4632,11 +4629,11 @@ var UIBase = require("./UIBase.js").UIBase;
 var keep = require("./keep.js");
 "#;
     let expected = r#"
-import { UIBase } from "./UIBase.js";
-import keep from "./keep.js";
-(function (base) {
-  use(base);
+(function(base) {
+    use(base);
 })(require("./UIBase.js").UIBase);
+var UIBase = require("./UIBase.js").UIBase;
+var keep = require("./keep.js");
 "#;
     let output = apply_unesm(input);
     assert_eq_normalized(&output, expected);
@@ -4653,9 +4650,10 @@ UIBase = other;
 var keep = require("./keep.js");
 "#;
     let output = apply_unesm(input);
+    // The argument's require stays a call, so the module stays CommonJS.
     assert!(
-        output.contains("require(\"./UIBase.js\").UIBase")
-            && output.contains("import keep from \"./keep.js\""),
+        output.contains("})(require(\"./UIBase.js\").UIBase)")
+            && output.contains("var keep = require(\"./keep.js\")"),
         "a mutated NamedProp local must not be reused as the call argument:\n{output}"
     );
 }
@@ -4728,7 +4726,7 @@ var keep = require("./keep.js");
 f(cond ? require("./UIBase.js").UIBase : other);
 "#;
     let expected = r#"
-import keep from "./keep.js";
+var keep = require("./keep.js");
 f(cond ? require("./UIBase.js").UIBase : other);
 "#;
     let output = apply_unesm(input);
@@ -4744,9 +4742,9 @@ then(function () {
 });
 "#;
     let expected = r#"
-import keep from "./keep.js";
-then(function () {
-  return require("./UIBase.js").UIBase;
+var keep = require("./keep.js");
+then(function() {
+    return require("./UIBase.js").UIBase;
 });
 "#;
     let output = apply_unesm(input);
@@ -4764,11 +4762,11 @@ function wrap() {
 }
 "#;
     let expected = r#"
-import keep from "./keep.js";
+var keep = require("./keep.js");
 function wrap() {
-  (function (base) {
-    use(base);
-  })(require("./UIBase.js").UIBase);
+    (function(base) {
+        use(base);
+    })(require("./UIBase.js").UIBase);
 }
 "#;
     let output = apply_unesm(input);
@@ -4784,9 +4782,9 @@ var keep = require("./keep.js");
 })(require(dyn).UIBase);
 "#;
     let expected = r#"
-import keep from "./keep.js";
-(function (base) {
-  use(base);
+var keep = require("./keep.js");
+(function(base) {
+    use(base);
 })(require(dyn).UIBase);
 "#;
     let output = apply_unesm(input);
@@ -4800,7 +4798,7 @@ var keep = require("./keep.js");
 f(...require("./UIBase.js").UIBase);
 "#;
     let expected = r#"
-import keep from "./keep.js";
+var keep = require("./keep.js");
 f(...require("./UIBase.js").UIBase);
 "#;
     let output = apply_unesm(input);
@@ -4816,9 +4814,9 @@ var keep = require("./keep.js");
 })(require("./UIBase.js")[key]);
 "#;
     let expected = r#"
-import keep from "./keep.js";
-(function (base) {
-  use(base);
+var keep = require("./keep.js");
+(function(base) {
+    use(base);
 })(require("./UIBase.js")[key]);
 "#;
     let output = apply_unesm(input);
@@ -4848,9 +4846,9 @@ var keep = require("./keep.js");
 })((0, require("./UIBase.js").UIBase));
 "#;
     let expected = r#"
-import keep from "./keep.js";
-(function (base) {
-  use(base);
+var keep = require("./keep.js");
+(function(base) {
+    use(base);
 })((0, require("./UIBase.js").UIBase));
 "#;
     let output = apply_unesm(input);
@@ -4887,10 +4885,10 @@ var keep = require("./keep.js");
 })(require("./UIBase.js").UIBase);
 "#;
     let expected = r#"
-import keep from "./keep.js";
 let UIBase = 0;
-(function (base) {
-  use(base);
+var keep = require("./keep.js");
+(function(base) {
+    use(base);
 })(require("./UIBase.js").UIBase);
 "#;
     let output = apply_unesm(input);
@@ -4907,10 +4905,10 @@ var keep = require("./keep.js");
 })(require("./UIBase.js").UIBase);
 "#;
     let expected = r#"
-import keep from "./keep.js";
 observe(UIBase);
-(function (base) {
-  use(base);
+var keep = require("./keep.js");
+(function(base) {
+    use(base);
 })(require("./UIBase.js").UIBase);
 "#;
     let output = apply_unesm(input);
@@ -4927,8 +4925,10 @@ var keep = require("./keep.js");
 consume(require("./UIBase.js").UIBase);
 "#;
     let expected = r#"
-import keep from "./keep.js";
-function reset() { UIBase = globalValue; }
+function reset() {
+    UIBase = globalValue;
+}
+var keep = require("./keep.js");
 consume(require("./UIBase.js").UIBase);
 "#;
     let output = apply_unesm(input);
@@ -4943,8 +4943,8 @@ var keep = require("./keep.js");
 consume(require("./UIBase.js").UIBase);
 "#;
     let expected = r#"
-import keep from "./keep.js";
-render(<UIBase />);
+render(<UIBase/>);
+var keep = require("./keep.js");
 consume(require("./UIBase.js").UIBase);
 "#;
     let output = apply_unesm(input);
@@ -4963,12 +4963,12 @@ var keep = require("./keep.js");
 })(require("./B.js").A);
 "#;
     let expected = r#"
-import keep from "./keep.js";
-(function (a) {
-  use(a);
+var keep = require("./keep.js");
+(function(a) {
+    use(a);
 })(require("./A.js").A);
-(function (b) {
-  use(b);
+(function(b) {
+    use(b);
 })(require("./B.js").A);
 "#;
     let output = apply_unesm(input);
@@ -4985,10 +4985,10 @@ var keep = require("./keep.js");
 })(require("./UIBase.js").UIBase);
 "#;
     let expected = r#"
-import keep from "./keep.js";
 eval("UIBase");
-(function (base) {
-  use(base);
+var keep = require("./keep.js");
+(function(base) {
+    use(base);
 })(require("./UIBase.js").UIBase);
 "#;
     let output = apply_unesm(input);
@@ -5005,10 +5005,10 @@ var keep = require("./keep.js");
 })(require("./UIBase.js").UIBase);
 "#;
     let expected = r#"
-import keep from "./keep.js";
 eval(source);
-(function (base) {
-  use(base);
+var keep = require("./keep.js");
+(function(base) {
+    use(base);
 })(require("./UIBase.js").UIBase);
 "#;
     let output = apply_unesm(input);
@@ -5024,9 +5024,9 @@ var keep = require("./keep.js");
 })(require("./X.js").class);
 "#;
     let expected = r#"
-import keep from "./keep.js";
-(function (base) {
-  use(base);
+var keep = require("./keep.js");
+(function(base) {
+    use(base);
 })(require("./X.js").class);
 "#;
     let output = apply_unesm(input);
@@ -5042,9 +5042,9 @@ var keep = require("./keep.js");
 })(require("./X.js")["foo-bar"]);
 "#;
     let expected = r#"
-import keep from "./keep.js";
-(function (base) {
-  use(base);
+var keep = require("./keep.js");
+(function(base) {
+    use(base);
 })(require("./X.js")["foo-bar"]);
 "#;
     let output = apply_unesm(input);
@@ -5058,7 +5058,7 @@ var keep = require("./keep.js");
 f(require("./X.js")["a²"]);
 "#;
     let expected = r#"
-import keep from "./keep.js";
+var keep = require("./keep.js");
 f(require("./X.js")["a²"]);
 "#;
     let output = apply_unesm(input);
@@ -5128,7 +5128,7 @@ require("./dep.js").UIBase = replacement;
 consume(require("./dep.js").UIBase);
 "#;
     let expected = r#"
-import { UIBase } from "./dep.js";
+var UIBase = require("./dep.js").UIBase;
 require("./dep.js").UIBase = replacement;
 consume(require("./dep.js").UIBase);
 "#;
@@ -5429,7 +5429,7 @@ var keep = require("./keep.js");
 f(cond ? require("./UIBase.js").default : other);
 "#;
     let expected = r#"
-import keep from "./keep.js";
+var keep = require("./keep.js");
 f(cond ? require("./UIBase.js").default : other);
 "#;
     let output = apply_unesm(input);
@@ -5445,9 +5445,9 @@ then(function () {
 });
 "#;
     let expected = r#"
-import keep from "./keep.js";
-then(function () {
-  return require("./UIBase.js").default;
+var keep = require("./keep.js");
+then(function() {
+    return require("./UIBase.js").default;
 });
 "#;
     let output = apply_unesm(input);
@@ -5465,11 +5465,11 @@ function wrap() {
 }
 "#;
     let expected = r#"
-import keep from "./keep.js";
+var keep = require("./keep.js");
 function wrap() {
-  (function (base) {
-    use(base);
-  })(require("./UIBase.js").default);
+    (function(base) {
+        use(base);
+    })(require("./UIBase.js").default);
 }
 "#;
     let output = apply_unesm(input);
@@ -5485,9 +5485,9 @@ var keep = require("./keep.js");
 })(require(dyn).default);
 "#;
     let expected = r#"
-import keep from "./keep.js";
-(function (base) {
-  use(base);
+var keep = require("./keep.js");
+(function(base) {
+    use(base);
 })(require(dyn).default);
 "#;
     let output = apply_unesm(input);
@@ -5501,7 +5501,7 @@ var keep = require("./keep.js");
 f(...require("./UIBase.js").default);
 "#;
     let expected = r#"
-import keep from "./keep.js";
+var keep = require("./keep.js");
 f(...require("./UIBase.js").default);
 "#;
     let output = apply_unesm(input);
@@ -5531,9 +5531,9 @@ var keep = require("./keep.js");
 })((0, require("./UIBase.js").default));
 "#;
     let expected = r#"
-import keep from "./keep.js";
-(function (base) {
-  use(base);
+var keep = require("./keep.js");
+(function(base) {
+    use(base);
 })((0, require("./UIBase.js").default));
 "#;
     let output = apply_unesm(input);
@@ -5550,10 +5550,10 @@ var keep = require("./keep.js");
 })(require("./UIBase.js").default);
 "#;
     let expected = r#"
-import keep from "./keep.js";
 eval(source);
-(function (base) {
-  use(base);
+var keep = require("./keep.js");
+(function(base) {
+    use(base);
 })(require("./UIBase.js").default);
 "#;
     let output = apply_unesm(input);
@@ -5736,7 +5736,7 @@ require("./dep.js").default = replacement;
 consume(require("./dep.js").default);
 "#;
     let expected = r#"
-import UIBase from "./dep.js";
+var UIBase = require("./dep.js").default;
 require("./dep.js").default = replacement;
 consume(require("./dep.js").default);
 "#;
@@ -5785,14 +5785,13 @@ require("./B.js").default = replacement;
 })(require("./B.js").default);
 "#;
     let expected = r#"
-import keep from "./keep.js";
-import { A } from "./A.js";
+var keep = require("./keep.js");
 require("./B.js").default = replacement;
-(function (a) {
-  use(a);
-})(A);
-(function (b) {
-  use(b);
+(function(a) {
+    use(a);
+})(require("./A.js").A);
+(function(b) {
+    use(b);
 })(require("./B.js").default);
 "#;
     let output = apply_unesm(input);
@@ -6632,9 +6631,10 @@ fn whole_named_export_chains_are_recovered_in_one_pass() {
             "import parse from \"qs-decode\"; import stringify from \"qs-encode\"; export { parse }; export { parse as decode }; export { stringify }; export { stringify as encode };",
         ),
         (
-            // The mirror pair keeps the existing `export default require(...)` re-export shape.
+            // A passthrough of a whole require stays CommonJS: as ESM,
+            // `export default require(…)` would throw.
             "module.exports = exports.default = require(\"impl-lib\");",
-            "export default require(\"impl-lib\");",
+            "module.exports = exports.default = require(\"impl-lib\");",
         ),
     ] {
         let once = common::render_rule(source, |mark| {
@@ -6682,9 +6682,6 @@ fn property_storage_recovers_named_export_chains_with_effectful_values() {
     // assignment chain of module bindings with the same single evaluation.
     for source in [
         "exports.a = exports.b = makeValue();",
-        "exports.a = exports.b = require(name);",
-        "exports.a = exports.b = require(\"x\", extra);",
-        "exports.a = exports.b = require(...specs);",
         "const require = load; exports.a = exports.b = require(\"x\");",
         "exports.a = exports.b = new Thing();",
         "exports.a = exports.b = void sideEffect();",
@@ -6706,13 +6703,8 @@ fn property_storage_recovers_named_export_chains_with_effectful_values() {
         "var P = require(\"./lib\"); var P = other; var Q = P; exports.a = exports.b = Q(1);",
         "var P = require(\"./lib\"); var Q = P.make; function swap() { P = other; } exports.a = exports.b = Q(1);",
         "var P = require(\"./lib\"); var Q = P; Q = local; exports.a = exports.b = Q(1);",
-        "var Lib = require(name); exports.a = exports.b = Lib.make(1);",
-        "var Lib = require(\"./lib\", extra); exports.a = exports.b = Lib.make(1);",
-        "var Lib = require(\"./lib\")[pick]; exports.a = exports.b = Lib.make(1);",
-        "var Lib = require(\"./lib\")(); exports.a = exports.b = Lib.make(1);",
         "function Lib() {} exports.a = exports.b = Lib.make(1);",
         "var Lib = { make() {} }; exports.a = exports.b = Lib.make(1);",
-        "function scope() { var Lib = require(\"./lib\"); } exports.a = exports.b = Lib.make(1);",
         "const require = load; var Lib = require(\"./lib\"); exports.a = exports.b = Lib.make(1);",
     ] {
         let output = common::render_rule(source, |mark| {
@@ -6726,6 +6718,31 @@ fn property_storage_recovers_named_export_chains_with_effectful_values() {
                 .any(|finding| finding.kind == OutputFindingKind::DuplicateDeclaration),
             "{source}\n{output}"
         );
+    }
+}
+
+#[test]
+fn named_export_chains_with_a_require_that_stays_a_call_stay_commonjs() {
+    // ESM has no `require`, so a module that keeps one stays CommonJS and
+    // its chain stays an export chain.
+    for source in [
+        "exports.a = exports.b = require(name);",
+        "exports.a = exports.b = require(\"x\", extra);",
+        "exports.a = exports.b = require(...specs);",
+        "var Lib = require(name); exports.a = exports.b = Lib.make(1);",
+        "var Lib = require(\"./lib\", extra); exports.a = exports.b = Lib.make(1);",
+        "var Lib = require(\"./lib\")[pick]; exports.a = exports.b = Lib.make(1);",
+        "var Lib = require(\"./lib\")(); exports.a = exports.b = Lib.make(1);",
+        "function scope() { var Lib = require(\"./lib\"); } exports.a = exports.b = Lib.make(1);",
+    ] {
+        let output = common::render_rule(source, |mark| {
+            wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
+        });
+        assert!(
+            output.contains("exports.a = exports.b = "),
+            "{source}\n{output}"
+        );
+        assert!(!output.contains("export "), "{source}\n{output}");
     }
 }
 
@@ -7601,7 +7618,9 @@ var origFetch = globalThis.fetch;
 globalThis.fetch = function spy() {};
 var player = require("./player");
 var util = require("./util");
-export const report = function () { return player.check(util); };
+exports.report = function() {
+    return player.check(util);
+};
 "#;
     let output = un_esm_standard(input);
     assert_eq_normalized(&output, expected);
@@ -7618,7 +7637,9 @@ module.exports = { db: db };
     let expected = r#"
 require("dotenv").config();
 var db = require("./db");
-export default { db: db };
+module.exports = {
+    db: db
+};
 "#;
     assert_eq_normalized(&un_esm_standard(input), expected);
 }
@@ -7664,10 +7685,12 @@ var lib = require("./lib");
 exports.run = function () { return lib.go(); };
 "#;
     let expected = r#"
-import polyfill from "./polyfill";
+var polyfill = require("./polyfill");
 polyfill.install();
 var lib = require("./lib");
-export const run = function () { return lib.go(); };
+exports.run = function() {
+    return lib.go();
+};
 "#;
     assert_eq_normalized(&un_esm_standard(input), expected);
 }
@@ -7737,4 +7760,166 @@ exports.foo = 1;
     assert!(!output.contains("import "), "{output}");
     assert!(output.contains("__esModule"), "{output}");
     assert!(output.contains("require(\"a\")"), "{output}");
+}
+
+// ESM has no `require`: a module that would become ESM with a `require` call
+// left in it stays CommonJS (`BARRIER_REQUIRE_IN_ESM` direction A).
+
+#[test]
+fn require_inside_a_function_keeps_the_module_commonjs() {
+    let input = r#"
+var lib = require("./lib");
+exports.load = function () { return require("./provider").value(); };
+exports.tag = lib.tag;
+"#;
+    let output = un_esm_standard(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn conditional_require_keeps_the_module_commonjs() {
+    let input = r#"
+var P = typeof Promise === "function" ? Promise : require("./promise-shim").Promise;
+exports.P = P;
+"#;
+    let output = un_esm_standard(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn numeric_id_require_does_not_keep_the_module_commonjs() {
+    // A module outside the input fails to load in CommonJS too.
+    let input = r#"
+var a = require("./a");
+exports.load = function () { return require(123); };
+exports.a = a.x;
+"#;
+    let output = un_esm_standard(input);
+    assert!(output.contains(r#"from "./a""#), "{output}");
+    assert!(output.contains("require(123)"), "{output}");
+    assert!(output.contains("export const load"), "{output}");
+}
+
+#[test]
+fn harmony_module_turns_loads_terser_inlined_into_imports() {
+    // shape: producer webpack@5.111.1 + terser, each single-use import
+    // binding inlined into its use; ids and names are synthetic.
+    let input = r#"
+const o = require("./module-100.js").A.make(["a"]);
+const s = { ...require("./module-200.js") };
+const c = (0, require("./module-300.js").Z)(alpha, "beta");
+require.d(exports, { M: () => o, S: () => s, C: () => c });
+"#;
+    let output = un_esm_standard(input);
+    assert!(!output.contains("require("), "{output}");
+    for source in ["./module-100.js", "./module-200.js", "./module-300.js"] {
+        assert!(output.contains(&format!(r#"from "{source}""#)), "{output}");
+    }
+    assert!(output.contains(".A.make("), "{output}");
+    assert!(output.contains("export"), "{output}");
+
+    let pipeline = render_pipeline(input);
+    assert!(!pipeline.contains("require("), "{pipeline}");
+    assert!(pipeline.contains(r#"from "./module-100.js""#), "{pipeline}");
+}
+
+#[test]
+fn harmony_module_inlined_loads_keep_their_order() {
+    let input = r#"
+var a = require("./a.js");
+const b = require("./b.js").make(a.x);
+const c = require("./c.js").make(b);
+require.d(exports, { c: () => c });
+"#;
+    let output = un_esm_standard(input);
+    let a = output.find(r#""./a.js""#).expect("a");
+    let b = output.find(r#""./b.js""#).expect("b");
+    let c = output.find(r#""./c.js""#).expect("c");
+    assert!(a < b && b < c, "{output}");
+    assert!(!output.contains("require("), "{output}");
+}
+
+#[test]
+fn harmony_module_with_a_lazy_require_stays_commonjs_with_lexer_visible_exports() {
+    // The split output has no webpack runtime, so `require.r` and `require.d`
+    // become the definitions they make. Node's `cjs-module-lexer` finds a
+    // getter written as a method, not as an arrow.
+    let input = r#"
+function o() { return require("./p.js").q; }
+require.r(exports);
+require.d(exports, { q: () => o });
+"#;
+    let output = un_esm_standard(input);
+    assert_eq_normalized(
+        &output,
+        r#"
+function o() { return require("./p.js").q; }
+Object.defineProperty(exports, "__esModule", { value: true });
+Object.defineProperty(exports, "q", { enumerable: true, get() { return o; } });
+"#,
+    );
+}
+
+#[test]
+fn harmony_module_keeps_a_global_write_barrier() {
+    // producer webpack@5.111.1 concatenateModules: an inner module's global
+    // write precedes the next inner module's load, which therefore stays a
+    // call in place, so the module stays CommonJS.
+    let input = r#"
+globalThis.fetch = spy;
+var d = require("./dep.js");
+function f() { return d.x; }
+require.d(exports, { r: () => f });
+"#;
+    let output = un_esm_standard(input);
+    assert!(!output.contains("import "), "{output}");
+    assert!(
+        output.contains(r#"var d = require("./dep.js")"#),
+        "{output}"
+    );
+    assert!(output.contains("get () {"), "{output}");
+    assert!(!output.contains("require.d"), "{output}");
+}
+
+#[test]
+fn imported_helper_call_of_a_require_is_left_for_cross_module_recovery() {
+    // Unpack resolves `helper(require(p))` from the helper module's facts
+    // after `UnEsm`; until then the module stays on its way to ESM.
+    let input = r#"
+var h = require("./helper.js");
+var x = h.default(require("./p.js"));
+exports.y = x;
+"#;
+    let output = un_esm_standard(input);
+    assert!(output.contains(r#"from "./helper.js""#), "{output}");
+    assert!(output.contains(r#"(require("./p.js"))"#), "{output}");
+}
+
+#[test]
+fn require_assigned_inside_an_export_sequence_becomes_an_import() {
+    // wild-observed in minified CommonJS:
+    // `module.exports = (a = (i = r(2)).base, o = a.Words, i.Hash)`.
+    let input = r#"
+var i, a, o;
+module.exports = (a = (i = require("./core.js")).base, o = a.Words, i.Hash);
+"#;
+    let output = render_pipeline(input);
+    assert!(output.contains(r#"from "./core.js""#), "{output}");
+    assert!(!output.contains("require("), "{output}");
+    assert!(output.contains("const base = "), "{output}");
+}
+
+#[test]
+fn chained_require_assignment_inside_an_export_sequence_becomes_an_import() {
+    // wild-observed in minified CommonJS: `(a = (i = c = r(2)).base, …)`.
+    let input = r#"
+var i, c, a, o;
+module.exports = (a = (i = c = require("./core.js")).base, o = a.Words, i.Hash);
+"#;
+    let output = render_pipeline(input);
+    assert!(output.contains(r#"from "./core.js""#), "{output}");
+    assert!(!output.contains("require("), "{output}");
+    let c = output.find("c = ").expect("c assigned");
+    let i = output.find("i = ").expect("i assigned");
+    assert!(c < i, "{output}");
 }

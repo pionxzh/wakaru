@@ -115,7 +115,7 @@ distinguishable from an authored ESM dependency downstream.
   wildcard_require_sources, has_export_all, export_star_sources, reexports, import_call_edges,
   default_object_ident_properties, ts_helper_exports,
   ts_helper_namespace_factory_exports, receiver_observing_exports,
-  passthrough_target }`
+  stays_commonjs, passthrough_target }`
 - `ModuleFactsMap` — keyed by normalized module specifier
   (handles `./foo`, `foo`, `foo.js` variants)
 

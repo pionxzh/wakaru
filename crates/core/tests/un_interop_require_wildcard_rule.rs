@@ -868,7 +868,9 @@ exports.load = function (code) { eval(code); return Promise.resolve().then(() =>
 "#
     );
     let output = render(&input);
-    assert!(output.contains("export const load"), "{output}");
+    // The require the lowering keeps stays a call, so the module stays
+    // CommonJS.
+    assert!(output.contains("exports.load"), "{output}");
     assert!(!output.contains("import("), "{output}");
 }
 
@@ -974,8 +976,9 @@ exports.load = function (other) { return ((t) => Promise.resolve().then(() => _i
 
 #[test]
 fn require_inside_a_function_keeps_interop_wildcard() {
-    // A `require` inside a function stays a `require`, so the namespace
-    // interop around it stays too. A lowered `import()` is the exception.
+    // A `require` inside a function stays a `require`, so the module stays
+    // CommonJS and the namespace interop around it stays too, the lowered
+    // `import()` included.
     let input = format!(
         "{BABEL_WILDCARD}{}",
         r#"
@@ -989,7 +992,10 @@ exports.load = function () { return Promise.resolve().then(() => _interopRequire
         output.contains(r#"_interopRequireWildcard(require("./a"))"#),
         "{output}"
     );
-    assert!(output.contains(r#"import("./b")"#), "{output}");
+    assert!(
+        output.contains(r#"_interopRequireWildcard(require("./b"))"#),
+        "{output}"
+    );
     assert!(
         output.contains("function _interopRequireWildcard"),
         "{output}"

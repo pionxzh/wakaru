@@ -658,9 +658,8 @@ layout directly is a proposal:
   AMD, Closure, Metro, and Turbopack were not checked with a producer.
 - **Relative `require` inside a top-level expression.** A module binding
   assigned inside an expression (`r = f((e = require("./m")).x)`) is not
-  turned into an import. The `require` stays in the ESM output, where it
-  throws, and no warning reports it. rspack production entries emit this
-  shape.
+  turned into an import, so the module stays CommonJS. rspack production
+  entries emit this shape.
 - **rspack inline `require.n` getter.** An inline `require.n` getter called
   in place in an rspack (1.7) entry (`(() => e && e.__esModule ? e.default :
   e)()`) is not collapsed: `UnWebpackInterop` matches only a getter bound to a

@@ -248,6 +248,10 @@ pub struct ModuleFacts {
     /// (reads `this`). A consumer's `ns.name()` passes the namespace as that
     /// receiver, so the call keeps its member form.
     pub receiver_observing_exports: Vec<Atom>,
+    /// True when the recovered module has no import or export declaration:
+    /// it stayed CommonJS (or is a plain script), so an ES module importer's
+    /// default import is its `module.exports`.
+    pub stays_commonjs: bool,
     /// If this module is a passthrough re-export (`export default require("./X.js")`),
     /// this is the target module specifier. Importers can be redirected to the target.
     pub passthrough_target: Option<Atom>,
@@ -673,7 +677,13 @@ fn object_ident_property_names(object: &ObjectLit) -> Vec<Atom> {
 }
 
 pub fn collect_module_facts(module: &Module) -> ModuleFacts {
-    let mut facts = ModuleFacts::default();
+    let mut facts = ModuleFacts {
+        stays_commonjs: !module
+            .body
+            .iter()
+            .any(|item| matches!(item, ModuleItem::ModuleDecl(_))),
+        ..ModuleFacts::default()
+    };
 
     for item in &module.body {
         let ModuleItem::ModuleDecl(decl) = item else {
@@ -2417,7 +2427,8 @@ fn is_regenerator_runtime_binding(module: &Module, local: &Atom) -> bool {
 
 /// Detect `export default require("./X.js")` — a pure passthrough module that
 /// re-exports another module's namespace as its default export. Returns the
-/// target specifier.
+/// target specifier. `module.exports = require("./X.js")` is the same
+/// passthrough when `UnEsm` keeps the module CommonJS.
 ///
 /// Only matches modules whose body contains leading `"use strict"` directives
 /// and the single `export default require("./X.js")`. Any other statement
@@ -2437,10 +2448,26 @@ fn detect_passthrough(module: &Module) -> Option<Atom> {
         return None;
     }
 
-    let ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(export)) = export_item else {
-        return None;
+    let value = match export_item {
+        ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(export)) => export.expr.as_ref(),
+        ModuleItem::Stmt(Stmt::Expr(statement)) => {
+            let Expr::Assign(assign) = statement.expr.as_ref() else {
+                return None;
+            };
+            let AssignTarget::Simple(SimpleAssignTarget::Member(target)) = &assign.left else {
+                return None;
+            };
+            if assign.op != AssignOp::Assign
+                || !matches!(target.obj.as_ref(), Expr::Ident(object) if object.sym == "module")
+                || !is_member_prop_name(&target.prop, "exports")
+            {
+                return None;
+            }
+            assign.right.as_ref()
+        }
+        _ => return None,
     };
-    let Expr::Call(call) = export.expr.as_ref() else {
+    let Expr::Call(call) = value else {
         return None;
     };
     let Callee::Expr(callee) = &call.callee else {

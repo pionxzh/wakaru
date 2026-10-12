@@ -862,14 +862,24 @@ own statements. Every wakaru CommonJS recovery shares this deviation; it is
 observable whenever a later provider's side effects (a global write, an
 installed getter or setter) change what an earlier consumer statement — such as
 an `Object.assign` copy — reads. Relative provider order is preserved only
-among requires that become imports. A require that stays a call keeps running
-in place, after every hoisted import. Requires of numeric module ids that are
-not in the input stay calls the same way in unpack output.
+among requires that become imports.
+
+ESM has no `require`, so a CommonJS module that would become ESM with a
+`require` call left in it stays CommonJS instead: one the barrier below keeps
+in place, a called require, one in a function, or one in a conditional
+position. Requires of numeric module ids that are not in the input are the
+exception. They fail in CommonJS too, so they stay calls in ESM output.
+Before that check `UnEsm` converts the module a second time, since some
+shapes convert only once it is ESM (`export default require("x")()`), and
+it leaves two shapes for later unpack stages: an imported helper's
+`helper(require("./p"))` (`cross_module_interop_import`) and a default-object
+composition source (`Object.assign(o, require("./p") || {})`). A require
+those stages leave stays in the ESM output.
 
 UnEsm limits the deviation with a barrier (`rules/un_esm/hoist_barrier.rs`).
 After the first top-level statement that a later provider can observe, every
-top-level `require` stays a call in place, and the module may become ESM with
-those calls in it. The barriers are:
+top-level `require` stays a call in place, so the module stays CommonJS. The
+barriers are:
 
 - a write to a global: `window.fetch = spy`, `process.env.X = v`, `g = 1`;
 - a string `require` that stays a call: one whose result is called, in an
@@ -894,6 +904,30 @@ install()`), and `Object.defineProperty(window, ...)`. webpack's module concaten
 `webpack@5.111.1` `concatenateModules`) is the main source of mid-body
 requires: an inner module's code runs before the next inner module's
 external require.
+
+A webpack harmony module (one that calls `require.r(exports)` or
+`require.d(exports, …)`) had ESM source, so its top-level loads came from
+imports, and webpack emitted them at the top of the factory in import order.
+When the first conversion leaves a require behind, `UnEsm` converts such a
+module again with two changes. A require that stays a call is no barrier
+there: Terser inlines a single-use import binding into its use
+(`r(100).A.make([…])`, `{ ...r(200) }`, `(0, n(300).Z)(…)`, producer
+`webpack@5.111.1` + Terser) but keeps the order of calls. And each such
+inlined load in a position that runs on every evaluation of the module body
+gets a `const` binding before its statement, which becomes an import. A
+global write or a discarded call stays a barrier, because only module
+concatenation puts one before a load. A require in a function or a
+conditional position was written by the source and keeps the module
+CommonJS. The assumption: an unconditional top-level require in a harmony
+module came from an import, so a source that wrote one itself (an ES module
+calling `require("x").init()` at the top level, which webpack accepts) has
+its call moved ahead of the module body like an import's.
+
+When a harmony module stays CommonJS, `UnEsm` writes the definitions the
+runtime calls made: `require.d` getters become `Object.defineProperty(exports,
+"name", { enumerable: true, get() { return x; } })`, as a method so Node's
+`cjs-module-lexer` finds the name for an ES module importer, and
+`require.r(exports)` becomes the `__esModule` definition.
 
 Recoveries that copy values at a specific program point (the default-object
 composition's `Object.assign` shells) prove the consumer's body exact but

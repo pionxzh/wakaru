@@ -188,11 +188,15 @@ fn async_loader_modules_become_deferred_requires_of_their_target() {
     // The loader module stays available to consumers in other inputs.
     assert_eq!(
         module(&output, "module-301.js").trim(),
-        r#"export default (()=>Promise.resolve().then(()=>require("./module-302.js")));"#
+        r#"module.exports = ()=>Promise.resolve().then(()=>require("./module-302.js"));"#
     );
     assert_eq!(
         module(&output, "module-101.js").trim(),
-        r#"export const load = function() {
+        r#""use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+exports.load = function() {
     return Promise.resolve().then(()=>require("./module-302.js")).then((e)=>e.message);
 };"#
     );
@@ -262,7 +266,7 @@ fn server_chunks_and_externals_are_recovered() {
     assert_clean(&output);
     assert_eq!(
         module(&output, "module-101.js").trim(),
-        r#"export default require("node:crypto");"#
+        r#"module.exports = require("node:crypto");"#
     );
     assert_eq!(
         module(&output, "module-202.js").trim(),
@@ -528,10 +532,9 @@ fn free_require_calls_in_translated_factories_share_the_require_name() {
     let output = unpack_chunk(&source);
     assert_clean(&output);
     let code = module(&output, "module-101.js");
-    assert!(
-        code.contains(r#"require("path").join(process.cwd()"#),
-        "{code}"
-    );
+    // An ES module's top-level host require is one of its imports.
+    assert!(code.contains(r#"import path from "path";"#), "{code}");
+    assert!(code.contains("path.join(process.cwd()"), "{code}");
     assert!(code.contains("./module-202.js"), "{code}");
 }
 
@@ -548,7 +551,7 @@ fn module_contexts_called_with_a_listed_constant_become_that_entry() {
     assert_clean(&output);
     assert_eq!(
         module(&output, "module-101.js").trim(),
-        r#"export default require("./module-303.js");"#
+        "\"use strict\";\nmodule.exports = require(\"./module-303.js\");"
     );
 }
 
@@ -572,10 +575,12 @@ fn module_contexts_with_dynamic_requests_use_a_local_runtime_copy() {
     );
     let output = unpack_chunk(&source);
     assert_clean(&output);
-    // The requires stay inside their entry thunks, so loading stays lazy.
+    // The requires stay inside their entry thunks, so loading stays lazy,
+    // and the module stays CommonJS around them.
     assert_eq!(
         module(&output, "module-101.js").trim(),
-        r##"function moduleContext(map) {
+        r##""use strict";
+function moduleContext(map) {
     function request(id) {
         const hash = id.indexOf("#");
         if (hash !== -1) {
@@ -609,7 +614,10 @@ fn module_contexts_with_dynamic_requests_use_a_local_runtime_copy() {
     context.import = async (id)=>await context(id);
     return context;
 }
-export const load = function(n) {
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+exports.load = function(n) {
     return moduleContext({
         "../icons/a.js": {
             id: ()=>301,
@@ -621,7 +629,7 @@ export const load = function(n) {
         }
     }).import(`../icons/${n}.js`);
 };
-export const missing = function() {
+exports.missing = function() {
     return moduleContext({
         "./x.js": {
             id: ()=>404,
@@ -746,7 +754,7 @@ fn dynamic_requires_stay_runtime_requires() {
     assert_clean(&output);
     assert_eq!(
         module(&output, "module-101.js").trim(),
-        "export default function(n) {\n    return require(n);\n};"
+        "module.exports = function(n) {\n    return require(n);\n};"
     );
 }
 
@@ -773,11 +781,20 @@ fn next_15_3_object_containers_are_recovered() {
     );
     assert_eq!(
         module(&output, "module-202.js").trim(),
-        r#"import { label } from "./module-101.js";
+        r#""use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+Object.defineProperty(exports, "default", {
+    enumerable: true,
+    get () {
+        return c;
+    }
+});
+var r = require("./module-101.js");
 function c() {
-    return Promise.resolve().then(()=>require("./module-302.js")).then((e)=>label + e.message);
-}
-export { c as default };"#
+    return Promise.resolve().then(()=>require("./module-302.js")).then((e)=>r.label + e.message);
+}"#
     );
 }
 
@@ -801,7 +818,7 @@ fn next_15_preamble_bindings_survive_redeclared_spellings() {
     );
     assert_eq!(
         module(&output, "module-505.js").trim(),
-        "let a;\na = require(\"./module-403.js\");\nexport default a.value;"
+        "let a;\na = require(\"./module-403.js\");\nmodule.exports = a.value;"
     );
 }
 
@@ -815,7 +832,7 @@ fn next_15_3_server_objects_recover_and_dirname_reads_stay_opaque() {
     assert_eq!(output.detected_formats, [BundleFormat::Turbopack]);
     assert_eq!(
         module(&output, "module-101.js").trim(),
-        r#"export default require("node:path");"#
+        r#"module.exports = require("node:path");"#
     );
     let [warning] = output.warnings.as_slice() else {
         panic!("expected one warning: {:?}", output.warnings);
@@ -859,7 +876,7 @@ fn loaders_in_another_input_are_called_through_their_module() {
     assert!(output.warnings.is_empty(), "{:?}", output.warnings);
     assert_eq!(
         module(&output, "module-101.js").trim(),
-        r#"export const load = ()=>require("./module-301.js")();"#
+        "\"use strict\";\nObject.defineProperty(exports, \"__esModule\", {\n    value: true\n});\nexports.load = ()=>require(\"./module-301.js\")();"
     );
 }
 

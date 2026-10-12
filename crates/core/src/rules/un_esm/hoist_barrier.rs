@@ -8,7 +8,7 @@
 //! discards the result (`polyfill.install()`), hoisting a later provider
 //! above it changes what that provider sees. After the first such statement,
 //! every top-level `require` stays a call: UnEsm then sees no `require`
-//! there, so the module may still become ESM with those calls left in it.
+//! there, and keeps the module CommonJS because of those calls.
 //!
 //! Other statements before a require are not barriers: declarations,
 //! function and class definitions, export plumbing, and calls whose results
@@ -34,9 +34,18 @@ use crate::utils::paren::strip_parens;
 /// the callee a fresh context. Returns that context for
 /// [`restore_requires`], or `None` when the module has no barrier before a
 /// require.
+///
+/// In a webpack harmony module (`harmony`), a require that stays a call is
+/// not a barrier. Its source was ESM, so webpack emitted every load at the
+/// top of the factory, and a later load can only follow another one when
+/// Terser inlined each binding into its use: the loads still run in the
+/// source's import order, which imports keep. A global write or a discarded
+/// call still is a barrier there: only module concatenation puts one before
+/// a load, and the load belongs to a later inner module.
 pub(super) fn hide_requires_after_barrier(
     module: &mut Module,
     unresolved_mark: Mark,
+    harmony: bool,
 ) -> Option<SyntaxContext> {
     let mut required = HashSet::default();
     let mut first_barrier = None;
@@ -55,7 +64,7 @@ pub(super) fn hide_requires_after_barrier(
             }
             ModuleItem::ModuleDecl(_) => continue,
         };
-        if is_barrier(stmt, unresolved_mark, &mut required) {
+        if is_barrier(stmt, unresolved_mark, harmony, &mut required) {
             first_barrier = Some(index);
             break;
         }
@@ -371,9 +380,16 @@ fn is_discarded_required_call(
 }
 
 /// Whether `stmt` is a hoisting barrier. Records the bindings of require
-/// declarations in `required` as it goes.
-fn is_barrier(stmt: &Stmt, unresolved_mark: Mark, required: &mut HashSet<BindingId>) -> bool {
-    let effects_are_barrier = |effects: Effects| effects.leftover_require || effects.global_write;
+/// declarations in `required` as it goes. With `harmony`, a require that
+/// stays a call does not make one (see [`hide_requires_after_barrier`]).
+fn is_barrier(
+    stmt: &Stmt,
+    unresolved_mark: Mark,
+    harmony: bool,
+    required: &mut HashSet<BindingId>,
+) -> bool {
+    let effects_are_barrier =
+        |effects: Effects| (effects.leftover_require && !harmony) || effects.global_write;
     match stmt {
         Stmt::Decl(Decl::Fn(_) | Decl::Class(_)) | Stmt::Empty(_) => false,
         Stmt::Decl(Decl::Var(var)) => {

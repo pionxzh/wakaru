@@ -480,6 +480,43 @@ fn webpack5_bundled_babel_runtime_interop_helper_becomes_imports() {
 }
 
 #[test]
+fn webpack5_bundled_babel_runtime_interop_of_a_commonjs_provider_becomes_a_default_import() {
+    // The babel runtime bundle above, with a `module.exports = format`
+    // provider that requires a module inside a function, so it stays
+    // CommonJS. The interop's `.default` is its `module.exports`, which is the
+    // default import of a CommonJS module.
+    let source = r#"(()=>{var e={393(e,t,r){"use strict";var n=r(994);t.run=function(){return["consumer-side",new o.default("w").label(),(0,u.default)("v"),u.default.version,i.twice(3),i.default,Object.keys(i).sort().join(",")]};var o=n(r(805)),u=n(r(30)),i=function(e){if("function"==typeof WeakMap){var t=new WeakMap;new WeakMap}return function(e){if(e&&e.__esModule)return e;var r,n,o={__proto__:null,default:e};if(null===e||"object"!=typeof e&&"function"!=typeof e)return o;if(r=t){if(r.has(e))return r.get(e);r.set(e,o)}for(const t in e)"default"!==t&&{}.hasOwnProperty.call(e,t)&&((n=(r=Object.defineProperty)&&Object.getOwnPropertyDescriptor(e,t))&&(n.get||n.set)?r(o,t,n):o[t]=e[t]);return o}(e)}(r(701))},97(e,t,r){const n=r(393);t.main=function(){return n.run()}},30(e,t,r){function n(e){return"<"+String(e)+">"}n.version="format-1",n.lazy=function(){return r(805)},e.exports=n},701(e,t){"use strict";Object.defineProperty(t,"__esModule",{value:!0}),t.default=void 0,t.twice=function(e){return 2*e},t.default="util-default"},805(e,t){"use strict";Object.defineProperty(t,"__esModule",{value:!0}),t.default=void 0,t.default=class{constructor(e){this.name=e}label(){return"widget:"+this.name}}},994(e){e.exports=function(e){return e&&e.__esModule?e:{default:e}},e.exports.__esModule=!0,e.exports.default=e.exports}};const t={};globalThis.lib=function r(n){const o=t[n];if(void 0!==o)return o.exports;const u=t[n]={exports:{}};return e[n](u,u.exports,r),u.exports}(97)})();"#;
+    // `validate_output_modules` reads every import target as ESM, so it is
+    // not used here: Node runs the syntaxless provider as CommonJS.
+    let output = unpack(source, DecompileOptions::default()).expect("bundle should unpack");
+    let module = |filename: &str| {
+        output
+            .modules
+            .iter()
+            .find(|(name, _)| name == filename)
+            .map(|(_, code)| code.clone())
+            .expect("module should exist")
+    };
+    let provider = module("module-30.js");
+    assert!(provider.contains("module.exports = n"), "{provider}");
+    assert!(!provider.contains("export "), "{provider}");
+    let consumer = module("module-393.js");
+    for present in [
+        r#"import u from "./module-30.js";"#,
+        r#"u("v")"#,
+        "u.version",
+    ] {
+        assert!(
+            consumer.contains(present),
+            "missing `{present}`:\n{consumer}"
+        );
+    }
+    for absent in ["require(", "u.default"] {
+        assert!(!consumer.contains(absent), "kept `{absent}`:\n{consumer}");
+    }
+}
+
+#[test]
 fn webpack5_bundled_swc_external_interop_helpers_become_imports() {
     // shape: producer @swc/core@1.16.2 module=commonjs externalHelpers, bundled
     // with @swc/helpers@0.5.18 by webpack@5.111.1 mode=production (Terser);

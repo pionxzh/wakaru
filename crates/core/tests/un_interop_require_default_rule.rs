@@ -967,8 +967,8 @@ exports.run = function () { return _a.default(); };
 #[test]
 fn require_inside_a_function_keeps_interop_default() {
     // `UnEsm` turns only top-level requires into imports. A `require` inside
-    // a function stays a `require`, where the interop call means the default
-    // export and the unwrapped form the whole module.
+    // a function stays a `require`, so the module stays CommonJS, where every
+    // interop call keeps meaning the default export.
     let input = r#"
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -980,8 +980,12 @@ function run() { var _a = _interopRequireDefault(require("./a")); return _a.defa
 function peek() { return _interopRequireDefault(require("./c")).default; }
 "#;
     let output = render(input);
-    assert!(output.contains(r#"import _b from "./b""#), "{output}");
-    assert!(output.contains("_b()"), "{output}");
+    assert!(!output.contains("import "), "{output}");
+    assert!(
+        output.contains(r#"_interopRequireDefault(require("./b"))"#),
+        "{output}"
+    );
+    assert!(output.contains("_b.default()"), "{output}");
     assert!(
         output.contains(r#"_interopRequireDefault(require("./a"))"#),
         "{output}"

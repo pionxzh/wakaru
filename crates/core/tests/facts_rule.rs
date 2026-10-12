@@ -204,6 +204,18 @@ fn export_default_expr() {
 }
 
 #[test]
+fn commonjs_passthrough_needs_the_whole_require_as_its_only_statement() {
+    for source in [
+        r#"module.exports = require("./provider.js")();"#,
+        r#"module.exports = require("./provider.js").value;"#,
+        r#"module.exports = require("./provider.js"); exports.x = 1;"#,
+        r#"module.exports += require("./provider.js");"#,
+    ] {
+        assert_eq!(collect_facts(source).passthrough_target, None, "{source}");
+    }
+}
+
+#[test]
 fn use_strict_does_not_hide_a_commonjs_passthrough() {
     let facts = collect_facts(
         r#"

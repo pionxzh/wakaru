@@ -147,8 +147,9 @@ fn webpack5_startup_with_unrestorable_boundary_falls_back_to_extracted_source() 
         return module.exports;
     }
     (() => {
+        // No statement before the require is a hoisting barrier, so the
+        // require becomes an import and the module needs ESM.
         if (window.FLAG_LOADED) return;
-        window.FLAG_LOADED = true;
         var dep = __webpack_require__(1);
         module.exports = dep;
     })();
@@ -1756,9 +1757,11 @@ fn library_anchor_consumed_by_wrapper_keeps_its_declaration() {
         entry.contains("= {}"),
         "the anchor declaration must be kept when the wrapper consumes it, got:\n{entry}"
     );
+    // The getter keeps a require inside a function, so the entry stays
+    // CommonJS and the tail stays `module.exports = t`.
     assert!(
-        entry.contains("export default t"),
-        "the wrapper tail must survive (as the recovered default export), got:\n{entry}"
+        entry.contains("module.exports = t"),
+        "the wrapper tail must survive, got:\n{entry}"
     );
     assert!(
         !entry.contains("export default exports") && !entry.contains("module.exports = exports"),

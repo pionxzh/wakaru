@@ -25,6 +25,7 @@ use crate::commonjs_export_residual::{
 };
 use crate::facts::{collect_module_facts, ModuleFactsMap};
 use crate::js_names::{is_reserved_binding_name, is_valid_identifier_name};
+use crate::kept_require;
 use crate::module_path::resolve_relative_specifier;
 use crate::provider_namespace_repair::run_provider_namespace_repair;
 use crate::utils::member::static_member_name;
@@ -47,6 +48,7 @@ use super::RewriteLevel;
 mod export_getters;
 mod export_star;
 pub(crate) mod export_storage;
+mod harmony_requires;
 mod hoist_barrier;
 use export_getters::has_webpack_export_definitions;
 pub(crate) use export_getters::{lower_export_getter_helpers, lower_webpack_export_definitions};
@@ -203,34 +205,93 @@ impl VisitMut for UnEsm {
         if super::eval_utils::module_has_with_stmt(module) {
             return;
         }
+        let was_commonjs = !has_module_decl(module);
+        // ESM has no `require`. A CommonJS module that would become ESM with a
+        // `require` call left in it (one the barrier keeps in place, a called
+        // require, one in a function or a condition) stays CommonJS instead,
+        // where the call still works.
+        let original = (was_commonjs
+            && !kept_require::kept_require_calls(module, self.unresolved_mark).is_empty())
+        .then(|| module.clone());
+        self.convert_module(module, false);
+        let Some(original) = original else {
+            self.finish(module);
+            return;
+        };
+        // Some shapes convert only once the module is ESM, such as the
+        // requires in `export default (a = require("x"), a.b)` or
+        // `export default require("x")()`: run again, as a later recovery
+        // pass would.
+        if self.keeps_require_in_esm(module) {
+            self.convert_module(module, false);
+        }
+        if !self.keeps_require_in_esm(module) {
+            self.finish(module);
+            return;
+        }
+        // A webpack harmony module's top-level loads all come from imports,
+        // so convert them, inlined ones included, before giving up on ESM.
+        let harmony = harmony_requires::is_webpack_harmony_module(&original, self.unresolved_mark);
+        if harmony {
+            *module = original.clone();
+            self.lowered_esbuild_namespace = false;
+            self.convert_module(module, true);
+            if !self.keeps_require_in_esm(module) {
+                self.finish(module);
+                return;
+            }
+        }
+        *module = original;
+        self.lowered_esbuild_namespace = false;
+        if harmony {
+            // The split output has no webpack runtime: define the exports
+            // and the marker the runtime calls would have, in a form an ES
+            // module importer sees.
+            lower_webpack_export_definitions(module, self.unresolved_mark);
+            export_getters::lower_webpack_esmodule_marker(module, self.unresolved_mark);
+            export_getters::lexer_visible_export_getters(module, self.unresolved_mark);
+        }
+        self.finish(module);
+    }
+}
+
+impl UnEsm {
+    fn keeps_require_in_esm(&self, module: &Module) -> bool {
+        has_module_decl(module)
+            && !kept_require::blocking_require_calls(module, self.unresolved_mark).is_empty()
+    }
+
+    /// One conversion attempt. `harmony` treats the module as webpack harmony
+    /// output: a kept require is no hoisting barrier, and each load Terser
+    /// inlined into its use gets a binding `UnEsm` converts.
+    fn convert_module(&mut self, module: &mut Module, harmony: bool) {
         // Read before the lowering below removes webpack's `require.d` calls.
         let calls_bundler_helper = calls_bundler_require_helper(module, self.unresolved_mark);
         // webpack's `require.d` calls become per-name definitions, which the
         // analysis and the export rewrites share with every other producer.
         // A module that stays CommonJS keeps the calls as written.
-        let was_commonjs = !module
-            .body
-            .iter()
-            .any(|item| matches!(item, ModuleItem::ModuleDecl(_)));
+        let was_commonjs = !has_module_decl(module);
         let before_lowering = (was_commonjs
             && has_webpack_export_definitions(module, self.unresolved_mark))
         .then(|| module.body.clone());
         let lowered = lower_webpack_export_definitions(module, self.unresolved_mark);
         let hidden_requires =
-            hoist_barrier::hide_requires_after_barrier(module, self.unresolved_mark);
+            hoist_barrier::hide_requires_after_barrier(module, self.unresolved_mark, harmony);
+        if harmony {
+            harmony_requires::hoist_inlined_requires(module, self.unresolved_mark);
+        }
         self.convert(module, calls_bundler_helper);
         if let (true, Some(original)) = (lowered, before_lowering) {
-            if !module
-                .body
-                .iter()
-                .any(|item| matches!(item, ModuleItem::ModuleDecl(_)))
-            {
+            if !has_module_decl(module) {
                 module.body = original;
             }
         }
         if let Some(hidden) = hidden_requires {
             hoist_barrier::restore_requires(module, hidden, self.unresolved_mark);
         }
+    }
+
+    fn finish(&self, module: &mut Module) {
         // Below standard, `UnIndirectCall` keeps the member in
         // `(0, ns.name)(…)` because a member call would gain a receiver. The
         // conversion above replaces the member with the imported binding,
@@ -243,6 +304,13 @@ impl VisitMut for UnEsm {
             ));
         }
     }
+}
+
+fn has_module_decl(module: &Module) -> bool {
+    module
+        .body
+        .iter()
+        .any(|item| matches!(item, ModuleItem::ModuleDecl(_)))
 }
 
 impl UnEsm {
@@ -4914,9 +4982,41 @@ fn hoist_requires_from_seq(
             }
         }
 
+        // a = (i = require("...")).lib → const i = require("..."); const a = i.lib;
+        // The require runs first either way, and `i` then holds what it
+        // returned, so the module keeps no require that stays a call.
+        if let Expr::Assign(assign) = expr_ref {
+            if assign.op == AssignOp::Assign {
+                if let (Some(outer_ident), Some((mut targets, require_expr))) = (
+                    simple_assign_target_ident(&assign.left),
+                    nested_require_assignment(&assign.right, unresolved_mark),
+                ) {
+                    // `(i = c = require("..."))`: `c` takes the value first.
+                    let inner_ident = targets.pop().expect("one target at least");
+                    let (inner_local, inner_assign) =
+                        import_local_for_assignment(inner_ident, used_names);
+                    hoisted.push(make_require_var_item(inner_local.clone(), require_expr));
+                    if let Some(assign) = inner_assign {
+                        hoisted.push(assign);
+                    }
+                    for target in targets.into_iter().rev() {
+                        hoisted.push(make_assign_item(target, Expr::Ident(inner_local.clone())));
+                    }
+                    let mut value = assign.right.clone();
+                    replace_member_chain_root(&mut value, Expr::Ident(inner_local));
+                    let (outer_local, outer_assign) =
+                        import_local_for_assignment(outer_ident.clone(), used_names);
+                    hoisted.push(make_var_item(outer_local, value));
+                    if let Some(assign) = outer_assign {
+                        hoisted.push(assign);
+                    }
+                    continue;
+                }
+            }
+        }
+
         // Assignments whose right side contains require() deeper in the tree:
         // - c = i = require("...") → const c = i = require("...");
-        // - a = (i = require("...")).lib → const a = (i = require("...")).lib;
         if let Expr::Assign(assign) = expr_ref {
             if assign.op == AssignOp::Assign {
                 if let Some(outer_ident) = simple_assign_target_ident(&assign.left) {
@@ -4951,6 +5051,59 @@ fn hoist_requires_from_seq(
     };
 
     (hoisted, final_expr)
+}
+
+/// `(i = require("...")).a.b` or `(i = c = require("...")).a.b`: the
+/// assigned bindings, outermost first, and the require call at the root of a
+/// member chain.
+fn nested_require_assignment(
+    expr: &Expr,
+    unresolved_mark: Mark,
+) -> Option<(Vec<Ident>, Box<Expr>)> {
+    let Expr::Member(_) = strip_parens(expr) else {
+        return None;
+    };
+    let mut current = strip_parens(expr);
+    while let Expr::Member(member) = current {
+        current = strip_parens(&member.obj);
+    }
+    let mut targets = Vec::new();
+    while let Expr::Assign(assign) = current {
+        if assign.op != AssignOp::Assign {
+            return None;
+        }
+        targets.push(simple_assign_target_ident(&assign.left)?.clone());
+        current = strip_parens(&assign.right);
+    }
+    let Expr::Call(call) = current else {
+        return None;
+    };
+    is_require_call(call, unresolved_mark)?;
+    (!targets.is_empty()).then(|| (targets, Box::new(Expr::Call(call.clone()))))
+}
+
+fn make_assign_item(target: Ident, value: Expr) -> ModuleItem {
+    ModuleItem::Stmt(Stmt::Expr(ExprStmt {
+        span: DUMMY_SP,
+        expr: Box::new(Expr::Assign(AssignExpr {
+            span: DUMMY_SP,
+            op: AssignOp::Assign,
+            left: AssignTarget::Simple(SimpleAssignTarget::Ident(BindingIdent {
+                id: target,
+                type_ann: None,
+            })),
+            right: Box::new(value),
+        })),
+    }))
+}
+
+/// Replaces the object at the root of a member chain.
+fn replace_member_chain_root(expr: &mut Box<Expr>, root: Expr) {
+    match &mut **expr {
+        Expr::Member(member) => replace_member_chain_root(&mut member.obj, root),
+        Expr::Paren(paren) => replace_member_chain_root(&mut paren.expr, root),
+        other => *other = root,
+    }
 }
 
 /// Match `(i = require("...")) && i.__esModule ? i : { default: i }`

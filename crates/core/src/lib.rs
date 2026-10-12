@@ -14,6 +14,7 @@ pub mod driver;
 pub mod facts;
 pub mod gtm;
 pub(crate) mod js_names;
+pub(crate) mod kept_require;
 pub(crate) mod module_path;
 pub mod namespace_decomposition;
 pub mod output_validate;
