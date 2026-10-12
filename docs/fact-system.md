@@ -67,6 +67,7 @@ Phase 2 (per module, parallel):
     run_cross_module_interop_imports(...)            ← helper export facts
     run_namespace_decomposition(&mut module, facts)  ← reads cross-module facts
     downgrade_unused_synthetic_imports(&mut module)  ← preserve require effects
+    run_kept_require_default_reads(...)              ← kept require of a default-only ESM provider
     registry rule range resuming after UnEsm, through UnReturn
       (UnEs6Class / UnPrototypeClass read this module's CallRequiredPlan pins)
     targeted late cleanup/recovery
@@ -111,7 +112,8 @@ distinguishable from an authored ESM dependency downstream.
 - `ImportCallEdge { source, imported, consumed_by_exports }`
 - `ModuleFacts { imports, exports, helper_exports,
   commonjs_default_object, commonjs_default_attached_properties,
-  require_returns_exports_object, whole_require_sources, marks_es_module,
+  require_returns_exports_object, commonjs_value_is_default,
+  whole_require_sources, marks_es_module,
   wildcard_require_sources, has_export_all, export_star_sources, reexports, import_call_edges,
   default_object_ident_properties, ts_helper_exports,
   ts_helper_namespace_factory_exports, receiver_observing_exports,
@@ -158,6 +160,14 @@ frame does not count (`cocos_registration_frame` in
 `module.exports = v` into a default export; only the first is one property
 of the required value, which a consumer's whole `require` reads as the
 namespace.
+
+`collect_commonjs_value_is_default` records the other case: the module
+assigns `module.exports` exactly once, in a top-level statement, and uses
+`module` only as `module.exports`. Its CommonJS value is then that
+statement's value, which becomes the default export. A consumer that stays
+CommonJS keeps `require` of it, which returns the ES module's namespace, so
+`run_kept_require_default_reads` reads `.default` of that call when the
+provider's output has only that default export.
 
 `collect_whole_require_sources` is the consumer half. It lists the sources
 of top-level `var x = require("src")` bindings that the module uses as the

@@ -42,9 +42,11 @@ use crate::commonjs_default_object_composition::{
 };
 use crate::facts::{
     collect_commonjs_default_attached_properties, collect_commonjs_default_object,
-    collect_marks_es_module, collect_module_facts, collect_require_returns_exports_object,
-    collect_whole_require_sources, collect_wildcard_require_sources, ModuleFactsMap,
+    collect_commonjs_value_is_default, collect_marks_es_module, collect_module_facts,
+    collect_require_returns_exports_object, collect_whole_require_sources,
+    collect_wildcard_require_sources, ModuleFactsMap,
 };
+use crate::kept_require::run_kept_require_default_reads;
 use crate::namespace_decomposition::run_namespace_decomposition;
 use crate::provider_import_repair::run_provider_import_repair;
 use crate::provider_namespace_repair::run_provider_namespace_repair;
@@ -517,6 +519,8 @@ pub(super) fn unpack_multi_module_with_plan(
                 collect_commonjs_default_attached_properties(&module, unresolved_mark);
             let require_returns_exports_object =
                 collect_require_returns_exports_object(&module, unresolved_mark);
+            let commonjs_value_is_default =
+                collect_commonjs_value_is_default(&module, unresolved_mark);
             let whole_require_sources = collect_whole_require_sources(&module, unresolved_mark);
             let marks_es_module = collect_marks_es_module(&module, unresolved_mark);
             let wildcard_require_sources =
@@ -589,6 +593,7 @@ pub(super) fn unpack_multi_module_with_plan(
             facts.commonjs_default_attached_properties =
                 commonjs_default_attached_properties;
             facts.require_returns_exports_object = require_returns_exports_object;
+            facts.commonjs_value_is_default = commonjs_value_is_default;
             facts.whole_require_sources = whole_require_sources;
             facts.marks_es_module = marks_es_module;
             facts.wildcard_require_sources = wildcard_require_sources;
@@ -734,6 +739,12 @@ pub(super) fn unpack_multi_module_with_plan(
                 unresolved_mark,
             );
             downgrade_unused_synthetic_imports(&mut module);
+            run_kept_require_default_reads(
+                &mut module,
+                facts_ref,
+                Some(&unpacked.module.filename),
+                unresolved_mark,
+            );
             // Late helper-through-UnReturn range.
             apply_rules_to_recovered_module(
                 &mut module,

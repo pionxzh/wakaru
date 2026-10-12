@@ -1,3 +1,4 @@
+use swc_core::common::DUMMY_SP;
 use swc_core::common::{Mark, Span};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, BinExpr, BinaryOp, CallExpr, Callee, Class, CondExpr,
@@ -5,7 +6,10 @@ use swc_core::ecma::ast::{
     MemberProp, Module, ModuleDecl, ModuleItem, OptCall, OptChainBase, OptChainExpr, SwitchStmt,
     TryStmt, WhileStmt,
 };
-use swc_core::ecma::visit::{Visit, VisitWith};
+use swc_core::ecma::ast::{IdentName, Invalid, MemberExpr};
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
+
+use crate::facts::{ExportKind, ModuleFacts, ModuleFactsMap};
 
 use crate::analysis::binding_id;
 use crate::analysis::binding_uses::BindingId;
@@ -360,6 +364,80 @@ fn is_composition_call(call: &CallExpr, unresolved_mark: Mark) -> bool {
                 }) if matches!(&**left, Expr::Call(inner) if is_kept_require_call(inner, unresolved_mark))
                     && matches!(&**right, Expr::Object(object) if object.props.is_empty()))
         })
+}
+
+/// In a module that stays CommonJS, reads `.default` of each kept
+/// `require("./p")` whose provider was `module.exports = v` and is now an
+/// ES module with only `export default v`: `require` of an ES module returns
+/// its namespace, and `v` is that namespace's `default`. Every consumer read
+/// of the CommonJS value keeps its meaning, an interop helper's included.
+pub(crate) fn run_kept_require_default_reads(
+    module: &mut Module,
+    module_facts: &ModuleFactsMap,
+    current_filename: Option<&str>,
+    unresolved_mark: Mark,
+) {
+    struct Rewriter<'a> {
+        module_facts: &'a ModuleFactsMap,
+        current_filename: Option<&'a str>,
+        unresolved_mark: Mark,
+    }
+
+    impl VisitMut for Rewriter<'_> {
+        fn visit_mut_expr(&mut self, expr: &mut Expr) {
+            expr.visit_mut_children_with(self);
+            let Expr::Call(call) = &*expr else {
+                return;
+            };
+            if !is_kept_require_call(call, self.unresolved_mark) {
+                return;
+            }
+            let [arg] = call.args.as_slice() else {
+                return;
+            };
+            let Expr::Lit(Lit::Str(source)) = strip_parens(&arg.expr) else {
+                return;
+            };
+            let Some(provider) = self
+                .module_facts
+                .get_from(self.current_filename, source.value.as_str().unwrap_or(""))
+            else {
+                return;
+            };
+            if !reads_value_as_default(provider) {
+                return;
+            }
+            let call = std::mem::replace(expr, Expr::Invalid(Invalid { span: DUMMY_SP }));
+            *expr = Expr::Member(MemberExpr {
+                span: DUMMY_SP,
+                obj: Box::new(call),
+                prop: MemberProp::Ident(IdentName::new("default".into(), DUMMY_SP)),
+            });
+        }
+    }
+
+    if module
+        .body
+        .iter()
+        .any(|item| matches!(item, ModuleItem::ModuleDecl(_)))
+    {
+        return;
+    }
+    module.visit_mut_with(&mut Rewriter {
+        module_facts,
+        current_filename,
+        unresolved_mark,
+    });
+}
+
+/// The provider's CommonJS value is the `default` of the namespace its ES
+/// module output gives `require`.
+fn reads_value_as_default(provider: &ModuleFacts) -> bool {
+    provider.commonjs_value_is_default
+        && !provider.stays_commonjs
+        && !provider.has_export_all
+        && provider.reexports.is_empty()
+        && matches!(provider.exports.as_slice(), [export] if export.kind == ExportKind::Default)
 }
 
 #[cfg(test)]

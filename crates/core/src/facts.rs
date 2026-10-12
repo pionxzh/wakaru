@@ -215,6 +215,12 @@ pub struct ModuleFacts {
     /// object. A consumer's whole `require` value is then the namespace of
     /// the recovered exports, with `default` as one of its properties.
     pub require_returns_exports_object: bool,
+    /// True when the module's CommonJS value is the value of its single
+    /// top-level `module.exports = v` statement, collected before `UnEsm`
+    /// turns it into `export default v`. A consumer that keeps `require` of
+    /// the recovered ES module then reads that value as `.default` of the
+    /// namespace `require` returns.
+    pub commonjs_value_is_default: bool,
     /// Sources this module requires as a whole value it uses directly, with
     /// no interop wrapper that would make the binding mean the provider's
     /// default export (see [`collect_whole_require_sources`]).
@@ -1615,6 +1621,101 @@ pub fn collect_require_returns_exports_object(module: &Module, unresolved_mark: 
     };
     module.visit_with(&mut runtime_surface);
     runtime_surface.module_uses == 0 && !runtime_surface.has_direct_eval
+}
+
+/// Whether the module's CommonJS value is the value of its single top-level
+/// `module.exports = v` statement: every use of the free `module` is a
+/// `module.exports` member, the module assigns `module.exports` exactly once,
+/// and that assignment is a top-level expression statement. Collected before
+/// `UnEsm`, which turns the statement into `export default v`. A direct eval,
+/// or a module with ESM declarations already, fails.
+pub fn collect_commonjs_value_is_default(module: &Module, unresolved_mark: Mark) -> bool {
+    struct Collector {
+        unresolved_mark: Mark,
+        module_uses: usize,
+        member_uses: usize,
+        assignments: usize,
+        has_direct_eval: bool,
+    }
+
+    impl Collector {
+        fn is_module_exports(&self, member: &swc_core::ecma::ast::MemberExpr) -> bool {
+            matches!(member.obj.as_ref(), Expr::Ident(object)
+                if is_unresolved_ident(object, "module", self.unresolved_mark))
+                && is_member_prop_name(&member.prop, "exports")
+        }
+    }
+
+    impl Visit for Collector {
+        fn visit_member_expr(&mut self, member: &swc_core::ecma::ast::MemberExpr) {
+            if self.is_module_exports(member) {
+                self.member_uses += 1;
+            }
+            member.visit_children_with(self);
+        }
+
+        fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+            if let AssignTarget::Simple(SimpleAssignTarget::Member(target)) = &assign.left {
+                if self.is_module_exports(target) {
+                    self.assignments += 1;
+                }
+            }
+            assign.visit_children_with(self);
+        }
+
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if matches!(&call.callee, Callee::Expr(callee)
+                if matches!(strip_parens(callee), Expr::Ident(ident)
+                    if is_unresolved_ident(ident, "eval", self.unresolved_mark)))
+            {
+                self.has_direct_eval = true;
+            }
+            call.visit_children_with(self);
+        }
+
+        fn visit_ident(&mut self, ident: &swc_core::ecma::ast::Ident) {
+            if is_unresolved_ident(ident, "module", self.unresolved_mark) {
+                self.module_uses += 1;
+            }
+        }
+    }
+
+    if module
+        .body
+        .iter()
+        .any(|item| matches!(item, ModuleItem::ModuleDecl(_)))
+    {
+        return false;
+    }
+    let top_level_assignments = module
+        .body
+        .iter()
+        .filter(|item| {
+            let ModuleItem::Stmt(Stmt::Expr(statement)) = item else {
+                return false;
+            };
+            let Expr::Assign(assign) = strip_parens(&statement.expr) else {
+                return false;
+            };
+            assign.op == AssignOp::Assign
+                && matches!(&assign.left, AssignTarget::Simple(SimpleAssignTarget::Member(target))
+                    if matches!(target.obj.as_ref(), Expr::Ident(object)
+                        if is_unresolved_ident(object, "module", unresolved_mark))
+                        && is_member_prop_name(&target.prop, "exports"))
+        })
+        .count();
+    let mut collector = Collector {
+        unresolved_mark,
+        module_uses: 0,
+        member_uses: 0,
+        assignments: 0,
+        has_direct_eval: false,
+    };
+    module.visit_with(&mut collector);
+    top_level_assignments == 1
+        && collector.assignments == 1
+        && collector.module_uses == collector.member_uses
+        && !collector.has_direct_eval
 }
 
 /// Sources of top-level `var x = require("src")` bindings whose value the

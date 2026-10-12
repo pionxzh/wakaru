@@ -6,9 +6,9 @@ use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::VisitMutWith;
 use wakaru_core::facts::{
     collect_commonjs_default_attached_properties, collect_commonjs_default_object,
-    collect_marks_es_module, collect_module_facts, ExportFact, ExportKind, HelperExportFact,
-    HelperKind, ImportFact, ImportKind, ModuleFacts, ModuleFactsMap, TypeScriptHelperExportFact,
-    TypeScriptHelperKind,
+    collect_commonjs_value_is_default, collect_marks_es_module, collect_module_facts, ExportFact,
+    ExportKind, HelperExportFact, HelperKind, ImportFact, ImportKind, ModuleFacts, ModuleFactsMap,
+    TypeScriptHelperExportFact, TypeScriptHelperKind,
 };
 use wakaru_core::{apply_rules, RulePipelineOptions};
 
@@ -1047,6 +1047,45 @@ fn marks_es_module_reads_the_flag_inside_a_top_level_sequence() {
     assert!(!marks(
         r#"(function(){Object.defineProperty(exports,"__esModule",{value:!0}),exports.default="value"})();"#
     ));
+}
+
+#[test]
+fn commonjs_value_is_default_needs_one_top_level_module_exports_assignment() {
+    let is_default = |source: &str| {
+        GLOBALS.set(&Default::default(), || {
+            let cm: Lrc<SourceMap> = Default::default();
+            let fm = cm.new_source_file(
+                FileName::Custom("test.js".to_string()).into(),
+                source.to_string(),
+            );
+            let lexer = Lexer::new(
+                Syntax::Es(EsSyntax::default()),
+                Default::default(),
+                StringInput::from(&*fm),
+                None,
+            );
+            let mut module = Parser::new_from(lexer)
+                .parse_module()
+                .expect("parse failed");
+            let unresolved_mark = Mark::new();
+            module.visit_mut_with(&mut resolver(unresolved_mark, Mark::new(), false));
+            collect_commonjs_value_is_default(&module, unresolved_mark)
+        })
+    };
+    assert!(is_default("module.exports = function (t) { return t; };"));
+    assert!(is_default(
+        r#""use strict"; function f() {} f.version = 1; module.exports = f; module.exports.x = 2;"#
+    ));
+    // Without the assignment the value is the `exports` object.
+    assert!(!is_default("exports.a = 1;"));
+    assert!(!is_default("module.exports = a; module.exports = b;"));
+    assert!(!is_default("if (c) module.exports = a;"));
+    assert!(!is_default(
+        "module.exports = a; function reset() { module.exports = b; }"
+    ));
+    assert!(!is_default("module.exports = a; module.hot.accept();"));
+    assert!(!is_default("module.exports = a; eval(code);"));
+    assert!(!is_default("export default a;"));
 }
 
 #[test]

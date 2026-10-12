@@ -667,24 +667,18 @@ layout directly is a proposal:
   shape. (rspack's version metadata, `require.rv` and `require.ruid`, is
   treated as runtime and stays out of the entry.)
 - **A kept `require` of a provider recovered as ESM.** A relative `require`
-  that stays a call (after an `import_hoisting_eagerness` barrier, or nested
-  in a function) returns the provider's module namespace once that provider
-  becomes ESM. Two consumer meanings break:
-  - the whole value of a `module.exports = v` provider, now `export default
-    v`: `const n = require("./m"); n()` throws (`hypothetical`);
-  - an interop default whose helper `UnWebpackInterop` already removed
-    (`require.n(x).a`), so the binding is read as the default:
-    `n.usesSpy()` throws (producer `webpack@4.47` concatenation + Terser,
-    with an `swc@1.16` CommonJS dependency).
-
-  The suggested fix is a Phase 2 pass: when the provider's facts prove
-  ESM output and the consumer's binding means its default, rewrite the
-  call to `require("./m").default`. The whole-value case needs a provider
-  fact that the CommonJS value is the default export (`module.exports = v`,
-  not `exports.default = v`). The interop case needs a Phase 1 consumer
-  fact, collected before the interop helpers go, like
-  `whole_require_sources`. Keeping the provider CommonJS does not fix the
-  interop case, because the `__esModule` object still has to be unwrapped.
+  that stays a call keeps its module CommonJS, and it returns the provider's
+  module namespace once that provider becomes ESM. When the provider was
+  `module.exports = v` and is now only `export default v`, Phase 2 reads
+  `.default` of the call (`run_kept_require_default_reads`), which is `v`
+  for every consumer read. The gap left is a provider that marked itself
+  `__esModule`: an interop default whose helper `UnWebpackInterop` already
+  removed (`require.n(x).a`) reads the binding as the default, and the
+  namespace has no marker for an interop helper to test (producer
+  `webpack@4.47` concatenation + Terser, with an `swc@1.16` CommonJS
+  dependency). Which reads mean the default is known only per use, so the
+  fix needs a Phase 1 consumer fact collected before the interop helpers
+  go, like `whole_require_sources`.
 - **A `.cjs` name still gets ESM syntax.** A single-file decompile keeps a
   `.cjs`/`.cts` input CommonJS (`run_un_esm` stands down), but unpack does
   not apply that gate. Two inputs reach it: a `.cjs` file passed to

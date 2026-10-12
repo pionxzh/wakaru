@@ -3976,3 +3976,38 @@ fn webpack5_does_not_misdetect_method_object_without_require_lifecycle() {
         "method-only object misdetected as a webpack5 modules object: {names:?}"
     );
 }
+
+#[test]
+fn webpack5_kept_require_of_a_module_exports_provider_reads_its_default() {
+    // shape: producer webpack@5.111.1 mode=production (Terser). Terser inlines
+    // each single-use require into its use, so `o(971)(…)` and
+    // `o(451)("toStringTag")` stay calls and their modules stay CommonJS. Each
+    // provider was `module.exports = function` and is now `export default
+    // function`, whose namespace `require` returns.
+    let source = r#"(()=>{var t={97(t,e,o){o(817);var r=o(825);t.exports={tag:r("entry"),registry:globalThis.__polyfillRegistry}},971(t){t.exports=function(t,e){(globalThis.__polyfillRegistry||(globalThis.__polyfillRegistry=[])).push([t.target,t.forced,e.label,"export-module"])}},232(t){t.exports="function"!=typeof globalThis.FeatureNative},817(t,e,o){o(971)({target:"Feature",forced:o(232)},{label:"installer-module"})},825(t,e,o){var r=o(971),l=o(451)("toStringTag");t.exports=function(t){return l+":"+t+":"+typeof r}},451(t){t.exports=function(t){return"well-known-module:"+t}}};const e={};globalThis.__artificialSink=function o(r){const l=e[r];if(void 0!==l)return l.exports;const i=e[r]={exports:{}};return t[r](i,i.exports,o),i.exports}(97)})();"#;
+    let output = unpack(source, DecompileOptions::default()).expect("bundle should unpack");
+    let module = |filename: &str| {
+        output
+            .modules
+            .iter()
+            .find(|(name, _)| name == filename)
+            .map(|(_, code)| code.clone())
+            .expect("module should exist")
+    };
+    let installer = module("module-817.js");
+    assert!(
+        installer.contains(r#"require("./module-971.js").default({"#),
+        "{installer}"
+    );
+    assert!(
+        installer.contains(r#"forced: require("./module-232.js").default"#),
+        "{installer}"
+    );
+    let tag = module("module-825.js");
+    assert!(
+        tag.contains(r#"require("./module-451.js").default("toStringTag")"#),
+        "{tag}"
+    );
+    assert!(tag.contains("module.exports = "), "{tag}");
+    assert!(module("module-971.js").contains("export default function"));
+}
