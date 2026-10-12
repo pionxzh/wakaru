@@ -448,8 +448,10 @@ Neither proof creates a default-object fact available to consumers.
   (`g.apply(this, arguments)`, Babel's async wrapper), or an export whose value
   is a wrapping call (`_asyncToGenerator(function* () { … })`), is listed when
   what it forwards to reads `this`; `call_receiver_independence` in
-  [rewrite-assumptions.md](rewrite-assumptions.md) has the rule. A
-  recognized transpiler helper is not listed.
+  [rewrite-assumptions.md](rewrite-assumptions.md) has the rule. An export
+  initialized through an assignment chain (`export const size = f.size =
+  function () { … }`, as `UnEsm` recovers `module.exports.size = …`) is read
+  at the chain's last value. A recognized transpiler helper is not listed.
 - **`UnObjectSpread`** — in multi-module unpack, recognizes object spread
   helpers imported from a helper module whose default/named export fact proves
   it is Babel's `extends` or `objectSpread` helper. This covers helpers split

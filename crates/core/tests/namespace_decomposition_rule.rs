@@ -450,6 +450,21 @@ export function run() {
     assert_eq!(target_facts.receiver_observing_exports, vec!["run"]);
 }
 
+/// UnEsm keeps the property write when it recovers
+/// `module.exports.size = function () { … }` after `module.exports = f`.
+#[test]
+fn export_through_an_assignment_chain_follows_its_function_literal() {
+    let target_facts = facts_for(
+        r#"
+const f = function () { return 1; };
+export default f;
+export const size = f.size = function () { return this.n; };
+export const flag = f.flag = true;
+"#,
+    );
+    assert_eq!(target_facts.receiver_observing_exports, vec!["size"]);
+}
+
 #[test]
 fn reserved_export_name_uses_safe_import_alias() {
     let target_facts = facts_for(

@@ -890,7 +890,20 @@ fn collect_receiver_observing_exports(module: &Module, facts: &ModuleFacts) -> V
             })) => {
                 for decl in &var.decls {
                     if let (Pat::Ident(binding), Some(init)) = (&decl.name, &decl.init) {
-                        match strip_parens(init) {
+                        // `export const size = f.size = function () { … }`:
+                        // UnEsm keeps the property write of a recovered
+                        // `module.exports.size = …`, and the export holds the
+                        // same function.
+                        let mut init = strip_parens(init);
+                        while let Expr::Assign(AssignExpr {
+                            op: AssignOp::Assign,
+                            right,
+                            ..
+                        }) = init
+                        {
+                            init = strip_parens(right);
+                        }
+                        match init {
                             Expr::Fn(function) => {
                                 functions.insert(binding.id.sym.clone(), &function.function);
                             }

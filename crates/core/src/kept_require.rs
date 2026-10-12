@@ -8,8 +8,8 @@ use swc_core::ecma::ast::{
     SwitchStmt, TryStmt, WhileStmt,
 };
 use swc_core::ecma::ast::{
-    Ident, IdentName, Invalid, KeyValueProp, MemberExpr, NewExpr, Pat, Prop, PropName,
-    PropOrSpread, VarDeclarator,
+    BindingIdent, Ident, IdentName, Invalid, KeyValueProp, MemberExpr, NewExpr, Pat, Prop,
+    PropName, PropOrSpread, SimpleAssignTarget, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -493,7 +493,7 @@ enum ProviderShape<'a> {
     /// `module.exports = v` plus named exports, which are on the namespace,
     /// not on `v`: a call or `new` reads `default`, a named export stays a
     /// namespace read.
-    DefaultWithNamed(&'a [ExportFact]),
+    DefaultWithNamed(&'a ModuleFacts),
     /// The module marked itself `__esModule`; the namespace is its exports
     /// object without the marker, which only an interop reads.
     Marked,
@@ -517,7 +517,7 @@ fn provider_shape(provider: &ModuleFacts) -> Option<ProviderShape<'_>> {
         return Some(if provider.exports.len() == 1 {
             ProviderShape::Default
         } else {
-            ProviderShape::DefaultWithNamed(&provider.exports)
+            ProviderShape::DefaultWithNamed(provider)
         });
     }
     if provider.marks_es_module {
@@ -569,23 +569,31 @@ pub(crate) fn run_kept_require_default_reads(
         .and_then(|filename| module_facts.get(filename))
         .map_or(&[][..], |own| own.interop_require_sources.as_slice());
 
-    // Bindings of a `DefaultWithNamed` provider whose every use is a call,
-    // a `new`, or a static member read.
+    // Bindings of a `DefaultWithNamed` provider, declared once, whose every
+    // use is a call, a `new`, or a static member read (see
+    // `BindingUseCheck`).
     let mut bindings = BindingCollector {
         unresolved_mark,
         shape_of: &shape_of,
         candidates: HashMap::default(),
+        declarations: HashMap::default(),
     };
     module.visit_with(&mut bindings);
     let mut uses = BindingUseCheck {
+        rejected: bindings
+            .declarations
+            .iter()
+            .filter(|(id, count)| **count > 1 && bindings.candidates.contains_key(*id))
+            .map(|(id, _)| id.clone())
+            .collect(),
         candidates: bindings.candidates,
-        rejected: HashSet::default(),
     };
     module.visit_with(&mut uses);
     let good: HashMap<BindingId, Atom> = uses
         .candidates
         .into_iter()
         .filter(|(id, _)| !uses.rejected.contains(id))
+        .map(|(id, (source, _))| (id, source))
         .collect();
 
     let mut rewriter = DefaultReadRewriter {
@@ -624,31 +632,57 @@ fn take_expr(expr: &mut Expr) -> Expr {
 struct BindingCollector<'a, F> {
     unresolved_mark: Mark,
     shape_of: &'a F,
-    candidates: HashMap<BindingId, Atom>,
+    /// Each candidate's source and the provider's exports that read `this`.
+    candidates: HashMap<BindingId, (Atom, &'a [Atom])>,
+    /// How often each binding is declared or assigned. A second `var` of
+    /// the same name writes it like an assignment does.
+    declarations: HashMap<BindingId, usize>,
 }
 
 impl<'a, F: Fn(&str) -> Option<ProviderShape<'a>>> Visit for BindingCollector<'a, F> {
     fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
         if let (Pat::Ident(binding), Some(init)) = (&declarator.name, &declarator.init) {
             if let Some(source) = require_source(init, self.unresolved_mark) {
-                if matches!(
-                    (self.shape_of)(&source),
-                    Some(ProviderShape::DefaultWithNamed(_))
-                ) {
-                    self.candidates.insert(binding_id(&binding.id), source);
+                if let Some(ProviderShape::DefaultWithNamed(provider)) = (self.shape_of)(&source) {
+                    self.candidates.insert(
+                        binding_id(&binding.id),
+                        (source, provider.receiver_observing_exports.as_slice()),
+                    );
                 }
             }
         }
         declarator.visit_children_with(self);
     }
+
+    fn visit_binding_ident(&mut self, binding: &BindingIdent) {
+        *self
+            .declarations
+            .entry(binding_id(&binding.id))
+            .or_default() += 1;
+    }
 }
 
-struct BindingUseCheck {
-    candidates: HashMap<BindingId, Atom>,
+/// Rejects a candidate binding with any use but a call, a `new`, or a
+/// static member read. A member write, an optional member, and a call of a
+/// named export that reads `this` are rejected too: the rewrite leaves them
+/// on the namespace, which is no longer the value they wrote to or passed as
+/// the receiver.
+struct BindingUseCheck<'a> {
+    candidates: HashMap<BindingId, (Atom, &'a [Atom])>,
     rejected: HashSet<BindingId>,
 }
 
-impl BindingUseCheck {
+impl BindingUseCheck<'_> {
+    fn reject_member_object(&mut self, member: &MemberExpr) -> bool {
+        match self.candidate(&member.obj) {
+            Some(id) => {
+                self.rejected.insert(id);
+                true
+            }
+            None => false,
+        }
+    }
+
     fn candidate(&self, expr: &Expr) -> Option<BindingId> {
         match strip_parens(expr) {
             Expr::Ident(id) => {
@@ -660,9 +694,10 @@ impl BindingUseCheck {
     }
 }
 
-impl Visit for BindingUseCheck {
+impl Visit for BindingUseCheck<'_> {
     fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
-        // The binding itself is no use.
+        // The binding itself is no use. A second declaration of it was
+        // counted by `BindingCollector`.
         declarator.init.visit_with(self);
     }
 
@@ -672,8 +707,37 @@ impl Visit for BindingUseCheck {
                 call.args.visit_with(self);
                 return;
             }
+            // `x.name()` passes the namespace as the receiver of a named
+            // export, where it passed the CommonJS value before.
+            if let Expr::Member(member) = strip_parens(callee) {
+                if let (Some(id), Some(name)) =
+                    (self.candidate(&member.obj), member.prop.as_ident())
+                {
+                    if self.candidates[&id].1.contains(&name.sym) {
+                        self.rejected.insert(id);
+                    }
+                }
+            }
         }
         call.visit_children_with(self);
+    }
+
+    fn visit_simple_assign_target(&mut self, target: &SimpleAssignTarget) {
+        if let SimpleAssignTarget::Member(member) = target {
+            if self.reject_member_object(member) {
+                return;
+            }
+        }
+        target.visit_children_with(self);
+    }
+
+    fn visit_opt_chain_base(&mut self, base: &OptChainBase) {
+        if let OptChainBase::Member(member) = base {
+            if self.reject_member_object(member) {
+                return;
+            }
+        }
+        base.visit_children_with(self);
     }
 
     fn visit_new_expr(&mut self, new: &NewExpr) {
@@ -724,7 +788,26 @@ impl<'a, F: Fn(&str) -> Option<ProviderShape<'a>>> DefaultReadRewriter<'a, F> {
 
     fn named_exports(&self, source: &str) -> Option<&'a [ExportFact]> {
         match (self.shape_of)(source) {
-            Some(ProviderShape::DefaultWithNamed(exports)) => Some(exports),
+            Some(ProviderShape::DefaultWithNamed(provider)) => Some(&provider.exports),
+            _ => None,
+        }
+    }
+
+    /// `require("./p").name(…)` where the named export `name` reads `this`:
+    /// the call passes the namespace as the receiver, where it passed the
+    /// CommonJS value before.
+    fn calls_receiver_observing_export(&self, callee: &Expr) -> Option<Atom> {
+        let Expr::Member(member) = strip_parens(callee) else {
+            return None;
+        };
+        let source = require_source(&member.obj, self.unresolved_mark)?;
+        let name = member.prop.as_ident()?;
+        match (self.shape_of)(&source) {
+            Some(ProviderShape::DefaultWithNamed(provider))
+                if provider.receiver_observing_exports.contains(&name.sym) =>
+            {
+                Some(source)
+            }
             _ => None,
         }
     }
@@ -794,6 +877,12 @@ impl<'a, F: Fn(&str) -> Option<ProviderShape<'a>>> VisitMut for DefaultReadRewri
                     if self.rewrite_callee(callee) {
                         call.args.visit_mut_with(self);
                         return;
+                    }
+                    if let Some(source) = self.calls_receiver_observing_export(callee) {
+                        self.report(
+                            source,
+                            "a call of its named export passes the namespace as `this`, where it passed the value it assigned to `module.exports`",
+                        );
                     }
                 }
                 expr.visit_mut_children_with(self);

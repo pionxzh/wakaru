@@ -682,11 +682,12 @@ layout directly is a proposal:
 
   What is left is reported as `commonjs_require_of_esm`: a binding of such a
   provider passed on as a value (code that calls it and also reads a named
-  export from it needs both), an interop default whose helper
-  `UnWebpackInterop` already removed (`require.n(x).a`, producer
-  `webpack@4.47` concatenation + Terser with an `swc@1.16` CommonJS
-  dependency, where which reads mean the default is known only per use), and
-  an interop helper imported from another module.
+  export from it needs both), written through (`x.count = 1`), read as an
+  optional member (`x?.name`), or used to call a named export that reads
+  `this`; an interop default whose helper `UnWebpackInterop` already removed
+  (`require.n(x).a`, producer `webpack@4.47` concatenation + Terser with an
+  `swc@1.16` CommonJS dependency, where which reads mean the default is known
+  only per use), and an interop helper imported from another module.
 - **A `.cjs` name still gets ESM syntax.** A single-file decompile keeps a
   `.cjs`/`.cts` input CommonJS (`run_un_esm` stands down), but unpack does
   not apply that gate. Two inputs reach it: a `.cjs` file passed to

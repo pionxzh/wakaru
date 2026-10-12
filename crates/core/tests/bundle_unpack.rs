@@ -4104,6 +4104,50 @@ fn kept_require_of_a_function_with_named_exports_reads_default_per_use() {
 
 #[test]
 fn imported_call_of_a_require_outside_a_top_level_var_keeps_the_module_commonjs() {
+#[test]
+fn kept_require_of_a_function_with_named_exports_reports_uses_it_cannot_redirect() {
+    // hypothetical: each consumer use below keeps the namespace after the
+    // `.default` rewrite, so the binding is left alone and reported.
+    let provider = r#"2(t){var f=function(){return 1};f.n=3,t.exports=f,t.exports.size=function(){return this.n},t.exports.flag=!0}"#;
+    for consumer in [
+        // A write lands on the namespace instead of the value.
+        r#"1(t,e,o){var i=o(2);e.run=function(){return i.count=1,i()+o(3).x}}"#,
+        // An optional member reads the namespace.
+        r#"1(t,e,o){var i=o(2);e.run=function(){return i?.name+i()+o(3).x}}"#,
+        // `this` of a named export was the value, now the namespace.
+        r#"1(t,e,o){var i=o(2);e.run=function(){return i.size()+i()+o(3).x}}"#,
+        // A second `var` writes the binding.
+        r#"1(t,e,o){var i=o(2);i();var i=o(3);e.run=function(){return i.x+o(3).x}}"#,
+    ] {
+        let source = kept_require_bundle(&format!("{consumer},{provider}"));
+        let output = unpack(&source, DecompileOptions::default()).expect("bundle should unpack");
+        let module = unpacked_module(&output, "module-1.js");
+        assert!(!module.contains("i.default"), "{module}");
+        assert!(
+            output
+                .warnings
+                .iter()
+                .any(|w| w.kind == wakaru_core::UnpackWarningKind::CommonJsRequireOfEsm),
+            "{module}\n{:#?}",
+            output.warnings
+        );
+    }
+
+    // The same call without a binding is reported too.
+    let source = kept_require_bundle(&format!(
+        r#"1(t,e,o){{e.run=function(){{return o(2).size()+o(3).x}}}},{provider}"#
+    ));
+    let output = unpack(&source, DecompileOptions::default()).expect("bundle should unpack");
+    assert!(
+        output.warnings.iter().any(|w| {
+            w.kind == wakaru_core::UnpackWarningKind::CommonJsRequireOfEsm
+                && w.message.contains("as `this`")
+        }),
+        "{:#?}",
+        output.warnings
+    );
+}
+
     // hypothetical: the cross-module interop pass reads only
     // `var x = helper(require(p))`, so these requires would stay in ESM.
     for consumer in [
