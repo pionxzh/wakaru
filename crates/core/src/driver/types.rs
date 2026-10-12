@@ -210,6 +210,15 @@ pub enum UnpackWarningKind {
     /// A module kept a bundler runtime call that the split output does not
     /// define, such as Turbopack chunk loading.
     RuntimeResidual,
+    /// An ES module output still calls the free `require`, which throws in
+    /// ESM.
+    CommonJsRequireUnrecovered,
+    /// A CommonJS output module requires a module recovered as ESM whose
+    /// namespace differs from the CommonJS value it replaced.
+    CommonJsRequireOfEsm,
+    /// With `--diagnostics`: a module stayed CommonJS although its input
+    /// looks like the output of an ES module source.
+    EsSourceKeptCommonJs,
     OutputParseRecovered,
     OutputParseFailed,
 }
@@ -228,6 +237,9 @@ impl UnpackWarningKind {
             Self::CrossModuleClassCall => "cross_module_class_call",
             Self::CommonJsExportUnrecovered => "commonjs_export_unrecovered",
             Self::RuntimeResidual => "runtime_residual",
+            Self::CommonJsRequireUnrecovered => "commonjs_require_unrecovered",
+            Self::CommonJsRequireOfEsm => "commonjs_require_of_esm",
+            Self::EsSourceKeptCommonJs => "es_source_kept_commonjs",
             Self::OutputParseRecovered => "output_parse_recovered",
             Self::OutputParseFailed => "output_parse_failed",
         }
@@ -244,6 +256,9 @@ impl UnpackWarningKind {
                 | Self::CrossModuleClassCall
                 | Self::CommonJsExportUnrecovered
                 | Self::RuntimeResidual
+                | Self::CommonJsRequireUnrecovered
+                | Self::CommonJsRequireOfEsm
+                | Self::EsSourceKeptCommonJs
         )
     }
 

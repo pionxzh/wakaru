@@ -109,6 +109,15 @@ pub(crate) fn diagnostic_from_core(
             DiagnosticCode::CommonJsExportUnrecovered
         }
         wakaru_core::UnpackWarningKind::RuntimeResidual => DiagnosticCode::RuntimeResidual,
+        wakaru_core::UnpackWarningKind::CommonJsRequireUnrecovered => {
+            DiagnosticCode::CommonJsRequireUnrecovered
+        }
+        wakaru_core::UnpackWarningKind::CommonJsRequireOfEsm => {
+            DiagnosticCode::CommonJsRequireOfEsm
+        }
+        wakaru_core::UnpackWarningKind::EsSourceKeptCommonJs => {
+            DiagnosticCode::EsSourceKeptCommonJs
+        }
         wakaru_core::UnpackWarningKind::OutputParseRecovered => {
             DiagnosticCode::OutputParseRecovered
         }

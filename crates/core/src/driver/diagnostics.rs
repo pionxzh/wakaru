@@ -53,6 +53,93 @@ pub(super) fn collect_commonjs_export_residual_warnings(
     )]
 }
 
+/// Report the `require` calls an ES module output still makes. ESM has no
+/// `require`, so `UnEsm` keeps such a module CommonJS; one that reaches the
+/// output anyway is a require a later stage was expected to convert. Calls of
+/// a numeric module id, which name a module outside the input, are not
+/// reported.
+pub(super) fn collect_commonjs_require_residual_warnings(
+    module: &swc_core::ecma::ast::Module,
+    unresolved_mark: Mark,
+    filename: &str,
+) -> Vec<UnpackWarning> {
+    let calls = crate::kept_require::esm_output_require_calls(module, unresolved_mark);
+    if calls.is_empty() {
+        return Vec::new();
+    }
+    let mut sources: Vec<String> = Vec::new();
+    for call in &calls {
+        let source = call
+            .source
+            .as_ref()
+            .map_or_else(|| "<dynamic>".to_string(), |source| format!("\"{source}\""));
+        if !sources.contains(&source) {
+            sources.push(source);
+        }
+    }
+    vec![UnpackWarning::new(
+        filename,
+        UnpackWarningKind::CommonJsRequireUnrecovered,
+        format!(
+            "ES module output still calls `require` for {}; these calls throw a ReferenceError when they run",
+            sources.join(", ")
+        ),
+    )]
+}
+
+/// Report the kept requires of a CommonJS output module whose provider is
+/// now an ES module that `require` gives a different value, as
+/// `run_kept_require_default_reads` returned them. A later pass can still
+/// turn the module into ESM or a require into an import, so only the sources
+/// the final module still requires are reported.
+pub(super) fn collect_commonjs_require_of_esm_warnings(
+    unhandled: Vec<(swc_core::atoms::Atom, &'static str)>,
+    module: &swc_core::ecma::ast::Module,
+    unresolved_mark: Mark,
+    filename: &str,
+) -> Vec<UnpackWarning> {
+    if unhandled.is_empty()
+        || module
+            .body
+            .iter()
+            .any(|item| matches!(item, ModuleItem::ModuleDecl(_)))
+    {
+        return Vec::new();
+    }
+    let kept = crate::kept_require::kept_require_calls(module, unresolved_mark);
+    unhandled
+        .into_iter()
+        .filter(|(source, _)| kept.iter().any(|call| call.source.as_ref() == Some(source)))
+        .map(|(source, reason)| {
+            UnpackWarning::new(
+                filename,
+                UnpackWarningKind::CommonJsRequireOfEsm,
+                format!(
+                    "CommonJS module requires \"{source}\", now an ES module, and `require` returns its namespace: {reason}"
+                ),
+            )
+        })
+        .collect()
+}
+
+/// With `--diagnostics`: report a module that stayed CommonJS although its
+/// input showed ES-source `evidence` (see
+/// [`crate::kept_require::es_source_evidence`]) and it keeps a require that
+/// runs on every evaluation of its body.
+pub(super) fn collect_es_source_kept_commonjs_warnings(
+    module: &swc_core::ecma::ast::Module,
+    unresolved_mark: Mark,
+    evidence: &[&str],
+    filename: &str,
+) -> Vec<UnpackWarning> {
+    crate::kept_require::es_source_kept_commonjs_message(module, unresolved_mark, evidence)
+        .map(|message| {
+            UnpackWarning::new(filename, UnpackWarningKind::EsSourceKeptCommonJs, message)
+        })
+        .into_iter()
+        .collect()
+}
+
 pub(super) fn collect_input_parse_warnings(errors: &[ParseDiagnostic]) -> Vec<UnpackWarning> {
     // Source locations identify occurrences, not distinct parser conditions.
     // Keep the first-seen signature order while collapsing repeated conditions

@@ -221,6 +221,12 @@ pub struct ModuleFacts {
     /// the recovered ES module then reads that value as `.default` of the
     /// namespace `require` returns.
     pub commonjs_value_is_default: bool,
+    /// True when the module assigns `module.exports` itself somewhere, so its
+    /// CommonJS value may not be the object `exports` names.
+    pub replaces_module_exports: bool,
+    /// Sources whose required value this module reads through an interop
+    /// (see [`collect_interop_require_sources`]).
+    pub interop_require_sources: Vec<Atom>,
     /// Sources this module requires as a whole value it uses directly, with
     /// no interop wrapper that would make the binding mean the provider's
     /// default export (see [`collect_whole_require_sources`]).
@@ -254,6 +260,10 @@ pub struct ModuleFacts {
     /// (reads `this`). A consumer's `ns.name()` passes the namespace as that
     /// receiver, so the call keeps its member form.
     pub receiver_observing_exports: Vec<Atom>,
+    /// Evidence, read before any rule runs, that the module's source was an
+    /// ES module (`kept_require::es_source_evidence`). Collected only for
+    /// `--diagnostics`, which reports a module that stayed CommonJS anyway.
+    pub es_source_evidence: Vec<&'static str>,
     /// True when the recovered module has no import or export declaration:
     /// it stayed CommonJS (or is a plain script), so an ES module importer's
     /// default import is its `module.exports`.
@@ -1625,8 +1635,11 @@ pub fn collect_require_returns_exports_object(module: &Module, unresolved_mark: 
 
 /// Whether the module's CommonJS value is the value of its single top-level
 /// `module.exports = v` statement: every use of the free `module` is a
-/// `module.exports` member, the module assigns `module.exports` exactly once,
-/// and that assignment is a top-level expression statement. Collected before
+/// `module.exports` member, and the module assigns `module.exports` exactly
+/// once, in a position that runs on every evaluation of its body: a
+/// top-level expression statement, an element of a top-level sequence, a
+/// top-level `var` initializer, or the right side of an assignment there
+/// (`var o = module.exports = {}`). Collected before
 /// `UnEsm`, which turns the statement into `export default v`. A direct eval,
 /// or a module with ESM declarations already, fails.
 pub fn collect_commonjs_value_is_default(module: &Module, unresolved_mark: Mark) -> bool {
@@ -1687,23 +1700,45 @@ pub fn collect_commonjs_value_is_default(module: &Module, unresolved_mark: Mark)
     {
         return false;
     }
-    let top_level_assignments = module
+    // Assignments that run on every evaluation of the module body: a
+    // top-level expression statement, an element of one that is a sequence
+    // (a minifier joins statements into one), a top-level `var` initializer,
+    // and the right side of an assignment in any of those
+    // (`var o = module.exports = {}`, `exports = module.exports = X`).
+    fn count_top_level(expr: &Expr, unresolved_mark: Mark) -> usize {
+        match strip_parens(expr) {
+            Expr::Seq(seq) => seq
+                .exprs
+                .iter()
+                .map(|expr| count_top_level(expr, unresolved_mark))
+                .sum(),
+            Expr::Assign(assign) if assign.op == AssignOp::Assign => {
+                let here = usize::from(matches!(&assign.left,
+                    AssignTarget::Simple(SimpleAssignTarget::Member(target))
+                        if matches!(target.obj.as_ref(), Expr::Ident(object)
+                            if is_unresolved_ident(object, "module", unresolved_mark))
+                            && is_member_prop_name(&target.prop, "exports")));
+                here + count_top_level(&assign.right, unresolved_mark)
+            }
+            _ => 0,
+        }
+    }
+    let top_level_assignments: usize = module
         .body
         .iter()
-        .filter(|item| {
-            let ModuleItem::Stmt(Stmt::Expr(statement)) = item else {
-                return false;
-            };
-            let Expr::Assign(assign) = strip_parens(&statement.expr) else {
-                return false;
-            };
-            assign.op == AssignOp::Assign
-                && matches!(&assign.left, AssignTarget::Simple(SimpleAssignTarget::Member(target))
-                    if matches!(target.obj.as_ref(), Expr::Ident(object)
-                        if is_unresolved_ident(object, "module", unresolved_mark))
-                        && is_member_prop_name(&target.prop, "exports"))
+        .map(|item| match item {
+            ModuleItem::Stmt(Stmt::Expr(statement)) => {
+                count_top_level(&statement.expr, unresolved_mark)
+            }
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => var
+                .decls
+                .iter()
+                .filter_map(|declarator| declarator.init.as_deref())
+                .map(|init| count_top_level(init, unresolved_mark))
+                .sum(),
+            _ => 0,
         })
-        .count();
+        .sum();
     let mut collector = Collector {
         unresolved_mark,
         module_uses: 0,
@@ -1716,6 +1751,51 @@ pub fn collect_commonjs_value_is_default(module: &Module, unresolved_mark: Mark)
         && collector.assignments == 1
         && collector.module_uses == collector.member_uses
         && !collector.has_direct_eval
+}
+
+/// Whether the module assigns the free `module`'s `exports` itself, in any
+/// position: `module.exports = v`, `module.exports ||= v`.
+pub fn collect_replaces_module_exports(module: &Module, unresolved_mark: Mark) -> bool {
+    struct Finder {
+        unresolved_mark: Mark,
+        found: bool,
+    }
+
+    impl Visit for Finder {
+        fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+            if matches!(&assign.left, AssignTarget::Simple(SimpleAssignTarget::Member(target))
+                if matches!(target.obj.as_ref(), Expr::Ident(object)
+                    if is_unresolved_ident(object, "module", self.unresolved_mark))
+                    && is_member_prop_name(&target.prop, "exports"))
+            {
+                self.found = true;
+            }
+            assign.visit_children_with(self);
+        }
+    }
+
+    let mut finder = Finder {
+        unresolved_mark,
+        found: false,
+    };
+    module.visit_with(&mut finder);
+    finder.found
+}
+
+/// Whether the module's only ESM declaration is one `export default`, the
+/// form webpack's CommonJS runtime normalizers write for a factory that
+/// replaced `module.exports` (an immediately invoked factory, an AMD return).
+/// Only the unpack driver knows a normalizer ran, so it combines this with
+/// that detector fact; for other input an `export default` is ES source.
+pub fn is_normalized_commonjs_default(module: &Module) -> bool {
+    let mut declarations = module.body.iter().filter_map(|item| match item {
+        ModuleItem::ModuleDecl(declaration) => Some(declaration),
+        ModuleItem::Stmt(_) => None,
+    });
+    matches!(
+        (declarations.next(), declarations.next()),
+        (Some(ModuleDecl::ExportDefaultExpr(_)), None)
+    )
 }
 
 /// Sources of top-level `var x = require("src")` bindings whose value the
@@ -1759,6 +1839,38 @@ pub fn collect_whole_require_sources(module: &Module, unresolved_mark: Mark) -> 
         })
         .map(|(source, _)| source)
         .collect();
+    sources.sort();
+    sources
+}
+
+/// Sources whose required value the module passes to webpack's `require.n`
+/// or an interop helper, or tests for `__esModule`, directly or through a
+/// top-level `var x = require("src")` binding. Collected before the helper
+/// stage and `UnWebpackInterop` remove those reads, after which a binding
+/// that meant the provider's default looks like the whole value.
+pub fn collect_interop_require_sources(module: &Module, unresolved_mark: Mark) -> Vec<Atom> {
+    let mut bindings: HashMap<BindingId, Atom> = HashMap::default();
+    for item in &module.body {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            continue;
+        };
+        for declarator in &var.decls {
+            if let (Pat::Ident(binding), Some(init)) = (&declarator.name, &declarator.init) {
+                if let Some(source) = string_require_source(init, unresolved_mark) {
+                    bindings.insert((binding.id.sym.clone(), binding.id.ctxt), source);
+                }
+            }
+        }
+    }
+    let mut collector = WholeRequireUseCollector {
+        unresolved_mark,
+        bindings: &bindings,
+        local_helpers: LocalHelperContext::collect_with_mark(module, unresolved_mark),
+        calls: HashMap::default(),
+        interop: HashSet::default(),
+    };
+    module.visit_with(&mut collector);
+    let mut sources: Vec<Atom> = collector.interop.into_iter().collect();
     sources.sort();
     sources
 }
@@ -1892,11 +2004,13 @@ struct WholeRequireUseCollector<'a> {
 }
 
 impl WholeRequireUseCollector<'_> {
+    /// The source of a recorded binding, or of a `require("src")` call.
     fn source_of(&self, expr: &Expr) -> Option<Atom> {
-        let Expr::Ident(ident) = strip_parens(expr) else {
-            return None;
-        };
-        self.bindings.get(&(ident.sym.clone(), ident.ctxt)).cloned()
+        match strip_parens(expr) {
+            Expr::Ident(ident) => self.bindings.get(&(ident.sym.clone(), ident.ctxt)).cloned(),
+            Expr::Call(call) => require_call_source(call, self.unresolved_mark),
+            _ => None,
+        }
     }
 }
 

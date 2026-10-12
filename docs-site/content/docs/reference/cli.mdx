@@ -181,6 +181,22 @@ warning when an ESM output module still reads or writes the listed exports
 through `exports` or `module.exports`. Those accesses throw a `ReferenceError`
 when they run.
 
+A module that would come out as ESM with a `require` call left in it stays
+CommonJS instead, since ESM has no `require`. Decompile and unpack always
+report a non-error `commonjs_require_unrecovered` warning when an ESM output
+module still calls `require` for the listed specifiers anyway. Those calls
+throw a `ReferenceError` when they run.
+
+Unpack always reports a non-error `commonjs_require_of_esm` warning when a
+module that stayed CommonJS requires a module recovered as ESM whose
+namespace differs from the CommonJS value it replaced, such as one that
+marked itself `__esModule`.
+
+With `--diagnostics`, decompile and unpack report a non-error
+`es_source_kept_commonjs` warning for a module that stayed CommonJS although
+its input looks compiled from an ES module, with the evidence and the
+requires it kept.
+
 Unpack reports a non-error `runtime_residual` warning when a module keeps a
 bundler runtime call that the output does not define, such as Turbopack chunk
 loading or path resolution through `__turbopack_context__`. The rest of the

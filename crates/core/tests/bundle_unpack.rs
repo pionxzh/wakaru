@@ -4011,3 +4011,125 @@ fn webpack5_kept_require_of_a_module_exports_provider_reads_its_default() {
     assert!(tag.contains("module.exports = "), "{tag}");
     assert!(module("module-971.js").contains("export default function"));
 }
+
+#[test]
+fn commonjs_require_of_a_marked_provider_now_esm_is_reported() {
+    // hypothetical, with webpack 5's `require.n`: module 1 keeps a require in
+    // a function, so it stays CommonJS. `UnWebpackInterop` replaced the
+    // interop getter with the binding, which then means module 2's default;
+    // module 2 marked itself `__esModule` and is now ESM, so the binding holds
+    // a namespace and `n.k` misses. Which reads mean the default is not
+    // known, so the require is reported.
+    let source = r#"(()=>{var t={1(t,e,o){var n=o(2),a=o.n(n);e.run=function(){return a().k+o(3).x}},2(t,e){"use strict";Object.defineProperty(e,"__esModule",{value:!0}),e.default={k:1}},3(t,e){e.x=1}};const e={};function o(r){const l=e[r];if(void 0!==l)return l.exports;const i=e[r]={exports:{}};return t[r](i,i.exports,o),i.exports}o.n=t=>{var e=t&&t.__esModule?()=>t.default:()=>t;return o.d(e,{a:e}),e},o.d=(t,e)=>{for(var r in e)o.o(e,r)&&!o.o(t,r)&&Object.defineProperty(t,r,{enumerable:!0,get:e[r]})},o.o=(t,e)=>Object.prototype.hasOwnProperty.call(t,e),globalThis.lib=o(1)})();"#;
+    let output = unpack(source, DecompileOptions::default()).expect("bundle should unpack");
+    let warnings = output
+        .warnings
+        .iter()
+        .filter(|w| w.kind == wakaru_core::UnpackWarningKind::CommonJsRequireOfEsm)
+        .collect::<Vec<_>>();
+    assert_eq!(warnings.len(), 1, "{:#?}", output.warnings);
+    assert_eq!(warnings[0].filename, "module-1.js");
+    assert!(warnings[0].message.contains("\"./module-2.js\""));
+    assert!(warnings[0].message.contains("`__esModule`"));
+    assert!(!warnings[0].kind.is_error());
+
+    // Without the interop the module reads the namespace as it read the
+    // exports object: no warning.
+    let direct = source.replace(
+        "var n=o(2),a=o.n(n);e.run=function(){return a().k+",
+        "var n=o(2);e.run=function(){return n.default.k+",
+    );
+    let output = unpack(&direct, DecompileOptions::default()).expect("bundle should unpack");
+    assert!(
+        !output
+            .warnings
+            .iter()
+            .any(|w| w.kind == wakaru_core::UnpackWarningKind::CommonJsRequireOfEsm),
+        "{:#?}",
+        output.warnings
+    );
+}
+
+/// A webpack 5 runtime around `modules`, entering module 1; module 1 keeps a
+/// require inside a function, so it stays CommonJS.
+fn kept_require_bundle(modules: &str) -> String {
+    format!(
+        r#"(()=>{{var t={{{modules},3(t,e){{e.x=1}}}};const e={{}};globalThis.lib=function o(r){{const l=e[r];if(void 0!==l)return l.exports;const i=e[r]={{exports:{{}}}};return t[r](i,i.exports,o),i.exports}}(1)}})();"#
+    )
+}
+
+fn unpacked_module(
+    output: &wakaru_core::driver::test_support::UnpackOutput,
+    filename: &str,
+) -> String {
+    output
+        .modules
+        .iter()
+        .find(|(name, _)| name == filename)
+        .map(|(_, code)| code.clone())
+        .expect("module should exist")
+}
+
+#[test]
+fn kept_require_of_a_function_with_named_exports_reads_default_per_use() {
+    // hypothetical: `module.exports = fn` plus `module.exports.flag = true`
+    // becomes a default and a named export.
+    let source = kept_require_bundle(
+        r#"1(t,e,o){var i=o(2);e.run=function(){return i({a:1})+i.flag+i.name+o(3).x}},2(t){t.exports=function(e){return "plugin"},t.exports.flag=!0}"#,
+    );
+    let output = unpack(&source, DecompileOptions::default()).expect("bundle should unpack");
+    let consumer = unpacked_module(&output, "module-1.js");
+    for present in ["i.default({", "i.flag", "i.default.name"] {
+        assert!(
+            consumer.contains(present),
+            "missing `{present}`:\n{consumer}"
+        );
+    }
+    assert!(output.warnings.is_empty(), "{:#?}", output.warnings);
+
+    // The value escapes: no read of it is right, so it is reported.
+    let escaped = kept_require_bundle(
+        r#"1(t,e,o){var i=o(2);e.run=function(){return[i,o(3).x]}},2(t){t.exports=function(e){return "plugin"},t.exports.flag=!0}"#,
+    );
+    let output = unpack(&escaped, DecompileOptions::default()).expect("bundle should unpack");
+    assert!(
+        output.warnings.iter().any(|w| {
+            w.kind == wakaru_core::UnpackWarningKind::CommonJsRequireOfEsm
+                && w.message.contains("beside its named exports")
+        }),
+        "{:#?}",
+        output.warnings
+    );
+}
+
+#[test]
+fn kept_require_of_a_marked_provider_drops_the_local_interop() {
+    // hypothetical: Babel's default interop returned the marked provider
+    // unchanged; its namespace now has no marker to test.
+    let source = kept_require_bundle(
+        r#"1(t,e,o){function Z(e){return e&&e.__esModule?e:{default:e}}var Q=Z(o(2));e.run=function(){return Q.default+o(3).x}},2(t,e){"use strict";Object.defineProperty(e,"__esModule",{value:!0}),e.default="d"}"#,
+    );
+    let output = unpack(&source, DecompileOptions::default()).expect("bundle should unpack");
+    let consumer = unpacked_module(&output, "module-1.js");
+    assert!(
+        consumer.contains(r#"const Q = require("./module-2.js");"#),
+        "{consumer}"
+    );
+    assert!(output.warnings.is_empty(), "{:#?}", output.warnings);
+}
+
+#[test]
+fn kept_require_of_an_amd_factory_result_reads_its_default() {
+    // The webpack AMD-return form the CommonJS runtime normalizer turns into
+    // `export default _webpackDefault`.
+    let source = kept_require_bundle(
+        r#"1(t,e,o){var i=o(2);e.run=function(){return i()+o(3).x}},2(t,e,o){var r;!function(){var n=function(){return"amd"};void 0===(r=function(){return n}.apply(e,[]))||(t.exports=r)}()}"#,
+    );
+    let output = unpack(&source, DecompileOptions::default()).expect("bundle should unpack");
+    let consumer = unpacked_module(&output, "module-1.js");
+    assert!(
+        consumer.contains(r#"require("./module-2.js").default"#),
+        "{consumer}"
+    );
+    assert!(unpacked_module(&output, "module-2.js").contains("export default"));
+}

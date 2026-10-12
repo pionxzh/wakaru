@@ -229,6 +229,9 @@ pub enum DiagnosticCode {
     CrossModuleClassCall,
     CommonJsExportUnrecovered,
     RuntimeResidual,
+    CommonJsRequireUnrecovered,
+    CommonJsRequireOfEsm,
+    EsSourceKeptCommonJs,
     OutputParseRecovered,
     OutputParseFailed,
 }
@@ -247,6 +250,9 @@ impl DiagnosticCode {
             Self::CrossModuleClassCall => "cross_module_class_call",
             Self::CommonJsExportUnrecovered => "commonjs_export_unrecovered",
             Self::RuntimeResidual => "runtime_residual",
+            Self::CommonJsRequireUnrecovered => "commonjs_require_unrecovered",
+            Self::CommonJsRequireOfEsm => "commonjs_require_of_esm",
+            Self::EsSourceKeptCommonJs => "es_source_kept_commonjs",
             Self::OutputParseRecovered => "output_parse_recovered",
             Self::OutputParseFailed => "output_parse_failed",
         }

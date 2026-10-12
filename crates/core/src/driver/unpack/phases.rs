@@ -13,8 +13,9 @@ use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::{Visit, VisitMutWith, VisitWith};
 
 use super::super::diagnostics::{
-    collect_commonjs_export_residual_warnings, collect_input_parse_warnings,
-    collect_output_diagnostics,
+    collect_commonjs_export_residual_warnings, collect_commonjs_require_of_esm_warnings,
+    collect_commonjs_require_residual_warnings, collect_es_source_kept_commonjs_warnings,
+    collect_input_parse_warnings, collect_output_diagnostics,
 };
 use super::super::io::{
     apply_fixer, build_output_sourcemap, parse_js, parse_js_with_recovery, print_js,
@@ -42,9 +43,10 @@ use crate::commonjs_default_object_composition::{
 };
 use crate::facts::{
     collect_commonjs_default_attached_properties, collect_commonjs_default_object,
-    collect_commonjs_value_is_default, collect_marks_es_module, collect_module_facts,
-    collect_require_returns_exports_object, collect_whole_require_sources,
-    collect_wildcard_require_sources, ModuleFactsMap,
+    collect_commonjs_value_is_default, collect_interop_require_sources, collect_marks_es_module,
+    collect_module_facts, collect_replaces_module_exports, collect_require_returns_exports_object,
+    collect_whole_require_sources, collect_wildcard_require_sources,
+    is_normalized_commonjs_default, ModuleFactsMap,
 };
 use crate::kept_require::run_kept_require_default_reads;
 use crate::namespace_decomposition::run_namespace_decomposition;
@@ -519,9 +521,20 @@ pub(super) fn unpack_multi_module_with_plan(
                 collect_commonjs_default_attached_properties(&module, unresolved_mark);
             let require_returns_exports_object =
                 collect_require_returns_exports_object(&module, unresolved_mark);
+            let replaces_module_exports =
+                collect_replaces_module_exports(&module, unresolved_mark);
             let commonjs_value_is_default =
-                collect_commonjs_value_is_default(&module, unresolved_mark);
+                collect_commonjs_value_is_default(&module, unresolved_mark)
+                    || (unpacked.webpack_commonjs_runtime
+                        && is_normalized_commonjs_default(&module));
+            let es_source_evidence = if options.diagnostics {
+                crate::kept_require::es_source_evidence(&module, unresolved_mark)
+            } else {
+                Vec::new()
+            };
             let whole_require_sources = collect_whole_require_sources(&module, unresolved_mark);
+            let interop_require_sources =
+                collect_interop_require_sources(&module, unresolved_mark);
             let marks_es_module = collect_marks_es_module(&module, unresolved_mark);
             let wildcard_require_sources =
                 collect_wildcard_require_sources(&module, unresolved_mark);
@@ -594,7 +607,10 @@ pub(super) fn unpack_multi_module_with_plan(
                 commonjs_default_attached_properties;
             facts.require_returns_exports_object = require_returns_exports_object;
             facts.commonjs_value_is_default = commonjs_value_is_default;
+            facts.replaces_module_exports = replaces_module_exports;
+            facts.es_source_evidence = es_source_evidence;
             facts.whole_require_sources = whole_require_sources;
+            facts.interop_require_sources = interop_require_sources;
             facts.marks_es_module = marks_es_module;
             facts.wildcard_require_sources = wildcard_require_sources;
             (facts, prepared, None, suggested_filename)
@@ -739,12 +755,6 @@ pub(super) fn unpack_multi_module_with_plan(
                 unresolved_mark,
             );
             downgrade_unused_synthetic_imports(&mut module);
-            run_kept_require_default_reads(
-                &mut module,
-                facts_ref,
-                Some(&unpacked.module.filename),
-                unresolved_mark,
-            );
             // Late helper-through-UnReturn range.
             apply_rules_to_recovered_module(
                 &mut module,
@@ -823,11 +833,41 @@ pub(super) fn unpack_multi_module_with_plan(
                 ));
             }
 
+            // After every rule: a later recovery can still turn the module
+            // into ESM, which reads the provider through an import instead.
+            let kept_requires_of_esm = run_kept_require_default_reads(
+                &mut module,
+                facts_ref,
+                Some(&unpacked.module.filename),
+                unresolved_mark,
+            );
+
             diag_warnings.extend(collect_commonjs_export_residual_warnings(
                 &module,
                 unresolved_mark,
                 &unpacked.module.filename,
             ));
+            diag_warnings.extend(collect_commonjs_require_residual_warnings(
+                &module,
+                unresolved_mark,
+                &unpacked.module.filename,
+            ));
+            diag_warnings.extend(collect_commonjs_require_of_esm_warnings(
+                kept_requires_of_esm,
+                &module,
+                unresolved_mark,
+                &unpacked.module.filename,
+            ));
+            if options.diagnostics {
+                if let Some(own) = facts_ref.get(&unpacked.module.filename) {
+                    diag_warnings.extend(collect_es_source_kept_commonjs_warnings(
+                        &module,
+                        unresolved_mark,
+                        &own.es_source_evidence,
+                        &unpacked.module.filename,
+                    ));
+                }
+            }
 
             // Final, isolated remap: rewrite import-source strings that point
             // at modules renamed via recovered filenames. Runs after every

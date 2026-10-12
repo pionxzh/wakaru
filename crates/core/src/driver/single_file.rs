@@ -4,7 +4,8 @@ use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::VisitMutWith;
 
 use super::diagnostics::{
-    collect_commonjs_export_residual_warnings, collect_input_parse_warnings,
+    collect_commonjs_export_residual_warnings, collect_commonjs_require_residual_warnings,
+    collect_es_source_kept_commonjs_warnings, collect_input_parse_warnings,
     collect_output_diagnostics,
 };
 use super::error::DriverErrorKind;
@@ -53,6 +54,11 @@ pub fn decompile_owned(
             module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
         }
 
+        // Read before the rules rewrite what marks an ES-source module.
+        let es_source_evidence = options
+            .diagnostics
+            .then(|| crate::kept_require::es_source_evidence(&module, unresolved_mark));
+
         {
             let span = tracing::info_span!("rules");
             let _enter = span.enter();
@@ -87,6 +93,19 @@ pub fn decompile_owned(
             unresolved_mark,
             &options.filename,
         ));
+        warnings.extend(collect_commonjs_require_residual_warnings(
+            &module,
+            unresolved_mark,
+            &options.filename,
+        ));
+        if let Some(evidence) = &es_source_evidence {
+            warnings.extend(collect_es_source_kept_commonjs_warnings(
+                &module,
+                unresolved_mark,
+                evidence,
+                &options.filename,
+            ));
+        }
 
         {
             let span = tracing::info_span!("fixer");
@@ -172,6 +191,75 @@ mod tests {
             output.code
         );
         assert!(residuals[0].message.contains("`run`"));
+    }
+
+    #[test]
+    fn require_calls_in_es_module_output_are_reported_without_diagnostics() {
+        // ES module input: `UnEsm` cannot keep it CommonJS.
+        let output = decompile(
+            "import h from \"./h\";\nvar x = h(require(\"./p\"));\nexport { x };",
+            DecompileOptions::default(),
+        )
+        .expect("decompile should succeed");
+        let residuals = output
+            .warnings
+            .iter()
+            .filter(|w| w.kind == UnpackWarningKind::CommonJsRequireUnrecovered)
+            .collect::<Vec<_>>();
+        assert_eq!(residuals.len(), 1, "{:#?}", output.warnings);
+        assert!(residuals[0].message.contains("\"./p\""));
+        assert!(!residuals[0].kind.is_error());
+
+        // A CommonJS module that keeps a require stays CommonJS: nothing to
+        // report.
+        let output = decompile(
+            "exports.load = function () { return require(\"./p\"); };",
+            DecompileOptions::default(),
+        )
+        .expect("decompile should succeed");
+        assert!(output.warnings.is_empty(), "{:#?}", output.warnings);
+    }
+
+    #[test]
+    fn diagnostics_report_an_es_source_module_kept_commonjs() {
+        let source = "require.r(exports);\nglobalThis.x = 1;\nvar d = require(\"./d\");\nrequire.d(exports, { a: () => d });";
+        let kept = |diagnostics: bool| {
+            decompile(
+                source,
+                DecompileOptions {
+                    diagnostics,
+                    ..Default::default()
+                },
+            )
+            .expect("decompile should succeed")
+            .warnings
+            .into_iter()
+            .filter(|w| w.kind == UnpackWarningKind::EsSourceKeptCommonJs)
+            .collect::<Vec<_>>()
+        };
+        assert!(kept(false).is_empty());
+        let warnings = kept(true);
+        assert_eq!(warnings.len(), 1, "{warnings:#?}");
+        assert!(warnings[0].message.contains("require.r, require.d"));
+        assert!(warnings[0].message.contains("\"./d\" (top-level)"));
+
+        // Kept only in a function: the source wrote it that way.
+        let output = decompile(
+            "require.r(exports);\nfunction o() { return require(\"./p\"); }\nrequire.d(exports, { q: () => o });",
+            DecompileOptions {
+                diagnostics: true,
+                ..Default::default()
+            },
+        )
+        .expect("decompile should succeed");
+        assert!(
+            !output
+                .warnings
+                .iter()
+                .any(|w| w.kind == UnpackWarningKind::EsSourceKeptCommonJs),
+            "{:#?}",
+            output.warnings
+        );
     }
 
     #[test]

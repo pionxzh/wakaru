@@ -6,9 +6,9 @@ use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::VisitMutWith;
 use wakaru_core::facts::{
     collect_commonjs_default_attached_properties, collect_commonjs_default_object,
-    collect_commonjs_value_is_default, collect_marks_es_module, collect_module_facts, ExportFact,
-    ExportKind, HelperExportFact, HelperKind, ImportFact, ImportKind, ModuleFacts, ModuleFactsMap,
-    TypeScriptHelperExportFact, TypeScriptHelperKind,
+    collect_commonjs_value_is_default, collect_interop_require_sources, collect_marks_es_module,
+    collect_module_facts, ExportFact, ExportKind, HelperExportFact, HelperKind, ImportFact,
+    ImportKind, ModuleFacts, ModuleFactsMap, TypeScriptHelperExportFact, TypeScriptHelperKind,
 };
 use wakaru_core::{apply_rules, RulePipelineOptions};
 
@@ -1073,6 +1073,19 @@ fn commonjs_value_is_default_needs_one_top_level_module_exports_assignment() {
         })
     };
     assert!(is_default("module.exports = function (t) { return t; };"));
+    // producer metro@0.87.0 minified (`metro-runtime` asyncRequire): the
+    // assignment joined into a top-level sequence.
+    assert!(is_default(
+        "function u() {} u.prefetch = p, module.exports = u;"
+    ));
+    assert!(!is_default("c && (u.x = 1, module.exports = u);"));
+    // producer webpack@4.47.0 mode=production over the `process` browser
+    // shim.
+    assert!(is_default(
+        "var n, r, o = module.exports = {}; o.title = \"browser\";"
+    ));
+    assert!(is_default("exports = module.exports = UAParser;"));
+    assert!(!is_default("function f() { var o = module.exports = {}; }"));
     assert!(is_default(
         r#""use strict"; function f() {} f.version = 1; module.exports = f; module.exports.x = 2;"#
     ));
@@ -1086,6 +1099,44 @@ fn commonjs_value_is_default_needs_one_top_level_module_exports_assignment() {
     assert!(!is_default("module.exports = a; module.hot.accept();"));
     assert!(!is_default("module.exports = a; eval(code);"));
     assert!(!is_default("export default a;"));
+}
+
+#[test]
+fn interop_require_sources_list_the_requires_read_through_an_interop() {
+    let sources = |source: &str| {
+        GLOBALS.set(&Default::default(), || {
+            let cm: Lrc<SourceMap> = Default::default();
+            let fm = cm.new_source_file(
+                FileName::Custom("test.js".to_string()).into(),
+                source.to_string(),
+            );
+            let lexer = Lexer::new(
+                Syntax::Es(EsSyntax::default()),
+                Default::default(),
+                StringInput::from(&*fm),
+                None,
+            );
+            let mut module = Parser::new_from(lexer)
+                .parse_module()
+                .expect("parse failed");
+            let unresolved_mark = Mark::new();
+            module.visit_mut_with(&mut resolver(unresolved_mark, Mark::new(), false));
+            collect_interop_require_sources(&module, unresolved_mark)
+                .into_iter()
+                .map(|source| source.to_string())
+                .collect::<Vec<_>>()
+        })
+    };
+    assert_eq!(
+        sources(
+            r#"function i(e) { return e && e.__esModule ? e : { default: e }; }
+var a = i(require("./a")), b = require("./b"), c = require.n(b), d = require("./d");
+exports.x = d.__esModule;
+exports.y = require("./e").value;"#
+        ),
+        ["./a", "./b", "./d"]
+    );
+    assert!(sources(r#"var a = require("./a"); exports.x = a.default;"#).is_empty());
 }
 
 #[test]

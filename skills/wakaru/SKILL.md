@@ -204,6 +204,19 @@ reachability sweep is desired.
   module still accesses the listed exports through `exports` or
   `module.exports`. Those accesses throw a `ReferenceError` when they run, so
   treat that module's export surface as incomplete.
+- A module that keeps a `require()` call (lazy, conditional, or after a
+  side effect) stays CommonJS: ESM has no `require`. A
+  `commonjs_require_unrecovered` warning (non-error) means an ESM output
+  module still calls `require` for the listed specifiers anyway; those calls
+  throw when they run.
+- A `commonjs_require_of_esm` warning (non-error) means a CommonJS output
+  module requires a module now recovered as ESM, so `require` returns that
+  module's namespace; a read of its default through an interop helper, or of
+  a replaced `module.exports` value, gets the namespace instead.
+- With `--diagnostics`, an `es_source_kept_commonjs` warning (non-error)
+  names a module that stayed CommonJS although its input looks compiled from
+  an ES module, with the evidence and the kept requires. Its imports are
+  still `require` calls; follow them as imports.
 - A `.cjs` or `.cts` input is decompiled as CommonJS: its `require()` calls and
   `module.exports` stay in place, so its output has no imports to follow.
   `--unpack` does not apply this yet: a `.cjs` input or recovered module can

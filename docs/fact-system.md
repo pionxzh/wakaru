@@ -67,10 +67,10 @@ Phase 2 (per module, parallel):
     run_cross_module_interop_imports(...)            ← helper export facts
     run_namespace_decomposition(&mut module, facts)  ← reads cross-module facts
     downgrade_unused_synthetic_imports(&mut module)  ← preserve require effects
-    run_kept_require_default_reads(...)              ← kept require of a default-only ESM provider
     registry rule range resuming after UnEsm, through UnReturn
       (UnEs6Class / UnPrototypeClass read this module's CallRequiredPlan pins)
     targeted late cleanup/recovery
+    run_kept_require_default_reads(...)              ← a kept require of a provider now ESM
 ```
 
 Both phases hand modules to the Rayon pool largest-first by source length
@@ -112,8 +112,8 @@ distinguishable from an authored ESM dependency downstream.
 - `ImportCallEdge { source, imported, consumed_by_exports }`
 - `ModuleFacts { imports, exports, helper_exports,
   commonjs_default_object, commonjs_default_attached_properties,
-  require_returns_exports_object, commonjs_value_is_default,
-  whole_require_sources, marks_es_module,
+  require_returns_exports_object, commonjs_value_is_default, replaces_module_exports,
+  whole_require_sources, interop_require_sources, marks_es_module,
   wildcard_require_sources, has_export_all, export_star_sources, reexports, import_call_edges,
   default_object_ident_properties, ts_helper_exports,
   ts_helper_namespace_factory_exports, receiver_observing_exports,
@@ -162,12 +162,17 @@ of the required value, which a consumer's whole `require` reads as the
 namespace.
 
 `collect_commonjs_value_is_default` records the other case: the module
-assigns `module.exports` exactly once, in a top-level statement, and uses
-`module` only as `module.exports`. Its CommonJS value is then that
-statement's value, which becomes the default export. A consumer that stays
-CommonJS keeps `require` of it, which returns the ES module's namespace, so
-`run_kept_require_default_reads` reads `.default` of that call when the
-provider's output has only that default export.
+assigns `module.exports` exactly once, in a position that runs on every
+evaluation of its body (a top-level statement, sequence element, or `var`
+initializer), and uses `module` only as `module.exports`. Its CommonJS value
+is then that assignment's value, which becomes the default export. The
+unpack driver also sets it for a webpack factory whose only ESM declaration
+is the `export default` a CommonJS runtime normalizer wrote. A consumer that
+stays CommonJS keeps `require` of it, which returns the ES module's
+namespace, so `run_kept_require_default_reads` reads `.default` where the
+value was read. `collect_replaces_module_exports` records any assignment of
+`module.exports`, for the warning when that pass cannot tell what the value
+was.
 
 `collect_whole_require_sources` is the consumer half. It lists the sources
 of top-level `var x = require("src")` bindings that the module uses as the
@@ -177,6 +182,12 @@ interop helper. The helper stage and `UnWebpackInterop` later replace an
 interop default (`() => x && x.__esModule ? x.default : x`) with the plain
 binding, and `UnEsm` merges every binding of one source into one default
 import, so after Phase 1 the two meanings can no longer be told apart.
+
+`collect_interop_require_sources` lists the opposite: the sources whose
+required value, or its top-level binding, goes to `require.n` or an interop
+helper or has its `__esModule` read. Unpack reads it only for the
+`commonjs_require_of_esm` warning: a module that stays CommonJS and read a
+marked provider through an interop now meets a namespace without the marker.
 
 A wildcard interop helper is the exception that needs the provider's
 `__esModule` marker. It returns a marked provider unchanged, so the binding is

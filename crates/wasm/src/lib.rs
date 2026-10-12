@@ -273,6 +273,9 @@ export type WakaruWarningKind =
     | "cross_module_class_call"
     | "commonjs_export_unrecovered"
     | "runtime_residual"
+    | "commonjs_require_unrecovered"
+    | "commonjs_require_of_esm"
+    | "es_source_kept_commonjs"
     | "output_parse_recovered"
     | "output_parse_failed"
     | "formatter_failed";
@@ -369,6 +372,18 @@ mod tests {
                 "commonjs_export_unrecovered",
             ),
             (wakaru::DiagnosticCode::RuntimeResidual, "runtime_residual"),
+            (
+                wakaru::DiagnosticCode::CommonJsRequireUnrecovered,
+                "commonjs_require_unrecovered",
+            ),
+            (
+                wakaru::DiagnosticCode::CommonJsRequireOfEsm,
+                "commonjs_require_of_esm",
+            ),
+            (
+                wakaru::DiagnosticCode::EsSourceKeptCommonJs,
+                "es_source_kept_commonjs",
+            ),
             (
                 wakaru::DiagnosticCode::OutputParseRecovered,
                 "output_parse_recovered",

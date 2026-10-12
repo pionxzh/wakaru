@@ -342,10 +342,10 @@ result from a run that produced nothing.
 
 | Error-class (`is_error: true`) | Non-error |
 |---|---|
-| `raw_normalization_failed`, `fact_collection_failed`, `webpack_factory_recovery_failed`, `decompile_failed`, `duplicate_declaration`, `output_parse_recovered`, `output_parse_failed` | `input_parse_recovered`, `tdz_violation`, `import_cycle`, `cross_module_class_call`, `commonjs_export_unrecovered`, `runtime_residual`, `gtm_unsupported_escape` |
+| `raw_normalization_failed`, `fact_collection_failed`, `webpack_factory_recovery_failed`, `decompile_failed`, `duplicate_declaration`, `output_parse_recovered`, `output_parse_failed` | `input_parse_recovered`, `tdz_violation`, `import_cycle`, `cross_module_class_call`, `commonjs_export_unrecovered`, `commonjs_require_unrecovered`, `commonjs_require_of_esm`, `es_source_kept_commonjs`, `runtime_residual`, `gtm_unsupported_escape` |
 
-`duplicate_declaration` and the `output_parse_*` checks run only with
-`--diagnostics`. Without it, Wakaru does not re-parse emitted modules, so a
+`duplicate_declaration`, `es_source_kept_commonjs`, and the `output_parse_*`
+checks run only with `--diagnostics`. Without it, Wakaru does not re-parse emitted modules, so a
 zero exit does not prove that every output file parses.
 
 ## Machine-readable output compatibility
@@ -404,6 +404,38 @@ first-appearance order; `exports` or `module.exports` in the list means the
 whole object is still used as a value. Output that stayed CommonJS (no `import`
 or `export`) does not get this warning, and neither do a direct
 `typeof exports` probe or other `module` members such as `module.hot`.
+
+A module that would come out as ESM with a `require` call left in it stays
+CommonJS instead, since ESM has no `require`. Decompile and unpack report a
+non-error `commonjs_require_unrecovered` warning, with or without
+`--diagnostics`, when an ESM output module still calls `require` anyway: a
+call a later unpack stage was expected to turn into an import. The message
+lists the required specifiers, and each call throws a `ReferenceError` when
+it runs. A call of a numeric module id, which names a module outside the
+input, is not reported.
+
+Unpack reports a non-error `commonjs_require_of_esm` warning, with or without
+`--diagnostics`, when a module that stayed CommonJS requires a module
+recovered as ESM whose namespace differs from the CommonJS value it replaced.
+`require` of an ES module returns its namespace. Unpack first rewrites the
+reads it can: `.default` for a provider that was `module.exports = v`, per
+use when the provider also has named exports, and a local interop helper
+dropped for a provider that marked itself `__esModule`. The warning names
+what is left and why: the replaced `module.exports` value used as a value or
+through an unknown read, or a marked provider read through an interop it
+cannot see anymore (`require.n`, an imported helper, an `__esModule` test).
+
+With `--diagnostics`, decompile and unpack report a non-error
+`es_source_kept_commonjs` warning for a module that stayed CommonJS although
+its input looks like the output of an ES module source (webpack's
+`require.r`/`require.d`, an `__esModule` marker, a getter definition on
+`exports`, or a require read through `.default`, `(0, require(x).y)()`, or
+swc's `_(require(x))`), and that keeps a require running on every evaluation
+of its body. Such a module is an ES module source whose transpiled shape
+Wakaru does not convert yet. The message lists the evidence and each kept
+require with its position: `top-level`, `function`, or `conditional`. A
+module whose kept requires all sit in a function or a conditional position
+wrote them itself and is not reported.
 
 Unpack reports a non-error `runtime_residual` warning when a module keeps a
 bundler runtime call that the split output does not define. Today these are

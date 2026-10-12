@@ -1,3 +1,4 @@
+use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::common::{Mark, Span};
 use swc_core::ecma::ast::{
@@ -6,10 +7,15 @@ use swc_core::ecma::ast::{
     MemberProp, Module, ModuleDecl, ModuleItem, OptCall, OptChainBase, OptChainExpr, SwitchStmt,
     TryStmt, WhileStmt,
 };
-use swc_core::ecma::ast::{IdentName, Invalid, MemberExpr};
+use swc_core::ecma::ast::{
+    Ident, IdentName, Invalid, KeyValueProp, MemberExpr, NewExpr, Pat, Prop, PropName,
+    PropOrSpread, VarDeclarator,
+};
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use crate::facts::{ExportKind, ModuleFacts, ModuleFactsMap};
+use crate::collections::HashMap;
+use crate::facts::{ExportFact, ExportKind, ModuleFacts, ModuleFactsMap};
+use crate::rules::transpiler_helper_utils::{LocalHelperContext, TranspilerHelperKind};
 
 use crate::analysis::binding_id;
 use crate::analysis::binding_uses::BindingId;
@@ -36,10 +42,22 @@ pub(crate) enum RequirePosition {
     Conditional,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+impl RequirePosition {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::TopLevel => "top-level",
+            Self::Function => "function",
+            Self::Conditional => "conditional",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct KeptRequire {
     pub span: Span,
     pub position: RequirePosition,
+    /// The specifier of a `require("literal")` call.
+    pub source: Option<Atom>,
 }
 
 /// Every call of the free `require` in `module`, in visit order, except one
@@ -73,7 +91,8 @@ pub(crate) fn kept_require_calls(module: &Module, unresolved_mark: Mark) -> Vec<
 ///   `Object.assign(target, require("./p") || {})`
 ///   (`commonjs_default_object_composition`).
 ///
-/// One the later stage leaves stays in ES module output.
+/// One the later stage leaves stays in ES module output, where the
+/// `commonjs_require_unrecovered` warning reports it.
 pub(crate) fn blocking_require_calls(module: &Module, unresolved_mark: Mark) -> Vec<KeptRequire> {
     let mut imported = HashSet::default();
     for item in &module.body {
@@ -114,6 +133,30 @@ pub(crate) fn kept_require_calls_in<N: VisitWith<KeptRequireFinder>>(
     };
     node.visit_with(&mut finder);
     finder.found
+}
+
+/// The calls of [`kept_require_calls`] when `module` has import or export
+/// declarations. ESM has no `require` binding, so each one throws a
+/// `ReferenceError` when it runs; CommonJS output reports nothing.
+pub(crate) fn esm_output_require_calls(module: &Module, unresolved_mark: Mark) -> Vec<KeptRequire> {
+    if !module
+        .body
+        .iter()
+        .any(|item| matches!(item, ModuleItem::ModuleDecl(_)))
+    {
+        return Vec::new();
+    }
+    kept_require_calls(module, unresolved_mark)
+}
+
+fn string_require_source(call: &CallExpr) -> Option<Atom> {
+    match call.args.as_slice() {
+        [arg] if arg.spread.is_none() => match strip_parens(&arg.expr) {
+            Expr::Lit(Lit::Str(source)) => Some(Atom::from(source.value.as_str().unwrap_or(""))),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 /// Whether `call` calls the free `require` with anything but a numeric id.
@@ -194,6 +237,7 @@ impl Visit for KeptRequireFinder {
             self.found.push(KeptRequire {
                 span: call.span,
                 position: self.position(),
+                source: string_require_source(call),
             });
         }
         if self.blocking && is_composition_call(call, self.unresolved_mark) {
@@ -366,78 +410,520 @@ fn is_composition_call(call: &CallExpr, unresolved_mark: Mark) -> bool {
         })
 }
 
-/// In a module that stays CommonJS, reads `.default` of each kept
-/// `require("./p")` whose provider was `module.exports = v` and is now an
-/// ES module with only `export default v`: `require` of an ES module returns
-/// its namespace, and `v` is that namespace's `default`. Every consumer read
-/// of the CommonJS value keeps its meaning, an interop helper's included.
+/// What a kept `require("./p")` returns once `./p` became an ES module, and
+/// how a read of it keeps the meaning it had when `./p` was CommonJS.
+#[derive(Clone, Copy)]
+enum ProviderShape<'a> {
+    /// `module.exports = v`, now only `export default v`: the value is the
+    /// namespace's `default`.
+    Default,
+    /// `module.exports = v` plus named exports, which are on the namespace,
+    /// not on `v`: a call or `new` reads `default`, a named export stays a
+    /// namespace read.
+    DefaultWithNamed(&'a [ExportFact]),
+    /// The module marked itself `__esModule`; the namespace is its exports
+    /// object without the marker, which only an interop reads.
+    Marked,
+    /// `module.exports` replaced another way: the value is unknown.
+    ReplacedValue,
+}
+
+fn provider_shape(provider: &ModuleFacts) -> Option<ProviderShape<'_>> {
+    if provider.stays_commonjs {
+        return None;
+    }
+    let has_default = provider
+        .exports
+        .iter()
+        .any(|export| export.kind == ExportKind::Default);
+    if provider.commonjs_value_is_default
+        && has_default
+        && !provider.has_export_all
+        && provider.reexports.is_empty()
+    {
+        return Some(if provider.exports.len() == 1 {
+            ProviderShape::Default
+        } else {
+            ProviderShape::DefaultWithNamed(&provider.exports)
+        });
+    }
+    if provider.marks_es_module {
+        Some(ProviderShape::Marked)
+    } else if provider.replaces_module_exports {
+        Some(ProviderShape::ReplacedValue)
+    } else {
+        None
+    }
+}
+
+fn is_named_export(exports: &[ExportFact], name: &str) -> bool {
+    exports
+        .iter()
+        .any(|export| export.kind == ExportKind::Named && export.exported == *name)
+}
+
+/// In a module that stays CommonJS, makes each kept `require("./p")` of a
+/// provider recovered as ESM read what it read when the provider was
+/// CommonJS, and returns the requires it cannot, with the reason, for the
+/// `commonjs_require_of_esm` warning.
+///
+/// `require` of an ES module returns its namespace. A provider that was
+/// `module.exports = v` has `v` as the namespace's `default`: the call reads
+/// `.default` when it is the only export, and otherwise each call, `new`, or
+/// read of a name that is not a named export goes through `.default`,
+/// directly or through a binding every use of which is one of those. A
+/// provider that marked itself `__esModule` has lost the marker, so a local
+/// interop helper around the call, which returned it unchanged, is dropped.
 pub(crate) fn run_kept_require_default_reads(
     module: &mut Module,
     module_facts: &ModuleFactsMap,
     current_filename: Option<&str>,
     unresolved_mark: Mark,
-) {
-    struct Rewriter<'a> {
-        module_facts: &'a ModuleFactsMap,
-        current_filename: Option<&'a str>,
-        unresolved_mark: Mark,
-    }
-
-    impl VisitMut for Rewriter<'_> {
-        fn visit_mut_expr(&mut self, expr: &mut Expr) {
-            expr.visit_mut_children_with(self);
-            let Expr::Call(call) = &*expr else {
-                return;
-            };
-            if !is_kept_require_call(call, self.unresolved_mark) {
-                return;
-            }
-            let [arg] = call.args.as_slice() else {
-                return;
-            };
-            let Expr::Lit(Lit::Str(source)) = strip_parens(&arg.expr) else {
-                return;
-            };
-            let Some(provider) = self
-                .module_facts
-                .get_from(self.current_filename, source.value.as_str().unwrap_or(""))
-            else {
-                return;
-            };
-            if !reads_value_as_default(provider) {
-                return;
-            }
-            let call = std::mem::replace(expr, Expr::Invalid(Invalid { span: DUMMY_SP }));
-            *expr = Expr::Member(MemberExpr {
-                span: DUMMY_SP,
-                obj: Box::new(call),
-                prop: MemberProp::Ident(IdentName::new("default".into(), DUMMY_SP)),
-            });
-        }
-    }
-
+) -> Vec<(Atom, &'static str)> {
     if module
         .body
         .iter()
         .any(|item| matches!(item, ModuleItem::ModuleDecl(_)))
     {
-        return;
+        return Vec::new();
     }
-    module.visit_mut_with(&mut Rewriter {
-        module_facts,
-        current_filename,
+    let shape_of = |source: &str| {
+        module_facts
+            .get_from(current_filename, source)
+            .and_then(provider_shape)
+    };
+    let interop_sources = current_filename
+        .and_then(|filename| module_facts.get(filename))
+        .map_or(&[][..], |own| own.interop_require_sources.as_slice());
+
+    // Bindings of a `DefaultWithNamed` provider whose every use is a call,
+    // a `new`, or a static member read.
+    let mut bindings = BindingCollector {
         unresolved_mark,
-    });
+        shape_of: &shape_of,
+        candidates: HashMap::default(),
+    };
+    module.visit_with(&mut bindings);
+    let mut uses = BindingUseCheck {
+        candidates: bindings.candidates,
+        rejected: HashSet::default(),
+    };
+    module.visit_with(&mut uses);
+    let good: HashMap<BindingId, Atom> = uses
+        .candidates
+        .into_iter()
+        .filter(|(id, _)| !uses.rejected.contains(id))
+        .collect();
+
+    let mut rewriter = DefaultReadRewriter {
+        unresolved_mark,
+        shape_of: &shape_of,
+        good: &good,
+        local_helpers: LocalHelperContext::collect_with_mark(module, unresolved_mark),
+        interop_sources,
+        unhandled: Vec::new(),
+    };
+    module.visit_mut_with(&mut rewriter);
+    rewriter.unhandled
 }
 
-/// The provider's CommonJS value is the `default` of the namespace its ES
-/// module output gives `require`.
-fn reads_value_as_default(provider: &ModuleFacts) -> bool {
-    provider.commonjs_value_is_default
-        && !provider.stays_commonjs
-        && !provider.has_export_all
-        && provider.reexports.is_empty()
-        && matches!(provider.exports.as_slice(), [export] if export.kind == ExportKind::Default)
+fn require_source(expr: &Expr, unresolved_mark: Mark) -> Option<Atom> {
+    match strip_parens(expr) {
+        Expr::Call(call) if is_kept_require_call(call, unresolved_mark) => {
+            string_require_source(call)
+        }
+        _ => None,
+    }
+}
+
+fn default_member(object: Expr) -> Expr {
+    Expr::Member(MemberExpr {
+        span: DUMMY_SP,
+        obj: Box::new(object),
+        prop: MemberProp::Ident(IdentName::new("default".into(), DUMMY_SP)),
+    })
+}
+
+fn take_expr(expr: &mut Expr) -> Expr {
+    std::mem::replace(expr, Expr::Invalid(Invalid { span: DUMMY_SP }))
+}
+
+struct BindingCollector<'a, F> {
+    unresolved_mark: Mark,
+    shape_of: &'a F,
+    candidates: HashMap<BindingId, Atom>,
+}
+
+impl<'a, F: Fn(&str) -> Option<ProviderShape<'a>>> Visit for BindingCollector<'a, F> {
+    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+        if let (Pat::Ident(binding), Some(init)) = (&declarator.name, &declarator.init) {
+            if let Some(source) = require_source(init, self.unresolved_mark) {
+                if matches!(
+                    (self.shape_of)(&source),
+                    Some(ProviderShape::DefaultWithNamed(_))
+                ) {
+                    self.candidates.insert(binding_id(&binding.id), source);
+                }
+            }
+        }
+        declarator.visit_children_with(self);
+    }
+}
+
+struct BindingUseCheck {
+    candidates: HashMap<BindingId, Atom>,
+    rejected: HashSet<BindingId>,
+}
+
+impl BindingUseCheck {
+    fn candidate(&self, expr: &Expr) -> Option<BindingId> {
+        match strip_parens(expr) {
+            Expr::Ident(id) => {
+                let id = binding_id(id);
+                self.candidates.contains_key(&id).then_some(id)
+            }
+            _ => None,
+        }
+    }
+}
+
+impl Visit for BindingUseCheck {
+    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+        // The binding itself is no use.
+        declarator.init.visit_with(self);
+    }
+
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if let Callee::Expr(callee) = &call.callee {
+            if self.candidate(callee).is_some() {
+                call.args.visit_with(self);
+                return;
+            }
+        }
+        call.visit_children_with(self);
+    }
+
+    fn visit_new_expr(&mut self, new: &NewExpr) {
+        if self.candidate(&new.callee).is_some() {
+            new.args.visit_with(self);
+            return;
+        }
+        new.visit_children_with(self);
+    }
+
+    fn visit_member_expr(&mut self, member: &MemberExpr) {
+        if self.candidate(&member.obj).is_some() && member.prop.as_ident().is_some() {
+            return;
+        }
+        member.visit_children_with(self);
+    }
+
+    fn visit_ident(&mut self, ident: &Ident) {
+        let id = binding_id(ident);
+        if self.candidates.contains_key(&id) {
+            self.rejected.insert(id);
+        }
+    }
+}
+
+struct DefaultReadRewriter<'a, F> {
+    unresolved_mark: Mark,
+    shape_of: &'a F,
+    good: &'a HashMap<BindingId, Atom>,
+    local_helpers: LocalHelperContext,
+    interop_sources: &'a [Atom],
+    unhandled: Vec<(Atom, &'static str)>,
+}
+
+impl<'a, F: Fn(&str) -> Option<ProviderShape<'a>>> DefaultReadRewriter<'a, F> {
+    fn report(&mut self, source: Atom, reason: &'static str) {
+        if !self.unhandled.iter().any(|(seen, _)| *seen == source) {
+            self.unhandled.push((source, reason));
+        }
+    }
+
+    fn good_binding(&self, expr: &Expr) -> Option<&'a Atom> {
+        match strip_parens(expr) {
+            Expr::Ident(id) => self.good.get(&binding_id(id)),
+            _ => None,
+        }
+    }
+
+    fn named_exports(&self, source: &str) -> Option<&'a [ExportFact]> {
+        match (self.shape_of)(source) {
+            Some(ProviderShape::DefaultWithNamed(exports)) => Some(exports),
+            _ => None,
+        }
+    }
+
+    /// A kept require in a position no rule above rewrote.
+    fn other_use(&mut self, source: Atom) {
+        match (self.shape_of)(&source) {
+            Some(ProviderShape::DefaultWithNamed(_)) => self.report(
+                source,
+                "the value it assigned to `module.exports` is now the namespace's `default`, beside its named exports, so a read of that value gets the namespace",
+            ),
+            Some(ProviderShape::Marked) if self.interop_sources.contains(&source) => self.report(
+                source,
+                "the namespace has no `__esModule` marker, so an interop that reads its default gets the namespace",
+            ),
+            Some(ProviderShape::ReplacedValue) => self.report(
+                source,
+                "the value it assigned to `module.exports` may not be the namespace's `default`, so a read of that value gets the namespace",
+            ),
+            _ => {}
+        }
+    }
+}
+
+impl<'a, F: Fn(&str) -> Option<ProviderShape<'a>>> VisitMut for DefaultReadRewriter<'a, F> {
+    fn visit_mut_var_declarator(&mut self, declarator: &mut VarDeclarator) {
+        // A good binding keeps its init; its uses are rewritten instead.
+        if let (Pat::Ident(binding), Some(_)) = (&declarator.name, &declarator.init) {
+            if self.good.contains_key(&binding_id(&binding.id)) {
+                return;
+            }
+        }
+        declarator.visit_mut_children_with(self);
+    }
+
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        // `require("./p")` alone: the default-only provider's value.
+        if let Some(source) = require_source(expr, self.unresolved_mark) {
+            if matches!((self.shape_of)(&source), Some(ProviderShape::Default)) {
+                *expr = default_member(take_expr(expr));
+            } else {
+                self.other_use(source);
+            }
+            return;
+        }
+        match expr {
+            // `H(require("./p"))` of a marked provider: the helper returned it
+            // unchanged.
+            Expr::Call(call)
+                if matches!(&call.callee, Callee::Expr(callee)
+                    if self.local_helpers.is_helper_callee(callee, TranspilerHelperKind::InteropRequireDefault)
+                        || self.local_helpers.is_helper_callee(callee, TranspilerHelperKind::InteropRequireWildcard))
+                    && call.args.len() == 1
+                    && call.args[0].spread.is_none() =>
+            {
+                if let Some(source) = require_source(&call.args[0].expr, self.unresolved_mark) {
+                    if matches!((self.shape_of)(&source), Some(ProviderShape::Marked)) {
+                        *expr = take_expr(&mut call.args[0].expr);
+                        return;
+                    }
+                }
+                expr.visit_mut_children_with(self);
+            }
+            // `require("./p")(…)` or `x(…)`.
+            Expr::Call(call) => {
+                if let Callee::Expr(callee) = &mut call.callee {
+                    if self.rewrite_callee(callee) {
+                        call.args.visit_mut_with(self);
+                        return;
+                    }
+                }
+                expr.visit_mut_children_with(self);
+            }
+            Expr::New(new) => {
+                if self.rewrite_callee(&mut new.callee) {
+                    new.args.visit_mut_with(self);
+                    return;
+                }
+                expr.visit_mut_children_with(self);
+            }
+            // `require("./p").name` or `x.name`.
+            Expr::Member(member) => {
+                let name = member.prop.as_ident().map(|prop| prop.sym.clone());
+                let source = require_source(&member.obj, self.unresolved_mark)
+                    .or_else(|| self.good_binding(&member.obj).cloned());
+                if let (Some(source), Some(name)) = (source, name) {
+                    if let Some(exports) = self.named_exports(&source) {
+                        if !is_named_export(exports, &name) {
+                            *member.obj = default_member(take_expr(&mut member.obj));
+                        }
+                        return;
+                    }
+                }
+                expr.visit_mut_children_with(self);
+            }
+            _ => expr.visit_mut_children_with(self),
+        }
+    }
+}
+
+impl<'a, F: Fn(&str) -> Option<ProviderShape<'a>>> DefaultReadRewriter<'a, F> {
+    /// Reads `.default` of a called or constructed `require("./p")` or good
+    /// binding of a `DefaultWithNamed` provider.
+    fn rewrite_callee(&mut self, callee: &mut Box<Expr>) -> bool {
+        let source = require_source(callee, self.unresolved_mark)
+            .or_else(|| self.good_binding(callee).cloned());
+        let Some(source) = source else {
+            return false;
+        };
+        if self.named_exports(&source).is_none() {
+            return false;
+        }
+        **callee = default_member(take_expr(callee));
+        true
+    }
+}
+
+/// Evidence in a module, before any rule runs, that its source was an ES
+/// module, as labels for a diagnostic.
+///
+/// Module level: webpack's `require.r(exports)` and `require.d(exports, …)`,
+/// an `__esModule` definition, assignment, or read (not an object-literal
+/// key: babel-runtime 6 shims write `module.exports = { default: require(x),
+/// __esModule: true }` by hand), and a getter definition on `exports` (swc,
+/// tsc). Require level: `require(x).default`, `(0, require(x).y)(…)`, and
+/// `h._(require(x))` (swc's interop helpers). `(0, b.y)(…)` through a
+/// variable bound to a require is not evidence: Terser writes it when it
+/// inlines a member alias in CommonJS source.
+pub(crate) fn es_source_evidence(module: &Module, unresolved_mark: Mark) -> Vec<&'static str> {
+    struct Collector {
+        unresolved_mark: Mark,
+        found: Vec<&'static str>,
+    }
+
+    impl Collector {
+        fn add(&mut self, label: &'static str) {
+            if !self.found.contains(&label) {
+                self.found.push(label);
+            }
+        }
+
+        fn is_free(&self, expr: &Expr, name: &str) -> bool {
+            matches!(strip_parens(expr), Expr::Ident(id)
+                if is_unresolved_ident(id, name, self.unresolved_mark))
+        }
+
+        fn is_require(&self, expr: &Expr) -> bool {
+            matches!(strip_parens(expr), Expr::Call(call)
+                if is_kept_require_call(call, self.unresolved_mark))
+        }
+    }
+
+    impl Visit for Collector {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if let Callee::Expr(callee) = &call.callee {
+                let first_is_exports = call
+                    .args
+                    .first()
+                    .is_some_and(|arg| self.is_free(&arg.expr, "exports"));
+                if let Expr::Member(member) = strip_parens(callee) {
+                    let prop = member.prop.as_ident().map(|prop| prop.sym.as_ref());
+                    if self.is_free(&member.obj, "require") && first_is_exports {
+                        match prop {
+                            Some("r") => self.add("require.r"),
+                            Some("d") => self.add("require.d"),
+                            _ => {}
+                        }
+                    }
+                    if self.is_free(&member.obj, "Object")
+                        && prop == Some("defineProperty")
+                        && first_is_exports
+                    {
+                        match call.args.get(1).map(|arg| strip_parens(&arg.expr)) {
+                            Some(Expr::Lit(Lit::Str(key))) if key.value == *"__esModule" => {
+                                self.add("__esModule")
+                            }
+                            _ if matches!(call.args.get(2).map(|arg| strip_parens(&arg.expr)),
+                            Some(Expr::Object(descriptor))
+                                if descriptor.props.iter().any(|prop| match prop {
+                                    PropOrSpread::Prop(prop) => matches!(&**prop,
+                                        Prop::KeyValue(KeyValueProp { key, .. })
+                                            if matches!(key, PropName::Ident(name) if name.sym == "get"))
+                                        || matches!(&**prop, Prop::Getter(_))
+                                        || matches!(&**prop, Prop::Method(method)
+                                            if matches!(&method.key, PropName::Ident(name) if name.sym == "get")),
+                                    PropOrSpread::Spread(_) => false,
+                                })) =>
+                            {
+                                self.add("export getter")
+                            }
+                            _ => {}
+                        }
+                    }
+                    if prop == Some("_")
+                        && call
+                            .args
+                            .first()
+                            .is_some_and(|arg| self.is_require(&arg.expr))
+                    {
+                        self.add("_(require())");
+                    }
+                }
+                if let Expr::Seq(seq) = strip_parens(callee) {
+                    if let [zero, Expr::Member(member)] =
+                        seq.exprs.iter().map(|e| &**e).collect::<Vec<_>>()[..]
+                    {
+                        if matches!(zero, Expr::Lit(Lit::Num(n)) if n.value == 0.0)
+                            && self.is_require(&member.obj)
+                        {
+                            self.add("(0, require().x)()");
+                        }
+                    }
+                }
+            }
+            call.visit_children_with(self);
+        }
+
+        fn visit_member_expr(&mut self, member: &MemberExpr) {
+            match member.prop.as_ident().map(|prop| prop.sym.as_ref()) {
+                Some("default") if self.is_require(&member.obj) => self.add("require().default"),
+                Some("__esModule") => self.add("__esModule"),
+                _ => {}
+            }
+            member.visit_children_with(self);
+        }
+    }
+
+    let mut collector = Collector {
+        unresolved_mark,
+        found: Vec::new(),
+    };
+    module.visit_with(&mut collector);
+    collector.found
+}
+
+/// The `es_source_kept_commonjs` message for an output `module` that stayed
+/// CommonJS while its input showed ES-source `evidence` and it keeps a
+/// require that runs on every evaluation of the module body. `None` when it
+/// does not apply: a module whose kept requires all sit in a function or a
+/// conditional position was written that way by its source.
+pub(crate) fn es_source_kept_commonjs_message(
+    module: &Module,
+    unresolved_mark: Mark,
+    evidence: &[&str],
+) -> Option<String> {
+    if evidence.is_empty()
+        || module
+            .body
+            .iter()
+            .any(|item| matches!(item, ModuleItem::ModuleDecl(_)))
+    {
+        return None;
+    }
+    let calls = kept_require_calls(module, unresolved_mark);
+    if !calls
+        .iter()
+        .any(|call| call.position == RequirePosition::TopLevel)
+    {
+        return None;
+    }
+    let requires = calls
+        .iter()
+        .map(|call| match &call.source {
+            Some(source) => format!("\"{source}\" ({})", call.position.as_str()),
+            None => format!("<dynamic> ({})", call.position.as_str()),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "module stayed CommonJS although its source looks like an ES module ({}); kept requires: {requires}",
+        evidence.join(", ")
+    ))
 }
 
 #[cfg(test)]
@@ -550,6 +1036,69 @@ try { require("g"); } catch (e) {}"#
             [TopLevel, TopLevel]
         );
         assert_eq!(positions(r#"var require = load; require("a");"#), []);
+    }
+
+    fn evidence(source: &str) -> Vec<&'static str> {
+        with_module(source, es_source_evidence)
+    }
+
+    #[test]
+    fn reads_es_source_evidence() {
+        assert_eq!(
+            evidence(r#"require.r(exports); require.d(exports, { a: () => a });"#),
+            ["require.r", "require.d"]
+        );
+        assert_eq!(
+            evidence(r#"Object.defineProperty(exports, "__esModule", { value: true });"#),
+            ["__esModule"]
+        );
+        assert_eq!(evidence(r#"exports.__esModule = true;"#), ["__esModule"]);
+        assert_eq!(
+            evidence(
+                r#"Object.defineProperty(exports, "a", { enumerable: !0, get: function () { return a; } });"#
+            ),
+            ["export getter"]
+        );
+        assert_eq!(
+            evidence(r#"var n = require("./a").default;"#),
+            ["require().default"]
+        );
+        assert_eq!(
+            evidence(r#"(0, require("./a").Z)(1);"#),
+            ["(0, require().x)()"]
+        );
+        assert_eq!(
+            evidence(r#"var n = require("./h")._(require("./a"));"#),
+            ["_(require())"]
+        );
+    }
+
+    #[test]
+    fn plain_commonjs_shows_no_es_source_evidence() {
+        // wild-observed: Terser output of CommonJS source after it inlined a
+        // member alias.
+        assert!(evidence(r#"var i = require("./a"); (0, i.defineMethod)("x", f);"#).is_empty());
+        // babel-runtime 6 shim, written by hand.
+        assert!(
+            evidence(r#"module.exports = { default: require("./a"), __esModule: true };"#)
+                .is_empty()
+        );
+        assert!(
+            evidence(r#"var t = require("./a")("toStringTag"); module.exports = t;"#).is_empty()
+        );
+        assert!(evidence(r#"Object.defineProperty(exports, "a", { value: 1 });"#).is_empty());
+    }
+
+    #[test]
+    fn only_es_module_output_reports_a_require() {
+        with_module(r#"exports.a = require("./a")();"#, |module, mark| {
+            assert!(esm_output_require_calls(module, mark).is_empty());
+        });
+        with_module(r#"export const a = require("./a")();"#, |module, mark| {
+            let calls = esm_output_require_calls(module, mark);
+            assert_eq!(calls.len(), 1);
+            assert_eq!(calls[0].source.as_deref(), Some("./a"));
+        });
     }
 
     #[test]

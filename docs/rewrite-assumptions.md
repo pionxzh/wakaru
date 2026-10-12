@@ -874,7 +874,8 @@ shapes convert only once it is ESM (`export default require("x")()`), and
 it leaves two shapes for later unpack stages: an imported helper's
 `helper(require("./p"))` (`cross_module_interop_import`) and a default-object
 composition source (`Object.assign(o, require("./p") || {})`). A require
-those stages leave stays in the ESM output.
+those stages leave stays in the ESM output, and the
+`commonjs_require_unrecovered` warning reports it.
 
 UnEsm limits the deviation with a barrier (`rules/un_esm/hoist_barrier.rs`).
 After the first top-level statement that a later provider can observe, every
