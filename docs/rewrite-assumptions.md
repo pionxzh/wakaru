@@ -870,12 +870,17 @@ in place, a called require, one in a function, or one in a conditional
 position. Requires of numeric module ids that are not in the input are the
 exception. They fail in CommonJS too, so they stay calls in ESM output.
 Before that check `UnEsm` converts the module a second time, since some
-shapes convert only once it is ESM (`export default require("x")()`), and
-it leaves two shapes for later unpack stages: an imported helper's
-`helper(require("./p"))` (`cross_module_interop_import`) and a default-object
-composition source (`Object.assign(o, require("./p") || {})`). A require
-those stages leave stays in the ESM output, and the
-`commonjs_require_unrecovered` warning reports it.
+shapes convert only once it is ESM (`export default require("x")()`). In
+unpack it leaves three shapes for later stages: a top-level `var`
+initialized by an imported helper's `helper(require("./p"))`
+(`cross_module_interop_import`), a top-level default-object composition
+statement (`Object.assign(o, require("./p") || {})`), and, in any position,
+a lowered `import()` around an imported helper
+(`Promise.resolve().then(() => helper(require("./p")))`,
+`lowered_dynamic_import_source_semantics`). A require those stages leave
+stays in the ESM output, and the `commonjs_require_unrecovered` warning
+reports it. A single file has no later stage, so there these shapes keep the
+module CommonJS too.
 
 UnEsm limits the deviation with a barrier (`rules/un_esm/hoist_barrier.rs`).
 After the first top-level statement that a later provider can observe, every

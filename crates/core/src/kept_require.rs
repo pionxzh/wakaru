@@ -2,10 +2,10 @@ use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::common::{Mark, Span};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignOp, BinExpr, BinaryOp, CallExpr, Callee, Class, CondExpr,
+    ArrowExpr, AssignExpr, AssignOp, BinExpr, BinaryOp, CallExpr, Callee, Class, CondExpr, Decl,
     DoWhileStmt, Expr, ForInStmt, ForOfStmt, ForStmt, Function, IfStmt, ImportSpecifier, Lit,
-    MemberProp, Module, ModuleDecl, ModuleItem, OptCall, OptChainBase, OptChainExpr, SwitchStmt,
-    TryStmt, WhileStmt,
+    MemberProp, Module, ModuleDecl, ModuleItem, OptCall, OptChainBase, OptChainExpr, Stmt,
+    SwitchStmt, TryStmt, WhileStmt,
 };
 use swc_core::ecma::ast::{
     Ident, IdentName, Invalid, KeyValueProp, MemberExpr, NewExpr, Pat, Prop, PropName,
@@ -15,6 +15,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::collections::HashMap;
 use crate::facts::{ExportFact, ExportKind, ModuleFacts, ModuleFactsMap};
+use crate::rules::lowered_dynamic_import::LoweredImportMatcher;
 use crate::rules::transpiler_helper_utils::{LocalHelperContext, TranspilerHelperKind};
 
 use crate::analysis::binding_id;
@@ -81,19 +82,33 @@ pub(crate) fn kept_require_calls(module: &Module, unresolved_mark: Mark) -> Vec<
     finder.found
 }
 
-/// [`kept_require_calls`] after `UnEsm` converted the module, without the
-/// requires a later stage of unpack may still turn into imports from the
-/// other modules' facts:
+/// [`kept_require_calls`] after `UnEsm` converted the module. With
+/// `later_unpack_stages`, it leaves out the requires a later stage of unpack
+/// may still turn into imports from the other modules' facts, in the
+/// top-level forms those stages accept:
 ///
-/// - the argument of a call of an imported helper, `helper(require("./p"))`
-///   or `ns.helper(require("./p"))` (`cross_module_interop_import`);
-/// - a source of a default-object composition shell,
+/// - the require argument of an imported helper that initializes a
+///   top-level `var`, `var x = helper(require("./p"))` or
+///   `var x = ns.helper(require("./p"))` (`cross_module_interop_import`);
+/// - a source of a top-level default-object composition statement,
 ///   `Object.assign(target, require("./p") || {})`
-///   (`commonjs_default_object_composition`).
+///   (`commonjs_default_object_composition`);
+/// - anywhere, the require of a lowered `import()` around an imported
+///   helper, `Promise.resolve().then(() => helper(require("./p")))`
+///   (`run_cross_module_lowered_dynamic_imports`).
 ///
 /// One the later stage leaves stays in ES module output, where the
-/// `commonjs_require_unrecovered` warning reports it.
-pub(crate) fn blocking_require_calls(module: &Module, unresolved_mark: Mark) -> Vec<KeptRequire> {
+/// `commonjs_require_unrecovered` warning reports it. A single file has no
+/// later stage, and the stages read no other form, so every other require
+/// counts.
+pub(crate) fn blocking_require_calls(
+    module: &Module,
+    unresolved_mark: Mark,
+    later_unpack_stages: bool,
+) -> Vec<KeptRequire> {
+    if !later_unpack_stages {
+        return kept_require_calls(module, unresolved_mark);
+    }
     let mut imported = HashSet::default();
     for item in &module.body {
         if let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item {
@@ -178,7 +193,8 @@ pub(crate) struct KeptRequireFinder {
     function_depth: usize,
     conditional_depth: usize,
     found: Vec<KeptRequire>,
-    /// Skip the requires a later stage converts ([`blocking_require_calls`]).
+    /// Skip the top-level requires a later stage converts
+    /// ([`blocking_require_calls`]).
     blocking: bool,
     /// Import bindings whose call of a require is left for a later stage.
     imported_helpers: HashSet<BindingId>,
@@ -195,13 +211,8 @@ impl KeptRequireFinder {
         }
     }
 
-    fn calls_imported_helper(&self, call: &CallExpr) -> bool {
-        if !self.blocking || self.imported_helpers.is_empty() {
-            return false;
-        }
-        let Callee::Expr(callee) = &call.callee else {
-            return false;
-        };
+    /// `helper` or `ns.helper` for an import binding `helper` or `ns`.
+    fn is_imported_helper(&self, callee: &Expr) -> bool {
         let helper = match strip_parens(callee) {
             Expr::Ident(id) => id,
             Expr::Member(member) => match strip_parens(&member.obj) {
@@ -211,11 +222,70 @@ impl KeptRequireFinder {
             _ => return false,
         };
         self.imported_helpers.contains(&binding_id(helper))
+    }
+
+    /// The specifier of a lowered `import()` around an imported wildcard
+    /// helper, `Promise.resolve().then(() => helper(require("./p")))` and
+    /// the other forms `run_cross_module_lowered_dynamic_imports` restores
+    /// anywhere in a module.
+    fn lowered_import_specifier<'a>(&self, call: &'a CallExpr) -> Option<&'a Expr> {
+        if !self.blocking || self.imported_helpers.is_empty() {
+            return None;
+        }
+        LoweredImportMatcher {
+            is_wildcard_helper: |callee: &Expr| self.is_imported_helper(callee),
+            unresolved_mark: Some(self.unresolved_mark),
+        }
+        .specifier(call)
+    }
+
+    fn calls_imported_helper(&self, call: &CallExpr) -> bool {
+        if !self.blocking || self.imported_helpers.is_empty() {
+            return false;
+        }
+        let Callee::Expr(callee) = &call.callee else {
+            return false;
+        };
+        self.is_imported_helper(callee)
             && call.args.first().is_some_and(|first| {
                 first.spread.is_none()
                     && matches!(&*first.expr, Expr::Call(inner)
                         if is_kept_require_call(inner, self.unresolved_mark))
             })
+    }
+
+    /// Visits `helper(require("./p"), …)` without the require argument
+    /// itself, but with what that require holds.
+    fn visit_skipping_helper_require(&mut self, call: &CallExpr) {
+        call.callee.visit_with(self);
+        for (index, arg) in call.args.iter().enumerate() {
+            match &*arg.expr {
+                Expr::Call(inner) if index == 0 => inner.visit_children_with(self),
+                _ => arg.visit_with(self),
+            }
+        }
+    }
+
+    /// Visits `Object.assign(target, require("./p") || {}, …)` without its
+    /// source requires.
+    fn visit_skipping_composition_requires(&mut self, call: &CallExpr) {
+        call.callee.visit_with(self);
+        for (index, arg) in call.args.iter().enumerate() {
+            match &*arg.expr {
+                Expr::Bin(BinExpr {
+                    op: BinaryOp::LogicalOr,
+                    left,
+                    right,
+                    ..
+                }) if index > 0 => {
+                    if let Expr::Call(inner) = &**left {
+                        inner.visit_children_with(self);
+                    }
+                    right.visit_with(self);
+                }
+                _ => arg.visit_with(self),
+            }
+        }
     }
 
     fn in_function<N: VisitWith<Self> + ?Sized>(&mut self, node: &N) {
@@ -233,6 +303,11 @@ impl KeptRequireFinder {
 
 impl Visit for KeptRequireFinder {
     fn visit_call_expr(&mut self, call: &CallExpr) {
+        if let Some(specifier) = self.lowered_import_specifier(call) {
+            // Only the specifier stays: the pass replaces the whole call.
+            specifier.visit_with(self);
+            return;
+        }
         if is_kept_require_call(call, self.unresolved_mark) {
             self.found.push(KeptRequire {
                 span: call.span,
@@ -240,38 +315,36 @@ impl Visit for KeptRequireFinder {
                 source: string_require_source(call),
             });
         }
-        if self.blocking && is_composition_call(call, self.unresolved_mark) {
-            call.callee.visit_with(self);
-            for (index, arg) in call.args.iter().enumerate() {
-                match &*arg.expr {
-                    Expr::Bin(BinExpr {
-                        op: BinaryOp::LogicalOr,
-                        left,
-                        right,
-                        ..
-                    }) if index > 0 => {
-                        if let Expr::Call(inner) = &**left {
-                            inner.visit_children_with(self);
-                        }
-                        right.visit_with(self);
-                    }
-                    _ => arg.visit_with(self),
-                }
-            }
-            return;
-        }
-        if self.calls_imported_helper(call) {
-            // Skip the helper's require argument itself, not what it holds.
-            call.callee.visit_with(self);
-            for (index, arg) in call.args.iter().enumerate() {
-                match &*arg.expr {
-                    Expr::Call(inner) if index == 0 => inner.visit_children_with(self),
-                    _ => arg.visit_with(self),
-                }
-            }
-            return;
-        }
         call.visit_children_with(self);
+    }
+
+    fn visit_module_item(&mut self, item: &ModuleItem) {
+        if self.blocking {
+            match item {
+                ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
+                    for declarator in &var.decls {
+                        declarator.name.visit_with(self);
+                        match declarator.init.as_deref().map(strip_parens) {
+                            Some(Expr::Call(call)) if self.calls_imported_helper(call) => {
+                                self.visit_skipping_helper_require(call);
+                            }
+                            _ => declarator.init.visit_with(self),
+                        }
+                    }
+                    return;
+                }
+                ModuleItem::Stmt(Stmt::Expr(statement)) => {
+                    if let Expr::Call(call) = strip_parens(&statement.expr) {
+                        if is_composition_call(call, self.unresolved_mark) {
+                            self.visit_skipping_composition_requires(call);
+                            return;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        item.visit_children_with(self);
     }
 
     fn visit_function(&mut self, function: &Function) {
@@ -964,7 +1037,7 @@ mod tests {
 
     fn blocking(source: &str) -> usize {
         with_module(source, |module, mark| {
-            blocking_require_calls(module, mark).len()
+            blocking_require_calls(module, mark, true).len()
         })
     }
 
@@ -1128,6 +1201,42 @@ try { require("g"); } catch (e) {}"#
                 r#"export default {}; Object.assign(o, require("./a"), require("./b") || {});"#
             ),
             2
+        );
+    }
+
+    #[test]
+    fn helper_and_composition_requires_block_outside_the_forms_later_stages_read() {
+        // The cross-module pass reads only a top-level `var` initializer, and
+        // the composition pass only a top-level statement.
+        assert_eq!(
+            blocking(r#"import h from "./h"; export const x = h.wrap(require("./a"));"#),
+            1
+        );
+        assert_eq!(
+            blocking(r#"import h from "./h"; exports.x = h(require("./a"));"#),
+            1
+        );
+        assert_eq!(
+            blocking(r#"import h from "./h"; export function f() { return h(require("./a")); }"#),
+            1
+        );
+        assert_eq!(
+            blocking(
+                r#"export default {}; function f() { Object.assign(o, require("./a") || {}); }"#
+            ),
+            1
+        );
+        // The lowered `import()` pass reads its form in any position.
+        assert_eq!(
+            blocking(
+                r#"import * as t from "./t"; export function f() { return Promise.resolve().then(() => t.__importStar(require("./a"))); }"#
+            ),
+            0
+        );
+        // A single file has no later stage.
+        with_module(
+            r#"import h from "./h"; var a = h(require("./a")); export default {}; Object.assign(o, require("./b") || {});"#,
+            |module, mark| assert_eq!(blocking_require_calls(module, mark, false).len(), 2),
         );
     }
 }

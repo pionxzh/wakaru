@@ -7883,16 +7883,51 @@ require.d(exports, { r: () => f });
 
 #[test]
 fn imported_helper_call_of_a_require_is_left_for_cross_module_recovery() {
-    // Unpack resolves `helper(require(p))` from the helper module's facts
-    // after `UnEsm`; until then the module stays on its way to ESM.
+    // Unpack resolves a top-level `var x = helper(require(p))` from the
+    // helper module's facts after `UnEsm`; until then the module stays on its
+    // way to ESM.
     let input = r#"
 var h = require("./helper.js");
 var x = h.default(require("./p.js"));
 exports.y = x;
 "#;
-    let output = un_esm_standard(input);
+    let unpack_stage = |source: &str| {
+        common::render_rule(source, |mark| {
+            wakaru_core::rules::UnEsm::new(mark, RewriteLevel::Standard)
+                .with_later_unpack_stages(true)
+        })
+    };
+    let output = unpack_stage(input);
     assert!(output.contains(r#"from "./helper.js""#), "{output}");
     assert!(output.contains(r#"(require("./p.js"))"#), "{output}");
+
+    // The cross-module pass reads no other position, so there the require
+    // keeps the module CommonJS.
+    let output = unpack_stage(
+        r#"
+var h = require("./helper.js");
+exports.y = h.wrap(require("./p.js"));
+"#,
+    );
+    assert!(!output.contains("import "), "{output}");
+    assert!(output.contains(r#"h.wrap(require("./p.js"))"#), "{output}");
+}
+
+#[test]
+fn imported_helper_call_of_a_require_keeps_a_single_file_commonjs() {
+    // A single file has no cross-module stage to convert the call later.
+    let input = r#"
+var h = require("./helper.js");
+var x = h.default(require("./p.js"));
+exports.y = x;
+Object.assign(exports, require("./q.js") || {});
+"#;
+    let output = un_esm_standard(input);
+    assert!(!output.contains("import "), "{output}");
+    let output = render_pipeline(input);
+    assert!(!output.contains("import "), "{output}");
+    assert!(!output.contains("export "), "{output}");
+    assert!(output.contains(r#"require("./p.js")"#), "{output}");
 }
 
 #[test]

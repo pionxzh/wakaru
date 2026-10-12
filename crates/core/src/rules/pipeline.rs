@@ -343,7 +343,8 @@ fn run_un_esm(module: &mut Module, ctx: RuleRunContext<'_>) {
         .then(|| RelativeNamespaceEvidence::collect(module, ctx.unresolved_mark, &local_helpers));
     let mut rule = UnEsm::new(ctx.unresolved_mark, ctx.rewrite_level)
         .with_current_filename(ctx.current_filename)
-        .with_local_helpers(local_helpers);
+        .with_local_helpers(local_helpers)
+        .with_later_unpack_stages(!single_file);
     module.visit_mut_with(&mut rule);
     if let Some(evidence) = relative_namespace.as_mut() {
         if rule.lowered_esbuild_namespace() {

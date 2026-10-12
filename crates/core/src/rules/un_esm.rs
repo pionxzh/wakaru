@@ -62,6 +62,7 @@ pub struct UnEsm {
     current_filename: Option<String>,
     local_helpers: Option<std::rc::Rc<LocalHelperContext>>,
     lowered_esbuild_namespace: bool,
+    later_unpack_stages: bool,
 }
 
 impl UnEsm {
@@ -72,7 +73,16 @@ impl UnEsm {
             current_filename: None,
             local_helpers: None,
             lowered_esbuild_namespace: false,
+            later_unpack_stages: false,
         }
+    }
+
+    /// Unpack runs stages after `UnEsm` that turn some top-level requires
+    /// into imports from the other modules' facts, so a module keeping only
+    /// those may still become ESM ([`kept_require::blocking_require_calls`]).
+    pub fn with_later_unpack_stages(mut self, later_unpack_stages: bool) -> Self {
+        self.later_unpack_stages = later_unpack_stages;
+        self
     }
 
     /// The helper context the pipeline already collected; without one,
@@ -258,7 +268,12 @@ impl VisitMut for UnEsm {
 impl UnEsm {
     fn keeps_require_in_esm(&self, module: &Module) -> bool {
         has_module_decl(module)
-            && !kept_require::blocking_require_calls(module, self.unresolved_mark).is_empty()
+            && !kept_require::blocking_require_calls(
+                module,
+                self.unresolved_mark,
+                self.later_unpack_stages,
+            )
+            .is_empty()
     }
 
     /// One conversion attempt. `harmony` treats the module as webpack harmony

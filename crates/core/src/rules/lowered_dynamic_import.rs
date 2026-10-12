@@ -116,9 +116,7 @@ impl<F: Fn(&Expr) -> bool> LoweredImportMatcher<F> {
         let Expr::Call(call) = expr else {
             return None;
         };
-        let specifier = self
-            .wrapped_import_specifier(call)
-            .or_else(|| self.lowered_import_specifier(call))?;
+        let specifier = self.specifier(call)?;
         Some(Expr::Call(CallExpr {
             span: call.span,
             callee: Callee::Import(Import {
@@ -131,6 +129,12 @@ impl<F: Fn(&Expr) -> bool> LoweredImportMatcher<F> {
             }],
             ..Default::default()
         }))
+    }
+
+    /// The specifier `call` imports when it is a lowered dynamic import.
+    pub(crate) fn specifier<'a>(&self, call: &'a CallExpr) -> Option<&'a Expr> {
+        self.wrapped_import_specifier(call)
+            .or_else(|| self.lowered_import_specifier(call))
     }
 
     /// The specifier of `<promise>.then(callback)`, where the callback

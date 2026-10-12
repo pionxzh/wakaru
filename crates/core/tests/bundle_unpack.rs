@@ -4103,6 +4103,32 @@ fn kept_require_of_a_function_with_named_exports_reads_default_per_use() {
 }
 
 #[test]
+fn imported_call_of_a_require_outside_a_top_level_var_keeps_the_module_commonjs() {
+    // hypothetical: the cross-module interop pass reads only
+    // `var x = helper(require(p))`, so these requires would stay in ESM.
+    for consumer in [
+        r#"1(t,e,o){var h=o(2);e.y=h.wrap(o(3))}"#,
+        r#"1(t,e,o){var h=o(2);e.y=function(){return h.wrap(o(3))}}"#,
+    ] {
+        let source = kept_require_bundle(&format!(
+            r#"{consumer},2(t,e){{e.wrap=function(x){{return x}}}}"#
+        ));
+        let output = unpack(&source, DecompileOptions::default()).expect("bundle should unpack");
+        let module = unpacked_module(&output, "module-1.js");
+        assert!(!module.contains("import "), "{module}");
+        assert!(module.contains(r#"require("./module-3.js")"#), "{module}");
+        assert!(
+            !output
+                .warnings
+                .iter()
+                .any(|w| w.kind == wakaru_core::UnpackWarningKind::CommonJsRequireUnrecovered),
+            "{:#?}",
+            output.warnings
+        );
+    }
+}
+
+#[test]
 fn kept_require_of_a_marked_provider_drops_the_local_interop() {
     // hypothetical: Babel's default interop returned the marked provider
     // unchanged; its namespace now has no marker to test.

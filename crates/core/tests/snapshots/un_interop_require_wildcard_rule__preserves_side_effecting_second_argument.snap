@@ -2,6 +2,6 @@
 source: crates/core/tests/un_interop_require_wildcard_rule.rs
 expression: render(input)
 ---
-import _interopRequireWildcard from "@babel/runtime/helpers/interopRequireWildcard";
+const _interopRequireWildcard = require("@babel/runtime/helpers/interopRequireWildcard");
 const _a = _interopRequireWildcard(require("a"), probe());
 console.log(_a);
