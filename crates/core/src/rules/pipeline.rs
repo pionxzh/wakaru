@@ -302,38 +302,41 @@ runner!(run_un_assignment_merging, |ctx| {
 runner!(run_un_webpack_interop, |ctx| UnWebpackInterop::new(
     ctx.unresolved_mark
 ));
+/// Whether a single-file decompile runs `UnEsm`, the rule that turns
+/// CommonJS into ESM.
+///
+/// A `.cjs` or `.cts` input is CommonJS whatever it contains: Node loads it
+/// that way, so recovering ESM syntax into one produces a file the runtime
+/// it is meant for cannot load. The extension is read through the same
+/// classifier the output validator uses, so the validator and the pipeline
+/// cannot disagree about it.
+///
+/// Unpack does not apply this gate yet (`docs/unpacking.md`, Known gaps): a
+/// harmony module there still calls `require.r`/`require.d`, which only
+/// `UnEsm` removes, so lifting the gate alone would leave runtime calls.
+///
+/// A single file also stays in the module system it was written in below
+/// standard. Its consumers are outside the output, so turning
+/// `module.exports = x` into `export default x` changes what their
+/// `require` returns (`single_file_esm_consumers`, a standard assumption).
+/// Unpack recovers every module of the bundle together, consumers included,
+/// and a factory still calls the bundler runtime (`require.r`, `require.d`)
+/// that only `UnEsm` removes, so unpack runs it at every level.
+pub(crate) fn single_file_runs_un_esm(filename: Option<&str>, level: RewriteLevel) -> bool {
+    let script = filename.is_some_and(|filename| {
+        crate::output_validate::filename_source_goal(filename)
+            == crate::output_validate::SourceGoal::Script
+    });
+    !script && level >= RewriteLevel::Standard
+}
+
 fn run_un_esm(module: &mut Module, ctx: RuleRunContext<'_>) {
     // Single-file decompilation only: with module facts the provider facts
     // decide (`provider_namespace_repair`), and unpack's first phases stop at
     // `UnEsm`, before those facts exist. `until("UnEsm")` RUNS `UnEsm` and then
     // stops, so the stop rule is what tells that phase apart from a decompile.
     let single_file = ctx.module_facts.is_none() && ctx.stop_after != Some("UnEsm");
-    // A `.cjs` or `.cts` input is CommonJS whatever it contains: Node loads it
-    // that way, so recovering ESM syntax into one produces a file the runtime
-    // it is meant for cannot load. The extension is read through the same
-    // classifier the output validator uses, so the validator and the pipeline
-    // cannot disagree about it.
-    //
-    // Unpack does not apply this gate yet (`docs/unpacking.md`, Known gaps): a
-    // harmony module there still calls `require.r`/`require.d`, which only
-    // `UnEsm` removes, so lifting the gate alone would leave runtime calls.
-    if single_file
-        && ctx.current_filename.is_some_and(|filename| {
-            crate::output_validate::filename_source_goal(filename)
-                == crate::output_validate::SourceGoal::Script
-        })
-    {
-        return;
-    }
-    // A single file stays in the module system it was written in below
-    // standard. Its consumers are outside the output, so turning
-    // `module.exports = x` into `export default x` changes what their
-    // `require` returns (`single_file_esm_consumers`, a standard
-    // assumption). Unpack
-    // recovers every module of the bundle together, consumers included, and
-    // a factory still calls the bundler runtime (`require.r`, `require.d`)
-    // that only `UnEsm` removes, so unpack runs it at every level.
-    if single_file && ctx.rewrite_level < RewriteLevel::Standard {
+    if single_file && !single_file_runs_un_esm(ctx.current_filename, ctx.rewrite_level) {
         return;
     }
     let local_helpers = ctx.local_helpers(module);

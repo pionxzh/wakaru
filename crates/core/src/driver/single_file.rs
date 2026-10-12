@@ -54,10 +54,12 @@ pub fn decompile_owned(
             module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
         }
 
-        // Read before the rules rewrite what marks an ES-source module.
-        let es_source_evidence = options
-            .diagnostics
-            .then(|| crate::kept_require::es_source_evidence(&module, unresolved_mark));
+        // Read before the rules rewrite what marks an ES-source module. Only
+        // where `UnEsm` runs: below standard and in a `.cjs` file every module
+        // stays CommonJS by design.
+        let es_source_evidence = (options.diagnostics
+            && crate::rules::single_file_runs_un_esm(Some(&options.filename), options.level))
+        .then(|| crate::kept_require::es_source_evidence(&module, unresolved_mark));
 
         {
             let span = tracing::info_span!("rules");
@@ -248,6 +250,53 @@ mod tests {
             "require.r(exports);\nfunction o() { return require(\"./p\"); }\nrequire.d(exports, { q: () => o });",
             DecompileOptions {
                 diagnostics: true,
+                ..Default::default()
+            },
+        )
+        .expect("decompile should succeed");
+        assert!(
+            !output
+                .warnings
+                .iter()
+                .any(|w| w.kind == UnpackWarningKind::EsSourceKeptCommonJs),
+            "{:#?}",
+            output.warnings
+        );
+    }
+
+    #[test]
+    fn diagnostics_skip_es_source_modules_where_single_file_keeps_commonjs() {
+        // hypothetical: the CommonJS output of an ES module with a plain
+        // top-level require, which `standard` turns into ESM.
+        let source = "Object.defineProperty(exports, \"__esModule\", { value: true });\nvar a = require(\"./a\");\nexports.x = a.y;";
+        let kept = |filename: &str, level: crate::rules::RewriteLevel| {
+            decompile(
+                source,
+                DecompileOptions {
+                    diagnostics: true,
+                    filename: filename.into(),
+                    level,
+                    ..Default::default()
+                },
+            )
+            .expect("decompile should succeed")
+            .warnings
+            .into_iter()
+            .filter(|w| w.kind == UnpackWarningKind::EsSourceKeptCommonJs)
+            .count()
+        };
+        // Below standard and in a `.cjs` file it stays CommonJS by design.
+        assert_eq!(kept("input.js", crate::rules::RewriteLevel::Minimal), 0);
+        assert_eq!(kept("input.cjs", crate::rules::RewriteLevel::Standard), 0);
+        assert_eq!(kept("input.js", crate::rules::RewriteLevel::Standard), 0);
+        // The barrier module the test above reports at `standard`.
+        let barrier = "require.r(exports);\nglobalThis.x = 1;\nvar d = require(\"./d\");\nrequire.d(exports, { a: () => d });";
+        let output = decompile(
+            barrier,
+            DecompileOptions {
+                diagnostics: true,
+                filename: "input.js".into(),
+                level: crate::rules::RewriteLevel::Minimal,
                 ..Default::default()
             },
         )

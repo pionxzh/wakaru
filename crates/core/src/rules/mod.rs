@@ -186,7 +186,9 @@ pub use object_assign_spread::ObjectAssignSpread;
 pub use pipeline::{
     apply_rules, rule_descriptors, rule_names, RuleDescriptor, RulePipelineOptions, RuleStage,
 };
-pub(crate) use pipeline::{apply_rules_to_recovered_module, apply_rules_with_observer};
+pub(crate) use pipeline::{
+    apply_rules_to_recovered_module, apply_rules_with_observer, single_file_runs_un_esm,
+};
 pub use remove_void::RemoveVoid;
 pub use simplify_sequence::SimplifySequence;
 pub use smart_inline::SmartInline;
