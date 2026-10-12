@@ -1220,6 +1220,81 @@ const x = { ...a };
 }
 
 #[test]
+fn keeps_iife_library_with_external_parameter() {
+    // producer rollup@2.79.2 format iife, output.name Lib, output.globals
+    // { "node:path": "NodePath" }: the default output.esModule adds the
+    // `__esModule` marker on the exports parameter.
+    let input = r#"
+var Lib = (function (exports, node_path) {
+  'use strict';
+
+  function label(file) {
+    return "lib:" + node_path.basename(file, node_path.extname(file));
+  }
+  const version = 2;
+
+  exports["default"] = label;
+  exports.label = label;
+  exports.version = version;
+
+  Object.defineProperty(exports, '__esModule', { value: true });
+
+  return exports;
+
+})({}, NodePath);
+globalThis.__artificialSink = Lib;
+"#;
+    let output = render_rule(input, UnObjectSpread::new_with_mark);
+    assert!(
+        output.contains("exports.label = label") && !output.contains("...NodePath"),
+        "library IIFE must keep its body:\n{output}"
+    );
+    let output = render(input);
+    assert!(
+        output.contains("label") && !output.contains("...NodePath"),
+        "library IIFE must keep its body:\n{output}"
+    );
+}
+
+#[test]
+fn keeps_minified_iife_library_with_external_parameter() {
+    // producer rollup@4.63.6 format iife, output.name Lib, output.globals
+    // { "node:path": "NodePath" }, then terser@5.51: output.esModule
+    // "if-default-prop" adds the marker beside named exports.
+    let input = r#"var Lib=function(e,i){"use strict";function t(e){return"lib:"+i.basename(e,i.extname(e))}return e.default=t,e.label=t,e.version=2,Object.defineProperty(e,"__esModule",{value:!0}),e}({},NodePath);globalThis.__artificialSink=Lib;"#;
+    let output = render(input);
+    assert!(
+        output.contains("basename") && !output.contains("...NodePath"),
+        "library IIFE must keep its body:\n{output}"
+    );
+}
+
+#[test]
+fn inline_spread_frame_rejects_extra_statements() {
+    // The esbuild `__spreadValues` frame with one extra statement is no
+    // longer a pure copy of `b` onto `a`.
+    let input = r#"
+var __defProp = Object.defineProperty;
+var __getOwnPropSymbols = Object.getOwnPropertySymbols;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __propIsEnum = Object.prototype.propertyIsEnumerable;
+var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
+const out = ((a, b) => {
+    for (var prop in b || (b = {})) __hasOwnProp.call(b, prop) && __defNormalProp(a, prop, b[prop]);
+    if (__getOwnPropSymbols) for (var prop of __getOwnPropSymbols(b)) __propIsEnum.call(b, prop) && __defNormalProp(a, prop, b[prop]);
+    __defProp(a, "__esModule", { value: true });
+    return a;
+})({ id: app_id }, app_info);
+use(out);
+"#;
+    let output = render_rule(input, UnObjectSpread::new_with_mark);
+    assert!(
+        output.contains("__esModule") && !output.contains("...app_info"),
+        "a frame with an extra statement is not a spread helper:\n{output}"
+    );
+}
+
+#[test]
 fn inlined_extends_preserves_non_empty_target() {
     let input = r#"
 function _extends() {

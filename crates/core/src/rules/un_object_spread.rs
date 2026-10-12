@@ -4,9 +4,9 @@ use swc_core::atoms::Atom;
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowFunctionBody, AssignOp, AssignTarget, BinaryOp, CallExpr, Callee, Decl, Expr, ForInStmt,
-    Function, FunctionBody, Ident, ImportSpecifier, MemberExpr, MemberProp, Module, ModuleDecl,
-    ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget,
-    SpreadElement, Stmt, UnaryExpr, UnaryOp,
+    Function, FunctionBody, Ident, IfStmt, ImportSpecifier, MemberExpr, MemberProp, Module,
+    ModuleDecl, ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread, ReturnStmt,
+    SimpleAssignTarget, SpreadElement, Stmt, UnaryExpr, UnaryOp,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -1334,16 +1334,42 @@ fn block_matches_inline_object_spread(
     source: &Ident,
     esbuild_define_normal_prop_helpers: &HashSet<BindingKey>,
 ) -> bool {
-    if !matches!(
-        stmts.last(),
-        Some(Stmt::Return(ret)) if ret.arg.as_deref().is_some_and(|arg| is_binding_ref(arg, target))
-    ) {
+    let Some((Stmt::Return(ret), copy_stmts)) = stmts.split_last() else {
+        return false;
+    };
+    if !ret
+        .arg
+        .as_deref()
+        .is_some_and(|arg| is_binding_ref(arg, target))
+    {
+        return false;
+    }
+    // The inlined helpers (esbuild's `__spreadValues`) only copy `source`'s
+    // keys onto `target` in loops, the symbol loop under an `if`. Any other
+    // statement means the function does more than spread: a rollup IIFE
+    // library `(function (exports, dep) { …; Object.defineProperty(exports,
+    // "__esModule", …); return exports; })({}, Dep)` has the same markers.
+    if !copy_stmts.iter().all(is_copy_loop_stmt) {
         return false;
     }
 
     let mut marker = InlineSpreadMarker::new(target, source, esbuild_define_normal_prop_helpers);
     stmts.visit_with(&mut marker);
     marker.is_match()
+}
+
+fn is_copy_loop_stmt(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::ForIn(_) | Stmt::ForOf(_) | Stmt::For(_) => true,
+        Stmt::If(IfStmt {
+            cons, alt: None, ..
+        }) => match cons.as_ref() {
+            Stmt::Block(block) => block.stmts.iter().all(is_copy_loop_stmt),
+            cons => is_copy_loop_stmt(cons),
+        },
+        Stmt::Block(block) => block.stmts.iter().all(is_copy_loop_stmt),
+        _ => false,
+    }
 }
 
 fn expr_matches_inline_object_spread(
