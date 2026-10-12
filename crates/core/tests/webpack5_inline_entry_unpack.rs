@@ -196,6 +196,72 @@ fn webpack5_startup_with_unrestorable_boundary_falls_back_to_extracted_source() 
     );
 }
 
+/// The same guarded startup with a global write before the require: the
+/// write is a hoisting barrier, so the require stays a call and the entry
+/// stays CommonJS, with the guard and the write still ahead of the load.
+#[test]
+fn webpack5_guarded_startup_with_a_barrier_stays_commonjs() {
+    let source = r#"
+(() => {
+    var __webpack_modules__ = ({
+        1: ((__unused_webpack_module, exports) => {
+            exports.value = 42;
+        })
+    });
+    var __webpack_module_cache__ = {};
+    function __webpack_require__(moduleId) {
+        var cachedModule = __webpack_module_cache__[moduleId];
+        if (cachedModule !== undefined) {
+            return cachedModule.exports;
+        }
+        var module = __webpack_module_cache__[moduleId] = { exports: {} };
+        __webpack_modules__[moduleId](module, module.exports, __webpack_require__);
+        return module.exports;
+    }
+    (() => {
+        if (window.FLAG_LOADED) return;
+        window.FLAG_LOADED = true;
+        var dep = __webpack_require__(1);
+        module.exports = dep;
+    })();
+})();
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "bundle.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("unpack should succeed");
+    let entry = &output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "entry.js")
+        .expect("entry.js should exist")
+        .1;
+    assert!(
+        !entry.contains("import ") && !entry.contains("export "),
+        "{entry}"
+    );
+    let guard = entry.find("window.FLAG_LOADED)").expect("guard kept");
+    let write = entry.find("window.FLAG_LOADED = true").expect("write kept");
+    let load = entry
+        .find(r#"require("./module-1.js")"#)
+        .expect("require kept");
+    assert!(guard < write && write < load, "{entry}");
+    assert!(entry.contains("module.exports = dep"), "{entry}");
+    assert!(
+        !output
+            .warnings
+            .iter()
+            .any(|warning| warning.kind == wakaru_core::UnpackWarningKind::DecompileFailed),
+        "{:?}",
+        output.warnings
+    );
+}
+
 #[test]
 fn webpack5_inline_startup_works_with_array_modules() {
     let source = r#"
