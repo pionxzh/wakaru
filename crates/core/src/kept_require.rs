@@ -488,8 +488,9 @@ fn is_composition_call(call: &CallExpr, unresolved_mark: Mark) -> bool {
 #[derive(Clone, Copy)]
 enum ProviderShape<'a> {
     /// `module.exports = v`, now only `export default v`: the value is the
-    /// namespace's `default`.
-    Default,
+    /// namespace's `default`. `marked`: the module also marked itself
+    /// `__esModule`, so a `.default` read of it already meant that default.
+    Default { marked: bool },
     /// `module.exports = v` plus named exports, which are on the namespace,
     /// not on `v`: a call or `new` reads `default`, a named export stays a
     /// namespace read.
@@ -518,7 +519,9 @@ fn provider_shape(provider: &ModuleFacts) -> Option<ProviderShape<'_>> {
         && provider.reexports.is_empty()
     {
         return Some(if provider.exports.len() == 1 {
-            ProviderShape::Default
+            ProviderShape::Default {
+                marked: provider.marks_es_module,
+            }
         } else {
             ProviderShape::DefaultWithNamed(provider)
         });
@@ -853,6 +856,17 @@ impl<'a, F: Fn(&str) -> Option<ProviderShape<'a>>> DefaultReadRewriter<'a, F> {
         }
     }
 
+    /// A provider recovered with a default export that also marked itself
+    /// `__esModule` (a Babel runtime helper's CommonJS shim sets
+    /// `module.exports.default = module.exports` beside the marker).
+    fn marked_default_provider(&self, source: &str) -> bool {
+        match (self.shape_of)(source) {
+            Some(ProviderShape::Default { marked }) => marked,
+            Some(ProviderShape::DefaultWithNamed(provider)) => provider.marks_es_module,
+            _ => false,
+        }
+    }
+
     /// `require("./p").name(…)` where the named export `name` reads `this`:
     /// the call passes the namespace as the receiver, where it passed the
     /// CommonJS value before.
@@ -921,7 +935,10 @@ impl<'a, F: Fn(&str) -> Option<ProviderShape<'a>>> VisitMut for DefaultReadRewri
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         // `require("./p")` alone: the default-only provider's value.
         if let Some(source) = require_source(expr, self.unresolved_mark) {
-            if matches!((self.shape_of)(&source), Some(ProviderShape::Default)) {
+            if matches!(
+                (self.shape_of)(&source),
+                Some(ProviderShape::Default { .. })
+            ) {
                 *expr = default_member(take_expr(expr));
             } else {
                 self.other_use(source);
@@ -974,6 +991,13 @@ impl<'a, F: Fn(&str) -> Option<ProviderShape<'a>>> VisitMut for DefaultReadRewri
                 let name = member.prop.as_ident().map(|prop| prop.sym.clone());
                 let source = require_source(&member.obj, self.unresolved_mark)
                     .or_else(|| self.good_binding(&member.obj).cloned());
+                // A marked provider's `.default` meant its ES default, which
+                // is the namespace's `default` too.
+                if let (Some(source), Some("default")) = (&source, name.as_deref()) {
+                    if self.marked_default_provider(source) {
+                        return;
+                    }
+                }
                 if let (Some(source), Some(name)) = (source, name) {
                     if let Some(exports) = self.named_exports(&source) {
                         if !is_named_export(exports, &name) {

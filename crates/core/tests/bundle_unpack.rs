@@ -4214,6 +4214,24 @@ fn imported_call_of_a_require_outside_a_top_level_var_keeps_the_module_commonjs(
 }
 
 #[test]
+fn kept_require_default_read_of_a_self_referencing_marked_provider_stays_one_read() {
+    // shape: the CommonJS shim of an `@babel/runtime` helper,
+    // `module.exports = fn` with `__esModule` and a `default` that is
+    // `module.exports` itself; it is recovered as `export default fn`. The
+    // consumer's `.default` already meant that default.
+    let source = kept_require_bundle(
+        r#"1(t,e,o){var h=o(2).default;e.run=function(){return h(5)+o(3).x}},2(t){t.exports=function(e){return e},t.exports.__esModule=!0,t.exports.default=t.exports}"#,
+    );
+    let output = unpack(&source, DecompileOptions::default()).expect("bundle should unpack");
+    let consumer = unpacked_module(&output, "module-1.js");
+    assert!(
+        consumer.contains(r#"require("./module-2.js").default;"#),
+        "{consumer}"
+    );
+    assert!(!consumer.contains(".default.default"), "{consumer}");
+}
+
+#[test]
 fn kept_require_of_a_marked_provider_drops_the_local_interop() {
     // hypothetical: Babel's default interop returned the marked provider
     // unchanged; its namespace now has no marker to test.

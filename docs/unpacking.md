@@ -675,7 +675,10 @@ layout directly is a proposal:
   before, where it can:
   - a provider that was `module.exports = v` (also `var o = module.exports =
     v` or a webpack normalizer's `export default`) and now exports only `v`
-    as default: the call reads `.default`;
+    as default: the call reads `.default`. If the provider also marked itself
+    `__esModule` (a Babel runtime helper's shim, whose `default` is
+    `module.exports` itself), a `.default` read of it already meant that
+    default and stays as it is;
   - the same with named exports beside the default: a call, a `new`, or a
     read of a name that is not a named export reads `.default`, directly or
     through a binding every use of which is one of those;
