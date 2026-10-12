@@ -794,6 +794,26 @@ console.log(o.Component);
 }
 
 #[test]
+fn keeps_iife_library_whose_body_carries_wildcard_markers() {
+    // producer rollup@4.63.6 format iife, output.name Lib,
+    // @rollup/plugin-commonjs@29.0.3, then terser@5.51: the commonjs
+    // plugin's `x.__esModule` read and rollup's `__esModule` defineProperty
+    // marker sit in a library wrapper applied to `{}`, not to a module load.
+    let input = r#"var Lib=function(r){"use strict";function n(r){return r&&r.__esModule&&Object.prototype.hasOwnProperty.call(r,"default")?r.default:r}var t,e;var u=function(){if(e)return t;function r(r){return"<"+String(r)+">"}return e=1,r.version="1",t=r}(),i=n(u);function o(r){return i(r)+"!"}const a=typeof i;var f={run:o,kind:a};return r.default=f,r.kind=a,r.run=o,Object.defineProperty(r,"__esModule",{value:!0}),r}({});globalThis.__artificialSink=Lib;"#;
+    for level in [
+        RewriteLevel::Minimal,
+        RewriteLevel::Standard,
+        RewriteLevel::Aggressive,
+    ] {
+        let output = render_with_level(input, level);
+        assert!(
+            output.contains(".run = ") && !output.contains("const Lib = {};"),
+            "library IIFE must keep its body at {level:?}:\n{output}"
+        );
+    }
+}
+
+#[test]
 fn typescript_parenthesized_interop_test_restores_default_import() {
     let input = include_str!("fixtures/tslib-interop/generated/default.js");
     let focused = common::render_rule(input, |_| wakaru_core::rules::UnInteropRequireDefault);

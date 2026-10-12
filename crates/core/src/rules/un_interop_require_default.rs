@@ -11,6 +11,8 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use crate::utils::paren::strip_parens;
+
 use super::decl_utils::fresh_binding_ident;
 use super::transpiler_helper_utils::{
     classify_inline_helper_call, detect_helper_from_path, helpers_with_remaining_refs,
@@ -1109,6 +1111,13 @@ impl VisitMut for DefaultRefRewriter<'_> {
 /// })(require("./module.js"));
 /// ```
 /// → `const x = require("./module.js")`
+///
+/// The argument must be a call: every producer applies the helper to a
+/// module load (`require("x")`, a webpack `r(701)`). The wildcard body test
+/// only looks for markers, and a rollup IIFE library wrapper
+/// (`var Lib = function (exports) { … }({})`) can carry them all: the
+/// commonjs plugin's `x.__esModule` read and rollup's `__esModule`
+/// `defineProperty` marker.
 fn unwrap_inline_interop_iifes(module: &mut Module, affected: &mut HashSet<BindingKey>) {
     for item in &mut module.body {
         let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) = item else {
@@ -1127,6 +1136,9 @@ fn unwrap_inline_interop_iifes(module: &mut Module, affected: &mut HashSet<Bindi
             let Some((kind, inner_arg)) = classify_inline_helper_call(call) else {
                 continue;
             };
+            if !matches!(strip_parens(inner_arg), Expr::Call(_)) {
+                continue;
+            }
             // Only strip `.default` for the default interop, not wildcard.
             match kind {
                 TranspilerHelperKind::InteropRequireDefault => {
