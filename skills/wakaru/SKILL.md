@@ -211,8 +211,9 @@ reachability sweep is desired.
   throw when they run.
 - A `commonjs_require_of_esm` warning (non-error) means a CommonJS output
   module requires a module now recovered as ESM, so `require` returns that
-  module's namespace; a read of its default through an interop helper, or of
-  a replaced `module.exports` value, gets the namespace instead.
+  module's namespace; a read of a replaced `module.exports` value, or of a
+  default whose interop was removed or whose provider has no default export,
+  gets the namespace instead.
 - With `--diagnostics`, an `es_source_kept_commonjs` warning (non-error)
   names a module that stayed CommonJS although its input looks compiled from
   an ES module, with the evidence and the kept requires. Its imports are

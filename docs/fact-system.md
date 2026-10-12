@@ -187,7 +187,9 @@ import, so after Phase 1 the two meanings can no longer be told apart.
 required value, or its top-level binding, goes to `require.n` or an interop
 helper or has its `__esModule` read. Unpack reads it only for the
 `commonjs_require_of_esm` warning: a module that stays CommonJS and read a
-marked provider through an interop now meets a namespace without the marker.
+marked provider through an interop now meets its namespace, which carries
+the marker only when the provider has a default export, and only while the
+interop is still there to test it.
 
 A wildcard interop helper is the exception that needs the provider's
 `__esModule` marker. It returns a marked provider unchanged, so the binding is

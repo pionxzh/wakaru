@@ -70,10 +70,11 @@ limits.
 Unpacked output follows Node's rules for ESM and CommonJS, except for the
 cases listed in [Known gaps](unpacking.md#known-gaps). A module that stays
 CommonJS is usually named `.js`, and an ESM module imports it with a default
-import, which Node resolves to `module.exports`. A bundler that rebuilds the
-output reads that import by the `__esModule` convention instead: if the
-CommonJS module sets `__esModule`, the import reads its `exports.default`,
-usually `undefined`. To rebuild, rename every file without module syntax
+import, which Node resolves to `module.exports`. A CommonJS module that
+requires an ESM sibling needs `require(esm)`, Node v22.12 or v20.19 and
+later. A bundler that rebuilds the output reads that import by the
+`__esModule` convention instead: if the CommonJS module sets `__esModule`,
+the import reads its `exports.default`, usually `undefined`. To rebuild, rename every file without module syntax
 (`import`, `export`, `import.meta`, or top-level `await`) to `.cjs`, scripts
 included, update the imports and kept `require()` calls that name them, and
 add `{"type": "module"}` at the output root.
@@ -422,8 +423,12 @@ reads it can: `.default` for a provider that was `module.exports = v`, per
 use when the provider also has named exports, and a local interop helper
 dropped for a provider that marked itself `__esModule`. The warning names
 what is left and why: the replaced `module.exports` value used as a value or
-through an unknown read, or a marked provider read through an interop it
-cannot see anymore (`require.n`, an imported helper, an `__esModule` test).
+through an unknown read, or a marked provider whose default was read
+through an interop. Node (since v22.12 and v20.19) adds `__esModule` to the
+namespace of a module with a default export, so an interop still in the
+output reads that default and is not reported. What is reported is an
+interop that is gone (`UnWebpackInterop` removed `require.n`) or a provider
+without a default export.
 
 With `--diagnostics`, decompile and unpack report a non-error
 `es_source_kept_commonjs` warning for a module that stayed CommonJS although

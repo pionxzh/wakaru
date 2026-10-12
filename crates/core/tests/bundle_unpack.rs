@@ -4032,8 +4032,47 @@ fn commonjs_require_of_a_marked_provider_now_esm_is_reported() {
     assert_eq!(warnings.len(), 1, "{:#?}", output.warnings);
     assert_eq!(warnings[0].filename, "module-1.js");
     assert!(warnings[0].message.contains("\"./module-2.js\""));
-    assert!(warnings[0].message.contains("`__esModule`"));
+    assert!(warnings[0]
+        .message
+        .contains("the interop that read its default was removed"));
     assert!(!warnings[0].kind.is_error());
+
+    // An interop still in the output tests `__esModule`, which Node sets on
+    // the namespace of a module with a default export: it reads the default,
+    // so there is nothing to report.
+    let tested = source.replace(
+        "var n=o(2),a=o.n(n);e.run=function(){return a().k+",
+        "var n=o(2);e.run=function(){return(n&&n.__esModule?n.default:n).k+",
+    );
+    let output = unpack(&tested, DecompileOptions::default()).expect("bundle should unpack");
+    let consumer = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "module-1.js")
+        .map(|(_, code)| code.clone())
+        .expect("consumer module");
+    assert!(consumer.contains("__esModule"), "{consumer}");
+    assert!(
+        !output
+            .warnings
+            .iter()
+            .any(|w| w.kind == wakaru_core::UnpackWarningKind::CommonJsRequireOfEsm),
+        "{:#?}",
+        output.warnings
+    );
+
+    // Without a default export Node adds no marker, so the same interop
+    // wraps the namespace.
+    let no_default = tested.replace("e.default={k:1}", "e.k=1");
+    let output = unpack(&no_default, DecompileOptions::default()).expect("bundle should unpack");
+    assert!(
+        output.warnings.iter().any(|w| {
+            w.kind == wakaru_core::UnpackWarningKind::CommonJsRequireOfEsm
+                && w.message.contains("it has no default export")
+        }),
+        "{:#?}",
+        output.warnings
+    );
 
     // Without the interop the module reads the namespace as it read the
     // exports object: no warning.

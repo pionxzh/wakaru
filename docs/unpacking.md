@@ -608,7 +608,9 @@ Unpack output targets Node's rules for ESM and CommonJS. Most modules come
 back as ESM, and a module whose exports cannot be recovered safely stays
 CommonJS. The tree has no `package.json`, so Node's syntax detection picks
 each `.js` file's format. An ESM module imports a CommonJS sibling with a
-default import, which Node resolves to the live `module.exports`. The
+default import, which Node resolves to the live `module.exports`. A
+CommonJS module keeps `require("./x.js")` of a sibling that came back as
+ESM, which needs `require(esm)`: Node v22.12 or v20.19 and later. The
 exceptions are listed under [Known gaps](#known-gaps), such as a module
 that keeps a `.cjs` name but comes back with ESM syntax.
 
@@ -684,10 +686,14 @@ layout directly is a proposal:
   provider passed on as a value (code that calls it and also reads a named
   export from it needs both), written through (`x.count = 1`), read as an
   optional member (`x?.name`), or used to call a named export that reads
-  `this`; an interop default whose helper `UnWebpackInterop` already removed
-  (`require.n(x).a`, producer `webpack@4.47` concatenation + Terser with an
-  `swc@1.16` CommonJS dependency, where which reads mean the default is known
-  only per use), and an interop helper imported from another module.
+  `this`; and an interop default of a marked provider whose helper
+  `UnWebpackInterop` already removed (`require.n(x).a`, producer
+  `webpack@4.47` concatenation + Terser with an `swc@1.16` CommonJS
+  dependency, where which reads mean the default is known only per use), or
+  of a marked provider without a default export. An interop still in the
+  output works: Node (since v22.12 and v20.19) adds `__esModule` to the
+  namespace of a module with a default export, so the interop reads that
+  default.
 - **A `.cjs` name still gets ESM syntax.** A single-file decompile keeps a
   `.cjs`/`.cts` input CommonJS (`run_un_esm` stands down), but unpack does
   not apply that gate. Two inputs reach it: a `.cjs` file passed to

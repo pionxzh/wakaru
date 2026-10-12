@@ -494,9 +494,12 @@ enum ProviderShape<'a> {
     /// not on `v`: a call or `new` reads `default`, a named export stays a
     /// namespace read.
     DefaultWithNamed(&'a ModuleFacts),
-    /// The module marked itself `__esModule`; the namespace is its exports
-    /// object without the marker, which only an interop reads.
-    Marked,
+    /// The module marked itself `__esModule`. Its namespace is its exports
+    /// object, and Node adds the `__esModule` marker to the namespace only
+    /// when the module has a default export (`require(esm)`, since v22.12
+    /// and v20.19), so only then does an interop that tests it still read
+    /// the default.
+    Marked { has_default: bool },
     /// `module.exports` replaced another way: the value is unknown.
     ReplacedValue,
 }
@@ -521,7 +524,7 @@ fn provider_shape(provider: &ModuleFacts) -> Option<ProviderShape<'_>> {
         });
     }
     if provider.marks_es_module {
-        Some(ProviderShape::Marked)
+        Some(ProviderShape::Marked { has_default })
     } else if provider.replaces_module_exports {
         Some(ProviderShape::ReplacedValue)
     } else {
@@ -602,10 +605,64 @@ pub(crate) fn run_kept_require_default_reads(
         good: &good,
         local_helpers: LocalHelperContext::collect_with_mark(module, unresolved_mark),
         interop_sources,
+        esmodule_tested_sources: esmodule_tested_sources(module, unresolved_mark),
         unhandled: Vec::new(),
     };
     module.visit_mut_with(&mut rewriter);
     rewriter.unhandled
+}
+
+/// Sources whose required value `module` reads `__esModule` of, as
+/// `require("./p").__esModule` or `x.__esModule` for a binding
+/// `var x = require("./p")`.
+fn esmodule_tested_sources(module: &Module, unresolved_mark: Mark) -> HashSet<Atom> {
+    struct Bindings {
+        unresolved_mark: Mark,
+        sources: HashMap<BindingId, Atom>,
+    }
+    impl Visit for Bindings {
+        fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+            if let (Pat::Ident(binding), Some(init)) = (&declarator.name, &declarator.init) {
+                if let Some(source) = require_source(init, self.unresolved_mark) {
+                    self.sources.insert(binding_id(&binding.id), source);
+                }
+            }
+            declarator.visit_children_with(self);
+        }
+    }
+    struct Tests<'a> {
+        unresolved_mark: Mark,
+        bindings: &'a HashMap<BindingId, Atom>,
+        tested: HashSet<Atom>,
+    }
+    impl Visit for Tests<'_> {
+        fn visit_member_expr(&mut self, member: &MemberExpr) {
+            if member
+                .prop
+                .as_ident()
+                .is_some_and(|prop| prop.sym == "__esModule")
+            {
+                let source = match strip_parens(&member.obj) {
+                    Expr::Ident(id) => self.bindings.get(&binding_id(id)).cloned(),
+                    object => require_source(object, self.unresolved_mark),
+                };
+                self.tested.extend(source);
+            }
+            member.visit_children_with(self);
+        }
+    }
+    let mut bindings = Bindings {
+        unresolved_mark,
+        sources: HashMap::default(),
+    };
+    module.visit_with(&mut bindings);
+    let mut tests = Tests {
+        unresolved_mark,
+        bindings: &bindings.sources,
+        tested: HashSet::default(),
+    };
+    module.visit_with(&mut tests);
+    tests.tested
 }
 
 fn require_source(expr: &Expr, unresolved_mark: Mark) -> Option<Atom> {
@@ -769,6 +826,9 @@ struct DefaultReadRewriter<'a, F> {
     good: &'a HashMap<BindingId, Atom>,
     local_helpers: LocalHelperContext,
     interop_sources: &'a [Atom],
+    /// Sources whose required value the module still tests for
+    /// `__esModule`, directly or through a binding.
+    esmodule_tested_sources: HashSet<Atom>,
     unhandled: Vec<(Atom, &'static str)>,
 }
 
@@ -819,10 +879,25 @@ impl<'a, F: Fn(&str) -> Option<ProviderShape<'a>>> DefaultReadRewriter<'a, F> {
                 source,
                 "the value it assigned to `module.exports` is now the namespace's `default`, beside its named exports, so a read of that value gets the namespace",
             ),
-            Some(ProviderShape::Marked) if self.interop_sources.contains(&source) => self.report(
-                source,
-                "the namespace has no `__esModule` marker, so an interop that reads its default gets the namespace",
-            ),
+            Some(ProviderShape::Marked { has_default: false })
+                if self.interop_sources.contains(&source) =>
+            {
+                self.report(
+                    source,
+                    "it has no default export, so its namespace has no `__esModule` marker and an interop that reads its default gets the namespace",
+                )
+            }
+            // Node marks the namespace of a module with a default export, so
+            // an interop that still tests `__esModule` reads the default.
+            Some(ProviderShape::Marked { has_default: true })
+                if self.interop_sources.contains(&source)
+                    && !self.esmodule_tested_sources.contains(&source) =>
+            {
+                self.report(
+                    source,
+                    "the interop that read its default was removed, so a read of the required value gets the namespace instead of the default",
+                )
+            }
             Some(ProviderShape::ReplacedValue) => self.report(
                 source,
                 "the value it assigned to `module.exports` may not be the namespace's `default`, so a read of that value gets the namespace",
@@ -864,7 +939,7 @@ impl<'a, F: Fn(&str) -> Option<ProviderShape<'a>>> VisitMut for DefaultReadRewri
                     && call.args[0].spread.is_none() =>
             {
                 if let Some(source) = require_source(&call.args[0].expr, self.unresolved_mark) {
-                    if matches!((self.shape_of)(&source), Some(ProviderShape::Marked)) {
+                    if matches!((self.shape_of)(&source), Some(ProviderShape::Marked { .. })) {
                         *expr = take_expr(&mut call.args[0].expr);
                         return;
                     }
