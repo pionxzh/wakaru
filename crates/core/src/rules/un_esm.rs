@@ -220,9 +220,15 @@ impl VisitMut for UnEsm {
         // `require` call left in it (one the barrier keeps in place, a called
         // require, one in a function or a condition) stays CommonJS instead,
         // where the call still works.
-        let original = (was_commonjs
-            && !kept_require::kept_require_calls(module, self.unresolved_mark).is_empty())
-        .then(|| module.clone());
+        let keeps_require = was_commonjs
+            && !kept_require::kept_require_calls(module, self.unresolved_mark).is_empty();
+        // A require in a function or a condition stays a call through every
+        // attempt below, so the module stays CommonJS: skip them.
+        if keeps_require && kept_require::has_unconvertible_require(module, self.unresolved_mark) {
+            self.keep_commonjs(module);
+            return;
+        }
+        let original = keeps_require.then(|| module.clone());
         self.convert_module(module, false);
         let Some(original) = original else {
             self.finish(module);
@@ -252,8 +258,16 @@ impl VisitMut for UnEsm {
             }
         }
         *module = original;
+        self.keep_commonjs(module);
+    }
+}
+
+impl UnEsm {
+    /// Finishes `module`, as it was before any conversion attempt, as
+    /// CommonJS.
+    fn keep_commonjs(&mut self, module: &mut Module) {
         self.lowered_esbuild_namespace = false;
-        if harmony {
+        if harmony_requires::is_webpack_harmony_module(module, self.unresolved_mark) {
             // The split output has no webpack runtime: define the exports
             // and the marker the runtime calls would have, in a form an ES
             // module importer sees.
@@ -263,9 +277,7 @@ impl VisitMut for UnEsm {
         }
         self.finish(module);
     }
-}
 
-impl UnEsm {
     fn keeps_require_in_esm(&self, module: &Module) -> bool {
         has_module_decl(module)
             && !kept_require::blocking_require_calls(

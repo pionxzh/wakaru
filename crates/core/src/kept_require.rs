@@ -77,6 +77,7 @@ pub(crate) fn kept_require_calls(module: &Module, unresolved_mark: Mark) -> Vec<
         found: Vec::new(),
         blocking: false,
         imported_helpers: HashSet::default(),
+        skip_helper_arguments: false,
     };
     module.visit_with(&mut finder);
     finder.found
@@ -126,9 +127,37 @@ pub(crate) fn blocking_require_calls(
         found: Vec::new(),
         blocking: true,
         imported_helpers: imported,
+        skip_helper_arguments: false,
     };
     module.visit_with(&mut finder);
     finder.found
+}
+
+/// Whether `module`, before `UnEsm` converts it, has a require that no
+/// conversion attempt removes, so the module stays CommonJS whatever the
+/// attempts do: one in a function or a conditional position.
+///
+/// The require argument of any call of a name or a member of a name,
+/// `helper(require("./p"))`, is left out. It may be a lowered `import()`
+/// in a function, which `UnEsm` restores when the wildcard helper is local
+/// and a later unpack stage restores when the helper is an import
+/// ([`blocking_require_calls`]); before conversion, which `helper` is a
+/// wildcard helper is unknown.
+pub(crate) fn has_unconvertible_require(module: &Module, unresolved_mark: Mark) -> bool {
+    let mut finder = KeptRequireFinder {
+        unresolved_mark,
+        function_depth: 0,
+        conditional_depth: 0,
+        found: Vec::new(),
+        blocking: false,
+        imported_helpers: HashSet::default(),
+        skip_helper_arguments: true,
+    };
+    module.visit_with(&mut finder);
+    finder
+        .found
+        .iter()
+        .any(|call| call.position != RequirePosition::TopLevel)
 }
 
 /// [`kept_require_calls`] for one node. The calls come in the order a
@@ -145,6 +174,7 @@ pub(crate) fn kept_require_calls_in<N: VisitWith<KeptRequireFinder>>(
         found: Vec::new(),
         blocking: false,
         imported_helpers: HashSet::default(),
+        skip_helper_arguments: false,
     };
     node.visit_with(&mut finder);
     finder.found
@@ -198,6 +228,10 @@ pub(crate) struct KeptRequireFinder {
     blocking: bool,
     /// Import bindings whose call of a require is left for a later stage.
     imported_helpers: HashSet<BindingId>,
+    /// Skip the require argument of every `helper(require("./p"))`,
+    /// `ns.helper(require("./p"))`, or `(0, ns.helper)(require("./p"))`,
+    /// whatever `helper` is ([`has_unconvertible_require`]).
+    skip_helper_arguments: bool,
 }
 
 impl KeptRequireFinder {
@@ -237,6 +271,30 @@ impl KeptRequireFinder {
             unresolved_mark: Some(self.unresolved_mark),
         }
         .specifier(call)
+    }
+
+    /// `helper(require("./p"), …)`, `ns.helper(require("./p"), …)`, or
+    /// `(0, ns.helper)(require("./p"), …)`.
+    fn calls_named_helper(&self, call: &CallExpr) -> bool {
+        let Callee::Expr(callee) = &call.callee else {
+            return false;
+        };
+        let is_named = |expr: &Expr| match strip_parens(expr) {
+            Expr::Ident(_) => true,
+            Expr::Member(member) => matches!(strip_parens(&member.obj), Expr::Ident(_)),
+            _ => false,
+        };
+        // `(0, ns.helper)(…)` calls the member without a receiver.
+        let named = match strip_parens(callee) {
+            Expr::Seq(seq) => seq.exprs.len() == 2 && is_named(&seq.exprs[1]),
+            callee => is_named(callee),
+        };
+        named
+            && call.args.first().is_some_and(|first| {
+                first.spread.is_none()
+                    && matches!(&*first.expr, Expr::Call(inner)
+                        if is_kept_require_call(inner, self.unresolved_mark))
+            })
     }
 
     fn calls_imported_helper(&self, call: &CallExpr) -> bool {
@@ -306,6 +364,10 @@ impl Visit for KeptRequireFinder {
         if let Some(specifier) = self.lowered_import_specifier(call) {
             // Only the specifier stays: the pass replaces the whole call.
             specifier.visit_with(self);
+            return;
+        }
+        if self.skip_helper_arguments && self.calls_named_helper(call) {
+            self.visit_skipping_helper_require(call);
             return;
         }
         if is_kept_require_call(call, self.unresolved_mark) {
@@ -1270,6 +1332,42 @@ mod tests {
         with_module(source, |module, mark| {
             blocking_require_calls(module, mark, true).len()
         })
+    }
+
+    fn unconvertible(source: &str) -> bool {
+        with_module(source, has_unconvertible_require)
+    }
+
+    #[test]
+    fn finds_a_require_no_conversion_attempt_removes() {
+        for source in [
+            r#"exports.load = function () { return require("./p"); };"#,
+            r#"var P = typeof Promise === "function" ? Promise : require("./shim");"#,
+            r#"var a = cfg || require("./a"); exports.a = a;"#,
+        ] {
+            assert!(unconvertible(source), "{source}");
+        }
+        for source in [
+            r#"var a = require("./a"); exports.x = a.x;"#,
+            r#"module.exports = (a = require("./a"), a.b);"#,
+            r#"exports.x = require("./a")();"#,
+            r#"Object.assign(o, require("./a") || {});"#,
+        ] {
+            assert!(!unconvertible(source), "{source}");
+        }
+        // `helper(require(p))` in a function may be a lowered `import()`,
+        // which a local or imported wildcard helper restores.
+        for source in [
+            r#"exports.load = () => Promise.resolve().then(() => _interop(require("./p")));"#,
+            r#"var h = require("./h"); exports.load = () => h.wrap(require("./p"));"#,
+            r#"var h = require("./h"); exports.load = () => (0, h.wrap)(require("./p"));"#,
+        ] {
+            assert!(!unconvertible(source), "{source}");
+        }
+        // Anything else around it still counts.
+        assert!(unconvertible(
+            r#"exports.load = () => Promise.resolve().then(() => require("./p"));"#
+        ));
     }
 
     use RequirePosition::{Conditional, Function, TopLevel};
