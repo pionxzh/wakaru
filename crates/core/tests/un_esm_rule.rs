@@ -7882,6 +7882,31 @@ require.d(exports, { r: () => f });
 }
 
 #[test]
+fn harmony_module_keeps_a_require_in_a_pattern_default_conditional() {
+    // A pattern default runs only when the value is undefined, so hoisting
+    // its load into an import would run it on every evaluation.
+    for (declaration, source) in [
+        (r#"const { a = require("./q.js") } = cfg;"#, "./q.js"),
+        (r#"const [a = require("./r.js")] = list;"#, "./r.js"),
+        (r#"let a; ({ a = require("./s.js") } = cfg);"#, "./s.js"),
+    ] {
+        let input = format!("{declaration}\nrequire.d(exports, {{ a: () => a }});\n");
+        let output = un_esm_standard(&input);
+        assert!(!output.contains("import "), "{output}");
+        assert!(
+            output.contains(&format!(r#"= require("{source}")"#)),
+            "{output}"
+        );
+        let pipeline = render_pipeline(&input);
+        assert!(!pipeline.contains("import "), "{pipeline}");
+        assert!(
+            pipeline.contains(&format!(r#"require("{source}")"#)),
+            "{pipeline}"
+        );
+    }
+}
+
+#[test]
 fn imported_helper_call_of_a_require_is_left_for_cross_module_recovery() {
     // Unpack resolves a top-level `var x = helper(require(p))` from the
     // helper module's facts after `UnEsm`; until then the module stays on its

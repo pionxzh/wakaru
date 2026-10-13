@@ -2,10 +2,10 @@ use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::common::{Mark, Span};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignOp, BinExpr, BinaryOp, CallExpr, Callee, Class, CondExpr, Decl,
-    DoWhileStmt, Expr, ForInStmt, ForOfStmt, ForStmt, Function, IfStmt, ImportSpecifier, Lit,
-    MemberProp, Module, ModuleDecl, ModuleItem, OptCall, OptChainBase, OptChainExpr, Stmt,
-    SwitchStmt, TryStmt, WhileStmt,
+    ArrowExpr, AssignExpr, AssignOp, AssignPat, AssignPatProp, BinExpr, BinaryOp, CallExpr, Callee,
+    Class, CondExpr, Decl, DoWhileStmt, Expr, ForInStmt, ForOfStmt, ForStmt, Function, IfStmt,
+    ImportSpecifier, Lit, MemberProp, Module, ModuleDecl, ModuleItem, OptCall, OptChainBase,
+    OptChainExpr, Stmt, SwitchStmt, TryStmt, WhileStmt,
 };
 use swc_core::ecma::ast::{
     BindingIdent, Ident, IdentName, Invalid, KeyValueProp, MemberExpr, NewExpr, Pat, Prop,
@@ -38,8 +38,8 @@ pub(crate) enum RequirePosition {
     /// included).
     Function,
     /// A branch of `if` or `?:`, the right side of `&&`, `||`, `??` or their
-    /// assignments, an optional call or member, or a loop, `switch`, or `try`
-    /// body.
+    /// assignments, a pattern default, an optional call or member, or a
+    /// loop, `switch`, or `try` body.
     Conditional,
 }
 
@@ -396,6 +396,19 @@ impl Visit for KeptRequireFinder {
             self.conditional(&expr.right);
         } else {
             expr.visit_children_with(self);
+        }
+    }
+
+    // A default runs only when the destructured value is undefined.
+    fn visit_assign_pat(&mut self, pat: &AssignPat) {
+        pat.left.visit_with(self);
+        self.conditional(&pat.right);
+    }
+
+    fn visit_assign_pat_prop(&mut self, prop: &AssignPatProp) {
+        prop.key.visit_with(self);
+        if let Some(value) = &prop.value {
+            self.conditional(value);
         }
     }
 
