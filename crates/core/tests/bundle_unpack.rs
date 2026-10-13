@@ -4229,6 +4229,56 @@ fn import_through_a_passthrough_of_a_function_provider_reads_its_default() {
     assert!(provider.contains("export default s"), "{provider}");
 }
 
+/// Module 3 of [`passthrough_bundle`] with Next's default-object tail
+/// (producer next@16.3.8 dist, minified), defining `default` as `value`.
+fn next_tail_provider(value: &str) -> String {
+    format!(
+        r#""use strict";Object.defineProperty(e,"__esModule",{{value:!0}}),Object.defineProperty(e,"default",{{enumerable:!0,get:function(){{return s}}}});{value}("function"==typeof e.default||"object"==typeof e.default&&null!==e.default)&&void 0===e.default.__esModule&&(Object.defineProperty(e.default,"__esModule",{{value:!0}}),Object.assign(e.default,e),t.exports=e.default)"#
+    )
+}
+
+#[test]
+fn import_through_a_passthrough_of_a_next_tail_provider_reads_its_default() {
+    // The tail made the provider's CommonJS value its default; a call result
+    // is assumed a function or object (`default_object_tail_value`). The
+    // consumer's `require.n` interop became a default import.
+    let source = passthrough_bundle(
+        r#""use strict";o.r(e),o.d(e,{run:()=>r});var z=o(2),a=o.n(z);function r(){return a()()}"#,
+        &next_tail_provider(r#"function m(f){return f}var s=m(function(){return"rendered"});"#),
+    )
+    .replace(
+        "o.r=t=>",
+        "o.n=t=>{var e=t&&t.__esModule?()=>t.default:()=>t;return o.d(e,{a:e}),e},o.r=t=>",
+    );
+    let output = unpack(&source, DecompileOptions::default()).expect("bundle should unpack");
+    let passthrough = unpacked_module(&output, "module-2.js");
+    assert!(
+        passthrough.contains(r#"module.exports = require("./module-3.js").default"#),
+        "{passthrough}"
+    );
+    let consumer = unpacked_module(&output, "module-1.js");
+    assert!(
+        consumer.contains(r#"import z from "./module-3.js""#),
+        "{consumer}"
+    );
+}
+
+#[test]
+fn passthrough_of_a_next_tail_provider_with_a_primitive_default_keeps_the_whole_require() {
+    // A string default fails the tail's test, so `module.exports` stays the
+    // exports object, which the namespace stands for.
+    let source = passthrough_bundle(
+        r#""use strict";o.r(e),o.d(e,{run:()=>r});var z=o(2);function r(){return z.default}"#,
+        &next_tail_provider(r#"var s="label";"#),
+    );
+    let output = unpack(&source, DecompileOptions::default()).expect("bundle should unpack");
+    let passthrough = unpacked_module(&output, "module-2.js");
+    assert!(
+        passthrough.contains(r#"module.exports = require("./module-3.js");"#),
+        "{passthrough}"
+    );
+}
+
 #[test]
 fn es_source_module_kept_commonjs_is_reported_only_under_diagnostics() {
     // hypothetical: module 1 is webpack harmony output (`o.r`, `o.d`) whose

@@ -1144,6 +1144,44 @@ Unpack mode decides the same edge from provider facts.
 
 Level: `standard` and above.
 
+### `default_object_tail_value`
+
+Next's CommonJS dist files end in a tail that replaces `module.exports` with
+the default export, with the named exports copied onto it:
+
+```js
+if ((typeof exports.default === "function" || typeof exports.default === "object" && exports.default !== null) && exports.default.__esModule === undefined) {
+  Object.defineProperty(exports.default, "__esModule", { value: true });
+  Object.assign(exports.default, exports);
+  module.exports = exports.default;
+}
+```
+
+`UnEsm` recovers such a module as ESM with the tail kept on the default
+binding. A consumer that stays CommonJS, such as a passthrough
+`module.exports = require("./link.js")`, then gets the namespace from
+`require`, where it got the default before. Unpack treats the module's
+CommonJS value as its default export (`commonjs_value_is_default`), so a kept
+`require` reads `.default` and re-export consolidation redirects the
+passthrough's importers to the default import.
+
+The tail does that only when the default is a function or an object at run
+time, which is usually not provable: Next's defaults are values such as a
+`forwardRef(…)` result. The assumption is that a tailed module's default is a
+function or an object unless it is provably a primitive (every value written
+to it a literal, a template, `void x`, `undefined`, or a binding initialized
+with one). Next adds the tail for components, so a primitive default is not
+expected. When the assumption is wrong, the tail left `module.exports` the
+exports object, and the rewritten `require(x).default` reads the primitive
+instead of that object.
+
+Affects: `collect_default_object_tail` in `facts.rs`, read by
+`run_kept_require_default_reads` and `run_reexport_consolidation`.
+
+Level: every level. Without it the kept `require` reads the namespace, which
+is already wrong for every tailed module whose default is a function or an
+object.
+
 ## Execution Environment Baseline
 
 Every level assumes the program runs in a standard ECMAScript environment:

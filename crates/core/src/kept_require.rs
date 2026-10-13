@@ -564,7 +564,9 @@ fn is_composition_call(call: &CallExpr, unresolved_mark: Mark) -> bool {
 enum ProviderShape<'a> {
     /// `module.exports = v`, now only `export default v`: the value is the
     /// namespace's `default`. `marked`: the module also marked itself
-    /// `__esModule`, so a `.default` read of it already meant that default.
+    /// `__esModule`, so a `.default` read of it already meant that default
+    /// (a Babel runtime shim's `module.exports.default = module.exports`, or
+    /// the self mirror `v.default = v` of Next's default-object tail).
     Default { marked: bool },
     /// `module.exports = v` plus named exports, which are on the namespace,
     /// not on `v`: a call or `new` reads `default`, a named export stays a
@@ -614,8 +616,9 @@ fn provider_shape(provider: &ModuleFacts) -> Option<ProviderShape<'_>> {
 /// `./p` was CommonJS.
 pub(crate) enum RequiredValueImport {
     /// The default import: a provider that stays CommonJS (its
-    /// `module.exports`), or one that was `module.exports = v` and now only
-    /// exports `v` as its default.
+    /// `module.exports`), or one whose CommonJS value is now its only
+    /// default export (`module.exports = v`, or a value that also marked
+    /// itself `__esModule`, such as Next's default-object tail).
     Default,
     /// The namespace import, read through members only: an ES module, or a
     /// provider that marked itself `__esModule`, whose namespace holds its
@@ -631,12 +634,8 @@ pub(crate) fn required_value_import(provider: &ModuleFacts) -> Option<RequiredVa
     }
     match provider_shape(provider) {
         None | Some(ProviderShape::Marked { .. }) => Some(RequiredValueImport::Namespace),
-        Some(ProviderShape::Default { marked: false }) => Some(RequiredValueImport::Default),
-        Some(
-            ProviderShape::Default { marked: true }
-            | ProviderShape::DefaultWithNamed(_)
-            | ProviderShape::ReplacedValue,
-        ) => None,
+        Some(ProviderShape::Default { .. }) => Some(RequiredValueImport::Default),
+        Some(ProviderShape::DefaultWithNamed(_) | ProviderShape::ReplacedValue) => None,
     }
 }
 

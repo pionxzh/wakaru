@@ -43,8 +43,9 @@ use crate::commonjs_default_object_composition::{
 };
 use crate::facts::{
     collect_commonjs_default_attached_properties, collect_commonjs_default_object,
-    collect_commonjs_value_is_default, collect_interop_require_sources, collect_marks_es_module,
-    collect_module_facts, collect_replaces_module_exports, collect_require_returns_exports_object,
+    collect_commonjs_value_is_default, collect_default_object_tail,
+    collect_interop_require_sources, collect_marks_es_module, collect_module_facts,
+    collect_replaces_module_exports, collect_require_returns_exports_object,
     collect_whole_require_sources, collect_wildcard_require_sources,
     is_normalized_commonjs_default, ModuleFactsMap,
 };
@@ -526,7 +527,8 @@ pub(super) fn unpack_multi_module_with_plan(
             let commonjs_value_is_default =
                 collect_commonjs_value_is_default(&module, unresolved_mark)
                     || (unpacked.webpack_commonjs_runtime
-                        && is_normalized_commonjs_default(&module));
+                        && is_normalized_commonjs_default(&module))
+                    || collect_default_object_tail(&module, unresolved_mark);
             let es_source_evidence = if options.diagnostics {
                 crate::kept_require::es_source_evidence(&module, unresolved_mark)
             } else {

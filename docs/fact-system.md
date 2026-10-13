@@ -167,7 +167,11 @@ evaluation of its body (a top-level statement, sequence element, or `var`
 initializer), and uses `module` only as `module.exports`. Its CommonJS value
 is then that assignment's value, which becomes the default export. The
 unpack driver also sets it for a webpack factory whose only ESM declaration
-is the `export default` a CommonJS runtime normalizer wrote. A consumer that
+is the `export default` a CommonJS runtime normalizer wrote, and, through
+`collect_default_object_tail`, for a module that ends in Next's
+default-object tail (`module.exports = exports.default` when the default is a
+function or an object, `default_object_tail_value` in
+[rewrite-assumptions.md](rewrite-assumptions.md)). A consumer that
 stays CommonJS keeps `require` of it, which returns the ES module's
 namespace, so `run_kept_require_default_reads` reads `.default` where the
 value was read. `collect_replaces_module_exports` records any assignment of

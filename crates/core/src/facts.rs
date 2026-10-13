@@ -217,9 +217,10 @@ pub struct ModuleFacts {
     pub require_returns_exports_object: bool,
     /// True when the module's CommonJS value is the value of its single
     /// top-level `module.exports = v` statement, collected before `UnEsm`
-    /// turns it into `export default v`. A consumer that keeps `require` of
-    /// the recovered ES module then reads that value as `.default` of the
-    /// namespace `require` returns.
+    /// turns it into `export default v`, or the default of Next's
+    /// default-object tail (`collect_default_object_tail`). A consumer
+    /// that keeps `require` of the recovered ES module then reads that value
+    /// as `.default` of the namespace `require` returns.
     pub commonjs_value_is_default: bool,
     /// True when the module assigns `module.exports` itself somewhere, so its
     /// CommonJS value may not be the object `exports` names.
@@ -1764,6 +1765,225 @@ pub fn collect_commonjs_value_is_default(module: &Module, unresolved_mark: Mark)
         && collector.assignments == 1
         && collector.module_uses == collector.member_uses
         && !collector.has_direct_eval
+}
+
+/// Whether the module, as extracted, ends in Next's default-object tail, so
+/// its CommonJS value is its default (`default_object_tail_value`):
+///
+/// ```js
+/// if ((typeof exports.default === "function" || …) && exports.default.__esModule === undefined) {
+///   Object.defineProperty(exports.default, "__esModule", { value: true });
+///   Object.assign(exports.default, exports);
+///   module.exports = exports.default;
+/// }
+/// ```
+///
+/// The last statement holds `Object.assign(exports.default, exports)` and the
+/// module's only `module.exports` assignment, `module.exports =
+/// exports.default`. The tail replaces `module.exports` only when the default
+/// is a function or an object; a default that is provably a primitive (every
+/// value written to it a literal, a template, `void x`, or `undefined`, or a
+/// binding initialized with one) fails. `UnEsm` recovers the module as ESM
+/// only from the exact tail, keeping it on the default binding, so a module
+/// that only resembles it stays CommonJS and its fact is not read.
+pub fn collect_default_object_tail(module: &Module, unresolved_mark: Mark) -> bool {
+    struct Finder {
+        unresolved_mark: Mark,
+        default_reassignments: usize,
+        other_reassignments: usize,
+        copies: usize,
+    }
+
+    impl Finder {
+        fn is_free(&self, expr: &Expr, name: &str) -> bool {
+            matches!(strip_parens(expr), Expr::Ident(ident)
+                if is_unresolved_ident(ident, name, self.unresolved_mark))
+        }
+
+        fn is_exports_default(&self, expr: &Expr) -> bool {
+            matches!(strip_parens(expr), Expr::Member(member)
+                if self.is_free(&member.obj, "exports")
+                    && is_member_prop_name(&member.prop, "default"))
+        }
+    }
+
+    impl Visit for Finder {
+        fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+            if let AssignTarget::Simple(SimpleAssignTarget::Member(target)) = &assign.left {
+                if self.is_free(&target.obj, "module")
+                    && is_member_prop_name(&target.prop, "exports")
+                {
+                    if assign.op == AssignOp::Assign && self.is_exports_default(&assign.right) {
+                        self.default_reassignments += 1;
+                    } else {
+                        self.other_reassignments += 1;
+                    }
+                }
+            }
+            assign.visit_children_with(self);
+        }
+
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if let Callee::Expr(callee) = &call.callee {
+                if matches!(strip_parens(callee), Expr::Member(member)
+                    if self.is_free(&member.obj, "Object")
+                        && is_member_prop_name(&member.prop, "assign"))
+                    && matches!(call.args.as_slice(), [target, source]
+                        if target.spread.is_none()
+                            && source.spread.is_none()
+                            && self.is_exports_default(&target.expr)
+                            && self.is_free(&source.expr, "exports"))
+                {
+                    self.copies += 1;
+                }
+            }
+            call.visit_children_with(self);
+        }
+    }
+
+    if module
+        .body
+        .iter()
+        .any(|item| matches!(item, ModuleItem::ModuleDecl(_)))
+    {
+        return false;
+    }
+    let Some(last) = module.body.last() else {
+        return false;
+    };
+    let new_finder = || Finder {
+        unresolved_mark,
+        default_reassignments: 0,
+        other_reassignments: 0,
+        copies: 0,
+    };
+    let mut whole = new_finder();
+    module.visit_with(&mut whole);
+    let mut tail = new_finder();
+    last.visit_with(&mut tail);
+    if whole.default_reassignments != 1
+        || whole.other_reassignments != 0
+        || tail.default_reassignments != 1
+        || tail.copies != 1
+    {
+        return false;
+    }
+    !default_is_primitive(module, unresolved_mark)
+}
+
+/// Whether every value the module writes to its `default` export, through
+/// `Object.defineProperty(exports, "default", { get … })` or `exports.default
+/// = v` at the top level (leaving out Babel's `exports.default = void 0`
+/// placeholder), is a primitive: a literal other than a regular expression, a
+/// template, `void x`, `undefined`, or a binding declared at the top level
+/// with one of those.
+fn default_is_primitive(module: &Module, unresolved_mark: Mark) -> bool {
+    fn is_primitive_literal(expr: &Expr) -> bool {
+        match strip_parens(expr) {
+            Expr::Lit(lit) => !matches!(lit, Lit::Regex(_)),
+            Expr::Tpl(_) => true,
+            Expr::Unary(unary) => unary.op == swc_core::ecma::ast::UnaryOp::Void,
+            Expr::Ident(ident) => ident.sym == "undefined",
+            _ => false,
+        }
+    }
+    let is_free = |expr: &Expr, name: &str| {
+        matches!(strip_parens(expr), Expr::Ident(ident)
+            if is_unresolved_ident(ident, name, unresolved_mark))
+    };
+    // The value a `default` getter returns.
+    let getter_value = |descriptor: &Expr| -> Option<Expr> {
+        let Expr::Object(object) = strip_parens(descriptor) else {
+            return None;
+        };
+        object.props.iter().find_map(|prop| {
+            let PropOrSpread::Prop(prop) = prop else {
+                return None;
+            };
+            let body = match prop.as_ref() {
+                Prop::KeyValue(kv) if matches!(&kv.key, PropName::Ident(key) if key.sym == "get") => {
+                    match strip_parens(&kv.value) {
+                        Expr::Fn(function) => function.function.body.as_ref()?,
+                        Expr::Arrow(arrow) => match arrow.body.as_ref() {
+                            swc_core::ecma::ast::ArrowFunctionBody::Expr(expr) => {
+                                return Some(expr.as_ref().clone())
+                            }
+                            swc_core::ecma::ast::ArrowFunctionBody::FunctionBody(_) => return None,
+                        },
+                        _ => return None,
+                    }
+                }
+                Prop::Method(method)
+                    if matches!(&method.key, PropName::Ident(key) if key.sym == "get") =>
+                {
+                    method.function.body.as_ref()?
+                }
+                _ => return None,
+            };
+            match body.stmts.as_slice() {
+                [Stmt::Return(ReturnStmt { arg: Some(arg), .. })] => Some(arg.as_ref().clone()),
+                _ => None,
+            }
+        })
+    };
+    let mut values: Vec<Expr> = Vec::new();
+    let mut unknown = false;
+    for item in &module.body {
+        let ModuleItem::Stmt(Stmt::Expr(statement)) = item else {
+            continue;
+        };
+        let exprs: Vec<&Expr> = match strip_parens(&statement.expr) {
+            Expr::Seq(seq) => seq.exprs.iter().map(|expr| expr.as_ref()).collect(),
+            expr => vec![expr],
+        };
+        for expr in exprs {
+            match strip_parens(expr) {
+                Expr::Call(call)
+                    if matches!(&call.callee, Callee::Expr(callee)
+                        if matches!(strip_parens(callee), Expr::Member(member)
+                            if is_free(&member.obj, "Object")
+                                && is_member_prop_name(&member.prop, "defineProperty")))
+                        && call.args.len() == 3
+                        && is_free(&call.args[0].expr, "exports")
+                        && matches!(strip_parens(&call.args[1].expr), Expr::Lit(Lit::Str(name))
+                            if name.value.as_str() == Some("default")) =>
+                {
+                    match getter_value(&call.args[2].expr) {
+                        Some(value) => values.push(value),
+                        None => unknown = true,
+                    }
+                }
+                Expr::Assign(assign)
+                    if assign.op == AssignOp::Assign
+                        && matches!(&assign.left,
+                            AssignTarget::Simple(SimpleAssignTarget::Member(target))
+                                if is_free(&target.obj, "exports")
+                                    && is_member_prop_name(&target.prop, "default"))
+                        && !matches!(strip_parens(&assign.right), Expr::Unary(unary)
+                            if unary.op == swc_core::ecma::ast::UnaryOp::Void) =>
+                {
+                    values.push(assign.right.as_ref().clone());
+                }
+                _ => {}
+            }
+        }
+    }
+    if unknown || values.is_empty() {
+        return false;
+    }
+    values.iter().all(|value| match strip_parens(value) {
+        Expr::Ident(binding) if binding.sym != "undefined" => module.body.iter().any(|item| {
+            let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+                return false;
+            };
+            var.decls.iter().any(|declarator| {
+                matches!(&declarator.name, Pat::Ident(name)
+                    if name.id.sym == binding.sym && name.id.ctxt == binding.ctxt)
+                    && declarator.init.as_deref().is_some_and(is_primitive_literal)
+            })
+        }),
+        value => is_primitive_literal(value),
+    })
 }
 
 /// Whether the module assigns the free `module`'s `exports` itself, in any

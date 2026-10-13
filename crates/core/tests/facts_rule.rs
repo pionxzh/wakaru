@@ -6,9 +6,10 @@ use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::VisitMutWith;
 use wakaru_core::facts::{
     collect_commonjs_default_attached_properties, collect_commonjs_default_object,
-    collect_commonjs_value_is_default, collect_interop_require_sources, collect_marks_es_module,
-    collect_module_facts, ExportFact, ExportKind, HelperExportFact, HelperKind, ImportFact,
-    ImportKind, ModuleFacts, ModuleFactsMap, TypeScriptHelperExportFact, TypeScriptHelperKind,
+    collect_commonjs_value_is_default, collect_default_object_tail,
+    collect_interop_require_sources, collect_marks_es_module, collect_module_facts, ExportFact,
+    ExportKind, HelperExportFact, HelperKind, ImportFact, ImportKind, ModuleFacts, ModuleFactsMap,
+    TypeScriptHelperExportFact, TypeScriptHelperKind,
 };
 use wakaru_core::{apply_rules, RulePipelineOptions};
 
@@ -1102,6 +1103,68 @@ fn commonjs_value_is_default_needs_one_top_level_module_exports_assignment() {
 }
 
 #[test]
+fn default_object_tail_makes_the_commonjs_value_the_default() {
+    let has_tail = |source: &str| {
+        GLOBALS.set(&Default::default(), || {
+            let cm: Lrc<SourceMap> = Default::default();
+            let fm = cm.new_source_file(
+                FileName::Custom("test.js".to_string()).into(),
+                source.to_string(),
+            );
+            let lexer = Lexer::new(
+                Syntax::Es(EsSyntax::default()),
+                Default::default(),
+                StringInput::from(&*fm),
+                None,
+            );
+            let mut module = Parser::new_from(lexer)
+                .parse_module()
+                .expect("parse failed");
+            let unresolved_mark = Mark::new();
+            module.visit_mut_with(&mut resolver(unresolved_mark, Mark::new(), false));
+            collect_default_object_tail(&module, unresolved_mark)
+        })
+    };
+    let getter = |value: &str| {
+        format!(
+            r#"Object.defineProperty(exports, "__esModule", {{ value: true }}); Object.defineProperty(exports, "default", {{ enumerable: true, get: function () {{ return D; }} }}); {value}"#
+        )
+    };
+    let tail = r#"if ((typeof exports.default === "function" || typeof exports.default === "object" && exports.default !== null) && typeof exports.default.__esModule === "undefined") { Object.defineProperty(exports.default, "__esModule", { value: true }); Object.assign(exports.default, exports); module.exports = exports.default; }"#;
+    // producer next@16.3.8 dist (swc) unminified, and the same tail minified
+    // with the getter joined into a sequence.
+    assert!(has_tail(&format!("{} {tail}", getter("function D() {}"))));
+    assert!(has_tail(&format!(
+        "{} {tail}",
+        getter("var D = wrap(function () {});")
+    )));
+    assert!(has_tail(
+        r#"require("./x"), Object.defineProperty(exports, "__esModule", { value: !0 }), Object.defineProperty(exports, "default", { enumerable: !0, get: function () { return D; } }); var D = make(); ("function" == typeof exports.default || "object" == typeof exports.default && null !== exports.default) && void 0 === exports.default.__esModule && (Object.defineProperty(exports.default, "__esModule", { value: !0 }), Object.assign(exports.default, exports), module.exports = exports.default);"#
+    ));
+    // A primitive default keeps `module.exports` the exports object.
+    assert!(!has_tail(&format!(
+        "{} {tail}",
+        getter(r#"var D = "label";"#)
+    )));
+    assert!(!has_tail(&format!(
+        r#"exports.default = void 0; exports.default = 3; {tail}"#
+    )));
+    // The tail must end the module and hold its only reassignment.
+    assert!(!has_tail(&format!(
+        "{} {tail} sideEffect();",
+        getter("function D() {}")
+    )));
+    assert!(!has_tail(&format!(
+        "{} module.exports = other; {tail}",
+        getter("function D() {}")
+    )));
+    assert!(!has_tail(&format!(
+        "{} if (c) {{ module.exports = exports.default; }}",
+        getter("function D() {}")
+    )));
+}
+
+#[test]
 fn interop_require_sources_list_the_requires_read_through_an_interop() {
     let sources = |source: &str| {
         GLOBALS.set(&Default::default(), || {
@@ -1841,6 +1904,28 @@ fn default_import_of_a_passthrough_to_a_node_builtin_is_redirected_to_its_namesp
     );
     assert!(
         output.contains(r#"import * as lib from "node:crypto""#),
+        "{output}"
+    );
+}
+
+#[test]
+fn default_import_of_a_passthrough_to_a_marked_default_only_provider_stays_a_default_import() {
+    // The provider's CommonJS value was its default, which also marked
+    // itself `__esModule` (Next's default-object tail): a namespace import
+    // would hold it only as `default`.
+    let facts = passthrough_facts_with_provider(ModuleFacts {
+        commonjs_value_is_default: true,
+        marks_es_module: true,
+        exports: vec![export("default", None, ExportKind::Default)],
+        ..Default::default()
+    });
+    let output = consolidate_reexports(
+        "import Link from \"./passthrough.js\";\nrender(Link);\n",
+        &facts,
+        "consumer.js",
+    );
+    assert!(
+        output.contains(r#"import Link from "./provider.js""#),
         "{output}"
     );
 }
