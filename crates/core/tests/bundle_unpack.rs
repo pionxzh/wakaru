@@ -4188,6 +4188,69 @@ fn kept_require_of_a_function_with_named_exports_reports_uses_it_cannot_redirect
 }
 
 #[test]
+fn es_source_module_kept_commonjs_is_reported_only_under_diagnostics() {
+    // hypothetical: module 1 is webpack harmony output (`o.r`, `o.d`) whose
+    // global write is a barrier, so its top-level load stays a call and the
+    // module stays CommonJS.
+    let source = r#"(()=>{var t={1(t,e,o){"use strict";o.r(e),o.d(e,{f:()=>f});globalThis.flag=1;var d=o(3);function f(){return d.x}},3(t,e){e.x=1}};const e={};function o(r){const l=e[r];if(void 0!==l)return l.exports;const i=e[r]={exports:{}};return t[r](i,i.exports,o),i.exports}o.r=t=>{Object.defineProperty(t,"__esModule",{value:!0})},o.d=(t,e)=>{for(var r in e)o.o(e,r)&&!o.o(t,r)&&Object.defineProperty(t,r,{enumerable:!0,get:e[r]})},o.o=(t,e)=>Object.prototype.hasOwnProperty.call(t,e),globalThis.lib=o(1)})();"#;
+    let is_kept = |w: &&wakaru_core::UnpackWarning| {
+        w.kind == wakaru_core::UnpackWarningKind::EsSourceKeptCommonJs
+    };
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            diagnostics: true,
+            ..DecompileOptions::default()
+        },
+    )
+    .expect("bundle should unpack");
+    let module = unpacked_module(&output, "module-1.js");
+    assert!(!module.contains("import "), "{module}");
+    let warnings = output.warnings.iter().filter(is_kept).collect::<Vec<_>>();
+    assert_eq!(warnings.len(), 1, "{:#?}", output.warnings);
+    assert_eq!(warnings[0].filename, "module-1.js");
+    assert!(
+        warnings[0]
+            .message
+            .contains(r#""./module-3.js" (top-level)"#),
+        "{}",
+        warnings[0].message
+    );
+
+    let output = unpack(source, DecompileOptions::default()).expect("bundle should unpack");
+    assert!(
+        !output.warnings.iter().any(|w| is_kept(&w)),
+        "{:#?}",
+        output.warnings
+    );
+}
+
+#[test]
+fn es_source_module_with_only_lazy_requires_is_not_reported() {
+    // hypothetical: a require in a function was written by the source.
+    let source = r#"(()=>{var t={1(t,e,o){"use strict";o.r(e),o.d(e,{f:()=>f});function f(){return o(3).x}},3(t,e){e.x=1}};const e={};function o(r){const l=e[r];if(void 0!==l)return l.exports;const i=e[r]={exports:{}};return t[r](i,i.exports,o),i.exports}o.r=t=>{Object.defineProperty(t,"__esModule",{value:!0})},o.d=(t,e)=>{for(var r in e)o.o(e,r)&&!o.o(t,r)&&Object.defineProperty(t,r,{enumerable:!0,get:e[r]})},o.o=(t,e)=>Object.prototype.hasOwnProperty.call(t,e),globalThis.lib=o(1)})();"#;
+    let output = unpack(
+        source,
+        DecompileOptions {
+            diagnostics: true,
+            ..DecompileOptions::default()
+        },
+    )
+    .expect("bundle should unpack");
+    let module = unpacked_module(&output, "module-1.js");
+    assert!(module.contains(r#"require("./module-3.js")"#), "{module}");
+    assert!(
+        !output
+            .warnings
+            .iter()
+            .any(|w| w.kind == wakaru_core::UnpackWarningKind::EsSourceKeptCommonJs),
+        "{:#?}",
+        output.warnings
+    );
+}
+
+#[test]
 fn imported_call_of_a_require_outside_a_top_level_var_keeps_the_module_commonjs() {
     // hypothetical: the cross-module interop pass reads only
     // `var x = helper(require(p))`, so these requires would stay in ESM.
