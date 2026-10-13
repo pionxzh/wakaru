@@ -2237,10 +2237,17 @@ function run() {
         &[("format.js", MODULE_EXPORTS_FUNCTION_PROVIDER)],
     );
 
+    // The call stays; its provider is the default import of the
+    // `module.exports = format` provider, the value the require returned.
     assert!(
-        consumer.contains(r#"__importDefault(require("./format.js"))"#),
+        consumer.contains(r#"import format from "./format.js";"#),
+        "{consumer}"
+    );
+    assert!(
+        consumer.contains("__importDefault(format)"),
         "a whole-value use keeps the helper call:\n{consumer}"
     );
+    assert!(!consumer.contains("require("), "{consumer}");
 }
 
 #[test]
@@ -2279,6 +2286,9 @@ function run() { return widget_js_1.default; }
         .map(|(_, code)| code)
         .expect("consumer module should exist");
 
+    // The provider marked itself `__esModule` and became an ES module, whose
+    // namespace has no marker, so no import holds the value an unproven
+    // function may test: the require stays (`commonjs_require_unrecovered`).
     assert!(
         consumer.contains(r#"__importDefault(require("./widget.js"))"#),
         "an unproven helper keeps its call:\n{consumer}"

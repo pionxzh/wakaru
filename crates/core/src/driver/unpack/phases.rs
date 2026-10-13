@@ -54,7 +54,9 @@ use crate::namespace_decomposition::run_namespace_decomposition;
 use crate::provider_import_repair::run_provider_import_repair;
 use crate::provider_namespace_repair::run_provider_namespace_repair;
 use crate::reexport_consolidation::run_reexport_consolidation;
-use crate::rules::cross_module_interop_import::run_cross_module_interop_imports;
+use crate::rules::cross_module_interop_import::{
+    import_unproven_helper_requires, run_cross_module_interop_imports,
+};
 use crate::rules::eval_utils::DirectEvalAnalyzer;
 use crate::rules::expr_utils::is_unresolved_ident;
 use crate::rules::lowered_dynamic_import::run_cross_module_lowered_dynamic_imports;
@@ -745,6 +747,12 @@ pub(super) fn unpack_multi_module_with_plan(
                 unresolved_mark,
             );
             run_cross_module_interop_imports(
+                &mut module,
+                facts_ref,
+                Some(&unpacked.module.filename),
+                unresolved_mark,
+            );
+            import_unproven_helper_requires(
                 &mut module,
                 facts_ref,
                 Some(&unpacked.module.filename),

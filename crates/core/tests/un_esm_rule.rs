@@ -7907,6 +7907,97 @@ fn harmony_module_keeps_a_require_in_a_pattern_default_conditional() {
 }
 
 #[test]
+fn requires_an_export_object_runs_first_become_imports() {
+    // shape: authored CommonJS bundled by webpack@5.111.1; wild-observed as a
+    // data table of `module.exports = {…}` providers.
+    let input = r#"
+module.exports = {
+  kind: "table",
+  alpha: require("./alpha.js"),
+  "beta-gamma": require("./beta.js"),
+  list: [require("./gamma.js")]
+};
+"#;
+    let output = render_pipeline(input);
+    assert!(!output.contains("require("), "{output}");
+    let alpha = output.find(r#"import alpha from "./alpha.js";"#);
+    let beta = output.find(r#"import beta_gamma from "./beta.js";"#);
+    let gamma = output.find(r#"from "./gamma.js";"#);
+    assert!(
+        alpha.is_some() && alpha < beta && beta < gamma,
+        "imports keep the order of the requires:\n{output}"
+    );
+    assert!(output.contains("export default {"), "{output}");
+    assert!(output.contains("alpha,"), "{output}");
+    assert!(output.contains(r#""beta-gamma": beta_gamma"#), "{output}");
+}
+
+#[test]
+fn a_require_after_another_effect_of_its_statement_stays_in_place() {
+    // hypothetical: an import would load the provider before the call, or
+    // run it when the condition is false.
+    for input in [
+        r#"module.exports = { stamp: stamp(), delta: require("./delta.js") };"#,
+        r#"module.exports = { a: flag ? require("./a.js") : null };"#,
+        r#"module.exports = { a: flag && require("./a.js") };"#,
+        r#"module.exports = { ...base, a: require("./a.js") };"#,
+        r#"module.exports = { [key()]: require("./a.js") };"#,
+        r#"exports.a = register(), exports.b = { b: require("./b.js") };"#,
+    ] {
+        let output = un_esm_standard(input);
+        assert!(!output.contains("import "), "{input}\n{output}");
+        assert!(output.contains("require("), "{input}\n{output}");
+    }
+}
+
+#[test]
+fn a_called_or_assigned_require_keeps_its_own_handling() {
+    // hypothetical: a require whose result is called or assigned is not a
+    // value passed on, so no binding is made for it.
+    for input in [
+        r#"module.exports = { tag: require("./tag.js")("x") };"#,
+        r#"var t; module.exports = { a: (t = require("./a.js")) && t.b };"#,
+        r#"register({ forced: require("./forced.js").check() });"#,
+    ] {
+        let output = un_esm_standard(input);
+        assert!(!output.contains("import "), "{input}\n{output}");
+    }
+}
+
+#[test]
+fn a_require_inside_a_statement_after_a_barrier_stays_in_place() {
+    // hypothetical: the provider may read the global the first statement
+    // writes.
+    let input = r#"
+globalThis.flag = true;
+module.exports = { a: require("./a.js") };
+"#;
+    let output = un_esm_standard(input);
+    assert!(!output.contains("import "), "{output}");
+    assert!(output.contains(r#"a: require("./a.js")"#), "{output}");
+}
+
+#[test]
+fn a_require_passed_to_a_call_becomes_an_import_when_it_runs_first() {
+    // shape: producer webpack@5.111.1 + Terser on core-js-style CommonJS,
+    // where the registering function stays bound: `$({ …, forced: r(3) }, …)`.
+    let input = r#"
+var $ = require("./export.js");
+$({ target: "Feature", forced: require("./forced.js") }, { label: "x" });
+"#;
+    let output = render_pipeline(input);
+    assert!(!output.contains("require("), "{output}");
+    let export = output
+        .find(r#"from "./export.js";"#)
+        .expect("export import");
+    let forced = output
+        .find(r#"import forced from "./forced.js";"#)
+        .expect("forced import");
+    assert!(export < forced, "{output}");
+    assert!(output.contains("forced\n"), "{output}");
+}
+
+#[test]
 fn imported_helper_call_of_a_require_is_left_for_cross_module_recovery() {
     // Unpack resolves a top-level `var x = helper(require(p))` from the
     // helper module's facts after `UnEsm`; until then the module stays on its
@@ -7926,16 +8017,36 @@ exports.y = x;
     assert!(output.contains(r#"from "./helper.js""#), "{output}");
     assert!(output.contains(r#"(require("./p.js"))"#), "{output}");
 
-    // The cross-module pass reads no other position, so there the require
-    // keeps the module CommonJS.
+    // The cross-module pass reads only that binding, so a call in another
+    // position that runs first in its statement gets one.
     let output = unpack_stage(
         r#"
 var h = require("./helper.js");
 exports.y = h.wrap(require("./p.js"));
 "#,
     );
+    assert!(output.contains(r#"from "./helper.js""#), "{output}");
+    assert!(
+        output.contains(r#"const p = h.wrap(require("./p.js"));"#),
+        "{output}"
+    );
+    assert!(output.contains("export { p as y }"), "{output}");
+
+    // After a hoisting barrier no later stage takes it: the provider would
+    // load before the global write.
+    let output = unpack_stage(
+        r#"
+var h = require("./helper.js");
+window.flag = 1;
+var x = h.default(require("./p.js"));
+exports.y = x;
+"#,
+    );
     assert!(!output.contains("import "), "{output}");
-    assert!(output.contains(r#"h.wrap(require("./p.js"))"#), "{output}");
+    assert!(
+        output.contains(r#"h.default(require("./p.js"))"#),
+        "{output}"
+    );
 }
 
 #[test]

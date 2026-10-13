@@ -45,12 +45,16 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::cross_module_helper_refs::{
     collect_cross_module_helper_refs, collect_cross_module_ts_helper_refs,
-    cross_module_member_helper_kind, cross_module_ts_member_helper, CrossModuleTsHelperRefs,
+    cross_module_member_helper_kind, cross_module_ts_member_helper, CrossModuleHelperRefs,
+    CrossModuleTsHelperRefs,
 };
+use super::decl_utils::{fresh_binding_ident, fresh_specifier_name};
 use super::helper_matcher::{binding_key, static_member_prop_name, BindingKey};
+use super::rename_utils::{collect_module_names, collect_unresolved_reference_names};
 use super::transpiler_helper_utils::TranspilerHelperKind;
 use crate::facts::{ExportKind, ModuleFacts, ModuleFactsMap, TypeScriptHelperKind};
-use crate::utils::paren::strip_parens;
+use crate::kept_require::{is_kept_require_call, required_value_import, RequiredValueImport};
+use crate::utils::paren::{strip_parens, strip_parens_mut};
 
 /// Turns top-level `x = helper(require("./p"))` bindings into imports of
 /// `./p`, where `helper` is `__importDefault` or `__importStar` imported from
@@ -61,34 +65,8 @@ pub(crate) fn run_cross_module_interop_imports(
     current_filename: Option<&str>,
     unresolved_mark: Mark,
 ) {
-    // tslib's `__importDefault` has Babel's `interopRequireDefault` body, so
-    // its facts are the semantic helper kind; `__importStar` is a raw
-    // TypeScript helper fact. Both channels are read for both helpers.
-    let semantic_refs =
-        collect_cross_module_helper_refs(module, module_facts, current_filename, |kind| {
-            matches!(
-                kind,
-                TranspilerHelperKind::InteropRequireDefault
-                    | TranspilerHelperKind::InteropRequireWildcard
-            )
-        });
-    let ts_default_refs = collect_cross_module_ts_helper_refs(
-        module,
-        module_facts,
-        current_filename,
-        TypeScriptHelperKind::ImportDefault,
-    );
-    let ts_star_refs = collect_cross_module_ts_helper_refs(
-        module,
-        module_facts,
-        current_filename,
-        TypeScriptHelperKind::ImportStar,
-    );
-    if semantic_refs.direct.is_empty()
-        && semantic_refs.namespaces.is_empty()
-        && is_empty(&ts_default_refs)
-        && is_empty(&ts_star_refs)
-    {
+    let helpers = InteropHelperRefs::collect(module, module_facts, current_filename);
+    if helpers.is_empty() {
         return;
     }
     // The rewrite removes a binding's declaration and renames its `.default`
@@ -97,25 +75,7 @@ pub(crate) fn run_cross_module_interop_imports(
     if super::eval_utils::has_dynamic_scope_construct(module) {
         return;
     }
-
-    let helper_kind = |callee: &Expr| {
-        let callee = strip_parens(callee);
-        let semantic = match callee {
-            Expr::Ident(helper) => semantic_refs.direct.get(&binding_key(helper)).copied(),
-            callee => cross_module_member_helper_kind(callee, &semantic_refs.namespaces),
-        };
-        let is_ts = |refs: &CrossModuleTsHelperRefs| match callee {
-            Expr::Ident(helper) => refs.direct.contains(&binding_key(helper)),
-            callee => cross_module_ts_member_helper(callee, &refs.namespaces),
-        };
-        match semantic {
-            Some(TranspilerHelperKind::InteropRequireDefault) => Some(Interop::Default),
-            Some(TranspilerHelperKind::InteropRequireWildcard) => Some(Interop::Star),
-            _ if is_ts(&ts_default_refs) => Some(Interop::Default),
-            _ if is_ts(&ts_star_refs) => Some(Interop::Star),
-            _ => None,
-        }
-    };
+    let helper_kind = |callee: &Expr| helpers.kind(callee);
 
     let mut candidates: HashMap<BindingKey, Candidate> = HashMap::default();
     for item in &module.body {
@@ -209,8 +169,78 @@ pub(crate) fn run_cross_module_interop_imports(
     }
 }
 
-fn is_empty(refs: &CrossModuleTsHelperRefs) -> bool {
-    refs.direct.is_empty() && refs.namespaces.is_empty()
+/// The imported bindings of a module that its providers' facts prove to be
+/// a default or wildcard interop helper.
+struct InteropHelperRefs {
+    semantic: CrossModuleHelperRefs,
+    ts_default: CrossModuleTsHelperRefs,
+    ts_star: CrossModuleTsHelperRefs,
+}
+
+impl InteropHelperRefs {
+    fn collect(
+        module: &Module,
+        module_facts: &ModuleFactsMap,
+        current_filename: Option<&str>,
+    ) -> Self {
+        // tslib's `__importDefault` has Babel's `interopRequireDefault` body,
+        // so its facts are the semantic helper kind; `__importStar` is a raw
+        // TypeScript helper fact. Both channels are read for both helpers.
+        Self {
+            semantic: collect_cross_module_helper_refs(
+                module,
+                module_facts,
+                current_filename,
+                |kind| {
+                    matches!(
+                        kind,
+                        TranspilerHelperKind::InteropRequireDefault
+                            | TranspilerHelperKind::InteropRequireWildcard
+                    )
+                },
+            ),
+            ts_default: collect_cross_module_ts_helper_refs(
+                module,
+                module_facts,
+                current_filename,
+                TypeScriptHelperKind::ImportDefault,
+            ),
+            ts_star: collect_cross_module_ts_helper_refs(
+                module,
+                module_facts,
+                current_filename,
+                TypeScriptHelperKind::ImportStar,
+            ),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        let ts_empty =
+            |refs: &CrossModuleTsHelperRefs| refs.direct.is_empty() && refs.namespaces.is_empty();
+        self.semantic.direct.is_empty()
+            && self.semantic.namespaces.is_empty()
+            && ts_empty(&self.ts_default)
+            && ts_empty(&self.ts_star)
+    }
+
+    fn kind(&self, callee: &Expr) -> Option<Interop> {
+        let callee = strip_parens(callee);
+        let semantic = match callee {
+            Expr::Ident(helper) => self.semantic.direct.get(&binding_key(helper)).copied(),
+            callee => cross_module_member_helper_kind(callee, &self.semantic.namespaces),
+        };
+        let is_ts = |refs: &CrossModuleTsHelperRefs| match callee {
+            Expr::Ident(helper) => refs.direct.contains(&binding_key(helper)),
+            callee => cross_module_ts_member_helper(callee, &refs.namespaces),
+        };
+        match semantic {
+            Some(TranspilerHelperKind::InteropRequireDefault) => Some(Interop::Default),
+            Some(TranspilerHelperKind::InteropRequireWildcard) => Some(Interop::Star),
+            _ if is_ts(&self.ts_default) => Some(Interop::Default),
+            _ if is_ts(&self.ts_star) => Some(Interop::Star),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -513,4 +543,153 @@ impl VisitMut for DefaultReadRewriter<'_> {
         }
         expr.visit_mut_children_with(self);
     }
+}
+
+/// After [`run_cross_module_interop_imports`], in an ES module: the require
+/// argument of each top-level `var x = h(require("./p"))` or
+/// `var x = ns.h(require("./p"))` that pass left (the facts do not prove the
+/// imported `h` an interop helper, or the binding has a use its import plan
+/// rejects) becomes an import of the value the require returned:
+/// `import p from "./p"; var x = h(p);`.
+///
+/// A provider that marked itself `__esModule` and became an ES module is the
+/// exception: its namespace stands for the exports object but has no marker.
+/// A proven interop helper returned such a provider unchanged, so the call
+/// goes and `x` is the namespace; for any other function the marker may
+/// matter, so the require stays.
+///
+/// `UnEsm` made the module ESM on the expectation that this stage takes the
+/// require (`kept_require::blocking_require_calls`), and ESM has no
+/// `require`. The call runs as before; only its provider loads with the
+/// other imports, which `UnEsm` allowed by leaving the require for a later
+/// stage only before the first hoisting barrier. The import form follows the
+/// provider's facts as for any kept require
+/// ([`crate::kept_require::required_value_import`]); a provider outside the
+/// input is a default import, as `UnEsm` turns `var x = require("pkg")`
+/// into one. A provider whose value no import holds keeps the require,
+/// which the `commonjs_require_unrecovered` warning reports.
+pub(crate) fn import_unproven_helper_requires(
+    module: &mut Module,
+    module_facts: &ModuleFactsMap,
+    current_filename: Option<&str>,
+    unresolved_mark: Mark,
+) {
+    if !module
+        .body
+        .iter()
+        .any(|item| matches!(item, ModuleItem::ModuleDecl(_)))
+    {
+        return;
+    }
+    let mut imported = HashSet::default();
+    for item in &module.body {
+        if let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item {
+            imported.extend(import.specifiers.iter().map(|specifier| match specifier {
+                ImportSpecifier::Named(named) => binding_key(&named.local),
+                ImportSpecifier::Default(default) => binding_key(&default.local),
+                ImportSpecifier::Namespace(namespace) => binding_key(&namespace.local),
+            }));
+        }
+    }
+    if imported.is_empty() {
+        return;
+    }
+    let is_imported_helper = |callee: &Expr| {
+        let helper = match strip_parens(callee) {
+            Expr::Ident(id) => id,
+            Expr::Member(member) => match strip_parens(&member.obj) {
+                Expr::Ident(id) => id,
+                _ => return false,
+            },
+            _ => return false,
+        };
+        imported.contains(&binding_key(helper))
+    };
+
+    let helpers = InteropHelperRefs::collect(module, module_facts, current_filename);
+    let mut used_names = collect_module_names(module);
+    used_names.extend(collect_unresolved_reference_names(module, unresolved_mark));
+    let mut imports = Vec::new();
+    for item in &mut module.body {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            continue;
+        };
+        for declarator in &mut var.decls {
+            let Some(init) = declarator.init.as_mut() else {
+                continue;
+            };
+            let Expr::Call(call) = strip_parens_mut(init) else {
+                continue;
+            };
+            let Callee::Expr(callee) = &call.callee else {
+                continue;
+            };
+            if !is_imported_helper(callee) {
+                continue;
+            }
+            let Some(first) = call.args.first_mut() else {
+                continue;
+            };
+            if first.spread.is_some() {
+                continue;
+            }
+            let Expr::Call(require) = strip_parens(&first.expr) else {
+                continue;
+            };
+            if !is_kept_require_call(require, unresolved_mark) {
+                continue;
+            }
+            let [source] = require.args.as_slice() else {
+                continue;
+            };
+            let Expr::Lit(Lit::Str(source)) = strip_parens(&source.expr) else {
+                continue;
+            };
+            let specifier = source.value.as_str().unwrap_or("");
+            let (namespace, drop_helper) = match module_facts.get_from(current_filename, specifier)
+            {
+                None => (false, false),
+                Some(provider) => match required_value_import(provider) {
+                    Some(RequiredValueImport::Default) => (false, false),
+                    Some(RequiredValueImport::Namespace) if !provider.marks_es_module => {
+                        (true, false)
+                    }
+                    Some(RequiredValueImport::Namespace) if helpers.kind(callee).is_some() => {
+                        (true, true)
+                    }
+                    _ => continue,
+                },
+            };
+            let local =
+                fresh_binding_ident(fresh_specifier_name(specifier, &mut used_names), DUMMY_SP);
+            let source = source.clone();
+            if drop_helper {
+                **init = Expr::Ident(local.clone());
+            } else {
+                *first.expr = Expr::Ident(local.clone());
+            }
+            imports.push(
+                Candidate {
+                    local,
+                    source,
+                    plan: ImportPlan {
+                        namespace,
+                        default_is_binding: false,
+                        member_reads: false,
+                        value_uses: false,
+                    },
+                }
+                .import(),
+            );
+        }
+    }
+    if imports.is_empty() {
+        return;
+    }
+    let insert_at = module
+        .body
+        .iter()
+        .rposition(|item| matches!(item, ModuleItem::ModuleDecl(ModuleDecl::Import(_))))
+        .map_or(0, |index| index + 1);
+    module.body.splice(insert_at..insert_at, imports);
 }

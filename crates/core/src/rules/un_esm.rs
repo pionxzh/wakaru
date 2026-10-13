@@ -50,6 +50,7 @@ mod export_star;
 pub(crate) mod export_storage;
 mod harmony_requires;
 mod hoist_barrier;
+mod leading_requires;
 use export_getters::has_webpack_export_definitions;
 pub(crate) use export_getters::{lower_export_getter_helpers, lower_webpack_export_definitions};
 use export_star::rewrite_commonjs_export_stars;
@@ -229,7 +230,7 @@ impl VisitMut for UnEsm {
             return;
         }
         let original = keeps_require.then(|| module.clone());
-        self.convert_module(module, false);
+        self.convert_module(module, Attempt::AsWritten);
         let Some(original) = original else {
             self.finish(module);
             return;
@@ -238,10 +239,10 @@ impl VisitMut for UnEsm {
         // requires in `export default (a = require("x"), a.b)` or
         // `export default require("x")()`: run again, as a later recovery
         // pass would.
-        if self.keeps_require_in_esm(module) {
-            self.convert_module(module, false);
+        if self.keeps_require_in_esm(module, false) {
+            self.convert_module(module, Attempt::AsWritten);
         }
-        if !self.keeps_require_in_esm(module) {
+        if !self.keeps_require_in_esm(module, false) {
             self.finish(module);
             return;
         }
@@ -251,8 +252,21 @@ impl VisitMut for UnEsm {
         if harmony {
             *module = original.clone();
             self.lowered_esbuild_namespace = false;
-            self.convert_module(module, true);
-            if !self.keeps_require_in_esm(module) {
+            self.convert_module(module, Attempt::Harmony);
+            if !self.keeps_require_in_esm(module, true) {
+                self.finish(module);
+                return;
+            }
+        } else {
+            // Any other module: the requires a statement runs before any
+            // other effect, moved out of their expression.
+            *module = original.clone();
+            self.lowered_esbuild_namespace = false;
+            self.convert_module(module, Attempt::LeadingRequires);
+            if self.keeps_require_in_esm(module, false) {
+                self.convert_module(module, Attempt::AsWritten);
+            }
+            if has_module_decl(module) && !self.keeps_require_in_esm(module, false) {
                 self.finish(module);
                 return;
             }
@@ -278,20 +292,28 @@ impl UnEsm {
         self.finish(module);
     }
 
-    fn keeps_require_in_esm(&self, module: &Module) -> bool {
+    /// Whether `module` became ESM with a require that no later stage
+    /// converts. `harmony` as for [`Attempt::Harmony`]: a kept require is no
+    /// hoisting barrier there.
+    fn keeps_require_in_esm(&self, module: &Module, harmony: bool) -> bool {
+        // A later stage would turn a require after the first barrier into an
+        // import loaded before the barrier.
+        let later_stages_before = self.later_unpack_stages.then(|| {
+            hoist_barrier::first_barrier(module, self.unresolved_mark, harmony)
+                .unwrap_or(module.body.len())
+        });
         has_module_decl(module)
             && !kept_require::blocking_require_calls(
                 module,
                 self.unresolved_mark,
-                self.later_unpack_stages,
+                later_stages_before,
             )
             .is_empty()
     }
 
-    /// One conversion attempt. `harmony` treats the module as webpack harmony
-    /// output: a kept require is no hoisting barrier, and each load Terser
-    /// inlined into its use gets a binding `UnEsm` converts.
-    fn convert_module(&mut self, module: &mut Module, harmony: bool) {
+    /// One conversion attempt.
+    fn convert_module(&mut self, module: &mut Module, attempt: Attempt) {
+        let harmony = attempt == Attempt::Harmony;
         // Read before the lowering below removes webpack's `require.d` calls.
         let calls_bundler_helper = calls_bundler_require_helper(module, self.unresolved_mark);
         // webpack's `require.d` calls become per-name definitions, which the
@@ -304,8 +326,14 @@ impl UnEsm {
         let lowered = lower_webpack_export_definitions(module, self.unresolved_mark);
         let hidden_requires =
             hoist_barrier::hide_requires_after_barrier(module, self.unresolved_mark, harmony);
-        if harmony {
-            harmony_requires::hoist_inlined_requires(module, self.unresolved_mark);
+        match attempt {
+            Attempt::AsWritten => {}
+            Attempt::Harmony => {
+                harmony_requires::hoist_inlined_requires(module, self.unresolved_mark)
+            }
+            Attempt::LeadingRequires => {
+                leading_requires::hoist_leading_requires(module, self.unresolved_mark)
+            }
         }
         self.convert(module, calls_bundler_helper);
         if let (true, Some(original)) = (lowered, before_lowering) {
@@ -331,6 +359,20 @@ impl UnEsm {
             ));
         }
     }
+}
+
+/// How [`UnEsm::convert_module`] treats the requires it finds.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Attempt {
+    /// Only the shapes each require is written in.
+    AsWritten,
+    /// Webpack harmony output: a kept require is no hoisting barrier, and
+    /// each load Terser inlined into its use gets a binding `UnEsm` converts
+    /// (`harmony_requires`).
+    Harmony,
+    /// The requires a top-level statement runs before any other effect get
+    /// a binding before the statement (`leading_requires`).
+    LeadingRequires,
 }
 
 fn has_module_decl(module: &Module) -> bool {

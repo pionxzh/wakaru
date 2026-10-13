@@ -871,16 +871,39 @@ position. Requires of numeric module ids that are not in the input are the
 exception. They fail in CommonJS too, so they stay calls in ESM output.
 Before that check `UnEsm` converts the module a second time, since some
 shapes convert only once it is ESM (`export default require("x")()`). In
-unpack it leaves three shapes for later stages: a top-level `var`
-initialized by an imported helper's `helper(require("./p"))`
-(`cross_module_interop_import`), a top-level default-object composition
-statement (`Object.assign(o, require("./p") || {})`), and, in any position,
-a lowered `import()` around an imported helper
+unpack it leaves three shapes for later stages: before the first barrier
+below, a top-level `var` initialized by an imported function's
+`helper(require("./p"))` (`cross_module_interop_import`) and a top-level
+default-object composition statement (`Object.assign(o, require("./p") ||
+{})`); and, in any position, a lowered `import()` around an imported helper
 (`Promise.resolve().then(() => helper(require("./p")))`,
-`lowered_dynamic_import_source_semantics`). A require those stages leave
-stays in the ESM output, and the `commonjs_require_unrecovered` warning
-reports it. A single file has no later stage, so there these shapes keep the
-module CommonJS too.
+`lowered_dynamic_import_source_semantics`). The first two load their
+provider as an import, so after a barrier they keep the module CommonJS like
+any other require. When the facts do not prove the imported function an
+interop helper, the call stays and only its require becomes an import of the
+value it returned (`import_unproven_helper_requires`; a default import for
+`module.exports = v` or a provider that stays CommonJS, a namespace for an
+ES module, and a default import for a provider outside the input). A require
+the stages leave stays in the ESM output, and the
+`commonjs_require_unrecovered` warning reports it. A single file has no later
+stage, so there these shapes keep the module CommonJS too.
+
+Source code and minifiers also leave a require inside an expression of any
+module: `module.exports = { a: require("./a") }` as written, or a bundled
+interop helper's call that Terser inlined into its one use,
+`(0, h(require("./x")).default)(Error)` (producer `@babel/core@7.18.13` with
+plugin-transform-runtime, webpack@5.111.1 + Terser). When the first
+conversion leaves a require behind in a module that is not webpack harmony
+output, `UnEsm` converts it again from the start, and this time a require (or
+a call of a name around one, `h(require("./x"))`) that its top-level
+statement evaluates before any other effect gets a `const` binding right
+before the statement (`un_esm/leading_requires.rs`). Only literals, names,
+member reads, function expressions, and other moved requires may come before
+it, so the binding runs it at the point it ran before; it then becomes an
+import like a top-level `var x = require(p)`. A plain require moves only when
+its value is passed on (a property value, an array element, a call argument);
+one that is called, has a member called, or is assigned keeps its own
+handling, and the module stays CommonJS when one remains.
 
 UnEsm limits the deviation with a barrier (`rules/un_esm/hoist_barrier.rs`).
 After the first top-level statement that a later provider can observe, every

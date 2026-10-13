@@ -18,13 +18,12 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use crate::js_names::{is_reserved_binding_name, is_valid_identifier_name};
 use crate::kept_require::{is_kept_require_call, kept_require_calls_in, RequirePosition};
 use crate::rules::expr_utils::is_unresolved_ident;
 use crate::utils::paren::strip_parens;
 
 use super::{collect_all_declared_names, collect_unresolved_reference_names, make_var_item};
-use crate::rules::decl_utils::fresh_binding_ident;
+use crate::rules::decl_utils::{fresh_binding_ident, fresh_specifier_name};
 
 /// Whether the module calls webpack's `require.r(exports)` or
 /// `require.d(exports, …)` outside a function: webpack emits them only for a
@@ -158,7 +157,7 @@ impl InlinedRequireRewriter<'_> {
         if let Some(local) = self.bindings.get(source) {
             return local.clone();
         }
-        let local = fresh_binding_ident(fresh_name(source, self.used_names), DUMMY_SP);
+        let local = fresh_binding_ident(fresh_specifier_name(source, self.used_names), DUMMY_SP);
         self.bindings.insert(source.to_owned(), local.clone());
         self.inserted.push((local.clone(), Box::new(call.clone())));
         local
@@ -202,34 +201,4 @@ impl VisitMut for InlinedRequireRewriter<'_> {
         let local = self.binding_for(&source, expr);
         *expr = Expr::Ident(local);
     }
-}
-
-/// A binding name from the specifier's file stem: `./module-100.js` gives
-/// `module_100`.
-fn fresh_name(source: &str, used_names: &mut HashSet<Atom>) -> Atom {
-    let last = source.rsplit('/').next().unwrap_or(source);
-    let stem = last.split('.').next().unwrap_or(last);
-    let mut base: String = stem
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '_' || c == '$' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    if base.is_empty() || base.starts_with(|c: char| c.is_ascii_digit()) {
-        base.insert(0, '_');
-    }
-    if !is_valid_identifier_name(&base) || is_reserved_binding_name(&base) {
-        base.insert(0, '_');
-    }
-    let mut candidate = Atom::from(base.as_str());
-    let mut suffix = 1usize;
-    while !used_names.insert(candidate.clone()) {
-        candidate = Atom::from(format!("{base}_{suffix}"));
-        suffix += 1;
-    }
-    candidate
 }

@@ -47,8 +47,31 @@ pub(super) fn hide_requires_after_barrier(
     unresolved_mark: Mark,
     harmony: bool,
 ) -> Option<SyntaxContext> {
+    let first_barrier = first_barrier(module, unresolved_mark, harmony)?;
+    let mut hide = HideRequire {
+        unresolved_mark,
+        hidden: SyntaxContext::empty().apply_mark(Mark::new()),
+        found: false,
+    };
+    // The barrier statement itself is left to UnEsm: a require it contains
+    // either stays a call or is hoisted out of a shape UnEsm recovers.
+    for item in &mut module.body[first_barrier + 1..] {
+        if let ModuleItem::Stmt(stmt) = item {
+            stmt.visit_mut_with(&mut hide);
+        }
+    }
+    hide.found.then_some(hide.hidden)
+}
+
+/// The index of the first top-level statement that is a hoisting barrier,
+/// with `harmony` as for [`hide_requires_after_barrier`]. Reads a converted
+/// module too: an import counts as the require it was.
+pub(super) fn first_barrier(
+    module: &Module,
+    unresolved_mark: Mark,
+    harmony: bool,
+) -> Option<usize> {
     let mut required = HashSet::default();
-    let mut first_barrier = None;
     for (index, item) in module.body.iter().enumerate() {
         let stmt = match item {
             ModuleItem::Stmt(stmt) => stmt,
@@ -65,24 +88,10 @@ pub(super) fn hide_requires_after_barrier(
             ModuleItem::ModuleDecl(_) => continue,
         };
         if is_barrier(stmt, unresolved_mark, harmony, &mut required) {
-            first_barrier = Some(index);
-            break;
+            return Some(index);
         }
     }
-    let first_barrier = first_barrier?;
-    let mut hide = HideRequire {
-        unresolved_mark,
-        hidden: SyntaxContext::empty().apply_mark(Mark::new()),
-        found: false,
-    };
-    // The barrier statement itself is left to UnEsm: a require it contains
-    // either stays a call or is hoisted out of a shape UnEsm recovers.
-    for item in &mut module.body[first_barrier + 1..] {
-        if let ModuleItem::Stmt(stmt) = item {
-            stmt.visit_mut_with(&mut hide);
-        }
-    }
-    hide.found.then_some(hide.hidden)
+    None
 }
 
 /// Gives the hidden `require` callees back their unresolved context, so later

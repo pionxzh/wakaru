@@ -365,8 +365,10 @@ rationale, or level gating appear.
   into a required module; `import_hoisting_eagerness`), so those requires
   stay calls in place, and gives them back when it is done. A module
   that would become ESM with a require call left in it stays CommonJS
-  (`import_hoisting_eagerness`; a webpack harmony module first gets a
-  second conversion that turns its inlined loads into imports). Static
+  (`import_hoisting_eagerness`; first it converts the module again: a
+  webpack harmony module turns its inlined loads into imports, any other
+  module moves the requires a statement runs before any other effect into
+  bindings). Static
   CommonJS live getters (`get: () => dep.member`) become source re-exports
   only when `dep` is a resolver-proven top-level literal `require()` binding
   and every use is a static member read; writes, dynamic reads, and escapes

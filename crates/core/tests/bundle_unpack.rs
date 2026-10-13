@@ -4343,20 +4343,49 @@ fn es_source_module_with_only_lazy_requires_is_not_reported() {
 }
 
 #[test]
-fn imported_call_of_a_require_outside_a_top_level_var_keeps_the_module_commonjs() {
-    // hypothetical: the cross-module interop pass reads only
-    // `var x = helper(require(p))`, so these requires would stay in ESM.
-    for consumer in [
-        r#"1(t,e,o){var h=o(2);e.y=h.wrap(o(3))}"#,
-        r#"1(t,e,o){var h=o(2);e.y=function(){return h.wrap(o(3))}}"#,
+fn imported_call_of_a_require_in_a_function_keeps_the_module_commonjs() {
+    // hypothetical: the require runs only when the function is called.
+    let source = kept_require_bundle(
+        r#"1(t,e,o){var h=o(2);e.y=function(){return h.wrap(o(3))}},2(t,e){e.wrap=function(x){return x}}"#,
+    );
+    let output = unpack(&source, DecompileOptions::default()).expect("bundle should unpack");
+    let module = unpacked_module(&output, "module-1.js");
+    assert!(!module.contains("import "), "{module}");
+    assert!(module.contains(r#"require("./module-3.js")"#), "{module}");
+    assert!(
+        !output
+            .warnings
+            .iter()
+            .any(|w| w.kind == wakaru_core::UnpackWarningKind::CommonJsRequireUnrecovered),
+        "{:#?}",
+        output.warnings
+    );
+}
+
+#[test]
+fn unproven_imported_call_of_a_require_imports_its_provider() {
+    // hypothetical: an imported function that is no interop helper, called on
+    // a require as an export's value or a binding's initializer. The call
+    // stays; its provider becomes an import, a namespace for one with named
+    // exports and a default import for `module.exports = v`.
+    for (consumer, import) in [
+        (
+            r#"1(t,e,o){var h=o(2);e.y=h.wrap(o(3))}"#,
+            r#"import * as module_3_1 from "./module-3.js";"#,
+        ),
+        (
+            r#"1(t,e,o){var h=o(2),x=h.wrap(o(4));e.y=function(){return x}},4(t){t.exports={v:1}}"#,
+            r#"import module_4 from "./module-4.js";"#,
+        ),
     ] {
         let source = kept_require_bundle(&format!(
             r#"{consumer},2(t,e){{e.wrap=function(x){{return x}}}}"#
         ));
         let output = unpack(&source, DecompileOptions::default()).expect("bundle should unpack");
         let module = unpacked_module(&output, "module-1.js");
-        assert!(!module.contains("import "), "{module}");
-        assert!(module.contains(r#"require("./module-3.js")"#), "{module}");
+        assert!(module.contains(import), "{module}");
+        assert!(module.contains("wrap(module_"), "{module}");
+        assert!(!module.contains("require("), "{module}");
         assert!(
             !output
                 .warnings
@@ -4365,7 +4394,81 @@ fn imported_call_of_a_require_outside_a_top_level_var_keeps_the_module_commonjs(
             "{:#?}",
             output.warnings
         );
+        let findings = validate_output_modules(&output.modules);
+        assert!(findings.is_empty(), "{findings:#?}");
     }
+}
+
+#[test]
+fn imported_call_of_a_marked_provider_now_esm_keeps_what_the_marker_meant() {
+    // shape: producer @babel/runtime interop, webpack@4.47.0 + UglifyJS
+    // 3.14; a bare use of the binding (`r;`) keeps the interop pass from
+    // converting it. The provider marked itself `__esModule` and becomes an
+    // ES module, whose namespace has no marker: a proven interop helper
+    // returned it unchanged, so the call goes; for any other function the
+    // marker may matter, so the require stays.
+    let marked = r#"4(t,e){"use strict";Object.defineProperty(e,"__esModule",{value:!0}),e.default=function(x){return x+1}}"#;
+    let interop = r#"2(t){t.exports=function(e){return e&&e.__esModule?e:{default:e}},t.exports.__esModule=!0,t.exports.default=t.exports}"#;
+    let source = kept_require_bundle(&format!(
+        r#"1(t,e,o){{var n=o(2),r=n(o(4));r;e.y=function(){{return r.default(1)}}}},{interop},{marked}"#
+    ));
+    let output = unpack(&source, DecompileOptions::default()).expect("bundle should unpack");
+    let module = unpacked_module(&output, "module-1.js");
+    assert!(
+        module.contains(r#"import * as module_4 from "./module-4.js";"#),
+        "{module}"
+    );
+    assert!(module.contains("const r = module_4;"), "{module}");
+    assert!(!module.contains("require("), "{module}");
+
+    let source = kept_require_bundle(&format!(
+        r#"1(t,e,o){{var h=o(2),r=h.wrap(o(4));e.y=function(){{return r}}}},2(t,e){{e.wrap=function(x){{return x}}}},{marked}"#
+    ));
+    let output = unpack(&source, DecompileOptions::default()).expect("bundle should unpack");
+    let module = unpacked_module(&output, "module-1.js");
+    assert!(
+        module.contains(r#"wrap(require("./module-4.js"))"#),
+        "{module}"
+    );
+}
+
+#[test]
+fn imported_call_of_a_require_after_a_hoisting_barrier_keeps_the_module_commonjs() {
+    // hypothetical: the global write must run before the provider loads,
+    // which an import would load first.
+    let source = kept_require_bundle(
+        r#"1(t,e,o){var h=o(2);globalThis.flag=1;var x=h.wrap(o(3));e.y=function(){return x}},2(t,e){e.wrap=function(x){return x}}"#,
+    );
+    let output = unpack(&source, DecompileOptions::default()).expect("bundle should unpack");
+    let module = unpacked_module(&output, "module-1.js");
+    assert!(!module.contains("import "), "{module}");
+    let flag = module.find("globalThis.flag").expect("global write");
+    let load = module
+        .find(r#"require("./module-3.js")"#)
+        .expect("load stays in place");
+    assert!(flag < load, "{module}");
+}
+
+#[test]
+fn interop_helper_call_terser_inlined_into_a_class_argument_becomes_an_import() {
+    // shape: producer @babel/core@7.18.13 + plugin-transform-runtime@7.18.10
+    // + plugin-transform-classes@7.18.9 + plugin-transform-modules-commonjs
+    // @7.18.6, bundled with @babel/runtime@7.28.6 by webpack@5.111.1
+    // production (Terser); wild-observed. Terser inlines the single-use
+    // `wrapNativeSuper` binding into the class IIFE's argument,
+    // `(0,o(r(837)).default)(Error)`. Sink renamed to `globalThis.lib`.
+    let source = r#"(()=>{var e={97(e,t,r){const o=r(618);t.main=function(){const e=new o.AppError("entry-side");return[o.describe(),e instanceof Error,e instanceof o.AppError,e.toJSON().message]}},618(e,t,r){"use strict";var o=r(994);t.AppError=void 0,t.describe=function(){const e=new f("errors-side");return[e instanceof Error,e instanceof f,e.name,e.toJSON().message]};var n=o(r(383)),u=o(r(579)),s=o(r(511)),p=o(r(452)),i=o(r(72));let f=function(e){(0,s.default)(f,e);var t,r,o=(t=f,r=function(){if("undefined"==typeof Reflect||!Reflect.construct)return!1;if(Reflect.construct.sham)return!1;if("function"==typeof Proxy)return!0;try{return Boolean.prototype.valueOf.call(Reflect.construct(Boolean,[],function(){})),!0}catch(e){return!1}}(),function(){var e,o=(0,i.default)(t);if(r){var n=(0,i.default)(this).constructor;e=Reflect.construct(o,arguments,n)}else e=o.apply(this,arguments);return(0,p.default)(this,e)});function f(e){var t;return(0,n.default)(this,f),(t=o.call(this,e)).name="inlined-super-error",t}return(0,u.default)(f,[{key:"toJSON",value:function(){return{name:this.name,message:"["+this.message+"]"}}}]),f}((0,o(r(837)).default)(Error));t.AppError=f},475(e){e.exports=function(e){if(void 0===e)throw new ReferenceError("this hasn't been initialised - super() hasn't been called");return e},e.exports.__esModule=!0,e.exports.default=e.exports},383(e){e.exports=function(e,t){if(!(e instanceof t))throw new TypeError("Cannot call a class as a function")},e.exports.__esModule=!0,e.exports.default=e.exports},646(e,t,r){var o=r(550),n=r(636);e.exports=function(e,t,r){if(o())return Reflect.construct.apply(null,arguments);var u=[null];u.push.apply(u,t);var s=new(e.bind.apply(e,u));return r&&n(s,r.prototype),s},e.exports.__esModule=!0,e.exports.default=e.exports},579(e,t,r){var o=r(736);function n(e,t){for(var r=0;r<t.length;r++){var n=t[r];n.enumerable=n.enumerable||!1,n.configurable=!0,"value"in n&&(n.writable=!0),Object.defineProperty(e,o(n.key),n)}}e.exports=function(e,t,r){return t&&n(e.prototype,t),r&&n(e,r),Object.defineProperty(e,"prototype",{writable:!1}),e},e.exports.__esModule=!0,e.exports.default=e.exports},72(e){function t(r){return e.exports=t=Object.setPrototypeOf?Object.getPrototypeOf.bind():function(e){return e.__proto__||Object.getPrototypeOf(e)},e.exports.__esModule=!0,e.exports.default=e.exports,t(r)}e.exports=t,e.exports.__esModule=!0,e.exports.default=e.exports},511(e,t,r){var o=r(636);e.exports=function(e,t){if("function"!=typeof t&&null!==t)throw new TypeError("Super expression must either be null or a function");e.prototype=Object.create(t&&t.prototype,{constructor:{value:e,writable:!0,configurable:!0}}),Object.defineProperty(e,"prototype",{writable:!1}),t&&o(e,t)},e.exports.__esModule=!0,e.exports.default=e.exports},994(e){e.exports=function(e){return e&&e.__esModule?e:{default:e}},e.exports.__esModule=!0,e.exports.default=e.exports},691(e){e.exports=function(e){try{return-1!==Function.toString.call(e).indexOf("[native code]")}catch(t){return"function"==typeof e}},e.exports.__esModule=!0,e.exports.default=e.exports},550(e){function t(){try{var r=!Boolean.prototype.valueOf.call(Reflect.construct(Boolean,[],function(){}))}catch(r){}return(e.exports=t=function(){return!!r},e.exports.__esModule=!0,e.exports.default=e.exports)()}e.exports=t,e.exports.__esModule=!0,e.exports.default=e.exports},452(e,t,r){var o=r(738).default,n=r(475);e.exports=function(e,t){if(t&&("object"==o(t)||"function"==typeof t))return t;if(void 0!==t)throw new TypeError("Derived constructors may only return object or undefined");return n(e)},e.exports.__esModule=!0,e.exports.default=e.exports},636(e){function t(r,o){return e.exports=t=Object.setPrototypeOf?Object.setPrototypeOf.bind():function(e,t){return e.__proto__=t,e},e.exports.__esModule=!0,e.exports.default=e.exports,t(r,o)}e.exports=t,e.exports.__esModule=!0,e.exports.default=e.exports},45(e,t,r){var o=r(738).default;e.exports=function(e,t){if("object"!=o(e)||!e)return e;var r=e[Symbol.toPrimitive];if(void 0!==r){var n=r.call(e,t||"default");if("object"!=o(n))return n;throw new TypeError("@@toPrimitive must return a primitive value.")}return("string"===t?String:Number)(e)},e.exports.__esModule=!0,e.exports.default=e.exports},736(e,t,r){var o=r(738).default,n=r(45);e.exports=function(e){var t=n(e,"string");return"symbol"==o(t)?t:t+""},e.exports.__esModule=!0,e.exports.default=e.exports},738(e){function t(r){return e.exports=t="function"==typeof Symbol&&"symbol"==typeof Symbol.iterator?function(e){return typeof e}:function(e){return e&&"function"==typeof Symbol&&e.constructor===Symbol&&e!==Symbol.prototype?"symbol":typeof e},e.exports.__esModule=!0,e.exports.default=e.exports,t(r)}e.exports=t,e.exports.__esModule=!0,e.exports.default=e.exports},837(e,t,r){var o=r(72),n=r(636),u=r(691),s=r(646);function p(t){var r="function"==typeof Map?new Map:void 0;return e.exports=p=function(e){if(null===e||!u(e))return e;if("function"!=typeof e)throw new TypeError("Super expression must either be null or a function");if(void 0!==r){if(r.has(e))return r.get(e);r.set(e,t)}function t(){return s(e,arguments,o(this).constructor)}return t.prototype=Object.create(e.prototype,{constructor:{value:t,enumerable:!1,writable:!0,configurable:!0}}),n(t,e)},e.exports.__esModule=!0,e.exports.default=e.exports,p(t)}e.exports=p,e.exports.__esModule=!0,e.exports.default=e.exports}};const t={};globalThis.lib=function r(o){const n=t[o];if(void 0!==n)return n.exports;const u=t[o]={exports:{}};return e[o](u,u.exports,r),u.exports}(97)})();"#;
+    let output = unpack(source, DecompileOptions::default()).expect("bundle should unpack");
+    let findings = validate_output_modules(&output.modules);
+    assert!(findings.is_empty(), "{findings:#?}");
+    let consumer = unpacked_module(&output, "module-618.js");
+    assert!(!consumer.contains("require("), "{consumer}");
+    assert!(
+        consumer.contains(r#"from "./module-837.js";"#),
+        "{consumer}"
+    );
+    assert!(consumer.contains("export let AppError"), "{consumer}");
+    assert!(!consumer.contains(".default"), "{consumer}");
 }
 
 #[test]

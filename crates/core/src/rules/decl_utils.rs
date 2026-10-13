@@ -22,6 +22,46 @@ pub(crate) fn fresh_binding_ident(sym: Atom, span: Span) -> Ident {
     Ident::new(sym, span, SyntaxContext::empty().apply_mark(Mark::new()))
 }
 
+/// A free binding name for a module's import of `source`, from its file
+/// stem: `./module-100.js` gives `module_100`. Records the name in
+/// `used_names`.
+pub(crate) fn fresh_specifier_name(source: &str, used_names: &mut HashSet<Atom>) -> Atom {
+    let last = source.rsplit('/').next().unwrap_or(source);
+    let stem = last.split('.').next().unwrap_or(last);
+    fresh_name_from(stem, used_names)
+}
+
+/// `base` made a valid binding name (`_` for each other character, a `_`
+/// prefix where needed) and suffixed until it is not in `used_names`, which
+/// records it.
+pub(crate) fn fresh_name_from(base: &str, used_names: &mut HashSet<Atom>) -> Atom {
+    let mut base: String = base
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '$' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if base.is_empty() || base.starts_with(|c: char| c.is_ascii_digit()) {
+        base.insert(0, '_');
+    }
+    if !crate::js_names::is_valid_identifier_name(&base)
+        || crate::js_names::is_reserved_binding_name(&base)
+    {
+        base.insert(0, '_');
+    }
+    let mut candidate = Atom::from(base.as_str());
+    let mut suffix = 1usize;
+    while !used_names.insert(candidate.clone()) {
+        candidate = Atom::from(format!("{base}_{suffix}"));
+        suffix += 1;
+    }
+    candidate
+}
+
 pub fn same_ident(left: &Ident, right: &Ident) -> bool {
     left.sym == right.sym && left.ctxt == right.ctxt
 }

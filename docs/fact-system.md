@@ -65,6 +65,7 @@ Phase 2 (per module, parallel):
     run_reexport_consolidation(&mut module, facts)
     run_cross_module_lowered_dynamic_imports(...)    ← helper export facts
     run_cross_module_interop_imports(...)            ← helper export facts
+    import_unproven_helper_requires(...)             ← provider facts
     run_namespace_decomposition(&mut module, facts)  ← reads cross-module facts
     downgrade_unused_synthetic_imports(&mut module)  ← preserve require effects
     registry rule range resuming after UnEsm, through UnReturn
@@ -420,6 +421,13 @@ Neither proof creates a default-object fact available to consumers.
   `importHelpers`). `UnEsm` restores the same shape with a local helper;
   in Phase 1 it cannot see a helper from another module
   (`lowered_dynamic_import_source_semantics` in rewrite-assumptions.md).
+- **`import_unproven_helper_requires`** — after the interop pass, a
+  `helper(require("./p"))` binding it left in an ES module (the helper is
+  not proven, or the provider's facts give no import plan) keeps its call,
+  and its require becomes an import of the value it returned, by the
+  provider's facts (`required_value_import`). `UnEsm` made the module ESM
+  expecting a later stage to take that require
+  (`import_hoisting_eagerness`).
 - **`run_cross_module_interop_imports`** — turns a top-level
   `x = helper(require("./p"))` into an import of `./p` when `helper` is
   imported from a module whose facts prove it is a default or wildcard interop

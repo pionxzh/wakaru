@@ -68,10 +68,11 @@ crates/
         rename_utils.rs             — shared binding rename utilities
         un_for_await.rs             — `for await` protocol matcher run by UnForOf (not a registered rule)
         lowered_dynamic_import.rs   — lowered `import()` matcher, run by UnInteropRequireWildcard and by a Phase 2 pass for a cross-module helper (not a registered rule)
-        cross_module_interop_import.rs — Phase 2 pass: `helper(require(x))` with a default/wildcard interop helper from another module becomes an import (not a registered rule)
+        cross_module_interop_import.rs — Phase 2 passes: `helper(require(x))` with a default/wildcard interop helper from another module becomes an import; any other imported function keeps its call around an import of `x` (not registered rules)
         un_esm/export_getters.rs    — swc / esbuild / sucrase export getter helpers and webpack `require.d` lowered to per-name definitions
         un_esm/export_storage.rs    — per-name CommonJS export storage model (getter / mirror / property)
         un_esm/harmony_requires.rs  — webpack harmony module detection and the loads Terser inlined into their use
+        un_esm/leading_requires.rs  — the requires a top-level statement runs before any other effect, moved into bindings
         cocos_rf.rs                 — Cocos Creator 2.x `cc._RF.push/pop` registration-frame matching shared by UnEnum and export storage
         *.rs                        — one file per transformation rule
       unpacker/

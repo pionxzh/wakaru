@@ -76,6 +76,7 @@ pub(crate) fn kept_require_calls(module: &Module, unresolved_mark: Mark) -> Vec<
         conditional_depth: 0,
         found: Vec::new(),
         blocking: false,
+        eager_stages: false,
         imported_helpers: HashSet::default(),
         skip_helper_arguments: false,
     };
@@ -84,32 +85,36 @@ pub(crate) fn kept_require_calls(module: &Module, unresolved_mark: Mark) -> Vec<
 }
 
 /// [`kept_require_calls`] after `UnEsm` converted the module. With
-/// `later_unpack_stages`, it leaves out the requires a later stage of unpack
-/// may still turn into imports from the other modules' facts, in the
-/// top-level forms those stages accept:
+/// `later_stages_before` (unpack), it leaves out the requires a later stage
+/// of unpack may still turn into imports from the other modules' facts, in
+/// the forms those stages accept:
 ///
-/// - the require argument of an imported helper that initializes a
-///   top-level `var`, `var x = helper(require("./p"))` or
-///   `var x = ns.helper(require("./p"))` (`cross_module_interop_import`);
-/// - a source of a top-level default-object composition statement,
-///   `Object.assign(target, require("./p") || {})`
+/// - in a top-level statement before the index `later_stages_before`, the
+///   require argument of an imported helper that initializes a top-level
+///   `var`, `var x = helper(require("./p"))` or
+///   `var x = ns.helper(require("./p"))` (`cross_module_interop_import`,
+///   then `import_unproven_helper_requires` for a helper it cannot prove);
+/// - in such a statement, a source of a top-level default-object
+///   composition statement, `Object.assign(target, require("./p") || {})`
 ///   (`commonjs_default_object_composition`);
 /// - anywhere, the require of a lowered `import()` around an imported
 ///   helper, `Promise.resolve().then(() => helper(require("./p")))`
 ///   (`run_cross_module_lowered_dynamic_imports`).
 ///
-/// One the later stage leaves stays in ES module output, where the
-/// `commonjs_require_unrecovered` warning reports it. A single file has no
-/// later stage, and the stages read no other form, so every other require
-/// counts.
+/// The caller passes the first hoisting barrier as `later_stages_before`:
+/// the first two stages hoist their provider into an import, which loads it
+/// before the barrier. A require the later stages leave stays in ES module
+/// output, where the `commonjs_require_unrecovered` warning reports it. A
+/// single file has no later stage, and the stages read no other form, so
+/// every other require counts.
 pub(crate) fn blocking_require_calls(
     module: &Module,
     unresolved_mark: Mark,
-    later_unpack_stages: bool,
+    later_stages_before: Option<usize>,
 ) -> Vec<KeptRequire> {
-    if !later_unpack_stages {
+    let Some(later_stages_before) = later_stages_before else {
         return kept_require_calls(module, unresolved_mark);
-    }
+    };
     let mut imported = HashSet::default();
     for item in &module.body {
         if let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item {
@@ -126,10 +131,14 @@ pub(crate) fn blocking_require_calls(
         conditional_depth: 0,
         found: Vec::new(),
         blocking: true,
+        eager_stages: true,
         imported_helpers: imported,
         skip_helper_arguments: false,
     };
-    module.visit_with(&mut finder);
+    for (index, item) in module.body.iter().enumerate() {
+        finder.eager_stages = index < later_stages_before;
+        item.visit_with(&mut finder);
+    }
     finder.found
 }
 
@@ -150,6 +159,7 @@ pub(crate) fn has_unconvertible_require(module: &Module, unresolved_mark: Mark) 
         conditional_depth: 0,
         found: Vec::new(),
         blocking: false,
+        eager_stages: false,
         imported_helpers: HashSet::default(),
         skip_helper_arguments: true,
     };
@@ -173,6 +183,7 @@ pub(crate) fn kept_require_calls_in<N: VisitWith<KeptRequireFinder>>(
         conditional_depth: 0,
         found: Vec::new(),
         blocking: false,
+        eager_stages: false,
         imported_helpers: HashSet::default(),
         skip_helper_arguments: false,
     };
@@ -223,9 +234,13 @@ pub(crate) struct KeptRequireFinder {
     function_depth: usize,
     conditional_depth: usize,
     found: Vec<KeptRequire>,
-    /// Skip the top-level requires a later stage converts
+    /// Skip the requires a later stage converts
     /// ([`blocking_require_calls`]).
     blocking: bool,
+    /// The module item being visited comes before the first hoisting
+    /// barrier, so the stages that hoist a provider into an import may take
+    /// its requires.
+    eager_stages: bool,
     /// Import bindings whose call of a require is left for a later stage.
     imported_helpers: HashSet<BindingId>,
     /// Skip the require argument of every `helper(require("./p"))`,
@@ -381,7 +396,7 @@ impl Visit for KeptRequireFinder {
     }
 
     fn visit_module_item(&mut self, item: &ModuleItem) {
-        if self.blocking {
+        if self.blocking && self.eager_stages {
             match item {
                 ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
                     for declarator in &var.decls {
@@ -1329,7 +1344,7 @@ mod tests {
 
     fn blocking(source: &str) -> usize {
         with_module(source, |module, mark| {
-            blocking_require_calls(module, mark, true).len()
+            blocking_require_calls(module, mark, Some(module.body.len())).len()
         })
     }
 
@@ -1564,7 +1579,7 @@ try { require("g"); } catch (e) {}"#
         // A single file has no later stage.
         with_module(
             r#"import h from "./h"; var a = h(require("./a")); export default {}; Object.assign(o, require("./b") || {});"#,
-            |module, mark| assert_eq!(blocking_require_calls(module, mark, false).len(), 2),
+            |module, mark| assert_eq!(blocking_require_calls(module, mark, None).len(), 2),
         );
     }
 }
