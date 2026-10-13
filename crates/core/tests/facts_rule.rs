@@ -1684,3 +1684,131 @@ const keys = { [lib]: 1 };
     );
     assert!(!output.contains("import * as"), "{output}");
 }
+
+fn passthrough_facts_with_commonjs_provider() -> ModuleFactsMap {
+    let mut facts = passthrough_facts();
+    facts.insert(
+        "provider.js",
+        ModuleFacts {
+            stays_commonjs: true,
+            ..Default::default()
+        },
+    );
+    facts
+}
+
+#[test]
+fn default_import_of_a_passthrough_to_a_commonjs_provider_stays_a_default_import() {
+    // The passthrough's value is the provider's `module.exports`, which is
+    // the provider's default import. Its namespace holds only the names
+    // Node's lexer finds, so `lib.version` on `module.exports = fn` would
+    // read `undefined` there.
+    for source in [
+        "import lib from \"./passthrough.js\";\nuse(lib.version);\n",
+        "import lib from \"./passthrough.js\";\nuse(lib);\n",
+    ] {
+        let output = consolidate_reexports(
+            source,
+            &passthrough_facts_with_commonjs_provider(),
+            "consumer.js",
+        );
+        assert!(
+            output.contains(r#"import lib from "./provider.js""#),
+            "{output}"
+        );
+        assert!(!output.contains("import * as"), "{output}");
+    }
+}
+
+#[test]
+fn default_import_of_a_passthrough_to_an_unknown_target_is_not_redirected() {
+    // Without facts for the target, its format is unknown: neither a default
+    // nor a namespace import of it is proven to hold the same value.
+    let mut facts = ModuleFactsMap::new();
+    facts.insert(
+        "passthrough.js",
+        ModuleFacts {
+            passthrough_target: Some("external-lib".into()),
+            ..Default::default()
+        },
+    );
+    let output = consolidate_reexports(
+        "import lib from \"./passthrough.js\";\nuse(lib.foo);\n",
+        &facts,
+        "consumer.js",
+    );
+    assert!(
+        output.contains(r#"import lib from "./passthrough.js""#),
+        "{output}"
+    );
+}
+
+fn passthrough_facts_with_provider(provider: ModuleFacts) -> ModuleFactsMap {
+    let mut facts = passthrough_facts();
+    facts.insert("provider.js", provider);
+    facts
+}
+
+#[test]
+fn default_import_of_a_passthrough_to_a_default_only_provider_now_esm_stays_a_default_import() {
+    // The provider was `module.exports = fn` and is now `export default fn`:
+    // its namespace holds `fn` only as `default`.
+    let facts = passthrough_facts_with_provider(ModuleFacts {
+        commonjs_value_is_default: true,
+        exports: vec![export("default", None, ExportKind::Default)],
+        ..Default::default()
+    });
+    let output = consolidate_reexports(
+        "import lib from \"./passthrough.js\";\nuse(lib.version);\n",
+        &facts,
+        "consumer.js",
+    );
+    assert!(
+        output.contains(r#"import lib from "./provider.js""#),
+        "{output}"
+    );
+}
+
+#[test]
+fn default_import_of_a_passthrough_to_a_default_with_named_provider_is_not_redirected() {
+    // `module.exports = fn` beside named exports: the named exports are on
+    // the namespace, not on `fn`, so neither import holds the old value.
+    let facts = passthrough_facts_with_provider(ModuleFacts {
+        commonjs_value_is_default: true,
+        exports: vec![
+            export("default", None, ExportKind::Default),
+            export("extra", Some("extra"), ExportKind::Named),
+        ],
+        ..Default::default()
+    });
+    let output = consolidate_reexports(
+        "import lib from \"./passthrough.js\";\nuse(lib.version);\n",
+        &facts,
+        "consumer.js",
+    );
+    assert!(
+        output.contains(r#"import lib from "./passthrough.js""#),
+        "{output}"
+    );
+}
+
+#[test]
+fn default_import_of_a_passthrough_to_a_node_builtin_is_redirected_to_its_namespace() {
+    let mut facts = ModuleFactsMap::new();
+    facts.insert(
+        "passthrough.js",
+        ModuleFacts {
+            passthrough_target: Some("node:crypto".into()),
+            ..Default::default()
+        },
+    );
+    let output = consolidate_reexports(
+        "import lib from \"./passthrough.js\";\nuse(lib.randomUUID());\n",
+        &facts,
+        "consumer.js",
+    );
+    assert!(
+        output.contains(r#"import * as lib from "node:crypto""#),
+        "{output}"
+    );
+}

@@ -548,6 +548,36 @@ fn provider_shape(provider: &ModuleFacts) -> Option<ProviderShape<'_>> {
     }
 }
 
+/// How an ES module importer reads the value `require("./p")` returned when
+/// `./p` was CommonJS.
+pub(crate) enum RequiredValueImport {
+    /// The default import: a provider that stays CommonJS (its
+    /// `module.exports`), or one that was `module.exports = v` and now only
+    /// exports `v` as its default.
+    Default,
+    /// The namespace import, read through members only: an ES module, or a
+    /// provider that marked itself `__esModule`, whose namespace holds its
+    /// exports.
+    Namespace,
+}
+
+/// `None` when no import holds that value: the provider's `module.exports`
+/// was replaced another way, or `v` sits beside named exports.
+pub(crate) fn required_value_import(provider: &ModuleFacts) -> Option<RequiredValueImport> {
+    if provider.stays_commonjs {
+        return Some(RequiredValueImport::Default);
+    }
+    match provider_shape(provider) {
+        None | Some(ProviderShape::Marked { .. }) => Some(RequiredValueImport::Namespace),
+        Some(ProviderShape::Default { marked: false }) => Some(RequiredValueImport::Default),
+        Some(
+            ProviderShape::Default { marked: true }
+            | ProviderShape::DefaultWithNamed(_)
+            | ProviderShape::ReplacedValue,
+        ) => None,
+    }
+}
+
 fn is_named_export(exports: &[ExportFact], name: &str) -> bool {
     exports
         .iter()

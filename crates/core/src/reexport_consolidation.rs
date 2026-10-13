@@ -1,14 +1,25 @@
 //! Re-export consolidation: redirect imports from passthrough modules to the
 //! actual target module.
 //!
-//! A passthrough module has the shape `export default require("./X.js")` with
-//! no other statements — it re-exports another module's namespace as its
-//! default export. When the imported binding is only used via member access
-//! (e.g. `x.foo`, `x.bar`), the import is rewritten:
-//!   `import x from "./passthrough.js"` → `import * as x from "./target.js"`
+//! A passthrough module has the shape `module.exports = require("./X.js")`
+//! (or `export default require("./X.js")`) with no other statements: its value
+//! is what `require` of the target returned when the target was CommonJS. The
+//! import is rewritten to the import of the target that holds that value
+//! (`kept_require::required_value_import`):
 //!
-//! The resulting namespace imports can then be further decomposed into named
-//! imports by the namespace decomposition pass.
+//! - The default import, for a target that stays CommonJS (its
+//!   `module.exports`) or that was `module.exports = v` and now only exports
+//!   `v` as its default. Only the source changes:
+//!   `import x from "./passthrough.js"` → `import x from "./target.js"`.
+//! - The namespace import, for an ES module target. When the binding is only
+//!   read through members (`x.foo`),
+//!   `import x from "./passthrough.js"` → `import * as x from "./target.js"`.
+//!   The resulting namespace imports can then be further decomposed into
+//!   named imports by the namespace decomposition pass.
+//!
+//! A `node:` builtin outside the input takes the namespace import. Any other
+//! target without facts (a package outside the input), or one whose value no
+//! import holds, leaves its importers alone.
 
 use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
@@ -20,7 +31,15 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitWith};
 
 use crate::facts::ModuleFactsMap;
+use crate::kept_require::{required_value_import, RequiredValueImport};
 use crate::module_path::relative_import_specifier;
+
+/// The module a passthrough chain ends at, and the import of it that holds
+/// the passthrough's value.
+enum PassthroughTarget {
+    Default(Atom),
+    Namespace(Atom),
+}
 
 pub fn run_reexport_consolidation(
     module: &mut Module,
@@ -31,7 +50,7 @@ pub fn run_reexport_consolidation(
         return;
     }
 
-    let redirects: Vec<(usize, Atom)> = module
+    let redirects: Vec<(usize, PassthroughTarget)> = module
         .body
         .iter()
         .enumerate()
@@ -48,6 +67,9 @@ pub fn run_reexport_consolidation(
 
             let source_str = import.src.value.as_str().unwrap_or("");
             let target = resolve_passthrough(source_str, module_facts, current_filename)?;
+            if matches!(target, PassthroughTarget::Default(_)) {
+                return Some((idx, target));
+            }
 
             let mut analyzer = MemberOnlyAnalyzer {
                 target_sym: &default_spec.local.sym,
@@ -71,11 +93,17 @@ pub fn run_reexport_consolidation(
         let ImportSpecifier::Default(default_spec) = &import.specifiers[0] else {
             continue;
         };
-        let local_ident = default_spec.local.clone();
-        import.specifiers = vec![ImportSpecifier::Namespace(ImportStarAsSpecifier {
-            span: DUMMY_SP,
-            local: Ident::new(local_ident.sym, DUMMY_SP, local_ident.ctxt),
-        })];
+        let target = match target {
+            PassthroughTarget::Default(target) => target,
+            PassthroughTarget::Namespace(target) => {
+                let local_ident = default_spec.local.clone();
+                import.specifiers = vec![ImportSpecifier::Namespace(ImportStarAsSpecifier {
+                    span: DUMMY_SP,
+                    local: Ident::new(local_ident.sym, DUMMY_SP, local_ident.ctxt),
+                })];
+                target
+            }
+        };
         *import.src = Str::from(target.as_ref());
     }
 }
@@ -84,7 +112,7 @@ fn resolve_passthrough(
     source: &str,
     facts: &ModuleFactsMap,
     current_filename: Option<&str>,
-) -> Option<Atom> {
+) -> Option<PassthroughTarget> {
     let original_importer = current_filename?;
     let mut current = facts.resolve_key_from(current_filename, source)?;
     let mut seen = crate::collections::HashSet::default();
@@ -97,18 +125,24 @@ fn resolve_passthrough(
         let target = module_facts.passthrough_target.as_ref()?;
         let target_str = target.as_ref();
 
-        if let Some(target_key) = facts.resolve_key_from(Some(&current), target_str) {
-            let target_facts = facts.get(&target_key)?;
-            if target_facts.passthrough_target.is_some() {
-                current = target_key;
-                continue;
-            }
-            return Some(Atom::from(relative_import_specifier(
-                original_importer,
-                &target_key,
-            )));
+        let Some(target_key) = facts.resolve_key_from(Some(&current), target_str) else {
+            // A `node:` builtin's namespace holds every export of its
+            // `require` value. Any other target outside the input has an
+            // unknown format: a bare name can be a bundled package.
+            return target_str
+                .starts_with("node:")
+                .then(|| PassthroughTarget::Namespace(target.clone()));
+        };
+        let target_facts = facts.get(&target_key)?;
+        if target_facts.passthrough_target.is_some() {
+            current = target_key;
+            continue;
         }
-        return Some(target.clone());
+        let specifier = Atom::from(relative_import_specifier(original_importer, &target_key));
+        return Some(match required_value_import(target_facts)? {
+            RequiredValueImport::Default => PassthroughTarget::Default(specifier),
+            RequiredValueImport::Namespace => PassthroughTarget::Namespace(specifier),
+        });
     }
 }
 

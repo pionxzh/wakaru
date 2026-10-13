@@ -4187,6 +4187,32 @@ fn kept_require_of_a_function_with_named_exports_reports_uses_it_cannot_redirect
     );
 }
 
+/// A webpack 5 bundle whose module 1 imports module 3 through the
+/// passthrough module 2, `module.exports = require("./module-3.js")`.
+fn passthrough_bundle(consumer: &str, provider: &str) -> String {
+    format!(
+        r#"(()=>{{var t={{1(t,e,o){{{consumer}}},2(t,e,o){{"use strict";t.exports=o(3)}},3(t,e,o){{{provider}}}}};const e={{}};function o(r){{const l=e[r];if(void 0!==l)return l.exports;const i=e[r]={{exports:{{}}}};return t[r](i,i.exports,o),i.exports}}o.r=t=>{{Object.defineProperty(t,"__esModule",{{value:!0}})}},o.d=(t,e)=>{{for(var r in e)o.o(e,r)&&!o.o(t,r)&&Object.defineProperty(t,r,{{enumerable:!0,get:e[r]}})}},o.o=(t,e)=>Object.prototype.hasOwnProperty.call(t,e),globalThis.lib=o(1)}})();"#
+    )
+}
+
+#[test]
+fn import_through_a_passthrough_of_a_function_provider_reads_its_default() {
+    // hypothetical: module 3 was `module.exports = fn` with a property on
+    // `fn`, which the namespace of its ES module form does not have.
+    let source = passthrough_bundle(
+        r#""use strict";o.r(e),o.d(e,{run:()=>r});var z=o(2);function r(){return z.version}"#,
+        r#"function s(x){return x}s.version="1";t.exports=s"#,
+    );
+    let output = unpack(&source, DecompileOptions::default()).expect("bundle should unpack");
+    let consumer = unpacked_module(&output, "module-1.js");
+    assert!(
+        consumer.contains(r#"import z from "./module-3.js""#),
+        "{consumer}"
+    );
+    let provider = unpacked_module(&output, "module-3.js");
+    assert!(provider.contains("export default s"), "{provider}");
+}
+
 #[test]
 fn es_source_module_kept_commonjs_is_reported_only_under_diagnostics() {
     // hypothetical: module 1 is webpack harmony output (`o.r`, `o.d`) whose
