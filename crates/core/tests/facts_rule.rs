@@ -1743,6 +1743,38 @@ fn default_import_of_a_passthrough_to_an_unknown_target_is_not_redirected() {
     );
 }
 
+#[test]
+fn destructured_default_import_is_redirected_to_the_provider_namespace() {
+    // Destructuring with fixed keys reads members, as `lib.a` does.
+    for source in [
+        "import lib from \"./passthrough.js\";\nconst { a, b: c, d = 1 } = lib;\nuse(a, c, d);\n",
+        "import lib from \"./passthrough.js\";\nlet a;\n({ a } = lib);\nuse(a);\n",
+    ] {
+        let output = consolidate_reexports(source, &passthrough_facts(), "consumer.js");
+        assert!(
+            output.contains(r#"import * as lib from "./provider.js""#),
+            "{output}"
+        );
+    }
+}
+
+#[test]
+fn destructured_default_import_with_a_rest_or_computed_key_is_not_redirected() {
+    // A rest element copies the object's own keys, and a computed key is
+    // not a fixed member: the namespace object can differ in both.
+    for source in [
+        "import lib from \"./passthrough.js\";\nconst { a, ...rest } = lib;\nuse(a, rest);\n",
+        "import lib from \"./passthrough.js\";\nconst { [key]: a } = lib;\nuse(a);\n",
+        "import lib from \"./passthrough.js\";\nconst [a] = lib;\nuse(a);\n",
+    ] {
+        let output = consolidate_reexports(source, &passthrough_facts(), "consumer.js");
+        assert!(
+            output.contains(r#"import lib from "./passthrough.js""#),
+            "{output}"
+        );
+    }
+}
+
 fn passthrough_facts_with_provider(provider: ModuleFacts) -> ModuleFactsMap {
     let mut facts = passthrough_facts();
     facts.insert("provider.js", provider);

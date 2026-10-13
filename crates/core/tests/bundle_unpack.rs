@@ -4196,6 +4196,22 @@ fn passthrough_bundle(consumer: &str, provider: &str) -> String {
 }
 
 #[test]
+fn destructured_import_through_a_passthrough_reads_the_esm_provider() {
+    // wild-observed, producer unknown: an ES module destructures a named
+    // export of an ES module it imports through a CommonJS passthrough.
+    let source = passthrough_bundle(
+        r#""use strict";o.r(e),o.d(e,{run:()=>r});var z=o(2);let{sel:j}=z;function r(){return j(1)}"#,
+        r#""use strict";o.r(e),o.d(e,{sel:()=>s});function s(x){return x}"#,
+    );
+    let output = unpack(&source, DecompileOptions::default()).expect("bundle should unpack");
+    let consumer = unpacked_module(&output, "module-1.js");
+    assert!(
+        consumer.contains(r#"import * as z from "./module-3.js""#),
+        "{consumer}"
+    );
+}
+
+#[test]
 fn import_through_a_passthrough_of_a_function_provider_reads_its_default() {
     // hypothetical: module 3 was `module.exports = fn` with a property on
     // `fn`, which the namespace of its ES module form does not have.

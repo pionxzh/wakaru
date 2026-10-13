@@ -12,7 +12,7 @@
 //!   `v` as its default. Only the source changes:
 //!   `import x from "./passthrough.js"` → `import x from "./target.js"`.
 //! - The namespace import, for an ES module target. When the binding is only
-//!   read through members (`x.foo`),
+//!   read through members (`x.foo`, or destructuring with fixed keys),
 //!   `import x from "./passthrough.js"` → `import * as x from "./target.js"`.
 //!   The resulting namespace imports can then be further decomposed into
 //!   named imports by the namespace decomposition pass.
@@ -24,15 +24,17 @@
 use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignTarget, Expr, Ident, ImportDecl, ImportSpecifier, ImportStarAsSpecifier,
-    MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, SimpleAssignTarget, Str, UnaryExpr,
-    UnaryOp, UpdateExpr,
+    AssignExpr, AssignOp, AssignTarget, AssignTargetPat, Expr, Ident, ImportDecl, ImportSpecifier,
+    ImportStarAsSpecifier, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectPat,
+    ObjectPatProp, PropName, SimpleAssignTarget, Str, UnaryExpr, UnaryOp, UpdateExpr,
+    VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
 use crate::facts::ModuleFactsMap;
 use crate::kept_require::{required_value_import, RequiredValueImport};
 use crate::module_path::relative_import_specifier;
+use crate::utils::paren::strip_parens;
 
 /// The module a passthrough chain ends at, and the import of it that holds
 /// the passthrough's value.
@@ -157,6 +159,20 @@ impl MemberOnlyAnalyzer<'_> {
     fn is_target(&self, ident: &Ident) -> bool {
         ident.sym == *self.target_sym && ident.ctxt == self.target_ctxt
     }
+
+    fn is_target_expr(&self, expr: &Expr) -> bool {
+        matches!(strip_parens(expr), Expr::Ident(ident) if self.is_target(ident))
+    }
+}
+
+/// `{ a, b: c, d = 1 }`: every key a fixed name, no rest element. Reading
+/// such a pattern from an object reads those members, as `x.a` does.
+fn is_fixed_key_object_pat(pat: &ObjectPat) -> bool {
+    pat.props.iter().all(|prop| match prop {
+        ObjectPatProp::KeyValue(prop) => !matches!(prop.key, PropName::Computed(_)),
+        ObjectPatProp::Assign(_) => true,
+        ObjectPatProp::Rest(_) => false,
+    })
 }
 
 impl Visit for MemberOnlyAnalyzer<'_> {
@@ -166,7 +182,26 @@ impl Visit for MemberOnlyAnalyzer<'_> {
         self.in_import_decl = false;
     }
 
+    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+        if let (Some(pat), Some(init)) = (declarator.name.as_object(), declarator.init.as_deref()) {
+            if self.is_target_expr(init) && is_fixed_key_object_pat(pat) {
+                pat.visit_with(self);
+                return;
+            }
+        }
+        declarator.visit_children_with(self);
+    }
+
     fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+        if let AssignTarget::Pat(AssignTargetPat::Object(pat)) = &assign.left {
+            if assign.op == AssignOp::Assign
+                && self.is_target_expr(&assign.right)
+                && is_fixed_key_object_pat(pat)
+            {
+                pat.visit_with(self);
+                return;
+            }
+        }
         if let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left {
             if matches!(member.obj.as_ref(), Expr::Ident(obj) if self.is_target(obj)) {
                 self.safe = false;
