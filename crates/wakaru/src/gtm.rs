@@ -70,6 +70,70 @@ pub struct Macro {
     pub function: String,
     /// `vtp_name`, when the variable has one.
     pub name: Option<String>,
+    /// `vtp_component`, when the variable has one: `URL`, `PATH` or `HOST` for
+    /// a built-in `__u` variable. It tells apart two macros that have no name.
+    pub component: Option<String>,
+}
+
+/// One tag the container lists.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Tag {
+    pub tag_id: u64,
+    /// GTM's tag type, such as `__html` (Custom HTML) or `__gaawe` (a GA4
+    /// event tag).
+    pub function: String,
+}
+
+/// An operand of a [`Predicate`]: a reference to a macro, a literal value, or a
+/// list of them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Operand {
+    /// The macro at this index of [`Container::macros`].
+    Macro { index: u64 },
+    /// A literal string, number or boolean, as text.
+    Value(String),
+    /// An array argument, such as the alternatives of an `any_of` comparison.
+    List(Vec<Operand>),
+}
+
+/// One entry of the container's `predicates` array: a comparison inside a
+/// trigger's condition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Predicate {
+    /// The row in [`Container::predicates`], which a [`Trigger`] references.
+    pub index: usize,
+    /// The comparison, such as `_eq` (equals), `_cn` (contains) or `_re`
+    /// (matches).
+    pub function: String,
+    pub arg0: Operand,
+    pub arg1: Operand,
+    pub ignore_case: bool,
+    /// The comparison holds when `arg0` matches any element of a list `arg1`.
+    pub any_of: bool,
+}
+
+/// One trigger, compiled: the condition under which it applies, and the tags it
+/// fires or blocks.
+///
+/// It is an entry of the container's `rules` array; the runtime stores tags by
+/// their position in that array, and the extraction turns those into the
+/// `tag_id`s in `fires` and `blocks`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Trigger {
+    /// The row in [`Container::triggers`].
+    pub index: usize,
+    /// `when`: predicate indices that must all hold.
+    pub when: Vec<usize>,
+    /// `unless`: predicate indices that must all not hold.
+    pub unless: Vec<usize>,
+    /// The `tag_id`s this trigger fires.
+    pub fires: Vec<u64>,
+    /// The `tag_id`s this trigger blocks.
+    pub blocks: Vec<u64>,
 }
 
 /// A template part that was not understood. Its macro reference is kept as
@@ -92,6 +156,12 @@ pub struct Container {
     /// `data.resource.version`.
     pub version: Option<String>,
     pub macros: Vec<Macro>,
+    /// The container's tags.
+    pub tags: Vec<Tag>,
+    /// The predicates a [`Trigger`]'s condition references.
+    pub predicates: Vec<Predicate>,
+    /// The triggers: what fires or blocks which tag, and under what condition.
+    pub triggers: Vec<Trigger>,
     /// Custom JavaScript variables in macro order, then Custom HTML scripts in
     /// tag order.
     pub scripts: Vec<Script>,
@@ -116,6 +186,38 @@ pub fn extract_container(source: &str) -> Option<Container> {
                 index: m.index,
                 function: m.function,
                 name: m.name,
+                component: m.component,
+            })
+            .collect(),
+        tags: container
+            .tags
+            .into_iter()
+            .map(|t| Tag {
+                tag_id: t.tag_id,
+                function: t.function,
+            })
+            .collect(),
+        predicates: container
+            .predicates
+            .into_iter()
+            .map(|p| Predicate {
+                index: p.index,
+                function: p.function,
+                arg0: operand(p.arg0),
+                arg1: operand(p.arg1),
+                ignore_case: p.ignore_case,
+                any_of: p.any_of,
+            })
+            .collect(),
+        triggers: container
+            .triggers
+            .into_iter()
+            .map(|t| Trigger {
+                index: t.index,
+                when: t.when,
+                unless: t.unless,
+                fires: t.fires,
+                blocks: t.blocks,
             })
             .collect(),
         scripts: container
@@ -154,6 +256,14 @@ fn field(field: core::GtmField) -> Field {
             Field::CustomJavaScriptVariable { macro_index }
         }
         core::GtmField::CustomHtmlTag { tag_id } => Field::CustomHtmlTag { tag_id },
+    }
+}
+
+fn operand(value: core::GtmOperand) -> Operand {
+    match value {
+        core::GtmOperand::Macro { index } => Operand::Macro { index },
+        core::GtmOperand::Value(text) => Operand::Value(text),
+        core::GtmOperand::List(items) => Operand::List(items.into_iter().map(operand).collect()),
     }
 }
 

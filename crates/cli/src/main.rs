@@ -1690,8 +1690,9 @@ fn gtm_warnings(intake: &GtmIntake) -> impl Iterator<Item = CliWarning> + '_ {
     })
 }
 
-/// The `index.md` written next to a container's pieces: what each `__gtm_macro_<n>` is, and the
-/// URLs of the external scripts, which have no body to write.
+/// The `index.md` written next to a container's pieces: what each `__gtm_macro_<n>` is, the tags
+/// with the triggers that fire or block them, those triggers' conditions decoded, and the URLs of
+/// the external scripts, which have no body to write.
 fn gtm_index_markdown(container: &wakaru::gtm::Container) -> String {
     let mut out = String::from("# Google Tag Manager container\n\n");
     if let Some(version) = &container.version {
@@ -1706,20 +1707,209 @@ fn gtm_index_markdown(container: &wakaru::gtm::Container) -> String {
         out.push_str(&format!(
             "| {} | `{}` | {} |\n",
             m.index,
-            m.function,
-            m.name.as_deref().unwrap_or("")
+            gtm_cell(&m.function),
+            gtm_cell(m.name.as_deref().unwrap_or(""))
         ));
     }
+
+    out.push_str("\n## Tags\n\n| tag_id | type | fired by | blocked by |\n|---|---|---|---|\n");
+    for tag in &container.tags {
+        out.push_str(&format!(
+            "| {} | `{}` | {} | {} |\n",
+            tag.tag_id,
+            gtm_cell(&tag.function),
+            gtm_trigger_indices(container, tag.tag_id, true),
+            gtm_trigger_indices(container, tag.tag_id, false)
+        ));
+    }
+
+    out.push_str(
+        "\n## Triggers\n\nEach trigger's condition and the tags it fires or blocks. A reference is the\n\
+         macro's name, or its type and component when it has no name (`__e`, `__u:PATH`).\n\n\
+         | # | when | fires | blocks |\n|---|---|---|---|\n",
+    );
+    for trigger in &container.triggers {
+        out.push_str(&format!(
+            "| {} | {} | {} | {} |\n",
+            trigger.index,
+            gtm_trigger_condition(trigger, container),
+            gtm_tag_ids(&trigger.fires),
+            gtm_tag_ids(&trigger.blocks)
+        ));
+    }
+
     out.push_str("\n## External scripts\n\n");
     if container.external_scripts.is_empty() {
         out.push_str("None.\n");
     } else {
         out.push_str("| tag | url |\n|---|---|\n");
         for script in &container.external_scripts {
-            out.push_str(&format!("| {} | {} |\n", script.tag_id, script.url));
+            out.push_str(&format!(
+                "| {} | {} |\n",
+                script.tag_id,
+                gtm_cell(&script.url)
+            ));
         }
     }
     out
+}
+
+/// The rows of the `Triggers` table that fire (`firing`) or block a tag.
+fn gtm_trigger_indices(container: &wakaru::gtm::Container, tag_id: u64, firing: bool) -> String {
+    container
+        .triggers
+        .iter()
+        .filter(|trigger| {
+            let tags = if firing {
+                &trigger.fires
+            } else {
+                &trigger.blocks
+            };
+            tags.contains(&tag_id)
+        })
+        .map(|trigger| trigger.index.to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn gtm_tag_ids(ids: &[u64]) -> String {
+    ids.iter()
+        .map(u64::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// A trigger's condition, decoded: the `when` predicates must all hold and no `unless` predicate
+/// may. An empty group is dropped, so a block-only trigger reads `not …` rather than `and not …`.
+fn gtm_trigger_condition(
+    trigger: &wakaru::gtm::Trigger,
+    container: &wakaru::gtm::Container,
+) -> String {
+    let when = gtm_predicates(&trigger.when, container);
+    let unless = gtm_predicates(&trigger.unless, container);
+    let text = match (when.is_empty(), unless.is_empty()) {
+        (false, false) => format!(
+            "{} and not {}",
+            when.join(" and "),
+            gtm_predicate_group(&unless)
+        ),
+        (false, true) => when.join(" and "),
+        (true, false) => format!("not {}", gtm_predicate_group(&unless)),
+        (true, true) => String::from("always"),
+    };
+    // a `|` inside a value (a regular expression alternation, most often) would end the table cell
+    gtm_cell(&text)
+}
+
+/// A Markdown table cell: a `|` would end the cell, and a line break the row.
+fn gtm_cell(text: &str) -> String {
+    let mut out = text.replace('|', "\\|");
+    for line_break in ['\n', '\r', '\u{2028}', '\u{2029}'] {
+        out = out.replace(line_break, " ");
+    }
+    out
+}
+
+/// A group of `unless` predicates, which hold together as one negation.
+fn gtm_predicate_group(parts: &[String]) -> String {
+    if parts.len() == 1 {
+        parts[0].clone()
+    } else {
+        format!("({})", parts.join(" or "))
+    }
+}
+
+fn gtm_predicates(indices: &[usize], container: &wakaru::gtm::Container) -> Vec<String> {
+    indices
+        .iter()
+        .map(
+            |index| match container.predicates.iter().find(|p| p.index == *index) {
+                Some(predicate) => format!("`{}`", gtm_predicate(predicate, container)),
+                // an index outside the array is a malformed container: name it rather than drop it, or
+                // the condition would read as if the comparison were never there
+                None => format!("`predicate {index}`"),
+            },
+        )
+        .collect()
+}
+
+/// One predicate in words. An operator the table does not name keeps its GTM name rather than a
+/// guess, the same way an unknown escape mode keeps its identifier.
+fn gtm_predicate(predicate: &wakaru::gtm::Predicate, container: &wakaru::gtm::Container) -> String {
+    let operator = match predicate.function.as_str() {
+        "_eq" => "equals",
+        "_cn" => "contains",
+        "_sw" => "starts with",
+        "_ew" => "ends with",
+        "_re" => "matches",
+        "_gt" => "is greater than",
+        "_lt" => "is less than",
+        "_ge" => "is greater than or equal to",
+        "_le" => "is less than or equal to",
+        "_css" => "matches the CSS selector",
+        other => other,
+    };
+    let mut text = format!(
+        "{} {} {}",
+        gtm_operand(&predicate.arg0, container),
+        operator,
+        gtm_operand_comparison(predicate, container)
+    );
+    if predicate.ignore_case {
+        text.push_str(" (ignoring case)");
+    }
+    text
+}
+
+/// The right-hand operand. When `any_of` is set, a list holds alternatives rather than one value,
+/// so its elements read as `or` instead of a comma list.
+fn gtm_operand_comparison(
+    predicate: &wakaru::gtm::Predicate,
+    container: &wakaru::gtm::Container,
+) -> String {
+    match (&predicate.arg1, predicate.any_of) {
+        (wakaru::gtm::Operand::List(items), true) => gtm_operand_list(items, container, " or "),
+        (other, _) => gtm_operand(other, container),
+    }
+}
+
+fn gtm_operand(operand: &wakaru::gtm::Operand, container: &wakaru::gtm::Container) -> String {
+    match operand {
+        wakaru::gtm::Operand::Value(text) => format!("\"{text}\""),
+        wakaru::gtm::Operand::Macro { index } => {
+            match container.macros.iter().find(|m| m.index == *index as usize) {
+                Some(mac) => gtm_macro_label(mac),
+                None => format!("__gtm_macro_{index}"),
+            }
+        }
+        wakaru::gtm::Operand::List(items) => gtm_operand_list(items, container, ", "),
+        // `Operand` is non-exhaustive: show a variant this build does not know instead of dropping it
+        other => format!("{other:?}"),
+    }
+}
+
+fn gtm_operand_list(
+    items: &[wakaru::gtm::Operand],
+    container: &wakaru::gtm::Container,
+    separator: &str,
+) -> String {
+    let items: Vec<String> = items
+        .iter()
+        .map(|item| gtm_operand(item, container))
+        .collect();
+    format!("({})", items.join(separator))
+}
+
+/// How a macro reads inside a condition: its `name`, or its type and component when it has none
+/// (`__e`, `__u:PATH`), so two built-ins that share a type do not read the same.
+fn gtm_macro_label(mac: &wakaru::gtm::Macro) -> String {
+    if let Some(name) = &mac.name {
+        return name.clone();
+    }
+    match &mac.component {
+        Some(component) => format!("{}:{}", mac.function, component),
+        None => mac.function.clone(),
+    }
 }
 
 fn read_explicit_unpack_sources(path: &Path) -> Result<Vec<wakaru::Source>> {

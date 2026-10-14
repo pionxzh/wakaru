@@ -58,7 +58,8 @@ An explicit file or stdin can also be a Google Tag Manager container
 (`gtm.js`). Wakaru recognizes it by the shape of its `data.resource` object,
 skips the GTM runtime, and writes each Custom JS variable to
 `macros/jsm-<n>.js`, each inline Custom HTML script to
-`tags/html-<tag_id>-<n>.js`, and an `index.md` listing the macros and external
+`tags/html-<tag_id>-<n>.js`, and an `index.md` listing the macros, the tags with
+the triggers that fire or block them, and the external
 script URLs. With more than one input, a container's files go under a
 directory named after its input file. Each script is decompiled on its own as
 a single file, without bundle detection; `--raw` writes it as extracted.

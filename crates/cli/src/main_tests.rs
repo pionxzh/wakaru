@@ -2390,10 +2390,20 @@ fn debug_enumerate_chunks_reports_webpack_fixture_without_unpacking() {
 const SYNTHETIC_GTM_CONTAINER: &str = r#"
 (function(){var data = {"resource":{"version":"40","macros":[
   {"function":"__jsm","vtp_javascript":["template","(function(){var a=1;return a})();"]},
-  {"function":"__v","vtp_name":"order_amount"}
-],"predicates":[],"rules":[],"tags":[
+  {"function":"__v","vtp_name":"order_amount"},
+  {"function":"__e"}
+],"predicates":[
+  {"function":"_eq","arg0":["macro",2],"arg1":"gtm.js"},
+  {"function":"_cn","arg0":["macro",1],"arg1":"100"},
+  {"function":"_eq","arg0":["macro",2],"arg1":["gtm.js","gtm.dom"],"any_of":true}
+],"rules":[
+  [["if",0],["add",0]],
+  [["if",1],["unless",0],["add",1],["block",2]],
+  [["if",2],["add",2]]
+],"tags":[
   {"function":"__html","tag_id":7,"vtp_html":["template","\n<script type=\"text/gtmscript\">track(\"",["escape",["macro",1],7],"\"," ,["escape",["macro",0],8,16],");</script>"]},
-  {"function":"__html","tag_id":9,"vtp_html":"<script type=\"text/gtmscript\" data-gtmsrc=\"//example.com/loader.js\"></script>"}
+  {"function":"__html","tag_id":9,"vtp_html":"<script type=\"text/gtmscript\" data-gtmsrc=\"//example.com/loader.js\"></script>"},
+  {"function":"__gaawe","tag_id":11}
 ]},"runtime":"var runtime=1;"};})();"#;
 
 const SYNTHETIC_WEBPACK4_BUNDLE: &str = "(function(modules){var c={};function r(i){if(c[i])return c[i].exports;var m=c[i]={exports:{}};modules[i].call(m.exports,m,m.exports,r);return m.exports}return r(0)})([function(module,exports,require){console.log(require(1))},function(module){module.exports=42}]);";
@@ -2441,6 +2451,24 @@ fn unpacking_a_gtm_container_writes_its_scripts_and_index() {
     let index = fs::read_to_string(out_dir.join("index.md")).expect("read the index");
     assert!(index.contains("| 1 | `__v` | order_amount |"), "{index}");
     assert!(index.contains("| 9 | //example.com/loader.js |"), "{index}");
+    // the tags table points at the trigger rows, and the trigger rows carry the decoded condition
+    assert!(index.contains("| 7 | `__html` | 0 |  |"), "{index}");
+    assert!(index.contains("| 11 | `__gaawe` | 2 | 1 |"), "{index}");
+    assert!(
+        index.contains(r#"| 0 | `__e equals "gtm.js"` | 7 |  |"#),
+        "{index}"
+    );
+    assert!(
+        index.contains(
+            r#"| 1 | `order_amount contains "100"` and not `__e equals "gtm.js"` | 9 | 11 |"#
+        ),
+        "{index}"
+    );
+    // an `any_of` comparison reads its alternatives as `or`
+    assert!(
+        index.contains(r#"| 2 | `__e equals ("gtm.js" or "gtm.dom")` | 11 |  |"#),
+        "{index}"
+    );
     fs::remove_dir_all(&dir).expect("remove temp dir");
 }
 

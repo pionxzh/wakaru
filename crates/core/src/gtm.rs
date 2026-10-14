@@ -97,6 +97,9 @@ pub struct GtmMacro {
     pub index: usize,
     pub function: String,
     pub name: Option<String>,
+    /// `vtp_component` of a built-in variable that has one, such as `URL`, `PATH` or `HOST` for
+    /// `__u`. It is what tells two such macros apart when neither has a `vtp_name`.
+    pub component: Option<String>,
 }
 
 /// A template part the extraction does not understand: an escape whose modes are unknown, or a
@@ -108,12 +111,67 @@ pub struct GtmUnsupportedPart {
     pub modes: Vec<u64>,
 }
 
+/// One tag as the container lists it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GtmTag {
+    pub tag_id: u64,
+    /// GTM's tag type, such as `__html` (Custom HTML) or `__gaawe` (a GA4 event tag).
+    pub function: String,
+}
+
+/// An operand of a trigger predicate: a reference to a macro, a literal value, or a list of them.
+#[derive(Clone, Debug, PartialEq)]
+pub enum GtmOperand {
+    /// `["macro", n]` — the macro at index `n`.
+    Macro { index: u64 },
+    /// A literal string, number or boolean, rendered as text.
+    Value(String),
+    /// An array argument, such as the alternatives of an `any_of` comparison.
+    List(Vec<GtmOperand>),
+}
+
+/// One entry of the container's `predicates` array: the leaf of a trigger's condition.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GtmPredicate {
+    pub index: usize,
+    /// The comparison, such as `_eq` (equals), `_cn` (contains) or `_re` (matches).
+    pub function: String,
+    pub arg0: GtmOperand,
+    pub arg1: GtmOperand,
+    pub ignore_case: bool,
+    /// `any_of`: the comparison holds when `arg0` matches any element of a list `arg1`.
+    pub any_of: bool,
+}
+
+/// One entry of the container's `rules` array: a trigger's compiled condition, and the tags it fires
+/// or blocks.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GtmTrigger {
+    /// The row in the container's `rules` array, which is the identity a tag's firing and blocking
+    /// lists point at.
+    pub index: usize,
+    /// `["if", …]`: predicate indices that must all hold.
+    pub when: Vec<usize>,
+    /// `["unless", …]`: predicate indices that must all not hold.
+    pub unless: Vec<usize>,
+    /// `["add", …]`: the `tag_id`s this trigger fires.
+    pub fires: Vec<u64>,
+    /// `["block", …]`: the `tag_id`s this trigger blocks.
+    pub blocks: Vec<u64>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct GtmContainer {
     pub version: Option<String>,
     /// Every macro that names its `function`, so a reader of `__gtm_macro_30` can answer "what is
     /// 30?".
     pub macros: Vec<GtmMacro>,
+    /// Every tag the container lists, in tag order.
+    pub tags: Vec<GtmTag>,
+    /// Every predicate, in predicate order; a trigger's `when` and `unless` index this array.
+    pub predicates: Vec<GtmPredicate>,
+    /// Every trigger, in rule order.
+    pub triggers: Vec<GtmTrigger>,
     /// Custom JS bodies in macro order, then Custom HTML scripts in tag order.
     pub scripts: Vec<GtmScript>,
     pub external_scripts: Vec<GtmExternalScript>,
@@ -155,6 +213,8 @@ fn extract(module: &Module) -> Option<GtmContainer> {
     }
     let macros = resource.get("macros")?.as_array()?;
     let tags = resource.get("tags")?.as_array()?;
+    let predicates = resource.get("predicates")?.as_array()?;
+    let rules = resource.get("rules")?.as_array()?;
 
     let mut container = GtmContainer {
         version: resource.get("version").and_then(|version| match version {
@@ -163,6 +223,9 @@ fn extract(module: &Module) -> Option<GtmContainer> {
             _ => None,
         }),
         macros: Vec::new(),
+        tags: Vec::new(),
+        predicates: Vec::new(),
+        triggers: Vec::new(),
         scripts: Vec::new(),
         external_scripts: Vec::new(),
         unsupported_parts: Vec::new(),
@@ -176,6 +239,10 @@ fn extract(module: &Module) -> Option<GtmContainer> {
                 function: function.to_string(),
                 name: macro_value
                     .get("vtp_name")
+                    .and_then(GtmValue::as_str)
+                    .map(ToOwned::to_owned),
+                component: macro_value
+                    .get("vtp_component")
                     .and_then(GtmValue::as_str)
                     .map(ToOwned::to_owned),
             });
@@ -201,6 +268,10 @@ fn extract(module: &Module) -> Option<GtmContainer> {
             .get("tag_id")
             .and_then(GtmValue::as_u64)
             .unwrap_or(0);
+        container.tags.push(GtmTag {
+            tag_id,
+            function: function.unwrap_or("").to_string(),
+        });
         if function != Some("__html") {
             continue;
         }
@@ -225,7 +296,109 @@ fn extract(module: &Module) -> Option<GtmContainer> {
         }
     }
 
+    for (index, value) in predicates.iter().enumerate() {
+        let Some(function) = value.get("function").and_then(GtmValue::as_str) else {
+            continue;
+        };
+        container.predicates.push(GtmPredicate {
+            index,
+            function: function.to_string(),
+            arg0: operand(value.get("arg0")),
+            arg1: operand(value.get("arg1")),
+            ignore_case: matches!(value.get("ignore_case"), Some(GtmValue::Bool(true))),
+            any_of: matches!(value.get("any_of"), Some(GtmValue::Bool(true))),
+        });
+    }
+
+    // The runtime compiles each trigger into a program of instructions: `if`/`unless` carry
+    // predicate indices, and `add`/`block` carry tag *array* indices, which are turned into the
+    // `tag_id`s a reader sees. A rule can fire no tag and only block, and the other way around. An
+    // instruction of an op a rule already has would replace it in the runtime's constructor; no
+    // container seen carries two, so they accumulate here and a repeated op is a superset, never a
+    // silent replacement. A position or predicate index outside its array cannot be resolved and is
+    // left out rather than guessed at.
+    for (index, rule) in rules.iter().enumerate() {
+        let Some(instructions) = rule.as_array() else {
+            continue;
+        };
+        let mut trigger = GtmTrigger {
+            index,
+            when: Vec::new(),
+            unless: Vec::new(),
+            fires: Vec::new(),
+            blocks: Vec::new(),
+        };
+        for instruction in instructions {
+            let Some(parts) = instruction.as_array() else {
+                continue;
+            };
+            let Some(op) = parts.first().and_then(GtmValue::as_str) else {
+                continue;
+            };
+            let args = &parts[1..];
+            match op {
+                "if" | "unless" => {
+                    let indices = args
+                        .iter()
+                        .filter_map(GtmValue::as_u64)
+                        .map(|value| value as usize);
+                    if op == "if" {
+                        trigger.when.extend(indices);
+                    } else {
+                        trigger.unless.extend(indices);
+                    }
+                }
+                "add" | "block" => {
+                    let tag_ids = args
+                        .iter()
+                        .filter_map(GtmValue::as_u64)
+                        .filter_map(|value| tags.get(value as usize))
+                        .filter_map(|tag| tag.get("tag_id"))
+                        .filter_map(GtmValue::as_u64);
+                    if op == "add" {
+                        trigger.fires.extend(tag_ids);
+                    } else {
+                        trigger.blocks.extend(tag_ids);
+                    }
+                }
+                _ => {}
+            }
+        }
+        container.triggers.push(trigger);
+    }
+
     Some(container)
+}
+
+/// A predicate argument: a `["macro", n]` reference, a literal rendered as text, or an array of
+/// them.
+fn operand(value: Option<&GtmValue>) -> GtmOperand {
+    match value {
+        Some(GtmValue::Array(items))
+            if items.first().and_then(GtmValue::as_str) == Some("macro") =>
+        {
+            match items.get(1).and_then(GtmValue::as_u64) {
+                Some(index) => GtmOperand::Macro { index },
+                None => GtmOperand::Value(String::new()),
+            }
+        }
+        Some(GtmValue::Array(items)) => {
+            GtmOperand::List(items.iter().map(|item| operand(Some(item))).collect())
+        }
+        Some(GtmValue::Str(text)) => GtmOperand::Value(text.clone()),
+        Some(GtmValue::Num(value)) => GtmOperand::Value(number(*value)),
+        Some(GtmValue::Bool(value)) => GtmOperand::Value(value.to_string()),
+        _ => GtmOperand::Value(String::new()),
+    }
+}
+
+/// A number as a reader writes it: no trailing `.0` on a whole one.
+fn number(value: f64) -> String {
+    if value.fract() == 0.0 && value.abs() < 1e15 {
+        format!("{}", value as i64)
+    } else {
+        value.to_string()
+    }
 }
 
 /// Joins a template array (`["template", …]`) back into a string. A field with no macro
@@ -865,6 +1038,89 @@ var data = {"resource":{"version":"40","macros":[
         assert_eq!(
             source,
             r#"if(/^https?:\/\/["']/.test(u))x='a' + __gtm_macro_0 + '';"#
+        );
+    }
+
+    #[test]
+    fn reads_every_tag_and_decodes_its_triggers() {
+        // wild-observed: `rules` holds compiled programs, `if`/`unless` carry predicate indices and
+        // `add`/`block` carry *tag array indices* (turned into the tag ids a reader sees); a
+        // predicate compares a macro with a literal, and a `__u` macro carries its component
+        let container = extract(&parse(
+            r#"var data={"resource":{"version":"7","macros":[
+                {"function":"__u","vtp_component":"PATH"},
+                {"function":"__e"}
+            ],"predicates":[
+                {"function":"_cn","arg0":["macro",0],"arg1":"/checkout","ignore_case":true},
+                {"function":"_eq","arg0":["macro",1],"arg1":"gtm.click"},
+                {"function":"_gt","arg0":["macro",0],"arg1":3},
+                {"function":"_eq","arg0":["macro",0],"arg1":["/a","/b"],"any_of":true}
+            ],"rules":[
+                [["if",0,1],["add",1]],
+                [["if",1],["unless",0],["add",0],["block",1]]
+            ],"tags":[
+                {"function":"__html","tag_id":7,"vtp_html":["template","<script>a();</script>"]},
+                {"function":"__gaawe","tag_id":9}
+            ]}};"#,
+        ))
+        .expect("container detected");
+
+        assert_eq!(
+            container.tags,
+            vec![
+                GtmTag {
+                    tag_id: 7,
+                    function: "__html".to_string()
+                },
+                GtmTag {
+                    tag_id: 9,
+                    function: "__gaawe".to_string()
+                },
+            ]
+        );
+        assert_eq!(container.macros[0].component.as_deref(), Some("PATH"));
+        assert_eq!(
+            container.predicates[0],
+            GtmPredicate {
+                index: 0,
+                function: "_cn".to_string(),
+                arg0: GtmOperand::Macro { index: 0 },
+                arg1: GtmOperand::Value("/checkout".to_string()),
+                ignore_case: true,
+                any_of: false,
+            }
+        );
+        assert_eq!(
+            container.predicates[2].arg1,
+            GtmOperand::Value("3".to_string())
+        );
+        // an `any_of` comparison stores its alternatives as an array argument
+        assert!(container.predicates[3].any_of);
+        assert_eq!(
+            container.predicates[3].arg1,
+            GtmOperand::List(vec![
+                GtmOperand::Value("/a".to_string()),
+                GtmOperand::Value("/b".to_string()),
+            ])
+        );
+        assert_eq!(
+            container.triggers,
+            vec![
+                GtmTrigger {
+                    index: 0,
+                    when: vec![0, 1],
+                    unless: Vec::new(),
+                    fires: vec![9],
+                    blocks: Vec::new(),
+                },
+                GtmTrigger {
+                    index: 1,
+                    when: vec![1],
+                    unless: vec![0],
+                    fires: vec![7],
+                    blocks: vec![9],
+                },
+            ]
         );
     }
 }

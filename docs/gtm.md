@@ -24,7 +24,7 @@ The pieces are written under `-o`:
 |---|---|
 | `macros/jsm-<n>.js` | the body of a Custom JS variable, `n` being its index in the container's macro array |
 | `tags/html-<tag_id>-<n>.js` | one inline script from a Custom HTML tag, in the order it appears in the tag |
-| `index.md` | every macro index with its `function` type and name, and the URLs of external scripts |
+| `index.md` | every macro index with its `function` type and name, the tags with the triggers that fire or block them, and the URLs of external scripts |
 
 With more than one input, a container's files go under a directory named after
 its input file (`gtm/macros/…`), with `-2`, `-3`… added when two inputs share a
@@ -75,6 +75,24 @@ tracks strings, comments and regular expression literals. A `/` counts as the
 start of a regular expression after punctuation that cannot end an operand; a
 regular expression right after a keyword such as `return` is read as division
 and can still mislead the scan.
+
+## Tags and triggers
+
+`index.md` lists every tag the container carries — its `tag_id` and GTM's type for
+it (`__html` is Custom HTML, `__gaawe` a GA4 event) — and the triggers that fire
+or block it, by their row in the trigger table. A trigger's condition is read out
+of the container's compiled `rules` array: the `if` predicates must all hold and
+no `unless` predicate may, and each predicate is written in words (`_eq` equals,
+`_cn` contains, `_sw` starts with, `_re` matches, `_css` matches a CSS selector).
+An operand is the macro's `vtp_name`, or its type and `vtp_component` when it has
+no name (`__e`, `__u:PATH`), so two built-in URL variables do not read the same. An
+`any_of` comparison stores its alternatives in an array argument and they read as
+`or`; any other array argument reads as a comma list. An operator outside that
+table keeps its GTM name rather than a guessed word.
+
+The runtime stores a rule's `add` and `block` instructions as positions in the tag
+array; the extraction turns those into the `tag_id`s a reader sees. A trigger can
+fire no tag and only block, and the other way around.
 
 ## Custom HTML tags
 
