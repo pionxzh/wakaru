@@ -37,6 +37,7 @@ crates/
           scope_split.rs            — recursive scope-hoisted splitting
           webpack_commonjs_runtime.rs — detector-proven runtime normalization
           dead_module.rs            — dead-module elimination
+          link_check.rs             — missing_imported_name: imports a sibling ESM output does not export
           filename_recovery.rs      — recovered module names
         trace.rs                    — rule trace orchestration and formatting
         export_storage.rs           — `debug cjs-exports` driver (pipeline up to UnEsm, then the storage report)

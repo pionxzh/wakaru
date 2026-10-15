@@ -9,7 +9,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::ast::{
     BindingIdent, Ident, IdentName, Invalid, KeyValueProp, MemberExpr, NewExpr, Pat, Prop,
-    PropName, PropOrSpread, SimpleAssignTarget, VarDeclarator,
+    PropName, PropOrSpread, SimpleAssignTarget, UnaryExpr, UnaryOp, UpdateExpr, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -672,6 +672,8 @@ fn is_named_export(exports: &[ExportFact], name: &str) -> bool {
 /// directly or through a binding every use of which is one of those. A
 /// provider that marked itself `__esModule` has lost the marker, so a local
 /// interop helper around the call, which returned it unchanged, is dropped.
+/// A write through the required value of a provider whose namespace is what
+/// `require` returns cannot be moved anywhere and is only reported.
 pub(crate) fn run_kept_require_default_reads(
     module: &mut Module,
     module_facts: &ModuleFactsMap,
@@ -731,7 +733,151 @@ pub(crate) fn run_kept_require_default_reads(
         unhandled: Vec::new(),
     };
     module.visit_mut_with(&mut rewriter);
+    for source in namespace_write_sources(module, unresolved_mark, &|source| {
+        module_facts
+            .get_from(current_filename, source)
+            .is_some_and(returns_namespace)
+    }) {
+        rewriter.report(
+            source,
+            "a write to the exports object it required goes to the namespace, which is not extensible, so the write throws in strict code and is lost in sloppy code",
+        );
+    }
     rewriter.unhandled
+}
+
+/// `require` of the provider returns its namespace and no rewrite above
+/// reads past it: a provider with named exports only, or one that marked
+/// itself `__esModule`.
+fn returns_namespace(provider: &ModuleFacts) -> bool {
+    !provider.stays_commonjs
+        && matches!(
+            provider_shape(provider),
+            None | Some(ProviderShape::Marked { .. })
+        )
+}
+
+/// Sources of kept requires that `module` writes through, directly
+/// (`require("./p").x = v`) or through a binding declared once from one
+/// (`var p = require("./p"); p.x = v`): a member assignment, update, or
+/// `delete`, or the target of `Object.assign`, `Object.defineProperty`,
+/// `Object.defineProperties`, or `Object.setPrototypeOf`. Only sources
+/// `is_namespace` accepts count.
+fn namespace_write_sources(
+    module: &Module,
+    unresolved_mark: Mark,
+    is_namespace: &dyn Fn(&str) -> bool,
+) -> Vec<Atom> {
+    struct Bindings<'a> {
+        unresolved_mark: Mark,
+        is_namespace: &'a dyn Fn(&str) -> bool,
+        sources: HashMap<BindingId, Atom>,
+        declarations: HashMap<BindingId, usize>,
+    }
+    impl Visit for Bindings<'_> {
+        fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+            if let (Pat::Ident(binding), Some(init)) = (&declarator.name, &declarator.init) {
+                if let Some(source) = require_source(init, self.unresolved_mark) {
+                    if (self.is_namespace)(&source) {
+                        self.sources.insert(binding_id(&binding.id), source);
+                    }
+                }
+            }
+            declarator.visit_children_with(self);
+        }
+
+        fn visit_binding_ident(&mut self, binding: &BindingIdent) {
+            *self
+                .declarations
+                .entry(binding_id(&binding.id))
+                .or_default() += 1;
+        }
+    }
+
+    struct Writes<'a> {
+        unresolved_mark: Mark,
+        is_namespace: &'a dyn Fn(&str) -> bool,
+        bindings: HashMap<BindingId, Atom>,
+        found: Vec<Atom>,
+    }
+    impl Writes<'_> {
+        fn written(&mut self, object: &Expr) {
+            let source = match strip_parens(object) {
+                Expr::Ident(id) => self.bindings.get(&binding_id(id)).cloned(),
+                object => require_source(object, self.unresolved_mark)
+                    .filter(|source| (self.is_namespace)(source)),
+            };
+            if let Some(source) = source {
+                if !self.found.contains(&source) {
+                    self.found.push(source);
+                }
+            }
+        }
+    }
+    impl Visit for Writes<'_> {
+        fn visit_simple_assign_target(&mut self, target: &SimpleAssignTarget) {
+            if let SimpleAssignTarget::Member(member) = target {
+                self.written(&member.obj);
+            }
+            target.visit_children_with(self);
+        }
+
+        fn visit_update_expr(&mut self, update: &UpdateExpr) {
+            if let Expr::Member(member) = strip_parens(&update.arg) {
+                self.written(&member.obj);
+            }
+            update.visit_children_with(self);
+        }
+
+        fn visit_unary_expr(&mut self, unary: &UnaryExpr) {
+            if unary.op == UnaryOp::Delete {
+                if let Expr::Member(member) = strip_parens(&unary.arg) {
+                    self.written(&member.obj);
+                }
+            }
+            unary.visit_children_with(self);
+        }
+
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if let (Callee::Expr(callee), Some(target)) = (&call.callee, call.args.first()) {
+                if let Expr::Member(member) = strip_parens(callee) {
+                    let is_object = matches!(strip_parens(&member.obj), Expr::Ident(id)
+                        if is_unresolved_ident(id, "Object", self.unresolved_mark));
+                    let writes_target = member.prop.as_ident().is_some_and(|prop| {
+                        matches!(
+                            prop.sym.as_ref(),
+                            "assign" | "defineProperty" | "defineProperties" | "setPrototypeOf"
+                        )
+                    });
+                    if is_object && writes_target && target.spread.is_none() {
+                        self.written(&target.expr);
+                    }
+                }
+            }
+            call.visit_children_with(self);
+        }
+    }
+
+    let mut bindings = Bindings {
+        unresolved_mark,
+        is_namespace,
+        sources: HashMap::default(),
+        declarations: HashMap::default(),
+    };
+    module.visit_with(&mut bindings);
+    let declarations = bindings.declarations;
+    let mut writes = Writes {
+        unresolved_mark,
+        is_namespace,
+        bindings: bindings
+            .sources
+            .into_iter()
+            .filter(|(id, _)| declarations.get(id) == Some(&1))
+            .collect(),
+        found: Vec::new(),
+    };
+    module.visit_with(&mut writes);
+    writes.found
 }
 
 /// Sources whose required value `module` reads `__esModule` of, as

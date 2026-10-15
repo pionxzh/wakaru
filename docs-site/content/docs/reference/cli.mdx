@@ -191,8 +191,14 @@ throw a `ReferenceError` when they run.
 Unpack always reports a non-error `commonjs_require_of_esm` warning when a
 module that stayed CommonJS requires a module recovered as ESM whose
 namespace differs from the CommonJS value it replaced, such as a
-`module.exports` value it reads, or a default it read through an interop
-that is no longer there.
+`module.exports` value it reads, a default it read through an interop
+that is no longer there, or a write to its exports object, which the
+namespace does not take.
+
+Unpack always reports a non-error `missing_imported_name` warning when an
+ESM output module imports a name that the sibling ESM module it names does
+not export. Node fails to link that module, so none of the module graph that
+imports it runs.
 
 With `--diagnostics`, decompile and unpack report a non-error
 `es_source_kept_commonjs` warning for a module that stayed CommonJS although

@@ -4520,3 +4520,75 @@ fn kept_require_of_an_amd_factory_result_reads_its_default() {
     );
     assert!(unpacked_module(&output, "module-2.js").contains("export default"));
 }
+
+#[test]
+fn es_module_consumer_writing_a_named_only_provider_reports_its_missing_default() {
+    // hypothetical: module 2 writes to the exports object of module 1, which
+    // writes named exports only. Module 1 becomes ESM; module 2 becomes ESM
+    // too and keeps `import p from`, since a namespace import cannot take the
+    // write, so it fails to link.
+    let source = r#"(()=>{var e={1:(e,t,r)=>{t.value=1},2:(e,t,r)=>{var p=r(1);p.value=2;console.log(p.value)}},t={};function r(o){var n=t[o];if(void 0!==n)return n.exports;var s=t[o]={exports:{}};return e[o](s,s.exports,r),s.exports}r(2)})();"#;
+    let output = unpack(source, DecompileOptions::default()).expect("bundle should unpack");
+    let warnings = output
+        .warnings
+        .iter()
+        .filter(|w| w.kind == wakaru_core::UnpackWarningKind::MissingImportedName)
+        .collect::<Vec<_>>();
+    assert_eq!(warnings.len(), 1, "{:#?}", output.warnings);
+    assert_eq!(warnings[0].filename, "module-2.js");
+    assert!(
+        warnings[0]
+            .message
+            .contains("imports `default` from \"./module-1.js\""),
+        "{}",
+        warnings[0].message
+    );
+    assert!(!warnings[0].kind.is_error());
+
+    // A provider that replaced `module.exports` keeps a default export: the
+    // consumer writes to that value, which links and works.
+    let replaced = source.replace("t.value=1", "e.exports={value:1}");
+    let output = unpack(&replaced, DecompileOptions::default()).expect("bundle should unpack");
+    assert!(
+        !output
+            .warnings
+            .iter()
+            .any(|w| w.kind == wakaru_core::UnpackWarningKind::MissingImportedName),
+        "{:#?}",
+        output.warnings
+    );
+}
+
+#[test]
+fn commonjs_consumer_writing_a_named_only_provider_now_esm_is_reported() {
+    // Module 2 keeps a require in a function, so it stays CommonJS, and
+    // writes to module 1, which writes named exports only and is now ESM:
+    // `require` returns its namespace, which takes no write. The direct
+    // `r(1).x = v` form is what Terser leaves of a single-use binding
+    // (producer webpack@5.111.1 + Terser).
+    let source = r#"(()=>{var e={1:(e,t,r)=>{t.value=1},2:(e,t,r)=>{var p=r(1);p.extra=2;t.run=function(){return r(3)}},3:(e,t,r)=>{t.x=1},4:(e,t,r)=>{"use strict";r(1).value=3;t.run=function(){return r(3)}}},t={};function r(o){var n=t[o];if(void 0!==n)return n.exports;var s=t[o]={exports:{}};return e[o](s,s.exports,r),s.exports}globalThis.a=r(2),globalThis.b=r(4)})();"#;
+    let output = unpack(source, DecompileOptions::default()).expect("bundle should unpack");
+    let reported = |filename: &str| {
+        output.warnings.iter().any(|w| {
+            w.kind == wakaru_core::UnpackWarningKind::CommonJsRequireOfEsm
+                && w.filename == filename
+                && w.message.contains("\"./module-1.js\"")
+                && w.message.contains("not extensible")
+        })
+    };
+    assert!(reported("module-2.js"), "{:#?}", output.warnings);
+    assert!(reported("module-4.js"), "{:#?}", output.warnings);
+
+    // A default-only provider's kept require reads `.default`, the value the
+    // write went to before: nothing to report.
+    let replaced = source.replace("t.value=1", "e.exports={value:1}");
+    let output = unpack(&replaced, DecompileOptions::default()).expect("bundle should unpack");
+    assert!(
+        !output
+            .warnings
+            .iter()
+            .any(|w| w.kind == wakaru_core::UnpackWarningKind::CommonJsRequireOfEsm),
+        "{:#?}",
+        output.warnings
+    );
+}

@@ -26,6 +26,7 @@ use crate::unpacker::{
 
 mod dead_module;
 mod filename_recovery;
+mod link_check;
 mod merge;
 mod phases;
 mod schedule;

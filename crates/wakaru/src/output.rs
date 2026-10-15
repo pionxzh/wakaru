@@ -232,6 +232,7 @@ pub enum DiagnosticCode {
     CommonJsRequireUnrecovered,
     CommonJsRequireOfEsm,
     EsSourceKeptCommonJs,
+    MissingImportedName,
     OutputParseRecovered,
     OutputParseFailed,
 }
@@ -253,6 +254,7 @@ impl DiagnosticCode {
             Self::CommonJsRequireUnrecovered => "commonjs_require_unrecovered",
             Self::CommonJsRequireOfEsm => "commonjs_require_of_esm",
             Self::EsSourceKeptCommonJs => "es_source_kept_commonjs",
+            Self::MissingImportedName => "missing_imported_name",
             Self::OutputParseRecovered => "output_parse_recovered",
             Self::OutputParseFailed => "output_parse_failed",
         }

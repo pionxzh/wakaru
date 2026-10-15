@@ -343,7 +343,7 @@ result from a run that produced nothing.
 
 | Error-class (`is_error: true`) | Non-error |
 |---|---|
-| `raw_normalization_failed`, `fact_collection_failed`, `webpack_factory_recovery_failed`, `decompile_failed`, `duplicate_declaration`, `output_parse_recovered`, `output_parse_failed` | `input_parse_recovered`, `tdz_violation`, `import_cycle`, `cross_module_class_call`, `commonjs_export_unrecovered`, `commonjs_require_unrecovered`, `commonjs_require_of_esm`, `es_source_kept_commonjs`, `runtime_residual`, `gtm_unsupported_escape` |
+| `raw_normalization_failed`, `fact_collection_failed`, `webpack_factory_recovery_failed`, `decompile_failed`, `duplicate_declaration`, `output_parse_recovered`, `output_parse_failed` | `input_parse_recovered`, `tdz_violation`, `import_cycle`, `cross_module_class_call`, `commonjs_export_unrecovered`, `commonjs_require_unrecovered`, `commonjs_require_of_esm`, `missing_imported_name`, `es_source_kept_commonjs`, `runtime_residual`, `gtm_unsupported_escape` |
 
 `duplicate_declaration`, `es_source_kept_commonjs`, and the `output_parse_*`
 checks run only with `--diagnostics`. Without it, Wakaru does not re-parse emitted modules, so a
@@ -428,7 +428,20 @@ through an interop. Node (since v22.12 and v20.19) adds `__esModule` to the
 namespace of a module with a default export, so an interop still in the
 output reads that default and is not reported. What is reported is an
 interop that is gone (`UnWebpackInterop` removed `require.n`) or a provider
-without a default export.
+without a default export. A write through the required value (`p.x = v`,
+`delete p.x`, `Object.assign(p, …)`) to a provider that writes named exports
+only, or that marked itself `__esModule`, is reported too: the namespace is
+not extensible, so the write throws in strict code and is lost in sloppy
+code.
+
+Unpack reports a non-error `missing_imported_name` warning, with or without
+`--diagnostics`, when an ESM output module imports or re-exports a name that
+the sibling ESM output module it names does not export. Node fails to link
+such a module (`does not provide an export named …`), so none of the module
+graph that imports it runs. A sibling with no `import` or `export` is
+CommonJS to Node and is not checked; neither is a name that may come through
+its `export *`, except `default`, which never does. `debug validate` reports
+the same defect as a finding, with star exports resolved.
 
 With `--diagnostics`, decompile and unpack report a non-error
 `es_source_kept_commonjs` warning for a module that stayed CommonJS although

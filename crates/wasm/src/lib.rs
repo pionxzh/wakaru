@@ -276,6 +276,7 @@ export type WakaruWarningKind =
     | "commonjs_require_unrecovered"
     | "commonjs_require_of_esm"
     | "es_source_kept_commonjs"
+    | "missing_imported_name"
     | "output_parse_recovered"
     | "output_parse_failed"
     | "formatter_failed";
@@ -383,6 +384,10 @@ mod tests {
             (
                 wakaru::DiagnosticCode::EsSourceKeptCommonJs,
                 "es_source_kept_commonjs",
+            ),
+            (
+                wakaru::DiagnosticCode::MissingImportedName,
+                "missing_imported_name",
             ),
             (
                 wakaru::DiagnosticCode::OutputParseRecovered,

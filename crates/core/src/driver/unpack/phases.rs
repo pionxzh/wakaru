@@ -31,6 +31,7 @@ use super::dead_module::{collect_import_report, eliminate_dead_helper_modules, I
 use super::filename_recovery::{
     build_rename_map, harvest_suggested_filename, rewrite_import_sources,
 };
+use super::link_check::{collect_link_report, collect_missing_imported_name_warnings, LinkReport};
 use super::merge::{
     apply_filename_rewrites, apply_numeric_rewrites, NumericRewritePlan, PreparedUnpackModule,
 };
@@ -702,12 +703,14 @@ pub(super) fn unpack_multi_module_with_plan(
         Vec<UnpackWarning>,
         Option<ImportReport>,
         Option<String>,
+        Option<LinkReport>,
     ) {
         if unpacked.detector_failure.is_some() {
             return (
                 unpacked.module.filename,
                 unpacked.module.code,
                 Vec::new(),
+                None,
                 None,
                 None,
             );
@@ -721,6 +724,7 @@ pub(super) fn unpack_multi_module_with_plan(
             Option<String>,
             Vec<UnpackWarning>,
             Option<ImportReport>,
+            LinkReport,
         )> {
             let rules_span = tracing::info_span!("phase2: rules");
             let rules_enter = rules_span.enter();
@@ -821,7 +825,13 @@ pub(super) fn unpack_multi_module_with_plan(
                     UnpackWarningKind::DecompileFailed,
                     "lifted function boundary could not be restored around a module-scope return; preserving the extracted body",
                 ));
-                return Ok((unpacked.module.code.clone(), None, fallback_warnings, None));
+                return Ok((
+                    unpacked.module.code.clone(),
+                    None,
+                    fallback_warnings,
+                    None,
+                    LinkReport::default(),
+                ));
             }
             drop(rules_enter);
             drop(rules_span);
@@ -919,6 +929,7 @@ pub(super) fn unpack_multi_module_with_plan(
             } else {
                 None
             };
+            let link = collect_link_report(&module);
 
             {
                 let span = tracing::info_span!("phase2: fixer");
@@ -960,7 +971,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 diag_warnings.extend(collect_output_diagnostics(&code, &unpacked.module.filename));
             }
 
-            Ok((code, srcmap_json, diag_warnings, report))
+            Ok((code, srcmap_json, diag_warnings, report, link))
         };
 
         let result = if let Some(prepared) = prepared {
@@ -1039,7 +1050,7 @@ pub(super) fn unpack_multi_module_with_plan(
         };
 
         match result {
-            Ok((code, srcmap_json, mut diag_warnings, report)) => {
+            Ok((code, srcmap_json, mut diag_warnings, report, link)) => {
                 let out_filename = rename_ref
                     .get(&unpacked.module.filename)
                     .cloned()
@@ -1047,7 +1058,14 @@ pub(super) fn unpack_multi_module_with_plan(
                 if let Some(note) = unpacked.detector_note {
                     diag_warnings.push(detector_note_warning(&out_filename, note));
                 }
-                (out_filename, code, diag_warnings, report, srcmap_json)
+                (
+                    out_filename,
+                    code,
+                    diag_warnings,
+                    report,
+                    srcmap_json,
+                    Some(link),
+                )
             }
             Err(e) => (
                 unpacked.module.filename.clone(),
@@ -1057,6 +1075,7 @@ pub(super) fn unpack_multi_module_with_plan(
                     UnpackWarningKind::DecompileFailed,
                     format!("decompile failed, preserving raw code: {e}"),
                 )],
+                None,
                 None,
                 None,
             ),
@@ -1080,11 +1099,16 @@ pub(super) fn unpack_multi_module_with_plan(
     // Separate source maps from the tuples before dead-module elimination.
     let mut srcmap_by_filename: crate::collections::HashMap<String, String> =
         crate::collections::HashMap::default();
+    let mut link_by_filename: crate::collections::HashMap<String, LinkReport> =
+        crate::collections::HashMap::default();
     let triples_for_dead: Vec<(String, String, Vec<UnpackWarning>, Option<ImportReport>)> = triples
         .into_iter()
-        .map(|(filename, code, warns, report, srcmap)| {
+        .map(|(filename, code, warns, report, srcmap, link)| {
             if let Some(map_json) = srcmap {
                 srcmap_by_filename.insert(filename.clone(), map_json);
+            }
+            if let Some(link) = link {
+                link_by_filename.insert(filename.clone(), link);
             }
             (filename, code, warns, report)
         })
@@ -1101,6 +1125,16 @@ pub(super) fn unpack_multi_module_with_plan(
             warnings.extend(module_warnings);
         }
     }
+    // Only modules that survived dead-module elimination link.
+    let link_reports: Vec<(&str, &LinkReport)> = modules
+        .iter()
+        .filter_map(|(filename, _)| {
+            link_by_filename
+                .get(filename)
+                .map(|report| (filename.as_str(), report))
+        })
+        .collect();
+    warnings.extend(collect_missing_imported_name_warnings(&link_reports));
     if options.diagnostics && report_import_cycle_warnings {
         warnings.extend(collect_import_cycle_warnings(&modules));
     }

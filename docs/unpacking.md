@@ -712,7 +712,8 @@ layout directly is a proposal:
     `require`. The namespace is not extensible, so the write throws a
     TypeError when it runs in strict code and is lost in sloppy code.
 
-  No warning reports either. The shape is wild-observed. Consumers outside
+  Unpack reports the first as `missing_imported_name` and the second as
+  `commonjs_require_of_esm`. The shape is wild-observed. Consumers outside
   the input are covered by
   [`exports_object_closed_to_consumers`](rewrite-assumptions.md#exports_object_closed_to_consumers)
   instead.

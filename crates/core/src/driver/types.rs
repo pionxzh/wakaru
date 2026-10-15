@@ -219,6 +219,9 @@ pub enum UnpackWarningKind {
     /// With `--diagnostics`: a module stayed CommonJS although its input
     /// looks like the output of an ES module source.
     EsSourceKeptCommonJs,
+    /// An ES module output imports a name that the sibling ES module output
+    /// it imports from does not export, so the module fails to link.
+    MissingImportedName,
     OutputParseRecovered,
     OutputParseFailed,
 }
@@ -240,6 +243,7 @@ impl UnpackWarningKind {
             Self::CommonJsRequireUnrecovered => "commonjs_require_unrecovered",
             Self::CommonJsRequireOfEsm => "commonjs_require_of_esm",
             Self::EsSourceKeptCommonJs => "es_source_kept_commonjs",
+            Self::MissingImportedName => "missing_imported_name",
             Self::OutputParseRecovered => "output_parse_recovered",
             Self::OutputParseFailed => "output_parse_failed",
         }
@@ -259,6 +263,7 @@ impl UnpackWarningKind {
                 | Self::CommonJsRequireUnrecovered
                 | Self::CommonJsRequireOfEsm
                 | Self::EsSourceKeptCommonJs
+                | Self::MissingImportedName
         )
     }
 
