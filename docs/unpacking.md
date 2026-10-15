@@ -713,8 +713,11 @@ layout directly is a proposal:
     TypeError when it runs in strict code and is lost in sloppy code.
 
   Unpack reports the first as `missing_imported_name` and the second as
-  `commonjs_require_of_esm`. The shape is wild-observed. Consumers outside
-  the input are covered by
+  `commonjs_require_of_esm`. The shape is wild-observed. The fix needs the
+  provider's format decision to see its consumers' writes, which Phase 1
+  does not; it is deferred
+  ([proposal](proposals/consumer-aware-provider-format.md)). Consumers
+  outside the input are covered by
   [`exports_object_closed_to_consumers`](rewrite-assumptions.md#exports_object_closed_to_consumers)
   instead.
 - **A `.cjs` name still gets ESM syntax.** A single-file decompile keeps a
