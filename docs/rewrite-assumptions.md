@@ -977,6 +977,51 @@ Level: wherever CommonJS becomes ESM: `standard` and above for single-file
 input (`single_file_esm_consumers`), and every level in unpack mode. This is
 inherent to emitting ESM from CommonJS.
 
+### `exports_object_closed_to_consumers`
+
+Requiring a CommonJS module returns its `exports` object, an ordinary object.
+The code that requires it can add, overwrite, or delete properties on it, for
+example to stub an export or to register a plugin. A method call through it,
+`lib.fn()`, runs with that object as `this`, so the callee can write to it
+too. Once the module is recovered as ESM, a consumer gets its module
+namespace object instead (`import * as lib`, or Node's `require()` of an ES
+module). The namespace is not extensible, its properties cannot be assigned
+or deleted from outside, and it is the `this` of `lib.fn()`. A consumer's
+write throws a TypeError in strict code and does nothing in sloppy code. A
+write through `this` in the recovered module always throws, because ES
+modules are strict:
+
+```js
+// provider, recovered as ESM
+exports.Type = function Type(tag) { this.tag = tag; };
+// a consumer outside the input
+const lib = require("./provider.js");
+lib.extra = 1;  // CommonJS: adds a property. ESM: TypeError in strict code
+lib.Type("x");  // CommonJS: writes `tag` onto the exports object. ESM: TypeError
+```
+
+wakaru assumes that code outside the input does not write to the exports
+object of a module it recovers as ESM. That code is invisible to it: a single
+file, or the entry of an unpacked bundle, is used by consumers that are not
+part of the input. Keeping every such module CommonJS would give up ESM
+recovery for every module that has an export, so the deviation is accepted.
+Calling a constructor-style export without `new`, as on the last line above,
+is a misuse that reaches it: in the CommonJS original the call wrote onto the
+exports object, and in the recovered module it throws at that first write.
+`call_receiver_independence` covers the receivers that lowering adds or
+removes; this assumption covers the receiver of a consumer's own `lib.fn()`.
+
+Inside the input, unpack sees every consumer, and this assumption does not
+cover them. A consumer that writes to a provider's exports object is a known
+gap (see [unpacking.md](unpacking.md#known-gaps)).
+
+Affects: `UnEsm` (every module it recovers as ESM), and the unpack recoveries
+that import a provider as a namespace or decompose one.
+
+Level: wherever CommonJS becomes ESM: `standard` and above for single-file
+input (`single_file_esm_consumers`), and every level in unpack mode. This is
+inherent to emitting ESM from CommonJS.
+
 ### `commonjs_export_mirror_coverage`
 
 Babel, sucrase, and TypeScript (for aliases and reassigned functions) keep an

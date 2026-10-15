@@ -698,6 +698,24 @@ layout directly is a proposal:
   output works: Node (since v22.12 and v20.19) adds `__esModule` to the
   namespace of a module with a default export, so the interop reads that
   default.
+- **A consumer that writes to a provider's exports object.** A module that
+  assigns to a required provider (`var p = require("./p"); p.f = impl`)
+  needs the provider's mutable `exports` object. A provider that writes only
+  named exports (`exports.f = …`) still becomes an ES module, which has no
+  such object, and the write fails in one of two ways:
+  - a consumer that becomes ESM keeps the default import it got from its
+    `require`, because the namespace import that replaces it for other
+    consumers refuses a mutation. The provider has no default export, so
+    the output fails to link before any of it runs (`does not provide an
+    export named 'default'`);
+  - a consumer that stays CommonJS gets the provider's module namespace from
+    `require`. The namespace is not extensible, so the write throws a
+    TypeError when it runs in strict code and is lost in sloppy code.
+
+  No warning reports either. The shape is wild-observed. Consumers outside
+  the input are covered by
+  [`exports_object_closed_to_consumers`](rewrite-assumptions.md#exports_object_closed_to_consumers)
+  instead.
 - **A `.cjs` name still gets ESM syntax.** A single-file decompile keeps a
   `.cjs`/`.cts` input CommonJS (`run_un_esm` stands down), but unpack does
   not apply that gate. Two inputs reach it: a `.cjs` file passed to
