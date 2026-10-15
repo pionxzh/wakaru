@@ -6997,6 +6997,31 @@ fn export_storage_module_gates() {
         export_storage("exports.a = 1; module.exports.b = 2; module.hot && module.hot.accept();"),
         ["a=property", "b=property"]
     );
+    // An identity comparison with `module` reads no export property.
+    assert_eq!(
+        export_storage("exports.a = 1; exports.main = require.main === module; f(module !== x);"),
+        ["a=property", "main=property"]
+    );
+    assert!(export_storage("exports.a = 1; f(module == x);")[0]
+        .starts_with("gate: `module` is referenced"));
+}
+
+#[test]
+fn property_storage_recovers_typescript_self_reads_beside_a_require_main_check() {
+    let input = r#"
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.isMain = exports.Box = void 0;
+exports.bump = bump;
+exports.Box = { read() { return exports.Box.value; }, value: 1 };
+function bump() { exports.Box.value += 1; return exports.Box.read(); }
+exports.isMain = typeof require !== "undefined" && require.main === module;
+"#;
+    let output = render_pipeline(input);
+    assert!(!output.contains("exports"), "{output}");
+    assert!(output.contains("return Box.value;"), "{output}");
+    assert!(output.contains("Box.value += 1;"), "{output}");
+    assert!(output.contains("require.main === module"), "{output}");
 }
 
 // ============================================================

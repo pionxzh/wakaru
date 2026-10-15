@@ -1267,6 +1267,18 @@ impl Visit for Inventory {
         if bin.op == BinaryOp::In {
             bin.left.visit_with(self);
             self.visit_in_operand(&bin.right);
+        } else if matches!(bin.op, BinaryOp::EqEqEq | BinaryOp::NotEqEq) {
+            // An identity comparison (tsc's `require.main === module`) reads
+            // no property of `module`, so a bare `module` operand does not
+            // touch exports. Loose equality may call `module`'s conversion
+            // methods and stays gated.
+            for operand in [&bin.left, &bin.right] {
+                if !matches!(strip_parens(operand), Expr::Ident(ident)
+                    if is_unresolved_ident(ident, "module", self.unresolved_mark))
+                {
+                    operand.visit_with(self);
+                }
+            }
         } else {
             bin.visit_children_with(self);
         }
