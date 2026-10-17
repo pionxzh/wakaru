@@ -1879,15 +1879,30 @@ fn adapt_public_unpack_output(output: wakaru::UnpackOutput) -> CliUnpackOutput {
             CliWarning::from_public(diagnostic, filename)
         })
         .collect();
+    // A module with no spans (an empty factory body) still names its input
+    // through the reports. A module listed by several inputs gets none.
+    let mut report_inputs: Vec<Option<Option<&str>>> = vec![None; output.modules.len()];
+    for input in &output.inputs {
+        for &index in &input.module_indices {
+            if let Some(slot) = report_inputs.get_mut(index) {
+                *slot = match slot {
+                    None => Some(Some(input.filename.as_str())),
+                    Some(_) => Some(None),
+                };
+            }
+        }
+    }
     let provenance = output
         .modules
         .iter()
-        .map(|module| {
+        .enumerate()
+        .map(|(index, module)| {
             let input = module
                 .provenance
                 .first()
                 .and_then(|span| input_names.get(span.input.get() as usize))
                 .copied()
+                .or_else(|| report_inputs[index].flatten())
                 .unwrap_or_default()
                 .to_string();
             CliModuleProvenance {

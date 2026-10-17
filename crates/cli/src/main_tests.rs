@@ -1343,6 +1343,52 @@ fn provenance_input_joins_directory_argument_with_file_path() {
     fs::remove_dir_all(&dir).expect("remove temp dir");
 }
 
+/// `102:()=>{}` is the factory of an empty required file (producer
+/// webpack@5.98.0 mode=production).
+#[test]
+fn provenance_input_names_empty_factory_source_among_several_inputs() {
+    let dir = temp_test_dir("provenance-empty-factory");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let chunk_a = dir.join("chunk-a.js");
+    let chunk_b = dir.join("chunk-b.js");
+    fs::write(
+        &chunk_a,
+        r#"(self.webpackChunkdemo=self.webpackChunkdemo||[]).push([[100],{101:(e,t,r)=>{"use strict";r(102);e.exports=function(){return"a"}},102:()=>{}}]);"#,
+    )
+    .expect("write first chunk");
+    fs::write(
+        &chunk_b,
+        r#"(self.webpackChunkdemo=self.webpackChunkdemo||[]).push([[200],{201:(e,t,r)=>{"use strict";e.exports=function(){return"b"}}}]);"#,
+    )
+    .expect("write second chunk");
+    let chunk_a = chunk_a.to_str().expect("input path should be utf8");
+    let chunk_b = chunk_b.to_str().expect("input path should be utf8");
+    let out_dir = dir.join("out");
+
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        chunk_a,
+        chunk_b,
+        "--unpack=strict",
+        "--provenance",
+        "-o",
+        out_dir.to_str().expect("output path should be utf8"),
+    ])
+    .expect("provenance unpack cli should parse");
+    run_default(cli).expect("provenance unpack should succeed");
+
+    let provenance: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(out_dir.join("provenance.json")).expect("read provenance.json"),
+    )
+    .expect("parse provenance.json");
+    let modules = &provenance["modules"];
+    assert_eq!(modules["module-102.js"]["input"], chunk_a);
+    assert_eq!(modules["module-102.js"]["ranges"], serde_json::json!([]));
+    assert_eq!(modules["module-201.js"]["input"], chunk_b);
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
 #[test]
 fn provenance_names_ignore_interleaved_vue_sfc_sidecars() {
     let out_dir = PathBuf::from("/tmp/wakaru-out");

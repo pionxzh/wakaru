@@ -102,6 +102,9 @@ is `<stdin>`. A module from a Bun single-file executable is
 removed from the embedded path. Its ranges index the embedded
 file's bytes, not the executable's. All ranges of a module refer to its one
 `input`. A file passed twice yields two inputs with the same `input` string.
+A module with no source statements, such as an empty factory, has empty
+`ranges` but still names its `input`. A module that no single input owns, such
+as one Wakaru synthesizes for several inputs, has an empty `input` string.
 
 ## Extract every file from a Bun single-file executable
 

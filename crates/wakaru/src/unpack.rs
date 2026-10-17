@@ -324,6 +324,7 @@ fn convert_core_output(
     let span = tracing::info_span!("public_unpack_convert_output");
     let _enter = span.enter();
     let only_input = (processed.len() == 1).then_some(processed[0].id);
+    let mut module_inputs: Vec<Option<InputId>> = Vec::new();
     let failed: HashSet<&str> = output
         .warnings
         .iter()
@@ -375,6 +376,15 @@ fn convert_core_output(
                     associated.extend(processed.iter().map(|input| input.id));
                 }
             }
+            // A module without spans (an empty factory body) still belongs to
+            // one input, so diagnostics key on the association, not the spans.
+            module_inputs.push(
+                associated
+                    .iter()
+                    .copied()
+                    .next()
+                    .filter(|_| associated.len() == 1),
+            );
             for input in associated {
                 reports[input.get() as usize].module_indices.push(index);
             }
@@ -409,11 +419,7 @@ fn convert_core_output(
         .map(|warning| {
             let module = module_by_filename.get(warning.filename.as_str()).copied();
             let mut diagnostic = diagnostic_from_core(warning, module);
-            diagnostic.input = module.and_then(|index| {
-                let mut inputs = modules[index].provenance.iter().map(|span| span.input);
-                let first = inputs.next()?;
-                inputs.all(|input| input == first).then_some(first)
-            });
+            diagnostic.input = module.and_then(|index| module_inputs[index]);
             diagnostic
         })
         .collect();
@@ -914,6 +920,7 @@ mod tests {
                 code: "export {};".to_string(),
                 ..Default::default()
             }],
+            warnings: vec![decompile_failed_warning("synthesized.js")],
             ..Default::default()
         };
 
@@ -923,6 +930,73 @@ mod tests {
         assert!(converted.modules[0].provenance.is_empty());
         assert_eq!(reports[0].module_indices, vec![0]);
         assert_eq!(reports[1].module_indices, vec![0]);
+        assert_eq!(converted.diagnostics[0].input, None);
+    }
+
+    #[test]
+    fn span_less_module_diagnostic_keeps_its_input() {
+        let processed = vec![ProcessedInput {
+            id: InputId::from_index(0),
+        }];
+        let mut reports = vec![InputReport {
+            id: processed[0].id,
+            filename: "chunk.js".to_string(),
+            detection: InputDetection::Structural(BundleFormat::Webpack5),
+            action: InputAction::Processed,
+            module_indices: Vec::new(),
+        }];
+        let output = wakaru_core::driver::PreparedUnpackOutput {
+            modules: vec![wakaru_core::driver::PreparedModuleOutput {
+                filename: "module-1.js".to_string(),
+                ..Default::default()
+            }],
+            warnings: vec![decompile_failed_warning("module-1.js")],
+            ..Default::default()
+        };
+
+        let converted = convert_core_output(output, &processed, &mut reports, false);
+
+        assert!(converted.modules[0].provenance.is_empty());
+        assert_eq!(reports[0].module_indices, vec![0]);
+        assert_eq!(converted.diagnostics[0].module, Some(0));
+        assert_eq!(converted.diagnostics[0].input, Some(processed[0].id));
+    }
+
+    /// `102:()=>{}` is the factory of an empty required file (producer
+    /// webpack@5.98.0 mode=production).
+    #[test]
+    fn empty_factory_in_one_of_several_inputs_is_reported_by_that_input() {
+        let output = unpack(
+            vec![
+                Source::new(
+                    "chunk-a.js",
+                    r#"(self.webpackChunkdemo=self.webpackChunkdemo||[]).push([[100],{101:(e,t,r)=>{"use strict";r(102);e.exports=function(){return"a"}},102:()=>{}}]);"#,
+                ),
+                Source::new(
+                    "chunk-b.js",
+                    r#"(self.webpackChunkdemo=self.webpackChunkdemo||[]).push([[200],{201:(e,t,r)=>{"use strict";e.exports=function(){return"b"}}}]);"#,
+                ),
+            ],
+            UnpackOptions::default().with_mode(UnpackMode::Strict),
+        )
+        .expect("webpack chunks should unpack");
+
+        let empty = output
+            .modules
+            .iter()
+            .position(|module| module.filename == "module-102.js")
+            .expect("empty factory should be emitted");
+        assert!(output.modules[empty].provenance.is_empty());
+        assert!(output.inputs[0].module_indices.contains(&empty));
+        assert!(!output.inputs[1].module_indices.contains(&empty));
+    }
+
+    fn decompile_failed_warning(filename: &str) -> wakaru_core::UnpackWarning {
+        wakaru_core::UnpackWarning {
+            filename: filename.to_string(),
+            kind: wakaru_core::UnpackWarningKind::DecompileFailed,
+            message: "decompile failed".to_string(),
+        }
     }
 
     #[test]
