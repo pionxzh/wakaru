@@ -2391,15 +2391,23 @@ const SYNTHETIC_GTM_CONTAINER: &str = r#"
 (function(){var data = {"resource":{"version":"40","macros":[
   {"function":"__jsm","vtp_javascript":["template","(function(){var a=1;return a})();"]},
   {"function":"__v","vtp_name":"order_amount"},
+  {"function":"__e"},
+  {"function":"__u","vtp_component":"QUERY","vtp_queryKey":"a"},
+  {"function":"__u","vtp_component":"QUERY","vtp_queryKey":"b"},
   {"function":"__e"}
 ],"predicates":[
   {"function":"_eq","arg0":["macro",2],"arg1":"gtm.js"},
   {"function":"_cn","arg0":["macro",1],"arg1":"100"},
-  {"function":"_eq","arg0":["macro",2],"arg1":["gtm.js","gtm.dom"],"any_of":true}
+  {"function":"_eq","arg0":["macro",2],"arg1":["list","gtm.js","gtm.dom"],"any_of":true},
+  {"function":"_re","arg0":["macro",3],"arg1":"x|y","ignore_case":true},
+  {"function":"_cn","arg0":["macro",4],"arg1":["template","id-",["macro",1]],"ignore_case":true},
+  {"function":"_eq","arg0":["macro",5],"arg1":"gtm.dom"}
 ],"rules":[
   [["if",0],["add",0]],
   [["if",1],["unless",0],["add",1],["block",2]],
-  [["if",2],["add",2]]
+  [["if",2],["add",2]],
+  [["if",3,4],["add",1]],
+  [["if",5],["add",1]]
 ],"tags":[
   {"function":"__html","tag_id":7,"vtp_html":["template","\n<script type=\"text/gtmscript\">track(\"",["escape",["macro",1],7],"\"," ,["escape",["macro",0],8,16],");</script>"]},
   {"function":"__html","tag_id":9,"vtp_html":"<script type=\"text/gtmscript\" data-gtmsrc=\"//example.com/loader.js\"></script>"},
@@ -2464,9 +2472,23 @@ fn unpacking_a_gtm_container_writes_its_scripts_and_index() {
         ),
         "{index}"
     );
-    // an `any_of` comparison reads its alternatives as `or`
+    // an `any_of` comparison reads its alternatives as `or`, without the `list` head
     assert!(
         index.contains(r#"| 2 | `__e equals ("gtm.js" or "gtm.dom")` | 11 |  |"#),
+        "{index}"
+    );
+    // a repeated definition reads as its first copy, which has no different macro to be told
+    // apart from
+    assert!(
+        index.contains(r#"| 4 | `__e equals "gtm.dom"` | 9 |  |"#),
+        "{index}"
+    );
+    // two macros with one label and different definitions carry their row; a template joins its macros into the text; and
+    // `ignore_case` shows only on `_re`, the one comparison the runtime reads it for
+    assert!(
+        index.contains(
+            r#"| 3 | `__u:QUERY#3 matches "x\|y" (ignoring case)` and `__u:QUERY#4 contains "id-{{order_amount}}"` | 9 |  |"#
+        ),
         "{index}"
     );
     fs::remove_dir_all(&dir).expect("remove temp dir");

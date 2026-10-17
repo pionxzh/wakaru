@@ -100,6 +100,10 @@ pub struct GtmMacro {
     /// `vtp_component` of a built-in variable that has one, such as `URL`, `PATH` or `HOST` for
     /// `__u`. It is what tells two such macros apart when neither has a `vtp_name`.
     pub component: Option<String>,
+    /// The first earlier macro with the same definition, field for field. A container often repeats
+    /// a variable (two `__e` entries, say); the copies read the same value, so a reader does not need
+    /// them told apart.
+    pub same_as: Option<usize>,
 }
 
 /// A template part the extraction does not understand: an escape whose modes are unknown, or a
@@ -126,8 +130,10 @@ pub enum GtmOperand {
     Macro { index: u64 },
     /// A literal string, number or boolean, rendered as text.
     Value(String),
-    /// An array argument, such as the alternatives of an `any_of` comparison.
+    /// A `["list", …]` argument, such as the alternatives of an `any_of` comparison.
     List(Vec<GtmOperand>),
+    /// A `["template", …]` argument: literal text and macro references joined into one string.
+    Template(Vec<GtmOperand>),
 }
 
 /// One entry of the container's `predicates` array: the leaf of a trigger's condition.
@@ -245,6 +251,9 @@ fn extract(module: &Module) -> Option<GtmContainer> {
                     .get("vtp_component")
                     .and_then(GtmValue::as_str)
                     .map(ToOwned::to_owned),
+                same_as: macros[..macro_index]
+                    .iter()
+                    .position(|earlier| earlier == macro_value),
             });
         }
         // Custom JS is the only macro whose body is code worth reading; everything else is a value
@@ -370,21 +379,29 @@ fn extract(module: &Module) -> Option<GtmContainer> {
     Some(container)
 }
 
-/// A predicate argument: a `["macro", n]` reference, a literal rendered as text, or an array of
-/// them.
+/// A predicate argument: a `["macro", n]` reference, a literal rendered as text, or a `["list", …]`
+/// or `["template", …]` of them.
+///
+/// The runtime expands an argument by its first element, as it does a tag field, and throws on an
+/// array whose head it does not know, so a list of alternatives is always `["list", …]` and its head
+/// is not one of them. An escape (`["escape", ["macro", n], mode, …]`) reads as the value it wraps:
+/// its modes encode that value for HTML or JavaScript output, and a condition needs only which value
+/// is compared. Any other array keeps every element, head included.
 fn operand(value: Option<&GtmValue>) -> GtmOperand {
+    let rest = |items: &[GtmValue]| -> Vec<GtmOperand> {
+        items[1..].iter().map(|item| operand(Some(item))).collect()
+    };
     match value {
-        Some(GtmValue::Array(items))
-            if items.first().and_then(GtmValue::as_str) == Some("macro") =>
-        {
-            match items.get(1).and_then(GtmValue::as_u64) {
+        Some(GtmValue::Array(items)) => match items.first().and_then(GtmValue::as_str) {
+            Some("macro") => match items.get(1).and_then(GtmValue::as_u64) {
                 Some(index) => GtmOperand::Macro { index },
                 None => GtmOperand::Value(String::new()),
-            }
-        }
-        Some(GtmValue::Array(items)) => {
-            GtmOperand::List(items.iter().map(|item| operand(Some(item))).collect())
-        }
+            },
+            Some("escape") => operand(items.get(1)),
+            Some("list") => GtmOperand::List(rest(items)),
+            Some("template") => GtmOperand::Template(rest(items)),
+            _ => GtmOperand::List(items.iter().map(|item| operand(Some(item))).collect()),
+        },
         Some(GtmValue::Str(text)) => GtmOperand::Value(text.clone()),
         Some(GtmValue::Num(value)) => GtmOperand::Value(number(*value)),
         Some(GtmValue::Bool(value)) => GtmOperand::Value(value.to_string()),
@@ -1045,16 +1062,21 @@ var data = {"resource":{"version":"40","macros":[
     fn reads_every_tag_and_decodes_its_triggers() {
         // wild-observed: `rules` holds compiled programs, `if`/`unless` carry predicate indices and
         // `add`/`block` carry *tag array indices* (turned into the tag ids a reader sees); a
-        // predicate compares a macro with a literal, and a `__u` macro carries its component
+        // predicate compares a macro with a literal, and a `__u` macro carries its component.
+        // hypothetical: the `["list", …]` and `["template", …]` arguments, written in the encoding
+        // the runtime expands every argument with
         let container = extract(&parse(
             r#"var data={"resource":{"version":"7","macros":[
                 {"function":"__u","vtp_component":"PATH"},
-                {"function":"__e"}
+                {"function":"__e"},
+                {"function":"__e"},
+                {"function":"__u","vtp_component":"PATH","vtp_stripWww":true}
             ],"predicates":[
                 {"function":"_cn","arg0":["macro",0],"arg1":"/checkout","ignore_case":true},
                 {"function":"_eq","arg0":["macro",1],"arg1":"gtm.click"},
                 {"function":"_gt","arg0":["macro",0],"arg1":3},
-                {"function":"_eq","arg0":["macro",0],"arg1":["/a","/b"],"any_of":true}
+                {"function":"_eq","arg0":["macro",0],"arg1":["list","/a","/b"],"any_of":true},
+                {"function":"_sw","arg0":["macro",0],"arg1":["template","/",["macro",1],"/"]}
             ],"rules":[
                 [["if",0,1],["add",1]],
                 [["if",1],["unless",0],["add",0],["block",1]]
@@ -1079,6 +1101,10 @@ var data = {"resource":{"version":"40","macros":[
             ]
         );
         assert_eq!(container.macros[0].component.as_deref(), Some("PATH"));
+        // a repeated definition points at the first one, and a different one does not
+        assert_eq!(container.macros[1].same_as, None);
+        assert_eq!(container.macros[2].same_as, Some(1));
+        assert_eq!(container.macros[3].same_as, None);
         assert_eq!(
             container.predicates[0],
             GtmPredicate {
@@ -1094,13 +1120,22 @@ var data = {"resource":{"version":"40","macros":[
             container.predicates[2].arg1,
             GtmOperand::Value("3".to_string())
         );
-        // an `any_of` comparison stores its alternatives as an array argument
+        // an `any_of` comparison stores its alternatives as a `["list", …]` argument, and the head
+        // is not one of them
         assert!(container.predicates[3].any_of);
         assert_eq!(
             container.predicates[3].arg1,
             GtmOperand::List(vec![
                 GtmOperand::Value("/a".to_string()),
                 GtmOperand::Value("/b".to_string()),
+            ])
+        );
+        assert_eq!(
+            container.predicates[4].arg1,
+            GtmOperand::Template(vec![
+                GtmOperand::Value("/".to_string()),
+                GtmOperand::Macro { index: 1 },
+                GtmOperand::Value("/".to_string()),
             ])
         );
         assert_eq!(

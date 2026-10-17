@@ -85,10 +85,19 @@ of the container's compiled `rules` array: the `if` predicates must all hold and
 no `unless` predicate may, and each predicate is written in words (`_eq` equals,
 `_cn` contains, `_sw` starts with, `_re` matches, `_css` matches a CSS selector).
 An operand is the macro's `vtp_name`, or its type and `vtp_component` when it has
-no name (`__e`, `__u:PATH`), so two built-in URL variables do not read the same. An
-`any_of` comparison stores its alternatives in an array argument and they read as
-`or`; any other array argument reads as a comma list. An operator outside that
-table keeps its GTM name rather than a guessed word.
+no name (`__e`, `__u:PATH`). When a macro with a different definition reads the
+same, the operand also carries its row in the macro table (`__u:QUERY#4`): two
+query-string variables differ only in their key, and two Custom JS variables only
+in their body. A container often repeats a definition, such as a second `__e`;
+the copies read the same value, so a copy reads as its first row and keeps the
+bare label when nothing else shares it. The
+runtime expands an argument by its first element, as it does a tag field, so a
+list is `["list", …]` and a value with macros in it is `["template", …]`. An
+`any_of` comparison's list holds alternatives and reads as `or`; any other list
+reads as a comma list, and a template reads as one quoted value with each macro as
+`{{…}}`. The runtime honors `ignore_case` only for `_re`, so only a `_re`
+predicate reads `(ignoring case)`. An operator outside that table keeps its GTM
+name rather than a guessed word.
 
 The runtime stores a rule's `add` and `block` instructions as positions in the tag
 array; the extraction turns those into the `tag_id`s a reader sees. A trigger can

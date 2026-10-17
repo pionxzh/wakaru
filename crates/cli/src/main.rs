@@ -1725,7 +1725,10 @@ fn gtm_index_markdown(container: &wakaru::gtm::Container) -> String {
 
     out.push_str(
         "\n## Triggers\n\nEach trigger's condition and the tags it fires or blocks. A reference is the\n\
-         macro's name, or its type and component when it has no name (`__e`, `__u:PATH`).\n\n\
+         macro's name, or its type and component when it has no name (`__e`, `__u:PATH`), followed\n\
+         by its row in the macro table when a macro with a different definition reads the same\n\
+         (`__u:QUERY#4`); a repeated definition reads as its first row. A\n\
+         `{{…}}` inside a quoted value is a macro joined into the text.\n\n\
          | # | when | fires | blocks |\n|---|---|---|---|\n",
     );
     for trigger in &container.triggers {
@@ -1855,7 +1858,8 @@ fn gtm_predicate(predicate: &wakaru::gtm::Predicate, container: &wakaru::gtm::Co
         operator,
         gtm_operand_comparison(predicate, container)
     );
-    if predicate.ignore_case {
+    // the runtime reads `ignore_case` only for `_re`, so on another comparison it changes nothing
+    if predicate.ignore_case && predicate.function == "_re" {
         text.push_str(" (ignoring case)");
     }
     text
@@ -1876,13 +1880,21 @@ fn gtm_operand_comparison(
 fn gtm_operand(operand: &wakaru::gtm::Operand, container: &wakaru::gtm::Container) -> String {
     match operand {
         wakaru::gtm::Operand::Value(text) => format!("\"{text}\""),
-        wakaru::gtm::Operand::Macro { index } => {
-            match container.macros.iter().find(|m| m.index == *index as usize) {
-                Some(mac) => gtm_macro_label(mac),
-                None => format!("__gtm_macro_{index}"),
-            }
-        }
+        wakaru::gtm::Operand::Macro { index } => gtm_macro_reference(*index, container),
         wakaru::gtm::Operand::List(items) => gtm_operand_list(items, container, ", "),
+        wakaru::gtm::Operand::Template(parts) => {
+            let text: String = parts
+                .iter()
+                .map(|part| match part {
+                    wakaru::gtm::Operand::Value(text) => text.clone(),
+                    wakaru::gtm::Operand::Macro { index } => {
+                        format!("{{{{{}}}}}", gtm_macro_reference(*index, container))
+                    }
+                    other => format!("{{{{{}}}}}", gtm_operand(other, container)),
+                })
+                .collect();
+            format!("\"{text}\"")
+        }
         // `Operand` is non-exhaustive: show a variant this build does not know instead of dropping it
         other => format!("{other:?}"),
     }
@@ -1900,8 +1912,29 @@ fn gtm_operand_list(
     format!("({})", items.join(separator))
 }
 
-/// How a macro reads inside a condition: its `name`, or its type and component when it has none
-/// (`__e`, `__u:PATH`), so two built-ins that share a type do not read the same.
+/// How the macro at `index` reads inside a condition: its label, followed by `#<row>` when a macro
+/// with a different definition has the same label. Two `__u:QUERY` variables differ only in their
+/// query key, and two unnamed `__jsm` variables only in their body, so the label alone does not say
+/// which one is meant. A repeated definition reads as its first copy, so copies of one variable keep
+/// the bare label and, when they need a row, share it.
+fn gtm_macro_reference(index: u64, container: &wakaru::gtm::Container) -> String {
+    let Some(mac) = container.macros.iter().find(|m| m.index as u64 == index) else {
+        return format!("__gtm_macro_{index}");
+    };
+    let first = mac.same_as.unwrap_or(mac.index);
+    let label = gtm_macro_label(mac);
+    let shared = container.macros.iter().any(|other| {
+        other.same_as.is_none() && other.index != first && gtm_macro_label(other) == label
+    });
+    if shared {
+        format!("{label}#{first}")
+    } else {
+        label
+    }
+}
+
+/// A macro's `name`, or its type and component when it has none (`__e`, `__u:PATH`), so two
+/// built-ins that share a type but not a component do not read the same.
 fn gtm_macro_label(mac: &wakaru::gtm::Macro) -> String {
     if let Some(name) = &mac.name {
         return name.clone();

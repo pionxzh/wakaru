@@ -73,6 +73,9 @@ pub struct Macro {
     /// `vtp_component`, when the variable has one: `URL`, `PATH` or `HOST` for
     /// a built-in `__u` variable. It tells apart two macros that have no name.
     pub component: Option<String>,
+    /// The index of the first earlier macro with the same definition, field for
+    /// field: the two read the same value.
+    pub same_as: Option<usize>,
 }
 
 /// One tag the container lists.
@@ -94,8 +97,11 @@ pub enum Operand {
     Macro { index: u64 },
     /// A literal string, number or boolean, as text.
     Value(String),
-    /// An array argument, such as the alternatives of an `any_of` comparison.
+    /// A list argument, such as the alternatives of an `any_of` comparison.
     List(Vec<Operand>),
+    /// A template argument: literal text and macro references joined into one
+    /// string.
+    Template(Vec<Operand>),
 }
 
 /// One entry of the container's `predicates` array: a comparison inside a
@@ -187,6 +193,7 @@ pub fn extract_container(source: &str) -> Option<Container> {
                 function: m.function,
                 name: m.name,
                 component: m.component,
+                same_as: m.same_as,
             })
             .collect(),
         tags: container
@@ -264,6 +271,9 @@ fn operand(value: core::GtmOperand) -> Operand {
         core::GtmOperand::Macro { index } => Operand::Macro { index },
         core::GtmOperand::Value(text) => Operand::Value(text),
         core::GtmOperand::List(items) => Operand::List(items.into_iter().map(operand).collect()),
+        core::GtmOperand::Template(parts) => {
+            Operand::Template(parts.into_iter().map(operand).collect())
+        }
     }
 }
 
@@ -316,5 +326,41 @@ mod tests {
             }]
         );
         assert_eq!(container.macros[0].function, "__jsm");
+    }
+
+    #[test]
+    fn maps_the_tags_and_their_triggers() {
+        let container = extract_container(
+            r#"var data = {"resource": {"macros": [{"function": "__u", "vtp_component": "HOST"}],
+              "tags": [{"function": "__gaawe", "tag_id": 4}],
+              "predicates": [{"function": "_eq", "arg0": ["macro", 0], "arg1": ["template", "a.", ["macro", 0]]}],
+              "rules": [[["if", 0], ["add", 0]]]}};"#,
+        )
+        .expect("a container");
+        assert_eq!(container.macros[0].component.as_deref(), Some("HOST"));
+        assert_eq!(
+            container.tags,
+            vec![Tag {
+                tag_id: 4,
+                function: "__gaawe".to_string(),
+            }]
+        );
+        assert_eq!(
+            container.predicates[0].arg1,
+            Operand::Template(vec![
+                Operand::Value("a.".to_string()),
+                Operand::Macro { index: 0 },
+            ])
+        );
+        assert_eq!(
+            container.triggers,
+            vec![Trigger {
+                index: 0,
+                when: vec![0],
+                unless: Vec::new(),
+                fires: vec![4],
+                blocks: Vec::new(),
+            }]
+        );
     }
 }
