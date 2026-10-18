@@ -1533,6 +1533,41 @@ fn eager_bound_require_id_is_rewritten() {
 }
 
 #[test]
+fn fake_namespace_loader_id_is_rewritten() {
+    // A lazy `import()` of a CommonJS module loads it through `require.t`
+    // with `mode & 1`; that id needs the same rewrite as `require(id)`. With
+    // mode 2 the first argument is the module's value and stays.
+    let source = r#"
+(() => {
+    var e = [, (e) => { e.exports = 41; }, (e) => { e.exports = { v: 42 }; }];
+    var n = {};
+    function r(o) {
+        var t = n[o];
+        if (t !== undefined) return t.exports;
+        var c = n[o] = { exports: {} };
+        e[o](c, c.exports, r);
+        return c.exports;
+    }
+    var d = r(1);
+    console.log(d);
+    Promise.resolve().then(() => r.t(2, 19)).then((v) => console.log(v));
+    Promise.resolve().then(r.t.bind(r, 2, 7)).then((v) => console.log(v));
+    console.log(r.t(1, 2));
+})();
+"#;
+    let pairs = expect_unpack(source, "bundle.js");
+    let entry = entry_of(&pairs);
+    assert!(
+        !entry.contains("t(2, 19)") && !entry.contains("2, 7)"),
+        "the fake-namespace loader ids must be rewritten, got:\n{entry}"
+    );
+    assert!(
+        entry.contains("t(1, 2)"),
+        "a mode-2 value argument must stay as written, got:\n{entry}"
+    );
+}
+
+#[test]
 fn entry_scope_shadow_does_not_move_runtime_boundary() {
     // The runtime boundary is the last `require.<member> = ...` assignment.
     // A nested function in the entry shadowing the require binding

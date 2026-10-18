@@ -14,7 +14,8 @@ use rayon::prelude::*;
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, Mark, SourceMap, SyntaxContext, DUMMY_SP, GLOBALS};
 use swc_core::ecma::ast::{
-    CallExpr, Callee, Expr, ExprOrSpread, Lit, MemberExpr, MemberProp, Module, Str,
+    ArrowFunctionBody, CallExpr, Callee, Expr, ExprOrSpread, Lit, MemberExpr, MemberProp, Module,
+    ReturnStmt, Stmt, Str,
 };
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
@@ -26,6 +27,7 @@ use super::super::types::{
 };
 use super::filename_recovery::{rewrite_import_sources, rewrite_import_sources_after_move};
 use crate::module_path::relative_import_specifier;
+use crate::unpacker::webpack4::{fake_namespace_mode_loads_id, require_id_arg_index};
 use crate::unpacker::UnpackedModule;
 use crate::unpacker::{DetectedModuleFailure, DetectedModuleNote, PreparedModuleAst};
 use crate::utils::paren::{strip_parens, strip_parens_mut};
@@ -768,7 +770,7 @@ struct WebpackNumericReferenceRewriter<'a> {
 
 impl VisitMut for WebpackNumericReferenceRewriter<'_> {
     fn visit_mut_call_expr(&mut self, call: &mut CallExpr) {
-        self.rewrite_async_chunk_t_bind(call);
+        self.rewrite_async_chunk_load(call);
         call.visit_mut_children_with(self);
         self.rewrite_plain_require(call);
     }
@@ -776,17 +778,14 @@ impl VisitMut for WebpackNumericReferenceRewriter<'_> {
 
 impl WebpackNumericReferenceRewriter<'_> {
     fn rewrite_plain_require(&self, call: &mut CallExpr) {
-        let Callee::Expr(callee_expr) = &call.callee else {
+        // `require(id)`, the bound loader `require.bind(require, id)`, and
+        // the fake-namespace loader `require.t(id, mode)` /
+        // `require.t.bind(require, id, mode)`.
+        let Some(index) = require_id_arg_index(call, &Atom::from("require"), self.unresolved_mark)
+        else {
             return;
         };
-        let Expr::Ident(callee) = strip_parens(callee_expr) else {
-            return;
-        };
-        if callee.sym.as_ref() != "require" || callee.ctxt.outer() != self.unresolved_mark {
-            return;
-        }
-
-        let Some(module_id) = numeric_single_arg_id(call) else {
+        let Some(module_id) = numeric_arg_id(&call.args[index].expr) else {
             return;
         };
         let Some(filename) = self
@@ -797,10 +796,19 @@ impl WebpackNumericReferenceRewriter<'_> {
         else {
             return;
         };
-        rewrite_numeric_arg_to_filename(&mut call.args[0], self.module_filename, filename);
+        rewrite_numeric_arg_to_filename(&mut call.args[index], self.module_filename, filename);
     }
 
-    fn rewrite_async_chunk_t_bind(&self, call: &mut CallExpr) {
+    /// The module id of a lazy `import()` behind a chunk load,
+    /// `R.e(chunk).then(loader)`, where `loader` is one of
+    ///
+    /// - `R.bind(R, id)` or `R.t.bind(R, id, mode)` (`null` for webpack 4's
+    ///   receiver), or
+    /// - `() => R(id)` or `() => R.t(id, mode)`, or the same with a
+    ///   parameterless `function` returning the call,
+    ///
+    /// and `R.t` takes a module id only when `mode & 1` is set.
+    fn rewrite_async_chunk_load(&self, call: &mut CallExpr) {
         let Some((runtime, chunk_id)) = self.extract_then_chunk_loader(&call.callee) else {
             return;
         };
@@ -810,10 +818,34 @@ impl WebpackNumericReferenceRewriter<'_> {
         if arg.spread.is_some() {
             return;
         }
-        let Expr::Call(bind_call) = strip_parens_mut(&mut arg.expr) else {
-            return;
+        let load = match strip_parens_mut(&mut arg.expr) {
+            Expr::Call(bind_call) => bind_call,
+            Expr::Arrow(arrow) if arrow.params.is_empty() => match &mut *arrow.body {
+                ArrowFunctionBody::Expr(body) => match strip_parens_mut(body) {
+                    Expr::Call(load) => load,
+                    _ => return,
+                },
+                ArrowFunctionBody::FunctionBody(body) => {
+                    let Some(load) = single_returned_call(&mut body.stmts) else {
+                        return;
+                    };
+                    load
+                }
+            },
+            Expr::Fn(function) if function.function.params.is_empty() => {
+                let Some(body) = function.function.body.as_mut() else {
+                    return;
+                };
+                let Some(load) = single_returned_call(&mut body.stmts) else {
+                    return;
+                };
+                load
+            }
+            _ => return,
         };
-        self.rewrite_t_bind_module_arg(bind_call, &runtime, chunk_id);
+        if let Some(index) = self.loader_module_arg_index(load, &runtime) {
+            self.rewrite_chunk_module_arg(&mut load.args, index, chunk_id);
+        }
     }
 
     fn extract_then_chunk_loader(&self, callee: &Callee) -> Option<(RuntimeIdent, usize)> {
@@ -833,42 +865,51 @@ impl WebpackNumericReferenceRewriter<'_> {
         self.extract_runtime_member_numeric_arg(load_call, "e", 0)
     }
 
-    fn rewrite_t_bind_module_arg(
-        &self,
-        call: &mut CallExpr,
-        expected_runtime: &RuntimeIdent,
-        chunk_id: usize,
-    ) {
+    /// Which argument of `call` holds the module id when `call` loads a
+    /// module through `runtime`: `R(id)`, `R.t(id, mode)`, `R.bind(T, id)`, or
+    /// `R.t.bind(T, id, mode)`, with `T` the runtime itself or `null`.
+    fn loader_module_arg_index(&self, call: &CallExpr, runtime: &RuntimeIdent) -> Option<usize> {
         let Callee::Expr(callee_expr) = &call.callee else {
-            return;
+            return None;
         };
-        let Expr::Member(MemberExpr { obj, prop, .. }) = strip_parens(callee_expr) else {
-            return;
+        let is_runtime = |expr: &Expr| {
+            matches!(strip_parens(expr), Expr::Ident(ident)
+                if RuntimeIdent::from_ident(ident) == *runtime)
+        };
+        let is_runtime_t = |expr: &Expr| {
+            self.extract_runtime_t_member(expr)
+                .is_some_and(|member_runtime| member_runtime == *runtime)
+        };
+        if call.args.iter().any(|arg| arg.spread.is_some()) {
+            return None;
+        }
+        let callee = strip_parens(callee_expr);
+        if is_runtime(callee) {
+            return (call.args.len() == 1).then_some(0);
+        }
+        if is_runtime_t(callee) {
+            return (call.args.len() == 2 && fake_namespace_mode_loads_id(&call.args[1].expr))
+                .then_some(0);
+        }
+        let Expr::Member(MemberExpr { obj, prop, .. }) = callee else {
+            return None;
         };
         if !member_prop_is(prop, "bind") {
-            return;
+            return None;
         }
-        let Some(runtime) = self.extract_runtime_t_member(obj) else {
-            return;
-        };
-        if &runtime != expected_runtime {
-            return;
+        let this_arg = call.args.first()?;
+        if !is_runtime(&this_arg.expr)
+            && !matches!(strip_parens(&this_arg.expr), Expr::Lit(Lit::Null(_)))
+        {
+            return None;
         }
-
-        let Some(this_arg) = call.args.first() else {
-            return;
-        };
-        if this_arg.spread.is_some() {
-            return;
+        if is_runtime(obj) {
+            (call.args.len() == 2).then_some(1)
+        } else if is_runtime_t(obj) {
+            (call.args.len() == 3 && fake_namespace_mode_loads_id(&call.args[2].expr)).then_some(1)
+        } else {
+            None
         }
-        let Expr::Ident(this_ident) = strip_parens(&this_arg.expr) else {
-            return;
-        };
-        if runtime != RuntimeIdent::from_ident(this_ident) {
-            return;
-        }
-
-        self.rewrite_chunk_module_arg(&mut call.args, 1, chunk_id);
     }
 
     fn extract_runtime_member_numeric_arg(
@@ -958,11 +999,15 @@ fn numeric_arg_id(expr: &Expr) -> Option<usize> {
     Some(value as usize)
 }
 
-fn numeric_single_arg_id(call: &CallExpr) -> Option<usize> {
-    if call.args.len() != 1 || call.args[0].spread.is_some() {
+/// The call `stmts` returns when they are a single `return call;`.
+fn single_returned_call(stmts: &mut [Stmt]) -> Option<&mut CallExpr> {
+    let [Stmt::Return(ReturnStmt { arg: Some(arg), .. })] = stmts else {
         return None;
+    };
+    match strip_parens_mut(arg) {
+        Expr::Call(call) => Some(call),
+        _ => None,
     }
-    numeric_arg_id(&call.args[0].expr)
 }
 
 fn rewrite_numeric_arg_to_filename(arg: &mut ExprOrSpread, from_filename: &str, filename: &str) {

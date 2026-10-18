@@ -413,6 +413,99 @@ exports.modules = {
 }
 
 #[test]
+fn webpack5_multi_file_rewrites_chunk_id_in_every_lazy_loader_form() {
+    // webpack 5.111 calls the loader from an arrow, 5.107 binds the plain
+    // require, and webpack 4 binds `require.t` to `null`; each needs the
+    // chunk module's path, as the bound `require.t` already gets.
+    for loader in [
+        "() => __webpack_require__.t(529, 19)",
+        "() => (__webpack_require__(529))",
+        "function () { return __webpack_require__(529); }",
+        "__webpack_require__.bind(__webpack_require__, 529)",
+        "__webpack_require__.t.bind(null, 529, 7)",
+    ] {
+        let entry = WEBPACK5_LAZY_CHUNK_ENTRY.replace("LOADER", loader);
+        let entry = unpack_entry_with_chunk_529(entry);
+        // `require.e(529)` keeps its chunk id.
+        let loader_part = entry.replace("e(529)", "");
+        assert!(
+            entry.contains("./module-529.js")
+                && !loader_part.contains("529,")
+                && !loader_part.contains("(529)"),
+            "`{loader}` should load the chunk module by its path:\n{entry}"
+        );
+    }
+}
+
+#[test]
+fn webpack5_multi_file_keeps_value_argument_of_require_t_without_load_bit() {
+    // Without `mode & 1`, `require.t`'s first argument is a value, not an id.
+    let entry = WEBPACK5_LAZY_CHUNK_ENTRY.replace("LOADER", "() => __webpack_require__.t(529, 2)");
+    let entry = unpack_entry_with_chunk_529(entry);
+    assert!(
+        entry.contains("t(529, 2)") && !entry.contains("./module-529.js"),
+        "a value argument must stay as written:\n{entry}"
+    );
+}
+
+const WEBPACK5_LAZY_CHUNK_ENTRY: &str = r#"
+(() => {
+  var __webpack_modules__ = ({
+    10: function(module, exports, __webpack_require__) {
+      module.exports = "entry";
+    }
+  });
+  var __webpack_module_cache__ = {};
+  function __webpack_require__(id) {
+    var cached = __webpack_module_cache__[id];
+    if (cached !== undefined) return cached.exports;
+    var module = __webpack_module_cache__[id] = { exports: {} };
+    __webpack_modules__[id](module, module.exports, __webpack_require__);
+    return module.exports;
+  }
+  __webpack_require__.e = function(id) { return Promise.resolve(id); };
+  __webpack_require__.t = function(value) { return value; };
+  (() => {
+    __webpack_require__.e(529).then(LOADER);
+  })();
+})();
+"#;
+
+/// The recovered `entry.js` of `entry` unpacked with chunk 529, which holds
+/// module 529.
+fn unpack_entry_with_chunk_529(entry: String) -> String {
+    let chunk = r#"
+exports.id = 529;
+exports.ids = [529];
+exports.modules = {
+  529: function(module, exports) {
+    exports.answer = 42;
+  }
+};
+"#;
+    let output = unpack_files(
+        vec![
+            UnpackInput {
+                filename: "entry.js".to_string(),
+                source: entry,
+            },
+            UnpackInput {
+                filename: "529.bundle.js".to_string(),
+                source: chunk.to_string(),
+            },
+        ],
+        DecompileOptions::default(),
+    )
+    .expect("entry and numeric chunk should unpack together");
+    output
+        .modules
+        .into_iter()
+        .find(|(name, _)| name == "entry.js")
+        .map(|(_, code)| code)
+        .expect("entry.js should exist")
+}
+
+#[test]
 fn webpack5_multi_file_raw_rewrites_unambiguous_numeric_chunk_id() {
     let entry = r#"
 (() => {

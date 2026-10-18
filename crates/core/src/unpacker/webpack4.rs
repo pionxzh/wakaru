@@ -102,7 +102,12 @@ fn expand_seq_stmt(stmt: Stmt) -> Vec<Stmt> {
 /// a direct `require(id)` call (argument 0), or the bound loader webpack
 /// emits for eager `import()` — `require.bind(require, id)` (webpack 5) /
 /// `require.bind(null, id)` (webpack 4) — where the id is argument 1.
-fn require_id_arg_index(
+///
+/// The fake-namespace loader of a lazy `import()` of a CommonJS module,
+/// `require.t(id, mode)` (argument 0) or `require.t.bind(require, id, mode)`
+/// (argument 1), carries a module id only when `mode & 1` asks it to load
+/// one; otherwise its first argument is already the module's value.
+pub(crate) fn require_id_arg_index(
     call: &CallExpr,
     require_sym: &Atom,
     unresolved_mark: Mark,
@@ -111,25 +116,50 @@ fn require_id_arg_index(
         matches!(expr, Expr::Ident(ident)
             if ident.sym == *require_sym && ident.ctxt.outer() == unresolved_mark)
     };
+    let is_require_t = |expr: &Expr| {
+        matches!(expr, Expr::Member(MemberExpr { obj, prop: MemberProp::Ident(prop), .. })
+            if prop.sym.as_ref() == "t" && is_require_ident(obj))
+    };
     let Callee::Expr(callee_expr) = &call.callee else {
         return None;
     };
     if is_require_ident(callee_expr) {
         return (call.args.len() == 1 && call.args[0].spread.is_none()).then_some(0);
     }
+    if is_require_t(callee_expr) {
+        return (call.args.len() == 2
+            && call.args.iter().all(|arg| arg.spread.is_none())
+            && fake_namespace_mode_loads_id(&call.args[1].expr))
+        .then_some(0);
+    }
     let Expr::Member(MemberExpr { obj, prop, .. }) = &**callee_expr else {
         return None;
     };
-    if !matches!(prop, MemberProp::Ident(ident) if ident.sym.as_ref() == "bind")
-        || !is_require_ident(obj)
-    {
+    if !matches!(prop, MemberProp::Ident(ident) if ident.sym.as_ref() == "bind") {
         return None;
     }
-    if call.args.len() != 2 || call.args.iter().any(|arg| arg.spread.is_some()) {
+    let arity = if is_require_ident(obj) {
+        2
+    } else if is_require_t(obj) {
+        3
+    } else {
+        return None;
+    };
+    if call.args.len() != arity || call.args.iter().any(|arg| arg.spread.is_some()) {
+        return None;
+    }
+    if arity == 3 && !fake_namespace_mode_loads_id(&call.args[2].expr) {
         return None;
     }
     let this_arg = &*call.args[0].expr;
     (is_require_ident(this_arg) || matches!(this_arg, Expr::Lit(Lit::Null(_)))).then_some(1)
+}
+
+/// Whether `mode`, the literal mode of webpack's `require.t`, sets bit 1:
+/// the first argument is a module id to load, not the module's value.
+pub(crate) fn fake_namespace_mode_loads_id(mode: &Expr) -> bool {
+    matches!(mode, Expr::Lit(Lit::Num(Number { value, .. }))
+        if *value >= 0.0 && value.fract() == 0.0 && (*value as u64) & 1 == 1)
 }
 
 /// Rewrites `require(N)` calls (where N is a numeric literal) to `require("./filename.js")`.
