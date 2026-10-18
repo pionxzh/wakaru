@@ -2713,7 +2713,7 @@ mod object_form_tests {
         assert_eq!(sanitize_filename("../../../etc/passwd"), "etc/passwd.js");
         assert_eq!(
             sanitize_filename("....//node_modules/@wakaru/cli/bin/wakaru"),
-            "..../node_modules/@wakaru/cli/bin/wakaru.js"
+            "..._/node_modules/@wakaru/cli/bin/wakaru.js"
         );
         assert_eq!(sanitize_filename("./src/style.less"), "src/style.less.js");
         assert_eq!(sanitize_filename("./src/view.tsx"), "src/view.tsx");

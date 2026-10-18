@@ -4907,7 +4907,7 @@ const modules = Array(4).concat([
         assert_eq!(sanitize_filename("./../../foo.js"), "foo.js");
         assert_eq!(
             sanitize_filename("....//node_modules/@wakaru/cli/bin/wakaru"),
-            "..../node_modules/@wakaru/cli/bin/wakaru.js"
+            "..._/node_modules/@wakaru/cli/bin/wakaru.js"
         );
     }
 

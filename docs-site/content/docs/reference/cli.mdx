@@ -47,6 +47,9 @@ Directory inputs scan `.js`, `.mjs`, and `.cjs` recursively, skipping hidden
 paths and `node_modules`. Input source maps (`--source-map`) are rejected
 with `--unpack`.
 
+Module filenames come from the paths in the bundle. Characters Windows does
+not allow in a filename, such as `"` and `*`, become `_` on every platform.
+
 Unpacked output follows Node's rules for ESM and CommonJS, except in a few
 known cases. A module that stays CommonJS is usually named `.js`, and an ESM
 module imports it with a default import, which Node resolves to

@@ -3638,6 +3638,6 @@ System.register("....//chunks/main", [], function (exports) {
 "#,
         );
 
-        assert_eq!(result.modules[0].filename, "..../chunks/main.js");
+        assert_eq!(result.modules[0].filename, "..._/chunks/main.js");
     }
 }

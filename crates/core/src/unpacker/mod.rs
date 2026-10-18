@@ -1153,17 +1153,60 @@ pub(crate) use crate::analysis::BindingId;
 ///
 /// This is component-based instead of replacement-based so overlapping strings
 /// like `....//foo` cannot turn into `../foo` after a single sanitation pass.
+/// Each kept component is also made writable on Windows (see
+/// [`windows_safe_path_component`]).
 pub(crate) fn sanitize_relative_path(raw: &str, fallback: &str) -> String {
     let normalized = raw.replace('\\', "/");
-    let parts: Vec<&str> = normalized
+    let parts: Vec<String> = normalized
         .split('/')
         .filter(|part| !part.is_empty() && *part != "." && *part != "..")
+        .map(windows_safe_path_component)
         .collect();
 
     if parts.is_empty() {
         fallback.to_string()
     } else {
         parts.join("/")
+    }
+}
+
+/// Replace what Win32 rejects or silently rewrites in a path component: the
+/// characters `<>:"|?*` and ASCII controls, a trailing dot or space (Win32
+/// strips it, so the file on disk would not match the import specifier), and
+/// a reserved device stem (`con.js`, `NUL`, `com1.txt`).
+///
+/// The replacement is `_`, not a `%XX` escape: emitted filenames are also
+/// relative import specifiers, and ESM resolution percent-decodes a
+/// specifier, so `./a%22b.js` would load `a"b.js` instead of the file
+/// written. Distinct names that collapse to one spelling are separated by
+/// the callers' filename deduplication.
+fn windows_safe_path_component(component: &str) -> String {
+    let mut safe: String = component
+        .chars()
+        .map(|ch| match ch {
+            '<' | '>' | ':' | '"' | '|' | '?' | '*' | '\0'..='\x1f' => '_',
+            _ => ch,
+        })
+        .collect();
+    if safe.ends_with(['.', ' ']) {
+        safe.pop();
+        safe.push('_');
+    }
+    if is_windows_device_stem(safe.split('.').next().unwrap_or_default()) {
+        safe.insert(0, '_');
+    }
+    safe
+}
+
+fn is_windows_device_stem(stem: &str) -> bool {
+    let upper = stem.to_ascii_uppercase();
+    match upper.as_str() {
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$" => true,
+        _ => {
+            upper.len() == 4
+                && (upper.starts_with("COM") || upper.starts_with("LPT"))
+                && matches!(upper.as_bytes()[3], b'1'..=b'9')
+        }
     }
 }
 
@@ -1804,7 +1847,7 @@ mod tests {
     fn sanitize_relative_path_drops_only_path_components() {
         assert_eq!(
             sanitize_relative_path("....//node_modules/@wakaru/cli/bin/wakaru", "module.js"),
-            "..../node_modules/@wakaru/cli/bin/wakaru"
+            "..._/node_modules/@wakaru/cli/bin/wakaru"
         );
         assert_eq!(
             sanitize_relative_path(".\\..\\node_modules\\debug\\src\\index", "module.js"),
@@ -1813,6 +1856,33 @@ mod tests {
         assert_eq!(
             sanitize_relative_path("./src/../utils/./helper.js", "module.js"),
             "src/utils/helper.js"
+        );
+    }
+
+    #[test]
+    fn sanitize_relative_path_makes_components_writable_on_windows() {
+        assert_eq!(
+            sanitize_relative_path(
+                r#"import("../messages/**/*.json") in src/i18n.js"#,
+                "module.js"
+            ),
+            "import(_._/messages/__/_.json_) in src/i18n.js"
+        );
+        assert_eq!(
+            sanitize_relative_path("a<b>c|d?e:f\u{1}g.js", "module.js"),
+            "a_b_c_d_e_f_g.js"
+        );
+        assert_eq!(
+            sanitize_relative_path("dir./name .js/file ", "module.js"),
+            "dir_/name .js/file_"
+        );
+        assert_eq!(
+            sanitize_relative_path("con/Aux.js/nul.tar.gz/com1.txt/LPT9", "module.js"),
+            "_con/_Aux.js/_nul.tar.gz/_com1.txt/_LPT9"
+        );
+        assert_eq!(
+            sanitize_relative_path("console.js/com0.js/com10.js/lpt.js", "module.js"),
+            "console.js/com0.js/com10.js/lpt.js"
         );
     }
 

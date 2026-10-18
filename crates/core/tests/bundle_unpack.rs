@@ -3501,7 +3501,7 @@ fn webpack5_string_module_id_with_overlapping_dots_cannot_emit_parent_path() {
         .map(|(name, _)| name.as_str())
         .collect();
     assert!(
-        names.contains(&"..../node_modules/@wakaru/cli/bin/wakaru.js"),
+        names.contains(&"..._/node_modules/@wakaru/cli/bin/wakaru.js"),
         "expected sanitized overlap path, got {names:?}"
     );
     assert!(

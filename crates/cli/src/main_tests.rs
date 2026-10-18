@@ -1919,7 +1919,7 @@ fn unpack_cli_does_not_write_overlapping_dot_payload_outside_output_dir() {
     );
     assert!(
         out_dir
-            .join("..../node_modules/@wakaru/cli/bin/wakaru.js")
+            .join("..._/node_modules/@wakaru/cli/bin/wakaru.js")
             .exists(),
         "payload should be written under the output directory"
     );

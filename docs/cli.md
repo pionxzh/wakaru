@@ -154,6 +154,12 @@ extension; every other or extensionless resource appends `.js` (for example,
 are removed from filesystem names, and modules that then collide receive
 stable numeric suffixes before consumer references are synthesized.
 
+A module path taken from the bundle is made writable on Windows, on every
+platform, so one input gives the same output tree everywhere: the characters
+`<>:"|?*` and ASCII control characters become `_`, a trailing dot or space
+becomes `_`, and a reserved device name (`con`, `nul`, `com1.js`) gets a
+leading `_`. Import specifiers between emitted modules use the same names.
+
 In normal multi-input unpack, a heuristic scope-hoisted ESM input or structural
 esbuild ESM chunk keeps its original safe relative input path as its public
 entry filename. Generated children are namespaced beneath that filename's stem
