@@ -56,7 +56,8 @@ CommonJS behavior. It may do so only when all of these hold:
 Without that evidence, the rule keeps the CommonJS behavior, even when the
 ESM form would read better. `namespace_interop_source_semantics`,
 `lowered_dynamic_import_source_semantics`,
-`webpack_lazy_import_source_semantics`, and
+`webpack_lazy_import_source_semantics`,
+`esbuild_lazy_import_source_semantics`, and
 `relative_require_esm_provider` are recoveries of this kind, and so is the
 `export *` recovery in [helper-detection.md](helper-detection.md).
 
@@ -1233,6 +1234,50 @@ Affects: the Phase 2 pass `run_cross_module_webpack_lazy_imports`, and the
 kept-require classification that lets a module with such a loader become an
 ES module in Phase 1. Turbopack async loader modules, which unpack writes as
 `Promise.resolve().then(() => require(target))`, take the same path.
+
+Level: every level, in unpack mode only.
+
+### `esbuild_lazy_import_source_semantics`
+
+esbuild without code splitting bundles an ES module that is loaded with
+`import()` as a lazy initializer and a namespace object, and lowers the
+`import()` to a call that runs the initializer and returns the namespace:
+
+```js
+// source
+const ns = await import("./dep.js");
+// esbuild --bundle
+var dep_exports = {};
+__export(dep_exports, { default: () => dep_default });
+var dep_default;
+var init_dep = __esm({ "dep.js"() { dep_default = 1; } });
+const ns = await Promise.resolve().then(() => (init_dep(), dep_exports));
+```
+
+A template `import()` builds a `__glob` map whose values are the same
+loaders. When the initializer and the namespace object are referenced only
+by such loaders, and the module's declarations only by the module itself,
+unpack emits the module as a plain ES module (the initializer body at top
+level, exports named by the `__export` map) and each loader as
+`import("./dep.js")`.
+
+The module still runs on the first load, as the initializer did. The result
+follows ESM semantics where the bundle differs:
+
+- The module loads through the ESM loader: `import()` settles a few
+  microtask turns later than the resolved promise did, as in
+  `lowered_dynamic_import_source_semantics`.
+- A throw while the module runs rejects every later `import()` of it. The
+  bundle's initializer cleared itself before running, so a later loader
+  returned the namespace of the half-run module instead.
+- The namespace is a module namespace object instead of a plain object with
+  getters: it has a null prototype and `Symbol.toStringTag`.
+
+A module that is also imported statically keeps its initializer: the
+importer runs it eagerly, before any loader.
+
+Affects: esbuild unpack (`unpacker/esbuild/lazy_import.rs`), in normal and
+raw output.
 
 Level: every level, in unpack mode only.
 

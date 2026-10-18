@@ -21,6 +21,7 @@ use crate::unpacker::emit_esm::{
 use crate::unpacker::{emit_esm, BindingId, MappedCode, SourcePositions};
 
 use super::bindings::{filter_item_excluding_bindings, ExternalImport, TopLevelRefCollector};
+use super::lazy_import::resolve_lazy_import_placeholders;
 
 /// Compute a relative import specifier from `importer` to `target`.
 /// Both are flat output filenames (e.g. `src/consumer.js`, `ns_a.js`).
@@ -477,12 +478,13 @@ pub(super) fn dedup_filename(filename: &str, seen: &mut HashSet<String>) -> Stri
 }
 
 pub(super) fn emit_items(
-    items: Vec<ModuleItem>,
+    mut items: Vec<ModuleItem>,
     filename: String,
     cm: Lrc<SourceMap>,
     positions: SourcePositions,
 ) -> MappedCode {
     let span = tracing::info_span!("esbuild: emit_items", count = items.len());
     let _enter = span.enter();
+    resolve_lazy_import_placeholders(&mut items, &filename);
     emit_esm::emit_items(items, filename, cm, positions)
 }

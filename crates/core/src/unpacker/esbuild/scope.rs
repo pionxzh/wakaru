@@ -11,7 +11,10 @@ use swc_core::ecma::visit::{Visit, VisitWith};
 
 use crate::collections::{HashMap, HashSet};
 use crate::rules::rename_utils::{rename_bindings, BindingRename};
-use crate::unpacker::emit_esm::{make_named_export_stmt, make_named_import_stmt_with_aliases};
+use crate::unpacker::emit_esm::{
+    make_named_export_stmt, make_named_export_stmt_with_aliases,
+    make_named_import_stmt_with_aliases,
+};
 use crate::unpacker::{
     module_item_declared_binding_ids, spans_byte_ranges, BindingId, SourcePositions, UnpackedModule,
 };
@@ -23,6 +26,7 @@ use super::bindings::{
     filter_item_excluding_bindings, item_binding_info_for, module_item_import_binding_ids,
     scope_write_atoms_for_item, AtomRefCollector, ExternalImport, ItemBindingInfo,
 };
+use super::lazy_import::LazyModule;
 use super::scope_boundaries::{
     collect_scope_hoisted_boundaries, detect_export_helper, find_last_module_end,
     is_scope_support_declaration_for_binding, removable_export_helper_dependency_indices,
@@ -56,6 +60,11 @@ struct ScopeModuleMeta {
     pub(super) referenced_atoms: HashSet<Atom>,
     pub(super) filename: String,
     pub(super) id: String,
+    /// `(public name, local)` exports of a module loaded only through a
+    /// lowered `import()` (see `lazy_import`): its namespace is what the
+    /// `import()` returns, so it exports the `__export` names instead of
+    /// local bindings.
+    public_exports: Option<Vec<(Atom, Atom)>>,
 }
 
 pub(super) struct ScopeExtractionRefs<'a> {
@@ -63,6 +72,7 @@ pub(super) struct ScopeExtractionRefs<'a> {
     pub(super) factory_preassigned_bindings: &'a HashMap<BindingId, String>,
     pub(super) factory_importable_bindings: &'a HashMap<BindingId, String>,
     pub(super) drop_unowned_helper_sibling_indices: &'a HashSet<usize>,
+    pub(super) lazy_modules: &'a [LazyModule],
     pub(super) positions: SourcePositions,
 }
 
@@ -167,7 +177,25 @@ fn merge_conflicting_factory_scope_metas(
     *metas = merged;
 }
 
+fn lazy_module_for<'a>(
+    refs: &ScopeExtractionRefs<'a>,
+    namespace: &BindingId,
+) -> Option<&'a LazyModule> {
+    refs.lazy_modules
+        .iter()
+        .find(|lazy| lazy.namespace == *namespace)
+}
+
+fn is_lazy_namespace(refs: &ScopeExtractionRefs<'_>, namespace: &BindingId) -> bool {
+    lazy_module_for(refs, namespace).is_some()
+}
+
 fn merge_scope_meta_group(metas: &[ScopeModuleMeta], group: &[usize]) -> ScopeModuleMeta {
+    // A lazily loaded module writes only bindings no other module reads, so
+    // it never shares state with another scope module.
+    debug_assert!(group
+        .iter()
+        .all(|&index| metas[index].public_exports.is_none()));
     let mut merged = metas[group[0]].clone();
     for &index in &group[1..] {
         let meta = &metas[index];
@@ -440,6 +468,7 @@ fn partition_scope_modules<'b>(
         .collect();
 
     for (bi, boundary) in boundaries.iter().enumerate() {
+        let lazy_module = lazy_module_for(refs, &boundary.ns_binding);
         let start = boundary.ns_decl_index;
         let end = if bi + 1 < boundaries.len() {
             boundaries[bi + 1].ns_decl_index
@@ -451,6 +480,18 @@ fn partition_scope_modules<'b>(
                 &boundary.exported_bindings,
                 &factory_referenced_atoms,
             )
+        };
+        // A lazily loaded module ends exactly at its inlined initializer
+        // body, which belongs to it even where it references none of its
+        // bindings (`init_dep()`); what follows is entry code.
+        let end = match lazy_module.and_then(|lazy| lazy.last_item_span) {
+            Some(last_span) => (start..analysis_items.len())
+                .find(|&index| {
+                    let span = analysis_items[index].span();
+                    (span.lo.0, span.hi.0) == last_span
+                })
+                .map_or(end, |last| last + 1),
+            None => end,
         };
 
         let mut body_indices: Vec<usize> = Vec::new();
@@ -528,7 +569,12 @@ fn partition_scope_modules<'b>(
             .collect();
 
         let base_name = boundary.ns_atom.to_string();
-        let filename = dedup_filename(&format!("{base_name}.js"), seen_lower);
+        // A lazy module's filename was reserved when its loaders were
+        // rewritten to name it.
+        let filename = match lazy_module {
+            Some(lazy) => lazy.filename.clone(),
+            None => dedup_filename(&format!("{base_name}.js"), seen_lower),
+        };
         let id = filename
             .strip_suffix(".js")
             .unwrap_or(&filename)
@@ -550,6 +596,12 @@ fn partition_scope_modules<'b>(
             referenced_atoms,
             filename,
             id,
+            public_exports: lazy_module.map(|lazy| {
+                lazy.exports
+                    .iter()
+                    .map(|(public, (local, _))| (public.clone(), local.clone()))
+                    .collect()
+            }),
         });
     }
 
@@ -1155,7 +1207,12 @@ fn compute_scope_imports_exports(
     for &i in &remaining_indices {
         entry_referenced.extend(item_infos[i].references.iter().cloned());
     }
-    for &(ns_idx, call_idx, _) in consumed_ns.iter() {
+    // A lazily loaded module's namespace is never restored: `import()`
+    // returns the module's own namespace instead.
+    for &(ns_idx, call_idx, boundary) in consumed_ns.iter() {
+        if is_lazy_namespace(refs, &boundary.ns_binding) {
+            continue;
+        }
         entry_referenced.extend(item_infos[ns_idx].references.iter().cloned());
         entry_referenced.extend(item_infos[call_idx].references.iter().cloned());
     }
@@ -1679,12 +1736,16 @@ fn emit_scope_modules(
             .iter()
             .map(|namespace| namespace.namespace_binding.0.clone())
             .collect();
-        let exports: HashSet<Atom> = effective_exports[mi]
-            .iter()
-            .filter(|atom| !namespace_atoms.contains(*atom))
-            .filter(|atom| declared_atoms.contains(*atom) || imported_atoms.contains(*atom))
-            .cloned()
-            .collect();
+        let exports: HashSet<Atom> = if meta.public_exports.is_some() {
+            HashSet::default()
+        } else {
+            effective_exports[mi]
+                .iter()
+                .filter(|atom| !namespace_atoms.contains(*atom))
+                .filter(|atom| declared_atoms.contains(*atom) || imported_atoms.contains(*atom))
+                .cloned()
+                .collect()
+        };
 
         // Body items with export promotion for exported bindings.
         let mut remaining_exports = exports;
@@ -1734,6 +1795,13 @@ fn emit_scope_modules(
             names.sort();
             module_items.push(make_named_export_stmt(&names));
         }
+        if let Some(public_exports) = &meta.public_exports {
+            let aliases: Vec<(Atom, Atom)> = public_exports
+                .iter()
+                .map(|(public, local)| (local.clone(), public.clone()))
+                .collect();
+            module_items.push(make_named_export_stmt_with_aliases(&aliases));
+        }
 
         rename_bindings(&mut module_items, &import_renames);
         let mut code = emit_items(
@@ -1743,7 +1811,9 @@ fn emit_scope_modules(
             refs.positions,
         );
         for namespace in &meta.namespaces {
-            if !effective_exports[mi].contains(&namespace.namespace_binding.0) {
+            if meta.public_exports.is_some()
+                || !effective_exports[mi].contains(&namespace.namespace_binding.0)
+            {
                 continue;
             }
             let mut namespace_items =
@@ -1877,6 +1947,9 @@ fn build_scope_entry(
     let mut synthesized_entry_exports: Vec<Atom> = Vec::new();
     let mut restored_namespace_bindings: HashSet<BindingId> = HashSet::default();
     for &(ns_idx, call_idx, boundary) in consumed_ns.iter() {
+        if is_lazy_namespace(refs, &boundary.ns_binding) {
+            continue;
+        }
         let entry_needs = entry_referenced.contains(&boundary.ns_binding);
         let factory_needs = factory_referenced.contains(&boundary.ns_binding);
         let scope_module_needs = scope_needed_entry_bindings.contains(&boundary.ns_binding);

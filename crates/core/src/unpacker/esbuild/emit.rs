@@ -25,6 +25,7 @@ use super::bindings::{
     AtomRefCollector, ExternalImport,
 };
 use super::factories::CjsFactoryParams;
+use super::lazy_import::resolve_lazy_import_placeholders;
 use super::ownership::{
     relocated_entry_bindings, FactoryOwnership, MergedModulePlan, PendingFactory, TopLevelIndex,
     TopLevelWriterItem,
@@ -434,7 +435,8 @@ pub(super) fn emit_entry(
         });
     }
     let entry_ranges = spans_byte_ranges(&cm, remaining_entry.iter().map(|item| item.span()));
-    let remaining_entry = repair_entry_imports(remaining_entry, &ownership.binding_to_filename);
+    let mut remaining_entry = repair_entry_imports(remaining_entry, &ownership.binding_to_filename);
+    resolve_lazy_import_placeholders(&mut remaining_entry, "entry.js");
     let entry_module = Module {
         span: Default::default(),
         body: remaining_entry,

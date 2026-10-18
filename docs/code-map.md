@@ -88,6 +88,7 @@ crates/
         esbuild.rs                  — esbuild/Bun splitter entry points + detection orchestration
         esbuild/
           factories.rs              — lazy-module helper detection, factory collection
+          lazy_import.rs            — modules reached only through a lowered `import()`: inlined as plain modules, loaders rewritten
           scope.rs                  — scope-hoisted module extraction
           scope_boundaries.rs       — `__export(ns, {...})` boundary detection
           ownership.rs              — factory ownership planning (groups, writers, demotion, merges)

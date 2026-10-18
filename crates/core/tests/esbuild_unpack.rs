@@ -4502,6 +4502,11 @@ fn esbuild_function_iife_arguments_binding_fails_closed() {
     assert!(pairs[0].1.contains("arguments.length"));
 }
 
+/// `ns_main` also imports the lazy module statically, so esbuild runs
+/// `init_lazy()` eagerly there (the shape of producer esbuild@0.28.0
+/// `--bundle` for a module imported both ways). That keeps `ns_lazy` a
+/// restored namespace object: a module reached only through the lowered
+/// `import()` would be emitted as its own module instead.
 const ENTRY_OWNED_BINDINGS_BUNDLE: &str = r#"
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
@@ -4526,6 +4531,7 @@ function load() {
 }
 var ns_main = {};
 __export(ns_main, { main: () => main, entryHelper: () => entryHelper });
+init_lazy();
 import { readFileSync } from "fs";
 function entryHelper() {
   console.log("helper");
@@ -5086,4 +5092,401 @@ init_sync();
         importer.contains("./globImport_messages_json.js"),
         "importer should import the renamed glob module:\n{importer}"
     );
+}
+
+// esbuild without code splitting bundles an ES module loaded only through
+// `import()` as a lazy initializer plus a namespace object, and lowers the
+// `import()` to `Promise.resolve().then(() => (init_x(), x_exports))`.
+// producer esbuild@0.28.0 `--bundle --platform=node --format=cjs`, the
+// minified build adding `--minify`. Sources:
+// `entry.js`: `export async function load() { const mod = await import("./lazy.js"); ... }`
+// `lazy.js`: `export default "lazy-esm-provider"; export function named(x) { return "named " + x; }`
+const ESBUILD_LOWERED_IMPORT_BUNDLE: &str = r#"var __defProp = Object.defineProperty;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+
+// lazy.js
+var lazy_exports = {};
+__export(lazy_exports, {
+  default: () => lazy_default,
+  named: () => named
+});
+function named(x) {
+  return "named " + x;
+}
+var lazy_default;
+var init_lazy = __esm({
+  "lazy.js"() {
+    lazy_default = "lazy-esm-provider";
+  }
+});
+
+// entry.js
+async function load() {
+  const mod = await Promise.resolve().then(() => (init_lazy(), lazy_exports));
+  return [mod.default, mod.named("x"), Object.keys(mod).sort(), "lowered-esm-consumer"];
+}
+
+// __entry.js
+globalThis.__artificialSink = Object.freeze({
+  get load() {
+    return load;
+  }
+});
+"#;
+const ESBUILD_LOWERED_IMPORT_MINIFIED_BUNDLE: &str = r#"var d=Object.defineProperty;var i=(e,r)=>()=>(e&&(r=e(e=0)),r);var l=(e,r)=>{for(var t in r)d(e,t,{get:r[t],enumerable:!0})};var o={};l(o,{default:()=>m,named:()=>s});function s(e){return"named "+e}var m,a=i(()=>{m="lazy-esm-provider"});async function n(){let e=await Promise.resolve().then(()=>(a(),o));return[e.default,e.named("x"),Object.keys(e).sort(),"lowered-esm-consumer"]}globalThis.__artificialSink=Object.freeze({get load(){return n}});
+"#;
+
+// The same producer over `import(`./page-${which}.js`)` with two matching ES
+// modules: a `__glob` map of lowered loaders.
+const ESBUILD_GLOB_IMPORT_BUNDLE: &str = r#"var __defProp = Object.defineProperty;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __glob = (map) => (path) => {
+  var fn = map[path];
+  if (fn) return fn();
+  throw new Error("Module not found in bundle: " + path);
+};
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+
+// page-about.js
+var page_about_exports = {};
+__export(page_about_exports, {
+  title: () => title
+});
+var title;
+var init_page_about = __esm({
+  "page-about.js"() {
+    title = "page-about-title";
+  }
+});
+
+// page-home.js
+var page_home_exports = {};
+__export(page_home_exports, {
+  title: () => title2
+});
+var title2;
+var init_page_home = __esm({
+  "page-home.js"() {
+    title2 = "page-home-title";
+  }
+});
+
+// import("./page-*.js") in entry.js
+var globImport_page_js = __glob({
+  "./page-about.js": () => Promise.resolve().then(() => (init_page_about(), page_about_exports)),
+  "./page-home.js": () => Promise.resolve().then(() => (init_page_home(), page_home_exports))
+});
+
+// entry.js
+async function load(which) {
+  const page = await globImport_page_js(`./page-${which}.js`);
+  return [page.title, Object.keys(page), "glob-esm-consumer"];
+}
+
+// __entry.js
+globalThis.__artificialSink = Object.freeze({
+  get load() {
+    return load;
+  }
+});
+"#;
+
+// `entry.js` imports `shared.js` statically and with `import()`: the entry
+// runs `init_shared()` eagerly as well.
+const ESBUILD_STATIC_AND_LOWERED_IMPORT_BUNDLE: &str = r#"var __defProp = Object.defineProperty;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+
+// shared.js
+var shared_exports = {};
+__export(shared_exports, {
+  default: () => shared_default,
+  named: () => named
+});
+function named(x) {
+  return "named " + x;
+}
+var shared_default;
+var init_shared = __esm({
+  "shared.js"() {
+    shared_default = "shared-esm-provider";
+  }
+});
+
+// entry.js
+init_shared();
+async function load() {
+  const mod = await Promise.resolve().then(() => (init_shared(), shared_exports));
+  return [named("static"), mod.default, mod.named === named, "static-and-lazy-consumer"];
+}
+
+// __entry.js
+globalThis.__artificialSink = Object.freeze({
+  get load() {
+    return load;
+  }
+});
+"#;
+
+// `lazy.js`, loaded only through `import()`, imports `dep.js` statically:
+// `init_lazy` calls `init_dep()` first.
+const ESBUILD_LOWERED_IMPORT_CHAIN_BUNDLE: &str = r#"var __defProp = Object.defineProperty;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+
+// dep.js
+var dep;
+var init_dep = __esm({
+  "dep.js"() {
+    dep = "dep-chain-provider";
+  }
+});
+
+// lazy.js
+var lazy_exports = {};
+__export(lazy_exports, {
+  value: () => value
+});
+var value;
+var init_lazy = __esm({
+  "lazy.js"() {
+    init_dep();
+    value = dep + "-lazy-chain";
+  }
+});
+
+// entry.js
+async function load() {
+  const mod = await Promise.resolve().then(() => (init_lazy(), lazy_exports));
+  return [mod.value, "chain-consumer"];
+}
+
+// __entry.js
+globalThis.__artificialSink = Object.freeze({
+  get load() {
+    return load;
+  }
+});
+"#;
+
+fn module_code<'a>(pairs: &'a [(String, String)], name: &str) -> &'a str {
+    pairs
+        .iter()
+        .find(|(filename, _)| filename == name)
+        .map(|(_, code)| code.as_str())
+        .unwrap_or_else(|| {
+            panic!(
+                "no {name} in {:?}",
+                pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+            )
+        })
+}
+
+#[test]
+fn esbuild_lowered_import_of_lazy_only_module_becomes_import() {
+    for pairs in [
+        expect_unpack(ESBUILD_LOWERED_IMPORT_BUNDLE, "bundle.js"),
+        expect_unpack_raw(ESBUILD_LOWERED_IMPORT_BUNDLE),
+    ] {
+        let entry = module_code(&pairs, "entry.js");
+        assert!(entry.contains("import(\"./lazy.js\")"), "{entry}");
+        assert!(!entry.contains("Promise.resolve"), "{entry}");
+        assert!(!entry.contains("lazy_exports"), "{entry}");
+        let lazy = module_code(&pairs, "lazy.js");
+        assert!(lazy.contains("lazy_default as default"), "{lazy}");
+        assert!(lazy.contains("named"), "{lazy}");
+        assert!(!lazy.contains("init_lazy"), "{lazy}");
+        assert_eq!(pairs.len(), 2, "{pairs:#?}");
+        assert_eq!(validate_output_modules(&pairs), vec![]);
+    }
+}
+
+#[test]
+fn esbuild_lowered_import_of_minified_lazy_only_module_becomes_import() {
+    let pairs = expect_unpack(ESBUILD_LOWERED_IMPORT_MINIFIED_BUNDLE, "bundle.js");
+    let entry = module_code(&pairs, "entry.js");
+    assert!(entry.contains("import(\"./a.js\")"), "{entry}");
+    let provider = module_code(&pairs, "a.js");
+    assert!(provider.contains("as default"), "{provider}");
+    assert!(provider.contains("\"lazy-esm-provider\""), "{provider}");
+    assert_eq!(validate_output_modules(&pairs), vec![]);
+}
+
+#[test]
+fn esbuild_glob_map_entries_load_lazy_only_modules_with_import() {
+    let pairs = expect_unpack(ESBUILD_GLOB_IMPORT_BUNDLE, "bundle.js");
+    let entry = module_code(&pairs, "entry.js");
+    assert!(
+        entry.contains("\"./page-home.js\": ()=>import(\"./page-home.js\")"),
+        "{entry}"
+    );
+    assert!(
+        entry.contains("\"./page-about.js\": ()=>import(\"./page-about.js\")"),
+        "{entry}"
+    );
+    assert!(!entry.contains("_exports"), "{entry}");
+    let home = module_code(&pairs, "page-home.js");
+    assert!(home.contains("as title"), "{home}");
+    assert!(!home.contains("init_page_home"), "{home}");
+    assert_eq!(validate_output_modules(&pairs), vec![]);
+}
+
+#[test]
+fn esbuild_module_also_imported_statically_keeps_its_initializer() {
+    // The bundle has too little evidence to split once nothing is inlined,
+    // so it stays one module; either way the lazy loader stays.
+    let pairs = expect_unpack(ESBUILD_STATIC_AND_LOWERED_IMPORT_BUNDLE, "bundle.js");
+    let code: String = pairs.iter().map(|(_, code)| code.as_str()).collect();
+    assert!(!code.contains("import(\""), "{code}");
+    assert!(code.contains("init_shared()"), "{code}");
+    assert!(code.contains("Promise.resolve()"), "{code}");
+}
+
+#[test]
+fn esbuild_lazy_only_module_keeps_its_dependency_initializer_call() {
+    // `lazy.js` is the last namespace of the bundle; its inlined body starts
+    // with `init_dep()`, which references none of its own bindings and must
+    // still stay in the module rather than run eagerly in the entry.
+    let pairs = expect_unpack(ESBUILD_LOWERED_IMPORT_CHAIN_BUNDLE, "bundle.js");
+    let entry = module_code(&pairs, "entry.js");
+    assert!(entry.contains("import(\"./lazy.js\")"), "{entry}");
+    assert!(!entry.contains("init_dep"), "{entry}");
+    let lazy = module_code(&pairs, "lazy.js");
+    assert!(lazy.contains("init_dep();"), "{lazy}");
+    let dep = module_code(&pairs, "dep.js");
+    assert!(dep.contains("export function init_dep()"), "{dep}");
+    assert_eq!(validate_output_modules(&pairs), vec![]);
+}
+
+#[test]
+fn esbuild_namespace_read_outside_its_loaders_keeps_the_loader() {
+    // hypothetical: entry code that reads the namespace object directly could
+    // run before any loader, so the module keeps its lazy initializer.
+    let bundle = ESBUILD_LOWERED_IMPORT_BUNDLE.replace(
+        "// __entry.js\n",
+        "// __entry.js\nglobalThis.__peek = lazy_exports;\n",
+    );
+    let pairs = expect_unpack(&bundle, "bundle.js");
+    let code: String = pairs.iter().map(|(_, code)| code.as_str()).collect();
+    assert!(!code.contains("import(\""), "{code}");
+    assert!(code.contains("init_lazy"), "{code}");
+}
+
+// Three modules loaded only through `import()`, where `a.js`'s initializer
+// is followed by `helper.js`, a module without a namespace object (imported
+// statically by `mid.js`). producer esbuild@0.28.0 `--bundle --platform=node
+// --format=cjs`.
+const ESBUILD_LOWERED_IMPORT_FOLLOWED_BY_PLAIN_MODULE_BUNDLE: &str = r#"var __defProp = Object.defineProperty;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+
+// a.js
+var a_exports = {};
+__export(a_exports, {
+  va: () => va
+});
+var va;
+var init_a = __esm({
+  "a.js"() {
+    va = "lazy-a-provider";
+  }
+});
+
+// helper.js
+function helper(x) {
+  return "helped " + x;
+}
+var init_helper = __esm({
+  "helper.js"() {
+  }
+});
+
+// mid.js
+var mid_exports = {};
+__export(mid_exports, {
+  mid: () => mid
+});
+var mid;
+var init_mid = __esm({
+  "mid.js"() {
+    init_helper();
+    mid = (x) => helper(x);
+  }
+});
+
+// z.js
+var z_exports = {};
+__export(z_exports, {
+  vz: () => vz
+});
+var vz;
+var init_z = __esm({
+  "z.js"() {
+    vz = "lazy-z-provider";
+  }
+});
+
+// entry.js
+async function load() {
+  const a = await Promise.resolve().then(() => (init_a(), a_exports));
+  const { mid: mid2 } = await Promise.resolve().then(() => (init_mid(), mid_exports));
+  const z = await Promise.resolve().then(() => (init_z(), z_exports));
+  return [a.va, mid2("x"), z.vz, "trailing-consumer"];
+}
+
+// __entry.js
+globalThis.__artificialSink = Object.freeze({
+  get load() {
+    return load;
+  }
+});
+"#;
+
+#[test]
+fn esbuild_lazy_module_followed_by_other_module_code_keeps_its_loader() {
+    // Scope extraction gives `a_exports` every item up to the next namespace,
+    // `helper.js` included, and other modules import `helper` from there. A
+    // module that holds another module's code is not what `import("./a.js")`
+    // loads, so `a.js` keeps its loader while `mid.js` and `z.js`, whose
+    // initializers end their regions, become `import()`.
+    let pairs = expect_unpack(
+        ESBUILD_LOWERED_IMPORT_FOLLOWED_BY_PLAIN_MODULE_BUNDLE,
+        "bundle.js",
+    );
+    let entry = module_code(&pairs, "entry.js");
+    assert!(entry.contains("init_a()"), "{entry}");
+    assert!(entry.contains("import(\"./mid.js\")"), "{entry}");
+    assert!(entry.contains("import(\"./z.js\")"), "{entry}");
+    assert_eq!(validate_output_modules(&pairs), vec![]);
 }

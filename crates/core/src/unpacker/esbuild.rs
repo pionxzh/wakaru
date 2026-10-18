@@ -14,6 +14,7 @@ use crate::unpacker::{
 mod bindings;
 mod emit;
 mod factories;
+mod lazy_import;
 mod ownership;
 mod scope;
 mod scope_boundaries;
@@ -36,6 +37,7 @@ use factories::{
     item_has_helper_factory_declarator, locally_exported_atoms, Factory, FactoryBodyRef,
     PathCommentHints,
 };
+use lazy_import::{plan_lazy_imports, LazyImportPlan};
 use ownership::{
     apply_demotion, claim_standalone_ownership, group_standalone_writers,
     partition_merged_factories, place_top_level_writers, plan_demotion, plan_merged_modules,
@@ -69,11 +71,12 @@ pub(super) fn detect_from_module_with_source(
     }
 
     // Evidence of esbuild structure found — clone + resolve for binding analysis.
-    let analysis_module = {
+    let unresolved_mark = Mark::new();
+    let mut analysis_module = {
         let span = tracing::info_span!("esbuild: clone and resolve for analysis");
         let _enter = span.enter();
         let mut am = module.clone();
-        am.visit_mut_with(&mut resolver(Mark::new(), Mark::new(), false));
+        am.visit_mut_with(&mut resolver(unresolved_mark, Mark::new(), false));
         am
     };
 
@@ -82,6 +85,31 @@ pub(super) fn detect_from_module_with_source(
         let source_file = cm.lookup_source_file(module.span.lo);
         PathCommentHints::new(source, source_file.start_pos.0)
     });
+
+    let lazy_imports = plan_lazy_imports(
+        &analysis_module,
+        || {
+            collect_factories(
+                module,
+                &analysis_module,
+                &helper_syms,
+                &commonjs_helper_syms,
+                filename_hints.as_ref(),
+            )
+        },
+        &commonjs_helper_syms,
+        unresolved_mark,
+    );
+    let (rewritten_module, lazy_imports) = match lazy_imports {
+        Some(mut plan) => {
+            let mut rewritten = module.clone();
+            plan.apply(&mut rewritten);
+            plan.apply(&mut analysis_module);
+            (Some(rewritten), Some(plan))
+        }
+        None => (None, None),
+    };
+    let module = rewritten_module.as_ref().unwrap_or(module);
 
     // Phase 2: collect factory declarations — `var X = helper(factory_fn)`.
     let factories = if helper_syms.is_empty() {
@@ -103,6 +131,7 @@ pub(super) fn detect_from_module_with_source(
         analysis_module,
         commonjs_helper_syms,
         factories,
+        lazy_imports,
         cm,
         positions,
     )
@@ -119,17 +148,37 @@ pub(super) fn detect_from_owned_factory_module_with_source(
         return Err(module);
     }
 
-    let analysis_module = {
+    let unresolved_mark = Mark::new();
+    let mut analysis_module = {
         let span = tracing::info_span!("esbuild: clone and resolve owned candidate for analysis");
         let _enter = span.enter();
         let mut analysis = module.clone();
-        analysis.visit_mut_with(&mut resolver(Mark::new(), Mark::new(), false));
+        analysis.visit_mut_with(&mut resolver(unresolved_mark, Mark::new(), false));
         analysis
     };
     let commonjs_helper_syms = collect_commonjs_helper_syms(&module);
     let filename_hints = source.map(|source| {
         let source_file = cm.lookup_source_file(module.span.lo);
         PathCommentHints::new(source, source_file.start_pos.0)
+    });
+    let lazy_imports = plan_lazy_imports(
+        &analysis_module,
+        || {
+            collect_factories(
+                &module,
+                &analysis_module,
+                &helper_syms,
+                &commonjs_helper_syms,
+                filename_hints.as_ref(),
+            )
+        },
+        &commonjs_helper_syms,
+        unresolved_mark,
+    )
+    .map(|mut plan| {
+        plan.apply(&mut module);
+        plan.apply(&mut analysis_module);
+        plan
     });
     let factories = collect_factories_owned(
         &mut module,
@@ -144,6 +193,7 @@ pub(super) fn detect_from_owned_factory_module_with_source(
         analysis_module,
         commonjs_helper_syms,
         factories,
+        lazy_imports,
         cm,
         positions,
     )
@@ -155,19 +205,26 @@ fn detect_from_prepared_factories(
     analysis_module: Module,
     commonjs_helper_syms: HashSet<Atom>,
     factories: Vec<Factory>,
+    lazy_imports: Option<LazyImportPlan>,
     cm: Lrc<SourceMap>,
     positions: SourcePositions,
 ) -> Option<UnpackResult> {
-    let helper_syms: HashSet<Atom> = factories
+    // Factories inlined as lazily loaded modules still count as evidence, and
+    // their helper still leaves the entry.
+    let mut helper_syms: HashSet<Atom> = factories
         .iter()
         .map(|factory| factory.helper_sym.clone())
         .collect();
+    let inlined_factories = lazy_imports.as_ref().map_or(0, |plan| {
+        helper_syms.extend(plan.inlined_helper_syms.iter().cloned());
+        plan.modules.len()
+    });
 
     let has_cjs_factories = !commonjs_helper_syms.is_empty()
         && factories
             .iter()
             .any(|f| commonjs_helper_syms.contains(&f.helper_sym));
-    let has_factories = has_cjs_factories || factories.len() >= 5;
+    let has_factories = has_cjs_factories || factories.len() + inlined_factories >= 5;
 
     // Try scope-hoisted detection on the full module body (needed for
     // scope-only bundles that have no factories at all).
@@ -193,7 +250,10 @@ fn detect_from_prepared_factories(
             .unwrap_or(false)
     };
 
-    if !has_factories && !has_scope_hoisted {
+    // A lazily loaded module is matched through its initializer, its
+    // namespace object, and a loader pairing the two: esbuild evidence on
+    // its own.
+    if !has_factories && !has_scope_hoisted && inlined_factories == 0 {
         return None;
     }
 
@@ -203,8 +263,14 @@ fn detect_from_prepared_factories(
     // bindings from the resolved AST.  Emission is deferred to Phase 6 so that
     // scope-hoisted extraction can inform import/export synthesis.
     let mut modules: Vec<UnpackedModule> = Vec::new();
-    let mut global_seen: HashSet<String> = HashSet::default();
-    global_seen.insert("entry.js".to_string());
+    let (lazy_modules, mut global_seen, planned_factory_filenames) = match lazy_imports {
+        Some(plan) => (plan.modules, plan.seen_filenames, plan.factory_filenames),
+        None => (
+            Vec::new(),
+            HashSet::from_iter(["entry.js".to_string()]),
+            HashMap::default(),
+        ),
+    };
 
     // Build top_level_bindings from the FULL analysis module so we can track
     // which identifiers referenced by factory bodies are top-level declarations
@@ -280,7 +346,10 @@ fn detect_from_prepared_factories(
 
     let mut pending_factories: Vec<PendingFactory> = Vec::new();
     for factory in factories {
-        let filename = dedup_filename(&factory.filename, &mut global_seen);
+        let filename = planned_factory_filenames
+            .get(&factory.binding)
+            .cloned()
+            .unwrap_or_else(|| dedup_filename(&factory.filename, &mut global_seen));
 
         // Read the resolved body from the analysis module by location instead
         // of retaining a second cloned body for every factory.
@@ -403,6 +472,7 @@ fn detect_from_prepared_factories(
                 factory_preassigned_bindings: &factory_preassigned_bindings,
                 factory_importable_bindings: &factory_importable_bindings,
                 drop_unowned_helper_sibling_indices: &drop_unowned_helper_sibling_indices,
+                lazy_modules: &lazy_modules,
                 positions,
             },
         )

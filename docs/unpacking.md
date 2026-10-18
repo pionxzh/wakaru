@@ -59,7 +59,14 @@ attempted in order — first match wins:
    concatenated `import()` / `require()` specifier is keyed by a label
    instead (`import("./locale/**/*.json") in src/i18n.js`); it is named
    after the binding that holds its lookup map, in the importer's directory
-   (`src/globImport_locale_json.js`). Bindings that stay in the synthetic entry (a
+   (`src/globImport_locale_json.js`). An ES module that esbuild reaches only
+   through a lowered `import()` (`Promise.resolve().then(() => (init_x(),
+   x_exports))`, directly or as a `__glob` map value) is emitted as a plain
+   module named after its initializer's key, and each loader becomes
+   `import("./x.js")` (`esbuild_lazy_import_source_semantics` in
+   [rewrite-assumptions.md](rewrite-assumptions.md)). A module whose
+   initializer or namespace object has any other reference, or whose
+   declarations are read outside it, keeps its initializer. Bindings that stay in the synthetic entry (a
    declaration the last-module boundary search leaves in the remainder, or a
    restored lazy-module namespace object reached through the `import()`
    lowering `then(() => (init_x(), ns_x))`) are exported from `entry.js` and
@@ -675,12 +682,13 @@ layout directly is a proposal:
   `import()` / `require()` specifier (producer `esbuild@0.25.0 --bundle
   --platform=node`) keeps its `__glob` map and the call through it
   (`` globImport_locale_json(`./locale/${l}.json`) ``) instead of the original
-  `import()`. The map's entries reach each target through its lazy
-  initializer (`init_x()`, `require_x()`), and the target module is emitted
-  exporting that initializer, so a native `import()` of it would return the
-  initializer instead of the module. A literal `import("./x.js")` lowered
-  to `Promise.resolve().then(() => (init_x(), x_exports))` stays lowered
-  for the same reason.
+  `import()`. Over ES modules loaded only through the map, each entry
+  already reads `() => import("./x.js")`; the map itself is not collapsed.
+  Over CommonJS modules the entries keep `__toESM(require_x())`: the target
+  is emitted exporting its `require_x()` initializer, so a native `import()`
+  of it would return the initializer instead of the module. A literal
+  `import()` of a CommonJS module lowered the same way stays lowered for the
+  same reason.
 - **Relative `require` inside a top-level expression.** A module binding
   assigned inside an expression (`r = f((e = require("./m")).x)`) is not
   turned into an import, so the module stays CommonJS. rspack production

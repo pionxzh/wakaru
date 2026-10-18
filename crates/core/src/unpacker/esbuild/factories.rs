@@ -40,6 +40,16 @@ pub(super) struct FactoryLocation {
     declarator_index: usize,
 }
 
+impl Factory {
+    /// Item and declarator index of the factory in the analysis AST.
+    pub(super) fn analysis_item_and_declarator(&self) -> (usize, usize) {
+        (
+            self.analysis_location.item_index,
+            self.analysis_location.declarator_index,
+        )
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct CjsFactoryParams {
     pub(super) exports: Atom,
