@@ -4948,3 +4948,142 @@ fn early_guard_with_nested_callback_keeps_unproven_namespace_unlinked() {
             && finding.message.contains("ns_lazy")
     }));
 }
+
+/// esbuild bundles a template-literal `import()` / `require()` as a virtual
+/// module keyed by a label (`import("../messages/**/*.json") in
+/// src/i18n.js`), not a path. The label must not become the filename: it
+/// holds `"` and `*`, which Windows rejects. producer esbuild@0.25.0
+/// `--bundle --format=esm --platform=node`; source:
+/// `src/i18n.js`: ``export function load(l){ return import(`../messages/${l}.json`) }``
+/// `src/sync.js`: ``export function loadSync(l){ return require(`../messages/${l}.json`) }``
+/// `src/main2.js`: `require("./i18n.js"); require("./sync.js")`
+#[test]
+fn esbuild_glob_module_is_named_beside_its_importer() {
+    let source = r#"var __create = Object.create;
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __glob = (map) => (path) => {
+  var fn = map[path];
+  if (fn) return fn();
+  throw new Error("Module not found in bundle: " + path);
+};
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
+var __commonJS = (cb, mod) => function __require() {
+  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+};
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+
+// messages/en.json
+var require_en = __commonJS({
+  "messages/en.json"(exports, module) {
+    module.exports = { a: 1 };
+  }
+});
+
+// messages/fr.json
+var require_fr = __commonJS({
+  "messages/fr.json"(exports, module) {
+    module.exports = { a: 2 };
+  }
+});
+
+// import("../messages/**/*.json") in src/i18n.js
+var globImport_messages_json;
+var init_ = __esm({
+  'import("../messages/**/*.json") in src/i18n.js'() {
+    globImport_messages_json = __glob({
+      "../messages/en.json": () => Promise.resolve().then(() => __toESM(require_en())),
+      "../messages/fr.json": () => Promise.resolve().then(() => __toESM(require_fr()))
+    });
+  }
+});
+
+// src/i18n.js
+var i18n_exports = {};
+__export(i18n_exports, {
+  load: () => load
+});
+function load(l) {
+  return globImport_messages_json(`../messages/${l}.json`);
+}
+var init_i18n = __esm({
+  "src/i18n.js"() {
+    init_();
+  }
+});
+
+// require("../messages/**/*.json") in src/sync.js
+var globRequire_messages_json;
+var init_2 = __esm({
+  'require("../messages/**/*.json") in src/sync.js'() {
+    globRequire_messages_json = __glob({
+      "../messages/en.json": () => require_en(),
+      "../messages/fr.json": () => require_fr()
+    });
+  }
+});
+
+// src/sync.js
+var sync_exports = {};
+__export(sync_exports, {
+  loadSync: () => loadSync
+});
+function loadSync(l) {
+  return globRequire_messages_json(`../messages/${l}.json`);
+}
+var init_sync = __esm({
+  "src/sync.js"() {
+    init_2();
+  }
+});
+
+// src/main2.js
+init_i18n();
+init_sync();
+"#;
+    let modules = expect_unpack(source, "bundle.js");
+    let names: Vec<&str> = modules.iter().map(|(name, _)| name.as_str()).collect();
+    assert!(
+        names.contains(&"src/globImport_messages_json.js")
+            && names.contains(&"src/globRequire_messages_json.js"),
+        "glob modules should take their map binding's name: {names:?}"
+    );
+    assert!(
+        names.iter().all(|name| !name.contains(['"', '*'])),
+        "a glob label must not become a path: {names:?}"
+    );
+    let importer = modules
+        .iter()
+        .find(|(name, _)| name == "src/i18n.js")
+        .map(|(_, code)| code.as_str())
+        .expect("importer module");
+    assert!(
+        importer.contains("./globImport_messages_json.js"),
+        "importer should import the renamed glob module:\n{importer}"
+    );
+}

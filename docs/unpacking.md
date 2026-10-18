@@ -54,7 +54,12 @@ attempted in order — first match wins:
    bundles from Bun are detected and split by this unpacker.
    Preserved Bun path comments are used only as filename hints for modules
    already found through structural helper patterns; they are not module
-   boundaries by themselves. Bindings that stay in the synthetic entry (a
+   boundaries by themselves. A lazy factory's object key is normally its
+   module path. The virtual module esbuild builds for a template or
+   concatenated `import()` / `require()` specifier is keyed by a label
+   instead (`import("./locale/**/*.json") in src/i18n.js`); it is named
+   after the binding that holds its lookup map, in the importer's directory
+   (`src/globImport_locale_json.js`). Bindings that stay in the synthetic entry (a
    declaration the last-module boundary search leaves in the remainder, or a
    restored lazy-module namespace object reached through the `import()`
    lowering `then(() => (init_x(), ns_x))`) are exported from `entry.js` and
@@ -666,6 +671,16 @@ layout directly is a proposal:
     but the input stays one file.
 
   AMD, Closure, Metro, and Turbopack were not checked with a producer.
+- **esbuild glob imports stay lookup maps.** A template or concatenated
+  `import()` / `require()` specifier (producer `esbuild@0.25.0 --bundle
+  --platform=node`) keeps its `__glob` map and the call through it
+  (`` globImport_locale_json(`./locale/${l}.json`) ``) instead of the original
+  `import()`. The map's entries reach each target through its lazy
+  initializer (`init_x()`, `require_x()`), and the target module is emitted
+  exporting that initializer, so a native `import()` of it would return the
+  initializer instead of the module. A literal `import("./x.js")` lowered
+  to `Promise.resolve().then(() => (init_x(), x_exports))` stays lowered
+  for the same reason.
 - **Relative `require` inside a top-level expression.** A module binding
   assigned inside an expression (`r = f((e = require("./m")).x)`) is not
   turned into an import, so the module stays CommonJS. rspack production

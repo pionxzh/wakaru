@@ -10,7 +10,8 @@ use super::bindings::{
 use super::emit::{repair_module_imports, restore_demoted_factories};
 use super::factories::{
     collect_commonjs_helper_syms, collect_factories, collect_factory_analysis_bindings,
-    collect_helper_syms, filter_helper_factory_declarators, has_factory_detection_evidence,
+    collect_helper_syms, factory_key_filename, filter_helper_factory_declarators,
+    has_factory_detection_evidence,
 };
 use super::ownership::{
     augment_imports_with_referenced_atoms_for_existing_sources, canonical_factory_filename,
@@ -1026,4 +1027,54 @@ fn affected_group_files_include_redirected_members_only_of_affected_groups() {
         .collect();
     files.sort_unstable();
     assert_eq!(files, ["writer.js", "writer_member.js"]);
+}
+
+#[test]
+fn glob_label_key_names_the_map_beside_its_importer() {
+    let init = Atom::from("init_");
+    let assign_map = |source: &str| parse_body_stmts(source);
+    assert_eq!(
+        factory_key_filename(
+            r#"import("../messages/**/*.json") in src/i18n.js"#.to_string(),
+            &assign_map("globImport_messages_json = __glob({});"),
+            &init,
+        ),
+        "src/globImport_messages_json.js"
+    );
+    assert_eq!(
+        factory_key_filename(
+            r#"require("./pages/**/*.js") in router.js"#.to_string(),
+            &assign_map("globRequire_pages_js = __glob({});"),
+            &init,
+        ),
+        "globRequire_pages_js.js"
+    );
+    // A body other than the single map assignment keeps the factory name.
+    assert_eq!(
+        factory_key_filename(
+            r#"import("./a/*.js") in src/b.js"#.to_string(),
+            &assign_map("a(); b = c;"),
+            &init,
+        ),
+        "src/init_.js"
+    );
+    // Ordinary path keys, and labels missing the importer, stay paths.
+    assert_eq!(
+        factory_key_filename("src/import(x).js".to_string(), &[], &init),
+        "src/import(x).js"
+    );
+    for key in [r#"import("./a/*.js")"#, r#"import("./a/*.js") in "#] {
+        let filename = factory_key_filename(key.to_string(), &[], &init);
+        assert!(!filename.contains("init_"), "{key} became {filename}");
+    }
+}
+
+fn parse_body_stmts(source: &str) -> Vec<Stmt> {
+    let module = super::super::parse_es_module(source, "body.js", Default::default())
+        .expect("fixture should parse");
+    module
+        .body
+        .into_iter()
+        .map(|item| item.stmt().expect("statement"))
+        .collect()
 }

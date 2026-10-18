@@ -449,11 +449,11 @@ fn try_extract_factory(
             use swc_core::ecma::ast::{Prop, PropOrSpread};
             if let PropOrSpread::Prop(prop) = &obj.props[0] {
                 if let Prop::Method(method) = &**prop {
+                    let body_stmts = method.function.body.as_ref()?.stmts.clone();
                     let filename = prop_key_str(&method.key)
-                        .map(sanitize_path)
+                        .map(|key| factory_key_filename(key, &body_stmts, &var_name))
                         .or_else(|| hinted_filename.clone())
                         .unwrap_or_else(|| format!("{var_name}.js"));
-                    let body_stmts = method.function.body.as_ref()?.stmts.clone();
                     return Some(Factory {
                         helper_sym,
                         binding,
@@ -650,6 +650,57 @@ fn prop_key_str(key: &swc_core::ecma::ast::PropName) -> Option<String> {
         PropName::Ident(id) => Some(id.sym.to_string()),
         _ => None,
     }
+}
+
+/// Filename for a factory whose object-method key is `key`. The key is
+/// normally the module's path; an esbuild glob label is not (see
+/// [`glob_label_importer`]).
+pub(super) fn factory_key_filename(key: String, body_stmts: &[Stmt], var_name: &Atom) -> String {
+    let Some(importer) = glob_label_importer(&key) else {
+        return sanitize_path(key);
+    };
+    let name = glob_map_binding(body_stmts).unwrap_or(var_name);
+    match sanitize_path(importer.to_string()).rsplit_once('/') {
+        Some((dir, _)) => format!("{dir}/{name}.js"),
+        None => format!("{name}.js"),
+    }
+}
+
+/// esbuild bundles a dynamic `import()` or `require()` whose specifier is a
+/// template or concatenation (`` import(`./locale/${l}.json`) ``) as a
+/// virtual module holding a lookup map over every matching file. That
+/// module's key is a label naming the call and its importer, not a path:
+///
+/// ```js
+/// var init_ = __esm({
+///   'import("./locale/**/*.json") in src/i18n.js'() {
+///     globImport_locale_json = __glob({ "./locale/en.json": () => ... });
+///   }
+/// });
+/// ```
+///
+/// Returns the importer path of such a label. producer esbuild@0.19.0,
+/// 0.21.5, and 0.25.0 `--bundle --platform=node`, with `import` and
+/// `require`.
+fn glob_label_importer(key: &str) -> Option<&str> {
+    let call = key
+        .strip_prefix("import(\"")
+        .or_else(|| key.strip_prefix("require(\""))?;
+    let (_, importer) = call.rsplit_once("\") in ")?;
+    (!importer.is_empty()).then_some(importer)
+}
+
+/// The binding a glob factory assigns its lookup map to
+/// (`globImport_locale_json`). esbuild derives it from the pattern, while the
+/// factory variable itself is an unnamed `init_`.
+fn glob_map_binding(body_stmts: &[Stmt]) -> Option<&Atom> {
+    let [Stmt::Expr(ExprStmt { expr, .. })] = body_stmts else {
+        return None;
+    };
+    let Expr::Assign(assign) = strip_parens(expr) else {
+        return None;
+    };
+    assign.left.as_ident().map(|ident| &ident.id.sym)
 }
 
 /// Convert a source-map style path (`../src/foo.js`, `webpack:///src/foo.js`) to a
