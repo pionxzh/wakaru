@@ -5,6 +5,7 @@ mod chunk_loading_global;
 pub mod closure_module_manager;
 pub(crate) mod emit_esm;
 pub mod esbuild;
+pub mod lit;
 pub mod metro;
 pub mod scope_hoist;
 mod surrounding;
@@ -1507,6 +1508,16 @@ fn detect_bundle_candidate_before_esbuild(
     };
     if result.is_some() {
         return result.map(DetectedBundle::from_result);
+    }
+
+    // Lit / jsaction / Polymer bundles (custom web component registries)
+    let result = {
+        let span = tracing::info_span!("detect_lit");
+        let _enter = span.enter();
+        lit::detect_from_module_prepared(module, cm.clone())
+    };
+    if result.is_some() {
+        return result;
     }
 
     None
