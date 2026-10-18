@@ -1276,8 +1276,16 @@ follows ESM semantics where the bundle differs:
 A module that is also imported statically keeps its initializer: the
 importer runs it eagerly, before any loader.
 
-Affects: esbuild unpack (`unpacker/esbuild/lazy_import.rs`), in normal and
-raw output.
+A `__glob` map whose every entry becomes such an `import()` collapses into
+`import()` of the template again (`` import(`./pages/${p}.js`) ``). For a
+path among the map's keys, the native `import()` loads the same module. For
+any other path the bundle threw `Module not found in bundle` synchronously
+from the call; the native `import()` returns a rejected promise instead, or
+loads whatever file the path names next to the output. Both are what the
+source's `import()` did.
+
+Affects: esbuild unpack (`unpacker/esbuild/lazy_import.rs`,
+`unpacker/esbuild/glob_import.rs`), in normal and raw output.
 
 Level: every level, in unpack mode only.
 

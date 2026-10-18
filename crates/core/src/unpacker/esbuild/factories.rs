@@ -24,6 +24,8 @@ pub(super) struct Factory {
     pub(super) var_name: Atom,
     /// Derived filename: filepath string key when available, else `<var_name>.js`.
     pub(super) filename: String,
+    /// `filename` is `<var_name>.js`: the factory has no path key or hint.
+    pub(super) named_after_binding: bool,
     /// CommonJS factory callback params: `(exports, module) => { ... }`.
     pub(super) cjs_params: Option<CjsFactoryParams>,
     /// The statements inside the factory function body (unresolved — for emission).
@@ -460,15 +462,17 @@ fn try_extract_factory(
             if let PropOrSpread::Prop(prop) = &obj.props[0] {
                 if let Prop::Method(method) = &**prop {
                     let body_stmts = method.function.body.as_ref()?.stmts.clone();
-                    let filename = prop_key_str(&method.key)
+                    let named = prop_key_str(&method.key)
                         .map(|key| factory_key_filename(key, &body_stmts, &var_name))
-                        .or_else(|| hinted_filename.clone())
-                        .unwrap_or_else(|| format!("{var_name}.js"));
+                        .or_else(|| hinted_filename.clone());
+                    let named_after_binding = named.is_none();
+                    let filename = named.unwrap_or_else(|| format!("{var_name}.js"));
                     return Some(Factory {
                         helper_sym,
                         binding,
                         var_name,
                         filename,
+                        named_after_binding,
                         cjs_params: is_commonjs_factory
                             .then(|| function_cjs_params(&method.function))
                             .flatten(),
@@ -484,12 +488,14 @@ fn try_extract_factory(
         // Minified arrow: y(() => { … }) or y(() => expr)
         Expr::Arrow(arrow) => {
             let body_stmts = arrow_body_stmts(arrow);
+            let named_after_binding = hinted_filename.is_none();
             let filename = hinted_filename.unwrap_or_else(|| format!("{var_name}.js"));
             Some(Factory {
                 helper_sym,
                 binding,
                 var_name,
                 filename,
+                named_after_binding,
                 cjs_params: is_commonjs_factory
                     .then(|| arrow_cjs_params(arrow))
                     .flatten(),
@@ -502,12 +508,14 @@ fn try_extract_factory(
         // Minified function: m(function() { … })
         Expr::Fn(fn_expr) => {
             let body_stmts = fn_expr.function.body.as_ref()?.stmts.clone();
+            let named_after_binding = hinted_filename.is_none();
             let filename = hinted_filename.unwrap_or_else(|| format!("{var_name}.js"));
             Some(Factory {
                 helper_sym,
                 binding,
                 var_name,
                 filename,
+                named_after_binding,
                 cjs_params: is_commonjs_factory
                     .then(|| function_cjs_params(&fn_expr.function))
                     .flatten(),

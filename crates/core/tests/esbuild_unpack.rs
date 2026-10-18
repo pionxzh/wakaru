@@ -5338,21 +5338,265 @@ fn esbuild_lowered_import_of_minified_lazy_only_module_becomes_import() {
 }
 
 #[test]
-fn esbuild_glob_map_entries_load_lazy_only_modules_with_import() {
-    let pairs = expect_unpack(ESBUILD_GLOB_IMPORT_BUNDLE, "bundle.js");
+fn esbuild_glob_import_of_lazy_only_modules_collapses_to_import() {
+    for pairs in [
+        expect_unpack(ESBUILD_GLOB_IMPORT_BUNDLE, "bundle.js"),
+        expect_unpack_raw(ESBUILD_GLOB_IMPORT_BUNDLE),
+    ] {
+        let entry = module_code(&pairs, "entry.js");
+        assert!(entry.contains("import(`./page-${which}.js`)"), "{entry}");
+        assert!(!entry.contains("globImport_page_js"), "{entry}");
+        assert!(!entry.contains("Module not found in bundle"), "{entry}");
+        assert!(!entry.contains("_exports"), "{entry}");
+        let home = module_code(&pairs, "page-home.js");
+        assert!(home.contains("as title"), "{home}");
+        assert!(!home.contains("init_page_home"), "{home}");
+        assert_eq!(validate_output_modules(&pairs), vec![]);
+    }
+}
+
+// A glob import's keys are relative to the importer (`src/i18n.js`), while
+// the call can land in another output file. producer esbuild@0.28.0
+// `--bundle --platform=node --format=cjs`. Sources:
+// `src/i18n.js`: ``export async function load(p) { const page = await import(`../pages/${p}.js`); return page.title; }``
+// `src/main.js`: `import { load } from "./i18n.js"; globalThis.out = load;`
+// `pages/home.js`, `pages/about.js`: `export const title = "page-…-title";`
+const ESBUILD_GLOB_IMPORT_FROM_SUBDIRECTORY_BUNDLE: &str = r#"var __defProp = Object.defineProperty;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __glob = (map) => (path) => {
+  var fn = map[path];
+  if (fn) return fn();
+  throw new Error("Module not found in bundle: " + path);
+};
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+
+// pages/about.js
+var about_exports = {};
+__export(about_exports, {
+  title: () => title
+});
+var title;
+var init_about = __esm({
+  "pages/about.js"() {
+    title = "page-about-title";
+  }
+});
+
+// pages/home.js
+var home_exports = {};
+__export(home_exports, {
+  title: () => title2
+});
+var title2;
+var init_home = __esm({
+  "pages/home.js"() {
+    title2 = "page-home-title";
+  }
+});
+
+// import("../pages/**/*.js") in src/i18n.js
+var globImport_pages_js = __glob({
+  "../pages/about.js": () => Promise.resolve().then(() => (init_about(), about_exports)),
+  "../pages/home.js": () => Promise.resolve().then(() => (init_home(), home_exports))
+});
+
+// src/i18n.js
+async function load(p) {
+  const page = await globImport_pages_js(`../pages/${p}.js`);
+  return page.title;
+}
+
+// src/main.js
+globalThis.out = load;
+"#;
+
+#[test]
+fn esbuild_glob_import_specifier_is_rewritten_from_the_calling_module() {
+    let pairs = expect_unpack(ESBUILD_GLOB_IMPORT_FROM_SUBDIRECTORY_BUNDLE, "bundle.js");
+    let entry = module_code(&pairs, "entry.js");
+    assert!(entry.contains("import(`./pages/${p}.js`)"), "{entry}");
+    assert!(!entry.contains("../pages/"), "{entry}");
+    module_code(&pairs, "pages/home.js");
+    assert_eq!(validate_output_modules(&pairs), vec![]);
+}
+
+#[test]
+fn esbuild_concatenated_glob_import_specifier_collapses_to_import() {
+    // The same producer over `import("../pages/" + p + ".js")` differs from
+    // the template build only in the call.
+    let bundle = ESBUILD_GLOB_IMPORT_FROM_SUBDIRECTORY_BUNDLE.replace(
+        "globImport_pages_js(`../pages/${p}.js`)",
+        "globImport_pages_js(\"../pages/\" + p + \".js\")",
+    );
+    let pairs = expect_unpack_raw(&bundle);
     let entry = module_code(&pairs, "entry.js");
     assert!(
-        entry.contains("\"./page-home.js\": ()=>import(\"./page-home.js\")"),
+        entry.contains("import(\"./pages/\" + p + \".js\")"),
         "{entry}"
     );
+    assert!(!entry.contains("globImport_pages_js"), "{entry}");
+    assert_eq!(validate_output_modules(&pairs), vec![]);
+}
+
+#[test]
+fn esbuild_glob_map_passed_as_a_value_is_kept() {
+    // hypothetical: a map read other than as a callee could be called with
+    // any path, so the map stays.
+    let bundle = ESBUILD_GLOB_IMPORT_FROM_SUBDIRECTORY_BUNDLE.replace(
+        "globalThis.out = load;",
+        "globalThis.out = load;\nglobalThis.lookup = globImport_pages_js;",
+    );
+    let pairs = expect_unpack(&bundle, "bundle.js");
+    let entry = module_code(&pairs, "entry.js");
     assert!(
-        entry.contains("\"./page-about.js\": ()=>import(\"./page-about.js\")"),
+        entry.contains("globImport_pages_js(`../pages/${p}.js`)"),
         "{entry}"
     );
-    assert!(!entry.contains("_exports"), "{entry}");
-    let home = module_code(&pairs, "page-home.js");
-    assert!(home.contains("as title"), "{home}");
-    assert!(!home.contains("init_page_home"), "{home}");
+    assert!(entry.contains("import(\"./pages/home.js\")"), "{entry}");
+    assert_eq!(validate_output_modules(&pairs), vec![]);
+}
+
+// When the importer is itself a lazy module, the map is the state of a
+// virtual lazy module between the last matched module and the importer.
+// producer esbuild@0.28.0 `--bundle --platform=node --format=cjs`, the
+// minified build adding `--minify`. Sources as above, except
+// `src/main.js`: `globalThis.run = async (p) => (await import("./i18n.js")).load(p);`
+const ESBUILD_GLOB_IMPORT_FROM_LAZY_MODULE_BUNDLE: &str = r#"var __defProp = Object.defineProperty;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __glob = (map) => (path) => {
+  var fn = map[path];
+  if (fn) return fn();
+  throw new Error("Module not found in bundle: " + path);
+};
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+
+// pages/about.js
+var about_exports = {};
+__export(about_exports, {
+  title: () => title
+});
+var title;
+var init_about = __esm({
+  "pages/about.js"() {
+    title = "page-about-title";
+  }
+});
+
+// pages/home.js
+var home_exports = {};
+__export(home_exports, {
+  title: () => title2
+});
+var title2;
+var init_home = __esm({
+  "pages/home.js"() {
+    title2 = "page-home-title";
+  }
+});
+
+// import("../pages/**/*.js") in src/i18n.js
+var globImport_pages_js;
+var init_ = __esm({
+  'import("../pages/**/*.js") in src/i18n.js'() {
+    globImport_pages_js = __glob({
+      "../pages/about.js": () => Promise.resolve().then(() => (init_about(), about_exports)),
+      "../pages/home.js": () => Promise.resolve().then(() => (init_home(), home_exports))
+    });
+  }
+});
+
+// src/i18n.js
+var i18n_exports = {};
+__export(i18n_exports, {
+  load: () => load
+});
+async function load(p) {
+  const page = await globImport_pages_js(`../pages/${p}.js`);
+  return page.title;
+}
+var init_i18n = __esm({
+  "src/i18n.js"() {
+    init_();
+  }
+});
+
+// src/main.js
+globalThis.run = async (p) => (await Promise.resolve().then(() => (init_i18n(), i18n_exports))).load(p);
+"#;
+const ESBUILD_GLOB_IMPORT_FROM_LAZY_MODULE_MINIFIED_BUNDLE: &str = r#"var m=Object.defineProperty;var n=t=>a=>{var e=t[a];if(e)return e();throw new Error("Module not found in bundle: "+a)};var o=(t,a)=>()=>(t&&(a=t(t=0)),a);var i=(t,a)=>{for(var e in a)m(t,e,{get:a[e],enumerable:!0})};var p={};i(p,{title:()=>x});var x,r=o(()=>{x="page-about-title"});var c={};i(c,{title:()=>b});var b,s=o(()=>{b="page-home-title"});var d,l=o(()=>{d=n({"../pages/about.js":()=>Promise.resolve().then(()=>(r(),p)),"../pages/home.js":()=>Promise.resolve().then(()=>(s(),c))})});var g={};i(g,{load:()=>h});async function h(t){return(await d(`../pages/${t}.js`)).title}var u=o(()=>{l()});globalThis.run=async t=>(await Promise.resolve().then(()=>(u(),g))).load(t);
+"#;
+
+#[test]
+fn esbuild_glob_import_in_a_lazy_module_drops_its_virtual_module() {
+    for pairs in [
+        expect_unpack(ESBUILD_GLOB_IMPORT_FROM_LAZY_MODULE_BUNDLE, "bundle.js"),
+        expect_unpack_raw(ESBUILD_GLOB_IMPORT_FROM_LAZY_MODULE_BUNDLE),
+    ] {
+        let names: Vec<&str> = pairs.iter().map(|(name, _)| name.as_str()).collect();
+        assert!(
+            !names.iter().any(|name| name.contains("globImport")),
+            "{names:?}"
+        );
+        let i18n = module_code(&pairs, "src/i18n.js");
+        assert!(i18n.contains("import(`../pages/${p}.js`)"), "{i18n}");
+        assert!(!i18n.contains("init_"), "{i18n}");
+        let home = module_code(&pairs, "pages/home.js");
+        assert!(!home.contains("init_home"), "{home}");
+        let entry = module_code(&pairs, "entry.js");
+        assert!(entry.contains("import(\"./src/i18n.js\")"), "{entry}");
+        assert_eq!(validate_output_modules(&pairs), vec![]);
+    }
+}
+
+#[test]
+fn esbuild_minified_glob_import_names_its_matches_after_their_keys() {
+    // Minified initializers have no path key, so the matched modules would be
+    // named after their bindings; they take their glob key instead, below the
+    // output root, and the map collapses. The virtual module sits between the
+    // last matched module and the importer.
+    let pairs = expect_unpack(
+        ESBUILD_GLOB_IMPORT_FROM_LAZY_MODULE_MINIFIED_BUNDLE,
+        "bundle.js",
+    );
+    let home = module_code(&pairs, "pages/home.js");
+    assert!(
+        home.contains("export const title = \"page-home-title\""),
+        "{home}"
+    );
+    module_code(&pairs, "pages/about.js");
+    let code: String = pairs.iter().map(|(_, code)| code.as_str()).collect();
+    assert!(code.contains("import(`./pages/${t}.js`)"), "{code}");
+    assert!(!code.contains("Module not found in bundle"), "{code}");
+    assert_eq!(validate_output_modules(&pairs), vec![]);
+}
+
+#[test]
+fn esbuild_glob_keys_that_do_not_name_output_files_keep_the_map() {
+    // hypothetical: a matched module whose path key is not what the glob key
+    // names keeps its name, so the map stays; its entries still import the
+    // plain modules.
+    let bundle = ESBUILD_GLOB_IMPORT_FROM_SUBDIRECTORY_BUNDLE
+        .replace("\"pages/about.js\"() {", "\"views/about.js\"() {");
+    let pairs = expect_unpack(&bundle, "bundle.js");
+    let entry = module_code(&pairs, "entry.js");
+    assert!(
+        entry.contains("globImport_pages_js(`../pages/${p}.js`)"),
+        "{entry}"
+    );
+    assert!(entry.contains("import(\"./views/about.js\")"), "{entry}");
+    module_code(&pairs, "views/about.js");
     assert_eq!(validate_output_modules(&pairs), vec![]);
 }
 

@@ -24,8 +24,10 @@
 //! [`LazyImportPlan::apply`] rewrites the bundle so the rest of the unpacker
 //! sees an ordinary scope-hoisted module: the initializer body moves to top
 //! level where the initializer was declared, and each loader becomes
-//! `import()` of a placeholder naming the module's output file.
-//! [`resolve_lazy_import_placeholders`] turns the placeholder into a relative
+//! `import()` of a placeholder naming the module's output file. A `__glob`
+//! map whose loaders all become `import()` collapses as well (see
+//! `glob_import`). [`resolve_lazy_import_placeholders`] turns the
+//! placeholders into a relative
 //! specifier once the importing module's filename is known. Where ESM
 //! semantics differ from the bundle's is listed under
 //! `esbuild_lazy_import_source_semantics` in `docs/rewrite-assumptions.md`.
@@ -47,6 +49,7 @@ use crate::unpacker::{
 use crate::utils::paren::strip_parens;
 
 use super::factories::Factory;
+use super::glob_import::{plan_glob_collapses, resolve_prefix_placeholder, GlobCollapsePlan};
 use super::scope_boundaries::{collect_scope_hoisted_boundaries, detect_export_helper};
 use super::synthesis::{dedup_filename, relative_import_path};
 
@@ -84,6 +87,7 @@ pub(super) struct LazyImportPlan {
     /// were inlined, so inlining one module renames no other.
     pub(super) factory_filenames: HashMap<BindingId, String>,
     loader_spans: HashSet<(u32, u32)>,
+    globs: GlobCollapsePlan,
 }
 
 /// Find the lazily loaded ES modules of a bundle whose resolved AST is
@@ -140,7 +144,7 @@ pub(super) fn plan_lazy_imports(
 
     let mut seen_filenames: HashSet<String> = HashSet::default();
     seen_filenames.insert("entry.js".to_string());
-    let factory_filenames: HashMap<BindingId, String> = factories
+    let mut factory_filenames: HashMap<BindingId, String> = factories
         .iter()
         .map(|factory| {
             (
@@ -236,14 +240,48 @@ pub(super) fn plan_lazy_imports(
         return None;
     }
 
-    let inlined_namespaces: HashSet<&BindingId> =
-        modules.iter().map(|module| &module.namespace).collect();
-    let loader_spans = loaders
+    let target_by_namespace: HashMap<&BindingId, &String> = modules
+        .iter()
+        .map(|module| (&module.namespace, &module.filename))
+        .collect();
+    let loader_targets: HashMap<(u32, u32), String> = loaders
         .loaders
         .iter()
-        .filter(|loader| inlined_namespaces.contains(&loader.namespace))
-        .map(|loader| (loader.span.lo.0, loader.span.hi.0))
+        .filter_map(|loader| {
+            let target = target_by_namespace.get(&loader.namespace)?;
+            Some(((loader.span.lo.0, loader.span.hi.0), (*target).clone()))
+        })
         .collect();
+    let loader_spans = loader_targets.keys().copied().collect();
+    let named_after_binding: HashSet<String> = factories
+        .iter()
+        .filter(|factory| factory.named_after_binding)
+        .map(|factory| factory_filenames[&factory.binding].clone())
+        .collect();
+    let globs = plan_glob_collapses(
+        analysis_module,
+        &factories,
+        commonjs_helper_syms,
+        &loader_targets,
+        &named_after_binding,
+        &mut seen_filenames,
+        &occurrences,
+        &modules.iter().map(|module| module.factory_item).collect(),
+    );
+    // Old names stay reserved, so no other module's name changes.
+    for module in &mut modules {
+        if let Some(name) = globs.renamed_targets.get(&module.filename) {
+            module.filename = name.clone();
+        }
+    }
+    for filename in factory_filenames.values_mut() {
+        if let Some(name) = globs.renamed_targets.get(filename) {
+            *filename = name.clone();
+        }
+    }
+    for helper in &globs.removed_factory_helpers {
+        *inlined_factory_helpers.entry(helper.clone()).or_default() += 1;
+    }
     let helper_factory_counts =
         factories
             .iter()
@@ -262,10 +300,17 @@ pub(super) fn plan_lazy_imports(
         seen_filenames,
         factory_filenames,
         loader_spans,
+        globs,
     })
 }
 
 impl LazyImportPlan {
+    /// Lazy factories that leave the bundle: inlined modules and the
+    /// virtual modules of collapsed glob maps.
+    pub(super) fn removed_factory_count(&self) -> usize {
+        self.modules.len() + self.globs.removed_factory_helpers.len()
+    }
+
     /// Rewrite `module`, the bundle or its resolved clone (the two share item
     /// layout and spans), and record where each module's code ends.
     pub(super) fn apply(&mut self, module: &mut Module) {
@@ -278,6 +323,7 @@ impl LazyImportPlan {
                 .collect(),
         };
         module.visit_mut_with(&mut rewriter);
+        self.globs.rewrite_calls(module);
 
         let factory_items: HashMap<usize, usize> = self
             .modules
@@ -286,7 +332,23 @@ impl LazyImportPlan {
             .map(|(index, lazy)| (lazy.factory_item, index))
             .collect();
         let mut body = Vec::with_capacity(module.body.len());
-        for (item_index, item) in std::mem::take(&mut module.body).into_iter().enumerate() {
+        for (item_index, mut item) in std::mem::take(&mut module.body).into_iter().enumerate() {
+            if self.globs.removed_items.contains(&item_index) {
+                continue;
+            }
+            if let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = &mut item {
+                let mut declarator = 0;
+                var.decls.retain(|_| {
+                    declarator += 1;
+                    !self
+                        .globs
+                        .removed_declarators
+                        .contains(&(item_index, declarator - 1))
+                });
+                if var.decls.is_empty() {
+                    continue;
+                }
+            }
             let Some(&lazy_index) = factory_items.get(&item_index) else {
                 body.push(item);
                 continue;
@@ -409,18 +471,18 @@ fn lowered_import_loader(call: &CallExpr, unresolved_mark: Mark) -> Option<(&Ide
     init.args.is_empty().then_some((factory, namespace))
 }
 
-fn binding_of(ident: &Ident) -> BindingId {
+pub(super) fn binding_of(ident: &Ident) -> BindingId {
     (ident.sym.clone(), ident.ctxt)
 }
 
 /// Every identifier occurrence by resolved binding, declarations included.
 #[derive(Default)]
-struct BindingOccurrences {
+pub(super) struct BindingOccurrences {
     counts: HashMap<BindingId, usize>,
 }
 
 impl BindingOccurrences {
-    fn count(&self, binding: &BindingId) -> usize {
+    pub(super) fn count(&self, binding: &BindingId) -> usize {
         self.counts.get(binding).copied().unwrap_or(0)
     }
 }
@@ -431,7 +493,7 @@ impl Visit for BindingOccurrences {
     }
 }
 
-enum FactoryBody<'a> {
+pub(super) enum FactoryBody<'a> {
     Stmts(&'a [Stmt]),
     Expr(&'a Expr),
 }
@@ -446,7 +508,7 @@ fn factory_init(item: &ModuleItem, declarator: usize) -> Option<&CallExpr> {
     Some(call)
 }
 
-fn factory_body(item: &ModuleItem, declarator: usize) -> Option<FactoryBody<'_>> {
+pub(super) fn factory_body(item: &ModuleItem, declarator: usize) -> Option<FactoryBody<'_>> {
     let call = factory_init(item, declarator)?;
     let [ExprOrSpread { spread: None, expr }] = call.args.as_slice() else {
         return None;
@@ -786,6 +848,7 @@ impl VisitMut for PlaceholderResolver<'_> {
         if !matches!(call.callee, Callee::Import(_)) {
             return;
         }
+        resolve_prefix_placeholder(call, self.from_filename);
         let Some(ExprOrSpread { expr, .. }) = call.args.first_mut() else {
             return;
         };

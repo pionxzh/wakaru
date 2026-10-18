@@ -66,7 +66,16 @@ attempted in order — first match wins:
    `import("./x.js")` (`esbuild_lazy_import_source_semantics` in
    [rewrite-assumptions.md](rewrite-assumptions.md)). A module whose
    initializer or namespace object has any other reference, or whose
-   declarations are read outside it, keeps its initializer. Bindings that stay in the synthetic entry (a
+   declarations are read outside it, keeps its initializer. A `__glob` map
+   whose every entry becomes such an `import()`, and which is only called,
+   collapses: each call becomes `import()` of its own specifier, whose
+   leading static text is rewritten from the calling module to the matched
+   modules' output directory, and the map leaves the bundle with its virtual
+   module and that module's initializer calls. It collapses only when every
+   key, after that leading text, is the rest of its target's output path. A
+   minified build has no path keys, so matched modules named after their
+   bindings take their glob key as their name instead, below the output root
+   (`../pages/home.js` names `pages/home.js`). Bindings that stay in the synthetic entry (a
    declaration the last-module boundary search leaves in the remainder, or a
    restored lazy-module namespace object reached through the `import()`
    lowering `then(() => (init_x(), ns_x))`) are exported from `entry.js` and
@@ -678,12 +687,12 @@ layout directly is a proposal:
     but the input stays one file.
 
   AMD, Closure, Metro, and Turbopack were not checked with a producer.
-- **esbuild glob imports stay lookup maps.** A template or concatenated
+- **Some esbuild glob imports stay lookup maps.** A template or concatenated
   `import()` / `require()` specifier (producer `esbuild@0.25.0 --bundle
   --platform=node`) keeps its `__glob` map and the call through it
   (`` globImport_locale_json(`./locale/${l}.json`) ``) instead of the original
-  `import()`. Over ES modules loaded only through the map, each entry
-  already reads `() => import("./x.js")`; the map itself is not collapsed.
+  `import()`, unless every match is an ES module loaded only through the
+  map and the keys name the matched modules' output files.
   Over CommonJS modules the entries keep `__toESM(require_x())`: the target
   is emitted exporting its `require_x()` initializer, so a native `import()`
   of it would return the initializer instead of the module. A literal

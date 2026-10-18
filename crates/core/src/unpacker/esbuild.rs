@@ -14,6 +14,7 @@ use crate::unpacker::{
 mod bindings;
 mod emit;
 mod factories;
+mod glob_import;
 mod lazy_import;
 mod ownership;
 mod scope;
@@ -217,7 +218,7 @@ fn detect_from_prepared_factories(
         .collect();
     let inlined_factories = lazy_imports.as_ref().map_or(0, |plan| {
         helper_syms.extend(plan.inlined_helper_syms.iter().cloned());
-        plan.modules.len()
+        plan.removed_factory_count()
     });
 
     let has_cjs_factories = !commonjs_helper_syms.is_empty()
