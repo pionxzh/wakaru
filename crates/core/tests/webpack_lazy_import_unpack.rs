@@ -3,7 +3,7 @@
 //! (`webpack_lazy_import_source_semantics`).
 
 use wakaru_core::driver::test_support::{unpack, unpack_files, UnpackInput};
-use wakaru_core::DecompileOptions;
+use wakaru_core::{DecompileOptions, UnpackWarningKind};
 
 /// A webpack 5 bundle whose entry runs module 1, with `modules` as the
 /// module array from index 1.
@@ -32,7 +32,9 @@ fn bundle(modules: &str) -> String {
     )
 }
 
-fn unpacked(source: &str) -> Vec<(String, String)> {
+/// The unpacked modules of `source`, and the module each `runtime_residual`
+/// warning names.
+fn unpacked_with_residuals(source: &str) -> (Vec<(String, String)>, Vec<String>) {
     let output = unpack(
         source,
         DecompileOptions {
@@ -41,7 +43,19 @@ fn unpacked(source: &str) -> Vec<(String, String)> {
         },
     )
     .expect("unpack should succeed");
-    output.modules
+    let residuals = output
+        .warnings
+        .iter()
+        .filter(|warning| warning.kind == UnpackWarningKind::RuntimeResidual)
+        .map(|warning| format!("{}: {}", warning.filename, warning.message))
+        .collect();
+    (output.modules, residuals)
+}
+
+fn unpacked(source: &str) -> Vec<(String, String)> {
+    let (modules, residuals) = unpacked_with_residuals(source);
+    assert!(residuals.is_empty(), "{residuals:?}");
+    modules
 }
 
 fn module<'a>(modules: &'a [(String, String)], name: &str) -> &'a str {
@@ -113,13 +127,31 @@ fn plain_loader_of_a_commonjs_value_reads_its_default() {
 #[test]
 fn fake_namespace_of_named_exports_only_keeps_the_loader() {
     // The fake namespace has a `default`, the recovered module none.
-    let modules = unpacked(&bundle(
+    let (modules, residuals) = unpacked_with_residuals(&bundle(
         r#"(e, t, r) => { r.r(t); r.d(t, { load: () => o }); async function o() { const m = await Promise.resolve().then(() => r.t(2, 19)); return m.greet("x"); } }, (e, t) => { t.greet = function (v) { return "hi " + v; }; }"#,
     ));
     let consumer = module(&modules, "module-1.js");
     assert!(
         consumer.contains(r#"require.t("./module-2.js", 19)"#) && !consumer.contains("import("),
         "{consumer}"
+    );
+    // The kept loader is reported.
+    assert_eq!(
+        residuals,
+        ["module-1.js: webpack runtime member `require.t` is kept, which the split output does not define; the lazy load throws when it runs"]
+    );
+}
+
+#[test]
+fn chunk_load_without_its_chunk_is_reported() {
+    let (modules, residuals) = unpacked_with_residuals(&bundle(
+        r#"(e, t, r) => { r.r(t); r.d(t, { load: () => o }); async function o() { return r.e(529).then(() => r(529)); } }"#,
+    ));
+    let consumer = module(&modules, "module-1.js");
+    assert!(consumer.contains("require.e(529)"), "{consumer}");
+    assert_eq!(
+        residuals,
+        ["module-1.js: webpack runtime member `require.e` is kept, which the split output does not define; the lazy load throws when it runs"]
     );
 }
 

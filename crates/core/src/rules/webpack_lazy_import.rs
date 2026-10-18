@@ -35,7 +35,7 @@ use swc_core::ecma::ast::{
     ArrowExpr, ArrowFunctionBody, CallExpr, Callee, Expr, ExprOrSpread, IdentName, Import, Lit,
     MemberExpr, MemberProp, Module, Pat, ReturnStmt, Stmt, Str,
 };
-use swc_core::ecma::visit::{VisitMut, VisitMutWith};
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::decl_utils::fresh_binding_ident;
 use super::eval_utils::module_blocks_global_reference;
@@ -367,6 +367,60 @@ impl VisitMut for Restorer<'_> {
             }
         }
         expr.visit_mut_children_with(self);
+    }
+}
+
+/// The first webpack lazy-load runtime member `module` still calls on the
+/// free `require`: `e` for `require.e(chunk)`, `t` for `require.t(…)` or
+/// `require.t.bind(…)`. The split output defines neither, so a load that
+/// [`run_cross_module_webpack_lazy_imports`] kept throws when it runs.
+pub(crate) fn kept_lazy_load_runtime_member(
+    module: &Module,
+    unresolved_mark: Mark,
+) -> Option<&'static str> {
+    let mut finder = RuntimeMemberFinder {
+        unresolved_mark,
+        found: None,
+    };
+    module.visit_with(&mut finder);
+    finder.found
+}
+
+struct RuntimeMemberFinder {
+    unresolved_mark: Mark,
+    found: Option<&'static str>,
+}
+
+impl Visit for RuntimeMemberFinder {
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if self.found.is_some() {
+            return;
+        }
+        self.found = match global_member_call(call, "require", self.unresolved_mark) {
+            Some("e") => Some("e"),
+            Some("t") => Some("t"),
+            _ => match &call.callee {
+                Callee::Expr(callee) => match strip_parens(callee) {
+                    Expr::Member(MemberExpr {
+                        obj,
+                        prop: MemberProp::Ident(bind),
+                        ..
+                    }) if bind.sym == "bind" => match strip_parens(obj) {
+                        Expr::Member(MemberExpr {
+                            obj,
+                            prop: MemberProp::Ident(t),
+                            ..
+                        }) if t.sym == "t" && is_global(obj, "require", self.unresolved_mark) => {
+                            Some("t")
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                },
+                _ => None,
+            },
+        };
+        call.visit_children_with(self);
     }
 }
 

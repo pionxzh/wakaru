@@ -53,6 +53,27 @@ pub(super) fn collect_commonjs_export_residual_warnings(
     )]
 }
 
+/// Report a webpack lazy load that kept its loader, through `require.e` or
+/// `require.t`, which the split output does not define.
+pub(super) fn collect_webpack_runtime_residual_warnings(
+    module: &swc_core::ecma::ast::Module,
+    unresolved_mark: Mark,
+    filename: &str,
+) -> Vec<UnpackWarning> {
+    let Some(member) =
+        crate::rules::webpack_lazy_import::kept_lazy_load_runtime_member(module, unresolved_mark)
+    else {
+        return Vec::new();
+    };
+    vec![UnpackWarning::new(
+        filename,
+        UnpackWarningKind::RuntimeResidual,
+        format!(
+            "webpack runtime member `require.{member}` is kept, which the split output does not define; the lazy load throws when it runs"
+        ),
+    )]
+}
+
 /// Report the `require` calls an ES module output still makes. ESM has no
 /// `require`, so `UnEsm` keeps such a module CommonJS; one that reaches the
 /// output anyway is a require a later stage was expected to convert. Calls of

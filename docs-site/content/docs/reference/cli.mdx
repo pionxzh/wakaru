@@ -209,8 +209,9 @@ requires it kept.
 
 Unpack reports a non-error `runtime_residual` warning when a module keeps a
 bundler runtime call that the output does not define, such as Turbopack chunk
-loading or path resolution through `__turbopack_context__`. The rest of the
-module is recovered.
+loading or path resolution through `__turbopack_context__`, or webpack's
+`require.e` and `require.t` around a lazy `import()` whose chunk was not among
+the inputs. The rest of the module is recovered.
 
 ## Overwrite protection
 

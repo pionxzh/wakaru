@@ -16,6 +16,7 @@ use super::super::diagnostics::{
     collect_commonjs_export_residual_warnings, collect_commonjs_require_of_esm_warnings,
     collect_commonjs_require_residual_warnings, collect_es_source_kept_commonjs_warnings,
     collect_input_parse_warnings, collect_output_diagnostics,
+    collect_webpack_runtime_residual_warnings,
 };
 use super::super::io::{
     apply_fixer, build_output_sourcemap, parse_js, parse_js_with_recovery, print_js,
@@ -875,6 +876,11 @@ pub(super) fn unpack_multi_module_with_plan(
                 &unpacked.module.filename,
             ));
             diag_warnings.extend(collect_commonjs_require_residual_warnings(
+                &module,
+                unresolved_mark,
+                &unpacked.module.filename,
+            ));
+            diag_warnings.extend(collect_webpack_runtime_residual_warnings(
                 &module,
                 unresolved_mark,
                 &unpacked.module.filename,

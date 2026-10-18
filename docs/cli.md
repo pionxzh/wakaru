@@ -464,7 +464,10 @@ bundler runtime call that the split output does not define. Today these are
 Turbopack runtime members without a module-graph meaning, such as chunk
 loading (`__turbopack_context__.L(...)`), path resolution
 (`__turbopack_context__.P(...)`), or the host `require`
-(`__turbopack_context__.t`). The message names the first such member. The
+(`__turbopack_context__.t`), and the webpack lazy-load members `require.e`
+and `require.t` of an `import()` that Wakaru did not restore: its chunk was
+not among the inputs, or the module it loads was recovered in a shape no
+`import()` reads the same way. The message names the first such member. The
 rest of the module is recovered; that call would throw if executed.
 
 ## Overwrite protection
