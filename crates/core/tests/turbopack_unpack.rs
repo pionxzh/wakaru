@@ -170,7 +170,7 @@ fn alias_ids_resolve_to_the_first_id_of_their_factory() {
 }
 
 #[test]
-fn async_loader_modules_become_deferred_requires_of_their_target() {
+fn async_loader_modules_become_dynamic_imports_of_their_target() {
     let source = client_chunk(
         r#"
 101, t => {
@@ -188,16 +188,12 @@ fn async_loader_modules_become_deferred_requires_of_their_target() {
     // The loader module stays available to consumers in other inputs.
     assert_eq!(
         module(&output, "module-301.js").trim(),
-        r#"module.exports = ()=>Promise.resolve().then(()=>require("./module-302.js"));"#
+        r#"export default (()=>import("./module-302.js"));"#
     );
     assert_eq!(
         module(&output, "module-101.js").trim(),
-        r#""use strict";
-Object.defineProperty(exports, "__esModule", {
-    value: true
-});
-exports.load = function() {
-    return Promise.resolve().then(()=>require("./module-302.js")).then((e)=>e.message);
+        r#"export const load = function() {
+    return import("./module-302.js").then((e)=>e.message);
 };"#
     );
 }
@@ -621,7 +617,7 @@ exports.load = function(n) {
     return moduleContext({
         "../icons/a.js": {
             id: ()=>301,
-            module: ()=>Promise.resolve().then(()=>require("./module-302.js"))
+            module: ()=>import("./module-302.js")
         },
         "../icons/b.js": {
             id: ()=>404,
@@ -781,20 +777,11 @@ fn next_15_3_object_containers_are_recovered() {
     );
     assert_eq!(
         module(&output, "module-202.js").trim(),
-        r#""use strict";
-Object.defineProperty(exports, "__esModule", {
-    value: true
-});
-Object.defineProperty(exports, "default", {
-    enumerable: true,
-    get () {
-        return c;
-    }
-});
-var r = require("./module-101.js");
+        r#"import { label } from "./module-101.js";
 function c() {
-    return Promise.resolve().then(()=>require("./module-302.js")).then((e)=>r.label + e.message);
-}"#
+    return import("./module-302.js").then((e)=>label + e.message);
+}
+export { c as default };"#
     );
 }
 
@@ -876,7 +863,7 @@ fn loaders_in_another_input_are_called_through_their_module() {
     assert!(output.warnings.is_empty(), "{:?}", output.warnings);
     assert_eq!(
         module(&output, "module-101.js").trim(),
-        "\"use strict\";\nObject.defineProperty(exports, \"__esModule\", {\n    value: true\n});\nexports.load = ()=>require(\"./module-301.js\")();"
+        "\"use strict\";\nObject.defineProperty(exports, \"__esModule\", {\n    value: true\n});\nexports.load = ()=>require(\"./module-301.js\").default();"
     );
 }
 

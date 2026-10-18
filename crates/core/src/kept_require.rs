@@ -17,6 +17,7 @@ use crate::collections::HashMap;
 use crate::facts::{ExportFact, ExportKind, ModuleFacts, ModuleFactsMap};
 use crate::rules::lowered_dynamic_import::LoweredImportMatcher;
 use crate::rules::transpiler_helper_utils::{LocalHelperContext, TranspilerHelperKind};
+use crate::rules::webpack_lazy_import::webpack_lazy_load;
 
 use crate::analysis::binding_id;
 use crate::analysis::binding_uses::BindingId;
@@ -99,7 +100,10 @@ pub(crate) fn kept_require_calls(module: &Module, unresolved_mark: Mark) -> Vec<
 ///   (`commonjs_default_object_composition`);
 /// - anywhere, the require of a lowered `import()` around an imported
 ///   helper, `Promise.resolve().then(() => helper(require("./p")))`
-///   (`run_cross_module_lowered_dynamic_imports`).
+///   (`run_cross_module_lowered_dynamic_imports`);
+/// - anywhere, the require of a webpack lazy load of a relative path,
+///   `require.e(1).then(() => require("./p"))`
+///   (`run_cross_module_webpack_lazy_imports`).
 ///
 /// The caller passes the first hoisting barrier as `later_stages_before`:
 /// the first two stages hoist their provider into an import, which loads it
@@ -152,6 +156,8 @@ pub(crate) fn blocking_require_calls(
 /// and a later unpack stage restores when the helper is an import
 /// ([`blocking_require_calls`]); before conversion, which `helper` is a
 /// wildcard helper is unknown.
+/// The require of a webpack lazy load is left out too: a later unpack stage
+/// restores it as `import()` ([`blocking_require_calls`]).
 pub(crate) fn has_unconvertible_require(module: &Module, unresolved_mark: Mark) -> bool {
     let mut finder = KeptRequireFinder {
         unresolved_mark,
@@ -379,6 +385,12 @@ impl Visit for KeptRequireFinder {
         if let Some(specifier) = self.lowered_import_specifier(call) {
             // Only the specifier stays: the pass replaces the whole call.
             specifier.visit_with(self);
+            return;
+        }
+        if (self.blocking || self.skip_helper_arguments)
+            && webpack_lazy_load(call, self.unresolved_mark).is_some()
+        {
+            // A literal specifier and chunk ids: nothing else runs.
             return;
         }
         if self.skip_helper_arguments && self.calls_named_helper(call) {
@@ -1524,9 +1536,16 @@ mod tests {
         ] {
             assert!(!unconvertible(source), "{source}");
         }
+        // A webpack lazy load becomes `import()` in a later unpack stage.
+        for source in [
+            r#"exports.load = () => Promise.resolve().then(() => require("./p"));"#,
+            r#"exports.load = () => require.e(1).then(require.t.bind(require, "./p", 7));"#,
+        ] {
+            assert!(!unconvertible(source), "{source}");
+        }
         // Anything else around it still counts.
         assert!(unconvertible(
-            r#"exports.load = () => Promise.resolve().then(() => require("./p"));"#
+            r#"exports.load = () => Promise.resolve(1).then(() => require("./p"));"#
         ));
     }
 
@@ -1722,10 +1741,27 @@ try { require("g"); } catch (e) {}"#
             ),
             0
         );
+        // So does the webpack lazy-load pass, for a relative path only.
+        assert_eq!(
+            blocking(
+                r#"export function f() { return [Promise.resolve().then(() => require("./a")), require.e(2).then(function () { return require("./b"); }), Promise.all([require.e(3), require.e(4)]).then(() => require("./c"))]; }"#
+            ),
+            0
+        );
+        assert_eq!(
+            blocking(
+                r#"export function f() { return Promise.resolve().then(() => require("a")); }"#
+            ),
+            1
+        );
         // A single file has no later stage.
         with_module(
             r#"import h from "./h"; var a = h(require("./a")); export default {}; Object.assign(o, require("./b") || {});"#,
             |module, mark| assert_eq!(blocking_require_calls(module, mark, None).len(), 2),
+        );
+        with_module(
+            r#"export function f() { return Promise.resolve().then(() => require("./a")); }"#,
+            |module, mark| assert_eq!(blocking_require_calls(module, mark, None).len(), 1),
         );
     }
 }

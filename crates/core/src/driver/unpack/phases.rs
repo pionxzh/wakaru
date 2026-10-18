@@ -61,6 +61,7 @@ use crate::rules::cross_module_interop_import::{
 use crate::rules::eval_utils::DirectEvalAnalyzer;
 use crate::rules::expr_utils::is_unresolved_ident;
 use crate::rules::lowered_dynamic_import::run_cross_module_lowered_dynamic_imports;
+use crate::rules::webpack_lazy_import::run_cross_module_webpack_lazy_imports;
 use crate::rules::{
     apply_rules, apply_rules_to_recovered_module, contains_local_self_require, ImportDedup,
     RewriteLevel, RulePipelineOptions, SimplifySequence, UnAssignmentMerging, UnConditionals,
@@ -745,6 +746,12 @@ pub(super) fn unpack_multi_module_with_plan(
             );
             run_reexport_consolidation(&mut module, facts_ref, Some(&unpacked.module.filename));
             run_cross_module_lowered_dynamic_imports(
+                &mut module,
+                facts_ref,
+                Some(&unpacked.module.filename),
+                unresolved_mark,
+            );
+            run_cross_module_webpack_lazy_imports(
                 &mut module,
                 facts_ref,
                 Some(&unpacked.module.filename),

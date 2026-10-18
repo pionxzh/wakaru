@@ -55,7 +55,8 @@ CommonJS behavior. It may do so only when all of these hold:
 
 Without that evidence, the rule keeps the CommonJS behavior, even when the
 ESM form would read better. `namespace_interop_source_semantics`,
-`lowered_dynamic_import_source_semantics`, and
+`lowered_dynamic_import_source_semantics`,
+`webpack_lazy_import_source_semantics`, and
 `relative_require_esm_provider` are recoveries of this kind, and so is the
 `export *` recovery in [helper-detection.md](helper-detection.md).
 
@@ -1176,6 +1177,64 @@ for a helper imported from another module of a bundle.
 Level: wherever `UnEsm` runs: `standard` and above for single-file input
 (`single_file_esm_consumers`), and every level in unpack mode, where the
 Phase 2 pass also runs.
+
+### `webpack_lazy_import_source_semantics`
+
+webpack and Rspack compile `import(x)` of another module of the bundle to a
+loader that runs after a resolved promise or after the chunk loads that hold
+`x`:
+
+```js
+// source
+const ns = await import("./dep.js");
+// webpack 5, dep.js an ES module in another chunk
+const ns = await __webpack_require__.e(240).then(() => __webpack_require__(240));
+// webpack 5, dep.js CommonJS in the same chunk
+const ns = await Promise.resolve().then(() => __webpack_require__.t(240, 19));
+```
+
+In unpack mode, once the module id resolves to a module of the output,
+wakaru emits `import("./dep.js")`, or
+`import("./dep.js").then((ns) => ns.default)` when the loader's value is the
+default export of the recovered module. The form follows from the loader and
+the provider's facts, as for a kept `require`:
+
+- The plain loader returns the exports object. That is the namespace of an
+  ES module or of a provider marked `__esModule`, and the default of a
+  `module.exports = v` provider recovered as `export default v` or of a
+  provider that stays CommonJS.
+- `require.t(id, mode)` returns a new object whose `default` is the exports
+  object: the namespace of a provider whose default is that object. With
+  `mode & 4` and a marked provider it returns the exports object, as the
+  plain loader does.
+- Any other combination keeps the loader: a fake namespace of a provider
+  recovered with named exports only, or of a marked provider without
+  `mode & 4`.
+
+The result follows ESM semantics where the bundle differs:
+
+- The chunk loads are dropped. Every chunk is part of the unpack output, and
+  `import()` loads the provider together with its own imports.
+- The provider loads through the ESM loader, asynchronously, as in
+  `lowered_dynamic_import_source_semantics`.
+- With `mode & 2`, webpack copies every key of a CommonJS provider's exports
+  object onto the fake namespace. `import()` of a provider recovered as
+  `export default v` has only `default`, so a named read gives `undefined`.
+  Node's `import()` of the CommonJS source gives the names cjs-module-lexer
+  detects, so the source itself differs from the bundle here.
+- With `mode & 16`, webpack returns a thenable exports object unchanged;
+  `import()` resolves to the namespace.
+
+The loader shape is bundler output for `import()`, and the result matches
+the source the bundler started from. Keeping the loader leaves `require`
+calls that the split output does not define.
+
+Affects: the Phase 2 pass `run_cross_module_webpack_lazy_imports`, and the
+kept-require classification that lets a module with such a loader become an
+ES module in Phase 1. Turbopack async loader modules, which unpack writes as
+`Promise.resolve().then(() => require(target))`, take the same path.
+
+Level: every level, in unpack mode only.
 
 ### `relative_require_esm_provider`
 

@@ -5,6 +5,11 @@ request)` → `Object.prototype.hasOwnProperty.call` normalization (item 2,
 `a13651d9`, `rules/un_webpack_interop.rs`) and `require.e`/`require.t`
 chunk-id resolution in multi-file unpack. Items 1 and 3 (recognizing the
 context-module shape and recovering source-like `import()`) remain open.
+A lazy load with a literal module id, outside any context map, is no
+longer part of this proposal: unpack resolves its id and restores
+`import()` from the provider's facts
+(`webpack_lazy_import_source_semantics` in
+[rewrite-assumptions.md](../rewrite-assumptions.md)).
 
 ## Summary
 
@@ -69,5 +74,7 @@ Potential staged work:
 ## Non-Goals For Now
 
 - Do not rewrite `require.e(...).then(...)` into `import(...)` solely from expression shape.
+  The literal-id rewrite above also needs the module id resolved to a module
+  of the output and that module's facts.
 - Do not simplify `require.t(..., 19)` to a module binding; `mode & 1` performs a module load.
 - Do not remove `.keys` or `.id` from context functions; callers may rely on them.

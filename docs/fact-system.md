@@ -64,6 +64,7 @@ Phase 2 (per module, parallel):
     run_provider_namespace_repair(&mut module, facts) ← proven ESM namespace edges
     run_reexport_consolidation(&mut module, facts)
     run_cross_module_lowered_dynamic_imports(...)    ← helper export facts
+    run_cross_module_webpack_lazy_imports(...)       ← provider facts
     run_cross_module_interop_imports(...)            ← helper export facts
     import_unproven_helper_requires(...)             ← provider facts
     run_namespace_decomposition(&mut module, facts)  ← reads cross-module facts
@@ -421,6 +422,15 @@ Neither proof creates a default-object fact available to consumers.
   `importHelpers`). `UnEsm` restores the same shape with a local helper;
   in Phase 1 it cannot see a helper from another module
   (`lowered_dynamic_import_source_semantics` in rewrite-assumptions.md).
+- **`run_cross_module_webpack_lazy_imports`** — restores `import()` from a
+  webpack or Rspack lazy load whose module id unpack resolved to a sibling
+  path, `require.e(1).then(() => require("./p"))` or
+  `Promise.resolve().then(() => require.t("./p", 19))`, and drops its chunk
+  loads. The provider's facts decide between `import("./p")` and
+  `import("./p").then((ns) => ns.default)` (`required_value_import`, as for
+  a kept require), or keep the loader. Phase 1 leaves the require of such a
+  loader to this pass, so the consumer can still become ESM
+  (`webpack_lazy_import_source_semantics` in rewrite-assumptions.md).
 - **`import_unproven_helper_requires`** — after the interop pass, a
   `helper(require("./p"))` binding it left in an ES module (the helper is
   not proven, or the provider's facts give no import plan) keeps its call,

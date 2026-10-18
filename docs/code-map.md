@@ -69,6 +69,7 @@ crates/
         rename_utils.rs             — shared binding rename utilities
         un_for_await.rs             — `for await` protocol matcher run by UnForOf (not a registered rule)
         lowered_dynamic_import.rs   — lowered `import()` matcher, run by UnInteropRequireWildcard and by a Phase 2 pass for a cross-module helper (not a registered rule)
+        webpack_lazy_import.rs      — webpack/Rspack lazy-load matcher (`require.e(c).then(() => require("./p"))`, `require.t`) and the Phase 2 pass that restores `import()` from provider facts (not a registered rule)
         cross_module_interop_import.rs — Phase 2 passes: `helper(require(x))` with a default/wildcard interop helper from another module becomes an import; any other imported function keeps its call around an import of `x` (not registered rules)
         un_esm/export_getters.rs    — swc / esbuild / sucrase export getter helpers and webpack `require.d` lowered to per-name definitions
         un_esm/export_storage.rs    — per-name CommonJS export storage model (getter / mirror / property)

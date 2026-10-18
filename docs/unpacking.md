@@ -293,7 +293,10 @@ applies. Only members with a known meaning are translated:
   stay recognizable and `UnEsm` keeps a module that uses its top-level `this`
   CommonJS. Below those it stays the exports parameter.
 - A generated async loader module becomes
-  `module.exports = () => Promise.resolve().then(() => require(target))`.
+  `module.exports = () => Promise.resolve().then(() => require(target))`,
+  which the webpack lazy-import pass of Phase 2 restores as
+  `import(target)` when the target's facts allow it
+  (`webpack_lazy_import_source_semantics` in rewrite-assumptions.md).
   `ctx.A(loader)` (15.5+) and `ctx.r(loader)(ctx.i)` (15.3–15.4) inline that
   expression when the loader is in the same input, and otherwise call
   `require(loader)()`, which the multi-input numeric rewrite resolves when the
