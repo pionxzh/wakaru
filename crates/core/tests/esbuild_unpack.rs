@@ -5490,3 +5490,87 @@ fn esbuild_lazy_module_followed_by_other_module_code_keeps_its_loader() {
     assert!(entry.contains("import(\"./z.js\")"), "{entry}");
     assert_eq!(validate_output_modules(&pairs), vec![]);
 }
+
+// `impl.js`, loaded only through `import()`, is followed by `descriptor.js`,
+// a lazy module without a namespace object whose top-level code is only its
+// state and its initializer. producer esbuild@0.28.0 `--bundle
+// --platform=node --format=cjs`. Sources:
+// `impl.js`: `export const call = () => "impl-called";`
+// `descriptor.js`: `export const descriptor = { name: "descriptor-name", load: () => import("./impl.js") };`
+// `registry.js`: `import { descriptor } from "./descriptor.js"; export const all = [descriptor];`
+// `main.js`: `const { all } = require("./registry.js"); globalThis.all = all;`
+const ESBUILD_LOWERED_IMPORT_FOLLOWED_BY_STATE_MODULE_BUNDLE: &str = r#"var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
+var __export = (target, all3) => {
+  for (var name in all3)
+    __defProp(target, name, { get: all3[name], enumerable: true });
+};
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+
+// impl.js
+var impl_exports = {};
+__export(impl_exports, {
+  call: () => call
+});
+var call;
+var init_impl = __esm({
+  "impl.js"() {
+    call = () => "impl-called";
+  }
+});
+
+// descriptor.js
+var descriptor;
+var init_descriptor = __esm({
+  "descriptor.js"() {
+    descriptor = { name: "descriptor-name", load: () => Promise.resolve().then(() => (init_impl(), impl_exports)) };
+  }
+});
+
+// registry.js
+var registry_exports = {};
+__export(registry_exports, {
+  all: () => all
+});
+var all;
+var init_registry = __esm({
+  "registry.js"() {
+    init_descriptor();
+    all = [descriptor];
+  }
+});
+
+// main.js
+var { all: all2 } = (init_registry(), __toCommonJS(registry_exports));
+globalThis.all = all2;
+"#;
+
+#[test]
+fn esbuild_lazy_module_followed_by_a_state_only_module_becomes_import() {
+    // The state and initializer of `descriptor.js` leave the entry with its
+    // factory, so they add no code to `impl.js`'s region.
+    let pairs = expect_unpack(
+        ESBUILD_LOWERED_IMPORT_FOLLOWED_BY_STATE_MODULE_BUNDLE,
+        "bundle.js",
+    );
+    let descriptor = module_code(&pairs, "descriptor.js");
+    assert!(descriptor.contains("import(\"./impl.js\")"), "{descriptor}");
+    let implementation = module_code(&pairs, "impl.js");
+    assert!(!implementation.contains("init_impl"), "{implementation}");
+    let entry = module_code(&pairs, "entry.js");
+    assert!(!entry.contains("impl_exports"), "{entry}");
+    assert_eq!(validate_output_modules(&pairs), vec![]);
+}

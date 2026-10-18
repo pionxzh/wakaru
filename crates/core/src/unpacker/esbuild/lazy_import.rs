@@ -34,8 +34,8 @@ use swc_core::atoms::Atom;
 use swc_core::common::{Mark, Span, Spanned};
 use swc_core::ecma::ast::{
     ArrowExpr, ArrowFunctionBody, CallExpr, Callee, Decl, Expr, ExprOrSpread, ExprStmt, Function,
-    Ident, Import, Lit, MemberProp, Module, ModuleItem, Prop, PropOrSpread, Stmt, Str, VarDecl,
-    VarDeclKind, VarDeclarator,
+    Ident, Import, Lit, MemberProp, Module, ModuleItem, Pat, Prop, PropOrSpread, Stmt, Str,
+    VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -149,6 +149,10 @@ pub(super) fn plan_lazy_imports(
             )
         })
         .collect();
+    let factory_locations: HashSet<(usize, usize)> = factories
+        .iter()
+        .map(Factory::analysis_item_and_declarator)
+        .collect();
     let mut modules = Vec::new();
     let mut inlined_factory_helpers: HashMap<Atom, usize> = HashMap::default();
     for factory in &factories {
@@ -172,11 +176,17 @@ pub(super) fn plan_lazy_imports(
         // then its initializer. Scope extraction gives a namespace every item
         // up to the next namespace, so code after the initializer (a module
         // without a namespace object) would join this one; the initializer
-        // must end the region.
+        // must end the region, or be followed only by another lazy module's
+        // state and initializer.
         if factory_item <= boundary.export_call_index
-            || boundaries
-                .get(boundary_index + 1)
-                .is_some_and(|next| next.ns_decl_index != factory_item + 1)
+            || boundaries.get(boundary_index + 1).is_some_and(|next| {
+                next.ns_decl_index <= factory_item
+                    || !gap_holds_only_factory_state(
+                        body,
+                        factory_item + 1..next.ns_decl_index,
+                        &factory_locations,
+                    )
+            })
         {
             continue;
         }
@@ -513,6 +523,36 @@ fn declares_function_scoped_var(stmts: &[Stmt]) -> bool {
         stmt.visit_with(&mut finder);
     }
     finder.found
+}
+
+/// Between an initializer and the next namespace, esbuild may write a lazy
+/// module without a namespace object whose only top-level code is its state
+/// and its initializer, such as a glob import's virtual module
+/// (`var G; var init_ = __esm({ ... G = __glob({...}) })`). Those leave the
+/// entry with their factory, so they add no code to this module's region.
+fn gap_holds_only_factory_state(
+    body: &[ModuleItem],
+    gap: std::ops::Range<usize>,
+    factory_locations: &HashSet<(usize, usize)>,
+) -> bool {
+    let mut state = HashSet::default();
+    let mut written = DeclaredBindings::default();
+    for index in gap {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = &body[index] else {
+            return false;
+        };
+        for (declarator, decl) in var.decls.iter().enumerate() {
+            if factory_locations.contains(&(index, declarator)) {
+                decl.visit_with(&mut written);
+                continue;
+            }
+            let (Pat::Ident(name), None) = (&decl.name, &decl.init) else {
+                return false;
+            };
+            state.insert(binding_of(&name.id));
+        }
+    }
+    state.is_subset(&written.bindings)
 }
 
 /// Between the namespace and the initializer, esbuild writes only the
