@@ -178,6 +178,11 @@ into that sequence (`r.d = ..., r.o = ..., (() => { ... })()`); the wrapper at
 the end of the sequence is unwrapped like a standalone one. Raw extraction uses
 the same boundary.
 
+Terser's `join_vars` (and Rspack's minifier) can declare a startup binding in
+the runtime's first statement (`var e, r = {…}, t = {}`); `entry.js` keeps
+that declaration. A trailing wrapper that writes such a binding is not
+unwrapped, since its body alone would lose the declaration.
+
 Terser can inline a single-use require function into the startup and call it
 with the entry id (`!function r(id) { ... }(100)`). Its body is runtime, never
 entry code. The statement holding the call and every statement after it are
@@ -777,6 +782,18 @@ runtime, server chunks, a self-contained bundle) match only each other. A
 reference is rewritten when exactly one candidate of its build carries the ID,
 so the same ID in an unrelated build no longer blocks the rewrite, and two
 candidates in one build stay ambiguous and keep the numeric call.
+The rewrite covers every loader webpack emits for a lazy `import()`, within
+one input and across inputs: `require(id)`, `require.bind(require, id)`
+(`null` receiver in webpack 4), and `require.t(id, mode)` or
+`require.t.bind(require, id, mode)` when `mode & 1` makes the first argument a
+module id. Behind a chunk load, `require.e(chunk).then(…)` with any of those
+loaders, or an arrow or parameterless `function` that returns one, takes the
+chunk-qualified id when the chunk file is named after its id, and otherwise
+the plain lookup above. Phase 2 then restores `import()` from the resolved
+loader and drops the chunk loads (`webpack_lazy_import_source_semantics` in
+[rewrite-assumptions.md](rewrite-assumptions.md)). A loader whose module is in
+no input keeps its numeric id, and the module gets a `runtime_residual`
+warning for the `require.e` or `require.t` it still calls.
 In normal output, opaque factories still reserve their numeric IDs but cannot
 become rewritten callers or targets. Recoverable siblings remain eligible for
 cross-input rewrites; an opaque factory does not disable its whole container.

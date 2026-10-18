@@ -2464,8 +2464,16 @@ fn extract_trailing_entry_body(
     // A final IIFE is only the entry wrapper when it owns the entire startup
     // region. Terser can inline an authored main() after imports or other
     // entry statements; extracting only that call body would discard them.
-    let (startup, require_sym) =
-        extract_webpack5_startup_region(bootstrap_body, modules_sym, require_plan)?;
+    let StartupRegion {
+        stmts: startup,
+        require_sym,
+        entry_declaration,
+    } = extract_webpack5_startup_region(bootstrap_body, modules_sym, require_plan)?;
+    // The wrapper's body alone would lose a binding declared outside it; the
+    // inline startup keeps the whole region with that declaration.
+    if entry_declaration.is_some() {
+        return None;
+    }
     let entry_stmt = match startup.as_slice() {
         [stmt] => stmt,
         [anchor, stmt]
@@ -2565,8 +2573,11 @@ fn extract_webpack5_inline_startup(
     modules_sym: &Atom,
     require_plan: Option<&RequireFnPlan>,
 ) -> Option<Webpack5InlineStartup> {
-    let (entry_region, require_sym) =
-        extract_webpack5_startup_region(bootstrap_body, modules_sym, require_plan)?;
+    let StartupRegion {
+        stmts: entry_region,
+        require_sym,
+        entry_declaration,
+    } = extract_webpack5_startup_region(bootstrap_body, modules_sym, require_plan)?;
 
     // The anchor, when present, is the *first* statement of the startup section
     // (webpack emits it immediately after the runtime). Position and `{}` shape
@@ -2611,6 +2622,10 @@ fn extract_webpack5_inline_startup(
     if body_stmts.is_empty() || !stmts_call_require(&body_stmts, &require_sym) {
         return None;
     }
+    let mut body_stmts = body_stmts;
+    if let Some(declaration) = entry_declaration {
+        place_entry_declaration(&mut body_stmts, declaration);
+    }
     Some(Webpack5InlineStartup {
         body_stmts,
         require_sym,
@@ -2625,7 +2640,7 @@ fn extract_webpack5_startup_region(
     bootstrap_body: &swc_core::ecma::ast::FunctionBody,
     modules_sym: &Atom,
     require_plan: Option<&RequireFnPlan>,
-) -> Option<(Vec<Stmt>, Atom)> {
+) -> Option<StartupRegion> {
     // Reuse the lifecycle plan that gated detection. Keep the loose fallback
     // for callers that do not already carry a plan.
     let (require_idx, require_sym) = match require_plan {
@@ -2693,7 +2708,186 @@ fn extract_webpack5_startup_region(
         return None;
     }
 
-    Some((entry_region, require_sym))
+    let entry_declaration = entry_declaration_in_runtime(
+        &bootstrap_body.stmts,
+        &probe_stmts,
+        startup_scan_from,
+        runtime_boundary
+            .as_ref()
+            .and_then(|boundary| boundary.seq_expr_idx),
+    );
+    Some(StartupRegion {
+        stmts: entry_region,
+        require_sym,
+        entry_declaration,
+    })
+}
+
+struct StartupRegion {
+    stmts: Vec<Stmt>,
+    require_sym: Atom,
+    /// `var a, b;` for the entry's own bindings that a minifier declared in
+    /// a runtime statement (see [`entry_declaration_in_runtime`]).
+    entry_declaration: Option<Stmt>,
+}
+
+/// The entry bindings a minifier declared in the runtime section: Terser
+/// joins the entry's `var e;` with the runtime's `var r = {…}, t = {};` into
+/// one statement before the require function, and the entry assigns it later
+/// (`e = o(97)`). Dropping the runtime statements would leave that
+/// assignment without a declaration.
+///
+/// A declarator counts when it has no initializer, the runtime statements
+/// never mention its binding, and the startup region does. `probe` is
+/// `stmts` resolved, so bindings compare by identity; `startup_from` is the
+/// first startup statement, and `split`, when set, the last runtime
+/// expression of the sequence just before it.
+fn entry_declaration_in_runtime(
+    stmts: &[Stmt],
+    probe: &[Stmt],
+    startup_from: usize,
+    split: Option<usize>,
+) -> Option<Stmt> {
+    // (statement, declarator) positions and the binding each one declares.
+    let mut candidates: Vec<(usize, usize, Id)> = Vec::new();
+    for (stmt_idx, stmt) in probe[..startup_from].iter().enumerate() {
+        let Stmt::Decl(swc_core::ecma::ast::Decl::Var(var)) = stmt else {
+            continue;
+        };
+        if var.kind != swc_core::ecma::ast::VarDeclKind::Var {
+            continue;
+        }
+        for (decl_idx, declarator) in var.decls.iter().enumerate() {
+            if let (Pat::Ident(binding), None) = (&declarator.name, &declarator.init) {
+                candidates.push((stmt_idx, decl_idx, binding.id.to_id()));
+            }
+        }
+    }
+    if candidates.is_empty() {
+        return None;
+    }
+    let ids: HashSet<Id> = candidates.iter().map(|(_, _, id)| id.clone()).collect();
+    let mut runtime = IdOccurrences {
+        ids: &ids,
+        counts: HashMap::default(),
+    };
+    let mut startup = IdOccurrences {
+        ids: &ids,
+        counts: HashMap::default(),
+    };
+    let split_stmt = split.map(|_| startup_from - 1);
+    for (stmt_idx, stmt) in probe.iter().enumerate() {
+        match (stmt_idx < startup_from, split_stmt == Some(stmt_idx)) {
+            (true, true) => {
+                let (Stmt::Expr(ExprStmt { expr, .. }), Some(split)) = (stmt, split) else {
+                    return None;
+                };
+                let Expr::Seq(seq) = strip_parens(expr) else {
+                    return None;
+                };
+                for (expr_idx, expr) in seq.exprs.iter().enumerate() {
+                    if expr_idx <= split {
+                        expr.visit_with(&mut runtime);
+                    } else {
+                        expr.visit_with(&mut startup);
+                    }
+                }
+            }
+            (true, false) => stmt.visit_with(&mut runtime),
+            (false, _) => stmt.visit_with(&mut startup),
+        }
+    }
+    // The declaration is the runtime's only mention of the binding.
+    let declarators: Vec<VarDeclarator> = candidates
+        .iter()
+        .filter(|(_, _, id)| {
+            runtime.counts.get(id) == Some(&1) && startup.counts.get(id).is_some_and(|n| *n > 0)
+        })
+        .filter_map(|(stmt_idx, decl_idx, _)| match &stmts[*stmt_idx] {
+            Stmt::Decl(swc_core::ecma::ast::Decl::Var(var)) => var.decls.get(*decl_idx).cloned(),
+            _ => None,
+        })
+        .collect();
+    (!declarators.is_empty()).then(|| {
+        Stmt::Decl(swc_core::ecma::ast::Decl::Var(Box::new(VarDecl {
+            span: DUMMY_SP,
+            ctxt: SyntaxContext::empty(),
+            kind: swc_core::ecma::ast::VarDeclKind::Var,
+            declare: false,
+            decls: declarators,
+        })))
+    })
+}
+
+/// Put each declarator of `declaration` back into `stmts`: on the first
+/// top-level `x = value;` it becomes `var x = value;`, which is the same
+/// statement since `var` hoists; a binding with no such assignment stays a
+/// bare `var x;` at the top. A top-level `x` of the startup region is always
+/// the declared binding: a `let` or `const` there would clash with the
+/// `var`.
+fn place_entry_declaration(stmts: &mut Vec<Stmt>, declaration: Stmt) {
+    let Stmt::Decl(swc_core::ecma::ast::Decl::Var(var)) = declaration else {
+        return;
+    };
+    let mut bare = Vec::new();
+    for declarator in var.decls {
+        let Pat::Ident(binding) = &declarator.name else {
+            bare.push(declarator);
+            continue;
+        };
+        let assignment = stmts.iter().position(|stmt| {
+            matches!(stmt, Stmt::Expr(ExprStmt { expr, .. })
+                if matches!(strip_parens(expr), Expr::Assign(AssignExpr {
+                    op: AssignOp::Assign,
+                    left: AssignTarget::Simple(SimpleAssignTarget::Ident(target)),
+                    ..
+                }) if target.id.sym == binding.id.sym))
+        });
+        let Some(idx) = assignment else {
+            bare.push(declarator);
+            continue;
+        };
+        let Stmt::Expr(ExprStmt { span, expr }) = &stmts[idx] else {
+            unreachable!("position matched an expression statement");
+        };
+        let Expr::Assign(AssignExpr { right, .. }) = strip_parens(expr) else {
+            unreachable!("position matched an assignment");
+        };
+        stmts[idx] = Stmt::Decl(swc_core::ecma::ast::Decl::Var(Box::new(VarDecl {
+            span: *span,
+            ctxt: SyntaxContext::empty(),
+            kind: swc_core::ecma::ast::VarDeclKind::Var,
+            declare: false,
+            decls: vec![VarDeclarator {
+                init: Some(right.clone()),
+                ..declarator
+            }],
+        })));
+    }
+    if !bare.is_empty() {
+        stmts.insert(
+            0,
+            Stmt::Decl(swc_core::ecma::ast::Decl::Var(Box::new(VarDecl {
+                decls: bare,
+                ..*var
+            }))),
+        );
+    }
+}
+
+/// How often each of `ids` occurs, declarations included.
+struct IdOccurrences<'a> {
+    ids: &'a HashSet<Id>,
+    counts: HashMap<Id, usize>,
+}
+
+impl Visit for IdOccurrences<'_> {
+    fn visit_ident(&mut self, ident: &Ident) {
+        let id = ident.to_id();
+        if self.ids.contains(&id) {
+            *self.counts.entry(id).or_default() += 1;
+        }
+    }
 }
 
 /// Entry code may end at an enclosing UMD/AMD factory's `return`: wrapper

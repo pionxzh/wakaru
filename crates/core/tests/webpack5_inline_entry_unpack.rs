@@ -1532,6 +1532,98 @@ fn eager_bound_require_id_is_rewritten() {
     );
 }
 
+/// A bootstrap whose first statement declares `bindings` together with the
+/// module table and cache, as Terser's `join_vars` leaves it, and whose last
+/// runtime sequence ends with `startup`.
+fn joined_var_bootstrap(bindings: &str, runtime: &str, startup: &str) -> String {
+    format!(
+        r#"
+(() => {{
+  "use strict";
+  var {bindings}r = {{
+      97(e, r, t) {{ Object.defineProperty(r, "__esModule", {{ value: !0 }}), (r.load = function () {{ return "loaded"; }}); }},
+    }},
+    t = {{}};
+  function o(e) {{
+    var a = t[e];
+    if (void 0 !== a) return a.exports;
+    var n = (t[e] = {{ exports: {{}} }});
+    return r[e](n, n.exports, o), n.exports;
+  }}
+  {runtime}(o.rv = () => "1.7.12"), (o.ruid = "bundler=rspack@1.7.12"), {startup};
+}})();
+"#
+    )
+}
+
+#[test]
+fn startup_binding_joined_with_the_module_table_keeps_its_declaration() {
+    // producer rspack@1.7.12 minify: `var e, r = {…}, t = {}` declares the
+    // entry's binding with the runtime; the startup assigns it.
+    let source = joined_var_bootstrap(
+        "e, ",
+        "",
+        "(e = o(97)), (globalThis.__sink = { get load() { return e.load; } })",
+    );
+    let pairs = expect_unpack(&source, "bundle.js");
+    let entry = entry_of(&pairs);
+    assert!(
+        entry.contains(r#"import { load } from "./module-97.js";"#)
+            && !entry.contains("e = require"),
+        "the startup binding must stay declared, got:\n{entry}"
+    );
+}
+
+#[test]
+fn startup_binding_without_an_assignment_stays_a_bare_declaration() {
+    // hypothetical: the startup writes the binding only inside a branch.
+    let source = joined_var_bootstrap(
+        "e, ",
+        "",
+        "globalThis.flag && (e = o(97)), (globalThis.__sink = () => e)",
+    );
+    let pairs = expect_unpack(&source, "bundle.js");
+    let entry = entry_of(&pairs);
+    assert!(
+        entry.starts_with("let e;") || entry.starts_with("var e;"),
+        "the binding must be declared before its use, got:\n{entry}"
+    );
+}
+
+#[test]
+fn binding_the_runtime_also_uses_is_not_moved_into_the_entry() {
+    // hypothetical: a runtime helper reads the binding, so it belongs to the
+    // runtime and the startup's write is left as it was.
+    let source = joined_var_bootstrap(
+        "e, ",
+        "(o.g = () => e), ",
+        "(e = o(97)), (globalThis.__sink = { get load() { return e.load; } })",
+    );
+    let pairs = expect_unpack(&source, "bundle.js");
+    let entry = entry_of(&pairs);
+    assert!(
+        !entry.contains("var e") && !entry.contains("let e") && !entry.contains("const e"),
+        "a runtime binding must not be redeclared in the entry, got:\n{entry}"
+    );
+}
+
+#[test]
+fn startup_wrapper_with_a_joined_binding_keeps_the_declaration() {
+    // hypothetical: the startup is a trailing IIFE that writes a binding
+    // declared outside it; unwrapping only the IIFE body would lose it.
+    let source = joined_var_bootstrap(
+        "e, ",
+        "",
+        "(() => { e = o(97); globalThis.__sink = () => e.load; })()",
+    );
+    let pairs = expect_unpack(&source, "bundle.js");
+    let entry = entry_of(&pairs);
+    assert!(
+        entry.contains("let e;") || entry.contains("var e;"),
+        "the binding the wrapper writes must stay declared, got:\n{entry}"
+    );
+}
+
 #[test]
 fn fake_namespace_loader_id_is_rewritten() {
     // A lazy `import()` of a CommonJS module loads it through `require.t`
