@@ -53,7 +53,8 @@ use super::helper_matcher::{binding_key, static_member_prop_name, BindingKey};
 use super::rename_utils::{collect_module_names, collect_unresolved_reference_names};
 use super::transpiler_helper_utils::TranspilerHelperKind;
 use crate::facts::{ExportKind, ModuleFacts, ModuleFactsMap, TypeScriptHelperKind};
-use crate::kept_require::{is_kept_require_call, required_value_import, RequiredValueImport};
+use crate::kept_require::is_kept_require_call;
+use crate::provider_interface::{ProviderInterface, RequiredValueImport};
 use crate::utils::paren::{strip_parens, strip_parens_mut};
 
 /// Turns top-level `x = helper(require("./p"))` bindings into imports of
@@ -564,7 +565,7 @@ impl VisitMut for DefaultReadRewriter<'_> {
 /// other imports, which `UnEsm` allowed by leaving the require for a later
 /// stage only before the first hoisting barrier. The import form follows the
 /// provider's facts as for any kept require
-/// ([`crate::kept_require::required_value_import`]); a provider outside the
+/// ([`ProviderInterface::required_value_import`]); a provider outside the
 /// input is a default import, as `UnEsm` turns `var x = require("pkg")`
 /// into one. A provider whose value no import holds keeps the require,
 /// which the `commonjs_require_unrecovered` warning reports.
@@ -649,16 +650,19 @@ pub(crate) fn import_unproven_helper_requires(
             let (namespace, drop_helper) = match module_facts.get_from(current_filename, specifier)
             {
                 None => (false, false),
-                Some(provider) => match required_value_import(provider) {
-                    Some(RequiredValueImport::Default) => (false, false),
-                    Some(RequiredValueImport::Namespace) if !provider.marks_es_module => {
-                        (true, false)
+                Some(provider) => {
+                    let provider = ProviderInterface::of(provider);
+                    match provider.required_value_import() {
+                        Some(RequiredValueImport::Default) => (false, false),
+                        Some(RequiredValueImport::Namespace) if !provider.marks_es_module() => {
+                            (true, false)
+                        }
+                        Some(RequiredValueImport::Namespace) if helpers.kind(callee).is_some() => {
+                            (true, true)
+                        }
+                        _ => continue,
                     }
-                    Some(RequiredValueImport::Namespace) if helpers.kind(callee).is_some() => {
-                        (true, true)
-                    }
-                    _ => continue,
-                },
+                }
             };
             let local =
                 fresh_binding_ident(fresh_specifier_name(specifier, &mut used_names), DUMMY_SP);

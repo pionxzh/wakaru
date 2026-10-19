@@ -5,7 +5,7 @@
 //! (or `export default require("./X.js")`) with no other statements: its value
 //! is what `require` of the target returned when the target was CommonJS. The
 //! import is rewritten to the import of the target that holds that value
-//! (`kept_require::required_value_import`):
+//! (`ProviderInterface::required_value_import`):
 //!
 //! - The default import, for a target that stays CommonJS (its
 //!   `module.exports`) or that was `module.exports = v` and now only exports
@@ -32,8 +32,8 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitWith};
 
 use crate::facts::ModuleFactsMap;
-use crate::kept_require::{required_value_import, RequiredValueImport};
 use crate::module_path::relative_import_specifier;
+use crate::provider_interface::{ProviderInterface, RequiredValueImport};
 use crate::utils::paren::strip_parens;
 
 /// The module a passthrough chain ends at, and the import of it that holds
@@ -141,10 +141,12 @@ fn resolve_passthrough(
             continue;
         }
         let specifier = Atom::from(relative_import_specifier(original_importer, &target_key));
-        return Some(match required_value_import(target_facts)? {
-            RequiredValueImport::Default => PassthroughTarget::Default(specifier),
-            RequiredValueImport::Namespace => PassthroughTarget::Namespace(specifier),
-        });
+        return Some(
+            match ProviderInterface::of(target_facts).required_value_import()? {
+                RequiredValueImport::Default => PassthroughTarget::Default(specifier),
+                RequiredValueImport::Namespace => PassthroughTarget::Namespace(specifier),
+            },
+        );
     }
 }
 

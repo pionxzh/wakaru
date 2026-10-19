@@ -40,7 +40,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use super::decl_utils::fresh_binding_ident;
 use super::eval_utils::module_blocks_global_reference;
 use crate::facts::{ModuleFacts, ModuleFactsMap};
-use crate::kept_require::{required_value_import, RequiredValueImport};
+use crate::provider_interface::{ProviderInterface, RequiredValueImport};
 use crate::utils::paren::strip_parens;
 
 /// What the loader of a lazy load returns.
@@ -289,19 +289,20 @@ enum ImportForm {
 /// `None` when no form gives the loader's value from what the provider
 /// recovered as.
 fn import_form(provider: &ModuleFacts, loader: LazyLoader) -> Option<ImportForm> {
-    let required_value = || match required_value_import(provider)? {
+    let provider = ProviderInterface::of(provider);
+    let required_value = || match provider.required_value_import()? {
         RequiredValueImport::Namespace => Some(ImportForm::Namespace),
         RequiredValueImport::Default => Some(ImportForm::Default),
     };
     match loader {
         LazyLoader::Require => required_value(),
         // The marker makes `require.t` return the exports object itself.
-        LazyLoader::FakeNamespace { mode } if mode & 4 != 0 && provider.marks_es_module => {
+        LazyLoader::FakeNamespace { mode } if mode & 4 != 0 && provider.marks_es_module() => {
             required_value()
         }
         // A fake namespace whose `default` is the exports object: the
         // namespace of an import whose default is that object.
-        LazyLoader::FakeNamespace { .. } => match required_value_import(provider)? {
+        LazyLoader::FakeNamespace { .. } => match provider.required_value_import()? {
             RequiredValueImport::Default => Some(ImportForm::Namespace),
             RequiredValueImport::Namespace => None,
         },

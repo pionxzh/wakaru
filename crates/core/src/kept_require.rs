@@ -14,7 +14,8 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::collections::HashMap;
-use crate::facts::{ExportFact, ExportKind, ModuleFacts, ModuleFactsMap};
+use crate::facts::ModuleFactsMap;
+use crate::provider_interface::{ProviderInterface, RequiredValue};
 use crate::rules::lowered_dynamic_import::LoweredImportMatcher;
 use crate::rules::transpiler_helper_utils::{LocalHelperContext, TranspilerHelperKind};
 use crate::rules::webpack_lazy_import::webpack_lazy_load;
@@ -608,93 +609,6 @@ fn is_composition_call(call: &CallExpr, unresolved_mark: Mark) -> bool {
         })
 }
 
-/// What a kept `require("./p")` returns once `./p` became an ES module, and
-/// how a read of it keeps the meaning it had when `./p` was CommonJS.
-#[derive(Clone, Copy)]
-enum ProviderShape<'a> {
-    /// `module.exports = v`, now only `export default v`: the value is the
-    /// namespace's `default`. `marked`: the module also marked itself
-    /// `__esModule`, so a `.default` read of it already meant that default
-    /// (a Babel runtime shim's `module.exports.default = module.exports`, or
-    /// the self mirror `v.default = v` of Next's default-object tail).
-    Default { marked: bool },
-    /// `module.exports = v` plus named exports, which are on the namespace,
-    /// not on `v`: a call or `new` reads `default`, a named export stays a
-    /// namespace read.
-    DefaultWithNamed(&'a ModuleFacts),
-    /// The module marked itself `__esModule`. Its namespace is its exports
-    /// object, and Node adds the `__esModule` marker to the namespace only
-    /// when the module has a default export (`require(esm)`, since v22.12
-    /// and v20.19), so only then does an interop that tests it still read
-    /// the default.
-    Marked { has_default: bool },
-    /// `module.exports` replaced another way: the value is unknown.
-    ReplacedValue,
-}
-
-fn provider_shape(provider: &ModuleFacts) -> Option<ProviderShape<'_>> {
-    if provider.stays_commonjs {
-        return None;
-    }
-    let has_default = provider
-        .exports
-        .iter()
-        .any(|export| export.kind == ExportKind::Default);
-    if provider.commonjs_value_is_default
-        && has_default
-        && !provider.has_export_all
-        && provider.reexports.is_empty()
-    {
-        return Some(if provider.exports.len() == 1 {
-            ProviderShape::Default {
-                marked: provider.marks_es_module,
-            }
-        } else {
-            ProviderShape::DefaultWithNamed(provider)
-        });
-    }
-    if provider.marks_es_module {
-        Some(ProviderShape::Marked { has_default })
-    } else if provider.replaces_module_exports {
-        Some(ProviderShape::ReplacedValue)
-    } else {
-        None
-    }
-}
-
-/// How an ES module importer reads the value `require("./p")` returned when
-/// `./p` was CommonJS.
-pub(crate) enum RequiredValueImport {
-    /// The default import: a provider that stays CommonJS (its
-    /// `module.exports`), or one whose CommonJS value is now its only
-    /// default export (`module.exports = v`, or a value that also marked
-    /// itself `__esModule`, such as Next's default-object tail).
-    Default,
-    /// The namespace import, read through members only: an ES module, or a
-    /// provider that marked itself `__esModule`, whose namespace holds its
-    /// exports.
-    Namespace,
-}
-
-/// `None` when no import holds that value: the provider's `module.exports`
-/// was replaced another way, or `v` sits beside named exports.
-pub(crate) fn required_value_import(provider: &ModuleFacts) -> Option<RequiredValueImport> {
-    if provider.stays_commonjs {
-        return Some(RequiredValueImport::Default);
-    }
-    match provider_shape(provider) {
-        None | Some(ProviderShape::Marked { .. }) => Some(RequiredValueImport::Namespace),
-        Some(ProviderShape::Default { .. }) => Some(RequiredValueImport::Default),
-        Some(ProviderShape::DefaultWithNamed(_) | ProviderShape::ReplacedValue) => None,
-    }
-}
-
-fn is_named_export(exports: &[ExportFact], name: &str) -> bool {
-    exports
-        .iter()
-        .any(|export| export.kind == ExportKind::Named && export.exported == *name)
-}
-
 /// In a module that stays CommonJS, makes each kept `require("./p")` of a
 /// provider recovered as ESM read what it read when the provider was
 /// CommonJS, and returns the requires it cannot, with the reason, for the
@@ -722,10 +636,10 @@ pub(crate) fn run_kept_require_default_reads(
     {
         return Vec::new();
     }
-    let shape_of = |source: &str| {
+    let provider_of = |source: &str| {
         module_facts
             .get_from(current_filename, source)
-            .and_then(provider_shape)
+            .map(ProviderInterface::of)
     };
     let interop_sources = current_filename
         .and_then(|filename| module_facts.get(filename))
@@ -736,7 +650,7 @@ pub(crate) fn run_kept_require_default_reads(
     // `BindingUseCheck`).
     let mut bindings = BindingCollector {
         unresolved_mark,
-        shape_of: &shape_of,
+        provider_of: &provider_of,
         candidates: HashMap::default(),
         declarations: HashMap::default(),
     };
@@ -760,7 +674,7 @@ pub(crate) fn run_kept_require_default_reads(
 
     let mut rewriter = DefaultReadRewriter {
         unresolved_mark,
-        shape_of: &shape_of,
+        provider_of: &provider_of,
         good: &good,
         local_helpers: LocalHelperContext::collect_with_mark(module, unresolved_mark),
         interop_sources,
@@ -769,9 +683,7 @@ pub(crate) fn run_kept_require_default_reads(
     };
     module.visit_mut_with(&mut rewriter);
     for source in namespace_write_sources(module, unresolved_mark, &|source| {
-        module_facts
-            .get_from(current_filename, source)
-            .is_some_and(returns_namespace)
+        provider_of(source).is_some_and(|provider| provider.require_returns_namespace())
     }) {
         rewriter.report(
             source,
@@ -779,17 +691,6 @@ pub(crate) fn run_kept_require_default_reads(
         );
     }
     rewriter.unhandled
-}
-
-/// `require` of the provider returns its namespace and no rewrite above
-/// reads past it: a provider with named exports only, or one that marked
-/// itself `__esModule`.
-fn returns_namespace(provider: &ModuleFacts) -> bool {
-    !provider.stays_commonjs
-        && matches!(
-            provider_shape(provider),
-            None | Some(ProviderShape::Marked { .. })
-        )
 }
 
 /// Sources of kept requires that `module` writes through, directly
@@ -991,7 +892,7 @@ fn take_expr(expr: &mut Expr) -> Expr {
 
 struct BindingCollector<'a, F> {
     unresolved_mark: Mark,
-    shape_of: &'a F,
+    provider_of: &'a F,
     /// Each candidate's source and the provider's exports that read `this`.
     candidates: HashMap<BindingId, (Atom, &'a [Atom])>,
     /// How often each binding is declared or assigned. A second `var` of
@@ -999,14 +900,16 @@ struct BindingCollector<'a, F> {
     declarations: HashMap<BindingId, usize>,
 }
 
-impl<'a, F: Fn(&str) -> Option<ProviderShape<'a>>> Visit for BindingCollector<'a, F> {
+impl<'a, F: Fn(&str) -> Option<ProviderInterface<'a>>> Visit for BindingCollector<'a, F> {
     fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
         if let (Pat::Ident(binding), Some(init)) = (&declarator.name, &declarator.init) {
             if let Some(source) = require_source(init, self.unresolved_mark) {
-                if let Some(ProviderShape::DefaultWithNamed(provider)) = (self.shape_of)(&source) {
+                if let Some(provider) = (self.provider_of)(&source)
+                    .filter(|provider| provider.value == RequiredValue::DefaultWithNamed)
+                {
                     self.candidates.insert(
                         binding_id(&binding.id),
-                        (source, provider.receiver_observing_exports.as_slice()),
+                        (source, provider.receiver_observing_exports()),
                     );
                 }
             }
@@ -1125,7 +1028,7 @@ impl Visit for BindingUseCheck<'_> {
 
 struct DefaultReadRewriter<'a, F> {
     unresolved_mark: Mark,
-    shape_of: &'a F,
+    provider_of: &'a F,
     good: &'a HashMap<BindingId, Atom>,
     local_helpers: LocalHelperContext,
     interop_sources: &'a [Atom],
@@ -1135,7 +1038,7 @@ struct DefaultReadRewriter<'a, F> {
     unhandled: Vec<(Atom, &'static str)>,
 }
 
-impl<'a, F: Fn(&str) -> Option<ProviderShape<'a>>> DefaultReadRewriter<'a, F> {
+impl<'a, F: Fn(&str) -> Option<ProviderInterface<'a>>> DefaultReadRewriter<'a, F> {
     fn report(&mut self, source: Atom, reason: &'static str) {
         if !self.unhandled.iter().any(|(seen, _)| *seen == source) {
             self.unhandled.push((source, reason));
@@ -1149,20 +1052,23 @@ impl<'a, F: Fn(&str) -> Option<ProviderShape<'a>>> DefaultReadRewriter<'a, F> {
         }
     }
 
-    fn named_exports(&self, source: &str) -> Option<&'a [ExportFact]> {
-        match (self.shape_of)(source) {
-            Some(ProviderShape::DefaultWithNamed(provider)) => Some(&provider.exports),
-            _ => None,
-        }
+    /// The provider of `source` when its CommonJS value sits beside named
+    /// exports ([`RequiredValue::DefaultWithNamed`]).
+    fn default_with_named(&self, source: &str) -> Option<ProviderInterface<'a>> {
+        (self.provider_of)(source)
+            .filter(|provider| provider.value == RequiredValue::DefaultWithNamed)
     }
 
     /// A provider recovered with a default export that also marked itself
     /// `__esModule` (a Babel runtime helper's CommonJS shim sets
     /// `module.exports.default = module.exports` beside the marker).
     fn marked_default_provider(&self, source: &str) -> bool {
-        match (self.shape_of)(source) {
-            Some(ProviderShape::Default { marked }) => marked,
-            Some(ProviderShape::DefaultWithNamed(provider)) => provider.marks_es_module,
+        let Some(provider) = (self.provider_of)(source) else {
+            return false;
+        };
+        match provider.value {
+            RequiredValue::Default { marked } => marked,
+            RequiredValue::DefaultWithNamed => provider.marks_es_module(),
             _ => false,
         }
     }
@@ -1176,24 +1082,19 @@ impl<'a, F: Fn(&str) -> Option<ProviderShape<'a>>> DefaultReadRewriter<'a, F> {
         };
         let source = require_source(&member.obj, self.unresolved_mark)?;
         let name = member.prop.as_ident()?;
-        match (self.shape_of)(&source) {
-            Some(ProviderShape::DefaultWithNamed(provider))
-                if provider.receiver_observing_exports.contains(&name.sym) =>
-            {
-                Some(source)
-            }
-            _ => None,
-        }
+        self.default_with_named(&source)
+            .is_some_and(|provider| provider.receiver_observing_exports().contains(&name.sym))
+            .then_some(source)
     }
 
     /// A kept require in a position no rule above rewrote.
     fn other_use(&mut self, source: Atom) {
-        match (self.shape_of)(&source) {
-            Some(ProviderShape::DefaultWithNamed(_)) => self.report(
+        match (self.provider_of)(&source).map(|provider| provider.value) {
+            Some(RequiredValue::DefaultWithNamed) => self.report(
                 source,
                 "the value it assigned to `module.exports` is now the namespace's `default`, beside its named exports, so a read of that value gets the namespace",
             ),
-            Some(ProviderShape::Marked { has_default: false })
+            Some(RequiredValue::Marked { has_default: false })
                 if self.interop_sources.contains(&source) =>
             {
                 self.report(
@@ -1203,7 +1104,7 @@ impl<'a, F: Fn(&str) -> Option<ProviderShape<'a>>> DefaultReadRewriter<'a, F> {
             }
             // Node marks the namespace of a module with a default export, so
             // an interop that still tests `__esModule` reads the default.
-            Some(ProviderShape::Marked { has_default: true })
+            Some(RequiredValue::Marked { has_default: true })
                 if self.interop_sources.contains(&source)
                     && !self.esmodule_tested_sources.contains(&source) =>
             {
@@ -1212,7 +1113,7 @@ impl<'a, F: Fn(&str) -> Option<ProviderShape<'a>>> DefaultReadRewriter<'a, F> {
                     "the interop that read its default was removed, so a read of the required value gets the namespace instead of the default",
                 )
             }
-            Some(ProviderShape::ReplacedValue) => self.report(
+            Some(RequiredValue::Replaced) => self.report(
                 source,
                 "the value it assigned to `module.exports` may not be the namespace's `default`, so a read of that value gets the namespace",
             ),
@@ -1221,7 +1122,7 @@ impl<'a, F: Fn(&str) -> Option<ProviderShape<'a>>> DefaultReadRewriter<'a, F> {
     }
 }
 
-impl<'a, F: Fn(&str) -> Option<ProviderShape<'a>>> VisitMut for DefaultReadRewriter<'a, F> {
+impl<'a, F: Fn(&str) -> Option<ProviderInterface<'a>>> VisitMut for DefaultReadRewriter<'a, F> {
     fn visit_mut_var_declarator(&mut self, declarator: &mut VarDeclarator) {
         // A good binding keeps its init; its uses are rewritten instead.
         if let (Pat::Ident(binding), Some(_)) = (&declarator.name, &declarator.init) {
@@ -1236,8 +1137,8 @@ impl<'a, F: Fn(&str) -> Option<ProviderShape<'a>>> VisitMut for DefaultReadRewri
         // `require("./p")` alone: the default-only provider's value.
         if let Some(source) = require_source(expr, self.unresolved_mark) {
             if matches!(
-                (self.shape_of)(&source),
-                Some(ProviderShape::Default { .. })
+                (self.provider_of)(&source).map(|provider| provider.value),
+                Some(RequiredValue::Default { .. })
             ) {
                 *expr = default_member(take_expr(expr));
             } else {
@@ -1256,7 +1157,10 @@ impl<'a, F: Fn(&str) -> Option<ProviderShape<'a>>> VisitMut for DefaultReadRewri
                     && call.args[0].spread.is_none() =>
             {
                 if let Some(source) = require_source(&call.args[0].expr, self.unresolved_mark) {
-                    if matches!((self.shape_of)(&source), Some(ProviderShape::Marked { .. })) {
+                    if matches!(
+                        (self.provider_of)(&source).map(|provider| provider.value),
+                        Some(RequiredValue::Marked { .. })
+                    ) {
                         *expr = take_expr(&mut call.args[0].expr);
                         return;
                     }
@@ -1299,8 +1203,8 @@ impl<'a, F: Fn(&str) -> Option<ProviderShape<'a>>> VisitMut for DefaultReadRewri
                     }
                 }
                 if let (Some(source), Some(name)) = (source, name) {
-                    if let Some(exports) = self.named_exports(&source) {
-                        if !is_named_export(exports, &name) {
+                    if let Some(provider) = self.default_with_named(&source) {
+                        if !provider.is_named_export(&name) {
                             *member.obj = default_member(take_expr(&mut member.obj));
                         }
                         return;
@@ -1313,7 +1217,7 @@ impl<'a, F: Fn(&str) -> Option<ProviderShape<'a>>> VisitMut for DefaultReadRewri
     }
 }
 
-impl<'a, F: Fn(&str) -> Option<ProviderShape<'a>>> DefaultReadRewriter<'a, F> {
+impl<'a, F: Fn(&str) -> Option<ProviderInterface<'a>>> DefaultReadRewriter<'a, F> {
     /// Reads `.default` of a called or constructed `require("./p")` or good
     /// binding of a `DefaultWithNamed` provider.
     fn rewrite_callee(&mut self, callee: &mut Box<Expr>) -> bool {
@@ -1322,7 +1226,7 @@ impl<'a, F: Fn(&str) -> Option<ProviderShape<'a>>> DefaultReadRewriter<'a, F> {
         let Some(source) = source else {
             return false;
         };
-        if self.named_exports(&source).is_none() {
+        if self.default_with_named(&source).is_none() {
             return false;
         }
         **callee = default_member(take_expr(callee));

@@ -1,8 +1,9 @@
 # Module interface model: provider and consumer facts before `UnEsm`
 
-Status: step 1 in progress on branch `claude/module-interface` (2026-10-20):
-the explicit execution mode (`PipelineMode`) and the late-recovery fix it
-exposed have landed there. The maintainer
+Status: step 1 done on branch `claude/module-interface` (2026-10-20), not
+merged: the explicit execution mode (`PipelineMode`), the late-recovery fix
+it exposed, and `ProviderInterface`, computed per lookup from the
+provider's facts. The maintainer
 has decided the direction (see [Decisions](#decisions)); steps 2 to 4 need
 review before code. This proposal absorbs the consumer-aware provider format proposal
 (deferred 2026-10-15), whose problem statement is

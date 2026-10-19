@@ -33,7 +33,8 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitWith};
 
 use crate::analysis::{binding_id, ident_matches_binding, BindingId};
-use crate::facts::{ExportKind, ModuleFactsMap};
+use crate::facts::ModuleFactsMap;
+use crate::provider_interface::ProviderInterface;
 use crate::rules::expr_utils::is_unresolved_ident;
 use crate::utils::paren::strip_parens;
 
@@ -66,29 +67,18 @@ pub(crate) fn run_provider_namespace_repair(
         let Some(provider) = module_facts.get_from(Some(current_filename), source) else {
             return false;
         };
-        let has_default = provider
-            .exports
-            .iter()
-            .any(|export| export.kind == ExportKind::Default);
-        let has_named_surface = provider.has_export_all
-            || provider
-                .exports
-                .iter()
-                .any(|export| export.kind == ExportKind::Named);
-        // A default export from `exports.default` is one property of the
-        // required value; one from `module.exports = v` is the whole value.
-        // An interop wrapper the consumer had unwrapped also makes the
-        // binding mean the default export, except a wildcard interop of a
-        // provider marked `__esModule`: it returns the required value as is.
+        let provider = ProviderInterface::of(provider);
+        // An interop wrapper the consumer had unwrapped makes the binding
+        // mean the default export, except a wildcard interop of a provider
+        // marked `__esModule`: it returns the required value as is.
         let whole_value = whole_require_sources
             .iter()
             .any(|whole| whole.as_ref() == source)
-            || (provider.marks_es_module
+            || (provider.marks_es_module()
                 && wildcard_require_sources
                     .iter()
                     .any(|wrapped| wrapped.as_ref() == source));
-        (has_named_surface || has_default)
-            && (!has_default || (provider.require_returns_exports_object && whole_value))
+        provider.namespace_holds_default_import(whole_value)
     };
     let policy = UsagePolicy {
         allow_default_read: true,
@@ -488,7 +478,7 @@ mod tests {
     use swc_core::ecma::visit::VisitMutWith;
 
     use super::*;
-    use crate::facts::{ExportFact, ModuleFacts};
+    use crate::facts::{ExportFact, ExportKind, ModuleFacts};
 
     fn parse_consumer(cm: &Lrc<SourceMap>, source: &str) -> (Module, Mark) {
         let file = cm.new_source_file(

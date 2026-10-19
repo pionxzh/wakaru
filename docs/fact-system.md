@@ -181,6 +181,16 @@ value was read. `collect_replaces_module_exports` records any assignment of
 `module.exports`, for the warning when that pass cannot tell what the value
 was.
 
+The Phase 2 passes do not combine these booleans themselves:
+`ProviderInterface::of` (`crates/core/src/provider_interface.rs`) derives,
+from one provider's facts alone, what `require` of it returned
+(`RequiredValue`: a module that stays CommonJS, `module.exports = v` alone or
+beside named exports, a module marked `__esModule`, a value replaced another
+way, or the `exports` object), which import reads that value, whether a
+namespace import holds what a default import meant, and which properties of
+a proven default value a `require("./p").name` captured. The consumer's side,
+such as the interop and whole-value lists below, stays with each pass.
+
 `collect_whole_require_sources` is the consumer half. It lists the sources
 of top-level `var x = require("src")` bindings that the module uses as the
 plain required value: every `require("src")` call is such a declarator, and
@@ -428,15 +438,17 @@ Neither proof creates a default-object fact available to consumers.
   path, `require.e(1).then(() => require("./p"))` or
   `Promise.resolve().then(() => require.t("./p", 19))`, and drops its chunk
   loads. The provider's facts decide between `import("./p")` and
-  `import("./p").then((ns) => ns.default)` (`required_value_import`, as for
-  a kept require), or keep the loader. Phase 1 leaves the require of such a
+  `import("./p").then((ns) => ns.default)`
+  (`ProviderInterface::required_value_import`, as for a kept require), or
+  keep the loader. Phase 1 leaves the require of such a
   loader to this pass, so the consumer can still become ESM
   (`webpack_lazy_import_source_semantics` in rewrite-assumptions.md).
 - **`import_unproven_helper_requires`** — after the interop pass, a
   `helper(require("./p"))` binding it left in an ES module (the helper is
   not proven, or the provider's facts give no import plan) keeps its call,
   and its require becomes an import of the value it returned, by the
-  provider's facts (`required_value_import`). `UnEsm` made the module ESM
+  provider's facts (`ProviderInterface::required_value_import`). `UnEsm`
+  made the module ESM
   expecting a later stage to take that require
   (`import_hoisting_eagerness`).
 - **`run_cross_module_interop_imports`** — turns a top-level

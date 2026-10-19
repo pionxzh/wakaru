@@ -34,7 +34,8 @@ use swc_core::ecma::visit::{Visit, VisitWith};
 
 use crate::analysis::binding_uses::BindingUseIndex;
 use crate::analysis::{binding_id, BindingId};
-use crate::facts::{ExportKind, ModuleFactsMap};
+use crate::facts::ModuleFactsMap;
+use crate::provider_interface::ProviderInterface;
 
 enum CaptureSite {
     OriginalPosition(BytePos),
@@ -74,28 +75,10 @@ pub(crate) fn run_provider_import_repair(
         let Some(provider) = module_facts.get_from(Some(current_filename), source) else {
             continue;
         };
-        if provider.has_export_all
-            || (provider.commonjs_default_object.is_none()
-                && provider.commonjs_default_attached_properties.is_empty())
-            || !provider
-                .exports
-                .iter()
-                .any(|export| export.kind == ExportKind::Default)
-        {
+        let Some(default_value) = ProviderInterface::of(provider).default_value_properties() else {
             continue;
-        }
+        };
 
-        let named_exports = provider
-            .exports
-            .iter()
-            .filter(|export| export.kind == ExportKind::Named)
-            .map(|export| export.exported.as_ref())
-            .collect::<HashSet<_>>();
-        let attached_properties = provider
-            .commonjs_default_attached_properties
-            .iter()
-            .map(Atom::as_ref)
-            .collect::<HashSet<_>>();
         let mut retained = Vec::with_capacity(import.specifiers.len() + 1);
         let mut repaired = Vec::new();
         for specifier in std::mem::take(&mut import.specifiers) {
@@ -117,12 +100,7 @@ pub(crate) fn run_provider_import_repair(
                     },
                 )
             };
-            if named.is_type_only
-                || capture_site.is_none()
-                || named_exports.contains(property.as_ref())
-                || (provider.commonjs_default_object.is_none()
-                    && !attached_properties.contains(property.as_ref()))
-            {
+            if named.is_type_only || capture_site.is_none() || !default_value.captures(&property) {
                 retained.push(specifier);
                 continue;
             }
