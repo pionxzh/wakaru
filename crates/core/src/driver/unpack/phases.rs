@@ -798,7 +798,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 facts_ref,
                 Some(&unpacked.module.filename),
                 unresolved_mark,
-                &import_tags,
+                &mut import_tags,
             );
             downgrade_unused_synthetic_imports(&mut module, &import_tags);
             // Late helper-through-UnReturn range.

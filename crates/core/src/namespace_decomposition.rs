@@ -83,18 +83,19 @@ pub fn run_namespace_decomposition(
         module_facts,
         current_filename,
         unresolved_mark,
-        &ImportTags::default(),
+        &mut ImportTags::default(),
     );
 }
 
 /// [`run_namespace_decomposition`], where `import_tags` say which imports
-/// `UnEsm` made from a require.
+/// `UnEsm` made from a require. A named import decomposed from such an
+/// import carries its tag.
 pub(crate) fn run_namespace_decomposition_with_tags(
     module: &mut Module,
     module_facts: &ModuleFactsMap,
     current_filename: Option<&str>,
     unresolved_mark: Mark,
-    import_tags: &ImportTags,
+    import_tags: &mut ImportTags,
 ) {
     let candidates = find_decomposition_candidates(
         module,
@@ -106,7 +107,7 @@ pub(crate) fn run_namespace_decomposition_with_tags(
     if candidates.is_empty() {
         return;
     }
-    apply_decompositions(module, &candidates);
+    apply_decompositions(module, &candidates, import_tags);
 }
 
 /// Find default imports that can be decomposed into named imports.
@@ -667,7 +668,11 @@ impl Visit for UsageAnalyzer<'_> {
 }
 
 /// Apply the decomposition rewrites.
-fn apply_decompositions(module: &mut Module, candidates: &[DecompCandidate]) {
+fn apply_decompositions(
+    module: &mut Module,
+    candidates: &[DecompCandidate],
+    import_tags: &mut ImportTags,
+) {
     // Build a lookup: (sym, ctxt) → map of exported_name → (local_name, local_ctxt).
     // Reused-existing specifiers carry their real ctxt; freshly-added ones use
     // `SyntaxContext::empty()`. Propagating the ctxt lets downstream rules match
@@ -728,6 +733,17 @@ fn apply_decompositions(module: &mut Module, candidates: &[DecompCandidate]) {
             if already_imported.contains(&prop.local) {
                 continue;
             }
+            import_tags.carry(
+                &(candidate.local_sym.clone(), candidate.local_ctxt),
+                (
+                    prop.local.clone(),
+                    if prop.exported == "default" && prop.local == candidate.local_sym {
+                        prop.local_ctxt
+                    } else {
+                        SyntaxContext::empty()
+                    },
+                ),
+            );
             if prop.exported == "default" && prop.local == candidate.local_sym {
                 named_specifiers.push(ImportSpecifier::Default(ImportDefaultSpecifier {
                     span: DUMMY_SP,
@@ -955,5 +971,66 @@ mod tests {
         let existing = HashSet::from_iter([Atom::from("value_1"), Atom::from("value_2")]);
 
         assert_eq!(synthesize_alias(&Atom::from("value"), &existing), "value_3");
+    }
+
+    #[test]
+    fn a_named_import_decomposed_from_a_synthesized_one_carries_its_tag() {
+        use crate::facts::{ExportFact, ModuleFacts};
+        use swc_core::common::{BytePos, Span, GLOBALS};
+
+        GLOBALS.set(&Default::default(), || {
+            let mut module = crate::unpacker::parse_es_module(
+                r#"import provider from "./provider.js"; provider.alpha();"#,
+                "consumer.js",
+                Default::default(),
+            )
+            .unwrap();
+            let unresolved_mark = Mark::new();
+            module.visit_mut_with(&mut swc_core::ecma::transforms::base::resolver(
+                unresolved_mark,
+                Mark::new(),
+                false,
+            ));
+            let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = &module.body[0] else {
+                unreachable!()
+            };
+            let ImportSpecifier::Default(default) = &import.specifiers[0] else {
+                unreachable!()
+            };
+            let call = Span::new(BytePos(1), BytePos(9));
+            let mut tags = ImportTags::default();
+            tags.insert(crate::analysis::binding_id(&default.local), call);
+            let mut facts = ModuleFactsMap::new();
+            facts.insert(
+                "provider.js",
+                ModuleFacts {
+                    exports: vec![ExportFact {
+                        exported: "alpha".into(),
+                        local: Some("alpha".into()),
+                        kind: ExportKind::Named,
+                    }],
+                    ..Default::default()
+                },
+            );
+
+            run_namespace_decomposition_with_tags(
+                &mut module,
+                &facts,
+                Some("consumer.js"),
+                unresolved_mark,
+                &mut tags,
+            );
+
+            let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = &module.body[0] else {
+                unreachable!()
+            };
+            let [ImportSpecifier::Named(named)] = import.specifiers.as_slice() else {
+                panic!("expected one named import: {:?}", import.specifiers)
+            };
+            assert_eq!(
+                tags.edges_of(&crate::analysis::binding_id(&named.local)),
+                &[(call.lo, call.hi)]
+            );
+        });
     }
 }
