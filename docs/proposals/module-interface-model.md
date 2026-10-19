@@ -1,11 +1,10 @@
 # Module interface model: provider and consumer facts before `UnEsm`
 
-Status: step 1 done on branch `claude/module-interface` (2026-10-20), not
-merged: the explicit execution mode (`PipelineMode`), the late-recovery fix
-it exposed, and `ProviderInterface`, computed per lookup from the
-provider's facts. The maintainer
-has decided the direction (see [Decisions](#decisions)); steps 2 to 4 need
-review before code. This proposal absorbs the consumer-aware provider format proposal
+Status: step 1 done (2026-10-20): the explicit execution mode
+(`PipelineMode`), the late-recovery fix it exposed, and
+`ProviderInterface`, computed per lookup from the provider's facts. Step 2
+is next. The maintainer has decided the direction (see
+[Decisions](#decisions)). This proposal absorbs the consumer-aware provider format proposal
 (deferred 2026-10-15), whose problem statement is
 [Consumer writes to a named-only provider](#consumer-writes-to-a-named-only-provider).
 
@@ -167,11 +166,12 @@ Three records, each with one owner:
   (known names, or open through `export *`), whether it marks itself
   `__esModule`, which transpiler helpers it exports and under which names,
   and whether any consumer needs its mutable `exports` object.
-- **`RequireEdge`**, per require binding in a consumer: the source, the
-  binding, and how it is used: whole value, through a default interop,
-  through a wildcard interop, static member reads (names), member writes
-  (assignment, update, `delete`, `Object.assign` or `Object.defineProperty`
-  target), receiver-sensitive calls, or escape.
+- **`RequireEdge`**, per `require()` call in a consumer: the source, the
+  form of the call (a declarator, a member read, a helper argument, inline),
+  the interop around it (none, default, wildcard, tested for `__esModule`),
+  and how the value is used: whole value, static member reads (names),
+  member writes (assignment, update, `delete`, `Object.assign` or
+  `Object.defineProperty` target), receiver-sensitive calls, or escape.
 - **The plan**: per module, the format chosen and why; per edge, the import
   form chosen (default, namespace, named, or a kept require with its read
   adapter) and why.
@@ -187,8 +187,10 @@ edges.
 Phase 1a (per module, parallel):
     obtain resolved AST, normalize detector-proven runtime branches
     existing raw CommonJS collectors
+    create RequireEdges with their interop, keyed by call span  ← new
     rule range up to, not including, UnEsm
-    collect RequireEdges and provider identity on this AST   ← new
+    add each edge's uses and writes, by the same call span      ← new
+    collect provider identity (helper exports) on this AST      ← new
 
 ──── barrier 0: ProviderInterfaces and the plan built from all modules ────
 
@@ -202,10 +204,43 @@ Phase 1b (per module, parallel):
 Phase 2: as today, reading the plan instead of re-deriving it
 ```
 
-The new collectors read the AST `UnEsm` is about to see, so what they
-record is an observation, not a prediction. Rules before `UnEsm` have
-already normalized most minified forms; a Terser-inlined write such as
-`t(100).f = …` becomes `require("./p.js").f = …` once ids are rewritten.
+Edges are collected in two passes, and both observe an AST that exists at
+that point; neither predicts a later rewrite.
+
+- **Interop, on the input.** Rules before `UnEsm` erase it:
+  `UnWebpackInterop` removes webpack's `.n` getter and `UnIndirectCall`
+  removes `(0, x.f)()`, so on the AST `UnEsm` sees, a default-interop read
+  and a whole-value use look the same. This is why
+  `interop_require_sources` is collected before the rule range today.
+- **Uses and writes, on the AST `UnEsm` sees.** The extractor has already
+  rewritten `t(100)` to `require("./module-100.js")`, and
+  `SimplifySequence` has split comma sequences. Writes still sit anywhere:
+  in chained assignments (`a.f = b.f = fn`), under `||`, in nested blocks
+  and function bodies, and on an inlined `require("./p.js")` with no
+  binding. The collector walks the whole tree.
+
+The edge key is the `require()` call's span. A binding is not a stable key:
+`UnWebpackInterop` renames before `UnEsm`, `UnEsm` renames on a collision,
+and `SmartRename` runs later. The call's span survives the whole rule
+range. When `UnEsm` turns a call into an import, it records each import
+specifier's local binding, after its own renames, against the edge. The
+barrier pre-passes read that table instead of the dummy span, which also
+stops them from treating a hand-written specifier that `UnEsm` merged into a
+synthesized import as synthesized.
+
+Provider identity needs more than today's helper facts, which read the
+recovered ESM exports (`collect_helper_exports` on `ExportFact`). Before
+`UnEsm`:
+
+- the helper body is recognized by shape (`LocalHelperContext`), Terser's
+  renamed locals included;
+- the export name that reaches it needs a new reader: the export-storage
+  analysis covers `require.d` getters once `require.r(exports)` is stripped
+  as `UnEsm` strips it, and `module.exports = fn` (with
+  `module.exports.default = module.exports`) needs the whole-value
+  collector;
+- the plan carries each export's helper kind. Unlike
+  `require("tslib")`, a bundled provider is not trusted by name.
 
 `UnEsm` reads the plan through `RuleRunContext`. With a plan entry it keeps a
 written provider CommonJS and proves a helper through its provider's
@@ -221,8 +256,10 @@ What barrier 0 cannot see stays with Phase 2:
 
 - interfaces exposed only by late ESM recovery of factory IIFEs, which runs
   after `UnEsm`;
-- helper exports visible only after the helper provider's own `UnEsm`.
-  Step 3 measures which helper-provider shapes are readable before it.
+- helper exports visible only after the helper provider's own `UnEsm`;
+- a UMD helper build that exports through a callback
+  (`exporter("__importDefault", __importDefault)`), which no stage proves
+  today.
 
 ### Explicit execution mode
 
@@ -252,9 +289,11 @@ lazy load. Barrier 0 adds a mode for Phase 1a, which does not run `UnEsm`.
    `provider_import_repair` read it instead of combining booleans. Add the
    explicit execution mode. No output change: unit tests and the fixture
    check stay unchanged.
-2. **Edge records.** Collect `RequireEdge`s before `UnEsm`. `UnEsm` tags
-   each import it synthesizes with its edge, and Phase 2 passes read the
-   edge instead of the dummy span and the per-source lists. Passes that
+2. **Edge records.** Collect `RequireEdge`s in the two passes above.
+   `UnEsm` tags each import it synthesizes with its edge, and Phase 2
+   passes read the edge instead of the dummy span and the per-source lists.
+   Some readers still need the current AST (an alias's lifetime, a use
+   count, the site to rewrite); they keep reading it. Passes that
    read a binding's uses move to `BindingUseIndex`. Add a debug command
    that prints each module's interface and each edge's plan with the
    reason, like `wakaru debug cjs-exports`. No output change.
@@ -288,14 +327,13 @@ lazy load. Barrier 0 adds a mode for Phase 1a, which does not run `UnEsm`.
 
 ## Open questions
 
-- **How a Phase 2 pass finds an edge.** An edge is recorded before
-  `UnEsm`; a pass reads it later, after rules have rewritten the AST. The
-  key must survive what runs in between. The barrier pre-passes run right
-  after the through-`UnEsm` range, so a binding recorded at the end of
-  `UnEsm` (after its own collision renames) is likely enough there.
-  `run_kept_require_default_reads` runs after the whole rule range, where
-  renames have happened; the `require` call's span may serve instead. Step 2
-  starts by pinning this with tests on both paths.
+- **A provider passed to a function.** `install(prov)` with
+  `function install(m) { m.f = … }` is an escape in unminified output, and
+  Terser can inline it into a direct write. Counting only direct writes
+  makes the same source get a different format per producer. Either an
+  escape keeps the provider CommonJS (safer, costs recovery), or the
+  collector follows one level into a local function's parameter writes.
+  To decide before step 3.
 - **Barrier 0 cost.** Every module waits for the slowest to reach `UnEsm`;
   the largest-first schedule limits but does not remove that. On the
   source-map path, ASTs that Phase 1 discards today must survive barrier 0.
