@@ -28,6 +28,7 @@ use crate::js_names::{is_reserved_binding_name, is_valid_identifier_name};
 use crate::kept_require;
 use crate::module_path::resolve_relative_specifier;
 use crate::provider_namespace_repair::run_provider_namespace_repair;
+use crate::require_edges::{declarator_require_calls, tag_declarator_imports, ImportTags};
 use crate::utils::member::static_member_name;
 use crate::utils::paren::strip_parens;
 use crate::utils::prototype_members::is_prototype_mutating_member_name;
@@ -64,6 +65,7 @@ pub struct UnEsm {
     local_helpers: Option<std::rc::Rc<LocalHelperContext>>,
     lowered_esbuild_namespace: bool,
     later_unpack_stages: kept_require::LaterUnpackStages,
+    import_tags: ImportTags,
 }
 
 impl UnEsm {
@@ -75,6 +77,7 @@ impl UnEsm {
             local_helpers: None,
             lowered_esbuild_namespace: false,
             later_unpack_stages: kept_require::LaterUnpackStages::None,
+            import_tags: ImportTags::default(),
         }
     }
 
@@ -120,6 +123,15 @@ impl UnEsm {
         self.current_filename = current_filename.map(str::to_owned);
         self
     }
+
+    /// The import specifiers the last run made from `require()` calls.
+    pub(crate) fn import_tags(&self) -> &ImportTags {
+        &self.import_tags
+    }
+
+    pub(crate) fn take_import_tags(&mut self) -> ImportTags {
+        std::mem::take(&mut self.import_tags)
+    }
 }
 
 // ============================================================
@@ -131,20 +143,46 @@ enum CjsRequireKind {
     /// require('foo') bare statement → import 'foo'
     Bare { source: String },
     /// var foo = require('foo') → import foo from 'foo'
-    Default { local: Ident, source: String },
+    Default {
+        local: Ident,
+        source: String,
+        call: Span,
+    },
     /// var { a, b: c } = require('foo') → import { a, b as c } from 'foo'
     Named {
         specifiers: Vec<(Atom, Ident)>,
         source: String,
+        call: Span,
     },
     /// var foo = require('foo').default → import foo from 'foo'
-    DefaultProp { local: Ident, source: String },
+    DefaultProp {
+        local: Ident,
+        source: String,
+        call: Span,
+    },
     /// var foo = require('foo').bar → import { bar as foo } from 'foo'
     NamedProp {
         prop: Atom,
         local: Ident,
         source: String,
+        call: Span,
     },
+}
+
+impl CjsRequireKind {
+    /// Each import local this require becomes, with the `require()` call's
+    /// span.
+    fn import_locals(&self) -> Vec<(&Ident, Span)> {
+        match self {
+            Self::Bare { .. } => Vec::new(),
+            Self::Default { local, call, .. }
+            | Self::DefaultProp { local, call, .. }
+            | Self::NamedProp { local, call, .. } => vec![(local, *call)],
+            Self::Named {
+                specifiers, call, ..
+            } => specifiers.iter().map(|(_, local)| (local, *call)).collect(),
+        }
+    }
 }
 
 /// Classified CJS export kinds
@@ -225,6 +263,19 @@ impl SourceEntry {
 
 impl VisitMut for UnEsm {
     fn visit_mut_module(&mut self, module: &mut swc_core::ecma::ast::Module) {
+        // The declarators other conversions (interop helpers, getter
+        // helpers) turn into imports directly, without the classification
+        // below.
+        let declarator_requires = declarator_require_calls(module, self.unresolved_mark);
+        self.import_tags = ImportTags::default();
+        self.convert_or_keep(module);
+        self.settle_import_tags(module, &declarator_requires);
+    }
+}
+
+impl UnEsm {
+    /// Converts `module` to ESM, or keeps it CommonJS.
+    fn convert_or_keep(&mut self, module: &mut Module) {
         // ESM is strict code, where a `with` statement is a syntax error, so
         // such a module stays CommonJS.
         if super::eval_utils::module_has_with_stmt(module) {
@@ -265,6 +316,7 @@ impl VisitMut for UnEsm {
         let harmony = harmony_requires::is_webpack_harmony_module(&original, self.unresolved_mark);
         if harmony {
             *module = original.clone();
+            self.import_tags = ImportTags::default();
             self.lowered_esbuild_namespace = false;
             self.convert_module(module, Attempt::Harmony);
             if !self.keeps_require_in_esm(module, true) {
@@ -275,6 +327,7 @@ impl VisitMut for UnEsm {
             // Any other module: the requires a statement runs before any
             // other effect, moved out of their expression.
             *module = original.clone();
+            self.import_tags = ImportTags::default();
             self.lowered_esbuild_namespace = false;
             self.convert_module(module, Attempt::LeadingRequires);
             if self.keeps_require_in_esm(module, false) {
@@ -286,7 +339,31 @@ impl VisitMut for UnEsm {
             }
         }
         *module = original;
+        self.import_tags = ImportTags::default();
         self.keep_commonjs(module);
+    }
+
+    /// Keeps the tags of the import specifiers `module` ends with, and tags
+    /// a specifier another conversion made from a declarator's require.
+    fn settle_import_tags(
+        &mut self,
+        module: &Module,
+        declarator_requires: &HashMap<BindingId, Span>,
+    ) {
+        let mut locals = HashSet::default();
+        for item in &module.body {
+            if let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item {
+                locals.extend(import.specifiers.iter().map(|specifier| {
+                    binding_id(match specifier {
+                        ImportSpecifier::Default(default) => &default.local,
+                        ImportSpecifier::Named(named) => &named.local,
+                        ImportSpecifier::Namespace(namespace) => &namespace.local,
+                    })
+                }));
+            }
+        }
+        self.import_tags.retain(|local| locals.contains(local));
+        tag_declarator_imports(module, declarator_requires, &mut self.import_tags);
     }
 }
 
@@ -669,6 +746,21 @@ impl UnEsm {
             })
             .collect();
 
+        // The import local each require becomes, with its call, for the
+        // tags. A require only live re-exports read becomes no import.
+        let mut require_locals: Vec<(BindingId, Span)> = classified
+            .iter()
+            .filter_map(|item| match item {
+                Classified::CjsRequire(kind) => Some(kind.import_locals()),
+                _ => None,
+            })
+            .flatten()
+            .map(|(local, call)| (binding_id(local), call))
+            .filter(|(local, _)| !consumed_reexport_bindings.contains(local))
+            .collect();
+        // The specifiers the input wrote that join such an import.
+        let mut merged_locals: Vec<BindingId> = Vec::new();
+
         // Phase 3: collect imports — build source_map keyed by String
         let mut source_order: Vec<String> = Vec::new();
         let mut source_map: HashMap<String, SourceEntry> = HashMap::default();
@@ -679,7 +771,7 @@ impl UnEsm {
         for c in classified.iter() {
             let src = match c {
                 Classified::CjsRequire(CjsRequireKind::Bare { source }) => source.clone(),
-                Classified::CjsRequire(CjsRequireKind::Default { local, source }) => {
+                Classified::CjsRequire(CjsRequireKind::Default { local, source, .. }) => {
                     if consumed_reexport_bindings.contains(&(local.sym.clone(), local.ctxt)) {
                         continue;
                     }
@@ -724,6 +816,7 @@ impl UnEsm {
                             for spec in &import.specifiers {
                                 match spec {
                                     ImportSpecifier::Default(d) => {
+                                        merged_locals.push(binding_id(&d.local));
                                         entry.add_default(d.local.clone())
                                     }
                                     ImportSpecifier::Named(n) => {
@@ -732,6 +825,7 @@ impl UnEsm {
                                             Some(ModuleExportName::Str(_)) => n.local.sym.clone(),
                                             None => n.local.sym.clone(),
                                         };
+                                        merged_locals.push(binding_id(&n.local));
                                         entry.add_named(imported, n.local.clone());
                                     }
                                     ImportSpecifier::Namespace(_) => {}
@@ -778,7 +872,7 @@ impl UnEsm {
                         entry.has_cjs = true;
                         entry.set_bare();
                     }
-                    CjsRequireKind::Default { local, source } => {
+                    CjsRequireKind::Default { local, source, .. } => {
                         if consumed_reexport_bindings.contains(&(local.sym.clone(), local.ctxt)) {
                             continue;
                         }
@@ -787,7 +881,9 @@ impl UnEsm {
                         entry.has_cjs = true;
                         entry.add_default(local.clone());
                     }
-                    CjsRequireKind::Named { specifiers, source } => {
+                    CjsRequireKind::Named {
+                        specifiers, source, ..
+                    } => {
                         let entry =
                             get_or_insert(&mut source_order, &mut source_map, source.clone());
                         entry.has_cjs = true;
@@ -795,7 +891,7 @@ impl UnEsm {
                             entry.add_named(imported.clone(), local.clone());
                         }
                     }
-                    CjsRequireKind::DefaultProp { local, source } => {
+                    CjsRequireKind::DefaultProp { local, source, .. } => {
                         let entry =
                             get_or_insert(&mut source_order, &mut source_map, source.clone());
                         entry.has_cjs = true;
@@ -805,6 +901,7 @@ impl UnEsm {
                         prop,
                         local,
                         source,
+                        ..
                     } => {
                         let entry =
                             get_or_insert(&mut source_order, &mut source_map, source.clone());
@@ -948,6 +1045,15 @@ impl UnEsm {
                 for item in &mut import_decls {
                     rename_bindings(item, &renames);
                 }
+                for local in require_locals
+                    .iter_mut()
+                    .map(|(local, _)| local)
+                    .chain(&mut merged_locals)
+                {
+                    if let Some(rename) = renames.iter().find(|rename| rename.old == *local) {
+                        local.0 = rename.new.clone();
+                    }
+                }
                 for c in classified.iter_mut() {
                     match c {
                         Classified::Keep(item) => rename_bindings(item, &renames),
@@ -1009,6 +1115,13 @@ impl UnEsm {
         merge_decl_and_named_export(&mut new_body);
         inline_adjacent_default_export_aliases(&mut new_body);
         module.body = new_body;
+        let tags_before = self.import_tags.clone();
+        for (local, call) in require_locals {
+            self.import_tags.insert(local, call);
+        }
+        for local in merged_locals {
+            self.import_tags.insert_merged(local);
+        }
 
         let Some(original) = original_cjs_module else {
             return;
@@ -1031,6 +1144,7 @@ impl UnEsm {
                 Some(current_filename),
                 self.unresolved_mark,
                 false,
+                &self.import_tags,
             );
             if has_unlinkable_default_self_import(module, current_filename) {
                 // CommonJS returns the current, partially initialized
@@ -1039,6 +1153,7 @@ impl UnEsm {
                 // self-import cannot even link. Roll back this rule as one
                 // unit instead of mixing an unrepresentable edge with ESM.
                 *module = original;
+                self.import_tags = tags_before;
                 return;
             }
         }
@@ -1059,6 +1174,7 @@ impl UnEsm {
                 && !calls_bundler_helper
             {
                 *module = original;
+                self.import_tags = tags_before;
             }
         }
     }
@@ -6786,7 +6902,11 @@ fn try_classify_cjs_require_declarator(
             // var foo = require('bar')
             if let Expr::Call(call) = init.as_ref() {
                 if let Some(source) = is_require_call(call, unresolved_mark) {
-                    return Some(CjsRequireKind::Default { local, source });
+                    return Some(CjsRequireKind::Default {
+                        local,
+                        source,
+                        call: call.span,
+                    });
                 }
             }
             // var foo = require('bar').baz or require('bar').default
@@ -6795,12 +6915,17 @@ fn try_classify_cjs_require_declarator(
                     if let Some(source) = is_require_call(call, unresolved_mark) {
                         if let Some(prop) = is_ident_prop(&member.prop) {
                             if prop.as_ref() == "default" {
-                                return Some(CjsRequireKind::DefaultProp { local, source });
+                                return Some(CjsRequireKind::DefaultProp {
+                                    local,
+                                    source,
+                                    call: call.span,
+                                });
                             } else {
                                 return Some(CjsRequireKind::NamedProp {
                                     prop,
                                     local,
                                     source,
+                                    call: call.span,
                                 });
                             }
                         }
@@ -6842,7 +6967,11 @@ fn try_classify_cjs_require_declarator(
                             }
                         }
                     }
-                    return Some(CjsRequireKind::Named { specifiers, source });
+                    return Some(CjsRequireKind::Named {
+                        specifiers,
+                        source,
+                        call: call.span,
+                    });
                 }
             }
             // var { bar } = require('foo').baz — complex, skip
@@ -7390,6 +7519,100 @@ mod tests {
             !spans.iter().any(|name| name == "binding_use_index"),
             "a module without a candidate must not pay for full binding analysis: {spans:?}"
         );
+    }
+
+    /// Runs `UnEsm` on `source` and returns, per import local, its tag:
+    /// the sources of the requires it came from (`merged` for a specifier
+    /// the input wrote), next to each require's source by its call key.
+    fn import_tags_of(source: &str) -> Vec<(String, String)> {
+        swc_core::common::GLOBALS.set(&Default::default(), || {
+            let mut module =
+                crate::unpacker::parse_es_module(source, "consumer.js", Default::default())
+                    .unwrap();
+            let unresolved_mark = Mark::new();
+            module.visit_mut_with(&mut swc_core::ecma::transforms::base::resolver(
+                unresolved_mark,
+                Mark::new(),
+                false,
+            ));
+            let edges = crate::require_edges::RequireEdges::collect(&module, unresolved_mark);
+            let mut rule = UnEsm::new(unresolved_mark, RewriteLevel::Standard);
+            module.visit_mut_with(&mut rule);
+            let tags = rule.take_import_tags();
+            let mut out = Vec::new();
+            for item in &module.body {
+                let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+                    continue;
+                };
+                for specifier in &import.specifiers {
+                    let local = binding_id(match specifier {
+                        ImportSpecifier::Default(default) => &default.local,
+                        ImportSpecifier::Named(named) => &named.local,
+                        ImportSpecifier::Namespace(namespace) => &namespace.local,
+                    });
+                    let tag = if tags.is_tagged(&local) {
+                        tags.edges_of(&local)
+                            .iter()
+                            .map(|key| edges.get(*key).unwrap().source.to_string())
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    } else if tags.is_synthesized(&local) {
+                        "merged".to_string()
+                    } else {
+                        "untagged".to_string()
+                    };
+                    out.push((local.0.to_string(), tag));
+                }
+            }
+            out.sort();
+            out
+        })
+    }
+
+    #[test]
+    fn import_tags_name_the_require_each_import_local_came_from() {
+        let tags = import_tags_of(
+            r#"import { authored } from "./alpha.js";
+import * as spaced from "./beta.js";
+var alpha = require("./alpha.js");
+var { beta, gamma: delta } = require("./beta.js");
+var epsilon = require("./epsilon.js").zeta;
+use(authored, spaced, alpha, beta, delta, epsilon);"#,
+        );
+        let expect = |local: &str, tag: &str| (local.to_string(), tag.to_string());
+        assert_eq!(
+            tags,
+            vec![
+                expect("alpha", "./alpha.js"),
+                expect("authored", "merged"),
+                expect("beta", "./beta.js"),
+                expect("delta", "./beta.js"),
+                expect("epsilon", "./epsilon.js"),
+                expect("spaced", "untagged"),
+            ]
+        );
+    }
+
+    #[test]
+    fn import_tags_follow_a_collision_rename() {
+        // The export name `alpha` wins, so the import local is renamed.
+        let tags = import_tags_of(
+            r#"var alpha = require("./alpha.js");
+exports.alpha = alpha.value + 1;"#,
+        );
+        assert_eq!(tags.len(), 1);
+        assert_ne!(tags[0].0, "alpha");
+        assert_eq!(tags[0].1, "./alpha.js");
+    }
+
+    #[test]
+    fn import_tags_are_dropped_when_the_module_stays_commonjs() {
+        let tags = import_tags_of(
+            r#"var alpha = require("./alpha.js");
+function later() { return require("./beta.js"); }
+exports.value = alpha.value;"#,
+        );
+        assert_eq!(tags, vec![]);
     }
 
     #[test]

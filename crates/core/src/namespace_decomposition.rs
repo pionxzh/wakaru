@@ -25,6 +25,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::facts::{ExportKind, ModuleFactsMap};
 use crate::js_names::is_reserved_binding_name;
+use crate::require_edges::ImportTags;
 use crate::rules::rename_utils::{collect_free_reference_names, starts_with_lowercase};
 use crate::utils::paren::strip_parens;
 
@@ -77,8 +78,31 @@ pub fn run_namespace_decomposition(
     current_filename: Option<&str>,
     unresolved_mark: Mark,
 ) {
-    let candidates =
-        find_decomposition_candidates(module, module_facts, current_filename, unresolved_mark);
+    run_namespace_decomposition_with_tags(
+        module,
+        module_facts,
+        current_filename,
+        unresolved_mark,
+        &ImportTags::default(),
+    );
+}
+
+/// [`run_namespace_decomposition`], where `import_tags` say which imports
+/// `UnEsm` made from a require.
+pub(crate) fn run_namespace_decomposition_with_tags(
+    module: &mut Module,
+    module_facts: &ModuleFactsMap,
+    current_filename: Option<&str>,
+    unresolved_mark: Mark,
+    import_tags: &ImportTags,
+) {
+    let candidates = find_decomposition_candidates(
+        module,
+        module_facts,
+        current_filename,
+        unresolved_mark,
+        import_tags,
+    );
     if candidates.is_empty() {
         return;
     }
@@ -91,6 +115,7 @@ fn find_decomposition_candidates(
     module_facts: &ModuleFactsMap,
     current_filename: Option<&str>,
     unresolved_mark: Mark,
+    import_tags: &ImportTags,
 ) -> Vec<DecompCandidate> {
     // Collect ALL bindings at every scope level (including function params,
     // catch clauses, inner var/let/const, etc.) to detect naming collisions.
@@ -169,10 +194,7 @@ fn find_decomposition_candidates(
             safe: true,
             in_import_decl: false,
         };
-        let import_is_synthesized = matches!(
-            &module.body[import_index],
-            ModuleItem::ModuleDecl(ModuleDecl::Import(import)) if import.span.is_dummy()
-        );
+        let import_is_synthesized = import_tags.is_synthesized(&(local_sym.clone(), local_ctxt));
         let mut has_inert_bare_reads = false;
         for item in &module.body {
             if import_is_synthesized && is_top_level_bare_read(item, &local_sym, local_ctxt) {

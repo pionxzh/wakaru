@@ -34,6 +34,7 @@ use super::transpiler_helper_utils::{LocalHelperContext, TranspilerHelperKind};
 use super::un_esmodule_flag::has_top_level_esmodule_flag;
 use crate::analysis::{binding_id, BindingId};
 use crate::provider_namespace_repair::run_relative_namespace_repair;
+use crate::require_edges::ImportTags;
 use crate::rules::expr_utils::is_unresolved_ident;
 use crate::utils::paren::strip_parens;
 
@@ -96,9 +97,10 @@ pub(crate) fn run_relative_namespace_import(
     module: &mut Module,
     evidence: &RelativeNamespaceEvidence,
     unresolved_mark: Mark,
+    import_tags: &ImportTags,
 ) {
     if evidence.compiled_from_esm && !evidence.bindings.is_empty() {
-        run_relative_namespace_repair(module, unresolved_mark, &evidence.bindings);
+        run_relative_namespace_repair(module, unresolved_mark, &evidence.bindings, import_tags);
     }
 }
 

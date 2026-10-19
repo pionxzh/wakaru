@@ -361,7 +361,10 @@ fn run_un_esm(module: &mut Module, ctx: RuleRunContext<'_>) {
         if rule.lowered_esbuild_namespace() {
             evidence.compiled_from_esm = true;
         }
-        run_relative_namespace_import(module, evidence, ctx.unresolved_mark);
+        run_relative_namespace_import(module, evidence, ctx.unresolved_mark, rule.import_tags());
+    }
+    if let Some(record) = ctx.require_record {
+        record.borrow_mut().tags = rule.take_import_tags();
     }
 }
 fn run_un_template_literal(module: &mut Module, ctx: RuleRunContext<'_>) {
@@ -1287,6 +1290,7 @@ use(p.alpha), p.beta = 1, n().gamma;"#;
             module.visit_mut_with(&mut resolver(unresolved_mark, Mark::new(), false));
             let record = RefCell::new(RequireRecord {
                 edges: RequireEdges::collect(&module, unresolved_mark),
+                ..Default::default()
             });
             apply_rules(
                 &mut module,

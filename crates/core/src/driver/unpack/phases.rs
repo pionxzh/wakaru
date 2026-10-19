@@ -53,11 +53,13 @@ use crate::facts::{
     is_normalized_commonjs_default, ModuleFactsMap,
 };
 use crate::kept_require::run_kept_require_default_reads;
-use crate::namespace_decomposition::run_namespace_decomposition;
+use crate::namespace_decomposition::run_namespace_decomposition_with_tags;
 use crate::provider_import_repair::run_provider_import_repair;
 use crate::provider_namespace_repair::run_provider_namespace_repair;
 use crate::reexport_consolidation::run_reexport_consolidation;
-use crate::require_edges::{RequireEdges, RequireRecord};
+use crate::require_edges::{
+    declarator_require_calls, tag_declarator_imports, ImportTags, RequireEdges, RequireRecord,
+};
 use crate::rules::cross_module_interop_import::{
     import_unproven_helper_requires, run_cross_module_interop_imports,
 };
@@ -181,6 +183,8 @@ struct Phase1PreparedModule {
     globals: Globals,
     module: Module,
     unresolved_mark: Mark,
+    /// The import specifiers `UnEsm` made from requires in this AST.
+    import_tags: ImportTags,
 }
 
 struct Phase1Module {
@@ -551,6 +555,7 @@ pub(super) fn unpack_multi_module_with_plan(
             // range adds the uses where it reaches `UnEsm`.
             let require_record = RefCell::new(RequireRecord {
                 edges: RequireEdges::collect(&module, unresolved_mark),
+                ..Default::default()
             });
             {
                 let span = tracing::info_span!("phase1: rules");
@@ -596,7 +601,7 @@ pub(super) fn unpack_multi_module_with_plan(
                     unresolved_mark,
                     options.level,
                 );
-                (facts, Some((module, unresolved_mark)))
+                (facts, Some((module, unresolved_mark, require_record.tags)))
             } else {
                 // Edges read the pre-late AST, as above. Collect them before
                 // recovering in place so this path still skips the clone.
@@ -635,11 +640,15 @@ pub(super) fn unpack_multi_module_with_plan(
             facts.require_edges = require_record.edges;
             (facts, prepared, None, suggested_filename)
         });
-        let prepared = prepared_parts.map(|(module, unresolved_mark)| Phase1PreparedModule {
-            globals,
-            module,
-            unresolved_mark,
-        });
+        let prepared =
+            prepared_parts.map(
+                |(module, unresolved_mark, import_tags)| Phase1PreparedModule {
+                    globals,
+                    module,
+                    import_tags,
+                    unresolved_mark,
+                },
+            );
         Phase1Module {
             filename: unpacked.module.filename.clone(),
             facts,
@@ -733,6 +742,7 @@ pub(super) fn unpack_multi_module_with_plan(
         let run_phase2_tail = |mut module: Module,
                                cm: Lrc<SourceMap>,
                                unresolved_mark: Mark,
+                               mut import_tags: ImportTags,
                                input_parse_warnings: Vec<UnpackWarning>|
          -> Result<(
             String,
@@ -750,13 +760,19 @@ pub(super) fn unpack_multi_module_with_plan(
                 Some(&unpacked.module.filename),
                 unresolved_mark,
             );
-            run_provider_import_repair(&mut module, facts_ref, Some(&unpacked.module.filename));
+            run_provider_import_repair(
+                &mut module,
+                facts_ref,
+                Some(&unpacked.module.filename),
+                &mut import_tags,
+            );
             run_provider_namespace_repair(
                 &mut module,
                 facts_ref,
                 Some(&unpacked.module.filename),
                 unresolved_mark,
                 true,
+                &import_tags,
             );
             run_reexport_consolidation(&mut module, facts_ref, Some(&unpacked.module.filename));
             run_cross_module_lowered_dynamic_imports(
@@ -771,25 +787,30 @@ pub(super) fn unpack_multi_module_with_plan(
                 Some(&unpacked.module.filename),
                 unresolved_mark,
             );
+            // This pass turns `x = helper(require("./p"))` declarators into
+            // imports: tag them as `UnEsm` tags its own.
+            let declarator_requires = declarator_require_calls(&module, unresolved_mark);
             run_cross_module_interop_imports(
                 &mut module,
                 facts_ref,
                 Some(&unpacked.module.filename),
                 unresolved_mark,
             );
+            tag_declarator_imports(&module, &declarator_requires, &mut import_tags);
             import_unproven_helper_requires(
                 &mut module,
                 facts_ref,
                 Some(&unpacked.module.filename),
                 unresolved_mark,
             );
-            run_namespace_decomposition(
+            run_namespace_decomposition_with_tags(
                 &mut module,
                 facts_ref,
                 Some(&unpacked.module.filename),
                 unresolved_mark,
+                &import_tags,
             );
-            downgrade_unused_synthetic_imports(&mut module);
+            downgrade_unused_synthetic_imports(&mut module, &import_tags);
             // Late helper-through-UnReturn range.
             apply_rules_to_recovered_module(
                 &mut module,
@@ -1007,10 +1028,17 @@ pub(super) fn unpack_multi_module_with_plan(
                 globals,
                 module,
                 unresolved_mark,
+                import_tags,
             } = prepared;
             GLOBALS.set(&globals, || {
                 let cm: Lrc<SourceMap> = Default::default();
-                run_phase2_tail(module, cm, unresolved_mark, prepared_parse_warnings)
+                run_phase2_tail(
+                    module,
+                    cm,
+                    unresolved_mark,
+                    import_tags,
+                    prepared_parse_warnings,
+                )
             })
         } else {
             GLOBALS.set(&Default::default(), || {
@@ -1059,7 +1087,12 @@ pub(super) fn unpack_multi_module_with_plan(
                     &unpacked.module.filename,
                 );
 
-                // Through-UnEsm range.
+                // Through-UnEsm range, which records its own edges and
+                // import tags on this AST, as Phase 1 did on its own.
+                let require_record = RefCell::new(RequireRecord {
+                    edges: RequireEdges::collect(&module, unresolved_mark),
+                    ..Default::default()
+                });
                 {
                     let span = tracing::info_span!("phase2: early rules");
                     let _enter = span.enter();
@@ -1069,12 +1102,20 @@ pub(super) fn unpack_multi_module_with_plan(
                         RulePipelineOptions::until("UnEsm")
                             .with_mode(PipelineMode::UnpackPhase1)
                             .with_rewrite_level(options.level)
-                            .with_current_filename(&unpacked.module.filename),
+                            .with_current_filename(&unpacked.module.filename)
+                            .with_require_record(&require_record),
                     );
                 }
+                let require_record = require_record.into_inner();
 
                 let input_parse_warnings = collect_input_parse_warnings(&parsed.recoverable_errors);
-                run_phase2_tail(module, cm, unresolved_mark, input_parse_warnings)
+                run_phase2_tail(
+                    module,
+                    cm,
+                    unresolved_mark,
+                    require_record.tags,
+                    input_parse_warnings,
+                )
             })
         };
 
@@ -2973,8 +3014,7 @@ module.exports = function(value) { return filter(map(value)); };
             .map(|module| module.code.as_str())
             .expect("expected named consumer");
         assert!(
-            !named_consumer.contains("import { map")
-                && !named_consumer.contains("filter } from"),
+            !named_consumer.contains("import { map") && !named_consumer.contains("filter } from"),
             "properties of a proven default object must be captured from its default import:\n{named_consumer}"
         );
         assert!(

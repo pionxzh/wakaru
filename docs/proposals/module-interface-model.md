@@ -224,9 +224,22 @@ The edge key is the `require()` call's span. A binding is not a stable key:
 and `SmartRename` runs later. The call's span survives the whole rule
 range. When `UnEsm` turns a call into an import, it records each import
 specifier's local binding, after its own renames, against the edge. The
-barrier pre-passes read that table instead of the dummy span, which also
-stops them from treating a hand-written specifier that `UnEsm` merged into a
-synthesized import as synthesized.
+barrier pre-passes read that table instead of the dummy span.
+
+A hand-written specifier that `UnEsm` merges into a synthesized import is
+recorded as merged, and the pre-passes still treat it as synthesized, as
+the dummy span made them do. Step 2 kept that on purpose: its provider is
+converted from CommonJS too, so a hand-written `import { name }` of a
+`module.exports = { name }` provider stops linking unless
+`provider_import_repair` rewrites it. A hand-written import of such a
+provider with no require of the same source beside it is not repaired
+today; whether every hand-written import of a converted provider should be
+is open.
+
+A detector that builds the module AST itself (a prepared AST) can write
+`require()` calls with a dummy span. Such a call keeps what the input pass
+read, so the per-source questions still count it, but it has no key, no
+uses, and no tag key.
 
 Provider identity needs more than today's helper facts, which read the
 recovered ESM exports (`collect_helper_exports` on `ExportFact`). Before

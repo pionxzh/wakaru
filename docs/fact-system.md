@@ -52,7 +52,7 @@ Phase 1 (per module, parallel):
     collect_module_facts(&facts_clone)                ← pure AST → facts
     collect_import_call_edges(&barrier_ast)           ← imports still under [[Call]]
     collect constructed-member suffixes(&barrier_ast) ← names only, same AST
-    retain original barrier AST + Globals + unresolved mark
+    retain original barrier AST + Globals + unresolved mark + import tags
 
 ──── barrier: ModuleFactsMap assembled from all modules;
      CommonJsDefaultObjectCompositionPlan and CallRequiredPlan built;
@@ -237,6 +237,23 @@ member calls, member writes (assignment, update, `delete`, or the target of
 dummy or shared with another call (a detector-built AST can write such calls)
 keeps what the input pass read but gets no key and no uses.
 
+The passes after the barrier recognize an import synthesized from a require
+by the import tags (`ImportTags`), not by a dummy span: when `UnEsm` turns a
+`require()` into an import, it records each specifier's local binding,
+after its own collision renames, with the key of the call it came from. A
+specifier the input wrote that `UnEsm` merged into such an import is
+recorded as merged, and the passes treat it as synthesized, as they did when
+they read the dummy span. Another conversion `UnEsm` runs (an interop or
+getter helper turning `var x = helper(require("./p"))` into an import) is
+tagged by its declarator, and so is the cross-module interop import pass;
+`provider_import_repair` carries the tag to the default import it creates.
+The tags cross the barrier with the retained AST; the source-map path's
+second run of the range records its own. Imports the default-object
+composition pass and `import_unproven_helper_requires` create are not
+tagged: each binds a value the pass reads at once, as an `Object.assign`
+source or a helper argument, which neither the cleanup of unused
+synthesized bindings nor namespace decomposition acts on.
+
 Normal processing also restores webpack's runtime-created `module.exports = {}`
 when structural webpack detection proves that a normalized extracted factory
 body is empty. A non-empty factory gets the same restoration only when it has a
@@ -401,8 +418,8 @@ Neither proof creates a default-object fact available to consumers.
   export of that same object. Authored ESM defaults, mixed surfaces, unresolved
   providers, dynamic sources, extra consumer behavior, and cycles remain
   visible CommonJS residuals.
-- **`provider_import_repair`** — repairs only dummy-span imports synthesized by
-  `UnEsm` for `require("./x").name`. If provider facts prove that the raw
+- **`provider_import_repair`** — repairs only named imports synthesized by
+  `UnEsm` for `require("./x").name` (the import tags below). If provider facts prove that the raw
   CommonJS value is the recovered default object, or positively prove `name`
   was attached to a stable callable default, and `name` is not a true named
   export, the pass imports that default value and captures `.name` into the
@@ -416,7 +433,7 @@ Neither proof creates a default-object fact available to consumers.
   consumer that mutates provider properties is also deliberately unresolved:
   an ESM namespace is read-only, so preserving that case requires a separate
   mutable facade design.
-- **`provider_namespace_repair`** — changes a dummy-span default import
+- **`provider_namespace_repair`** — changes a default import `UnEsm`
   synthesized for a whole-object `require("./x")` into a namespace import when
   the provider facts prove a named or `export *` surface and no default export,
   or a default export whose provider requires as its `exports` object

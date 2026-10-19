@@ -18,6 +18,10 @@
 //!   extractor has turned bundler loads into `require("./p")` and
 //!   `SimplifySequence` has split comma sequences.
 //!
+//! `UnEsm` records which import specifier it made from which calls
+//! ([`ImportTags`]); the passes after the fact barrier read that table to
+//! tell an import synthesized from a require from one the input wrote.
+//!
 //! A call whose span is dummy, or shared with another call, cannot be found
 //! again by span: it keeps what the first pass read, which the per-source
 //! queries count, but has no key, so it gets no uses and no import tag. A
@@ -32,9 +36,9 @@ use swc_core::atoms::Atom;
 use swc_core::common::{BytePos, Mark, Span};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignTarget, CallExpr, Callee, Class, Decl, Expr, ExprStmt, Function,
-    Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, NewExpr, ObjectPatProp, OptCall,
-    OptChainBase, OptChainExpr, Pat, Prop, PropName, SimpleAssignTarget, Stmt, TaggedTpl,
-    UnaryExpr, UnaryOp, UpdateExpr, VarDeclarator,
+    ImportSpecifier, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, NewExpr,
+    ObjectPatProp, OptCall, OptChainBase, OptChainExpr, Pat, Prop, PropName, SimpleAssignTarget,
+    Stmt, TaggedTpl, UnaryExpr, UnaryOp, UpdateExpr, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -349,12 +353,159 @@ impl RequireEdges {
     }
 }
 
-/// The edges collected for one module before `UnEsm`. The pipeline adds
-/// their uses in place when the rule range reaches `UnEsm`
-/// ([`crate::rules::RulePipelineOptions::with_require_record`]).
+/// The import specifiers made from `require()` calls: each local binding,
+/// after `UnEsm`'s own collision renames, and the keys of the calls it came
+/// from. A pass after the fact barrier reads it to tell an import
+/// synthesized from a require from one the input wrote, and a pass that
+/// rebuilds such a local carries the entry over. A call without a key (a
+/// dummy span) still tags its local, with no key.
+///
+/// It also lists the specifiers the input wrote that `UnEsm` merged into an
+/// import it made from a require of the same source. The barrier passes
+/// treat those as synthesized, as they did when they read the import's
+/// dummy span: the provider they import is converted from CommonJS as well.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ImportTags {
+    locals: HashMap<BindingId, Vec<EdgeKey>>,
+    merged: HashSet<BindingId>,
+}
+
+impl ImportTags {
+    /// Records that the import bound to `local` was made from the
+    /// `require()` call at `call`.
+    pub(crate) fn insert(&mut self, local: BindingId, call: Span) {
+        let keys = self.locals.entry(local).or_default();
+        let key = key_of(call);
+        if !call.is_dummy() && !keys.contains(&key) {
+            keys.push(key);
+        }
+    }
+
+    /// Records that `local` was made from the same calls as `from`.
+    pub(crate) fn carry(&mut self, from: &BindingId, local: BindingId) {
+        let Some(keys) = self.locals.get(from).cloned() else {
+            return;
+        };
+        let target = self.locals.entry(local).or_default();
+        for key in keys {
+            if !target.contains(&key) {
+                target.push(key);
+            }
+        }
+    }
+
+    /// Records that the input wrote the specifier bound to `local`, and
+    /// `UnEsm` merged it into an import it made from a require.
+    pub(crate) fn insert_merged(&mut self, local: BindingId) {
+        self.merged.insert(local);
+    }
+
+    /// Whether `local` is the binding of an import specifier made from a
+    /// `require()` call.
+    pub(crate) fn is_tagged(&self, local: &BindingId) -> bool {
+        self.locals.contains_key(local)
+    }
+
+    /// Whether the barrier passes treat the specifier bound to `local` as
+    /// one `UnEsm` synthesized: made from a require, or merged into such an
+    /// import.
+    pub(crate) fn is_synthesized(&self, local: &BindingId) -> bool {
+        self.is_tagged(local) || self.merged.contains(local)
+    }
+
+    /// The keys of the calls the specifier bound to `local` came from.
+    pub fn edges_of(&self, local: &BindingId) -> &[EdgeKey] {
+        self.locals.get(local).map_or(&[], Vec::as_slice)
+    }
+
+    pub(crate) fn retain(&mut self, mut keep: impl FnMut(&BindingId) -> bool) {
+        self.locals.retain(|local, _| keep(local));
+        self.merged.retain(|local| keep(local));
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.locals.is_empty() && self.merged.is_empty()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&BindingId, &[EdgeKey])> {
+        self.locals
+            .iter()
+            .map(|(local, keys)| (local, keys.as_slice()))
+    }
+}
+
+/// The `require()` call each top-level declarator binding is initialized
+/// from, directly or as the first argument of a call
+/// (`var x = helper(require("src"))`): what a pass that turns such a
+/// declarator into an import made the import from.
+pub(crate) fn declarator_require_calls(
+    module: &Module,
+    unresolved_mark: Mark,
+) -> HashMap<BindingId, Span> {
+    let mut calls = HashMap::default();
+    for item in &module.body {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            continue;
+        };
+        for declarator in &var.decls {
+            let (Pat::Ident(binding), Some(init)) = (&declarator.name, &declarator.init) else {
+                continue;
+            };
+            let call = as_require_call(init, unresolved_mark).or_else(|| {
+                let Expr::Call(wrapper) = strip_parens(init) else {
+                    return None;
+                };
+                let first = wrapper.args.first().filter(|arg| arg.spread.is_none())?;
+                as_require_call(&first.expr, unresolved_mark)
+            });
+            if let Some(call) = call {
+                calls.insert(binding_id(&binding.id), call.span);
+            }
+        }
+    }
+    calls
+}
+
+/// Tags each specifier of a synthesized (dummy-span) import whose local was
+/// a declarator binding of `declarator_requires`, collected before a pass
+/// that turns such declarators into imports directly.
+pub(crate) fn tag_declarator_imports(
+    module: &Module,
+    declarator_requires: &HashMap<BindingId, Span>,
+    tags: &mut ImportTags,
+) {
+    if declarator_requires.is_empty() {
+        return;
+    }
+    for item in &module.body {
+        let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+            continue;
+        };
+        if !import.span.is_dummy() {
+            continue;
+        }
+        for specifier in &import.specifiers {
+            let local = binding_id(match specifier {
+                ImportSpecifier::Default(default) => &default.local,
+                ImportSpecifier::Named(named) => &named.local,
+                ImportSpecifier::Namespace(namespace) => &namespace.local,
+            });
+            if !tags.is_tagged(&local) {
+                if let Some(call) = declarator_requires.get(&local) {
+                    tags.insert(local, *call);
+                }
+            }
+        }
+    }
+}
+
+/// The edges collected for one module before `UnEsm`, and the import tags
+/// `UnEsm` adds. The pipeline fills it in place when the rule range reaches
+/// `UnEsm` ([`crate::rules::RulePipelineOptions::with_require_record`]).
 #[derive(Debug, Clone, Default)]
 pub(crate) struct RequireRecord {
     pub(crate) edges: RequireEdges,
+    pub(crate) tags: ImportTags,
 }
 
 impl fmt::Display for Interop {
@@ -1384,6 +1535,52 @@ p?.gamma;"#,
             );
             assert_eq!(only(&edges, "./p.js").uses, None);
         });
+    }
+
+    #[test]
+    fn a_rebuilt_import_local_carries_the_tag_of_the_ones_it_stands_for() {
+        let mut tags = ImportTags::default();
+        let named: BindingId = ("alpha".into(), Default::default());
+        let default: BindingId = ("_alpha".into(), Default::default());
+        let call = Span::new(BytePos(1), BytePos(9));
+        tags.insert(named.clone(), call);
+        tags.carry(&named, default.clone());
+        assert_eq!(tags.edges_of(&default), &[key_of(call)]);
+        // A dummy call still tags its local, with no key.
+        let dummy: BindingId = ("beta".into(), Default::default());
+        tags.insert(dummy.clone(), DUMMY_SP);
+        assert!(tags.is_tagged(&dummy) && tags.edges_of(&dummy).is_empty());
+    }
+
+    #[test]
+    fn imports_a_pass_made_from_declarators_are_tagged_with_their_require() {
+        with_module(
+            r#"var alpha = helper(require("./alpha.js")); var beta = other();"#,
+            |module, mark| {
+                let calls = declarator_require_calls(module, mark);
+                assert_eq!(calls.len(), 1);
+                // As a later pass would: the declarator becomes an import.
+                let mut converted = crate::unpacker::parse_es_module(
+                    r#"import * as alpha from "./alpha.js"; var beta = other();"#,
+                    "consumer.js",
+                    Default::default(),
+                )
+                .unwrap();
+                let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = &mut converted.body[0]
+                else {
+                    unreachable!()
+                };
+                import.span = DUMMY_SP;
+                let ImportSpecifier::Namespace(namespace) = &mut import.specifiers[0] else {
+                    unreachable!()
+                };
+                let (local, call) = calls.iter().next().unwrap();
+                namespace.local.ctxt = local.1;
+                let mut tags = ImportTags::default();
+                tag_declarator_imports(&converted, &calls, &mut tags);
+                assert_eq!(tags.edges_of(local), &[key_of(*call)]);
+            },
+        );
     }
 
     #[test]

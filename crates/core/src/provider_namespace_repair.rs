@@ -10,8 +10,8 @@
 //! among the others, while a default from `module.exports = v` is the whole
 //! required value.
 //!
-//! This pass is deliberately conservative. It only touches imports synthesized
-//! by `UnEsm`, requires one of those proven providers
+//! This pass is deliberately conservative. It only touches imports `UnEsm`
+//! synthesized from a require (the import tags), requires one of those proven providers
 //! (or, without facts, the evidence in [`run_relative_namespace_repair`]),
 //! and accepts uses whose behavior is supported by an ESM namespace: static
 //! member reads, `Object.keys(namespace)`, and a namespace used as an
@@ -35,6 +35,7 @@ use swc_core::ecma::visit::{Visit, VisitWith};
 use crate::analysis::{binding_id, ident_matches_binding, BindingId};
 use crate::facts::ModuleFactsMap;
 use crate::provider_interface::ProviderInterface;
+use crate::require_edges::ImportTags;
 use crate::rules::expr_utils::is_unresolved_ident;
 use crate::utils::paren::strip_parens;
 
@@ -51,6 +52,7 @@ pub(crate) fn run_provider_namespace_repair(
     current_filename: Option<&str>,
     unresolved_mark: Mark,
     allow_value_escape: bool,
+    import_tags: &ImportTags,
 ) {
     let Some(current_filename) = current_filename else {
         return;
@@ -84,9 +86,13 @@ pub(crate) fn run_provider_namespace_repair(
         allow_default_read: true,
         allow_value_escape,
     };
-    repair_synthesized_default_imports(module, unresolved_mark, policy, |source, _| {
-        namespace_provider(source)
-    });
+    repair_synthesized_default_imports(
+        module,
+        unresolved_mark,
+        policy,
+        import_tags,
+        |source, _| namespace_provider(source),
+    );
 }
 
 /// Without provider facts, repair the synthesized default imports of
@@ -97,14 +103,19 @@ pub(crate) fn run_relative_namespace_repair(
     module: &mut Module,
     unresolved_mark: Mark,
     bindings: &HashSet<BindingId>,
+    import_tags: &ImportTags,
 ) {
     let policy = UsagePolicy {
         allow_default_read: false,
         allow_value_escape: false,
     };
-    repair_synthesized_default_imports(module, unresolved_mark, policy, |_, binding| {
-        bindings.contains(binding)
-    });
+    repair_synthesized_default_imports(
+        module,
+        unresolved_mark,
+        policy,
+        import_tags,
+        |_, binding| bindings.contains(binding),
+    );
 }
 
 /// Which uses beyond static member reads keep a binding a namespace candidate.
@@ -118,6 +129,7 @@ fn repair_synthesized_default_imports(
     module: &mut Module,
     unresolved_mark: Mark,
     policy: UsagePolicy,
+    import_tags: &ImportTags,
     namespace_candidate: impl Fn(&str, &BindingId) -> bool,
 ) {
     let mut candidates = HashSet::default();
@@ -125,7 +137,7 @@ fn repair_synthesized_default_imports(
         let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
             continue;
         };
-        if !import.span.is_dummy() || import.type_only {
+        if import.type_only {
             continue;
         }
         let Some(source) = import.src.value.as_str() else {
@@ -137,7 +149,9 @@ fn repair_synthesized_default_imports(
                 continue;
             };
             let binding = binding_id(&default.local);
-            if !namespace_candidate(source, &binding) {
+            // Only an import `UnEsm` synthesized from a require (or merged
+            // into one): an import the input wrote meant what it says.
+            if !import_tags.is_synthesized(&binding) || !namespace_candidate(source, &binding) {
                 continue;
             }
             let transparent_aliases = collect_transparent_aliases(module, &binding);
@@ -556,10 +570,15 @@ function mutateProvider() {
 consume(before, provider.alpha);
 "#;
             let (mut module, unresolved_mark) = parse_consumer(&cm, source);
-            let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = &mut module.body[0] else {
+            let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = &module.body[0] else {
                 panic!("expected leading import")
             };
-            import.span = DUMMY_SP;
+            let ImportSpecifier::Default(default) = &import.specifiers[0] else {
+                panic!("expected default import")
+            };
+            // As if `UnEsm` had made the import from a require.
+            let mut tags = ImportTags::default();
+            tags.insert(binding_id(&default.local), DUMMY_SP);
 
             let mut facts = ModuleFactsMap::new();
             facts.insert(
@@ -580,6 +599,7 @@ consume(before, provider.alpha);
                 Some("consumer.js"),
                 unresolved_mark,
                 true,
+                &tags,
             );
 
             let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = &module.body[0] else {

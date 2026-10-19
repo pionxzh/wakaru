@@ -12,8 +12,8 @@
 //! var name = _name.name;
 //! ```
 //!
-//! The pass is deliberately narrow. It touches only import declarations
-//! synthesized by `UnEsm` (dummy span), requires either a proven raw CommonJS
+//! The pass is deliberately narrow. It touches only named imports `UnEsm`
+//! synthesized from a require (the import tags), requires either a proven raw CommonJS
 //! default object or a property explicitly attached to a stable callable
 //! default, and leaves export-star providers and unknown default values
 //! unchanged. Capturing an undeclared property from a proven object is
@@ -36,6 +36,7 @@ use crate::analysis::binding_uses::BindingUseIndex;
 use crate::analysis::{binding_id, BindingId};
 use crate::facts::ModuleFactsMap;
 use crate::provider_interface::ProviderInterface;
+use crate::require_edges::ImportTags;
 
 enum CaptureSite {
     OriginalPosition(BytePos),
@@ -49,6 +50,7 @@ pub(crate) fn run_provider_import_repair(
     module: &mut Module,
     module_facts: &ModuleFactsMap,
     current_filename: Option<&str>,
+    import_tags: &mut ImportTags,
 ) {
     let Some(current_filename) = current_filename else {
         return;
@@ -66,7 +68,7 @@ pub(crate) fn run_provider_import_repair(
         let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
             continue;
         };
-        if !import.span.is_dummy() || import.type_only {
+        if import.type_only {
             continue;
         }
         let Some(source) = import.src.value.as_str() else {
@@ -86,6 +88,12 @@ pub(crate) fn run_provider_import_repair(
                 retained.push(specifier);
                 continue;
             };
+            // Only a named import `UnEsm` synthesized from
+            // `require("./p").name` (or merged into one).
+            if !import_tags.is_synthesized(&binding_id(&named.local)) {
+                retained.push(specifier);
+                continue;
+            }
             let Some(property) = imported_identifier_name(named) else {
                 retained.push(specifier);
                 continue;
@@ -122,6 +130,11 @@ pub(crate) fn run_provider_import_repair(
                 DUMMY_SP,
                 SyntaxContext::empty(),
             );
+            // The default import stands for the requires the named ones
+            // came from.
+            for (named, _, _) in &repaired {
+                import_tags.carry(&binding_id(named), binding_id(&local));
+            }
             retained.insert(
                 0,
                 ImportSpecifier::Default(ImportDefaultSpecifier {
