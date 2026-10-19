@@ -248,6 +248,77 @@ fn parses_debug_enumerate_chunks_command() {
 }
 
 #[test]
+fn parses_debug_interop_command() {
+    let cli = Cli::try_parse_from(["wakaru", "debug", "interop", "bundle.js", "--json"])
+        .expect("debug interop command should parse");
+
+    match cli.command {
+        Some(Command::Debug(DebugArgs {
+            command: DebugCommand::Interop(args),
+        })) => {
+            assert_eq!(args.input, Some(PathBuf::from("bundle.js")));
+            assert!(args.json);
+        }
+        other => panic!("expected debug interop command, got {other:?}"),
+    }
+}
+
+#[test]
+fn debug_interop_prints_each_edge_and_the_import_made_from_it() {
+    let edge =
+        |source: &str, un_esm: &[&str], imports: &[&str], reason| wakaru_core::driver::EdgeReport {
+            source: source.to_string(),
+            keyed: true,
+            form: "declarator `alpha`".to_string(),
+            top_level: true,
+            interop: "none".to_string(),
+            esmodule_tested: false,
+            uses: Some("reads beta".to_string()),
+            un_esm_imports: un_esm.iter().map(ToString::to_string).collect(),
+            imports: imports.iter().map(ToString::to_string).collect(),
+            no_import_reason: reason,
+        };
+    let report = wakaru_core::driver::InteropReport {
+        modules: vec![wakaru_core::driver::ModuleInterop {
+            filename: "consumer.js".to_string(),
+            provider: wakaru_core::driver::ProviderReport {
+                value: "ExportsObject".to_string(),
+                has_default: false,
+                has_named_surface: true,
+                marks_es_module: false,
+                required_value_import: "namespace",
+            },
+            stays_commonjs: false,
+            edges: vec![
+                edge("./a.js", &["default alpha"], &["named beta as beta"], None),
+                edge("./b.js", &["default alpha"], &["default alpha"], None),
+                edge("./c.js", &[], &[], Some("the require stays a call")),
+            ],
+        }],
+    };
+
+    assert_eq!(
+        interop_text(&report),
+        r#"consumer.js
+  provider: ExportsObject (default export no, named surface yes, __esModule no; read by namespace import)
+  require("./a.js"): declarator `alpha`
+    uses: reads beta
+    import: named beta as beta (UnEsm made default alpha)
+  require("./b.js"): declarator `alpha`
+    uses: reads beta
+    import: default alpha
+  require("./c.js"): declarator `alpha`
+    uses: reads beta
+    no import: the require stays a call
+"#
+    );
+    assert_eq!(
+        interop_json("bundle.js", &report)["modules"][0]["edges"][0]["imports"],
+        serde_json::json!(["named beta as beta"])
+    );
+}
+
+#[test]
 fn debug_validate_formats_source_locations_for_text_and_json() {
     let finding = wakaru_core::OutputFinding {
         filename: "nested/entry.js".into(),

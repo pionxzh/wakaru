@@ -1,9 +1,12 @@
 # Module interface model: provider and consumer facts before `UnEsm`
 
-Status: step 1 done (2026-10-20): the explicit execution mode
-(`PipelineMode`), the late-recovery fix it exposed, and
-`ProviderInterface`, computed per lookup from the provider's facts. Step 2
-is next. The maintainer has decided the direction (see
+Status: steps 1 and 2 done (2026-10-20). Step 1: the explicit execution
+mode (`PipelineMode`), the late-recovery fix it exposed, and
+`ProviderInterface`, computed per lookup from the provider's facts. Step 2:
+`RequireEdges` on the module facts (`crates/core/src/require_edges.rs`),
+the import tags that replace the dummy-span check, the per-source lists
+removed, and `wakaru debug interop`; the binding-use analyzers did not move
+(see step 2 below). Step 3 is next. The maintainer has decided the direction (see
 [Decisions](#decisions)). This proposal absorbs the consumer-aware provider format proposal
 (deferred 2026-10-15), whose problem statement is
 [Consumer writes to a named-only provider](#consumer-writes-to-a-named-only-provider).
@@ -310,6 +313,18 @@ lazy load. Barrier 0 adds a mode for Phase 1a, which does not run `UnEsm`.
    read a binding's uses move to `BindingUseIndex`. Add a debug command
    that prints each module's interface and each edge's plan with the
    reason, like `wakaru debug cjs-exports`. No output change.
+
+   Done as planned, except: a call with a dummy or shared span keeps its
+   input-pass record (prepared detector ASTs write such calls, and dropping
+   them would change the per-source answers); hand-written specifiers
+   merged into a synthesized import still count as synthesized (see
+   [The barrier before `UnEsm`](#the-barrier-before-unesm)); and no
+   analyzer moved to `BindingUseIndex`: it has no kind for a member call,
+   an optional chain, the position of a whole-value read (callee, argument,
+   alias initializer), or the name of a `delete` target, which the
+   analyzers tell apart. The cross-module interop import pass and namespace
+   decomposition carry tags to the imports they build; the default-object
+   composition pass and `import_unproven_helper_requires` do not.
 3. **Barrier 0.** Split Phase 1, build the plan at barrier 0, and let
    `UnEsm` read it. Output changes: written providers stay CommonJS, and
    providers whose helper lives in another module recover their ES module

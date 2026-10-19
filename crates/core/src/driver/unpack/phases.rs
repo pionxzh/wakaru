@@ -33,6 +33,7 @@ use super::dead_module::{collect_import_report, eliminate_dead_helper_modules, I
 use super::filename_recovery::{
     build_rename_map, harvest_suggested_filename, rewrite_import_sources,
 };
+use super::interop_report::import_forms;
 use super::link_check::{collect_link_report, collect_missing_imported_name_warnings, LinkReport};
 use super::merge::{
     apply_filename_rewrites, apply_numeric_rewrites, NumericRewritePlan, PreparedUnpackModule,
@@ -329,7 +330,7 @@ pub(super) fn unpack_multi_module(
         .into_iter()
         .map(PreparedUnpackModule::plain)
         .collect();
-    unpack_multi_module_with_plan(modules, NumericRewritePlan::default(), options, &[])
+    unpack_multi_module_with_plan(modules, NumericRewritePlan::default(), options, &[], None)
 }
 
 pub(super) fn unpack_multi_module_with_plan(
@@ -337,6 +338,7 @@ pub(super) fn unpack_multi_module_with_plan(
     numeric_rewrite_plan: NumericRewritePlan,
     options: DecompileOptions,
     origins: &[Option<Arc<InputOrigin>>],
+    interop: Option<&super::InteropSink>,
 ) -> Result<PreparedUnpackOutput> {
     if options.sourcemap.is_some() {
         bail!(
@@ -743,6 +745,8 @@ pub(super) fn unpack_multi_module_with_plan(
         )> {
             let rules_span = tracing::info_span!("phase2: rules");
             let rules_enter = rules_span.enter();
+            // The imports `UnEsm` made, before the barrier passes repair them.
+            let mut un_esm_imports = interop.map(|_| import_forms(&module, &import_tags));
             // Late pass at the barrier
             run_commonjs_default_object_composition(
                 &mut module,
@@ -801,6 +805,17 @@ pub(super) fn unpack_multi_module_with_plan(
                 &mut import_tags,
             );
             downgrade_unused_synthetic_imports(&mut module, &import_tags);
+            if let Some(interop) = interop {
+                interop.record(
+                    &unpacked.module.filename,
+                    facts_ref.get(&unpacked.module.filename),
+                    &module,
+                    &import_tags,
+                    un_esm_imports
+                        .take()
+                        .unwrap_or_else(|| import_forms(&module, &import_tags)),
+                );
+            }
             // Late helper-through-UnReturn range.
             apply_rules_to_recovered_module(
                 &mut module,
@@ -1620,6 +1635,7 @@ export { p as t };
                 ..Default::default()
             },
             &[],
+            None,
         )
         .expect("scope split cycle should decompile");
 

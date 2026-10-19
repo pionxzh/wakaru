@@ -227,6 +227,21 @@ enum DebugCommand {
     /// (getter, mirror, or property) and why other models were rejected,
     /// analyzed on the module as it reaches UnEsm. Single-file inputs only.
     CjsExports(CjsExportsArgs),
+
+    /// Unpack a bundle and report each module's provider interface (what
+    /// `require` of it returned) and each require() call: its form,
+    /// interop, uses, and the import made from it or why none was.
+    Interop(InteropArgs),
+}
+
+#[derive(Debug, Clone, Args)]
+struct InteropArgs {
+    /// Input bundle. Use `-` or omit to read from stdin.
+    input: Option<PathBuf>,
+
+    /// Print the report as JSON.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -875,7 +890,118 @@ fn run_debug(args: DebugArgs, force: bool) -> Result<()> {
         DebugCommand::Validate(args) => run_validate(args),
         DebugCommand::EnumerateChunks(args) => run_enumerate_chunks(args),
         DebugCommand::CjsExports(args) => run_cjs_exports(args),
+        DebugCommand::Interop(args) => run_interop(args),
     }
+}
+
+fn run_interop(args: InteropArgs) -> Result<()> {
+    let (source, filename) = read_input(args.input.as_ref())?;
+    let report = wakaru_core::driver::explain_interop(
+        &source,
+        wakaru_core::DecompileOptions {
+            filename: filename.clone(),
+            ..Default::default()
+        },
+    )?;
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&interop_json(&filename, &report))?
+        );
+    } else {
+        print!("{}", interop_text(&report));
+    }
+    Ok(())
+}
+
+fn interop_json(input: &str, report: &wakaru_core::driver::InteropReport) -> serde_json::Value {
+    serde_json::json!({
+        "input": input,
+        "modules": report.modules.iter().map(|module| serde_json::json!({
+            "filename": module.filename,
+            "stays_commonjs": module.stays_commonjs,
+            "provider": {
+                "value": module.provider.value,
+                "has_default": module.provider.has_default,
+                "has_named_surface": module.provider.has_named_surface,
+                "marks_es_module": module.provider.marks_es_module,
+                "required_value_import": module.provider.required_value_import,
+            },
+            "edges": module.edges.iter().map(|edge| serde_json::json!({
+                "source": edge.source,
+                "keyed": edge.keyed,
+                "form": edge.form,
+                "top_level": edge.top_level,
+                "interop": edge.interop,
+                "esmodule_tested": edge.esmodule_tested,
+                "uses": edge.uses,
+                "un_esm_imports": edge.un_esm_imports,
+                "imports": edge.imports,
+                "no_import_reason": edge.no_import_reason,
+            })).collect::<Vec<_>>(),
+        })).collect::<Vec<_>>(),
+    })
+}
+
+fn interop_text(report: &wakaru_core::driver::InteropReport) -> String {
+    let yes_no = |value: bool| if value { "yes" } else { "no" };
+    let mut out = String::new();
+    for module in &report.modules {
+        let provider = &module.provider;
+        out.push_str(&format!(
+            "{}{}\n  provider: {} (default export {}, named surface {}, __esModule {}; read by {} import)\n",
+            module.filename,
+            if module.stays_commonjs {
+                " (stays CommonJS)"
+            } else {
+                ""
+            },
+            provider.value,
+            yes_no(provider.has_default),
+            yes_no(provider.has_named_surface),
+            yes_no(provider.marks_es_module),
+            provider.required_value_import,
+        ));
+        for edge in &module.edges {
+            let mut facts = vec![edge.form.clone()];
+            if !edge.top_level {
+                facts.push("nested".to_string());
+            }
+            if edge.interop != "none" {
+                facts.push(format!("{} interop", edge.interop));
+            }
+            if edge.esmodule_tested {
+                facts.push("__esModule read".to_string());
+            }
+            out.push_str(&format!(
+                "  require(\"{}\"): {}\n",
+                edge.source,
+                facts.join(", ")
+            ));
+            if let Some(uses) = &edge.uses {
+                out.push_str(&format!("    uses: {uses}\n"));
+            }
+            if let Some(reason) = edge.no_import_reason {
+                out.push_str(&format!("    no import: {reason}\n"));
+            } else if edge.un_esm_imports == edge.imports {
+                out.push_str(&format!("    import: {}\n", edge.imports.join(", ")));
+            } else {
+                let shown = |imports: &[String]| {
+                    if imports.is_empty() {
+                        "none".to_string()
+                    } else {
+                        imports.join(", ")
+                    }
+                };
+                out.push_str(&format!(
+                    "    import: {} (UnEsm made {})\n",
+                    shown(&edge.imports),
+                    shown(&edge.un_esm_imports)
+                ));
+            }
+        }
+    }
+    out
 }
 
 fn run_cjs_exports(args: CjsExportsArgs) -> Result<()> {

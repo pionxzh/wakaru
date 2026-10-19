@@ -26,6 +26,7 @@ use crate::unpacker::{
 
 mod dead_module;
 mod filename_recovery;
+mod interop_report;
 mod link_check;
 mod merge;
 mod phases;
@@ -34,6 +35,10 @@ mod scope_split;
 mod source_index;
 mod webpack_commonjs_runtime;
 
+use interop_report::InteropSink;
+pub use interop_report::{
+    explain_interop, EdgeReport, InteropReport, ModuleInterop, ProviderReport,
+};
 use merge::{
     emit_raw_modules_with_numeric_rewrites, input_group_for_filename, prepare_multi_source_modules,
     MultiSourceModule,
@@ -420,9 +425,21 @@ pub fn unpack_prepared_inputs(
 
 pub fn unpack_prepared_inputs_with_policy(
     inputs: Vec<PreparedUnpackInput>,
+    options: DecompileOptions,
+    raw: bool,
+    scope_hoist_policy: ScopeHoistPolicy,
+) -> Result<PreparedUnpackOutput> {
+    unpack_prepared_inputs_impl(inputs, options, raw, scope_hoist_policy, None)
+}
+
+/// [`unpack_prepared_inputs_with_policy`], recording each module's interop
+/// report in `interop` when one is given (`wakaru debug interop`).
+fn unpack_prepared_inputs_impl(
+    inputs: Vec<PreparedUnpackInput>,
     mut options: DecompileOptions,
     raw: bool,
     scope_hoist_policy: ScopeHoistPolicy,
+    interop: Option<&InteropSink>,
 ) -> Result<PreparedUnpackOutput> {
     if inputs.is_empty() {
         return Err(anyhow!("at least one prepared input is required"));
@@ -669,7 +686,13 @@ pub fn unpack_prepared_inputs_with_policy(
     let mut output = if raw {
         emit_raw_modules_with_numeric_rewrites(modules, numeric_rewrite_plan)?
     } else {
-        unpack_multi_module_with_plan(modules, numeric_rewrite_plan, options.clone(), &origins)?
+        unpack_multi_module_with_plan(
+            modules,
+            numeric_rewrite_plan,
+            options.clone(),
+            &origins,
+            interop,
+        )?
     };
     output.warnings.splice(0..0, preparation_warnings);
     output.detected_formats = detected_formats;

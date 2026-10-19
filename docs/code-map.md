@@ -39,6 +39,7 @@ crates/
           dead_module.rs            — dead-module elimination
           link_check.rs             — missing_imported_name: imports a sibling ESM output does not export
           filename_recovery.rs      — recovered module names
+          interop_report.rs         — `debug interop` report (each module's provider interface and require edges)
         trace.rs                    — rule trace orchestration and formatting
         export_storage.rs           — `debug cjs-exports` driver (pipeline up to UnEsm, then the storage report)
         diagnostics.rs              — post-transform diagnostic warning collection

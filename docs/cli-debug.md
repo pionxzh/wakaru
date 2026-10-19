@@ -295,3 +295,51 @@ minifier, counts as one getter definition per name:
 `UnEsm` lowers those calls first, and so does the analysis.
 `--json` prints `input`, `uses_exports`, `gate`, and an `exports` array with
 `name`, `storage`, `binding`, `rejected`, and the access counts.
+
+## `debug interop`
+
+```bash
+wakaru debug interop bundle.js
+wakaru debug interop bundle.js --json
+```
+
+Unpacks one bundle and reports, for each module, what `require` of it
+returned while it was CommonJS, and how it requires the other modules. Output
+is unchanged; nothing is written but the report.
+
+For each module, the first line names its `ProviderInterface`: the required
+value (`CommonJs`, `Default`, `DefaultWithNamed`, `Marked`, `Replaced`, or
+`ExportsObject`), whether it has a default export or a named surface, whether
+it marked itself `__esModule`, and which import reads the required value
+(`default`, `namespace`, or `none`). Then each `require("src")` call of the
+module, in source order, is one edge:
+
+- its form (declarator, destructure, member read, interop helper argument,
+  bare statement, or inline), `nested` when it is not in a top-level
+  statement, the interop around it, and an `__esModule` read, all read on the
+  module as extracted, before any rule;
+- `uses`: how the value is used on the module as it reaches `UnEsm` (member
+  reads, receiver-sensitive member calls, calls, member writes,
+  `Object.assign` / `Object.defineProperty` targets, and escape);
+- `import`: the import specifiers made from the call after the passes at the
+  fact barrier, followed by what `UnEsm` made when a pass changed it; or
+  `no import` with the reason (the module stays CommonJS, the require stays a
+  call, or the call is not on the AST `UnEsm` sees).
+
+```text
+module-11111.js
+  provider: ExportsObject (default export no, named surface yes, __esModule no; read by namespace import)
+  require("./module-22222.js"): declarator `alpha`
+    uses: reads epsilon
+    import: named epsilon as epsilon (UnEsm made default alpha)
+  require("./module-33333.js"): declarator `beta`
+    uses: reads zeta, writes gamma
+    import: default beta
+```
+
+A call whose span is dummy or shared with another call (a detector that
+builds its module AST itself can write such calls) is listed last with no
+uses and no import. `--json` prints `input` and a `modules` array; each module
+has `filename`, `stays_commonjs`, `provider`, and `edges`, and each edge has
+`source`, `keyed`, `form`, `top_level`, `interop`, `esmodule_tested`, `uses`,
+`un_esm_imports`, `imports`, and `no_import_reason`.
