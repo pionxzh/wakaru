@@ -46,10 +46,8 @@ use crate::commonjs_default_object_composition::{
 };
 use crate::facts::{
     collect_commonjs_default_attached_properties, collect_commonjs_default_object,
-    collect_commonjs_value_is_default, collect_default_object_tail,
-    collect_interop_require_sources, collect_marks_es_module, collect_module_facts,
-    collect_replaces_module_exports, collect_require_returns_exports_object,
-    collect_whole_require_sources, collect_wildcard_require_sources,
+    collect_commonjs_value_is_default, collect_default_object_tail, collect_marks_es_module,
+    collect_module_facts, collect_replaces_module_exports, collect_require_returns_exports_object,
     is_normalized_commonjs_default, ModuleFactsMap,
 };
 use crate::kept_require::run_kept_require_default_reads;
@@ -545,12 +543,7 @@ pub(super) fn unpack_multi_module_with_plan(
             } else {
                 Vec::new()
             };
-            let whole_require_sources = collect_whole_require_sources(&module, unresolved_mark);
-            let interop_require_sources =
-                collect_interop_require_sources(&module, unresolved_mark);
             let marks_es_module = collect_marks_es_module(&module, unresolved_mark);
-            let wildcard_require_sources =
-                collect_wildcard_require_sources(&module, unresolved_mark);
             // Each require's form and interop, read on the input; the rule
             // range adds the uses where it reaches `UnEsm`.
             let require_record = RefCell::new(RequireRecord {
@@ -633,10 +626,7 @@ pub(super) fn unpack_multi_module_with_plan(
             facts.commonjs_value_is_default = commonjs_value_is_default;
             facts.replaces_module_exports = replaces_module_exports;
             facts.es_source_evidence = es_source_evidence;
-            facts.whole_require_sources = whole_require_sources;
-            facts.interop_require_sources = interop_require_sources;
             facts.marks_es_module = marks_es_module;
-            facts.wildcard_require_sources = wildcard_require_sources;
             facts.require_edges = require_record.edges;
             (facts, prepared, None, suggested_filename)
         });
@@ -1254,6 +1244,61 @@ mod tests {
     use crate::test_tracing::record_spans;
     use crate::unpacker::UnpackedModule;
     use crate::{validate_output_modules, DceMode, OutputFindingKind};
+
+    /// The require edges, with their uses, and the import tags of one module
+    /// run through the range as Phase 1 runs it (`second_parse == false`) or
+    /// as the source-map path reruns it in Phase 2.
+    fn edges_through_un_esm(
+        code: &str,
+        second_parse: bool,
+    ) -> (RequireEdges, Vec<crate::require_edges::EdgeKey>) {
+        GLOBALS.set(&Globals::new(), || {
+            let cm: Lrc<SourceMap> = Default::default();
+            let mut module = if second_parse {
+                parse_js_with_recovery(code, "consumer.js", cm)
+                    .unwrap()
+                    .module
+            } else {
+                parse_js(code, "consumer.js", cm).unwrap()
+            };
+            let unresolved_mark = Mark::new();
+            module.visit_mut_with(&mut resolver(unresolved_mark, Mark::new(), false));
+            let record = RefCell::new(RequireRecord {
+                edges: RequireEdges::collect(&module, unresolved_mark),
+                ..Default::default()
+            });
+            apply_rules(
+                &mut module,
+                unresolved_mark,
+                RulePipelineOptions::until("UnEsm")
+                    .with_mode(PipelineMode::UnpackPhase1)
+                    .with_current_filename("consumer.js")
+                    .with_require_record(&record),
+            );
+            let record = record.into_inner();
+            let mut keys: Vec<_> = record
+                .tags
+                .iter()
+                .flat_map(|(_, keys)| keys.iter().copied())
+                .collect();
+            keys.sort();
+            (record.edges, keys)
+        })
+    }
+
+    #[test]
+    fn source_map_rerun_records_the_same_edges_and_tags_as_phase1() {
+        let code = r#"var alpha = require("./alpha.js");
+var beta = require("./beta.js").gamma;
+alpha.delta = beta;
+module.exports = function () { return require("./epsilon.js"); };"#;
+        let (phase1_edges, phase1_tags) = edges_through_un_esm(code, false);
+        let (rerun_edges, rerun_tags) = edges_through_un_esm(code, true);
+        assert_eq!(phase1_edges.iter().count(), 3);
+        assert!(phase1_edges.iter().all(|edge| edge.uses.is_some()));
+        assert_eq!(phase1_edges, rerun_edges);
+        assert_eq!(phase1_tags, rerun_tags);
+    }
 
     fn validate_prepared_output(output: &PreparedUnpackOutput) -> Vec<crate::OutputFinding> {
         let modules = output

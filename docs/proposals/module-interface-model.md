@@ -109,11 +109,11 @@ the AST:
   `replaces_module_exports`, `marks_es_module`, `stays_commonjs`) their own
   way.
 - **How a consumer uses a require.** `UnEsm` turns a whole require into a
-  default import. How the consumer used it survives only as per-source
-  lists collected before `UnEsm` (`whole_require_sources`,
-  `interop_require_sources`, `wildcard_require_sources`). Phase 2 passes
-  recognize a synthesized import by its dummy span, and each pass that reads
-  a binding's uses brings its own analyzer instead of
+  default import. Before step 2, how the consumer used it survived only as
+  per-source lists collected before `UnEsm` (`whole_require_sources`,
+  `interop_require_sources`, `wildcard_require_sources`), and Phase 2
+  passes recognized a synthesized import by its dummy span. Each pass that
+  reads a binding's uses brings its own analyzer instead of
   `analysis::BindingUseIndex`.
 - **Cross-barrier contracts.** `blocking_require_calls` lists by hand the
   require forms that four Phase 2 passes accept. `run_un_esm` infers whether
@@ -211,7 +211,7 @@ that point; neither predicts a later rewrite.
   `UnWebpackInterop` removes webpack's `.n` getter and `UnIndirectCall`
   removes `(0, x.f)()`, so on the AST `UnEsm` sees, a default-interop read
   and a whole-value use look the same. This is why
-  `interop_require_sources` is collected before the rule range today.
+  `interop_require_sources` was collected before the rule range.
 - **Uses and writes, on the AST `UnEsm` sees.** The extractor has already
   rewritten `t(100)` to `require("./module-100.js")`, and
   `SimplifySequence` has split comma sequences. Writes still sit anywhere:

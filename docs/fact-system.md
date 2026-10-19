@@ -16,8 +16,8 @@ statically declared properties of an object assigned directly to
 runtime use, an exact ordered default-object composition shell, and positively
 observed properties attached to a stable callable before it becomes
 `module.exports`, and whether the module marks itself `__esModule`; on the
-consumer side, which sources it requires as a whole value or through a
-wildcard interop. For object defaults, the identity proof is independent of
+consumer side, one record per `require()` call (its form, interop, and
+uses). For object defaults, the identity proof is independent of
 the property list: an empty list may describe a proven empty object rather
 than an unknown value. An empty callable-property list is not such a proof.
 
@@ -117,8 +117,7 @@ conservatively retain the graph.
 - `ModuleFacts { imports, exports, helper_exports,
   commonjs_default_object, commonjs_default_attached_properties,
   require_returns_exports_object, commonjs_value_is_default, replaces_module_exports,
-  whole_require_sources, interop_require_sources, marks_es_module,
-  wildcard_require_sources, require_edges, has_export_all, export_star_sources, reexports, import_call_edges,
+  marks_es_module, require_edges, has_export_all, export_star_sources, reexports, import_call_edges,
   default_object_ident_properties, ts_helper_exports,
   ts_helper_namespace_factory_exports, receiver_observing_exports,
   stays_commonjs, passthrough_target }`
@@ -189,20 +188,21 @@ from one provider's facts alone, what `require` of it returned
 beside named exports, a module marked `__esModule`, a value replaced another
 way, or the `exports` object), which import reads that value, whether a
 namespace import holds what a default import meant, and which properties of
-a proven default value a `require("./p").name` captured. The consumer's side,
-such as the interop and whole-value lists below, stays with each pass.
+a proven default value a `require("./p").name` captured. The consumer's side
+is the module's own require edges (`require_edges`, below), which each pass
+queries.
 
-`collect_whole_require_sources` is the consumer half. It lists the sources
-of top-level `var x = require("src")` bindings that the module uses as the
-plain required value: every `require("src")` call is such a declarator, and
-no binding of it is tested for `__esModule` or passed to `require.n` or an
-interop helper. The helper stage and `UnWebpackInterop` later replace an
-interop default (`() => x && x.__esModule ? x.default : x`) with the plain
-binding, and `UnEsm` merges every binding of one source into one default
-import, so after Phase 1 the two meanings can no longer be told apart.
+`RequireEdges::uses_whole_value` is the consumer half. It holds for a source
+the module uses as the plain required value: every `require("src")` call is
+a top-level `var x = require("src")`, and no call or binding of it is tested
+for `__esModule` or passed to `require.n` or an interop helper. The helper
+stage and `UnWebpackInterop` later replace an interop default
+(`() => x && x.__esModule ? x.default : x`) with the plain binding, and
+`UnEsm` merges every binding of one source into one default import, so after
+Phase 1 the two meanings can no longer be told apart.
 
-`collect_interop_require_sources` lists the opposite: the sources whose
-required value, or its top-level binding, goes to `require.n` or an interop
+`RequireEdges::reads_through_interop` is the opposite: the required value of
+the source, or its top-level binding, goes to `require.n` or an interop
 helper or has its `__esModule` read. Unpack reads it only for the
 `commonjs_require_of_esm` warning: a module that stays CommonJS and read a
 marked provider through an interop now meets its namespace, which carries
@@ -217,12 +217,12 @@ provider half: a top-level `__esModule` marker (`Object.defineProperty`,
 assignment, or webpack's `require.r(exports)`), read before `UnEsm` removes
 it. The marker matcher is the one `UnEsmoduleFlag` uses, and it does not check
 the descriptor's value. The marker also counts as an element of a top-level
-sequence statement, where a minifier joins it with the statements after it. `collect_wildcard_require_sources` is the consumer
-half: sources of top-level `var x = wildcard(require("src"))` bindings, with
-the helper declared or inlined at the call site (a minifier inlines a
-single-use helper), when every `require("src")` call in the module is such an
-argument. Other positions, such as a wildcard inside a lowered `import()`,
-are not recorded.
+sequence statement, where a minifier joins it with the statements after it.
+`RequireEdges::uses_only_wildcard_interop` is the consumer half: every
+`require("src")` call in the module is the argument of a top-level
+`var x = wildcard(require("src"))`, with the helper declared or inlined at
+the call site (a minifier inlines a single-use helper). Other positions, such
+as a wildcard inside a lowered `import()`, do not count.
 
 `require_edges` (`crates/core/src/require_edges.rs`) records each
 `require("src")` call of the module as one edge, keyed by the call's span:
@@ -438,9 +438,9 @@ Neither proof creates a default-object fact available to consumers.
   the provider facts prove a named or `export *` surface and no default export,
   or a default export whose provider requires as its `exports` object
   (`require_returns_exports_object`) while the consumer used the whole value
-  without an interop wrapper (`whole_require_sources`), or through a wildcard
-  interop of a provider marked `__esModule` (`wildcard_require_sources` and
-  `marks_es_module`).
+  without an interop wrapper (`uses_whole_value` on the consumer's require
+  edges), or through a wildcard interop of a provider marked `__esModule`
+  (`uses_only_wildcard_interop` and `marks_es_module`).
   It accepts static member reads, `Object.keys(namespace)`, and namespace values
   used as `Object.assign` sources, and a namespace passed on as a value
   (`use(ns)`, webpack's `require.t(ns, 2)` namespace object): the default

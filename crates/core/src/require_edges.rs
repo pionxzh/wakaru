@@ -1443,6 +1443,9 @@ exports.y = require("./e").value;"#,
         assert!(edges.reads_through_interop("./b"));
         assert!(edges.reads_through_interop("./d"));
         assert!(!edges.reads_through_interop("./e"));
+        // A `.default` read alone is no interop.
+        let plain = super::tests::edges(r#"var a = require("./a"); exports.x = a.default;"#);
+        assert!(!plain.reads_through_interop("./a"));
     }
 
     #[test]

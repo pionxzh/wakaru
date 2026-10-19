@@ -16,6 +16,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use crate::collections::HashMap;
 use crate::facts::ModuleFactsMap;
 use crate::provider_interface::{ProviderInterface, RequiredValue};
+use crate::require_edges::RequireEdges;
 use crate::rules::lowered_dynamic_import::LoweredImportMatcher;
 use crate::rules::transpiler_helper_utils::{LocalHelperContext, TranspilerHelperKind};
 use crate::rules::webpack_lazy_import::webpack_lazy_load;
@@ -641,9 +642,9 @@ pub(crate) fn run_kept_require_default_reads(
             .get_from(current_filename, source)
             .map(ProviderInterface::of)
     };
-    let interop_sources = current_filename
+    let own_edges = current_filename
         .and_then(|filename| module_facts.get(filename))
-        .map_or(&[][..], |own| own.interop_require_sources.as_slice());
+        .map(|own| &own.require_edges);
 
     // Bindings of a `DefaultWithNamed` provider, declared once, whose every
     // use is a call, a `new`, or a static member read (see
@@ -677,7 +678,7 @@ pub(crate) fn run_kept_require_default_reads(
         provider_of: &provider_of,
         good: &good,
         local_helpers: LocalHelperContext::collect_with_mark(module, unresolved_mark),
-        interop_sources,
+        own_edges,
         esmodule_tested_sources: esmodule_tested_sources(module, unresolved_mark),
         unhandled: Vec::new(),
     };
@@ -1031,7 +1032,9 @@ struct DefaultReadRewriter<'a, F> {
     provider_of: &'a F,
     good: &'a HashMap<BindingId, Atom>,
     local_helpers: LocalHelperContext,
-    interop_sources: &'a [Atom],
+    /// This module's require edges, read on its input: whether it read a
+    /// source through an interop the rule range removed.
+    own_edges: Option<&'a RequireEdges>,
     /// Sources whose required value the module still tests for
     /// `__esModule`, directly or through a binding.
     esmodule_tested_sources: HashSet<Atom>,
@@ -1039,6 +1042,11 @@ struct DefaultReadRewriter<'a, F> {
 }
 
 impl<'a, F: Fn(&str) -> Option<ProviderInterface<'a>>> DefaultReadRewriter<'a, F> {
+    fn reads_through_interop(&self, source: &str) -> bool {
+        self.own_edges
+            .is_some_and(|edges| edges.reads_through_interop(source))
+    }
+
     fn report(&mut self, source: Atom, reason: &'static str) {
         if !self.unhandled.iter().any(|(seen, _)| *seen == source) {
             self.unhandled.push((source, reason));
@@ -1095,7 +1103,7 @@ impl<'a, F: Fn(&str) -> Option<ProviderInterface<'a>>> DefaultReadRewriter<'a, F
                 "the value it assigned to `module.exports` is now the namespace's `default`, beside its named exports, so a read of that value gets the namespace",
             ),
             Some(RequiredValue::Marked { has_default: false })
-                if self.interop_sources.contains(&source) =>
+                if self.reads_through_interop(&source) =>
             {
                 self.report(
                     source,
@@ -1105,7 +1113,7 @@ impl<'a, F: Fn(&str) -> Option<ProviderInterface<'a>>> DefaultReadRewriter<'a, F
             // Node marks the namespace of a module with a default export, so
             // an interop that still tests `__esModule` reads the default.
             Some(RequiredValue::Marked { has_default: true })
-                if self.interop_sources.contains(&source)
+                if self.reads_through_interop(&source)
                     && !self.esmodule_tested_sources.contains(&source) =>
             {
                 self.report(
