@@ -757,8 +757,8 @@ layout directly is a proposal:
   Unpack reports the first as `missing_imported_name` and the second as
   `commonjs_require_of_esm`. The shape is wild-observed. The fix needs the
   provider's format decision to see its consumers' writes, which Phase 1
-  does not; it is deferred
-  ([proposal](proposals/consumer-aware-provider-format.md)). Consumers
+  does not; it is planned in the
+  [module interface model](proposals/module-interface-model.md). Consumers
   outside the input are covered by
   [`exports_object_closed_to_consumers`](rewrite-assumptions.md#exports_object_closed_to_consumers)
   instead.
