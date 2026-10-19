@@ -1672,22 +1672,14 @@ struct PreparedWebpack5Factories {
     str_id_to_filename: HashMap<String, String>,
 }
 
-/// Runtime-parameter reuse and free-name capture keep one factory opaque in
-/// a numeric-id container. `isolate_fatal` does the same for any other
-/// normalization failure; only translated factories opt in, because their
-/// detector already reports failures per module.
+/// Runtime-parameter reuse and free-name capture keep one factory opaque.
+/// `isolate_fatal` does the same for any other normalization failure; only
+/// translated factories opt in, because their detector already reports
+/// failures per module.
 fn prepare_webpack5_factories(
     module_entries: &[Webpack5ModuleDescriptor<'_>],
     isolate_fatal: bool,
 ) -> Option<PreparedWebpack5Factories> {
-    // A missing numeric ID remains an unmistakable webpack runtime call such
-    // as `require(17)`. An unresolved string ID could instead look like
-    // `require("./provider.js")` and be mistaken for an authored ESM edge by
-    // UnEsm, so named-ID containers retain the historical whole-bundle
-    // fallback when any factory is opaque.
-    let can_isolate_runtime_parameter_reuse = module_entries
-        .iter()
-        .all(|entry| entry.id.parse::<usize>().is_ok());
     let mut opaque_filenames: HashMap<String, DetectedModuleFailure> = HashMap::default();
 
     loop {
@@ -1724,14 +1716,11 @@ fn prepare_webpack5_factories(
                     error @ (FactoryNormalizationError::RuntimeParameterReuse
                     | FactoryNormalizationError::FreeNameCapture),
                 ) => {
-                    if !can_isolate_runtime_parameter_reuse {
-                        return None;
-                    }
                     newly_opaque.insert(entry.filename.clone(), isolated_failure(error));
                     prepared.push(None);
                 }
                 Err(FactoryNormalizationError::Fatal) => {
-                    if !(isolate_fatal && can_isolate_runtime_parameter_reuse) {
+                    if !isolate_fatal {
                         return None;
                     }
                     newly_opaque.insert(

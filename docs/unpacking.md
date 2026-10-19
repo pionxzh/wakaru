@@ -438,16 +438,18 @@ Webpack has a narrower partial-failure path for two factory-local failures. A
 minified factory may reuse its `module`, `exports`, or loader parameter as an
 ordinary local after its last runtime use, and a factory may read one of the
 canonical names free (webpack emits a free `require` for
-`__non_webpack_require__` and keeps `typeof exports` free in ESM modules). In a
-numeric-ID container, when the reuse boundary cannot be proved or the rename
-would capture a free reference, Wakaru preserves that factory's extracted body
-unchanged and marks only that module as failed; other factories in the same
-structurally proven container remain recoverable. Named-ID containers keep the whole-input fallback
-because an unresolved path-like runtime call could otherwise be mistaken for an
-ESM import. A fixed-point pass
-removes failed factory IDs from the rewrite map before retrying dependants, so
-calls to an opaque factory follow the existing absent-ID behavior instead of
-becoming invented ESM edges. The opaque body never enters rule processing,
+`__non_webpack_require__` and keeps `typeof exports` free in ESM modules). When
+the reuse boundary cannot be proved or the rename would capture a free
+reference, Wakaru preserves that factory's extracted body unchanged and marks
+only that module as failed; other factories in the same structurally proven
+container remain recoverable, with numeric and string module IDs alike. A
+fixed-point pass removes failed factory IDs from the rewrite map before
+retrying dependants, so a call to an opaque factory follows the absent-ID
+behavior of its ID kind: a numeric call stays `require(<number>)`, and a string
+call keeps its raw ID, which `UnEsm` currently turns into an import of that ID
+like any string ID absent from the table. Either way the consumer reads no
+facts from the opaque module, even when a named ID is also a valid relative
+path to its emitted file. The opaque body never enters rule processing,
 fact collection, filename recovery, or recursive scope splitting. Other
 normalization failures still reject the whole container, except in factories
 another detector translated (Turbopack), which fail one at a time. A container

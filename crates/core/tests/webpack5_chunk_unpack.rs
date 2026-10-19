@@ -182,6 +182,107 @@ fn webpack5_chunk_localizes_unprovable_loader_reuse_to_one_factory() {
 }
 
 #[test]
+fn webpack5_chunk_with_string_ids_localizes_unprovable_loader_reuse_to_one_factory() {
+    let source = r#"
+(self.webpackChunk_app = self.webpackChunk_app || []).push([
+  [7],
+  {
+    "NOtv": function(module, exports, load) {
+      if (globalThis.useAlternate) load = globalThis.alternateLoader;
+      module.exports = load;
+    },
+    "UUUU": function(module) {
+      module.exports = "stable";
+    },
+    "+BL1": function(module, exports, load) {
+      module.exports = [load("NOtv"), load("UUUU")];
+    }
+  }
+]);
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "chunk.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("one opaque chunk factory should not discard recoverable siblings");
+    let failures = output
+        .warnings
+        .iter()
+        .filter(|warning| {
+            warning.kind == wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed
+        })
+        .map(|warning| warning.filename.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(failures, ["module-NOtv.js"], "{:?}", output.warnings);
+    let consumer = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "module-+BL1.js")
+        .map(|(_, code)| code)
+        .expect("recoverable consumer should be emitted");
+    assert!(!consumer.contains("./module-NOtv.js"), "{consumer}");
+    assert!(consumer.contains("./module-UUUU.js"), "{consumer}");
+}
+
+#[test]
+fn webpack5_chunk_named_id_opaque_provider_lends_its_consumer_no_facts() {
+    // The consumer's unresolved id is also a valid relative path to the
+    // opaque module's emitted file. Its output must match the one for a
+    // provider absent from the table: the opaque module's empty facts must
+    // not read as proven ones.
+    let chunk = |provider: &str| {
+        format!(
+            r#"
+(self.webpackChunk_app = self.webpackChunk_app || []).push([
+  [7],
+  {{
+    {provider}
+    "./main.js": function(module, exports, load) {{
+      var o = load("./provider.js");
+      exports.run = function() {{ return o.foo(); }};
+      exports.again = function() {{ return o.bar; }};
+    }},
+    "./util.js": function(module, exports) {{
+      exports.x = 1;
+    }}
+  }}
+]);
+"#
+        )
+    };
+    let consumer = |source: &str| {
+        let output = unpack(
+            source,
+            DecompileOptions {
+                filename: "chunk.js".to_string(),
+                ..Default::default()
+            },
+        )
+        .expect("the named-id chunk should unpack");
+        output
+            .modules
+            .into_iter()
+            .find(|(filename, _)| filename == "main.js")
+            .map(|(_, code)| code)
+            .expect("the consumer should be emitted")
+    };
+
+    let opaque = consumer(&chunk(
+        r#""./provider.js": function(module, exports, load) {
+      if (globalThis.useAlternate) load = globalThis.alternateLoader;
+      exports.foo = load;
+      exports.bar = 1;
+    },"#,
+    ));
+    let absent = consumer(&chunk(""));
+    assert_eq!(opaque, absent);
+}
+
+#[test]
 fn webpack5_chunk_heuristic_skips_scope_split_without_import_bearing_entry() {
     let source = r#"
 (self.webpackChunk_N_E = self.webpackChunk_N_E || []).push([

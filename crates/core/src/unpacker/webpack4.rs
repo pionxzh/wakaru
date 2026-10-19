@@ -586,12 +586,6 @@ fn prepare_webpack4_modules(
                     error @ (FactoryNormalizationError::RuntimeParameterReuse
                     | FactoryNormalizationError::FreeNameCapture),
                 ) => {
-                    // A retained numeric call cannot be mistaken for an ESM
-                    // import. Named IDs can be path-like strings, so keep the
-                    // historical whole-container fallback for that shape.
-                    if !all_numeric {
-                        return None;
-                    }
                     newly_opaque.insert(descriptor.filename.clone(), isolated_failure(error));
                     emitted.push(None);
                     continue;

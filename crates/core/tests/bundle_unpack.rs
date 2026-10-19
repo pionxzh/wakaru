@@ -1757,9 +1757,7 @@ fn webpack5_free_require_calls_that_name_a_module_id_stay_opaque() {
 }
 
 #[test]
-fn webpack5_free_name_capture_in_a_named_id_container_keeps_the_whole_fallback() {
-    // An unresolved string id could pass for an authored import path, so a
-    // named-id container is not split around an opaque factory.
+fn webpack5_free_name_capture_in_a_named_id_container_stays_opaque() {
     let source = r#"
 (() => {
   var modules = ({
@@ -1789,13 +1787,18 @@ fn webpack5_free_name_capture_in_a_named_id_container_keeps_the_whole_fallback()
             ..Default::default()
         },
     )
-    .expect("an undetected container still unpacks as a single file");
+    .expect("an isolated factory should unpack");
 
-    assert!(
-        !output.detected_formats.contains(&BundleFormat::Webpack5),
-        "{:?}",
-        output.detected_formats
-    );
+    assert_eq!(output.detected_formats, [BundleFormat::Webpack5]);
+    assert_eq!(free_name_capture_failures(&output), ["src/host.js"]);
+    let entry = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "src/entry.js")
+        .map(|(_, code)| code)
+        .expect("the consumer should remain recovered");
+    assert!(!entry.contains("\"./host.js\""), "{entry}");
+    assert!(entry.contains("\"./value.js\""), "{entry}");
 }
 
 #[test]
@@ -3081,7 +3084,7 @@ fn webpack5_opaque_loader_reuse_preserves_other_structural_modules() {
 }
 
 #[test]
-fn webpack_named_id_loader_reuse_keeps_whole_container_fallback() {
+fn webpack_named_id_loader_reuse_stays_opaque() {
     let webpack4 = r#"
 !function(modules) {
   function load(id) {
@@ -3121,24 +3124,47 @@ fn webpack_named_id_loader_reuse_keeps_whole_container_fallback() {
 })();
 "#;
 
-    for (filename, source) in [
-        ("webpack4-named-loader-reuse.js", webpack4),
-        ("webpack5-named-loader-reuse.js", webpack5),
+    for (filename, source, format) in [
+        (
+            "webpack4-named-loader-reuse.js",
+            webpack4,
+            BundleFormat::Webpack4,
+        ),
+        (
+            "webpack5-named-loader-reuse.js",
+            webpack5,
+            BundleFormat::Webpack5,
+        ),
     ] {
-        let output = unpack_raw(
+        let output = unpack(
             source,
-            &DecompileOptions {
+            DecompileOptions {
                 filename: filename.to_string(),
                 ..Default::default()
             },
         )
-        .expect("path-like absent IDs must keep the historical input fallback");
+        .expect("one opaque factory should not discard its container");
+        assert_eq!(output.detected_formats, [format], "{filename}");
         assert!(
-            output.detected_formats.is_empty(),
-            "{filename} must not synthesize a path-like edge"
+            output.warnings.iter().any(|warning| {
+                warning.filename == "opaque.js"
+                    && warning.kind == wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed
+            }),
+            "{filename}: {:?}",
+            output.warnings
         );
-        assert_eq!(output.modules.len(), 1, "{filename}");
-        assert!(output.modules[0].1.contains("useAlternate"), "{filename}");
+        let opaque = output
+            .modules
+            .iter()
+            .find(|(name, _)| name == "opaque.js")
+            .map(|(_, code)| code)
+            .unwrap_or_else(|| panic!("{filename}: the opaque module should be emitted"));
+        assert!(opaque.contains("useAlternate"), "{filename}: {opaque}");
+        assert!(
+            output.modules.iter().any(|(name, _)| name == "entry.js"),
+            "{filename}: {:?}",
+            output.modules
+        );
     }
 }
 
