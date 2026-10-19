@@ -252,6 +252,41 @@ If an unguarded statement cannot be placed without guessing, structural
 detection leaves the response unsplit; explicit-file fallback preserves the
 input intact.
 
+## Decode a React Server Components (Flight) payload
+
+```bash
+wakaru flight payload.txt -o flight.json          # a raw Flight payload
+wakaru flight page.html -o flight.json            # a saved Next.js page
+wakaru flight captured-flight.js                  # prints the JSON to stdout
+```
+
+`flight` reads a React Flight payload and prints it as JSON. It is not part of
+the decompile pipeline: a payload is data, not JavaScript source, so no rule
+runs and nothing is decompiled. The input is either a raw payload (`1:I[...]`
+rows, one per line) or a page or script that holds Next.js
+`self.__next_f.push(...)` calls, which are found, unescaped, and concatenated
+before decoding. The `format` field says which was recognized:
+`raw-flight` or `next.__next_f`.
+
+The output is `rows`, `assets`, and `problems`. Each row carries its hex `id`,
+its `tag` letter (`null` for a model row), a `kind` (`model`,
+`module-reference`, `hint`, `error`, `text`, or `other`), its raw `payload`,
+and `json` when React reads the payload as JSON. `assets` lists the served
+files the rows name, in payload order without repeats: the chunks of a module
+reference, the stylesheet or script of a hint. Feed those back to `--unpack`.
+`problems` lists the rows and push calls that did not decode, with the byte
+offset each starts at, and the rest of the output is still written. A capture
+cut mid-row therefore loses only the tail.
+
+Tag letters and framing follow React's client parser: a row is
+`<hex id>:<tag><payload>`, a row with no tag is a JSON model, and the
+length-prefixed rows (`T`, `A`, `O`, `o`, `b`, `U`, `S`, `s`, `L`, `l`, `G`,
+`g`, `M`, `m`, `V`) are read by that length, so a text row may hold newlines.
+Model rows keep React's `$` references (`"$L3"`, `"$undefined"`) as plain
+strings: `flight` decodes the transport, not the React tree it describes.
+`__NEXT_DATA__`, build IDs, and manifest files are not collected yet; this
+command only decodes the Flight stream.
+
 ## Formatter
 
 ```bash
@@ -393,6 +428,7 @@ Within one major version, these outputs change only by addition:
 
 - the `wakaru --version` line, `wakaru <version>`;
 - the `--json` object on stdout, for single-file and unpack runs;
+- the `flight` command's JSON, and its `format` and `kind` values;
 - `provenance.json`;
 - the exit status rules in the previous section.
 

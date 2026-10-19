@@ -165,6 +165,24 @@ recovered `.vue` files for template inspection, but keep the paired JavaScript
 artifact around when recovery falls back or looks too heuristic. Do not
 present recovered SFCs as original source.
 
+### 5. Decode a captured React Server Components (Flight) payload
+
+A React Flight payload (React Server Components' wire format) is data, not
+JavaScript: do not run it through decompilation or unpacking. Next.js embeds
+it in page HTML as `self.__next_f.push(...)` calls.
+
+```bash
+wakaru flight page.html -o flight.json       # saved Next.js page or script
+wakaru flight payload.txt -o flight.json     # raw payload rows
+```
+
+The JSON holds `rows` (hex `id`, `tag`, `kind`, raw `payload`, and `json` when
+React parses it), `assets` (the chunk and stylesheet paths the payload names,
+ready for `--unpack`), and `problems` (rows that did not decode; the rest is
+still written). `format` is `raw-flight` or `next.__next_f`. Model rows keep
+React's `$` references (`"$L3"`) as strings: the tree they describe is not
+reconstructed.
+
 ## Heavily obfuscated input
 
 For string-array encoding, control-flow flattening, VM protectors, and similar

@@ -2763,3 +2763,62 @@ fn a_run_of_containers_only_does_not_need_the_bundle_job() {
     assert!(out_dir.join("b/macros/jsm-0.js").is_file());
     fs::remove_dir_all(&dir).expect("remove temp dir");
 }
+
+#[test]
+fn parses_flight_with_a_raw_payload_or_a_page() {
+    let cli = Cli::try_parse_from(["wakaru", "flight", "page.html", "-o", "flight.json"])
+        .expect("flight command should parse");
+    match cli.command {
+        Some(Command::Flight(args)) => {
+            assert_eq!(args.input, PathBuf::from("page.html"));
+            assert_eq!(args.output, Some(PathBuf::from("flight.json")));
+        }
+        other => panic!("expected flight command, got {other:?}"),
+    }
+
+    let cli = Cli::try_parse_from(["wakaru", "flight", "payload.txt"]).expect("flight to stdout");
+    assert!(matches!(
+        cli.command,
+        Some(Command::Flight(flight::FlightArgs { output: None, .. }))
+    ));
+}
+
+#[test]
+fn flight_writes_the_decoded_page_as_json() {
+    let dir = temp_test_dir("flight-page");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input_path = dir.join("page.js");
+    let output_path = dir.join("flight.json");
+    fs::write(
+        &input_path,
+        concat!(
+            r#"self.__next_f = self.__next_f || [];"#,
+            r#"self.__next_f.push([0]);"#,
+            r#"self.__next_f.push([1, "1:I[\"static/chunks/alpha.js\",[],\"default\"]\n"]);"#,
+        ),
+    )
+    .expect("write captured page");
+
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        "flight",
+        input_path.to_str().expect("input path should be utf8"),
+        "-o",
+        output_path.to_str().expect("output path should be utf8"),
+    ])
+    .expect("flight cli should parse");
+    match cli.command {
+        Some(Command::Flight(args)) => flight::run(args).expect("flight should decode"),
+        other => panic!("expected flight command, got {other:?}"),
+    }
+
+    let written: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&output_path).expect("read flight json"))
+            .expect("flight output should be json");
+    assert_eq!(written["format"], "next.__next_f");
+    assert_eq!(written["next_flight"]["data"], 1);
+    assert_eq!(written["rows"][0]["kind"], "module-reference");
+    assert_eq!(written["assets"][0], "static/chunks/alpha.js");
+    assert_eq!(written["problems"].as_array().map(Vec::len), Some(0));
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}

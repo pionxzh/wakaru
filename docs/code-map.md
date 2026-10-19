@@ -48,6 +48,7 @@ crates/
         io.rs                       — parse/print helpers
         types.rs                    — driver options, outputs, and warning types
       facts.rs                      — post-Stage-2 cross-module fact extraction
+      flight.rs                     — React Server Components (Flight) payload decoding and Next.js `__next_f` extraction
       gtm.rs                        — Google Tag Manager container extraction (façade: `wakaru::gtm`)
       commonjs_default_object_composition.rs — exact mutable-default composition recovery
       commonjs_export_residual.rs   — `exports` accesses left in ESM output (`commonjs_export_unrecovered`)

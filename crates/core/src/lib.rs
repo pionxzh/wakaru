@@ -12,6 +12,7 @@ pub(crate) mod commonjs_default_object_composition;
 pub(crate) mod commonjs_export_residual;
 pub mod driver;
 pub mod facts;
+pub mod flight;
 pub mod gtm;
 pub(crate) mod interface_plan;
 pub(crate) mod js_names;

@@ -115,6 +115,20 @@ the external script URLs. Macro references read
 `__gtm_macro_<n>`, where `<n>` is the row in `index.md`. Pass `--raw` to keep
 each piece as extracted.
 
+## React Server Components (Flight) payloads
+
+```bash
+wakaru flight payload.txt -o flight.json
+wakaru flight page.html -o flight.json
+```
+
+`flight` decodes a React Flight payload into JSON: the `rows` of the stream,
+the `assets` they name, and the `problems` that did not decode. The input can
+be a raw payload or a saved Next.js page holding `self.__next_f.push(...)`
+calls, which are extracted and concatenated first; `format` reports which was
+recognized. Nothing is decompiled: a Flight payload is data, not JavaScript
+source.
+
 ## Rewrite level
 
 ```bash

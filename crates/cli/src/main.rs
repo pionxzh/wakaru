@@ -19,6 +19,7 @@ use wakaru_core::{
 mod bun_extract;
 mod color;
 mod discovery;
+mod flight;
 mod formatter;
 mod json_output;
 mod output;
@@ -182,6 +183,10 @@ enum Command {
     /// Inspect and extract Bun single-file executable containers.
     Bun(bun_extract::BunArgs),
 
+    /// Decode a captured React Server Components (Flight) payload, or the
+    /// `self.__next_f.push(...)` entries a Next.js page carries.
+    Flight(flight::FlightArgs),
+
     /// Internal debugging commands.
     #[command(hide = true)]
     Debug(DebugArgs),
@@ -340,6 +345,7 @@ fn main() -> Result<()> {
     match cli.command.clone() {
         Some(Command::Extract(args)) => run_extract(args, cli.force),
         Some(Command::Bun(args)) => bun_extract::run(args, cli.force),
+        Some(Command::Flight(args)) => flight::run(args),
         Some(Command::Debug(args)) => run_debug(args, cli.force),
         None => run_default(cli),
     }
