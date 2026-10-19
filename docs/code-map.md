@@ -52,6 +52,7 @@ crates/
       commonjs_export_residual.rs   — `exports` accesses left in ESM output (`commonjs_export_unrecovered`)
       kept_require.rs               — requires that stay calls: positions, the default read of a kept require, ES-source evidence, and their warnings
       provider_interface.rs         — what `require` of a provider returned and which import reads it, from the provider's facts (Phase 2 passes)
+      require_edges.rs              — one record per `require()` call (form, interop, uses), keyed by the call's span
       sourcemap_rename.rs           — source-map-driven name recovery
       namespace_decomposition.rs    — cross-module namespace-to-named-import rewrite
       reexport_consolidation.rs     — cross-module re-export consolidation

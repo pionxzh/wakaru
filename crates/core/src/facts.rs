@@ -240,6 +240,10 @@ pub struct ModuleFacts {
     /// (`var x = interopRequireWildcard(require("src"))`, declared or inlined
     /// at the call site). See [`collect_wildcard_require_sources`].
     pub wildcard_require_sources: Vec<Atom>,
+    /// Each `require()` call of the module: its form and interop, read on
+    /// the input, and its uses, read where the rule range reaches `UnEsm`
+    /// (see [`crate::require_edges`]).
+    pub require_edges: crate::require_edges::RequireEdges,
     /// True when the module contains `export *`. Its complete named surface
     /// may depend on another provider, so local absence is not proof that a
     /// requested name should come from the default object.

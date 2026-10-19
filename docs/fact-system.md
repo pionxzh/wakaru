@@ -46,7 +46,8 @@ Phase 1 (per module, parallel):
     obtain resolved AST (prepared detector AST, or parse → resolver)
     normalize exact detector-proven webpack runtime branches
     collect raw CommonJS default-object / callable-property facts
-    rule range through UnEsm
+    collect require edges: form and interop, keyed by call span
+    rule range through UnEsm (its runner first adds each edge's uses)
     clone barrier AST → recover webpack factory IIFE ESM shapes
     collect_module_facts(&facts_clone)                ← pure AST → facts
     collect_import_call_edges(&barrier_ast)           ← imports still under [[Call]]
@@ -117,7 +118,7 @@ conservatively retain the graph.
   commonjs_default_object, commonjs_default_attached_properties,
   require_returns_exports_object, commonjs_value_is_default, replaces_module_exports,
   whole_require_sources, interop_require_sources, marks_es_module,
-  wildcard_require_sources, has_export_all, export_star_sources, reexports, import_call_edges,
+  wildcard_require_sources, require_edges, has_export_all, export_star_sources, reexports, import_call_edges,
   default_object_ident_properties, ts_helper_exports,
   ts_helper_namespace_factory_exports, receiver_observing_exports,
   stays_commonjs, passthrough_target }`
@@ -222,6 +223,19 @@ the helper declared or inlined at the call site (a minifier inlines a
 single-use helper), when every `require("src")` call in the module is such an
 argument. Other positions, such as a wildcard inside a lowered `import()`,
 are not recorded.
+
+`require_edges` (`crates/core/src/require_edges.rs`) records each
+`require("src")` call of the module as one edge, keyed by the call's span:
+the form it is written in (a declarator, a destructure, a member read, an
+interop helper argument, a bare statement, or inline), whether it sits in a
+top-level statement, the interop around the call or its top-level binding,
+and whether `__esModule` is read on it. These are read on the input, before
+the rule range erases the interop. The runner of `UnEsm` then adds how the
+value is used on the AST `UnEsm` sees: static member reads, receiver-sensitive
+member calls, member writes (assignment, update, `delete`, or the target of
+`Object.assign` / `Object.defineProperty`), and escape. A call whose span is
+dummy or shared with another call (a detector-built AST can write such calls)
+keeps what the input pass read but gets no key and no uses.
 
 Normal processing also restores webpack's runtime-created `module.exports = {}`
 when structural webpack detection proves that a normalized extracted factory

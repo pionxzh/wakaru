@@ -114,6 +114,7 @@ pub fn trace_rules(
                     current_filename: Some(&options.filename),
                     mode: Some(PipelineMode::SingleFile),
                     call_required_plan: None,
+                    require_record: None,
                 },
                 &mut observer,
             );

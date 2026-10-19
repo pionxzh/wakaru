@@ -22,6 +22,7 @@ pub(crate) mod provider_import_repair;
 pub(crate) mod provider_interface;
 pub(crate) mod provider_namespace_repair;
 pub mod reexport_consolidation;
+pub mod require_edges;
 pub mod rules;
 pub mod sourcemap_rename;
 pub(crate) mod synthetic_import_cleanup;

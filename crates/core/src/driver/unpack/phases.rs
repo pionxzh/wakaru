@@ -1,6 +1,7 @@
 //! Two-phase multi-module pipeline: fact collection (Phase 1) and output
 //! decompilation with the cross-module late pass (Phase 2).
 
+use std::cell::RefCell;
 use std::sync::Arc;
 
 use anyhow::{bail, Result};
@@ -56,6 +57,7 @@ use crate::namespace_decomposition::run_namespace_decomposition;
 use crate::provider_import_repair::run_provider_import_repair;
 use crate::provider_namespace_repair::run_provider_namespace_repair;
 use crate::reexport_consolidation::run_reexport_consolidation;
+use crate::require_edges::{RequireEdges, RequireRecord};
 use crate::rules::cross_module_interop_import::{
     import_unproven_helper_requires, run_cross_module_interop_imports,
 };
@@ -545,6 +547,11 @@ pub(super) fn unpack_multi_module_with_plan(
             let marks_es_module = collect_marks_es_module(&module, unresolved_mark);
             let wildcard_require_sources =
                 collect_wildcard_require_sources(&module, unresolved_mark);
+            // Each require's form and interop, read on the input; the rule
+            // range adds the uses where it reaches `UnEsm`.
+            let require_record = RefCell::new(RequireRecord {
+                edges: RequireEdges::collect(&module, unresolved_mark),
+            });
             {
                 let span = tracing::info_span!("phase1: rules");
                 let _enter = span.enter();
@@ -554,9 +561,11 @@ pub(super) fn unpack_multi_module_with_plan(
                     RulePipelineOptions::until("UnEsm")
                         .with_mode(PipelineMode::UnpackPhase1)
                         .with_rewrite_level(options.level)
-                        .with_current_filename(&unpacked.module.filename),
+                        .with_current_filename(&unpacked.module.filename)
+                        .with_require_record(&require_record),
                 );
             }
+            let require_record = require_record.into_inner();
             // ESM recovery mutates the AST heavily (UnIife, factory-IIFE
             // rewrites, renames) to expose import/export declarations that
             // `collect_module_facts` reads. Phase 2 resumes from the
@@ -623,6 +632,7 @@ pub(super) fn unpack_multi_module_with_plan(
             facts.interop_require_sources = interop_require_sources;
             facts.marks_es_module = marks_es_module;
             facts.wildcard_require_sources = wildcard_require_sources;
+            facts.require_edges = require_record.edges;
             (facts, prepared, None, suggested_filename)
         });
         let prepared = prepared_parts.map(|(module, unresolved_mark)| Phase1PreparedModule {
