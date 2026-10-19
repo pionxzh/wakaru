@@ -44,8 +44,8 @@ pub use output_validate::{
     validate_output_modules, validate_output_modules_with_inputs, OutputFinding, OutputFindingKind,
 };
 pub use rules::{
-    apply_rules, rule_descriptors, rule_names, RewriteAssumptions, RewriteLevel, RewritePolicy,
-    RuleDescriptor, RulePipelineOptions, RuleStage,
+    apply_rules, rule_descriptors, rule_names, PipelineMode, RewriteAssumptions, RewriteLevel,
+    RewritePolicy, RuleDescriptor, RulePipelineOptions, RuleStage,
 };
 pub use sourcemap_rename::{extract_source_entries, parse_sourcemap, resolve_source_path};
 pub use tdz_check::{check_tdz, TdzViolation};

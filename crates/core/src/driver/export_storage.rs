@@ -9,7 +9,8 @@ use super::unpack::detect_bundle;
 use super::{DriverError, DriverErrorKind, DriverResult};
 use crate::rules::{
     analyze_export_storage, apply_rules, lower_export_getter_helpers,
-    lower_webpack_export_definitions, rule_names, ExportStorageReport, RulePipelineOptions,
+    lower_webpack_export_definitions, rule_names, ExportStorageReport, PipelineMode,
+    RulePipelineOptions,
 };
 
 /// The per-name CommonJS export storage decisions for one single-file input,
@@ -80,6 +81,7 @@ pub fn explain_commonjs_exports(
                 RulePipelineOptions {
                     stop_after: Some(stop_after),
                     ..RulePipelineOptions::default()
+                        .with_mode(PipelineMode::SingleFile)
                         .with_dce_mode(options.dce_mode)
                         .with_rewrite_level(options.level)
                         .with_current_filename(&options.filename)

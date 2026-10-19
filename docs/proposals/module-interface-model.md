@@ -1,8 +1,9 @@
 # Module interface model: provider and consumer facts before `UnEsm`
 
-Status: proposed, not started (2026-10-20). The maintainer has decided the
-direction (see [Decisions](#decisions)); the steps below need review before
-code. This proposal absorbs the consumer-aware provider format proposal
+Status: step 1 in progress on branch `claude/module-interface` (2026-10-20):
+the explicit execution mode (`PipelineMode`) has landed there. The maintainer
+has decided the direction (see [Decisions](#decisions)); steps 2 to 4 need
+review before code. This proposal absorbs the consumer-aware provider format proposal
 (deferred 2026-10-15), whose problem statement is
 [Consumer writes to a named-only provider](#consumer-writes-to-a-named-only-provider).
 

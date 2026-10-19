@@ -73,8 +73,7 @@ struct RuleRunContext<'a> {
     local_helpers: Rc<RefCell<Option<Rc<LocalHelperContext>>>>,
     extracted_function_names: SharedExtractedFunctionNames,
     pre_dead: Option<Rc<PreDeadSet>>,
-    /// The rule this run stops after, if any.
-    stop_after: Option<&'a str>,
+    mode: PipelineMode,
 }
 
 pub(super) struct PreDeadSet {
@@ -331,11 +330,9 @@ pub(crate) fn single_file_runs_un_esm(filename: Option<&str>, level: RewriteLeve
 }
 
 fn run_un_esm(module: &mut Module, ctx: RuleRunContext<'_>) {
-    // Single-file decompilation only: with module facts the provider facts
-    // decide (`provider_namespace_repair`), and unpack's first phases stop at
-    // `UnEsm`, before those facts exist. `until("UnEsm")` RUNS `UnEsm` and then
-    // stops, so the stop rule is what tells that phase apart from a decompile.
-    let single_file = ctx.module_facts.is_none() && ctx.stop_after != Some("UnEsm");
+    // Single-file decompilation only: in unpack the provider facts decide
+    // (`provider_namespace_repair`).
+    let single_file = ctx.mode == PipelineMode::SingleFile;
     if single_file && !single_file_runs_un_esm(ctx.current_filename, ctx.rewrite_level) {
         return;
     }
@@ -347,7 +344,7 @@ fn run_un_esm(module: &mut Module, ctx: RuleRunContext<'_>) {
     let mut rule = UnEsm::new(ctx.unresolved_mark, ctx.rewrite_level)
         .with_current_filename(ctx.current_filename)
         .with_local_helpers(local_helpers)
-        .with_later_unpack_stages(!single_file);
+        .with_later_unpack_stages(ctx.mode.later_unpack_stages());
     module.visit_mut_with(&mut rule);
     if let Some(evidence) = relative_namespace.as_mut() {
         if rule.lowered_esbuild_namespace() {
@@ -876,6 +873,48 @@ define_rule_registry! {
     ]),
 }
 
+/// Where a run of the rule pipeline sits in a decompile, which decides what
+/// `UnEsm` may assume about the stages that run after it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PipelineMode {
+    /// A single-file decompile, and the single-file debug commands. No other
+    /// module exists, and no stage runs after the rule pipeline.
+    SingleFile,
+    /// One module of an unpack, before the fact barrier: Phase 1's range
+    /// through `UnEsm`, the source-map path's rerun of that range in Phase 2,
+    /// and the scope-hoist split's inspection of a module. Every
+    /// cross-module stage after the barrier still runs.
+    UnpackPhase1,
+    /// Phase 1's late ESM recovery on a clone of the module, which predicts
+    /// the late recovery that ends Phase 2 for the module facts.
+    UnpackLatePrediction,
+    /// One module of an unpack, after the fact barrier: Phase 2's range with
+    /// module facts, and the late ESM recovery that ends Phase 2.
+    UnpackPhase2,
+    /// Raw unpack output, whose late ESM recovery runs no other stage.
+    UnpackRaw,
+}
+
+impl PipelineMode {
+    /// Whether stages after this run may still turn a top-level require
+    /// into an import from the other modules' facts
+    /// ([`UnEsm::with_later_unpack_stages`]). Every unpack mode assumes so.
+    pub(crate) fn later_unpack_stages(self) -> bool {
+        self != Self::SingleFile
+    }
+
+    /// The mode of a caller that does not state one, read from the options
+    /// as the pipeline always has: module facts, or a stop at `UnEsm` (which
+    /// runs `UnEsm` and then stops, as unpack's Phase 1 does), mean unpack.
+    fn inferred(options: &RulePipelineOptions<'_>) -> Self {
+        if options.module_facts.is_some() || options.stop_after == Some("UnEsm") {
+            Self::UnpackPhase1
+        } else {
+            Self::SingleFile
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct RulePipelineOptions<'a> {
     pub start_from: Option<&'a str>,
@@ -884,6 +923,10 @@ pub struct RulePipelineOptions<'a> {
     pub rewrite_level: RewriteLevel,
     pub module_facts: Option<&'a ModuleFactsMap>,
     pub current_filename: Option<&'a str>,
+    /// Where this run sits in a decompile. The drivers state it; without
+    /// one, the pipeline infers it from `module_facts` and `stop_after`
+    /// ([`PipelineMode`]).
+    pub mode: Option<PipelineMode>,
     pub(crate) call_required_plan: Option<&'a crate::rules::CallRequiredPlan>,
 }
 
@@ -896,6 +939,7 @@ impl Default for RulePipelineOptions<'_> {
             rewrite_level: RewriteLevel::Standard,
             module_facts: None,
             current_filename: None,
+            mode: None,
             call_required_plan: None,
         }
     }
@@ -934,6 +978,11 @@ impl<'a> RulePipelineOptions<'a> {
 
     pub fn with_current_filename(mut self, current_filename: &'a str) -> Self {
         self.current_filename = Some(current_filename);
+        self
+    }
+
+    pub fn with_mode(mut self, mode: PipelineMode) -> Self {
+        self.mode = Some(mode);
         self
     }
 
@@ -1006,7 +1055,9 @@ fn apply_rules_impl(
         local_helpers: Rc::new(RefCell::new(None)),
         extracted_function_names: Rc::new(RefCell::new(ExtractedFunctionNames::default())),
         pre_dead,
-        stop_after: options.stop_after,
+        mode: options
+            .mode
+            .unwrap_or_else(|| PipelineMode::inferred(&options)),
     };
     let mut started = options.start_from.is_none();
 
@@ -1150,6 +1201,108 @@ mod tests {
         });
     }
 
+    /// Runs the pipeline through `UnEsm` on `source` and returns whether the
+    /// module became ESM.
+    fn becomes_esm(source: &str, options: RulePipelineOptions<'_>) -> bool {
+        use swc_core::common::{sync::Lrc, FileName, SourceMap};
+        use swc_core::ecma::parser::{parse_file_as_module, EsSyntax, Syntax};
+        use swc_core::ecma::transforms::base::resolver;
+
+        GLOBALS.set(&Default::default(), || {
+            let cm: Lrc<SourceMap> = Default::default();
+            let file = cm.new_source_file(FileName::Anon.into(), source.to_string());
+            let mut module = parse_file_as_module(
+                &file,
+                Syntax::Es(EsSyntax::default()),
+                Default::default(),
+                None,
+                &mut Vec::new(),
+            )
+            .expect("test source parses");
+            let unresolved_mark = Mark::new();
+            module.visit_mut_with(&mut resolver(unresolved_mark, Mark::new(), false));
+            apply_rules(&mut module, unresolved_mark, options);
+            module
+                .body
+                .iter()
+                .any(|item| matches!(item, ModuleItem::ModuleDecl(_)))
+        })
+    }
+
+    #[test]
+    fn single_file_mode_gates_un_esm_like_a_decompile() {
+        // Below standard, and in a `.cjs` file, a single file stays
+        // CommonJS; unpack runs `UnEsm` at every level and for every name.
+        use PipelineMode::{SingleFile, UnpackPhase1};
+        use RewriteLevel::{Minimal, Standard};
+
+        let source = "module.exports = 1;";
+        for (mode, level, filename, expected) in [
+            (SingleFile, Minimal, "a.js", false),
+            (SingleFile, Standard, "a.cjs", false),
+            (SingleFile, Standard, "a.js", true),
+            (UnpackPhase1, Minimal, "a.js", true),
+            (UnpackPhase1, Standard, "a.cjs", true),
+        ] {
+            let options = RulePipelineOptions::until("UnEsm")
+                .with_mode(mode)
+                .with_rewrite_level(level)
+                .with_current_filename(filename);
+            assert_eq!(
+                becomes_esm(source, options),
+                expected,
+                "{mode:?} at {level:?} in {filename}"
+            );
+        }
+    }
+
+    #[test]
+    fn un_esm_leaves_helper_requires_to_later_unpack_stages_by_mode() {
+        // `ns.helper(require("./p"))` with an imported `ns` is a require a
+        // cross-module stage after the barrier may still turn into an
+        // import. Where such a stage still runs, `UnEsm` makes the module
+        // ESM around it; otherwise the require keeps the module CommonJS.
+        let source = r#"
+var helpers = require("./helpers.js");
+var alpha = helpers.wrap(require("./alpha.js"));
+exports.read = read;
+function read() { return alpha; }
+"#;
+        for (mode, expected) in [
+            (PipelineMode::SingleFile, false),
+            (PipelineMode::UnpackPhase1, true),
+            (PipelineMode::UnpackLatePrediction, true),
+            (PipelineMode::UnpackPhase2, true),
+            (PipelineMode::UnpackRaw, true),
+        ] {
+            let options = RulePipelineOptions::until("UnEsm").with_mode(mode);
+            assert_eq!(becomes_esm(source, options), expected, "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn unstated_mode_is_inferred_from_facts_and_stop_rule() {
+        // A stop at `UnEsm` or module facts mean unpack's Phase 1, anything
+        // else a single file, as before callers could state the mode.
+        let source = "module.exports = 1;";
+        let facts = ModuleFactsMap::default();
+        for (options, expected) in [
+            (RulePipelineOptions::default(), false),
+            (
+                RulePipelineOptions::between("UnCurlyBraces", "UnWebpackInterop2"),
+                false,
+            ),
+            (RulePipelineOptions::until("UnEsm"), true),
+            (
+                RulePipelineOptions::between("UnCurlyBraces", "UnEsm").with_module_facts(&facts),
+                true,
+            ),
+        ] {
+            let options = options.with_rewrite_level(RewriteLevel::Minimal);
+            assert_eq!(becomes_esm(source, options), expected, "{options:?}");
+        }
+    }
+
     #[test]
     fn un_for_of_runner_uses_precomputed_local_helper_context() {
         GLOBALS.set(&Default::default(), || {
@@ -1165,7 +1318,7 @@ mod tests {
                 local_helpers: Rc::new(RefCell::new(Some(Rc::new(LocalHelperContext::default())))),
                 extracted_function_names: Default::default(),
                 pre_dead: None,
-                stop_after: None,
+                mode: PipelineMode::SingleFile,
             };
 
             reset_collect_transpiler_helpers_call_count();

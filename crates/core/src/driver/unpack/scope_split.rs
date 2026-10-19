@@ -13,7 +13,7 @@ use swc_core::ecma::visit::VisitMutWith;
 
 use super::super::io::parse_js;
 use super::{recover_late_esm_from_factory_iifes, LateEsmRecoveryOptions};
-use crate::rules::{apply_rules, RewriteLevel, RulePipelineOptions};
+use crate::rules::{apply_rules, PipelineMode, RewriteLevel, RulePipelineOptions};
 use crate::unpacker::{
     scope_hoist, GeneratedSourceMapPoint, InputOffsets, SourcePositions, UnpackResult,
     UnpackedModule,
@@ -148,6 +148,7 @@ fn split_esm_recovered_scope_hoisted_module(
             &mut module,
             unresolved_mark,
             RulePipelineOptions::until("UnEsm")
+                .with_mode(PipelineMode::UnpackPhase1)
                 .with_rewrite_level(level)
                 .with_current_filename(filename),
         );
@@ -156,6 +157,7 @@ fn split_esm_recovered_scope_hoisted_module(
             unresolved_mark,
             level,
             filename,
+            PipelineMode::UnpackPhase1,
             LateEsmRecoveryOptions {
                 smart_rename: false,
                 export_rename: false,

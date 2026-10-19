@@ -15,7 +15,7 @@ use super::io::{
 };
 use super::output_finalize::strip_redundant_module_use_strict;
 use super::types::{DecompileOptions, DecompileOutput};
-use crate::rules::{apply_rules, ImportDedup, RulePipelineOptions, UnImportRename};
+use crate::rules::{apply_rules, ImportDedup, PipelineMode, RulePipelineOptions, UnImportRename};
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
 
 pub fn decompile(source: &str, options: DecompileOptions) -> Result<DecompileOutput> {
@@ -68,6 +68,7 @@ pub fn decompile_owned(
                 &mut module,
                 unresolved_mark,
                 RulePipelineOptions::default()
+                    .with_mode(PipelineMode::SingleFile)
                     .with_dce_mode(options.dce_mode)
                     .with_rewrite_level(options.level)
                     .with_current_filename(&options.filename),

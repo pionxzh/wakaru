@@ -65,8 +65,8 @@ use crate::rules::lowered_dynamic_import::run_cross_module_lowered_dynamic_impor
 use crate::rules::webpack_lazy_import::run_cross_module_webpack_lazy_imports;
 use crate::rules::{
     apply_rules, apply_rules_to_recovered_module, contains_local_self_require, ImportDedup,
-    RewriteLevel, RulePipelineOptions, SimplifySequence, UnAssignmentMerging, UnConditionals,
-    UnConditionalsAssignmentOnly, UnImportRename, UnOptionalChaining,
+    PipelineMode, RewriteLevel, RulePipelineOptions, SimplifySequence, UnAssignmentMerging,
+    UnConditionals, UnConditionalsAssignmentOnly, UnImportRename, UnOptionalChaining,
 };
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
 use crate::synthetic_import_cleanup::downgrade_unused_synthetic_imports;
@@ -552,6 +552,7 @@ pub(super) fn unpack_multi_module_with_plan(
                     &mut module,
                     unresolved_mark,
                     RulePipelineOptions::until("UnEsm")
+                        .with_mode(PipelineMode::UnpackPhase1)
                         .with_rewrite_level(options.level)
                         .with_current_filename(&unpacked.module.filename),
                 );
@@ -574,6 +575,7 @@ pub(super) fn unpack_multi_module_with_plan(
                         unresolved_mark,
                         options.level,
                         &unpacked.module.filename,
+                        PipelineMode::UnpackLatePrediction,
                         LateEsmRecoveryOptions::default(),
                     );
                 }
@@ -602,6 +604,7 @@ pub(super) fn unpack_multi_module_with_plan(
                         unresolved_mark,
                         options.level,
                         &unpacked.module.filename,
+                        PipelineMode::UnpackLatePrediction,
                         LateEsmRecoveryOptions::default(),
                     );
                 }
@@ -782,6 +785,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 &mut module,
                 unresolved_mark,
                 RulePipelineOptions::between("UnObjectSpread2", "UnReturn")
+                    .with_mode(PipelineMode::UnpackPhase2)
                     .with_dce_mode(options.dce_mode)
                     .with_rewrite_level(options.level)
                     .with_module_facts(facts_ref)
@@ -804,6 +808,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 unresolved_mark,
                 options.level,
                 &unpacked.module.filename,
+                PipelineMode::UnpackPhase2,
                 LateEsmRecoveryOptions::default(),
             );
             module.visit_mut_with(&mut UnOptionalChaining::new(unresolved_mark, options.level));
@@ -1052,6 +1057,7 @@ pub(super) fn unpack_multi_module_with_plan(
                         &mut module,
                         unresolved_mark,
                         RulePipelineOptions::until("UnEsm")
+                            .with_mode(PipelineMode::UnpackPhase1)
                             .with_rewrite_level(options.level)
                             .with_current_filename(&unpacked.module.filename),
                     );

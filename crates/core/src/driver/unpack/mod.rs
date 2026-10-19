@@ -16,8 +16,8 @@ use super::types::{
 use super::unpack_cycles::{collect_import_cycle_warnings, scan_local_import_dependencies};
 use super::{DriverError, DriverErrorKind, DriverResult};
 use crate::rules::{
-    apply_rules, ArrowFunction, ArrowReturn, RewriteLevel, RulePipelineOptions, SmartRename, UnEsm,
-    UnExportRename, UnIife,
+    apply_rules, ArrowFunction, ArrowReturn, PipelineMode, RewriteLevel, RulePipelineOptions,
+    SmartRename, UnEsm, UnExportRename, UnIife,
 };
 use crate::unpacker::{
     scope_hoist, try_prepare_bundle, try_prepare_source, BundleFormat, DetectedBundle,
@@ -873,6 +873,7 @@ fn normalize_raw_unpacked_module(source: &str, filename: &str) -> Result<String>
             unresolved_mark,
             RewriteLevel::Minimal,
             filename,
+            PipelineMode::UnpackRaw,
             LateEsmRecoveryOptions {
                 smart_rename: false,
                 export_rename: false,
@@ -889,6 +890,7 @@ fn recover_late_esm_from_factory_iifes(
     unresolved_mark: Mark,
     level: RewriteLevel,
     current_filename: &str,
+    mode: PipelineMode,
     options: LateEsmRecoveryOptions,
 ) {
     // A factory's `.call(this, …)` wrapper is an IIFE callee, which
@@ -903,6 +905,7 @@ fn recover_late_esm_from_factory_iifes(
     module.visit_mut_with(&mut ArrowReturn);
     module.visit_mut_with(&mut UnIife::new(level));
     let pipeline_options = RulePipelineOptions::between("UnCurlyBraces", "UnEsm")
+        .with_mode(mode)
         .with_rewrite_level(level)
         .with_current_filename(current_filename);
     apply_rules(module, unresolved_mark, pipeline_options);

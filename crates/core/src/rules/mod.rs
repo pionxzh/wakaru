@@ -185,7 +185,8 @@ pub use merge_declaration_init::MergeDeclarationInit;
 pub use obj_shorthand::ObjShorthand;
 pub use object_assign_spread::ObjectAssignSpread;
 pub use pipeline::{
-    apply_rules, rule_descriptors, rule_names, RuleDescriptor, RulePipelineOptions, RuleStage,
+    apply_rules, rule_descriptors, rule_names, PipelineMode, RuleDescriptor, RulePipelineOptions,
+    RuleStage,
 };
 pub(crate) use pipeline::{
     apply_rules_to_recovered_module, apply_rules_with_observer, single_file_runs_un_esm,

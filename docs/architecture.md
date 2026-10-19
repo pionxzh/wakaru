@@ -138,8 +138,12 @@ Transformation rules implement SWC's `VisitMut` trait and run in a fixed order
 through `apply_rules()`. Several rules repeat after later stages expose new
 patterns. `crates/core/src/rules/pipeline.rs` stores the ordered
 `RuleDescriptor` entries, `RuleStage` metadata, and explicit dependencies.
-`RulePipelineOptions` controls ranges, rewrite level, dead-code cleanup, and
-optional module facts.
+`RulePipelineOptions` controls ranges, rewrite level, dead-code cleanup,
+optional module facts, and the `PipelineMode`: whether the run is a single-file
+decompile or which unpack phase it belongs to, which decides what `UnEsm` may
+leave to the stages after it. The drivers state the mode; a caller that does
+not is treated as unpack Phase 1 when it passes module facts or stops at
+`UnEsm`, and as a single file otherwise.
 
 #### Pipeline stages
 
