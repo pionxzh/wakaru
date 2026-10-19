@@ -2344,6 +2344,117 @@ function run() {
 }
 
 #[test]
+fn module_recovered_only_late_keeps_commonjs_for_a_helper_require() {
+    // shape: hypothetical. A require inside an IIFE keeps the consumer
+    // CommonJS when `UnEsm` first runs; the late ESM recovery that ends
+    // Phase 2 unwraps the IIFE and converts it. The cross-module helper
+    // stages have run by then and found a CommonJS module, so no stage takes
+    // the require around the bundled helper, and an ES module would throw
+    // `ReferenceError` where it runs.
+    let output = unpack_files(
+        vec![
+            UnpackInput {
+                filename: "tslib.js".to_string(),
+                source: TSLIB_INTEROP_HELPERS.to_string(),
+            },
+            UnpackInput {
+                filename: "consumer.js".to_string(),
+                source: r#""use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.run = run;
+var beta = (function () { return require("./beta.js"); })();
+var tslib_1 = require("./tslib.js");
+var format_js_1 = tslib_1.__importDefault(require("./format.js"));
+function run() { return [beta.value, (0, format_js_1.default)("v")]; }
+"#
+                .to_string(),
+            },
+            UnpackInput {
+                filename: "beta.js".to_string(),
+                source: "exports.value = 1;\n".to_string(),
+            },
+            UnpackInput {
+                filename: "format.js".to_string(),
+                source: MODULE_EXPORTS_FUNCTION_PROVIDER.to_string(),
+            },
+            UnpackInput {
+                filename: "entry.js".to_string(),
+                source: r#"var consumer = require("./consumer.js");
+console.log(consumer.run());
+"#
+                .to_string(),
+            },
+        ],
+        DecompileOptions::default(),
+    )
+    .expect("plain multi-file inputs should decompile through unpack barrier");
+    assert_valid_module_graph(&output.modules);
+    let consumer = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "consumer.js")
+        .map(|(_, code)| code)
+        .expect("consumer module should exist");
+    assert!(
+        !(consumer.contains("require(") && consumer.contains("export ")),
+        "an ES module consumer must not call require:\n{consumer}"
+    );
+}
+
+#[test]
+fn module_recovered_only_late_with_a_lazy_load_is_predicted_as_esm() {
+    // shape: hypothetical. As above, but the only require the late recovery
+    // keeps is a lazy load, which the lazy-load restore takes in a CommonJS
+    // module before the recovery runs. The consumer becomes ESM, and the
+    // facts Phase 1 predicted for it must say so, or its importer reads it
+    // as CommonJS.
+    let output = unpack_files(
+        vec![
+            UnpackInput {
+                filename: "consumer.js".to_string(),
+                source: r#""use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.load = load;
+var beta = (function () { return require("./beta.js"); })();
+function load() { return [beta, Promise.resolve().then(() => require("./gamma.js"))]; }
+"#
+                .to_string(),
+            },
+            UnpackInput {
+                filename: "beta.js".to_string(),
+                source: "module.exports = 1;\n".to_string(),
+            },
+            UnpackInput {
+                filename: "gamma.js".to_string(),
+                source: "exports.value = 2;\n".to_string(),
+            },
+            UnpackInput {
+                filename: "entry.js".to_string(),
+                source: r#"var consumer = require("./consumer.js");
+console.log(consumer.load());
+"#
+                .to_string(),
+            },
+        ],
+        DecompileOptions::default(),
+    )
+    .expect("plain multi-file inputs should decompile through unpack barrier");
+    assert_valid_module_graph(&output.modules);
+    let consumer = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "consumer.js")
+        .map(|(_, code)| code)
+        .expect("consumer module should exist");
+    assert!(
+        consumer.contains("export ")
+            && consumer.contains(r#"import("./gamma.js")"#)
+            && !consumer.contains("require("),
+        "the consumer becomes ESM with the lazy load restored:\n{consumer}"
+    );
+}
+
+#[test]
 fn interop_helper_without_proven_body_stays() {
     // A module that only names its export `__importDefault` proves nothing.
     let output = unpack_files(

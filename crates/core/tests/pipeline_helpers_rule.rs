@@ -511,6 +511,51 @@ fn trace_supports_rule_ranges() {
 }
 
 #[test]
+fn trace_stopping_at_un_esm_matches_the_single_file_decompile() {
+    // A trace is a single-file pipeline: stopping it at `UnEsm` must not
+    // make `UnEsm` run as unpack does, at every level and with a require
+    // left to stages that run only after unpack's fact barrier.
+    for (source, level) in [
+        ("module.exports = 1;", RewriteLevel::Minimal),
+        (
+            r#"var helpers = require("./helpers.js");
+var alpha = helpers.wrap(require("./alpha.js"));
+exports.read = read;
+function read() { return alpha; }"#,
+            RewriteLevel::Standard,
+        ),
+    ] {
+        let options = || DecompileOptions {
+            filename: "fixture.js".to_string(),
+            level,
+            ..Default::default()
+        };
+        let events = trace_rules(
+            source,
+            options(),
+            RuleTraceOptions {
+                stop_after: Some("UnEsm".to_string()),
+                only_changed: false,
+                ..Default::default()
+            },
+        )
+        .expect("trace should succeed");
+        let traced = &events.last().expect("the trace reaches UnEsm").after;
+        let decompiled = wakaru_core::decompile(source, options())
+            .expect("decompile should succeed")
+            .code;
+        assert!(
+            !decompiled.contains("export "),
+            "the decompile keeps CommonJS:\n{decompiled}"
+        );
+        assert!(
+            !traced.contains("export "),
+            "the trace keeps CommonJS as the decompile does:\n{traced}"
+        );
+    }
+}
+
+#[test]
 fn changed_rules_helper_returns_only_names() {
     let names = changed_rules("const x = void 0;");
     assert!(names.contains(&"RemoveVoid"));

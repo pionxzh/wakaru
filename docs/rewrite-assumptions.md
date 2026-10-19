@@ -888,7 +888,12 @@ value it returned (`import_unproven_helper_requires`; a default import for
 ES module, and a default import for a provider outside the input). A require
 the stages leave stays in the ESM output, and the
 `commonjs_require_unrecovered` warning reports it. A single file has no later
-stage, so there these shapes keep the module CommonJS too.
+stage, so there these shapes keep the module CommonJS too. Neither has raw
+unpack output, nor the late ESM recovery that ends unpack's Phase 2: it runs
+after these stages, which found the module still CommonJS. Of the requires
+`UnEsm` leaves to later stages, only a webpack lazy load is gone by then,
+because its restore reads a module of either format; Phase 1 predicts that
+recovery for the module facts with the same assumption.
 
 Source code and minifiers also leave a require inside an expression of any
 module: `module.exports = { a: require("./a") }` as written, or a bundled

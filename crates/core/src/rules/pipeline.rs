@@ -6,6 +6,7 @@ use swc_core::ecma::ast::Module;
 use swc_core::ecma::visit::VisitMutWith;
 
 use crate::facts::ModuleFactsMap;
+use crate::kept_require::LaterUnpackStages;
 use crate::DceMode;
 
 use super::dead_decls::compute_pre_dead_decl_spans;
@@ -344,7 +345,7 @@ fn run_un_esm(module: &mut Module, ctx: RuleRunContext<'_>) {
     let mut rule = UnEsm::new(ctx.unresolved_mark, ctx.rewrite_level)
         .with_current_filename(ctx.current_filename)
         .with_local_helpers(local_helpers)
-        .with_later_unpack_stages(ctx.mode.later_unpack_stages());
+        .with_later_stages(ctx.mode.later_unpack_stages());
     module.visit_mut_with(&mut rule);
     if let Some(evidence) = relative_namespace.as_mut() {
         if rule.lowered_esbuild_namespace() {
@@ -896,11 +897,21 @@ pub enum PipelineMode {
 }
 
 impl PipelineMode {
-    /// Whether stages after this run may still turn a top-level require
-    /// into an import from the other modules' facts
-    /// ([`UnEsm::with_later_unpack_stages`]). Every unpack mode assumes so.
-    pub(crate) fn later_unpack_stages(self) -> bool {
-        self != Self::SingleFile
+    /// The stages after this run that may still turn a require into an
+    /// import from the other modules' facts, so `UnEsm` may leave that
+    /// require to them ([`crate::kept_require::blocking_require_calls`]).
+    ///
+    /// The late ESM recovery that ends Phase 2 runs after every such stage.
+    /// A module it makes ESM was CommonJS while they ran, so of those stages
+    /// only the lazy-load restore, which reads a module of either format,
+    /// has taken its requires; Phase 1 predicts that recovery with the same
+    /// assumption.
+    pub(crate) fn later_unpack_stages(self) -> LaterUnpackStages {
+        match self {
+            Self::UnpackPhase1 => LaterUnpackStages::All,
+            Self::UnpackLatePrediction => LaterUnpackStages::LazyLoads,
+            Self::SingleFile | Self::UnpackPhase2 | Self::UnpackRaw => LaterUnpackStages::None,
+        }
     }
 
     /// The mode of a caller that does not state one, read from the options
@@ -1260,8 +1271,10 @@ mod tests {
     fn un_esm_leaves_helper_requires_to_later_unpack_stages_by_mode() {
         // `ns.helper(require("./p"))` with an imported `ns` is a require a
         // cross-module stage after the barrier may still turn into an
-        // import. Where such a stage still runs, `UnEsm` makes the module
-        // ESM around it; otherwise the require keeps the module CommonJS.
+        // import. Where such a stage still runs on the module as ESM,
+        // `UnEsm` makes the module ESM around it; otherwise the require
+        // keeps the module CommonJS. Late recovery runs after the stages,
+        // which saw the module still CommonJS.
         let source = r#"
 var helpers = require("./helpers.js");
 var alpha = helpers.wrap(require("./alpha.js"));
@@ -1271,9 +1284,9 @@ function read() { return alpha; }
         for (mode, expected) in [
             (PipelineMode::SingleFile, false),
             (PipelineMode::UnpackPhase1, true),
-            (PipelineMode::UnpackLatePrediction, true),
-            (PipelineMode::UnpackPhase2, true),
-            (PipelineMode::UnpackRaw, true),
+            (PipelineMode::UnpackLatePrediction, false),
+            (PipelineMode::UnpackPhase2, false),
+            (PipelineMode::UnpackRaw, false),
         ] {
             let options = RulePipelineOptions::until("UnEsm").with_mode(mode);
             assert_eq!(becomes_esm(source, options), expected, "{mode:?}");

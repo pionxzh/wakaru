@@ -85,12 +85,27 @@ pub(crate) fn kept_require_calls(module: &Module, unresolved_mark: Mark) -> Vec<
     finder.found
 }
 
-/// [`kept_require_calls`] after `UnEsm` converted the module. With
-/// `later_stages_before` (unpack), it leaves out the requires a later stage
-/// of unpack may still turn into imports from the other modules' facts, in
-/// the forms those stages accept:
+/// The stages of unpack after `UnEsm` that may still turn a require into
+/// an import from the other modules' facts ([`blocking_require_calls`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LaterUnpackStages {
+    /// No stage runs: a single file, raw output, or a run after the stages
+    /// (the late ESM recovery that ends Phase 2).
+    None,
+    /// Only the webpack lazy-load restore, which takes a load in a module of
+    /// either format. The other stages need an import binding or an
+    /// `export default` that a module still CommonJS when they run lacks:
+    /// Phase 1's prediction of the late ESM recovery that ends Phase 2.
+    LazyLoads,
+    /// Every stage: unpack's Phase 1.
+    All,
+}
+
+/// [`kept_require_calls`] after `UnEsm` converted the module, leaving out
+/// the requires `later_stages` may still turn into imports from the other
+/// modules' facts, in the forms those stages accept:
 ///
-/// - in a top-level statement before the index `later_stages_before`, the
+/// - in a top-level statement before the first hoisting barrier, the
 ///   require argument of an imported helper that initializes a top-level
 ///   `var`, `var x = helper(require("./p"))` or
 ///   `var x = ns.helper(require("./p"))` (`cross_module_interop_import`,
@@ -103,32 +118,40 @@ pub(crate) fn kept_require_calls(module: &Module, unresolved_mark: Mark) -> Vec<
 ///   (`run_cross_module_lowered_dynamic_imports`);
 /// - anywhere, the require of a webpack lazy load of a relative path,
 ///   `require.e(1).then(() => require("./p"))`
-///   (`run_cross_module_webpack_lazy_imports`).
+///   (`run_cross_module_webpack_lazy_imports`), the only form
+///   [`LaterUnpackStages::LazyLoads`] leaves out.
 ///
-/// The caller passes the first hoisting barrier as `later_stages_before`:
-/// the first two stages hoist their provider into an import, which loads it
-/// before the barrier. A require the later stages leave stays in ES module
-/// output, where the `commonjs_require_unrecovered` warning reports it. A
-/// single file has no later stage, and the stages read no other form, so
-/// every other require counts.
+/// `hoisting_before` gives the first hoisting barrier, read only for
+/// [`LaterUnpackStages::All`]: the first two stages hoist their provider
+/// into an import, which loads it before the barrier. A require the later
+/// stages leave stays in ES module output, where the
+/// `commonjs_require_unrecovered` warning reports it. Without a later stage
+/// every require counts, and the stages read no other form.
 pub(crate) fn blocking_require_calls(
     module: &Module,
     unresolved_mark: Mark,
-    later_stages_before: Option<usize>,
+    later_stages: LaterUnpackStages,
+    hoisting_before: impl FnOnce() -> usize,
 ) -> Vec<KeptRequire> {
-    let Some(later_stages_before) = later_stages_before else {
-        return kept_require_calls(module, unresolved_mark);
-    };
-    let mut imported = HashSet::default();
-    for item in &module.body {
-        if let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item {
-            imported.extend(import.specifiers.iter().map(|specifier| match specifier {
-                ImportSpecifier::Named(named) => binding_id(&named.local),
-                ImportSpecifier::Default(default) => binding_id(&default.local),
-                ImportSpecifier::Namespace(namespace) => binding_id(&namespace.local),
-            }));
+    // With no import binding and no statement before the barrier, only the
+    // lazy-load form is left out.
+    let (imported, hoisting_before) = match later_stages {
+        LaterUnpackStages::None => return kept_require_calls(module, unresolved_mark),
+        LaterUnpackStages::LazyLoads => (HashSet::default(), 0),
+        LaterUnpackStages::All => {
+            let mut imported = HashSet::default();
+            for item in &module.body {
+                if let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item {
+                    imported.extend(import.specifiers.iter().map(|specifier| match specifier {
+                        ImportSpecifier::Named(named) => binding_id(&named.local),
+                        ImportSpecifier::Default(default) => binding_id(&default.local),
+                        ImportSpecifier::Namespace(namespace) => binding_id(&namespace.local),
+                    }));
+                }
+            }
+            (imported, hoisting_before())
         }
-    }
+    };
     let mut finder = KeptRequireFinder {
         unresolved_mark,
         function_depth: 0,
@@ -140,7 +163,7 @@ pub(crate) fn blocking_require_calls(
         skip_helper_arguments: false,
     };
     for (index, item) in module.body.iter().enumerate() {
-        finder.eager_stages = index < later_stages_before;
+        finder.eager_stages = index < hoisting_before;
         item.visit_with(&mut finder);
     }
     finder.found
@@ -1502,7 +1525,7 @@ mod tests {
 
     fn blocking(source: &str) -> usize {
         with_module(source, |module, mark| {
-            blocking_require_calls(module, mark, Some(module.body.len())).len()
+            blocking_require_calls(module, mark, LaterUnpackStages::All, || module.body.len()).len()
         })
     }
 
@@ -1755,13 +1778,37 @@ try { require("g"); } catch (e) {}"#
             1
         );
         // A single file has no later stage.
+        let no_stage = |module: &Module, mark| {
+            blocking_require_calls(module, mark, LaterUnpackStages::None, || 0).len()
+        };
         with_module(
             r#"import h from "./h"; var a = h(require("./a")); export default {}; Object.assign(o, require("./b") || {});"#,
-            |module, mark| assert_eq!(blocking_require_calls(module, mark, None).len(), 2),
+            |module, mark| assert_eq!(no_stage(module, mark), 2),
         );
         with_module(
             r#"export function f() { return Promise.resolve().then(() => require("./a")); }"#,
-            |module, mark| assert_eq!(blocking_require_calls(module, mark, None).len(), 1),
+            |module, mark| assert_eq!(no_stage(module, mark), 1),
         );
+    }
+
+    #[test]
+    fn a_module_commonjs_until_the_stages_ran_leaves_out_only_lazy_loads() {
+        // The lazy-load restore takes a load in a CommonJS module too; the
+        // helper and composition stages need the import binding and the
+        // `export default` the module gains only afterwards.
+        let source = r#"import h from "./h"; var a = h(require("./a")); export default {}; Object.assign(o, require("./b") || {}); export function f() { return require.e(2).then(() => require("./c")); }"#;
+        for (later_stages, expected) in [
+            (LaterUnpackStages::None, 3),
+            (LaterUnpackStages::LazyLoads, 2),
+            (LaterUnpackStages::All, 0),
+        ] {
+            with_module(source, |module, mark| {
+                assert_eq!(
+                    blocking_require_calls(module, mark, later_stages, || module.body.len()).len(),
+                    expected,
+                    "{later_stages:?}"
+                );
+            });
+        }
     }
 }

@@ -1,7 +1,8 @@
 # Module interface model: provider and consumer facts before `UnEsm`
 
 Status: step 1 in progress on branch `claude/module-interface` (2026-10-20):
-the explicit execution mode (`PipelineMode`) has landed there. The maintainer
+the explicit execution mode (`PipelineMode`) and the late-recovery fix it
+exposed have landed there. The maintainer
 has decided the direction (see [Decisions](#decisions)); steps 2 to 4 need
 review before code. This proposal absorbs the consumer-aware provider format proposal
 (deferred 2026-10-15), whose problem statement is
@@ -232,6 +233,16 @@ Each mode states which later stages will still run, which is what
 `later_unpack_stages` approximates today. Late recovery in Phase 2 runs
 after the cross-module passes it would defer to; a test should pin what
 `UnEsm` assumes there.
+
+Step 1 found that the late recovery assumed every later stage still ran, so
+a module first made ESM there could keep a `require` no stage takes. Now
+`PipelineMode` (`SingleFile`, `UnpackPhase1`, `UnpackLatePrediction`,
+`UnpackPhase2`, `UnpackRaw`) maps to `kept_require::LaterUnpackStages`:
+all stages in Phase 1, none in a single file, raw output, or Phase 2's late
+recovery, and only the lazy-load restore, which takes a load in a CommonJS
+module, for Phase 1's prediction of that recovery. A prediction with no
+stage would disagree with Phase 2 on a module whose only such require is a
+lazy load. Barrier 0 adds a mode for Phase 1a, which does not run `UnEsm`.
 
 ## Steps
 

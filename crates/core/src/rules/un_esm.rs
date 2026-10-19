@@ -63,7 +63,7 @@ pub struct UnEsm {
     current_filename: Option<String>,
     local_helpers: Option<std::rc::Rc<LocalHelperContext>>,
     lowered_esbuild_namespace: bool,
-    later_unpack_stages: bool,
+    later_unpack_stages: kept_require::LaterUnpackStages,
 }
 
 impl UnEsm {
@@ -74,14 +74,28 @@ impl UnEsm {
             current_filename: None,
             local_helpers: None,
             lowered_esbuild_namespace: false,
-            later_unpack_stages: false,
+            later_unpack_stages: kept_require::LaterUnpackStages::None,
         }
     }
 
-    /// Unpack runs stages after `UnEsm` that turn some top-level requires
-    /// into imports from the other modules' facts, so a module keeping only
-    /// those may still become ESM ([`kept_require::blocking_require_calls`]).
-    pub fn with_later_unpack_stages(mut self, later_unpack_stages: bool) -> Self {
+    /// Unpack runs stages after `UnEsm` that turn some requires into
+    /// imports from the other modules' facts, so a module keeping only those
+    /// may still become ESM ([`kept_require::blocking_require_calls`]).
+    /// `true` assumes every such stage still runs, as in unpack's Phase 1.
+    pub fn with_later_unpack_stages(self, later_unpack_stages: bool) -> Self {
+        self.with_later_stages(if later_unpack_stages {
+            kept_require::LaterUnpackStages::All
+        } else {
+            kept_require::LaterUnpackStages::None
+        })
+    }
+
+    /// [`Self::with_later_unpack_stages`] for a run after some of the
+    /// stages.
+    pub(crate) fn with_later_stages(
+        mut self,
+        later_unpack_stages: kept_require::LaterUnpackStages,
+    ) -> Self {
         self.later_unpack_stages = later_unpack_stages;
         self
     }
@@ -296,17 +310,17 @@ impl UnEsm {
     /// converts. `harmony` as for [`Attempt::Harmony`]: a kept require is no
     /// hoisting barrier there.
     fn keeps_require_in_esm(&self, module: &Module, harmony: bool) -> bool {
-        // A later stage would turn a require after the first barrier into an
-        // import loaded before the barrier.
-        let later_stages_before = self.later_unpack_stages.then(|| {
-            hoist_barrier::first_barrier(module, self.unresolved_mark, harmony)
-                .unwrap_or(module.body.len())
-        });
         has_module_decl(module)
             && !kept_require::blocking_require_calls(
                 module,
                 self.unresolved_mark,
-                later_stages_before,
+                self.later_unpack_stages,
+                // A later stage would turn a require after the first barrier
+                // into an import loaded before the barrier.
+                || {
+                    hoist_barrier::first_barrier(module, self.unresolved_mark, harmony)
+                        .unwrap_or(module.body.len())
+                },
             )
             .is_empty()
     }

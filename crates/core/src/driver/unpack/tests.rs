@@ -831,3 +831,23 @@ require.r(exports);
         "expression-bodied arrows stay as written:\n{output}"
     );
 }
+
+/// Raw output runs no cross-module stage, so its late ESM recovery has no
+/// stage to leave a require to: a module that would keep one stays
+/// CommonJS, where the require still runs.
+#[test]
+fn raw_normalization_keeps_commonjs_for_a_require_no_stage_takes() {
+    // shape: hypothetical. The declarations share one statement, which only
+    // the late recovery's rule range splits before `UnEsm` converts them.
+    let source = r#"
+var helpers = require("./helpers.js"), alpha = helpers.wrap(require("./alpha.js"));
+exports.read = read;
+function read() { return alpha; }
+"#;
+    let output =
+        normalize_raw_unpacked_module(source, "module.js").expect("raw normalization succeeds");
+    assert!(
+        !(output.contains("require(") && output.contains("export ")),
+        "an ES module must not call require:\n{output}"
+    );
+}

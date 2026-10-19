@@ -8,7 +8,7 @@ use super::io::{parse_js, print_trace_module};
 use super::types::DecompileOptions;
 use super::unpack::detect_bundle;
 use super::{DriverError, DriverErrorKind, DriverResult};
-use crate::rules::{apply_rules_with_observer, rule_names, RulePipelineOptions};
+use crate::rules::{apply_rules_with_observer, rule_names, PipelineMode, RulePipelineOptions};
 
 #[derive(Debug, Clone)]
 pub struct RuleTraceOptions {
@@ -112,7 +112,7 @@ pub fn trace_rules(
                     rewrite_level: options.level,
                     module_facts: None,
                     current_filename: Some(&options.filename),
-                    mode: None,
+                    mode: Some(PipelineMode::SingleFile),
                     call_required_plan: None,
                 },
                 &mut observer,
