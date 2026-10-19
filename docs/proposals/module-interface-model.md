@@ -298,6 +298,36 @@ module, for Phase 1's prediction of that recovery. A prediction with no
 stage would disagree with Phase 2 on a module whose only such require is a
 lazy load. Barrier 0 adds a mode for Phase 1a, which does not run `UnEsm`.
 
+### A provider passed to a function
+
+Decided 2026-10-20 by the maintainer. `install(prov)` with
+`function install(m) { m.f = … }` keeps the call in unminified output, and
+Terser can inline it into a direct write, so counting only direct writes
+would give the same source a different format per producer.
+
+- **Counts as a write**: the callee is a function in the same module,
+  declared once, never reassigned, and not reading `arguments` (the
+  conditions of `Evidence::callee_params` in `rules/arrow_function.rs`),
+  and it writes that parameter: a member assignment, update, or `delete`,
+  or the target of `Object.assign` / `Object.defineProperty`. The provider
+  stays CommonJS.
+- **Does not count**: interop and re-export helpers, builtins that only
+  read (`Object.keys`), same-module functions that only read the
+  parameter, unknown callees, and callees in other modules. The provider
+  becomes ESM as today; unknown and cross-module callees fall under the
+  same accepted deviation as writes from outside the input.
+- **Warning**: a named-only provider passed to an unknown or cross-module
+  callee gets a non-error warning, since a write there breaks at runtime
+  and nothing reports it today.
+
+A write that works at runtime proves the provider's value was a mutable
+CommonJS `exports` object (an ES module namespace and webpack's
+getter-only exports reject writes), so keeping it CommonJS loses no
+correct recovery. Passing a value to a function proves nothing: ES modules
+pass namespaces to `Object.keys` and registries. Counting every escape as
+a write was rejected: in a sample of bundles from real websites it kept
+providers CommonJS with no write behind any of them.
+
 ## Steps
 
 1. **One provider derivation.** Build `ProviderInterface` from `ModuleFacts`
@@ -355,13 +385,6 @@ lazy load. Barrier 0 adds a mode for Phase 1a, which does not run `UnEsm`.
 
 ## Open questions
 
-- **A provider passed to a function.** `install(prov)` with
-  `function install(m) { m.f = … }` is an escape in unminified output, and
-  Terser can inline it into a direct write. Counting only direct writes
-  makes the same source get a different format per producer. Either an
-  escape keeps the provider CommonJS (safer, costs recovery), or the
-  collector follows one level into a local function's parameter writes.
-  To decide before step 3.
 - **Barrier 0 cost.** Every module waits for the slowest to reach `UnEsm`;
   the largest-first schedule limits but does not remove that. On the
   source-map path, ASTs that Phase 1 discards today must survive barrier 0.
