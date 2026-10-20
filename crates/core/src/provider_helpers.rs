@@ -40,6 +40,7 @@ use crate::analysis::binding_uses::BindingUseIndex;
 use crate::analysis::BindingId;
 use crate::collections::{HashMap, HashSet};
 use crate::facts::collect_commonjs_value_is_default;
+use crate::require_edges::CalleeExport;
 use crate::rules::transpiler_helper_utils::{
     classify_interop_helper_expr, classify_interop_helper_function, TranspilerHelperKind,
 };
@@ -83,6 +84,16 @@ impl ProviderHelpers {
             named_helpers(module, unresolved_mark, &functions)
         };
         (helpers.value.is_some() || !helpers.named.is_empty()).then_some(helpers)
+    }
+
+    /// The helper a consumer reaches through `export` of the required
+    /// value.
+    pub(crate) fn kind_of(&self, export: &CalleeExport) -> Option<TranspilerHelperKind> {
+        match export {
+            CalleeExport::Value => self.value,
+            CalleeExport::Named(name) => self.named(name),
+            CalleeExport::Other => None,
+        }
     }
 
     /// The helper the required value holds as the property `name`.

@@ -3109,6 +3109,50 @@ fn a_provider_passed_to_a_bundled_interop_helper_is_not_reported() {
     }
 }
 
+#[test]
+fn a_provider_passed_to_another_export_of_a_helper_module_is_reported() {
+    // Module 400 exports an interop helper, but the callee is another of its
+    // exports: only a proven helper export counts as reading the value.
+    let consumer = r#"function(module, exports, __webpack_require__) {
+      "use strict";
+      var helpers = __webpack_require__(400);
+      var p = __webpack_require__(100);
+      helpers.install(p);
+      exports.done = helpers.interop(p).default === p;
+    },
+    400: function(module, exports) {
+      "use strict";
+      exports.interop = function (e) { return e && e.__esModule ? e : { default: e }; };
+      exports.install = function (m) { m.f = function patched() {}; };
+    }"#;
+    for output in unpack_written_provider(consumer) {
+        assert_eq!(escape_warnings(&output), vec!["module-200.js"]);
+    }
+}
+
+#[test]
+fn a_provider_passed_to_a_helper_lookalike_is_reported() {
+    // The callee has the helper's name but not its body.
+    let consumer = r#"function(module, exports, __webpack_require__) {
+      "use strict";
+      var interop = __webpack_require__(400);
+      var p = interop(__webpack_require__(100));
+      exports.done = p.default.g() === "g";
+    },
+    400: function(module) {
+      function _interopRequireDefault(e) { e.f = function patched() {}; return { default: e }; }
+      module.exports = _interopRequireDefault, module.exports.__esModule = true, module.exports["default"] = module.exports;
+    }"#;
+    for output in unpack_written_provider(consumer) {
+        assert_eq!(
+            escape_warnings(&output),
+            vec!["module-200.js"],
+            "{:#?}",
+            output.warnings
+        );
+    }
+}
+
 /// A webpack 5 bundle of `modules`; its entry runs module 400's `run`.
 fn helper_provider_bundle(modules: &str) -> String {
     format!(

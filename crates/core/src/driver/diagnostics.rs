@@ -145,9 +145,10 @@ pub(super) fn collect_commonjs_require_of_esm_warnings(
 
 /// Report each provider whose CommonJS `exports` object this module passes
 /// to a callee the unpack plan cannot follow (one in another module that is
-/// not a transpiler helper module, or an unknown one), when the provider became an ES module read through its
-/// namespace. The namespace takes no write, so a write there throws when it
-/// runs; a write the plan can see keeps the provider CommonJS instead.
+/// not an interop helper that module is proven to export, or an unknown one),
+/// when the provider became an ES module read through its namespace. The
+/// namespace takes no write, so a write there throws when it runs; a write
+/// the plan can see keeps the provider CommonJS instead.
 pub(super) fn collect_commonjs_exports_escape_warnings(
     facts: &crate::facts::ModuleFactsMap,
     plan: &crate::interface_plan::InterfacePlan,
@@ -164,12 +165,11 @@ pub(super) fn collect_commonjs_exports_escape_warnings(
         let Some(uses) = edge.uses.as_ref() else {
             continue;
         };
-        // A transpiler helper module's export (an interop helper bundled as
-        // its own module) only reads the value.
+        // An interop helper bundled as its own module only reads the value,
+        // when barrier 0 proved that export is one.
         let other_callee = uses.passed_to_other_module.iter().find(|callee| {
-            !facts
-                .get_from(Some(filename), callee)
-                .is_some_and(|callee| callee.is_helper_module)
+            plan.helper_kind(filename, &callee.source, &callee.export)
+                .is_none()
         });
         if other_callee.is_none() && !uses.passed_to_unknown {
             continue;
@@ -192,7 +192,7 @@ pub(super) fn collect_commonjs_exports_escape_warnings(
         }
         reported.push(edge.source.as_ref());
         let callee = match other_callee {
-            Some(other) => format!("a function from \"{other}\""),
+            Some(other) => format!("a function from \"{}\"", other.source),
             None => "a function wakaru cannot follow".to_string(),
         };
         warnings.push(UnpackWarning::new(

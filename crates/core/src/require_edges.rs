@@ -131,9 +131,9 @@ pub struct RequireUses {
     /// The value is passed to a function of this module that writes the
     /// parameter it arrives in ([`ArgumentCallee`]).
     pub callee_write: bool,
-    /// The value is passed to a callee required from another module: the
-    /// sources, in first-use order.
-    pub passed_to_other_module: Vec<Atom>,
+    /// The value is passed to a callee required from another module, in
+    /// first-use order.
+    pub passed_to_other_module: Vec<ModuleCallee>,
     /// The value is passed to a callee whose effect on it is unknown.
     pub passed_to_unknown: bool,
 }
@@ -155,6 +155,28 @@ impl RequireUses {
     }
 }
 
+/// A callee required from another module, which a required value is
+/// passed to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModuleCallee {
+    /// The source the callee is required from.
+    pub source: Atom,
+    /// Which part of that source's required value the callee is.
+    pub export: CalleeExport,
+}
+
+/// The part of a required value a callee is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CalleeExport {
+    /// The value itself: `h(x)` with `var h = require("src")`, or
+    /// `require("src")(x)`.
+    Value,
+    /// One static member of it: `ns.name(x)`, `require("src").name(x)`.
+    Named(Atom),
+    /// A computed member, or a member of a member.
+    Other,
+}
+
 /// What a callee does with a required value passed to it as an argument.
 ///
 /// A same-module function counts as a writer when the call reaches it
@@ -173,8 +195,8 @@ enum ArgumentCallee {
     Writes,
     /// A same-module function binding, decided once the module is read.
     Local(BindingId),
-    /// A callee required from the source.
-    OtherModule(Atom),
+    /// A callee required from another module.
+    OtherModule(ModuleCallee),
     Unknown,
 }
 
@@ -630,10 +652,13 @@ impl fmt::Display for RequireUses {
             parts.push("written by a callee".to_string());
         }
         if !self.passed_to_other_module.is_empty() {
-            parts.push(format!(
-                "passed to a callee from {}",
-                join(&self.passed_to_other_module)
-            ));
+            let mut sources: Vec<Atom> = Vec::new();
+            for callee in &self.passed_to_other_module {
+                if !sources.contains(&callee.source) {
+                    sources.push(callee.source.clone());
+                }
+            }
+            parts.push(format!("passed to a callee from {}", join(&sources)));
         }
         if self.passed_to_unknown {
             parts.push("passed to an unknown callee".to_string());
@@ -1195,13 +1220,22 @@ impl UseCollector<'_> {
         }
         // A callee reached through a value required from another module.
         let mut base = callee;
+        let mut props = Vec::new();
         while let Expr::Member(member) = base {
+            props.push(&member.prop);
             base = strip_parens(&member.obj);
         }
+        let export = match props.as_slice() {
+            [] => CalleeExport::Value,
+            [prop] => static_member_name(prop).map_or(CalleeExport::Other, CalleeExport::Named),
+            _ => CalleeExport::Other,
+        };
+        let other_module =
+            |source: Atom| ArgumentCallee::OtherModule(ModuleCallee { source, export });
         match base {
             Expr::Call(call) => {
                 if let Some(source) = require_call_source(call, self.unresolved_mark) {
-                    return ArgumentCallee::OtherModule(source);
+                    return other_module(source);
                 }
                 ArgumentCallee::Unknown
             }
@@ -1211,7 +1245,7 @@ impl UseCollector<'_> {
                         .sources
                         .get(key)
                         .cloned()
-                        .map_or(ArgumentCallee::Unknown, ArgumentCallee::OtherModule);
+                        .map_or(ArgumentCallee::Unknown, other_module);
                 }
                 if std::ptr::eq(base, callee) && ident.ctxt.outer() != self.unresolved_mark {
                     return ArgumentCallee::Local(binding_id(ident));
@@ -1241,9 +1275,9 @@ impl UseCollector<'_> {
             match callee {
                 ArgumentCallee::Reads => {}
                 ArgumentCallee::Writes => uses.callee_write = true,
-                ArgumentCallee::OtherModule(source) => {
-                    if !uses.passed_to_other_module.contains(&source) {
-                        uses.passed_to_other_module.push(source);
+                ArgumentCallee::OtherModule(callee) => {
+                    if !uses.passed_to_other_module.contains(&callee) {
+                        uses.passed_to_other_module.push(callee);
                     }
                 }
                 ArgumentCallee::Unknown => uses.passed_to_unknown = true,
@@ -2012,6 +2046,7 @@ function twice(m) {}
 twice(require("./twice.js"));
 var installer = require("./installer.js");
 installer.install(require("./other.js"));
+installer.nested.install(require("./other3.js"));
 require("./direct.js")(require("./other2.js"));
 register(require("./global.js"));"#,
         );
@@ -2034,10 +2069,30 @@ register(require("./global.js"));"#,
             assert!(!uses.writes() && uses.passed_to_unknown, "{source}: {uses}");
         }
         let other = only(&edges, "./other.js").uses.expect("uses");
-        assert_eq!(other.passed_to_other_module, names(&["./installer.js"]));
+        assert_eq!(
+            other.passed_to_other_module,
+            [ModuleCallee {
+                source: "./installer.js".into(),
+                export: CalleeExport::Named("install".into()),
+            }]
+        );
         assert!(!other.writes());
+        let other3 = only(&edges, "./other3.js").uses.expect("uses");
+        assert_eq!(
+            other3.passed_to_other_module,
+            [ModuleCallee {
+                source: "./installer.js".into(),
+                export: CalleeExport::Other,
+            }]
+        );
         let other2 = only(&edges, "./other2.js").uses.expect("uses");
-        assert_eq!(other2.passed_to_other_module, names(&["./direct.js"]));
+        assert_eq!(
+            other2.passed_to_other_module,
+            [ModuleCallee {
+                source: "./direct.js".into(),
+                export: CalleeExport::Value,
+            }]
+        );
     }
 
     #[test]

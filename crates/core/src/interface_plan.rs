@@ -30,7 +30,8 @@ use swc_core::atoms::Atom;
 use crate::collections::{HashMap, HashSet};
 use crate::facts::{canonical_module_key, resolve_module_key};
 use crate::provider_helpers::ProviderHelpers;
-use crate::require_edges::{RequireEdges, RequireUses};
+use crate::require_edges::{CalleeExport, RequireEdges, RequireUses};
+use crate::rules::transpiler_helper_utils::TranspilerHelperKind;
 
 /// One module's input to the plan.
 pub(crate) struct PlanModule<'a> {
@@ -163,6 +164,22 @@ impl InterfacePlan {
     /// The interop helpers the module exports, when it is not written.
     pub(crate) fn helper_exports(&self, filename: &str) -> Option<&ProviderHelpers> {
         self.helpers.get(&canonical_module_key(filename))
+    }
+
+    /// The interop helper `filename` reaches as `export` of what it
+    /// requires from `source`.
+    pub(crate) fn helper_kind(
+        &self,
+        filename: &str,
+        source: &str,
+        export: &CalleeExport,
+    ) -> Option<TranspilerHelperKind> {
+        let (_, provider) = self
+            .helper_sources
+            .get(&canonical_module_key(filename))?
+            .iter()
+            .find(|(required, _)| required.as_ref() == source)?;
+        self.helpers.get(provider)?.kind_of(export)
     }
 
     /// Whether requiring the module returned a writable CommonJS `exports`
@@ -380,6 +397,22 @@ h(require("./other.js"));"#,
             ["./helper.js"]
         );
         assert!(plan.helper_sources("src/helper.js").is_empty());
+        assert_eq!(
+            plan.helper_kind("src/consumer.js", "./helper.js", &CalleeExport::Value),
+            Some(TranspilerHelperKind::InteropRequireDefault)
+        );
+        assert_eq!(
+            plan.helper_kind(
+                "src/consumer.js",
+                "./helper.js",
+                &CalleeExport::Named("default".into())
+            ),
+            None
+        );
+        assert_eq!(
+            plan.helper_kind("src/consumer.js", "./written.js", &CalleeExport::Value),
+            None
+        );
     }
 
     #[test]
