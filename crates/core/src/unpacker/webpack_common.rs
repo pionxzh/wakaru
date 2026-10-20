@@ -19,6 +19,7 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::emit_esm::{dedup_filename, FilenameDedupStyle};
+use super::webpack4::require_id_arg_index;
 use super::DetectedModuleFailure;
 use crate::analysis::binding_uses::{BindingId, BindingUseIndex, UseKind};
 use crate::module_path::relative_import_specifier;
@@ -41,6 +42,70 @@ pub(super) enum FactoryNormalizationError {
     FreeNameCapture,
     /// Any other normalization failure remains container-fatal.
     Fatal,
+}
+
+/// String module ids that the factory loads through its loader parameter but
+/// that `string_ids` (its own table) does not hold: modules of another chunk,
+/// or opaque ones. A string of digits stays a string id: the runtime looks the
+/// module up by property key, so `"2638"` names key `2638` and `"0366"` names
+/// only key `"0366"`. Collected before the parameter is renamed to `require`,
+/// while a loader call is still told apart from a free `require("pkg")`. An id
+/// that a free `require` also passes is left out, since the two calls look
+/// the same after the rename.
+pub(super) fn absent_loader_string_ids(
+    module: &Module,
+    loader_sym: &Atom,
+    unresolved_mark: Mark,
+    string_ids: &HashMap<String, String>,
+) -> HashSet<String> {
+    struct Collector<'a> {
+        loader_sym: &'a Atom,
+        require_sym: Atom,
+        unresolved_mark: Mark,
+        string_ids: &'a HashMap<String, String>,
+        loader: HashSet<String>,
+        free: HashSet<String>,
+    }
+
+    impl Collector<'_> {
+        fn string_arg(call: &CallExpr, sym: &Atom, unresolved_mark: Mark) -> Option<String> {
+            let index = require_id_arg_index(call, sym, unresolved_mark)?;
+            let Expr::Lit(Lit::Str(request)) = strip_parens(&call.args[index].expr) else {
+                return None;
+            };
+            request.value.as_str().map(str::to_string)
+        }
+    }
+
+    impl Visit for Collector<'_> {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            call.visit_children_with(self);
+            if let Some(id) = Self::string_arg(call, self.loader_sym, self.unresolved_mark) {
+                if !self.string_ids.contains_key(&id) {
+                    self.loader.insert(id);
+                }
+            } else if *self.loader_sym != self.require_sym {
+                if let Some(id) = Self::string_arg(call, &self.require_sym, self.unresolved_mark) {
+                    self.free.insert(id);
+                }
+            }
+        }
+    }
+
+    let mut collector = Collector {
+        loader_sym,
+        require_sym: Atom::from("require"),
+        unresolved_mark,
+        string_ids,
+        loader: HashSet::default(),
+        free: HashSet::default(),
+    };
+    module.visit_with(&mut collector);
+    let Collector {
+        mut loader, free, ..
+    } = collector;
+    loader.retain(|id| !free.contains(id));
+    loader
 }
 
 /// Whether a free `require(...)` call may share the `require` name with the

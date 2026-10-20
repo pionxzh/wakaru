@@ -546,6 +546,22 @@ fn unpack_prepared_inputs_impl(
                             })
                     })
                     .collect::<HashMap<_, _>>();
+                let mut webpack_absent_string_ids = detected
+                    .result
+                    .modules
+                    .iter()
+                    .filter_map(|module| {
+                        detected
+                            .webpack_absent_string_ids
+                            .get(&module.filename)
+                            .map(|ids| {
+                                (
+                                    (module.id.clone(), module.filename.clone()),
+                                    Arc::new(ids.clone()),
+                                )
+                            })
+                    })
+                    .collect::<HashMap<_, _>>();
                 let webpack_legacy_module_i = detected
                     .result
                     .modules
@@ -595,6 +611,9 @@ fn unpack_prepared_inputs_impl(
                                 .copied();
                             let webpack_legacy_module_i = webpack_legacy_module_i
                                 .contains(&(module.id.clone(), module.filename.clone()));
+                            let webpack_absent_string_ids = webpack_absent_string_ids
+                                .remove(&(module.id.clone(), module.filename.clone()))
+                                .unwrap_or_default();
                             MultiSourceModule::detected_with_ast_from_input(
                                 module,
                                 ast,
@@ -608,6 +627,7 @@ fn unpack_prepared_inputs_impl(
                             .with_webpack_commonjs_runtime(webpack_commonjs_runtime)
                             .with_webpack_numeric_module_id(webpack_numeric_module_id)
                             .with_webpack_legacy_module_i(webpack_legacy_module_i)
+                            .with_webpack_absent_string_ids(webpack_absent_string_ids)
                             .with_chunk_loading_globals(chunk_loading_globals.clone())
                             .with_detector_failure(detector_failure)
                             .with_detector_note(detector_note)

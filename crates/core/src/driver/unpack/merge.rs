@@ -2,9 +2,11 @@
 //!
 //! When unpacking multiple input files at once, extracted module filenames are
 //! uniqued across inputs. Relative references are updated when that uniquing
-//! renames sibling outputs, and numeric `require(<id>)` / async-chunk
+//! renames sibling outputs, and webpack `require(<id>)` / async-chunk
 //! references are rewritten when the target id is unambiguous among the
-//! inputs of the referencing module's build.
+//! inputs of the referencing module's build: any numeric id, and a string id
+//! only where the detector saw the factory load it and found it absent from
+//! its own table.
 
 use crate::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -49,6 +51,10 @@ pub(super) struct MultiSourceModule {
     /// Numeric module identity retained from the original webpack container
     /// key. `None` includes named ids and synthetic recursive children.
     webpack_numeric_module_id: Option<f64>,
+    /// String ids the factory loads that its own table lacks. Only a call
+    /// with one of these may link to a module of another input; any other
+    /// string `require` is authored or already rewritten.
+    webpack_absent_string_ids: Arc<HashSet<String>>,
     /// Whether the original container proves webpack 4's `module.i` spelling.
     webpack_legacy_module_i: bool,
     /// A structural detector lifted this code out of a callable body. If ESM
@@ -63,7 +69,7 @@ pub(super) struct MultiSourceModule {
     external_consumers: bool,
     chunk_ids: Arc<HashSet<usize>>,
     /// The input's build identity: the chunk-loading globals it pushes into or
-    /// binds as a runtime (empty when it shows none). A numeric reference only
+    /// binds as a runtime (empty when it shows none). A module-id reference only
     /// links to a module of the same build.
     chunk_loading_globals: Arc<[String]>,
     input_filename: String,
@@ -125,6 +131,7 @@ impl MultiSourceModule {
             implicit_commonjs_default_object: false,
             webpack_commonjs_runtime: false,
             webpack_numeric_module_id: None,
+            webpack_absent_string_ids: Arc::default(),
             webpack_legacy_module_i: false,
             restore_lifted_function_boundary: true,
             allow_cross_chunk_rewrite: true,
@@ -163,6 +170,11 @@ impl MultiSourceModule {
         self
     }
 
+    pub(super) fn with_webpack_absent_string_ids(mut self, ids: Arc<HashSet<String>>) -> Self {
+        self.webpack_absent_string_ids = ids;
+        self
+    }
+
     pub(super) fn with_webpack_legacy_module_i(mut self, enabled: bool) -> Self {
         self.webpack_legacy_module_i = enabled;
         self
@@ -191,6 +203,7 @@ impl MultiSourceModule {
             implicit_commonjs_default_object: false,
             webpack_commonjs_runtime: false,
             webpack_numeric_module_id: None,
+            webpack_absent_string_ids: Arc::default(),
             webpack_legacy_module_i: false,
             restore_lifted_function_boundary: false,
             allow_cross_chunk_rewrite: false,
@@ -275,6 +288,7 @@ pub(super) struct NumericRewriteModuleContext {
     input_group: String,
     module_filename: String,
     build: Arc<[String]>,
+    absent_string_ids: Arc<HashSet<String>>,
 }
 
 pub(super) struct FilenameRewriteModuleContext {
@@ -283,13 +297,14 @@ pub(super) struct FilenameRewriteModuleContext {
     rename_map: Arc<HashMap<String, String>>,
 }
 
-/// Every module that a numeric id names, across all inputs. A reference
-/// resolves only when exactly one candidate belongs to the referencing
-/// module's build and that candidate is healthy.
+/// Every module that a numeric id, or a webpack string id, names across all
+/// inputs. A reference resolves only when exactly one candidate belongs to
+/// the referencing module's build and that candidate is healthy.
 #[derive(Default)]
 pub(super) struct NumericRewritePlan {
     plain_id_targets: HashMap<usize, Vec<NumericTarget>>,
     chunk_id_targets: HashMap<(String, usize, usize), Vec<NumericTarget>>,
+    string_id_targets: HashMap<String, Vec<NumericTarget>>,
     can_rewrite: bool,
 }
 
@@ -305,6 +320,7 @@ impl NumericRewritePlan {
     fn new(
         plain_id_targets: HashMap<usize, Vec<NumericTarget>>,
         chunk_id_targets: HashMap<(String, usize, usize), Vec<NumericTarget>>,
+        string_id_targets: HashMap<String, Vec<NumericTarget>>,
     ) -> Self {
         // Skip the rewrite pass when no candidate could ever resolve: every
         // candidate is opaque or shares its build with another candidate.
@@ -314,11 +330,13 @@ impl NumericRewritePlan {
                     && resolve_numeric_target(targets, &target.build).is_some()
             })
         };
-        let can_rewrite =
-            plain_id_targets.values().any(resolvable) || chunk_id_targets.values().any(resolvable);
+        let can_rewrite = plain_id_targets.values().any(resolvable)
+            || chunk_id_targets.values().any(resolvable)
+            || string_id_targets.values().any(resolvable);
         Self {
             plain_id_targets,
             chunk_id_targets,
+            string_id_targets,
             can_rewrite,
         }
     }
@@ -385,6 +403,7 @@ pub(super) fn prepare_multi_source_modules(
     let numeric_rewrite_plan = NumericRewritePlan::new(
         numeric_module_id_targets(&modules),
         numeric_chunk_module_id_targets(&modules),
+        string_module_id_targets(&modules),
     );
     let has_rewrites = !numeric_rewrite_plan.is_empty();
 
@@ -401,6 +420,7 @@ pub(super) fn prepare_multi_source_modules(
                     input_group: module.input_group,
                     module_filename: module.module.filename.clone(),
                     build: module.chunk_loading_globals.clone(),
+                    absent_string_ids: module.webpack_absent_string_ids.clone(),
                 })
             } else {
                 None
@@ -587,6 +607,28 @@ fn numeric_module_id_targets(modules: &[MultiSourceModule]) -> HashMap<usize, Ve
     targets
 }
 
+/// Webpack factories by the property key of their table entry, which is what
+/// a string loader call looks up: a numeric key `2638` answers `"2638"`.
+/// Synthetic children of a split factory carry no detector identity, and an
+/// entry module may be a synthesized startup whose id is no table key; both
+/// are left out.
+fn string_module_id_targets(modules: &[MultiSourceModule]) -> HashMap<String, Vec<NumericTarget>> {
+    let mut targets: HashMap<String, Vec<NumericTarget>> = HashMap::default();
+    for module in modules {
+        if !module.allow_cross_chunk_rewrite
+            || !module.webpack_commonjs_runtime
+            || module.module.is_entry
+        {
+            continue;
+        }
+        targets
+            .entry(module.module.id.clone())
+            .or_default()
+            .push(numeric_target(module));
+    }
+    targets
+}
+
 fn numeric_chunk_module_id_targets(
     modules: &[MultiSourceModule],
 ) -> HashMap<(String, usize, usize), Vec<NumericTarget>> {
@@ -651,6 +693,7 @@ pub(super) fn apply_numeric_rewrites(
         input_group: &context.input_group,
         module_filename: &context.module_filename,
         build: &context.build,
+        absent_string_ids: &context.absent_string_ids,
         unresolved_mark,
         plan,
     });
@@ -764,6 +807,7 @@ struct WebpackNumericReferenceRewriter<'a> {
     input_group: &'a str,
     module_filename: &'a str,
     build: &'a [String],
+    absent_string_ids: &'a HashSet<String>,
     unresolved_mark: Mark,
     plan: &'a NumericRewritePlan,
 }
@@ -785,14 +829,16 @@ impl WebpackNumericReferenceRewriter<'_> {
         else {
             return;
         };
-        let Some(module_id) = numeric_arg_id(&call.args[index].expr) else {
-            return;
+        let targets = match strip_parens(&call.args[index].expr) {
+            Expr::Lit(Lit::Str(request)) => request
+                .value
+                .as_str()
+                .filter(|id| self.absent_string_ids.contains(*id))
+                .and_then(|id| self.plan.string_id_targets.get(id)),
+            expr => numeric_arg_id(expr).and_then(|id| self.plan.plain_id_targets.get(&id)),
         };
-        let Some(filename) = self
-            .plan
-            .plain_id_targets
-            .get(&module_id)
-            .and_then(|targets| resolve_numeric_target(targets, self.build))
+        let Some(filename) =
+            targets.and_then(|targets| resolve_numeric_target(targets, self.build))
         else {
             return;
         };

@@ -25,8 +25,8 @@ use crate::unpacker::webpack4::{
     RequireStringIdRewriter,
 };
 use crate::unpacker::webpack_common::{
-    is_external_require_call, isolated_failure, numeric_id_from_expr, split_array_concat,
-    FactoryNormalizationError,
+    absent_loader_string_ids, is_external_require_call, isolated_failure, numeric_id_from_expr,
+    split_array_concat, FactoryNormalizationError,
 };
 use crate::unpacker::{
     deconflict_runtime_binding_renames, emit_module_with_positions, source_fallback_for_stmts,
@@ -459,6 +459,7 @@ pub(super) fn detect_chunk_from_module_prepared(
     let mut all_prepared = Vec::new();
     let mut all_failures = HashMap::default();
     let mut all_numeric_module_ids = HashMap::default();
+    let mut all_absent_string_ids = HashMap::default();
     let mut all_legacy_module_i = HashSet::default();
 
     for item in &module.body {
@@ -474,12 +475,14 @@ pub(super) fn detect_chunk_from_module_prepared(
             all_prepared.extend(extracted.prepared);
             all_failures.extend(extracted.failures);
             all_numeric_module_ids.extend(extracted.numeric_module_ids);
+            all_absent_string_ids.extend(extracted.absent_string_ids);
         } else if let Some(modules_container) = extract_commonjs_chunk_modules(expr) {
             let extracted = extract_modules_from_container(&modules_container, cm.clone())?;
             all_modules.extend(extracted.modules);
             all_prepared.extend(extracted.prepared);
             all_failures.extend(extracted.failures);
             all_numeric_module_ids.extend(extracted.numeric_module_ids);
+            all_absent_string_ids.extend(extracted.absent_string_ids);
         }
     }
 
@@ -500,6 +503,7 @@ pub(super) fn detect_chunk_from_module_prepared(
         )
         .with_module_failures(all_failures)
         .with_webpack_numeric_module_ids(all_numeric_module_ids)
+        .with_webpack_absent_string_ids(all_absent_string_ids)
         .with_webpack_legacy_module_i(all_legacy_module_i),
     )
 }
@@ -1670,6 +1674,9 @@ struct PreparedWebpack5Factories {
     failures: HashMap<String, DetectedModuleFailure>,
     id_to_filename: HashMap<usize, String>,
     str_id_to_filename: HashMap<String, String>,
+    /// Per prepared factory filename: the string ids it loads that the table
+    /// lacks, for cross-input rewrites.
+    absent_string_ids: HashMap<String, HashSet<String>>,
 }
 
 /// Runtime-parameter reuse and free-name capture keep one factory opaque.
@@ -1704,6 +1711,7 @@ fn prepare_webpack5_factories(
             .collect();
 
         let mut prepared = Vec::with_capacity(module_entries.len());
+        let mut absent_string_ids = HashMap::default();
         let mut newly_opaque = HashMap::default();
         for entry in module_entries {
             if opaque_filenames.contains_key(&entry.filename) {
@@ -1711,7 +1719,12 @@ fn prepare_webpack5_factories(
                 continue;
             }
             match prepare_webpack5_module(entry, &id_to_filename, &str_id_to_filename) {
-                Ok(ast) => prepared.push(Some(ast)),
+                Ok((ast, absent)) => {
+                    if !absent.is_empty() {
+                        absent_string_ids.insert(entry.filename.clone(), absent);
+                    }
+                    prepared.push(Some(ast));
+                }
                 Err(
                     error @ (FactoryNormalizationError::RuntimeParameterReuse
                     | FactoryNormalizationError::FreeNameCapture),
@@ -1738,6 +1751,7 @@ fn prepare_webpack5_factories(
                 failures: opaque_filenames,
                 id_to_filename,
                 str_id_to_filename,
+                absent_string_ids,
             });
         }
         opaque_filenames.extend(newly_opaque);
@@ -1781,6 +1795,7 @@ struct ExtractedWebpack5Modules {
     prepared: Vec<Option<PreparedModuleAst>>,
     failures: HashMap<String, DetectedModuleFailure>,
     numeric_module_ids: HashMap<String, f64>,
+    absent_string_ids: HashMap<String, HashSet<String>>,
 }
 
 fn extract_modules_from_container(
@@ -1821,6 +1836,7 @@ fn extract_modules_from_container(
             .iter()
             .filter_map(|entry| entry.numeric_id.map(|id| (entry.filename.clone(), id)))
             .collect(),
+        absent_string_ids: prepared_factories.absent_string_ids,
     })
 }
 
@@ -1893,6 +1909,7 @@ fn extract_webpack5_modules_with_plan(
         failures,
         id_to_filename,
         str_id_to_filename,
+        absent_string_ids,
     } = prepare_webpack5_factories(&module_entries, false)?;
     if !module_entries.is_empty() && failures.len() == module_entries.len() {
         // A synthetic startup cannot make an entirely opaque module table
@@ -2043,7 +2060,8 @@ fn extract_webpack5_modules_with_plan(
             cm,
         )
         .with_module_failures(failures)
-        .with_webpack_numeric_module_ids(numeric_module_ids),
+        .with_webpack_numeric_module_ids(numeric_module_ids)
+        .with_webpack_absent_string_ids(absent_string_ids),
     )
 }
 
@@ -4030,30 +4048,34 @@ fn extract_factory_parts(expr: &Expr) -> Option<(Webpack5FactoryParams<'_>, &[St
     }
 }
 
+/// The prepared module, and the string ids it loads that its table lacks.
 fn prepare_webpack5_module(
     descriptor: &Webpack5ModuleDescriptor<'_>,
     id_to_filename: &HashMap<usize, String>,
     str_id_to_filename: &HashMap<String, String>,
-) -> Result<PreparedModuleAst, FactoryNormalizationError> {
+) -> Result<(PreparedModuleAst, HashSet<String>), FactoryNormalizationError> {
     let span = tracing::info_span!("webpack5: prepare_module");
     let _enter = span.enter();
 
     let globals = Globals::new();
-    let (synthetic_module, unresolved_mark) = GLOBALS.set(&globals, || {
-        let (mut synthetic_module, unresolved_mark) =
+    let (synthetic_module, unresolved_mark, absent_string_ids) = GLOBALS.set(&globals, || {
+        let (mut synthetic_module, unresolved_mark, absent_string_ids) =
             normalize_extracted_webpack_module(descriptor, id_to_filename, str_id_to_filename)?;
         let span = tracing::info_span!("webpack5: fixer");
         let _enter = span.enter();
         apply_fixer(&mut synthetic_module).map_err(|_| FactoryNormalizationError::Fatal)?;
-        Ok((synthetic_module, unresolved_mark))
+        Ok((synthetic_module, unresolved_mark, absent_string_ids))
     })?;
 
-    Ok(PreparedModuleAst {
-        globals,
-        module: synthetic_module,
-        unresolved_mark,
-        recoverable_parse_errors: Vec::new(),
-    })
+    Ok((
+        PreparedModuleAst {
+            globals,
+            module: synthetic_module,
+            unresolved_mark,
+            recoverable_parse_errors: Vec::new(),
+        },
+        absent_string_ids,
+    ))
 }
 
 /// Normalize a webpack5 factory body into a standalone module.
@@ -4066,7 +4088,7 @@ fn normalize_extracted_webpack_module(
     descriptor: &Webpack5ModuleDescriptor<'_>,
     id_to_filename: &HashMap<usize, String>,
     str_id_to_filename: &HashMap<String, String>,
-) -> Result<(Module, Mark), FactoryNormalizationError> {
+) -> Result<(Module, Mark, HashSet<String>), FactoryNormalizationError> {
     let mut synthetic_module = build_module_from_stmts(descriptor.body_stmts.to_vec());
 
     let param_syms: Vec<Atom> = match descriptor.params {
@@ -4101,6 +4123,17 @@ fn normalize_extracted_webpack_module(
         unresolved_mark,
         true,
     );
+    let absent_string_ids = param_syms
+        .get(2)
+        .map(|loader| {
+            absent_loader_string_ids(
+                &synthetic_module,
+                loader,
+                unresolved_mark,
+                str_id_to_filename,
+            )
+        })
+        .unwrap_or_default();
 
     {
         let span = tracing::info_span!("webpack5: normalize");
@@ -4183,7 +4216,7 @@ fn normalize_extracted_webpack_module(
         unwrap_webpack_global_envelopes(&mut synthetic_module, unresolved_mark);
     }
 
-    Ok((synthetic_module, unresolved_mark))
+    Ok((synthetic_module, unresolved_mark, absent_string_ids))
 }
 
 fn extract_iife_stmt_body(stmt: &Stmt) -> Option<&swc_core::ecma::ast::FunctionBody> {

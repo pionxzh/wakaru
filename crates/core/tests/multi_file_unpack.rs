@@ -1696,6 +1696,198 @@ fn numeric_require_links_a_runtime_bundle_to_chunks_of_the_global_it_binds() {
     assert!(!consumer.contains("require(999)"), "{consumer}");
 }
 
+const HASHED_CONSUMER_CHUNK: &str = r#"
+(self.webpackChunk_app = self.webpackChunk_app || []).push([[1], {
+    "+BL1": function(module, exports, load) {
+        "use strict";
+        var dep = load("NOtv");
+        exports.run = function() { return dep.a(); };
+    }
+}]);
+"#;
+
+const HASHED_PROVIDER_CHUNK: &str = r#"
+(self.webpackChunk_app = self.webpackChunk_app || []).push([[2], {
+    "NOtv": function(module, exports) {
+        "use strict";
+        exports.a = function() { return 1; };
+    }
+}]);
+"#;
+
+#[test]
+fn string_id_require_links_across_inputs_of_one_build() {
+    for inputs in [
+        [
+            ("app.js", HASHED_CONSUMER_CHUNK),
+            ("provider.js", HASHED_PROVIDER_CHUNK),
+        ],
+        [
+            ("provider.js", HASHED_PROVIDER_CHUNK),
+            ("app.js", HASHED_CONSUMER_CHUNK),
+        ],
+    ] {
+        let modules = unpack_named(&inputs);
+        let consumer = module_named(&modules, "module-+BL1.js");
+        assert!(
+            consumer.contains(r#"import { a } from "./module-NOtv.js""#),
+            "{consumer}"
+        );
+        assert_valid_module_graph(&modules);
+    }
+}
+
+#[test]
+fn named_id_require_links_across_inputs_relative_to_the_consumer() {
+    let consumer = r#"
+(self.webpackChunk_app = self.webpackChunk_app || []).push([[1], {
+    "./src/app.js": function(module, exports, load) {
+        "use strict";
+        var dep = load("./src/util.js");
+        exports.run = function() { return dep.a(); };
+    }
+}]);
+"#;
+    let provider = r#"
+(self.webpackChunk_app = self.webpackChunk_app || []).push([[2], {
+    "./src/util.js": function(module, exports) {
+        "use strict";
+        exports.a = function() { return 1; };
+    }
+}]);
+"#;
+    let modules = unpack_named(&[("app.js", consumer), ("provider.js", provider)]);
+    let consumer = module_named(&modules, "src/app.js");
+    assert!(
+        consumer.contains(r#"import { a } from "./util.js""#),
+        "{consumer}"
+    );
+    assert_valid_module_graph(&modules);
+}
+
+#[test]
+fn digit_string_id_require_links_by_property_key() {
+    // A hashed id can be all digits. The runtime looks the module up by
+    // property key: `"2638"` is key `2638`, while `"0366"` is not key `366`.
+    let consumer = r#"
+(self.webpackChunk_app = self.webpackChunk_app || []).push([[1], {
+    "+BL1": function(module, exports, load) {
+        module.exports = [load("2638"), load("0366")];
+    }
+}]);
+"#;
+    let provider = r#"
+(self.webpackChunk_app = self.webpackChunk_app || []).push([[2], {
+    2638: function(module) { module.exports = 1; },
+    366: function(module) { module.exports = 2; }
+}]);
+"#;
+    let modules = unpack_named(&[("app.js", consumer), ("provider.js", provider)]);
+    let consumer = module_named(&modules, "module-+BL1.js");
+    assert!(consumer.contains("./module-2638.js"), "{consumer}");
+    assert!(!consumer.contains("./module-366.js"), "{consumer}");
+}
+
+#[test]
+fn string_id_require_does_not_link_into_another_builds_chunk() {
+    let widget = HASHED_PROVIDER_CHUNK.replace("webpackChunk_app", "webpackChunk_widget");
+    let modules = unpack_named(&[("app.js", HASHED_CONSUMER_CHUNK), ("widget.js", &widget)]);
+    let consumer = module_named(&modules, "module-+BL1.js");
+    assert!(!consumer.contains("./module-NOtv"), "{consumer}");
+}
+
+#[test]
+fn string_id_require_stays_unlinked_when_two_inputs_of_the_build_carry_it() {
+    let modules = unpack_named(&[
+        ("app.js", HASHED_CONSUMER_CHUNK),
+        ("provider.js", HASHED_PROVIDER_CHUNK),
+        ("copy.js", HASHED_PROVIDER_CHUNK),
+    ]);
+    let consumer = module_named(&modules, "module-+BL1.js");
+    assert!(!consumer.contains("./module-NOtv"), "{consumer}");
+}
+
+#[test]
+fn string_id_rewrite_leaves_a_free_require_of_the_same_request() {
+    // `require` here is the host's, not the loader: after the loader is
+    // renamed to `require` the two calls look the same, so neither links.
+    let consumer = r#"
+(self.webpackChunk_app = self.webpackChunk_app || []).push([[1], {
+    "+BL1": function(module, exports, load) {
+        module.exports = [load("NOtv"), require("NOtv"), require("UUUU")];
+    }
+}]);
+"#;
+    let provider = r#"
+(self.webpackChunk_app = self.webpackChunk_app || []).push([[2], {
+    "NOtv": function(module) { module.exports = 1; },
+    "UUUU": function(module) { module.exports = 2; }
+}]);
+"#;
+    let modules = unpack_named(&[("app.js", consumer), ("provider.js", provider)]);
+    let consumer = module_named(&modules, "module-+BL1.js");
+    assert!(!consumer.contains("./module-NOtv"), "{consumer}");
+    assert!(!consumer.contains("./module-UUUU"), "{consumer}");
+}
+
+#[test]
+fn string_id_rewrite_leaves_a_local_reference_that_spells_another_inputs_id() {
+    // The consumer's own table resolves `./src/util.js`, rewritten to
+    // `./util.js` from `src/main.js`; the other input's module whose raw id
+    // is `./util.js` must not capture that local reference.
+    let consumer = r#"
+(self.webpackChunk_app = self.webpackChunk_app || []).push([[1], {
+    "./src/main.js": function(module, exports, load) {
+        "use strict";
+        var dep = load("./src/util.js");
+        exports.run = function() { return dep.local; };
+    },
+    "./src/util.js": function(module, exports) {
+        "use strict";
+        exports.local = 1;
+    }
+}]);
+"#;
+    let other = r#"
+(self.webpackChunk_app = self.webpackChunk_app || []).push([[2], {
+    "./util.js": function(module, exports) {
+        "use strict";
+        exports.other = 2;
+    }
+}]);
+"#;
+    let modules = unpack_named(&[("app.js", consumer), ("other.js", other)]);
+    let consumer = module_named(&modules, "src/main.js");
+    assert!(
+        consumer.contains(r#"import { local } from "./util.js""#),
+        "{consumer}"
+    );
+    assert_valid_module_graph(&modules);
+}
+
+#[test]
+fn string_id_require_links_across_inputs_in_raw_mode() {
+    let output = unpack_files_raw(
+        vec![
+            UnpackInput {
+                filename: "app.js".to_string(),
+                source: HASHED_CONSUMER_CHUNK.to_string(),
+            },
+            UnpackInput {
+                filename: "provider.js".to_string(),
+                source: HASHED_PROVIDER_CHUNK.to_string(),
+            },
+        ],
+        &DecompileOptions::default(),
+    )
+    .expect("raw inputs should unpack together");
+    let consumer = module_named(&output.modules, "module-+BL1.js");
+    assert!(
+        consumer.contains(r#"require("./module-NOtv.js")"#),
+        "{consumer}"
+    );
+}
+
 #[test]
 fn parent_relative_inputs_keep_public_paths_without_failing() {
     // `wakaru --unpack ../pkg/*.js` is an ordinary invocation; the traversal

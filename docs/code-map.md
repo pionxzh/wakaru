@@ -105,7 +105,7 @@ crates/
         scope_hoist.rs              — heuristic scope-hoisted splitting (esbuild, Bun, Rollup, Vite)
         surrounding.rs              — top-level code around the bundle statement, kept in entry.js (webpack 5, Browserify)
         chunk_enumeration.rs        — fail-closed lazy-chunk URL / relative-import enumeration (`debug enumerate-chunks`)
-        chunk_loading_global.rs     — an input's chunk-loading global names (its build identity for multi-input numeric rewrites)
+        chunk_loading_global.rs     — an input's chunk-loading global names (its build identity for multi-input module-id rewrites)
       utils/
         paren.rs, swc_safety.rs     — paren stripping, SWC panic guards
     tests/

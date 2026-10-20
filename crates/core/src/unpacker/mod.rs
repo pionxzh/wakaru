@@ -869,13 +869,19 @@ pub(crate) struct DetectedBundle {
     /// as `moduleId`, so runtime recovery must not parse the public id or guess
     /// from the emitted filename.
     pub(crate) webpack_numeric_module_ids: crate::collections::HashMap<String, f64>,
+    /// Per factory filename: the string module ids the factory loads through
+    /// its loader parameter that its own table does not hold. Only these
+    /// calls may link to a module of another input; any other string
+    /// `require` is an authored or already-rewritten request.
+    pub(crate) webpack_absent_string_ids:
+        crate::collections::HashMap<String, crate::collections::HashSet<String>>,
     /// Factories whose surrounding container proves webpack 4's minified
     /// `module.i` module-identity spelling. Modern webpack uses `module.id`;
     /// a bare `.i` in a modern chunk must not be guessed from the table key.
     pub(crate) webpack_legacy_module_i: crate::collections::HashSet<String>,
     pub(crate) chunk_ids: crate::collections::HashSet<usize>,
     /// Names of the chunk-loading globals the input pushes into or binds as a
-    /// runtime: the input's build identity for cross-input numeric rewrites.
+    /// runtime: the input's build identity for cross-input module-id rewrites.
     pub(crate) chunk_loading_globals: Vec<String>,
     /// Statically extracted webpack chunk-reference surface, when one was
     /// found. Populated only for the dedicated debug inspection path and
@@ -896,6 +902,7 @@ impl DetectedBundle {
             module_failures: Default::default(),
             module_notes: Default::default(),
             webpack_numeric_module_ids: Default::default(),
+            webpack_absent_string_ids: Default::default(),
             webpack_legacy_module_i: Default::default(),
             chunk_ids: Default::default(),
             chunk_loading_globals: Vec::new(),
@@ -921,6 +928,7 @@ impl DetectedBundle {
             module_failures: Default::default(),
             module_notes: Default::default(),
             webpack_numeric_module_ids: Default::default(),
+            webpack_absent_string_ids: Default::default(),
             webpack_legacy_module_i: Default::default(),
             chunk_ids: Default::default(),
             chunk_loading_globals: Vec::new(),
@@ -966,6 +974,19 @@ impl DetectedBundle {
             .iter()
             .any(|module| &module.filename == filename)));
         self.webpack_numeric_module_ids = module_ids;
+        self
+    }
+
+    pub(crate) fn with_webpack_absent_string_ids(
+        mut self,
+        absent_string_ids: crate::collections::HashMap<String, crate::collections::HashSet<String>>,
+    ) -> Self {
+        debug_assert!(absent_string_ids.keys().all(|filename| self
+            .result
+            .modules
+            .iter()
+            .any(|module| &module.filename == filename)));
+        self.webpack_absent_string_ids = absent_string_ids;
         self
     }
 

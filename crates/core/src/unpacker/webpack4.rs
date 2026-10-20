@@ -546,6 +546,7 @@ fn prepare_webpack4_modules(
         };
 
         let mut emitted = Vec::with_capacity(descriptors.len());
+        let mut absent_string_ids = HashMap::default();
         let mut newly_opaque = HashMap::default();
         for descriptor in descriptors {
             if opaque_filenames.contains_key(&descriptor.filename) {
@@ -580,7 +581,7 @@ fn prepare_webpack4_modules(
                     }
                 },
             );
-            let (mut module, _) = match normalized {
+            let (mut module, _, absent) = match normalized {
                 Ok(normalized) => normalized,
                 Err(
                     error @ (FactoryNormalizationError::RuntimeParameterReuse
@@ -596,6 +597,9 @@ fn prepare_webpack4_modules(
             // factory-local failures. A fixer or emitter failure still invalidates the whole container;
             // skipping that module would leave rewritten callers pointing at
             // an output file that was never emitted.
+            if !absent.is_empty() {
+                absent_string_ids.insert(descriptor.filename.clone(), absent);
+            }
             apply_fixer(&mut module).ok()?;
             emitted.push(Some(
                 emit_module_with_positions(
@@ -651,6 +655,7 @@ fn prepare_webpack4_modules(
         return Some(
             DetectedBundle::from_result(UnpackResult::new(modules, BundleFormat::Webpack4))
                 .with_module_failures(failures)
+                .with_webpack_absent_string_ids(absent_string_ids)
                 .with_webpack_numeric_module_ids(
                     descriptors
                         .iter()
@@ -874,7 +879,7 @@ fn normalize_extracted_webpack_module(
     fn_expr: &FnExpr,
     loader_module_ids: super::webpack_common::ReusedLoaderModuleIds<'_>,
     require_rewrite: impl FnOnce(&Atom, Mark, &mut Module),
-) -> Result<(Module, Mark), FactoryNormalizationError> {
+) -> Result<(Module, Mark, HashSet<String>), FactoryNormalizationError> {
     // Extract param names (up to 3: module, exports, require)
     let params = &fn_expr.function.params;
     let param_syms: Vec<Atom> = params
@@ -907,6 +912,17 @@ fn normalize_extracted_webpack_module(
         unresolved_mark,
         false,
     );
+    let absent_string_ids = param_syms
+        .get(2)
+        .map(|loader| {
+            super::webpack_common::absent_loader_string_ids(
+                &synthetic_module,
+                loader,
+                unresolved_mark,
+                loader_module_ids.string,
+            )
+        })
+        .unwrap_or_default();
 
     // Build renaming map: param[0] -> "module", param[1] -> "exports",
     // param[2] -> "require". Reused parameters keep their original binding
@@ -989,7 +1005,7 @@ fn normalize_extracted_webpack_module(
     // Step 2b: strip webpack's global-polyfill envelope
     unwrap_webpack_global_envelopes(&mut synthetic_module, unresolved_mark);
 
-    Ok((synthetic_module, unresolved_mark))
+    Ok((synthetic_module, unresolved_mark, absent_string_ids))
 }
 
 /// Sanitize a webpack module path string into a safe filename.

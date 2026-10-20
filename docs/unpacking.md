@@ -800,9 +800,9 @@ the same `prepare_unpack_input` intake and structured executor result used by
 the façade; no production caller or second detector loop remains.
 
 Before the two-phase pipeline starts, multi-source unpack stabilizes the merged
-module set: filenames are made unique before fact collection, and numeric
-webpack module IDs are mapped to those final filenames so entry/chunk
-references can be rewritten across physical input files.
+module set: filenames are made unique before fact collection, and webpack
+module IDs, numeric or string, are mapped to those final filenames so
+entry/chunk references can be rewritten across physical input files.
 
 A numeric reference only links within its own build. One page often loads
 several unrelated builds (an app, an ad SDK, a support widget), each numbering
@@ -831,6 +831,20 @@ warning for the `require.e` or `require.t` it still calls.
 In normal output, opaque factories still reserve their numeric IDs but cannot
 become rewritten callers or targets. Recoverable siblings remain eligible for
 cross-input rewrites; an opaque factory does not disable its whole container.
+
+String IDs (webpack's hashed, named, or custom module ids) follow the same
+build and single-candidate rules, through the plain lookup only. A string call
+needs evidence that the loader made it: once the factory's loader parameter is
+renamed to `require`, an unresolved `require("NOtv")` looks like a host
+`require("pkg")` (webpack externals) or a reference the input already
+rewrote. So the detector records, before that rename, the string IDs each
+factory passes to its loader that its own table lacks, and only those calls
+may link. An ID that a free `require` in the same factory also passes is left
+out. Targets are webpack 4/5 factories keyed by their table entry's property
+key, as the runtime looks them up: `"2638"` names key `2638`, and `"0366"`
+(a hashed id of digits) names only key `"0366"`. An opaque target reserves its
+ID like a numeric one. A named ID's specifier is rebased to the
+consumer's final path like any other rewritten edge.
 
 **`unpack_raw(source)`** — bundle splitting without the normal decompile rule
 pipeline. It returns detector output after only the extraction and
