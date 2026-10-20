@@ -217,7 +217,10 @@ pub use un_enum::UnEnum;
 pub use un_es6_class::UnEs6Class;
 pub use un_esbuild_cjs_wrapper::UnEsbuildCjsWrapper;
 pub(crate) use un_esm::contains_local_self_require;
-pub(crate) use un_esm::export_storage::{analyze_export_storage, ExportStorageReport};
+pub(crate) use un_esm::export_storage::{
+    analyze_export_storage, analyze_export_storage_without_markers, ExportStorage,
+    ExportStorageReport,
+};
 pub use un_esm::UnEsm;
 pub(crate) use un_esm::{
     is_webpack_harmony_module, lower_export_getter_helpers, lower_webpack_export_definitions,

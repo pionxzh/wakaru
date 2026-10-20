@@ -54,6 +54,7 @@ use crate::facts::{
 use crate::interface_plan::{InterfacePlan, PlanModule};
 use crate::kept_require::run_kept_require_default_reads;
 use crate::namespace_decomposition::run_namespace_decomposition_with_tags;
+use crate::provider_helpers::ProviderHelpers;
 use crate::provider_import_repair::run_provider_import_repair;
 use crate::provider_namespace_repair::run_provider_namespace_repair;
 use crate::reexport_consolidation::run_reexport_consolidation;
@@ -203,6 +204,8 @@ struct Phase1aModule {
     /// Requiring the module returns its CommonJS `exports` object: it is
     /// neither ESM nor a webpack harmony module where `UnEsm` will see it.
     exports_object_writable: bool,
+    /// The interop helpers the module exports, on the AST `UnEsm` will see.
+    helpers: Option<ProviderHelpers>,
     warning: Option<UnpackWarning>,
     input_parse_warnings: Vec<UnpackWarning>,
     suggested_filename: Option<String>,
@@ -665,12 +668,18 @@ pub(super) fn unpack_multi_module_with_plan(
                 .iter()
                 .any(|item| matches!(item, ModuleItem::ModuleDecl(_)))
                 && !is_webpack_harmony_module(&module, unresolved_mark);
+            let helpers = {
+                let span = tracing::info_span!("phase1: provider helpers");
+                let _enter = span.enter();
+                ProviderHelpers::collect(&module, unresolved_mark)
+            };
             Ok((
                 module,
                 unresolved_mark,
                 raw,
                 require_edges,
                 exports_object_writable,
+                helpers,
                 residual_warning,
                 suggested_filename,
             ))
@@ -682,6 +691,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 raw,
                 require_edges,
                 exports_object_writable,
+                helpers,
                 warning,
                 suggested_filename,
             )) => Phase1a::Pending(Box::new(Phase1aModule {
@@ -693,6 +703,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 raw,
                 require_edges,
                 exports_object_writable,
+                helpers,
                 warning,
                 input_parse_warnings,
                 suggested_filename,
@@ -720,6 +731,7 @@ pub(super) fn unpack_multi_module_with_plan(
             raw,
             require_edges,
             exports_object_writable: _,
+            helpers: _,
             warning,
             input_parse_warnings,
             suggested_filename,
@@ -834,6 +846,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 filename: &pending.filename,
                 edges: &pending.require_edges,
                 exports_object_writable: pending.exports_object_writable,
+                helpers: pending.helpers.as_ref(),
             }),
         }))
     };

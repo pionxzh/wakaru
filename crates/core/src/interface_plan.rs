@@ -18,9 +18,14 @@
 //! A provider whose required value was never a writable CommonJS `exports`
 //! object is left alone: a webpack harmony module (its exports are getters
 //! `require.d` defined), and a module the input already wrote as ESM.
+//!
+//! The plan also carries the interop helpers each provider exports
+//! ([`ProviderHelpers`]). A written provider's helpers are dropped: a
+//! consumer may have replaced one.
 
 use crate::collections::{HashMap, HashSet};
 use crate::facts::{canonical_module_key, resolve_module_key};
+use crate::provider_helpers::ProviderHelpers;
 use crate::require_edges::{RequireEdges, RequireUses};
 
 /// One module's input to the plan.
@@ -31,6 +36,8 @@ pub(crate) struct PlanModule<'a> {
     /// module has no import or export declaration and is not a webpack
     /// harmony module.
     pub(crate) exports_object_writable: bool,
+    /// The interop helpers the module exports, read before `UnEsm`.
+    pub(crate) helpers: Option<&'a ProviderHelpers>,
 }
 
 /// The decisions barrier 0 makes for every module of an unpack.
@@ -41,6 +48,9 @@ pub(crate) struct InterfacePlan {
     written: HashMap<String, String>,
     /// Modules whose required value was not a writable `exports` object.
     closed: HashSet<String>,
+    /// The interop helpers of each provider no consumer writes to, by
+    /// canonical key.
+    helpers: HashMap<String, ProviderHelpers>,
 }
 
 impl InterfacePlan {
@@ -76,7 +86,20 @@ impl InterfacePlan {
                     .or_insert_with(|| module.filename.to_string());
             }
         }
-        Self { written, closed }
+        let helpers: HashMap<String, ProviderHelpers> = modules
+            .iter()
+            .filter_map(|module| {
+                let key = canonical_module_key(module.filename);
+                (!written.contains_key(&key))
+                    .then(|| module.helpers.map(|helpers| (key, helpers.clone())))
+                    .flatten()
+            })
+            .collect();
+        Self {
+            written,
+            closed,
+            helpers,
+        }
     }
 
     /// Whether `UnEsm` keeps the module CommonJS because a consumer in the
@@ -90,6 +113,11 @@ impl InterfacePlan {
         self.written
             .get(&canonical_module_key(filename))
             .map(String::as_str)
+    }
+
+    /// The interop helpers the module exports, when it is not written.
+    pub(crate) fn helper_exports(&self, filename: &str) -> Option<&ProviderHelpers> {
+        self.helpers.get(&canonical_module_key(filename))
     }
 
     /// Whether requiring the module returned a writable CommonJS `exports`
@@ -147,12 +175,14 @@ mod tests {
             filename: "src/consumer.js",
             edges: &consumer_edges,
             exports_object_writable: true,
+            helpers: None,
         }];
         for (name, filename) in providers.iter().zip(&names) {
             modules.push(PlanModule {
                 filename,
                 edges: &empty,
                 exports_object_writable: !closed.contains(name),
+                helpers: None,
             });
         }
         InterfacePlan::build(modules)
@@ -245,6 +275,60 @@ require("./plain.js").f = 1;"#,
         assert!(!plan.exports_object_writable("src/harmony.js"));
         assert!(plan.keeps_commonjs("src/plain.js"));
         assert!(plan.exports_object_writable("src/plain.js"));
+    }
+
+    fn provider_helpers(source: &str) -> ProviderHelpers {
+        GLOBALS.set(&Default::default(), || {
+            let cm: Lrc<SourceMap> = Default::default();
+            let file = cm.new_source_file(FileName::Anon.into(), source.to_string());
+            let mut module = parse_file_as_module(
+                &file,
+                Syntax::Es(EsSyntax::default()),
+                Default::default(),
+                None,
+                &mut Vec::new(),
+            )
+            .expect("test source parses");
+            let mark = Mark::new();
+            module.visit_mut_with(&mut resolver(mark, Mark::new(), false));
+            ProviderHelpers::collect(&module, mark).expect("the provider exports a helper")
+        })
+    }
+
+    #[test]
+    fn a_written_provider_carries_no_helpers() {
+        let helpers = provider_helpers(
+            "module.exports = function (e) { return e && e.__esModule ? e : { default: e }; };",
+        );
+        let consumer = edges(
+            r#"var h = require("./helper.js");
+var w = require("./written.js");
+w.f = 1;
+h(require("./other.js"));"#,
+        );
+        let empty = RequireEdges::default();
+        let plan = InterfacePlan::build([
+            PlanModule {
+                filename: "src/consumer.js",
+                edges: &consumer,
+                exports_object_writable: true,
+                helpers: None,
+            },
+            PlanModule {
+                filename: "src/helper.js",
+                edges: &empty,
+                exports_object_writable: true,
+                helpers: Some(&helpers),
+            },
+            PlanModule {
+                filename: "src/written.js",
+                edges: &empty,
+                exports_object_writable: true,
+                helpers: Some(&helpers),
+            },
+        ]);
+        assert!(plan.helper_exports("src/helper.js").is_some());
+        assert!(plan.helper_exports("src/written.js").is_none());
     }
 
     #[test]

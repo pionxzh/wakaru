@@ -50,6 +50,7 @@ use crate::analysis::BindingId;
 use crate::rules::cocos_rf::framed_cc_rf_push_calls;
 use crate::rules::eval_utils::{module_has_with_stmt, DirectEvalPresence};
 use crate::rules::un_enum::is_enum_iife_callee;
+use crate::rules::un_esmodule_flag::is_marker_stmt;
 use crate::utils::member::static_member_name;
 use crate::utils::paren::strip_parens;
 use crate::utils::prototype_members::is_prototype_mutating_member_name;
@@ -177,6 +178,22 @@ pub(crate) fn analyze_export_storage(
     module: &Module,
     unresolved_mark: Mark,
 ) -> ExportStorageReport {
+    analyze(module, unresolved_mark, false)
+}
+
+/// [`analyze_export_storage`] of the module as `UnEsmoduleFlag` leaves it:
+/// its top-level `__esModule` marker statements, webpack's
+/// `require.r(exports)` included, are not read. `UnEsm` removes them before
+/// it rewrites the storage it analyzed; a reader that runs before `UnEsm`
+/// uses this instead of removing them itself.
+pub(crate) fn analyze_export_storage_without_markers(
+    module: &Module,
+    unresolved_mark: Mark,
+) -> ExportStorageReport {
+    analyze(module, unresolved_mark, true)
+}
+
+fn analyze(module: &Module, unresolved_mark: Mark, skip_markers: bool) -> ExportStorageReport {
     if let Some(span) = top_level_this(module, unresolved_mark) {
         return ExportStorageReport::ModuleGate {
             message: "top-level `this` is `module.exports`".to_string(),
@@ -187,6 +204,17 @@ pub(crate) fn analyze_export_storage(
     let mut inventory = Inventory::new(unresolved_mark);
     inventory.export_star_statements = export_star_statement_indices(module, unresolved_mark);
     inventory.cc_rf_push_calls = framed_cc_rf_push_calls(&module.body, unresolved_mark);
+    if skip_markers {
+        inventory.marker_statements = module
+            .body
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| {
+                matches!(item, ModuleItem::Stmt(stmt) if is_marker_stmt(stmt, unresolved_mark))
+            })
+            .map(|(index, _)| index)
+            .collect();
+    }
     module.visit_with(&mut inventory);
     if !inventory.saw_exports {
         return ExportStorageReport::NoCommonJsExports;
@@ -482,6 +510,9 @@ struct Inventory {
     /// Module-body statements that become `export * from`; see
     /// [`export_star_statement_indices`].
     export_star_statements: HashSet<usize>,
+    /// Module-body marker statements the analysis does not read; see
+    /// [`analyze_export_storage_without_markers`].
+    marker_statements: HashSet<usize>,
     /// The `exports` binding is reassigned, or used as a value other than a
     /// static member object, a `typeof` operand, or a call argument.
     binding_escape: bool,
@@ -521,6 +552,7 @@ impl Inventory {
             in_module_expr_stmt: false,
             nested_write: false,
             export_star_statements: HashSet::default(),
+            marker_statements: HashSet::default(),
             binding_escape: false,
             stmt: StmtPos {
                 list: MODULE_LIST,
@@ -999,7 +1031,9 @@ impl Visit for Inventory {
     fn visit_module_items(&mut self, items: &[ModuleItem]) {
         let saved = self.stmt;
         for (index, item) in items.iter().enumerate() {
-            if self.export_star_statements.contains(&index) {
+            if self.export_star_statements.contains(&index)
+                || self.marker_statements.contains(&index)
+            {
                 self.saw_exports = true;
                 continue;
             }

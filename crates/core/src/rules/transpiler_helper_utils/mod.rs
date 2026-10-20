@@ -33,7 +33,8 @@ pub(crate) use collect::collect_transpiler_helpers;
 use collect::{collect_swc_member_helpers, collect_transpiler_helpers_inner};
 
 pub(crate) use matchers::{
-    classify_inline_callable, classify_inline_helper_call, collect_maybe_array_like_bindings,
+    classify_inline_callable, classify_inline_helper_call, classify_interop_helper_expr,
+    classify_interop_helper_function, collect_maybe_array_like_bindings,
     extract_inline_sliced_to_array_call, is_call_super_fn, is_inherits_fn, is_set_prototype_of_fn,
 };
 use matchers::{

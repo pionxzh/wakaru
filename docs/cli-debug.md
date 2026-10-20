@@ -313,7 +313,10 @@ value (`CommonJs`, `Default`, `DefaultWithNamed`, `Marked`, `Replaced`, or
 it marked itself `__esModule`, and which import reads the required value
 (`default`, `namespace`, or `none`). A module that stayed CommonJS because a
 consumer in the input writes to its `exports` object gets a `kept CommonJS`
-line naming the first such consumer. Then each `require("src")` call of the
+line naming the first such consumer. A module that exports a default or
+wildcard interop helper, proven before `UnEsm` by the export's storage and
+the helper's body, gets a `helper exports` line (`module.exports` names a
+required value that is the helper itself). Then each `require("src")` call of the
 module, in source order, is one edge:
 
 - its form (declarator, destructure, member read, interop helper argument,
@@ -345,6 +348,6 @@ A call whose span is dummy or shared with another call (a detector that
 builds its module AST itself can write such calls) is listed last with no
 uses and no import. `--json` prints `input` and a `modules` array; each module
 has `filename`, `stays_commonjs`, `written_by` (the consumer, or `null`),
-`provider`, and `edges`, and each edge has
+`helper_exports`, `provider`, and `edges`, and each edge has
 `source`, `keyed`, `form`, `top_level`, `interop`, `esmodule_tested`, `uses`,
 `un_esm_imports`, `imports`, and `no_import_reason`.

@@ -921,6 +921,7 @@ fn interop_json(input: &str, report: &wakaru_core::driver::InteropReport) -> ser
             "filename": module.filename,
             "stays_commonjs": module.stays_commonjs,
             "written_by": module.written_by,
+            "helper_exports": module.helper_exports,
             "provider": {
                 "value": module.provider.value,
                 "has_default": module.provider.has_default,
@@ -966,6 +967,12 @@ fn interop_text(report: &wakaru_core::driver::InteropReport) -> String {
         if let Some(consumer) = &module.written_by {
             out.push_str(&format!(
                 "  kept CommonJS: {consumer} writes to its exports\n"
+            ));
+        }
+        if !module.helper_exports.is_empty() {
+            out.push_str(&format!(
+                "  helper exports: {}\n",
+                module.helper_exports.join(", ")
             ));
         }
         for edge in &module.edges {

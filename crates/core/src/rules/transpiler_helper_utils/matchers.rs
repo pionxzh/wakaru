@@ -668,6 +668,66 @@ pub(crate) fn classify_inline_callable(callee: &Expr) -> Option<TranspilerHelper
     let func = function_from_inline_callable(callee)?;
     detect_helper_from_fn(&func, false)
 }
+/// The interop helper kind of a function by its body shape alone: Babel's
+/// and SWC's default and wildcard interop, and tslib's `__importStar` (which
+/// copies through `__createBinding`, a shape of its own). Only the interop
+/// matchers run, so a reader that needs no other kind pays for no other.
+pub(crate) fn classify_interop_helper_function(func: &Function) -> Option<TranspilerHelperKind> {
+    // Every interop helper takes one or two parameters.
+    if !matches!(func.params.len(), 1 | 2) {
+        return None;
+    }
+    if is_interop_require_default_fn(func) {
+        return Some(TranspilerHelperKind::InteropRequireDefault);
+    }
+    if is_interop_require_wildcard_fn(func)
+        || is_namespace_default_interop_fn(func)
+        || ts_import_star_function_matches(func)
+    {
+        return Some(TranspilerHelperKind::InteropRequireWildcard);
+    }
+    None
+}
+
+/// [`classify_interop_helper_function`] of a function or arrow literal, and
+/// of TypeScript's inline `__importStar` declarator value.
+pub(crate) fn classify_interop_helper_expr(expr: &Expr) -> Option<TranspilerHelperKind> {
+    match strip_parens(expr) {
+        Expr::Fn(fn_expr) => classify_interop_helper_function(&fn_expr.function),
+        Expr::Arrow(arrow) if matches!(arrow.params.len(), 1 | 2) => {
+            detect_interop_default_expr_arrow(arrow).or_else(|| {
+                // Every interop helper tests `__esModule`; checking that
+                // first spares copying the body of any other arrow.
+                if !mentions_esmodule(arrow) {
+                    return None;
+                }
+                function_from_arrow(arrow)
+                    .as_ref()
+                    .and_then(classify_interop_helper_function)
+            })
+        }
+        expr if ts_expr_matches_helper_kind(expr, TsHelperKind::ImportStar) => {
+            Some(TranspilerHelperKind::InteropRequireWildcard)
+        }
+        _ => None,
+    }
+}
+
+fn mentions_esmodule(arrow: &swc_core::ecma::ast::ArrowExpr) -> bool {
+    struct Finder(bool);
+    impl Visit for Finder {
+        fn visit_ident_name(&mut self, name: &IdentName) {
+            self.0 |= name.sym.as_ref() == "__esModule";
+        }
+        fn visit_str(&mut self, value: &swc_core::ecma::ast::Str) {
+            self.0 |= value.value.as_str() == Some("__esModule");
+        }
+    }
+    let mut finder = Finder(false);
+    arrow.body.visit_with(&mut finder);
+    finder.0
+}
+
 pub(super) fn detect_helper_from_arrow(
     arrow: &swc_core::ecma::ast::ArrowExpr,
     has_sub_helpers: bool,

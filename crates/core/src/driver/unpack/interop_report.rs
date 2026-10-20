@@ -17,6 +17,7 @@ use crate::facts::ModuleFacts;
 use crate::interface_plan::InterfacePlan;
 use crate::provider_interface::{ProviderInterface, RequiredValueImport};
 use crate::require_edges::{EdgeKey, ImportTags, RequireEdge, RequireForm};
+use crate::rules::transpiler_helper_utils::TranspilerHelperKind;
 
 /// Every module of an unpack, with its provider interface and require edges.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -36,6 +37,10 @@ pub struct ModuleInterop {
     /// The module stayed CommonJS because a consumer in the input writes to
     /// its `exports` object: the first such consumer.
     pub written_by: Option<String>,
+    /// The interop helpers the module exports, as barrier 0 proved them:
+    /// `name (default interop)` or `name (wildcard interop)`, with
+    /// `module.exports` naming the required value itself.
+    pub helper_exports: Vec<String>,
     pub edges: Vec<EdgeReport>,
 }
 
@@ -94,6 +99,24 @@ impl InteropSink {
     ) {
         let mut report = module_interop(filename, facts, module, tags, un_esm_imports);
         report.written_by = plan.written_by(filename).map(str::to_string);
+        report.helper_exports = plan
+            .helper_exports(filename)
+            .map(|helpers| {
+                helpers
+                    .entries()
+                    .map(|(name, kind)| {
+                        format!(
+                            "{} ({})",
+                            name.map_or("module.exports", |name| name.as_ref()),
+                            match kind {
+                                TranspilerHelperKind::InteropRequireWildcard => "wildcard interop",
+                                _ => "default interop",
+                            }
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         self.modules
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -223,6 +246,7 @@ fn module_interop(
         provider,
         stays_commonjs,
         written_by: None,
+        helper_exports: Vec::new(),
         edges: edges.chain(unkeyed).collect(),
     }
 }
