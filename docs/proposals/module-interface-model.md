@@ -1,18 +1,14 @@
 # Module interface model: provider and consumer facts before `UnEsm`
 
-Status: steps 1, 2, and 3 done (2026-10-20); step 4 measured, nothing
-removed (see step 4), so "fewer Phase 2 interop passes" in
-[Done when](#done-when) is not met. Closing the line needs a maintainer
-decision on the passes that now serve only helper modules barrier 0 does
-not read. Step 1: the
-explicit execution mode (`PipelineMode`), the late-recovery fix it exposed,
-and `ProviderInterface`, computed per lookup from the provider's facts.
-Step 2: `RequireEdges` on the module facts (`crates/core/src/require_edges.rs`),
-the import tags that replace the dummy-span check, the per-source lists
-removed, and `wakaru debug interop`; the binding-use analyzers did not move
-(see step 2 below). Step 3: barrier 0, the written-provider decision, and
-the bundled-helper provider identity (see step 3 below). The maintainer has decided the direction (see
-[Decisions](#decisions)). This proposal absorbs the consumer-aware provider format proposal
+Status: done (2026-10-21). Step 1: the explicit execution mode
+(`PipelineMode`), the late-recovery fix it exposed, and `ProviderInterface`.
+Step 2: `RequireEdges` (`crates/core/src/require_edges.rs`), the import tags
+that replace the dummy-span check, and `wakaru debug interop`; the
+binding-use analyzers did not move. Step 3: barrier 0, the written-provider
+decision, and the bundled-helper provider identity. Step 4 removed no pass:
+each Phase 2 interop pass still serves inputs barrier 0 does not read (see
+step 4 and [Done when](#done-when)). The maintainer decided the direction
+(see [Decisions](#decisions)) and closed the line with that result. This proposal absorbs the consumer-aware provider format proposal
 (deferred 2026-10-15), whose problem statement is
 [Consumer writes to a named-only provider](#consumer-writes-to-a-named-only-provider).
 
@@ -456,7 +452,16 @@ providers CommonJS with no write behind any of them.
   input.
 - A re-export through a bundled helper provider recovers as
   `export { default } from`.
-- Fewer Phase 2 interop passes after step 4 than before step 3.
+- Fewer Phase 2 interop passes after step 4 than before step 3: not met,
+  and accepted when the line closed: barrier 0 reads only what exists
+  before `UnEsm`, so the Phase 2 passes keep the inputs it cannot see. The
+  lowered `import()` restore and the bundled interop helper import serve
+  helper modules the input wrote as ESM and helpers exposed only by late
+  recovery; `import_unproven_helper_requires` serves wrappers that are not
+  interop helpers; `provider_namespace_repair` decides default versus
+  namespace from facts that exist only after the provider's own `UnEsm`.
+  Reading ESM-input helper modules at barrier 0 would shrink the first two,
+  not remove them.
 - Barrier 0 does not multiply wall time or peak RSS. A cost short of that
   is a tradeoff the maintainer weighs against the recovered output, not a
   regression to remove. A cost of several times is grounds to revert it and
