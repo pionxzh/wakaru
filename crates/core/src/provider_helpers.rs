@@ -24,22 +24,30 @@
 //! shim also mirrors it as `module.exports.default = module.exports`, which
 //! gives it a `default` member too.
 //!
+//! A `module.exports = helper` provider may replace its value, and the
+//! helper binding, with a copy of the helper on the first call
+//! ([`SelfReplacement`]). It is proven only when that copy has the same
+//! kind: whichever value a consumer reads, before or after the first call,
+//! is then a helper of that kind.
+//!
 //! Anything else is absent: a module with ESM declarations, a reassigned
 //! binding, an export with more than one storage, or a UMD build that
 //! defines its exports through a callback (`exporter("__importDefault", …)`).
 
 use swc_core::atoms::Atom;
-use swc_core::common::Mark;
+use swc_core::common::{Mark, Span};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignOp, AssignTarget, Decl, Expr, Ident, MemberExpr, Module, ModuleItem, Pat,
-    SimpleAssignTarget, Stmt,
+    AssignExpr, AssignOp, AssignTarget, Callee, Decl, Expr, FnDecl, FnExpr, Ident, Lit, MemberExpr,
+    Module, ModuleItem, NewExpr, Pat, ReturnStmt, SimpleAssignTarget, Stmt, UnaryOp,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
-use crate::analysis::binding_uses::BindingUseIndex;
+use crate::analysis::binding_uses::{BindingUseIndex, UseKind};
 use crate::analysis::BindingId;
 use crate::collections::{HashMap, HashSet};
-use crate::facts::collect_commonjs_value_is_default;
+use crate::facts::{
+    collect_commonjs_value_is_default, commonjs_value_assignments, ModuleExportsAssignments,
+};
 use crate::require_edges::CalleeExport;
 use crate::rules::transpiler_helper_utils::{
     classify_interop_helper_expr, classify_interop_helper_function, TranspilerHelperKind,
@@ -69,17 +77,33 @@ impl ProviderHelpers {
         {
             return None;
         }
-        let mut functions = helper_functions(module);
+        let whole_value = collect_commonjs_value_is_default(module, unresolved_mark);
+        // The helper's own `module.exports` write keeps the value from
+        // counting as the single top-level one.
+        let replacement = if whole_value {
+            None
+        } else {
+            SelfReplacement::find(module, unresolved_mark)
+        };
+        let mut functions = helper_functions(module, replacement.as_ref());
         if !exports_a_helper(module, unresolved_mark, &functions) {
             return None;
         }
         // A binding written anywhere may no longer hold the helper when a
-        // consumer calls it.
+        // consumer calls it, unless the write is the helper replacing itself
+        // with a copy of the same kind.
         let written = BindingUseIndex::collect_direct_write_bindings(module);
-        functions.retain(|binding, _| !written.contains(binding));
+        let replaced = replacement
+            .as_ref()
+            .filter(|replacement| replacement.is_only_write(module));
+        functions.retain(|binding, _| {
+            !written.contains(binding) || replaced.is_some_and(|r| &r.binding == binding)
+        });
 
-        let helpers = if collect_commonjs_value_is_default(module, unresolved_mark) {
-            whole_value_helpers(module, unresolved_mark, &functions)
+        let helpers = if whole_value {
+            whole_value_helpers(module, unresolved_mark, &functions, None)
+        } else if let Some(replacement) = replaced {
+            whole_value_helpers(module, unresolved_mark, &functions, Some(replacement))
         } else {
             named_helpers(module, unresolved_mark, &functions)
         };
@@ -125,8 +149,12 @@ impl ProviderHelpers {
 }
 
 /// The module's top-level interop helper functions, each declared once: a
-/// function declaration, or a declarator with a function value.
-fn helper_functions(module: &Module) -> HashMap<BindingId, TranspilerHelperKind> {
+/// function declaration, or a declarator with a function value. A function
+/// that replaces itself has the kind of the copy it installs.
+fn helper_functions(
+    module: &Module,
+    replacement: Option<&SelfReplacement>,
+) -> HashMap<BindingId, TranspilerHelperKind> {
     let mut functions: HashMap<BindingId, TranspilerHelperKind> = HashMap::default();
     let mut declared: HashSet<BindingId> = HashSet::default();
     let mut redeclared: HashSet<BindingId> = HashSet::default();
@@ -140,10 +168,14 @@ fn helper_functions(module: &Module) -> HashMap<BindingId, TranspilerHelperKind>
     };
     for item in &module.body {
         match item {
-            ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) => declare(
-                binding_id(&fn_decl.ident),
-                classify_interop_helper_function(&fn_decl.function),
-            ),
+            ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) => {
+                let binding = binding_id(&fn_decl.ident);
+                let kind = match replacement {
+                    Some(replacement) if replacement.binding == binding => Some(replacement.kind),
+                    _ => classify_interop_helper_function(&fn_decl.function),
+                };
+                declare(binding, kind);
+            }
             ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
                 for declarator in &var.decls {
                     let Pat::Ident(binding) = &declarator.name else {
@@ -224,10 +256,15 @@ fn exports_a_helper(
 /// A provider whose CommonJS value is its single `module.exports = v`
 /// statement: `v` is the helper, and Babel's runtime shim
 /// `module.exports.default = module.exports` gives it a `default` member.
+///
+/// With `replacement`, `v` must be the helper that replaces itself, the
+/// value it installs on its first call is a copy of the same kind, and its
+/// own mirror is the one `default` write besides the top-level one.
 fn whole_value_helpers(
     module: &Module,
     unresolved_mark: Mark,
     functions: &HashMap<BindingId, TranspilerHelperKind>,
+    replacement: Option<&SelfReplacement>,
 ) -> ProviderHelpers {
     let mut helpers = ProviderHelpers::default();
     let mut values = top_level_assignments(module).filter_map(|assign| {
@@ -236,6 +273,19 @@ fn whole_value_helpers(
     let (Some(value), None) = (values.next(), values.next()) else {
         return helpers;
     };
+    if let Some(replacement) = replacement {
+        let is_replacing_helper = matches!(strip_parens(value), Expr::Ident(ident)
+            if binding_id(ident) == replacement.binding);
+        if !is_replacing_helper
+            || commonjs_value_assignments(module, unresolved_mark)
+                != Some(ModuleExportsAssignments {
+                    top_level: 1,
+                    total: 2,
+                })
+        {
+            return helpers;
+        }
+    }
     let kind = match strip_parens(value) {
         Expr::Ident(ident) => functions.get(&binding_id(ident)).copied(),
         value => classify_interop_helper_expr(value),
@@ -265,10 +315,247 @@ fn whole_value_helpers(
         count: 0,
     };
     module.visit_with(&mut default_writes);
-    if mirrors == 1 && default_writes.count == 1 {
+    if mirrors == 1 && default_writes.count == 1 + usize::from(replacement.is_some()) {
         helpers.named.push((Atom::from("default"), kind));
     }
     helpers
+}
+
+/// A function that, on its first call, replaces the module's value and its
+/// own binding with a helper literal and calls it, so the work of setting up
+/// its caches runs once:
+///
+/// ```js
+/// function F(e, t) {
+///   if ("function" == typeof WeakMap) var r = new WeakMap(), n = new WeakMap();
+///   return (module.exports = F = function (e, t) { /* wildcard interop */ },
+///     module.exports.__esModule = true, module.exports.default = module.exports)(e, t);
+/// }
+/// module.exports = F, module.exports.__esModule = true, module.exports.default = module.exports;
+/// ```
+///
+/// (producer @babel/runtime@7.28.6 `helpers/interopRequireWildcard.js`;
+/// 7.23.5 still declares a separate `_getRequireWildcardCache`, and its
+/// helper is never written.) Every call returns what the installed copy
+/// returns, and the value that replaces `module.exports` is that copy with
+/// its own `default` mirror, so the module's value is a helper of the
+/// copy's kind before and after the first call.
+#[derive(Debug)]
+struct SelfReplacement {
+    binding: BindingId,
+    /// The kind of the installed copy.
+    kind: TranspilerHelperKind,
+    /// `F` in `F = function…`: the write the binding may have.
+    write: Span,
+}
+
+impl SelfReplacement {
+    /// The module's one top-level function that replaces itself. A second
+    /// one could install a value of another kind.
+    fn find(module: &Module, unresolved_mark: Mark) -> Option<Self> {
+        let mut found = module.body.iter().filter_map(|item| match item {
+            ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) => {
+                Self::of_function(fn_decl, unresolved_mark)
+            }
+            _ => None,
+        });
+        match (found.next(), found.next()) {
+            (Some(found), None) => Some(found),
+            _ => None,
+        }
+    }
+
+    fn of_function(fn_decl: &FnDecl, unresolved_mark: Mark) -> Option<Self> {
+        let binding = binding_id(&fn_decl.ident);
+        let function = &fn_decl.function;
+        let (last, setup) = function.body.as_ref()?.stmts.split_last()?;
+        let Stmt::Return(ReturnStmt {
+            arg: Some(returned),
+            ..
+        }) = last
+        else {
+            return None;
+        };
+        let Expr::Call(call) = strip_parens(returned) else {
+            return None;
+        };
+        // The call passes the parameters on, in order.
+        let params = function
+            .params
+            .iter()
+            .map(|param| match &param.pat {
+                Pat::Ident(param) => Some(binding_id(&param.id)),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let forwards = call.args.len() == params.len()
+            && call.args.iter().zip(&params).all(|(arg, param)| {
+                arg.spread.is_none()
+                    && matches!(strip_parens(&arg.expr), Expr::Ident(ident)
+                        if &binding_id(ident) == param)
+            });
+        if !forwards {
+            return None;
+        }
+        let Callee::Expr(callee) = &call.callee else {
+            return None;
+        };
+        let Expr::Seq(seq) = strip_parens(callee) else {
+            return None;
+        };
+        let (install, marks) = seq.exprs.split_first()?;
+
+        // `module.exports = F = function…`
+        let Expr::Assign(outer) = strip_parens(install) else {
+            return None;
+        };
+        if outer.op != AssignOp::Assign
+            || !assign_member(outer)
+                .is_some_and(|target| is_module_exports(target, unresolved_mark))
+        {
+            return None;
+        }
+        let Expr::Assign(inner) = strip_parens(&outer.right) else {
+            return None;
+        };
+        let AssignTarget::Simple(SimpleAssignTarget::Ident(target)) = &inner.left else {
+            return None;
+        };
+        if inner.op != AssignOp::Assign || binding_id(&target.id) != binding {
+            return None;
+        }
+        let kind = match strip_parens(&inner.right) {
+            Expr::Fn(FnExpr { function, .. }) => classify_interop_helper_function(function),
+            _ => None,
+        }?;
+
+        // The `__esModule` marker and exactly one `default` mirror, both on
+        // the new value.
+        let mut mirrors = 0;
+        for mark in marks {
+            let Expr::Assign(assign) = strip_parens(mark) else {
+                return None;
+            };
+            let target = assign_member(assign).filter(|target| {
+                assign.op == AssignOp::Assign
+                    && is_module_exports_expr(&target.obj, unresolved_mark)
+            })?;
+            if is_member_named(target, "default")
+                && is_module_exports_expr(&assign.right, unresolved_mark)
+            {
+                mirrors += 1;
+            } else if !(is_member_named(target, "__esModule") && is_constant(&assign.right)) {
+                return None;
+            }
+        }
+        if mirrors != 1 {
+            return None;
+        }
+
+        let mut setup_effects = SetupEffects {
+            unresolved_mark,
+            binding: &binding,
+            found: false,
+        };
+        setup.visit_with(&mut setup_effects);
+        if setup_effects.found {
+            return None;
+        }
+        Some(Self {
+            binding,
+            kind,
+            write: target.id.span,
+        })
+    }
+
+    /// Whether the binding's only direct write is the replacement.
+    fn is_only_write(&self, module: &Module) -> bool {
+        let index = BindingUseIndex::collect(module);
+        let mut writes = index
+            .use_sites(&self.binding)
+            .iter()
+            .filter(|site| matches!(site.kind, UseKind::Write | UseKind::ReadWrite));
+        matches!((writes.next(), writes.next()), (Some(site), None) if site.span == self.write)
+    }
+}
+
+/// `true`, `false`, or a minifier's `!0` / `!1`.
+fn is_constant(expr: &Expr) -> bool {
+    match strip_parens(expr) {
+        Expr::Lit(Lit::Bool(_) | Lit::Num(_)) => true,
+        Expr::Unary(unary) => {
+            unary.op == UnaryOp::Bang && matches!(strip_parens(&unary.arg), Expr::Lit(Lit::Num(_)))
+        }
+        _ => false,
+    }
+}
+
+/// Finds anything in the statements before the replacing call that could
+/// return another value, or reach the module's value or the helper binding:
+/// a `return` or `throw`, a call, an assignment or update, a `delete`, a
+/// member read (which may run a getter), a nested function or class, `new`
+/// of anything but a global, or a reference to the binding, `module`, or
+/// `exports`. Babel's setup, `var r = new WeakMap()` under a `typeof` test,
+/// has none of them.
+struct SetupEffects<'a> {
+    unresolved_mark: Mark,
+    binding: &'a BindingId,
+    found: bool,
+}
+
+impl Visit for SetupEffects<'_> {
+    fn visit_stmt(&mut self, stmt: &Stmt) {
+        if matches!(stmt, Stmt::Return(_) | Stmt::Throw(_)) {
+            self.found = true;
+            return;
+        }
+        stmt.visit_children_with(self);
+    }
+
+    fn visit_expr(&mut self, expr: &Expr) {
+        match expr {
+            Expr::Call(_)
+            | Expr::Assign(_)
+            | Expr::Update(_)
+            | Expr::Member(_)
+            | Expr::SuperProp(_)
+            | Expr::OptChain(_)
+            | Expr::Fn(_)
+            | Expr::Arrow(_)
+            | Expr::Class(_)
+            | Expr::TaggedTpl(_)
+            | Expr::Await(_)
+            | Expr::Yield(_) => self.found = true,
+            Expr::Unary(unary) if unary.op == UnaryOp::Delete => self.found = true,
+            Expr::New(NewExpr { callee, .. }) => {
+                let global = matches!(strip_parens(callee), Expr::Ident(ident)
+                    if ident.ctxt.outer() == self.unresolved_mark);
+                if global {
+                    expr.visit_children_with(self);
+                } else {
+                    self.found = true;
+                }
+            }
+            _ => expr.visit_children_with(self),
+        }
+    }
+
+    fn visit_decl(&mut self, decl: &Decl) {
+        if matches!(decl, Decl::Var(_)) {
+            decl.visit_children_with(self);
+        } else {
+            self.found = true;
+        }
+    }
+
+    fn visit_ident(&mut self, ident: &Ident) {
+        if &binding_id(ident) == self.binding
+            || (ident.ctxt.outer() == self.unresolved_mark
+                && matches!(ident.sym.as_ref(), "module" | "exports"))
+        {
+            self.found = true;
+        }
+    }
 }
 
 /// A provider with named exports: each name's storage, by the export
@@ -678,5 +965,259 @@ exports.run = function () {{ return __importDefault(require("./widget.js")).defa
             ),
             None
         );
+    }
+
+    /// `@babel/runtime@7.28.6` `helpers/interopRequireWildcard.js` as
+    /// webpack@5.111.1 bundles it (mode production, no minimizer); rspack@1.7
+    /// emits the same body, and webpack@4.47 splits the last sequence into
+    /// statements.
+    const REPLACING_WILDCARD: &str = r#"var _typeof = require("./module-111.js")["default"];
+function _interopRequireWildcard(e, t) {
+  if ("function" == typeof WeakMap) var r = new WeakMap(),
+    n = new WeakMap();
+  return (module.exports = _interopRequireWildcard = function _interopRequireWildcard(e, t) {
+    if (!t && e && e.__esModule) return e;
+    var o,
+      i,
+      f = {
+        __proto__: null,
+        "default": e
+      };
+    if (null === e || "object" != _typeof(e) && "function" != typeof e) return f;
+    if (o = t ? n : r) {
+      if (o.has(e)) return o.get(e);
+      o.set(e, f);
+    }
+    for (var _t in e) "default" !== _t && {}.hasOwnProperty.call(e, _t) && ((i = (o = Object.defineProperty) && Object.getOwnPropertyDescriptor(e, _t)) && (i.get || i.set) ? o(f, _t, i) : f[_t] = e[_t]);
+    return f;
+  }, module.exports.__esModule = true, module.exports["default"] = module.exports)(e, t);
+}
+"#;
+
+    /// producer @babel/runtime@7.28.6 bundled by webpack@5.111.1 and
+    /// rspack@1.7.12 {"mode":"production","optimization":{"minimize":false}}:
+    /// the helper replaces `module.exports` and its own binding on its first
+    /// call.
+    #[test]
+    fn babel_runtime_wildcard_that_replaces_itself() {
+        let helpers = collect(&format!(
+            "{REPLACING_WILDCARD}module.exports = _interopRequireWildcard, module.exports.__esModule = true, module.exports[\"default\"] = module.exports;"
+        ))
+        .expect("helpers");
+        assert_eq!(helpers.value, Some(InteropRequireWildcard));
+        assert_eq!(named(&helpers), [("default", InteropRequireWildcard)]);
+    }
+
+    /// producer @babel/runtime@7.28.6 bundled by webpack@4.47.0
+    /// {"mode":"production","optimization":{"minimize":false}}: the
+    /// top-level sequence is three statements.
+    #[test]
+    fn babel_runtime_wildcard_that_replaces_itself_split() {
+        let helpers = collect(&format!(
+            r#"{REPLACING_WILDCARD}module.exports = _interopRequireWildcard;
+module.exports.__esModule = true;
+module.exports["default"] = module.exports;"#
+        ))
+        .expect("helpers");
+        assert_eq!(helpers.value, Some(InteropRequireWildcard));
+        assert_eq!(named(&helpers), [("default", InteropRequireWildcard)]);
+    }
+
+    /// producer @babel/runtime@7.28.6 bundled by webpack@5.111.1
+    /// {"mode":"production","optimization":{"minimize":true}}: Terser renames
+    /// the helper and its parameters and drops the copy's name.
+    #[test]
+    fn terser_babel_runtime_wildcard_that_replaces_itself() {
+        let helpers = collect(
+            r#"var o = require("./module-111.js").default;
+function n(t, r) {
+    if ("function" == typeof WeakMap) var u = new WeakMap, s = new WeakMap;
+    return (module.exports = n = function(e, t) {
+        if (!t && e && e.__esModule) return e;
+        var r, n, f = { __proto__: null, default: e };
+        if (null === e || "object" != o(e) && "function" != typeof e) return f;
+        if (r = t ? s : u) {
+            if (r.has(e)) return r.get(e);
+            r.set(e, f);
+        }
+        for (var l in e) "default" !== l && ({}).hasOwnProperty.call(e, l) && ((n = (r = Object.defineProperty) && Object.getOwnPropertyDescriptor(e, l)) && (n.get || n.set) ? r(f, l, n) : f[l] = e[l]);
+        return f;
+    }, module.exports.__esModule = !0, module.exports.default = module.exports)(t, r);
+}
+module.exports = n, module.exports.__esModule = !0, module.exports.default = module.exports;"#,
+        )
+        .expect("helpers");
+        assert_eq!(helpers.value, Some(InteropRequireWildcard));
+        assert_eq!(named(&helpers), [("default", InteropRequireWildcard)]);
+    }
+
+    /// producer @babel/runtime@7.23.5 bundled by webpack@5.111.1: the cache
+    /// helper replaces itself, the exported helper is never written.
+    #[test]
+    fn babel_runtime_wildcard_with_a_replacing_cache_helper() {
+        let helpers = collect(
+            r#"var _typeof = require("./module-111.js")["default"];
+function _getRequireWildcardCache(e) {
+  if ("function" != typeof WeakMap) return null;
+  var r = new WeakMap(),
+    t = new WeakMap();
+  return (_getRequireWildcardCache = function _getRequireWildcardCache(e) {
+    return e ? t : r;
+  })(e);
+}
+function _interopRequireWildcard(e, r) {
+  if (!r && e && e.__esModule) return e;
+  if (null === e || "object" != _typeof(e) && "function" != typeof e) return {
+    "default": e
+  };
+  var t = _getRequireWildcardCache(r);
+  if (t && t.has(e)) return t.get(e);
+  var n = {
+      __proto__: null
+    },
+    a = Object.defineProperty && Object.getOwnPropertyDescriptor;
+  for (var u in e) if ("default" !== u && Object.prototype.hasOwnProperty.call(e, u)) {
+    var i = a ? Object.getOwnPropertyDescriptor(e, u) : null;
+    i && (i.get || i.set) ? Object.defineProperty(n, u, i) : n[u] = e[u];
+  }
+  return n["default"] = e, t && t.set(e, n), n;
+}
+module.exports = _interopRequireWildcard, module.exports.__esModule = true, module.exports["default"] = module.exports;"#,
+        )
+        .expect("helpers");
+        assert_eq!(helpers.value, Some(InteropRequireWildcard));
+        assert_eq!(named(&helpers), [("default", InteropRequireWildcard)]);
+    }
+
+    /// producer @babel/runtime@7.12.18 bundled by webpack@5.111.1: no
+    /// `default` mirror, so only the value is the helper.
+    #[test]
+    fn babel_runtime_wildcard_without_a_mirror() {
+        let helpers = collect(
+            r#"var _typeof = require("./module-111.js");
+function _getRequireWildcardCache() {
+  if (typeof WeakMap !== "function") return null;
+  var cache = new WeakMap();
+  _getRequireWildcardCache = function _getRequireWildcardCache() {
+    return cache;
+  };
+  return cache;
+}
+function _interopRequireWildcard(obj) {
+  if (obj && obj.__esModule) {
+    return obj;
+  }
+  if (obj === null || _typeof(obj) !== "object" && typeof obj !== "function") {
+    return { "default": obj };
+  }
+  var cache = _getRequireWildcardCache();
+  if (cache && cache.has(obj)) {
+    return cache.get(obj);
+  }
+  var newObj = {};
+  var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+  for (var key in obj) {
+    if (Object.prototype.hasOwnProperty.call(obj, key)) {
+      var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+      if (desc && (desc.get || desc.set)) {
+        Object.defineProperty(newObj, key, desc);
+      } else {
+        newObj[key] = obj[key];
+      }
+    }
+  }
+  newObj["default"] = obj;
+  if (cache) {
+    cache.set(obj, newObj);
+  }
+  return newObj;
+}
+module.exports = _interopRequireWildcard;"#,
+        )
+        .expect("helpers");
+        assert_eq!(helpers.value, Some(InteropRequireWildcard));
+        assert!(helpers.named.is_empty());
+    }
+
+    const MIRRORS: &str =
+        "module.exports.__esModule = true, module.exports[\"default\"] = module.exports";
+
+    #[test]
+    fn a_replacement_must_install_a_helper_of_its_kind() {
+        // The installed copy is no helper: after the first call the value
+        // is that function.
+        assert_eq!(
+            collect(&format!(
+                r#"function F(e, t) {{
+  return (module.exports = F = function (e, t) {{ return e; }}, {MIRRORS})(e, t);
+}}
+module.exports = F, {MIRRORS};"#
+            )),
+            None
+        );
+    }
+
+    #[test]
+    fn a_replacement_with_another_write_or_value_is_not_proven() {
+        let replacing = format!(
+            r#"function F(e, t) {{
+  return (module.exports = F = function (e, t) {{
+    if (!t && e && e.__esModule) return e;
+    var f = {{ default: e }};
+    for (var k in e) if (k !== "default") f[k] = e[k];
+    return f;
+  }}, {MIRRORS})(e, t);
+}}
+"#
+        );
+        // The binding is written again.
+        assert_eq!(
+            collect(&format!(
+                "{replacing}module.exports = F, {MIRRORS};\nF = function (e) {{ return e; }};"
+            )),
+            None
+        );
+        // The value is another function: the replacement would change it.
+        assert_eq!(
+            collect(&format!(
+                "{replacing}module.exports = function (e) {{ return e && e.__esModule ? e : {{ default: e }}; }}, {MIRRORS};"
+            )),
+            None
+        );
+        // A named export: the replacement drops the module's other exports.
+        assert_eq!(collect(&format!("{replacing}exports.wildcard = F;")), None);
+        // The positive control.
+        assert!(collect(&format!("{replacing}module.exports = F, {MIRRORS};")).is_some());
+    }
+
+    #[test]
+    fn a_replacement_must_run_on_every_call_with_the_arguments() {
+        let wildcard = r#"function (e, t) {
+    if (!t && e && e.__esModule) return e;
+    var f = { default: e };
+    for (var k in e) if (k !== "default") f[k] = e[k];
+    return f;
+  }"#;
+        for (setup, args) in [
+            // A call before the replacement may write anything.
+            ("init();", "e, t"),
+            // An early return skips it.
+            ("if (!e) return e;", "e, t"),
+            // The arguments are not passed on in order.
+            ("", "t, e"),
+            ("", "e"),
+        ] {
+            assert_eq!(
+                collect(&format!(
+                    r#"function F(e, t) {{
+  {setup}
+  return (module.exports = F = {wildcard}, {MIRRORS})({args});
+}}
+module.exports = F, {MIRRORS};"#
+                )),
+                None,
+                "setup `{setup}`, arguments `{args}`"
+            );
+        }
     }
 }

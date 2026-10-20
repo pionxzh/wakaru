@@ -763,8 +763,6 @@ layout directly is a proposal:
     callback and exports it through `exporter("__importDefault", …)`; no
     stage proves it (producer `webpack@4` resolving tslib's UMD `main`, an
     older build of the artificial suite);
-  - `@babel/runtime`'s `interopRequireWildcard`, which replaces
-    `module.exports` and its own binding on its first call;
   - tslib's `__exportStar` and `__createBinding`: the plan carries interop
     helpers only, so `tslib_1.__exportStar(require("./x"), exports)` through
     a bundled tslib keeps its module CommonJS (hypothetical bundle; tsc's

@@ -408,8 +408,11 @@ providers CommonJS with no write behind any of them.
    module, and the bundled interop helper import changes only consumers of
    `@babel/runtime`'s `interopRequireWildcard`, whose module replaces
    `module.exports` and its own binding on the first call, so barrier 0
-   cannot map it. Both stay until barrier 0 proves that helper or the
-   restore is shown to cover nothing else. `import_unproven_helper_requires`
+   could not map it. Barrier 0 now proves that module by the exact
+   replacement (`SelfReplacement` in `provider_helpers.rs`: the installed
+   copy has the helper's body, the setup before it has no outside effect,
+   and the binding has no other write); the passes are measured again
+   below. `import_unproven_helper_requires`
    still serves wrappers that are no helper, and `provider_namespace_repair`
    changes as many modules as before: 3a and 3b moved no part of its
    default-versus-namespace decision before `UnEsm`. Update

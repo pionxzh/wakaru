@@ -285,7 +285,13 @@ module's top-level `__esModule` markers, as `UnEsm` removes them, so
 `require.r(exports)` does not fail its module gate. A module whose single
 `module.exports = v` statement is its CommonJS value exports `v` itself, and
 the Babel runtime shim's `module.exports.default = module.exports` adds a
-`default` member when it is the only write of that property. A written
+`default` member when it is the only write of that property. `@babel/runtime`'s
+versioned `interopRequireWildcard` replaces `module.exports` and its own
+binding with a copy of itself on its first call; that module is proven only
+when the copy has the helper's kind, the function's setup before the call
+has no effect outside it, and the binding has no other write, so the value
+a consumer reads is a helper of that kind before and after the first call
+(`SelfReplacement`). A written
 provider's helpers are dropped. Each `UnEsm` run that reads the plan adds the
 helpers of the sources its module requires to its `LocalHelperContext`
 (`with_bundled_helpers`): `ns.name(…)` through a never-assigned top-level

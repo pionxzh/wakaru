@@ -287,7 +287,11 @@ For example, `UnInteropRequireDefault`:
   its `LocalHelperContext` for each consumer that requires that provider
   (`with_bundled_helpers`). The consumer's calls then unwrap as a local or
   `tslib` helper's do, per proven export, never by the provider's name
-  (see [fact-system.md](fact-system.md#shape)). A helper barrier 0 cannot
+  (see [fact-system.md](fact-system.md#shape)). `@babel/runtime`'s versioned
+  `interopRequireWildcard`, which replaces `module.exports` and its own
+  binding on its first call, is proven by that exact replacement (the copy
+  it installs must have the helper's body), not by a looser reading of
+  written bindings. A helper barrier 0 cannot
   map, but the facts after the provider's own `UnEsm` prove, is still
   handled in Phase 2: `run_cross_module_interop_imports` turns
   `x = helper(require("./p"))` into an import, and

@@ -1666,6 +1666,31 @@ pub fn collect_require_returns_exports_object(module: &Module, unresolved_mark: 
 /// `UnEsm`, which turns the statement into `export default v`. A direct eval,
 /// or a module with ESM declarations already, fails.
 pub fn collect_commonjs_value_is_default(module: &Module, unresolved_mark: Mark) -> bool {
+    commonjs_value_assignments(module, unresolved_mark).is_some_and(|assignments| {
+        assignments
+            == (ModuleExportsAssignments {
+                top_level: 1,
+                total: 1,
+            })
+    })
+}
+
+/// How often a module assigns `module.exports`: in the positions
+/// [`collect_commonjs_value_is_default`] reads as running on every
+/// evaluation of the body, and anywhere.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ModuleExportsAssignments {
+    pub(crate) top_level: usize,
+    pub(crate) total: usize,
+}
+
+/// The `module.exports` assignments of a module whose every use of the free
+/// `module` is a `module.exports` member, or `None` for a module with
+/// another use, a direct eval, or ESM declarations.
+pub(crate) fn commonjs_value_assignments(
+    module: &Module,
+    unresolved_mark: Mark,
+) -> Option<ModuleExportsAssignments> {
     struct Collector {
         unresolved_mark: Mark,
         module_uses: usize,
@@ -1721,7 +1746,7 @@ pub fn collect_commonjs_value_is_default(module: &Module, unresolved_mark: Mark)
         .iter()
         .any(|item| matches!(item, ModuleItem::ModuleDecl(_)))
     {
-        return false;
+        return None;
     }
     // Assignments that run on every evaluation of the module body: a
     // top-level expression statement, an element of one that is a sequence
@@ -1770,10 +1795,12 @@ pub fn collect_commonjs_value_is_default(module: &Module, unresolved_mark: Mark)
         has_direct_eval: false,
     };
     module.visit_with(&mut collector);
-    top_level_assignments == 1
-        && collector.assignments == 1
-        && collector.module_uses == collector.member_uses
-        && !collector.has_direct_eval
+    (collector.module_uses == collector.member_uses && !collector.has_direct_eval).then_some(
+        ModuleExportsAssignments {
+            top_level: top_level_assignments,
+            total: collector.assignments,
+        },
+    )
 }
 
 /// Whether the module, as extracted, ends in Next's default-object tail, so

@@ -3339,6 +3339,97 @@ fn a_bundled_babel_runtime_interop_helper_proves_a_reexport_getter() {
     }
 }
 
+/// producer @babel/runtime@7.28.6 `helpers/interopRequireWildcard.js`
+/// bundled by webpack@5.111.1 (mode production, no minimizer), with a
+/// consumer from @babel/plugin-transform-runtime@7.28.5 (version ^7.28.6):
+/// the helper replaces `module.exports` and its own binding on its first
+/// call.
+#[test]
+fn a_bundled_babel_runtime_wildcard_that_replaces_itself_converts_in_un_esm() {
+    let source = helper_provider_bundle(
+        r#"    100: function(module) {
+      function _interopRequireWildcard(e, t) {
+        if ("function" == typeof WeakMap) var r = new WeakMap(), n = new WeakMap();
+        return (module.exports = _interopRequireWildcard = function _interopRequireWildcard(e, t) {
+          if (!t && e && e.__esModule) return e;
+          var o, i, f = { __proto__: null, "default": e };
+          if (null === e || "object" != typeof e && "function" != typeof e) return f;
+          if (o = t ? n : r) {
+            if (o.has(e)) return o.get(e);
+            o.set(e, f);
+          }
+          for (var _t in e) "default" !== _t && {}.hasOwnProperty.call(e, _t) && ((i = (o = Object.defineProperty) && Object.getOwnPropertyDescriptor(e, _t)) && (i.get || i.set) ? o(f, _t, i) : f[_t] = e[_t]);
+          return f;
+        }, module.exports.__esModule = true, module.exports["default"] = module.exports)(e, t);
+      }
+      module.exports = _interopRequireWildcard, module.exports.__esModule = true, module.exports["default"] = module.exports;
+    },
+    200: function(module, exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.default = void 0;
+      exports.twice = twice;
+      function twice(n) { return n * 2; }
+      var _default = exports.default = "util-default";
+    },
+    400: function(module, exports, __webpack_require__) {
+      "use strict";
+      var _interopRequireWildcard = __webpack_require__(100)["default"];
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.run = run;
+      var util = _interopRequireWildcard(__webpack_require__(200));
+      function run() { return [util.twice(3), util.default, Object.keys(util).sort().join(",")]; }
+    }"#,
+    );
+
+    let report = wakaru_core::driver::explain_interop(
+        &source,
+        DecompileOptions {
+            filename: "chunk.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("the chunk should unpack");
+    let helper = report
+        .modules
+        .iter()
+        .find(|module| module.filename == "module-100.js")
+        .expect("the helper module");
+    assert_eq!(
+        helper.helper_exports,
+        [
+            "module.exports (wildcard interop)",
+            "default (wildcard interop)"
+        ]
+    );
+    let consumer = report
+        .modules
+        .iter()
+        .find(|module| module.filename == "module-400.js")
+        .expect("the consumer module");
+    let util = consumer
+        .edges
+        .iter()
+        .find(|edge| edge.source == "./module-200.js")
+        .expect("the wrapped require");
+    // `UnEsm` made the namespace import in Phase 1b; no later pass did.
+    assert_eq!(util.un_esm_imports, ["namespace util"]);
+    assert_eq!(util.imports, ["namespace util"]);
+
+    for emit_source_map in [false, true] {
+        let output = unpack_one(&source, emit_source_map);
+        assert_valid_module_graph(&output.modules);
+        let consumer = module_named(&output.modules, "module-400.js");
+        assert!(
+            consumer.contains("import * as util from \"./module-200.js\""),
+            "{consumer}"
+        );
+        assert!(!consumer.contains("module-100.js"), "{consumer}");
+        assert!(!consumer.contains("_interopRequireWildcard"), "{consumer}");
+        assert!(!consumer.contains("require("), "{consumer}");
+    }
+}
+
 #[test]
 fn a_provider_that_only_looks_like_tslib_is_not_trusted() {
     // The export has the helper's name but not its body.
