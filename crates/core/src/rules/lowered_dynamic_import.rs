@@ -19,9 +19,12 @@
 //! `docs/rewrite-assumptions.md`.
 //!
 //! `UnEsm` restores the shape through the wildcard unwrap when the helper is
-//! local. In unpack mode a helper bundled as its own module is known only
-//! from cross-module facts, so Phase 2 runs
-//! [`run_cross_module_lowered_dynamic_imports`].
+//! local, and in unpack mode when barrier 0 proved it in the module that
+//! bundles it ([`crate::provider_helpers`]). Phase 2 runs
+//! [`run_cross_module_lowered_dynamic_imports`] for a helper only the facts
+//! after the provider's own `UnEsm` prove: a helper module the input wrote
+//! as ESM, which barrier 0 does not read, a helper export that only the late
+//! ESM recovery exposes, or an export storage barrier 0 cannot map.
 
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{

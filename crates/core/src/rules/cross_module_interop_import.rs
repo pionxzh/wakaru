@@ -7,13 +7,16 @@
 //! const util = tslib_1.__importStar(require("./util.js"));
 //! ```
 //!
-//! `UnEsm` unwraps these calls when the helper is local or comes from
-//! `require("tslib")`. A bundler that includes tslib as a module leaves only
-//! a relative require, which Phase 1 cannot prove to be tslib, so the module
+//! `UnEsm` unwraps these calls when the helper is local, comes from
+//! `require("tslib")`, or is an export barrier 0 proved in the module that
+//! bundles it ([`crate::provider_helpers`]). Barrier 0 does not read every
+//! helper module: one the input wrote as ESM (tslib's ES module build passed
+//! as another input), one whose helper export only the late ESM recovery
+//! exposes, or one whose export storage it cannot map. The consumer then
 //! becomes ESM around a helper call that still wraps a `require`. In Phase 2
-//! the helper is proven by the provider's TypeScript helper export facts,
-//! and [`run_cross_module_interop_imports`] turns each top-level binding of
-//! such a call into an import of the wrapped module.
+//! the helper is proven by the provider's helper export facts, and
+//! [`run_cross_module_interop_imports`] turns each top-level binding of such
+//! a call into an import of the wrapped module.
 //!
 //! The import form follows the wrapped module's facts, because the helpers
 //! return different values for a provider marked `__esModule` and for an
@@ -558,6 +561,11 @@ impl VisitMut for DefaultReadRewriter<'_> {
 /// A proven interop helper returned such a provider unchanged, so the call
 /// goes and `x` is the namespace; for any other function the marker may
 /// matter, so the require stays.
+///
+/// With bundled helpers proven at barrier 0, the call this stage meets is
+/// either a function that is no interop helper (a CommonJS function another
+/// module exports, `var x = wrap(require("./p"))`) or a helper that neither
+/// barrier 0 nor the facts prove.
 ///
 /// `UnEsm` made the module ESM on the expectation that this stage takes the
 /// require (`kept_require::blocking_require_calls`), and ESM has no

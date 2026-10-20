@@ -1,6 +1,10 @@
 # Module interface model: provider and consumer facts before `UnEsm`
 
-Status: steps 1, 2, and 3 done (2026-10-20); step 4 next. Step 1: the
+Status: steps 1, 2, and 3 done (2026-10-20); step 4 measured, nothing
+removed (see step 4), so "fewer Phase 2 interop passes" in
+[Done when](#done-when) is not met. Closing the line needs a maintainer
+decision on the passes that now serve only helper modules barrier 0 does
+not read. Step 1: the
 explicit execution mode (`PipelineMode`), the late-recovery fix it exposed,
 and `ProviderInterface`, computed per lookup from the provider's facts.
 Step 2: `RequireEdges` on the module facts (`crates/core/src/require_edges.rs`),
@@ -404,21 +408,46 @@ providers CommonJS with no write behind any of them.
 
    Measured after step 3 by counting the modules each pass changes, with
    and without the bundled-helper proof: on the private fixtures and the
-   artificial cases, the lowered `import()` restore no longer changes any
-   module, and the bundled interop helper import changes only consumers of
-   `@babel/runtime`'s `interopRequireWildcard`, whose module replaces
-   `module.exports` and its own binding on the first call, so barrier 0
-   could not map it. Barrier 0 now proves that module by the exact
-   replacement (`SelfReplacement` in `provider_helpers.rs`: the installed
-   copy has the helper's body, the setup before it has no outside effect,
-   and the binding has no other write); the passes are measured again
-   below. `import_unproven_helper_requires`
-   still serves wrappers that are no helper, and `provider_namespace_repair`
-   changes as many modules as before: 3a and 3b moved no part of its
-   default-versus-namespace decision before `UnEsm`. Update
-   [fact-system.md](../fact-system.md), [unpacking.md](../unpacking.md)
-   (Known gaps), and the
-   [rule dependency inventory](../rule-dependency-inventory.md).
+   artificial cases, the lowered `import()` restore no longer changed any
+   module, and the bundled interop helper import changed only consumers of
+   `@babel/runtime`'s versioned `interopRequireWildcard`, whose module
+   replaces `module.exports` and its own binding on the first call. Barrier
+   0 now proves that module by the exact replacement (`SelfReplacement` in
+   `provider_helpers.rs`: the installed copy has the helper's body, the
+   setup before it has no outside effect, and the binding has no other
+   write).
+
+   Measured again with that proof, on the same inputs: neither the lowered
+   `import()` restore nor the bundled interop helper import changes a
+   module (without the proof both still do); `import_unproven_helper_requires`
+   changes only consumers of a CommonJS function that is no interop helper
+   (`var x = wrap(require("./p"))`); `provider_namespace_repair` changes
+   as many modules in the fixtures as without the proof, and a few fewer in
+   the artificial cases, where the proof converts some consumers in Phase 1b.
+
+   Step 4 removed nothing. Each pass still accepts an input no earlier stage
+   handles, recorded in its doc comment and in
+   [fact-system.md](../fact-system.md):
+
+   - The lowered `import()` restore and the bundled interop helper import
+     prove a helper from the facts after the provider's own `UnEsm`. Barrier
+     0 does not read a helper module the input wrote as ESM (tslib's ES
+     module build passed as another input, pinned by the multi-file unpack
+     tests), a helper export only the late ESM recovery exposes, or an
+     export storage it cannot map. Without the passes such a consumer
+     becomes ESM around a `require`. Removing them trades that recovery
+     away, which is a maintainer decision; reading ESM helper modules at
+     barrier 0 would leave them only the late-recovered and unmapped
+     exports.
+   - `import_unproven_helper_requires` serves wrappers that are no helper.
+   - `provider_namespace_repair`: barrier 0 moved no part of its
+     default-versus-namespace decision before `UnEsm`. Whether a provider
+     ends with a default export is known only after its own `UnEsm` and late
+     recovery, which the plan does not carry.
+
+   `kept_require::blocking_require_calls` and `LaterUnpackStages` are
+   unchanged, as every stage they list still runs. No ordering edge changed
+   in the [rule dependency inventory](../rule-dependency-inventory.md).
 
 ## Done when
 

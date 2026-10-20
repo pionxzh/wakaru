@@ -2700,6 +2700,42 @@ function run() {
 }
 
 #[test]
+fn lowered_import_through_an_esm_helper_input_becomes_import_call() {
+    // shape: producer tsc@5.9.3 module=CommonJS esModuleInterop
+    // importHelpers, next to tslib's ES module build as another input.
+    // Barrier 0 reads no helper module the input wrote as ESM, so `UnEsm`
+    // leaves the lowered `import()` to the Phase 2 restore, which proves
+    // the helper from the provider's export facts.
+    let consumer = unpack_tslib_interop_consumer(
+        r#""use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.load = load;
+const tslib_1 = require("./tslib.js");
+const widget_js_1 = tslib_1.__importDefault(require("./widget.js"));
+async function load() {
+    const lazy = await Promise.resolve().then(() => tslib_1.__importStar(require("./util.js")));
+    return [new widget_js_1.default("w").label(), lazy.twice(3)];
+}
+"#,
+        &[
+            ("widget.js", TSC_DEFAULT_CLASS_PROVIDER),
+            ("util.js", TSC_NAMED_AND_DEFAULT_PROVIDER),
+        ],
+    );
+
+    assert!(
+        consumer.contains(r#"await import("./util.js")"#),
+        "{consumer}"
+    );
+    for absent in ["require(", "__importStar", "__importDefault"] {
+        assert!(
+            !consumer.contains(absent),
+            "consumer must not keep `{absent}`:\n{consumer}"
+        );
+    }
+}
+
+#[test]
 fn module_recovered_only_late_keeps_commonjs_for_a_helper_require() {
     // shape: hypothetical. A require inside an IIFE keeps the consumer
     // CommonJS when `UnEsm` first runs; the late ESM recovery that ends

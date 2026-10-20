@@ -516,6 +516,9 @@ Neither proof creates a default-object fact available to consumers.
   textual position. Authored imports, namespace mutation, conditional/nested
   alias replacement, computed/meta reads, and `__esModule` observation remain
   unchanged.
+  Barrier 0 does not move this decision before `UnEsm`: whether a provider
+  ends with a default export is known only after its own `UnEsm`, so `UnEsm`
+  still makes the default import and this pass corrects it.
   The existing namespace decomposition pass can then recover narrower named
   imports where its own gates allow that rewrite. Single-file decompilation
   has no facts; the `UnEsm` runner makes the same rewrite
@@ -528,9 +531,10 @@ Neither proof creates a default-object fact available to consumers.
   as its own module, or tslib's `__importStar` under TypeScript's
   `importHelpers`). `UnEsm` restores the same shape with a local helper,
   and with a bundled one the plan proved at barrier 0; this pass covers a
-  helper proven only by the facts after the provider's own `UnEsm` (a
-  provider the input already wrote as ESM, or one whose export barrier 0
-  could not map)
+  helper proven only by the facts after the provider's own `UnEsm`: a helper
+  module the input already wrote as ESM, which barrier 0 does not read
+  (tslib's ES module build passed as another input), a helper export only
+  the late ESM recovery exposes, or an export storage barrier 0 cannot map
   (`lowered_dynamic_import_source_semantics` in rewrite-assumptions.md).
 - **`run_cross_module_webpack_lazy_imports`** — restores `import()` from a
   webpack or Rspack lazy load whose module id unpack resolved to a sibling
@@ -549,7 +553,10 @@ Neither proof creates a default-object fact available to consumers.
   provider's facts (`ProviderInterface::required_value_import`). `UnEsm`
   made the module ESM
   expecting a later stage to take that require
-  (`import_hoisting_eagerness`).
+  (`import_hoisting_eagerness`). With bundled helpers proven at barrier 0,
+  the calls left here are of a function that is no interop helper (a
+  CommonJS function another module exports, `wrap(require("./p"))`), or of
+  a helper neither barrier 0 nor the facts prove.
 - **`run_cross_module_interop_imports`** — turns a top-level
   `x = helper(require("./p"))` into an import of `./p` when `helper` is
   imported from a module whose facts prove it is a default or wildcard interop
@@ -565,7 +572,8 @@ Neither proof creates a default-object fact available to consumers.
   import cannot represent keep the call. `UnEsm` makes the same rewrite with a
   local or `tslib` helper, and with a bundled helper the plan proved at
   barrier 0 (see [Shape](#shape)); this pass covers a helper proven only by
-  the facts after the provider's own `UnEsm`.
+  the facts after the provider's own `UnEsm`, the same three sources as the
+  lowered `import()` restore above.
 - **`namespace_decomposition`** — rewrites `import r from "./x"; r.foo()` into
   `import { foo } from "./x"; foo()` when `./x` exports `foo` and no collision
   prevents the rewrite. On a namespace import, `ns.default` becomes a default

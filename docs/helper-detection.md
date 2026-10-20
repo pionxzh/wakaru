@@ -292,8 +292,9 @@ For example, `UnInteropRequireDefault`:
   binding on its first call, is proven by that exact replacement (the copy
   it installs must have the helper's body), not by a looser reading of
   written bindings. A helper barrier 0 cannot
-  map, but the facts after the provider's own `UnEsm` prove, is still
-  handled in Phase 2: `run_cross_module_interop_imports` turns
+  map, but the facts after the provider's own `UnEsm` prove (a helper module
+  the input wrote as ESM, a helper export only the late ESM recovery
+  exposes), is still handled in Phase 2: `run_cross_module_interop_imports` turns
   `x = helper(require("./p"))` into an import, and
   `run_cross_module_lowered_dynamic_imports` restores the lowered
   `import()`

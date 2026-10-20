@@ -10,6 +10,12 @@
 //! among the others, while a default from `module.exports = v` is the whole
 //! required value.
 //!
+//! Barrier 0 does not move this decision before `UnEsm`: the plan carries
+//! which providers a consumer writes to and which helpers they export, not
+//! whether a provider ends with a default export, which is known only after
+//! the provider's own `UnEsm` and late recovery. So `UnEsm` still makes the
+//! default import, and this pass corrects it.
+//!
 //! This pass is deliberately conservative. It only touches imports `UnEsm`
 //! synthesized from a require (the import tags), requires one of those proven providers
 //! (or, without facts, the evidence in [`run_relative_namespace_repair`]),
