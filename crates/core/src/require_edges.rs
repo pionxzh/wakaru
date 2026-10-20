@@ -128,13 +128,54 @@ pub struct RequireUses {
     /// The value is used whole anywhere else: passed to a call, stored,
     /// returned, or aliased.
     pub escapes: bool,
+    /// The value is passed to a function of this module that writes the
+    /// parameter it arrives in ([`ArgumentCallee`]).
+    pub callee_write: bool,
+    /// The value is passed to a callee required from another module: the
+    /// sources, in first-use order.
+    pub passed_to_other_module: Vec<Atom>,
+    /// The value is passed to a callee whose effect on it is unknown.
+    pub passed_to_unknown: bool,
 }
 
 impl RequireUses {
-    /// Whether the consumer writes to the required value.
+    /// Whether the consumer writes to the required value: directly, or
+    /// through a function of the module it passes the value to.
     pub fn writes(&self) -> bool {
-        !self.member_writes.is_empty() || self.computed_write || self.object_api_write
+        !self.member_writes.is_empty()
+            || self.computed_write
+            || self.object_api_write
+            || self.callee_write
     }
+
+    /// Whether the value reaches a callee that could write to it unseen:
+    /// one in another module, or one nothing is known about.
+    pub fn passed_to_unseen_callee(&self) -> bool {
+        self.passed_to_unknown || !self.passed_to_other_module.is_empty()
+    }
+}
+
+/// What a callee does with a required value passed to it as an argument.
+///
+/// A same-module function counts as a writer when the call reaches it
+/// directly (a function literal, or a binding declared once and never
+/// written), it does not read `arguments`, and its body writes the
+/// parameter: a member assignment, update, or `delete`, or the target of
+/// `Object.assign`, `Object.defineProperty`, `Object.defineProperties`, or
+/// `Object.setPrototypeOf` (the conditions `ArrowFunction` uses for a
+/// callee's parameters). Only that one level is followed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ArgumentCallee {
+    /// An interop or re-export helper, a builtin that only reads, or a
+    /// same-module function that does not write the parameter.
+    Reads,
+    /// A same-module function that writes the parameter.
+    Writes,
+    /// A same-module function binding, decided once the module is read.
+    Local(BindingId),
+    /// A callee required from the source.
+    OtherModule(Atom),
+    Unknown,
 }
 
 /// One `require("src")` call of a module.
@@ -276,14 +317,32 @@ impl RequireEdges {
             bindings: HashMap::default(),
         };
         module.visit_with(&mut sites);
+        let sources: HashMap<EdgeKey, Atom> = self
+            .edges
+            .iter()
+            .map(|edge| (edge.key(), edge.source.clone()))
+            .collect();
         let mut uses = UseCollector {
             unresolved_mark,
             keys: &keys,
             local_helpers,
             bindings: &sites.bindings,
+            sources: &sources,
             uses: HashMap::default(),
+            local_callees: Vec::new(),
         };
         module.visit_with(&mut uses);
+        if !uses.local_callees.is_empty() {
+            let writers = LocalWriters::collect(module, &uses.local_callees);
+            for (key, callee, index) in std::mem::take(&mut uses.local_callees) {
+                let entry = uses.uses.entry(key).or_default();
+                match writers.writes(&callee, index) {
+                    Some(true) => entry.callee_write = true,
+                    Some(false) => {}
+                    None => entry.passed_to_unknown = true,
+                }
+            }
+        }
         for edge in &mut self.edges {
             let key = edge.key();
             edge.uses = (sites.seen.get(&key) == Some(&1))
@@ -566,6 +625,18 @@ impl fmt::Display for RequireUses {
         }
         if self.escapes {
             parts.push("escapes".to_string());
+        }
+        if self.callee_write {
+            parts.push("written by a callee".to_string());
+        }
+        if !self.passed_to_other_module.is_empty() {
+            parts.push(format!(
+                "passed to a callee from {}",
+                join(&self.passed_to_other_module)
+            ));
+        }
+        if self.passed_to_unknown {
+            parts.push("passed to an unknown callee".to_string());
         }
         if parts.is_empty() {
             f.write_str("unused")
@@ -984,7 +1055,12 @@ struct UseCollector<'a> {
     keys: &'a HashSet<EdgeKey>,
     local_helpers: &'a LocalHelperContext,
     bindings: &'a HashMap<BindingId, EdgeKey>,
+    /// Each keyed call's source.
+    sources: &'a HashMap<EdgeKey, Atom>,
     uses: HashMap<EdgeKey, RequireUses>,
+    /// Values passed to a same-module function binding: the edge, the
+    /// callee, and the argument position.
+    local_callees: Vec<(EdgeKey, BindingId, usize)>,
 }
 
 impl UseCollector<'_> {
@@ -1083,6 +1159,390 @@ impl UseCollector<'_> {
             _ => None,
         }
     }
+}
+
+impl UseCollector<'_> {
+    /// What `callee` does with the argument at `index`.
+    fn argument_callee(&self, callee: &Expr, index: usize) -> ArgumentCallee {
+        let callee = match strip_parens(callee) {
+            // `(0, f)(x)`
+            Expr::Seq(seq) => seq.exprs.last().map_or(callee, |last| strip_parens(last)),
+            other => other,
+        };
+        match callee {
+            Expr::Fn(function) => {
+                return local_function_writes(FunctionNode::Function(&function.function), index)
+                    .map_or(ArgumentCallee::Unknown, ArgumentCallee::from_writes);
+            }
+            Expr::Arrow(arrow) => {
+                return local_function_writes(FunctionNode::Arrow(arrow), index)
+                    .map_or(ArgumentCallee::Unknown, ArgumentCallee::from_writes);
+            }
+            _ => {}
+        }
+        if let Some(name) = callee_name(callee) {
+            if is_interop_helper_name(&name) {
+                return ArgumentCallee::Reads;
+            }
+        }
+        if let Expr::Member(member) = callee {
+            if let Expr::Ident(object) = strip_parens(&member.obj) {
+                if object.ctxt.outer() == self.unresolved_mark {
+                    let method = static_member_name(&member.prop);
+                    return builtin_argument(&object.sym, method.as_deref(), index);
+                }
+            }
+        }
+        // A callee reached through a value required from another module.
+        let mut base = callee;
+        while let Expr::Member(member) = base {
+            base = strip_parens(&member.obj);
+        }
+        match base {
+            Expr::Call(call) => {
+                if let Some(source) = require_call_source(call, self.unresolved_mark) {
+                    return ArgumentCallee::OtherModule(source);
+                }
+                ArgumentCallee::Unknown
+            }
+            Expr::Ident(ident) => {
+                if let Some(key) = self.bindings.get(&binding_id(ident)) {
+                    return self
+                        .sources
+                        .get(key)
+                        .cloned()
+                        .map_or(ArgumentCallee::Unknown, ArgumentCallee::OtherModule);
+                }
+                if std::ptr::eq(base, callee) && ident.ctxt.outer() != self.unresolved_mark {
+                    return ArgumentCallee::Local(binding_id(ident));
+                }
+                ArgumentCallee::Unknown
+            }
+            _ => ArgumentCallee::Unknown,
+        }
+    }
+
+    /// Records the arguments of a call or `new` that are a required value,
+    /// and visits the others.
+    fn arguments(&mut self, callee: &Expr, args: &[swc_core::ecma::ast::ExprOrSpread]) {
+        for (index, arg) in args.iter().enumerate() {
+            let key = arg
+                .spread
+                .is_none()
+                .then(|| self.value_of(&arg.expr))
+                .flatten();
+            let Some(key) = key else {
+                arg.visit_with(self);
+                continue;
+            };
+            let callee = self.argument_callee(callee, index);
+            let uses = self.uses(key);
+            uses.escapes = true;
+            match callee {
+                ArgumentCallee::Reads => {}
+                ArgumentCallee::Writes => uses.callee_write = true,
+                ArgumentCallee::OtherModule(source) => {
+                    if !uses.passed_to_other_module.contains(&source) {
+                        uses.passed_to_other_module.push(source);
+                    }
+                }
+                ArgumentCallee::Unknown => uses.passed_to_unknown = true,
+                ArgumentCallee::Local(binding) => self.local_callees.push((key, binding, index)),
+            }
+            if let Expr::Call(call) = strip_parens(&arg.expr) {
+                call.args.visit_with(self);
+            }
+        }
+    }
+}
+
+impl ArgumentCallee {
+    fn from_writes(writes: bool) -> Self {
+        if writes {
+            Self::Writes
+        } else {
+            Self::Reads
+        }
+    }
+}
+
+/// The name a callee is written with: an identifier, or a static member.
+fn callee_name(callee: &Expr) -> Option<Atom> {
+    match callee {
+        Expr::Ident(ident) => Some(ident.sym.clone()),
+        Expr::Member(member) => static_member_name(&member.prop),
+        _ => None,
+    }
+}
+
+/// Interop and re-export helpers by the names transpilers give them. A
+/// name is enough here: the helper is only kept from counting as an
+/// unknown callee.
+fn is_interop_helper_name(name: &str) -> bool {
+    matches!(
+        name,
+        "__importDefault"
+            | "__importStar"
+            | "__exportStar"
+            | "__createBinding"
+            | "__setModuleDefault"
+            | "__toESM"
+            | "__toCommonJS"
+            | "__reExport"
+            | "_interopRequireDefault"
+            | "_interopRequireWildcard"
+            | "_interop_require_default"
+            | "_interop_require_wildcard"
+            | "interopRequireDefault"
+            | "interopRequireWildcard"
+            | "_interopNamespace"
+            | "_interopNamespaceDefault"
+            | "_interopDefault"
+            | "_interopDefaultLegacy"
+            | "_export_star"
+            | "_exportStar"
+    )
+}
+
+/// What a method of a free global does with the argument at `index`.
+/// `Object`'s writing methods take their target in the branch for them in
+/// `visit_call_expr`; `require`'s members are the bundler's interop.
+fn builtin_argument(global: &str, method: Option<&str>, index: usize) -> ArgumentCallee {
+    match global {
+        "require" | "JSON" | "console" | "Array" | "Promise" | "Math" | "String" | "Number"
+        | "Symbol" | "Boolean" => ArgumentCallee::Reads,
+        "Object" => match method {
+            Some("freeze" | "seal" | "preventExtensions") if index == 0 => ArgumentCallee::Unknown,
+            _ => ArgumentCallee::Reads,
+        },
+        "Reflect" => match method {
+            Some("set" | "defineProperty" | "deleteProperty" | "setPrototypeOf") if index == 0 => {
+                ArgumentCallee::Writes
+            }
+            _ => ArgumentCallee::Reads,
+        },
+        _ => ArgumentCallee::Unknown,
+    }
+}
+
+/// A function a required value is passed to.
+#[derive(Clone, Copy)]
+enum FunctionNode<'a> {
+    Function(&'a Function),
+    Arrow(&'a ArrowExpr),
+}
+
+/// Whether the function writes the parameter at `index`; `None` when a
+/// parameter is not the only way its body reaches the argument (it reads
+/// `arguments`, or the parameter is a pattern).
+fn local_function_writes(function: FunctionNode<'_>, index: usize) -> Option<bool> {
+    let params: Vec<&Pat> = match function {
+        FunctionNode::Function(function) => {
+            if reads_arguments(function) {
+                return None;
+            }
+            function.params.iter().map(|param| &param.pat).collect()
+        }
+        FunctionNode::Arrow(arrow) => arrow.params.iter().collect(),
+    };
+    let Some(param) = params.get(index) else {
+        // An argument past the parameters is unused.
+        return Some(false);
+    };
+    let Pat::Ident(param) = param else {
+        return None;
+    };
+    let mut finder = ParamWrites {
+        param: binding_id(&param.id),
+        found: false,
+    };
+    match function {
+        FunctionNode::Function(function) => function.visit_with(&mut finder),
+        FunctionNode::Arrow(arrow) => arrow.visit_with(&mut finder),
+    }
+    Some(finder.found)
+}
+
+/// Finds a write to a parameter's value anywhere in its function, nested
+/// functions included.
+struct ParamWrites {
+    param: BindingId,
+    found: bool,
+}
+
+impl ParamWrites {
+    fn is_param(&self, expr: &Expr) -> bool {
+        matches!(strip_parens(expr), Expr::Ident(ident) if binding_id(ident) == self.param)
+    }
+
+    fn is_member_of_param(&self, expr: &Expr) -> bool {
+        matches!(strip_parens(expr), Expr::Member(member) if self.is_param(&member.obj))
+    }
+}
+
+impl Visit for ParamWrites {
+    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+        if let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left {
+            if self.is_param(&member.obj) {
+                self.found = true;
+                return;
+            }
+        }
+        assign.visit_children_with(self);
+    }
+
+    fn visit_update_expr(&mut self, update: &UpdateExpr) {
+        if self.is_member_of_param(&update.arg) {
+            self.found = true;
+            return;
+        }
+        update.visit_children_with(self);
+    }
+
+    fn visit_unary_expr(&mut self, unary: &UnaryExpr) {
+        if unary.op == UnaryOp::Delete && self.is_member_of_param(&unary.arg) {
+            self.found = true;
+            return;
+        }
+        unary.visit_children_with(self);
+    }
+
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if let (Callee::Expr(callee), Some(first)) = (&call.callee, call.args.first()) {
+            if first.spread.is_none() && self.is_param(&first.expr) {
+                if let Expr::Member(member) = strip_parens(callee) {
+                    let object_api = matches!(strip_parens(&member.obj), Expr::Ident(object)
+                        if object.sym == "Object")
+                        && matches!(
+                            member.prop.as_ident().map(|prop| prop.sym.as_ref()),
+                            Some(
+                                "assign" | "defineProperty" | "defineProperties" | "setPrototypeOf"
+                            )
+                        );
+                    if object_api {
+                        self.found = true;
+                        return;
+                    }
+                }
+            }
+        }
+        call.visit_children_with(self);
+    }
+}
+
+/// The same-module functions required values are passed to, read once the
+/// whole module is known.
+struct LocalWriters {
+    /// `with` or direct `eval` can reach any binding by name.
+    dynamic_scope: bool,
+    uses: crate::analysis::binding_uses::BindingUseIndex,
+    /// For each callee binding and argument position, whether its function
+    /// writes that parameter (`None`: not only through the parameter).
+    writes: HashMap<(BindingId, usize), Option<bool>>,
+}
+
+impl LocalWriters {
+    fn collect(module: &Module, callees: &[(EdgeKey, BindingId, usize)]) -> Self {
+        let mut wanted: HashMap<BindingId, Vec<usize>> = HashMap::default();
+        for (_, binding, index) in callees {
+            let indices = wanted.entry(binding.clone()).or_default();
+            if !indices.contains(index) {
+                indices.push(*index);
+            }
+        }
+        let mut finder = FunctionFinder {
+            wanted: &wanted,
+            writes: HashMap::default(),
+        };
+        module.visit_with(&mut finder);
+        Self {
+            dynamic_scope: crate::rules::eval_utils::has_dynamic_scope_construct(module),
+            uses: crate::analysis::binding_uses::BindingUseIndex::collect(module),
+            writes: finder.writes,
+        }
+    }
+
+    /// Whether the function bound to `callee` writes its parameter at
+    /// `index`; `None` when the call does not reach that function directly
+    /// or the body reaches the argument another way.
+    fn writes(&self, callee: &BindingId, index: usize) -> Option<bool> {
+        if self.dynamic_scope || !self.uses.has_single_declaration(callee) {
+            return None;
+        }
+        let written = self.uses.use_sites(callee).iter().any(|site| {
+            matches!(
+                site.kind,
+                crate::analysis::binding_uses::UseKind::Write
+                    | crate::analysis::binding_uses::UseKind::ReadWrite
+            )
+        });
+        if written {
+            return None;
+        }
+        *self.writes.get(&(callee.clone(), index))?
+    }
+}
+
+/// Reads the declarations of the wanted function bindings, in any scope: a
+/// function declaration, or a declarator initialized with a function or an
+/// arrow.
+struct FunctionFinder<'a> {
+    wanted: &'a HashMap<BindingId, Vec<usize>>,
+    writes: HashMap<(BindingId, usize), Option<bool>>,
+}
+
+impl FunctionFinder<'_> {
+    fn record(&mut self, name: &swc_core::ecma::ast::Ident, function: FunctionNode<'_>) {
+        let binding = binding_id(name);
+        let Some(indices) = self.wanted.get(&binding) else {
+            return;
+        };
+        for index in indices {
+            self.writes.insert(
+                (binding.clone(), *index),
+                local_function_writes(function, *index),
+            );
+        }
+    }
+}
+
+impl Visit for FunctionFinder<'_> {
+    fn visit_fn_decl(&mut self, decl: &swc_core::ecma::ast::FnDecl) {
+        self.record(&decl.ident, FunctionNode::Function(&decl.function));
+        decl.visit_children_with(self);
+    }
+
+    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+        if let (Pat::Ident(name), Some(init)) = (&declarator.name, &declarator.init) {
+            match strip_parens(init) {
+                Expr::Fn(function) => {
+                    self.record(&name.id, FunctionNode::Function(&function.function))
+                }
+                Expr::Arrow(arrow) => self.record(&name.id, FunctionNode::Arrow(arrow)),
+                _ => {}
+            }
+        }
+        declarator.visit_children_with(self);
+    }
+}
+
+/// Whether `function` reads its own `arguments` in its parameters or body
+/// (an arrow inside it reads the same `arguments`).
+fn reads_arguments(function: &Function) -> bool {
+    struct Finder(bool);
+    impl Visit for Finder {
+        fn visit_ident(&mut self, ident: &swc_core::ecma::ast::Ident) {
+            if ident.sym == "arguments" {
+                self.0 = true;
+            }
+        }
+
+        fn visit_function(&mut self, _: &Function) {}
+    }
+    let mut finder = Finder(false);
+    function.params.visit_with(&mut finder);
+    function.body.visit_with(&mut finder);
+    finder.0
 }
 
 impl Visit for UseCollector<'_> {
@@ -1187,13 +1647,13 @@ impl Visit for UseCollector<'_> {
         };
         if let Expr::Member(member) = strip_parens(callee) {
             if self.member_use(member, true) {
-                call.args.visit_with(self);
+                self.arguments(callee, &call.args);
                 return;
             }
         }
         if let Some(key) = self.value_of(callee) {
             self.uses(key).called = true;
-            call.args.visit_with(self);
+            self.arguments(callee, &call.args);
             return;
         }
         if is_interop_callee(callee, self.local_helpers, self.unresolved_mark) {
@@ -1224,16 +1684,22 @@ impl Visit for UseCollector<'_> {
             }
             return;
         }
-        call.visit_children_with(self);
+        callee.visit_with(self);
+        self.arguments(callee, &call.args);
     }
 
     fn visit_new_expr(&mut self, new: &NewExpr) {
         if let Some(key) = self.value_of(&new.callee) {
             self.uses(key).called = true;
-            new.args.visit_with(self);
+            if let Some(args) = &new.args {
+                self.arguments(&new.callee, args);
+            }
             return;
         }
-        new.visit_children_with(self);
+        new.callee.visit_with(self);
+        if let Some(args) = &new.args {
+            self.arguments(&new.callee, args);
+        }
     }
 
     fn visit_opt_chain_expr(&mut self, chain: &OptChainExpr) {
@@ -1501,6 +1967,77 @@ use(p);"#,
         assert!(q.object_api_write && !q.escapes);
         let r = only(&edges, "./r.js").uses.expect("uses of ./r.js");
         assert_eq!(r.member_writes, names(&["s"]));
+    }
+
+    #[test]
+    fn a_same_module_function_that_writes_its_parameter_writes_the_value() {
+        let edges = edges(
+            r#"function install(m) { m.f = function () {}; }
+install(require("./declared.js"));
+var add = (o) => { Object.assign(o, extra); };
+add(require("./arrow.js"));
+(function (m) { delete m.gone; })(require("./literal.js"));
+function later(m, name) { list.forEach(function (k) { m[name + k] = 1; }); }
+var p = require("./nested.js");
+later(p, "x");
+(0, install)(require("./sequence.js"));"#,
+        );
+        for source in [
+            "./declared.js",
+            "./arrow.js",
+            "./literal.js",
+            "./nested.js",
+            "./sequence.js",
+        ] {
+            let uses = only(&edges, source).uses.expect("uses");
+            assert!(uses.callee_write && uses.writes(), "{source}: {uses}");
+            assert!(!uses.passed_to_unseen_callee(), "{source}: {uses}");
+        }
+    }
+
+    #[test]
+    fn readers_helpers_and_unproven_callees_do_not_write_the_value() {
+        let edges = edges(
+            r#"function describe(m) { return Object.keys(m).join(); }
+describe(require("./read.js"));
+Object.keys(require("./keys.js"));
+__exportStar(require("./star.js"), exports);
+function spread(m) { arguments[0].x = 1; m.y = 2; }
+spread(require("./arguments.js"));
+var swapped = function (m) { m.f = 1; };
+swapped = other;
+swapped(require("./reassigned.js"));
+function twice(m) { m.f = 1; }
+function twice(m) {}
+twice(require("./twice.js"));
+var installer = require("./installer.js");
+installer.install(require("./other.js"));
+require("./direct.js")(require("./other2.js"));
+register(require("./global.js"));"#,
+        );
+        for source in ["./read.js", "./keys.js", "./star.js"] {
+            let uses = only(&edges, source).uses.expect("uses");
+            assert!(
+                !uses.writes() && !uses.passed_to_unseen_callee(),
+                "{source}: {uses}"
+            );
+        }
+        // A callee the call may not reach, or whose body reaches the
+        // argument another way, is unknown.
+        for source in [
+            "./arguments.js",
+            "./reassigned.js",
+            "./twice.js",
+            "./global.js",
+        ] {
+            let uses = only(&edges, source).uses.expect("uses");
+            assert!(!uses.writes() && uses.passed_to_unknown, "{source}: {uses}");
+        }
+        let other = only(&edges, "./other.js").uses.expect("uses");
+        assert_eq!(other.passed_to_other_module, names(&["./installer.js"]));
+        assert!(!other.writes());
+        let other2 = only(&edges, "./other2.js").uses.expect("uses");
+        assert_eq!(other2.passed_to_other_module, names(&["./direct.js"]));
     }
 
     #[test]
