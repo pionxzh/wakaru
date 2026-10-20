@@ -38,16 +38,24 @@ merge step.
 
 ## Shape
 
-Multi-module unpack runs in two parallel phases with a single barrier between
-them (`crates/core/src/driver/unpack/phases.rs`):
+Multi-module unpack runs in two parallel phases with a barrier between them
+(`crates/core/src/driver/unpack/phases.rs`). Phase 1 is itself split right
+before `UnEsm`, so every module reaches `UnEsm` before any runs it
+(barrier 0):
 
 ```
-Phase 1 (per module, parallel):
+Phase 1a (per module, parallel):
     obtain resolved AST (prepared detector AST, or parse → resolver)
     normalize exact detector-proven webpack runtime branches
     collect raw CommonJS default-object / callable-property facts
     collect require edges: form and interop, keyed by call span
-    rule range through UnEsm (its runner first adds each edge's uses)
+    rule range up to, not including, UnEsm
+    add each edge's uses, on the AST UnEsm will see
+
+──── barrier 0: every module has reached UnEsm ────
+
+Phase 1b (per module, parallel):
+    UnEsm, which records the import tags
     clone barrier AST → recover webpack factory IIFE ESM shapes
     collect_module_facts(&facts_clone)                ← pure AST → facts
     collect_import_call_edges(&barrier_ast)           ← imports still under [[Call]]
@@ -76,7 +84,7 @@ Phase 2 (per module, parallel):
     run_kept_require_default_reads(...)              ← a kept require of a provider now ESM
 ```
 
-Both phases hand modules to the Rayon pool largest-first by source length
+Each phase, Phase 1a and 1b included, hands modules to the Rayon pool largest-first by source length
 (`driver/unpack/schedule.rs`). Per-module cost is heavily skewed, and Rayon's
 default range splitting can leave the largest module to start after most
 workers have gone idle, so it becomes the critical path of the phase.
@@ -230,7 +238,7 @@ the form it is written in (a declarator, a destructure, a member read, an
 interop helper argument, a bare statement, or inline), whether it sits in a
 top-level statement, the interop around the call or its top-level binding,
 and whether `__esModule` is read on it. These are read on the input, before
-the rule range erases the interop. The runner of `UnEsm` then adds how the
+the rule range erases the interop. Phase 1a then adds how the
 value is used on the AST `UnEsm` sees: static member reads, receiver-sensitive
 member calls, member writes (assignment, update, `delete`, or the target of
 `Object.assign` / `Object.defineProperty`), and escape. A call whose span is

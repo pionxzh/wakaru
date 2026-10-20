@@ -108,13 +108,14 @@ pub fn trace_rules(
                 RulePipelineOptions {
                     start_from: trace_options.start_from.as_deref(),
                     stop_after: trace_options.stop_after.as_deref(),
+                    stop_before: None,
                     dce_mode: options.dce_mode,
                     rewrite_level: options.level,
                     module_facts: None,
                     current_filename: Some(&options.filename),
                     mode: Some(PipelineMode::SingleFile),
                     call_required_plan: None,
-                    require_record: None,
+                    import_tags: None,
                 },
                 &mut observer,
             );

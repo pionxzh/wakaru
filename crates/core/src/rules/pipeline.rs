@@ -7,7 +7,7 @@ use swc_core::ecma::visit::VisitMutWith;
 
 use crate::facts::ModuleFactsMap;
 use crate::kept_require::LaterUnpackStages;
-use crate::require_edges::RequireRecord;
+use crate::require_edges::ImportTags;
 use crate::DceMode;
 
 use super::dead_decls::compute_pre_dead_decl_spans;
@@ -76,7 +76,7 @@ struct RuleRunContext<'a> {
     extracted_function_names: SharedExtractedFunctionNames,
     pre_dead: Option<Rc<PreDeadSet>>,
     mode: PipelineMode,
-    require_record: Option<&'a RefCell<RequireRecord>>,
+    import_tags: Option<&'a RefCell<ImportTags>>,
 }
 
 pub(super) struct PreDeadSet {
@@ -340,14 +340,6 @@ fn run_un_esm(module: &mut Module, ctx: RuleRunContext<'_>) {
         return;
     }
     let local_helpers = ctx.local_helpers(module);
-    // Each require's uses on the AST `UnEsm` sees, for the edges collected
-    // on the input.
-    if let Some(record) = ctx.require_record {
-        record
-            .borrow_mut()
-            .edges
-            .add_uses(module, ctx.unresolved_mark, &local_helpers);
-    }
     // The evidence is read before `UnEsm` removes the `__esModule` marker and
     // unwraps interop calls.
     let mut relative_namespace = single_file
@@ -363,8 +355,8 @@ fn run_un_esm(module: &mut Module, ctx: RuleRunContext<'_>) {
         }
         run_relative_namespace_import(module, evidence, ctx.unresolved_mark, rule.import_tags());
     }
-    if let Some(record) = ctx.require_record {
-        record.borrow_mut().tags = rule.take_import_tags();
+    if let Some(tags) = ctx.import_tags {
+        *tags.borrow_mut() = rule.take_import_tags();
     }
 }
 fn run_un_template_literal(module: &mut Module, ctx: RuleRunContext<'_>) {
@@ -943,6 +935,8 @@ impl PipelineMode {
 pub struct RulePipelineOptions<'a> {
     pub start_from: Option<&'a str>,
     pub stop_after: Option<&'a str>,
+    /// Stops before this rule runs: the range ends with the rule before it.
+    pub stop_before: Option<&'a str>,
     pub dce_mode: DceMode,
     pub rewrite_level: RewriteLevel,
     pub module_facts: Option<&'a ModuleFactsMap>,
@@ -952,9 +946,8 @@ pub struct RulePipelineOptions<'a> {
     /// ([`PipelineMode`]).
     pub mode: Option<PipelineMode>,
     pub(crate) call_required_plan: Option<&'a crate::rules::CallRequiredPlan>,
-    /// The module's require edges, collected on the input; `UnEsm`'s runner
-    /// adds their uses.
-    pub(crate) require_record: Option<&'a RefCell<RequireRecord>>,
+    /// Receives the import specifiers `UnEsm` makes from `require()` calls.
+    pub(crate) import_tags: Option<&'a RefCell<ImportTags>>,
 }
 
 impl Default for RulePipelineOptions<'_> {
@@ -962,13 +955,14 @@ impl Default for RulePipelineOptions<'_> {
         Self {
             start_from: None,
             stop_after: None,
+            stop_before: None,
             dce_mode: DceMode::Full,
             rewrite_level: RewriteLevel::Standard,
             module_facts: None,
             current_filename: None,
             mode: None,
             call_required_plan: None,
-            require_record: None,
+            import_tags: None,
         }
     }
 }
@@ -977,6 +971,14 @@ impl<'a> RulePipelineOptions<'a> {
     pub fn until(stop_after: &'a str) -> Self {
         Self {
             stop_after: Some(stop_after),
+            ..Default::default()
+        }
+    }
+
+    /// Every rule before `stop_before`, which does not run.
+    pub fn before(stop_before: &'a str) -> Self {
+        Self {
+            stop_before: Some(stop_before),
             ..Default::default()
         }
     }
@@ -1022,8 +1024,8 @@ impl<'a> RulePipelineOptions<'a> {
         self
     }
 
-    pub(crate) fn with_require_record(mut self, record: &'a RefCell<RequireRecord>) -> Self {
-        self.require_record = Some(record);
+    pub(crate) fn with_import_tags(mut self, tags: &'a RefCell<ImportTags>) -> Self {
+        self.import_tags = Some(tags);
         self
     }
 }
@@ -1091,7 +1093,7 @@ fn apply_rules_impl(
         mode: options
             .mode
             .unwrap_or_else(|| PipelineMode::inferred(&options)),
-        require_record: options.require_record,
+        import_tags: options.import_tags,
     };
     let mut started = options.start_from.is_none();
 
@@ -1101,6 +1103,9 @@ fn apply_rules_impl(
         // stopping at a disabled rule stops there instead of running to the end.
         if !started && options.start_from == Some(descriptor.id) {
             started = true;
+        }
+        if started && options.stop_before == Some(descriptor.id) {
+            return;
         }
         if !descriptor.is_enabled(ctx.clone()) {
             if started && options.stop_after == Some(descriptor.id) {
@@ -1264,54 +1269,6 @@ mod tests {
     }
 
     #[test]
-    fn un_esm_runner_adds_uses_to_the_edges_collected_on_the_input() {
-        use crate::require_edges::{Interop, RequireEdges};
-        use swc_core::common::{sync::Lrc, FileName, SourceMap};
-        use swc_core::ecma::parser::{parse_file_as_module, EsSyntax, Syntax};
-        use swc_core::ecma::transforms::base::resolver;
-
-        // The interop is read on the input, where the `require.n` getter is
-        // still there; the uses are read where the rule range reaches
-        // `UnEsm`, after the comma sequence is split.
-        let source = r#"var p = require("./p.js"), n = require.n(p);
-use(p.alpha), p.beta = 1, n().gamma;"#;
-        GLOBALS.set(&Default::default(), || {
-            let cm: Lrc<SourceMap> = Default::default();
-            let file = cm.new_source_file(FileName::Anon.into(), source.to_string());
-            let mut module = parse_file_as_module(
-                &file,
-                Syntax::Es(EsSyntax::default()),
-                Default::default(),
-                None,
-                &mut Vec::new(),
-            )
-            .expect("test source parses");
-            let unresolved_mark = Mark::new();
-            module.visit_mut_with(&mut resolver(unresolved_mark, Mark::new(), false));
-            let record = RefCell::new(RequireRecord {
-                edges: RequireEdges::collect(&module, unresolved_mark),
-                ..Default::default()
-            });
-            apply_rules(
-                &mut module,
-                unresolved_mark,
-                RulePipelineOptions::until("UnEsm")
-                    .with_mode(PipelineMode::UnpackPhase1)
-                    .with_require_record(&record),
-            );
-            let record = record.into_inner();
-            let edge = record.edges.iter().next().expect("one edge");
-            assert_eq!(edge.interop, Interop::Default);
-            let uses = edge.uses.as_ref().expect("the call reached UnEsm");
-            assert!(uses.member_reads.iter().any(|name| name == "alpha"));
-            assert_eq!(
-                uses.member_writes,
-                vec![swc_core::atoms::Atom::from("beta")]
-            );
-        });
-    }
-
-    #[test]
     fn single_file_mode_gates_un_esm_like_a_decompile() {
         // Below standard, and in a `.cjs` file, a single file stays
         // CommonJS; unpack runs `UnEsm` at every level and for every name.
@@ -1336,6 +1293,17 @@ use(p.alpha), p.beta = 1, n().gamma;"#;
                 "{mode:?} at {level:?} in {filename}"
             );
         }
+    }
+
+    #[test]
+    fn a_range_stopped_before_un_esm_ends_with_the_rule_before_it() {
+        // Unpack's Phase 1a stops before `UnEsm`; Phase 1b runs it alone.
+        let source = "module.exports = 1;";
+        let before = RulePipelineOptions::before("UnEsm").with_mode(PipelineMode::UnpackPhase1);
+        assert!(!becomes_esm(source, before));
+        let only =
+            RulePipelineOptions::between("UnEsm", "UnEsm").with_mode(PipelineMode::UnpackPhase1);
+        assert!(becomes_esm(source, only));
     }
 
     #[test]
@@ -1403,7 +1371,7 @@ function read() { return alpha; }
                 extracted_function_names: Default::default(),
                 pre_dead: None,
                 mode: PipelineMode::SingleFile,
-                require_record: None,
+                import_tags: None,
             };
 
             reset_collect_transpiler_helpers_call_count();

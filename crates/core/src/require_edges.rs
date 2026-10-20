@@ -499,15 +499,6 @@ pub(crate) fn tag_declarator_imports(
     }
 }
 
-/// The edges collected for one module before `UnEsm`, and the import tags
-/// `UnEsm` adds. The pipeline fills it in place when the rule range reaches
-/// `UnEsm` ([`crate::rules::RulePipelineOptions::with_require_record`]).
-#[derive(Debug, Clone, Default)]
-pub(crate) struct RequireRecord {
-    pub(crate) edges: RequireEdges,
-    pub(crate) tags: ImportTags,
-}
-
 impl fmt::Display for Interop {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {

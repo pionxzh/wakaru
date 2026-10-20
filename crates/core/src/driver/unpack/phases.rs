@@ -57,7 +57,7 @@ use crate::provider_import_repair::run_provider_import_repair;
 use crate::provider_namespace_repair::run_provider_namespace_repair;
 use crate::reexport_consolidation::run_reexport_consolidation;
 use crate::require_edges::{
-    declarator_require_calls, tag_declarator_imports, ImportTags, RequireEdges, RequireRecord,
+    declarator_require_calls, tag_declarator_imports, ImportTags, RequireEdges,
 };
 use crate::rules::cross_module_interop_import::{
     import_unproven_helper_requires, run_cross_module_interop_imports,
@@ -65,6 +65,7 @@ use crate::rules::cross_module_interop_import::{
 use crate::rules::eval_utils::DirectEvalAnalyzer;
 use crate::rules::expr_utils::is_unresolved_ident;
 use crate::rules::lowered_dynamic_import::run_cross_module_lowered_dynamic_imports;
+use crate::rules::transpiler_helper_utils::LocalHelperContext;
 use crate::rules::webpack_lazy_import::run_cross_module_webpack_lazy_imports;
 use crate::rules::{
     apply_rules, apply_rules_to_recovered_module, contains_local_self_require, ImportDedup,
@@ -184,6 +185,97 @@ struct Phase1PreparedModule {
     unresolved_mark: Mark,
     /// The import specifiers `UnEsm` made from requires in this AST.
     import_tags: ImportTags,
+}
+
+/// A module past Phase 1a: its AST where the rule range reaches `UnEsm`,
+/// and what Phase 1a read before the rules ran.
+struct Phase1aModule {
+    filename: String,
+    /// The extracted source length, for the largest-first schedule.
+    size: usize,
+    globals: Globals,
+    module: Module,
+    unresolved_mark: Mark,
+    raw: RawCommonJsFacts,
+    require_edges: RequireEdges,
+    warning: Option<UnpackWarning>,
+    input_parse_warnings: Vec<UnpackWarning>,
+    suggested_filename: Option<String>,
+}
+
+enum Phase1a {
+    /// No rule runs on the module: its Phase 1 result is final.
+    Done(Box<Phase1Module>),
+    Pending(Box<Phase1aModule>),
+}
+
+/// The CommonJS provider facts read on the resolved input, before any rule.
+struct RawCommonJsFacts {
+    commonjs_default_object: Option<crate::facts::CommonJsDefaultObjectFact>,
+    commonjs_default_attached_properties: Vec<swc_core::atoms::Atom>,
+    require_returns_exports_object: bool,
+    commonjs_value_is_default: bool,
+    replaces_module_exports: bool,
+    es_source_evidence: Vec<&'static str>,
+    marks_es_module: bool,
+}
+
+impl RawCommonJsFacts {
+    fn apply(self, facts: &mut crate::facts::ModuleFacts) {
+        facts.commonjs_default_object = self.commonjs_default_object;
+        facts.commonjs_default_attached_properties = self.commonjs_default_attached_properties;
+        facts.require_returns_exports_object = self.require_returns_exports_object;
+        facts.commonjs_value_is_default = self.commonjs_value_is_default;
+        facts.replaces_module_exports = self.replaces_module_exports;
+        facts.es_source_evidence = self.es_source_evidence;
+        facts.marks_es_module = self.marks_es_module;
+    }
+}
+
+/// Phase 1a's rule range: every rule before `UnEsm`. Returns the module's
+/// require edges: each call's form and interop, read on the input, and its
+/// uses, read on the AST `UnEsm` will see.
+fn run_rules_before_un_esm(
+    module: &mut Module,
+    unresolved_mark: Mark,
+    level: RewriteLevel,
+    filename: &str,
+) -> RequireEdges {
+    let mut edges = RequireEdges::collect(module, unresolved_mark);
+    apply_rules(
+        module,
+        unresolved_mark,
+        RulePipelineOptions::before("UnEsm")
+            .with_mode(PipelineMode::UnpackPhase1)
+            .with_rewrite_level(level)
+            .with_current_filename(filename),
+    );
+    if edges.iter().next().is_some() {
+        let local_helpers = LocalHelperContext::collect_with_mark(module, unresolved_mark);
+        edges.add_uses(module, unresolved_mark, &local_helpers);
+    }
+    edges
+}
+
+/// Phase 1b's rule range: `UnEsm` alone, on the AST Phase 1a left. Returns
+/// the import specifiers it made from requires.
+fn run_un_esm_range(
+    module: &mut Module,
+    unresolved_mark: Mark,
+    level: RewriteLevel,
+    filename: &str,
+) -> ImportTags {
+    let import_tags = RefCell::new(ImportTags::default());
+    apply_rules(
+        module,
+        unresolved_mark,
+        RulePipelineOptions::between("UnEsm", "UnEsm")
+            .with_mode(PipelineMode::UnpackPhase1)
+            .with_rewrite_level(level)
+            .with_current_filename(filename)
+            .with_import_tags(&import_tags),
+    );
+    import_tags.into_inner()
 }
 
 struct Phase1Module {
@@ -399,25 +491,27 @@ pub(super) fn unpack_multi_module_with_plan(
     let eliminate_dead_modules =
         options.dce_mode.is_enabled() && !matches!(options.level, RewriteLevel::Minimal);
 
-    // Phase 1: collect facts. Run the through-UnEsm normalization range on each
-    // module and extract import/export facts. For normal unpacking, keep that
-    // normalized AST so Phase 2 can resume after the facts barrier. Source-map
-    // mode still reparses in Phase 2 because sourcemap renaming depends on the
-    // original parser SourceMap.
-    let collect_facts = |unpacked: &mut PreparedUnpackModule| -> Phase1Module {
+    // Phase 1: collect facts, in two halves. Phase 1a runs the rule range up
+    // to `UnEsm` on each module and reads its require edges; Phase 1b runs
+    // `UnEsm` and extracts the import/export facts. Every module finishes
+    // Phase 1a before any runs `UnEsm` (barrier 0). For normal unpacking,
+    // keep the normalized AST so Phase 2 can resume after the facts barrier.
+    // Source-map mode still reparses in Phase 2 because sourcemap renaming
+    // depends on the original parser SourceMap.
+    let prepare_module = |unpacked: &mut PreparedUnpackModule| -> Phase1a {
         if let Some(failure) = unpacked.detector_failure {
             // The factory loader's later lifetime is unproven. Running any
             // require-aware transform or fact collector over this body could
             // turn an ordinary local call into a fabricated module edge.
             unpacked.prepared = None;
-            return Phase1Module {
+            return Phase1a::Done(Box::new(Phase1Module {
                 filename: unpacked.module.filename.clone(),
                 facts: crate::facts::ModuleFacts::default(),
                 prepared: None,
                 warning: Some(detector_failure_warning(&unpacked.module.filename, failure)),
                 input_parse_warnings: Vec::new(),
                 suggested_filename: None,
-            };
+            }));
         }
         let (globals, prepared_input, input_parse_warnings) = match unpacked.prepared.take() {
             Some(prepared) => {
@@ -441,8 +535,7 @@ pub(super) fn unpack_multi_module_with_plan(
             }
             None => (Globals::new(), None, Vec::new()),
         };
-        let (facts, prepared_parts, warning, suggested_filename) =
-            GLOBALS.set(&globals, || {
+        let prepared = GLOBALS.set(&globals, || {
             let (mut module, unresolved_mark) = match prepared_input {
                 Some((mut module, _detector_mark)) => {
                     // The detector's contexts describe its own surgery; give
@@ -464,18 +557,13 @@ pub(super) fn unpack_multi_module_with_plan(
                         ) {
                             Ok(module) => module,
                             Err(e) => {
-                                return (
-                                    crate::facts::ModuleFacts::default(),
-                                    None,
-                                    Some(UnpackWarning::new(
-                                        unpacked.module.filename.clone(),
-                                        UnpackWarningKind::FactCollectionParseFailed,
-                                        format!(
-                                            "parse failed during fact collection, using empty facts: {e}"
-                                        ),
-                                    )),
-                                    None,
-                                );
+                                return Err(UnpackWarning::new(
+                                    unpacked.module.filename.clone(),
+                                    UnpackWarningKind::FactCollectionParseFailed,
+                                    format!(
+                                        "parse failed during fact collection, using empty facts: {e}"
+                                    ),
+                                ));
                             }
                         }
                     };
@@ -546,26 +634,74 @@ pub(super) fn unpack_multi_module_with_plan(
                 Vec::new()
             };
             let marks_es_module = collect_marks_es_module(&module, unresolved_mark);
-            // Each require's form and interop, read on the input; the rule
-            // range adds the uses where it reaches `UnEsm`.
-            let require_record = RefCell::new(RequireRecord {
-                edges: RequireEdges::collect(&module, unresolved_mark),
-                ..Default::default()
-            });
-            {
+            let raw = RawCommonJsFacts {
+                commonjs_default_object,
+                commonjs_default_attached_properties,
+                require_returns_exports_object,
+                commonjs_value_is_default,
+                replaces_module_exports,
+                es_source_evidence,
+                marks_es_module,
+            };
+            let require_edges = {
                 let span = tracing::info_span!("phase1: rules");
                 let _enter = span.enter();
-                apply_rules(
+                run_rules_before_un_esm(
                     &mut module,
                     unresolved_mark,
-                    RulePipelineOptions::until("UnEsm")
-                        .with_mode(PipelineMode::UnpackPhase1)
-                        .with_rewrite_level(options.level)
-                        .with_current_filename(&unpacked.module.filename)
-                        .with_require_record(&require_record),
-                );
+                    options.level,
+                    &unpacked.module.filename,
+                )
+            };
+            Ok((module, unresolved_mark, raw, require_edges, residual_warning, suggested_filename))
+        });
+        match prepared {
+            Ok((module, unresolved_mark, raw, require_edges, warning, suggested_filename)) => {
+                Phase1a::Pending(Box::new(Phase1aModule {
+                    filename: unpacked.module.filename.clone(),
+                    size: unpacked.module.code.len(),
+                    globals,
+                    module,
+                    unresolved_mark,
+                    raw,
+                    require_edges,
+                    warning,
+                    input_parse_warnings,
+                    suggested_filename,
+                }))
             }
-            let require_record = require_record.into_inner();
+            Err(warning) => Phase1a::Done(Box::new(Phase1Module {
+                filename: unpacked.module.filename.clone(),
+                facts: crate::facts::ModuleFacts::default(),
+                prepared: None,
+                warning: Some(warning),
+                input_parse_warnings,
+                suggested_filename: None,
+            })),
+        }
+    };
+
+    // Phase 1b: `UnEsm`, then the module facts. Each module's AST resumes
+    // where Phase 1a left it.
+    let finish_facts = |pending: Box<Phase1aModule>| -> Phase1Module {
+        let Phase1aModule {
+            filename,
+            size: _,
+            globals,
+            mut module,
+            unresolved_mark,
+            raw,
+            require_edges,
+            warning,
+            input_parse_warnings,
+            suggested_filename,
+        } = *pending;
+        let (facts, prepared_parts) = GLOBALS.set(&globals, || {
+            let import_tags = {
+                let span = tracing::info_span!("phase1: UnEsm");
+                let _enter = span.enter();
+                run_un_esm_range(&mut module, unresolved_mark, options.level, &filename)
+            };
             // ESM recovery mutates the AST heavily (UnIife, factory-IIFE
             // rewrites, renames) to expose import/export declarations that
             // `collect_module_facts` reads. Phase 2 resumes from the
@@ -583,7 +719,7 @@ pub(super) fn unpack_multi_module_with_plan(
                         &mut facts_module,
                         unresolved_mark,
                         options.level,
-                        &unpacked.module.filename,
+                        &filename,
                         PipelineMode::UnpackLatePrediction,
                         LateEsmRecoveryOptions::default(),
                     );
@@ -596,7 +732,7 @@ pub(super) fn unpack_multi_module_with_plan(
                     unresolved_mark,
                     options.level,
                 );
-                (facts, Some((module, unresolved_mark, require_record.tags)))
+                (facts, Some((module, unresolved_mark, import_tags)))
             } else {
                 // Edges read the pre-late AST, as above. Collect them before
                 // recovering in place so this path still skips the clone.
@@ -612,7 +748,7 @@ pub(super) fn unpack_multi_module_with_plan(
                         &mut module,
                         unresolved_mark,
                         options.level,
-                        &unpacked.module.filename,
+                        &filename,
                         PipelineMode::UnpackLatePrediction,
                         LateEsmRecoveryOptions::default(),
                     );
@@ -621,16 +757,9 @@ pub(super) fn unpack_multi_module_with_plan(
                 facts.import_call_edges = import_call_edges;
                 (facts, None)
             };
-            facts.commonjs_default_object = commonjs_default_object;
-            facts.commonjs_default_attached_properties =
-                commonjs_default_attached_properties;
-            facts.require_returns_exports_object = require_returns_exports_object;
-            facts.commonjs_value_is_default = commonjs_value_is_default;
-            facts.replaces_module_exports = replaces_module_exports;
-            facts.es_source_evidence = es_source_evidence;
-            facts.marks_es_module = marks_es_module;
-            facts.require_edges = require_record.edges;
-            (facts, prepared, residual_warning, suggested_filename)
+            raw.apply(&mut facts);
+            facts.require_edges = require_edges;
+            (facts, prepared)
         });
         let prepared =
             prepared_parts.map(
@@ -642,7 +771,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 },
             );
         Phase1Module {
-            filename: unpacked.module.filename.clone(),
+            filename,
             facts,
             prepared,
             warning,
@@ -651,13 +780,29 @@ pub(super) fn unpack_multi_module_with_plan(
         }
     };
 
-    let phase1: Vec<_> = {
-        let span = tracing::info_span!("phase1_collect_facts");
+    let phase1a: Vec<Phase1a> = {
+        let span = tracing::info_span!("phase1a_rules_before_un_esm");
         let _enter = span.enter();
         par_map_largest_first(
             modules.iter_mut().collect(),
             |module: &&mut PreparedUnpackModule| module.module.code.len(),
-            collect_facts,
+            prepare_module,
+        )
+    };
+
+    let phase1: Vec<Phase1Module> = {
+        let span = tracing::info_span!("phase1b_collect_facts");
+        let _enter = span.enter();
+        par_map_largest_first(
+            phase1a,
+            |module: &Phase1a| match module {
+                Phase1a::Done(_) => 0,
+                Phase1a::Pending(pending) => pending.size,
+            },
+            |module| match module {
+                Phase1a::Done(done) => *done,
+                Phase1a::Pending(pending) => finish_facts(pending),
+            },
         )
     };
 
@@ -1093,33 +1238,33 @@ pub(super) fn unpack_multi_module_with_plan(
                     &unpacked.module.filename,
                 );
 
-                // Through-UnEsm range, which records its own edges and
-                // import tags on this AST, as Phase 1 did on its own.
-                let require_record = RefCell::new(RequireRecord {
-                    edges: RequireEdges::collect(&module, unresolved_mark),
-                    ..Default::default()
-                });
-                {
+                // Through-UnEsm range, which records its own import tags on
+                // this AST, as Phase 1 did on its own.
+                let import_tags = {
                     let span = tracing::info_span!("phase2: early rules");
                     let _enter = span.enter();
                     apply_rules(
                         &mut module,
                         unresolved_mark,
-                        RulePipelineOptions::until("UnEsm")
+                        RulePipelineOptions::before("UnEsm")
                             .with_mode(PipelineMode::UnpackPhase1)
                             .with_rewrite_level(options.level)
-                            .with_current_filename(&unpacked.module.filename)
-                            .with_require_record(&require_record),
+                            .with_current_filename(&unpacked.module.filename),
                     );
-                }
-                let require_record = require_record.into_inner();
+                    run_un_esm_range(
+                        &mut module,
+                        unresolved_mark,
+                        options.level,
+                        &unpacked.module.filename,
+                    )
+                };
 
                 let input_parse_warnings = collect_input_parse_warnings(&parsed.recoverable_errors);
                 run_phase2_tail(
                     module,
                     cm,
                     unresolved_mark,
-                    require_record.tags,
+                    import_tags,
                     input_parse_warnings,
                 )
             })
@@ -1279,27 +1424,34 @@ mod tests {
             };
             let unresolved_mark = Mark::new();
             module.visit_mut_with(&mut resolver(unresolved_mark, Mark::new(), false));
-            let record = RefCell::new(RequireRecord {
-                edges: RequireEdges::collect(&module, unresolved_mark),
-                ..Default::default()
-            });
-            apply_rules(
-                &mut module,
-                unresolved_mark,
-                RulePipelineOptions::until("UnEsm")
-                    .with_mode(PipelineMode::UnpackPhase1)
-                    .with_current_filename("consumer.js")
-                    .with_require_record(&record),
-            );
-            let record = record.into_inner();
-            let mut keys: Vec<_> = record
-                .tags
+            let level = RewriteLevel::Standard;
+            let edges = run_rules_before_un_esm(&mut module, unresolved_mark, level, "consumer.js");
+            let tags = run_un_esm_range(&mut module, unresolved_mark, level, "consumer.js");
+            let mut keys: Vec<_> = tags
                 .iter()
                 .flat_map(|(_, keys)| keys.iter().copied())
                 .collect();
             keys.sort();
-            (record.edges, keys)
+            (edges, keys)
         })
+    }
+
+    #[test]
+    fn edges_get_their_uses_where_the_range_reaches_un_esm() {
+        // The interop is read on the input, where the `require.n` getter is
+        // still there; the uses are read on the AST `UnEsm` will see, after
+        // the comma sequence is split, before `UnEsm` runs.
+        let code = r#"var p = require("./p.js"), n = require.n(p);
+use(p.alpha), p.beta = 1, n().gamma;"#;
+        let (edges, _) = edges_through_un_esm(code, false);
+        let edge = edges.iter().next().expect("one edge");
+        assert_eq!(edge.interop, crate::require_edges::Interop::Default);
+        let uses = edge.uses.as_ref().expect("the call reached UnEsm");
+        assert!(uses.member_reads.iter().any(|name| name == "alpha"));
+        assert_eq!(
+            uses.member_writes,
+            vec![swc_core::atoms::Atom::from("beta")]
+        );
     }
 
     #[test]

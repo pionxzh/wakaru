@@ -302,10 +302,12 @@ When unpacking bundles, the driver runs a two-phase pipeline:
 1. **Phase 1 (parallel, largest modules first):** Obtain a resolved module AST. Source-only detector
    output is parsed and resolved here; webpack5 can hand off its already
    resolved, bundler-normalized AST directly. Apply exact normal-only rewrites
-   backed by detector-owned runtime facts, then run the rule registry through
-   `UnEsm`, clone that barrier AST for webpack factory-IIFE fact recovery, and
-   extract import/export facts. Retain the pre-recovery AST together with its
-   `Globals` and unresolved mark.
+   backed by detector-owned runtime facts, then run the rule registry up to
+   `UnEsm` and read each `require()` call's edge (Phase 1a). Once every module
+   has reached `UnEsm` (barrier 0), run `UnEsm`, clone that barrier AST for
+   webpack factory-IIFE fact recovery, and extract import/export facts
+   (Phase 1b). Retain the pre-recovery AST together with its `Globals` and
+   unresolved mark.
 2. **Phase 2 (parallel, largest modules first):** Resume the retained Phase 1 AST → cross-module late
    pass (exact CommonJS default-object composition, re-export consolidation,
    namespace decomposition, fact-aware helper recovery) → run the registry
