@@ -2854,3 +2854,31 @@ function run() { return widget_js_1.default; }
         "an unproven helper keeps its call:\n{consumer}"
     );
 }
+
+#[test]
+fn a_kept_string_id_folds_its_interop_getter_like_a_numeric_one() {
+    // `UnWebpackInterop` folds the `require.n` getter around a kept call, and
+    // JSX written through it is recovered, for a string id as for a number.
+    let chunk = |id: &str| {
+        format!(
+            r#"
+(self.webpackChunk_app = self.webpackChunk_app || []).push([[1], {{
+    "+BL1": function(module, exports, load) {{
+        "use strict";
+        load.r(exports); load.d(exports, {{ view: () => view }});
+        var n = load({id}), o = load.n(n);
+        function view() {{ return o().createElement("div", null, "hi"); }}
+    }}
+}}]);
+"#
+        )
+    };
+    for (id, call) in [(r#""q1tI""#, r#"require("q1tI")"#), ("11", "require(11)")] {
+        let output = unpack_one(&chunk(id), false);
+        let consumer = module_named(&output.modules, "module-+BL1.js");
+        assert!(consumer.contains(call), "{consumer}");
+        assert!(consumer.contains("<div>hi</div>"), "{consumer}");
+        assert!(!consumer.contains("__esModule"), "{consumer}");
+        assert!(!consumer.contains("-1"), "{consumer}");
+    }
+}

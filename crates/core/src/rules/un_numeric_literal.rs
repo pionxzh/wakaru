@@ -15,6 +15,11 @@ impl VisitMut for UnNumericLiteral {
             if !num.value.is_finite() {
                 return;
             }
+            // Unpack's stand-in for a kept webpack `require("id")`: its `raw`
+            // is the quoted id the output must print.
+            if crate::kept_require::is_kept_string_module_id(num) {
+                return;
+            }
             if let Some(raw) = &num.raw {
                 if raw.as_ref() != num.value.to_string() {
                     num.raw = None;

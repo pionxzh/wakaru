@@ -872,10 +872,12 @@ in place, a called require, one in a function, or one in a conditional
 position. Webpack loader calls whose module id no input links are the
 exception: a numeric id (`require(17)`), and a string id (`require("q1tI")`)
 that the detector saw the factory pass to its loader. They fail in CommonJS
-too, so they stay calls in ESM output (`runtime_residual` reports them). Unpack
-gives a kept string call's callee a context of its own, a child of the
-unresolved mark, so no require matcher reads it as an authored
-`require("pkg")`; emitted-name checks still count it as a free name.
+too, so they stay calls in ESM output (`runtime_residual` reports them). From
+Phase 1 to the printed output, unpack writes a kept string id as a number
+literal that only prints as the string (`kept_require::kept_string_module_id`:
+value `-1`, `raw` the quoted id), so every rule handles the call exactly as an
+absent numeric id: `UnEsm` does not import it, `UnWebpackInterop` still folds
+a `require.n` getter around it, and JSX through that getter is recovered.
 Before that check `UnEsm` converts the module a second time, since some
 shapes convert only once it is ESM (`export default require("x")()`). In
 unpack it leaves three shapes for later stages: before the first barrier

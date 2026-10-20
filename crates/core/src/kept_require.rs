@@ -4,8 +4,8 @@ use swc_core::common::{Mark, Span};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignPat, AssignPatProp, BinExpr, BinaryOp, CallExpr, Callee,
     Class, CondExpr, Decl, DoWhileStmt, Expr, ForInStmt, ForOfStmt, ForStmt, Function, IfStmt,
-    ImportSpecifier, Lit, MemberProp, Module, ModuleDecl, ModuleItem, OptCall, OptChainBase,
-    OptChainExpr, Stmt, SwitchStmt, TryStmt, WhileStmt,
+    ImportSpecifier, Lit, MemberProp, Module, ModuleDecl, ModuleItem, Number, OptCall,
+    OptChainBase, OptChainExpr, Stmt, SwitchStmt, TryStmt, WhileStmt,
 };
 use swc_core::ecma::ast::{
     BindingIdent, Ident, IdentName, Invalid, KeyValueProp, MemberExpr, NewExpr, Pat, Prop,
@@ -64,14 +64,53 @@ pub(crate) struct KeptRequire {
     pub source: Option<Atom>,
 }
 
+/// The value of every [`kept_string_module_id`] literal. No webpack module id
+/// is negative, so the numeric-id rewrites never resolve it.
+const KEPT_STRING_MODULE_ID_VALUE: f64 = -1.0;
+
+/// The argument that stands in for the string id of a kept webpack loader
+/// call, `require("q1tI")`, from unpack's Phase 1 to the printed output: a
+/// call whose module id no input links.
+///
+/// PLACEHOLDER, NOT A REAL NUMBER. It is a number literal whose value is
+/// [`KEPT_STRING_MODULE_ID_VALUE`] and whose `raw` is the quoted id. Rules
+/// read the `Lit::Num`, so the call goes the way of an absent numeric id
+/// (`require(17)`): `UnEsm` does not import it and does not keep the module
+/// CommonJS for it ([`kept_require_calls`]), it is no hoisting barrier, and
+/// `UnWebpackInterop` still folds a `require.n` getter around it. The callee
+/// stays the unresolved `require`, so emitted-name checks see it. swc's
+/// codegen prints `raw` for a number outside minify mode, so the output
+/// reads `require("q1tI")` again.
+///
+/// Anything that rewrites number literals must leave this one alone
+/// ([`is_kept_string_module_id`]), or the output prints `-1` in place of the
+/// id: `UnNumericLiteral` checks it before dropping a `raw` spelling.
+pub(crate) fn kept_string_module_id(span: Span, quoted: Atom) -> Expr {
+    Expr::Lit(Lit::Num(Number {
+        span,
+        value: KEPT_STRING_MODULE_ID_VALUE,
+        raw: Some(quoted),
+    }))
+}
+
+/// Whether `number` is a [`kept_string_module_id`] placeholder. The parser
+/// never produces a negative value or a quoted `raw`.
+pub(crate) fn is_kept_string_module_id(number: &Number) -> bool {
+    number.value == KEPT_STRING_MODULE_ID_VALUE
+        && number
+            .raw
+            .as_ref()
+            .is_some_and(|raw| raw.starts_with('"') || raw.starts_with('\''))
+}
+
 /// Every call of the free `require` in `module`, in visit order, except one
 /// whose only argument is a numeric literal.
 ///
 /// A numeric id names a module outside the input (unpack rewrites the ids it
 /// resolves into relative paths), so the call fails in CommonJS as well as in
-/// ESM: keeping such a module CommonJS would not make it run. Unpack keeps a
-/// string id no input links the same way, by giving the callee a context
-/// other than the unresolved one, so this finder never sees it.
+/// ESM: keeping such a module CommonJS would not make it run. Unpack writes a
+/// string id no input links as a number literal ([`kept_string_module_id`]),
+/// so this finder skips it the same way.
 ///
 /// `module` must be resolved with `unresolved_mark`.
 pub(crate) fn kept_require_calls(module: &Module, unresolved_mark: Mark) -> Vec<KeptRequire> {

@@ -684,12 +684,10 @@ fn same_build(left: &[String], right: &[String]) -> bool {
 /// webpack loader calls it cannot resolve as `require(<id>)` calls and
 /// returns the warning that reports them.
 ///
-/// A kept call with a string id gets a callee context of its own, so that,
-/// like a numeric one, no require matcher reads it as an authored
-/// `require("pkg")`: `UnEsm` neither imports it nor keeps the module
-/// CommonJS for it (`kept_require`). The context's mark is a child of
-/// `unresolved_mark`, which emitted-name checks still count as free
-/// ([`crate::rules::rename_utils::collect_free_reference_names`]).
+/// A kept call with a string id has its argument replaced by
+/// [`crate::kept_require::kept_string_module_id`], so every later rule treats
+/// it as a numeric id absent from the input while the output still prints
+/// the string.
 pub(super) fn apply_numeric_rewrites(
     module: &mut Module,
     unresolved_mark: Mark,
@@ -714,12 +712,30 @@ pub(super) fn apply_numeric_rewrites(
         context,
         plan,
         unresolved_mark,
-        hidden: SyntaxContext::empty().apply_mark(Mark::fresh(unresolved_mark)),
         chunk_load_depth: 0,
         found: Vec::new(),
     };
     module.visit_mut_with(&mut keeper);
     unresolved_loader_warning(&context.module_filename, &keeper.found)
+}
+
+/// `value` as a double-quoted JavaScript string literal.
+fn quote_js_string(value: &str) -> String {
+    let mut quoted = String::with_capacity(value.len() + 2);
+    quoted.push('"');
+    for ch in value.chars() {
+        match ch {
+            '"' => quoted.push_str("\\\""),
+            '\\' => quoted.push_str("\\\\"),
+            '\n' => quoted.push_str("\\n"),
+            '\r' => quoted.push_str("\\r"),
+            '\u{2028}' | '\u{2029}' => quoted.push_str(&format!("\\u{:04x}", ch as u32)),
+            ch if ch.is_control() => quoted.push_str(&format!("\\u{:04x}", ch as u32)),
+            ch => quoted.push(ch),
+        }
+    }
+    quoted.push('"');
+    quoted
 }
 
 /// Why a kept loader call's module id does not link.
@@ -737,7 +753,6 @@ struct UnresolvedLoaderCalls<'a> {
     context: &'a NumericRewriteModuleContext,
     plan: &'a NumericRewritePlan,
     unresolved_mark: Mark,
-    hidden: SyntaxContext,
     /// Inside the loader of a lazy load behind `require.e`, whose kept chunk
     /// load is reported instead.
     chunk_load_depth: usize,
@@ -789,7 +804,7 @@ impl VisitMut for UnresolvedLoaderCalls<'_> {
         if callee.sym.as_ref() != "require" || callee.ctxt.outer() != self.unresolved_mark {
             return;
         }
-        let [arg] = call.args.as_slice() else {
+        let [arg] = call.args.as_mut_slice() else {
             return;
         };
         if arg.spread.is_some() {
@@ -807,7 +822,13 @@ impl VisitMut for UnresolvedLoaderCalls<'_> {
                 let Some(reason) = self.classify(self.plan.string_id_targets.get(&id)) else {
                     return;
                 };
-                callee.ctxt = self.hidden;
+                // Keep the spelling the input used; a synthesized literal has
+                // none.
+                let quoted = request
+                    .raw
+                    .clone()
+                    .unwrap_or_else(|| quote_js_string(&id).into());
+                *arg.expr = crate::kept_require::kept_string_module_id(request.span, quoted);
                 self.record(format!("\"{id}\""), reason);
             }
             expr => {

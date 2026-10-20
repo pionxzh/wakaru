@@ -49,3 +49,28 @@ const fraction = 0.75;
 
     assert_eq_normalized(&apply(input), expected);
 }
+
+#[test]
+fn keeps_the_quoted_raw_of_unpacks_kept_string_module_id() {
+    // Unpack writes a kept webpack `require("q1tI")` as a number literal of
+    // value -1 whose raw is the quoted id; dropping that raw would print -1.
+    use swc_core::ecma::ast::{Expr, ExprStmt, Lit, ModuleItem, Number, Stmt};
+    use swc_core::ecma::visit::VisitMutWith;
+
+    let mut item = ModuleItem::Stmt(Stmt::Expr(ExprStmt {
+        span: Default::default(),
+        expr: Box::new(Expr::Lit(Lit::Num(Number {
+            span: Default::default(),
+            value: -1.0,
+            raw: Some("\"q1tI\"".into()),
+        }))),
+    }));
+    item.visit_mut_with(&mut UnNumericLiteral);
+    let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = &item else {
+        unreachable!()
+    };
+    let Expr::Lit(Lit::Num(number)) = &**expr else {
+        unreachable!()
+    };
+    assert_eq!(number.raw.as_deref(), Some("\"q1tI\""));
+}
