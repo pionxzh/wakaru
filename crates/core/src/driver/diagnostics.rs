@@ -76,9 +76,9 @@ pub(super) fn collect_webpack_runtime_residual_warnings(
 
 /// Report the `require` calls an ES module output still makes. ESM has no
 /// `require`, so `UnEsm` keeps such a module CommonJS; one that reaches the
-/// output anyway is a require a later stage was expected to convert. Calls of
-/// a numeric module id, which name a module outside the input, are not
-/// reported.
+/// output anyway is a require a later stage was expected to convert. Webpack
+/// loader calls whose module id no input links, numeric or string, are not
+/// reported: unpack reports them as `runtime_residual`.
 pub(super) fn collect_commonjs_require_residual_warnings(
     module: &swc_core::ecma::ast::Module,
     unresolved_mark: Mark,

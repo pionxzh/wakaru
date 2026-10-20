@@ -507,7 +507,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 unresolved_mark,
                 unpacked.filename_rewrite.as_ref(),
             );
-            apply_numeric_rewrites(
+            let residual_warning = apply_numeric_rewrites(
                 &mut module,
                 unresolved_mark,
                 unpacked.numeric_rewrite.as_ref(),
@@ -630,7 +630,7 @@ pub(super) fn unpack_multi_module_with_plan(
             facts.es_source_evidence = es_source_evidence;
             facts.marks_es_module = marks_es_module;
             facts.require_edges = require_record.edges;
-            (facts, prepared, None, suggested_filename)
+            (facts, prepared, residual_warning, suggested_filename)
         });
         let prepared =
             prepared_parts.map(
@@ -1071,7 +1071,8 @@ pub(super) fn unpack_multi_module_with_plan(
                     unresolved_mark,
                     unpacked.filename_rewrite.as_ref(),
                 );
-                apply_numeric_rewrites(
+                // Phase 1 already reported the calls this keeps.
+                let _ = apply_numeric_rewrites(
                     &mut module,
                     unresolved_mark,
                     unpacked.numeric_rewrite.as_ref(),

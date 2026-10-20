@@ -225,7 +225,17 @@ fn webpack5_chunk_with_string_ids_localizes_unprovable_loader_reuse_to_one_facto
         .map(|(_, code)| code)
         .expect("recoverable consumer should be emitted");
     assert!(!consumer.contains("./module-NOtv.js"), "{consumer}");
+    assert!(consumer.contains(r#"require("NOtv")"#), "{consumer}");
     assert!(consumer.contains("./module-UUUU.js"), "{consumer}");
+    assert!(
+        output.warnings.iter().any(|warning| {
+            warning.filename == "module-+BL1.js"
+                && warning.kind == wakaru_core::UnpackWarningKind::RuntimeResidual
+                && warning.message.contains("`\"NOtv\"` in an opaque module")
+        }),
+        "{:?}",
+        output.warnings
+    );
 }
 
 #[test]

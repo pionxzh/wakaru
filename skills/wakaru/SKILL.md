@@ -237,9 +237,12 @@ reachability sweep is desired.
   bundler runtime helper the output does not define, such as
   `__turbopack_context__.L(...)` (Turbopack chunk loading),
   `__turbopack_context__.P(...)` (path resolution), or webpack's
-  `require.e` / `require.t` around a lazy `import()`. Read the module
-  normally; only that call is unresolved. For webpack, check that the chunk
-  file holding the loaded module is among the inputs.
+  `require.e` / `require.t` around a lazy `import()`, or a webpack
+  `require(id)` whose module id no output links (the message says whether
+  the id is in no input, in an opaque module, or in several modules of the
+  build). Read the module normally; only that call is unresolved. For
+  webpack, check that the chunk file holding the loaded module is among the
+  inputs, once.
 - `failed` in unpack JSON counts distinct modules with at least one
   error-class warning (decompile failures, declaration conflicts, output parse
   failures); `total` is the module count. `failed > 0` always comes with a

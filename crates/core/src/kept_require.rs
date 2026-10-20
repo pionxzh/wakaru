@@ -69,7 +69,9 @@ pub(crate) struct KeptRequire {
 ///
 /// A numeric id names a module outside the input (unpack rewrites the ids it
 /// resolves into relative paths), so the call fails in CommonJS as well as in
-/// ESM: keeping such a module CommonJS would not make it run.
+/// ESM: keeping such a module CommonJS would not make it run. Unpack keeps a
+/// string id no input links the same way, by giving the callee a context
+/// other than the unresolved one, so this finder never sees it.
 ///
 /// `module` must be resolved with `unresolved_mark`.
 pub(crate) fn kept_require_calls(module: &Module, unresolved_mark: Mark) -> Vec<KeptRequire> {

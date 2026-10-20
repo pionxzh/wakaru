@@ -53,6 +53,14 @@ pub(crate) fn collect_jsx_tag_bindings(module: &Module) -> HashSet<BindingId> {
     collector.bindings
 }
 
+/// An identifier the printed code reads as a free name: one the resolver left
+/// unresolved, or a kept webpack `require("id")` whose callee unpack gave a
+/// child context of the unresolved mark so require matchers skip it.
+fn is_unresolved_reference(ident: &Ident, unresolved_mark: Mark) -> bool {
+    let outer = ident.ctxt.outer();
+    outer == unresolved_mark || (outer != Mark::root() && outer.parent() == unresolved_mark)
+}
+
 /// Names used by unresolved identifier references in this module.
 ///
 /// A transform that introduces a module-scoped binding with one of these
@@ -70,7 +78,7 @@ pub(crate) fn collect_unresolved_reference_names(
 
     impl Visit for Collector {
         fn visit_ident(&mut self, ident: &Ident) {
-            if ident.ctxt.outer() == self.unresolved_mark {
+            if is_unresolved_reference(ident, self.unresolved_mark) {
                 self.names.insert(ident.sym.clone());
             }
         }
@@ -112,7 +120,7 @@ pub(crate) fn collect_free_reference_names(
 
     impl Visit for Collector {
         fn visit_ident(&mut self, ident: &Ident) {
-            if ident.ctxt.outer() == self.unresolved_mark {
+            if is_unresolved_reference(ident, self.unresolved_mark) {
                 self.names.insert(ident.sym.clone());
             }
         }
@@ -1109,6 +1117,39 @@ impl VisitMut for BindingRenamer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_child_of_the_unresolved_mark_is_still_a_free_name() {
+        // Unpack gives a kept webpack `require("id")` such a callee context.
+        fn callee(module: &mut Module) -> &mut Ident {
+            let ModuleItem::Stmt(Stmt::Expr(stmt)) = &mut module.body[0] else {
+                panic!("expected an expression statement");
+            };
+            let Expr::Call(call) = &mut *stmt.expr else {
+                panic!("expected a call");
+            };
+            let swc_core::ecma::ast::Callee::Expr(callee) = &mut call.callee else {
+                panic!("expected a callee expression");
+            };
+            let Expr::Ident(callee) = &mut **callee else {
+                panic!("expected an identifier callee");
+            };
+            callee
+        }
+
+        with_parsed_module("require('x');", |module| {
+            let mut module = module.clone();
+            let require = Atom::from("require");
+            let unresolved_mark = callee(&mut module).ctxt.outer();
+            callee(&mut module).ctxt =
+                SyntaxContext::empty().apply_mark(Mark::fresh(unresolved_mark));
+            assert!(collect_free_reference_names(&module, unresolved_mark).contains(&require));
+            assert!(collect_unresolved_reference_names(&module, unresolved_mark).contains(&require));
+            // A context with an unrelated mark is a local, not a free name.
+            callee(&mut module).ctxt = SyntaxContext::empty().apply_mark(Mark::new());
+            assert!(!collect_free_reference_names(&module, unresolved_mark).contains(&require));
+        });
+    }
 
     #[test]
     fn binding_renamer_keeps_re_export_source_names() {

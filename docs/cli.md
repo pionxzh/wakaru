@@ -422,8 +422,8 @@ non-error `commonjs_require_unrecovered` warning, with or without
 `--diagnostics`, when an ESM output module still calls `require` anyway: a
 call a later unpack stage was expected to turn into an import. The message
 lists the required specifiers, and each call throws a `ReferenceError` when
-it runs. A call of a numeric module id, which names a module outside the
-input, is not reported.
+it runs. A webpack loader call whose module id no input links, numeric or
+string, is not reported here: `runtime_residual` reports it.
 
 Unpack reports a non-error `commonjs_require_of_esm` warning, with or without
 `--diagnostics`, when a module that stayed CommonJS requires a module
@@ -475,6 +475,15 @@ and `require.t` of an `import()` that Wakaru did not restore: its chunk was
 not among the inputs, or the module it loads was recovered in a shape no
 `import()` reads the same way. The message names the first such member. The
 rest of the module is recovered; that call would throw if executed.
+
+Unpack also reports `runtime_residual` for a webpack module that keeps
+`require(id)` calls whose module id the split output does not link, numeric
+(`require(17)`) or string (`require("q1tI")`, a hashed or named id). The
+message lists each id with the reason: in no input, in an opaque module, or
+in several modules of the build. Passing the chunk that holds the module, or
+only one copy of it, links the call. A loader behind a chunk load
+(`require.e(chunk).then(() => require(id))`) is covered by the `require.e`
+report instead.
 
 ## Overwrite protection
 

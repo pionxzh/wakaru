@@ -197,7 +197,29 @@ fn webpack_chunks_do_not_replace_opaque_targets_with_same_numbered_modules() {
             .1;
         assert!(consumer.contains("require(200)"), "{consumer}");
         assert!(!consumer.contains("from "), "{consumer}");
-        assert_eq!(output.warnings.len(), 1, "{:?}", output.warnings);
+        // The opaque module's own failure, and the kept call to it.
+        let kinds = output
+            .warnings
+            .iter()
+            .map(|warning| warning.kind)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            kinds,
+            [
+                wakaru_core::UnpackWarningKind::RuntimeResidual,
+                wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed,
+            ],
+            "{:?}",
+            output.warnings
+        );
+        assert!(
+            output.warnings[0].filename == "module-100.js"
+                && output.warnings[0]
+                    .message
+                    .contains("`200` in an opaque module"),
+            "{:?}",
+            output.warnings
+        );
     }
 }
 
@@ -1885,6 +1907,148 @@ fn string_id_require_links_across_inputs_in_raw_mode() {
     assert!(
         consumer.contains(r#"require("./module-NOtv.js")"#),
         "{consumer}"
+    );
+}
+
+fn unpack_one(
+    source: &str,
+    emit_source_map: bool,
+) -> wakaru_core::driver::test_support::UnpackOutput {
+    unpack(
+        source,
+        DecompileOptions {
+            filename: "chunk.js".to_string(),
+            emit_source_map,
+            ..Default::default()
+        },
+    )
+    .expect("the chunk should unpack")
+}
+
+fn residual_messages(output: &wakaru_core::driver::test_support::UnpackOutput) -> Vec<&str> {
+    output
+        .warnings
+        .iter()
+        .filter(|warning| warning.kind == wakaru_core::UnpackWarningKind::RuntimeResidual)
+        .map(|warning| warning.message.as_str())
+        .collect()
+}
+
+#[test]
+fn unresolved_string_id_stays_a_require_call_in_esm_output() {
+    // As for a numeric id: the call fails in CommonJS too, so the module
+    // still becomes ESM and keeps the call, which is reported.
+    for emit_source_map in [false, true] {
+        let output = unpack_one(HASHED_CONSUMER_CHUNK, emit_source_map);
+        let consumer = module_named(&output.modules, "module-+BL1.js");
+        assert!(consumer.contains(r#"require("NOtv")"#), "{consumer}");
+        assert!(consumer.contains("export const run"), "{consumer}");
+        assert!(!consumer.contains(r#"from "NOtv""#), "{consumer}");
+        assert_eq!(
+            residual_messages(&output),
+            ["webpack `require` keeps module ids the split output does not link: `\"NOtv\"` in no input; these calls throw when they run"]
+        );
+    }
+}
+
+#[test]
+fn unresolved_named_id_keeps_its_spelling() {
+    let consumer = r#"
+(self.webpackChunk_app = self.webpackChunk_app || []).push([[1], {
+    "./src/app.js": function(module, exports, load) {
+        "use strict";
+        var dep = load("./src/util.js");
+        exports.run = function() { return dep.a(); };
+    }
+}]);
+"#;
+    let output = unpack_one(consumer, false);
+    let consumer = module_named(&output.modules, "src/app.js");
+    assert!(
+        consumer.contains(r#"require("./src/util.js")"#),
+        "{consumer}"
+    );
+    assert!(!consumer.contains("import "), "{consumer}");
+    assert_eq!(residual_messages(&output).len(), 1, "{:?}", output.warnings);
+}
+
+#[test]
+fn unresolved_numeric_id_is_reported() {
+    let output = unpack_one(APP_CONSUMER_CHUNK, false);
+    let consumer = module_named(&output.modules, "module-100.js");
+    assert!(consumer.contains("require(200)"), "{consumer}");
+    assert_eq!(
+        residual_messages(&output),
+        ["webpack `require` keeps module ids the split output does not link: `200` in no input; these calls throw when they run"]
+    );
+}
+
+#[test]
+fn string_id_with_two_candidates_is_reported_with_the_count() {
+    let output = unpack_files(
+        [
+            ("app.js", HASHED_CONSUMER_CHUNK),
+            ("provider.js", HASHED_PROVIDER_CHUNK),
+            ("copy.js", HASHED_PROVIDER_CHUNK),
+        ]
+        .into_iter()
+        .map(|(filename, source)| UnpackInput {
+            filename: filename.to_string(),
+            source: source.to_string(),
+        })
+        .collect(),
+        DecompileOptions::default(),
+    )
+    .expect("inputs should unpack together");
+    let consumer = module_named(&output.modules, "module-+BL1.js");
+    assert!(consumer.contains(r#"require("NOtv")"#), "{consumer}");
+    assert_eq!(
+        residual_messages(&output),
+        ["webpack `require` keeps module ids the split output does not link: `\"NOtv\"` in 2 modules of the build; these calls throw when they run"]
+    );
+}
+
+#[test]
+fn a_free_require_of_a_package_still_becomes_an_import_beside_a_kept_id() {
+    let consumer = r#"
+(self.webpackChunk_app = self.webpackChunk_app || []).push([[1], {
+    "+BL1": function(module, exports, load) {
+        "use strict";
+        var dep = load("NOtv"), lib = require("lodash");
+        exports.run = function() { return dep.a() + lib.b(); };
+    }
+}]);
+"#;
+    let output = unpack_one(consumer, false);
+    let consumer = module_named(&output.modules, "module-+BL1.js");
+    assert!(consumer.contains(r#"from "lodash""#), "{consumer}");
+    assert!(consumer.contains(r#"require("NOtv")"#), "{consumer}");
+    assert!(!consumer.contains(r#"require("lodash")"#), "{consumer}");
+}
+
+#[test]
+fn a_kept_id_behind_a_chunk_load_is_reported_once() {
+    // The loader behind `require.e` is covered by the kept chunk load; the
+    // one behind `Promise.resolve()` has no other report.
+    let consumer = r#"
+(self.webpackChunk_app = self.webpackChunk_app || []).push([[1], {
+    "+BL1": function(module, exports, load) {
+        "use strict";
+        exports.now = function() { return Promise.resolve().then(() => load("NOtv")); };
+        exports.later = function() { return load.e(5).then(() => load("UUUU")); };
+    }
+}]);
+"#;
+    let output = unpack_one(consumer, false);
+    let consumer = module_named(&output.modules, "module-+BL1.js");
+    assert!(consumer.contains("export const now"), "{consumer}");
+    assert!(consumer.contains(r#"require("UUUU")"#), "{consumer}");
+    assert_eq!(
+        residual_messages(&output),
+        [
+            "webpack `require` keeps module ids the split output does not link: `\"NOtv\"` in no input; these calls throw when they run",
+            "webpack runtime member `require.e` is kept, which the split output does not define; the lazy load throws when it runs",
+        ]
     );
 }
 

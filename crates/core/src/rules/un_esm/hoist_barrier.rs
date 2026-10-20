@@ -13,8 +13,8 @@
 //! Other statements before a require are not barriers: declarations,
 //! function and class definitions, export plumbing, and calls whose results
 //! are kept (`var x = lib.make()`) or that go through local helpers. A
-//! numeric-id require of a module outside the input stays a call by itself
-//! and is not a barrier either.
+//! webpack require of a module id no input links, numeric or string, stays a
+//! call by itself and is not a barrier either.
 
 use crate::collections::HashSet;
 

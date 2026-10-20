@@ -445,11 +445,10 @@ only that module as failed; other factories in the same structurally proven
 container remain recoverable, with numeric and string module IDs alike. A
 fixed-point pass removes failed factory IDs from the rewrite map before
 retrying dependants, so a call to an opaque factory follows the absent-ID
-behavior of its ID kind: a numeric call stays `require(<number>)`, and a string
-call keeps its raw ID, which `UnEsm` currently turns into an import of that ID
-like any string ID absent from the table. Either way the consumer reads no
-facts from the opaque module, even when a named ID is also a valid relative
-path to its emitted file. The opaque body never enters rule processing,
+behavior: the call stays `require(<id>)`, numeric or string with the id as
+written, and `runtime_residual` reports it as an opaque module. The consumer
+reads no facts from the opaque module, even when a named ID is also a valid
+relative path to its emitted file. The opaque body never enters rule processing,
 fact collection, filename recovery, or recursive scope splitting. Other
 normalization failures still reject the whole container, except in factories
 another detector translated (Turbopack), which fail one at a time. A container
@@ -489,7 +488,8 @@ cannot erase properties observable through the alias. Proven named property
 writes stay on the default object as well as becoming named exports.
 Numeric calls
 absent from the current table remain explicit `require(<number>)` runtime calls
-and never synthesize an ESM edge. Webpack 5's pure `.g` and `.amdO`
+and never synthesize an ESM edge; so do string calls the detector recorded as
+absent, as `require("<id>")` with the id as written. Webpack 5's pure `.g` and `.amdO`
 runtime-member reads may occur in a conditional loader prefix because its
 normalizer consumes them. Conditional first-write boundaries, hoisted or other
 deferred pre-write captures, unmapped string IDs, consumed mid-sequence

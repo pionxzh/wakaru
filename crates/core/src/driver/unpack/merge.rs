@@ -289,6 +289,7 @@ pub(super) struct NumericRewriteModuleContext {
     module_filename: String,
     build: Arc<[String]>,
     absent_string_ids: Arc<HashSet<String>>,
+    webpack_runtime: bool,
 }
 
 pub(super) struct FilenameRewriteModuleContext {
@@ -412,7 +413,9 @@ pub(super) fn prepare_multi_source_modules(
         .zip(original_filenames)
         .map(|(module, original_filename)| {
             let reserved_public_path = public_paths.module_holds_reserved_path(&module);
-            let numeric_rewrite = if has_rewrites
+            // A webpack factory always gets a context: its unresolved loader
+            // calls are kept and reported even when nothing links.
+            let numeric_rewrite = if (has_rewrites || module.webpack_commonjs_runtime)
                 && module.allow_cross_chunk_rewrite
                 && module.detector_failure.is_none()
             {
@@ -421,6 +424,7 @@ pub(super) fn prepare_multi_source_modules(
                     module_filename: module.module.filename.clone(),
                     build: module.chunk_loading_globals.clone(),
                     absent_string_ids: module.webpack_absent_string_ids.clone(),
+                    webpack_runtime: module.webpack_commonjs_runtime,
                 })
             } else {
                 None
@@ -676,27 +680,188 @@ fn same_build(left: &[String], right: &[String]) -> bool {
     left.iter().any(|name| right.contains(name))
 }
 
+/// Rewrites the module-id references `plan` resolves, then keeps the
+/// webpack loader calls it cannot resolve as `require(<id>)` calls and
+/// returns the warning that reports them.
+///
+/// A kept call with a string id gets a callee context of its own, so that,
+/// like a numeric one, no require matcher reads it as an authored
+/// `require("pkg")`: `UnEsm` neither imports it nor keeps the module
+/// CommonJS for it (`kept_require`). The context's mark is a child of
+/// `unresolved_mark`, which emitted-name checks still count as free
+/// ([`crate::rules::rename_utils::collect_free_reference_names`]).
 pub(super) fn apply_numeric_rewrites(
     module: &mut Module,
     unresolved_mark: Mark,
     context: Option<&NumericRewriteModuleContext>,
     plan: &NumericRewritePlan,
-) {
-    let Some(context) = context else {
-        return;
+) -> Option<UnpackWarning> {
+    let context = context?;
+    if !plan.is_empty() {
+        module.visit_mut_with(&mut WebpackNumericReferenceRewriter {
+            input_group: &context.input_group,
+            module_filename: &context.module_filename,
+            build: &context.build,
+            absent_string_ids: &context.absent_string_ids,
+            unresolved_mark,
+            plan,
+        });
+    }
+    if !context.webpack_runtime {
+        return None;
+    }
+    let mut keeper = UnresolvedLoaderCalls {
+        context,
+        plan,
+        unresolved_mark,
+        hidden: SyntaxContext::empty().apply_mark(Mark::fresh(unresolved_mark)),
+        chunk_load_depth: 0,
+        found: Vec::new(),
     };
-    if plan.is_empty() {
-        return;
+    module.visit_mut_with(&mut keeper);
+    unresolved_loader_warning(&context.module_filename, &keeper.found)
+}
+
+/// Why a kept loader call's module id does not link.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum UnresolvedModuleId {
+    /// No input of the build carries the id.
+    Absent,
+    /// The one module that carries it is an opaque factory.
+    Opaque,
+    /// More than one module of the build carries it.
+    Ambiguous(usize),
+}
+
+struct UnresolvedLoaderCalls<'a> {
+    context: &'a NumericRewriteModuleContext,
+    plan: &'a NumericRewritePlan,
+    unresolved_mark: Mark,
+    hidden: SyntaxContext,
+    /// Inside the loader of a lazy load behind `require.e`, whose kept chunk
+    /// load is reported instead.
+    chunk_load_depth: usize,
+    /// Each id once, in visit order: its spelling and why it stays.
+    found: Vec<(String, UnresolvedModuleId)>,
+}
+
+impl UnresolvedLoaderCalls<'_> {
+    fn classify(&self, targets: Option<&Vec<NumericTarget>>) -> Option<UnresolvedModuleId> {
+        let candidates = targets
+            .into_iter()
+            .flatten()
+            .filter(|target| same_build(&target.build, &self.context.build))
+            .collect::<Vec<_>>();
+        match candidates.as_slice() {
+            [] => Some(UnresolvedModuleId::Absent),
+            [only] if only.filename.is_none() => Some(UnresolvedModuleId::Opaque),
+            [_] => None,
+            many => Some(UnresolvedModuleId::Ambiguous(many.len())),
+        }
     }
 
-    module.visit_mut_with(&mut WebpackNumericReferenceRewriter {
-        input_group: &context.input_group,
-        module_filename: &context.module_filename,
-        build: &context.build,
-        absent_string_ids: &context.absent_string_ids,
-        unresolved_mark,
-        plan,
-    });
+    fn record(&mut self, spelling: String, reason: UnresolvedModuleId) {
+        if self.chunk_load_depth == 0 && !self.found.iter().any(|(known, _)| *known == spelling) {
+            self.found.push((spelling, reason));
+        }
+    }
+}
+
+impl VisitMut for UnresolvedLoaderCalls<'_> {
+    fn visit_mut_call_expr(&mut self, call: &mut CallExpr) {
+        if crate::rules::webpack_lazy_import::then_waits_for_chunk_load(call, self.unresolved_mark)
+        {
+            call.callee.visit_mut_with(self);
+            self.chunk_load_depth += 1;
+            call.args.visit_mut_with(self);
+            self.chunk_load_depth -= 1;
+        } else {
+            call.visit_mut_children_with(self);
+        }
+        // Only a plain `require(id)`: a lazy load's `require.bind` and
+        // `require.t` forms are reported through `require.e` / `require.t`.
+        let Callee::Expr(callee) = &mut call.callee else {
+            return;
+        };
+        let Expr::Ident(callee) = &mut **callee else {
+            return;
+        };
+        if callee.sym.as_ref() != "require" || callee.ctxt.outer() != self.unresolved_mark {
+            return;
+        }
+        let [arg] = call.args.as_slice() else {
+            return;
+        };
+        if arg.spread.is_some() {
+            return;
+        }
+        match strip_parens(&arg.expr) {
+            Expr::Lit(Lit::Str(request)) => {
+                let Some(id) = request.value.as_str() else {
+                    return;
+                };
+                if !self.context.absent_string_ids.contains(id) {
+                    return;
+                }
+                let id = id.to_string();
+                let Some(reason) = self.classify(self.plan.string_id_targets.get(&id)) else {
+                    return;
+                };
+                callee.ctxt = self.hidden;
+                self.record(format!("\"{id}\""), reason);
+            }
+            expr => {
+                let Some(id) = numeric_arg_id(expr) else {
+                    return;
+                };
+                let Some(reason) = self.classify(self.plan.plain_id_targets.get(&id)) else {
+                    return;
+                };
+                self.record(id.to_string(), reason);
+            }
+        }
+    }
+}
+
+fn unresolved_loader_warning(
+    filename: &str,
+    found: &[(String, UnresolvedModuleId)],
+) -> Option<UnpackWarning> {
+    if found.is_empty() {
+        return None;
+    }
+    let mut groups: Vec<(UnresolvedModuleId, Vec<&str>)> = Vec::new();
+    for (spelling, reason) in found {
+        match groups.iter_mut().find(|(known, _)| known == reason) {
+            Some((_, ids)) => ids.push(spelling),
+            None => groups.push((*reason, vec![spelling])),
+        }
+    }
+    let clauses = groups
+        .iter()
+        .map(|(reason, ids)| {
+            let ids = ids
+                .iter()
+                .map(|id| format!("`{id}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            match reason {
+                UnresolvedModuleId::Absent => format!("{ids} in no input"),
+                UnresolvedModuleId::Opaque => format!("{ids} in an opaque module"),
+                UnresolvedModuleId::Ambiguous(count) => {
+                    format!("{ids} in {count} modules of the build")
+                }
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    Some(UnpackWarning::new(
+        filename,
+        UnpackWarningKind::RuntimeResidual,
+        format!(
+            "webpack `require` keeps module ids the split output does not link: {clauses}; these calls throw when they run"
+        ),
+    ))
 }
 
 pub(super) fn emit_raw_modules_with_numeric_rewrites(
@@ -749,7 +914,8 @@ pub(super) fn emit_raw_modules_with_numeric_rewrites(
                     unresolved_mark,
                     unpacked.filename_rewrite.as_ref(),
                 );
-                apply_numeric_rewrites(
+                // Raw output reports no module diagnostics.
+                let _ = apply_numeric_rewrites(
                     &mut module,
                     unresolved_mark,
                     unpacked.numeric_rewrite.as_ref(),
@@ -1221,7 +1387,7 @@ mod tests {
             let unresolved_mark = Mark::new();
             let top_level_mark = Mark::new();
             module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
-            apply_numeric_rewrites(
+            let _ = apply_numeric_rewrites(
                 &mut module,
                 unresolved_mark,
                 prepared[0].numeric_rewrite.as_ref(),

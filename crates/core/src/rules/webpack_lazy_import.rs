@@ -91,6 +91,27 @@ pub(crate) fn webpack_lazy_load(call: &CallExpr, unresolved_mark: Mark) -> Optio
     relative.then_some(LazyLoad { specifier, loader })
 }
 
+/// Whether `call` is `<promise>.then(…)` on a chunk load, `require.e(chunk)`
+/// or `Promise.all([require.e(chunk), …])`. A load whose chunk no input holds
+/// keeps the `require.e` that [`kept_lazy_load_runtime_member`] reports.
+pub(crate) fn then_waits_for_chunk_load(call: &CallExpr, unresolved_mark: Mark) -> bool {
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    let Expr::Member(MemberExpr {
+        obj: promise,
+        prop: MemberProp::Ident(then),
+        ..
+    }) = strip_parens(callee)
+    else {
+        return false;
+    };
+    then.sym == "then"
+        && matches!(strip_parens(promise), Expr::Call(load) if is_chunk_load(load, unresolved_mark)
+            || (is_ready_promise(promise, unresolved_mark)
+                && global_member_call(load, "Promise", unresolved_mark) == Some("all")))
+}
+
 /// `Promise.resolve()`, `require.e(chunk)`, or
 /// `Promise.all([require.e(chunk), …])`, with literal chunk ids.
 fn is_ready_promise(expr: &Expr, unresolved_mark: Mark) -> bool {

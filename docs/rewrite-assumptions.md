@@ -869,8 +869,13 @@ among requires that become imports.
 ESM has no `require`, so a CommonJS module that would become ESM with a
 `require` call left in it stays CommonJS instead: one the barrier below keeps
 in place, a called require, one in a function, or one in a conditional
-position. Requires of numeric module ids that are not in the input are the
-exception. They fail in CommonJS too, so they stay calls in ESM output.
+position. Webpack loader calls whose module id no input links are the
+exception: a numeric id (`require(17)`), and a string id (`require("q1tI")`)
+that the detector saw the factory pass to its loader. They fail in CommonJS
+too, so they stay calls in ESM output (`runtime_residual` reports them). Unpack
+gives a kept string call's callee a context of its own, a child of the
+unresolved mark, so no require matcher reads it as an authored
+`require("pkg")`; emitted-name checks still count it as a free name.
 Before that check `UnEsm` converts the module a second time, since some
 shapes convert only once it is ESM (`export default require("x")()`). In
 unpack it leaves three shapes for later stages: before the first barrier
