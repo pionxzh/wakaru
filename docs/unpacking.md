@@ -753,6 +753,24 @@ layout directly is a proposal:
   Consumers outside the input are covered by
   [`exports_object_closed_to_consumers`](rewrite-assumptions.md#exports_object_closed_to_consumers)
   instead.
+- **A transpiler helper module that barrier 0 cannot prove.** `UnEsm`
+  proves a default or wildcard interop helper bundled as its own module
+  only when the export storage analysis maps the export to a function with
+  the helper's body ([fact-system.md](fact-system.md#shape)). Unproven, so
+  the consumer keeps the call (or Phase 2 imports it from the facts after
+  the provider's `UnEsm`):
+  - tslib's UMD build (`tslib.js`), which defines every helper inside a
+    callback and exports it through `exporter("__importDefault", …)`; no
+    stage proves it (producer `webpack@4` resolving tslib's UMD `main`, an
+    older build of the artificial suite);
+  - `@babel/runtime`'s `interopRequireWildcard`, which replaces
+    `module.exports` and its own binding on its first call;
+  - tslib's `__exportStar` and `__createBinding`: the plan carries interop
+    helpers only, so `tslib_1.__exportStar(require("./x"), exports)` through
+    a bundled tslib keeps its module CommonJS (hypothetical bundle; tsc's
+    `importHelpers` output has this call);
+  - a helper module the input already wrote as ESM, which barrier 0 does
+    not read.
 - **A write to a webpack harmony provider.** A provider webpack compiled
   from ESM (`require.r` / `require.d`) becomes ESM even when a consumer
   writes to it. Its exports object is ordinary, with a getter per export:

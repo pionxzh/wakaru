@@ -151,7 +151,7 @@ pub(crate) struct LocalHelperContext {
     /// ([`Self::with_bundled_helpers`]).
     bundled: HashMap<String, ProviderHelpers>,
     /// Top-level `x = require(source)` bindings of those sources, never
-    /// written: each reaches the helpers its provider exports, as a
+    /// assigned: each reaches the helpers its provider exports, as a
     /// `require("tslib")` binding reaches tslib's.
     bundled_namespaces: HashMap<BindingKey, String>,
     unresolved_mark: Option<Mark>,
@@ -208,7 +208,12 @@ impl LocalHelperContext {
     ///   require("./m.js").default` and `h.default(…)` read its `default`
     ///   mirror when the provider has one.
     ///
-    /// A binding written anywhere is not trusted.
+    /// A binding assigned anywhere (an assignment, an update, a loop head)
+    /// is not trusted. A second `var` declarator of the same name is not
+    /// counted as an assignment, as for a local helper binding: a minifier
+    /// that merges variables stores a helper call's result in the helper's
+    /// own binding (`var n = require("./m.js").default, n = n(require(…))`),
+    /// and the call still reads the helper.
     pub(crate) fn with_bundled_helpers(
         mut self,
         module: &Module,

@@ -277,17 +277,22 @@ For example, `UnInteropRequireDefault`:
   is a lowered `import("./a")` and becomes that call. The forms that pass a
   non-literal specifier through the promise or a wrapper function are read
   the same way (`lowered_dynamic_import_source_semantics` in
-  [rewrite-assumptions.md](rewrite-assumptions.md)). In unpack mode, a
-  wildcard helper bundled as its own module is proven only by helper export
-  facts, so a Phase 2 pass restores the same shape there (see
-  [fact-system.md](fact-system.md))
+  [rewrite-assumptions.md](rewrite-assumptions.md))
 - In unpack mode, a default or wildcard interop helper bundled as its own
   module (tslib under TypeScript's `importHelpers`, `@babel/runtime` under
   plugin-transform-runtime, `@swc/helpers` under `externalHelpers`) is
-  likewise proven only by
-  helper export facts, so the Phase 2 pass `run_cross_module_interop_imports`
-  turns `x = helper(require("./p"))` into an import there (see
-  [fact-system.md](fact-system.md))
+  proven before `UnEsm`, at barrier 0: the provider's export storage maps
+  the export to a function with the helper's body
+  (`crates/core/src/provider_helpers.rs`), and `UnEsm` adds the export to
+  its `LocalHelperContext` for each consumer that requires that provider
+  (`with_bundled_helpers`). The consumer's calls then unwrap as a local or
+  `tslib` helper's do, per proven export, never by the provider's name
+  (see [fact-system.md](fact-system.md#shape)). A helper barrier 0 cannot
+  map, but the facts after the provider's own `UnEsm` prove, is still
+  handled in Phase 2: `run_cross_module_interop_imports` turns
+  `x = helper(require("./p"))` into an import, and
+  `run_cross_module_lowered_dynamic_imports` restores the lowered
+  `import()`
 
 SWC AMD's assignment form `_a = _interopRequireDefault(_a)` — and the modern
 external-helper spelling `_a = helper._(_a)`, proven against the exact
@@ -356,7 +361,8 @@ Priority targets, roughly ordered by real-world frequency:
 
 `exportStar` recovery stays within one module. A tslib copy bundled as its
 own module and called through that module's namespace is not recognized:
-module facts do not yet carry an `__exportStar` export. A Babel loop whose
+neither the barrier-0 plan, which carries interop helpers only, nor the
+module facts carry an `__exportStar` export. A Babel loop whose
 `require()` binding is also used elsewhere (for example by an
 `export { default } from` getter on the same source) keeps the loop.
 

@@ -449,8 +449,9 @@ in sloppy code.
 
 Unpack reports a non-error `commonjs_exports_escape` warning, with or without
 `--diagnostics`, when a module passes a provider's CommonJS exports object to
-a function unpack does not follow, one in another module (other than a
-transpiler helper module) or one it cannot identify, and that provider is now
+a function unpack does not follow, one in another module (other than an
+interop helper that module is proven to export) or one it cannot identify,
+and that provider is now
 an ES module read through its namespace. If that function writes to the
 object, the write throws when it runs. A function in the same module is
 followed: if it writes the parameter, the provider stays CommonJS instead.

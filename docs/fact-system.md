@@ -51,8 +51,10 @@ Phase 1a (per module, parallel):
     collect require edges: form and interop, keyed by call span
     rule range up to, not including, UnEsm
     add each edge's uses, on the AST UnEsm will see
+    collect the interop helpers the module exports, on the same AST
 
-──── barrier 0: InterfacePlan built from every module's require edges ────
+──── barrier 0: InterfacePlan built from every module's require edges
+     and helper exports ────
 
 Phase 1b (per module, parallel):
     UnEsm, reading the plan; it records the import tags
@@ -264,10 +266,35 @@ re-export helpers, read-only builtins (`Object.keys`), and functions that
 only read the parameter do not count. A callee in another module, or one
 the collector cannot identify, does not count either; after the fact
 barrier, a consumer that passes a provider now read through its namespace to
-such a callee gets the `commonjs_exports_escape` warning (a transpiler helper
-module as the callee is exempt). Sources resolve to modules as
-`ModuleFactsMap::get_from` resolves them. A harmony provider is left alone:
-its exports are getters the runtime defined.
+such a callee gets the `commonjs_exports_escape` warning (a callee the plan
+proves is an interop helper export of its module is exempt). Sources resolve
+to modules as `ModuleFactsMap::get_from` resolves them. A harmony provider is
+left alone: its exports are getters the runtime defined.
+
+The plan also carries the interop helpers each module exports
+(`ProviderHelpers`, `crates/core/src/provider_helpers.rs`), read at the end
+of Phase 1a on the AST `UnEsm` will see. A bundle can carry tslib,
+`@babel/runtime`, or `@swc/helpers` as its own module, and a consumer then
+reaches the helper through `require("./m.js")`, whose name proves nothing.
+An export is a helper when the export storage analysis maps its name to a
+function the module declares once and never writes (a getter, a mirrored
+binding, or a property written once, a function literal included), and that
+function has the body of a default or wildcard interop helper
+(`classify_interop_helper_function`). The analysis runs without the
+module's top-level `__esModule` markers, as `UnEsm` removes them, so
+`require.r(exports)` does not fail its module gate. A module whose single
+`module.exports = v` statement is its CommonJS value exports `v` itself, and
+the Babel runtime shim's `module.exports.default = module.exports` adds a
+`default` member when it is the only write of that property. A written
+provider's helpers are dropped. Each `UnEsm` run that reads the plan adds the
+helpers of the sources its module requires to its `LocalHelperContext`
+(`with_bundled_helpers`): `ns.name(…)` through a never-assigned top-level
+`ns = require("./m.js")`, the inlined `require("./m.js").name(…)`, and, for
+a provider that is the helper, the binding of `require("./m.js")` or its
+`.default`. `UnEsm` then unwraps those calls as it does for a local or
+`tslib` helper, so a getter that re-exports through a bundled tslib's
+`__importDefault` becomes `export { default } from`. The rules before
+`UnEsm` ran before the barrier and do not see these helpers.
 
 The passes after the barrier recognize an import synthesized from a require
 by the import tags (`ImportTags`), not by a dummy span: when `UnEsm` turns a
@@ -493,8 +520,11 @@ Neither proof creates a default-object fact available to consumers.
   imported from a module whose helper export fact proves it is the wildcard
   interop helper (swc's `externalHelpers` output, with `@swc/helpers` bundled
   as its own module, or tslib's `__importStar` under TypeScript's
-  `importHelpers`). `UnEsm` restores the same shape with a local helper;
-  in Phase 1 it cannot see a helper from another module
+  `importHelpers`). `UnEsm` restores the same shape with a local helper,
+  and with a bundled one the plan proved at barrier 0; this pass covers a
+  helper proven only by the facts after the provider's own `UnEsm` (a
+  provider the input already wrote as ESM, or one whose export barrier 0
+  could not map)
   (`lowered_dynamic_import_source_semantics` in rewrite-assumptions.md).
 - **`run_cross_module_webpack_lazy_imports`** — restores `import()` from a
   webpack or Rspack lazy load whose module id unpack resolved to a sibling
@@ -527,8 +557,9 @@ Neither proof creates a default-object fact available to consumers.
   `module.exports = value` or the namespace of a provider with named exports
   and no default. `.default` reads become the binding; other uses that the
   import cannot represent keep the call. `UnEsm` makes the same rewrite with a
-  local or `tslib` helper; in Phase 1 it cannot see a helper from another
-  module.
+  local or `tslib` helper, and with a bundled helper the plan proved at
+  barrier 0 (see [Shape](#shape)); this pass covers a helper proven only by
+  the facts after the provider's own `UnEsm`.
 - **`namespace_decomposition`** — rewrites `import r from "./x"; r.foo()` into
   `import { foo } from "./x"; foo()` when `./x` exports `foo` and no collision
   prevents the rewrite. On a namespace import, `ns.default` becomes a default

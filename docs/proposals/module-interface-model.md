@@ -1,13 +1,13 @@
 # Module interface model: provider and consumer facts before `UnEsm`
 
-Status: steps 1 and 2 done (2026-10-20); step 3 half done. Step 1: the
+Status: steps 1, 2, and 3 done (2026-10-20); step 4 next. Step 1: the
 explicit execution mode (`PipelineMode`), the late-recovery fix it exposed,
 and `ProviderInterface`, computed per lookup from the provider's facts.
 Step 2: `RequireEdges` on the module facts (`crates/core/src/require_edges.rs`),
 the import tags that replace the dummy-span check, the per-source lists
 removed, and `wakaru debug interop`; the binding-use analyzers did not move
-(see step 2 below). Step 3, first half: barrier 0 and the written-provider
-decision (see step 3 below); the bundled-helper provider identity is next. The maintainer has decided the direction (see
+(see step 2 below). Step 3: barrier 0, the written-provider decision, and
+the bundled-helper provider identity (see step 3 below). The maintainer has decided the direction (see
 [Decisions](#decisions)). This proposal absorbs the consumer-aware provider format proposal
 (deferred 2026-10-15), whose problem statement is
 [Consumer writes to a named-only provider](#consumer-writes-to-a-named-only-provider).
@@ -377,10 +377,42 @@ providers CommonJS with no write behind any of them.
    `UnEsm` builds its own. A webpack harmony provider stays ESM when written;
    adding a new property to its exports object works in the bundle, so that
    case is a known gap ([unpacking.md](../unpacking.md#known-gaps)).
+
+   Second half done: provider identity. Phase 1a reads each module's
+   interop helper exports (`ProviderHelpers`) on the AST `UnEsm` will see:
+   the export storage analysis, run without the `__esModule` markers, maps
+   each export to a function declared once and never written, or the
+   `module.exports = v` value with its Babel runtime `default` mirror, and
+   the interop-only body matchers classify it. The plan carries each
+   unwritten provider's helpers and, per consumer, the sources that reach
+   them. `run_un_esm` adds them to the `LocalHelperContext` it gives
+   `UnEsm` (`with_bundled_helpers`), per export and kind: a namespace
+   binding's member, the inlined `require("./m.js").name(…)`, and a
+   provider that is the helper. A getter that re-exports through a bundled
+   tslib's `__importDefault` now recovers as `export { default } from`
+   (webpack 5, webpack 5 + Terser, webpack 4, rspack), and a consumer of a
+   bundled Babel runtime or `@swc/helpers` interop helper converts in
+   Phase 1b. The `commonjs_exports_escape` exemption now needs a proven
+   interop helper export instead of any export of a helper module. Only
+   default and wildcard interop helpers are carried; tslib's `__exportStar`,
+   the UMD `tslib.js` exporter callback, and a helper module written as ESM
+   stay unproven ([unpacking.md](../unpacking.md#known-gaps)).
 4. **Remove what barrier 0 makes redundant.** Candidates, each to verify:
    the default-versus-namespace guess in `provider_namespace_repair`, the
    bundled interop helper import, the lowered `import()` restore. A pass
-   still needed for late-recovered interfaces stays. Update
+   still needed for late-recovered interfaces stays.
+
+   Measured after step 3 by counting the modules each pass changes, with
+   and without the bundled-helper proof: on the private fixtures and the
+   artificial cases, the lowered `import()` restore no longer changes any
+   module, and the bundled interop helper import changes only consumers of
+   `@babel/runtime`'s `interopRequireWildcard`, whose module replaces
+   `module.exports` and its own binding on the first call, so barrier 0
+   cannot map it. Both stay until barrier 0 proves that helper or the
+   restore is shown to cover nothing else. `import_unproven_helper_requires`
+   still serves wrappers that are no helper, and `provider_namespace_repair`
+   changes as many modules as before: 3a and 3b moved no part of its
+   default-versus-namespace decision before `UnEsm`. Update
    [fact-system.md](../fact-system.md), [unpacking.md](../unpacking.md)
    (Known gaps), and the
    [rule dependency inventory](../rule-dependency-inventory.md).
