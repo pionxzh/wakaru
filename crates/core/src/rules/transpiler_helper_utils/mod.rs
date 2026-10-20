@@ -18,6 +18,7 @@ use super::helper_matcher::{
     remove_var_declarators_by_binding, static_member_prop_name,
 };
 use crate::js_names::is_likely_generated_alias;
+use crate::provider_helpers::ProviderHelpers;
 use crate::utils::paren::strip_parens;
 
 pub(crate) use super::helper_matcher::BindingKey;
@@ -145,6 +146,14 @@ pub(crate) struct LocalHelperContext {
     ts_helpers: HashMap<BindingKey, TsHelperInfo>,
     tslib_namespaces: HashSet<BindingKey>,
     tslib_require_member_calls: HashSet<TranspilerHelperKind>,
+    /// Helpers of the modules of an unpack that this module requires, by
+    /// the source it names each with: the barrier-0 plan's proven exports
+    /// ([`Self::with_bundled_helpers`]).
+    bundled: HashMap<String, ProviderHelpers>,
+    /// Top-level `x = require(source)` bindings of those sources, never
+    /// written: each reaches the helpers its provider exports, as a
+    /// `require("tslib")` binding reaches tslib's.
+    bundled_namespaces: HashMap<BindingKey, String>,
     unresolved_mark: Option<Mark>,
     top_level_callable_ref_graph: OnceCell<HashMap<BindingKey, HashSet<BindingKey>>>,
 }
@@ -176,8 +185,142 @@ impl LocalHelperContext {
             ts_helpers: collect_ts_helpers(module, &tslib_namespaces, unresolved_mark),
             tslib_namespaces,
             tslib_require_member_calls: collect_tslib_require_member_calls(module, unresolved_mark),
+            bundled: HashMap::default(),
+            bundled_namespaces: HashMap::default(),
             unresolved_mark,
             top_level_callable_ref_graph: OnceCell::new(),
+        }
+    }
+
+    /// Adds the helpers that other modules of an unpack export, as the
+    /// barrier-0 plan proved them, keyed by the source this module requires
+    /// each provider with. A provider is trusted per export and kind, never
+    /// by its name:
+    ///
+    /// - `var ns = require("./m.js")` makes `ns.name` a helper when the
+    ///   provider's `name` export is one, like a `require("tslib")` binding;
+    /// - `require("./m.js").name(…)` is the inlined form of the same call,
+    ///   like `require("tslib").__importDefault(…)`;
+    /// - a provider whose required value is the helper
+    ///   (`module.exports = helper`) makes `var h = require("./m.js")` a
+    ///   helper binding, as a helper runtime path does, and
+    ///   `require("./m.js")(…)` a helper call; `var h =
+    ///   require("./m.js").default` and `h.default(…)` read its `default`
+    ///   mirror when the provider has one.
+    ///
+    /// A binding written anywhere is not trusted.
+    pub(crate) fn with_bundled_helpers(
+        mut self,
+        module: &Module,
+        bundled: HashMap<String, ProviderHelpers>,
+    ) -> Self {
+        if bundled.is_empty() {
+            return self;
+        }
+        let written =
+            crate::analysis::binding_uses::BindingUseIndex::collect_direct_write_bindings(module);
+        for item in &module.body {
+            let swc_core::ecma::ast::ModuleItem::Stmt(swc_core::ecma::ast::Stmt::Decl(
+                swc_core::ecma::ast::Decl::Var(var),
+            )) = item
+            else {
+                continue;
+            };
+            for declarator in &var.decls {
+                let swc_core::ecma::ast::Pat::Ident(binding) = &declarator.name else {
+                    continue;
+                };
+                let key = binding_key(&binding.id);
+                if written.contains(&key) {
+                    continue;
+                }
+                let Some(init) = declarator.init.as_deref() else {
+                    continue;
+                };
+                match strip_parens(init) {
+                    Expr::Call(_) => {
+                        let Some(source) = self.require_source(init) else {
+                            continue;
+                        };
+                        let Some(helpers) = bundled.get(source) else {
+                            continue;
+                        };
+                        if let Some(kind) = helpers.value() {
+                            self.helpers.insert(key.clone(), kind);
+                        }
+                        self.bundled_namespaces.insert(key, source.to_string());
+                    }
+                    Expr::Member(member) => {
+                        let Some(kind) = self.require_source(&member.obj).and_then(|source| {
+                            bundled
+                                .get(source)?
+                                .named(static_member_prop_name(&member.prop)?)
+                        }) else {
+                            continue;
+                        };
+                        self.helpers.insert(key, kind);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        self.bundled = bundled;
+        self
+    }
+
+    /// Whether some provider the module requires exports a helper of
+    /// `kind` ([`Self::with_bundled_helpers`]).
+    pub(crate) fn has_bundled_helper(&self, kind: TranspilerHelperKind) -> bool {
+        self.bundled
+            .values()
+            .any(|helpers| helpers.exports_kind(kind))
+    }
+
+    /// The source of `require("src")`, with an unresolved `require`.
+    fn require_source<'a>(&self, expr: &'a Expr) -> Option<&'a str> {
+        let Expr::Call(call) = strip_parens(expr) else {
+            return None;
+        };
+        let swc_core::ecma::ast::Callee::Expr(callee) = &call.callee else {
+            return None;
+        };
+        let Expr::Ident(require) = strip_parens(callee) else {
+            return None;
+        };
+        if !self.is_unresolved_or_unguarded_ident(require, "require") {
+            return None;
+        }
+        let [arg] = call.args.as_slice() else {
+            return None;
+        };
+        if arg.spread.is_some() {
+            return None;
+        }
+        match strip_parens(&arg.expr) {
+            Expr::Lit(Lit::Str(source)) => source.value.as_str(),
+            _ => None,
+        }
+    }
+
+    /// The helper kind of a callee reached through a bundled provider.
+    fn bundled_callee_kind(&self, callee: &Expr) -> Option<TranspilerHelperKind> {
+        if self.bundled.is_empty() {
+            return None;
+        }
+        match strip_parens(callee) {
+            Expr::Member(member) => {
+                let name = static_member_prop_name(&member.prop)?;
+                let source = match strip_parens(&member.obj) {
+                    Expr::Ident(namespace) => self
+                        .bundled_namespaces
+                        .get(&binding_key(namespace))?
+                        .as_str(),
+                    object => self.require_source(object)?,
+                };
+                self.bundled.get(source)?.named(name)
+            }
+            callee @ Expr::Call(_) => self.bundled.get(self.require_source(callee)?)?.value(),
+            _ => None,
         }
     }
 
@@ -299,9 +442,12 @@ impl LocalHelperContext {
             }
         }
 
-        tslib_member_helper_kind(callee, &self.tslib_namespaces).or_else(|| {
-            tslib_require_member_name(callee, self.unresolved_mark).and_then(tslib_helper_name_kind)
-        })
+        tslib_member_helper_kind(callee, &self.tslib_namespaces)
+            .or_else(|| {
+                tslib_require_member_name(callee, self.unresolved_mark)
+                    .and_then(tslib_helper_name_kind)
+            })
+            .or_else(|| self.bundled_callee_kind(callee))
     }
 
     pub(crate) fn is_helper_callee(&self, callee: &Expr, kind: TranspilerHelperKind) -> bool {

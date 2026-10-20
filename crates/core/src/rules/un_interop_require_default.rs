@@ -126,8 +126,14 @@ fn run_un_interop_require_default(
     let tslib_namespaces = local_helpers.tslib_namespaces();
     let has_direct_tslib_calls =
         local_helpers.has_tslib_require_member_call(TranspilerHelperKind::InteropRequireDefault);
+    let has_bundled_helper =
+        local_helpers.has_bundled_helper(TranspilerHelperKind::InteropRequireDefault);
 
-    if !helpers.is_empty() || !tslib_namespaces.is_empty() || has_direct_tslib_calls {
+    if !helpers.is_empty()
+        || !tslib_namespaces.is_empty()
+        || has_direct_tslib_calls
+        || has_bundled_helper
+    {
         // Phase 1: Collect which bindings receive helper-wrapped values
         let mut collector = AffectedBindingCollector {
             local_helpers,

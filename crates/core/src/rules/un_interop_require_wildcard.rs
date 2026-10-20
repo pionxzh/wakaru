@@ -80,7 +80,11 @@ fn run_un_interop_require_wildcard(
     if scope == InteropScope::RuntimeHelpers {
         return;
     }
-    if helpers.is_empty() && tslib_namespaces.is_empty() && !has_direct_tslib_calls {
+    if helpers.is_empty()
+        && tslib_namespaces.is_empty()
+        && !has_direct_tslib_calls
+        && !local_helpers.has_bundled_helper(TranspilerHelperKind::InteropRequireWildcard)
+    {
         return;
     }
 

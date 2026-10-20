@@ -1187,3 +1187,118 @@ fn async_iterator_adapters_are_classified_by_producer() {
         assert!(context.helpers().is_empty(), "{:?}", context.helpers());
     });
 }
+
+/// The callees of every call in `consumer`, with the helper kind
+/// `with_bundled_helpers` gives each, beside the providers in `providers`
+/// (source, provider module).
+fn bundled_callee_kinds(
+    consumer: &str,
+    providers: &[(&str, &str)],
+) -> Vec<(String, Option<TranspilerHelperKind>)> {
+    use swc_core::ecma::codegen::{text_writer::JsWriter, Emitter};
+    use swc_core::ecma::transforms::base::resolver;
+    use swc_core::ecma::visit::{Visit, VisitMutWith, VisitWith};
+
+    GLOBALS.set(&Globals::default(), || {
+        let resolve = |code: &str| {
+            let mut module = parse_module(code);
+            let mark = Mark::new();
+            module.visit_mut_with(&mut resolver(mark, Mark::new(), false));
+            (module, mark)
+        };
+        let bundled: HashMap<String, crate::provider_helpers::ProviderHelpers> = providers
+            .iter()
+            .filter_map(|(source, code)| {
+                let (module, mark) = resolve(code);
+                Some((
+                    source.to_string(),
+                    crate::provider_helpers::ProviderHelpers::collect(&module, mark)?,
+                ))
+            })
+            .collect();
+        let (module, mark) = resolve(consumer);
+        let context = LocalHelperContext::collect_with_mark(&module, mark)
+            .with_bundled_helpers(&module, bundled);
+
+        struct Calls<'a>(
+            &'a LocalHelperContext,
+            Vec<(String, Option<TranspilerHelperKind>)>,
+        );
+        impl Visit for Calls<'_> {
+            fn visit_call_expr(&mut self, call: &CallExpr) {
+                if let Callee::Expr(callee) = &call.callee {
+                    let cm: Lrc<SourceMap> = Default::default();
+                    let mut buf = Vec::new();
+                    {
+                        let mut emitter = Emitter {
+                            cfg: Default::default(),
+                            cm: cm.clone(),
+                            comments: None,
+                            wr: JsWriter::new(cm, "\n", &mut buf, None),
+                        };
+                        swc_core::ecma::codegen::Node::emit_with(callee.as_ref(), &mut emitter)
+                            .expect("emit");
+                    }
+                    let text = String::from_utf8(buf).expect("utf8");
+                    if !text.starts_with("require") || text.contains('.') {
+                        self.1.push((text, self.0.helper_callee_kind(callee)));
+                    }
+                }
+                call.visit_children_with(self);
+            }
+        }
+        let mut calls = Calls(&context, Vec::new());
+        module.visit_with(&mut calls);
+        calls.1
+    })
+}
+
+#[test]
+fn bundled_helpers_are_proven_per_export_and_binding() {
+    let tslib = r#"function n(e) { return e && e.__esModule ? e : { default: e }; }
+function other(e) { return e; }
+require.d(exports, { __importDefault: () => n, __other: () => other });"#;
+    let runtime = r#"module.exports = function (e) { return e && e.__esModule ? e : { default: e }; };
+module.exports.__esModule = true;
+module.exports.default = module.exports;"#;
+    let kinds = bundled_callee_kinds(
+        r#"var ns = require("./tslib.js");
+ns.__importDefault(a);
+ns.__other(b);
+require("./tslib.js").__importDefault(c);
+var h = require("./runtime.js");
+h(d);
+h.default(e);
+var hd = require("./runtime.js").default;
+hd(f);
+require("./runtime.js")(g);
+var written = require("./tslib.js");
+written = other;
+written.__importDefault(i);
+var unknown = require("./unknown.js");
+unknown.__importDefault(j);"#,
+        &[
+            ("./tslib.js", tslib),
+            ("./runtime.js", runtime),
+            ("./unknown.js", "exports.x = 1;"),
+        ],
+    );
+    let default = Some(TranspilerHelperKind::InteropRequireDefault);
+    assert_eq!(
+        kinds,
+        [
+            ("ns.__importDefault".to_string(), default),
+            ("ns.__other".to_string(), None),
+            (
+                "require(\"./tslib.js\").__importDefault".to_string(),
+                default
+            ),
+            ("h".to_string(), default),
+            ("h.default".to_string(), default),
+            ("hd".to_string(), default),
+            ("require(\"./runtime.js\")".to_string(), default),
+            ("written.__importDefault".to_string(), None),
+            ("unknown.__importDefault".to_string(), None),
+        ]
+    );
+}

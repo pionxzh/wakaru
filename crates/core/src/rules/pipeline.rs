@@ -341,7 +341,19 @@ fn run_un_esm(module: &mut Module, ctx: RuleRunContext<'_>) {
     if single_file && !single_file_runs_un_esm(ctx.current_filename, ctx.rewrite_level) {
         return;
     }
-    let local_helpers = ctx.local_helpers(module);
+    let mut local_helpers = ctx.local_helpers(module);
+    // In unpack, the helpers other modules export, as barrier 0 proved them.
+    // Only `UnEsm` reads them: the rules before it ran before the barrier.
+    if let Some((plan, filename)) = ctx.interface_plan.zip(ctx.current_filename) {
+        let bundled = plan.helper_sources(filename);
+        if !bundled.is_empty() {
+            local_helpers = Rc::new(
+                (*local_helpers)
+                    .clone()
+                    .with_bundled_helpers(module, bundled),
+            );
+        }
+    }
     // The evidence is read before `UnEsm` removes the `__esModule` marker and
     // unwraps interop calls.
     let mut relative_namespace = single_file

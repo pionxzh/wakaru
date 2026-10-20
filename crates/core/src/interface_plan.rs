@@ -20,8 +20,12 @@
 //! `require.d` defined), and a module the input already wrote as ESM.
 //!
 //! The plan also carries the interop helpers each provider exports
-//! ([`ProviderHelpers`]). A written provider's helpers are dropped: a
-//! consumer may have replaced one.
+//! ([`ProviderHelpers`]), so that `UnEsm` proves a helper a consumer reaches
+//! through `require("./m.js")` as it proves one reached through
+//! `require("tslib")`, but per proven export instead of by name. A written
+//! provider's helpers are dropped: a consumer may have replaced one.
+
+use swc_core::atoms::Atom;
 
 use crate::collections::{HashMap, HashSet};
 use crate::facts::{canonical_module_key, resolve_module_key};
@@ -51,6 +55,9 @@ pub(crate) struct InterfacePlan {
     /// The interop helpers of each provider no consumer writes to, by
     /// canonical key.
     helpers: HashMap<String, ProviderHelpers>,
+    /// For each consumer, by canonical key: the sources it requires that
+    /// resolve to a provider in `helpers`, with that provider's key.
+    helper_sources: HashMap<String, Vec<(Atom, String)>>,
 }
 
 impl InterfacePlan {
@@ -95,10 +102,35 @@ impl InterfacePlan {
                     .flatten()
             })
             .collect();
+        let mut helper_sources: HashMap<String, Vec<(Atom, String)>> = HashMap::default();
+        if !helpers.is_empty() {
+            for module in &modules {
+                let mut sources: Vec<(Atom, String)> = Vec::new();
+                for edge in module.edges.iter().chain(module.edges.unkeyed()) {
+                    if sources.iter().any(|(source, _)| source == &edge.source) {
+                        continue;
+                    }
+                    let Some(provider) = resolve_module_key(
+                        |key| keys.contains(key),
+                        Some(module.filename),
+                        &edge.source,
+                    ) else {
+                        continue;
+                    };
+                    if helpers.contains_key(&provider) {
+                        sources.push((edge.source.clone(), provider));
+                    }
+                }
+                if !sources.is_empty() {
+                    helper_sources.insert(canonical_module_key(module.filename), sources);
+                }
+            }
+        }
         Self {
             written,
             closed,
             helpers,
+            helper_sources,
         }
     }
 
@@ -113,6 +145,19 @@ impl InterfacePlan {
         self.written
             .get(&canonical_module_key(filename))
             .map(String::as_str)
+    }
+
+    /// The interop helpers of the providers `filename` requires, by the
+    /// source it names each with.
+    pub(crate) fn helper_sources(&self, filename: &str) -> HashMap<String, ProviderHelpers> {
+        self.helper_sources
+            .get(&canonical_module_key(filename))
+            .into_iter()
+            .flatten()
+            .filter_map(|(source, provider)| {
+                Some((source.to_string(), self.helpers.get(provider)?.clone()))
+            })
+            .collect()
     }
 
     /// The interop helpers the module exports, when it is not written.
@@ -329,6 +374,12 @@ h(require("./other.js"));"#,
         ]);
         assert!(plan.helper_exports("src/helper.js").is_some());
         assert!(plan.helper_exports("src/written.js").is_none());
+        let sources = plan.helper_sources("src/consumer.js");
+        assert_eq!(
+            sources.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["./helper.js"]
+        );
+        assert!(plan.helper_sources("src/helper.js").is_empty());
     }
 
     #[test]

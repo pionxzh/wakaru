@@ -4442,11 +4442,12 @@ fn unproven_imported_call_of_a_require_imports_its_provider() {
 #[test]
 fn imported_call_of_a_marked_provider_now_esm_keeps_what_the_marker_meant() {
     // shape: producer @babel/runtime interop, webpack@4.47.0 + UglifyJS
-    // 3.14; a bare use of the binding (`r;`) keeps the interop pass from
-    // converting it. The provider marked itself `__esModule` and becomes an
-    // ES module, whose namespace has no marker: a proven interop helper
-    // returned it unchanged, so the call goes; for any other function the
-    // marker may matter, so the require stays.
+    // 3.14. The provider marked itself `__esModule` and becomes an ES
+    // module, whose namespace has no marker: a proven interop helper
+    // returned it unchanged, so the call goes, and `UnEsm` proves the
+    // bundled helper at barrier 0 and reads `r.default` as the default
+    // import; for any other function the marker may matter, so the require
+    // stays.
     let marked = r#"4(t,e){"use strict";Object.defineProperty(e,"__esModule",{value:!0}),e.default=function(x){return x+1}}"#;
     let interop = r#"2(t){t.exports=function(e){return e&&e.__esModule?e:{default:e}},t.exports.__esModule=!0,t.exports.default=t.exports}"#;
     let source = kept_require_bundle(&format!(
@@ -4455,11 +4456,13 @@ fn imported_call_of_a_marked_provider_now_esm_keeps_what_the_marker_meant() {
     let output = unpack(&source, DecompileOptions::default()).expect("bundle should unpack");
     let module = unpacked_module(&output, "module-1.js");
     assert!(
-        module.contains(r#"import * as module_4 from "./module-4.js";"#),
+        module.contains(r#"import r from "./module-4.js";"#),
         "{module}"
     );
-    assert!(module.contains("const r = module_4;"), "{module}");
+    assert!(module.contains("return r(1)"), "{module}");
     assert!(!module.contains("require("), "{module}");
+    let findings = validate_output_modules(&output.modules);
+    assert!(findings.is_empty(), "{findings:#?}");
 
     let source = kept_require_bundle(&format!(
         r#"1(t,e,o){{var h=o(2),r=h.wrap(o(4));e.y=function(){{return r}}}},2(t,e){{e.wrap=function(x){{return x}}}},{marked}"#

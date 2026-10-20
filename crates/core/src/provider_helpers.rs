@@ -85,6 +85,23 @@ impl ProviderHelpers {
         (helpers.value.is_some() || !helpers.named.is_empty()).then_some(helpers)
     }
 
+    /// The helper the required value holds as the property `name`.
+    pub(crate) fn named(&self, name: &str) -> Option<TranspilerHelperKind> {
+        self.named
+            .iter()
+            .find_map(|(exported, kind)| (exported.as_ref() == name).then_some(*kind))
+    }
+
+    /// The helper the required value is.
+    pub(crate) fn value(&self) -> Option<TranspilerHelperKind> {
+        self.value
+    }
+
+    /// Whether some export holds a helper of `kind`.
+    pub(crate) fn exports_kind(&self, kind: TranspilerHelperKind) -> bool {
+        self.value == Some(kind) || self.named.iter().any(|(_, named)| *named == kind)
+    }
+
     /// Each export, `None` naming the required value itself.
     pub(crate) fn entries(
         &self,

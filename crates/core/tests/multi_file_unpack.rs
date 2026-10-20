@@ -3108,3 +3108,210 @@ fn a_provider_passed_to_a_bundled_interop_helper_is_not_reported() {
         );
     }
 }
+
+/// A webpack 5 bundle of `modules`; its entry runs module 400's `run`.
+fn helper_provider_bundle(modules: &str) -> String {
+    format!(
+        r#"(() => {{
+  var __webpack_modules__ = ({{
+{modules}
+  }});
+  var __webpack_module_cache__ = {{}};
+  function __webpack_require__(id) {{
+    var cached = __webpack_module_cache__[id];
+    if (cached !== undefined) return cached.exports;
+    var module = __webpack_module_cache__[id] = {{ exports: {{}} }};
+    __webpack_modules__[id](module, module.exports, __webpack_require__);
+    return module.exports;
+  }}
+  __webpack_require__.r = (e) => {{ Object.defineProperty(e, "__esModule", {{ value: true }}); }};
+  __webpack_require__.d = (e, d) => {{ for (var k in d) Object.defineProperty(e, k, {{ enumerable: true, get: d[k] }}); }};
+  console.log(__webpack_require__(400).run());
+}})();
+"#
+    )
+}
+
+/// Module 200: the widget a re-exporter hands on as its default.
+const WIDGET_MODULE: &str = r#"200: function(module, exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      class Widget { label() { return "widget"; } }
+      exports.default = Widget;
+    },"#;
+
+/// producer tsc@5.9 `importHelpers`: `export { default } from "./widget"`
+/// as a getter around tslib's `__importDefault`, with tslib bundled as
+/// module 100 (`helper`) and a consumer that imports the default through
+/// the same helper.
+fn tslib_reexport_bundle(helper: &str) -> String {
+    helper_provider_bundle(&format!(
+        r#"    100: {helper},
+    {WIDGET_MODULE}
+    300: function(module, exports, __webpack_require__) {{
+      "use strict";
+      Object.defineProperty(exports, "__esModule", {{ value: true }});
+      exports.default = void 0;
+      const tslib_1 = __webpack_require__(100);
+      var widget_1 = __webpack_require__(200);
+      Object.defineProperty(exports, "default", {{
+        enumerable: true,
+        get: function () {{ return tslib_1.__importDefault(widget_1).default; }}
+      }});
+    }},
+    400: function(module, exports, __webpack_require__) {{
+      "use strict";
+      Object.defineProperty(exports, "__esModule", {{ value: true }});
+      exports.run = run;
+      const tslib_1 = __webpack_require__(100);
+      const reexport_1 = tslib_1.__importDefault(__webpack_require__(300));
+      function run() {{ return new reexport_1.default().label(); }}
+    }}"#
+    ))
+}
+
+/// tslib's ES module build, bundled by webpack 5.
+const BUNDLED_TSLIB: &str = r#"function(module, __webpack_exports__, __webpack_require__) {
+      "use strict";
+      __webpack_require__.d(__webpack_exports__, { __importDefault: () => __importDefault });
+      function __importDefault(mod) {
+        return (mod && mod.__esModule) ? mod : { "default": mod };
+      }
+    }"#;
+
+#[test]
+fn a_reexport_getter_through_a_bundled_tslib_recovers_esm() {
+    let source = tslib_reexport_bundle(BUNDLED_TSLIB);
+    for emit_source_map in [false, true] {
+        let output = unpack_one(&source, emit_source_map);
+        assert_valid_module_graph(&output.modules);
+        let reexport = module_named(&output.modules, "module-300.js");
+        assert!(
+            reexport.contains("export { default } from \"./module-200.js\""),
+            "{reexport}"
+        );
+        assert!(!reexport.contains("defineProperty"), "{reexport}");
+        let consumer = module_named(&output.modules, "module-400.js");
+        assert!(
+            consumer.contains("import reexport_1 from \"./module-300.js\""),
+            "{consumer}"
+        );
+        assert!(consumer.contains("new reexport_1()"), "{consumer}");
+        assert!(!consumer.contains("__importDefault"), "{consumer}");
+    }
+}
+
+#[test]
+fn a_terser_inlined_call_of_a_bundled_tslib_helper_recovers_esm() {
+    // producer webpack@5 + terser@5: the helper is renamed, and a binding
+    // used once is inlined into `require(…).__importDefault(…)`.
+    let source = helper_provider_bundle(&format!(
+        r#"    100: function(module, __webpack_exports__, __webpack_require__) {{
+      "use strict";
+      function n(e) {{ return e && e.__esModule ? e : {{ default: e }}; }}
+      __webpack_require__.d(__webpack_exports__, {{ __importDefault: () => n }});
+    }},
+    {WIDGET_MODULE}
+    300: function(module, exports, __webpack_require__) {{
+      "use strict";
+      Object.defineProperty(exports, "__esModule", {{ value: true }});
+      exports.default = void 0;
+      const n = __webpack_require__(100);
+      var o = __webpack_require__(200);
+      Object.defineProperty(exports, "default", {{
+        enumerable: true,
+        get: function () {{ return n.__importDefault(o).default; }}
+      }});
+    }},
+    400: function(module, exports, __webpack_require__) {{
+      "use strict";
+      exports.run = function () {{ return new n.default().label(); }};
+      const n = __webpack_require__(100).__importDefault(__webpack_require__(300));
+    }}"#
+    ));
+    for emit_source_map in [false, true] {
+        let output = unpack_one(&source, emit_source_map);
+        assert_valid_module_graph(&output.modules);
+        let reexport = module_named(&output.modules, "module-300.js");
+        assert!(
+            reexport.contains("export { default } from \"./module-200.js\""),
+            "{reexport}"
+        );
+        let consumer = module_named(&output.modules, "module-400.js");
+        assert!(
+            consumer.contains("import n from \"./module-300.js\""),
+            "{consumer}"
+        );
+        assert!(consumer.contains("new n()"), "{consumer}");
+        assert!(!consumer.contains("require("), "{consumer}");
+    }
+}
+
+#[test]
+fn a_bundled_babel_runtime_interop_helper_proves_a_reexport_getter() {
+    // producer babel@7 with @babel/plugin-transform-runtime: the helper
+    // module is `module.exports = helper` with its `default` mirror, and
+    // `export { default } from "./widget"` reads the wrapped require.
+    let source = helper_provider_bundle(&format!(
+        r#"    100: function(module) {{
+      function _interopRequireDefault(e) {{ return e && e.__esModule ? e : {{ default: e }}; }}
+      module.exports = _interopRequireDefault, module.exports.__esModule = true, module.exports["default"] = module.exports;
+    }},
+    {WIDGET_MODULE}
+    300: function(module, exports, __webpack_require__) {{
+      "use strict";
+      var _interopRequireDefault = __webpack_require__(100);
+      Object.defineProperty(exports, "__esModule", {{ value: true }});
+      Object.defineProperty(exports, "default", {{
+        enumerable: true,
+        get: function () {{ return _widget.default; }}
+      }});
+      var _widget = _interopRequireDefault(__webpack_require__(200));
+    }},
+    400: function(module, exports, __webpack_require__) {{
+      "use strict";
+      var _interopRequireDefault = __webpack_require__(100);
+      Object.defineProperty(exports, "__esModule", {{ value: true }});
+      exports.run = run;
+      var _reexport = _interopRequireDefault(__webpack_require__(300));
+      function run() {{ return new _reexport.default().label(); }}
+    }}"#
+    ));
+    for emit_source_map in [false, true] {
+        let output = unpack_one(&source, emit_source_map);
+        assert_valid_module_graph(&output.modules);
+        let reexport = module_named(&output.modules, "module-300.js");
+        assert!(
+            reexport.contains("import _widget from \"./module-200.js\""),
+            "{reexport}"
+        );
+        assert!(
+            reexport.contains("export { _widget as default }"),
+            "{reexport}"
+        );
+        assert!(!reexport.contains("require("), "{reexport}");
+        let consumer = module_named(&output.modules, "module-400.js");
+        assert!(consumer.contains("new _reexport()"), "{consumer}");
+    }
+}
+
+#[test]
+fn a_provider_that_only_looks_like_tslib_is_not_trusted() {
+    // The export has the helper's name but not its body.
+    let source = tslib_reexport_bundle(
+        r#"function(module, __webpack_exports__, __webpack_require__) {
+      "use strict";
+      __webpack_require__.d(__webpack_exports__, { __importDefault: () => __importDefault });
+      function __importDefault(mod) { return mod; }
+    }"#,
+    );
+    for emit_source_map in [false, true] {
+        let output = unpack_one(&source, emit_source_map);
+        let reexport = module_named(&output.modules, "module-300.js");
+        assert!(
+            reexport.contains("return tslib_1.__importDefault(widget_1).default"),
+            "{reexport}"
+        );
+        assert!(!reexport.contains("export "), "{reexport}");
+    }
+}
