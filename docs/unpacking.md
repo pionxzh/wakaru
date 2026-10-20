@@ -730,8 +730,7 @@ layout directly is a proposal:
 
   What is left is reported as `commonjs_require_of_esm`: a binding of such a
   provider passed on as a value (code that calls it and also reads a named
-  export from it needs both), written through (`x.count = 1`), read as an
-  optional member (`x?.name`), or used to call a named export that reads
+  export from it needs both), read as an optional member (`x?.name`), or used to call a named export that reads
   `this`; and an interop default of a marked provider whose helper
   `UnWebpackInterop` already removed (`require.n(x).a`, producer
   `webpack@4.47` concatenation + Terser with an `swc@1.16` CommonJS
@@ -740,28 +739,25 @@ layout directly is a proposal:
   output works: Node (since v22.12 and v20.19) adds `__esModule` to the
   namespace of a module with a default export, so the interop reads that
   default.
-- **A consumer that writes to a provider's exports object.** A module that
-  assigns to a required provider (`var p = require("./p"); p.f = impl`)
-  needs the provider's mutable `exports` object. A provider that writes only
-  named exports (`exports.f = …`) still becomes an ES module, which has no
-  such object, and the write fails in one of two ways:
-  - a consumer that becomes ESM keeps the default import it got from its
-    `require`, because the namespace import that replaces it for other
-    consumers refuses a mutation. The provider has no default export, so
-    the output fails to link before any of it runs (`does not provide an
-    export named 'default'`);
-  - a consumer that stays CommonJS gets the provider's module namespace from
-    `require`. The namespace is not extensible, so the write throws a
-    TypeError when it runs in strict code and is lost in sloppy code.
-
-  Unpack reports the first as `missing_imported_name` and the second as
-  `commonjs_require_of_esm`. The shape is wild-observed. The fix needs the
-  provider's format decision to see its consumers' writes, which Phase 1
-  does not; it is planned in the
-  [module interface model](proposals/module-interface-model.md). Consumers
-  outside the input are covered by
+- **A provider whose exports object escapes to a function unpack does not
+  follow.** A provider that a module of the input writes to stays CommonJS
+  (the plan built at barrier 0, [fact-system.md](fact-system.md#shape)): a
+  member assignment, update, or `delete` on the required value, the target
+  of `Object.assign` / `Object.defineProperty`, or a function of the same
+  module that writes the parameter the value is passed in. A value passed to
+  a function in another module (`installer.install(p)`) or to one unpack
+  cannot identify (a global, a method of an object, a reassigned binding) is
+  not followed, so the provider still becomes ESM, and a write there throws
+  at runtime. Unpack reports the consumer as `commonjs_exports_escape`. The
+  shape is hypothetical. A write through an alias of the required value (`var q = p; q.f = …`) is not seen either.
+  Consumers outside the input are covered by
   [`exports_object_closed_to_consumers`](rewrite-assumptions.md#exports_object_closed_to_consumers)
   instead.
+- **A write to a webpack harmony provider.** A provider webpack compiled
+  from ESM (`require.r` / `require.d`) becomes ESM even when a consumer
+  writes to it. Its exports object is ordinary, with a getter per export:
+  overwriting an export fails in the bundle too, but adding a new property
+  (`p.extra = 1`, producer hypothetical) works there and fails after unpack.
 - **A `.cjs` name still gets ESM syntax.** A single-file decompile keeps a
   `.cjs`/`.cts` input CommonJS (`run_un_esm` stands down), but unpack does
   not apply that gate. Two inputs reach it: a `.cjs` file passed to

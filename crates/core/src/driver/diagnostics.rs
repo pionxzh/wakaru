@@ -143,6 +143,70 @@ pub(super) fn collect_commonjs_require_of_esm_warnings(
         .collect()
 }
 
+/// Report each provider whose CommonJS `exports` object this module passes
+/// to a callee the unpack plan cannot follow (one in another module that is
+/// not a transpiler helper module, or an unknown one), when the provider became an ES module read through its
+/// namespace. The namespace takes no write, so a write there throws when it
+/// runs; a write the plan can see keeps the provider CommonJS instead.
+pub(super) fn collect_commonjs_exports_escape_warnings(
+    facts: &crate::facts::ModuleFactsMap,
+    plan: &crate::interface_plan::InterfacePlan,
+    filename: &str,
+) -> Vec<UnpackWarning> {
+    use crate::provider_interface::{ProviderInterface, RequiredValueImport};
+
+    let Some(own) = facts.get(filename) else {
+        return Vec::new();
+    };
+    let mut reported: Vec<&str> = Vec::new();
+    let mut warnings = Vec::new();
+    for edge in own.require_edges.iter() {
+        let Some(uses) = edge.uses.as_ref() else {
+            continue;
+        };
+        // A transpiler helper module's export (an interop helper bundled as
+        // its own module) only reads the value.
+        let other_callee = uses.passed_to_other_module.iter().find(|callee| {
+            !facts
+                .get_from(Some(filename), callee)
+                .is_some_and(|callee| callee.is_helper_module)
+        });
+        if other_callee.is_none() && !uses.passed_to_unknown {
+            continue;
+        }
+        if reported.contains(&edge.source.as_ref()) {
+            continue;
+        }
+        let Some(key) = facts.resolve_key_from(Some(filename), &edge.source) else {
+            continue;
+        };
+        let Some(provider) = facts.get(&key) else {
+            continue;
+        };
+        let interface = ProviderInterface::of(provider);
+        if provider.stays_commonjs
+            || !plan.exports_object_writable(&key)
+            || interface.required_value_import() != Some(RequiredValueImport::Namespace)
+        {
+            continue;
+        }
+        reported.push(edge.source.as_ref());
+        let callee = match other_callee {
+            Some(other) => format!("a function from \"{other}\""),
+            None => "a function wakaru cannot follow".to_string(),
+        };
+        warnings.push(UnpackWarning::new(
+            filename,
+            UnpackWarningKind::CommonJsExportsEscape,
+            format!(
+                "passes the CommonJS exports of \"{}\" to {callee}, but that module is now an ES module whose namespace cannot be written; a write there throws when it runs",
+                edge.source
+            ),
+        ));
+    }
+    warnings
+}
+
 /// With `--diagnostics`: report a module that stayed CommonJS although its
 /// input showed ES-source `evidence` (see
 /// [`crate::kept_require::es_source_evidence`]) and it keeps a require that

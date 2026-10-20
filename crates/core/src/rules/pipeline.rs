@@ -6,6 +6,7 @@ use swc_core::ecma::ast::Module;
 use swc_core::ecma::visit::VisitMutWith;
 
 use crate::facts::ModuleFactsMap;
+use crate::interface_plan::InterfacePlan;
 use crate::kept_require::LaterUnpackStages;
 use crate::require_edges::ImportTags;
 use crate::DceMode;
@@ -77,6 +78,7 @@ struct RuleRunContext<'a> {
     pre_dead: Option<Rc<PreDeadSet>>,
     mode: PipelineMode,
     import_tags: Option<&'a RefCell<ImportTags>>,
+    interface_plan: Option<&'a InterfacePlan>,
 }
 
 pub(super) struct PreDeadSet {
@@ -344,8 +346,14 @@ fn run_un_esm(module: &mut Module, ctx: RuleRunContext<'_>) {
     // unwraps interop calls.
     let mut relative_namespace = single_file
         .then(|| RelativeNamespaceEvidence::collect(module, ctx.unresolved_mark, &local_helpers));
+    // A provider a consumer in the input writes to stays CommonJS.
+    let keep_commonjs = ctx
+        .interface_plan
+        .zip(ctx.current_filename)
+        .is_some_and(|(plan, filename)| plan.keeps_commonjs(filename));
     let mut rule = UnEsm::new(ctx.unresolved_mark, ctx.rewrite_level)
         .with_current_filename(ctx.current_filename)
+        .with_written_exports(keep_commonjs)
         .with_local_helpers(local_helpers)
         .with_later_stages(ctx.mode.later_unpack_stages());
     module.visit_mut_with(&mut rule);
@@ -948,6 +956,8 @@ pub struct RulePipelineOptions<'a> {
     pub(crate) call_required_plan: Option<&'a crate::rules::CallRequiredPlan>,
     /// Receives the import specifiers `UnEsm` makes from `require()` calls.
     pub(crate) import_tags: Option<&'a RefCell<ImportTags>>,
+    /// The unpack plan built at barrier 0, which `UnEsm` reads.
+    pub(crate) interface_plan: Option<&'a InterfacePlan>,
 }
 
 impl Default for RulePipelineOptions<'_> {
@@ -963,6 +973,7 @@ impl Default for RulePipelineOptions<'_> {
             mode: None,
             call_required_plan: None,
             import_tags: None,
+            interface_plan: None,
         }
     }
 }
@@ -1026,6 +1037,11 @@ impl<'a> RulePipelineOptions<'a> {
 
     pub(crate) fn with_import_tags(mut self, tags: &'a RefCell<ImportTags>) -> Self {
         self.import_tags = Some(tags);
+        self
+    }
+
+    pub(crate) fn with_interface_plan(mut self, plan: Option<&'a InterfacePlan>) -> Self {
+        self.interface_plan = plan;
         self
     }
 }
@@ -1094,6 +1110,7 @@ fn apply_rules_impl(
             .mode
             .unwrap_or_else(|| PipelineMode::inferred(&options)),
         import_tags: options.import_tags,
+        interface_plan: options.interface_plan,
     };
     let mut started = options.start_from.is_none();
 
@@ -1372,6 +1389,7 @@ function read() { return alpha; }
                 pre_dead: None,
                 mode: PipelineMode::SingleFile,
                 import_tags: None,
+                interface_plan: None,
             };
 
             reset_collect_transpiler_helpers_call_count();

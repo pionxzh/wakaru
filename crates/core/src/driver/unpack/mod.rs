@@ -921,6 +921,7 @@ fn normalize_raw_unpacked_module(source: &str, filename: &str) -> Result<String>
                 smart_rename: false,
                 export_rename: false,
                 arrow_functions: false,
+                interface_plan: None,
             },
         );
         apply_fixer(&mut module)?;
@@ -934,7 +935,7 @@ fn recover_late_esm_from_factory_iifes(
     level: RewriteLevel,
     current_filename: &str,
     mode: PipelineMode,
-    options: LateEsmRecoveryOptions,
+    options: LateEsmRecoveryOptions<'_>,
 ) {
     // A factory's `.call(this, …)` wrapper is an IIFE callee, which
     // `ArrowFunction` converts at every level, so `UnIife` can drop its
@@ -950,7 +951,8 @@ fn recover_late_esm_from_factory_iifes(
     let pipeline_options = RulePipelineOptions::between("UnCurlyBraces", "UnEsm")
         .with_mode(mode)
         .with_rewrite_level(level)
-        .with_current_filename(current_filename);
+        .with_current_filename(current_filename)
+        .with_interface_plan(options.interface_plan);
     apply_rules(module, unresolved_mark, pipeline_options);
     // Gated like its registry entry.
     if options.smart_rename && level >= RewriteLevel::Standard {
@@ -963,20 +965,32 @@ fn recover_late_esm_from_factory_iifes(
 }
 
 #[derive(Clone, Copy)]
-struct LateEsmRecoveryOptions {
+struct LateEsmRecoveryOptions<'a> {
     smart_rename: bool,
     export_rename: bool,
     /// Runs `ArrowFunction` over the module. Raw output, which skips
     /// readability rewrites, converts only a factory's `.call` wrapper.
     arrow_functions: bool,
+    /// The unpack plan from barrier 0, which `UnEsm` reads again here.
+    interface_plan: Option<&'a crate::interface_plan::InterfacePlan>,
 }
 
-impl Default for LateEsmRecoveryOptions {
+impl Default for LateEsmRecoveryOptions<'_> {
     fn default() -> Self {
         Self {
             smart_rename: true,
             export_rename: true,
             arrow_functions: true,
+            interface_plan: None,
+        }
+    }
+}
+
+impl<'a> LateEsmRecoveryOptions<'a> {
+    fn with_interface_plan(self, interface_plan: &'a crate::interface_plan::InterfacePlan) -> Self {
+        Self {
+            interface_plan: Some(interface_plan),
+            ..self
         }
     }
 }

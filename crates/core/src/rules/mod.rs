@@ -219,7 +219,9 @@ pub use un_esbuild_cjs_wrapper::UnEsbuildCjsWrapper;
 pub(crate) use un_esm::contains_local_self_require;
 pub(crate) use un_esm::export_storage::{analyze_export_storage, ExportStorageReport};
 pub use un_esm::UnEsm;
-pub(crate) use un_esm::{lower_export_getter_helpers, lower_webpack_export_definitions};
+pub(crate) use un_esm::{
+    is_webpack_harmony_module, lower_export_getter_helpers, lower_webpack_export_definitions,
+};
 pub use un_esmodule_flag::UnEsmoduleFlag;
 pub use un_export_rename::UnExportRename;
 pub use un_for_of::UnForOf;

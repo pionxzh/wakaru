@@ -275,6 +275,7 @@ export type WakaruWarningKind =
     | "runtime_residual"
     | "commonjs_require_unrecovered"
     | "commonjs_require_of_esm"
+    | "commonjs_exports_escape"
     | "es_source_kept_commonjs"
     | "missing_imported_name"
     | "output_parse_recovered"
@@ -380,6 +381,10 @@ mod tests {
             (
                 wakaru::DiagnosticCode::CommonJsRequireOfEsm,
                 "commonjs_require_of_esm",
+            ),
+            (
+                wakaru::DiagnosticCode::CommonJsExportsEscape,
+                "commonjs_exports_escape",
             ),
             (
                 wakaru::DiagnosticCode::EsSourceKeptCommonJs,

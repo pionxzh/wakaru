@@ -1026,8 +1026,9 @@ exports object, and in the recovered module it throws at that first write.
 removes; this assumption covers the receiver of a consumer's own `lib.fn()`.
 
 Inside the input, unpack sees every consumer, and this assumption does not
-cover them. A consumer that writes to a provider's exports object is a known
-gap (see [unpacking.md](unpacking.md#known-gaps)).
+cover them: a provider that a consumer writes to stays CommonJS. A write unpack
+does not follow (inside a function in another module, or one it cannot
+identify) is a known gap (see [unpacking.md](unpacking.md#known-gaps)).
 
 Affects: `UnEsm` (every module it recovers as ESM), and the unpack recoveries
 that import a provider as a namespace or decompose one.

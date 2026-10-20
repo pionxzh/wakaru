@@ -162,6 +162,7 @@ fn split_esm_recovered_scope_hoisted_module(
                 smart_rename: false,
                 export_rename: false,
                 arrow_functions: true,
+                interface_plan: None,
             },
         );
         scope_hoist::split_scope_hoisted_module_with_mode(

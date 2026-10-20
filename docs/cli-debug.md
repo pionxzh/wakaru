@@ -311,7 +311,9 @@ For each module, the first line names its `ProviderInterface`: the required
 value (`CommonJs`, `Default`, `DefaultWithNamed`, `Marked`, `Replaced`, or
 `ExportsObject`), whether it has a default export or a named surface, whether
 it marked itself `__esModule`, and which import reads the required value
-(`default`, `namespace`, or `none`). Then each `require("src")` call of the
+(`default`, `namespace`, or `none`). A module that stayed CommonJS because a
+consumer in the input writes to its `exports` object gets a `kept CommonJS`
+line naming the first such consumer. Then each `require("src")` call of the
 module, in source order, is one edge:
 
 - its form (declarator, destructure, member read, interop helper argument,
@@ -320,7 +322,9 @@ module, in source order, is one edge:
   module as extracted, before any rule;
 - `uses`: how the value is used on the module as it reaches `UnEsm` (member
   reads, receiver-sensitive member calls, calls, member writes,
-  `Object.assign` / `Object.defineProperty` targets, and escape);
+  `Object.assign` / `Object.defineProperty` targets, escape, and, for a value
+  passed to a function, whether a function of the module writes it, or the
+  callee is in another module or unknown);
 - `import`: the import specifiers made from the call after the passes at the
   fact barrier, followed by what `UnEsm` made when a pass changed it; or
   `no import` with the reason (the module stays CommonJS, the require stays a
@@ -340,6 +344,7 @@ module-11111.js
 A call whose span is dummy or shared with another call (a detector that
 builds its module AST itself can write such calls) is listed last with no
 uses and no import. `--json` prints `input` and a `modules` array; each module
-has `filename`, `stays_commonjs`, `provider`, and `edges`, and each edge has
+has `filename`, `stays_commonjs`, `written_by` (the consumer, or `null`),
+`provider`, and `edges`, and each edge has
 `source`, `keyed`, `form`, `top_level`, `interop`, `esmodule_tested`, `uses`,
 `un_esm_imports`, `imports`, and `no_import_reason`.

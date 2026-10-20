@@ -116,6 +116,7 @@ pub fn trace_rules(
                     mode: Some(PipelineMode::SingleFile),
                     call_required_plan: None,
                     import_tags: None,
+                    interface_plan: None,
                 },
                 &mut observer,
             );

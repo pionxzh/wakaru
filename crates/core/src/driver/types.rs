@@ -216,6 +216,10 @@ pub enum UnpackWarningKind {
     /// A CommonJS output module requires a module recovered as ESM whose
     /// namespace differs from the CommonJS value it replaced.
     CommonJsRequireOfEsm,
+    /// A module passes a provider's CommonJS `exports` object to a function
+    /// in another module or one wakaru cannot follow, and the provider is
+    /// now an ES module, whose namespace takes no write.
+    CommonJsExportsEscape,
     /// With `--diagnostics`: a module stayed CommonJS although its input
     /// looks like the output of an ES module source.
     EsSourceKeptCommonJs,
@@ -242,6 +246,7 @@ impl UnpackWarningKind {
             Self::RuntimeResidual => "runtime_residual",
             Self::CommonJsRequireUnrecovered => "commonjs_require_unrecovered",
             Self::CommonJsRequireOfEsm => "commonjs_require_of_esm",
+            Self::CommonJsExportsEscape => "commonjs_exports_escape",
             Self::EsSourceKeptCommonJs => "es_source_kept_commonjs",
             Self::MissingImportedName => "missing_imported_name",
             Self::OutputParseRecovered => "output_parse_recovered",
@@ -262,6 +267,7 @@ impl UnpackWarningKind {
                 | Self::RuntimeResidual
                 | Self::CommonJsRequireUnrecovered
                 | Self::CommonJsRequireOfEsm
+                | Self::CommonJsExportsEscape
                 | Self::EsSourceKeptCommonJs
                 | Self::MissingImportedName
         )

@@ -353,7 +353,7 @@ result from a run that produced nothing.
 
 | Error-class (`is_error: true`) | Non-error |
 |---|---|
-| `raw_normalization_failed`, `fact_collection_failed`, `webpack_factory_recovery_failed`, `decompile_failed`, `duplicate_declaration`, `output_parse_recovered`, `output_parse_failed` | `input_parse_recovered`, `tdz_violation`, `import_cycle`, `cross_module_class_call`, `commonjs_export_unrecovered`, `commonjs_require_unrecovered`, `commonjs_require_of_esm`, `missing_imported_name`, `es_source_kept_commonjs`, `runtime_residual`, `gtm_unsupported_escape` |
+| `raw_normalization_failed`, `fact_collection_failed`, `webpack_factory_recovery_failed`, `decompile_failed`, `duplicate_declaration`, `output_parse_recovered`, `output_parse_failed` | `input_parse_recovered`, `tdz_violation`, `import_cycle`, `cross_module_class_call`, `commonjs_export_unrecovered`, `commonjs_require_unrecovered`, `commonjs_require_of_esm`, `commonjs_exports_escape`, `missing_imported_name`, `es_source_kept_commonjs`, `runtime_residual`, `gtm_unsupported_escape` |
 
 `duplicate_declaration`, `es_source_kept_commonjs`, and the `output_parse_*`
 checks run only with `--diagnostics`. Without it, Wakaru does not re-parse emitted modules, so a
@@ -438,11 +438,22 @@ through an interop. Node (since v22.12 and v20.19) adds `__esModule` to the
 namespace of a module with a default export, so an interop still in the
 output reads that default and is not reported. What is reported is an
 interop that is gone (`UnWebpackInterop` removed `require.n`) or a provider
-without a default export. A write through the required value (`p.x = v`,
-`delete p.x`, `Object.assign(p, …)`) to a provider that writes named exports
-only, or that marked itself `__esModule`, is reported too: the namespace is
-not extensible, so the write throws in strict code and is lost in sloppy
-code.
+without a default export. A provider that a module of the input writes to
+(`p.x = v`, `delete p.x`, `Object.assign(p, …)`, or a function of the same
+module that writes the value passed to it) stays CommonJS, so the write lands
+where it did. A write to a provider that writes named exports only, or that
+marked itself `__esModule`, is reported here only when unpack could not read
+the call's uses (a call a detector built without a source position): the
+namespace is not extensible, so the write throws in strict code and is lost
+in sloppy code.
+
+Unpack reports a non-error `commonjs_exports_escape` warning, with or without
+`--diagnostics`, when a module passes a provider's CommonJS exports object to
+a function unpack does not follow, one in another module (other than a
+transpiler helper module) or one it cannot identify, and that provider is now
+an ES module read through its namespace. If that function writes to the
+object, the write throws when it runs. A function in the same module is
+followed: if it writes the parameter, the provider stays CommonJS instead.
 
 Unpack reports a non-error `missing_imported_name` warning, with or without
 `--diagnostics`, when an ESM output module imports or re-exports a name that

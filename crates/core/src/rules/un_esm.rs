@@ -55,6 +55,7 @@ mod leading_requires;
 use export_getters::has_webpack_export_definitions;
 pub(crate) use export_getters::{lower_export_getter_helpers, lower_webpack_export_definitions};
 use export_star::rewrite_commonjs_export_stars;
+pub(crate) use harmony_requires::is_webpack_harmony_module;
 
 use export_storage::{property_storage_plan, recover_export_storage};
 
@@ -66,6 +67,8 @@ pub struct UnEsm {
     lowered_esbuild_namespace: bool,
     later_unpack_stages: kept_require::LaterUnpackStages,
     import_tags: ImportTags,
+    /// A consumer in the input writes to this module's `exports` object.
+    written_exports: bool,
 }
 
 impl UnEsm {
@@ -78,7 +81,16 @@ impl UnEsm {
             lowered_esbuild_namespace: false,
             later_unpack_stages: kept_require::LaterUnpackStages::None,
             import_tags: ImportTags::default(),
+            written_exports: false,
         }
+    }
+
+    /// A consumer in the input writes to this module's `exports` object
+    /// (the unpack plan, [`crate::interface_plan`]). An ES module has no
+    /// such object, so a CommonJS module stays CommonJS.
+    pub(crate) fn with_written_exports(mut self, written_exports: bool) -> Self {
+        self.written_exports = written_exports;
+        self
     }
 
     /// Unpack runs stages after `UnEsm` that turn some requires into
@@ -282,6 +294,16 @@ impl UnEsm {
             return;
         }
         let was_commonjs = !has_module_decl(module);
+        // A consumer writes to the `exports` object, which ESM does not
+        // have. A webpack harmony module's exports are getters the runtime
+        // defined, which take no write in the bundle either.
+        if self.written_exports
+            && was_commonjs
+            && !harmony_requires::is_webpack_harmony_module(module, self.unresolved_mark)
+        {
+            self.keep_commonjs(module);
+            return;
+        }
         // ESM has no `require`. A CommonJS module that would become ESM with a
         // `require` call left in it (one the barrier keeps in place, a called
         // require, one in a function or a condition) stays CommonJS instead,

@@ -14,10 +14,10 @@ use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::{Visit, VisitMutWith, VisitWith};
 
 use super::super::diagnostics::{
-    collect_commonjs_export_residual_warnings, collect_commonjs_require_of_esm_warnings,
-    collect_commonjs_require_residual_warnings, collect_es_source_kept_commonjs_warnings,
-    collect_input_parse_warnings, collect_output_diagnostics,
-    collect_webpack_runtime_residual_warnings,
+    collect_commonjs_export_residual_warnings, collect_commonjs_exports_escape_warnings,
+    collect_commonjs_require_of_esm_warnings, collect_commonjs_require_residual_warnings,
+    collect_es_source_kept_commonjs_warnings, collect_input_parse_warnings,
+    collect_output_diagnostics, collect_webpack_runtime_residual_warnings,
 };
 use super::super::io::{
     apply_fixer, build_output_sourcemap, parse_js, parse_js_with_recovery, print_js,
@@ -51,6 +51,7 @@ use crate::facts::{
     collect_module_facts, collect_replaces_module_exports, collect_require_returns_exports_object,
     is_normalized_commonjs_default, ModuleFactsMap,
 };
+use crate::interface_plan::{InterfacePlan, PlanModule};
 use crate::kept_require::run_kept_require_default_reads;
 use crate::namespace_decomposition::run_namespace_decomposition_with_tags;
 use crate::provider_import_repair::run_provider_import_repair;
@@ -64,6 +65,7 @@ use crate::rules::cross_module_interop_import::{
 };
 use crate::rules::eval_utils::DirectEvalAnalyzer;
 use crate::rules::expr_utils::is_unresolved_ident;
+use crate::rules::is_webpack_harmony_module;
 use crate::rules::lowered_dynamic_import::run_cross_module_lowered_dynamic_imports;
 use crate::rules::transpiler_helper_utils::LocalHelperContext;
 use crate::rules::webpack_lazy_import::run_cross_module_webpack_lazy_imports;
@@ -198,6 +200,9 @@ struct Phase1aModule {
     unresolved_mark: Mark,
     raw: RawCommonJsFacts,
     require_edges: RequireEdges,
+    /// Requiring the module returns its CommonJS `exports` object: it is
+    /// neither ESM nor a webpack harmony module where `UnEsm` will see it.
+    exports_object_writable: bool,
     warning: Option<UnpackWarning>,
     input_parse_warnings: Vec<UnpackWarning>,
     suggested_filename: Option<String>,
@@ -264,6 +269,7 @@ fn run_un_esm_range(
     unresolved_mark: Mark,
     level: RewriteLevel,
     filename: &str,
+    plan: Option<&InterfacePlan>,
 ) -> ImportTags {
     let import_tags = RefCell::new(ImportTags::default());
     apply_rules(
@@ -273,7 +279,8 @@ fn run_un_esm_range(
             .with_mode(PipelineMode::UnpackPhase1)
             .with_rewrite_level(level)
             .with_current_filename(filename)
-            .with_import_tags(&import_tags),
+            .with_import_tags(&import_tags)
+            .with_interface_plan(plan),
     );
     import_tags.into_inner()
 }
@@ -653,23 +660,43 @@ pub(super) fn unpack_multi_module_with_plan(
                     &unpacked.module.filename,
                 )
             };
-            Ok((module, unresolved_mark, raw, require_edges, residual_warning, suggested_filename))
+            let exports_object_writable = !module
+                .body
+                .iter()
+                .any(|item| matches!(item, ModuleItem::ModuleDecl(_)))
+                && !is_webpack_harmony_module(&module, unresolved_mark);
+            Ok((
+                module,
+                unresolved_mark,
+                raw,
+                require_edges,
+                exports_object_writable,
+                residual_warning,
+                suggested_filename,
+            ))
         });
         match prepared {
-            Ok((module, unresolved_mark, raw, require_edges, warning, suggested_filename)) => {
-                Phase1a::Pending(Box::new(Phase1aModule {
-                    filename: unpacked.module.filename.clone(),
-                    size: unpacked.module.code.len(),
-                    globals,
-                    module,
-                    unresolved_mark,
-                    raw,
-                    require_edges,
-                    warning,
-                    input_parse_warnings,
-                    suggested_filename,
-                }))
-            }
+            Ok((
+                module,
+                unresolved_mark,
+                raw,
+                require_edges,
+                exports_object_writable,
+                warning,
+                suggested_filename,
+            )) => Phase1a::Pending(Box::new(Phase1aModule {
+                filename: unpacked.module.filename.clone(),
+                size: unpacked.module.code.len(),
+                globals,
+                module,
+                unresolved_mark,
+                raw,
+                require_edges,
+                exports_object_writable,
+                warning,
+                input_parse_warnings,
+                suggested_filename,
+            })),
             Err(warning) => Phase1a::Done(Box::new(Phase1Module {
                 filename: unpacked.module.filename.clone(),
                 facts: crate::facts::ModuleFacts::default(),
@@ -683,7 +710,7 @@ pub(super) fn unpack_multi_module_with_plan(
 
     // Phase 1b: `UnEsm`, then the module facts. Each module's AST resumes
     // where Phase 1a left it.
-    let finish_facts = |pending: Box<Phase1aModule>| -> Phase1Module {
+    let finish_facts = |pending: Box<Phase1aModule>, plan: &InterfacePlan| -> Phase1Module {
         let Phase1aModule {
             filename,
             size: _,
@@ -692,6 +719,7 @@ pub(super) fn unpack_multi_module_with_plan(
             unresolved_mark,
             raw,
             require_edges,
+            exports_object_writable: _,
             warning,
             input_parse_warnings,
             suggested_filename,
@@ -700,7 +728,13 @@ pub(super) fn unpack_multi_module_with_plan(
             let import_tags = {
                 let span = tracing::info_span!("phase1: UnEsm");
                 let _enter = span.enter();
-                run_un_esm_range(&mut module, unresolved_mark, options.level, &filename)
+                run_un_esm_range(
+                    &mut module,
+                    unresolved_mark,
+                    options.level,
+                    &filename,
+                    Some(plan),
+                )
             };
             // ESM recovery mutates the AST heavily (UnIife, factory-IIFE
             // rewrites, renames) to expose import/export declarations that
@@ -721,7 +755,7 @@ pub(super) fn unpack_multi_module_with_plan(
                         options.level,
                         &filename,
                         PipelineMode::UnpackLatePrediction,
-                        LateEsmRecoveryOptions::default(),
+                        LateEsmRecoveryOptions::default().with_interface_plan(plan),
                     );
                 }
                 let mut facts = collect_module_facts(&facts_module);
@@ -750,7 +784,7 @@ pub(super) fn unpack_multi_module_with_plan(
                         options.level,
                         &filename,
                         PipelineMode::UnpackLatePrediction,
-                        LateEsmRecoveryOptions::default(),
+                        LateEsmRecoveryOptions::default().with_interface_plan(plan),
                     );
                 }
                 let mut facts = collect_module_facts(&module);
@@ -790,6 +824,20 @@ pub(super) fn unpack_multi_module_with_plan(
         )
     };
 
+    // Barrier 0: the plan from every module's require edges.
+    let interface_plan = {
+        let span = tracing::info_span!("barrier0_interface_plan");
+        let _enter = span.enter();
+        InterfacePlan::build(phase1a.iter().filter_map(|module| match module {
+            Phase1a::Done(_) => None,
+            Phase1a::Pending(pending) => Some(PlanModule {
+                filename: &pending.filename,
+                edges: &pending.require_edges,
+                exports_object_writable: pending.exports_object_writable,
+            }),
+        }))
+    };
+
     let phase1: Vec<Phase1Module> = {
         let span = tracing::info_span!("phase1b_collect_facts");
         let _enter = span.enter();
@@ -801,7 +849,7 @@ pub(super) fn unpack_multi_module_with_plan(
             },
             |module| match module {
                 Phase1a::Done(done) => *done,
-                Phase1a::Pending(pending) => finish_facts(pending),
+                Phase1a::Pending(pending) => finish_facts(pending, &interface_plan),
             },
         )
     };
@@ -844,6 +892,7 @@ pub(super) fn unpack_multi_module_with_plan(
     let facts_ref = &module_facts;
     let composition_plan_ref = &commonjs_default_object_composition_plan;
     let call_required_plan_ref = &call_required_plan;
+    let plan_ref = &interface_plan;
     let sm_ref = &parsed_sourcemap;
     let rename_ref = &rename_map;
     let phase2_inputs: Vec<_> = modules
@@ -954,6 +1003,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 interop.record(
                     &unpacked.module.filename,
                     facts_ref.get(&unpacked.module.filename),
+                    plan_ref,
                     &module,
                     &import_tags,
                     un_esm_imports
@@ -990,7 +1040,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 options.level,
                 &unpacked.module.filename,
                 PipelineMode::UnpackPhase2,
-                LateEsmRecoveryOptions::default(),
+                LateEsmRecoveryOptions::default().with_interface_plan(plan_ref),
             );
             module.visit_mut_with(&mut UnOptionalChaining::new(unresolved_mark, options.level));
             module.visit_mut_with(&mut UnConditionalsAssignmentOnly);
@@ -1075,6 +1125,11 @@ pub(super) fn unpack_multi_module_with_plan(
                 kept_requires_of_esm,
                 &module,
                 unresolved_mark,
+                &unpacked.module.filename,
+            ));
+            diag_warnings.extend(collect_commonjs_exports_escape_warnings(
+                facts_ref,
+                plan_ref,
                 &unpacked.module.filename,
             ));
             if options.diagnostics {
@@ -1256,6 +1311,7 @@ pub(super) fn unpack_multi_module_with_plan(
                         unresolved_mark,
                         options.level,
                         &unpacked.module.filename,
+                        Some(plan_ref),
                     )
                 };
 
@@ -1426,7 +1482,7 @@ mod tests {
             module.visit_mut_with(&mut resolver(unresolved_mark, Mark::new(), false));
             let level = RewriteLevel::Standard;
             let edges = run_rules_before_un_esm(&mut module, unresolved_mark, level, "consumer.js");
-            let tags = run_un_esm_range(&mut module, unresolved_mark, level, "consumer.js");
+            let tags = run_un_esm_range(&mut module, unresolved_mark, level, "consumer.js", None);
             let mut keys: Vec<_> = tags
                 .iter()
                 .flat_map(|(_, keys)| keys.iter().copied())
@@ -3530,7 +3586,7 @@ module.exports = function() { return missing; };
     }
 
     #[test]
-    fn provider_facts_leave_mutated_commonjs_namespaces_unresolved() {
+    fn a_mutated_commonjs_exports_object_keeps_its_provider_commonjs() {
         let modules = vec![
             UnpackedModule {
                 id: "provider".to_string(),
@@ -3554,13 +3610,25 @@ module.exports = provider;
 
         let output = unpack_multi_module(modules, DecompileOptions::default())
             .expect("mutable namespace fixture should decompile");
+        // The consumer writes to the provider's `exports` object, which an
+        // ES module does not have, so the provider stays CommonJS and the
+        // consumer's default import is that object.
         let findings = validate_prepared_output(&output);
+        assert!(findings.is_empty(), "{findings:#?}");
+        let code = |name: &str| {
+            output
+                .modules
+                .iter()
+                .find(|module| module.filename == name)
+                .map(|module| module.code.clone())
+                .unwrap()
+        };
+        let provider = code("provider.js");
+        assert!(provider.contains("exports.value = 1"), "{provider}");
+        let consumer = code("consumer.js");
         assert!(
-            findings.iter().any(|finding| {
-                finding.kind == OutputFindingKind::MissingImportedName
-                    && finding.filename == "consumer.js"
-            }),
-            "a mutable CommonJS exports object needs a provider facade and must fail closed: {findings:#?}"
+            consumer.contains("import provider from \"./provider.js\""),
+            "{consumer}"
         );
     }
 

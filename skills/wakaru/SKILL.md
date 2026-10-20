@@ -214,6 +214,10 @@ reachability sweep is desired.
   module's namespace; a read of a replaced `module.exports` value, or of a
   default whose interop was removed or whose provider has no default export,
   gets the namespace instead, and a write to it fails.
+- A `commonjs_exports_escape` warning (non-error) means a module passes a
+  provider's exports object to a function in another module or one wakaru
+  cannot follow, and that provider is now ESM. If the function writes to the
+  object, it throws at runtime; check that call before running the output.
 - A `missing_imported_name` warning (non-error) means an ESM output module
   imports a name its sibling ESM module does not export. Node cannot link
   it, so treat that edge, and every module that imports through it, as

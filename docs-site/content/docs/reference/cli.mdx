@@ -198,7 +198,13 @@ module that stayed CommonJS requires a module recovered as ESM whose
 namespace differs from the CommonJS value it replaced, such as a
 `module.exports` value it reads, a default it read through an interop
 that is no longer there, or a write to its exports object, which the
-namespace does not take.
+namespace does not take. A provider that a module of the input writes to
+stays CommonJS, so only a write unpack did not see is reported.
+
+Unpack always reports a non-error `commonjs_exports_escape` warning when a
+module passes a provider's exports object to a function in another module or
+one wakaru cannot follow, and that provider is now an ES module. If the
+function writes to the object, the write throws when it runs.
 
 Unpack always reports a non-error `missing_imported_name` warning when an
 ESM output module imports a name that the sibling ESM module it names does

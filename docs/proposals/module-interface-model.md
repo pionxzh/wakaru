@@ -1,12 +1,13 @@
 # Module interface model: provider and consumer facts before `UnEsm`
 
-Status: steps 1 and 2 done (2026-10-20). Step 1: the explicit execution
-mode (`PipelineMode`), the late-recovery fix it exposed, and
-`ProviderInterface`, computed per lookup from the provider's facts. Step 2:
-`RequireEdges` on the module facts (`crates/core/src/require_edges.rs`),
+Status: steps 1 and 2 done (2026-10-20); step 3 half done. Step 1: the
+explicit execution mode (`PipelineMode`), the late-recovery fix it exposed,
+and `ProviderInterface`, computed per lookup from the provider's facts.
+Step 2: `RequireEdges` on the module facts (`crates/core/src/require_edges.rs`),
 the import tags that replace the dummy-span check, the per-source lists
 removed, and `wakaru debug interop`; the binding-use analyzers did not move
-(see step 2 below). Step 3 is next. The maintainer has decided the direction (see
+(see step 2 below). Step 3, first half: barrier 0 and the written-provider
+decision (see step 3 below); the bundled-helper provider identity is next. The maintainer has decided the direction (see
 [Decisions](#decisions)). This proposal absorbs the consumer-aware provider format proposal
 (deferred 2026-10-15), whose problem statement is
 [Consumer writes to a named-only provider](#consumer-writes-to-a-named-only-provider).
@@ -362,6 +363,20 @@ providers CommonJS with no write behind any of them.
    ([performance learnings](../learnings/performance-round-2026-09.md) set
    the measurement rules). Some cost is an accepted tradeoff; see
    [Done when](#done-when).
+
+   First half done: Phase 1 split at `UnEsm` (`run_rules_before_un_esm`,
+   `run_un_esm_range`), the uses of every edge read at the end of Phase 1a,
+   and `InterfacePlan` built at barrier 0. `UnEsm` keeps a written provider
+   CommonJS, in Phase 1b, the late ESM recovery, and the source-map rerun.
+   The escape policy is implemented as decided, and
+   `commonjs_exports_escape` reports a namespace provider passed to a
+   callee in another module (not a transpiler helper module) or an unknown
+   one. Barrier 0 needs no new `PipelineMode`: the mode matters only where
+   `UnEsm` runs. `LocalHelperContext` is no longer shared between the rules
+   before `UnEsm` and `UnEsm`; Phase 1a builds one for the edge uses and
+   `UnEsm` builds its own. A webpack harmony provider stays ESM when written;
+   adding a new property to its exports object works in the bundle, so that
+   case is a known gap ([unpacking.md](../unpacking.md#known-gaps)).
 4. **Remove what barrier 0 makes redundant.** Candidates, each to verify:
    the default-versus-namespace guess in `provider_namespace_repair`, the
    bundled interop helper import, the lowered `import()` restore. A pass

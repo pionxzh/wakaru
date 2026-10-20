@@ -14,6 +14,7 @@ use super::{
 use crate::analysis::binding_id;
 use crate::collections::HashMap;
 use crate::facts::ModuleFacts;
+use crate::interface_plan::InterfacePlan;
 use crate::provider_interface::{ProviderInterface, RequiredValueImport};
 use crate::require_edges::{EdgeKey, ImportTags, RequireEdge, RequireForm};
 
@@ -32,6 +33,9 @@ pub struct ModuleInterop {
     /// The module has no import or export declaration after the passes at
     /// the fact barrier.
     pub stays_commonjs: bool,
+    /// The module stayed CommonJS because a consumer in the input writes to
+    /// its `exports` object: the first such consumer.
+    pub written_by: Option<String>,
     pub edges: Vec<EdgeReport>,
 }
 
@@ -83,11 +87,13 @@ impl InteropSink {
         &self,
         filename: &str,
         facts: Option<&ModuleFacts>,
+        plan: &InterfacePlan,
         module: &Module,
         tags: &ImportTags,
         un_esm_imports: ImportForms,
     ) {
-        let report = module_interop(filename, facts, module, tags, un_esm_imports);
+        let mut report = module_interop(filename, facts, module, tags, un_esm_imports);
+        report.written_by = plan.written_by(filename).map(str::to_string);
         self.modules
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -216,6 +222,7 @@ fn module_interop(
         filename: filename.to_string(),
         provider,
         stays_commonjs,
+        written_by: None,
         edges: edges.chain(unkeyed).collect(),
     }
 }

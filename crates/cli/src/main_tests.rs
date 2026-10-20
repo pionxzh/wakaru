@@ -289,6 +289,7 @@ fn debug_interop_prints_each_edge_and_the_import_made_from_it() {
                 required_value_import: "namespace",
             },
             stays_commonjs: false,
+            written_by: Some("writer.js".to_string()),
             edges: vec![
                 edge("./a.js", &["default alpha"], &["named beta as beta"], None),
                 edge("./b.js", &["default alpha"], &["default alpha"], None),
@@ -301,6 +302,7 @@ fn debug_interop_prints_each_edge_and_the_import_made_from_it() {
         interop_text(&report),
         r#"consumer.js
   provider: ExportsObject (default export no, named surface yes, __esModule no; read by namespace import)
+  kept CommonJS: writer.js writes to its exports
   require("./a.js"): declarator `alpha`
     uses: reads beta
     import: named beta as beta (UnEsm made default alpha)
@@ -315,6 +317,10 @@ fn debug_interop_prints_each_edge_and_the_import_made_from_it() {
     assert_eq!(
         interop_json("bundle.js", &report)["modules"][0]["edges"][0]["imports"],
         serde_json::json!(["named beta as beta"])
+    );
+    assert_eq!(
+        interop_json("bundle.js", &report)["modules"][0]["written_by"],
+        serde_json::json!("writer.js")
     );
 }
 

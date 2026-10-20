@@ -28,7 +28,7 @@ use crate::rules::decl_utils::{fresh_binding_ident, fresh_specifier_name};
 /// Whether the module calls webpack's `require.r(exports)` or
 /// `require.d(exports, …)` outside a function: webpack emits them only for a
 /// module whose source was ESM.
-pub(super) fn is_webpack_harmony_module(module: &Module, unresolved_mark: Mark) -> bool {
+pub(crate) fn is_webpack_harmony_module(module: &Module, unresolved_mark: Mark) -> bool {
     struct Finder {
         unresolved_mark: Mark,
         found: bool,

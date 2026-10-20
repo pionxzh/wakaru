@@ -920,6 +920,7 @@ fn interop_json(input: &str, report: &wakaru_core::driver::InteropReport) -> ser
         "modules": report.modules.iter().map(|module| serde_json::json!({
             "filename": module.filename,
             "stays_commonjs": module.stays_commonjs,
+            "written_by": module.written_by,
             "provider": {
                 "value": module.provider.value,
                 "has_default": module.provider.has_default,
@@ -962,6 +963,11 @@ fn interop_text(report: &wakaru_core::driver::InteropReport) -> String {
             yes_no(provider.marks_es_module),
             provider.required_value_import,
         ));
+        if let Some(consumer) = &module.written_by {
+            out.push_str(&format!(
+                "  kept CommonJS: {consumer} writes to its exports\n"
+            ));
+        }
         for edge in &module.edges {
             let mut facts = vec![edge.form.clone()];
             if !edge.top_level {

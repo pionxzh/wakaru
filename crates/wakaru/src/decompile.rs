@@ -115,6 +115,9 @@ pub(crate) fn diagnostic_from_core(
         wakaru_core::UnpackWarningKind::CommonJsRequireOfEsm => {
             DiagnosticCode::CommonJsRequireOfEsm
         }
+        wakaru_core::UnpackWarningKind::CommonJsExportsEscape => {
+            DiagnosticCode::CommonJsExportsEscape
+        }
         wakaru_core::UnpackWarningKind::EsSourceKeptCommonJs => {
             DiagnosticCode::EsSourceKeptCommonJs
         }

@@ -317,47 +317,7 @@ impl ModuleFactsMap {
     /// Resolve a specifier as written by a specific importing module to the
     /// canonical key stored in this map.
     pub fn resolve_key_from(&self, from_filename: Option<&str>, specifier: &str) -> Option<String> {
-        if let Some(from_filename) = from_filename {
-            if let Some(resolved) = resolve_relative_specifier(from_filename, specifier) {
-                if let Some(key) = self.resolve_key_exact_variants(&resolved) {
-                    return Some(key);
-                }
-            }
-        }
-        self.resolve_key_exact_variants(specifier)
-    }
-
-    fn resolve_key_exact_variants(&self, specifier: &str) -> Option<String> {
-        let canon = Self::canonicalize(specifier);
-
-        // Try canonical form first
-        if self.inner.contains_key(&canon) {
-            return Some(canon);
-        }
-
-        // Try common extensions added
-        let has_ext = [".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"]
-            .iter()
-            .any(|ext| canon.ends_with(ext));
-        if !has_ext {
-            for ext in [".js", ".jsx"] {
-                let with_ext = format!("{canon}{ext}");
-                if self.inner.contains_key(&with_ext) {
-                    return Some(with_ext);
-                }
-            }
-        }
-
-        // Try with extension stripped
-        for ext in [".js", ".jsx"] {
-            if let Some(stripped) = canon.strip_suffix(ext) {
-                if self.inner.contains_key(stripped) {
-                    return Some(stripped.to_string());
-                }
-            }
-        }
-
-        None
+        resolve_module_key(|key| self.inner.contains_key(key), from_filename, specifier)
     }
 
     /// Number of modules in the map.
@@ -376,14 +336,70 @@ impl ModuleFactsMap {
     }
 
     /// Normalize a module specifier to canonical form.
-    /// Strips leading `./` — the canonical key is always a relative path
-    /// without the dot-slash prefix.
     fn canonicalize(specifier: &str) -> String {
-        specifier
-            .strip_prefix("./")
-            .unwrap_or(specifier)
-            .to_string()
+        canonical_module_key(specifier)
     }
+}
+
+/// A module specifier in the canonical form module tables key by: no
+/// leading `./`, the rest kept (`"lib/foo.js"`).
+pub(crate) fn canonical_module_key(specifier: &str) -> String {
+    specifier
+        .strip_prefix("./")
+        .unwrap_or(specifier)
+        .to_string()
+}
+
+/// Resolves `specifier`, as `from_filename` wrote it, to the canonical key of
+/// a module `contains` holds: a relative specifier from the importing file
+/// first, then the specifier itself, each with or without `./` and a `.js` /
+/// `.jsx` extension.
+pub(crate) fn resolve_module_key(
+    contains: impl Fn(&str) -> bool,
+    from_filename: Option<&str>,
+    specifier: &str,
+) -> Option<String> {
+    if let Some(from_filename) = from_filename {
+        if let Some(resolved) = resolve_relative_specifier(from_filename, specifier) {
+            if let Some(key) = resolve_key_exact_variants(&contains, &resolved) {
+                return Some(key);
+            }
+        }
+    }
+    resolve_key_exact_variants(&contains, specifier)
+}
+
+fn resolve_key_exact_variants(contains: &impl Fn(&str) -> bool, specifier: &str) -> Option<String> {
+    let canon = canonical_module_key(specifier);
+
+    // Try canonical form first
+    if contains(&canon) {
+        return Some(canon);
+    }
+
+    // Try common extensions added
+    let has_ext = [".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"]
+        .iter()
+        .any(|ext| canon.ends_with(ext));
+    if !has_ext {
+        for ext in [".js", ".jsx"] {
+            let with_ext = format!("{canon}{ext}");
+            if contains(&with_ext) {
+                return Some(with_ext);
+            }
+        }
+    }
+
+    // Try with extension stripped
+    for ext in [".js", ".jsx"] {
+        if let Some(stripped) = canon.strip_suffix(ext) {
+            if contains(stripped) {
+                return Some(stripped.to_string());
+            }
+        }
+    }
+
+    None
 }
 
 impl fmt::Display for ModuleFactsMap {

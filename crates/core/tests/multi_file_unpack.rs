@@ -2882,3 +2882,229 @@ fn a_kept_string_id_folds_its_interop_getter_like_a_numeric_one() {
         assert!(!consumer.contains("-1"), "{consumer}");
     }
 }
+
+/// A webpack 5 bundle whose module 100 writes two named exports, a consumer
+/// module 200 written by `consumer`, and module 300 that reads both.
+fn written_provider_bundle(provider: &str, consumer: &str) -> String {
+    format!(
+        r#"(() => {{
+  var __webpack_modules__ = ({{
+    100: {provider},
+    200: {consumer},
+    300: function(module, exports, __webpack_require__) {{
+      "use strict";
+      var c = __webpack_require__(200);
+      var p = __webpack_require__(100);
+      module.exports = {{ done: c.done, f: p.f(), g: p.g() }};
+    }}
+  }});
+  var __webpack_module_cache__ = {{}};
+  function __webpack_require__(id) {{
+    var cached = __webpack_module_cache__[id];
+    if (cached !== undefined) return cached.exports;
+    var module = __webpack_module_cache__[id] = {{ exports: {{}} }};
+    __webpack_modules__[id](module, module.exports, __webpack_require__);
+    return module.exports;
+  }}
+  __webpack_require__.r = (e) => {{ Object.defineProperty(e, "__esModule", {{ value: true }}); }};
+  __webpack_require__.d = (e, d) => {{ for (var k in d) Object.defineProperty(e, k, {{ enumerable: true, get: d[k] }}); }};
+  console.log(__webpack_require__(300));
+}})();
+"#
+    )
+}
+
+const NAMED_PROVIDER: &str = r#"function(module, exports) {
+      "use strict";
+      exports.f = function original() { return "original"; };
+      exports.g = function g() { return "g"; };
+    }"#;
+
+fn escape_warnings(output: &wakaru_core::driver::test_support::UnpackOutput) -> Vec<&str> {
+    output
+        .warnings
+        .iter()
+        .filter(|warning| warning.kind == wakaru_core::UnpackWarningKind::CommonJsExportsEscape)
+        .map(|warning| warning.filename.as_str())
+        .collect()
+}
+
+/// Unpacks `consumer` beside the named-only provider on both AST paths
+/// (the retained AST and the source-map rerun), which must agree.
+fn unpack_written_provider(consumer: &str) -> Vec<wakaru_core::driver::test_support::UnpackOutput> {
+    let source = written_provider_bundle(NAMED_PROVIDER, consumer);
+    [false, true]
+        .into_iter()
+        .map(|emit_source_map| unpack_one(&source, emit_source_map))
+        .collect()
+}
+
+#[test]
+fn a_provider_its_consumer_writes_stays_commonjs() {
+    // Unminified: the consumer writes through its binding, and becomes ESM
+    // with a default import of the provider's `module.exports`.
+    let consumer = r#"function(module, exports, __webpack_require__) {
+      "use strict";
+      var p = __webpack_require__(100);
+      p.f = function patched() { return "patched"; };
+      exports.done = true;
+    }"#;
+    for output in unpack_written_provider(consumer) {
+        assert_valid_module_graph(&output.modules);
+        let provider = module_named(&output.modules, "module-100.js");
+        assert!(
+            provider.contains("exports.f = function original"),
+            "{provider}"
+        );
+        assert!(!provider.contains("export "), "{provider}");
+        let consumer = module_named(&output.modules, "module-200.js");
+        assert!(
+            consumer.contains("import p from \"./module-100.js\""),
+            "{consumer}"
+        );
+        assert!(consumer.contains("p.f = function patched"), "{consumer}");
+        let reader = module_named(&output.modules, "module-300.js");
+        assert!(
+            reader.contains("import p from \"./module-100.js\""),
+            "{reader}"
+        );
+        assert!(output.warnings.iter().all(|warning| {
+            warning.kind != wakaru_core::UnpackWarningKind::MissingImportedName
+                && warning.kind != wakaru_core::UnpackWarningKind::CommonJsRequireOfEsm
+        }));
+    }
+}
+
+#[test]
+fn a_provider_written_through_an_inlined_require_stays_commonjs() {
+    // Terser inlines a binding used once into the write.
+    let consumer = r#"function(module, exports, __webpack_require__) {
+      "use strict";
+      __webpack_require__(100).f = function patched() { return "patched"; };
+      exports.done = true;
+    }"#;
+    for output in unpack_written_provider(consumer) {
+        assert_valid_module_graph(&output.modules);
+        let provider = module_named(&output.modules, "module-100.js");
+        assert!(
+            provider.contains("exports.f = function original"),
+            "{provider}"
+        );
+        let consumer = module_named(&output.modules, "module-200.js");
+        assert!(
+            consumer.contains("require(\"./module-100.js\").f = function patched"),
+            "{consumer}"
+        );
+    }
+}
+
+#[test]
+fn a_provider_a_local_function_writes_stays_commonjs() {
+    let consumer = r#"function(module, exports, __webpack_require__) {
+      "use strict";
+      function install(m) { m.f = function patched() { return "patched"; }; }
+      install(__webpack_require__(100));
+      exports.done = true;
+    }"#;
+    for output in unpack_written_provider(consumer) {
+        assert_valid_module_graph(&output.modules);
+        let provider = module_named(&output.modules, "module-100.js");
+        assert!(
+            provider.contains("exports.f = function original"),
+            "{provider}"
+        );
+        assert!(escape_warnings(&output).is_empty());
+    }
+}
+
+#[test]
+fn a_provider_its_consumers_only_read_still_becomes_esm() {
+    let consumer = r#"function(module, exports, __webpack_require__) {
+      "use strict";
+      var p = __webpack_require__(100);
+      function describe(m) { return Object.keys(m).sort().join(","); }
+      exports.done = describe(p) + "|" + Object.keys(p).length;
+    }"#;
+    for output in unpack_written_provider(consumer) {
+        assert_valid_module_graph(&output.modules);
+        let provider = module_named(&output.modules, "module-100.js");
+        assert!(provider.contains("export const f"), "{provider}");
+        let consumer = module_named(&output.modules, "module-200.js");
+        assert!(
+            consumer.contains("import * as p from \"./module-100.js\""),
+            "{consumer}"
+        );
+        assert!(escape_warnings(&output).is_empty());
+    }
+}
+
+#[test]
+fn a_provider_passed_to_another_modules_function_becomes_esm_with_a_warning() {
+    // A callee in another module is not followed: the provider becomes ESM,
+    // and the consumer is reported.
+    let consumer = r#"function(module, exports, __webpack_require__) {
+      "use strict";
+      var installer = __webpack_require__(400);
+      var p = __webpack_require__(100);
+      installer.install(p);
+      exports.done = true;
+    },
+    400: function(module, exports) {
+      "use strict";
+      exports.install = function install(m) { m.f = function patched() {}; };
+    }"#;
+    for output in unpack_written_provider(consumer) {
+        let provider = module_named(&output.modules, "module-100.js");
+        assert!(provider.contains("export const f"), "{provider}");
+        assert_eq!(escape_warnings(&output), vec!["module-200.js"]);
+    }
+}
+
+#[test]
+fn a_written_webpack_harmony_provider_is_left_esm() {
+    // `require.d` defines getters on the harmony exports object, so a write
+    // to an export does not land in the bundle either.
+    let provider = r#"function(module, __webpack_exports__, __webpack_require__) {
+      "use strict";
+      __webpack_require__.r(__webpack_exports__);
+      __webpack_require__.d(__webpack_exports__, { f: () => f, g: () => g });
+      function f() { return "original"; }
+      function g() { return "g"; }
+    }"#;
+    let consumer = r#"function(module, exports, __webpack_require__) {
+      "use strict";
+      var p = __webpack_require__(100);
+      p.f = function patched() { return "patched"; };
+      exports.done = true;
+    }"#;
+    let source = written_provider_bundle(provider, consumer);
+    for emit_source_map in [false, true] {
+        let output = unpack_one(&source, emit_source_map);
+        let provider = module_named(&output.modules, "module-100.js");
+        assert!(provider.contains("export { f }"), "{provider}");
+        assert!(!provider.contains("__webpack_require__"), "{provider}");
+    }
+}
+
+#[test]
+fn a_provider_passed_to_a_bundled_interop_helper_is_not_reported() {
+    // The Babel runtime's interop helper, bundled as its own module, only
+    // reads the value.
+    let consumer = r#"function(module, exports, __webpack_require__) {
+      "use strict";
+      var interop = __webpack_require__(400);
+      var p = interop(__webpack_require__(100));
+      exports.done = p.default.g() === "g";
+    },
+    400: function(module) {
+      function _interopRequireDefault(e) { return e && e.__esModule ? e : { default: e }; }
+      module.exports = _interopRequireDefault, module.exports.__esModule = true, module.exports["default"] = module.exports;
+    }"#;
+    for output in unpack_written_provider(consumer) {
+        assert!(
+            escape_warnings(&output).is_empty(),
+            "{:#?}",
+            output.warnings
+        );
+    }
+}

@@ -41,7 +41,7 @@ merge step.
 Multi-module unpack runs in two parallel phases with a barrier between them
 (`crates/core/src/driver/unpack/phases.rs`). Phase 1 is itself split right
 before `UnEsm`, so every module reaches `UnEsm` before any runs it
-(barrier 0):
+(barrier 0), and `UnEsm` can read a plan built from all modules:
 
 ```
 Phase 1a (per module, parallel):
@@ -52,10 +52,10 @@ Phase 1a (per module, parallel):
     rule range up to, not including, UnEsm
     add each edge's uses, on the AST UnEsm will see
 
-──── barrier 0: every module has reached UnEsm ────
+──── barrier 0: InterfacePlan built from every module's require edges ────
 
 Phase 1b (per module, parallel):
-    UnEsm, which records the import tags
+    UnEsm, reading the plan; it records the import tags
     clone barrier AST → recover webpack factory IIFE ESM shapes
     collect_module_facts(&facts_clone)                ← pure AST → facts
     collect_import_call_edges(&barrier_ast)           ← imports still under [[Call]]
@@ -66,7 +66,8 @@ Phase 1b (per module, parallel):
      CommonJsDefaultObjectCompositionPlan and CallRequiredPlan built;
      constructed-member suffixes unioned (not stored on ModuleFacts) ────
 
-Phase 2 (per module, parallel):
+Phase 2 (per module, parallel; the late ESM recovery and the source-map
+path's rerun through UnEsm read the same plan):
     resume retained barrier AST
     run_commonjs_default_object_composition(module, plan) ← exact mutable default
     run_provider_import_repair(&mut module, facts)    ← proven CJS property edges
@@ -244,6 +245,29 @@ member calls, member writes (assignment, update, `delete`, or the target of
 `Object.assign` / `Object.defineProperty`), and escape. A call whose span is
 dummy or shared with another call (a detector-built AST can write such calls)
 keeps what the input pass read but gets no key and no uses.
+
+What crosses barrier 0 is the plan (`InterfacePlan`,
+`crates/core/src/interface_plan.rs`), built from each module's require edges
+and whether requiring the module returned a writable CommonJS `exports`
+object (it has no import or export declaration and is not a webpack harmony
+module). A provider that some edge writes to is kept CommonJS: `UnEsm`, in
+Phase 1b, in the late ESM recovery, and in the source-map path's rerun, leaves
+the module as it is. An ES module has no `exports` object, so this is the only
+format in which the consumer's write lands. An edge counts as a write for a
+member assignment, update, or `delete` on the value, the target of an
+`Object` method that writes, or the value passed to a function of the same
+module that writes that parameter. The use collector follows such a call one
+level, when the call reaches the function directly (a function literal, or a
+binding declared once and never written, in a module without `with` or
+direct eval) and the function does not read `arguments`. Interop and
+re-export helpers, read-only builtins (`Object.keys`), and functions that
+only read the parameter do not count. A callee in another module, or one
+the collector cannot identify, does not count either; after the fact
+barrier, a consumer that passes a provider now read through its namespace to
+such a callee gets the `commonjs_exports_escape` warning (a transpiler helper
+module as the callee is exempt). Sources resolve to modules as
+`ModuleFactsMap::get_from` resolves them. A harmony provider is left alone:
+its exports are getters the runtime defined.
 
 The passes after the barrier recognize an import synthesized from a require
 by the import tags (`ImportTags`), not by a dummy span: when `UnEsm` turns a

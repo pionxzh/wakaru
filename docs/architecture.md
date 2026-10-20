@@ -304,7 +304,9 @@ When unpacking bundles, the driver runs a two-phase pipeline:
    resolved, bundler-normalized AST directly. Apply exact normal-only rewrites
    backed by detector-owned runtime facts, then run the rule registry up to
    `UnEsm` and read each `require()` call's edge (Phase 1a). Once every module
-   has reached `UnEsm` (barrier 0), run `UnEsm`, clone that barrier AST for
+   has reached `UnEsm` (barrier 0) and the plan is built from every module's
+   edges (`InterfacePlan`: a provider a consumer writes to stays CommonJS),
+   run `UnEsm`, clone that barrier AST for
    webpack factory-IIFE fact recovery, and extract import/export facts
    (Phase 1b). Retain the pre-recovery AST together with its `Globals` and
    unresolved mark.
