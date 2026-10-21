@@ -50,7 +50,7 @@ internal source-map blobs are not accepted as v3 input maps. Executable
 discovery is limited to explicit file paths: directory scans still consider
 only `.js`, `.mjs`, and `.cjs` candidates, and stdin remains text input. Use
 `--raw` to keep the embedded JavaScript close to its shipped form, and
-`wakaru bun extract` for its exact bytes.
+`wakaru bun extract` for the file as the bundler emitted it.
 See [bun-standalone.md](bun-standalone.md) for the container format, safety
 properties, and current limits.
 
@@ -115,16 +115,23 @@ wakaru bun extract ./compiled-app -o extracted/ --json
 wakaru bun extract ./compiled-app -o extracted/ --include-internals
 ```
 
-This is a byte-exact container operation, separate from `--unpack`. It writes
-every validated Bun file record below `extracted/files/`, including JavaScript,
-CSS, file-loader assets, WebAssembly, native add-ons, embedded SQLite databases,
+This is a container operation, separate from `--unpack`. It writes every
+validated Bun file record below `extracted/files/`, including JavaScript, CSS,
+file-loader assets, WebAssembly, native add-ons, embedded SQLite databases,
 and records using loader IDs unknown to this Wakaru version. It does not parse,
 format, decompile, or execute their contents. Bun 1.3.3+ is supported.
 
+Each file holds the bytes the bundler emitted. That is the stored record
+byte-for-byte, except when Bun 1.4.1 or later stored non-ASCII JavaScript or a
+`text` import as UTF-16: Wakaru writes that record as its UTF-8 transcode, the
+bytes Bun encoded it from, and labels it `utf16le`.
+
 `extracted/manifest.json` records each original Bun path, safe output path,
 loader ID and known name, encoding, module format, server/client side, entry
-status, byte length, and executable byte range. `--json` also prints that
-manifest to stdout. Unsafe path components and non-UTF-8 path bytes are
+status, stored byte length (`bytes`), written byte length (`output_bytes`),
+and the executable byte range of the stored bytes. `--json` also prints that
+manifest to stdout. The manifest's `schema` is 2; schema 1 wrote UTF-16
+records as stored and labeled them `utf8`. Unsafe path components and non-UTF-8 path bytes are
 percent-encoded, and case-insensitive filename collisions receive stable
 numeric suffixes. Wakaru never writes outside the selected output directory.
 

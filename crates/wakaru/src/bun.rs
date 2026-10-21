@@ -4,6 +4,7 @@
 //! executables. Parsing backward from the trailer avoids platform-specific
 //! executable-section handling while retaining exact byte provenance.
 
+use std::borrow::Cow;
 use std::fmt;
 use std::ops::Range;
 
@@ -43,12 +44,35 @@ struct StringPointer {
     length: u32,
 }
 
+/// How Bun stored a record's `contents`.
+///
+/// The discriminant is Bun's serialized `Encoding` byte. Use
+/// [`BunEmbeddedFile::file_bytes`] or [`BunEmbeddedFile::text`] to read the
+/// contents independently of the stored representation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum BunEncoding {
+    /// Stored bytes are the file's bytes (encoding byte 0). Bun uses this for
+    /// assets.
     Binary,
+    /// Encoding byte 1, followed by one NUL byte. Bun 1.4.0 and earlier label
+    /// JavaScript records this way while storing UTF-8 bytes; Bun 1.4.1 and
+    /// later use it only for ASCII-only text.
     Latin1,
+    /// Never produced. Bun 1.4.0 and earlier declared encoding byte 2 as
+    /// UTF-8 but never wrote it; Bun 1.4.1 reuses the value for
+    /// [`Utf16`](Self::Utf16), which is how Wakaru reads it. Kept only so
+    /// removing it is not a breaking change in a minor release; it will be
+    /// removed in the next major release.
+    #[deprecated(
+        note = "Bun never wrote encoding byte 2 as UTF-8; it is read as `Utf16`. Removed in the next major release."
+    )]
     Utf8,
+    /// Encoding byte 2 from Bun 1.4.1: little-endian UTF-16 code units at an
+    /// even offset, followed by two NUL bytes. Bun stores server-side
+    /// JavaScript and `text`-loader imports this way when their UTF-8 text is
+    /// not ASCII-only, and presents them to the program as UTF-8.
+    Utf16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -194,6 +218,9 @@ pub struct BunEmbeddedFile<'a> {
     /// lossily; use [`name_bytes`](Self::name_bytes) when exact bytes matter.
     pub name: String,
     pub name_bytes: &'a [u8],
+    /// Stored contents exactly as Bun serialized them, without the
+    /// terminator. For [`BunEncoding::Utf16`] these are UTF-16LE code units;
+    /// [`file_bytes`](Self::file_bytes) returns the file's own bytes.
     pub contents: &'a [u8],
     /// Bun's internal serialized source-map representation, when present.
     /// This is not a v3 JSON source map.
@@ -222,7 +249,7 @@ pub struct BunEmbeddedFile<'a> {
     pub executable_range: Range<usize>,
 }
 
-impl BunEmbeddedFile<'_> {
+impl<'a> BunEmbeddedFile<'a> {
     pub fn is_javascript_like(&self) -> bool {
         self.loader_kind().is_javascript_like()
     }
@@ -230,6 +257,80 @@ impl BunEmbeddedFile<'_> {
     pub fn loader_kind(&self) -> BunLoader {
         BunLoader::from_raw(self.loader)
     }
+
+    /// The file's bytes as the bundler emitted them.
+    ///
+    /// For [`BunEncoding::Binary`] and [`BunEncoding::Latin1`] records this
+    /// borrows [`contents`](Self::contents) unchanged. A
+    /// [`BunEncoding::Utf16`] record is transcoded back to the WTF-8 bytes
+    /// Bun encoded it from: plain UTF-8, except that an unpaired surrogate
+    /// keeps its three-byte generalized UTF-8 form instead of being replaced.
+    /// The transcode is the exact inverse of Bun's encoding step, so it never
+    /// fails.
+    pub fn file_bytes(&self) -> Cow<'a, [u8]> {
+        match self.encoding {
+            BunEncoding::Utf16 => Cow::Owned(utf16le_to_wtf8(self.contents)),
+            _ => Cow::Borrowed(self.contents),
+        }
+    }
+
+    /// The file's contents as text.
+    ///
+    /// [`BunEncoding::Binary`] and [`BunEncoding::Latin1`] contents must be
+    /// valid UTF-8 and are borrowed. Bun 1.4.0 and earlier store UTF-8
+    /// JavaScript under the `Latin1` label, and Bun 1.4.1 and later use that
+    /// label only for ASCII, so both decode as UTF-8. [`BunEncoding::Utf16`]
+    /// contents are decoded as UTF-16LE into an owned string.
+    ///
+    /// Returns an error instead of replacing characters when the contents are
+    /// not valid UTF-8, or when UTF-16 contents hold an unpaired surrogate.
+    pub fn text(&self) -> Result<Cow<'a, str>, BunStandaloneError> {
+        match self.file_bytes() {
+            Cow::Borrowed(bytes) => {
+                std::str::from_utf8(bytes)
+                    .map(Cow::Borrowed)
+                    .map_err(|error| {
+                        BunStandaloneError::new(format!(
+                            "Bun module {} contents are not UTF-8: {error}",
+                            self.index
+                        ))
+                    })
+            }
+            Cow::Owned(bytes) => String::from_utf8(bytes).map(Cow::Owned).map_err(|_| {
+                BunStandaloneError::new(format!(
+                    "Bun module {} UTF-16 contents hold an unpaired surrogate",
+                    self.index
+                ))
+            }),
+        }
+    }
+}
+
+/// Transcodes UTF-16LE code units to WTF-8: UTF-8, plus the three-byte form
+/// of each unpaired surrogate. `bytes` has an even length (validated at parse
+/// time); a trailing odd byte would be ignored.
+fn utf16le_to_wtf8(bytes: &[u8]) -> Vec<u8> {
+    let units = bytes
+        .chunks_exact(2)
+        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]));
+    let mut output = Vec::with_capacity(bytes.len());
+    for decoded in char::decode_utf16(units) {
+        match decoded {
+            Ok(character) => {
+                let mut buffer = [0u8; 4];
+                output.extend_from_slice(character.encode_utf8(&mut buffer).as_bytes());
+            }
+            Err(error) => {
+                let surrogate = error.unpaired_surrogate();
+                output.extend_from_slice(&[
+                    0xe0 | (surrogate >> 12) as u8,
+                    0x80 | ((surrogate >> 6) & 0x3f) as u8,
+                    0x80 | (surrogate & 0x3f) as u8,
+                ]);
+            }
+        }
+    }
+    output
 }
 
 /// Validated Bun standalone module graph borrowed from an executable.
@@ -424,7 +525,7 @@ fn parse_module_table_with_layout<'a>(
         let encoding = match record[layout.metadata_offset] {
             0 => BunEncoding::Binary,
             1 => BunEncoding::Latin1,
-            2 => BunEncoding::Utf8,
+            2 => BunEncoding::Utf16,
             value => {
                 return Err(BunStandaloneError::new(format!(
                     "Bun module {index} has unknown encoding {value}"
@@ -456,7 +557,12 @@ fn parse_module_table_with_layout<'a>(
         validate_nul_terminated(data, name_ptr, &format!("module {index} name"))?;
         let name = String::from_utf8_lossy(name_bytes).into_owned();
         let contents = pointer_slice(data, contents_ptr, "module contents")?;
-        validate_nul_terminated(data, contents_ptr, &format!("module {index} contents"))?;
+        let contents_label = format!("module {index} contents");
+        if encoding == BunEncoding::Utf16 {
+            validate_utf16_body(data, contents_ptr, &contents_label)?;
+        } else {
+            validate_nul_terminated(data, contents_ptr, &contents_label)?;
+        }
         let source_map = pointer_slice(data, source_map_ptr, "module source map")?;
         let bytecode = pointer_slice(data, bytecode_ptr, "module bytecode")?;
         let module_info = pointer_slice(data, module_info_ptr, "module info")?;
@@ -500,17 +606,62 @@ fn validate_nul_terminated(
     pointer: StringPointer,
     label: &str,
 ) -> Result<(), BunStandaloneError> {
+    validate_terminator(data, pointer, label, 1)
+}
+
+/// Bun 1.4.1+ writes a UTF-16 body at an even offset of the graph data, with
+/// an even byte length and a two-byte NUL terminator. The offset is checked
+/// relative to the graph data rather than the executable, so a bare graph cut
+/// out of an executable validates the same way.
+fn validate_utf16_body(
+    data: &[u8],
+    pointer: StringPointer,
+    label: &str,
+) -> Result<(), BunStandaloneError> {
+    if pointer.length == 0 {
+        return Ok(());
+    }
+    if !pointer.offset.is_multiple_of(2) {
+        return Err(BunStandaloneError::new(format!(
+            "Bun {label} is UTF-16 at odd offset {}",
+            pointer.offset
+        )));
+    }
+    if !pointer.length.is_multiple_of(2) {
+        return Err(BunStandaloneError::new(format!(
+            "Bun {label} is UTF-16 with odd byte length {}",
+            pointer.length
+        )));
+    }
+    validate_terminator(data, pointer, label, 2)
+}
+
+/// Checks that `width` NUL bytes follow a nonempty region.
+fn validate_terminator(
+    data: &[u8],
+    pointer: StringPointer,
+    label: &str,
+    width: usize,
+) -> Result<(), BunStandaloneError> {
     if pointer.length == 0 {
         return Ok(());
     }
     let terminator = (pointer.offset as usize)
         .checked_add(pointer.length as usize)
+        .and_then(|start| Some(start..start.checked_add(width)?))
         .ok_or_else(|| BunStandaloneError::new(format!("Bun {label} range overflows")))?;
-    if data.get(terminator) == Some(&0) {
+    if data
+        .get(terminator)
+        .is_some_and(|bytes| bytes.iter().all(|byte| *byte == 0))
+    {
         Ok(())
-    } else {
+    } else if width == 1 {
         Err(BunStandaloneError::new(format!(
             "Bun {label} is not NUL-terminated"
+        )))
+    } else {
+        Err(BunStandaloneError::new(format!(
+            "Bun {label} is not terminated by {width} NUL bytes"
         )))
     }
 }
@@ -736,6 +887,203 @@ mod tests {
         executable.extend_from_slice(&0u32.to_le_bytes());
         executable.extend_from_slice(TRAILER);
         executable
+    }
+
+    /// Wraps graph `data` holding one 52-byte record in the offsets record and
+    /// trailer. `metadata` is the record's encoding, loader, format, and side.
+    fn single_record_graph(
+        mut data: Vec<u8>,
+        name: TestPointer,
+        contents: TestPointer,
+        source_map: TestPointer,
+        metadata: [u8; 4],
+    ) -> Vec<u8> {
+        let modules_offset = data.len() as u32;
+        let mut record = [0u8; CURRENT_MODULE_RECORD_SIZE];
+        put_pointer(&mut record, 0, name);
+        put_pointer(&mut record, 8, contents);
+        put_pointer(&mut record, 16, source_map);
+        record[48..52].copy_from_slice(&metadata);
+        data.extend_from_slice(&record);
+
+        let byte_count = data.len() as u64;
+        let mut executable = data;
+        executable.extend_from_slice(&byte_count.to_le_bytes());
+        executable.extend_from_slice(&modules_offset.to_le_bytes());
+        executable.extend_from_slice(&(CURRENT_MODULE_RECORD_SIZE as u32).to_le_bytes());
+        executable.extend_from_slice(&0u32.to_le_bytes());
+        executable.extend_from_slice(&0u32.to_le_bytes());
+        executable.extend_from_slice(&0u32.to_le_bytes());
+        executable.extend_from_slice(&0u32.to_le_bytes());
+        executable.extend_from_slice(TRAILER);
+        executable
+    }
+
+    #[derive(Clone, Copy, Default)]
+    struct Utf16Layout {
+        odd_offset: bool,
+        odd_length: bool,
+        one_nul: bool,
+    }
+
+    /// A graph whose JavaScript entry is stored the way Bun 1.4.1+ stores
+    /// non-ASCII text: UTF-16LE at an even offset, followed by two NULs.
+    fn utf16_fixture(units: &[u16], layout: Utf16Layout) -> Vec<u8> {
+        let mut data = Vec::new();
+        let name = append(&mut data, b"/$bunfs/root/entry.js", true);
+        if data.len().is_multiple_of(2) == layout.odd_offset {
+            data.push(0);
+        }
+        let body = units
+            .iter()
+            .flat_map(|unit| unit.to_le_bytes())
+            .collect::<Vec<_>>();
+        let contents = TestPointer {
+            offset: data.len() as u32,
+            length: body.len() as u32 - u32::from(layout.odd_length),
+        };
+        data.extend_from_slice(&body);
+        data.push(0);
+        if !layout.one_nul {
+            data.push(0);
+        }
+        // A nonzero byte after the terminator, so a missing NUL is observable.
+        data.extend_from_slice(b"--");
+        single_record_graph(
+            data,
+            name,
+            contents,
+            TestPointer {
+                offset: 0,
+                length: 0,
+            },
+            [2, 1, 1, 0],
+        )
+    }
+
+    #[test]
+    fn decodes_utf16_contents_written_by_newer_bun() {
+        let text = "/*! \u{a9} legal */console.log('h\u{e9}llo \u{1f600}');";
+        let units = text.encode_utf16().collect::<Vec<_>>();
+        let executable = utf16_fixture(&units, Utf16Layout::default());
+        let standalone = extract_standalone(&executable)
+            .expect("UTF-16 fixture should parse")
+            .expect("UTF-16 fixture should be detected");
+
+        let entry = standalone.entry_point();
+        assert_eq!(entry.encoding, BunEncoding::Utf16);
+        assert_eq!(entry.contents.len(), units.len() * 2);
+        assert_eq!(
+            &executable[entry.executable_range.clone()],
+            entry.contents,
+            "the executable range covers the stored UTF-16 bytes"
+        );
+        assert_eq!(entry.file_bytes().as_ref(), text.as_bytes());
+        assert_eq!(entry.text().expect("valid UTF-16"), text);
+    }
+
+    #[test]
+    fn keeps_unpaired_utf16_surrogates_as_wtf8_bytes_but_rejects_them_as_text() {
+        let units = [u16::from(b'a'), 0xd800, u16::from(b'b')];
+        let executable = utf16_fixture(&units, Utf16Layout::default());
+        let standalone = extract_standalone(&executable)
+            .expect("UTF-16 fixture should parse")
+            .expect("UTF-16 fixture should be detected");
+
+        let entry = standalone.entry_point();
+        assert_eq!(entry.file_bytes().as_ref(), b"a\xed\xa0\x80b");
+        let error = entry.text().expect_err("an unpaired surrogate is not text");
+        assert!(
+            error.to_string().contains("unpaired surrogate"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn decodes_latin1_labeled_contents_as_borrowed_utf8() {
+        let executable = fixture();
+        let standalone = extract_standalone(&executable)
+            .expect("fixture should parse")
+            .expect("fixture should be detected");
+
+        let entry = standalone.entry_point();
+        assert_eq!(entry.encoding, BunEncoding::Latin1);
+        assert!(matches!(entry.file_bytes(), Cow::Borrowed(_)));
+        assert!(matches!(
+            entry.text().expect("UTF-8 contents"),
+            Cow::Borrowed("console.log('entry');")
+        ));
+    }
+
+    #[test]
+    fn rejects_malformed_utf16_bodies() {
+        let units = "h\u{e9}llo".encode_utf16().collect::<Vec<_>>();
+        for (layout, expected) in [
+            (
+                Utf16Layout {
+                    odd_offset: true,
+                    ..Utf16Layout::default()
+                },
+                "module 0 contents is UTF-16 at odd offset",
+            ),
+            (
+                Utf16Layout {
+                    odd_length: true,
+                    ..Utf16Layout::default()
+                },
+                "module 0 contents is UTF-16 with odd byte length",
+            ),
+            (
+                Utf16Layout {
+                    one_nul: true,
+                    ..Utf16Layout::default()
+                },
+                "module 0 contents is not terminated by 2 NUL bytes",
+            ),
+        ] {
+            let error = extract_standalone(&utf16_fixture(&units, layout))
+                .expect_err("malformed UTF-16 body should fail");
+            assert!(
+                error.to_string().contains(expected),
+                "expected {expected:?}, got {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_utf16_terminator_past_the_graph_data() {
+        let mut data = Vec::new();
+        let name = append(&mut data, b"/$bunfs/root/entry.js", true);
+        let modules_offset = data.len();
+        data.extend_from_slice(&[0u8; CURRENT_MODULE_RECORD_SIZE]);
+        if !data.len().is_multiple_of(2) {
+            data.push(0);
+        }
+        // The body ends the graph data with one NUL; the second NUL would be
+        // the offsets record that follows.
+        let contents = TestPointer {
+            offset: data.len() as u32,
+            length: 2,
+        };
+        data.extend_from_slice(&[0xe9, 0x00, 0x00]);
+        let record = &mut data[modules_offset..modules_offset + CURRENT_MODULE_RECORD_SIZE];
+        put_pointer(record, 0, name);
+        put_pointer(record, 8, contents);
+        record[48..52].copy_from_slice(&[2, 1, 1, 0]);
+
+        let byte_count = data.len() as u64;
+        let mut executable = data;
+        executable.extend_from_slice(&byte_count.to_le_bytes());
+        executable.extend_from_slice(&(modules_offset as u32).to_le_bytes());
+        executable.extend_from_slice(&(CURRENT_MODULE_RECORD_SIZE as u32).to_le_bytes());
+        executable.extend_from_slice(&[0u8; 16]);
+        executable.extend_from_slice(TRAILER);
+
+        let error = extract_standalone(&executable).expect_err("unterminated UTF-16 should fail");
+        assert!(
+            error.to_string().contains("not terminated by 2 NUL bytes"),
+            "unexpected error: {error}"
+        );
     }
 
     #[test]

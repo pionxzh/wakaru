@@ -27,10 +27,12 @@ rewrites.
 npx wakaru bun extract ./compiled-app -o extracted/
 ```
 
-`bun extract` copies everything in the container, byte for byte:
-JavaScript, CSS, assets, WebAssembly, native add-ons, embedded SQLite
-databases. Nothing is parsed or executed. `extracted/manifest.json` records
-each file's original path, loader, and role.
+`bun extract` copies everything in the container: JavaScript, CSS, assets,
+WebAssembly, native add-ons, embedded SQLite databases. Each file holds the
+bytes Bun stored, except that non-ASCII JavaScript or text that Bun 1.4.1 and
+later stored as UTF-16 is written back as UTF-8. Nothing is parsed or
+executed. `extracted/manifest.json` records each file's original path,
+loader, and role.
 
 Two options:
 

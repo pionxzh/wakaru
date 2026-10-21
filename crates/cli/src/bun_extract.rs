@@ -1,9 +1,12 @@
-//! Byte-exact extraction of Bun standalone file records.
+//! Extraction of Bun standalone file records.
 //!
-//! This command deliberately stops at the container boundary. JavaScript files
-//! are written exactly as Bun stored them, alongside every non-JavaScript file;
-//! callers can pass selected JavaScript outputs back through Wakaru separately.
+//! This command deliberately stops at the container boundary. Every file is
+//! written with the bytes the bundler emitted: exactly as Bun stored them, or,
+//! for a record Bun stored as UTF-16, the transcode back to the bytes Bun
+//! encoded. Callers can pass selected JavaScript outputs back through Wakaru
+//! separately.
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::fs;
 use std::io::{self, IsTerminal};
@@ -19,7 +22,9 @@ use crate::output::{
     write_bytes, write_bytes_if_changed,
 };
 
-const MANIFEST_SCHEMA: u32 = 1;
+/// Schema 2: a record Bun stored as UTF-16 is written as its UTF-8 transcode,
+/// labeled `utf16le`, with the written length in `output_bytes`.
+const MANIFEST_SCHEMA: u32 = 2;
 const MAX_OUTPUT_AMPLIFICATION: usize = 4;
 
 #[derive(Debug, Clone, Args)]
@@ -75,6 +80,8 @@ fn run_extract(args: BunExtractArgs, force: bool) -> Result<()> {
             )
         })?;
 
+    // Bound every output before any transcode allocates, so records aliasing
+    // one large range cannot multiply memory use before the guard runs.
     let requested_bytes = standalone.files.iter().try_fold(0usize, |total, file| {
         let internals = if args.include_internals {
             file.source_map
@@ -86,7 +93,7 @@ fn run_extract(args: BunExtractArgs, force: bool) -> Result<()> {
             0
         };
         total
-            .checked_add(file.contents.len())
+            .checked_add(file_output_bound(file)?)
             .and_then(|size| size.checked_add(internals))
             .ok_or_else(|| anyhow::anyhow!("Bun extraction size overflows this platform"))
     })?;
@@ -138,6 +145,7 @@ fn run_extract(args: BunExtractArgs, force: bool) -> Result<()> {
 
         planned.push(PlannedFile {
             file,
+            output: file.file_bytes(),
             relative_output,
             output_path,
             source_map_output,
@@ -146,8 +154,27 @@ fn run_extract(args: BunExtractArgs, force: bool) -> Result<()> {
         });
     }
 
+    let written_bytes = planned
+        .iter()
+        .map(|file| {
+            file.output.len()
+                + file
+                    .source_map_output
+                    .as_ref()
+                    .map_or(0, |_| file.file.source_map.len())
+                + file
+                    .bytecode_output
+                    .as_ref()
+                    .map_or(0, |_| file.file.bytecode.len())
+                + file
+                    .module_info_output
+                    .as_ref()
+                    .map_or(0, |_| file.file.module_info.len())
+        })
+        .sum();
+
     for file in &planned {
-        write_output(&file.output_path, file.file.contents, check_existing_writes)?;
+        write_output(&file.output_path, &file.output, check_existing_writes)?;
         for (output, bytes) in [
             (&file.source_map_output, file.file.source_map),
             (&file.bytecode_output, file.file.bytecode),
@@ -164,7 +191,7 @@ fn run_extract(args: BunExtractArgs, force: bool) -> Result<()> {
         &standalone,
         &planned,
         args.include_internals,
-        requested_bytes,
+        written_bytes,
     );
     let serialized = format!("{}\n", serde_json::to_string_pretty(&manifest)?);
     let manifest_path = canonicalize_unpack_output_path(
@@ -184,15 +211,23 @@ fn run_extract(args: BunExtractArgs, force: bool) -> Result<()> {
         eprintln!(
             "extracted {} Bun file(s), {} byte(s), to {}",
             planned.len(),
-            planned
-                .iter()
-                .map(|file| file.file.contents.len())
-                .sum::<usize>(),
+            planned.iter().map(|file| file.output.len()).sum::<usize>(),
             args.output.display()
         );
     }
 
     Ok(())
+}
+
+/// Upper bound on the bytes written for a record's contents. A UTF-16 code
+/// unit (two stored bytes) becomes at most three UTF-8 bytes.
+fn file_output_bound(file: &wakaru::bun::BunEmbeddedFile<'_>) -> Result<usize> {
+    let stored = file.contents.len();
+    let bound = match file.encoding {
+        wakaru::bun::BunEncoding::Utf16 => stored.checked_add(stored / 2),
+        _ => Some(stored),
+    };
+    bound.ok_or_else(|| anyhow::anyhow!("Bun extraction size overflows this platform"))
 }
 
 fn write_output(path: &Path, bytes: &[u8], check_existing: bool) -> Result<()> {
@@ -221,6 +256,9 @@ fn plan_internal_output(
 
 struct PlannedFile<'file, 'data> {
     file: &'file wakaru::bun::BunEmbeddedFile<'data>,
+    /// The bytes written below `files/`: the stored contents, or the
+    /// transcode of a UTF-16 record.
+    output: Cow<'data, [u8]>,
     relative_output: String,
     output_path: PathBuf,
     source_map_output: Option<(String, PathBuf)>,
@@ -446,7 +484,11 @@ struct BunManifestFile {
     module_format: &'static str,
     side: &'static str,
     is_entry: bool,
+    /// Stored byte count; `executable_range` covers these bytes.
     bytes: usize,
+    /// Bytes written to `output_path`. Differs from `bytes` only for a record
+    /// Bun stored as UTF-16.
+    output_bytes: usize,
     executable_range: [usize; 2],
     source_map: ManifestRegion,
     bytecode: ManifestRegion,
@@ -468,6 +510,7 @@ impl BunManifestFile {
             side: side_name(file.side),
             is_entry: file.is_entry,
             bytes: file.contents.len(),
+            output_bytes: planned.output.len(),
             executable_range: range_array(&file.executable_range),
             source_map: ManifestRegion::new(
                 file.source_map.len(),
@@ -544,7 +587,7 @@ fn encoding_name(encoding: wakaru::bun::BunEncoding) -> &'static str {
     match encoding {
         wakaru::bun::BunEncoding::Binary => "binary",
         wakaru::bun::BunEncoding::Latin1 => "latin1",
-        wakaru::bun::BunEncoding::Utf8 => "utf8",
+        wakaru::bun::BunEncoding::Utf16 => "utf16le",
         _ => "unknown",
     }
 }
@@ -770,6 +813,72 @@ mod tests {
         assert_eq!(
             manifest["files"][1]["original_name"]["hex"],
             "2F2462756E66732F726F6F742F2E2E2F6173736574732F6C6F676F2DFF2E62696E"
+        );
+
+        fs::remove_dir_all(&dir).expect("remove temp root");
+    }
+
+    #[test]
+    fn writes_utf16_records_from_newer_bun_as_their_utf8_transcode() {
+        let dir = temp_test_dir("real-bun-utf16");
+        fs::create_dir_all(&dir).expect("create temp root");
+        let input = dir.join("standalone.bin");
+        let output = dir.join("out");
+        fs::write(
+            &input,
+            include_bytes!("../tests/fixtures/bun-embedded-sources/utf16-graph.bin"),
+        )
+        .expect("write real Bun graph");
+
+        run_extract(
+            BunExtractArgs {
+                input,
+                output: output.clone(),
+                include_internals: false,
+                json: false,
+            },
+            false,
+        )
+        .expect("extract UTF-16 Bun graph");
+
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(output.join("manifest.json")).expect("read manifest"))
+                .expect("parse manifest");
+        assert_eq!(manifest["schema"], MANIFEST_SCHEMA);
+        let files = manifest["files"].as_array().expect("manifest file array");
+        for file in files {
+            assert_eq!(file["encoding"], "utf16le", "{file}");
+            let written = fs::read(output.join(file["output_path"].as_str().unwrap()))
+                .expect("read extracted record");
+            assert_eq!(file["output_bytes"], written.len());
+            let range = file["executable_range"].as_array().unwrap();
+            assert_eq!(
+                file["bytes"],
+                range[1].as_u64().unwrap() - range[0].as_u64().unwrap(),
+                "bytes keeps the stored UTF-16 length"
+            );
+        }
+
+        let entry = files
+            .iter()
+            .find(|file| file["loader"] == "js")
+            .expect("JavaScript entry");
+        let entry_text = String::from_utf8(
+            fs::read(output.join(entry["output_path"].as_str().unwrap())).expect("read entry"),
+        )
+        .expect("entry is written as UTF-8");
+        assert!(
+            entry_text.contains("/*! \u{a9} Example Corp \u{2014} legal notice */"),
+            "{entry_text}"
+        );
+        let note = files
+            .iter()
+            .find(|file| file["loader"] == "text")
+            .expect("text import");
+        assert_eq!(
+            fs::read(output.join(note["output_path"].as_str().unwrap())).expect("read note"),
+            include_bytes!("../tests/fixtures/bun-embedded-sources/utf16/src/note.txt"),
+            "a text import is written as the original file's bytes"
         );
 
         fs::remove_dir_all(&dir).expect("remove temp root");

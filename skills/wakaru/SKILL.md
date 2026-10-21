@@ -91,7 +91,7 @@ Variants:
 wakaru dist/ --unpack --json -o out/          # scan a build-output directory
 wakaru entry.js chunk.js --unpack -o out/     # explicit entry + chunk files
 wakaru ./compiled-app --unpack --raw -o out/  # extract a Bun single-file executable safely
-wakaru bun extract ./compiled-app -o raw/     # dump every embedded Bun file byte-for-byte
+wakaru bun extract ./compiled-app -o raw/     # dump every embedded Bun file as the bundler emitted it
 ```
 
 Bun single-file executable extraction requires an explicit executable path
@@ -102,9 +102,11 @@ it still splits statements and declarations so the chunks link as ESM, so use
 `wakaru bun extract` when the exact bytes matter.
 
 Use `wakaru bun extract` instead when the task needs the container itself. It
-writes every validated file record below `raw/files/` without decoding or
-transforming it and records loader metadata and byte ranges in
-`raw/manifest.json`. Add `--json` for the same manifest on stdout.
+writes every validated file record below `raw/files/` and records loader
+metadata and byte ranges in `raw/manifest.json`. Files are stored bytes, except
+records with `"encoding": "utf16le"` (Bun 1.4.1+ non-ASCII text), which are
+written as UTF-8; their `bytes` and `executable_range` describe the stored
+UTF-16, and `output_bytes` the written file. Add `--json` for the same manifest on stdout.
 `--include-internals` also emits opaque Bun source-map, JavaScriptCore bytecode,
 and module-info regions; do not treat `source-map.bunmap` as a v3 JSON map.
 The extractor supports Bun 1.3.3+.

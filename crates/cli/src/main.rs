@@ -2124,9 +2124,9 @@ fn read_explicit_unpack_sources(path: &Path) -> Result<Vec<wakaru::Source>> {
     javascript
         .into_iter()
         .map(|file| {
-            let code = std::str::from_utf8(file.contents).with_context(|| {
+            let code = file.text().with_context(|| {
                 format!(
-                    "Bun embedded JavaScript {:?} in {} is not UTF-8",
+                    "failed to decode Bun embedded JavaScript {:?} in {}",
                     file.name,
                     path.display()
                 )

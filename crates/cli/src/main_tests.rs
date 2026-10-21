@@ -1860,6 +1860,31 @@ fn explicit_legacy_bun_standalone_extracts_javascript_entries() {
 }
 
 #[test]
+fn explicit_bun_standalone_decodes_utf16_javascript_entries() {
+    let dir = temp_test_dir("utf16-bun-standalone");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let executable = dir.join("app");
+    let mut bytes = b"\x7fELF".to_vec();
+    bytes.extend_from_slice(include_bytes!(
+        "../tests/fixtures/bun-embedded-sources/utf16-graph.bin"
+    ));
+    fs::write(&executable, bytes).expect("write UTF-16 Bun executable");
+
+    let sources = read_explicit_unpack_sources(&executable).expect("extract UTF-16 Bun sources");
+
+    assert_eq!(sources.len(), 1, "the text import is not JavaScript");
+    assert!(
+        sources[0]
+            .code()
+            .contains("/*! \u{a9} Example Corp \u{2014} legal notice */"),
+        "unexpected embedded JavaScript: {}",
+        sources[0].code()
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
 fn executable_without_bun_graph_is_rejected_clearly() {
     let dir = temp_test_dir("non-bun-executable");
     fs::create_dir_all(&dir).expect("create temp dir");
@@ -2073,7 +2098,7 @@ fn synthetic_bun_standalone() -> Vec<u8> {
     let mut entry = [0u8; RECORD_SIZE];
     put_pointer(&mut entry, 0, entry_name);
     put_pointer(&mut entry, 8, entry_contents);
-    entry[48] = 2; // UTF-8
+    entry[48] = 1; // Latin1 label over UTF-8 bytes, as Bun 1.4.0 and earlier write
     entry[49] = 2; // TypeScript
     entry[50] = 1; // ESM
     data.extend_from_slice(&entry);

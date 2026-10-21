@@ -77,8 +77,8 @@ that callers outside the crate populate.
 Bun single-file PE, Mach-O, and ELF executables contain a serialized module
 graph around compiled outputs. The parser reads it without executing the input.
 Normal `--unpack` hands JavaScript records to `UnpackJob`, then the esbuild/Bun
-detector recovers inner modules; `bun extract` stops at byte-for-byte container
-extraction, including non-JavaScript assets. Binary layouts, opaque internals,
+detector recovers inner modules; `bun extract` stops at container extraction,
+writing every file as the bundler emitted it, including non-JavaScript assets. Binary layouts, opaque internals,
 and AST memory ownership belong in [bun-standalone.md](bun-standalone.md).
 
 ### Unpackers (`crates/core/src/unpacker/`)

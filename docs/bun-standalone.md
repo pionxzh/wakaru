@@ -14,7 +14,7 @@ wakaru ./compiled-app --unpack --raw -o raw/
 wakaru ./compiled-app --unpack -o readable/
 ```
 
-It can also extract every embedded file without transforming its bytes:
+It can also extract every embedded file as the bundler emitted it:
 
 ```bash
 wakaru bun extract ./compiled-app -o extracted/
@@ -36,11 +36,14 @@ scope-hoisted module regions. Those regions are useful bundle boundaries, but
 are not guaranteed to match every original source file.
 
 `wakaru bun extract` stops before that JavaScript pipeline. Every file record is
-written byte-for-byte below `files/`, whether its loader is JavaScript, CSS,
-file, JSON-family, TOML, WebAssembly, N-API, text, Bun shell, SQLite, HTML,
-YAML, Markdown, or an unknown future loader. A deterministic `manifest.json`
-preserves the record metadata and maps Bun's original virtual path to the safe
-on-disk path.
+written below `files/`, whether its loader is JavaScript, CSS, file,
+JSON-family, TOML, WebAssembly, N-API, text, Bun shell, SQLite, HTML, YAML,
+Markdown, or an unknown future loader. A record is written byte-for-byte as Bun
+stored it, except a record Bun stored as UTF-16 (see
+[Text encodings](#text-encodings)), which is written as the bytes Bun encoded
+it from. A deterministic `manifest.json` preserves the record metadata, the
+stored byte range, and maps Bun's original virtual path to the safe on-disk
+path.
 
 The loader mapping and both record layouts follow Bun's `Loader` enum and
 `CompiledModuleGraphFile` serializer. Bun declares the loader discriminants
@@ -49,6 +52,29 @@ instead of discarding their contents. The older layout has no module-info or
 bytecode-origin fields, so those public slices and manifest regions are empty.
 A changed or ambiguous record layout fails closed because the container has no
 independent version field with which to select an unverified decoder.
+
+## Text encodings
+
+The record's encoding byte says how `contents` is stored. Bun 1.4.0 and
+earlier label JavaScript records `latin1` (1) while storing UTF-8 bytes, and
+assets `binary` (0); they declare 2 as UTF-8 but never write it. Bun 1.4.1
+reuses 2 for UTF-16 (`Encoding::Utf16` in `StandaloneModuleGraph`): a
+server-side JavaScript chunk or a `text`-loader import is stored as a
+JavaScriptCore string body. ASCII-only text stays `latin1` with one NUL
+terminator. Any other text is transcoded from UTF-8 (WTF-8) to little-endian
+UTF-16 at an even offset, with an even byte length and two NUL bytes after it;
+Bun pads one byte before it when needed. Bun's runtime presents such a file to
+the program as its UTF-8 transcode.
+
+Wakaru validates the offset parity relative to the graph data, so a bare graph
+cut out of an executable validates the same way, plus the byte-length parity
+and both terminator bytes. `BunEmbeddedFile::file_bytes` returns the stored
+bytes, or for UTF-16 the transcode back to the bytes Bun encoded (WTF-8, which
+is UTF-8 unless the text holds an unpaired surrogate). `BunEmbeddedFile::text`
+decodes strictly and fails on invalid UTF-8 or an unpaired surrogate; the
+`--unpack` intake uses it. `wakaru bun extract` writes `file_bytes` and labels
+the record `utf16le` in the manifest, where `bytes` and `executable_range`
+still describe the stored UTF-16 and `output_bytes` the written length.
 
 ## Internal intake and memory ownership
 
@@ -72,7 +98,8 @@ when a recovered module needs to own them; the detector must not retain one AST
 clone per binding.
 
 The public `wakaru::bun` API borrows exact content and metadata slices and
-reports their absolute executable byte ranges. Opaque source-map, bytecode,
+reports their absolute executable byte ranges; only the transcode of a UTF-16
+record is owned. Opaque source-map, bytecode,
 and module-info slices are available separately from JavaScript contents.
 
 ## Safety and validation
@@ -88,7 +115,9 @@ and module-info slices are available separately from JavaScript contents.
   existing symlinks, prevents case-insensitive collisions, and verifies every
   output remains below the selected directory.
 - Suspicious graphs that request more than four times the executable size in
-  output are rejected to limit pointer-alias amplification.
+  output are rejected to limit pointer-alias amplification. A UTF-16 record
+  counts at its largest possible transcode, 1.5 times its stored size, before
+  any transcode allocates.
 
 ## Opaque internals
 
