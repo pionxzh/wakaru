@@ -241,9 +241,13 @@ today; whether every hand-written import of a converted provider should be
 is open.
 
 A detector that builds the module AST itself (a prepared AST) can write
-`require()` calls with a dummy span. Such a call keeps what the input pass
-read, so the per-source questions still count it, but it has no key, no
-uses, and no tag key.
+`require()` calls with a dummy or shared span. Such a call keeps what the
+input pass read, so the per-source questions still count it, but it has no
+key, no uses, and no tag key. The Turbopack translator gives each require
+it translates the span of the input call it replaces; what stays without a
+key is a require in a synthesized facade or loader module, and the clones
+of the inner call that the webpack extractors make when they inline
+`require.n(require(x))`.
 
 Provider identity needs more than today's helper facts, which read the
 recovered ESM exports (`collect_helper_exports` on `ExportFact`). Before

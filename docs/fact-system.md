@@ -245,8 +245,14 @@ the rule range erases the interop. Phase 1a then adds how the
 value is used on the AST `UnEsm` sees: static member reads, receiver-sensitive
 member calls, member writes (assignment, update, `delete`, or the target of
 `Object.assign` / `Object.defineProperty`), and escape. A call whose span is
-dummy or shared with another call (a detector-built AST can write such calls)
-keeps what the input pass read but gets no key and no uses.
+dummy or shared with another call keeps what the input pass read but gets no
+key and no uses. A detector that builds the module AST itself gives each
+`require()` it translates the span of the input call it replaces (the
+Turbopack translator does); what stays dummy is a call with no input call
+behind it, such as the requires in Turbopack's synthesized facade and loader
+modules. The webpack extractors inline `require.n(require(x))`
+(`RequireNRewriter`) by cloning the inner call, so the clones share one span
+and get no key.
 
 What crosses barrier 0 is the plan (`InterfacePlan`,
 `crates/core/src/interface_plan.rs`), built from each module's require edges

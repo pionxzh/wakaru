@@ -25,8 +25,12 @@
 //! A call whose span is dummy, or shared with another call, cannot be found
 //! again by span: it keeps what the first pass read, which the per-source
 //! queries count, but has no key, so it gets no uses and no import tag. A
-//! detector that builds its module AST itself (a prepared AST) can write
-//! such calls.
+//! detector that builds its module AST itself (a prepared AST) gives a
+//! `require()` it translates the span of the input call it replaces; calls
+//! with no input call behind them (Turbopack's synthesized facade and loader
+//! modules) stay dummy, and the webpack extractors inline
+//! `require.n(require(x))` by cloning one call, so the clones share its
+//! span.
 //!
 
 use crate::collections::{HashMap, HashSet};

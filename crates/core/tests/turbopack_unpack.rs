@@ -1093,3 +1093,169 @@ import { FLAG } from "./module-999.js";
 export const value = helper(1) + FLAG;"#
     );
 }
+
+fn unpack_chunk_with_map(source: &str, emit_source_map: bool) -> UnpackOutput {
+    unpack(
+        source,
+        DecompileOptions {
+            filename: "chunk.js".to_string(),
+            emit_source_map,
+            ..Default::default()
+        },
+    )
+    .expect("unpack should succeed")
+}
+
+#[test]
+fn a_named_only_provider_a_consumer_writes_stays_commonjs() {
+    // wild-observed (producer Next.js Turbopack): a consumer keeps the
+    // required exports object in a binding and writes a member back onto it
+    // (`var j = ctx.r(N); x.f = j.f = …`). An ES module has no exports object
+    // to write to, so the provider must stay CommonJS in both modes.
+    let source = client_chunk(
+        r#"
+11, (e, t, r) => {
+  "use strict";
+  var n = e.r(22), o = e.r(33), s = n.f;
+  r.f = n.f = function (t) { return s.call(this, t); };
+  o.f = function () { return []; };
+},
+22, (e, t, r) => { "use strict"; var n = {}.propertyIsEnumerable; r.f = function (t) { return n.call(this, t); }; },
+33, (e, t, r) => { "use strict"; r.f = Object.getOwnPropertySymbols; }
+"#,
+    );
+    for emit_source_map in [false, true] {
+        let output = unpack_chunk_with_map(&source, emit_source_map);
+        assert_clean(&output);
+        let findings = wakaru_core::validate_output_modules(&output.modules);
+        assert!(findings.is_empty(), "{findings:#?}");
+        for provider in ["module-22.js", "module-33.js"] {
+            let code = module(&output, provider);
+            assert!(code.contains("exports.f = "), "{provider}:\n{code}");
+            assert!(!code.contains("export "), "{provider}:\n{code}");
+        }
+        let consumer = module(&output, "module-11.js");
+        assert!(consumer.contains("n.f = function"), "{consumer}");
+        assert!(consumer.contains("o.f = function"), "{consumer}");
+    }
+}
+
+/// Every `require()` edge `explain_interop` reports for `source`, as
+/// `(module, source, keyed)`.
+fn interop_edges(source: &str) -> Vec<(String, String, bool)> {
+    let report = wakaru_core::driver::explain_interop(
+        source,
+        DecompileOptions {
+            filename: "chunk.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("the chunk should unpack");
+    report
+        .modules
+        .iter()
+        .flat_map(|module| {
+            module
+                .edges
+                .iter()
+                .map(|edge| (module.filename.clone(), edge.source.clone(), edge.keyed))
+        })
+        .collect()
+}
+
+fn assert_edges(edges: &[(String, String, bool)], expected: &[(&str, &str, bool)]) {
+    let found: Vec<(&str, &str, bool)> = edges
+        .iter()
+        .map(|(module, source, keyed)| (module.as_str(), source.as_str(), *keyed))
+        .collect();
+    assert_eq!(found, expected);
+}
+
+#[test]
+fn translated_requires_carry_the_span_of_their_context_call() {
+    // hypothetical: `r` and `i` requires (one id required twice), a loader
+    // of this input, a loader of another input, and a computed id.
+    let client = client_chunk(
+        r#"
+11, t => {
+  "use strict";
+  var a = t.r(22), b = t.r(22), c = t.i(33);
+  t.s(["run", 0, function () { return [a.x, b.x, c.y, t.A(44), t.A(666), t.r(a.k)]; }]);
+},
+22, (t, e, r) => { r.x = 1; r.k = 2; },
+33, t => { "use strict"; t.s(["y", 0, 3]); },
+44, t => { t.v(e => Promise.all(["static/chunks/lazy.js"].map(e => t.l(e))).then(() => e(55))); },
+55, t => { "use strict"; t.s(["message", 0, "lazy"]); }
+"#,
+    );
+    // Two calls of one id get two keys; a shared span would leave both
+    // unkeyed. The loader module is synthesized: its require has no
+    // original call, so it stays unkeyed.
+    assert_edges(
+        &interop_edges(&client),
+        &[
+            ("module-11.js", "./module-22.js", true),
+            ("module-11.js", "./module-22.js", true),
+            ("module-11.js", "./module-33.js", true),
+            ("module-11.js", "./module-55.js", true),
+            ("module-44.js", "./module-55.js", false),
+        ],
+    );
+
+    // hypothetical: server externals, as the module value and as a binding.
+    let server = r#"module.exports = [
+111, (a, b, c) => { b.exports = a.x("node:crypto", () => require("node:crypto")); },
+222, a => { "use strict"; var b = a.i(111), p = a.x("node:path", () => require("node:path")); a.s(["hash", 0, () => b.randomUUID() + p.sep]); }
+];"#;
+    assert_edges(
+        &interop_edges(server),
+        &[
+            ("module-111.js", "node:crypto", true),
+            ("module-222.js", "./module-111.js", true),
+            ("module-222.js", "node:path", true),
+        ],
+    );
+
+    // 15.3–15.4 call a loader inline: `ctx.r(loader)(ctx.i)`.
+    let legacy = format!(
+        "{LEGACY_CLIENT_PREFIX}{}}}]);",
+        r#"
+111: e => { var { g: t, __dirname: l } = e; { "use strict"; e.s({ label: () => t }); let t = "alpha"; } },
+222: e => { "use strict"; var { g: t, __dirname: l } = e; e.s({ default: () => c }); var r = e.i(111); function c() { return e.r(333)(e.i).then(e => r.label + e.message); } },
+333: e => { var { g: t, __dirname: l } = e; e.v(t => Promise.all(["static/chunks/lazy-beta.js"].map(t => e.l(t))).then(() => t(444))); },
+444: e => { var { g: t, __dirname: l } = e; { e.s({ message: () => t }); let t = "beta"; } }
+"#
+    );
+    assert_edges(
+        &interop_edges(&legacy),
+        &[
+            ("module-222.js", "./module-111.js", true),
+            ("module-222.js", "./module-444.js", true),
+            ("module-333.js", "./module-444.js", false),
+        ],
+    );
+}
+
+#[test]
+fn requesting_a_source_map_does_not_change_the_unpacked_modules() {
+    // hypothetical: the provider-write shape above beside every translated
+    // require form.
+    let source = client_chunk(
+        r#"
+11, (e, t, r) => {
+  "use strict";
+  var n = e.r(22), o = e.i(33), s = n.f;
+  r.f = n.f = function (t) { return s.call(this, t) + o.y; };
+  r.load = function () { return [e.A(44), e.A(666), e.r(n.k)]; };
+},
+22, (e, t, r) => { "use strict"; r.f = function () { return 1; }; r.k = 22; },
+33, e => { "use strict"; e.s(["y", 0, 3]); },
+44, e => { e.v(t => Promise.all(["static/chunks/lazy.js"].map(t => e.l(t))).then(() => t(55))); },
+55, e => { "use strict"; e.s(["message", 0, "lazy"]); }
+"#,
+    );
+    let plain = unpack_chunk_with_map(&source, false);
+    let mapped = unpack_chunk_with_map(&source, true);
+    assert_clean(&plain);
+    assert_eq!(plain.modules, mapped.modules);
+}

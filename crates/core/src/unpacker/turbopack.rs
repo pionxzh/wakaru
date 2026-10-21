@@ -2102,21 +2102,26 @@ impl ContextTranslator<'_> {
         self.aliases.get(&id).copied().unwrap_or(id)
     }
 
-    /// `ctx(<id>)`, the webpack require call the normalizer rewrites.
-    fn require_call(&self, id: usize) -> Box<Expr> {
-        call_expr(
+    /// `ctx(<id>)`, the webpack require call the normalizer rewrites. It
+    /// takes the span of the `ctx.*(...)` call it translates: a require edge
+    /// is keyed by its call's span, and a dummy one gets no key.
+    fn require_call(&self, id: usize, span: Span) -> Box<Expr> {
+        spanned_call_expr(
             ident_expr(&self.ctx),
             vec![number_expr(self.resolve_alias(id))],
+            span,
         )
     }
 
     /// `ctx.A(loader)` (or 15.3's `ctx.r(loader)(ctx.i)`): inline a loader of
     /// this input; otherwise call the translated loader module, which the
     /// multi-input numeric rewrite can reach in another chunk.
-    fn loader_call(&mut self, id: usize) -> Box<Expr> {
+    /// `span` goes to the `require()` inside the result; the outer call of
+    /// `require(id)()` has no original call of its own.
+    fn loader_call(&mut self, id: usize, span: Span) -> Box<Expr> {
         match self.loaders.get(&self.resolve_alias(id)).copied() {
-            Some(target) => self.loader_expr(target),
-            None => call_expr(self.require_call(id), Vec::new()),
+            Some(target) => self.loader_expr(target, span),
+            None => call_expr(self.require_call(id, span), Vec::new()),
         }
     }
 
@@ -2125,6 +2130,7 @@ impl ContextTranslator<'_> {
             return None;
         };
         let letter = self.ctx_member(callee)?.to_owned();
+        let span = call.span;
         if let Some(residual) = self.residual_member(&letter) {
             call.callee = Callee::Expr(residual);
             call.args.visit_mut_with(self);
@@ -2133,16 +2139,20 @@ impl ContextTranslator<'_> {
         let translated = match (letter.as_str(), call.args.as_mut_slice()) {
             ("r" | "i", [ExprOrSpread { spread: None, expr }]) => {
                 match numeric_id_from_expr(expr) {
-                    Some(id) => Some(self.require_call(id)),
+                    Some(id) => Some(self.require_call(id, span)),
                     // A computed id stays a runtime require by id.
                     None => {
                         expr.visit_mut_with(self);
-                        Some(call_expr(ident_expr(&self.ctx), vec![expr.clone()]))
+                        Some(spanned_call_expr(
+                            ident_expr(&self.ctx),
+                            vec![expr.clone()],
+                            span,
+                        ))
                     }
                 }
             }
             ("A", [ExprOrSpread { spread: None, expr }]) => {
-                numeric_id_from_expr(expr).map(|id| self.loader_call(id))
+                numeric_id_from_expr(expr).map(|id| self.loader_call(id, span))
             }
             ("f", [ExprOrSpread { spread: None, expr }]) => {
                 expr.visit_mut_with(self);
@@ -2159,7 +2169,7 @@ impl ContextTranslator<'_> {
                 }],
             ) => self
                 .external_request(request, thunk)
-                .map(|request| call_expr(ident_expr(&self.ctx), vec![request])),
+                .map(|request| spanned_call_expr(ident_expr(&self.ctx), vec![request], span)),
             _ => None,
         };
         if translated.is_none() {
@@ -2338,15 +2348,15 @@ impl ContextTranslator<'_> {
         else {
             return None;
         };
-        Some(self.loader_call(numeric_id_from_expr(id)?))
+        Some(self.loader_call(numeric_id_from_expr(id)?, call.span))
     }
 
-    fn loader_expr(&mut self, target: LoaderTarget) -> Box<Expr> {
+    fn loader_expr(&mut self, target: LoaderTarget, span: Span) -> Box<Expr> {
         self.uses_promise = true;
         match target {
             LoaderTarget::Module(target) => {
                 let load = Box::new(Expr::Arrow(ArrowExpr {
-                    body: Box::new(ArrowFunctionBody::Expr(self.require_call(target))),
+                    body: Box::new(ArrowFunctionBody::Expr(self.require_call(target, span))),
                     ..Default::default()
                 }));
                 call_expr(member(promise_resolve(), "then"), vec![load])
@@ -2649,7 +2659,12 @@ fn prop_name(name: &str) -> PropName {
 }
 
 fn call_expr(callee: Box<Expr>, args: Vec<Box<Expr>>) -> Box<Expr> {
+    spanned_call_expr(callee, args, DUMMY_SP)
+}
+
+fn spanned_call_expr(callee: Box<Expr>, args: Vec<Box<Expr>>, span: Span) -> Box<Expr> {
     Box::new(Expr::Call(CallExpr {
+        span,
         callee: Callee::Expr(callee),
         args: args
             .into_iter()

@@ -633,6 +633,12 @@ prepared-module materialization and Closure emission, which happen in every
 mode), never on whether points are present. Recording points costs emitter
 bookkeeping per token, which is why extraction discards them by default.
 
+The map path prints a prepared module AST and parses it again, which gives
+every node a real span, and Phase 2 keys each `require()` edge by its call's
+span (see [fact-system.md](fact-system.md)). A detector that builds a module
+AST therefore gives each call it translates the span of the input call it
+replaces, so both modes key the same edges.
+
 ## Running the output
 
 Unpack output targets Node's rules for ESM and CommonJS. Most modules come
