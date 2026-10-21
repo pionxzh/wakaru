@@ -39,17 +39,17 @@ use std::fmt;
 use swc_core::atoms::Atom;
 use swc_core::common::{BytePos, Mark, Span};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignTarget, CallExpr, Callee, Class, Decl, Expr, ExprStmt, Function,
-    ImportSpecifier, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, NewExpr,
-    ObjectPatProp, OptCall, OptChainBase, OptChainExpr, Pat, Prop, PropName, SimpleAssignTarget,
-    Stmt, TaggedTpl, UnaryExpr, UnaryOp, UpdateExpr, VarDeclarator,
+    ArrowExpr, AssignExpr, AssignTarget, BinExpr, BinaryOp, CallExpr, Callee, Class, Decl, Expr,
+    ExprStmt, Function, ImportSpecifier, Lit, MemberExpr, MemberProp, Module, ModuleDecl,
+    ModuleItem, NewExpr, ObjectPatProp, OptCall, OptChainBase, OptChainExpr, Pat, Prop, PropName,
+    SimpleAssignTarget, Stmt, TaggedTpl, UnaryExpr, UnaryOp, UpdateExpr, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
 use crate::analysis::{binding_id, BindingId};
 use crate::rules::expr_utils::is_unresolved_ident;
 use crate::rules::transpiler_helper_utils::{
-    classify_inline_callable, LocalHelperContext, TranspilerHelperKind,
+    classify_inline_callable, top_level_required_bindings, LocalHelperContext, TranspilerHelperKind,
 };
 use crate::utils::paren::strip_parens;
 
@@ -175,7 +175,8 @@ pub enum CalleeExport {
     /// The value itself: `h(x)` with `var h = require("src")`, or
     /// `require("src")(x)`.
     Value,
-    /// One static member of it: `ns.name(x)`, `require("src").name(x)`.
+    /// One static member of it: `ns.name(x)`, `require("src").name(x)`,
+    /// or `h(x)` with `var h = require("src").name`.
     Named(Atom),
     /// A computed member, or a member of a member.
     Other,
@@ -185,7 +186,8 @@ pub enum CalleeExport {
 ///
 /// A same-module function counts as a writer when the call reaches it
 /// directly (a function literal, or a binding declared once and never
-/// written), it does not read `arguments`, and its body writes the
+/// written; TypeScript's guarded helper `this && this.__name || F` reaches
+/// its fallbacks `F`), it does not read `arguments`, and its body writes the
 /// parameter: a member assignment, update, or `delete`, or the target of
 /// `Object.assign`, `Object.defineProperty`, `Object.defineProperties`, or
 /// `Object.setPrototypeOf` (the conditions `ArrowFunction` uses for a
@@ -356,6 +358,8 @@ impl RequireEdges {
             sources: &sources,
             uses: HashMap::default(),
             local_callees: Vec::new(),
+            member_callees: member_callees(module, unresolved_mark),
+            this_depth: 0,
         };
         module.visit_with(&mut uses);
         if !uses.local_callees.is_empty() {
@@ -1090,6 +1094,12 @@ struct UseCollector<'a> {
     /// Values passed to a same-module function binding: the edge, the
     /// callee, and the argument position.
     local_callees: Vec<(EdgeKey, BindingId, usize)>,
+    /// The top-level `var h = require("src").name` bindings no statement
+    /// writes, and the export each one holds.
+    member_callees: HashMap<BindingId, ModuleCallee>,
+    /// The non-arrow functions and classes around the node being visited;
+    /// at zero, `this` is the module's own.
+    this_depth: usize,
 }
 
 impl UseCollector<'_> {
@@ -1207,7 +1217,18 @@ impl UseCollector<'_> {
                 return local_function_writes(FunctionNode::Arrow(arrow), index)
                     .map_or(ArgumentCallee::Unknown, ArgumentCallee::from_writes);
             }
+            // TypeScript's helper inlined at the call site:
+            // `(this && this.__importDefault || function (mod) { … })(x)`.
+            Expr::Bin(_) if self.this_depth == 0 => {
+                if let Some(functions) = this_guard_fallbacks(callee) {
+                    return fallbacks_write(&functions, index)
+                        .map_or(ArgumentCallee::Unknown, ArgumentCallee::from_writes);
+                }
+            }
             _ => {}
+        }
+        if is_read_only_object_prototype_call(callee, self.unresolved_mark) {
+            return ArgumentCallee::Reads;
         }
         if let Some(name) = callee_name(callee) {
             if is_interop_helper_name(&name) {
@@ -1250,6 +1271,18 @@ impl UseCollector<'_> {
                         .get(key)
                         .cloned()
                         .map_or(ArgumentCallee::Unknown, other_module);
+                }
+                // `h(x)` with `var h = require("src").name` calls that
+                // export; a member of it, `h.x(x)`, is some other function.
+                if let Some(held) = self.member_callees.get(&binding_id(ident)) {
+                    return ArgumentCallee::OtherModule(ModuleCallee {
+                        source: held.source.clone(),
+                        export: if std::ptr::eq(base, callee) {
+                            held.export.clone()
+                        } else {
+                            CalleeExport::Other
+                        },
+                    });
                 }
                 if std::ptr::eq(base, callee) && ident.ctxt.outer() != self.unresolved_mark {
                     return ArgumentCallee::Local(binding_id(ident));
@@ -1491,6 +1524,7 @@ impl LocalWriters {
         let mut finder = FunctionFinder {
             wanted: &wanted,
             writes: HashMap::default(),
+            this_depth: 0,
         };
         module.visit_with(&mut finder);
         Self {
@@ -1523,14 +1557,18 @@ impl LocalWriters {
 
 /// Reads the declarations of the wanted function bindings, in any scope: a
 /// function declaration, or a declarator initialized with a function or an
-/// arrow.
+/// arrow. Where `this` is the module's own, a declarator may also hold
+/// TypeScript's guarded helper ([`this_guard_fallbacks`]).
 struct FunctionFinder<'a> {
     wanted: &'a HashMap<BindingId, Vec<usize>>,
     writes: HashMap<(BindingId, usize), Option<bool>>,
+    /// The non-arrow functions and classes around the node being visited;
+    /// at zero, `this` is the module's own.
+    this_depth: usize,
 }
 
 impl FunctionFinder<'_> {
-    fn record(&mut self, name: &swc_core::ecma::ast::Ident, function: FunctionNode<'_>) {
+    fn record(&mut self, name: &swc_core::ecma::ast::Ident, functions: &[FunctionNode<'_>]) {
         let binding = binding_id(name);
         let Some(indices) = self.wanted.get(&binding) else {
             return;
@@ -1538,7 +1576,7 @@ impl FunctionFinder<'_> {
         for index in indices {
             self.writes.insert(
                 (binding.clone(), *index),
-                local_function_writes(function, *index),
+                fallbacks_write(functions, *index),
             );
         }
     }
@@ -1546,7 +1584,7 @@ impl FunctionFinder<'_> {
 
 impl Visit for FunctionFinder<'_> {
     fn visit_fn_decl(&mut self, decl: &swc_core::ecma::ast::FnDecl) {
-        self.record(&decl.ident, FunctionNode::Function(&decl.function));
+        self.record(&decl.ident, &[FunctionNode::Function(&decl.function)]);
         decl.visit_children_with(self);
     }
 
@@ -1554,14 +1592,140 @@ impl Visit for FunctionFinder<'_> {
         if let (Pat::Ident(name), Some(init)) = (&declarator.name, &declarator.init) {
             match strip_parens(init) {
                 Expr::Fn(function) => {
-                    self.record(&name.id, FunctionNode::Function(&function.function))
+                    self.record(&name.id, &[FunctionNode::Function(&function.function)])
                 }
-                Expr::Arrow(arrow) => self.record(&name.id, FunctionNode::Arrow(arrow)),
+                Expr::Arrow(arrow) => self.record(&name.id, &[FunctionNode::Arrow(arrow)]),
+                init @ Expr::Bin(_) if self.this_depth == 0 => {
+                    if let Some(functions) = this_guard_fallbacks(init) {
+                        self.record(&name.id, &functions);
+                    }
+                }
                 _ => {}
             }
         }
         declarator.visit_children_with(self);
     }
+
+    fn visit_function(&mut self, function: &Function) {
+        self.this_depth += 1;
+        function.visit_children_with(self);
+        self.this_depth -= 1;
+    }
+
+    fn visit_class(&mut self, class: &Class) {
+        self.this_depth += 1;
+        class.visit_children_with(self);
+        self.this_depth -= 1;
+    }
+}
+
+/// Whether a callee that runs one of `functions` writes its parameter at
+/// `index`: `None` when one of them reaches the argument another way, and
+/// `true` when one of them writes it.
+fn fallbacks_write(functions: &[FunctionNode<'_>], index: usize) -> Option<bool> {
+    let mut writes = false;
+    for function in functions {
+        writes |= local_function_writes(*function, index)?;
+    }
+    Some(writes)
+}
+
+/// The functions TypeScript's guarded helper can run, where `this` is the
+/// module's own: `this && this.__name || F`, with `F` a function, an arrow,
+/// or `c ? F1 : F2` of them (`__createBinding`). The guard is falsy unless
+/// the module wrote that property itself, or a global copy of the same
+/// tslib helper (`typescript_helper_guard` in rewrite-assumptions.md), so
+/// the fallback is what runs. The name proves nothing: the fallbacks'
+/// bodies decide, as for any local function.
+fn this_guard_fallbacks(expr: &Expr) -> Option<Vec<FunctionNode<'_>>> {
+    let Expr::Bin(BinExpr {
+        op: BinaryOp::LogicalOr,
+        left,
+        right,
+        ..
+    }) = strip_parens(expr)
+    else {
+        return None;
+    };
+    let Expr::Bin(BinExpr {
+        op: BinaryOp::LogicalAnd,
+        left: guard,
+        right: member,
+        ..
+    }) = strip_parens(left)
+    else {
+        return None;
+    };
+    let Expr::Member(member) = strip_parens(member) else {
+        return None;
+    };
+    if !matches!(strip_parens(guard), Expr::This(_))
+        || !matches!(strip_parens(&member.obj), Expr::This(_))
+        || static_member_name(&member.prop).is_none()
+    {
+        return None;
+    }
+    let mut functions = Vec::new();
+    collect_fallbacks(right, &mut functions)?;
+    Some(functions)
+}
+
+fn collect_fallbacks<'a>(expr: &'a Expr, functions: &mut Vec<FunctionNode<'a>>) -> Option<()> {
+    match strip_parens(expr) {
+        Expr::Fn(function) => functions.push(FunctionNode::Function(&function.function)),
+        Expr::Arrow(arrow) => functions.push(FunctionNode::Arrow(arrow)),
+        Expr::Cond(cond) => {
+            collect_fallbacks(&cond.cons, functions)?;
+            collect_fallbacks(&cond.alt, functions)?;
+        }
+        _ => return None,
+    }
+    Some(())
+}
+
+/// `Object.prototype.m.call(x, …)` for a method `m` that only reads its
+/// receiver: what `UnWebpackInterop` makes of webpack's `require.o`.
+fn is_read_only_object_prototype_call(callee: &Expr, unresolved_mark: Mark) -> bool {
+    let Expr::Member(call) = strip_parens(callee) else {
+        return false;
+    };
+    if static_member_name(&call.prop).as_deref() != Some("call") {
+        return false;
+    }
+    let Expr::Member(method) = strip_parens(&call.obj) else {
+        return false;
+    };
+    if !matches!(
+        static_member_name(&method.prop).as_deref(),
+        Some("hasOwnProperty" | "propertyIsEnumerable" | "toString" | "isPrototypeOf")
+    ) {
+        return false;
+    }
+    let Expr::Member(prototype) = strip_parens(&method.obj) else {
+        return false;
+    };
+    static_member_name(&prototype.prop).as_deref() == Some("prototype")
+        && matches!(strip_parens(&prototype.obj), Expr::Ident(object)
+            if is_unresolved_ident(object, "Object", unresolved_mark))
+}
+
+/// The top-level `var h = require("src").name` bindings no statement
+/// writes, read as `UnEsm` reads a bundled provider's helper bindings
+/// ([`top_level_required_bindings`]).
+fn member_callees(module: &Module, unresolved_mark: Mark) -> HashMap<BindingId, ModuleCallee> {
+    top_level_required_bindings(module, Some(unresolved_mark))
+        .into_iter()
+        .filter_map(|binding| {
+            let name = binding.member?;
+            Some((
+                binding.key,
+                ModuleCallee {
+                    source: binding.source.into(),
+                    export: CalleeExport::Named(name.into()),
+                },
+            ))
+        })
+        .collect()
 }
 
 /// Whether `function` reads its own `arguments` in its parameters or body
@@ -1584,6 +1748,18 @@ fn reads_arguments(function: &Function) -> bool {
 }
 
 impl Visit for UseCollector<'_> {
+    fn visit_function(&mut self, function: &Function) {
+        self.this_depth += 1;
+        function.visit_children_with(self);
+        self.this_depth -= 1;
+    }
+
+    fn visit_class(&mut self, class: &Class) {
+        self.this_depth += 1;
+        class.visit_children_with(self);
+        self.this_depth -= 1;
+    }
+
     fn visit_expr(&mut self, expr: &Expr) {
         if let Some(key) = self.value_of(expr) {
             // The keyed call itself, unless a parent below classified it.
@@ -2097,6 +2273,129 @@ register(require("./global.js"));"#,
                 export: CalleeExport::Value,
             }]
         );
+    }
+
+    #[test]
+    fn a_binding_of_a_required_member_is_that_export() {
+        let edges = edges(
+            r#"var h = require("./h.js").default;
+h(require("./default.js"));
+h.x(require("./member-of.js"));
+var r = require("./r.js").default;
+r = other;
+r(require("./reassigned.js"));
+function later() {
+    var g = require("./g.js").default;
+    g(require("./nested.js"));
+}"#,
+        );
+        let default = only(&edges, "./default.js").uses.expect("uses");
+        assert_eq!(
+            default.passed_to_other_module,
+            [ModuleCallee {
+                source: "./h.js".into(),
+                export: CalleeExport::Named("default".into()),
+            }]
+        );
+        assert!(!default.passed_to_unknown && !default.writes(), "{default}");
+        let member_of = only(&edges, "./member-of.js").uses.expect("uses");
+        assert_eq!(
+            member_of.passed_to_other_module,
+            [ModuleCallee {
+                source: "./h.js".into(),
+                export: CalleeExport::Other,
+            }]
+        );
+        // A reassigned binding, or one declared inside a function, may not
+        // hold the export when the call runs.
+        for source in ["./reassigned.js", "./nested.js"] {
+            let uses = only(&edges, source).uses.expect("uses");
+            assert!(
+                uses.passed_to_unknown && uses.passed_to_other_module.is_empty(),
+                "{source}: {uses}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_typescript_guarded_helper_is_read_through_its_fallbacks() {
+        // producer typescript@6.0.3 --module commonjs --esModuleInterop,
+        // then terser@5.36.0 -c -m --toplevel: the helpers `export *` and
+        // `export { x } from` need, under minified names.
+        let edges = edges(
+            r#"var t = this && this.__createBinding || (Object.create ? function (e, t, r, n) {
+    void 0 === n && (n = r);
+    var o = Object.getOwnPropertyDescriptor(t, r);
+    o && !("get" in o ? !t.__esModule : o.writable || o.configurable) || (o = { enumerable: !0, get: function () { return t[r]; } }),
+    Object.defineProperty(e, n, o);
+} : function (e, t, r, n) { void 0 === n && (n = r), e[n] = t[r]; }),
+    n = this && this.__exportStar || function (e, r) {
+    for (var n in e) "default" === n || Object.prototype.hasOwnProperty.call(r, n) || t(r, e, n);
+};
+n(require("./a.js"), exports);
+t(exports, require("./b.js"), "x");
+(this && this.__read || function (m) { return Object.keys(m); })(require("./inline.js"));"#,
+        );
+        for source in ["./a.js", "./b.js", "./inline.js"] {
+            let uses = only(&edges, source).uses.expect("uses");
+            assert!(
+                !uses.writes() && !uses.passed_to_unseen_callee(),
+                "{source}: {uses}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_guarded_helper_counts_only_where_this_is_the_modules() {
+        let edges = edges(
+            r#"var w = this && this.__exportStar || function (m, o) { m.extra = 1; };
+w(require("./written.js"), exports);
+var c = this && this.__createBinding || (Object.create ? function (o, m, k) { o[k] = m[k]; } : function (o, m, k) { m[k] = o[k]; });
+c(exports, require("./cond.js"), "x");
+function later() {
+    var s = this && this.__exportStar || function (m, o) { for (var k in m) o[k] = m[k]; };
+    s(require("./nested.js"), exports);
+    (this && this.__read || function (m) { return Object.keys(m); })(require("./inline-nested.js"));
+}
+class Holder {
+    field = (this && this.__read || function (m) { return Object.keys(m); })(require("./class.js"));
+}"#,
+        );
+        // hypothetical: a fallback that writes the value is a write, as
+        // any local function would be, and so is either branch of `?:`.
+        for source in ["./written.js", "./cond.js"] {
+            let uses = only(&edges, source).uses.expect("uses");
+            assert!(uses.callee_write && uses.writes(), "{source}: {uses}");
+        }
+        // In a function or a class body `this` is the receiver of the call,
+        // whose `__name` property may be any function.
+        for source in ["./nested.js", "./inline-nested.js", "./class.js"] {
+            let uses = only(&edges, source).uses.expect("uses");
+            assert!(!uses.writes() && uses.passed_to_unknown, "{source}: {uses}");
+        }
+    }
+
+    #[test]
+    fn only_a_read_only_object_prototype_method_reads_through_call() {
+        let edges = edges(
+            r#"Object.prototype.hasOwnProperty.call(require("./own.js"), "k");
+Object.prototype.propertyIsEnumerable.call(require("./enumerable.js"), "k");
+Array.prototype.push.call(require("./push.js"), 1);
+function shadowed(Object) {
+    Object.prototype.hasOwnProperty.call(require("./shadowed.js"), "k");
+}"#,
+        );
+        for source in ["./own.js", "./enumerable.js"] {
+            let uses = only(&edges, source).uses.expect("uses");
+            assert!(
+                !uses.writes() && !uses.passed_to_unseen_callee(),
+                "{source}: {uses}"
+            );
+        }
+        for source in ["./push.js", "./shadowed.js"] {
+            let uses = only(&edges, source).uses.expect("uses");
+            assert!(uses.passed_to_unknown, "{source}: {uses}");
+        }
     }
 
     #[test]

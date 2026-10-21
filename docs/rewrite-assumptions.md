@@ -1113,6 +1113,42 @@ Level: wherever those rules run; `UnEsm` at `standard` and above for
 single-file input (`single_file_esm_consumers`), and at every level in unpack
 mode.
 
+### `typescript_helper_guard`
+
+TypeScript emits each helper it inlines into CommonJS output as a guard
+over a fallback:
+
+```js
+var __exportStar = (this && this.__exportStar) || function (m, exports) { /* … */ };
+```
+
+At the top level of a module (outside every non-arrow function and class
+body), `this` is the module's `exports` object when a CommonJS loader or a
+bundler runs the body, `undefined` in an ES module or a strict call without
+a receiver, and the global object in a sloppy call without one. wakaru
+assumes the guard is falsy there, so the fallback is what runs: the
+`exports` object has a `__name` property only when the module writes it,
+and a global `__name` is the same tslib helper that a runtime installed
+(tslib's browser build, or the Cocos Creator engine as in
+`cocos_registration_frame`), which does what the fallback does. A minifier
+keeps the shape under another binding name, or inlines a helper used once
+at its call site: `(this && this.__importDefault || function (e) { … })(x)`.
+
+The property name proves nothing by itself. Each rule that relies on the
+guard also matches the fallback's body, and `UnEsm`'s top-level `this` check
+also requires that the module never accesses that property through
+`exports` or `module.exports`. Inside a function or class body `this` is a
+receiver whose `__name` property can be any function, so the unpack plan's
+use collector reads the guard only where `this` is the module's own.
+
+Affects: TypeScript helper detection (the helper's kind comes from the
+fallback), `UnEsm`'s `export *` recovery and its top-level `this` check (the
+guard is not a use of the `exports` object), and the unpack plan's use
+collector (a required value passed to the helper reaches the fallback, and
+the fallback's body decides whether the value is written).
+
+Level: every level; the guard is part of how the helper is recognized.
+
 ### `namespace_interop_source_semantics`
 
 rollup's default `output.interop: "default"` builds every external namespace

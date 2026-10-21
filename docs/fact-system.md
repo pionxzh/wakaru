@@ -267,10 +267,19 @@ member assignment, update, or `delete` on the value, the target of an
 module that writes that parameter. The use collector follows such a call one
 level, when the call reaches the function directly (a function literal, or a
 binding declared once and never written, in a module without `with` or
-direct eval) and the function does not read `arguments`. Interop and
-re-export helpers, read-only builtins (`Object.keys`), and functions that
-only read the parameter do not count. A callee in another module, or one
-the collector cannot identify, does not count either; after the fact
+direct eval) and the function does not read `arguments`. TypeScript's
+guarded helper `this && this.__name || F`, declared or called where `this`
+is the module's own, reaches its fallback `F` (both branches of
+`c ? F1 : F2`), and writes when either branch does
+([`typescript_helper_guard`](rewrite-assumptions.md#typescript_helper_guard)).
+Interop and re-export helpers, read-only builtins (`Object.keys`,
+`Object.prototype.hasOwnProperty.call` and the other `Object.prototype`
+methods that only read their receiver), and functions that only read the
+parameter do not count. A callee in another module, or one the collector
+cannot identify, does not count either. A top-level
+`var h = require("src").name` that no statement writes makes `h(x)` a call
+of that module's `name` export, read from the same bindings `UnEsm` trusts
+for a bundled helper (`top_level_required_bindings`). After the fact
 barrier, a consumer that passes a provider now read through its namespace to
 such a callee gets the `commonjs_exports_escape` warning (a callee the plan
 proves is an interop helper export of its module is exempt). Sources resolve

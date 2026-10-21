@@ -222,50 +222,22 @@ impl LocalHelperContext {
         if bundled.is_empty() {
             return self;
         }
-        let written =
-            crate::analysis::binding_uses::BindingUseIndex::collect_direct_write_bindings(module);
-        for item in &module.body {
-            let swc_core::ecma::ast::ModuleItem::Stmt(swc_core::ecma::ast::Stmt::Decl(
-                swc_core::ecma::ast::Decl::Var(var),
-            )) = item
-            else {
+        for binding in top_level_required_bindings(module, self.unresolved_mark) {
+            let Some(helpers) = bundled.get(binding.source) else {
                 continue;
             };
-            for declarator in &var.decls {
-                let swc_core::ecma::ast::Pat::Ident(binding) = &declarator.name else {
-                    continue;
-                };
-                let key = binding_key(&binding.id);
-                if written.contains(&key) {
-                    continue;
+            match binding.member {
+                None => {
+                    if let Some(kind) = helpers.value() {
+                        self.helpers.insert(binding.key.clone(), kind);
+                    }
+                    self.bundled_namespaces
+                        .insert(binding.key, binding.source.to_string());
                 }
-                let Some(init) = declarator.init.as_deref() else {
-                    continue;
-                };
-                match strip_parens(init) {
-                    Expr::Call(_) => {
-                        let Some(source) = self.require_source(init) else {
-                            continue;
-                        };
-                        let Some(helpers) = bundled.get(source) else {
-                            continue;
-                        };
-                        if let Some(kind) = helpers.value() {
-                            self.helpers.insert(key.clone(), kind);
-                        }
-                        self.bundled_namespaces.insert(key, source.to_string());
+                Some(name) => {
+                    if let Some(kind) = helpers.named(name) {
+                        self.helpers.insert(binding.key, kind);
                     }
-                    Expr::Member(member) => {
-                        let Some(kind) = self.require_source(&member.obj).and_then(|source| {
-                            bundled
-                                .get(source)?
-                                .named(static_member_prop_name(&member.prop)?)
-                        }) else {
-                            continue;
-                        };
-                        self.helpers.insert(key, kind);
-                    }
-                    _ => {}
                 }
             }
         }
@@ -283,28 +255,7 @@ impl LocalHelperContext {
 
     /// The source of `require("src")`, with an unresolved `require`.
     fn require_source<'a>(&self, expr: &'a Expr) -> Option<&'a str> {
-        let Expr::Call(call) = strip_parens(expr) else {
-            return None;
-        };
-        let swc_core::ecma::ast::Callee::Expr(callee) = &call.callee else {
-            return None;
-        };
-        let Expr::Ident(require) = strip_parens(callee) else {
-            return None;
-        };
-        if !self.is_unresolved_or_unguarded_ident(require, "require") {
-            return None;
-        }
-        let [arg] = call.args.as_slice() else {
-            return None;
-        };
-        if arg.spread.is_some() {
-            return None;
-        }
-        match strip_parens(&arg.expr) {
-            Expr::Lit(Lit::Str(source)) => source.value.as_str(),
-            _ => None,
-        }
+        require_source(expr, self.unresolved_mark)
     }
 
     /// The helper kind of a callee reached through a bundled provider.
@@ -550,6 +501,95 @@ fn prop_name_as_str(name: &PropName) -> Option<&str> {
 fn is_unresolved_or_unguarded_ident(id: &Ident, name: &str, unresolved_mark: Option<Mark>) -> bool {
     id.sym.as_ref() == name
         && unresolved_mark.is_none_or(|unresolved_mark| id.ctxt.outer() == unresolved_mark)
+}
+
+/// The source of `require("src")`, with an unresolved `require`.
+fn require_source(expr: &Expr, unresolved_mark: Option<Mark>) -> Option<&str> {
+    let Expr::Call(call) = strip_parens(expr) else {
+        return None;
+    };
+    let swc_core::ecma::ast::Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Ident(require) = strip_parens(callee) else {
+        return None;
+    };
+    if !is_unresolved_or_unguarded_ident(require, "require", unresolved_mark) {
+        return None;
+    }
+    let [arg] = call.args.as_slice() else {
+        return None;
+    };
+    if arg.spread.is_some() {
+        return None;
+    }
+    match strip_parens(&arg.expr) {
+        Expr::Lit(Lit::Str(source)) => source.value.as_str(),
+        _ => None,
+    }
+}
+
+/// A top-level binding of a required value or of one static member of it
+/// ([`top_level_required_bindings`]).
+pub(crate) struct RequiredBinding<'a> {
+    pub(crate) key: BindingKey,
+    /// The source the binding requires.
+    pub(crate) source: &'a str,
+    /// `None` for `var x = require("src")`; the member's name for
+    /// `var x = require("src").name`.
+    pub(crate) member: Option<&'a str>,
+}
+
+/// The top-level `var x = require("src")` and `var x = require("src").name`
+/// declarators whose binding no assignment, update, or loop head writes.
+/// A second `var` declarator of the same name is not counted as a write
+/// (see [`LocalHelperContext::with_bundled_helpers`]).
+///
+/// `UnEsm` trusts a bundled provider's helpers through these bindings, and
+/// the unpack plan's use collector reads a value passed to one as passed to
+/// that provider's export, so the two read the same bindings.
+pub(crate) fn top_level_required_bindings(
+    module: &Module,
+    unresolved_mark: Option<Mark>,
+) -> Vec<RequiredBinding<'_>> {
+    let mut found = Vec::new();
+    for item in &module.body {
+        let swc_core::ecma::ast::ModuleItem::Stmt(swc_core::ecma::ast::Stmt::Decl(
+            swc_core::ecma::ast::Decl::Var(var),
+        )) = item
+        else {
+            continue;
+        };
+        for declarator in &var.decls {
+            let (swc_core::ecma::ast::Pat::Ident(binding), Some(init)) =
+                (&declarator.name, declarator.init.as_deref())
+            else {
+                continue;
+            };
+            let (source, member) = match strip_parens(init) {
+                Expr::Call(_) => (require_source(init, unresolved_mark), None),
+                Expr::Member(member) => match static_member_prop_name(&member.prop) {
+                    Some(name) => (require_source(&member.obj, unresolved_mark), Some(name)),
+                    None => continue,
+                },
+                _ => continue,
+            };
+            let Some(source) = source else {
+                continue;
+            };
+            found.push(RequiredBinding {
+                key: binding_key(&binding.id),
+                source,
+                member,
+            });
+        }
+    }
+    if !found.is_empty() {
+        let written =
+            crate::analysis::binding_uses::BindingUseIndex::collect_direct_write_bindings(module);
+        found.retain(|binding| !written.contains(&binding.key));
+    }
+    found
 }
 
 // ---------------------------------------------------------------------------

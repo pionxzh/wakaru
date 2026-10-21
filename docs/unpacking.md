@@ -754,8 +754,12 @@ layout directly is a proposal:
   a function in another module (`installer.install(p)`) or to one unpack
   cannot identify (a global, a method of an object, a reassigned binding) is
   not followed, so the provider still becomes ESM, and a write there throws
-  at runtime. Unpack reports the consumer as `commonjs_exports_escape`. The
-  shape is hypothetical. A write through an alias of the required value (`var q = p; q.f = …`) is not seen either.
+  at runtime. Unpack reports the consumer as `commonjs_exports_escape`,
+  unless barrier 0 proves the callee is an interop helper its module
+  exports. Passing a provider to a registration function of another module
+  is wild-observed; unpack does not read that function's body to see
+  whether it writes the value. A write through an alias of the required
+  value (`var q = p; q.f = …`) is not seen either.
   Consumers outside the input are covered by
   [`exports_object_closed_to_consumers`](rewrite-assumptions.md#exports_object_closed_to_consumers)
   instead.

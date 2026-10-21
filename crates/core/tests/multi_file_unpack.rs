@@ -3145,6 +3145,104 @@ fn a_provider_passed_to_a_bundled_interop_helper_is_not_reported() {
     }
 }
 
+/// Module 444 is the Babel runtime's `interopRequireDefault` helper module
+/// (producer @babel/runtime@7.29.7, `helpers/interopRequireDefault.js`)
+/// with `body` as the helper's body.
+fn babel_interop_helper_module(body: &str) -> String {
+    format!(
+        r#"444: function(module) {{
+      function _interopRequireDefault(e) {{ {body} }}
+      module.exports = _interopRequireDefault, module.exports.__esModule = true, module.exports["default"] = module.exports;
+    }}"#
+    )
+}
+
+/// The consumer binds the helper's `default` member, as Babel's output
+/// does with `require("@babel/runtime/helpers/interopRequireDefault").default`.
+fn default_binding_consumer(helper_body: &str) -> String {
+    format!(
+        r#"function(module, exports, __webpack_require__) {{
+      "use strict";
+      var interop = __webpack_require__(444).default;
+      var p = interop(__webpack_require__(100));
+      exports.done = p.default.g() === "g";
+    }},
+    {}"#,
+        babel_interop_helper_module(helper_body)
+    )
+}
+
+#[test]
+fn a_provider_passed_to_a_bundled_helpers_default_binding_is_not_reported() {
+    let consumer = default_binding_consumer("return e && e.__esModule ? e : { default: e };");
+    for output in unpack_written_provider(&consumer) {
+        assert_valid_module_graph(&output.modules);
+        assert!(
+            escape_warnings(&output).is_empty(),
+            "{:#?}",
+            output.warnings
+        );
+    }
+}
+
+#[test]
+fn a_provider_passed_to_a_writing_default_binding_is_reported_with_its_module() {
+    // The binding is still the module's `default` export, but the body that
+    // export holds writes the value: only barrier 0's proof exempts it.
+    let consumer =
+        default_binding_consumer("e.extra = 1; return e && e.__esModule ? e : { default: e };");
+    for output in unpack_written_provider(&consumer) {
+        assert_eq!(escape_warnings(&output), vec!["module-200.js"]);
+        let warning = output
+            .warnings
+            .iter()
+            .find(|warning| warning.kind == wakaru_core::UnpackWarningKind::CommonJsExportsEscape)
+            .unwrap();
+        assert!(
+            warning
+                .message
+                .contains("to a function from \"./module-444.js\""),
+            "{}",
+            warning.message
+        );
+    }
+}
+
+#[test]
+fn typescript_reexport_helpers_minified_at_top_level_are_not_reported() {
+    // producer typescript@6.0.3 --module commonjs --esModuleInterop, then
+    // terser@5.36.0 -c -m --toplevel on the entry: the guarded helpers
+    // `this && this.__exportStar || function …` hold minified names, and the
+    // entry passes each re-exported module to them.
+    let provider = |name: &str| UnpackInput {
+        filename: format!("{name}.js"),
+        source: format!(
+            r#""use strict";
+Object.defineProperty(exports, "__esModule", {{ value: true }});
+exports.v_{name} = void 0;
+exports.default = default_1;
+exports.v_{name} = 1;
+function default_1() {{ return '{name}'; }}
+"#
+        ),
+    };
+    let entry = r#""use strict";var e,t=this&&this.__createBinding||(Object.create?function(e,t,r,n){void 0===n&&(n=r);var o=Object.getOwnPropertyDescriptor(t,r);o&&!("get"in o?!t.__esModule:o.writable||o.configurable)||(o={enumerable:!0,get:function(){return t[r]}}),Object.defineProperty(e,n,o)}:function(e,t,r,n){void 0===n&&(n=r),e[n]=t[r]}),r=this&&this.__setModuleDefault||(Object.create?function(e,t){Object.defineProperty(e,"default",{enumerable:!0,value:t})}:function(e,t){e.default=t}),n=this&&this.__exportStar||function(e,r){for(var n in e)"default"===n||Object.prototype.hasOwnProperty.call(r,n)||t(r,e,n)},o=this&&this.__importStar||(e=function(t){return e=Object.getOwnPropertyNames||function(e){var t=[];for(var r in e)Object.prototype.hasOwnProperty.call(e,r)&&(t[t.length]=r);return t},e(t)},function(n){if(n&&n.__esModule)return n;var o={};if(null!=n)for(var u=e(n),i=0;i<u.length;i++)"default"!==u[i]&&t(o,n,u[i]);return r(o,n),o}),u=this&&this.__importDefault||function(e){return e&&e.__esModule?e:{default:e}};Object.defineProperty(exports,"__esModule",{value:!0}),exports.run=exports.c=void 0,n(require("./a"),exports),n(require("./b"),exports);var i=require("./c");Object.defineProperty(exports,"c",{enumerable:!0,get:function(){return u(i).default}});const a=u(require("./d")),c=o(require("./e"));exports.run=()=>[a.default,c];"#;
+    let mut inputs: Vec<UnpackInput> = ["a", "b", "c", "d", "e"].map(provider).into();
+    inputs.push(UnpackInput {
+        filename: "index.js".to_string(),
+        source: entry.to_string(),
+    });
+    let output = unpack_files(inputs, DecompileOptions::default()).expect("unpack");
+    assert!(
+        escape_warnings(&output).is_empty(),
+        "{:#?}",
+        output.warnings
+    );
+    let index = module_named(&output.modules, "index.js");
+    assert!(index.contains("export * from \"./a\""), "{index}");
+    assert!(index.contains("export * from \"./b\""), "{index}");
+}
+
 #[test]
 fn a_provider_passed_to_another_export_of_a_helper_module_is_reported() {
     // Module 400 exports an interop helper, but the callee is another of its
