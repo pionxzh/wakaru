@@ -9,4 +9,5 @@ description = "Public Rust API for the Wakaru JavaScript decompiler"
 [dependencies]
 wakaru-core.workspace = true
 anyhow.workspace = true
+ruzstd.workspace = true
 tracing.workspace = true

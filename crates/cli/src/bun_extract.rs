@@ -3,11 +3,12 @@
 //! This command deliberately stops at the container boundary. Every file is
 //! written with the bytes the bundler emitted: exactly as Bun stored them, or,
 //! for a record Bun stored as UTF-16, the transcode back to the bytes Bun
-//! encoded. Callers can pass selected JavaScript outputs back through Wakaru
-//! separately.
+//! encoded. The original source files carried in Bun's embedded source maps
+//! are written below `sources/`. Callers can pass selected JavaScript outputs
+//! back through Wakaru separately.
 
 use std::borrow::Cow;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{self, IsTerminal};
 use std::ops::Range;
@@ -23,7 +24,8 @@ use crate::output::{
 };
 
 /// Schema 2: a record Bun stored as UTF-16 is written as its UTF-8 transcode,
-/// labeled `utf16le`, with the written length in `output_bytes`.
+/// labeled `utf16le`, with the written length in `output_bytes`; original
+/// sources from embedded source maps are listed in `sources`.
 const MANIFEST_SCHEMA: u32 = 2;
 const MAX_OUTPUT_AMPLIFICATION: usize = 4;
 
@@ -44,7 +46,8 @@ pub(crate) struct BunExtractArgs {
     /// Bun single-file executable: PE, Mach-O, ELF, or bare serialized graph.
     pub(crate) input: PathBuf,
 
-    /// Output directory. Embedded files are written below `files/`.
+    /// Output directory. Embedded files are written below `files/`, original
+    /// sources from embedded source maps below `sources/`.
     #[arg(short, long, value_name = "DIR")]
     pub(crate) output: PathBuf,
 
@@ -105,6 +108,22 @@ fn run_extract(args: BunExtractArgs, force: bool) -> Result<()> {
         );
     }
 
+    // Original sources share the output budget; every decompression counts,
+    // including one whose bytes repeat an earlier occurrence.
+    let sources = recover_sources(
+        &standalone,
+        output_limit - requested_bytes,
+        executable.len(),
+    );
+    for skipped in &sources.skipped {
+        eprintln!(
+            "warning: {}: skipped original sources of Bun module {}: {}",
+            args.input.display(),
+            skipped.record,
+            skipped.message
+        );
+    }
+
     let check_existing_writes = crate::ensure_output_dir(&args.output, force)?;
     let output_root = canonicalize_output_dir(&args.output)?;
     let mut exact_paths = HashSet::new();
@@ -154,24 +173,39 @@ fn run_extract(args: BunExtractArgs, force: bool) -> Result<()> {
         });
     }
 
-    let written_bytes = planned
+    let mut source_case_folded_paths = HashSet::new();
+    let mut source_outputs = Vec::with_capacity(sources.files.len());
+    for file in &sources.files {
+        let sanitized = sanitize_source_path(file.path, file.record, file.index);
+        let unique = allocate_case_insensitive_path(&sanitized, &mut source_case_folded_paths);
+        let relative = format!("sources/{unique}");
+        let path = resolve_unpack_output_path(&output_root, &relative, &mut exact_paths)?;
+        source_outputs.push((relative, path));
+    }
+
+    let written_bytes = sources
+        .files
         .iter()
-        .map(|file| {
-            file.output.len()
-                + file
-                    .source_map_output
-                    .as_ref()
-                    .map_or(0, |_| file.file.source_map.len())
-                + file
-                    .bytecode_output
-                    .as_ref()
-                    .map_or(0, |_| file.file.bytecode.len())
-                + file
-                    .module_info_output
-                    .as_ref()
-                    .map_or(0, |_| file.file.module_info.len())
-        })
-        .sum();
+        .map(|file| file.bytes.len())
+        .sum::<usize>()
+        + planned
+            .iter()
+            .map(|file| {
+                file.output.len()
+                    + file
+                        .source_map_output
+                        .as_ref()
+                        .map_or(0, |_| file.file.source_map.len())
+                    + file
+                        .bytecode_output
+                        .as_ref()
+                        .map_or(0, |_| file.file.bytecode.len())
+                    + file
+                        .module_info_output
+                        .as_ref()
+                        .map_or(0, |_| file.file.module_info.len())
+            })
+            .sum::<usize>();
 
     for file in &planned {
         write_output(&file.output_path, &file.output, check_existing_writes)?;
@@ -185,11 +219,16 @@ fn run_extract(args: BunExtractArgs, force: bool) -> Result<()> {
             }
         }
     }
+    for (file, (_, path)) in sources.files.iter().zip(&source_outputs) {
+        write_output(path, &file.bytes, check_existing_writes)?;
+    }
 
     let manifest = BunManifest::new(
         &args.input,
         &standalone,
         &planned,
+        &sources,
+        &source_outputs,
         args.include_internals,
         written_bytes,
     );
@@ -209,14 +248,145 @@ fn run_extract(args: BunExtractArgs, force: bool) -> Result<()> {
         print!("{serialized}");
     } else if io::stderr().is_terminal() {
         eprintln!(
-            "extracted {} Bun file(s), {} byte(s), to {}",
+            "extracted {} Bun file(s), {} byte(s), and {} original source file(s) to {}",
             planned.len(),
             planned.iter().map(|file| file.output.len()).sum::<usize>(),
+            sources.files.len(),
             args.output.display()
         );
     }
 
     Ok(())
+}
+
+/// Original sources read from every record's embedded source map.
+struct RecoveredSources<'data> {
+    /// Every source-map entry, in record and map order.
+    occurrences: Vec<SourceOccurrence<'data>>,
+    /// One entry per distinct (path, bytes) pair, in first-seen order.
+    files: Vec<RecoveredSourceFile<'data>>,
+    /// Records whose sources were not recovered, with the reason.
+    skipped: Vec<SkippedSourceMap>,
+}
+
+#[derive(Clone, Serialize)]
+struct SkippedSourceMap {
+    record: u32,
+    message: String,
+}
+
+struct SourceOccurrence<'data> {
+    source: wakaru::bun::BunOriginalSource<'data>,
+    /// Index into [`RecoveredSources::files`].
+    file: usize,
+}
+
+struct RecoveredSourceFile<'data> {
+    path: &'data str,
+    record: u32,
+    index: u32,
+    bytes: Vec<u8>,
+}
+
+/// Decompresses every original source within `budget` bytes in total. The
+/// same path in several records with identical bytes becomes one file; the
+/// same path with different bytes keeps both. A record whose sources cannot
+/// be recovered is skipped and reported; the embedded files do not depend on
+/// its source map.
+fn recover_sources<'data>(
+    standalone: &wakaru::bun::BunStandalone<'data>,
+    budget: usize,
+    input_bytes: usize,
+) -> RecoveredSources<'data> {
+    let mut remaining = budget;
+    let mut occurrences = Vec::new();
+    let mut files: Vec<RecoveredSourceFile<'data>> = Vec::new();
+    let mut by_path: HashMap<&'data str, Vec<usize>> = HashMap::new();
+    let mut skipped = Vec::new();
+    for record in &standalone.files {
+        let decoded = match decompress_record_sources(record, remaining, budget, input_bytes) {
+            Ok(decoded) => decoded,
+            Err(error) => {
+                skipped.push(SkippedSourceMap {
+                    record: record.index,
+                    message: format!("{error:#}"),
+                });
+                continue;
+            }
+        };
+        for (source, bytes) in decoded {
+            remaining -= bytes.len();
+            let same_path = by_path.entry(source.path).or_default();
+            let file = match same_path
+                .iter()
+                .copied()
+                .find(|candidate| files[*candidate].bytes == bytes)
+            {
+                Some(existing) => existing,
+                None => {
+                    files.push(RecoveredSourceFile {
+                        path: source.path,
+                        record: source.record,
+                        index: source.index,
+                        bytes,
+                    });
+                    same_path.push(files.len() - 1);
+                    files.len() - 1
+                }
+            };
+            occurrences.push(SourceOccurrence { source, file });
+        }
+    }
+    RecoveredSources {
+        occurrences,
+        files,
+        skipped,
+    }
+}
+
+/// Decompresses every source in one record's map, or none: a map Wakaru
+/// cannot read, a corrupt frame, or a frame past the remaining budget skips
+/// the whole record so its sources are never half-written.
+fn decompress_record_sources<'data>(
+    record: &wakaru::bun::BunEmbeddedFile<'data>,
+    remaining: usize,
+    budget: usize,
+    input_bytes: usize,
+) -> Result<Vec<(wakaru::bun::BunOriginalSource<'data>, Vec<u8>)>> {
+    let mut left = remaining;
+    let mut decoded = Vec::new();
+    for source in record
+        .original_sources()
+        .context("failed to read Bun embedded source map")?
+    {
+        let bytes = source.decompress(left).with_context(|| {
+            format!(
+                "failed to decompress a Bun embedded source within the {budget}-byte extraction budget left for a {input_bytes}-byte input"
+            )
+        })?;
+        left -= bytes.len();
+        decoded.push((source, bytes));
+    }
+    Ok(decoded)
+}
+
+/// Maps a source-map path, usually relative to the build's working
+/// directory, to a relative path below `sources/`. Both `/` and `\` separate
+/// components; empty and `.` components are dropped; `..` becomes `%2E%2E`,
+/// so the result stays below `sources/`; other unsafe bytes are
+/// percent-encoded as in embedded file names. `../lib/a.ts` maps to
+/// `%2E%2E/lib/a.ts`.
+fn sanitize_source_path(path: &str, record: u32, index: u32) -> String {
+    let components = path
+        .split(['/', '\\'])
+        .filter(|component| !component.is_empty() && *component != ".")
+        .map(|component| encode_path_component(component.as_bytes()))
+        .collect::<Vec<_>>();
+    if components.is_empty() {
+        format!("source-{record}-{index}")
+    } else {
+        components.join("/")
+    }
 }
 
 /// Upper bound on the bytes written for a record's contents. A UTF-16 code
@@ -439,7 +609,13 @@ struct BunManifest {
     asset_file_count: usize,
     content_bytes: usize,
     written_bytes: usize,
+    /// Distinct files written below `sources/`.
+    source_file_count: usize,
     files: Vec<BunManifestFile>,
+    /// One entry per source-map entry; identical repeats share `output_path`.
+    sources: Vec<BunManifestSource>,
+    /// Records whose embedded sources were skipped, with the reason.
+    skipped_sources: Vec<SkippedSourceMap>,
 }
 
 impl BunManifest {
@@ -447,6 +623,8 @@ impl BunManifest {
         input: &Path,
         standalone: &wakaru::bun::BunStandalone<'_>,
         planned: &[PlannedFile<'_, '_>],
+        sources: &RecoveredSources<'_>,
+        source_outputs: &[(String, PathBuf)],
         include_internals: bool,
         written_bytes: usize,
     ) -> Self {
@@ -468,7 +646,22 @@ impl BunManifest {
             asset_file_count: planned.len() - javascript_file_count,
             content_bytes,
             written_bytes,
+            source_file_count: sources.files.len(),
             files: planned.iter().map(BunManifestFile::new).collect(),
+            sources: sources
+                .occurrences
+                .iter()
+                .map(|occurrence| BunManifestSource {
+                    record: occurrence.source.record,
+                    index: occurrence.source.index,
+                    path: occurrence.source.path.to_string(),
+                    output_path: source_outputs[occurrence.file].0.clone(),
+                    output_bytes: sources.files[occurrence.file].bytes.len(),
+                    compressed_bytes: occurrence.source.compressed.len(),
+                    executable_range: range_array(&occurrence.source.compressed_range),
+                })
+                .collect(),
+            skipped_sources: sources.skipped.clone(),
         }
     }
 }
@@ -530,6 +723,22 @@ impl BunManifestFile {
             bytecode_origin_path: ManifestBytes::new(file.bytecode_origin_path),
         }
     }
+}
+
+#[derive(Serialize)]
+struct BunManifestSource {
+    /// Index of the file record whose source map carries this entry.
+    record: u32,
+    /// Position in that source map's `sources` list.
+    index: u32,
+    /// The path as the bundler wrote it in the source map.
+    path: String,
+    output_path: String,
+    /// Decompressed bytes written to `output_path`.
+    output_bytes: usize,
+    compressed_bytes: usize,
+    /// Executable byte range of the compressed bytes.
+    executable_range: [usize; 2],
 }
 
 #[derive(Serialize)]
@@ -644,7 +853,8 @@ mod tests {
         let mut data = Vec::new();
         let entry_name = append(&mut data, b"/$bunfs/root/src/entry.js", true);
         let entry_contents = append(&mut data, b"console.log('entry');", true);
-        let source_map = append(&mut data, b"opaque-map", false);
+        // A serialized source map with no sources and opaque mapping bytes.
+        let source_map = append(&mut data, b"\0\0\0\0\x0a\0\0\0opaque-map", false);
         let bytecode = append(&mut data, b"\0\xffbytecode", false);
         let module_info = append(&mut data, b"module-info", false);
         let bytecode_origin = append(&mut data, b"/$bunfs/root/entry.bytecode", true);
@@ -695,6 +905,98 @@ mod tests {
         executable.extend_from_slice(&3u32.to_le_bytes());
         executable.extend_from_slice(TRAILER);
         executable
+    }
+
+    /// A zstd frame without a declared content size, holding raw `content`.
+    fn raw_zstd_frame(content: &[u8]) -> Vec<u8> {
+        let mut frame = vec![0x28, 0xb5, 0x2f, 0xfd, 0x00, 0x00];
+        frame.extend_from_slice(&(((content.len() as u32) << 3) | 1).to_le_bytes()[..3]);
+        frame.extend_from_slice(content);
+        frame
+    }
+
+    /// A zstd frame without a declared content size whose one RLE block
+    /// expands one byte to `size` bytes, at most its 128 KiB window.
+    fn rle_zstd_frame(byte: u8, size: u32) -> Vec<u8> {
+        let mut frame = vec![0x28, 0xb5, 0x2f, 0xfd, 0x00, 0x38];
+        frame.extend_from_slice(&((size << 3) | (1 << 1) | 1).to_le_bytes()[..3]);
+        frame.push(byte);
+        frame
+    }
+
+    /// Bun's `SerializedSourceMap`: header, path pointers, content pointers,
+    /// mapping bytes, then the paths and compressed contents.
+    fn serialized_source_map(sources: &[(&str, Vec<u8>)]) -> Vec<u8> {
+        let mapping = b"opaque";
+        let payload_start = 8 + 16 * sources.len() + mapping.len();
+        let mut blob = Vec::new();
+        blob.extend_from_slice(&(sources.len() as u32).to_le_bytes());
+        blob.extend_from_slice(&(mapping.len() as u32).to_le_bytes());
+        let mut payload = Vec::new();
+        for bytes in sources
+            .iter()
+            .map(|(path, _)| path.as_bytes())
+            .chain(sources.iter().map(|(_, frame)| frame.as_slice()))
+        {
+            blob.extend_from_slice(&((payload_start + payload.len()) as u32).to_le_bytes());
+            blob.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+            payload.extend_from_slice(bytes);
+        }
+        blob.extend_from_slice(mapping);
+        blob.extend_from_slice(&payload);
+        blob
+    }
+
+    /// A graph of JavaScript records, each carrying the given original
+    /// sources in its source map.
+    /// Original sources of one record: each path with its zstd frame.
+    type RecordSources<'a> = Vec<(&'a str, Vec<u8>)>;
+
+    fn sources_fixture(records: &[(&[u8], RecordSources<'_>)]) -> Vec<u8> {
+        let mut data = Vec::new();
+        let pointers = records
+            .iter()
+            .map(|(name, sources)| {
+                let map = append(&mut data, &serialized_source_map(sources), false);
+                let name = append(&mut data, name, true);
+                let contents = append(&mut data, b"console.log(1);", true);
+                (name, contents, map)
+            })
+            .collect::<Vec<_>>();
+        let modules_offset = data.len() as u32;
+        for (name, contents, map) in pointers {
+            let mut record = [0u8; RECORD_SIZE];
+            put_pointer(&mut record, 0, name);
+            put_pointer(&mut record, 8, contents);
+            put_pointer(&mut record, 16, map);
+            record[48..51].copy_from_slice(&[1, 1, 1]);
+            data.extend_from_slice(&record);
+        }
+        let mut executable = b"\x7fELFsynthetic".to_vec();
+        executable.extend_from_slice(&data);
+        executable.extend_from_slice(&(data.len() as u64).to_le_bytes());
+        executable.extend_from_slice(&modules_offset.to_le_bytes());
+        executable.extend_from_slice(&((RECORD_SIZE * records.len()) as u32).to_le_bytes());
+        executable.extend_from_slice(&[0u8; 16]);
+        executable.extend_from_slice(TRAILER);
+        executable
+    }
+
+    fn extract_to(dir: &Path, executable: &[u8]) -> Result<PathBuf> {
+        fs::create_dir_all(dir).expect("create temp root");
+        let input = dir.join("app");
+        let output = dir.join("out");
+        fs::write(&input, executable).expect("write fixture");
+        run_extract(
+            BunExtractArgs {
+                input,
+                output: output.clone(),
+                include_internals: false,
+                json: false,
+            },
+            false,
+        )?;
+        Ok(output)
     }
 
     fn temp_test_dir(name: &str) -> PathBuf {
@@ -791,7 +1093,7 @@ mod tests {
         );
         assert_eq!(
             fs::read(output.join("internals/0000/source-map.bunmap")).expect("read source map"),
-            b"opaque-map"
+            b"\0\0\0\0\x0a\0\0\0opaque-map"
         );
         assert_eq!(
             fs::read(output.join("internals/0000/bytecode.bin")).expect("read bytecode"),
@@ -882,6 +1184,240 @@ mod tests {
         );
 
         fs::remove_dir_all(&dir).expect("remove temp root");
+    }
+
+    #[test]
+    fn maps_source_map_paths_below_the_sources_directory() {
+        assert_eq!(sanitize_source_path("src/index.ts", 0, 0), "src/index.ts");
+        assert_eq!(
+            sanitize_source_path("../node_modules/pkg/x.js", 0, 1),
+            "%2E%2E/node_modules/pkg/x.js"
+        );
+        assert_eq!(sanitize_source_path("/abs/./a\\b.ts", 0, 2), "abs/a/b.ts");
+        assert_eq!(
+            sanitize_source_path("C:\\proj\\a.ts", 0, 3),
+            "C%3A/proj/a.ts"
+        );
+        assert_eq!(sanitize_source_path("bun:wrap", 0, 4), "bun%3Awrap");
+        assert_eq!(sanitize_source_path("./", 2, 5), "source-2-5");
+    }
+
+    #[test]
+    fn writes_original_sources_once_per_distinct_path_and_bytes() {
+        let dir = temp_test_dir("original-sources");
+        let executable = sources_fixture(&[
+            (
+                b"/$bunfs/root/entry.js",
+                vec![
+                    ("src/index.ts", raw_zstd_frame(b"import './shared';\n")),
+                    ("../node_modules/pkg/x.js", raw_zstd_frame(b"shared\n")),
+                    ("src/Util.ts", raw_zstd_frame(b"first\n")),
+                ],
+            ),
+            (
+                b"/$bunfs/root/chunk.js",
+                vec![
+                    ("../node_modules/pkg/x.js", raw_zstd_frame(b"shared\n")),
+                    ("src/Util.ts", raw_zstd_frame(b"second\n")),
+                    ("src/util.ts", raw_zstd_frame(b"lowercase\n")),
+                ],
+            ),
+        ]);
+        let output = extract_to(&dir, &executable).expect("extract sources");
+
+        let read = |path: &str| fs::read(output.join(path)).expect(path);
+        assert_eq!(read("sources/src/index.ts"), b"import './shared';\n");
+        assert_eq!(
+            read("sources/%2E%2E/node_modules/pkg/x.js"),
+            b"shared\n",
+            "a parent segment stays below sources/"
+        );
+        assert_eq!(read("sources/src/Util.ts"), b"first\n");
+        assert_eq!(
+            read("sources/src/Util_2.ts"),
+            b"second\n",
+            "the same path with different bytes keeps both"
+        );
+        assert_eq!(
+            read("sources/src/util_3.ts"),
+            b"lowercase\n",
+            "a case-insensitive collision gets a suffix"
+        );
+
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&read("manifest.json")).expect("parse manifest");
+        assert_eq!(manifest["source_file_count"], 5);
+        let sources = manifest["sources"].as_array().expect("sources array");
+        assert_eq!(sources.len(), 6, "every occurrence is recorded");
+        let shared = sources
+            .iter()
+            .filter(|source| source["path"] == "../node_modules/pkg/x.js")
+            .collect::<Vec<_>>();
+        assert_eq!(shared.len(), 2);
+        assert_eq!(
+            (shared[0]["record"].clone(), shared[1]["record"].clone()),
+            (serde_json::json!(0), serde_json::json!(1))
+        );
+        assert!(
+            shared
+                .iter()
+                .all(|source| source["output_path"] == "sources/%2E%2E/node_modules/pkg/x.js"),
+            "identical bytes share one file: {shared:?}"
+        );
+        for source in sources {
+            let range = source["executable_range"].as_array().unwrap();
+            let (start, end) = (
+                range[0].as_u64().unwrap() as usize,
+                range[1].as_u64().unwrap() as usize,
+            );
+            assert_eq!(source["compressed_bytes"], end - start);
+            assert_eq!(&executable[start..start + 4], b"\x28\xb5\x2f\xfd");
+            assert_eq!(
+                source["output_bytes"],
+                read(source["output_path"].as_str().unwrap()).len()
+            );
+        }
+
+        fs::remove_dir_all(&dir).expect("remove temp root");
+    }
+
+    fn read_manifest(output: &Path) -> serde_json::Value {
+        serde_json::from_slice(&fs::read(output.join("manifest.json")).expect("read manifest"))
+            .expect("parse manifest")
+    }
+
+    #[test]
+    fn skips_original_sources_over_the_amplification_budget() {
+        let dir = temp_test_dir("source-bomb");
+        let executable = sources_fixture(&[(
+            b"/$bunfs/root/entry.js",
+            vec![
+                ("src/small.ts", raw_zstd_frame(b"small")),
+                ("src/bomb.ts", rle_zstd_frame(b'x', 100_000)),
+            ],
+        )]);
+        let output = extract_to(&dir, &executable).expect("files still extract");
+
+        assert!(output.join("files").join("entry.js").is_file());
+        assert!(
+            !output.join("sources").exists(),
+            "a record's sources are written all or none"
+        );
+        let manifest = read_manifest(&output);
+        assert_eq!(manifest["source_file_count"], 0);
+        let skipped = manifest["skipped_sources"].as_array().unwrap();
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0]["record"], 0);
+        let message = skipped[0]["message"].as_str().unwrap();
+        assert!(
+            message.contains("extraction budget") && message.contains("decodes past"),
+            "unexpected reason: {message}"
+        );
+
+        fs::remove_dir_all(&dir).expect("remove temp root");
+    }
+
+    #[test]
+    fn skips_an_unreadable_source_map_and_keeps_other_records() {
+        let dir = temp_test_dir("unreadable-source-map");
+        let mut executable = sources_fixture(&[
+            (
+                b"/$bunfs/root/entry.js",
+                vec![("src/a.ts", raw_zstd_frame(b"a"))],
+            ),
+            (
+                b"/$bunfs/root/chunk.js",
+                vec![("src/b.ts", raw_zstd_frame(b"b"))],
+            ),
+        ]);
+        // Point the first record's first source path before the string payload.
+        let map_start = b"\x7fELFsynthetic".len();
+        executable[map_start + 8..map_start + 12].copy_from_slice(&0u32.to_le_bytes());
+
+        let output = extract_to(&dir, &executable).expect("files still extract");
+
+        assert!(output.join("files").join("entry.js").is_file());
+        assert!(output.join("files").join("chunk.js").is_file());
+        assert!(!output.join("sources").join("src").join("a.ts").exists());
+        assert_eq!(
+            fs::read(output.join("sources").join("src").join("b.ts")).expect("read b.ts"),
+            b"b"
+        );
+        let manifest = read_manifest(&output);
+        assert_eq!(manifest["source_file_count"], 1);
+        let skipped = manifest["skipped_sources"].as_array().unwrap();
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0]["record"], 0);
+        let message = skipped[0]["message"].as_str().unwrap();
+        assert!(
+            message.contains("failed to read Bun embedded source map")
+                && message.contains("not at the string payload start"),
+            "unexpected reason: {message}"
+        );
+
+        fs::remove_dir_all(&dir).expect("remove temp root");
+    }
+
+    #[test]
+    fn recovers_original_sources_from_real_bun_source_maps() {
+        type Originals<'a> = &'a [(&'a str, &'a [u8])];
+        let fixtures: [(&str, &[u8], Originals<'_>); 2] = [
+            (
+                "latin1",
+                include_bytes!("../tests/fixtures/bun-embedded-sources/latin1-graph.bin"),
+                &[
+                    (
+                        "src/index.ts",
+                        include_bytes!(
+                            "../tests/fixtures/bun-embedded-sources/latin1/src/index.ts"
+                        ),
+                    ),
+                    (
+                        "src/util/math.ts",
+                        include_bytes!(
+                            "../tests/fixtures/bun-embedded-sources/latin1/src/util/math.ts"
+                        ),
+                    ),
+                ],
+            ),
+            (
+                "utf16",
+                include_bytes!("../tests/fixtures/bun-embedded-sources/utf16-graph.bin"),
+                &[
+                    (
+                        "src/index.ts",
+                        include_bytes!("../tests/fixtures/bun-embedded-sources/utf16/src/index.ts"),
+                    ),
+                    (
+                        "src/util/math.ts",
+                        include_bytes!(
+                            "../tests/fixtures/bun-embedded-sources/utf16/src/util/math.ts"
+                        ),
+                    ),
+                ],
+            ),
+        ];
+
+        for (name, graph, originals) in fixtures {
+            let dir = temp_test_dir(&format!("real-bun-sources-{name}"));
+            let output = extract_to(&dir, graph)
+                .unwrap_or_else(|error| panic!("extract {name} graph: {error:#}"));
+
+            for (path, bytes) in originals {
+                assert_eq!(
+                    fs::read(output.join("sources").join(path)).expect("read source"),
+                    *bytes,
+                    "{name}: {path}"
+                );
+            }
+            let manifest: serde_json::Value = serde_json::from_slice(
+                &fs::read(output.join("manifest.json")).expect("read manifest"),
+            )
+            .expect("parse manifest");
+            assert_eq!(manifest["source_file_count"], originals.len(), "{name}");
+
+            fs::remove_dir_all(&dir).expect("remove temp root");
+        }
     }
 
     #[test]

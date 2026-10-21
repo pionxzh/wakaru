@@ -13,6 +13,7 @@ wakaru = { version = "=1.14.0", path = "crates/wakaru" }
 wakaru-core = { version = "=1.14.0", path = "crates/core" }
 wakaru-formatter = { path = "crates/formatter" }
 anyhow = "1.0"
+ruzstd = "0.9.1"
 sourcemap = "9"
 swc_core = { version = "=82.0.0", features = [
   "common",

@@ -223,7 +223,8 @@ pub struct BunEmbeddedFile<'a> {
     /// [`file_bytes`](Self::file_bytes) returns the file's own bytes.
     pub contents: &'a [u8],
     /// Bun's internal serialized source-map representation, when present.
-    /// This is not a v3 JSON source map.
+    /// This is not a v3 JSON source map; [`original_sources`](Self::original_sources)
+    /// reads the original files it carries.
     pub source_map: &'a [u8],
     pub source_map_range: Option<Range<usize>>,
     /// Opaque JavaScriptCore bytecode region, including Bun's serialized
@@ -274,6 +275,22 @@ impl<'a> BunEmbeddedFile<'a> {
         }
     }
 
+    /// The original source files carried in this record's embedded source
+    /// map, in the map's `sources` order.
+    ///
+    /// Bun embeds a map when the build passes `--sourcemap`; without one the
+    /// list is empty. [`extract_standalone`] does not read the map, so a
+    /// graph whose map this version cannot read still extracts and the error
+    /// comes from this call only. Every pointer is checked against the map's own bounds, and each
+    /// [`BunOriginalSource`] borrows the executable. Use
+    /// [`BunOriginalSource::decompress`] to read a file's contents.
+    pub fn original_sources(&self) -> Result<Vec<BunOriginalSource<'a>>, BunStandaloneError> {
+        match &self.source_map_range {
+            Some(range) => parse_original_sources(self.index, self.source_map, range.start),
+            None => Ok(Vec::new()),
+        }
+    }
+
     /// The file's contents as text.
     ///
     /// [`BunEncoding::Binary`] and [`BunEncoding::Latin1`] contents must be
@@ -304,6 +321,221 @@ impl<'a> BunEmbeddedFile<'a> {
             }),
         }
     }
+}
+
+/// One original source file carried in a record's embedded Bun source map.
+///
+/// Bun copies each `sources` path and `sourcesContent` text of the bundler's
+/// JSON source map into its serialized map, compressing each text as one zstd
+/// frame. The path is as the bundler wrote it, usually relative to the
+/// build's working directory, and may contain `..` segments.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct BunOriginalSource<'a> {
+    /// Index of the [`BunEmbeddedFile`] whose source map carries this file.
+    pub record: u32,
+    /// Position of this file in the source map's `sources` list.
+    pub index: u32,
+    pub path: &'a str,
+    /// Absolute byte range of `path` in the executable.
+    pub path_range: Range<usize>,
+    /// The zstd frame holding the file's contents.
+    pub compressed: &'a [u8],
+    /// Absolute byte range of `compressed` in the executable.
+    pub compressed_range: Range<usize>,
+}
+
+impl BunOriginalSource<'_> {
+    /// Decompresses the file's contents, as the bundler read them.
+    ///
+    /// `limit` caps the decompressed size: a frame that declares a larger
+    /// content size fails before decoding, and one that decodes past `limit`
+    /// fails within one decoding step (64 KiB plus at most one block) of
+    /// passing it. The input must be exactly one zstd frame; a
+    /// declared content size and a frame checksum, when present, must match
+    /// the decoded bytes. Returns an error instead of a truncated file.
+    pub fn decompress(&self, limit: usize) -> Result<Vec<u8>, BunStandaloneError> {
+        use ruzstd::decoding::{BlockDecodingStrategy, FrameDecoder};
+
+        let error = |message: String| {
+            BunStandaloneError::new(format!(
+                "Bun module {} source {} ({}): {message}",
+                self.record, self.index, self.path
+            ))
+        };
+        // The frame header descriptor follows the four-byte magic. It
+        // declares the content size when its size flag is set or when the
+        // frame is a single segment.
+        let declares_size = self
+            .compressed
+            .get(4)
+            .is_some_and(|descriptor| descriptor >> 6 != 0 || descriptor & 0x20 != 0);
+
+        let mut input = self.compressed;
+        let mut decoder = FrameDecoder::new();
+        decoder
+            .init(&mut input)
+            .map_err(|source| error(format!("invalid zstd frame header: {source}")))?;
+        let declared = declares_size.then(|| decoder.content_size());
+        if let Some(size) = declared {
+            if size > limit as u64 {
+                return Err(error(format!(
+                    "zstd frame declares {size} bytes, over the {limit}-byte budget"
+                )));
+            }
+        }
+
+        let mut output = Vec::with_capacity(declared.map_or(0, |size| size as usize));
+        loop {
+            decoder
+                .decode_blocks(&mut input, BlockDecodingStrategy::UptoBytes(64 * 1024))
+                .map_err(|source| error(format!("invalid zstd frame: {source}")))?;
+            if let Some(bytes) = decoder.collect() {
+                output.extend_from_slice(&bytes);
+            }
+            if output.len() > limit {
+                return Err(error(format!(
+                    "zstd frame decodes past the {limit}-byte budget"
+                )));
+            }
+            if decoder.is_finished() {
+                break;
+            }
+        }
+        if let Some(bytes) = decoder.collect() {
+            output.extend_from_slice(&bytes);
+        }
+        if output.len() > limit {
+            return Err(error(format!(
+                "zstd frame decodes past the {limit}-byte budget"
+            )));
+        }
+
+        if !input.is_empty() {
+            return Err(error(format!(
+                "{} bytes follow the zstd frame",
+                input.len()
+            )));
+        }
+        if let Some(size) = declared {
+            if output.len() as u64 != size {
+                return Err(error(format!(
+                    "zstd frame declares {size} bytes but decodes to {}",
+                    output.len()
+                )));
+            }
+        }
+        if let Some(expected) = decoder.get_checksum_from_data() {
+            if decoder.get_calculated_checksum() != Some(expected) {
+                return Err(error("zstd frame checksum does not match".to_string()));
+            }
+        }
+        Ok(output)
+    }
+}
+
+/// Size of `SerializedSourceMapHeader`: `source_files_count` and
+/// `map_bytes_length`, both `u32`.
+const SOURCE_MAP_HEADER_SIZE: usize = 8;
+const SOURCE_MAP_POINTER_SIZE: usize = 8;
+
+/// Reads the source paths and compressed contents of Bun's
+/// `SerializedSourceMap`, whose layout is stable since at least Bun 1.2:
+///
+/// ```text
+/// u32 source_files_count, u32 map_bytes_length
+/// source_files_count × StringPointer   source paths
+/// source_files_count × StringPointer   zstd-compressed source contents
+/// map_bytes_length bytes               mappings (opaque here)
+/// string payload                       paths, then compressed contents
+/// ```
+///
+/// Every pointer is relative to the start of the blob. Bun's writer places
+/// the string payload right after the mappings and the first path at its
+/// start; both are required here, and every pointer must stay inside the
+/// payload. The mapping bytes changed representation across Bun versions and
+/// are not read.
+fn parse_original_sources(
+    record: u32,
+    blob: &[u8],
+    blob_start: usize,
+) -> Result<Vec<BunOriginalSource<'_>>, BunStandaloneError> {
+    let error = |message: String| {
+        BunStandaloneError::new(format!("Bun module {record} source map {message}"))
+    };
+    if blob.len() < SOURCE_MAP_HEADER_SIZE {
+        return Err(error(format!("header is truncated ({} bytes)", blob.len())));
+    }
+    let count = read_u32(blob, 0)? as usize;
+    let map_bytes_length = read_u32(blob, 4)? as usize;
+    let table_end = count
+        .checked_mul(2 * SOURCE_MAP_POINTER_SIZE)
+        .and_then(|size| size.checked_add(SOURCE_MAP_HEADER_SIZE))
+        .filter(|end| *end <= blob.len())
+        .ok_or_else(|| {
+            error(format!(
+                "declares {count} sources, more than its {}-byte blob can index",
+                blob.len()
+            ))
+        })?;
+    let payload_start = table_end
+        .checked_add(map_bytes_length)
+        .filter(|end| *end <= blob.len())
+        .ok_or_else(|| {
+            error(format!(
+                "mapping length {map_bytes_length} runs past its {}-byte blob",
+                blob.len()
+            ))
+        })?;
+    if count == 0 {
+        return Ok(Vec::new());
+    }
+
+    let pointer = |slot: usize| {
+        read_pointer(
+            blob,
+            SOURCE_MAP_HEADER_SIZE + slot * SOURCE_MAP_POINTER_SIZE,
+        )
+    };
+    let first_path = pointer(0)?;
+    if first_path.offset as usize != payload_start {
+        return Err(error(format!(
+            "first source path starts at {}, not at the string payload start {payload_start}",
+            first_path.offset
+        )));
+    }
+    let payload_slice = |pointer: StringPointer, what: &str, index: usize| {
+        let start = pointer.offset as usize;
+        start
+            .checked_add(pointer.length as usize)
+            .filter(|end| start >= payload_start && *end <= blob.len())
+            .map(|end| (&blob[start..end], blob_start + start..blob_start + end))
+            .ok_or_else(|| {
+                error(format!(
+                    "source {index} {what} range {start}+{} lies outside the string payload {payload_start}..{}",
+                    pointer.length,
+                    blob.len()
+                ))
+            })
+    };
+
+    let mut sources = Vec::with_capacity(count);
+    for index in 0..count {
+        let (path, path_range) = payload_slice(pointer(index)?, "path", index)?;
+        let path = std::str::from_utf8(path)
+            .map_err(|_| error(format!("source {index} path is not UTF-8")))?;
+        let (compressed, compressed_range) =
+            payload_slice(pointer(count + index)?, "contents", index)?;
+        sources.push(BunOriginalSource {
+            record,
+            index: index as u32,
+            path,
+            path_range,
+            compressed,
+            compressed_range,
+        });
+    }
+    Ok(sources)
 }
 
 /// Transcodes UTF-16LE code units to WTF-8: UTF-8, plus the three-byte form
@@ -1084,6 +1316,210 @@ mod tests {
             error.to_string().contains("not terminated by 2 NUL bytes"),
             "unexpected error: {error}"
         );
+    }
+
+    /// A zstd frame holding `content` in one raw block. `declare` writes a
+    /// single-segment header with a one-byte content size; otherwise the
+    /// header declares no size, only a 1 KiB window.
+    fn raw_zstd_frame(content: &[u8], declare: Option<u8>) -> Vec<u8> {
+        let mut frame = vec![0x28, 0xb5, 0x2f, 0xfd];
+        match declare {
+            Some(size) => frame.extend_from_slice(&[0x20, size]),
+            None => frame.extend_from_slice(&[0x00, 0x00]),
+        }
+        let block_header = ((content.len() as u32) << 3) | 1;
+        frame.extend_from_slice(&block_header.to_le_bytes()[..3]);
+        frame.extend_from_slice(content);
+        frame
+    }
+
+    /// Bun's `SerializedSourceMap` layout: header, path pointers, content
+    /// pointers, the opaque mapping bytes, then paths and compressed contents.
+    fn serialized_source_map(sources: &[(&[u8], Vec<u8>)], mapping: &[u8]) -> Vec<u8> {
+        let payload_start = 8 + 16 * sources.len() + mapping.len();
+        let mut header = Vec::new();
+        header.extend_from_slice(&(sources.len() as u32).to_le_bytes());
+        header.extend_from_slice(&(mapping.len() as u32).to_le_bytes());
+        let mut payload = Vec::new();
+        let mut pointers = Vec::new();
+        for bytes in sources
+            .iter()
+            .map(|(path, _)| *path)
+            .chain(sources.iter().map(|(_, compressed)| compressed.as_slice()))
+        {
+            pointers.push(((payload_start + payload.len()) as u32, bytes.len() as u32));
+            payload.extend_from_slice(bytes);
+        }
+        for (offset, length) in pointers {
+            header.extend_from_slice(&offset.to_le_bytes());
+            header.extend_from_slice(&length.to_le_bytes());
+        }
+        header.extend_from_slice(mapping);
+        header.extend_from_slice(&payload);
+        header
+    }
+
+    /// A graph whose JavaScript entry carries `blob` as its source map.
+    fn source_map_fixture(blob: &[u8]) -> Vec<u8> {
+        let mut data = b"synthetic prefix".to_vec();
+        let source_map = append(&mut data, blob, false);
+        let name = append(&mut data, b"/$bunfs/root/entry.js", true);
+        let contents = append(&mut data, b"console.log(1);", true);
+        single_record_graph(data, name, contents, source_map, [1, 1, 1, 0])
+    }
+
+    fn original_sources_error(blob: &[u8]) -> String {
+        let executable = source_map_fixture(blob);
+        let standalone = extract_standalone(&executable)
+            .expect("the graph itself stays valid")
+            .expect("graph should be detected");
+        standalone
+            .entry_point()
+            .original_sources()
+            .expect_err("source map should be rejected")
+            .to_string()
+    }
+
+    #[test]
+    fn reads_original_sources_from_serialized_source_map() {
+        let blob = serialized_source_map(
+            &[
+                (b"src/index.ts", raw_zstd_frame(b"export {};\n", Some(11))),
+                (b"../lib/a.ts", raw_zstd_frame(b"// a\n", None)),
+            ],
+            b"opaque mapping bytes",
+        );
+        let executable = source_map_fixture(&blob);
+        let standalone = extract_standalone(&executable)
+            .expect("fixture should parse")
+            .expect("fixture should be detected");
+
+        let sources = standalone
+            .entry_point()
+            .original_sources()
+            .expect("valid source map");
+        assert_eq!(sources.len(), 2);
+        assert_eq!(sources[0].path, "src/index.ts");
+        assert_eq!(sources[1].path, "../lib/a.ts");
+        assert_eq!((sources[1].record, sources[1].index), (0, 1));
+        for source in &sources {
+            assert_eq!(
+                &executable[source.path_range.clone()],
+                source.path.as_bytes()
+            );
+            assert_eq!(
+                &executable[source.compressed_range.clone()],
+                source.compressed
+            );
+        }
+        assert_eq!(sources[0].decompress(64).unwrap(), b"export {};\n");
+        assert_eq!(sources[1].decompress(64).unwrap(), b"// a\n");
+    }
+
+    #[test]
+    fn reads_no_original_sources_without_a_map_or_with_an_empty_one() {
+        let executable = fixture();
+        let standalone = extract_standalone(&executable).unwrap().unwrap();
+        assert!(standalone.files[1].original_sources().unwrap().is_empty());
+
+        let blob = serialized_source_map(&[], b"mapping");
+        let executable = source_map_fixture(&blob);
+        let standalone = extract_standalone(&executable).unwrap().unwrap();
+        assert!(standalone
+            .entry_point()
+            .original_sources()
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn rejects_malformed_source_map_headers() {
+        let valid =
+            serialized_source_map(&[(b"src/a.ts", raw_zstd_frame(b"a", Some(1)))], b"mapping");
+
+        assert!(original_sources_error(&valid[..5]).contains("header is truncated"));
+
+        let mut too_many = valid.clone();
+        too_many[0..4].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(original_sources_error(&too_many).contains("more than its"));
+
+        let mut long_mapping = valid.clone();
+        long_mapping[4..8].copy_from_slice(&(valid.len() as u32).to_le_bytes());
+        assert!(original_sources_error(&long_mapping).contains("runs past"));
+
+        // Bun's writer starts the string payload right after the mapping
+        // bytes, with the first path there.
+        let mut shifted_anchor = valid.clone();
+        shifted_anchor[8..12].copy_from_slice(&(8 + 16 + 7 + 1u32).to_le_bytes());
+        assert!(original_sources_error(&shifted_anchor).contains("not at the string payload start"));
+    }
+
+    #[test]
+    fn rejects_source_map_pointers_outside_the_string_payload() {
+        let valid =
+            serialized_source_map(&[(b"src/a.ts", raw_zstd_frame(b"a", Some(1)))], b"mapping");
+
+        let mut past_end = valid.clone();
+        past_end[20..24].copy_from_slice(&(valid.len() as u32).to_le_bytes());
+        let error = original_sources_error(&past_end);
+        assert!(error.contains("source 0 contents range"), "{error}");
+        assert!(error.contains("lies outside the string payload"), "{error}");
+
+        // Contents pointing back into the mapping bytes.
+        let mut into_mapping = valid.clone();
+        into_mapping[16..20].copy_from_slice(&24u32.to_le_bytes());
+        assert!(original_sources_error(&into_mapping).contains("lies outside the string payload"));
+    }
+
+    #[test]
+    fn rejects_non_utf8_source_paths() {
+        let blob = serialized_source_map(&[(b"src/\xff.ts", raw_zstd_frame(b"a", Some(1)))], b"");
+        assert!(original_sources_error(&blob).contains("source 0 path is not UTF-8"));
+    }
+
+    fn single_source(frame: Vec<u8>) -> Vec<u8> {
+        serialized_source_map(&[(b"src/a.ts", frame)], b"")
+    }
+
+    fn decompress_single(blob: &[u8], limit: usize) -> Result<Vec<u8>, BunStandaloneError> {
+        let executable = source_map_fixture(blob);
+        let standalone = extract_standalone(&executable).unwrap().unwrap();
+        let sources = standalone.entry_point().original_sources().unwrap();
+        sources[0].decompress(limit)
+    }
+
+    #[test]
+    fn decompression_stops_at_the_byte_budget() {
+        let content = vec![b'x'; 200];
+
+        let declared = single_source(raw_zstd_frame(&content, Some(200)));
+        let error = decompress_single(&declared, 199).expect_err("declared size over budget");
+        assert!(error
+            .to_string()
+            .contains("declares 200 bytes, over the 199-byte budget"));
+        assert_eq!(decompress_single(&declared, 200).unwrap(), content);
+
+        let undeclared = single_source(raw_zstd_frame(&content, None));
+        let error = decompress_single(&undeclared, 199).expect_err("decoded size over budget");
+        assert!(error
+            .to_string()
+            .contains("decodes past the 199-byte budget"));
+        assert_eq!(decompress_single(&undeclared, 200).unwrap(), content);
+    }
+
+    #[test]
+    fn decompression_rejects_frames_that_do_not_match_their_slice() {
+        let mut trailing = raw_zstd_frame(b"abc", Some(3));
+        trailing.push(0);
+        let error = decompress_single(&single_source(trailing), 64).expect_err("trailing byte");
+        assert!(error.to_string().contains("1 bytes follow the zstd frame"));
+
+        let wrong_size = raw_zstd_frame(b"abc", Some(4));
+        assert!(decompress_single(&single_source(wrong_size), 64).is_err());
+
+        let error =
+            decompress_single(&single_source(b"not zstd".to_vec()), 64).expect_err("bad magic");
+        assert!(error.to_string().contains("invalid zstd frame header"));
     }
 
     #[test]

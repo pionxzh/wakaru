@@ -34,8 +34,16 @@ later stored as UTF-16 is written back as UTF-8. Nothing is parsed or
 executed. `extracted/manifest.json` records each file's original path,
 loader, and role.
 
+If the app was compiled with `--sourcemap`, Bun embedded the original source
+files too, and `bun extract` writes them below `extracted/sources/` under
+their original paths, such as `sources/src/index.ts`. These are the files
+before bundling, TypeScript types and comments included, so check this
+directory first. A `..` in a path is written as `%2E%2E` so every file stays
+inside the output directory.
+
 Two options:
 
 - `--json` also prints the manifest to stdout
-- `--include-internals` also writes Bun's runtime regions (opaque source
-  map, bytecode, module info). These are runtime data, not project assets.
+- `--include-internals` also writes Bun's runtime regions (the whole opaque
+  source map, bytecode, module info). These are runtime data, not project
+  assets.

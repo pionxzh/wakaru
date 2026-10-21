@@ -106,9 +106,18 @@ writes every validated file record below `raw/files/` and records loader
 metadata and byte ranges in `raw/manifest.json`. Files are stored bytes, except
 records with `"encoding": "utf16le"` (Bun 1.4.1+ non-ASCII text), which are
 written as UTF-8; their `bytes` and `executable_range` describe the stored
-UTF-16, and `output_bytes` the written file. Add `--json` for the same manifest on stdout.
+UTF-16, and `output_bytes` the written file.
+
+If the app was compiled with `--sourcemap`, `raw/sources/` holds the original
+pre-bundle files (for example TypeScript with types and comments), and the
+manifest's `sources` list maps each original `path` to its `output_path`.
+Check it before decompiling: when it is present, read those files instead of
+the bundled JavaScript. A `..` path component is written as `%2E%2E`. A
+record listed in `skipped_sources` had a map Wakaru could not read; its
+sources are missing, so fall back to its decompiled JavaScript. Add `--json` for the same manifest on stdout.
 `--include-internals` also emits opaque Bun source-map, JavaScriptCore bytecode,
 and module-info regions; do not treat `source-map.bunmap` as a v3 JSON map.
+The original sources are written without this flag.
 The extractor supports Bun 1.3.3+.
 
 Module filenames are `module-<id>.js` unless the bundle carries usable naming

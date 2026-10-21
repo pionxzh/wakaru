@@ -116,7 +116,8 @@ wakaru bun extract ./compiled-app -o extracted/ --include-internals
 ```
 
 This is a container operation, separate from `--unpack`. It writes every
-validated Bun file record below `extracted/files/`, including JavaScript, CSS,
+validated Bun file record below `extracted/files/`, and the original source
+files from Bun's embedded source maps below `extracted/sources/`, including JavaScript, CSS,
 file-loader assets, WebAssembly, native add-ons, embedded SQLite databases,
 and records using loader IDs unknown to this Wakaru version. It does not parse,
 format, decompile, or execute their contents. Bun 1.3.3+ is supported.
@@ -126,19 +127,36 @@ byte-for-byte, except when Bun 1.4.1 or later stored non-ASCII JavaScript or a
 `text` import as UTF-16: Wakaru writes that record as its UTF-8 transcode, the
 bytes Bun encoded it from, and labels it `utf16le`.
 
+A build compiled with `--sourcemap` embeds each record's original sources,
+such as `src/index.ts`, with their full text. Wakaru writes each source path
+below `sources/`, with every `..` component encoded as `%2E%2E` so the file
+stays inside the directory: `../node_modules/pkg/x.js` becomes
+`sources/%2E%2E/node_modules/pkg/x.js`. A path that several records carry with
+identical bytes is written once; different bytes under one path get a numeric
+suffix. Bun's mappings are not decoded.
+
 `extracted/manifest.json` records each original Bun path, safe output path,
 loader ID and known name, encoding, module format, server/client side, entry
 status, stored byte length (`bytes`), written byte length (`output_bytes`),
 and the executable byte range of the stored bytes. `--json` also prints that
-manifest to stdout. The manifest's `schema` is 2; schema 1 wrote UTF-16
-records as stored and labeled them `utf8`. Unsafe path components and non-UTF-8 path bytes are
+manifest to stdout. Its `sources` list has one entry per source-map entry:
+the `record` index, the `index` in that map, the original `path`, the
+`output_path` (shared by identical repeats), `output_bytes`,
+`compressed_bytes`, and the `executable_range` of the compressed bytes;
+`source_file_count` counts the distinct files written. A record whose map
+cannot be read, holds a corrupt frame, or would pass the extraction budget
+has none of its sources written; it prints a stderr warning and appears in
+`skipped_sources` with its `record` index and a `message`, and the rest of
+the extraction continues. The manifest's
+`schema` is 2; schema 1 wrote UTF-16 records as stored, labeled them `utf8`,
+and had no `sources`. Unsafe path components and non-UTF-8 path bytes are
 percent-encoded, and case-insensitive filename collisions receive stable
 numeric suffixes. Wakaru never writes outside the selected output directory.
 
 `--include-internals` additionally writes Bun's associated opaque source-map,
 JavaScriptCore bytecode, and module-info regions below `extracted/internals/`.
 These are runtime data, not ordinary project assets. In particular,
-`source-map.bunmap` is not a v3 JSON source map.
+`source-map.bunmap` is Bun's whole serialized map, not a v3 JSON source map.
 
 As with other directory-producing commands, Wakaru requires an empty or new
 output directory unless `--force` is passed.

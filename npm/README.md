@@ -72,7 +72,8 @@ wakaru bun extract ./compiled-app -o extracted/
 
 Writes every embedded file record — JavaScript, assets, and binaries — to
 `extracted/files/`, with a `manifest.json` mapping original Bun paths to safe
-output paths. Extraction only writes the files; it does not decompile or
+output paths. An app compiled with `--sourcemap` also embeds its original
+source files, which are written to `extracted/sources/`. Extraction only writes the files; it does not decompile or
 execute them.
 
 ### Formatter

@@ -14,7 +14,8 @@ wakaru ./compiled-app --unpack --raw -o raw/
 wakaru ./compiled-app --unpack -o readable/
 ```
 
-It can also extract every embedded file as the bundler emitted it:
+It can also extract every embedded file as the bundler emitted it, plus the
+original source files when the build embedded a source map:
 
 ```bash
 wakaru bun extract ./compiled-app -o extracted/
@@ -24,7 +25,7 @@ Bun writes a serialized module graph immediately before the fixed
 `\n---- Bun! ----\n` trailer.
 Wakaru works backward from that trailer, validates the offsets record, the
 36-byte file records used by Bun 1.3.3–1.3.8 or the 52-byte records introduced
-in Bun 1.3.9, and every referenced byte range. This avoids scanning for
+in Bun 1.3.9 (unchanged through Bun 1.4.3), and every referenced byte range. This avoids scanning for
 printable JavaScript and does not require a separate native-section parser for
 each operating system.
 
@@ -99,8 +100,65 @@ clone per binding.
 
 The public `wakaru::bun` API borrows exact content and metadata slices and
 reports their absolute executable byte ranges; only the transcode of a UTF-16
-record is owned. Opaque source-map, bytecode,
-and module-info slices are available separately from JavaScript contents.
+record and a decompressed original source are owned. Opaque source-map,
+bytecode, and module-info slices are available separately from JavaScript
+contents.
+
+## Original sources
+
+When the build passes `--sourcemap` (any value was observed to embed one,
+including `none` on Bun 1.3.13), each JavaScript record carries Bun's
+`SerializedSourceMap`. Bun's writer
+(`serializeJsonSourceMapForStandalone`) refuses a map without
+`sourcesContent`, or whose `sources` and `sourcesContent` lengths differ, so
+every embedded path has its file's text. The layout has been stable since at
+least Bun 1.2; all integers are little-endian and every `StringPointer` is
+relative to the start of the map:
+
+```text
+u32 source_files_count, u32 map_bytes_length    SerializedSourceMapHeader
+source_files_count × StringPointer              sources paths (UTF-8)
+source_files_count × StringPointer              sourcesContent, each one zstd frame
+map_bytes_length bytes                          mappings
+string payload                                  the paths, then the frames
+```
+
+The mapping bytes changed representation (VLQ text in older versions,
+`InternalSourceMap` from 1.3.13), so Wakaru does not read them.
+`BunEmbeddedFile::original_sources` reads the header and pointers on demand;
+`extract_standalone` does not, so a map it cannot read never rejects the
+graph. It requires the pointer table to fit the map, the string payload to
+start at `8 + 16 × count + map_bytes_length` within the map, the first path to
+start there (Bun's writer asserts this), every pointer to stay inside the
+payload, and every path to be UTF-8. A count of zero is no sources.
+
+`BunOriginalSource::decompress(limit)` decodes one frame with the pure-Rust
+`ruzstd` decoder. A frame that declares a content size over `limit` fails
+before decoding; one that decodes past `limit` fails when it does; trailing
+bytes, a declared size that does not match, or a checksum mismatch also fail.
+Decompressed files are the original pre-bundle files, byte-identical (for
+example TypeScript with its types and comments).
+
+`wakaru bun extract` writes them below `sources/` by default; they are source
+files, not runtime internals. A path is the bundler's, usually relative to the
+build's working directory: both `/` and `\` separate components, empty and
+`.` components are dropped, and `..` becomes `%2E%2E`, so
+`../node_modules/pkg/x.js` is written to
+`sources/%2E%2E/node_modules/pkg/x.js`. Other unsafe bytes are
+percent-encoded as in `files/`. A path with no components is written as
+`sources/source-<record>-<index>`. When several records carry the same path
+with identical bytes, it is written once; different bytes under one path get
+the numeric suffix used for case-insensitive collisions. The manifest's
+`sources` list has one entry per occurrence, with the record index, position in
+the map, original path, output path, compressed size, compressed executable
+range, and decompressed size. Unlike the graph, an unreadable map does not
+fail the extraction: the embedded files do not depend on it, and its format is
+not part of what the graph validates. When a record's map cannot be read, one
+of its frames is corrupt, or its sources would pass the remaining extraction
+budget, none of that record's sources are written; the files and other
+records' sources still are. Each skipped record prints a stderr warning and
+gets an entry in the manifest's `skipped_sources` list (`record` and
+`message`).
 
 ## Safety and validation
 
@@ -117,23 +175,28 @@ and module-info slices are available separately from JavaScript contents.
 - Suspicious graphs that request more than four times the executable size in
   output are rejected to limit pointer-alias amplification. A UTF-16 record
   counts at its largest possible transcode, 1.5 times its stored size, before
-  any transcode allocates.
+  any transcode allocates. Original sources are decompressed within what is
+  left of that budget; every decompression counts, including a repeated file
+  that is written once.
 
 ## Opaque internals
 
 `wakaru bun extract --include-internals` writes three optional regions when
-present: Bun's serialized source-map data, JavaScriptCore bytecode (including
+present: Bun's whole serialized source map, JavaScriptCore bytecode (including
 serialized alignment padding), and ESM module information. These outputs live
 under `internals/<record-index>/` and are also described in the manifest.
 
 They are deliberately excluded by default because they are runtime
-implementation data rather than source assets. Bun's serialized source map is
-written as `source-map.bunmap`, not `.map`, because it is not v3 JSON.
+implementation data rather than source assets; the original sources the map
+carries are written below `sources/` without this flag. Bun's serialized
+source map is written as `source-map.bunmap`, not `.map`, because it is not v3
+JSON.
 
 ## Current limits
 
-- Bun's embedded source-map field uses an internal binary representation, not a
-  v3 JSON source map, and is not used for name recovery.
+- Bun's embedded source map is an internal binary representation, not a v3
+  JSON source map. Wakaru recovers its original sources but does not decode
+  its mappings, so they are not used for name recovery or position mapping.
 - The parser supports the known Bun 1.3.3–1.3.8 and Bun 1.3.9-era record
   layouts. It intentionally rejects unknown or ambiguous layouts; another Bun
   layout change requires a new validated parser branch.

@@ -95,7 +95,12 @@ wakaru bun extract ./compiled-app -o extracted/ --include-internals
 `bun extract` is a container operation. It writes every validated file record
 below `extracted/files/` plus a `manifest.json`. It never parses or executes
 the contents. Each file holds the stored bytes, except that non-ASCII
-JavaScript or text that Bun 1.4.1+ stored as UTF-16 is written as UTF-8. `--include-internals` also writes Bun's opaque
+JavaScript or text that Bun 1.4.1+ stored as UTF-16 is written as UTF-8. When
+the app was compiled with `--sourcemap`, the original source files embedded in
+Bun's source maps are written below `extracted/sources/`, with each `..` in a
+path written as `%2E%2E`. If a record's source map cannot be read, its sources
+are skipped with a warning and the rest is still extracted.
+`--include-internals` also writes Bun's opaque
 source-map, bytecode, and module-info regions. Bun 1.3.3+ is supported.
 
 ## Google Tag Manager containers
