@@ -390,6 +390,7 @@ fn run_unpack(cli: Cli) -> Result<()> {
         cli.emit_source_map,
     )?;
     let scan_stats = execution.scan_stats;
+    let bun_embedded_sources = execution.bun_embedded_sources;
     let single_input_name = execution.single_input_name;
     let output = execution.output;
     for intake in &execution.gtm {
@@ -570,6 +571,16 @@ fn run_unpack(cli: Cli) -> Result<()> {
         let provenance_path = out_dir.join("provenance.json");
         fs::write(&provenance_path, json)
             .with_context(|| format!("failed to write {}", provenance_path.display()))?;
+    }
+
+    if !cli.json {
+        for (input, count) in &bun_embedded_sources {
+            eprintln!(
+                "{}: {}",
+                styled.bold("note"),
+                bun_embedded_sources_note(input, *count)
+            );
+        }
     }
 
     if cli.json {
@@ -1434,6 +1445,9 @@ struct PublicUnpackExecution {
     scan_stats: Option<DirectoryScanStats>,
     single_input_name: Option<String>,
     gtm: Vec<GtmIntake>,
+    /// Bun executables among the inputs whose source maps embed original
+    /// sources, with the number of distinct source paths.
+    bun_embedded_sources: Vec<(PathBuf, usize)>,
 }
 
 struct CliDecompileOutput {
@@ -1565,6 +1579,7 @@ fn run_public_unpack(
         .with_output_source_maps(emit_source_map);
     let mut job = wakaru::UnpackJob::new(options)?;
     let mut gtm = Vec::new();
+    let mut bun_embedded_sources = Vec::new();
     let mut stats = DirectoryScanStats::default();
     let mut pushed_inputs = 0usize;
     // inputs the job itself received; a run of containers only has none
@@ -1598,7 +1613,11 @@ fn run_public_unpack(
                         pushed_inputs += 1;
                         continue;
                     }
-                    for source in read_explicit_unpack_sources(path)? {
+                    let input = read_explicit_unpack_sources(path)?;
+                    if input.bun_embedded_sources > 0 {
+                        bun_embedded_sources.push((path.clone(), input.bun_embedded_sources));
+                    }
+                    for source in input.sources {
                         job_inputs += usize::from(push_explicit_source(
                             &mut job,
                             source,
@@ -1671,6 +1690,7 @@ fn run_public_unpack(
         scan_stats: (stats.scanned > 0).then_some(stats),
         single_input_name,
         gtm,
+        bun_embedded_sources,
     })
 }
 
@@ -2084,15 +2104,27 @@ fn gtm_macro_label(mac: &wakaru::gtm::Macro) -> String {
     }
 }
 
-fn read_explicit_unpack_sources(path: &Path) -> Result<Vec<wakaru::Source>> {
+/// The sources an explicit `--unpack` file contributes.
+#[derive(Debug)]
+struct ExplicitUnpackSources {
+    sources: Vec<wakaru::Source>,
+    /// Distinct original source paths a Bun executable carries in its
+    /// embedded source maps; zero for any other input.
+    bun_embedded_sources: usize,
+}
+
+fn read_explicit_unpack_sources(path: &Path) -> Result<ExplicitUnpackSources> {
     let bytes = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
     if !is_executable_container(&bytes) {
         let code = String::from_utf8(bytes)
             .with_context(|| format!("failed to read {} as UTF-8", path.display()))?;
-        return Ok(vec![wakaru::Source::new(
-            path.to_string_lossy().to_string(),
-            code,
-        )]);
+        return Ok(ExplicitUnpackSources {
+            sources: vec![wakaru::Source::new(
+                path.to_string_lossy().to_string(),
+                code,
+            )],
+            bun_embedded_sources: 0,
+        });
     }
 
     let standalone = wakaru::bun::extract_standalone(&bytes)
@@ -2121,7 +2153,17 @@ fn read_explicit_unpack_sources(path: &Path) -> Result<Vec<wakaru::Source>> {
         );
     }
 
-    javascript
+    // Advisory only: `wakaru bun extract` reports a map it cannot read.
+    let bun_embedded_sources = standalone
+        .files
+        .iter()
+        .filter_map(|file| file.original_sources().ok())
+        .flatten()
+        .map(|source| source.path)
+        .collect::<std::collections::HashSet<_>>()
+        .len();
+
+    let sources = javascript
         .into_iter()
         .map(|file| {
             let code = file.text().with_context(|| {
@@ -2137,7 +2179,21 @@ fn read_explicit_unpack_sources(path: &Path) -> Result<Vec<wakaru::Source>> {
                 code,
             ))
         })
-        .collect()
+        .collect::<Result<_>>()?;
+    Ok(ExplicitUnpackSources {
+        sources,
+        bun_embedded_sources,
+    })
+}
+
+/// The stderr note pointing `--unpack` users at `wakaru bun extract` when a
+/// Bun executable embeds its original sources.
+fn bun_embedded_sources_note(input: &Path, count: usize) -> String {
+    format!(
+        "{} embeds {count} original source file(s) in Bun source maps; run `wakaru bun extract {} -o <dir>` to write them",
+        input.display(),
+        input.display()
+    )
 }
 
 fn is_executable_container(bytes: &[u8]) -> bool {

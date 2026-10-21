@@ -97,7 +97,10 @@ wakaru bun extract ./compiled-app -o raw/     # dump every embedded Bun file as 
 Bun single-file executable extraction requires an explicit executable path
 (directory scans and stdin handle JavaScript only). `--unpack` selects the
 JavaScript-like records and sends them through
-bundle splitting. Prefer `--raw` when comparing their shipped representation:
+bundle splitting. If stderr shows `note: <input> embeds N original source
+file(s) in Bun source maps`, run the `wakaru bun extract` command it names
+and read `sources/` before the decompiled output. Prefer `--raw` when
+comparing their shipped representation:
 it still splits statements and declarations so the chunks link as ESM, so use
 `wakaru bun extract` when the exact bytes matter.
 

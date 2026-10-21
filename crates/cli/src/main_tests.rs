@@ -1823,7 +1823,9 @@ fn explicit_bun_standalone_extracts_javascript_entries() {
     let executable = dir.join("app");
     fs::write(&executable, synthetic_bun_standalone()).expect("write Bun executable");
 
-    let sources = read_explicit_unpack_sources(&executable).expect("extract Bun sources");
+    let sources = read_explicit_unpack_sources(&executable)
+        .expect("extract Bun sources")
+        .sources;
 
     assert_eq!(sources.len(), 1, "non-JavaScript assets must be ignored");
     assert_eq!(sources[0].code(), "console.log('entry');");
@@ -1847,7 +1849,9 @@ fn explicit_legacy_bun_standalone_extracts_javascript_entries() {
     ));
     fs::write(&executable, bytes).expect("write legacy Bun executable");
 
-    let sources = read_explicit_unpack_sources(&executable).expect("extract legacy Bun sources");
+    let sources = read_explicit_unpack_sources(&executable)
+        .expect("extract legacy Bun sources")
+        .sources;
 
     assert_eq!(sources.len(), 1, "non-JavaScript assets must be ignored");
     assert!(
@@ -1870,7 +1874,9 @@ fn explicit_bun_standalone_decodes_utf16_javascript_entries() {
     ));
     fs::write(&executable, bytes).expect("write UTF-16 Bun executable");
 
-    let sources = read_explicit_unpack_sources(&executable).expect("extract UTF-16 Bun sources");
+    let sources = read_explicit_unpack_sources(&executable)
+        .expect("extract UTF-16 Bun sources")
+        .sources;
 
     assert_eq!(sources.len(), 1, "the text import is not JavaScript");
     assert!(
@@ -1879,6 +1885,48 @@ fn explicit_bun_standalone_decodes_utf16_javascript_entries() {
             .contains("/*! \u{a9} Example Corp \u{2014} legal notice */"),
         "unexpected embedded JavaScript: {}",
         sources[0].code()
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn unpack_reports_original_sources_embedded_in_bun_source_maps() {
+    let dir = temp_test_dir("bun-embedded-sources-note");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let with_map = dir.join("with-map");
+    let mut bytes = b"\x7fELF".to_vec();
+    bytes.extend_from_slice(include_bytes!(
+        "../tests/fixtures/bun-embedded-sources/latin1-graph.bin"
+    ));
+    fs::write(&with_map, bytes).expect("write Bun executable with a source map");
+    let without_map = dir.join("without-map");
+    fs::write(&without_map, synthetic_bun_standalone()).expect("write Bun executable");
+    let plain = dir.join("plain.js");
+    fs::write(&plain, "console.log(1);").expect("write plain input");
+
+    let unpack = |input: &PathBuf| {
+        run_public_unpack(
+            std::slice::from_ref(input),
+            true,
+            UnpackMode::Auto,
+            DceMode::Off,
+            RewriteLevel::Standard,
+            false,
+            false,
+        )
+        .expect("unpack input")
+    };
+    assert_eq!(
+        unpack(&with_map).bun_embedded_sources,
+        vec![(with_map.clone(), 2)]
+    );
+    assert!(unpack(&without_map).bun_embedded_sources.is_empty());
+    assert!(unpack(&plain).bun_embedded_sources.is_empty());
+
+    assert_eq!(
+        bun_embedded_sources_note(Path::new("dist/app"), 2),
+        "dist/app embeds 2 original source file(s) in Bun source maps; run `wakaru bun extract dist/app -o <dir>` to write them"
     );
 
     fs::remove_dir_all(&dir).expect("remove temp dir");

@@ -46,7 +46,10 @@ validates Bun's embedded module graph, selects its JS/JSX/TS/TSX entries, and
 then sends those entries through the same unpack pipeline as ordinary bundle
 files. It never runs the executable. This `--unpack` path does not write binary
 assets; use `wakaru bun extract` when every embedded file is needed. Bun's
-internal source-map blobs are not accepted as v3 input maps. Executable
+internal source-map blobs are not accepted as v3 input maps. When they embed
+original source files, `--unpack` prints one `note:` line per executable to
+stderr (not with `--json`) naming the `wakaru bun extract` command that writes
+them; the unpacked output is unchanged. Executable
 discovery is limited to explicit file paths: directory scans still consider
 only `.js`, `.mjs`, and `.cjs` candidates, and stdin remains text input. Use
 `--raw` to keep the embedded JavaScript close to its shipped form, and

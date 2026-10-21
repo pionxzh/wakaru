@@ -83,7 +83,9 @@ for an example, or use [source maps](/guides/source-maps) to trace output positi
 
 `--unpack` on a `bun build --compile` binary (PE, Mach-O, ELF) validates
 Bun's embedded module graph and decompiles the JavaScript entries. It never
-executes the binary. To dump every embedded file, assets, WASM, and native
+executes the binary. When the binary embeds its original source files, a
+`note:` line on stderr names the `wakaru bun extract` command that writes
+them. To dump every embedded file, assets, WASM, and native
 add-ons included:
 
 ```bash
