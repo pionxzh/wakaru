@@ -3486,3 +3486,78 @@ fn a_provider_that_only_looks_like_tslib_is_not_trusted() {
         assert!(!reexport.contains("export "), "{reexport}");
     }
 }
+
+/// Shape `wild-observed` (Next.js output): a module compiled by SWC wraps a
+/// require in `_interop_require_wildcard` from the bundled `@swc/helpers`
+/// module, and Next.js appends its self-replacing default tail. `UnEsm`
+/// proves the bundled helper and makes the namespace import in Phase 1b; that
+/// import must not keep the tail, and with it the module, CommonJS.
+#[test]
+fn a_bundled_wildcard_interop_import_beside_a_self_replacing_default_converts() {
+    let source = r#"(() => {
+  var __webpack_modules__ = ({
+    111: function(module, exports) {
+      "use strict";
+      function o(e) {
+        if (e && e.__esModule) return e;
+        if (null === e || "object" != typeof e && "function" != typeof e) return { default: e };
+        var r = {};
+        for (var a in e) "default" !== a && Object.prototype.hasOwnProperty.call(e, a) && (r[a] = e[a]);
+        return r.default = e, r;
+      }
+      Object.defineProperty(exports, "__esModule", { value: true });
+      Object.defineProperty(exports, "_", { enumerable: true, get: function() { return o; } });
+      Object.defineProperty(exports, "_interop_require_wildcard", { enumerable: true, get: function() { return o; } });
+    },
+    222: function(module, exports, __webpack_require__) {
+      module.exports = __webpack_require__(444);
+    },
+    444: function(module, exports) {
+      exports.read = function() { return "read"; };
+    },
+    333: function(module, exports, __webpack_require__) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      Object.defineProperty(exports, "default", { enumerable: true, get: function() { return Widget; } });
+      const _interop_require_wildcard = __webpack_require__(111);
+      const _store = /*#__PURE__*/ _interop_require_wildcard._(__webpack_require__(222));
+      function Widget() { return _store.read(); }
+      if ((typeof exports.default === "function" || (typeof exports.default === "object" && exports.default !== null)) && typeof exports.default.__esModule === "undefined") {
+        Object.defineProperty(exports.default, "__esModule", { value: true });
+        Object.assign(exports.default, exports);
+        module.exports = exports.default;
+      }
+    }
+  });
+  var __webpack_module_cache__ = {};
+  function __webpack_require__(id) {
+    var cached = __webpack_module_cache__[id];
+    if (cached !== undefined) return cached.exports;
+    var module = __webpack_module_cache__[id] = { exports: {} };
+    __webpack_modules__[id](module, module.exports, __webpack_require__);
+    return module.exports;
+  }
+  console.log(__webpack_require__(333)());
+})();
+"#;
+    for emit_source_map in [false, true] {
+        let output = unpack_one(source, emit_source_map);
+        assert_valid_module_graph(&output.modules);
+        let widget = module_named(&output.modules, "module-333.js");
+        assert!(
+            widget.contains("import * as _store from \"./module-222.js\""),
+            "{widget}"
+        );
+        assert!(widget.contains("export { Widget as default }"), "{widget}");
+        // The tail keeps its effect on the default value: the `__esModule`
+        // mark and the copy of the only enumerable export, `default`.
+        assert!(
+            widget.contains("Object.defineProperty(Widget, \"__esModule\"")
+                && widget.contains("Widget.default = Widget"),
+            "{widget}"
+        );
+        assert!(!widget.contains("exports"), "{widget}");
+        assert!(!widget.contains("require("), "{widget}");
+        assert!(!widget.contains("_interop_require_wildcard"), "{widget}");
+    }
+}

@@ -497,6 +497,9 @@ fn has_module_decl(module: &Module) -> bool {
 
 impl UnEsm {
     fn convert(&mut self, module: &mut Module, calls_bundler_helper: bool) {
+        // Read before the pre-passes below turn interop-wrapped requires into
+        // imports.
+        let had_module_decl = has_module_decl(module);
         // UnAssignmentMerging owns safe chain splitting. UnEsm recovers the
         // remaining top-level named-export chains as whole operations. If a
         // chain still remains, keep the CommonJS boundary before any
@@ -592,7 +595,9 @@ impl UnEsm {
         split_compound_exports(module, self.unresolved_mark);
         rewrite_commonjs_export_stars(module, self.unresolved_mark);
         rewrite_webpack_export_getters(module, self.unresolved_mark);
-        rewrite_recovered_default_only_default_compat_block(module, self.unresolved_mark);
+        if !had_module_decl {
+            rewrite_recovered_default_only_default_compat_block(module, self.unresolved_mark);
+        }
         remove_dead_named_only_default_compat_blocks(module, self.unresolved_mark);
         lower_exported_cjs_requires(module, self.unresolved_mark);
         preserve_written_cjs_require_bindings(module, self.unresolved_mark);
@@ -2435,8 +2440,9 @@ fn rewrite_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) {
 /// This is deliberately not inferred from the eventual printed export. The
 /// proof requires top-level generated getters that each return a local
 /// binding under a distinct ordinary name, one final exact postamble, no
-/// pre-existing ESM declarations, and no other unresolved `exports` or
-/// `module` use anywhere in the module. Data properties, re-export getters,
+/// import or export declaration in the module the conversion started from and
+/// no export declaration made since, and no other unresolved `exports` or `module` use
+/// anywhere in the module. Data properties, re-export getters,
 /// aliases, escapes, hidden mutations, and direct eval therefore fail closed.
 fn rewrite_recovered_default_only_default_compat_block(module: &mut Module, unresolved_mark: Mark) {
     let compat_indices: Vec<usize> = module
@@ -2457,12 +2463,16 @@ fn rewrite_recovered_default_only_default_compat_block(module: &mut Module, unre
     }
 
     // Authored ESM mixed with a CommonJS facade needs a different provenance
-    // model. This recovery is only for a fully generated CommonJS surface.
-    if module
-        .body
-        .iter()
-        .any(|item| matches!(item, ModuleItem::ModuleDecl(_)))
-    {
+    // model. This recovery is only for a fully generated CommonJS surface:
+    // the caller runs it only on a module that came to this conversion
+    // without import or export declarations. The imports the pre-passes made
+    // since then (an interop-wrapped require, `__toESM`) come from this
+    // module's own requires and add no export; an export they made
+    // (`export * from`) is part of the surface the copy reads, which the
+    // getters below do not describe.
+    if module.body.iter().any(|item| {
+        matches!(item, ModuleItem::ModuleDecl(decl) if !matches!(decl, ModuleDecl::Import(_)))
+    }) {
         return;
     }
 

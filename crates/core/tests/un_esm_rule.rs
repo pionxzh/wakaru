@@ -2728,6 +2728,58 @@ if ((typeof entry === "function" || typeof entry === "object" && entry !== null)
     );
 }
 
+/// `UnEsm` turns a require wrapped in the wildcard interop helper into a
+/// namespace import before it rewrites the default-only postamble. That
+/// import comes from the module's own CommonJS and adds no export, so the
+/// postamble is still rewritten. Shape `wild-observed`: SWC's wildcard
+/// interop around a require, then Next.js's self-replacing default tail. A
+/// local helper stands in here for the helper module of a bundle.
+#[test]
+fn wildcard_interop_import_does_not_block_default_only_postamble_recovery() {
+    let input = format!(
+        r#"
+Object.defineProperty(exports, "__esModule", {{
+  value: true
+}});
+Object.defineProperty(exports, "default", {{
+  enumerable: true,
+  get: function() {{
+    return entry;
+  }}
+}});
+var _dependency = _interopRequireWildcard(require("./dependency.js"));
+function _interopRequireWildcard(e) {{
+  if (e && e.__esModule) return e;
+  if (null === e || "object" != typeof e && "function" != typeof e) return {{ default: e }};
+  var r = {{}};
+  for (var a in e) "default" !== a && Object.prototype.hasOwnProperty.call(e, a) && (r[a] = e[a]);
+  return r.default = e, r;
+}}
+function entry() {{
+  return _dependency.read();
+}}
+{DEFAULT_COMPAT_POSTAMBLE}
+"#
+    );
+
+    assert_eq_normalized(
+        &apply(&input),
+        r#"
+import * as _dependency from "./dependency.js";
+function entry() {
+    return _dependency.read();
+}
+export { entry as default };
+if ((typeof entry === "function" || typeof entry === "object" && entry !== null) && entry.__esModule === undefined) {
+    Object.defineProperty(entry, "__esModule", {
+        value: true
+    });
+    entry.default = entry;
+}
+"#,
+    );
+}
+
 #[test]
 fn shadowed_exports_and_module_do_not_block_default_only_postamble_recovery() {
     let input = format!(
@@ -3121,6 +3173,20 @@ Object.defineProperty(exports, "default", {{
 }});
 function entry() {{}}
 export const answer = 42;
+{DEFAULT_COMPAT_POSTAMBLE}
+"#
+            ),
+        ),
+        (
+            "authored import beside the generated surface",
+            format!(
+                r#"
+import dependency from "./dependency.js";
+Object.defineProperty(exports, "default", {{
+  enumerable: true,
+  get() {{ return entry; }}
+}});
+function entry() {{ return dependency; }}
 {DEFAULT_COMPAT_POSTAMBLE}
 "#
             ),

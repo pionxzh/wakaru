@@ -424,7 +424,9 @@ the generated CommonJS adapter onto the recovered binding when the complete
 surface is a set of top-level enumerable getters that each return a local
 binding under a distinct name, one of them `default`, the postamble is the
 final statement, and there is no authored ESM or other unresolved
-`exports` / `module` use. Its observable `__esModule` definition and the copy
+`exports` / `module` use. An import `UnEsm` made earlier in the same
+conversion, from a require the module wraps in an interop helper, is not
+authored ESM: it adds no export the copy would read. Its observable `__esModule` definition and the copy
 onto the default value remain: `.default = self` when `default` is the only
 getter, otherwise `Object.assign(self, { ... })` listing every getter's binding
 in definition order. Native ESM replaces only the final `module.exports`
