@@ -135,6 +135,11 @@ pub struct RequireUses {
     /// The value is passed to a function of this module that writes the
     /// parameter it arrives in ([`ArgumentCallee`]).
     pub callee_write: bool,
+    /// A write names `default` or `__esModule`: a member write, a literal
+    /// key of an `Object` or `Reflect` method that writes the value, or such
+    /// a write by a function of this module to its parameter. A computed
+    /// key does not count.
+    pub interop_key_write: bool,
     /// The value is passed to a callee required from another module, in
     /// first-use order.
     pub passed_to_other_module: Vec<ModuleCallee>,
@@ -197,8 +202,11 @@ enum ArgumentCallee {
     /// An interop or re-export helper, a builtin that only reads, or a
     /// same-module function that does not write the parameter.
     Reads,
-    /// A same-module function that writes the parameter.
-    Writes,
+    /// A same-module function that writes the parameter; `interop_key`:
+    /// a write names `default` or `__esModule`.
+    Writes {
+        interop_key: bool,
+    },
     /// A same-module function binding, decided once the module is read.
     Local(BindingId),
     /// A callee required from another module.
@@ -367,8 +375,11 @@ impl RequireEdges {
             for (key, callee, index) in std::mem::take(&mut uses.local_callees) {
                 let entry = uses.uses.entry(key).or_default();
                 match writers.writes(&callee, index) {
-                    Some(true) => entry.callee_write = true,
-                    Some(false) => {}
+                    Some(write) if write.writes => {
+                        entry.callee_write = true;
+                        entry.interop_key_write |= write.interop_key;
+                    }
+                    Some(_) => {}
                     None => entry.passed_to_unknown = true,
                 }
             }
@@ -658,6 +669,9 @@ impl fmt::Display for RequireUses {
         }
         if self.callee_write {
             parts.push("written by a callee".to_string());
+        }
+        if self.interop_key_write && !self.member_writes.iter().any(|name| is_interop_key(name)) {
+            parts.push("writes default or __esModule".to_string());
         }
         if !self.passed_to_other_module.is_empty() {
             let mut sources: Vec<Atom> = Vec::new();
@@ -1155,9 +1169,10 @@ impl UseCollector<'_> {
         };
         match static_member_name(&member.prop) {
             Some(name) => {
-                let writes = &mut self.uses(key).member_writes;
-                if !writes.contains(&name) {
-                    writes.push(name);
+                let uses = self.uses(key);
+                uses.interop_key_write |= is_interop_key(&name);
+                if !uses.member_writes.contains(&name) {
+                    uses.member_writes.push(name);
                 }
             }
             None => self.uses(key).computed_write = true,
@@ -1202,7 +1217,12 @@ impl UseCollector<'_> {
 
 impl UseCollector<'_> {
     /// What `callee` does with the argument at `index`.
-    fn argument_callee(&self, callee: &Expr, index: usize) -> ArgumentCallee {
+    fn argument_callee(
+        &self,
+        callee: &Expr,
+        index: usize,
+        args: &[swc_core::ecma::ast::ExprOrSpread],
+    ) -> ArgumentCallee {
         let callee = match strip_parens(callee) {
             // `(0, f)(x)`
             Expr::Seq(seq) => seq.exprs.last().map_or(callee, |last| strip_parens(last)),
@@ -1239,7 +1259,7 @@ impl UseCollector<'_> {
             if let Expr::Ident(object) = strip_parens(&member.obj) {
                 if object.ctxt.outer() == self.unresolved_mark {
                     let method = static_member_name(&member.prop);
-                    return builtin_argument(&object.sym, method.as_deref(), index);
+                    return builtin_argument(&object.sym, method.as_deref(), index, args);
                 }
             }
         }
@@ -1306,12 +1326,15 @@ impl UseCollector<'_> {
                 arg.visit_with(self);
                 continue;
             };
-            let callee = self.argument_callee(callee, index);
+            let callee = self.argument_callee(callee, index, args);
             let uses = self.uses(key);
             uses.escapes = true;
             match callee {
                 ArgumentCallee::Reads => {}
-                ArgumentCallee::Writes => uses.callee_write = true,
+                ArgumentCallee::Writes { interop_key } => {
+                    uses.callee_write = true;
+                    uses.interop_key_write |= interop_key;
+                }
                 ArgumentCallee::OtherModule(callee) => {
                     if !uses.passed_to_other_module.contains(&callee) {
                         uses.passed_to_other_module.push(callee);
@@ -1328,12 +1351,63 @@ impl UseCollector<'_> {
 }
 
 impl ArgumentCallee {
-    fn from_writes(writes: bool) -> Self {
-        if writes {
-            Self::Writes
+    fn from_writes(writes: ParamWrite) -> Self {
+        if writes.writes {
+            Self::Writes {
+                interop_key: writes.interop_key,
+            }
         } else {
             Self::Reads
         }
+    }
+}
+
+/// Whether a member name is one an interop reads to tell an ES module from
+/// a CommonJS value.
+fn is_interop_key(name: &str) -> bool {
+    name == "default" || name == "__esModule"
+}
+
+/// Whether the call of `Object.<method>` or `Reflect.<method>` whose first
+/// argument is the value writes `default` or `__esModule` by a literal key:
+/// the key argument of `defineProperty`, `set`, and `deleteProperty`, or a
+/// key of an object literal passed to `defineProperties` or `assign`.
+fn writes_interop_key(method: &str, args: &[swc_core::ecma::ast::ExprOrSpread]) -> bool {
+    match method {
+        "defineProperty" | "set" | "deleteProperty" => args.get(1).is_some_and(|arg| {
+            arg.spread.is_none()
+                && matches!(strip_parens(&arg.expr), Expr::Lit(Lit::Str(key))
+                    if key.value.as_str().is_some_and(is_interop_key))
+        }),
+        "defineProperties" | "assign" => args.iter().skip(1).any(|arg| {
+            let Expr::Object(object) = strip_parens(&arg.expr) else {
+                return false;
+            };
+            arg.spread.is_none()
+                && object.props.iter().any(|prop| {
+                    let swc_core::ecma::ast::PropOrSpread::Prop(prop) = prop else {
+                        return false;
+                    };
+                    let name = match prop.as_ref() {
+                        Prop::Shorthand(ident) => Some(ident.sym.clone()),
+                        Prop::KeyValue(kv) => prop_name_atom(&kv.key),
+                        Prop::Getter(getter) => prop_name_atom(&getter.key),
+                        Prop::Setter(setter) => prop_name_atom(&setter.key),
+                        Prop::Method(method) => prop_name_atom(&method.key),
+                        Prop::Assign(_) => None,
+                    };
+                    name.is_some_and(|name| is_interop_key(&name))
+                })
+        }),
+        _ => false,
+    }
+}
+
+fn prop_name_atom(key: &PropName) -> Option<Atom> {
+    match key {
+        PropName::Ident(ident) => Some(ident.sym.clone()),
+        PropName::Str(key) => key.value.as_str().map(Atom::from),
+        _ => None,
     }
 }
 
@@ -1378,7 +1452,12 @@ fn is_interop_helper_name(name: &str) -> bool {
 /// What a method of a free global does with the argument at `index`.
 /// `Object`'s writing methods take their target in the branch for them in
 /// `visit_call_expr`; `require`'s members are the bundler's interop.
-fn builtin_argument(global: &str, method: Option<&str>, index: usize) -> ArgumentCallee {
+fn builtin_argument(
+    global: &str,
+    method: Option<&str>,
+    index: usize,
+    args: &[swc_core::ecma::ast::ExprOrSpread],
+) -> ArgumentCallee {
     match global {
         "require" | "JSON" | "console" | "Array" | "Promise" | "Math" | "String" | "Number"
         | "Symbol" | "Boolean" => ArgumentCallee::Reads,
@@ -1387,8 +1466,12 @@ fn builtin_argument(global: &str, method: Option<&str>, index: usize) -> Argumen
             _ => ArgumentCallee::Reads,
         },
         "Reflect" => match method {
-            Some("set" | "defineProperty" | "deleteProperty" | "setPrototypeOf") if index == 0 => {
-                ArgumentCallee::Writes
+            Some(method @ ("set" | "defineProperty" | "deleteProperty" | "setPrototypeOf"))
+                if index == 0 =>
+            {
+                ArgumentCallee::Writes {
+                    interop_key: writes_interop_key(method, args),
+                }
             }
             _ => ArgumentCallee::Reads,
         },
@@ -1403,10 +1486,18 @@ enum FunctionNode<'a> {
     Arrow(&'a ArrowExpr),
 }
 
-/// Whether the function writes the parameter at `index`; `None` when a
+/// How a function writes one of its parameters.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct ParamWrite {
+    writes: bool,
+    /// A write names `default` or `__esModule`.
+    interop_key: bool,
+}
+
+/// How the function writes the parameter at `index`; `None` when a
 /// parameter is not the only way its body reaches the argument (it reads
 /// `arguments`, or the parameter is a pattern).
-fn local_function_writes(function: FunctionNode<'_>, index: usize) -> Option<bool> {
+fn local_function_writes(function: FunctionNode<'_>, index: usize) -> Option<ParamWrite> {
     let params: Vec<&Pat> = match function {
         FunctionNode::Function(function) => {
             if reads_arguments(function) {
@@ -1418,14 +1509,14 @@ fn local_function_writes(function: FunctionNode<'_>, index: usize) -> Option<boo
     };
     let Some(param) = params.get(index) else {
         // An argument past the parameters is unused.
-        return Some(false);
+        return Some(ParamWrite::default());
     };
     let Pat::Ident(param) = param else {
         return None;
     };
     let mut finder = ParamWrites {
         param: binding_id(&param.id),
-        found: false,
+        found: ParamWrite::default(),
     };
     match function {
         FunctionNode::Function(function) => function.visit_with(&mut finder),
@@ -1434,11 +1525,11 @@ fn local_function_writes(function: FunctionNode<'_>, index: usize) -> Option<boo
     Some(finder.found)
 }
 
-/// Finds a write to a parameter's value anywhere in its function, nested
+/// Finds the writes to a parameter's value anywhere in its function, nested
 /// functions included.
 struct ParamWrites {
     param: BindingId,
-    found: bool,
+    found: ParamWrite,
 }
 
 impl ParamWrites {
@@ -1446,8 +1537,20 @@ impl ParamWrites {
         matches!(strip_parens(expr), Expr::Ident(ident) if binding_id(ident) == self.param)
     }
 
-    fn is_member_of_param(&self, expr: &Expr) -> bool {
-        matches!(strip_parens(expr), Expr::Member(member) if self.is_param(&member.obj))
+    /// Records a write to the member `prop` of the parameter.
+    fn member_written(&mut self, prop: &MemberProp) {
+        self.found.writes = true;
+        self.found.interop_key |=
+            static_member_name(prop).is_some_and(|name| is_interop_key(&name));
+    }
+
+    /// Records a write to a member of the parameter when `expr` is one.
+    fn written_member(&mut self, expr: &Expr) {
+        if let Expr::Member(member) = strip_parens(expr) {
+            if self.is_param(&member.obj) {
+                self.member_written(&member.prop);
+            }
+        }
     }
 }
 
@@ -1455,25 +1558,20 @@ impl Visit for ParamWrites {
     fn visit_assign_expr(&mut self, assign: &AssignExpr) {
         if let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left {
             if self.is_param(&member.obj) {
-                self.found = true;
-                return;
+                self.member_written(&member.prop);
             }
         }
         assign.visit_children_with(self);
     }
 
     fn visit_update_expr(&mut self, update: &UpdateExpr) {
-        if self.is_member_of_param(&update.arg) {
-            self.found = true;
-            return;
-        }
+        self.written_member(&update.arg);
         update.visit_children_with(self);
     }
 
     fn visit_unary_expr(&mut self, unary: &UnaryExpr) {
-        if unary.op == UnaryOp::Delete && self.is_member_of_param(&unary.arg) {
-            self.found = true;
-            return;
+        if unary.op == UnaryOp::Delete {
+            self.written_member(&unary.arg);
         }
         unary.visit_children_with(self);
     }
@@ -1482,17 +1580,18 @@ impl Visit for ParamWrites {
         if let (Callee::Expr(callee), Some(first)) = (&call.callee, call.args.first()) {
             if first.spread.is_none() && self.is_param(&first.expr) {
                 if let Expr::Member(member) = strip_parens(callee) {
+                    let method = member.prop.as_ident().map(|prop| prop.sym.as_ref());
                     let object_api = matches!(strip_parens(&member.obj), Expr::Ident(object)
                         if object.sym == "Object")
                         && matches!(
-                            member.prop.as_ident().map(|prop| prop.sym.as_ref()),
+                            method,
                             Some(
                                 "assign" | "defineProperty" | "defineProperties" | "setPrototypeOf"
                             )
                         );
-                    if object_api {
-                        self.found = true;
-                        return;
+                    if let (true, Some(method)) = (object_api, method) {
+                        self.found.writes = true;
+                        self.found.interop_key |= writes_interop_key(method, &call.args);
                     }
                 }
             }
@@ -1507,9 +1606,9 @@ struct LocalWriters {
     /// `with` or direct `eval` can reach any binding by name.
     dynamic_scope: bool,
     uses: crate::analysis::binding_uses::BindingUseIndex,
-    /// For each callee binding and argument position, whether its function
+    /// For each callee binding and argument position, how its function
     /// writes that parameter (`None`: not only through the parameter).
-    writes: HashMap<(BindingId, usize), Option<bool>>,
+    writes: HashMap<(BindingId, usize), Option<ParamWrite>>,
 }
 
 impl LocalWriters {
@@ -1534,10 +1633,10 @@ impl LocalWriters {
         }
     }
 
-    /// Whether the function bound to `callee` writes its parameter at
-    /// `index`; `None` when the call does not reach that function directly
-    /// or the body reaches the argument another way.
-    fn writes(&self, callee: &BindingId, index: usize) -> Option<bool> {
+    /// How the function bound to `callee` writes its parameter at `index`;
+    /// `None` when the call does not reach that function directly or the
+    /// body reaches the argument another way.
+    fn writes(&self, callee: &BindingId, index: usize) -> Option<ParamWrite> {
         if self.dynamic_scope || !self.uses.has_single_declaration(callee) {
             return None;
         }
@@ -1561,7 +1660,7 @@ impl LocalWriters {
 /// TypeScript's guarded helper ([`this_guard_fallbacks`]).
 struct FunctionFinder<'a> {
     wanted: &'a HashMap<BindingId, Vec<usize>>,
-    writes: HashMap<(BindingId, usize), Option<bool>>,
+    writes: HashMap<(BindingId, usize), Option<ParamWrite>>,
     /// The non-arrow functions and classes around the node being visited;
     /// at zero, `this` is the module's own.
     this_depth: usize,
@@ -1619,13 +1718,15 @@ impl Visit for FunctionFinder<'_> {
     }
 }
 
-/// Whether a callee that runs one of `functions` writes its parameter at
+/// How a callee that runs one of `functions` writes its parameter at
 /// `index`: `None` when one of them reaches the argument another way, and
-/// `true` when one of them writes it.
-fn fallbacks_write(functions: &[FunctionNode<'_>], index: usize) -> Option<bool> {
-    let mut writes = false;
+/// a write when one of them writes it.
+fn fallbacks_write(functions: &[FunctionNode<'_>], index: usize) -> Option<ParamWrite> {
+    let mut writes = ParamWrite::default();
     for function in functions {
-        writes |= local_function_writes(*function, index)?;
+        let write = local_function_writes(*function, index)?;
+        writes.writes |= write.writes;
+        writes.interop_key |= write.interop_key;
     }
     Some(writes)
 }
@@ -1891,7 +1992,12 @@ impl Visit for UseCollector<'_> {
                     .then(|| self.value_of(&arg.expr))
                     .flatten();
                 match (index, value) {
-                    (0, Some(key)) => self.uses(key).object_api_write = true,
+                    (0, Some(key)) => {
+                        let interop_key = writes_interop_key(method, &call.args);
+                        let uses = self.uses(key);
+                        uses.object_api_write = true;
+                        uses.interop_key_write |= interop_key;
+                    }
                     (_, Some(key)) if method == "assign" => self.uses(key).assign_source = true,
                     _ => arg.visit_with(self),
                 }
@@ -2207,6 +2313,51 @@ later(p, "x");
             assert!(uses.callee_write && uses.writes(), "{source}: {uses}");
             assert!(!uses.passed_to_unseen_callee(), "{source}: {uses}");
         }
+    }
+
+    #[test]
+    fn a_write_that_names_an_interop_key_is_marked() {
+        let edges = edges(
+            r#"require("./member.js").__esModule = true;
+var d = require("./deleted.js"); delete d.default;
+Object.defineProperty(require("./defined.js"), "__esModule", { value: true });
+Object.assign(require("./assigned.js"), { "default": x });
+Object.defineProperties(require("./properties.js"), { __esModule: { value: true } });
+Reflect.set(require("./reflected.js"), "default", x);
+function mark(m) { if (y) { m.__esModule = true; } m.f = 1; }
+mark(require("./local.js"));
+var p = require("./plain.js"); p.flag = 1; p[key] = 2; p.count++;
+Object.defineProperty(require("./other-key.js"), "k", { value: 1 });
+Object.assign(require("./spread.js"), source, { f: 1 });
+function patch(m) { m.f = 1; }
+patch(require("./local-plain.js"));"#,
+        );
+        for source in [
+            "./member.js",
+            "./deleted.js",
+            "./defined.js",
+            "./assigned.js",
+            "./properties.js",
+            "./reflected.js",
+            "./local.js",
+        ] {
+            let uses = only(&edges, source).uses.expect("uses");
+            assert!(uses.writes() && uses.interop_key_write, "{source}: {uses}");
+        }
+        for source in [
+            "./plain.js",
+            "./other-key.js",
+            "./spread.js",
+            "./local-plain.js",
+        ] {
+            let uses = only(&edges, source).uses.expect("uses");
+            assert!(uses.writes() && !uses.interop_key_write, "{source}: {uses}");
+        }
+        let local = only(&edges, "./local.js").uses.expect("uses");
+        assert_eq!(
+            local.to_string(),
+            "escapes, written by a callee, writes default or __esModule"
+        );
     }
 
     #[test]
