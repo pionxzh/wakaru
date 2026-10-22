@@ -3659,3 +3659,168 @@ fn a_bundled_wildcard_interop_import_beside_a_self_replacing_default_converts() 
         assert!(!widget.contains("_interop_require_wildcard"), "{widget}");
     }
 }
+
+fn interop_warnings(output: &wakaru_core::driver::test_support::UnpackOutput) -> Vec<String> {
+    output
+        .warnings
+        .iter()
+        .filter(|warning| {
+            matches!(
+                warning.kind,
+                wakaru_core::UnpackWarningKind::MissingImportedName
+                    | wakaru_core::UnpackWarningKind::CommonJsRequireOfEsm
+                    | wakaru_core::UnpackWarningKind::CommonJsExportsEscape
+            )
+        })
+        .map(|warning| format!("{}: {}", warning.filename, warning.message))
+        .collect()
+}
+
+#[test]
+fn a_whole_value_provider_its_consumers_write_becomes_a_default_export() {
+    // Module 100 is a registry object. Module 200 becomes ESM and writes
+    // through its default import; module 300 keeps a require in a function,
+    // so it stays CommonJS and reads the value through `.default`. Both
+    // writes land on the object module 400 reads.
+    let modules = r#"
+    100: function(module) {
+      module.exports = {};
+    },
+    200: function(module, exports, __webpack_require__) {
+      "use strict";
+      var r = __webpack_require__(100);
+      var key = "dynamic";
+      r[key] = true;
+      r.first = 1;
+      exports.done = true;
+    },
+    300: function(module, exports, __webpack_require__) {
+      function later() { return __webpack_require__(200).done; }
+      var r = __webpack_require__(100);
+      r.second = 2;
+      module.exports = later;
+    },
+    400: function(module, exports, __webpack_require__) {
+      "use strict";
+      var r = __webpack_require__(100);
+      var later = __webpack_require__(300);
+      exports.run = function () { return [Object.keys(r).sort().join(), later()]; };
+    }"#;
+    let source = helper_provider_bundle(modules);
+    for emit_source_map in [false, true] {
+        let output = unpack_one(&source, emit_source_map);
+        assert_valid_module_graph(&output.modules);
+        assert!(
+            interop_warnings(&output).is_empty(),
+            "{:#?}",
+            output.warnings
+        );
+        let provider = module_named(&output.modules, "module-100.js");
+        assert!(provider.contains("export default {}"), "{provider}");
+        assert!(!provider.contains("module.exports"), "{provider}");
+        let esm_writer = module_named(&output.modules, "module-200.js");
+        assert!(
+            esm_writer.contains("import r from \"./module-100.js\""),
+            "{esm_writer}"
+        );
+        assert!(esm_writer.contains("r[key] = true"), "{esm_writer}");
+        assert!(esm_writer.contains("r.first = 1"), "{esm_writer}");
+        let cjs_writer = module_named(&output.modules, "module-300.js");
+        assert!(
+            cjs_writer.contains("require(\"./module-100.js\").default"),
+            "{cjs_writer}"
+        );
+        assert!(cjs_writer.contains("r.second = 2"), "{cjs_writer}");
+        let reader = module_named(&output.modules, "module-400.js");
+        assert!(
+            reader.contains("import r from \"./module-100.js\""),
+            "{reader}"
+        );
+    }
+}
+
+#[test]
+fn a_shared_store_its_consumer_extends_becomes_a_default_export() {
+    // core-js 3's `internals/shared-store.js` and `internals/inspect-source.js`
+    // as a minifier joins them (wild-observed, core-js@3.46.0 under webpack 5).
+    let modules = r#"
+    100: function(module, exports, __webpack_require__) {
+      "use strict";
+      var o = __webpack_require__(110), c = "__core-js_shared__", a = module.exports = o[c] || (o[c] = {});
+      (a.versions || (a.versions = [])).push({ version: "3.46.0", mode: "global" });
+    },
+    110: function(module) {
+      module.exports = typeof globalThis == "object" ? globalThis : self;
+    },
+    200: function(module, exports, __webpack_require__) {
+      var n = __webpack_require__(100), i = Function.toString;
+      typeof n.inspectSource != "function" && (n.inspectSource = function (e) { return i.call(e); });
+      module.exports = n.inspectSource;
+    },
+    400: function(module, exports, __webpack_require__) {
+      "use strict";
+      var inspect = __webpack_require__(200);
+      var store = __webpack_require__(100);
+      exports.run = function () { return [inspect(function f() {}), store.inspectSource === inspect]; };
+    }"#;
+    let source = helper_provider_bundle(modules);
+    for emit_source_map in [false, true] {
+        let output = unpack_one(&source, emit_source_map);
+        assert_valid_module_graph(&output.modules);
+        assert!(
+            interop_warnings(&output).is_empty(),
+            "{:#?}",
+            output.warnings
+        );
+        let provider = module_named(&output.modules, "module-100.js");
+        assert!(provider.contains("export default"), "{provider}");
+        assert!(!provider.contains("module.exports"), "{provider}");
+        let writer = module_named(&output.modules, "module-200.js");
+        assert!(writer.contains("from \"./module-100.js\""), "{writer}");
+        assert!(writer.contains(".inspectSource = function"), "{writer}");
+    }
+}
+
+#[test]
+fn a_written_whole_value_provider_unesm_leaves_commonjs_stays_commonjs() {
+    // A require in a `for` head keeps module 100 CommonJS in `UnEsm`; the
+    // rules after it hoist the declaration, and the late ESM recovery would
+    // then convert the module, while its consumers read the facts that say
+    // CommonJS. The write keeps it CommonJS there too.
+    let modules = r#"
+    100: function(module, exports, __webpack_require__) {
+      for (var r = __webpack_require__(110), o = {}, s = 0; s < 3; s++) o[r.name(s)] = s;
+      module.exports = o;
+    },
+    110: function(module, exports) {
+      exports.name = function (s) { return "k" + s; };
+    },
+    200: function(module, exports, __webpack_require__) {
+      function later() { return __webpack_require__(110).name(9); }
+      var i = __webpack_require__(100);
+      i.flag = "set";
+      module.exports = later;
+    },
+    400: function(module, exports, __webpack_require__) {
+      "use strict";
+      var later = __webpack_require__(200);
+      var i = __webpack_require__(100);
+      exports.run = function () { return [i.flag, i.k1, later()]; };
+    }"#;
+    let source = helper_provider_bundle(modules);
+    for emit_source_map in [false, true] {
+        let output = unpack_one(&source, emit_source_map);
+        assert_valid_module_graph(&output.modules);
+        assert!(
+            interop_warnings(&output).is_empty(),
+            "{:#?}",
+            output.warnings
+        );
+        let provider = module_named(&output.modules, "module-100.js");
+        assert!(provider.contains("module.exports = o"), "{provider}");
+        assert!(!provider.contains("export "), "{provider}");
+        let writer = module_named(&output.modules, "module-200.js");
+        assert!(writer.contains("require(\"./module-100.js\");"), "{writer}");
+        assert!(!writer.contains(".default"), "{writer}");
+    }
+}

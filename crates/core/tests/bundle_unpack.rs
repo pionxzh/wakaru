@@ -4571,10 +4571,11 @@ fn es_module_consumer_writing_a_named_only_provider_keeps_it_commonjs() {
     // 1 stays CommonJS, and module 2's default import is its
     // `module.exports`.
     let source = r#"(()=>{var e={1:(e,t,r)=>{t.value=1},2:(e,t,r)=>{var p=r(1);p.value=2;console.log(p.value)}},t={};function r(o){var n=t[o];if(void 0!==n)return n.exports;var s=t[o]={exports:{}};return e[o](s,s.exports,r),s.exports}r(2)})();"#;
-    for source in [
-        source.to_string(),
-        source.replace("t.value=1", "e.exports={value:1}"),
-    ] {
+    // The same write to a provider whose only export is
+    // `module.exports = {…}` lands on that object, which `export default`
+    // still holds.
+    let whole_value = source.replace("t.value=1", "e.exports={value:1}");
+    for (source, kept) in [(source.to_string(), true), (whole_value, false)] {
         let output = unpack(&source, DecompileOptions::default()).expect("bundle should unpack");
         assert!(
             !output
@@ -4585,12 +4586,13 @@ fn es_module_consumer_writing_a_named_only_provider_keeps_it_commonjs() {
             output.warnings
         );
         let provider = unpacked_module(&output, "module-1.js");
-        assert!(!provider.contains("export "), "{provider}");
+        assert_eq!(!provider.contains("export "), kept, "{provider}");
         let consumer = unpacked_module(&output, "module-2.js");
         assert!(
             consumer.contains("import p from \"./module-1.js\""),
             "{consumer}"
         );
+        assert!(consumer.contains("p.value = 2"), "{consumer}");
     }
 }
 

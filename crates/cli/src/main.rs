@@ -982,9 +982,15 @@ fn interop_text(report: &wakaru_core::driver::InteropReport) -> String {
             provider.required_value_import,
         ));
         if let Some(consumer) = &module.written_by {
-            out.push_str(&format!(
-                "  kept CommonJS: {consumer} writes to its exports\n"
-            ));
+            if module.stays_commonjs {
+                out.push_str(&format!(
+                    "  kept CommonJS: {consumer} writes to its exports\n"
+                ));
+            } else {
+                out.push_str(&format!(
+                    "  written by {consumer}: the writes land on its default export\n"
+                ));
+            }
         }
         if !module.helper_exports.is_empty() {
             out.push_str(&format!(

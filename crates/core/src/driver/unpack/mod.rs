@@ -922,6 +922,7 @@ fn normalize_raw_unpacked_module(source: &str, filename: &str) -> Result<String>
                 export_rename: false,
                 arrow_functions: false,
                 interface_plan: None,
+                keep_commonjs: false,
             },
         );
         apply_fixer(&mut module)?;
@@ -952,7 +953,8 @@ fn recover_late_esm_from_factory_iifes(
         .with_mode(mode)
         .with_rewrite_level(level)
         .with_current_filename(current_filename)
-        .with_interface_plan(options.interface_plan);
+        .with_interface_plan(options.interface_plan)
+        .with_keep_commonjs(options.keep_commonjs);
     apply_rules(module, unresolved_mark, pipeline_options);
     // Gated like its registry entry.
     if options.smart_rename && level >= RewriteLevel::Standard {
@@ -973,6 +975,9 @@ struct LateEsmRecoveryOptions<'a> {
     arrow_functions: bool,
     /// The unpack plan from barrier 0, which `UnEsm` reads again here.
     interface_plan: Option<&'a crate::interface_plan::InterfacePlan>,
+    /// `UnEsm` keeps the module CommonJS (a written provider it left
+    /// CommonJS before the fact barrier).
+    keep_commonjs: bool,
 }
 
 impl Default for LateEsmRecoveryOptions<'_> {
@@ -982,6 +987,7 @@ impl Default for LateEsmRecoveryOptions<'_> {
             export_rename: true,
             arrow_functions: true,
             interface_plan: None,
+            keep_commonjs: false,
         }
     }
 }
@@ -990,6 +996,13 @@ impl<'a> LateEsmRecoveryOptions<'a> {
     fn with_interface_plan(self, interface_plan: &'a crate::interface_plan::InterfacePlan) -> Self {
         Self {
             interface_plan: Some(interface_plan),
+            ..self
+        }
+    }
+
+    fn with_keep_commonjs(self, keep_commonjs: bool) -> Self {
+        Self {
+            keep_commonjs,
             ..self
         }
     }

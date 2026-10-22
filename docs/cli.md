@@ -520,7 +520,11 @@ interop that is gone (`UnWebpackInterop` removed `require.n`) or a provider
 without a default export. A provider that a module of the input writes to
 (`p.x = v`, `delete p.x`, `Object.assign(p, …)`, or a function of the same
 module that writes the value passed to it) stays CommonJS, so the write lands
-where it did. A write to a provider that writes named exports only, or that
+where it did. The exception is a provider whose only export is one
+`module.exports = v`, when every write goes to `v` itself, not to `default`
+or `__esModule` and not through an interop helper: it becomes
+`export default v`, and a consumer that stays CommonJS reads
+`require(p).default`, the same `v`. A write to a provider that writes named exports only, or that
 marked itself `__esModule`, is reported here only when unpack could not read
 the call's uses (a call a detector built without a source position): the
 namespace is not extensible, so the write throws in strict code and is lost

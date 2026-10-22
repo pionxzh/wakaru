@@ -51,7 +51,7 @@ use crate::facts::{
     collect_module_facts, collect_replaces_module_exports, collect_require_returns_exports_object,
     is_normalized_commonjs_default, ModuleFactsMap,
 };
-use crate::interface_plan::{InterfacePlan, PlanModule};
+use crate::interface_plan::{exports_only_whole_value, InterfacePlan, PlanModule};
 use crate::kept_require::run_kept_require_default_reads;
 use crate::namespace_decomposition::run_namespace_decomposition_with_tags;
 use crate::provider_helpers::ProviderHelpers;
@@ -206,6 +206,9 @@ struct Phase1aModule {
     exports_object_writable: bool,
     /// The interop helpers the module exports, on the AST `UnEsm` will see.
     helpers: Option<ProviderHelpers>,
+    /// The module's only export is one top-level `module.exports = v`, read
+    /// on the input.
+    exports_whole_value: bool,
     warning: Option<UnpackWarning>,
     input_parse_warnings: Vec<UnpackWarning>,
     suggested_filename: Option<String>,
@@ -644,6 +647,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 Vec::new()
             };
             let marks_es_module = collect_marks_es_module(&module, unresolved_mark);
+            let exports_whole_value = exports_only_whole_value(&module, unresolved_mark);
             let raw = RawCommonJsFacts {
                 commonjs_default_object,
                 commonjs_default_attached_properties,
@@ -680,6 +684,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 require_edges,
                 exports_object_writable,
                 helpers,
+                exports_whole_value,
                 residual_warning,
                 suggested_filename,
             ))
@@ -692,6 +697,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 require_edges,
                 exports_object_writable,
                 helpers,
+                exports_whole_value,
                 warning,
                 suggested_filename,
             )) => Phase1a::Pending(Box::new(Phase1aModule {
@@ -704,6 +710,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 require_edges,
                 exports_object_writable,
                 helpers,
+                exports_whole_value,
                 warning,
                 input_parse_warnings,
                 suggested_filename,
@@ -732,6 +739,7 @@ pub(super) fn unpack_multi_module_with_plan(
             require_edges,
             exports_object_writable: _,
             helpers: _,
+            exports_whole_value: _,
             warning,
             input_parse_warnings,
             suggested_filename,
@@ -748,6 +756,14 @@ pub(super) fn unpack_multi_module_with_plan(
                     Some(plan),
                 )
             };
+            // A written provider may become ESM only in `UnEsm` above, which
+            // read the plan: one it left CommonJS stays so through the late
+            // recovery, here and in Phase 2.
+            let keep_commonjs = plan.is_written(&filename)
+                && !module
+                    .body
+                    .iter()
+                    .any(|item| matches!(item, ModuleItem::ModuleDecl(_)));
             // ESM recovery mutates the AST heavily (UnIife, factory-IIFE
             // rewrites, renames) to expose import/export declarations that
             // `collect_module_facts` reads. Phase 2 resumes from the
@@ -767,7 +783,9 @@ pub(super) fn unpack_multi_module_with_plan(
                         options.level,
                         &filename,
                         PipelineMode::UnpackLatePrediction,
-                        LateEsmRecoveryOptions::default().with_interface_plan(plan),
+                        LateEsmRecoveryOptions::default()
+                            .with_interface_plan(plan)
+                            .with_keep_commonjs(keep_commonjs),
                     );
                 }
                 let mut facts = collect_module_facts(&facts_module);
@@ -796,7 +814,9 @@ pub(super) fn unpack_multi_module_with_plan(
                         options.level,
                         &filename,
                         PipelineMode::UnpackLatePrediction,
-                        LateEsmRecoveryOptions::default().with_interface_plan(plan),
+                        LateEsmRecoveryOptions::default()
+                            .with_interface_plan(plan)
+                            .with_keep_commonjs(keep_commonjs),
                     );
                 }
                 let mut facts = collect_module_facts(&module);
@@ -847,6 +867,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 edges: &pending.require_edges,
                 exports_object_writable: pending.exports_object_writable,
                 helpers: pending.helpers.as_ref(),
+                exports_whole_value: pending.exports_whole_value,
             }),
         }))
     };
@@ -1053,7 +1074,14 @@ pub(super) fn unpack_multi_module_with_plan(
                 options.level,
                 &unpacked.module.filename,
                 PipelineMode::UnpackPhase2,
-                LateEsmRecoveryOptions::default().with_interface_plan(plan_ref),
+                LateEsmRecoveryOptions::default()
+                    .with_interface_plan(plan_ref)
+                    .with_keep_commonjs(
+                        plan_ref.is_written(&unpacked.module.filename)
+                            && facts_ref
+                                .get(&unpacked.module.filename)
+                                .is_some_and(|facts| facts.stays_commonjs),
+                    ),
             );
             module.visit_mut_with(&mut UnOptionalChaining::new(unresolved_mark, options.level));
             module.visit_mut_with(&mut UnConditionalsAssignmentOnly);

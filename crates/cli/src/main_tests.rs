@@ -279,29 +279,45 @@ fn debug_interop_prints_each_edge_and_the_import_made_from_it() {
             no_import_reason: reason,
         };
     let report = wakaru_core::driver::InteropReport {
-        modules: vec![wakaru_core::driver::ModuleInterop {
-            filename: "consumer.js".to_string(),
-            provider: wakaru_core::driver::ProviderReport {
-                value: "ExportsObject".to_string(),
-                has_default: false,
-                has_named_surface: true,
-                marks_es_module: false,
-                required_value_import: "namespace",
+        modules: vec![
+            wakaru_core::driver::ModuleInterop {
+                filename: "consumer.js".to_string(),
+                provider: wakaru_core::driver::ProviderReport {
+                    value: "ExportsObject".to_string(),
+                    has_default: false,
+                    has_named_surface: true,
+                    marks_es_module: false,
+                    required_value_import: "namespace",
+                },
+                stays_commonjs: true,
+                written_by: Some("writer.js".to_string()),
+                helper_exports: vec!["__importDefault (default interop)".to_string()],
+                edges: vec![
+                    edge("./a.js", &["default alpha"], &["named beta as beta"], None),
+                    edge("./b.js", &["default alpha"], &["default alpha"], None),
+                    edge("./c.js", &[], &[], Some("the require stays a call")),
+                ],
             },
-            stays_commonjs: false,
-            written_by: Some("writer.js".to_string()),
-            helper_exports: vec!["__importDefault (default interop)".to_string()],
-            edges: vec![
-                edge("./a.js", &["default alpha"], &["named beta as beta"], None),
-                edge("./b.js", &["default alpha"], &["default alpha"], None),
-                edge("./c.js", &[], &[], Some("the require stays a call")),
-            ],
-        }],
+            wakaru_core::driver::ModuleInterop {
+                filename: "registry.js".to_string(),
+                provider: wakaru_core::driver::ProviderReport {
+                    value: "Default { marked: false }".to_string(),
+                    has_default: true,
+                    has_named_surface: false,
+                    marks_es_module: false,
+                    required_value_import: "default",
+                },
+                stays_commonjs: false,
+                written_by: Some("writer.js".to_string()),
+                helper_exports: Vec::new(),
+                edges: Vec::new(),
+            },
+        ],
     };
 
     assert_eq!(
         interop_text(&report),
-        r#"consumer.js
+        r#"consumer.js (stays CommonJS)
   provider: ExportsObject (default export no, named surface yes, __esModule no; read by namespace import)
   kept CommonJS: writer.js writes to its exports
   helper exports: __importDefault (default interop)
@@ -314,6 +330,9 @@ fn debug_interop_prints_each_edge_and_the_import_made_from_it() {
   require("./c.js"): declarator `alpha`
     uses: reads beta
     no import: the require stays a call
+registry.js
+  provider: Default { marked: false } (default export yes, named surface no, __esModule no; read by default import)
+  written by writer.js: the writes land on its default export
 "#
     );
     assert_eq!(

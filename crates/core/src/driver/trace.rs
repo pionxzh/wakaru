@@ -117,6 +117,7 @@ pub fn trace_rules(
                     call_required_plan: None,
                     import_tags: None,
                     interface_plan: None,
+                    keep_commonjs: false,
                 },
                 &mut observer,
             );

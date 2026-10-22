@@ -1026,7 +1026,10 @@ exports object, and in the recovered module it throws at that first write.
 removes; this assumption covers the receiver of a consumer's own `lib.fn()`.
 
 Inside the input, unpack sees every consumer, and this assumption does not
-cover them: a provider that a consumer writes to stays CommonJS. A write unpack
+cover them: a provider that a consumer writes to stays CommonJS, unless its
+only export is one `module.exports = v` that every write lands on, where
+`export default v` holds the same object
+([fact-system.md](fact-system.md#shape)). A write unpack
 does not follow (inside a function in another module, or one it cannot
 identify) is a known gap (see [unpacking.md](unpacking.md#known-gaps)).
 

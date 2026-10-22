@@ -276,7 +276,31 @@ Interop and re-export helpers, read-only builtins (`Object.keys`,
 `Object.prototype.hasOwnProperty.call` and the other `Object.prototype`
 methods that only read their receiver), and functions that only read the
 parameter do not count. A callee in another module, or one the collector
-cannot identify, does not count either. A top-level
+cannot identify, does not count either.
+
+One written provider may still become ESM: one whose only export, read on
+the input before any rule, is a single top-level `module.exports = v` (no
+other `module.exports` member, no reference to the free `exports`, no
+`__esModule` marker; `exports_only_whole_value`), when every write lands on
+`v` itself. A write lands on `v` when its consumer is CommonJS in the input
+(an ES module or webpack harmony consumer writes through a namespace
+import), reads the value with no interop helper and no `__esModule` test,
+and names neither `default` nor `__esModule` (a member, a literal key of an
+`Object` or `Reflect` method, or such a write by a same-module function;
+`RequireUses::interop_key_write`). `UnEsm` then writes `export default v`.
+A consumer that becomes ESM writes through its default import, which holds
+`v`, and one that stays CommonJS reads `require(p).default` after the
+barrier (`run_kept_require_default_reads`), the same `v`. The decision reads
+only what both sides show before `UnEsm`, never the format a consumer ends
+up in. Such a provider still counts as written, so its helpers are dropped.
+When `UnEsm` leaves it CommonJS for another reason (a kept `require`), the
+fact recovery and the Phase 2 late ESM recovery keep it CommonJS too
+(`keep_commonjs` in `RulePipelineOptions`): rules after `UnEsm` can expose a
+shape that recovery converts, such as a `require` in a `for` head that
+`UnVariableMerging` hoists, and its consumers' `.default` rewrite reads the
+facts, which would then say CommonJS for an ES module.
+
+A top-level
 `var h = require("src").name` that no statement writes makes `h(x)` a call
 of that module's `name` export, read from the same bindings `UnEsm` trusts
 for a bundled helper (`top_level_required_bindings`). After the fact

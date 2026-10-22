@@ -222,7 +222,10 @@ namespace differs from the CommonJS value it replaced, such as a
 `module.exports` value it reads, a default it read through an interop
 that is no longer there, or a write to its exports object, which the
 namespace does not take. A provider that a module of the input writes to
-stays CommonJS, so only a write unpack did not see is reported.
+stays CommonJS, so only a write unpack did not see is reported. A provider
+whose only export is one `module.exports = v` may still become
+`export default v` when every write goes to `v`; a module that stays CommonJS
+then reads `require(p).default`, which is `v`.
 
 Unpack always reports a non-error `commonjs_exports_escape` warning when a
 module passes a provider's exports object to a function in another module or

@@ -747,7 +747,9 @@ layout directly is a proposal:
   default.
 - **A provider whose exports object escapes to a function unpack does not
   follow.** A provider that a module of the input writes to stays CommonJS
-  (the plan built at barrier 0, [fact-system.md](fact-system.md#shape)): a
+  (the plan built at barrier 0, [fact-system.md](fact-system.md#shape);
+  one whose only export is `module.exports = v` becomes `export default v`
+  when every write lands on `v`): a
   member assignment, update, or `delete` on the required value, the target
   of `Object.assign` / `Object.defineProperty`, or a function of the same
   module that writes the parameter the value is passed in. A value passed to
@@ -779,6 +781,21 @@ layout directly is a proposal:
     `importHelpers` output has this call);
   - a helper module the input already wrote as ESM, which barrier 0 does
     not read.
+- **A provider only the Phase 2 late ESM recovery converts.** A
+  provider's facts come from its barrier AST: Phase 1b runs the late ESM
+  recovery on a clone of the AST `UnEsm` left. Phase 2 runs the rules after
+  `UnEsm` first, and they can expose a shape that recovery then converts:
+  `UnVariableMerging` hoists `for (var r = require("./x"), …)` out of the
+  loop head, and a TypeScript enum IIFE becomes plain export assignments
+  (both wild-observed). The module comes out ESM while its facts say
+  CommonJS, so a consumer that stays CommonJS keeps a bare `require` of it,
+  which now returns its namespace, and the converted module's own imports
+  miss the provider repairs before the rule range (a default import of a
+  named-only provider). A written provider is held CommonJS through that
+  recovery ([fact-system.md](fact-system.md#shape)); an unwritten one is
+  not. Holding every module to its facts would give up the ES form those
+  modules reach; predicting the shape would need the rules after `UnEsm` in
+  Phase 1.
 - **A write to a webpack harmony provider.** A provider webpack compiled
   from ESM (`require.r` / `require.d`) becomes ESM even when a consumer
   writes to it. Its exports object is ordinary, with a getter per export:

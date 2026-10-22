@@ -79,6 +79,7 @@ struct RuleRunContext<'a> {
     mode: PipelineMode,
     import_tags: Option<&'a RefCell<ImportTags>>,
     interface_plan: Option<&'a InterfacePlan>,
+    keep_commonjs: bool,
 }
 
 pub(super) struct PreDeadSet {
@@ -358,11 +359,13 @@ fn run_un_esm(module: &mut Module, ctx: RuleRunContext<'_>) {
     // unwraps interop calls.
     let mut relative_namespace = single_file
         .then(|| RelativeNamespaceEvidence::collect(module, ctx.unresolved_mark, &local_helpers));
-    // A provider a consumer in the input writes to stays CommonJS.
-    let keep_commonjs = ctx
-        .interface_plan
-        .zip(ctx.current_filename)
-        .is_some_and(|(plan, filename)| plan.keeps_commonjs(filename));
+    // A provider a consumer in the input writes to stays CommonJS, and so
+    // does a written provider the late recovery must not convert.
+    let keep_commonjs = ctx.keep_commonjs
+        || ctx
+            .interface_plan
+            .zip(ctx.current_filename)
+            .is_some_and(|(plan, filename)| plan.keeps_commonjs(filename));
     let mut rule = UnEsm::new(ctx.unresolved_mark, ctx.rewrite_level)
         .with_current_filename(ctx.current_filename)
         .with_written_exports(keep_commonjs)
@@ -970,6 +973,10 @@ pub struct RulePipelineOptions<'a> {
     pub(crate) import_tags: Option<&'a RefCell<ImportTags>>,
     /// The unpack plan built at barrier 0, which `UnEsm` reads.
     pub(crate) interface_plan: Option<&'a InterfacePlan>,
+    /// `UnEsm` keeps a CommonJS module CommonJS: the late ESM recovery of a
+    /// written provider that `UnEsm` left CommonJS before the fact barrier,
+    /// so that the facts its consumers read match its output.
+    pub(crate) keep_commonjs: bool,
 }
 
 impl Default for RulePipelineOptions<'_> {
@@ -986,6 +993,7 @@ impl Default for RulePipelineOptions<'_> {
             call_required_plan: None,
             import_tags: None,
             interface_plan: None,
+            keep_commonjs: false,
         }
     }
 }
@@ -1056,6 +1064,11 @@ impl<'a> RulePipelineOptions<'a> {
         self.interface_plan = plan;
         self
     }
+
+    pub(crate) fn with_keep_commonjs(mut self, keep_commonjs: bool) -> Self {
+        self.keep_commonjs = keep_commonjs;
+        self
+    }
 }
 
 pub fn apply_rules(module: &mut Module, unresolved_mark: Mark, options: RulePipelineOptions<'_>) {
@@ -1123,6 +1136,7 @@ fn apply_rules_impl(
             .unwrap_or_else(|| PipelineMode::inferred(&options)),
         import_tags: options.import_tags,
         interface_plan: options.interface_plan,
+        keep_commonjs: options.keep_commonjs,
     };
     let mut started = options.start_from.is_none();
 
@@ -1402,6 +1416,7 @@ function read() { return alpha; }
                 mode: PipelineMode::SingleFile,
                 import_tags: None,
                 interface_plan: None,
+                keep_commonjs: false,
             };
 
             reset_collect_transpiler_helpers_call_count();

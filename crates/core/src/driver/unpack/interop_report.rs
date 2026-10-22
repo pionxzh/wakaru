@@ -34,8 +34,9 @@ pub struct ModuleInterop {
     /// The module has no import or export declaration after the passes at
     /// the fact barrier.
     pub stays_commonjs: bool,
-    /// The module stayed CommonJS because a consumer in the input writes to
-    /// its `exports` object: the first such consumer.
+    /// The first consumer in the input that writes to the module's required
+    /// value. The module stays CommonJS for it, unless its only export is
+    /// one `module.exports = v` that every write lands on.
     pub written_by: Option<String>,
     /// The interop helpers the module exports, as barrier 0 proved them:
     /// `name (default interop)` or `name (wildcard interop)`, with

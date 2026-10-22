@@ -311,9 +311,10 @@ For each module, the first line names its `ProviderInterface`: the required
 value (`CommonJs`, `Default`, `DefaultWithNamed`, `Marked`, `Replaced`, or
 `ExportsObject`), whether it has a default export or a named surface, whether
 it marked itself `__esModule`, and which import reads the required value
-(`default`, `namespace`, or `none`). A module that stayed CommonJS because a
-consumer in the input writes to its `exports` object gets a `kept CommonJS`
-line naming the first such consumer. A module that exports a default or
+(`default`, `namespace`, or `none`). A module that a consumer in the input
+writes to gets a line naming the first such consumer: `kept CommonJS` when it
+stayed CommonJS, or `written by` when it became ESM because its only export
+is one `module.exports = v` that every write lands on. A module that exports a default or
 wildcard interop helper, proven before `UnEsm` by the export's storage and
 the helper's body, gets a `helper exports` line (`module.exports` names a
 required value that is the helper itself). Then each `require("src")` call of the
@@ -347,7 +348,8 @@ module-11111.js
 A call whose span is dummy or shared with another call (a detector that
 builds its module AST itself can write such calls) is listed last with no
 uses and no import. `--json` prints `input` and a `modules` array; each module
-has `filename`, `stays_commonjs`, `written_by` (the consumer, or `null`),
+has `filename`, `stays_commonjs`, `written_by` (the first consumer that
+writes to it, or `null`),
 `helper_exports`, `provider`, and `edges`, and each edge has
 `source`, `keyed`, `form`, `top_level`, `interop`, `esmodule_tested`, `uses`,
 `un_esm_imports`, `imports`, and `no_import_reason`.

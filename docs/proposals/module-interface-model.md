@@ -8,7 +8,9 @@ binding-use analyzers did not move. Step 3: barrier 0, the written-provider
 decision, and the bundled-helper provider identity. Step 4 removed no pass:
 each Phase 2 interop pass still serves inputs barrier 0 does not read (see
 step 4 and [Done when](#done-when)). The maintainer decided the direction
-(see [Decisions](#decisions)) and closed the line with that result. This proposal absorbs the consumer-aware provider format proposal
+(see [Decisions](#decisions)) and closed the line with that result. A
+follow-up (2026-10-22) narrowed the written-provider rule of step 3 to let a
+whole-value provider become ESM. This proposal absorbs the consumer-aware provider format proposal
 (deferred 2026-10-15), whose problem statement is
 [Consumer writes to a named-only provider](#consumer-writes-to-a-named-only-provider).
 
@@ -72,7 +74,9 @@ Unpack reports both failure modes today (`missing_imported_name`,
 The fix keeps a written provider CommonJS. Then a default import gets its
 `module.exports`, `require` returns the same object, and every write lands
 where it did before. That decision needs every consumer's writes before the
-provider's `UnEsm` runs.
+provider's `UnEsm` runs. A provider whose only export is
+`module.exports = v` is the exception (step 3): its ES form
+`export default v` still holds the object the writes go to.
 
 #### A provider whose helper lives in another module
 
@@ -381,6 +385,28 @@ providers CommonJS with no write behind any of them.
    `UnEsm` builds its own. A webpack harmony provider stays ESM when written;
    adding a new property to its exports object works in the bundle, so that
    case is a known gap ([unpacking.md](../unpacking.md#known-gaps)).
+
+   Narrowed 2026-10-22 by the maintainer: keeping every written provider
+   CommonJS also took the ES form from providers whose only export is one
+   `module.exports = v`, where it was correct. Such a provider may now
+   become `export default v` when barrier 0 observes that its only export
+   is that statement (no `__esModule` marker, no other `module.exports` or
+   `exports` use) and that every write goes to `v` itself: from a consumer
+   that is CommonJS in the input, without an interop helper or an
+   `__esModule` test, and not to `default` or `__esModule`. A writer that
+   becomes ESM writes through its default import; one that stays CommonJS
+   reads `require(p).default` from `run_kept_require_default_reads`. Both
+   reach `v`. The decision does not predict the writers' final format,
+   which barrier 0 cannot observe. Named-only and marked written providers
+   still stay CommonJS, and a written provider keeps dropping its helpers.
+   A whole-value provider that `UnEsm` leaves CommonJS for another reason
+   stays CommonJS through the fact recovery and the Phase 2 late recovery:
+   rules after `UnEsm` (`UnVariableMerging` hoisting a `require` out of a
+   `for` head, for example) can expose a shape the Phase 2 recovery
+   converts while the facts its consumers read, predicted on the barrier
+   AST, still say CommonJS. That mismatch remains for unwritten providers;
+   a consumer that stays CommonJS then keeps a bare `require` of an ES
+   module.
 
    Second half done: provider identity. Phase 1a reads each module's
    interop helper exports (`ProviderHelpers`) on the AST `UnEsm` will see:
