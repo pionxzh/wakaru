@@ -28,6 +28,11 @@
 //! (`exports.x = require(p).y`). A `.default` read is left to the
 //! default-member classification. A read inside a function, a condition, or
 //! any other expression keeps its `require`, as it would without the plan.
+//!
+//! A consumer's require of a CommonJS passthrough is rewritten to the module
+//! behind it before this pass runs (`InterfacePlan::passthrough_sources`), so
+//! a member read through a passthrough of a whole-value provider is read the
+//! same way.
 
 use swc_core::ecma::ast::ObjectPat;
 

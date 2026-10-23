@@ -1384,8 +1384,9 @@ binding. A consumer that stays CommonJS, such as a passthrough
 `module.exports = require("./link.js")`, then gets the namespace from
 `require`, where it got the default before. Unpack treats the module's
 CommonJS value as its default export (`commonjs_value_is_default`), so a kept
-`require` reads `.default` and re-export consolidation redirects the
-passthrough's importers to the default import.
+`require` reads `.default`. The passthrough's own consumers require the
+tailed module directly (barrier 0 retargets a require of a passthrough), so
+they read it through its default import too.
 
 The tail does that only when the default is a function or an object at run
 time, which is usually not provable: Next's defaults are values such as a
@@ -1404,7 +1405,8 @@ A provably primitive default leaves the module a provider marked
 decomposition then the default import.
 
 Affects: `collect_default_object_tail` in `facts.rs`, read by
-`run_kept_require_default_reads` and `run_reexport_consolidation`.
+`run_kept_require_default_reads` and the provider repairs through
+`ProviderInterface`.
 
 Level: every level. Without it the kept `require` reads the namespace, which
 is already wrong for every tailed module whose default is a function or an

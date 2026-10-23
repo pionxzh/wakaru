@@ -22,7 +22,6 @@ pub(crate) mod provider_helpers;
 pub(crate) mod provider_import_repair;
 pub(crate) mod provider_interface;
 pub(crate) mod provider_namespace_repair;
-pub mod reexport_consolidation;
 pub mod require_edges;
 pub mod rsc;
 pub mod rules;

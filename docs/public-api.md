@@ -110,7 +110,7 @@ The following remain private implementation details:
 - `facts` and cross-module fact maps
 - `unpacker` and detector-specific entry points
 - `UnpackedModule`, `UnpackResult`, and prepared AST types
-- namespace decomposition and re-export consolidation passes
+- namespace decomposition and the other cross-module repair passes
 - TDZ visitors and SWC-facing source-map rename helpers
 - SWC AST, `Mark`, `SyntaxContext`, `SourceMap`, and visitor types
 - output path and filesystem-oriented helpers

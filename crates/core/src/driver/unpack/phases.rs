@@ -57,7 +57,6 @@ use crate::namespace_decomposition::run_namespace_decomposition_with_tags;
 use crate::provider_helpers::ProviderHelpers;
 use crate::provider_import_repair::run_provider_import_repair;
 use crate::provider_namespace_repair::run_provider_namespace_repair;
-use crate::reexport_consolidation::run_reexport_consolidation;
 use crate::require_edges::{
     declarator_require_calls, tag_declarator_imports, ImportTags, RequireEdges,
 };
@@ -1310,7 +1309,6 @@ pub(super) fn unpack_multi_module_with_plan(
                 true,
                 &import_tags,
             );
-            run_reexport_consolidation(&mut module, facts_ref, Some(&unpacked.module.filename));
             run_cross_module_lowered_dynamic_imports(
                 &mut module,
                 facts_ref,

@@ -14,7 +14,13 @@ whole-value provider become ESM. Another (2026-10-24) has `UnEsm` read
 `require(p).name` of a whole-value provider through the default import, from
 the plan, instead of importing `name` for `provider_import_repair` to fix;
 the repair pass stays for the providers the plan does not prove
-whole-value. This proposal absorbs the consumer-aware provider format proposal
+whole-value. A later round of Phase 2 pass cuts (maintainer decision,
+2026-10-24) removed two passes: the CommonJS default-object composition,
+whose shell now stays CommonJS, and `reexport_consolidation`, replaced by
+barrier 0 retargeting a consumer's require of a CommonJS passthrough
+(`module.exports = require(x)`) to the module behind it before `UnEsm`, and
+counting a write through such a module on that module
+([fact-system.md](../fact-system.md)). This proposal absorbs the consumer-aware provider format proposal
 (deferred 2026-10-15), whose problem statement is
 [Consumer writes to a named-only provider](#consumer-writes-to-a-named-only-provider).
 
@@ -424,8 +430,9 @@ providers CommonJS with no write behind any of them.
    object, a callable with an observed property, or a proven empty object;
    a class, a call result, a global-object detection, or an absent
    property of a callable now links too. Marked providers, providers with
-   named exports or `export *`, a passthrough `module.exports = require(x)`,
-   and hand-written imports are unchanged. Whether `provider_import_repair`
+   named exports or `export *`, a passthrough `module.exports = require(x)`
+   (whose consumers barrier 0 later retargeted to the module behind it, see
+   Status), and hand-written imports are unchanged. Whether `provider_import_repair`
    can go is a separate decision: it still serves object providers with
    named writes beside the default, marked providers, and hand-written
    specifiers merged into a synthesized import.

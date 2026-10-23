@@ -254,9 +254,6 @@ pub struct ModuleFacts {
     /// it stayed CommonJS (or is a plain script), so an ES module importer's
     /// default import is its `module.exports`.
     pub stays_commonjs: bool,
-    /// If this module is a passthrough re-export (`export default require("./X.js")`),
-    /// this is the target module specifier. Importers can be redirected to the target.
-    pub passthrough_target: Option<Atom>,
     /// True when the module exports a recognized transpiler helper (Babel/tslib),
     /// including helper-dependency kinds with no rewrite mapping (e.g.
     /// `_defineProperty`). Used by dead-module elimination to treat the module as
@@ -888,7 +885,6 @@ fn collect_declared_facts(module: &Module) -> ModuleFacts {
         }
     }
 
-    facts.passthrough_target = detect_passthrough(module);
     facts
 }
 
@@ -2168,11 +2164,6 @@ impl Visit for CommonJsRuntimeSurfaceCollector {
     }
 }
 
-fn is_use_strict_directive(expr: &Expr) -> bool {
-    matches!(strip_parens(expr), Expr::Lit(Lit::Str(value))
-        if value.value.as_str() == Some("use strict"))
-}
-
 /// Collect static properties attached unconditionally to a stable top-level
 /// callable that becomes the CommonJS default value.
 ///
@@ -2589,66 +2580,6 @@ fn is_regenerator_runtime_binding(module: &Module, local: &Atom) -> bool {
     };
     module.visit_with(&mut finder);
     finder.found
-}
-
-/// Detect `export default require("./X.js")` — a pure passthrough module that
-/// re-exports another module's namespace as its default export. Returns the
-/// target specifier. `module.exports = require("./X.js")` is the same
-/// passthrough when `UnEsm` keeps the module CommonJS.
-///
-/// Only matches modules whose body contains leading `"use strict"` directives
-/// and the single `export default require("./X.js")`. Any other statement
-/// (side effects, imports, additional exports) disqualifies the module.
-fn detect_passthrough(module: &Module) -> Option<Atom> {
-    let mut items = module.body.iter();
-    let export_item = loop {
-        let item = items.next()?;
-        if matches!(item, ModuleItem::Stmt(Stmt::Expr(statement))
-            if is_use_strict_directive(&statement.expr))
-        {
-            continue;
-        }
-        break item;
-    };
-    if items.next().is_some() {
-        return None;
-    }
-
-    let value = match export_item {
-        ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(export)) => export.expr.as_ref(),
-        ModuleItem::Stmt(Stmt::Expr(statement)) => {
-            let Expr::Assign(assign) = statement.expr.as_ref() else {
-                return None;
-            };
-            let AssignTarget::Simple(SimpleAssignTarget::Member(target)) = &assign.left else {
-                return None;
-            };
-            if assign.op != AssignOp::Assign
-                || !matches!(target.obj.as_ref(), Expr::Ident(object) if object.sym == "module")
-                || !is_member_prop_name(&target.prop, "exports")
-            {
-                return None;
-            }
-            assign.right.as_ref()
-        }
-        _ => return None,
-    };
-    let Expr::Call(call) = value else {
-        return None;
-    };
-    let Callee::Expr(callee) = &call.callee else {
-        return None;
-    };
-    let Expr::Ident(ident) = callee.as_ref() else {
-        return None;
-    };
-    if ident.sym != "require" || call.args.len() != 1 || call.args[0].spread.is_some() {
-        return None;
-    }
-    let Expr::Lit(Lit::Str(s)) = call.args[0].expr.as_ref() else {
-        return None;
-    };
-    Some(str_to_atom(&s.value))
 }
 
 fn export_name_to_atom(name: &swc_core::ecma::ast::ModuleExportName) -> Atom {

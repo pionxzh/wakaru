@@ -59,7 +59,6 @@ crates/
       require_edges.rs              — one record per `require()` call (form, interop, uses), keyed by the call's span
       sourcemap_rename.rs           — source-map-driven name recovery
       namespace_decomposition.rs    — cross-module namespace-to-named-import rewrite
-      reexport_consolidation.rs     — cross-module re-export consolidation
       rules/
         mod.rs                      — rule module declarations and public exports
         pipeline.rs                 — rule descriptor registry and pipeline execution

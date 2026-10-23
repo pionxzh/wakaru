@@ -80,7 +80,6 @@ path's rerun through UnEsm read the same plan):
     resume retained barrier AST
     run_provider_import_repair(&mut module, facts)    ← proven CJS property edges
     run_provider_namespace_repair(&mut module, facts) ← proven ESM namespace edges
-    run_reexport_consolidation(&mut module, facts)
     run_cross_module_lowered_dynamic_imports(...)    ← helper export facts
     run_cross_module_webpack_lazy_imports(...)       ← provider facts
     run_cross_module_interop_imports(...)            ← helper export facts
@@ -192,7 +191,7 @@ conservatively retain the graph.
   marks_es_module, require_edges, has_export_all, export_star_sources, reexports, import_call_edges,
   default_object_ident_properties, ts_helper_exports,
   ts_helper_namespace_factory_exports, receiver_observing_exports,
-  stays_commonjs, passthrough_target }`
+  stays_commonjs }`
 - `ModuleFactsMap` — keyed by normalized module specifier
   (handles `./foo`, `foo`, `foo.js` variants)
 
