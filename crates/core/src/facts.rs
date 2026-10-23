@@ -703,6 +703,59 @@ fn object_ident_property_names(object: &ObjectLit) -> Vec<Atom> {
 }
 
 pub fn collect_module_facts(module: &Module) -> ModuleFacts {
+    collect_module_facts_with_helpers(module, HelperFacts::collect(module))
+}
+
+/// The transpiler helpers a module exports.
+pub(crate) struct HelperFacts {
+    helper_exports: Vec<HelperExportFact>,
+    default_object_helper_exports: Vec<HelperExportFact>,
+    ts_helper_exports: Vec<TypeScriptHelperExportFact>,
+    ts_helper_namespace_factory_exports: Vec<Atom>,
+    is_helper_module: bool,
+}
+
+impl HelperFacts {
+    pub(crate) fn collect(module: &Module) -> Self {
+        let exports = collect_declared_facts(module).exports;
+        let (helper_exports, exports_any_helper) = collect_helper_exports(module, &exports);
+        let default_object_helper_exports = collect_default_object_helper_exports(module);
+        let ts_helper_exports = collect_ts_helper_exports(module, &exports);
+        Self {
+            is_helper_module: exports_any_helper
+                || !default_object_helper_exports.is_empty()
+                || !ts_helper_exports.is_empty(),
+            helper_exports,
+            default_object_helper_exports,
+            ts_helper_exports,
+            ts_helper_namespace_factory_exports: collect_ts_helper_namespace_factory_exports(
+                module,
+            ),
+        }
+    }
+}
+
+/// [`collect_module_facts`] with transpiler-helper facts that may come from
+/// another AST of the same module: unpack reads them where the rules that
+/// rewrite helper bodies (`UnConditionals`, `ArrowFunction`, DCE) have not
+/// run. The interface (imports, exports, format) and the receiver-observing
+/// exports are read on `module`.
+pub(crate) fn collect_module_facts_with_helpers(
+    module: &Module,
+    helpers: HelperFacts,
+) -> ModuleFacts {
+    let mut facts = collect_declared_facts(module);
+    facts.helper_exports = helpers.helper_exports;
+    facts.default_object_helper_exports = helpers.default_object_helper_exports;
+    facts.ts_helper_exports = helpers.ts_helper_exports;
+    facts.ts_helper_namespace_factory_exports = helpers.ts_helper_namespace_factory_exports;
+    facts.is_helper_module = helpers.is_helper_module;
+    facts.receiver_observing_exports = collect_receiver_observing_exports(module, &facts);
+    facts
+}
+
+/// The module's format and its import/export declarations.
+fn collect_declared_facts(module: &Module) -> ModuleFacts {
     let mut facts = ModuleFacts {
         stays_commonjs: !module
             .body
@@ -856,15 +909,6 @@ pub fn collect_module_facts(module: &Module) -> ModuleFacts {
     }
 
     facts.passthrough_target = detect_passthrough(module);
-    let (helper_exports, exports_any_helper) = collect_helper_exports(module, &facts.exports);
-    facts.helper_exports = helper_exports;
-    facts.default_object_helper_exports = collect_default_object_helper_exports(module);
-    facts.ts_helper_exports = collect_ts_helper_exports(module, &facts.exports);
-    facts.ts_helper_namespace_factory_exports = collect_ts_helper_namespace_factory_exports(module);
-    facts.receiver_observing_exports = collect_receiver_observing_exports(module, &facts);
-    facts.is_helper_module = exports_any_helper
-        || !facts.default_object_helper_exports.is_empty()
-        || !facts.ts_helper_exports.is_empty();
     facts
 }
 

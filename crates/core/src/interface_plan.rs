@@ -31,8 +31,8 @@
 //! sides show before `UnEsm`, never the format a consumer ends up in. Such a
 //! provider still counts as written: it keeps no proven helpers, and if
 //! `UnEsm` leaves it CommonJS for another reason, the late ESM recovery
-//! keeps it so (`keep_commonjs` in the rule pipeline options), so the facts
-//! its consumers read match its output.
+//! keeps it so (`keep_commonjs` in the rule pipeline options): a module only
+//! that recovery converts misses the provider repairs on its own imports.
 //!
 //! A provider whose required value was never a writable CommonJS `exports`
 //! object is left alone: a webpack harmony module (its exports are getters

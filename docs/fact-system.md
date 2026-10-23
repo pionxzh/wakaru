@@ -60,7 +60,11 @@ Phase 1b (per module, parallel):
     UnEsm, reading the plan; it reads whole-value members through the
       default import and records the import tags
     clone barrier AST → recover webpack factory IIFE ESM shapes
-    collect_module_facts(&facts_clone)                ← pure AST → facts
+    unless UnEsm left an ES module with no free module/exports/require:
+      collect transpiler-helper facts on that clone
+      clone barrier AST → Phase 2's rule range and cleanup, without facts
+        → recover webpack factory IIFE ESM shapes     ← predicts Phase 2's format
+    collect the other facts on the last clone         ← pure AST → facts
     collect_import_call_edges(&barrier_ast)           ← imports still under [[Call]]
     collect constructed-member suffixes(&barrier_ast) ← names only, same AST
     retain original barrier AST + Globals + unresolved mark + import tags
@@ -83,10 +87,41 @@ path's rerun through UnEsm read the same plan):
     run_namespace_decomposition(&mut module, facts)  ← reads cross-module facts
     downgrade_unused_synthetic_imports(&mut module)  ← preserve require effects
     registry rule range resuming after UnEsm, through UnReturn
-      (UnEs6Class / UnPrototypeClass read this module's CallRequiredPlan pins)
-    targeted late cleanup/recovery
+      (UnEs6Class / UnPrototypeClass read this module's CallRequiredPlan pins;
+      the helper rules read provider helper facts)
+    SimplifySequence, UnAssignmentMerging, late ESM recovery
+    targeted late cleanup
     run_kept_require_default_reads(...)              ← a kept require of a provider now ESM
 ```
+
+For a module `UnEsm` left CommonJS, in whole or in part, Phase 1b predicts
+the format and exports Phase 2 reaches by running, on a clone, the steps
+Phase 2 runs before its late ESM recovery that need no other module: the rule range after `UnEsm` through
+`UnReturn` and the syntax cleanup (`run_rules_before_late_recovery`, shared
+by both phases). Those rules can expose a shape the late recovery converts:
+`UnVariableMerging` hoists `for (var r = require("./x"), …)` out of the loop
+head, and `UnEnum` expands a TypeScript enum IIFE whose argument assigns the
+export. Without them, the facts said CommonJS for a module Phase 2 turned
+into ESM, and its consumers kept a bare `require` of it or a default import
+it does not have. The transpiler-helper facts still come from a clone that
+runs only the late recovery: the rule range rewrites helper bodies
+(`UnConditionals`, `ArrowFunction`, DCE) into shapes the helper detectors do
+not match. An ES module that reads no free `module`, `exports`, or
+`require` after `UnEsm` (`is_settled_es_module`), such as a converted
+webpack harmony module, leaves the late recovery nothing to convert, so its
+facts come from that recovery alone and it skips the extra rule range. A
+module that has imports but still assigns `exports` takes the range too:
+after the range, the late recovery can still turn those assignments into
+export declarations (wild-observed), and its consumers' imports follow the
+export names.
+
+The prediction differs from Phase 2 where Phase 2 reads other modules:
+the cross-module passes before the range, and the rules in the range that
+read facts (cross-module helper calls, `CallRequiredPlan` pins). For a
+module still CommonJS at the barrier, the cross-module passes take only
+the requires of webpack lazy loads (`LaterUnpackStages::LazyLoads`, which
+the prediction's `UnEsm` already leaves out); the other passes need an
+import binding or an `export default` such a module lacks.
 
 Each phase, Phase 1a and 1b included, hands modules to the Rayon pool largest-first by source length
 (`driver/unpack/schedule.rs`). Per-module cost is heavily skewed, and Rayon's
@@ -302,10 +337,12 @@ only what both sides show before `UnEsm`, never the format a consumer ends
 up in. Such a provider still counts as written, so its helpers are dropped.
 When `UnEsm` leaves it CommonJS for another reason (a kept `require`), the
 fact recovery and the Phase 2 late ESM recovery keep it CommonJS too
-(`keep_commonjs` in `RulePipelineOptions`): rules after `UnEsm` can expose a
-shape that recovery converts, such as a `require` in a `for` head that
-`UnVariableMerging` hoists, and its consumers' `.default` rewrite reads the
-facts, which would then say CommonJS for an ES module.
+(`keep_commonjs` in `RulePipelineOptions`). The facts would predict the
+conversion (Phase 1b, [Shape](#shape)), but a module only the late recovery
+converts gets its own imports from that late `UnEsm`, after the provider
+repairs ran, and the prediction runs without the other modules' facts: a
+written provider whose format still moved away from it would take writes on
+its namespace.
 
 The plan also lists, for each consumer, the sources that resolve to another
 module whose only export is one `module.exports = v` (the same

@@ -309,10 +309,14 @@ When unpacking bundles, the driver runs a two-phase pipeline:
    edges (`InterfacePlan`: a provider a consumer writes to stays CommonJS,
    unless its only export is one `module.exports = v` every write lands on;
    a member read of such a provider reads its default import),
-   run `UnEsm`, clone that barrier AST for
-   webpack factory-IIFE fact recovery, and extract import/export facts
-   (Phase 1b). Retain the pre-recovery AST together with its `Globals` and
-   unresolved mark.
+   run `UnEsm`, then run the webpack factory-IIFE recovery on a clone of
+   that barrier AST and extract import/export facts from it (Phase 1b).
+   Unless `UnEsm` left an ES module with no CommonJS globals, the clone
+   first runs the steps Phase 2 runs before its late recovery that need no
+   other module (the registry range after `UnEsm`, through `UnReturn`), so
+   the facts predict the format Phase 2 reaches; the transpiler-helper facts
+   then come from a second clone that runs only the recovery. Retain the
+   pre-recovery AST together with its `Globals` and unresolved mark.
 2. **Phase 2 (parallel, largest modules first):** Resume the retained Phase 1 AST → cross-module late
    pass (exact CommonJS default-object composition, re-export consolidation,
    namespace decomposition, fact-aware helper recovery) → run the registry

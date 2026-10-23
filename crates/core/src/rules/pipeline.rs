@@ -920,8 +920,8 @@ pub enum PipelineMode {
     /// and the scope-hoist split's inspection of a module. Every
     /// cross-module stage after the barrier still runs.
     UnpackPhase1,
-    /// Phase 1's late ESM recovery on a clone of the module, which predicts
-    /// the late recovery that ends Phase 2 for the module facts.
+    /// Phase 1's prediction, on a clone of the module, of the rule range and
+    /// the late ESM recovery that end Phase 2, for the module facts.
     UnpackLatePrediction,
     /// One module of an unpack, after the fact barrier: Phase 2's range with
     /// module facts, and the late ESM recovery that ends Phase 2.
@@ -980,8 +980,10 @@ pub struct RulePipelineOptions<'a> {
     /// The unpack plan built at barrier 0, which `UnEsm` reads.
     pub(crate) interface_plan: Option<&'a InterfacePlan>,
     /// `UnEsm` keeps a CommonJS module CommonJS: the late ESM recovery of a
-    /// written provider that `UnEsm` left CommonJS before the fact barrier,
-    /// so that the facts its consumers read match its output.
+    /// written provider that `UnEsm` left CommonJS before the fact barrier.
+    /// A module only that recovery converts misses the provider repairs on
+    /// its own imports, and its consumers' writes would land on a namespace
+    /// if its format moved away from the facts.
     pub(crate) keep_commonjs: bool,
 }
 

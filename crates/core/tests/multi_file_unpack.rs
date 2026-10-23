@@ -3785,8 +3785,9 @@ fn a_shared_store_its_consumer_extends_becomes_a_default_export() {
 fn a_written_whole_value_provider_unesm_leaves_commonjs_stays_commonjs() {
     // A require in a `for` head keeps module 100 CommonJS in `UnEsm`; the
     // rules after it hoist the declaration, and the late ESM recovery would
-    // then convert the module, while its consumers read the facts that say
-    // CommonJS. The write keeps it CommonJS there too.
+    // then convert the module and turn its require of module 110, which has
+    // named exports only, into a default import that misses the provider
+    // repairs. The write keeps it CommonJS there too.
     let modules = r#"
     100: function(module, exports, __webpack_require__) {
       for (var r = __webpack_require__(110), o = {}, s = 0; s < 3; s++) o[r.name(s)] = s;
@@ -4320,4 +4321,147 @@ fn a_whole_value_binding_avoids_taken_and_evaluated_names() {
             "{consumer}"
         );
     }
+}
+
+#[test]
+fn a_provider_the_rules_after_unesm_let_convert_is_read_as_esm() {
+    // A require in a `for` head keeps module 100 CommonJS in `UnEsm`;
+    // `UnVariableMerging` hoists the declaration and the late ESM recovery
+    // then converts it (wild-observed). Its facts predict that format, so
+    // module 200, which stays CommonJS, reads `.default` from the require,
+    // and module 400 imports the default export.
+    let modules = r#"
+    100: function(module, exports, __webpack_require__) {
+      for (var r = __webpack_require__(110), o = {}, s = 0; s < 3; s++) o[r.name(s)] = s;
+      module.exports = o;
+    },
+    110: function(module) {
+      module.exports = { name: function (s) { return "k" + s; } };
+    },
+    200: function(module, exports, __webpack_require__) {
+      function later() { return __webpack_require__(110).name(9); }
+      var p = __webpack_require__(100);
+      module.exports = function () { return [p.k1, later()]; };
+    },
+    400: function(module, exports, __webpack_require__) {
+      "use strict";
+      var read = __webpack_require__(200);
+      var p = __webpack_require__(100);
+      exports.run = function () { return [p.k2, read()]; };
+    }"#;
+    let source = helper_provider_bundle(modules);
+    for emit_source_map in [false, true] {
+        let output = unpack_one(&source, emit_source_map);
+        assert_valid_module_graph(&output.modules);
+        assert!(
+            interop_warnings(&output).is_empty(),
+            "{:#?}",
+            output.warnings
+        );
+        let provider = module_named(&output.modules, "module-100.js");
+        assert!(provider.contains("export default o"), "{provider}");
+        assert!(!provider.contains("module.exports"), "{provider}");
+        let commonjs_reader = module_named(&output.modules, "module-200.js");
+        assert!(
+            commonjs_reader.contains("require(\"./module-100.js\").default"),
+            "{commonjs_reader}"
+        );
+        let esm_reader = module_named(&output.modules, "module-400.js");
+        assert!(
+            esm_reader.contains("import p from \"./module-100.js\""),
+            "{esm_reader}"
+        );
+    }
+}
+
+#[test]
+fn a_typescript_enum_provider_unenum_converts_is_read_as_esm() {
+    // TypeScript's CommonJS enum, `(Mode || (exports.Mode = Mode = {}))`
+    // (producer typescript@5.9.3 module=commonjs), as a minifier joins it
+    // into one sequence (wild-observed). The export inside the IIFE argument
+    // keeps module 100 CommonJS in `UnEsm`; `UnEnum` expands the IIFE and the
+    // late ESM recovery converts the module. Its facts predict that format,
+    // so module 400 imports its named export instead of a default export it
+    // does not have.
+    let modules = r#"
+    100: function(module, exports) {
+      "use strict";
+      var n;
+      Object.defineProperty(exports, "__esModule", { value: !0 }), exports.Mode = void 0, function (e) {
+        e[e.Dev = 0] = "Dev", e[e.Prod = 1] = "Prod";
+      }(n || (exports.Mode = n = {}));
+    },
+    200: function(module, exports, __webpack_require__) {
+      function later() { return __webpack_require__(100).Mode.Prod; }
+      var p = __webpack_require__(100);
+      module.exports = function () { return [p.Mode.Dev, later()]; };
+    },
+    400: function(module, exports, __webpack_require__) {
+      "use strict";
+      var read = __webpack_require__(200);
+      var p = __webpack_require__(100);
+      exports.run = function () { return [p.Mode.Prod, read()]; };
+    }"#;
+    let source = helper_provider_bundle(modules);
+    for emit_source_map in [false, true] {
+        let output = unpack_one(&source, emit_source_map);
+        assert_valid_module_graph(&output.modules);
+        assert!(
+            interop_warnings(&output).is_empty(),
+            "{:#?}",
+            output.warnings
+        );
+        let provider = module_named(&output.modules, "module-100.js");
+        assert!(provider.contains("export const Mode"), "{provider}");
+        // A marked provider's namespace has the property a CommonJS reader
+        // takes from the require.
+        let commonjs_reader = module_named(&output.modules, "module-200.js");
+        assert!(
+            commonjs_reader.contains("const p = require(\"./module-100.js\");"),
+            "{commonjs_reader}"
+        );
+        let esm_reader = module_named(&output.modules, "module-400.js");
+        assert!(!esm_reader.contains("import p from"), "{esm_reader}");
+        assert!(esm_reader.contains("\"./module-100.js\""), "{esm_reader}");
+    }
+}
+
+#[test]
+fn a_provider_with_imports_and_commonjs_exports_is_read_by_its_final_exports() {
+    // An input that is ES module and CommonJS at once (hypothetical; the
+    // scope-hoisted split gives a module the same mix, wild-observed): the
+    // import makes it ESM before `UnEsm`, while the exports in the sequence
+    // convert only in the late ESM recovery, after the rule range splits
+    // it. The facts read the exports the recovery makes, so the consumer
+    // does not import a default export the module lacks.
+    let inputs = vec![
+        UnpackInput {
+            filename: "util.js".to_string(),
+            source: r#"import n from "./dep.js";
+function E(t) { return t instanceof Error; }
+exports.debuglog = function () {
+  return function () { return exports.format.apply(exports, arguments); };
+}, exports.format = function (t) { return n + t; }, exports.isError = E;
+"#
+            .to_string(),
+        },
+        UnpackInput {
+            filename: "dep.js".to_string(),
+            source: "export default \"p:\";\n".to_string(),
+        },
+        UnpackInput {
+            filename: "consumer.js".to_string(),
+            source: r#"var u = require("./util.js");
+exports.run = function () { return [u.format("a"), u.isError(u)]; };
+"#
+            .to_string(),
+        },
+    ];
+    let output = unpack_files(inputs, DecompileOptions::default()).unwrap();
+    assert_valid_module_graph(&output.modules);
+    let provider = module_named(&output.modules, "util.js");
+    assert!(provider.contains("export var format"), "{provider}");
+    let consumer = module_named(&output.modules, "consumer.js");
+    assert!(!consumer.contains("import u from"), "{consumer}");
+    assert!(consumer.contains("\"./util.js\""), "{consumer}");
 }

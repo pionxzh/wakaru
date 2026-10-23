@@ -48,8 +48,9 @@ use crate::commonjs_default_object_composition::{
 use crate::facts::{
     collect_commonjs_default_attached_properties, collect_commonjs_default_object,
     collect_commonjs_value_is_default, collect_default_object_tail, collect_marks_es_module,
-    collect_module_facts, collect_replaces_module_exports, collect_require_returns_exports_object,
-    is_normalized_commonjs_default, ModuleFactsMap,
+    collect_module_facts, collect_module_facts_with_helpers, collect_replaces_module_exports,
+    collect_require_returns_exports_object, is_normalized_commonjs_default, HelperFacts,
+    ModuleFactsMap,
 };
 use crate::interface_plan::{exports_only_whole_value, InterfacePlan, PlanModule};
 use crate::kept_require::run_kept_require_default_reads;
@@ -290,6 +291,79 @@ fn run_un_esm_range(
             .with_interface_plan(plan),
     );
     import_tags.into_inner()
+}
+
+/// What Phase 2's rule range reads from the other modules.
+#[derive(Clone, Copy)]
+struct LateRangeFacts<'a> {
+    module_facts: &'a ModuleFactsMap,
+    call_required_plan: &'a crate::rules::CallRequiredPlan,
+}
+
+/// The rules Phase 2 runs after its cross-module passes and before its late
+/// ESM recovery: the registry range after `UnEsm` through `UnReturn`, then
+/// the syntax cleanup the late recovery needs. Phase 1b runs the same steps
+/// on its prediction clone, without the facts, so that the late recovery
+/// there sees the shapes these rules expose (a `require` hoisted out of a
+/// `for` head, a TypeScript enum IIFE expanded) and the module facts predict
+/// the format Phase 2 reaches.
+fn run_rules_before_late_recovery(
+    module: &mut Module,
+    unresolved_mark: Mark,
+    level: RewriteLevel,
+    dce_mode: crate::DceMode,
+    filename: &str,
+    mode: PipelineMode,
+    facts: Option<LateRangeFacts<'_>>,
+) {
+    let mut pipeline_options = RulePipelineOptions::between("UnObjectSpread2", "UnReturn")
+        .with_mode(mode)
+        .with_dce_mode(dce_mode)
+        .with_rewrite_level(level)
+        .with_current_filename(filename);
+    if let Some(facts) = facts {
+        pipeline_options = pipeline_options
+            .with_module_facts(facts.module_facts)
+            .with_call_required_plan(facts.call_required_plan);
+    }
+    apply_rules_to_recovered_module(module, unresolved_mark, pipeline_options);
+    // Later rules can expose sequence expressions. The old unpack
+    // path cleaned those by running a second full module pipeline;
+    // keep only the syntax cleanup needed after the split.
+    module.visit_mut_with(&mut SimplifySequence::new_with_level(
+        unresolved_mark,
+        level,
+    ));
+    module.visit_mut_with(&mut UnAssignmentMerging::new(unresolved_mark));
+}
+
+/// Whether `module` is an ES module with no CommonJS left: it reads no free
+/// `module`, `exports`, or `require`. The late ESM recovery has nothing to
+/// convert in such a module, whatever rules run before it.
+fn is_settled_es_module(module: &Module, unresolved_mark: Mark) -> bool {
+    struct CommonJsGlobals {
+        unresolved_mark: Mark,
+        found: bool,
+    }
+    impl Visit for CommonJsGlobals {
+        fn visit_ident(&mut self, ident: &Ident) {
+            self.found |= ident.ctxt.outer() == self.unresolved_mark
+                && matches!(ident.sym.as_ref(), "module" | "exports" | "require");
+        }
+    }
+    if !module
+        .body
+        .iter()
+        .any(|item| matches!(item, ModuleItem::ModuleDecl(_)))
+    {
+        return false;
+    }
+    let mut globals = CommonJsGlobals {
+        unresolved_mark,
+        found: false,
+    };
+    module.visit_with(&mut globals);
+    !globals.found
 }
 
 struct Phase1Module {
@@ -770,31 +844,60 @@ pub(super) fn unpack_multi_module_with_plan(
                     .body
                     .iter()
                     .any(|item| matches!(item, ModuleItem::ModuleDecl(_)));
-            // ESM recovery mutates the AST heavily (UnIife, factory-IIFE
-            // rewrites, renames) to expose import/export declarations that
-            // `collect_module_facts` reads. Phase 2 resumes from the
-            // *pre-recovery* through-UnEsm barrier state and runs its own
-            // recovery later at `options.level`, so it needs the unmodified
-            // `module`. When the AST will be reused (no-sourcemap path), clone
-            // before recovering for facts. When it won't be reused (sourcemap
-            // path discards `module`), recover in place and skip the clone.
-            let (mut facts, prepared) = if can_reuse_phase1_ast {
-                let mut facts_module = module.clone();
-                {
-                    let span = tracing::info_span!("phase1: fact recovery");
-                    let _enter = span.enter();
-                    recover_late_esm_from_factory_iifes(
-                        &mut facts_module,
-                        unresolved_mark,
-                        options.level,
-                        &filename,
-                        PipelineMode::UnpackLatePrediction,
-                        LateEsmRecoveryOptions::default()
-                            .with_interface_plan(plan)
-                            .with_keep_commonjs(keep_commonjs),
-                    );
+            let settled = is_settled_es_module(&module, unresolved_mark);
+            let recover_late = |module: &mut Module| {
+                recover_late_esm_from_factory_iifes(
+                    module,
+                    unresolved_mark,
+                    options.level,
+                    &filename,
+                    PipelineMode::UnpackLatePrediction,
+                    LateEsmRecoveryOptions::default()
+                        .with_interface_plan(plan)
+                        .with_keep_commonjs(keep_commonjs),
+                );
+            };
+            // The facts predict the module Phase 2 ends with. Its late ESM
+            // recovery (UnIife, factory-IIFE rewrites, renames) exposes the
+            // import/export declarations the facts read. A module `UnEsm`
+            // left CommonJS, in whole or in part, can convert there after
+            // rules that expose the shape the recovery converts, so its
+            // prediction runs those rules first; a settled ES module has
+            // nothing left to convert. The rule
+            // range rewrites helper bodies (`UnConditionals`,
+            // `ArrowFunction`, DCE) into shapes the helper detectors do not
+            // read, so the helper facts come from the late recovery alone.
+            //
+            // Phase 2 resumes from the through-UnEsm barrier state and runs
+            // those steps itself at `options.level`, so it needs the
+            // unmodified `module`. When the AST will be reused (no-sourcemap
+            // path), clone before recovering for facts. When it won't be
+            // reused (sourcemap path discards `module`), recover in place.
+            let predict = |module: &mut Module| {
+                let span = tracing::info_span!("phase1: fact recovery");
+                let _enter = span.enter();
+                if settled {
+                    recover_late(module);
+                    return collect_module_facts(module);
                 }
-                let mut facts = collect_module_facts(&facts_module);
+                let mut helper_module = module.clone();
+                recover_late(&mut helper_module);
+                let helpers = HelperFacts::collect(&helper_module);
+                drop(helper_module);
+                run_rules_before_late_recovery(
+                    module,
+                    unresolved_mark,
+                    options.level,
+                    options.dce_mode,
+                    &filename,
+                    PipelineMode::UnpackLatePrediction,
+                    None,
+                );
+                recover_late(module);
+                collect_module_facts_with_helpers(module, helpers)
+            };
+            let (mut facts, prepared) = if can_reuse_phase1_ast {
+                let mut facts = predict(&mut module.clone());
                 // Class recovery runs on this pre-late AST. Probing the
                 // late-renamed clone misses IIFEs Phase 2 still converts.
                 facts.import_call_edges = crate::rules::collect_import_call_edges(
@@ -805,27 +908,13 @@ pub(super) fn unpack_multi_module_with_plan(
                 (facts, Some((module, unresolved_mark, import_tags)))
             } else {
                 // Edges read the pre-late AST, as above. Collect them before
-                // recovering in place so this path still skips the clone.
+                // recovering in place.
                 let import_call_edges = crate::rules::collect_import_call_edges(
                     &module,
                     unresolved_mark,
                     options.level,
                 );
-                {
-                    let span = tracing::info_span!("phase1: fact recovery");
-                    let _enter = span.enter();
-                    recover_late_esm_from_factory_iifes(
-                        &mut module,
-                        unresolved_mark,
-                        options.level,
-                        &filename,
-                        PipelineMode::UnpackLatePrediction,
-                        LateEsmRecoveryOptions::default()
-                            .with_interface_plan(plan)
-                            .with_keep_commonjs(keep_commonjs),
-                    );
-                }
-                let mut facts = collect_module_facts(&module);
+                let mut facts = predict(&mut module);
                 facts.import_call_edges = import_call_edges;
                 (facts, None)
             };
@@ -1052,25 +1141,18 @@ pub(super) fn unpack_multi_module_with_plan(
                 );
             }
             // Late helper-through-UnReturn range.
-            apply_rules_to_recovered_module(
+            run_rules_before_late_recovery(
                 &mut module,
                 unresolved_mark,
-                RulePipelineOptions::between("UnObjectSpread2", "UnReturn")
-                    .with_mode(PipelineMode::UnpackPhase2)
-                    .with_dce_mode(options.dce_mode)
-                    .with_rewrite_level(options.level)
-                    .with_module_facts(facts_ref)
-                    .with_current_filename(&unpacked.module.filename)
-                    .with_call_required_plan(call_required_plan_ref),
-            );
-            // Later rules can expose sequence expressions. The old unpack
-            // path cleaned those by running a second full module pipeline;
-            // keep only the syntax cleanup needed after the split.
-            module.visit_mut_with(&mut SimplifySequence::new_with_level(
-                unresolved_mark,
                 options.level,
-            ));
-            module.visit_mut_with(&mut UnAssignmentMerging::new(unresolved_mark));
+                options.dce_mode,
+                &unpacked.module.filename,
+                PipelineMode::UnpackPhase2,
+                Some(LateRangeFacts {
+                    module_facts: facts_ref,
+                    call_required_plan: call_required_plan_ref,
+                }),
+            );
             // UnIife2 can expose webpack export helpers that were hidden in
             // factory wrappers at the Stage 2 barrier. Recover just that ESM
             // shape without restoring the old full second pass.
@@ -1537,6 +1619,29 @@ mod tests {
             keys.sort();
             (edges, keys)
         })
+    }
+
+    #[test]
+    fn a_settled_es_module_reads_no_commonjs_global() {
+        let settled = |code: &str| {
+            GLOBALS.set(&Globals::new(), || {
+                let cm: Lrc<SourceMap> = Default::default();
+                let mut module = parse_js(code, "m.js", cm).unwrap();
+                let unresolved_mark = Mark::new();
+                module.visit_mut_with(&mut resolver(unresolved_mark, Mark::new(), false));
+                is_settled_es_module(&module, unresolved_mark)
+            })
+        };
+        assert!(settled("import n from \"./n.js\";\nexport const x = n;"));
+        // CommonJS left beside the declarations: the late recovery can
+        // still convert it.
+        assert!(!settled("import n from \"./n.js\";\nexports.x = n;"));
+        assert!(!settled("export const x = () => require(\"./n.js\");"));
+        assert!(!settled("export default module.id;"));
+        // No declaration at all.
+        assert!(!settled("const x = 1;"));
+        // A local named like a CommonJS global is not one.
+        assert!(settled("export function f(exports) { return exports.x; }"));
     }
 
     #[test]

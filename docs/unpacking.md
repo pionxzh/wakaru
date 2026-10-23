@@ -781,21 +781,20 @@ layout directly is a proposal:
     `importHelpers` output has this call);
   - a helper module the input already wrote as ESM, which barrier 0 does
     not read.
-- **A provider only the Phase 2 late ESM recovery converts.** A
-  provider's facts come from its barrier AST: Phase 1b runs the late ESM
-  recovery on a clone of the AST `UnEsm` left. Phase 2 runs the rules after
-  `UnEsm` first, and they can expose a shape that recovery then converts:
+- **A module only the Phase 2 late ESM recovery converts.** The rules
+  after `UnEsm` can expose a shape that recovery converts:
   `UnVariableMerging` hoists `for (var r = require("./x"), …)` out of the
-  loop head, and a TypeScript enum IIFE becomes plain export assignments
-  (both wild-observed). The module comes out ESM while its facts say
-  CommonJS, so a consumer that stays CommonJS keeps a bare `require` of it,
-  which now returns its namespace, and the converted module's own imports
-  miss the provider repairs before the rule range (a default import of a
-  named-only provider). A written provider is held CommonJS through that
-  recovery ([fact-system.md](fact-system.md#shape)); an unwritten one is
-  not. Holding every module to its facts would give up the ES form those
-  modules reach; predicting the shape would need the rules after `UnEsm` in
-  Phase 1.
+  loop head, and `UnEnum` expands a TypeScript enum IIFE that assigns the
+  export (both wild-observed). Phase 1b runs the same rules on its
+  prediction clone, so the module's facts say ESM and its consumers read it
+  that way ([fact-system.md](fact-system.md#shape)). Its own imports do not
+  get that help: the late `UnEsm` makes them after the cross-module passes
+  ran, so they miss the provider repairs, and a default import of a
+  named-only CommonJS provider stays and fails to link. The prediction also
+  runs without the other modules' facts, so a cross-module pass or a rule
+  that reads facts could still move a module's format away from it. A
+  written provider is held CommonJS through that recovery, so neither
+  reaches it; an unwritten one is not held.
 - **A write to a webpack harmony provider.** A provider webpack compiled
   from ESM (`require.r` / `require.d`) becomes ESM even when a consumer
   writes to it. Its exports object is ordinary, with a getter per export:

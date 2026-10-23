@@ -430,6 +430,15 @@ providers CommonJS with no write behind any of them.
    named writes beside the default, marked providers, and hand-written
    specifiers merged into a synthesized import.
 
+   A second follow-up the same day (maintainer decision): Phase 1b's prediction runs
+   the rules Phase 2 runs before its late recovery, without the other
+   modules' facts, so the facts now predict that format for unwritten
+   providers too ([fact-system.md](../fact-system.md#shape)). The hold on
+   written providers stays: a module only the late recovery converts gets
+   its own imports from that late `UnEsm`, after the provider repairs ran
+   ([unpacking.md](../unpacking.md#known-gaps)), and a format that still
+   moved away from the prediction would put the writes on a namespace.
+
    Second half done: provider identity. Phase 1a reads each module's
    interop helper exports (`ProviderHelpers`) on the AST `UnEsm` will see:
    the export storage analysis, run without the `__esModule` markers, maps
