@@ -49,7 +49,9 @@ use crate::facts::{
     collect_replaces_module_exports, collect_require_returns_exports_object,
     is_normalized_commonjs_default, HelperFacts, ModuleFactsMap,
 };
-use crate::interface_plan::{exports_only_whole_value, InterfacePlan, PlanModule};
+use crate::interface_plan::{
+    exports_only_whole_value, passthrough_source, InterfacePlan, PlanModule,
+};
 use crate::kept_require::run_kept_require_default_reads;
 use crate::namespace_decomposition::run_namespace_decomposition_with_tags;
 use crate::provider_helpers::ProviderHelpers;
@@ -214,6 +216,9 @@ struct Phase1aModule {
     /// The module's only export is one top-level `module.exports = v`, read
     /// on the input.
     exports_whole_value: bool,
+    /// The module is a CommonJS passthrough of this source, on the AST
+    /// `UnEsm` will see.
+    passthrough: Option<swc_core::atoms::Atom>,
     warning: Option<UnpackWarning>,
     input_parse_warnings: Vec<UnpackWarning>,
     suggested_filename: Option<String>,
@@ -913,6 +918,9 @@ pub(super) fn unpack_multi_module_with_plan(
             // assigned value as its default.
             let exports_whole_value = exports_whole_value
                 && !lowers_to_commonjs_namespace(&module, unresolved_mark);
+            let passthrough = exports_object_writable
+                .then(|| passthrough_source(&module, unresolved_mark))
+                .flatten();
             Ok((
                 module,
                 unresolved_mark,
@@ -921,6 +929,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 exports_object_writable,
                 helpers,
                 exports_whole_value,
+                passthrough,
                 residual_warning,
                 suggested_filename,
             ))
@@ -934,6 +943,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 exports_object_writable,
                 helpers,
                 exports_whole_value,
+                passthrough,
                 warning,
                 suggested_filename,
             )) => Phase1a::Pending(Box::new(Phase1aModule {
@@ -947,6 +957,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 exports_object_writable,
                 helpers,
                 exports_whole_value,
+                passthrough,
                 warning,
                 input_parse_warnings,
                 suggested_filename,
@@ -976,6 +987,7 @@ pub(super) fn unpack_multi_module_with_plan(
             exports_object_writable: _,
             helpers: _,
             exports_whole_value: _,
+            passthrough: _,
             warning,
             input_parse_warnings,
             suggested_filename,
@@ -1146,6 +1158,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 exports_object_writable: pending.exports_object_writable,
                 helpers: pending.helpers.as_ref(),
                 exports_whole_value: pending.exports_whole_value,
+                passthrough: pending.passthrough.clone(),
             }),
         }))
     };

@@ -51,12 +51,18 @@
 //! through `require("./m.js")` as it proves one reached through
 //! `require("tslib")`, but per proven export instead of by name. A written
 //! provider's helpers are dropped: a consumer may have replaced one.
+//!
+//! A CommonJS passthrough, a module whose whole body is
+//! `module.exports = require("x")` ([`passthrough_source`]), returns from
+//! `require` what requiring `x` returns: the same object. So a write through
+//! a passthrough is a write on the module at the end of its chain, and
+//! counts there as a direct write does.
 
 use swc_core::atoms::Atom;
 use swc_core::common::Mark;
 use swc_core::ecma::ast::{
-    AssignExpr, AssignTarget, Callee, Expr, Ident, MemberExpr, MemberProp, Module,
-    SimpleAssignTarget,
+    AssignExpr, AssignOp, AssignTarget, Callee, Expr, Ident, Lit, MemberExpr, MemberProp, Module,
+    ModuleItem, SimpleAssignTarget, Stmt,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -84,6 +90,85 @@ pub(crate) struct PlanModule<'a> {
     /// The module's only export is one top-level `module.exports = v`
     /// ([`exports_only_whole_value`]).
     pub(crate) exports_whole_value: bool,
+    /// The module is a CommonJS passthrough of this source
+    /// ([`passthrough_source`]).
+    pub(crate) passthrough: Option<Atom>,
+}
+
+/// The source `x` of a CommonJS passthrough: a module whose body, read on
+/// the AST `UnEsm` will see, is directives and one statement
+/// `module.exports = require("x")`, with `module` and `require` free. A
+/// numeric module id (`require(17)`, a module outside the bundle) is no
+/// source. Requiring such a module returns what requiring `x` returns.
+///
+/// The caller also checks that requiring the module returns its CommonJS
+/// value: it is neither ESM nor a webpack harmony module.
+pub(crate) fn passthrough_source(module: &Module, unresolved_mark: Mark) -> Option<Atom> {
+    let mut statements = module.body.iter().skip_while(|item| {
+        matches!(item, ModuleItem::Stmt(Stmt::Expr(statement))
+            if matches!(statement.expr.as_ref(), Expr::Lit(Lit::Str(_))))
+    });
+    let (Some(ModuleItem::Stmt(Stmt::Expr(statement))), None) =
+        (statements.next(), statements.next())
+    else {
+        return None;
+    };
+    let Expr::Assign(assign) = strip_parens(&statement.expr) else {
+        return None;
+    };
+    let AssignTarget::Simple(SimpleAssignTarget::Member(target)) = &assign.left else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign
+        || !matches!(strip_parens(&target.obj), Expr::Ident(object)
+            if is_unresolved_ident(object, "module", unresolved_mark))
+        || !matches!(&target.prop, MemberProp::Ident(prop) if prop.sym == "exports")
+    {
+        return None;
+    }
+    let Expr::Call(call) = strip_parens(&assign.right) else {
+        return None;
+    };
+    require_call_source(call, unresolved_mark)
+}
+
+/// Where a chain of passthroughs ends.
+#[derive(Debug, Clone)]
+enum PassthroughEnd {
+    /// A module of the input that is no passthrough, by canonical key.
+    Module(String),
+    /// A source outside the input: a bare package name or a `node:`
+    /// builtin.
+    External,
+}
+
+/// Follows the passthrough `start` (a canonical key in `passthroughs`) to
+/// the first module that is no passthrough. `None` for a chain that meets
+/// itself again (a cycle) and for a relative source that names no module of
+/// the input.
+fn passthrough_end(
+    start: &str,
+    passthroughs: &HashMap<String, (&str, Atom)>,
+    keys: &HashSet<String>,
+) -> Option<PassthroughEnd> {
+    let mut seen: HashSet<&str> = HashSet::default();
+    let mut current = passthroughs.get_key_value(start)?.0.as_str();
+    loop {
+        if !seen.insert(current) {
+            return None;
+        }
+        let (filename, target) = passthroughs.get(current)?;
+        match resolve_module_key(|key| keys.contains(key), Some(filename), target) {
+            Some(next) => match passthroughs.get_key_value(&next) {
+                Some((next, _)) => current = next.as_str(),
+                None => return Some(PassthroughEnd::Module(next)),
+            },
+            None => {
+                return (!target.starts_with('.') && !target.starts_with('/'))
+                    .then_some(PassthroughEnd::External);
+            }
+        }
+    }
 }
 
 /// Whether the module's only export is the value of one top-level
@@ -228,6 +313,21 @@ impl InterfacePlan {
             .filter(|module| module.exports_whole_value)
             .map(|module| canonical_module_key(module.filename))
             .collect();
+        let passthroughs: HashMap<String, (&str, Atom)> = modules
+            .iter()
+            .filter_map(|module| {
+                let target = module.passthrough.clone()?;
+                Some((
+                    canonical_module_key(module.filename),
+                    (module.filename, target),
+                ))
+            })
+            .collect();
+        // Where each passthrough chain ends.
+        let passthrough_ends: HashMap<&str, PassthroughEnd> = passthroughs
+            .keys()
+            .filter_map(|key| Some((key.as_str(), passthrough_end(key, &passthroughs, &keys)?)))
+            .collect();
         let mut written: HashMap<String, String> = HashMap::default();
         let mut kept: HashSet<String> = HashSet::default();
         for module in &modules {
@@ -242,17 +342,25 @@ impl InterfacePlan {
                 ) else {
                     continue;
                 };
-                if closed.contains(&provider) {
-                    continue;
+                // A write through a passthrough lands on the module of the
+                // input its chain ends at.
+                let end = match passthrough_ends.get(provider.as_str()) {
+                    Some(PassthroughEnd::Module(end)) => Some(end.clone()),
+                    _ => None,
+                };
+                for provider in std::iter::once(provider).chain(end) {
+                    if closed.contains(&provider) {
+                        continue;
+                    }
+                    if !whole_value.contains(&provider)
+                        || !writes_the_value_itself(edge, module.exports_object_writable, uses)
+                    {
+                        kept.insert(provider.clone());
+                    }
+                    written
+                        .entry(provider)
+                        .or_insert_with(|| module.filename.to_string());
                 }
-                if !whole_value.contains(&provider)
-                    || !writes_the_value_itself(edge, module.exports_object_writable, uses)
-                {
-                    kept.insert(provider.clone());
-                }
-                written
-                    .entry(provider)
-                    .or_insert_with(|| module.filename.to_string());
             }
         }
         let helpers: HashMap<String, ProviderHelpers> = modules
@@ -486,6 +594,7 @@ mod tests {
             exports_object_writable: consumer_writable,
             helpers: None,
             exports_whole_value: false,
+            passthrough: None,
         }];
         for (name, filename) in providers.iter().zip(&names) {
             modules.push(PlanModule {
@@ -494,6 +603,7 @@ mod tests {
                 exports_object_writable: !closed.contains(name),
                 helpers: None,
                 exports_whole_value: whole.contains(name),
+                passthrough: None,
             });
         }
         InterfacePlan::build(modules)
@@ -625,6 +735,7 @@ h(require("./other.js"));"#,
                 exports_object_writable: true,
                 helpers: None,
                 exports_whole_value: false,
+                passthrough: None,
             },
             PlanModule {
                 filename: "src/helper.js",
@@ -632,6 +743,7 @@ h(require("./other.js"));"#,
                 exports_object_writable: true,
                 helpers: Some(&helpers),
                 exports_whole_value: false,
+                passthrough: None,
             },
             PlanModule {
                 filename: "src/written.js",
@@ -639,6 +751,7 @@ h(require("./other.js"));"#,
                 exports_object_writable: true,
                 helpers: Some(&helpers),
                 exports_whole_value: false,
+                passthrough: None,
             },
         ]);
         assert!(plan.helper_exports("src/helper.js").is_some());
@@ -885,6 +998,7 @@ h.patched = true;"#,
                 exports_object_writable: true,
                 helpers: None,
                 exports_whole_value: false,
+                passthrough: None,
             },
             PlanModule {
                 filename: "src/helper.js",
@@ -892,6 +1006,7 @@ h.patched = true;"#,
                 exports_object_writable: true,
                 helpers: Some(&helpers),
                 exports_whole_value: true,
+                passthrough: None,
             },
         ]);
         assert!(!plan.keeps_commonjs("src/helper.js"));
@@ -918,6 +1033,7 @@ module.exports = make();"#,
             exports_object_writable: true,
             helpers: None,
             exports_whole_value,
+            passthrough: None,
         };
         let plan = InterfacePlan::build([
             module("src/consumer.js", &consumer, true),
@@ -929,6 +1045,121 @@ module.exports = make();"#,
             HashSet::from_iter(["./whole.js".to_string()])
         );
         assert!(plan.whole_value_sources("src/whole.js").is_empty());
+    }
+
+    fn passthrough(source: &str) -> Option<Atom> {
+        with_module(source, passthrough_source)
+    }
+
+    #[test]
+    fn only_a_lone_module_exports_of_a_require_is_a_passthrough() {
+        // The react-is and use-sync-external-store entry shape
+        // (wild-observed), as the extractor leaves it.
+        assert_eq!(
+            passthrough(r#"module.exports = require("./module-100.js");"#).as_deref(),
+            Some("./module-100.js")
+        );
+        assert_eq!(
+            passthrough(r#""use strict"; "client"; module.exports = (require("node:crypto"));"#)
+                .as_deref(),
+            Some("node:crypto")
+        );
+        for source in [
+            r#"module.exports = require("./a"); exports.x = 1;"#,
+            r#"exports.x = 1; module.exports = require("./a");"#,
+            r#"module.exports = require("./a").f;"#,
+            r#"module.exports = require("./a")();"#,
+            r#"if (c) module.exports = require("./a");"#,
+            r#"module.exports = c ? require("./a") : require("./b");"#,
+            r#"exports.a = require("./a");"#,
+            r#"module.exports = require(17);"#,
+            // A local `require` needs a declaration, an extra statement.
+            r#"var require = load; module.exports = require("./a");"#,
+            r#"module.exports += require("./a");"#,
+            r#"var t = module.exports = require("./a");"#,
+        ] {
+            assert_eq!(passthrough(source), None, "{source}");
+        }
+    }
+
+    /// The plan for `src/consumer.js` beside the modules `src/<name>.js`,
+    /// each with its passthrough source, if any, and whether its only
+    /// export is one `module.exports = v`.
+    fn plan_with_passthroughs(
+        consumer: &str,
+        modules: &[(&str, Option<&str>, bool)],
+    ) -> InterfacePlan {
+        let consumer_edges = edges(consumer);
+        let module_edges: Vec<(String, RequireEdges)> = modules
+            .iter()
+            .map(|(name, passthrough, _)| {
+                (
+                    format!("src/{name}.js"),
+                    passthrough
+                        .map(|source| edges(&format!(r#"module.exports = require("{source}");"#)))
+                        .unwrap_or_default(),
+                )
+            })
+            .collect();
+        let mut plan_modules = vec![PlanModule {
+            filename: "src/consumer.js",
+            edges: &consumer_edges,
+            exports_object_writable: true,
+            helpers: None,
+            exports_whole_value: false,
+            passthrough: None,
+        }];
+        for ((_, passthrough, whole), (filename, edges)) in modules.iter().zip(&module_edges) {
+            plan_modules.push(PlanModule {
+                filename,
+                edges,
+                exports_object_writable: true,
+                helpers: None,
+                exports_whole_value: *whole,
+                passthrough: passthrough.map(Atom::from),
+            });
+        }
+        InterfacePlan::build(plan_modules)
+    }
+
+    #[test]
+    fn a_write_through_a_passthrough_counts_on_the_module_its_chain_ends_at() {
+        let plan = plan_with_passthroughs(
+            r#"var p = require("./pass.js");
+p.f = 1;
+require("./outer.js").g = 2;
+require("./whole-pass.js").k = 3;
+require("./cycle-a.js").h = 4;
+require("./external.js").i = 5;"#,
+            &[
+                ("named", None, false),
+                ("pass", Some("./named.js"), false),
+                ("chained", None, false),
+                ("inner", Some("./chained.js"), false),
+                ("outer", Some("./inner.js"), false),
+                ("whole", None, true),
+                ("whole-pass", Some("./whole.js"), false),
+                ("cycle-a", Some("./cycle-b.js"), false),
+                ("cycle-b", Some("./cycle-a.js"), false),
+                ("external", Some("lodash"), false),
+            ],
+        );
+        for name in ["named", "chained"] {
+            let filename = format!("src/{name}.js");
+            assert!(plan.keeps_commonjs(&filename), "{name}");
+            assert_eq!(plan.written_by(&filename), Some("src/consumer.js"));
+        }
+        // The passthrough itself is written too; it stays CommonJS anyway.
+        assert!(plan.is_written("src/pass.js"));
+        // A write through a passthrough lands on a whole value as a direct
+        // write does.
+        assert!(plan.is_written("src/whole.js"));
+        assert!(!plan.keeps_commonjs("src/whole.js"));
+        // A cycle has no end: only the passthrough written to counts.
+        assert!(plan.is_written("src/cycle-a.js"));
+        assert!(!plan.is_written("src/cycle-b.js"));
+        // The intermediate passthrough of a chain is not written.
+        assert!(!plan.is_written("src/inner.js"));
     }
 
     #[test]

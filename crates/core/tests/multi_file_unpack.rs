@@ -4536,3 +4536,75 @@ exports.run = function () { return [p.f(), p.default()]; };"#,
     );
     assert_valid_module_graph(&modules);
 }
+
+#[test]
+fn a_write_through_a_passthrough_keeps_the_module_it_reaches_commonjs() {
+    // Module 120 passes module 100 through; the consumer writes to it
+    // through module 120, while module 410 reads module 100 directly
+    // (hypothetical). The write lands on module 100's `exports` object, so
+    // module 100 stays CommonJS for both.
+    let modules = r#"
+    100: function(module, exports) {
+      exports.f = function () { return 1; };
+    },
+    120: function(module, exports, __webpack_require__) {
+      module.exports = __webpack_require__(100);
+    },
+    400: function(module, exports, __webpack_require__) {
+      "use strict";
+      var p = __webpack_require__(120);
+      p.f = function () { return 2; };
+      exports.run = function () { return [p.f(), __webpack_require__(410).go()]; };
+    },
+    410: function(module, exports, __webpack_require__) {
+      "use strict";
+      var r = __webpack_require__(100);
+      exports.go = function () { return r.f(); };
+    }"#;
+    let source = helper_provider_bundle(modules);
+    for emit_source_map in [false, true] {
+        let output = unpack_one(&source, emit_source_map);
+        assert_valid_module_graph(&output.modules);
+        let provider = module_named(&output.modules, "module-100.js");
+        assert!(provider.contains("exports.f = "), "{provider}");
+        assert!(!provider.contains("export "), "{provider}");
+        let reader = module_named(&output.modules, "module-410.js");
+        assert!(
+            reader.contains(r#"import r from "./module-100.js";"#) && reader.contains("r.f()"),
+            "{reader}"
+        );
+    }
+}
+
+#[test]
+fn a_write_through_a_passthrough_lands_on_a_whole_value_default() {
+    // Module 130 passes module 110, whose only export is
+    // `module.exports = {}`, through; the consumer writes to that object
+    // through module 130 (hypothetical). Module 110 still becomes
+    // `export default {}`: the write lands on that value.
+    let modules = r#"
+    110: function(module) {
+      module.exports = {};
+    },
+    130: function(module, exports, __webpack_require__) {
+      module.exports = __webpack_require__(110);
+    },
+    400: function(module, exports, __webpack_require__) {
+      "use strict";
+      __webpack_require__(130).k = 1;
+      var s = __webpack_require__(110);
+      exports.run = function () { return s.k; };
+    }"#;
+    let source = helper_provider_bundle(modules);
+    for emit_source_map in [false, true] {
+        let output = unpack_one(&source, emit_source_map);
+        assert_valid_module_graph(&output.modules);
+        let provider = module_named(&output.modules, "module-110.js");
+        assert!(provider.contains("export default {}"), "{provider}");
+        let pass = module_named(&output.modules, "module-130.js");
+        assert!(
+            pass.contains(r#"module.exports = require("./module-110.js").default;"#),
+            "{pass}"
+        );
+    }
+}
