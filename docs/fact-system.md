@@ -282,7 +282,13 @@ One written provider may still become ESM: one whose only export, read on
 the input before any rule, is a single top-level `module.exports = v` (no
 other `module.exports` member, no reference to the free `exports`, no
 `__esModule` marker; `exports_only_whole_value`), when every write lands on
-`v` itself. A write lands on `v` when its consumer is CommonJS in the input
+`v` itself. A `v` rooted at a `require` call (`require(s)`, a member chain
+on it, or an identifier callee's first argument such as
+`interopDefault(require(s))`) does not count: `UnEsm` makes a re-export or
+an import of `s` from it, not `export default v`. Neither does esbuild's
+`module.exports = __toCommonJS(ns)`, which `UnEsm` lowers to the names of
+`ns` (its `default` getter included); Phase 1a asks the lowering itself on
+the AST `UnEsm` will see (`lowers_to_commonjs_namespace`). A write lands on `v` when its consumer is CommonJS in the input
 (an ES module or webpack harmony consumer writes through a namespace
 import), reads the value with no interop helper and no `__esModule` test,
 and names neither `default` nor `__esModule` (a member, a literal key of an

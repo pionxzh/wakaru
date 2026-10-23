@@ -71,9 +71,10 @@ use crate::rules::lowered_dynamic_import::run_cross_module_lowered_dynamic_impor
 use crate::rules::transpiler_helper_utils::LocalHelperContext;
 use crate::rules::webpack_lazy_import::run_cross_module_webpack_lazy_imports;
 use crate::rules::{
-    apply_rules, apply_rules_to_recovered_module, contains_local_self_require, ImportDedup,
-    PipelineMode, RewriteLevel, RulePipelineOptions, SimplifySequence, UnAssignmentMerging,
-    UnConditionals, UnConditionalsAssignmentOnly, UnImportRename, UnOptionalChaining,
+    apply_rules, apply_rules_to_recovered_module, contains_local_self_require,
+    lowers_to_commonjs_namespace, ImportDedup, PipelineMode, RewriteLevel, RulePipelineOptions,
+    SimplifySequence, UnAssignmentMerging, UnConditionals, UnConditionalsAssignmentOnly,
+    UnImportRename, UnOptionalChaining,
 };
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
 use crate::synthetic_import_cleanup::downgrade_unused_synthetic_imports;
@@ -677,6 +678,11 @@ pub(super) fn unpack_multi_module_with_plan(
                 let _enter = span.enter();
                 ProviderHelpers::collect(&module, unresolved_mark)
             };
+            // `UnEsm` lowers esbuild's `module.exports = __toCommonJS(ns)` to
+            // the namespace's names, so the module does not export the
+            // assigned value as its default.
+            let exports_whole_value = exports_whole_value
+                && !lowers_to_commonjs_namespace(&module, unresolved_mark);
             Ok((
                 module,
                 unresolved_mark,

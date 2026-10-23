@@ -157,6 +157,26 @@ pub(crate) fn lower_export_getter_helpers(module: &mut Module, unresolved_mark: 
     lowered_namespace
 }
 
+/// Whether [`lower_export_getter_helpers`] lowers the module's
+/// `module.exports = __toCommonJS(namespace)` (esbuild's CommonJS output of
+/// an ES module) to per-name getter definitions. `UnEsm` then recovers the
+/// namespace's names as named exports, and its `default` getter, when it has
+/// one, as the default export: never the assigned value itself. Reads the
+/// module without changing it.
+pub(crate) fn lowers_to_commonjs_namespace(module: &Module, unresolved_mark: Mark) -> bool {
+    if !module
+        .body
+        .iter()
+        .any(|item| is_helper_call_candidate(item, unresolved_mark))
+    {
+        return false;
+    }
+    let uses = BindingUseIndex::collect(module);
+    GetterHelpers::collect(module, &uses, unresolved_mark)
+        .lower_namespace_exports(module, &uses)
+        .is_some()
+}
+
 /// A top-level statement shaped like a helper call: `f(exports, { ... })`,
 /// `f(binding, "a", "b")`, or `module.exports = f(binding)`. Most modules
 /// have none, and then no binding analysis runs.

@@ -53,7 +53,9 @@ mod harmony_requires;
 mod hoist_barrier;
 mod leading_requires;
 use export_getters::has_webpack_export_definitions;
-pub(crate) use export_getters::{lower_export_getter_helpers, lower_webpack_export_definitions};
+pub(crate) use export_getters::{
+    lower_export_getter_helpers, lower_webpack_export_definitions, lowers_to_commonjs_namespace,
+};
 use export_star::rewrite_commonjs_export_stars;
 pub(crate) use harmony_requires::is_webpack_harmony_module;
 

@@ -16,8 +16,10 @@
 //! warning after the fact barrier instead.
 //!
 //! One written provider may still become ESM: one whose only export is a
-//! single top-level `module.exports = v` ([`exports_only_whole_value`]),
-//! when every write lands on `v` itself. Its ES form is `export default v`.
+//! single top-level `module.exports = v` ([`exports_only_whole_value`]) that
+//! `UnEsm` turns into `export default v` (not a `v` rooted at a `require`,
+//! not an esbuild namespace `UnEsm` lowers to named exports), when every
+//! write lands on `v` itself. Its ES form is `export default v`.
 //! A consumer that becomes ESM writes through its default import, which
 //! holds `v`; one that stays CommonJS reads `require(p).default` after the
 //! fact barrier (`run_kept_require_default_reads`), which is `v` too. A
@@ -44,14 +46,19 @@
 
 use swc_core::atoms::Atom;
 use swc_core::common::Mark;
-use swc_core::ecma::ast::{Expr, Ident, MemberExpr, MemberProp, Module};
+use swc_core::ecma::ast::{
+    AssignExpr, AssignTarget, Callee, Expr, Ident, MemberExpr, MemberProp, Module,
+    SimpleAssignTarget,
+};
 use swc_core::ecma::visit::{Visit, VisitWith};
 
 use crate::collections::{HashMap, HashSet};
 use crate::facts::{canonical_module_key, resolve_module_key};
 use crate::facts::{collect_commonjs_value_is_default, collect_marks_es_module};
 use crate::provider_helpers::ProviderHelpers;
-use crate::require_edges::{CalleeExport, Interop, RequireEdge, RequireEdges, RequireUses};
+use crate::require_edges::{
+    require_call_source, CalleeExport, Interop, RequireEdge, RequireEdges, RequireUses,
+};
 use crate::rules::expr_utils::is_unresolved_ident;
 use crate::rules::transpiler_helper_utils::TranspilerHelperKind;
 use crate::utils::paren::strip_parens;
@@ -79,13 +86,36 @@ pub(crate) struct PlanModule<'a> {
 /// never referenced (no `exports.x` write, no `exports` passed to a
 /// function), and the module does not mark itself `__esModule`. `UnEsm`
 /// turns such a module into `export default v` alone.
+///
+/// A `v` rooted at a `require` call is not such a value: `require(s)`
+/// itself, a member chain on it, or a call of an identifier whose first
+/// argument is `require(s)` (`interopDefault(require(s))`). `UnEsm` turns
+/// the passthrough into a re-export, or keeps it CommonJS, and a wrapped
+/// call into an import of the required module. Phase 1a also rejects a
+/// module `UnEsm` lowers to the names of an esbuild `__toCommonJS`
+/// namespace (`lowers_to_commonjs_namespace`), which this AST read cannot
+/// tell from another call.
 pub(crate) fn exports_only_whole_value(module: &Module, unresolved_mark: Mark) -> bool {
     struct Surface {
         unresolved_mark: Mark,
         module_exports: usize,
         exports: usize,
+        rooted_at_require: bool,
     }
     impl Visit for Surface {
+        fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+            if let AssignTarget::Simple(SimpleAssignTarget::Member(target)) = &assign.left {
+                if matches!(strip_parens(&target.obj), Expr::Ident(object)
+                    if is_unresolved_ident(object, "module", self.unresolved_mark))
+                    && matches!(&target.prop, MemberProp::Ident(prop) if prop.sym == "exports")
+                    && is_rooted_at_require(&assign.right, self.unresolved_mark)
+                {
+                    self.rooted_at_require = true;
+                }
+            }
+            assign.visit_children_with(self);
+        }
+
         fn visit_member_expr(&mut self, member: &MemberExpr) {
             if matches!(strip_parens(&member.obj), Expr::Ident(object)
                 if is_unresolved_ident(object, "module", self.unresolved_mark))
@@ -111,9 +141,28 @@ pub(crate) fn exports_only_whole_value(module: &Module, unresolved_mark: Mark) -
         unresolved_mark,
         module_exports: 0,
         exports: 0,
+        rooted_at_require: false,
     };
     module.visit_with(&mut surface);
-    surface.module_exports == 1 && surface.exports == 0
+    surface.module_exports == 1 && surface.exports == 0 && !surface.rooted_at_require
+}
+
+/// `require(s)`, a member chain on it, or a call of an identifier whose
+/// first argument is `require(s)`.
+fn is_rooted_at_require(expr: &Expr, unresolved_mark: Mark) -> bool {
+    match strip_parens(expr) {
+        Expr::Member(member) => is_rooted_at_require(&member.obj, unresolved_mark),
+        Expr::Call(call) if require_call_source(call, unresolved_mark).is_some() => true,
+        Expr::Call(call) => {
+            matches!(&call.callee, Callee::Expr(callee) if matches!(strip_parens(callee), Expr::Ident(_)))
+                && call.args.first().is_some_and(|arg| {
+                    arg.spread.is_none()
+                        && matches!(strip_parens(&arg.expr), Expr::Call(inner)
+                            if require_call_source(inner, unresolved_mark).is_some())
+                })
+        }
+        _ => false,
+    }
 }
 
 /// Whether `edge`'s writes land on the value `require` returned: the
@@ -304,6 +353,7 @@ mod tests {
     use swc_core::ecma::visit::VisitMutWith;
 
     use super::*;
+    use crate::rules::lowers_to_commonjs_namespace;
     use crate::rules::transpiler_helper_utils::LocalHelperContext;
 
     /// Parses and resolves `source`, then reads it with `read`.
@@ -339,6 +389,21 @@ mod tests {
 
     fn whole_value(source: &str) -> bool {
         with_module(source, exports_only_whole_value)
+    }
+
+    /// Whether `UnEsm` lowers `source` to the names of an esbuild namespace,
+    /// read as Phase 1a reads it: after the rules before `UnEsm`.
+    fn lowers_to_namespace(source: &str) -> bool {
+        use crate::rules::{apply_rules, PipelineMode, RulePipelineOptions};
+        with_module(source, |module, mark| {
+            let mut module = module.clone();
+            apply_rules(
+                &mut module,
+                mark,
+                RulePipelineOptions::before("UnEsm").with_mode(PipelineMode::UnpackPhase1),
+            );
+            lowers_to_commonjs_namespace(&module, mark)
+        })
     }
 
     /// The plan for one consumer `src/consumer.js` beside the providers
@@ -579,6 +644,88 @@ var n = require("./module-111.js"), o = require("./module-222.js"), i = require(
             "module.exports = v; module.exports.default = module.exports;",
         ] {
             assert!(!whole_value(source), "{source}");
+        }
+    }
+
+    #[test]
+    fn a_value_rooted_at_a_require_is_not_a_whole_value_export() {
+        // `UnEsm` turns a passthrough into a re-export or keeps it
+        // CommonJS, and a wrapped require into an import of that module.
+        for source in [
+            r#"module.exports = require("./a");"#,
+            r#"module.exports = (require("./a"));"#,
+            r#"module.exports = require("./a").f;"#,
+            r#"module.exports = require("./a").f.g;"#,
+            r#"var o = module.exports = require("./a");"#,
+            r#"function i(e) { return e && e.__esModule ? e : { default: e }; }
+module.exports = i(require("./a"));"#,
+        ] {
+            assert!(!whole_value(source), "{source}");
+        }
+        // A member callee, or a require that is not the first argument, is
+        // a value of its own.
+        for source in [
+            r#"module.exports = Object.assign({}, require("./a"));"#,
+            r#"module.exports = f(1, require("./a"));"#,
+            r#"module.exports = require("./a")();"#,
+            "module.exports = class {};",
+            "module.exports = mk();",
+        ] {
+            assert!(whole_value(source), "{source}");
+        }
+    }
+
+    /// esbuild's CommonJS output of an ES module (producer esbuild
+    /// `--format=cjs`), with `entries` in its `__export` call.
+    fn esbuild_namespace(entries: &str, tail: &str) -> String {
+        format!(
+            r#"var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __export = (target, all) => {{
+  for (var name in all)
+    __defProp(target, name, {{ get: all[name], enumerable: true }});
+}};
+var __copyProps = (to, from, except, desc) => {{
+  if (from && typeof from === "object" || typeof from === "function") {{
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, {{ get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable }});
+  }}
+  return to;
+}};
+var __toCommonJS = (mod) => __copyProps(__defProp({{}}, "__esModule", {{ value: true }}), mod);
+var mod_exports = {{}};
+__export(mod_exports, {{ {entries} }});
+module.exports = __toCommonJS(mod_exports);
+function foo() {{ return 1; }}
+{tail}"#
+        )
+    }
+
+    #[test]
+    fn an_esbuild_namespace_is_not_a_whole_value_export_at_the_barrier() {
+        // The AST read on the input sees one `module.exports = call()`;
+        // Phase 1a also asks whether `UnEsm` lowers it to the namespace's
+        // names, the default getter's value included.
+        for source in [
+            esbuild_namespace("foo: () => foo", ""),
+            esbuild_namespace(
+                "foo: () => foo, default: () => mod_default",
+                "var mod_default = { other: 1 };",
+            ),
+        ] {
+            assert!(whole_value(&source), "{source}");
+            assert!(lowers_to_namespace(&source), "{source}");
+        }
+        for source in [
+            "module.exports = {};",
+            "module.exports = class K {};",
+            "module.exports = mk();",
+            r#"module.exports = typeof window != "undefined" ? window : Function("return this")();"#,
+        ] {
+            assert!(!lowers_to_namespace(source), "{source}");
         }
     }
 

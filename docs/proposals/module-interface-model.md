@@ -391,7 +391,9 @@ providers CommonJS with no write behind any of them.
    `module.exports = v`, where it was correct. Such a provider may now
    become `export default v` when barrier 0 observes that its only export
    is that statement (no `__esModule` marker, no other `module.exports` or
-   `exports` use) and that every write goes to `v` itself: from a consumer
+   `exports` use, `v` not rooted at a `require` call and not an esbuild
+   `__toCommonJS` namespace `UnEsm` lowers to named exports) and that every
+   write goes to `v` itself: from a consumer
    that is CommonJS in the input, without an interop helper or an
    `__esModule` test, and not to `default` or `__esModule`. A writer that
    becomes ESM writes through its default import; one that stays CommonJS

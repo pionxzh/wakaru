@@ -3824,3 +3824,118 @@ fn a_written_whole_value_provider_unesm_leaves_commonjs_stays_commonjs() {
         assert!(!writer.contains(".default"), "{writer}");
     }
 }
+
+/// esbuild's CommonJS output of an ES module as module 100 (producer esbuild
+/// `--format=cjs`): `foo`, and a `default` that is not the module's value.
+const ESBUILD_NAMESPACE_PROVIDER: &str = r#"100: function(module) {
+      var __defProp = Object.defineProperty;
+      var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+      var __getOwnPropNames = Object.getOwnPropertyNames;
+      var __hasOwnProp = Object.prototype.hasOwnProperty;
+      var __export = (target, all) => {
+        for (var name in all)
+          __defProp(target, name, { get: all[name], enumerable: true });
+      };
+      var __copyProps = (to, from, except, desc) => {
+        if (from && typeof from === "object" || typeof from === "function") {
+          for (let key of __getOwnPropNames(from))
+            if (!__hasOwnProp.call(to, key) && key !== except)
+              __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+        }
+        return to;
+      };
+      var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+      var mod_exports = {};
+      __export(mod_exports, {
+        foo: () => foo,
+        default: () => mod_default
+      });
+      var mod_default = { other: 1 };
+      module.exports = __toCommonJS(mod_exports);
+      function foo() { return 1; }
+    },"#;
+
+#[test]
+fn a_written_esbuild_namespace_provider_stays_commonjs() {
+    // `UnEsm` lowers `module.exports = __toCommonJS(ns)` to the names of
+    // `ns`, with its `default` getter as the default export, so the value
+    // the consumer writes to is not the default export: the provider stays
+    // CommonJS and the consumer reads `foo` from the value it wrote to.
+    let modules = format!(
+        r#"{ESBUILD_NAMESPACE_PROVIDER}
+    400: function(module, exports, __webpack_require__) {{
+      "use strict";
+      var p = __webpack_require__(100);
+      p.extra = 1;
+      exports.run = function () {{ return [p.foo(), p.extra]; }};
+    }}"#
+    );
+    let source = helper_provider_bundle(&modules);
+    for emit_source_map in [false, true] {
+        let output = unpack_one(&source, emit_source_map);
+        assert_valid_module_graph(&output.modules);
+        assert!(
+            interop_warnings(&output).is_empty(),
+            "{:#?}",
+            output.warnings
+        );
+        let provider = module_named(&output.modules, "module-100.js");
+        assert!(
+            provider.contains("module.exports = __toCommonJS(mod_exports)"),
+            "{provider}"
+        );
+        assert!(
+            !provider.lines().any(|line| line.starts_with("export ")),
+            "{provider}"
+        );
+        let consumer = module_named(&output.modules, "module-400.js");
+        assert!(consumer.contains("p.extra = 1"), "{consumer}");
+        assert!(consumer.contains("p.foo()"), "{consumer}");
+        assert!(!consumer.contains("mod_default"), "{consumer}");
+        assert!(!consumer.contains(".default"), "{consumer}");
+    }
+}
+
+#[test]
+fn a_written_provider_whose_value_is_rooted_at_a_require_stays_commonjs() {
+    // Module 100 passes module 110 through an interop helper, module 120
+    // passes it through, and module 130 exports one of its members. `UnEsm`
+    // turns none of them into `export default v` of the value the consumer
+    // writes to, so each stays CommonJS.
+    let modules = r#"
+    100: function(module, exports, __webpack_require__) {
+      function i(e) { return e && e.__esModule ? e : { default: e }; }
+      module.exports = i(__webpack_require__(110));
+    },
+    110: function(module, exports) {
+      exports.f = function () { return 4; };
+    },
+    120: function(module, exports, __webpack_require__) {
+      module.exports = __webpack_require__(110);
+    },
+    130: function(module, exports, __webpack_require__) {
+      module.exports = __webpack_require__(110).f;
+    },
+    400: function(module, exports, __webpack_require__) {
+      var p = __webpack_require__(100);
+      p.extra = 1;
+      var q = __webpack_require__(120);
+      q.extra = 2;
+      var s = __webpack_require__(130);
+      s.extra = 3;
+      exports.run = function () { return [p.default.f(), q.f(), s()]; };
+    }"#;
+    let source = helper_provider_bundle(modules);
+    for emit_source_map in [false, true] {
+        let output = unpack_one(&source, emit_source_map);
+        assert_valid_module_graph(&output.modules);
+        for name in ["module-100.js", "module-120.js", "module-130.js"] {
+            let provider = module_named(&output.modules, name);
+            assert!(provider.contains("module.exports = "), "{provider}");
+            assert!(
+                !provider.lines().any(|line| line.starts_with("export ")),
+                "{provider}"
+            );
+        }
+    }
+}

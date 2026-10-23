@@ -224,6 +224,7 @@ pub(crate) use un_esm::export_storage::{
 pub use un_esm::UnEsm;
 pub(crate) use un_esm::{
     is_webpack_harmony_module, lower_export_getter_helpers, lower_webpack_export_definitions,
+    lowers_to_commonjs_namespace,
 };
 pub use un_esmodule_flag::UnEsmoduleFlag;
 pub use un_export_rename::UnExportRename;
