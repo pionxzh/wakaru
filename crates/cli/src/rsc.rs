@@ -1,4 +1,4 @@
-//! `wakaru flight`: decode a captured React Server Components (Flight) payload.
+//! `wakaru rsc`: decode a captured React Server Components (Flight) payload.
 //!
 //! The input is either a raw payload (`1:I[...]` rows, one per line) or a page
 //! or script holding Next.js `self.__next_f.push(...)` calls, which are
@@ -11,12 +11,12 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::Args;
 use serde::Serialize;
-use wakaru_core::flight::{self, FlightPayload};
+use wakaru_core::rsc::{self as flight, FlightPayload};
 
 use crate::output::write_if_changed;
 
 #[derive(Debug, Clone, Args)]
-pub(crate) struct FlightArgs {
+pub(crate) struct RscArgs {
     /// A raw Flight payload, a page containing `self.__next_f.push(...)`
     /// calls, or a script holding those calls on their own.
     pub(crate) input: PathBuf,
@@ -26,7 +26,7 @@ pub(crate) struct FlightArgs {
     pub(crate) output: Option<PathBuf>,
 }
 
-pub(crate) fn run(args: FlightArgs) -> Result<()> {
+pub(crate) fn run(args: RscArgs) -> Result<()> {
     let text = fs::read_to_string(&args.input)
         .with_context(|| format!("failed to read {}", args.input.display()))?;
     let decoded = decode_input(&text);

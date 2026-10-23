@@ -13,10 +13,10 @@
 //!     "1:I[\"static/chunks/app/page.js\",[\"static/chunks/alpha.js\"],\"default\"]\n",
 //!     "2:[\"$\",\"div\",null,{\"children\":\"Hello\"}]\n",
 //! );
-//! let decoded = wakaru_core::flight::decode(payload);
+//! let decoded = wakaru_core::rsc::decode(payload);
 //! assert!(decoded.problems.is_empty());
 //! assert_eq!(decoded.rows.len(), 3);
-//! assert_eq!(decoded.rows[2].tag, wakaru_core::flight::FlightTag::Model);
+//! assert_eq!(decoded.rows[2].tag, wakaru_core::rsc::FlightTag::Model);
 //! assert_eq!(
 //!     decoded.asset_paths(),
 //!     ["/static/alpha.css", "static/chunks/app/page.js", "static/chunks/alpha.js"]

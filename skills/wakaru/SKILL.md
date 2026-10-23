@@ -165,15 +165,15 @@ recovered `.vue` files for template inspection, but keep the paired JavaScript
 artifact around when recovery falls back or looks too heuristic. Do not
 present recovered SFCs as original source.
 
-### 5. Decode a captured React Server Components (Flight) payload
+### 5. Decode a captured React Server Components payload (experimental)
 
-A React Flight payload (React Server Components' wire format) is data, not
+A React Server Components payload (React's Flight wire format) is data, not
 JavaScript: do not run it through decompilation or unpacking. Next.js embeds
 it in page HTML as `self.__next_f.push(...)` calls.
 
 ```bash
-wakaru flight page.html -o flight.json       # saved Next.js page or script
-wakaru flight payload.txt -o flight.json     # raw payload rows
+wakaru rsc page.html -o rsc.json       # saved Next.js page or script
+wakaru rsc payload.rsc -o rsc.json     # raw payload rows
 ```
 
 The JSON holds `rows` (hex `id`, `tag`, `kind`, raw `payload`, and `json` when

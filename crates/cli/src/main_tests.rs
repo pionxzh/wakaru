@@ -2765,30 +2765,30 @@ fn a_run_of_containers_only_does_not_need_the_bundle_job() {
 }
 
 #[test]
-fn parses_flight_with_a_raw_payload_or_a_page() {
-    let cli = Cli::try_parse_from(["wakaru", "flight", "page.html", "-o", "flight.json"])
-        .expect("flight command should parse");
+fn parses_rsc_with_a_raw_payload_or_a_page() {
+    let cli = Cli::try_parse_from(["wakaru", "rsc", "page.html", "-o", "rsc.json"])
+        .expect("rsc command should parse");
     match cli.command {
-        Some(Command::Flight(args)) => {
+        Some(Command::Rsc(args)) => {
             assert_eq!(args.input, PathBuf::from("page.html"));
-            assert_eq!(args.output, Some(PathBuf::from("flight.json")));
+            assert_eq!(args.output, Some(PathBuf::from("rsc.json")));
         }
-        other => panic!("expected flight command, got {other:?}"),
+        other => panic!("expected rsc command, got {other:?}"),
     }
 
-    let cli = Cli::try_parse_from(["wakaru", "flight", "payload.txt"]).expect("flight to stdout");
+    let cli = Cli::try_parse_from(["wakaru", "rsc", "payload.txt"]).expect("rsc to stdout");
     assert!(matches!(
         cli.command,
-        Some(Command::Flight(flight::FlightArgs { output: None, .. }))
+        Some(Command::Rsc(rsc::RscArgs { output: None, .. }))
     ));
 }
 
 #[test]
-fn flight_writes_the_decoded_page_as_json() {
-    let dir = temp_test_dir("flight-page");
+fn rsc_writes_the_decoded_page_as_json() {
+    let dir = temp_test_dir("rsc-page");
     fs::create_dir_all(&dir).expect("create temp dir");
     let input_path = dir.join("page.js");
-    let output_path = dir.join("flight.json");
+    let output_path = dir.join("rsc.json");
     fs::write(
         &input_path,
         concat!(
@@ -2801,20 +2801,20 @@ fn flight_writes_the_decoded_page_as_json() {
 
     let cli = Cli::try_parse_from([
         "wakaru",
-        "flight",
+        "rsc",
         input_path.to_str().expect("input path should be utf8"),
         "-o",
         output_path.to_str().expect("output path should be utf8"),
     ])
-    .expect("flight cli should parse");
+    .expect("rsc cli should parse");
     match cli.command {
-        Some(Command::Flight(args)) => flight::run(args).expect("flight should decode"),
-        other => panic!("expected flight command, got {other:?}"),
+        Some(Command::Rsc(args)) => rsc::run(args).expect("rsc should decode"),
+        other => panic!("expected rsc command, got {other:?}"),
     }
 
     let written: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&output_path).expect("read flight json"))
-            .expect("flight output should be json");
+        serde_json::from_str(&fs::read_to_string(&output_path).expect("read rsc json"))
+            .expect("rsc output should be json");
     assert_eq!(written["format"], "next.__next_f");
     assert_eq!(written["next_flight"]["data"], 1);
     assert_eq!(written["rows"][0]["kind"], "module-reference");

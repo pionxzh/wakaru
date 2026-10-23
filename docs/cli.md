@@ -252,15 +252,17 @@ If an unguarded statement cannot be placed without guessing, structural
 detection leaves the response unsplit; explicit-file fallback preserves the
 input intact.
 
-## Decode a React Server Components (Flight) payload
+## Decode a React Server Components payload
 
 ```bash
-wakaru flight payload.txt -o flight.json          # a raw Flight payload
-wakaru flight page.html -o flight.json            # a saved Next.js page
-wakaru flight captured-flight.js                  # prints the JSON to stdout
+wakaru rsc payload.rsc -o rsc.json                # a raw RSC payload
+wakaru rsc page.html -o rsc.json                  # a saved Next.js page
+wakaru rsc captured-flight.js                     # prints the JSON to stdout
 ```
 
-`flight` reads a React Flight payload and prints it as JSON. It is not part of
+`rsc` is experimental: its output can change in any release. It reads a React
+Server Components payload (React's Flight wire format) and prints it as JSON.
+It is not part of
 the decompile pipeline: a payload is data, not JavaScript source, so no rule
 runs and nothing is decompiled. The input is either a raw payload (`1:I[...]`
 rows, one per line) or a page or script that holds Next.js
@@ -283,7 +285,7 @@ Tag letters and framing follow React's client parser: a row is
 length-prefixed rows (`T`, `A`, `O`, `o`, `b`, `U`, `S`, `s`, `L`, `l`, `G`,
 `g`, `M`, `m`, `V`) are read by that length, so a text row may hold newlines.
 Model rows keep React's `$` references (`"$L3"`, `"$undefined"`) as plain
-strings: `flight` decodes the transport, not the React tree it describes.
+strings: `rsc` decodes the transport, not the React tree it describes.
 `__NEXT_DATA__`, build IDs, and manifest files are not collected yet; this
 command only decodes the Flight stream.
 
@@ -428,7 +430,6 @@ Within one major version, these outputs change only by addition:
 
 - the `wakaru --version` line, `wakaru <version>`;
 - the `--json` object on stdout, for single-file and unpack runs;
-- the `flight` command's JSON, and its `format` and `kind` values;
 - `provenance.json`;
 - the exit status rules in the previous section.
 
