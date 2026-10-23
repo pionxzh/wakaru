@@ -366,9 +366,15 @@ fn run_un_esm(module: &mut Module, ctx: RuleRunContext<'_>) {
             .interface_plan
             .zip(ctx.current_filename)
             .is_some_and(|(plan, filename)| plan.keeps_commonjs(filename));
+    let whole_value_sources = ctx
+        .interface_plan
+        .zip(ctx.current_filename)
+        .map(|(plan, filename)| plan.whole_value_sources(filename))
+        .unwrap_or_default();
     let mut rule = UnEsm::new(ctx.unresolved_mark, ctx.rewrite_level)
         .with_current_filename(ctx.current_filename)
         .with_written_exports(keep_commonjs)
+        .with_whole_value_sources(whole_value_sources)
         .with_local_helpers(local_helpers)
         .with_later_stages(ctx.mode.later_unpack_stages());
     module.visit_mut_with(&mut rule);

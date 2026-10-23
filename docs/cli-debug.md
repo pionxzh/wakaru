@@ -330,7 +330,10 @@ module, in source order, is one edge:
   passed to a function, whether a function of the module writes it, or the
   callee is in another module or unknown);
 - `import`: the import specifiers made from the call after the passes at the
-  fact barrier, followed by what `UnEsm` made when a pass changed it; or
+  fact barrier, followed by what `UnEsm` made when a pass changed it (a
+  member read of a module whose only export is one `module.exports = v`
+  shows the default import it reads through, such as `default _p`, on every
+  edge that binding stands for); or
   `no import` with the reason (the module stays CommonJS, the require stays a
   call, or the call is not on the AST `UnEsm` sees).
 

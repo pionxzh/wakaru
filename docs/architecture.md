@@ -307,7 +307,8 @@ When unpacking bundles, the driver runs a two-phase pipeline:
    `UnEsm` and read each `require()` call's edge (Phase 1a). Once every module
    has reached `UnEsm` (barrier 0) and the plan is built from every module's
    edges (`InterfacePlan`: a provider a consumer writes to stays CommonJS,
-   unless its only export is one `module.exports = v` every write lands on),
+   unless its only export is one `module.exports = v` every write lands on;
+   a member read of such a provider reads its default import),
    run `UnEsm`, clone that barrier AST for
    webpack factory-IIFE fact recovery, and extract import/export facts
    (Phase 1b). Retain the pre-recovery AST together with its `Globals` and

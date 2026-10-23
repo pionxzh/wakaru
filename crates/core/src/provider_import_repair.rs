@@ -20,6 +20,12 @@
 //! intentional: CommonJS returns `undefined`, while a guessed ESM named import
 //! fails during module linking. Callable defaults require a positive property
 //! fact and do not use that absence inference.
+//!
+//! For a provider whose only export is one `module.exports = v`, as the
+//! unpack plan proves it, `UnEsm` already reads `require("./p").name`
+//! through the default import (`InterfacePlan::whole_value_sources`),
+//! whatever `v` is, so this pass meets no named import made from such a
+//! read; a specifier the input wrote and `UnEsm` merged still reaches it.
 
 use crate::collections::{HashMap, HashSet};
 

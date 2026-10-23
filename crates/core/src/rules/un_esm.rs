@@ -52,6 +52,7 @@ pub(crate) mod export_storage;
 mod harmony_requires;
 mod hoist_barrier;
 mod leading_requires;
+mod whole_value_members;
 use export_getters::has_webpack_export_definitions;
 pub(crate) use export_getters::{
     lower_export_getter_helpers, lower_webpack_export_definitions, lowers_to_commonjs_namespace,
@@ -71,6 +72,9 @@ pub struct UnEsm {
     import_tags: ImportTags,
     /// A consumer in the input writes to this module's `exports` object.
     written_exports: bool,
+    /// The sources this module requires whose only export is one
+    /// `module.exports = v` (the unpack plan).
+    whole_value_sources: HashSet<String>,
 }
 
 impl UnEsm {
@@ -84,6 +88,7 @@ impl UnEsm {
             later_unpack_stages: kept_require::LaterUnpackStages::None,
             import_tags: ImportTags::default(),
             written_exports: false,
+            whole_value_sources: HashSet::default(),
         }
     }
 
@@ -92,6 +97,16 @@ impl UnEsm {
     /// such object, so a CommonJS module stays CommonJS.
     pub(crate) fn with_written_exports(mut self, written_exports: bool) -> Self {
         self.written_exports = written_exports;
+        self
+    }
+
+    /// The sources this module requires that name a module whose only export
+    /// is one `module.exports = v` (the unpack plan,
+    /// [`crate::interface_plan::InterfacePlan::whole_value_sources`]): a
+    /// member read on such a require reads the default import
+    /// ([`whole_value_members`]).
+    pub(crate) fn with_whole_value_sources(mut self, sources: HashSet<String>) -> Self {
+        self.whole_value_sources = sources;
         self
     }
 
@@ -583,6 +598,16 @@ impl UnEsm {
         UnInteropRequireDefault::run_with_helpers(module, &local_helpers, InteropScope::All);
         UnInteropRequireWildcard::run_with_helpers(module, &local_helpers, InteropScope::All);
         recover_coupled_commonjs_default_binding(module, self.unresolved_mark);
+        // A member read on the value of a whole-value provider reads its
+        // default import, where the input read it. Runs before the hoisting
+        // below would move a call argument's read ahead of the arguments
+        // before it, and again once the export and compound-declaration
+        // pre-passes expose more declarators.
+        let mut whole_value_reads = whole_value_members::read_whole_value_members(
+            module,
+            self.unresolved_mark,
+            &self.whole_value_sources,
+        );
         // Phase -1: hoist require() calls out of complex expressions
         hoist_embedded_requires(module, self.unresolved_mark);
         // Parallel to the named-member pass inside hoist_embedded_requires.
@@ -602,6 +627,11 @@ impl UnEsm {
         }
         remove_dead_named_only_default_compat_blocks(module, self.unresolved_mark);
         lower_exported_cjs_requires(module, self.unresolved_mark);
+        whole_value_reads.extend(whole_value_members::read_whole_value_members(
+            module,
+            self.unresolved_mark,
+            &self.whole_value_sources,
+        ));
         preserve_written_cjs_require_bindings(module, self.unresolved_mark);
         export_getters::snapshot_unresolved_id_require_getters(module, self.unresolved_mark);
         // Runs after the getter and wrapper pre-passes, whose shapes it would
@@ -787,6 +817,13 @@ impl UnEsm {
             .map(|(local, call)| (binding_id(local), call))
             .filter(|(local, _)| !consumed_reexport_bindings.contains(local))
             .collect();
+        // A binding of a whole-value provider stands for every require whose
+        // member read it now holds.
+        require_locals.extend(
+            whole_value_reads
+                .into_iter()
+                .filter(|(local, _)| !consumed_reexport_bindings.contains(local)),
+        );
         // The specifiers the input wrote that join such an import.
         let mut merged_locals: Vec<BindingId> = Vec::new();
 

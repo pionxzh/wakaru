@@ -3138,7 +3138,7 @@ module.exports = function(value) { return parse(value); };
     }
 
     #[test]
-    fn provider_facts_reject_conditional_properties_on_a_localized_callable_alias() {
+    fn a_conditional_property_of_a_whole_value_callable_is_read_through_its_default() {
         let modules = vec![
             UnpackedModule {
                 id: "provider".to_string(),
@@ -3164,16 +3164,12 @@ module.exports = optional;
             },
         ];
 
+        // The provider facts do not prove `optional`, but the plan proves
+        // the provider's only export is `module.exports = api`, so `UnEsm`
+        // reads the property from the default import, present or not.
         let output = unpack_multi_module(modules, DecompileOptions::default())
             .expect("conditional alias-property fixture should decompile");
-        let findings = validate_prepared_output(&output);
-        assert!(
-            findings.iter().any(|finding| {
-                finding.kind == OutputFindingKind::MissingImportedName
-                    && finding.filename == "consumer.js"
-            }),
-            "a conditional alias property must remain visible to validation: {findings:#?}"
-        );
+        assert_eq!(validate_prepared_output(&output), vec![]);
         let consumer = output
             .modules
             .iter()
@@ -3181,13 +3177,17 @@ module.exports = optional;
             .map(|module| module.code.as_str())
             .expect("expected consumer module");
         assert!(
-            consumer.contains("import { optional } from \"./provider.js\""),
-            "an unproven alias property must not be repaired through the default export:\n{consumer}"
+            consumer.contains("import provider from \"./provider.js\""),
+            "{consumer}"
+        );
+        assert!(
+            consumer.contains("const optional = provider.optional"),
+            "{consumer}"
         );
     }
 
     #[test]
-    fn provider_facts_do_not_infer_absent_callable_properties() {
+    fn an_absent_property_of_a_whole_value_callable_is_read_through_its_default() {
         let modules = vec![
             UnpackedModule {
                 id: "provider".to_string(),
@@ -3213,15 +3213,25 @@ module.exports = function() { return missing; };
             },
         ];
 
+        // Callable facts prove only observed properties, but the plan
+        // proves the provider's only export is `module.exports = api`:
+        // CommonJS reads `undefined`, and so does the default import.
         let output = unpack_multi_module(modules, DecompileOptions::default())
             .expect("absent callable-property fixture should decompile");
-        let findings = validate_prepared_output(&output);
+        assert_eq!(validate_prepared_output(&output), vec![]);
+        let consumer = output
+            .modules
+            .iter()
+            .find(|module| module.filename == "consumer.js")
+            .map(|module| module.code.as_str())
+            .expect("expected consumer module");
         assert!(
-            findings.iter().any(|finding| {
-                finding.kind == OutputFindingKind::MissingImportedName
-                    && finding.filename == "consumer.js"
-            }),
-            "callable facts prove only observed properties and must not infer an absent one: {findings:#?}"
+            consumer.contains("import provider from \"./provider.js\""),
+            "{consumer}"
+        );
+        assert!(
+            consumer.contains("const missing = provider.missing"),
+            "{consumer}"
         );
     }
 
@@ -3599,7 +3609,7 @@ Object.assign(module.exports, require("./left.js") || {});
     }
 
     #[test]
-    fn provider_facts_leave_unproven_default_properties_unchanged() {
+    fn a_property_of_an_unknown_whole_value_is_read_through_its_default() {
         let modules = vec![
             UnpackedModule {
                 id: "provider".to_string(),
@@ -3620,15 +3630,68 @@ module.exports = function() { return missing; };
             },
         ];
 
+        // The provider facts know nothing of the call's value, but the plan
+        // proves it is the provider's only export, so the consumer reads
+        // `missing` from it as CommonJS did.
         let output = unpack_multi_module(modules, DecompileOptions::default())
             .expect("unproven provider fixture should decompile");
-        let findings = validate_prepared_output(&output);
+        assert_eq!(validate_prepared_output(&output), vec![]);
+        let consumer = output
+            .modules
+            .iter()
+            .find(|module| module.filename == "consumer.js")
+            .map(|module| module.code.as_str())
+            .expect("expected consumer module");
         assert!(
-            findings.iter().any(|finding| {
-                finding.kind == OutputFindingKind::MissingImportedName
-                    && finding.filename == "consumer.js"
-            }),
-            "an unknown default value must fail closed instead of fabricating a property capture: {findings:#?}"
+            consumer.contains("import provider from \"./provider.js\""),
+            "{consumer}"
+        );
+        assert!(
+            consumer.contains("const missing = provider.missing"),
+            "{consumer}"
+        );
+    }
+
+    #[test]
+    fn a_hand_written_import_of_a_whole_value_provider_is_left_as_written() {
+        let modules = vec![
+            UnpackedModule {
+                id: "provider".to_string(),
+                code: "module.exports = makeProvider();".to_string(),
+                filename: "provider.js".to_string(),
+                ..Default::default()
+            },
+            UnpackedModule {
+                id: "consumer".to_string(),
+                is_entry: true,
+                code: r#"
+import { name } from "./provider.js";
+var other = require("./provider.js").other;
+export default function() { return [name, other]; }
+"#
+                .to_string(),
+                filename: "consumer.js".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        let output = unpack_multi_module(modules, DecompileOptions::default())
+            .expect("mixed consumer fixture should decompile");
+        let consumer = output
+            .modules
+            .iter()
+            .find(|module| module.filename == "consumer.js")
+            .map(|module| module.code.as_str())
+            .expect("expected consumer module");
+        // The authored named import stays named, beside the default import
+        // the require became; its missing export is the input's own.
+        assert!(
+            consumer.contains("import provider, { name } from \"./provider.js\""),
+            "{consumer}"
+        );
+        assert!(
+            consumer.contains("const other = provider.other"),
+            "{consumer}"
         );
     }
 

@@ -54,7 +54,7 @@ crates/
       commonjs_default_object_composition.rs — exact mutable-default composition recovery
       commonjs_export_residual.rs   — `exports` accesses left in ESM output (`commonjs_export_unrecovered`)
       kept_require.rs               — requires that stay calls: positions, the default read of a kept require, ES-source evidence, and their warnings
-      interface_plan.rs             — the plan built at barrier 0 from every module's require edges and helper exports: which providers stay CommonJS because a consumer writes to them, and which interop helpers each consumer reaches through a bundled provider
+      interface_plan.rs             — the plan built at barrier 0 from every module's require edges and helper exports: which providers stay CommonJS because a consumer writes to them, which sources each consumer reads a whole `module.exports = v` value from, and which interop helpers each consumer reaches through a bundled provider
       provider_helpers.rs           — the interop helpers a module exports, read before `UnEsm` (export storage + helper body)
       provider_interface.rs         — what `require` of a provider returned and which import reads it, from the provider's facts (Phase 2 passes)
       require_edges.rs              — one record per `require()` call (form, interop, uses), keyed by the call's span
@@ -82,6 +82,7 @@ crates/
         un_esm/export_storage.rs    — per-name CommonJS export storage model (getter / mirror / property)
         un_esm/harmony_requires.rs  — webpack harmony module detection and the loads Terser inlined into their use
         un_esm/leading_requires.rs  — the requires a top-level statement runs before any other effect, moved into bindings
+        un_esm/whole_value_members.rs — member reads of a whole `module.exports = v` provider, read through one binding that becomes the default import
         cocos_rf.rs                 — Cocos Creator 2.x `cc._RF.push/pop` registration-frame matching shared by UnEnum and export storage
         *.rs                        — one file per transformation rule
       unpacker/

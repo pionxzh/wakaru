@@ -57,7 +57,8 @@ Phase 1a (per module, parallel):
      and helper exports ────
 
 Phase 1b (per module, parallel):
-    UnEsm, reading the plan; it records the import tags
+    UnEsm, reading the plan; it reads whole-value members through the
+      default import and records the import tags
     clone barrier AST → recover webpack factory IIFE ESM shapes
     collect_module_facts(&facts_clone)                ← pure AST → facts
     collect_import_call_edges(&barrier_ast)           ← imports still under [[Call]]
@@ -306,6 +307,31 @@ shape that recovery converts, such as a `require` in a `for` head that
 `UnVariableMerging` hoists, and its consumers' `.default` rewrite reads the
 facts, which would then say CommonJS for an ES module.
 
+The plan also lists, for each consumer, the sources that resolve to another
+module whose only export is one `module.exports = v` (the same
+`exports_only_whole_value` fact, written or not; `whole_value_sources`).
+`require(p)` of such a provider returns `v`, and its ES form is
+`export default v`, so `UnEsm` reads a member of it through one binding of
+the value before it classifies the requires
+(`rules/un_esm/whole_value_members.rs`): `var x = require(p).name` (a
+static member chain whose first member is not `default`), an object pattern
+destructuring `require(p)` (defaults and rest included), a direct argument
+of a top-level call, and the right side of a top-level assignment
+(`exports.x = require(p).y`) become `var _p = require(p)` before the
+statement and a read of `_p` in place, and `_p` becomes the default import.
+The member is read where the input read it; only the provider's evaluation
+moves, as for every require that becomes an import. This is the CommonJS
+read whether or not `v` has the member, and whether the provider ends ESM
+or stays CommonJS, where its default import is its `module.exports`. The
+binding is an earlier `var L = require(p)` declared once and never written,
+or a fresh one named after the specifier's file stem, else `_` and the
+first read's local (`_x`, as `provider_import_repair` names its default
+import) or member, avoiding every name of the module and the names a direct
+eval mentions. A self-require is not a whole-value source, a `.default`
+read keeps the default-member classification, and a read in a function or
+a condition keeps its `require`. Single-file decompile and `--raw` have no
+plan.
+
 A top-level
 `var h = require("src").name` that no statement writes makes `h(x)` a call
 of that module's `name` export, read from the same bindings `UnEsm` trusts
@@ -357,6 +383,8 @@ they read the dummy span. Another conversion `UnEsm` runs (an interop or
 getter helper turning `var x = helper(require("./p"))` into an import) is
 tagged by its declarator, and so is the cross-module interop import pass;
 `provider_import_repair` carries the tag to the default import it creates.
+The binding `UnEsm` makes for whole-value member reads is tagged with the
+key of every call it replaced.
 The tags cross the barrier with the retained AST; the source-map path's
 second run of the range records its own. Imports the default-object
 composition pass and `import_unproven_helper_requires` create are not
@@ -538,8 +566,15 @@ Neither proof creates a default-object fact available to consumers.
   original local binding at the original `require` declaration position. An
   object property absent from a proven empty object is also covered: CommonJS
   returns `undefined`, whereas a guessed ESM named import fails during linking.
-  Callable-property absence is never inferred.
-  Authored ESM imports, unknown default values, synthesized bindings without
+  The pass itself never infers callable-property absence, and leaves an
+  unknown default value unchanged: a provider the plan proves whole-value
+  reaches it with no named import to repair, because `UnEsm` already read
+  `require("./x").name` through the default import (the plan, above), present
+  or absent, whatever the value. What it still repairs is a provider the plan
+  does not prove whole-value (an object default with named writes beside it,
+  `module.exports = { a }; module.exports.b = 2`, or a marked provider) and
+  a specifier the input wrote that `UnEsm` merged into a synthesized import.
+  Authored ESM imports, synthesized bindings without
   either a source position or a proven mutable-local capture, and providers
   with `export *` remain unchanged. A whole-object CommonJS
   consumer that mutates provider properties is also deliberately unresolved:

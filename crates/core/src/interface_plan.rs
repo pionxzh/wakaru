@@ -38,6 +38,14 @@
 //! object is left alone: a webpack harmony module (its exports are getters
 //! `require.d` defined), and a module the input already wrote as ESM.
 //!
+//! The plan also lists, for each consumer, the sources that name a module
+//! whose only export is one `module.exports = v`, written or not
+//! ([`InterfacePlan::whole_value_sources`]). `require(source)` returns `v`,
+//! the module's default export when `UnEsm` converts it and its
+//! `module.exports` when it does not, so `UnEsm` reads `require(source).name`
+//! through the default import instead of importing `name`, which such a
+//! module never exports.
+//!
 //! The plan also carries the interop helpers each provider exports
 //! ([`ProviderHelpers`]), so that `UnEsm` proves a helper a consumer reaches
 //! through `require("./m.js")` as it proves one reached through
@@ -197,6 +205,10 @@ pub(crate) struct InterfacePlan {
     /// For each consumer, by canonical key: the sources it requires that
     /// resolve to a provider in `helpers`, with that provider's key.
     helper_sources: HashMap<String, Vec<(Atom, String)>>,
+    /// For each consumer, by canonical key: the sources it requires that
+    /// resolve to another module whose only export is one
+    /// `module.exports = v` ([`PlanModule::exports_whole_value`]).
+    whole_value_sources: HashMap<String, Vec<Atom>>,
 }
 
 impl InterfacePlan {
@@ -276,12 +288,38 @@ impl InterfacePlan {
                 }
             }
         }
+        let mut whole_value_sources: HashMap<String, Vec<Atom>> = HashMap::default();
+        if !whole_value.is_empty() {
+            for module in &modules {
+                let consumer = canonical_module_key(module.filename);
+                let mut sources: Vec<Atom> = Vec::new();
+                for edge in module.edges.iter().chain(module.edges.unkeyed()) {
+                    if sources.contains(&edge.source) {
+                        continue;
+                    }
+                    let Some(provider) = resolve_module_key(
+                        |key| keys.contains(key),
+                        Some(module.filename),
+                        &edge.source,
+                    ) else {
+                        continue;
+                    };
+                    if provider != consumer && whole_value.contains(&provider) {
+                        sources.push(edge.source.clone());
+                    }
+                }
+                if !sources.is_empty() {
+                    whole_value_sources.insert(consumer, sources);
+                }
+            }
+        }
         Self {
             written,
             kept,
             closed,
             helpers,
             helper_sources,
+            whole_value_sources,
         }
     }
 
@@ -314,6 +352,19 @@ impl InterfacePlan {
             .filter_map(|(source, provider)| {
                 Some((source.to_string(), self.helpers.get(provider)?.clone()))
             })
+            .collect()
+    }
+
+    /// The sources `filename` requires that name another module whose only
+    /// export is one `module.exports = v`: `require(source)` returns `v`,
+    /// which `UnEsm` makes that module's default export when it converts
+    /// it, and which stays its `module.exports` when it does not.
+    pub(crate) fn whole_value_sources(&self, filename: &str) -> HashSet<String> {
+        self.whole_value_sources
+            .get(&canonical_module_key(filename))
+            .into_iter()
+            .flatten()
+            .map(|source| source.to_string())
             .collect()
     }
 
@@ -846,6 +897,38 @@ h.patched = true;"#,
         assert!(!plan.keeps_commonjs("src/helper.js"));
         assert!(plan.helper_exports("src/helper.js").is_none());
         assert!(plan.helper_sources("src/consumer.js").is_empty());
+    }
+
+    #[test]
+    fn whole_value_sources_name_the_whole_value_providers_a_module_requires() {
+        // The consumer's own only export is a whole value too: a
+        // self-require is not a provider of it.
+        let consumer = edges(
+            r#"var a = require("./whole.js").a;
+var again = require("./whole.js").again;
+var b = require("./named.js").b;
+var self = require("./consumer.js").self;
+var d = require("lodash").d;
+module.exports = make();"#,
+        );
+        let empty = RequireEdges::default();
+        let module = |filename, edges, exports_whole_value| PlanModule {
+            filename,
+            edges,
+            exports_object_writable: true,
+            helpers: None,
+            exports_whole_value,
+        };
+        let plan = InterfacePlan::build([
+            module("src/consumer.js", &consumer, true),
+            module("src/whole.js", &empty, true),
+            module("src/named.js", &empty, false),
+        ]);
+        assert_eq!(
+            plan.whole_value_sources("src/consumer.js"),
+            HashSet::from_iter(["./whole.js".to_string()])
+        );
+        assert!(plan.whole_value_sources("src/whole.js").is_empty());
     }
 
     #[test]

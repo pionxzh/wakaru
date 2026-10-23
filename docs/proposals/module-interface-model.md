@@ -10,7 +10,11 @@ each Phase 2 interop pass still serves inputs barrier 0 does not read (see
 step 4 and [Done when](#done-when)). The maintainer decided the direction
 (see [Decisions](#decisions)) and closed the line with that result. A
 follow-up (2026-10-22) narrowed the written-provider rule of step 3 to let a
-whole-value provider become ESM. This proposal absorbs the consumer-aware provider format proposal
+whole-value provider become ESM. Another (2026-10-24) has `UnEsm` read
+`require(p).name` of a whole-value provider through the default import, from
+the plan, instead of importing `name` for `provider_import_repair` to fix;
+the repair pass stays for the providers the plan does not prove
+whole-value. This proposal absorbs the consumer-aware provider format proposal
 (deferred 2026-10-15), whose problem statement is
 [Consumer writes to a named-only provider](#consumer-writes-to-a-named-only-provider).
 
@@ -409,6 +413,22 @@ providers CommonJS with no write behind any of them.
    AST, still say CommonJS. That mismatch remains for unwritten providers;
    a consumer that stays CommonJS then keeps a bare `require` of an ES
    module.
+
+   Follow-up 2026-10-24 by the maintainer: the plan also lists, per
+   consumer, the sources whose provider exports only one
+   `module.exports = v`, written or not. `UnEsm` binds `require(p)` once
+   and reads `.name` from that binding where the input read it, so the
+   binding becomes the default import, which is `v` whether the provider
+   ends ESM or stays CommonJS. This replaces, for those providers, the
+   Phase 2 capture that `provider_import_repair` made only for a proven
+   object, a callable with an observed property, or a proven empty object;
+   a class, a call result, a global-object detection, or an absent
+   property of a callable now links too. Marked providers, providers with
+   named exports or `export *`, a passthrough `module.exports = require(x)`,
+   and hand-written imports are unchanged. Whether `provider_import_repair`
+   can go is a separate decision: it still serves object providers with
+   named writes beside the default, marked providers, and hand-written
+   specifiers merged into a synthesized import.
 
    Second half done: provider identity. Phase 1a reads each module's
    interop helper exports (`ProviderHelpers`) on the AST `UnEsm` will see:

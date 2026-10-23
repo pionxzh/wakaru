@@ -3939,3 +3939,385 @@ fn a_written_provider_whose_value_is_rooted_at_a_require_stays_commonjs() {
         }
     }
 }
+
+/// The consumer module of a bundle as `module-400.js`.
+fn consumer_of(output: &wakaru_core::driver::test_support::UnpackOutput) -> &str {
+    module_named(&output.modules, "module-400.js")
+}
+
+#[test]
+fn a_member_read_of_a_whole_value_provider_reads_its_default_import() {
+    // Module 100 is core-js 2's `_global.js` (wild-observed, webpack-bundled);
+    // 110 a class, 120 a function with an attached property, 130 a call
+    // result (hypothetical). Each one's only export is `module.exports = v`,
+    // so `require(p).name` reads `name` of `v`, present or absent, and the
+    // consumer reads it from the default import.
+    let modules = r#"
+    100: function(module) {
+      var global = module.exports = typeof window != "undefined" && window.Math == Math ? window : typeof self != "undefined" && self.Math == Math ? self : Function("return this")();
+      if (typeof __g == "number") __g = global;
+    },
+    110: function(module) {
+      module.exports = class Store { static create() { return 1; } };
+    },
+    120: function(module) {
+      function api(value) { return value; }
+      api.parse = function (value) { return value.length; };
+      module.exports = api;
+    },
+    130: function(module) {
+      module.exports = makeStore();
+      function makeStore() { return { size: 3 }; }
+    },
+    400: function(module, exports, __webpack_require__) {
+      "use strict";
+      var M = __webpack_require__(100).Math;
+      var noGlobal = __webpack_require__(100).noSuchGlobal;
+      var create = __webpack_require__(110).create;
+      var gone = __webpack_require__(110).gone;
+      var parse = __webpack_require__(120).parse;
+      var absent = __webpack_require__(120).absent;
+      var size = __webpack_require__(130).size;
+      var none = __webpack_require__(130).none;
+      exports.run = function () { return [M === Math, noGlobal, create(), gone, parse("ab"), absent, size, none]; };
+    }"#;
+    let source = helper_provider_bundle(modules);
+    for emit_source_map in [false, true] {
+        let output = unpack_one(&source, emit_source_map);
+        assert_valid_module_graph(&output.modules);
+        assert!(
+            interop_warnings(&output).is_empty(),
+            "{:#?}",
+            output.warnings
+        );
+        for name in [
+            "module-100.js",
+            "module-110.js",
+            "module-120.js",
+            "module-130.js",
+        ] {
+            let provider = module_named(&output.modules, name);
+            assert!(provider.contains("export default"), "{provider}");
+        }
+        // A later rule joins the two reads of one binding into one
+        // destructuring.
+        let consumer = consumer_of(&output);
+        assert!(!consumer.contains("import {"), "{consumer}");
+        for (local, source, members) in [
+            ("_M", "100", ["Math: Math_1", "noSuchGlobal: noGlobal"]),
+            ("_create", "110", ["create", "gone"]),
+            ("_parse", "120", ["parse", "absent"]),
+            ("_size", "130", ["size", "none"]),
+        ] {
+            assert_eq!(
+                consumer
+                    .matches(&format!("from \"./module-{source}.js\""))
+                    .count(),
+                1,
+                "{consumer}"
+            );
+            assert!(
+                consumer.contains(&format!("import {local} from \"./module-{source}.js\"")),
+                "{consumer}"
+            );
+            assert!(
+                consumer.contains(&format!(
+                    "const {{ {}, {} }} = {local};",
+                    members[0], members[1]
+                )),
+                "{consumer}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_destructured_whole_value_keeps_its_defaults_and_rest() {
+    let modules = r#"
+    100: function(module) {
+      module.exports = makeOptions();
+      function makeOptions() { return { alpha: 1, beta: 2 }; }
+    },
+    400: function(module, exports, __webpack_require__) {
+      "use strict";
+      var { alpha = 5, gamma = 7, ...others } = __webpack_require__(100);
+      exports.run = function () { return [alpha, gamma, others]; };
+    }"#;
+    let source = helper_provider_bundle(modules);
+    for emit_source_map in [false, true] {
+        let output = unpack_one(&source, emit_source_map);
+        assert_valid_module_graph(&output.modules);
+        let consumer = consumer_of(&output);
+        assert!(
+            consumer.contains("import _alpha from \"./module-100.js\""),
+            "{consumer}"
+        );
+        assert!(
+            consumer.contains("const { alpha = 5, gamma = 7, ...others } = _alpha;"),
+            "{consumer}"
+        );
+    }
+}
+
+#[test]
+fn a_whole_value_member_read_keeps_its_position() {
+    // The declarations read the members where the input did, between the
+    // calls, and a local the module writes stays a `let`; the call argument
+    // is read after the argument before it.
+    let modules = r#"
+    100: function(module) {
+      module.exports = makeMethods();
+      function makeMethods() { return { map: function (v) { return v + 1; }, filter: function (v) { return v > 0; } }; }
+    },
+    400: function(module, exports, __webpack_require__) {
+      "use strict";
+      before();
+      var map = __webpack_require__(100).map;
+      between();
+      var filter = __webpack_require__(100).filter;
+      map = replacement;
+      use(first(), __webpack_require__(100).size);
+      exports.run = function (v) { return filter(map(v)); };
+    }"#;
+    let source = helper_provider_bundle(modules);
+    for emit_source_map in [false, true] {
+        let output = unpack_one(&source, emit_source_map);
+        assert_valid_module_graph(&output.modules);
+        let consumer = consumer_of(&output);
+        assert_eq!(consumer.matches("from \"./module-100.js\"").count(), 1);
+        let order = [
+            "import _map from \"./module-100.js\"",
+            "before();",
+            "let map = _map.map;",
+            "between();",
+            "const filter = _map.filter;",
+            "map = replacement;",
+            "use(first(), _map.size);",
+        ]
+        .map(|line| {
+            consumer
+                .find(line)
+                .unwrap_or_else(|| panic!("{line}:\n{consumer}"))
+        });
+        assert!(order.windows(2).all(|pair| pair[0] < pair[1]), "{consumer}");
+    }
+}
+
+#[test]
+fn every_require_a_whole_value_binding_stands_for_is_tagged() {
+    let source = helper_provider_bundle(
+        r#"
+    100: function(module) {
+      module.exports = makeStore();
+      function makeStore() { return { size: 3 }; }
+    },
+    400: function(module, exports, __webpack_require__) {
+      "use strict";
+      var first = __webpack_require__(100).size;
+      var again = __webpack_require__(100).none;
+      exports.run = function () { return [first, again]; };
+    }"#,
+    );
+    let report = wakaru_core::driver::explain_interop(
+        &source,
+        DecompileOptions {
+            filename: "chunk.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("the chunk should unpack");
+    let consumer = report
+        .modules
+        .iter()
+        .find(|module| module.filename == "module-400.js")
+        .expect("the consumer module");
+    let edges: Vec<_> = consumer
+        .edges
+        .iter()
+        .filter(|edge| edge.source == "./module-100.js")
+        .collect();
+    assert_eq!(edges.len(), 2, "{edges:#?}");
+    for edge in edges {
+        assert_eq!(edge.un_esm_imports, ["default _first"], "{edge:#?}");
+        assert_eq!(edge.imports, ["default _first"], "{edge:#?}");
+    }
+}
+
+#[test]
+fn a_whole_value_member_export_reads_the_default_import() {
+    let modules = r#"
+    100: function(module) {
+      module.exports = class Store { static create() { return 1; } };
+    },
+    400: function(module, exports, __webpack_require__) {
+      "use strict";
+      exports.create = __webpack_require__(100).create;
+      exports.run = function () { return exports.create(); };
+    }"#;
+    let source = helper_provider_bundle(modules);
+    for emit_source_map in [false, true] {
+        let output = unpack_one(&source, emit_source_map);
+        assert_valid_module_graph(&output.modules);
+        let consumer = consumer_of(&output);
+        assert!(
+            consumer.contains("import _create from \"./module-100.js\""),
+            "{consumer}"
+        );
+        assert!(
+            consumer.contains("export const create = _create.create;"),
+            "{consumer}"
+        );
+    }
+}
+
+#[test]
+fn a_whole_value_read_the_late_recovery_converts_reads_the_default_import() {
+    // A require in a `for` head keeps the consumer CommonJS in `UnEsm`; the
+    // rules after it hoist the declaration, and the late ESM recovery,
+    // which reads the same plan, converts the consumer.
+    let modules = r#"
+    100: function(module) {
+      module.exports = makeMethods();
+      function makeMethods() { return { alpha: function () { return 1; } }; }
+    },
+    400: function(module, exports, __webpack_require__) {
+      "use strict";
+      var out = [];
+      for (var a = __webpack_require__(100).alpha, i = 0; i < 2; i++) out.push(a(), i);
+      exports.run = function () { return out; };
+    }"#;
+    let source = helper_provider_bundle(modules);
+    for emit_source_map in [false, true] {
+        let output = unpack_one(&source, emit_source_map);
+        assert_valid_module_graph(&output.modules);
+        let consumer = consumer_of(&output);
+        assert!(
+            consumer.contains("import _alpha from \"./module-100.js\""),
+            "{consumer}"
+        );
+        assert!(
+            consumer.contains("const alpha = _alpha.alpha;"),
+            "{consumer}"
+        );
+        assert!(!consumer.contains("require("), "{consumer}");
+    }
+}
+
+#[test]
+fn a_whole_value_provider_that_stays_commonjs_is_read_through_its_default() {
+    // Module 100 keeps a require in its class heritage, so it stays
+    // CommonJS; the consumer's default import is its `module.exports`.
+    let modules = r#"
+    100: function(module, exports, __webpack_require__) {
+      module.exports = class extends __webpack_require__(110).Base {};
+    },
+    110: function(module, exports) {
+      exports.Base = class {};
+    },
+    400: function(module, exports, __webpack_require__) {
+      "use strict";
+      var name = __webpack_require__(100).name;
+      exports.run = function () { return name; };
+    }"#;
+    let source = helper_provider_bundle(modules);
+    for emit_source_map in [false, true] {
+        let output = unpack_one(&source, emit_source_map);
+        assert_valid_module_graph(&output.modules);
+        let provider = module_named(&output.modules, "module-100.js");
+        assert!(provider.contains("module.exports = class"), "{provider}");
+        let consumer = consumer_of(&output);
+        assert!(
+            consumer.contains("import _name from \"./module-100.js\""),
+            "{consumer}"
+        );
+        assert!(consumer.contains("const name = _name.name;"), "{consumer}");
+    }
+}
+
+#[test]
+fn a_provider_with_more_than_a_whole_value_keeps_its_named_imports() {
+    // Module 100 passes module 110 through, 120 is esbuild's CommonJS
+    // output of an ES module (producer esbuild `--format=cjs`), 130 is
+    // marked `__esModule`, and 110 writes named exports: none exports only
+    // one `module.exports = v` value.
+    let modules = format!(
+        r#"{ESBUILD_NAMESPACE_PROVIDER}
+    110: function(module, exports) {{
+      exports.f = function () {{ return 4; }};
+    }},
+    120: function(module, exports, __webpack_require__) {{
+      module.exports = __webpack_require__(110);
+    }},
+    130: function(module, exports) {{
+      Object.defineProperty(exports, "__esModule", {{ value: true }});
+      exports.flag = 1;
+    }},
+    400: function(module, exports, __webpack_require__) {{
+      "use strict";
+      var foo = __webpack_require__(100).foo;
+      var f = __webpack_require__(110).f;
+      var g = __webpack_require__(120).f;
+      var flag = __webpack_require__(130).flag;
+      exports.run = function () {{ return [foo(), f(), g(), flag]; }};
+    }}"#
+    );
+    let source = helper_provider_bundle(&modules);
+    for emit_source_map in [false, true] {
+        let output = unpack_one(&source, emit_source_map);
+        let consumer = consumer_of(&output);
+        for (import, source) in [
+            ("{ foo }", "100"),
+            ("{ f }", "110"),
+            ("{ f as f_1 }", "120"),
+            ("{ flag }", "130"),
+        ] {
+            assert!(
+                consumer.contains(&format!("import {import} from \"./module-{source}.js\"")),
+                "{consumer}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_whole_value_binding_avoids_taken_and_evaluated_names() {
+    // `_size` is declared, and the direct eval reads `_none`.
+    let modules = r#"
+    100: function(module) {
+      module.exports = makeStore();
+      function makeStore() { return { size: 3 }; }
+    },
+    110: function(module) {
+      module.exports = makeStore();
+      function makeStore() { return { none: 3 }; }
+    },
+    400: function(module, exports, __webpack_require__) {
+      "use strict";
+      var _size = 1;
+      var size = __webpack_require__(100).size;
+      var none = __webpack_require__(110).none;
+      exports.run = function () { return [_size, size, none, eval("_none")]; };
+    }"#;
+    let source = helper_provider_bundle(modules);
+    for emit_source_map in [false, true] {
+        let output = unpack_one(&source, emit_source_map);
+        assert_valid_module_graph(&output.modules);
+        let consumer = consumer_of(&output);
+        assert!(
+            consumer.contains("import _size_2 from \"./module-100.js\""),
+            "{consumer}"
+        );
+        assert!(
+            consumer.contains("const size = _size_2.size;"),
+            "{consumer}"
+        );
+        assert!(
+            consumer.contains("import _none_2 from \"./module-110.js\""),
+            "{consumer}"
+        );
+        assert!(
+            consumer.contains("const none = _none_2.none;"),
+            "{consumer}"
+        );
+    }
+}
