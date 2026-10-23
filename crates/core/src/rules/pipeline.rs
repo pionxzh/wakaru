@@ -70,6 +70,11 @@ struct RuleRunContext<'a> {
     unresolved_mark: Mark,
     rewrite_level: RewriteLevel,
     dce_mode: DceMode,
+    /// Unpack's Phase 2 adopts a run of the rules after `UnEsm` through
+    /// `UnReturn` made without these facts or the plan, in another `mode`,
+    /// when `range_ignores_facts` (`driver/unpack/phases.rs`) holds. A rule
+    /// in that range that reads the facts, the plan, or the mode in a new
+    /// way must be covered there.
     module_facts: Option<&'a ModuleFactsMap>,
     current_filename: Option<&'a str>,
     call_required_plan: Option<&'a crate::rules::CallRequiredPlan>,

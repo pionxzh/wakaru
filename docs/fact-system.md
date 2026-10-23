@@ -68,6 +68,7 @@ Phase 1b (per module, parallel):
     collect_import_call_edges(&barrier_ast)           ← imports still under [[Call]]
     collect constructed-member suffixes(&barrier_ast) ← names only, same AST
     retain original barrier AST + Globals + unresolved mark + import tags
+      (+ the AST the rule range left, for a module with no imports)
 
 ──── barrier: ModuleFactsMap assembled from all modules;
      CommonJsDefaultObjectCompositionPlan and CallRequiredPlan built;
@@ -88,7 +89,9 @@ path's rerun through UnEsm read the same plan):
     downgrade_unused_synthetic_imports(&mut module)  ← preserve require effects
     registry rule range resuming after UnEsm, through UnReturn
       (UnEs6Class / UnPrototypeClass read this module's CallRequiredPlan pins;
-      the helper rules read provider helper facts)
+      the helper rules read provider helper facts; Phase 1b's run is adopted
+      when the passes above left the AST as it was and the range reads no
+      facts for the module)
     SimplifySequence, UnAssignmentMerging, late ESM recovery
     targeted late cleanup
     run_kept_require_default_reads(...)              ← a kept require of a provider now ESM
@@ -123,7 +126,18 @@ export declarations (wild-observed), and its consumers' imports follow the
 export names.
 
 The two clones of an unsettled module run in parallel: the recovery for the
-helper facts on another worker, the rule range on the current one.
+helper facts on another worker, the rule range on the current one. For a
+module with no imports at the barrier, Phase 1b also keeps the AST the rule
+range left, and Phase 2 adopts it instead of running the range again when
+its cross-module passes left the barrier AST unchanged and the range reads
+no facts for the module (`range_ignores_facts`): no import source or
+string call argument (a `require("…")` among them) of the module names a
+module with transpiler-helper facts, and `CallRequiredPlan` pins none of
+its exports. The range reads
+other modules only through those two, and no rule in it reads the pipeline
+mode, so its run with the facts equals the prediction's run without them. A
+module with imports is not kept: the provider repairs usually rewrite its
+imports, and the kept AST would only add to peak memory.
 
 The prediction differs from Phase 2 where Phase 2 reads other modules:
 the cross-module passes before the range, and the rules in the range that
@@ -760,6 +774,13 @@ For an existing rule that must stay at its current pipeline position, add an
 optional fact-aware constructor and thread `ModuleFactsMap` through the
 multi-module rule runner only. Single-file `decompile()` should keep using the
 normal constructor.
+
+A rule in the registry range after `UnEsm` through `UnReturn` that reads
+facts in a new way must also be covered by `range_ignores_facts`
+(`driver/unpack/phases.rs`): Phase 2 adopts Phase 1b's run of that range,
+made without facts, whenever that check holds ([Shape](#shape)). The check
+knows only provider helper facts read through import and `require("…")`
+sources, and `CallRequiredPlan` pins.
 
 ### Gotchas when synthesizing new idents
 

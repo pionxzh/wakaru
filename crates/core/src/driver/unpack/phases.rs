@@ -187,6 +187,12 @@ fn detector_note_warning(filename: &str, note: DetectedModuleNote) -> UnpackWarn
 struct Phase1PreparedModule {
     globals: Globals,
     module: Module,
+    /// `module` after the rules Phase 2 runs before its late recovery, as
+    /// the Phase 1b prediction ran them without the facts. Kept for a module
+    /// `UnEsm` did not settle that has no imports; Phase 2 adopts it instead
+    /// of running those rules again when its passes leave `module` as it was
+    /// and `range_ignores_facts` holds.
+    ranged: Option<Module>,
     unresolved_mark: Mark,
     /// The import specifiers `UnEsm` made from requires in this AST.
     import_tags: ImportTags,
@@ -335,6 +341,71 @@ fn run_rules_before_late_recovery(
         level,
     ));
     module.visit_mut_with(&mut UnAssignmentMerging::new(unresolved_mark));
+}
+
+/// Whether [`run_rules_before_late_recovery`] does the same on `module`
+/// with `facts` as without them, so that Phase 2 can adopt the run the
+/// Phase 1b prediction made on the same AST.
+///
+/// The range reads other modules in two places only. The transpiler-helper
+/// rules (`UnObjectSpread2`, `UnObjectRest2`/`3`, `UnSlicedToArray2`,
+/// `UnTemplateLiteral`, `UnRegenerator`, `UnAsyncAwait`, `UnForOf`) look up
+/// the module named by an import source or a `require("…")` argument and
+/// read only its helper facts (`helper_exports`,
+/// `default_object_helper_exports`, `ts_helper_exports`,
+/// `ts_helper_namespace_factory_exports`); with all of them empty, a lookup
+/// finds what a run without facts finds. `UnEs6Class` and
+/// `UnPrototypeClass` read this module's `CallRequiredPlan` pins. No rule in
+/// the range reads the pipeline mode. A rule added to the range that reads
+/// facts another way must be covered here.
+fn range_ignores_facts(module: &Module, facts: LateRangeFacts<'_>, filename: &str) -> bool {
+    struct ProviderSources<'a> {
+        facts: &'a ModuleFactsMap,
+        filename: &'a str,
+        helper_provider: bool,
+    }
+    impl ProviderSources<'_> {
+        fn check(&mut self, source: &swc_core::ecma::ast::Str) {
+            // The rules read a source that is not valid UTF-8 as "".
+            let source = source.value.as_str().unwrap_or("");
+            self.helper_provider |= self
+                .facts
+                .get_from(Some(self.filename), source)
+                .is_some_and(|provider| {
+                    !provider.helper_exports.is_empty()
+                        || !provider.default_object_helper_exports.is_empty()
+                        || !provider.ts_helper_exports.is_empty()
+                        || !provider.ts_helper_namespace_factory_exports.is_empty()
+                });
+        }
+    }
+    impl Visit for ProviderSources<'_> {
+        fn visit_import_decl(&mut self, import: &swc_core::ecma::ast::ImportDecl) {
+            self.check(&import.src);
+        }
+        fn visit_call_expr(&mut self, call: &swc_core::ecma::ast::CallExpr) {
+            for arg in &call.args {
+                if let Expr::Lit(swc_core::ecma::ast::Lit::Str(source)) = arg.expr.as_ref() {
+                    self.check(source);
+                }
+            }
+            call.visit_children_with(self);
+        }
+    }
+    if facts
+        .call_required_plan
+        .pinned_exports(filename)
+        .is_some_and(|pins| !pins.is_empty())
+    {
+        return false;
+    }
+    let mut sources = ProviderSources {
+        facts: facts.module_facts,
+        filename,
+        helper_provider: false,
+    };
+    module.visit_with(&mut sources);
+    !sources.helper_provider
 }
 
 /// Whether `module` is an ES module with no CommonJS left that the late ESM
@@ -920,14 +991,19 @@ pub(super) fn unpack_multi_module_with_plan(
             // Phase 2 resumes from the through-UnEsm barrier state and runs
             // those steps itself at `options.level`, so it needs the
             // unmodified `module`. When the AST will be reused (no-sourcemap
-            // path), clone before recovering for facts. When it won't be
+            // path), clone before recovering for facts, and keep the AST the
+            // rule range left (`keep_ranged`): Phase 2 adopts it when its
+            // passes leave the module unchanged and its own run of the range
+            // would match (`range_ignores_facts`). A module with imports is
+            // left out: the provider repairs usually rewrite them, and the
+            // kept AST would only add to peak memory. When the AST won't be
             // reused (sourcemap path discards `module`), recover in place.
-            let predict = |module: &mut Module| {
+            let predict = |module: &mut Module, keep_ranged: bool| {
                 let span = tracing::info_span!("phase1: fact recovery");
                 let _enter = span.enter();
                 if settled {
                     recover_late(module);
-                    return collect_module_facts(module);
+                    return (collect_module_facts(module), None);
                 }
                 // The helper facts and the rule range work on separate
                 // copies of the barrier AST, so they run in parallel: when
@@ -959,11 +1035,16 @@ pub(super) fn unpack_multi_module_with_plan(
                         },
                     )
                 });
+                let ranged = keep_ranged.then(|| module.clone());
                 recover_late(module);
-                collect_module_facts_with_helpers(module, helpers)
+                (collect_module_facts_with_helpers(module, helpers), ranged)
             };
             let (mut facts, prepared) = if can_reuse_phase1_ast {
-                let mut facts = predict(&mut module.clone());
+                let keep_ranged = !module
+                    .body
+                    .iter()
+                    .any(|item| matches!(item, ModuleItem::ModuleDecl(ModuleDecl::Import(_))));
+                let (mut facts, ranged) = predict(&mut module.clone(), keep_ranged);
                 // Class recovery runs on this pre-late AST. Probing the
                 // late-renamed clone misses IIFEs Phase 2 still converts.
                 facts.import_call_edges = crate::rules::collect_import_call_edges(
@@ -971,7 +1052,7 @@ pub(super) fn unpack_multi_module_with_plan(
                     unresolved_mark,
                     options.level,
                 );
-                (facts, Some((module, unresolved_mark, import_tags)))
+                (facts, Some((module, ranged, unresolved_mark, import_tags)))
             } else {
                 // Edges read the pre-late AST, as above. Collect them before
                 // recovering in place.
@@ -980,7 +1061,7 @@ pub(super) fn unpack_multi_module_with_plan(
                     unresolved_mark,
                     options.level,
                 );
-                let mut facts = predict(&mut module);
+                let (mut facts, _) = predict(&mut module, false);
                 facts.import_call_edges = import_call_edges;
                 (facts, None)
             };
@@ -988,15 +1069,15 @@ pub(super) fn unpack_multi_module_with_plan(
             facts.require_edges = require_edges;
             (facts, prepared)
         });
-        let prepared =
-            prepared_parts.map(
-                |(module, unresolved_mark, import_tags)| Phase1PreparedModule {
-                    globals,
-                    module,
-                    import_tags,
-                    unresolved_mark,
-                },
-            );
+        let prepared = prepared_parts.map(|(module, ranged, unresolved_mark, import_tags)| {
+            Phase1PreparedModule {
+                globals,
+                module,
+                ranged,
+                import_tags,
+                unresolved_mark,
+            }
+        });
         Phase1Module {
             filename,
             facts,
@@ -1121,6 +1202,7 @@ pub(super) fn unpack_multi_module_with_plan(
             );
         }
         let run_phase2_tail = |mut module: Module,
+                               ranged: Option<Module>,
                                cm: Lrc<SourceMap>,
                                unresolved_mark: Mark,
                                mut import_tags: ImportTags,
@@ -1136,6 +1218,20 @@ pub(super) fn unpack_multi_module_with_plan(
             let rules_enter = rules_span.enter();
             // The imports `UnEsm` made, before the barrier passes repair them.
             let mut un_esm_imports = interop.map(|_| import_forms(&module, &import_tags));
+            // A copy of the barrier AST, made only while the prediction's run
+            // of the rule range can stand in for this one: the passes below
+            // must then leave the module as it was.
+            let ranged = ranged.filter(|_| {
+                range_ignores_facts(
+                    &module,
+                    LateRangeFacts {
+                        module_facts: facts_ref,
+                        call_required_plan: call_required_plan_ref,
+                    },
+                    &unpacked.module.filename,
+                )
+            });
+            let barrier = ranged.as_ref().map(|_| module.clone());
             // Late pass at the barrier
             run_commonjs_default_object_composition(
                 &mut module,
@@ -1206,19 +1302,25 @@ pub(super) fn unpack_multi_module_with_plan(
                         .unwrap_or_else(|| import_forms(&module, &import_tags)),
                 );
             }
-            // Late helper-through-UnReturn range.
-            run_rules_before_late_recovery(
-                &mut module,
-                unresolved_mark,
-                options.level,
-                options.dce_mode,
-                &unpacked.module.filename,
-                PipelineMode::UnpackPhase2,
-                Some(LateRangeFacts {
-                    module_facts: facts_ref,
-                    call_required_plan: call_required_plan_ref,
-                }),
-            );
+            // Late helper-through-UnReturn range. The prediction ran it on
+            // the same barrier AST; when the passes above left that AST
+            // unchanged and the range reads no facts here, its result is
+            // the one this run would produce.
+            match (ranged, barrier) {
+                (Some(ranged), Some(barrier)) if barrier == module => module = ranged,
+                _ => run_rules_before_late_recovery(
+                    &mut module,
+                    unresolved_mark,
+                    options.level,
+                    options.dce_mode,
+                    &unpacked.module.filename,
+                    PipelineMode::UnpackPhase2,
+                    Some(LateRangeFacts {
+                        module_facts: facts_ref,
+                        call_required_plan: call_required_plan_ref,
+                    }),
+                ),
+            }
             // UnIife2 can expose webpack export helpers that were hidden in
             // factory wrappers at the Stage 2 barrier. Recover just that ESM
             // shape without restoring the old full second pass.
@@ -1427,6 +1529,7 @@ pub(super) fn unpack_multi_module_with_plan(
             let Phase1PreparedModule {
                 globals,
                 module,
+                ranged,
                 unresolved_mark,
                 import_tags,
             } = prepared;
@@ -1434,6 +1537,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 let cm: Lrc<SourceMap> = Default::default();
                 run_phase2_tail(
                     module,
+                    ranged,
                     cm,
                     unresolved_mark,
                     import_tags,
@@ -1513,6 +1617,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 let input_parse_warnings = collect_input_parse_warnings(&parsed.recoverable_errors);
                 run_phase2_tail(
                     module,
+                    None,
                     cm,
                     unresolved_mark,
                     import_tags,
@@ -1735,6 +1840,144 @@ mod tests {
         // `require` as a value.
         assert!(!settled("export const r = require.bind(require, 999);"));
         assert!(!settled("export const r = require;"));
+    }
+
+    fn resolved_module(code: &str) -> (Module, Mark, Lrc<SourceMap>) {
+        let cm: Lrc<SourceMap> = Default::default();
+        let mut module = parse_js(code, "m.js", cm.clone()).unwrap();
+        let unresolved_mark = Mark::new();
+        module.visit_mut_with(&mut resolver(unresolved_mark, Mark::new(), false));
+        (module, unresolved_mark, cm)
+    }
+
+    /// `helpers.js` exports an object-spread helper as its default; `plain.js`
+    /// exports none.
+    fn helper_provider_facts() -> ModuleFactsMap {
+        use crate::facts::{HelperExportFact, HelperKind, ModuleFacts};
+        let mut facts = ModuleFactsMap::new();
+        facts.insert(
+            "helpers.js",
+            ModuleFacts {
+                helper_exports: vec![HelperExportFact {
+                    exported: "default".into(),
+                    local: None,
+                    kind: HelperKind::ObjectSpread,
+                }],
+                ..Default::default()
+            },
+        );
+        facts.insert("plain.js", ModuleFacts::default());
+        facts
+    }
+
+    #[test]
+    fn the_rule_range_ignores_facts_without_a_helper_provider_or_pins() {
+        GLOBALS.set(&Globals::new(), || {
+            let facts = helper_provider_facts();
+            let plan = crate::rules::CallRequiredPlan::build(&facts);
+            let ignores = |code: &str, filename: &str| {
+                let (module, _, _) = resolved_module(code);
+                range_ignores_facts(
+                    &module,
+                    LateRangeFacts {
+                        module_facts: &facts,
+                        call_required_plan: &plan,
+                    },
+                    filename,
+                )
+            };
+            assert!(ignores(
+                "import p from \"./plain.js\";\nconst q = require(\"./plain.js\");\nexport const x = [p, q];",
+                "m.js"
+            ));
+            // The helper rules read a helper provider's facts through an
+            // import or a `require` argument.
+            assert!(!ignores(
+                "import s from \"./helpers.js\";\nexport const x = s({}, a);",
+                "m.js"
+            ));
+            assert!(!ignores(
+                "const s = interop(require(\"./helpers.js\"));\nmodule.exports = s.default({}, a);",
+                "m.js"
+            ));
+
+            // `base.js` exports `Foo`, which `child.js` still calls: the
+            // class rules read that pin while they run on `base.js`.
+            let mut pinned = ModuleFactsMap::new();
+            pinned.insert(
+                "base.js",
+                crate::facts::ModuleFacts {
+                    exports: vec![crate::facts::ExportFact {
+                        exported: "Foo".into(),
+                        local: Some("Foo".into()),
+                        kind: crate::facts::ExportKind::Named,
+                    }],
+                    ..Default::default()
+                },
+            );
+            pinned.insert(
+                "child.js",
+                crate::facts::ModuleFacts {
+                    import_call_edges: vec![crate::facts::ImportCallEdge {
+                        source: "./base.js".into(),
+                        imported: "Foo".into(),
+                        consumed_by_exports: None,
+                    }],
+                    ..Default::default()
+                },
+            );
+            let pinned_plan = crate::rules::CallRequiredPlan::build(&pinned);
+            let (module, _, _) = resolved_module("export function Foo() {}");
+            let pinned_facts = LateRangeFacts {
+                module_facts: &pinned,
+                call_required_plan: &pinned_plan,
+            };
+            assert!(!range_ignores_facts(&module, pinned_facts, "base.js"));
+            assert!(range_ignores_facts(&module, pinned_facts, "child.js"));
+        });
+    }
+
+    #[test]
+    fn the_rule_range_runs_alike_with_facts_it_ignores() {
+        // Phase 2 adopts the prediction's run of the range, made without
+        // facts, when `range_ignores_facts` holds. The run with facts must
+        // then print the same; with a helper provider it does not.
+        let run = |code: &str, with_facts: bool| {
+            GLOBALS.set(&Globals::new(), || {
+                let facts = helper_provider_facts();
+                let plan = crate::rules::CallRequiredPlan::build(&facts);
+                let (mut module, unresolved_mark, cm) = resolved_module(code);
+                let late_facts = LateRangeFacts {
+                    module_facts: &facts,
+                    call_required_plan: &plan,
+                };
+                let ignored = range_ignores_facts(&module, late_facts, "m.js");
+                run_rules_before_late_recovery(
+                    &mut module,
+                    unresolved_mark,
+                    RewriteLevel::Standard,
+                    crate::DceMode::TransformOnly,
+                    "m.js",
+                    if with_facts {
+                        PipelineMode::UnpackPhase2
+                    } else {
+                        PipelineMode::UnpackLatePrediction
+                    },
+                    with_facts.then_some(late_facts),
+                );
+                (ignored, print_js(&module, cm).unwrap())
+            })
+        };
+        let plain = "import s from \"./plain.js\";\nexport const x = s({}, a, { b: 1 });";
+        let (ignored, with_facts) = run(plain, true);
+        assert!(ignored);
+        assert_eq!(with_facts, run(plain, false).1);
+
+        let helper = "import s from \"./helpers.js\";\nexport const x = s({}, a, { b: 1 });";
+        let (ignored, with_facts) = run(helper, true);
+        assert!(!ignored);
+        assert!(with_facts.contains("...a"), "{with_facts}");
+        assert_ne!(with_facts, run(helper, false).1);
     }
 
     #[test]

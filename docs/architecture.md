@@ -317,11 +317,14 @@ When unpacking bundles, the driver runs a two-phase pipeline:
    through `UnReturn`), so the facts predict the format Phase 2 reaches; the
    transpiler-helper facts then come from a second clone that runs only the
    recovery, in parallel. Retain the pre-recovery AST together with its
-   `Globals` and unresolved mark.
+   `Globals` and unresolved mark, and for a module with no imports the AST
+   the rule range left.
 2. **Phase 2 (parallel, largest modules first):** Resume the retained Phase 1 AST → cross-module late
    pass (exact CommonJS default-object composition, re-export consolidation,
    namespace decomposition, fact-aware helper recovery) → run the registry
-   range resuming after `UnEsm`, through `UnReturn` → targeted late
+   range resuming after `UnEsm`, through `UnReturn`, or adopt Phase 1b's run
+   when the late pass changed nothing and the range reads no facts for the
+   module ([fact-system.md](fact-system.md#shape)) → targeted late
    cleanup/recovery → emit.
 
 Unpack stops the registry at `UnReturn`. The registry's later Cleanup rules
