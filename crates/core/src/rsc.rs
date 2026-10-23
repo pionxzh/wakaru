@@ -379,8 +379,9 @@ impl FlightPayload {
             let Some(json) = &row.json else { continue };
             match row.tag {
                 FlightTag::Module => {
-                    // `[id, chunks, name]` from React 19 and Next.js 14, or
-                    // `{"id", "chunks", "name", "async"}` from Next.js 13.4.
+                    // `[id, chunks, name]` from React 19 and Next.js 14 (with
+                    // webpack or Turbopack), or `{"id", "chunks", "name",
+                    // "async"}` from Next.js 13.4.
                     let chunks = match json {
                         Value::Array(items) => items.get(1),
                         Value::Object(fields) => fields.get("chunks"),
@@ -417,8 +418,8 @@ impl FlightPayload {
 }
 
 /// The file a module reference's chunk entry names. Next.js 14 and later list
-/// chunk ids and files alternately (`"974", "static/chunks/a.js"`); Next.js
-/// 13.4 joins them (`"974:static/chunks/a.js"`).
+/// chunk ids and files alternately (`"974", "static/chunks/a.js"`), or only
+/// files under Turbopack; Next.js 13.4 joins them (`"974:static/chunks/a.js"`).
 fn chunk_file(chunk: &str) -> &str {
     if chunk.contains("://") {
         return chunk;
@@ -1029,6 +1030,30 @@ mod tests {
                 "/_next/static/css/alpha.css",
                 "static/chunks/webpack-alpha.js",
                 "static/chunks/app/page-alpha.js",
+            ]
+        );
+    }
+
+    #[test]
+    fn assets_read_the_turbopack_module_reference_shape() {
+        // `producer next@15.5.4 --turbopack`: chunks are file URLs only, with
+        // no chunk ids between them.
+        let decoded = decode(
+            concat!(
+                "2:I[100,[\"/_next/static/chunks/alpha.js?dpl=dpl_alpha\",",
+                "\"/_next/static/chunks/beta.js?dpl=dpl_alpha\"],\"default\"]\n",
+                ":HL[\"/_next/static/chunks/gamma.css?dpl=dpl_alpha\",\"style\"]\n",
+            )
+            .as_bytes(),
+        );
+
+        assert!(decoded.problems.is_empty());
+        assert_eq!(
+            decoded.asset_paths(),
+            [
+                "/_next/static/chunks/alpha.js?dpl=dpl_alpha",
+                "/_next/static/chunks/beta.js?dpl=dpl_alpha",
+                "/_next/static/chunks/gamma.css?dpl=dpl_alpha",
             ]
         );
     }
