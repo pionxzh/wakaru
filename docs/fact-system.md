@@ -780,7 +780,10 @@ facts in a new way must also be covered by `range_ignores_facts`
 (`driver/unpack/phases.rs`): Phase 2 adopts Phase 1b's run of that range,
 made without facts, whenever that check holds ([Shape](#shape)). The check
 knows only provider helper facts read through import and `require("…")`
-sources, and `CallRequiredPlan` pins.
+sources, and `CallRequiredPlan` pins. Builds with debug assertions also run
+the range with the facts at every adoption and panic when it prints
+differently from the adopted AST (`assert_adopted_range_matches`), so the
+unpack tests catch a fact read the check misses.
 
 ### Gotchas when synthesizing new idents
 

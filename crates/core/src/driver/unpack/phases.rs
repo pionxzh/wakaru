@@ -408,6 +408,40 @@ fn range_ignores_facts(module: &Module, facts: LateRangeFacts<'_>, filename: &st
     !sources.helper_provider
 }
 
+/// Debug builds check every adoption that `range_ignores_facts` allows:
+/// Phase 2's own run of the range, with the facts, on the module its passes
+/// left must print the same as the adopted run made without them. A
+/// mismatch means a rule in the range reads facts in a way the check does
+/// not cover.
+#[cfg(debug_assertions)]
+#[allow(clippy::too_many_arguments)]
+fn assert_adopted_range_matches(
+    adopted: &Module,
+    mut module: Module,
+    unresolved_mark: Mark,
+    level: RewriteLevel,
+    dce_mode: crate::DceMode,
+    filename: &str,
+    facts: LateRangeFacts<'_>,
+) {
+    run_rules_before_late_recovery(
+        &mut module,
+        unresolved_mark,
+        level,
+        dce_mode,
+        filename,
+        PipelineMode::UnpackPhase2,
+        Some(facts),
+    );
+    let print = |module: &Module| print_js(module, Lrc::<SourceMap>::default()).ok();
+    assert!(
+        print(&module) == print(adopted),
+        "{filename}: Phase 2 adopted the rule range Phase 1b ran without facts, but the run \
+         with facts differs: a rule after `UnEsm` reads facts that `range_ignores_facts` does \
+         not cover (docs/fact-system.md, \"Adding a new fact-reading rule\")"
+    );
+}
+
 /// Whether `module` is an ES module with no CommonJS left that the late ESM
 /// recovery can convert: it reads no free `module` or `exports`, and uses
 /// the free `require` only as `require(<number>)` and as webpack's
@@ -1307,7 +1341,22 @@ pub(super) fn unpack_multi_module_with_plan(
             // unchanged and the range reads no facts here, its result is
             // the one this run would produce.
             match (ranged, barrier) {
-                (Some(ranged), Some(barrier)) if barrier == module => module = ranged,
+                (Some(ranged), Some(barrier)) if barrier == module => {
+                    #[cfg(debug_assertions)]
+                    assert_adopted_range_matches(
+                        &ranged,
+                        barrier,
+                        unresolved_mark,
+                        options.level,
+                        options.dce_mode,
+                        &unpacked.module.filename,
+                        LateRangeFacts {
+                            module_facts: facts_ref,
+                            call_required_plan: call_required_plan_ref,
+                        },
+                    );
+                    module = ranged;
+                }
                 _ => run_rules_before_late_recovery(
                     &mut module,
                     unresolved_mark,
@@ -1978,6 +2027,78 @@ mod tests {
         assert!(!ignored);
         assert!(with_facts.contains("...a"), "{with_facts}");
         assert_ne!(with_facts, run(helper, false).1);
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "reads facts that `range_ignores_facts` does not cover")]
+    fn an_adopted_range_that_facts_would_change_fails_the_debug_check() {
+        // A gate that let a helper provider's consumer through: the run
+        // without facts leaves the helper call, the run with them spreads
+        // it, and the check catches the difference.
+        GLOBALS.set(&Globals::new(), || {
+            let facts = helper_provider_facts();
+            let plan = crate::rules::CallRequiredPlan::build(&facts);
+            let (module, unresolved_mark, _) = resolved_module(
+                "import s from \"./helpers.js\";\nexport const x = s({}, a, { b: 1 });",
+            );
+            let mut adopted = module.clone();
+            run_rules_before_late_recovery(
+                &mut adopted,
+                unresolved_mark,
+                RewriteLevel::Standard,
+                crate::DceMode::TransformOnly,
+                "m.js",
+                PipelineMode::UnpackLatePrediction,
+                None,
+            );
+            assert_adopted_range_matches(
+                &adopted,
+                module,
+                unresolved_mark,
+                RewriteLevel::Standard,
+                crate::DceMode::TransformOnly,
+                "m.js",
+                LateRangeFacts {
+                    module_facts: &facts,
+                    call_required_plan: &plan,
+                },
+            );
+        });
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn an_adopted_range_that_ignores_facts_passes_the_debug_check() {
+        GLOBALS.set(&Globals::new(), || {
+            let facts = helper_provider_facts();
+            let plan = crate::rules::CallRequiredPlan::build(&facts);
+            let (module, unresolved_mark, _) = resolved_module(
+                "import s from \"./plain.js\";\nexport const x = s({}, a, { b: 1 });",
+            );
+            let mut adopted = module.clone();
+            run_rules_before_late_recovery(
+                &mut adopted,
+                unresolved_mark,
+                RewriteLevel::Standard,
+                crate::DceMode::TransformOnly,
+                "m.js",
+                PipelineMode::UnpackLatePrediction,
+                None,
+            );
+            assert_adopted_range_matches(
+                &adopted,
+                module,
+                unresolved_mark,
+                RewriteLevel::Standard,
+                crate::DceMode::TransformOnly,
+                "m.js",
+                LateRangeFacts {
+                    module_facts: &facts,
+                    call_required_plan: &plan,
+                },
+            );
+        });
     }
 
     #[test]
