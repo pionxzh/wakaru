@@ -929,19 +929,36 @@ pub(super) fn unpack_multi_module_with_plan(
                     recover_late(module);
                     return collect_module_facts(module);
                 }
+                // The helper facts and the rule range work on separate
+                // copies of the barrier AST, so they run in parallel: when
+                // the largest module is unsettled, its prediction is the
+                // longest task of Phase 1b. The range, the longer of the
+                // two, starts on this thread; another worker takes the
+                // helper facts when one is idle.
                 let mut helper_module = module.clone();
-                recover_late(&mut helper_module);
-                let helpers = HelperFacts::collect(&helper_module);
-                drop(helper_module);
-                run_rules_before_late_recovery(
-                    module,
-                    unresolved_mark,
-                    options.level,
-                    options.dce_mode,
-                    &filename,
-                    PipelineMode::UnpackLatePrediction,
-                    None,
-                );
+                let ((), helpers) = GLOBALS.with(|globals| {
+                    rayon::join(
+                        || {
+                            GLOBALS.set(globals, || {
+                                run_rules_before_late_recovery(
+                                    module,
+                                    unresolved_mark,
+                                    options.level,
+                                    options.dce_mode,
+                                    &filename,
+                                    PipelineMode::UnpackLatePrediction,
+                                    None,
+                                )
+                            })
+                        },
+                        || {
+                            GLOBALS.set(globals, || {
+                                recover_late(&mut helper_module);
+                                HelperFacts::collect(&helper_module)
+                            })
+                        },
+                    )
+                });
                 recover_late(module);
                 collect_module_facts_with_helpers(module, helpers)
             };
@@ -1987,6 +2004,78 @@ for (var key in current) globalThis[key] = current[key];"#,
             !spans.iter().any(|name| name == "phase2: parse"),
             "normal unpack should reuse the Phase 1 AST"
         );
+    }
+
+    #[test]
+    fn an_unsettled_helper_provider_predicts_alike_on_any_worker_count() {
+        // The kept require in the `for` head leaves `helpers.js` unsettled,
+        // so its prediction runs the rule range and the recovery for its
+        // helper facts in parallel. The consumer still reads the helper,
+        // and the output does not depend on whether a second worker took
+        // the helper facts.
+        let modules = || {
+            [
+                (
+                    "helpers.js",
+                    r#"function helper(source, excluded) {
+    var target = {};
+    for (var key in source) {
+        if (Object.prototype.hasOwnProperty.call(source, key) && excluded.indexOf(key) < 0) {
+            target[key] = source[key];
+        }
+    }
+    if (source != null && typeof Object.getOwnPropertySymbols === "function") {
+        for (var i = 0, key = Object.getOwnPropertySymbols(source); i < key.length; i++) {
+            if (excluded.indexOf(key[i]) < 0 && Object.prototype.propertyIsEnumerable.call(source, key[i])) {
+                target[key[i]] = source[key[i]];
+            }
+        }
+    }
+    return target;
+}
+export { helper as __rest };
+for (var r = require("./side.js"), n = 0; n < 1; n++) r.go(n);
+"#,
+                ),
+                (
+                    "consumer.js",
+                    r#"import { __rest } from "./helpers.js";
+var label = props.label, rest = __rest(props, ["label"]);
+use(label, rest);
+"#,
+                ),
+                ("side.js", "module.exports = { go: function () {} };\n"),
+            ]
+            .into_iter()
+            .map(|(filename, code)| UnpackedModule {
+                id: filename.to_string(),
+                is_entry: filename == "consumer.js",
+                code: code.to_string(),
+                filename: filename.to_string(),
+                ..Default::default()
+            })
+            .collect::<Vec<_>>()
+        };
+        let unpack_on = |threads: usize| {
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .unwrap()
+                .install(|| unpack_multi_module(modules(), DecompileOptions::default()))
+                .expect("modules should decompile")
+                .modules
+                .into_iter()
+                .map(|module| (module.filename, module.code))
+                .collect::<Vec<_>>()
+        };
+        let one = unpack_on(1);
+        let consumer = &one
+            .iter()
+            .find(|(filename, _)| filename == "consumer.js")
+            .expect("consumer output")
+            .1;
+        assert!(consumer.contains("...rest"), "{consumer}");
+        assert_eq!(one, unpack_on(4));
     }
 
     #[test]

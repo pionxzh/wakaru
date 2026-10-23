@@ -316,8 +316,8 @@ When unpacking bundles, the driver runs a two-phase pipeline:
    recovery that need no other module (the registry range after `UnEsm`,
    through `UnReturn`), so the facts predict the format Phase 2 reaches; the
    transpiler-helper facts then come from a second clone that runs only the
-   recovery. Retain the pre-recovery AST together with its `Globals` and
-   unresolved mark.
+   recovery, in parallel. Retain the pre-recovery AST together with its
+   `Globals` and unresolved mark.
 2. **Phase 2 (parallel, largest modules first):** Resume the retained Phase 1 AST → cross-module late
    pass (exact CommonJS default-object composition, re-export consolidation,
    namespace decomposition, fact-aware helper recovery) → run the registry

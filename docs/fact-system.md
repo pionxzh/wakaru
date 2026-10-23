@@ -61,7 +61,7 @@ Phase 1b (per module, parallel):
       default import and records the import tags
     clone barrier AST → recover webpack factory IIFE ESM shapes
     unless UnEsm left a settled ES module (no CommonJS the recovery converts):
-      collect transpiler-helper facts on that clone
+      collect transpiler-helper facts on that clone   ← in parallel with the range
       clone barrier AST → Phase 2's rule range and cleanup, without facts
         → recover webpack factory IIFE ESM shapes     ← predicts Phase 2's format
     collect the other facts on the last clone         ← pure AST → facts
@@ -121,6 +121,9 @@ module that has imports but still assigns `exports` takes the range too:
 after the range, the late recovery can still turn those assignments into
 export declarations (wild-observed), and its consumers' imports follow the
 export names.
+
+The two clones of an unsettled module run in parallel: the recovery for the
+helper facts on another worker, the rule range on the current one.
 
 The prediction differs from Phase 2 where Phase 2 reads other modules:
 the cross-module passes before the range, and the rules in the range that
