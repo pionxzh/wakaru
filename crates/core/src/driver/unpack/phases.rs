@@ -337,15 +337,64 @@ fn run_rules_before_late_recovery(
     module.visit_mut_with(&mut UnAssignmentMerging::new(unresolved_mark));
 }
 
-/// Whether `module` is an ES module with no CommonJS left: it reads no free
-/// `module`, `exports`, or `require`. The late ESM recovery has nothing to
-/// convert in such a module, whatever rules run before it.
+/// Whether `module` is an ES module with no CommonJS left that the late ESM
+/// recovery can convert: it reads no free `module` or `exports`, and uses
+/// the free `require` only as `require(<number>)` and as webpack's
+/// namespace-object helpers on a local object (`require.r(ns)`,
+/// `require.d(ns, …)`). `UnEsm` makes imports from string specifiers only,
+/// and treats `require.r` / `require.d` as exports only on `exports`; no
+/// rule turns a number into a string or a local into `exports`. So the late
+/// recovery has nothing to convert in such a module, whatever rules run
+/// before it. A numeric `require` names a module outside the bundle (an
+/// external of a chunk); webpack's module concatenation builds a namespace
+/// object with `require.r` / `require.d`.
 fn is_settled_es_module(module: &Module, unresolved_mark: Mark) -> bool {
     struct CommonJsGlobals {
         unresolved_mark: Mark,
         found: bool,
     }
+    impl CommonJsGlobals {
+        fn is_free(&self, expr: &Expr, name: &str) -> bool {
+            matches!(expr, Expr::Ident(ident)
+                if ident.sym.as_ref() == name && ident.ctxt.outer() == self.unresolved_mark)
+        }
+
+        /// A `require` call the late recovery leaves alone, apart from
+        /// what its arguments contain.
+        fn is_inert_require_call(&self, call: &swc_core::ecma::ast::CallExpr) -> bool {
+            use swc_core::ecma::ast::{Callee, Lit};
+            let Callee::Expr(callee) = &call.callee else {
+                return false;
+            };
+            if call.args.iter().any(|arg| arg.spread.is_some()) {
+                return false;
+            }
+            if self.is_free(callee, "require") {
+                return matches!(call.args.as_slice(), [arg]
+                    if matches!(arg.expr.as_ref(), Expr::Lit(Lit::Num(_))));
+            }
+            let Expr::Member(member) = callee.as_ref() else {
+                return false;
+            };
+            self.is_free(&member.obj, "require")
+                && member
+                    .prop
+                    .as_ident()
+                    .is_some_and(|prop| matches!(prop.sym.as_ref(), "r" | "d"))
+                && call.args.first().is_some_and(|target| {
+                    matches!(target.expr.as_ref(), Expr::Ident(local)
+                        if local.ctxt.outer() != self.unresolved_mark)
+                })
+        }
+    }
     impl Visit for CommonJsGlobals {
+        fn visit_call_expr(&mut self, call: &swc_core::ecma::ast::CallExpr) {
+            if self.is_inert_require_call(call) {
+                call.args.visit_with(self);
+            } else {
+                call.visit_children_with(self);
+            }
+        }
         fn visit_ident(&mut self, ident: &Ident) {
             self.found |= ident.ctxt.outer() == self.unresolved_mark
                 && matches!(ident.sym.as_ref(), "module" | "exports" | "require");
@@ -1642,6 +1691,33 @@ mod tests {
         assert!(!settled("const x = 1;"));
         // A local named like a CommonJS global is not one.
         assert!(settled("export function f(exports) { return exports.x; }"));
+        // `require` of a numeric module id, and webpack's namespace-object
+        // helpers on a local: nothing the late recovery converts.
+        assert!(settled(
+            "const ext = require(999);\nexport const x = ext.go;"
+        ));
+        assert!(settled(
+            "const ns = {};\nrequire.r(ns);\nrequire.d(ns, { a: () => a });\nvar a = 1;\nexport { ns };"
+        ));
+        // Their arguments are still read.
+        assert!(!settled(
+            "const ns = {};\nrequire.d(ns, { a: () => require(\"./a.js\") });\nexport { ns };"
+        ));
+        // A string specifier, or one a rule could inline into a string.
+        assert!(!settled("const n = require(\"./n.js\");\nexport { n };"));
+        assert!(!settled(
+            "const id = \"./n.js\";\nexport const n = require(id);"
+        ));
+        assert!(!settled("export const n = require(999, 1);"));
+        assert!(!settled("export const n = require(...ids);"));
+        // The helpers on `exports`, on an undeclared object, or any other
+        // runtime helper.
+        assert!(!settled("export const x = 1;\nrequire.r(exports);"));
+        assert!(!settled("export const x = 1;\nrequire.r(ns);"));
+        assert!(!settled("export const x = require.e(777);"));
+        // `require` as a value.
+        assert!(!settled("export const r = require.bind(require, 999);"));
+        assert!(!settled("export const r = require;"));
     }
 
     #[test]

@@ -60,7 +60,7 @@ Phase 1b (per module, parallel):
     UnEsm, reading the plan; it reads whole-value members through the
       default import and records the import tags
     clone barrier AST → recover webpack factory IIFE ESM shapes
-    unless UnEsm left an ES module with no free module/exports/require:
+    unless UnEsm left a settled ES module (no CommonJS the recovery converts):
       collect transpiler-helper facts on that clone
       clone barrier AST → Phase 2's rule range and cleanup, without facts
         → recover webpack factory IIFE ESM shapes     ← predicts Phase 2's format
@@ -106,10 +106,17 @@ into ESM, and its consumers kept a bare `require` of it or a default import
 it does not have. The transpiler-helper facts still come from a clone that
 runs only the late recovery: the rule range rewrites helper bodies
 (`UnConditionals`, `ArrowFunction`, DCE) into shapes the helper detectors do
-not match. An ES module that reads no free `module`, `exports`, or
-`require` after `UnEsm` (`is_settled_es_module`), such as a converted
-webpack harmony module, leaves the late recovery nothing to convert, so its
-facts come from that recovery alone and it skips the extra rule range. A
+not match. An ES module that reads no free `module` or `exports` after
+`UnEsm`, and uses the free `require` only with a numeric module id (a
+module outside the bundle, `require(123)`) or as webpack's namespace-object
+helpers on a local object (`require.r(ns)`, `require.d(ns, …)`, which module
+concatenation emits; both wild-observed), is settled
+(`is_settled_es_module`). `UnEsm` makes imports from string specifiers
+only, reads those helpers as exports only on `exports`, and no rule turns a
+number into a string or a local into `exports`, so the late recovery has
+nothing to convert in such a module. Its facts come from that recovery
+alone and it skips the extra rule range. A converted webpack harmony module
+is the usual case. A
 module that has imports but still assigns `exports` takes the range too:
 after the range, the late recovery can still turn those assignments into
 export declarations (wild-observed), and its consumers' imports follow the

@@ -4465,3 +4465,48 @@ exports.run = function () { return [u.format("a"), u.isError(u)]; };
     assert!(!consumer.contains("import u from"), "{consumer}");
     assert!(consumer.contains("\"./util.js\""), "{consumer}");
 }
+
+#[test]
+fn an_es_module_with_a_numeric_require_and_a_namespace_object_is_read_as_esm() {
+    // A webpack harmony module that requires a module outside the chunk by
+    // its numeric id, and builds a concatenated module's namespace object
+    // with `require.r` / `require.d` on a local (both wild-observed). The
+    // late ESM recovery has nothing left to convert there, so its facts
+    // come from that recovery alone, and module 200 imports its named
+    // export.
+    let modules = r#"
+    100: function(module, exports, __webpack_require__) {
+      "use strict";
+      __webpack_require__.r(exports);
+      __webpack_require__.d(exports, { run: function () { return run; } });
+      var ext = __webpack_require__(999);
+      var ns = {};
+      __webpack_require__.r(ns);
+      __webpack_require__.d(ns, { a: function () { return a; } });
+      var a = 1;
+      function run() { return [ext.go(), ns.a]; }
+    },
+    200: function(module, exports, __webpack_require__) {
+      "use strict";
+      var p = __webpack_require__(100);
+      exports.out = function () { return p.run(); };
+    }"#;
+    let source = helper_provider_bundle(modules);
+    for emit_source_map in [false, true] {
+        let output = unpack_one(&source, emit_source_map);
+        assert_valid_module_graph(&output.modules);
+        assert!(
+            interop_warnings(&output).is_empty(),
+            "{:#?}",
+            output.warnings
+        );
+        let provider = module_named(&output.modules, "module-100.js");
+        assert!(provider.contains("export { run }"), "{provider}");
+        assert!(provider.contains("require(999)"), "{provider}");
+        let reader = module_named(&output.modules, "module-200.js");
+        assert!(
+            reader.contains("import { run } from \"./module-100.js\""),
+            "{reader}"
+        );
+    }
+}
