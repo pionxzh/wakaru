@@ -6,9 +6,10 @@
 //! the recovered provider is later proven to expose named exports but no
 //! default, the closest faithful ESM edge is a namespace import. The same
 //! holds for a provider with a default export that never refers to `module`
-//! outside a Cocos registration frame: requiring it returns its `exports` object, where `default` is one property
-//! among the others, while a default from `module.exports = v` is the whole
-//! required value.
+//! outside a Cocos registration frame: requiring it returns its `exports`
+//! object, where `default` is one property among the others, while a default
+//! from `module.exports = v` is the whole required value. A provider the input
+//! wrote as ESM is the same: `require` of it returns its namespace.
 //!
 //! Barrier 0 does not move this decision before `UnEsm`: the plan carries
 //! which providers a consumer writes to and which helpers they export, not

@@ -156,11 +156,14 @@ impl<'a> ProviderInterface<'a> {
     /// this provider meant. `whole_value` says the consumer used the
     /// required value whole, or through an interop that returns it as is:
     /// that value is the namespace only when `require` returned the
-    /// `exports` object, where a default export is one property among the
-    /// others. Without a default export the namespace is the only surface.
+    /// `exports` object or the namespace of a module the input wrote as ESM,
+    /// where a default export is one property among the others. Without a
+    /// default export the namespace is the only surface.
     pub(crate) fn namespace_holds_default_import(&self, whole_value: bool) -> bool {
         (self.has_named_surface || self.has_default)
-            && (!self.has_default || (self.facts.require_returns_exports_object && whole_value))
+            && (!self.has_default
+                || ((self.facts.require_returns_exports_object || self.facts.input_is_es_module)
+                    && whole_value))
     }
 
     /// The properties of the provider's proven CommonJS default value that a
@@ -427,6 +430,24 @@ mod tests {
             (
                 "a default property of the exports object, read as the default",
                 exports_object(default_and_named()),
+                false,
+                false,
+            ),
+            (
+                "a default export of a module the input wrote as ESM, read whole",
+                ModuleFacts {
+                    input_is_es_module: true,
+                    ..default_and_named()
+                },
+                true,
+                true,
+            ),
+            (
+                "a default export of a module the input wrote as ESM, read as the default",
+                ModuleFacts {
+                    input_is_es_module: true,
+                    ..default_and_named()
+                },
                 false,
                 false,
             ),

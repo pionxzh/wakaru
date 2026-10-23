@@ -6,9 +6,10 @@ use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::VisitMutWith;
 use wakaru_core::facts::{
     collect_commonjs_default_attached_properties, collect_commonjs_default_object,
-    collect_commonjs_value_is_default, collect_default_object_tail, collect_marks_es_module,
-    collect_module_facts, ExportFact, ExportKind, HelperExportFact, HelperKind, ImportFact,
-    ImportKind, ModuleFacts, ModuleFactsMap, TypeScriptHelperExportFact, TypeScriptHelperKind,
+    collect_commonjs_value_is_default, collect_default_object_tail, collect_input_is_es_module,
+    collect_marks_es_module, collect_module_facts, ExportFact, ExportKind, HelperExportFact,
+    HelperKind, ImportFact, ImportKind, ModuleFacts, ModuleFactsMap, TypeScriptHelperExportFact,
+    TypeScriptHelperKind,
 };
 use wakaru_core::{apply_rules, RulePipelineOptions};
 
@@ -997,6 +998,43 @@ fn commonjs_value_is_default_needs_one_top_level_module_exports_assignment() {
     assert!(!is_default("module.exports = a; module.hot.accept();"));
     assert!(!is_default("module.exports = a; eval(code);"));
     assert!(!is_default("export default a;"));
+}
+
+#[test]
+fn input_is_es_module_needs_a_declaration_and_no_commonjs_global() {
+    let is_esm = |source: &str, commonjs_value_is_default: bool| {
+        GLOBALS.set(&Default::default(), || {
+            let cm: Lrc<SourceMap> = Default::default();
+            let fm = cm.new_source_file(
+                FileName::Custom("test.js".to_string()).into(),
+                source.to_string(),
+            );
+            let lexer = Lexer::new(
+                Syntax::Es(EsSyntax::default()),
+                Default::default(),
+                StringInput::from(&*fm),
+                None,
+            );
+            let mut module = Parser::new_from(lexer)
+                .parse_module()
+                .expect("parse failed");
+            let unresolved_mark = Mark::new();
+            module.visit_mut_with(&mut resolver(unresolved_mark, Mark::new(), false));
+            collect_input_is_es_module(&module, unresolved_mark, commonjs_value_is_default)
+        })
+    };
+    assert!(is_esm("export const f = 1; export default g;", false));
+    assert!(is_esm(r#"import x from "./x"; use(x);"#, false));
+    // A local named `module` is no CommonJS global.
+    assert!(is_esm(
+        "export default function (module) { return module.id; }",
+        false
+    ));
+    assert!(!is_esm("exports.f = 1;", false));
+    // A CommonJS runtime normalizer's `export default`.
+    assert!(!is_esm("export default fn;", true));
+    assert!(!is_esm("export default fn; exports.beta = 2;", false));
+    assert!(!is_esm("export const f = 1; module.hot.accept();", false));
 }
 
 #[test]

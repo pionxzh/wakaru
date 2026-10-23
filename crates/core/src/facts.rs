@@ -203,6 +203,10 @@ pub struct ModuleFacts {
     /// object. A consumer's whole `require` value is then the namespace of
     /// the recovered exports, with `default` as one of its properties.
     pub require_returns_exports_object: bool,
+    /// True when the input wrote the module as an ES module
+    /// ([`collect_input_is_es_module`]). A consumer's whole `require` of it
+    /// reads its namespace, with `default` as one of its properties.
+    pub input_is_es_module: bool,
     /// True when the module's CommonJS value is the value of its single
     /// top-level `module.exports = v` statement, collected before `UnEsm`
     /// turns it into `export default v`, or the default of Next's
@@ -1625,6 +1629,43 @@ pub fn collect_commonjs_default_object(
     Some(CommonJsDefaultObjectFact {
         declared_properties: properties,
     })
+}
+
+/// Whether the input wrote the module as an ES module: it has an import or
+/// export declaration before any rule runs and no free `module` or `exports`
+/// reference, which an ES module does not have. A webpack factory whose
+/// replaced `module.exports` a runtime normalizer wrote as `export default`
+/// is CommonJS: `commonjs_value_is_default` holds for it, and the caller
+/// passes that.
+pub fn collect_input_is_es_module(
+    module: &Module,
+    unresolved_mark: Mark,
+    commonjs_value_is_default: bool,
+) -> bool {
+    struct CommonJsGlobal {
+        unresolved_mark: Mark,
+        found: bool,
+    }
+    impl Visit for CommonJsGlobal {
+        fn visit_ident(&mut self, ident: &swc_core::ecma::ast::Ident) {
+            self.found |= is_unresolved_ident(ident, "module", self.unresolved_mark)
+                || is_unresolved_ident(ident, "exports", self.unresolved_mark);
+        }
+    }
+    if commonjs_value_is_default
+        || !module
+            .body
+            .iter()
+            .any(|item| matches!(item, ModuleItem::ModuleDecl(_)))
+    {
+        return false;
+    }
+    let mut global = CommonJsGlobal {
+        unresolved_mark,
+        found: false,
+    };
+    module.visit_with(&mut global);
+    !global.found
 }
 
 /// Whether requiring the module returns its `exports` object: no unresolved

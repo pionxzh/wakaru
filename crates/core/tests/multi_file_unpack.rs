@@ -4510,3 +4510,29 @@ fn an_es_module_with_a_numeric_require_and_a_namespace_object_is_read_as_esm() {
         );
     }
 }
+
+#[test]
+fn a_whole_require_of_a_provider_the_input_wrote_as_esm_reads_its_namespace() {
+    // `require` of an ES module returns its namespace, where `default` is
+    // one property beside the named exports (hypothetical).
+    let modules = unpack_named(&[
+        (
+            "esm.js",
+            r#"export const f = () => 1;
+export default function D() { return 0; }"#,
+        ),
+        (
+            "consumer.js",
+            r#"var p = require("./esm.js");
+exports.run = function () { return [p.f(), p.default()]; };"#,
+        ),
+    ]);
+    let consumer = module_named(&modules, "consumer.js");
+    assert!(
+        consumer.contains(r#"import p, { f } from "./esm.js";"#)
+            && consumer.contains("f(),")
+            && consumer.contains("p()"),
+        "{consumer}"
+    );
+    assert_valid_module_graph(&modules);
+}

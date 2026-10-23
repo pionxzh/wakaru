@@ -184,7 +184,8 @@ conservatively retain the graph.
 - `ImportCallEdge { source, imported, consumed_by_exports }`
 - `ModuleFacts { imports, exports, helper_exports,
   commonjs_default_object, commonjs_default_attached_properties,
-  require_returns_exports_object, commonjs_value_is_default, replaces_module_exports,
+  require_returns_exports_object, input_is_es_module, commonjs_value_is_default,
+  replaces_module_exports,
   marks_es_module, require_edges, has_export_all, export_star_sources, reexports, import_call_edges,
   default_object_ident_properties, ts_helper_exports,
   ts_helper_namespace_factory_exports, receiver_observing_exports,
@@ -219,7 +220,13 @@ frame does not count (`cocos_registration_frame` in
 [rewrite-assumptions.md](rewrite-assumptions.md)). `UnEsm` turns both `exports.default = v` and
 `module.exports = v` into a default export; only the first is one property
 of the required value, which a consumer's whole `require` reads as the
-namespace.
+namespace. `input_is_es_module` records the same for a module the input
+wrote as ESM: it has an import or export declaration before any rule, no
+free `module` or `exports`, and is not a webpack factory whose only
+declaration is the `export default` a CommonJS runtime normalizer wrote
+(`commonjs_value_is_default`). `require`
+of it returns its namespace, where `default` is one property among the
+others.
 
 `collect_commonjs_value_is_default` records the other case: the module
 assigns `module.exports` exactly once, in a position that runs on every
@@ -617,7 +624,8 @@ Neither proof creates a default-object fact available to consumers.
   synthesized for a whole-object `require("./x")` into a namespace import when
   the provider facts prove a named or `export *` surface and no default export,
   or a default export whose provider requires as its `exports` object
-  (`require_returns_exports_object`) while the consumer used the whole value
+  (`require_returns_exports_object`) or as the namespace of a module the
+  input wrote as ESM (`input_is_es_module`) while the consumer used the whole value
   without an interop wrapper (`uses_whole_value` on the consumer's require
   edges), or through a wildcard interop of a provider marked `__esModule`
   (`uses_only_wildcard_interop` and `marks_es_module`).

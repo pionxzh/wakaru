@@ -44,10 +44,10 @@ use super::webpack_commonjs_runtime::normalize_webpack_commonjs_runtime;
 use super::{recover_late_esm_from_factory_iifes, LateEsmRecoveryOptions};
 use crate::facts::{
     collect_commonjs_default_attached_properties, collect_commonjs_default_object,
-    collect_commonjs_value_is_default, collect_default_object_tail, collect_marks_es_module,
-    collect_module_facts, collect_module_facts_with_helpers, collect_replaces_module_exports,
-    collect_require_returns_exports_object, is_normalized_commonjs_default, HelperFacts,
-    ModuleFactsMap,
+    collect_commonjs_value_is_default, collect_default_object_tail, collect_input_is_es_module,
+    collect_marks_es_module, collect_module_facts, collect_module_facts_with_helpers,
+    collect_replaces_module_exports, collect_require_returns_exports_object,
+    is_normalized_commonjs_default, HelperFacts, ModuleFactsMap,
 };
 use crate::interface_plan::{exports_only_whole_value, InterfacePlan, PlanModule};
 use crate::kept_require::run_kept_require_default_reads;
@@ -230,6 +230,7 @@ struct RawCommonJsFacts {
     commonjs_default_object: Option<crate::facts::CommonJsDefaultObjectFact>,
     commonjs_default_attached_properties: Vec<swc_core::atoms::Atom>,
     require_returns_exports_object: bool,
+    input_is_es_module: bool,
     commonjs_value_is_default: bool,
     replaces_module_exports: bool,
     es_source_evidence: Vec<&'static str>,
@@ -241,6 +242,7 @@ impl RawCommonJsFacts {
         facts.commonjs_default_object = self.commonjs_default_object;
         facts.commonjs_default_attached_properties = self.commonjs_default_attached_properties;
         facts.require_returns_exports_object = self.require_returns_exports_object;
+        facts.input_is_es_module = self.input_is_es_module;
         facts.commonjs_value_is_default = self.commonjs_value_is_default;
         facts.replaces_module_exports = self.replaces_module_exports;
         facts.es_source_evidence = self.es_source_evidence;
@@ -867,6 +869,8 @@ pub(super) fn unpack_multi_module_with_plan(
                     || (unpacked.webpack_commonjs_runtime
                         && is_normalized_commonjs_default(&module))
                     || collect_default_object_tail(&module, unresolved_mark);
+            let input_is_es_module =
+                collect_input_is_es_module(&module, unresolved_mark, commonjs_value_is_default);
             let es_source_evidence = if options.diagnostics {
                 crate::kept_require::es_source_evidence(&module, unresolved_mark)
             } else {
@@ -878,6 +882,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 commonjs_default_object,
                 commonjs_default_attached_properties,
                 require_returns_exports_object,
+                input_is_es_module,
                 commonjs_value_is_default,
                 replaces_module_exports,
                 es_source_evidence,
