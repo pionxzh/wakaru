@@ -233,6 +233,10 @@ pub struct RequireEdge {
     /// Uses on the AST `UnEsm` sees; `None` when that AST does not hold the
     /// call exactly once.
     pub uses: Option<RequireUses>,
+    /// The source the input wrote, when it names a CommonJS passthrough and
+    /// `source` is the module the passthrough chain ends at
+    /// ([`RequireEdges::alias_sources`]).
+    pub via: Option<Atom>,
 }
 
 impl RequireEdge {
@@ -418,6 +422,31 @@ impl RequireEdges {
             .filter(move |edge| edge.source.as_ref() == source)
             .peekable();
         all.peek().is_some().then_some(all)
+    }
+
+    /// Reads each edge of a source `sources` maps, and each callee required
+    /// from one, as an edge of the specifier it maps to: the module a
+    /// CommonJS passthrough chain ends at, which `UnEsm` read instead
+    /// (`InterfacePlan::passthrough_sources`). The edge keeps the source the
+    /// input wrote in `via`.
+    pub(crate) fn alias_sources(&mut self, sources: &HashMap<String, String>) {
+        if sources.is_empty() {
+            return;
+        }
+        for edge in self.edges.iter_mut().chain(self.unkeyed.iter_mut()) {
+            if let Some(target) = sources.get(edge.source.as_ref()) {
+                edge.via = Some(std::mem::replace(&mut edge.source, target.as_str().into()));
+            }
+            for callee in edge
+                .uses
+                .iter_mut()
+                .flat_map(|uses| uses.passed_to_other_module.iter_mut())
+            {
+                if let Some(target) = sources.get(callee.source.as_ref()) {
+                    callee.source = target.as_str().into();
+                }
+            }
+        }
     }
 
     /// Whether the module uses `source` as the plain required value: every
@@ -981,6 +1010,7 @@ impl Visit for EdgeCollector<'_> {
                     interop: Interop::None,
                     esmodule_tested: false,
                     uses: None,
+                    via: None,
                 },
             ));
         }

@@ -948,6 +948,7 @@ fn interop_json(input: &str, report: &wakaru_core::driver::InteropReport) -> ser
             },
             "edges": module.edges.iter().map(|edge| serde_json::json!({
                 "source": edge.source,
+                "via": edge.via,
                 "keyed": edge.keyed,
                 "form": edge.form,
                 "top_level": edge.top_level,
@@ -1010,8 +1011,12 @@ fn interop_text(report: &wakaru_core::driver::InteropReport) -> String {
                 facts.push("__esModule read".to_string());
             }
             out.push_str(&format!(
-                "  require(\"{}\"): {}\n",
+                "  require(\"{}\"){}: {}\n",
                 edge.source,
+                edge.via
+                    .as_ref()
+                    .map(|via| format!(" via {via}"))
+                    .unwrap_or_default(),
                 facts.join(", ")
             ));
             if let Some(uses) = &edge.uses {

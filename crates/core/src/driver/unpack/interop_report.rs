@@ -60,6 +60,10 @@ pub struct ProviderReport {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EdgeReport {
     pub source: String,
+    /// The source the input wrote, when it named a CommonJS passthrough and
+    /// `source` is the module the passthrough chain ends at, which `UnEsm`
+    /// read instead.
+    pub via: Option<String>,
     /// False for a call whose span is dummy or shared with another call: it
     /// has no uses and no import tag.
     pub keyed: bool,
@@ -261,6 +265,7 @@ fn edge_report(
 ) -> EdgeReport {
     EdgeReport {
         source: edge.source.to_string(),
+        via: edge.via.as_ref().map(ToString::to_string),
         keyed,
         form: edge.form.to_string(),
         top_level: edge.top_level,
@@ -379,5 +384,35 @@ mod tests {
             .unwrap();
         assert_eq!(provider.provider.value, "ExportsObject");
         assert_eq!(provider.provider.required_value_import, "namespace");
+    }
+
+    #[test]
+    fn an_edge_through_a_passthrough_names_the_module_behind_it() {
+        let bundle = BUNDLE.replace(
+            "var alpha = __webpack_require__(22222);",
+            "var alpha = __webpack_require__(44444);",
+        )
+        .replace(
+            "33333: (module, exports) => { exports.zeta = 2; },",
+            "33333: (module, exports) => { exports.zeta = 2; },\n    44444: (module, exports, __webpack_require__) => { module.exports = __webpack_require__(22222); },",
+        );
+        let report = explain_interop(
+            &bundle,
+            DecompileOptions {
+                filename: "bundle.js".to_string(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let consumer = report
+            .modules
+            .iter()
+            .find(|module| module.filename == "module-11111.js")
+            .expect("the consumer module");
+        let alpha = &consumer.edges[0];
+        assert_eq!(alpha.source, "./module-22222.js");
+        assert_eq!(alpha.via.as_deref(), Some("./module-44444.js"));
+        assert_eq!(alpha.imports, ["named epsilon as epsilon"]);
+        assert_eq!(consumer.edges[1].via, None);
     }
 }

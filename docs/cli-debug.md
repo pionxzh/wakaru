@@ -318,7 +318,10 @@ is one `module.exports = v` that every write lands on. A module that exports a d
 wildcard interop helper, proven before `UnEsm` by the export's storage and
 the helper's body, gets a `helper exports` line (`module.exports` names a
 required value that is the helper itself). Then each `require("src")` call of the
-module, in source order, is one edge:
+module, in source order, is one edge. A call of a CommonJS passthrough (a
+module whose body is `module.exports = require("x")`) is shown under the
+module the passthrough chain ends at, which `UnEsm` reads instead, followed
+by `via` and the source the input wrote:
 
 - its form (declarator, destructure, member read, interop helper argument,
   bare statement, or inline), `nested` when it is not in a top-level
@@ -354,5 +357,6 @@ uses and no import. `--json` prints `input` and a `modules` array; each module
 has `filename`, `stays_commonjs`, `written_by` (the first consumer that
 writes to it, or `null`),
 `helper_exports`, `provider`, and `edges`, and each edge has
-`source`, `keyed`, `form`, `top_level`, `interop`, `esmodule_tested`, `uses`,
+`source`, `via` (the passthrough the input named, or `null`), `keyed`,
+`form`, `top_level`, `interop`, `esmodule_tested`, `uses`,
 `un_esm_imports`, `imports`, and `no_import_reason`.

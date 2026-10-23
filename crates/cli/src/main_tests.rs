@@ -268,6 +268,7 @@ fn debug_interop_prints_each_edge_and_the_import_made_from_it() {
     let edge =
         |source: &str, un_esm: &[&str], imports: &[&str], reason| wakaru_core::driver::EdgeReport {
             source: source.to_string(),
+            via: None,
             keyed: true,
             form: "declarator `alpha`".to_string(),
             top_level: true,
@@ -296,6 +297,10 @@ fn debug_interop_prints_each_edge_and_the_import_made_from_it() {
                     edge("./a.js", &["default alpha"], &["named beta as beta"], None),
                     edge("./b.js", &["default alpha"], &["default alpha"], None),
                     edge("./c.js", &[], &[], Some("the require stays a call")),
+                    wakaru_core::driver::EdgeReport {
+                        via: Some("./pass.js".to_string()),
+                        ..edge("./d.js", &["default alpha"], &["default alpha"], None)
+                    },
                 ],
             },
             wakaru_core::driver::ModuleInterop {
@@ -330,6 +335,9 @@ fn debug_interop_prints_each_edge_and_the_import_made_from_it() {
   require("./c.js"): declarator `alpha`
     uses: reads beta
     no import: the require stays a call
+  require("./d.js") via ./pass.js: declarator `alpha`
+    uses: reads beta
+    import: default alpha
 registry.js
   provider: Default { marked: false } (default export yes, named surface no, __esModule no; read by default import)
   written by writer.js: the writes land on its default export
@@ -338,6 +346,10 @@ registry.js
     assert_eq!(
         interop_json("bundle.js", &report)["modules"][0]["edges"][0]["imports"],
         serde_json::json!(["named beta as beta"])
+    );
+    assert_eq!(
+        interop_json("bundle.js", &report)["modules"][0]["edges"][3]["via"],
+        serde_json::json!("./pass.js")
     );
     assert_eq!(
         interop_json("bundle.js", &report)["modules"][0]["written_by"],

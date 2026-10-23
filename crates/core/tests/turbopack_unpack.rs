@@ -264,9 +264,11 @@ fn server_chunks_and_externals_are_recovered() {
         module(&output, "module-101.js").trim(),
         r#"module.exports = require("node:crypto");"#
     );
+    // Module 101 passes the builtin through: its consumer requires the
+    // builtin itself, whose default import is the object `require` returns.
     assert_eq!(
         module(&output, "module-202.js").trim(),
-        r#"import * as b from "node:crypto";
+        r#"import b from "node:crypto";
 export const hash = ()=>b.randomUUID();"#
     );
 }
@@ -1203,6 +1205,8 @@ fn translated_requires_carry_the_span_of_their_context_call() {
     );
 
     // hypothetical: server externals, as the module value and as a binding.
+    // Module 111 passes `node:crypto` through, so module 222's edge names
+    // the builtin.
     let server = r#"module.exports = [
 111, (a, b, c) => { b.exports = a.x("node:crypto", () => require("node:crypto")); },
 222, a => { "use strict"; var b = a.i(111), p = a.x("node:path", () => require("node:path")); a.s(["hash", 0, () => b.randomUUID() + p.sep]); }
@@ -1211,7 +1215,7 @@ fn translated_requires_carry_the_span_of_their_context_call() {
         &interop_edges(server),
         &[
             ("module-111.js", "node:crypto", true),
-            ("module-222.js", "./module-111.js", true),
+            ("module-222.js", "node:crypto", true),
             ("module-222.js", "node:path", true),
         ],
     );

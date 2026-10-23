@@ -1114,6 +1114,10 @@ pub(super) fn unpack_multi_module_with_plan(
                 (facts, None)
             };
             raw.apply(&mut facts);
+            // `UnEsm` read each require of a passthrough as a require of the
+            // module its chain ends at; so do the passes after the barrier.
+            let mut require_edges = require_edges;
+            require_edges.alias_sources(&plan.passthrough_sources(&filename));
             facts.require_edges = require_edges;
             (facts, prepared)
         });

@@ -56,19 +56,27 @@
 //! `module.exports = require("x")` ([`passthrough_source`]), returns from
 //! `require` what requiring `x` returns: the same object. So a write through
 //! a passthrough is a write on the module at the end of its chain, and
-//! counts there as a direct write does.
+//! counts there as a direct write does. And the plan names, for each
+//! consumer, the module at the end of every passthrough chain it requires
+//! ([`InterfacePlan::passthrough_sources`]); `UnEsm` reads that module
+//! instead: its run rewrites the consumer's `require("./pass")` to `require`
+//! of that module first ([`rewrite_passthrough_requires`]). The answers
+//! above for a source that names a passthrough are the answers for that
+//! module, under the rewritten specifier. The passthrough itself stays
+//! CommonJS.
 
 use swc_core::atoms::Atom;
 use swc_core::common::Mark;
 use swc_core::ecma::ast::{
-    AssignExpr, AssignOp, AssignTarget, Callee, Expr, Ident, Lit, MemberExpr, MemberProp, Module,
-    ModuleItem, SimpleAssignTarget, Stmt,
+    AssignExpr, AssignOp, AssignTarget, CallExpr, Callee, Expr, Ident, Lit, MemberExpr, MemberProp,
+    Module, ModuleItem, SimpleAssignTarget, Stmt, Str,
 };
-use swc_core::ecma::visit::{Visit, VisitWith};
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::collections::{HashMap, HashSet};
 use crate::facts::{canonical_module_key, resolve_module_key};
 use crate::facts::{collect_commonjs_value_is_default, collect_marks_es_module};
+use crate::module_path::relative_import_specifier;
 use crate::provider_helpers::ProviderHelpers;
 use crate::require_edges::{
     require_call_source, CalleeExport, Interop, RequireEdge, RequireEdges, RequireUses,
@@ -132,14 +140,60 @@ pub(crate) fn passthrough_source(module: &Module, unresolved_mark: Mark) -> Opti
     require_call_source(call, unresolved_mark)
 }
 
+/// Rewrites, in a consumer, every `require("s")` whose source `sources`
+/// maps to another specifier, keeping the call and its span: the edge key
+/// of the call stays the same. The rewritten specifier is no key of
+/// `sources`, so running this again changes nothing. Returns whether a call
+/// changed.
+pub(crate) fn rewrite_passthrough_requires(
+    module: &mut Module,
+    unresolved_mark: Mark,
+    sources: &HashMap<String, String>,
+) -> bool {
+    struct Rewriter<'a> {
+        unresolved_mark: Mark,
+        sources: &'a HashMap<String, String>,
+        changed: bool,
+    }
+    impl VisitMut for Rewriter<'_> {
+        fn visit_mut_call_expr(&mut self, call: &mut CallExpr) {
+            call.visit_mut_children_with(self);
+            let Some(source) = require_call_source(call, self.unresolved_mark) else {
+                return;
+            };
+            let Some(target) = self.sources.get(source.as_ref()) else {
+                return;
+            };
+            if let Expr::Lit(Lit::Str(literal)) = call.args[0].expr.as_mut() {
+                *literal = Str {
+                    span: literal.span,
+                    value: target.as_str().into(),
+                    raw: None,
+                };
+                self.changed = true;
+            }
+        }
+    }
+    if sources.is_empty() {
+        return false;
+    }
+    let mut rewriter = Rewriter {
+        unresolved_mark,
+        sources,
+        changed: false,
+    };
+    module.visit_mut_with(&mut rewriter);
+    rewriter.changed
+}
+
 /// Where a chain of passthroughs ends.
 #[derive(Debug, Clone)]
 enum PassthroughEnd {
     /// A module of the input that is no passthrough, by canonical key.
     Module(String),
     /// A source outside the input: a bare package name or a `node:`
-    /// builtin.
-    External,
+    /// builtin, as the last passthrough wrote it.
+    External(Atom),
 }
 
 /// Follows the passthrough `start` (a canonical key in `passthroughs`) to
@@ -165,7 +219,7 @@ fn passthrough_end(
             },
             None => {
                 return (!target.starts_with('.') && !target.starts_with('/'))
-                    .then_some(PassthroughEnd::External);
+                    .then(|| PassthroughEnd::External(target.clone()));
             }
         }
     }
@@ -294,6 +348,10 @@ pub(crate) struct InterfacePlan {
     /// resolve to another module whose only export is one
     /// `module.exports = v` ([`PlanModule::exports_whole_value`]).
     whole_value_sources: HashMap<String, Vec<Atom>>,
+    /// For each consumer, by canonical key: the sources it requires that
+    /// name a passthrough, with the specifier of the module the chain ends
+    /// at.
+    passthrough_sources: HashMap<String, Vec<(Atom, Atom)>>,
 }
 
 impl InterfacePlan {
@@ -328,6 +386,55 @@ impl InterfacePlan {
             .keys()
             .filter_map(|key| Some((key.as_str(), passthrough_end(key, &passthroughs, &keys)?)))
             .collect();
+        // Each consumer's requires of a passthrough, with the specifier of
+        // the module the chain ends at. A passthrough's own require is left
+        // alone, and so is a chain that ends at the consumer itself.
+        let mut passthrough_sources: HashMap<String, Vec<(Atom, Atom)>> = HashMap::default();
+        if !passthrough_ends.is_empty() {
+            for module in &modules {
+                let consumer = canonical_module_key(module.filename);
+                if passthroughs.contains_key(&consumer) {
+                    continue;
+                }
+                let mut sources: Vec<(Atom, Atom)> = Vec::new();
+                for edge in module.edges.iter().chain(module.edges.unkeyed()) {
+                    if sources.iter().any(|(source, _)| source == &edge.source) {
+                        continue;
+                    }
+                    let Some(end) = resolve_module_key(
+                        |key| keys.contains(key),
+                        Some(module.filename),
+                        &edge.source,
+                    )
+                    .and_then(|provider| passthrough_ends.get(provider.as_str())) else {
+                        continue;
+                    };
+                    let specifier = match end {
+                        PassthroughEnd::Module(target) if *target == consumer => continue,
+                        PassthroughEnd::Module(target) => {
+                            Atom::from(relative_import_specifier(module.filename, target))
+                        }
+                        PassthroughEnd::External(target) => target.clone(),
+                    };
+                    sources.push((edge.source.clone(), specifier));
+                }
+                if !sources.is_empty() {
+                    passthrough_sources.insert(consumer, sources);
+                }
+            }
+        }
+        // The source `UnEsm` will read for an edge, and the module of the
+        // input it names: through a passthrough, the module its chain ends
+        // at, under the rewritten specifier.
+        let provider_of = |module: &PlanModule<'_>, source: &Atom| -> (Atom, Option<String>) {
+            let aliased = passthrough_sources
+                .get(&canonical_module_key(module.filename))
+                .and_then(|sources| sources.iter().find(|(original, _)| original == source));
+            let source = aliased.map_or(source, |(_, specifier)| specifier).clone();
+            let provider =
+                resolve_module_key(|key| keys.contains(key), Some(module.filename), &source);
+            (source, provider)
+        };
         let mut written: HashMap<String, String> = HashMap::default();
         let mut kept: HashSet<String> = HashSet::default();
         for module in &modules {
@@ -377,18 +484,14 @@ impl InterfacePlan {
             for module in &modules {
                 let mut sources: Vec<(Atom, String)> = Vec::new();
                 for edge in module.edges.iter().chain(module.edges.unkeyed()) {
-                    if sources.iter().any(|(source, _)| source == &edge.source) {
-                        continue;
-                    }
-                    let Some(provider) = resolve_module_key(
-                        |key| keys.contains(key),
-                        Some(module.filename),
-                        &edge.source,
-                    ) else {
+                    let (source, Some(provider)) = provider_of(module, &edge.source) else {
                         continue;
                     };
+                    if sources.iter().any(|(listed, _)| *listed == source) {
+                        continue;
+                    }
                     if helpers.contains_key(&provider) {
-                        sources.push((edge.source.clone(), provider));
+                        sources.push((source, provider));
                     }
                 }
                 if !sources.is_empty() {
@@ -402,18 +505,14 @@ impl InterfacePlan {
                 let consumer = canonical_module_key(module.filename);
                 let mut sources: Vec<Atom> = Vec::new();
                 for edge in module.edges.iter().chain(module.edges.unkeyed()) {
-                    if sources.contains(&edge.source) {
-                        continue;
-                    }
-                    let Some(provider) = resolve_module_key(
-                        |key| keys.contains(key),
-                        Some(module.filename),
-                        &edge.source,
-                    ) else {
+                    let (source, Some(provider)) = provider_of(module, &edge.source) else {
                         continue;
                     };
+                    if sources.contains(&source) {
+                        continue;
+                    }
                     if provider != consumer && whole_value.contains(&provider) {
-                        sources.push(edge.source.clone());
+                        sources.push(source);
                     }
                 }
                 if !sources.is_empty() {
@@ -428,7 +527,25 @@ impl InterfacePlan {
             helpers,
             helper_sources,
             whole_value_sources,
+            passthrough_sources,
         }
+    }
+
+    /// The sources `filename` requires that name a CommonJS passthrough,
+    /// each with the specifier of the module its chain ends at: the
+    /// relative path of a module of the input, or the source outside the
+    /// input (`"fs"`, `"node:crypto"`) as the last passthrough wrote it.
+    /// Requiring the passthrough returns what requiring that module
+    /// returns. A chain that meets itself again or ends at `filename`, a
+    /// relative source no module of the input matches, and a passthrough's
+    /// own require are left out.
+    pub(crate) fn passthrough_sources(&self, filename: &str) -> HashMap<String, String> {
+        self.passthrough_sources
+            .get(&canonical_module_key(filename))
+            .into_iter()
+            .flatten()
+            .map(|(source, specifier)| (source.to_string(), specifier.to_string()))
+            .collect()
     }
 
     /// Whether `UnEsm` keeps the module CommonJS because a consumer in the
@@ -1077,6 +1194,9 @@ module.exports = make();"#,
             r#"var require = load; module.exports = require("./a");"#,
             r#"module.exports += require("./a");"#,
             r#"var t = module.exports = require("./a");"#,
+            // A webpack harmony module, and a module the input wrote as ESM.
+            r#"require.r(exports); module.exports = require("./a");"#,
+            r#"export default require("./a");"#,
         ] {
             assert_eq!(passthrough(source), None, "{source}");
         }
@@ -1160,6 +1280,151 @@ require("./external.js").i = 5;"#,
         assert!(!plan.is_written("src/cycle-b.js"));
         // The intermediate passthrough of a chain is not written.
         assert!(!plan.is_written("src/inner.js"));
+    }
+
+    #[test]
+    fn a_require_of_a_passthrough_names_the_module_its_chain_ends_at() {
+        let plan = plan_with_passthroughs(
+            r#"var a = require("./pass.js");
+var b = require("./outer");
+var c = require("./cycle-a.js");
+var d = require("./to-consumer.js");
+var e = require("./fs-pass.js");
+var f = require("./builtin-pass.js");
+var g = require("./missing-pass.js");
+var h = require("./named.js");
+function later() { return require("./pass.js"); }"#,
+            &[
+                ("named", None, false),
+                ("pass", Some("./named.js"), false),
+                ("deep/chained", None, false),
+                ("deep/inner", Some("./chained.js"), false),
+                ("outer", Some("./deep/inner.js"), false),
+                ("cycle-a", Some("./cycle-b.js"), false),
+                ("cycle-b", Some("./cycle-a.js"), false),
+                ("to-consumer", Some("./consumer.js"), false),
+                ("fs-pass", Some("fs"), false),
+                ("builtin-pass", Some("node:crypto"), false),
+                ("missing-pass", Some("./missing.js"), false),
+            ],
+        );
+        let sources = plan.passthrough_sources("src/consumer.js");
+        let mut listed: Vec<(&str, &str)> = sources
+            .iter()
+            .map(|(source, target)| (source.as_str(), target.as_str()))
+            .collect();
+        listed.sort_unstable();
+        assert_eq!(
+            listed,
+            [
+                ("./builtin-pass.js", "node:crypto"),
+                ("./fs-pass.js", "fs"),
+                ("./outer", "./deep/chained.js"),
+                ("./pass.js", "./named.js"),
+            ]
+        );
+        // A passthrough's own require is not retargeted.
+        assert!(plan.passthrough_sources("src/outer.js").is_empty());
+        assert!(plan.passthrough_sources("src/deep/inner.js").is_empty());
+    }
+
+    #[test]
+    fn whole_value_and_helper_sources_name_the_rewritten_specifier() {
+        let helpers = provider_helpers(
+            "module.exports = function (e) { return e && e.__esModule ? e : { default: e }; };",
+        );
+        let consumer = edges(
+            r#"var h = require("./helper-pass.js");
+var w = require("./whole-pass.js").size;"#,
+        );
+        let pass = |source: &str| edges(&format!(r#"module.exports = require("{source}");"#));
+        let (helper_pass, whole_pass) = (pass("./helper.js"), pass("./whole.js"));
+        let empty = RequireEdges::default();
+        let module = |filename, edges, helpers, whole, passthrough: Option<&str>| PlanModule {
+            filename,
+            edges,
+            exports_object_writable: true,
+            helpers,
+            exports_whole_value: whole,
+            passthrough: passthrough.map(Atom::from),
+        };
+        let plan = InterfacePlan::build([
+            module("src/consumer.js", &consumer, None, false, None),
+            module("src/helper.js", &empty, Some(&helpers), false, None),
+            module(
+                "src/helper-pass.js",
+                &helper_pass,
+                None,
+                false,
+                Some("./helper.js"),
+            ),
+            module("src/whole.js", &empty, None, true, None),
+            module(
+                "src/whole-pass.js",
+                &whole_pass,
+                None,
+                false,
+                Some("./whole.js"),
+            ),
+        ]);
+        assert_eq!(
+            plan.helper_sources("src/consumer.js")
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["./helper.js"]
+        );
+        assert_eq!(
+            plan.helper_kind("src/consumer.js", "./helper.js", &CalleeExport::Value),
+            Some(TranspilerHelperKind::InteropRequireDefault)
+        );
+        assert_eq!(
+            plan.whole_value_sources("src/consumer.js"),
+            HashSet::from_iter(["./whole.js".to_string()])
+        );
+    }
+
+    #[test]
+    fn rewriting_a_passthrough_require_keeps_the_call_and_runs_once() {
+        let sources = HashMap::from_iter([("./pass.js".to_string(), "./named.js".to_string())]);
+        let printed = GLOBALS.set(&Default::default(), || {
+            let cm: Lrc<SourceMap> = Default::default();
+            let file = cm.new_source_file(
+                FileName::Anon.into(),
+                r#"var a = require("./pass.js");
+function later() { return require("./pass.js").f; }
+require.e(1).then(() => require("./pass.js"));
+var b = other("./pass.js");"#
+                    .to_string(),
+            );
+            let mut module = parse_file_as_module(
+                &file,
+                Syntax::Es(EsSyntax::default()),
+                Default::default(),
+                None,
+                &mut Vec::new(),
+            )
+            .expect("test source parses");
+            let mark = Mark::new();
+            module.visit_mut_with(&mut resolver(mark, Mark::new(), false));
+            let spans = |module: &Module| {
+                RequireEdges::collect(module, mark)
+                    .iter()
+                    .map(|edge| edge.call)
+                    .collect::<Vec<_>>()
+            };
+            let before = spans(&module);
+            assert!(rewrite_passthrough_requires(&mut module, mark, &sources));
+            assert_eq!(spans(&module), before);
+            assert!(!rewrite_passthrough_requires(&mut module, mark, &sources));
+            crate::unpacker::emit_esm::emit_module_raw(&module, cm).expect("prints")
+        });
+        assert_eq!(
+            printed.matches(r#"require("./named.js")"#).count(),
+            3,
+            "{printed}"
+        );
+        assert!(printed.contains(r#"other("./pass.js")"#), "{printed}");
     }
 
     #[test]

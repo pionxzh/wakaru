@@ -3642,8 +3642,11 @@ fn a_bundled_wildcard_interop_import_beside_a_self_replacing_default_converts() 
         let output = unpack_one(source, emit_source_map);
         assert_valid_module_graph(&output.modules);
         let widget = module_named(&output.modules, "module-333.js");
+        // Module 222 passes module 444 through: the wildcard interop of its
+        // `exports` object reads 444's named exports.
         assert!(
-            widget.contains("import * as _store from \"./module-222.js\""),
+            widget.contains("import { read } from \"./module-444.js\"")
+                && widget.contains("return read();"),
             "{widget}"
         );
         assert!(widget.contains("export { Widget as default }"), "{widget}");
@@ -4237,10 +4240,10 @@ fn a_whole_value_provider_that_stays_commonjs_is_read_through_its_default() {
 
 #[test]
 fn a_provider_with_more_than_a_whole_value_keeps_its_named_imports() {
-    // Module 100 passes module 110 through, 120 is esbuild's CommonJS
-    // output of an ES module (producer esbuild `--format=cjs`), 130 is
-    // marked `__esModule`, and 110 writes named exports: none exports only
-    // one `module.exports = v` value.
+    // Module 100 is esbuild's CommonJS output of an ES module (producer
+    // esbuild `--format=cjs`), 130 is marked `__esModule`, 110 writes named
+    // exports, and 120 passes 110 through: none exports only one
+    // `module.exports = v` value. A require of 120 reads 110.
     let modules = format!(
         r#"{ESBUILD_NAMESPACE_PROVIDER}
     110: function(module, exports) {{
@@ -4266,17 +4269,14 @@ fn a_provider_with_more_than_a_whole_value_keeps_its_named_imports() {
     for emit_source_map in [false, true] {
         let output = unpack_one(&source, emit_source_map);
         let consumer = consumer_of(&output);
-        for (import, source) in [
-            ("{ foo }", "100"),
-            ("{ f }", "110"),
-            ("{ f as f_1 }", "120"),
-            ("{ flag }", "130"),
-        ] {
+        for (import, source) in [("{ foo }", "100"), ("{ f }", "110"), ("{ flag }", "130")] {
             assert!(
                 consumer.contains(&format!("import {import} from \"./module-{source}.js\"")),
                 "{consumer}"
             );
         }
+        assert!(!consumer.contains("./module-120.js"), "{consumer}");
+        assert_eq!(consumer.matches("f(),").count(), 2, "{consumer}");
     }
 }
 
@@ -4607,4 +4607,181 @@ fn a_write_through_a_passthrough_lands_on_a_whole_value_default() {
             "{pass}"
         );
     }
+}
+
+#[test]
+fn a_require_of_a_passthrough_reads_the_module_behind_it() {
+    // Module 120 is a package entry that passes its build through,
+    // `module.exports = require("./cjs/x.production.js")`, as react-is and
+    // use-sync-external-store ship it (wild-observed). The consumer reads
+    // the build's named exports through it, as a binding, a member, and a
+    // destructure.
+    let modules = r#"
+    100: function(module, exports) {
+      exports.f = function () { return 1; };
+      exports.g = 2;
+    },
+    120: function(module, exports, __webpack_require__) {
+      module.exports = __webpack_require__(100);
+    },
+    400: function(module, exports, __webpack_require__) {
+      "use strict";
+      var p = __webpack_require__(120);
+      var h = __webpack_require__(120).g;
+      var { f: d } = __webpack_require__(120);
+      exports.run = function () { return [p.f(), p.g, h, d()]; };
+    }"#;
+    let source = helper_provider_bundle(modules);
+    for emit_source_map in [false, true] {
+        let output = unpack_one(&source, emit_source_map);
+        assert_valid_module_graph(&output.modules);
+        let consumer = consumer_of(&output);
+        assert!(
+            consumer.contains(r#"import { f, g } from "./module-100.js";"#),
+            "{consumer}"
+        );
+        assert!(!consumer.contains("./module-120.js"), "{consumer}");
+        // The passthrough itself stays CommonJS.
+        let pass = module_named(&output.modules, "module-120.js");
+        assert_eq!(
+            pass.trim(),
+            r#"module.exports = require("./module-100.js");"#
+        );
+    }
+}
+
+#[test]
+fn a_require_of_a_passthrough_of_a_whole_value_reads_its_default() {
+    // Module 120 passes a function with an attached property through
+    // (hypothetical): the consumer's member read goes through the default
+    // import of the function's module.
+    let modules = r#"
+    110: function(module) {
+      function s(x) { return x; }
+      s.version = "1";
+      module.exports = s;
+    },
+    120: function(module, exports, __webpack_require__) {
+      module.exports = __webpack_require__(110);
+    },
+    400: function(module, exports, __webpack_require__) {
+      "use strict";
+      var p = __webpack_require__(120);
+      var v = __webpack_require__(120).version;
+      exports.run = function () { return [p(1), p.version, v]; };
+    }"#;
+    let source = helper_provider_bundle(modules);
+    for emit_source_map in [false, true] {
+        let output = unpack_one(&source, emit_source_map);
+        assert_valid_module_graph(&output.modules);
+        let consumer = consumer_of(&output);
+        assert!(
+            consumer.contains(r#"import p from "./module-110.js";"#)
+                && consumer.contains("p.version;")
+                && consumer.contains("p(1)"),
+            "{consumer}"
+        );
+        assert!(!consumer.contains("./module-120.js"), "{consumer}");
+    }
+}
+
+#[test]
+fn a_require_of_a_passthrough_chain_reads_the_module_at_its_end() {
+    // Module 120 passes 130 through, which passes 100 through
+    // (hypothetical).
+    let modules = r#"
+    100: function(module, exports) {
+      exports.f = function () { return 1; };
+    },
+    120: function(module, exports, __webpack_require__) {
+      module.exports = __webpack_require__(130);
+    },
+    130: function(module, exports, __webpack_require__) {
+      "use strict";
+      module.exports = __webpack_require__(100);
+    },
+    400: function(module, exports, __webpack_require__) {
+      "use strict";
+      var p = __webpack_require__(120);
+      exports.run = function () { return p.f(); };
+    }"#;
+    let source = helper_provider_bundle(modules);
+    for emit_source_map in [false, true] {
+        let output = unpack_one(&source, emit_source_map);
+        assert_valid_module_graph(&output.modules);
+        let consumer = consumer_of(&output);
+        assert!(
+            consumer.contains(r#"import { f } from "./module-100.js";"#)
+                && consumer.contains("return f();"),
+            "{consumer}"
+        );
+        for pass in ["module-120.js", "module-130.js"] {
+            let pass = module_named(&output.modules, pass);
+            assert!(pass.contains("module.exports = require("), "{pass}");
+        }
+    }
+}
+
+#[test]
+fn an_interop_read_through_a_passthrough_reads_the_marked_module_behind_it() {
+    // Module 120 passes 100, marked `__esModule`, through; the consumer
+    // reads it only through a default interop helper (hypothetical).
+    let modules = r#"
+    100: function(module, exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.default = function D() { return 0; };
+      exports.f = function () { return 1; };
+    },
+    120: function(module, exports, __webpack_require__) {
+      module.exports = __webpack_require__(100);
+    },
+    400: function(module, exports, __webpack_require__) {
+      "use strict";
+      function i(e) { return e && e.__esModule ? e : { default: e }; }
+      var p = i(__webpack_require__(120));
+      exports.run = function () { return p.default(); };
+    }"#;
+    let source = helper_provider_bundle(modules);
+    for emit_source_map in [false, true] {
+        let output = unpack_one(&source, emit_source_map);
+        assert_valid_module_graph(&output.modules);
+        let consumer = consumer_of(&output);
+        assert!(
+            consumer.contains(r#"import p from "./module-100.js";"#)
+                && consumer.contains("return p();"),
+            "{consumer}"
+        );
+    }
+}
+
+#[test]
+fn a_require_of_a_passthrough_of_an_es_module_input_reads_its_namespace() {
+    // `pass.js` passes `esm.js`, which the input wrote as ESM, through
+    // (hypothetical).
+    let modules = unpack_named(&[
+        (
+            "esm.js",
+            r#"export const f = () => 1;
+export default function D() { return 0; }"#,
+        ),
+        ("pass.js", r#"module.exports = require("./esm.js");"#),
+        (
+            "consumer.js",
+            r#"var p = require("./pass.js");
+exports.run = function () { return [p.f(), p.default()]; };"#,
+        ),
+    ]);
+    let consumer = module_named(&modules, "consumer.js");
+    assert!(
+        consumer.contains(r#"import p, { f } from "./esm.js";"#)
+            && consumer.contains("f(),")
+            && consumer.contains("p()"),
+        "{consumer}"
+    );
+    assert_eq!(
+        module_named(&modules, "pass.js").trim(),
+        r#"module.exports = require("./esm.js");"#
+    );
+    assert_valid_module_graph(&modules);
 }

@@ -1,9 +1,8 @@
 ---
 source: crates/core/tests/webpack4_unpack.rs
-assertion_line: 210
 expression: code
 ---
-import r from "./module-3.js";
+import * as r from "./module-50.js";
 import o from "./module-29.js";
 import { unstable_IdlePriority, unstable_ImmediatePriority, unstable_LowPriority, unstable_NormalPriority, unstable_UserBlockingPriority, unstable_cancelCallback, unstable_getCurrentPriorityLevel, unstable_now, unstable_requestPaint, unstable_runWithPriority, unstable_scheduleCallback, unstable_shouldYield } from "./module-46.js";
 function a(e) {

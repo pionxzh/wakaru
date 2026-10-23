@@ -56,14 +56,16 @@ Phase 1a (per module, parallel):
      and helper exports ────
 
 Phase 1b (per module, parallel):
-    UnEsm, reading the plan; it reads whole-value members through the
-      default import and records the import tags
+    UnEsm, reading the plan; it first retargets each require of a CommonJS
+      passthrough, reads whole-value members through the default import,
+      and records the import tags
     clone barrier AST → recover webpack factory IIFE ESM shapes
     unless UnEsm left a settled ES module (no CommonJS the recovery converts):
       collect transpiler-helper facts on that clone   ← in parallel with the range
       clone barrier AST → Phase 2's rule range and cleanup, without facts
         → recover webpack factory IIFE ESM shapes     ← predicts Phase 2's format
     collect the other facts on the last clone         ← pure AST → facts
+    retarget the require edges of passthroughs as UnEsm did
     collect_import_call_edges(&barrier_ast)           ← imports still under [[Call]]
     collect constructed-member suffixes(&barrier_ast) ← names only, same AST
     retain original barrier AST + Globals + unresolved mark + import tags
@@ -390,6 +392,25 @@ eval mentions. A self-require is not a whole-value source, a `.default`
 read keeps the default-member classification, and a read in a function or
 a condition keeps its `require`. Single-file decompile and `--raw` have no
 plan.
+
+The plan also names, for each consumer, the module at the end of every
+CommonJS passthrough chain it requires (`passthrough_sources`): requiring
+the passthrough returns what requiring that module returns, the same
+object. Each `UnEsm` run that reads the plan first rewrites the consumer's
+literal `require("./pass")` to that module's specifier
+(`rewrite_passthrough_requires`), anywhere in the module, keeping the call
+and its span, so the edge key and the import tags still name the call. A
+chain is followed with a seen-set; one that meets itself again, or that
+ends at the consumer itself, is left alone, and a passthrough's own
+`require` is never rewritten, so the passthrough stays CommonJS. A
+module of the input gets a relative specifier from the consumer; a bare or
+`node:` source outside the input keeps the string the last passthrough
+wrote (`"fs"`, `"node:crypto"`); a relative source that names no module of
+the input is not followed. The whole-value and helper sources above are
+read on the module at the end of the chain and listed under the rewritten
+specifier, and Phase 1b rewrites the sources of the consumer's require
+edges (and of the callees its values reach) the same way, keeping the
+source the input wrote as `via`, before the edges cross the fact barrier.
 
 A top-level
 `var h = require("src").name` that no statement writes makes `h(x)` a call

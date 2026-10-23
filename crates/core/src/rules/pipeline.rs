@@ -347,6 +347,17 @@ fn run_un_esm(module: &mut Module, ctx: RuleRunContext<'_>) {
     if single_file && !single_file_runs_un_esm(ctx.current_filename, ctx.rewrite_level) {
         return;
     }
+    // In unpack, a require of a CommonJS passthrough reads the module its
+    // chain ends at, before anything below reads the sources.
+    if let Some((plan, filename)) = ctx.interface_plan.zip(ctx.current_filename) {
+        if crate::interface_plan::rewrite_passthrough_requires(
+            module,
+            ctx.unresolved_mark,
+            &plan.passthrough_sources(filename),
+        ) {
+            ctx.invalidate_local_helpers();
+        }
+    }
     let mut local_helpers = ctx.local_helpers(module);
     // In unpack, the helpers other modules export, as barrier 0 proved them.
     // Only `UnEsm` reads them: the rules before it ran before the barrier.
