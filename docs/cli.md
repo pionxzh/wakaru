@@ -283,7 +283,12 @@ scripts and stylesheets the payload loads, in payload order without repeats:
 the chunks of each module reference and the file of each preload or preinit
 hint, written as the payload writes them (a `?dpl=` query included). Paths in
 model rows, such as an image source, are page content and are not listed.
-Download the listed files and pass them to `--unpack`. `problems` lists the
+When the input is a page, `scripts` lists the `src` of each `<script>`
+element in page order without repeats: the bundler runtime (`webpack-*.js` or
+`turbopack-*.js`), `main-app-*.js`, polyfills, and framework chunks a page
+loads this way are not named in its payload, so `assets` alone misses them.
+For a raw payload or a script, `scripts` is empty. Download the files in
+`assets` and `scripts` and pass them to `--unpack`. `problems` lists the
 rows and push calls that did not decode, with the byte offset each starts at;
 `location` says whether the offset counts into the input (`capture`) or into
 the Flight payload (`payload`). The rest of the output is still written, so a

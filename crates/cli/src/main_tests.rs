@@ -2819,6 +2819,7 @@ fn rsc_writes_the_decoded_page_as_json() {
     assert_eq!(written["next_entries"]["data"], 1);
     assert_eq!(written["rows"][0]["kind"], "module-reference");
     assert_eq!(written["assets"][0], "static/chunks/alpha.js");
+    assert_eq!(written["scripts"].as_array().map(Vec::len), Some(0));
     assert_eq!(written["problems"].as_array().map(Vec::len), Some(0));
     fs::remove_dir_all(&dir).expect("remove temp dir");
 }

@@ -74,6 +74,7 @@ fn report(source: String, payload: &Payload) -> JsonRscReport {
             binary: entries.binary,
         }),
         assets: payload.assets.clone(),
+        scripts: payload.scripts.clone(),
         rows: payload.rows.iter().map(JsonRscRow::from).collect(),
         problems: payload.problems.iter().map(JsonRscProblem::from).collect(),
     }
@@ -89,6 +90,8 @@ struct JsonRscReport {
     next_entries: Option<JsonNextEntries>,
     /// Scripts and stylesheets the payload loads, in payload order.
     assets: Vec<String>,
+    /// The `src` of each `<script>` element of a page input, in page order.
+    scripts: Vec<String>,
     rows: Vec<JsonRscRow>,
     /// Rows and push calls that did not decode. The rest of the output is kept.
     problems: Vec<JsonRscProblem>,
@@ -160,6 +163,7 @@ mod tests {
     use super::*;
 
     const PAGE: &str = concat!(
+        r#"<html><script src="/static/chunks/webpack-alpha.js" async=""></script>"#,
         r#"<script>(self.__next_f=self.__next_f||[]).push([0])</script>"#,
         r#"<script>self.__next_f.push([1,":HL[\"/static/css/alpha.css\",\"style\"]\n"])</script>"#,
         r#"<script>self.__next_f.push([1,"1a:I[100,[\"200\",\"static/chunks/alpha.js\"],\"default\"]\n"])</script>"#,
@@ -178,6 +182,7 @@ mod tests {
         assert!(report.next_entries.is_none());
         assert_eq!(report.rows.len(), 1);
         assert_eq!(report.assets, ["static/chunks/alpha.js"]);
+        assert!(report.scripts.is_empty());
     }
 
     #[test]
@@ -199,6 +204,7 @@ mod tests {
             report.assets,
             ["/static/css/alpha.css", "static/chunks/alpha.js"]
         );
+        assert_eq!(report.scripts, ["/static/chunks/webpack-alpha.js"]);
         assert!(report.problems.is_empty());
     }
 

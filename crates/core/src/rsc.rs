@@ -462,6 +462,10 @@ pub struct Capture {
     pub format: CaptureFormat,
     /// The push calls read, in order. Empty for a raw payload.
     pub next_entries: Vec<NextFlightEntry>,
+    /// The `src` of each `<script>` element, in page order without repeats.
+    /// Empty unless the input is a page: the bundler runtime and framework
+    /// chunks a page loads this way are not named in its payload.
+    pub scripts: Vec<String>,
     /// The decoded rows. For a page, `problems` lists the push calls that did
     /// not read before the rows that did not decode.
     pub payload: FlightPayload,
@@ -478,11 +482,13 @@ pub fn decode_capture(input: &[u8]) -> Option<Capture> {
         return Some(Capture {
             format: CaptureFormat::Raw,
             next_entries: Vec::new(),
+            scripts: Vec::new(),
             payload: decode(input),
         });
     }
 
-    let capture = extract_next_flight(&String::from_utf8_lossy(input));
+    let text = String::from_utf8_lossy(input);
+    let capture = extract_next_flight(&text);
     if capture.entries.is_empty() && capture.problems.is_empty() {
         return None;
     }
@@ -495,6 +501,7 @@ pub fn decode_capture(input: &[u8]) -> Option<Capture> {
     Some(Capture {
         format: CaptureFormat::NextFlight,
         next_entries: capture.entries,
+        scripts: page_scripts(&text),
         payload,
     })
 }
@@ -591,23 +598,41 @@ pub fn extract_next_flight(text: &str) -> NextFlightCapture {
 /// The parts of `text` that can hold a push call: the contents of each
 /// `<script>` element when the text is a page, otherwise all of it.
 fn search_ranges(text: &str) -> Vec<Range<usize>> {
-    let trimmed = text.trim_start_matches('\u{feff}').trim_start();
-    if !trimmed.starts_with('<') {
+    if !is_page(text) {
         return std::iter::once(0..text.len()).collect();
     }
+    script_elements(text)
+        .into_iter()
+        .map(|script| script.content)
+        .collect()
+}
 
+/// Whether `text` is HTML rather than a script: it starts with `<`.
+fn is_page(text: &str) -> bool {
+    text.trim_start_matches('\u{feff}')
+        .trim_start()
+        .starts_with('<')
+}
+
+/// One `<script>` element of a page, as byte ranges into the page.
+struct ScriptElement {
+    /// The attributes of the opening tag, after `<script`.
+    attributes: Range<usize>,
+    content: Range<usize>,
+}
+
+fn script_elements(text: &str) -> Vec<ScriptElement> {
     // ASCII lowercasing keeps every byte offset.
     let lower = text.to_ascii_lowercase();
-    let mut ranges = Vec::new();
+    let mut scripts = Vec::new();
     let mut cursor = 0;
     while let Some(found) = lower[cursor..].find("<script") {
-        let tag = cursor + found;
-        let after_name = tag + "<script".len();
+        let after_name = cursor + found + "<script".len();
         if !lower[after_name..].starts_with(|c: char| c == '>' || c == '/' || c.is_whitespace()) {
             cursor = after_name;
             continue;
         }
-        let Some(open_end) = lower[after_name..].find('>') else {
+        let Some(open_end) = opening_tag_end(&text[after_name..]) else {
             break;
         };
         let start = after_name + open_end + 1;
@@ -615,10 +640,118 @@ fn search_ranges(text: &str) -> Vec<Range<usize>> {
         let end = lower[start..]
             .find("</script")
             .map_or(text.len(), |offset| start + offset);
-        ranges.push(start..end);
+        scripts.push(ScriptElement {
+            attributes: after_name..after_name + open_end,
+            content: start..end,
+        });
         cursor = end;
     }
-    ranges
+    scripts
+}
+
+/// The offset of the `>` that closes an opening tag, skipping quoted attribute
+/// values.
+fn opening_tag_end(tag: &str) -> Option<usize> {
+    let mut quote = None;
+    for (offset, byte) in tag.bytes().enumerate() {
+        match (quote, byte) {
+            (Some(active), _) if byte == active => quote = None,
+            (Some(_), _) => {}
+            (None, b'"' | b'\'') => quote = Some(byte),
+            (None, b'>') => return Some(offset),
+            (None, _) => {}
+        }
+    }
+    None
+}
+
+/// The `src` of each `<script>` element of a page, in page order without
+/// repeats, with HTML character references decoded. Empty for a script.
+pub fn page_scripts(text: &str) -> Vec<String> {
+    if !is_page(text) {
+        return Vec::new();
+    }
+    let mut sources: Vec<String> = Vec::new();
+    for script in script_elements(text) {
+        let Some(src) = attribute(&text[script.attributes], "src") else {
+            continue;
+        };
+        let src = decode_character_references(src.trim());
+        if !src.is_empty() && !sources.contains(&src) {
+            sources.push(src);
+        }
+    }
+    sources
+}
+
+/// The value of attribute `wanted` in the attribute text of an opening tag.
+fn attribute<'a>(attributes: &'a str, wanted: &str) -> Option<&'a str> {
+    let mut rest = attributes;
+    loop {
+        rest = rest.trim_start_matches(|c: char| c.is_whitespace() || c == '/');
+        if rest.is_empty() {
+            return None;
+        }
+        let name_end = rest
+            .find(|c: char| c.is_whitespace() || c == '=' || c == '/')
+            .unwrap_or(rest.len());
+        let name = &rest[..name_end];
+        rest = rest[name_end..].trim_start();
+        let mut value = None;
+        if let Some(after) = rest.strip_prefix('=') {
+            let after = after.trim_start();
+            let (found, tail) = match after.chars().next() {
+                Some(quote @ ('"' | '\'')) => {
+                    let body = &after[1..];
+                    let end = body.find(quote).unwrap_or(body.len());
+                    (&body[..end], body.get(end + 1..).unwrap_or(""))
+                }
+                _ => {
+                    let end = after.find(char::is_whitespace).unwrap_or(after.len());
+                    (&after[..end], &after[end..])
+                }
+            };
+            value = Some(found);
+            rest = tail;
+        }
+        if name.eq_ignore_ascii_case(wanted) {
+            return value;
+        }
+    }
+}
+
+/// Decode the character references an attribute value can hold, such as the
+/// `&amp;` React writes for `&`.
+fn decode_character_references(value: &str) -> String {
+    const REFERENCES: &[(&str, char)] = &[
+        ("&amp;", '&'),
+        ("&quot;", '"'),
+        ("&#x27;", '\''),
+        ("&#39;", '\''),
+        ("&lt;", '<'),
+        ("&gt;", '>'),
+    ];
+    let mut out = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(amp) = rest.find('&') {
+        out.push_str(&rest[..amp]);
+        rest = &rest[amp..];
+        match REFERENCES
+            .iter()
+            .find(|(reference, _)| rest.starts_with(reference))
+        {
+            Some((reference, char)) => {
+                out.push(*char);
+                rest = &rest[reference.len()..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// The next `__next_f` push in `from..limit`, with the offset to resume from.
@@ -1144,6 +1277,41 @@ mod tests {
     }
 
     #[test]
+    fn page_scripts_are_the_script_sources_in_page_order() {
+        // `producer next@15.5.4`; names and hashes are synthetic.
+        let page = concat!(
+            "<!DOCTYPE html><html><head>",
+            "<link rel=\"preload\" as=\"script\" href=\"/_next/static/chunks/webpack-alpha.js\"/>",
+            "<script src=\"/_next/static/chunks/webpack-alpha.js?dpl=dpl_alpha\" id=\"_R_\" async=\"\"></script>",
+            "<script src=\"/_next/static/chunks/main-app-alpha.js?dpl=dpl_alpha\" async=\"\"></script>",
+            "<script src=\"/_next/static/chunks/polyfills-alpha.js?dpl=dpl_alpha\" noModule=\"\"></script>",
+            "</head><body><script>self.__next_f.push([0])</script>",
+            "<SCRIPT data-src=\"/lazy.js\" title='a > b' SRC='/a.js?x=1&amp;y=2'></SCRIPT>",
+            "<script src=/b.js defer></script>",
+            "<script src=\"/_next/static/chunks/main-app-alpha.js?dpl=dpl_alpha\" async=\"\"></script>",
+            "</body></html>",
+        );
+
+        assert_eq!(
+            page_scripts(page),
+            [
+                "/_next/static/chunks/webpack-alpha.js?dpl=dpl_alpha",
+                "/_next/static/chunks/main-app-alpha.js?dpl=dpl_alpha",
+                "/_next/static/chunks/polyfills-alpha.js?dpl=dpl_alpha",
+                "/a.js?x=1&y=2",
+                "/b.js",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_script_capture_has_no_page_scripts() {
+        assert!(
+            page_scripts("self.__next_f.push([0]); var s = '<script src=\"/a.js\">';").is_empty()
+        );
+    }
+
+    #[test]
     fn a_bootstrap_entry_discards_what_came_before_it() {
         let capture = extract_next_flight(concat!(
             r#"self.__next_f.push([1, "1:[\"stale\"]\n"]);"#,
@@ -1251,6 +1419,7 @@ mod tests {
 
         assert_eq!(capture.format, CaptureFormat::Raw);
         assert!(capture.next_entries.is_empty());
+        assert!(capture.scripts.is_empty());
         assert_eq!(capture.payload.rows.len(), 1);
         assert!(capture.payload.problems.is_empty());
     }
@@ -1305,5 +1474,6 @@ mod tests {
             capture.payload.problems[0].message,
             "unterminated __next_f.push argument"
         );
+        assert!(capture.scripts.is_empty());
     }
 }

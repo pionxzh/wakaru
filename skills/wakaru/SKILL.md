@@ -177,8 +177,9 @@ wakaru rsc payload.rsc -o rsc.json     # raw payload rows
 ```
 
 The JSON holds `rows` (hex `id`, `tag`, `kind`, raw `payload`, and `json` when
-React parses it), `assets` (the script and stylesheet paths the payload loads;
-download them and pass them to `--unpack`), and `problems` (rows and push calls
+React parses it), `assets` (the script and stylesheet paths the payload loads),
+`scripts` (a page's `<script src>` files, which include the bundler runtime the
+payload never names; download both lists and pass them to `--unpack`), and `problems` (rows and push calls
 that did not decode; the rest is still written). `format` is `raw` or
 `next.__next_f`. Input with no payload fails. Model rows keep React's `$`
 references (`"$L3"`) as strings: the tree they describe is not reconstructed.

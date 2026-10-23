@@ -123,8 +123,9 @@ wakaru rsc page.html -o rsc.json
 ```
 
 `rsc` decodes a React Server Components payload into JSON: the `rows` of the
-stream, the scripts and stylesheets it loads (`assets`), and the `problems`
-that did not decode. The input can be a raw payload or a saved Next.js page
+stream, the scripts and stylesheets it loads (`assets`), the `<script src>`
+files of a page (`scripts`, which include the bundler runtime), and the
+`problems` that did not decode. The input can be a raw payload or a saved Next.js page
 holding `self.__next_f.push(...)` calls, which are extracted and concatenated
 first; `format` reports which was recognized. Nothing is decompiled: the
 payload is data, not JavaScript source. The output can change in any release.

@@ -12,7 +12,8 @@
 //! output can change in any release.
 //!
 //! ```
-//! let page = r#"<script>(self.__next_f=self.__next_f||[]).push([0])</script>
+//! let page = r#"<script src="/_next/static/chunks/webpack-a.js" async=""></script>
+//! <script>(self.__next_f=self.__next_f||[]).push([0])</script>
 //! <script>self.__next_f.push([1,":HL[\"/_next/static/css/a.css\",\"style\"]\n1:I[100,[\"200\",\"static/chunks/app/page-a.js\"],\"default\"]\n"])</script>"#;
 //! let payload = wakaru::rsc::decode(page.as_bytes()).expect("a payload");
 //! assert_eq!(payload.format, wakaru::rsc::Format::NextFlight);
@@ -22,6 +23,7 @@
 //!     payload.assets,
 //!     ["/_next/static/css/a.css", "static/chunks/app/page-a.js"]
 //! );
+//! assert_eq!(payload.scripts, ["/_next/static/chunks/webpack-a.js"]);
 //! ```
 
 use std::borrow::Cow;
@@ -51,6 +53,11 @@ pub struct Payload {
     /// each preload or preinit hint, as the payload writes them. Paths in model
     /// rows are page content and are not listed.
     pub assets: Vec<String>,
+    /// The `src` of each `<script>` element when the input is a page, in page
+    /// order without repeats; empty otherwise. A page loads its bundler
+    /// runtime and framework chunks this way, and the payload does not name
+    /// them.
+    pub scripts: Vec<String>,
     /// Push calls that could not be read, then rows that could not be decoded.
     /// The rows around them are kept.
     pub problems: Vec<Problem>,
@@ -213,6 +220,7 @@ pub fn decode(input: &[u8]) -> Option<Payload> {
         next_entries,
         rows,
         assets,
+        scripts: capture.scripts,
         problems,
     })
 }
@@ -269,6 +277,7 @@ mod tests {
             ]
         );
         assert_eq!(payload.assets, ["/a.css"]);
+        assert!(payload.scripts.is_empty());
         assert_eq!(
             payload.problems,
             vec![Problem {
