@@ -262,30 +262,39 @@ wakaru rsc captured-flight.js                     # prints the JSON to stdout
 
 `rsc` is experimental: its output can change in any release. It reads a React
 Server Components payload (React's Flight wire format) and prints it as JSON.
-It is not part of
-the decompile pipeline: a payload is data, not JavaScript source, so no rule
-runs and nothing is decompiled. The input is either a raw payload (`1:I[...]`
-rows, one per line) or a page or script that holds Next.js
-`self.__next_f.push(...)` calls, which are found, unescaped, and concatenated
-before decoding. The `format` field says which was recognized:
-`raw-flight` or `next.__next_f`.
+It is not part of the decompile pipeline: a payload is data, not JavaScript
+source, so no rule runs and nothing is decompiled.
 
-The output is `rows`, `assets`, and `problems`. Each row carries its hex `id`,
-its `tag` letter (`null` for a model row), a `kind` (`model`,
-`module-reference`, `hint`, `error`, `text`, or `other`), its raw `payload`,
-and `json` when React reads the payload as JSON. `assets` lists the served
-files the rows name, in payload order without repeats: the chunks of a module
-reference, the stylesheet or script of a hint. Feed those back to `--unpack`.
-`problems` lists the rows and push calls that did not decode, with the byte
-offset each starts at, and the rest of the output is still written. A capture
-cut mid-row therefore loses only the tail.
+The input is either a raw payload, as a `?_rsc=` request returns it, or a page
+or script that holds Next.js `self.__next_f.push(...)` calls. Input that starts
+with a row header (`1:`, or `:` for a hint row without an id) is a raw payload.
+Anything else is searched for push calls; in a page (input that starts with
+`<`), only `<script>` elements are searched. The calls are unescaped and
+concatenated before decoding. The `format` field says which input was read:
+`raw` or `next.__next_f`, and `next_entries` counts the push calls by kind.
+Input that is neither fails with an error.
+
+The output is `rows`, `assets`, and `problems`. Each row carries its `id` in
+hex, as `$L1a` references spell it (`null` for a row written without one, such
+as a React 19 hint), its `tag` letter (`null` for a model row), a `kind`
+(`model`, `module-reference`, `hint`, `error`, `text`, or `other`), its raw
+`payload`, and `json` when React reads the payload as JSON. `assets` lists the
+scripts and stylesheets the payload loads, in payload order without repeats:
+the chunks of each module reference and the file of each preload or preinit
+hint, written as the payload writes them (a `?dpl=` query included). Paths in
+model rows, such as an image source, are page content and are not listed.
+Download the listed files and pass them to `--unpack`. `problems` lists the
+rows and push calls that did not decode, with the byte offset each starts at;
+`location` says whether the offset counts into the input (`capture`) or into
+the Flight payload (`payload`). The rest of the output is still written, so a
+capture cut mid-row loses only the tail.
 
 Tag letters and framing follow React's client parser: a row is
 `<hex id>:<tag><payload>`, a row with no tag is a JSON model, and the
 length-prefixed rows (`T`, `A`, `O`, `o`, `b`, `U`, `S`, `s`, `L`, `l`, `G`,
-`g`, `M`, `m`, `V`) are read by that length, so a text row may hold newlines.
-Model rows keep React's `$` references (`"$L3"`, `"$undefined"`) as plain
-strings: `rsc` decodes the transport, not the React tree it describes.
+`g`, `M`, `m`, `V`) are read by their length in bytes, so a text row may hold
+newlines. Model rows keep React's `$` references (`"$L3"`, `"$undefined"`) as
+plain strings: `rsc` decodes the transport, not the React tree it describes.
 `__NEXT_DATA__`, build IDs, and manifest files are not collected yet; this
 command only decodes the Flight stream.
 

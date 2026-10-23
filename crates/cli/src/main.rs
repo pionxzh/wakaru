@@ -345,7 +345,7 @@ fn main() -> Result<()> {
     match cli.command.clone() {
         Some(Command::Extract(args)) => run_extract(args, cli.force),
         Some(Command::Bun(args)) => bun_extract::run(args, cli.force),
-        Some(Command::Rsc(args)) => rsc::run(args),
+        Some(Command::Rsc(args)) => rsc::run(args, cli.force),
         Some(Command::Debug(args)) => run_debug(args, cli.force),
         None => run_default(cli),
     }

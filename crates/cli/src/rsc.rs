@@ -8,17 +8,17 @@
 use std::fs;
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::Args;
 use serde::Serialize;
-use wakaru_core::rsc::{self as flight, FlightPayload};
+use wakaru_core::rsc::{self, Capture, CaptureFormat, NextFlightKind, ProblemLocation};
 
 use crate::output::write_if_changed;
 
 #[derive(Debug, Clone, Args)]
 pub(crate) struct RscArgs {
-    /// A raw Flight payload, a page containing `self.__next_f.push(...)`
-    /// calls, or a script holding those calls on their own.
+    /// A raw RSC payload, a page containing `self.__next_f.push(...)` calls,
+    /// or a script holding those calls on their own.
     pub(crate) input: PathBuf,
 
     /// Write the decoded JSON here. Prints to stdout when omitted.
@@ -26,39 +26,23 @@ pub(crate) struct RscArgs {
     pub(crate) output: Option<PathBuf>,
 }
 
-pub(crate) fn run(args: RscArgs) -> Result<()> {
-    let text = fs::read_to_string(&args.input)
+pub(crate) fn run(args: RscArgs, force: bool) -> Result<()> {
+    let input = fs::read(&args.input)
         .with_context(|| format!("failed to read {}", args.input.display()))?;
-    let decoded = decode_input(&text);
-
-    let report = JsonFlightReport {
-        source: args.input.display().to_string(),
-        format: decoded.format,
-        next_flight: decoded.next_flight,
-        assets: decoded
-            .payload
-            .asset_paths()
-            .iter()
-            .map(|p| p.to_string())
-            .collect(),
-        rows: decoded
-            .payload
-            .rows
-            .iter()
-            .map(JsonFlightRow::from)
-            .collect(),
-        problems: decoded
-            .payload
-            .problems
-            .iter()
-            .map(JsonFlightProblem::from)
-            .collect(),
+    let Some(capture) = rsc::decode_capture(&input) else {
+        bail!(
+            "{} holds no React Server Components payload: it does not start with a \
+             row such as `1:`, and has no `self.__next_f.push(...)` call",
+            args.input.display()
+        );
     };
+    let report = report(args.input.display().to_string(), &capture);
     let json =
         serde_json::to_string_pretty(&report).context("failed to serialize the report")? + "\n";
 
     match args.output {
         Some(path) => {
+            crate::ensure_output_file(&path, force)?;
             write_if_changed(&path, &json)?;
             println!(
                 "{}: {} rows, {} assets, {} problems -> {}",
@@ -74,67 +58,59 @@ pub(crate) fn run(args: RscArgs) -> Result<()> {
     Ok(())
 }
 
-struct DecodedInput {
-    format: &'static str,
-    next_flight: Option<JsonNextFlight>,
-    payload: FlightPayload,
-}
-
-fn decode_input(text: &str) -> DecodedInput {
-    let capture = flight::extract_next_flight(text);
-    // No readable push call means the input is the payload itself, not a page
-    // or a script that carries one.
-    if capture.entries.is_empty() && capture.problems.is_empty() {
-        return DecodedInput {
-            format: "raw-flight",
-            next_flight: None,
-            payload: flight::decode(text),
-        };
-    }
-
-    let mut payload = flight::decode(&capture.payload);
-    // Report the capture's own problems first: they explain a payload that came
-    // out shorter than the page suggested.
-    let mut problems = capture.problems;
-    problems.append(&mut payload.problems);
-    payload.problems = problems;
-
+fn report(source: String, capture: &Capture) -> JsonRscReport {
     let count = |kind| {
         capture
-            .entries
+            .next_entries
             .iter()
             .filter(|entry| entry.kind == kind)
             .count()
     };
-    DecodedInput {
-        format: "next.__next_f",
-        next_flight: Some(JsonNextFlight {
-            bootstrap: count(flight::NextFlightKind::Bootstrap),
-            data: count(flight::NextFlightKind::Data),
-            form_state: count(flight::NextFlightKind::FormState),
-            binary: count(flight::NextFlightKind::Binary),
+    JsonRscReport {
+        source,
+        format: match capture.format {
+            CaptureFormat::Raw => "raw",
+            CaptureFormat::NextFlight => "next.__next_f",
+        },
+        next_entries: (capture.format == CaptureFormat::NextFlight).then(|| JsonNextEntries {
+            bootstrap: count(NextFlightKind::Bootstrap),
+            data: count(NextFlightKind::Data),
+            form_state: count(NextFlightKind::FormState),
+            binary: count(NextFlightKind::Binary),
         }),
-        payload,
+        assets: capture
+            .payload
+            .asset_paths()
+            .iter()
+            .map(|path| path.to_string())
+            .collect(),
+        rows: capture.payload.rows.iter().map(JsonRscRow::from).collect(),
+        problems: capture
+            .payload
+            .problems
+            .iter()
+            .map(JsonRscProblem::from)
+            .collect(),
     }
 }
 
 #[derive(Serialize)]
-struct JsonFlightReport {
+struct JsonRscReport {
     source: String,
-    /// `next.__next_f` when the input held push calls, else `raw-flight`.
+    /// `next.__next_f` when the input held push calls, else `raw`.
     format: &'static str,
     /// The push entries the input held, by kind. Omitted for a raw payload.
     #[serde(skip_serializing_if = "Option::is_none")]
-    next_flight: Option<JsonNextFlight>,
-    /// Served files the payload references, in payload order.
+    next_entries: Option<JsonNextEntries>,
+    /// Scripts and stylesheets the payload loads, in payload order.
     assets: Vec<String>,
-    rows: Vec<JsonFlightRow>,
+    rows: Vec<JsonRscRow>,
     /// Rows and push calls that did not decode. The rest of the output is kept.
-    problems: Vec<JsonFlightProblem>,
+    problems: Vec<JsonRscProblem>,
 }
 
 #[derive(Serialize)]
-struct JsonNextFlight {
+struct JsonNextEntries {
     bootstrap: usize,
     data: usize,
     form_state: usize,
@@ -142,8 +118,10 @@ struct JsonNextFlight {
 }
 
 #[derive(Serialize)]
-struct JsonFlightRow {
-    id: u32,
+struct JsonRscRow {
+    /// The row id in hex, as `$L1a` references spell it; `null` for a row
+    /// written without one.
+    id: Option<String>,
     /// The tag letter, or `null` for a model row.
     tag: Option<char>,
     /// `model`, `module-reference`, `hint`, `error`, `text`, or `other`.
@@ -153,27 +131,34 @@ struct JsonFlightRow {
     json: Option<serde_json::Value>,
 }
 
-impl From<&flight::FlightRow> for JsonFlightRow {
-    fn from(row: &flight::FlightRow) -> Self {
-        JsonFlightRow {
-            id: row.id,
+impl From<&rsc::FlightRow> for JsonRscRow {
+    fn from(row: &rsc::FlightRow) -> Self {
+        JsonRscRow {
+            id: row.id.map(|id| format!("{id:x}")),
             tag: row.tag.letter(),
             kind: row.tag.kind(),
-            payload: row.payload.clone(),
+            payload: row.text().into_owned(),
             json: row.json.clone(),
         }
     }
 }
 
 #[derive(Serialize)]
-struct JsonFlightProblem {
+struct JsonRscProblem {
+    /// `capture` for an offset into the input page or script, `payload` for an
+    /// offset into the Flight payload.
+    location: &'static str,
     offset: usize,
     message: String,
 }
 
-impl From<&flight::FlightProblem> for JsonFlightProblem {
-    fn from(problem: &flight::FlightProblem) -> Self {
-        JsonFlightProblem {
+impl From<&rsc::FlightProblem> for JsonRscProblem {
+    fn from(problem: &rsc::FlightProblem) -> Self {
+        JsonRscProblem {
+            location: match problem.location {
+                ProblemLocation::Capture => "capture",
+                ProblemLocation::Payload => "payload",
+            },
             offset: problem.offset,
             message: problem.message.clone(),
         }
@@ -186,51 +171,64 @@ mod tests {
 
     const PAGE: &str = concat!(
         r#"<script>(self.__next_f=self.__next_f||[]).push([0])</script>"#,
-        r#"<script>self.__next_f.push([1,"0:HL[\"static/css/alpha.css\",\"style\"]\n"])</script>"#,
-        r#"<script>self.__next_f.push([1,"1:I[\"static/chunks/alpha.js\",[],\"default\"]\n"])</script>"#,
+        r#"<script>self.__next_f.push([1,":HL[\"/static/css/alpha.css\",\"style\"]\n"])</script>"#,
+        r#"<script>self.__next_f.push([1,"1a:I[100,[\"200\",\"static/chunks/alpha.js\"],\"default\"]\n"])</script>"#,
     );
+
+    fn report_of(input: &str) -> JsonRscReport {
+        let capture = rsc::decode_capture(input.as_bytes()).expect("a payload");
+        report("input".to_string(), &capture)
+    }
 
     #[test]
     fn a_raw_payload_stays_a_raw_payload() {
-        let decoded = decode_input("1:I[\"static/chunks/alpha.js\",[],\"default\"]\n");
+        let report = report_of("1:I[100,[\"200\",\"static/chunks/alpha.js\"],\"default\"]\n");
 
-        assert_eq!(decoded.format, "raw-flight");
-        assert!(decoded.next_flight.is_none());
-        assert_eq!(decoded.payload.rows.len(), 1);
-        assert_eq!(decoded.payload.asset_paths(), ["static/chunks/alpha.js"]);
+        assert_eq!(report.format, "raw");
+        assert!(report.next_entries.is_none());
+        assert_eq!(report.rows.len(), 1);
+        assert_eq!(report.assets, ["static/chunks/alpha.js"]);
     }
 
     #[test]
     fn a_page_is_extracted_before_it_is_decoded() {
-        let decoded = decode_input(PAGE);
+        let report = report_of(PAGE);
 
-        assert_eq!(decoded.format, "next.__next_f");
-        let next = decoded.next_flight.expect("push entries");
+        assert_eq!(report.format, "next.__next_f");
+        let next = report.next_entries.expect("push entries");
         assert_eq!((next.bootstrap, next.data), (1, 2));
-        assert_eq!(decoded.payload.rows.len(), 2);
         assert_eq!(
-            decoded.payload.asset_paths(),
-            ["static/css/alpha.css", "static/chunks/alpha.js"]
+            report
+                .rows
+                .iter()
+                .map(|row| row.id.as_deref())
+                .collect::<Vec<_>>(),
+            [None, Some("1a")]
         );
-        assert!(decoded.payload.problems.is_empty());
+        assert_eq!(
+            report.assets,
+            ["/static/css/alpha.css", "static/chunks/alpha.js"]
+        );
+        assert!(report.problems.is_empty());
     }
 
     #[test]
-    fn capture_problems_come_before_payload_problems() {
-        let decoded = decode_input(concat!(
+    fn problems_name_the_text_their_offset_counts_into() {
+        let report = report_of(concat!(
             r#"self.__next_f.push([7]);"#,
             r#"self.__next_f.push([1,"1:I(\"a\")\n"]);"#,
         ));
 
-        let messages: Vec<&str> = decoded
-            .payload
-            .problems
-            .iter()
-            .map(|problem| problem.message.as_str())
-            .collect();
         assert_eq!(
-            messages,
-            ["unknown push entry type 7", "row 1 payload is not JSON",]
+            report
+                .problems
+                .iter()
+                .map(|problem| (problem.location, problem.message.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("capture", "unknown push entry type 7"),
+                ("payload", "row 1 payload is not JSON"),
+            ]
         );
     }
 }

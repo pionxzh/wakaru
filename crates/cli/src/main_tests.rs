@@ -2794,7 +2794,7 @@ fn rsc_writes_the_decoded_page_as_json() {
         concat!(
             r#"self.__next_f = self.__next_f || [];"#,
             r#"self.__next_f.push([0]);"#,
-            r#"self.__next_f.push([1, "1:I[\"static/chunks/alpha.js\",[],\"default\"]\n"]);"#,
+            r#"self.__next_f.push([1, "1:I[100,[\"200\",\"static/chunks/alpha.js\"],\"default\"]\n"]);"#,
         ),
     )
     .expect("write captured page");
@@ -2808,7 +2808,7 @@ fn rsc_writes_the_decoded_page_as_json() {
     ])
     .expect("rsc cli should parse");
     match cli.command {
-        Some(Command::Rsc(args)) => rsc::run(args).expect("rsc should decode"),
+        Some(Command::Rsc(args)) => rsc::run(args, false).expect("rsc should decode"),
         other => panic!("expected rsc command, got {other:?}"),
     }
 
@@ -2816,9 +2816,65 @@ fn rsc_writes_the_decoded_page_as_json() {
         serde_json::from_str(&fs::read_to_string(&output_path).expect("read rsc json"))
             .expect("rsc output should be json");
     assert_eq!(written["format"], "next.__next_f");
-    assert_eq!(written["next_flight"]["data"], 1);
+    assert_eq!(written["next_entries"]["data"], 1);
     assert_eq!(written["rows"][0]["kind"], "module-reference");
     assert_eq!(written["assets"][0], "static/chunks/alpha.js");
     assert_eq!(written["problems"].as_array().map(Vec::len), Some(0));
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+fn run_rsc(args: &[&str]) -> anyhow::Result<()> {
+    let cli = Cli::try_parse_from(args).expect("rsc cli should parse");
+    match cli.command {
+        Some(Command::Rsc(rsc_args)) => rsc::run(rsc_args, cli.force),
+        other => panic!("expected rsc command, got {other:?}"),
+    }
+}
+
+#[test]
+fn rsc_does_not_overwrite_a_file_without_force() {
+    let dir = temp_test_dir("rsc-overwrite");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input_path = dir.join("page.rsc");
+    let input = input_path.to_str().expect("input path should be utf8");
+    fs::write(&input_path, "1:null\n").expect("write payload");
+
+    let error = run_rsc(&["wakaru", "rsc", input, "-o", input]).expect_err("refuses");
+    assert!(error.to_string().contains("pass --force"), "{error}");
+    assert_eq!(
+        fs::read_to_string(&input_path).expect("read payload"),
+        "1:null\n"
+    );
+
+    run_rsc(&["wakaru", "rsc", "--force", input, "-o", input]).expect("writes with --force");
+    assert!(fs::read_to_string(&input_path)
+        .expect("read report")
+        .contains("\"format\": \"raw\""));
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn rsc_fails_on_input_without_a_payload() {
+    let dir = temp_test_dir("rsc-none");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input_path = dir.join("page.html");
+    fs::write(
+        &input_path,
+        "<!DOCTYPE html>\n<html><body><script id=\"__NEXT_DATA__\" type=\"application/json\">{}</script></body></html>\n",
+    )
+    .expect("write page");
+
+    let error = run_rsc(&[
+        "wakaru",
+        "rsc",
+        input_path.to_str().expect("input path should be utf8"),
+    ])
+    .expect_err("no payload");
+    assert!(
+        error
+            .to_string()
+            .contains("holds no React Server Components payload"),
+        "{error}"
+    );
     fs::remove_dir_all(&dir).expect("remove temp dir");
 }
