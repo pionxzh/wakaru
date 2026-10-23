@@ -136,8 +136,8 @@ pub(crate) enum LaterUnpackStages {
     /// (the late ESM recovery that ends Phase 2).
     None,
     /// Only the webpack lazy-load restore, which takes a load in a module of
-    /// either format. The other stages need an import binding or an
-    /// `export default` that a module still CommonJS when they run lacks:
+    /// either format. The other stages need an import binding that a module
+    /// still CommonJS when they run lacks:
     /// Phase 1's prediction of the late ESM recovery that ends Phase 2.
     LazyLoads,
     /// Every stage: unpack's Phase 1.
@@ -153,9 +153,6 @@ pub(crate) enum LaterUnpackStages {
 ///   `var`, `var x = helper(require("./p"))` or
 ///   `var x = ns.helper(require("./p"))` (`cross_module_interop_import`,
 ///   then `import_unproven_helper_requires` for a helper it cannot prove);
-/// - in such a statement, a source of a top-level default-object
-///   composition statement, `Object.assign(target, require("./p") || {})`
-///   (`commonjs_default_object_composition`);
 /// - anywhere, the require of a lowered `import()` around an imported
 ///   helper, `Promise.resolve().then(() => helper(require("./p")))`
 ///   (`run_cross_module_lowered_dynamic_imports`);
@@ -165,7 +162,7 @@ pub(crate) enum LaterUnpackStages {
 ///   [`LaterUnpackStages::LazyLoads`] leaves out.
 ///
 /// `hoisting_before` gives the first hoisting barrier, read only for
-/// [`LaterUnpackStages::All`]: the first two stages hoist their provider
+/// [`LaterUnpackStages::All`]: the first stage hoists its provider
 /// into an import, which loads it before the barrier. A require the later
 /// stages leave stays in ES module output, where the
 /// `commonjs_require_unrecovered` warning reports it. Without a later stage
@@ -411,28 +408,6 @@ impl KeptRequireFinder {
         }
     }
 
-    /// Visits `Object.assign(target, require("./p") || {}, …)` without its
-    /// source requires.
-    fn visit_skipping_composition_requires(&mut self, call: &CallExpr) {
-        call.callee.visit_with(self);
-        for (index, arg) in call.args.iter().enumerate() {
-            match &*arg.expr {
-                Expr::Bin(BinExpr {
-                    op: BinaryOp::LogicalOr,
-                    left,
-                    right,
-                    ..
-                }) if index > 0 => {
-                    if let Expr::Call(inner) = &**left {
-                        inner.visit_children_with(self);
-                    }
-                    right.visit_with(self);
-                }
-                _ => arg.visit_with(self),
-            }
-        }
-    }
-
     fn in_function<N: VisitWith<Self> + ?Sized>(&mut self, node: &N) {
         self.function_depth += 1;
         node.visit_children_with(self);
@@ -475,28 +450,17 @@ impl Visit for KeptRequireFinder {
 
     fn visit_module_item(&mut self, item: &ModuleItem) {
         if self.blocking && self.eager_stages {
-            match item {
-                ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
-                    for declarator in &var.decls {
-                        declarator.name.visit_with(self);
-                        match declarator.init.as_deref().map(strip_parens) {
-                            Some(Expr::Call(call)) if self.calls_imported_helper(call) => {
-                                self.visit_skipping_helper_require(call);
-                            }
-                            _ => declarator.init.visit_with(self),
+            if let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item {
+                for declarator in &var.decls {
+                    declarator.name.visit_with(self);
+                    match declarator.init.as_deref().map(strip_parens) {
+                        Some(Expr::Call(call)) if self.calls_imported_helper(call) => {
+                            self.visit_skipping_helper_require(call);
                         }
-                    }
-                    return;
-                }
-                ModuleItem::Stmt(Stmt::Expr(statement)) => {
-                    if let Expr::Call(call) = strip_parens(&statement.expr) {
-                        if is_composition_call(call, self.unresolved_mark) {
-                            self.visit_skipping_composition_requires(call);
-                            return;
-                        }
+                        _ => declarator.init.visit_with(self),
                     }
                 }
-                _ => {}
+                return;
             }
         }
         item.visit_children_with(self);
@@ -625,30 +589,6 @@ impl Visit for KeptRequireFinder {
         stmt.visit_children_with(self);
         self.conditional_depth -= 1;
     }
-}
-
-/// `Object.assign(target, require("./p") || {}, …)` with every source in
-/// that form.
-fn is_composition_call(call: &CallExpr, unresolved_mark: Mark) -> bool {
-    let Callee::Expr(callee) = &call.callee else {
-        return false;
-    };
-    let is_assign = matches!(strip_parens(callee), Expr::Member(member)
-        if matches!(strip_parens(&member.obj), Expr::Ident(object)
-            if is_unresolved_ident(object, "Object", unresolved_mark))
-            && member.prop.as_ident().is_some_and(|prop| prop.sym == "assign"));
-    is_assign
-        && call.args.len() >= 2
-        && call.args[1..].iter().all(|arg| {
-            arg.spread.is_none()
-                && matches!(&*arg.expr, Expr::Bin(BinExpr {
-                    op: BinaryOp::LogicalOr,
-                    left,
-                    right,
-                    ..
-                }) if matches!(&**left, Expr::Call(inner) if is_kept_require_call(inner, unresolved_mark))
-                    && matches!(&**right, Expr::Object(object) if object.props.is_empty()))
-        })
 }
 
 /// In a module that stays CommonJS, makes each kept `require("./p")` of a
@@ -1659,21 +1599,21 @@ try { require("g"); } catch (e) {}"#
     }
 
     #[test]
-    fn imported_helper_and_composition_sources_do_not_block() {
+    fn imported_helper_requires_do_not_block_and_copy_sources_do() {
         assert_eq!(
             blocking(
                 r#"import h from "./h"; var a = h(require("./a")); var b = h.x(require("./b"));"#
             ),
             0
         );
+        // No later stage takes the source of an `Object.assign` copy.
         assert_eq!(
             blocking(
                 r#"export default {}; Object.assign(o, require("./a") || {}, require("./b") || {});"#
             ),
-            0
+            2
         );
-        // A local helper is no import, and a composition needs every source
-        // in its `|| {}` form.
+        // A local helper is no import.
         assert_eq!(
             blocking(
                 r#"import h from "./h"; function g(x) { return x; } var a = g(require("./a"));"#
@@ -1689,9 +1629,8 @@ try { require("g"); } catch (e) {}"#
     }
 
     #[test]
-    fn helper_and_composition_requires_block_outside_the_forms_later_stages_read() {
-        // The cross-module pass reads only a top-level `var` initializer, and
-        // the composition pass only a top-level statement.
+    fn helper_requires_block_outside_the_forms_later_stages_read() {
+        // The cross-module pass reads only a top-level `var` initializer.
         assert_eq!(
             blocking(r#"import h from "./h"; export const x = h.wrap(require("./a"));"#),
             1
@@ -1747,13 +1686,13 @@ try { require("g"); } catch (e) {}"#
     #[test]
     fn a_module_commonjs_until_the_stages_ran_leaves_out_only_lazy_loads() {
         // The lazy-load restore takes a load in a CommonJS module too; the
-        // helper and composition stages need the import binding and the
-        // `export default` the module gains only afterwards.
+        // helper stages need the import binding the module gains only
+        // afterwards. No stage takes the `Object.assign` copy source.
         let source = r#"import h from "./h"; var a = h(require("./a")); export default {}; Object.assign(o, require("./b") || {}); export function f() { return require.e(2).then(() => require("./c")); }"#;
         for (later_stages, expected) in [
             (LaterUnpackStages::None, 3),
             (LaterUnpackStages::LazyLoads, 2),
-            (LaterUnpackStages::All, 0),
+            (LaterUnpackStages::All, 1),
         ] {
             with_module(source, |module, mark| {
                 assert_eq!(

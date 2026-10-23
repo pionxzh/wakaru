@@ -320,8 +320,7 @@ When unpacking bundles, the driver runs a two-phase pipeline:
    `Globals` and unresolved mark, and for a module with no imports the AST
    the rule range left.
 2. **Phase 2 (parallel, largest modules first):** Resume the retained Phase 1 AST → cross-module late
-   pass (exact CommonJS default-object composition, re-export consolidation,
-   namespace decomposition, fact-aware helper recovery) → run the registry
+   pass (re-export consolidation, namespace decomposition, fact-aware helper recovery) → run the registry
    range resuming after `UnEsm`, through `UnReturn`, or adopt Phase 1b's run
    when the late pass changed nothing and the range reads no facts for the
    module ([fact-system.md](fact-system.md#shape)) → targeted late
@@ -339,11 +338,9 @@ that rule; do not add a late pass that hides it. `debug validate` reports what
 remains.
 
 The late pass uses facts from Phase 1 to inform cross-module rewrites (e.g.,
-repairing a proven CommonJS object or callable-property edge, preserving one
-mutable object across an exact ordered CommonJS composition chain, converting
+repairing a proven CommonJS object or callable-property edge, converting
 `ns.foo` to `import { foo }`, or recognizing a split helper module). Facts are
 extracted in `crates/core/src/facts.rs` and consumed by
-`crates/core/src/commonjs_default_object_composition.rs`,
 `crates/core/src/provider_import_repair.rs`,
 `crates/core/src/namespace_decomposition.rs`,
 `crates/core/src/reexport_consolidation.rs`, and fact-aware rules. See

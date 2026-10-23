@@ -51,7 +51,6 @@ crates/
       facts.rs                      — post-Stage-2 cross-module fact extraction
       gtm.rs                        — Google Tag Manager container extraction (façade: `wakaru::gtm`)
       rsc.rs                        — React Server Components payload decoding and Next.js `__next_f` extraction (façade: `wakaru::rsc`)
-      commonjs_default_object_composition.rs — exact mutable-default composition recovery
       commonjs_export_residual.rs   — `exports` accesses left in ESM output (`commonjs_export_unrecovered`)
       kept_require.rs               — requires that stay calls: positions, the default read of a kept require, ES-source evidence, and their warnings
       interface_plan.rs             — the plan built at barrier 0 from every module's require edges and helper exports: which providers stay CommonJS because a consumer writes to them, which sources each consumer reads a whole `module.exports = v` value from, and which interop helpers each consumer reaches through a bundled provider

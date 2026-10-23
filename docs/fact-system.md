@@ -12,10 +12,8 @@ A barrier-and-read mechanism that lets Phase 2 rules read provider shape from
 imports/exports. Deliberately narrow pre-`UnEsm` facts preserve CommonJS
 provider shape that `UnEsm` would otherwise erase: the proven identity and
 statically declared properties of an object assigned directly to
-`module.exports`, whether that assignment is the module's only CommonJS
-runtime use, an exact ordered default-object composition shell, and positively
-observed properties attached to a stable callable before it becomes
-`module.exports`, and whether the module marks itself `__esModule`; on the
+`module.exports`, positively observed properties attached to a stable
+callable before it becomes `module.exports`, and whether the module marks itself `__esModule`; on the
 consumer side, one record per `require()` call (its form, interop, and
 uses). For object defaults, the identity proof is independent of
 the property list: an empty list may describe a proven empty object rather
@@ -71,13 +69,12 @@ Phase 1b (per module, parallel):
       (+ the AST the rule range left, for a module with no imports)
 
 ──── barrier: ModuleFactsMap assembled from all modules;
-     CommonJsDefaultObjectCompositionPlan and CallRequiredPlan built;
+     CallRequiredPlan built;
      constructed-member suffixes unioned (not stored on ModuleFacts) ────
 
 Phase 2 (per module, parallel; the late ESM recovery and the source-map
 path's rerun through UnEsm read the same plan):
     resume retained barrier AST
-    run_commonjs_default_object_composition(module, plan) ← exact mutable default
     run_provider_import_repair(&mut module, facts)    ← proven CJS property edges
     run_provider_namespace_repair(&mut module, facts) ← proven ESM namespace edges
     run_reexport_consolidation(&mut module, facts)
@@ -145,7 +142,7 @@ read facts (cross-module helper calls, `CallRequiredPlan` pins). For a
 module still CommonJS at the barrier, the cross-module passes take only
 the requires of webpack lazy loads (`LaterUnpackStages::LazyLoads`, which
 the prediction's `UnEsm` already leaves out); the other passes need an
-import binding or an `export default` such a module lacks.
+import binding such a module lacks.
 
 Each phase, Phase 1a and 1b included, hands modules to the Rayon pool largest-first by source length
 (`driver/unpack/schedule.rs`). Per-module cost is heavily skewed, and Rayon's
@@ -203,17 +200,6 @@ proven object whose declared-property list is empty. Multiple whole-value
 assignments, reassigned aliases, non-object values, nested callbacks, and
 `exports.default` fail closed. Computed keys and spreads are omitted from the
 declared-property list without weakening the proven object identity.
-
-The same object fact separately records two stronger proofs without weakening
-that ordinary property fact. `default_assignment_is_only_commonjs_use` scans
-the complete resolved AST, including deferred function bodies, and holds only
-when the establishing assignment is the sole unresolved `module`/`exports`
-use and no direct eval exists. `composition_sources` is populated only when
-the complete executable body is an optional strict directive followed by
-`module.exports = {}` and one or more exact ordered
-`Object.assign(module.exports, require(relativeSource) || {})` calls. Dynamic
-or bare sources, extra statements, alternate targets, and alternate fallback
-shapes leave that list empty.
 
 `collect_commonjs_default_attached_properties` separately records static
 identifier properties assigned directly and unconditionally to a stable
@@ -447,11 +433,11 @@ tagged by its declarator, and so is the cross-module interop import pass;
 The binding `UnEsm` makes for whole-value member reads is tagged with the
 key of every call it replaced.
 The tags cross the barrier with the retained AST; the source-map path's
-second run of the range records its own. Imports the default-object
-composition pass and `import_unproven_helper_requires` create are not
-tagged: each binds a value the pass reads at once, as an `Object.assign`
-source or a helper argument, which neither the cleanup of unused
-synthesized bindings nor namespace decomposition acts on.
+second run of the range records its own. Imports
+`import_unproven_helper_requires` creates are not tagged: each binds a
+value the pass reads at once, as a helper argument, which neither the
+cleanup of unused synthesized bindings nor namespace decomposition acts
+on.
 
 Normal processing also restores webpack's runtime-created `module.exports = {}`
 when structural webpack detection proves that a normalized extracted factory
@@ -605,20 +591,6 @@ Neither proof creates a default-object fact available to consumers.
   left unpinned only on a prediction; after Phase 2, a module that still calls
   one of them gets a `cross_module_class_call` warning.
 
-- **`commonjs_default_object_composition`** — builds a monotone fixed point at
-  the barrier. A provider seeds it only when the raw assignment is its sole
-  CommonJS runtime use — residual `require` identifiers (conditional or nested
-  requires that never become import facts) count as runtime uses and block the
-  seed — and its recovered surface is exactly one default export with no
-  imports. Provider bodies are surface-proven only; their side-effect
-  statements move ahead of the consumer's copies under
-  `import_hoisting_eagerness` (see rewrite-assumptions.md). A composition enters only after every relative provider is
-  already proven, so cycles never become eligible. Phase 2 then re-matches the
-  complete normalized body before introducing default imports, one stable
-  local object, the original ordered `Object.assign` calls, and a default
-  export of that same object. Authored ESM defaults, mixed surfaces, unresolved
-  providers, dynamic sources, extra consumer behavior, and cycles remain
-  visible CommonJS residuals.
 - **`provider_import_repair`** — repairs only named imports synthesized by
   `UnEsm` for `require("./x").name` (the import tags below). If provider facts prove that the raw
   CommonJS value is the recovered default object, or positively prove `name`

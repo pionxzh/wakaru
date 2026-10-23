@@ -443,8 +443,6 @@ mod tests {
     fn default_value_properties_need_a_proven_value_and_a_closed_surface() {
         let object = Some(CommonJsDefaultObjectFact {
             declared_properties: vec!["alpha".into()],
-            default_assignment_is_only_commonjs_use: false,
-            composition_sources: Vec::new(),
         });
         let proven_object = ModuleFacts {
             commonjs_default_object: object.clone(),

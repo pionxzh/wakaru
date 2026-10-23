@@ -880,15 +880,14 @@ absent numeric id: `UnEsm` does not import it, `UnWebpackInterop` still folds
 a `require.n` getter around it, and JSX through that getter is recovered.
 Before that check `UnEsm` converts the module a second time, since some
 shapes convert only once it is ESM (`export default require("x")()`). In
-unpack it leaves three shapes for later stages: before the first barrier
+unpack it leaves two shapes for later stages: before the first barrier
 below, a top-level `var` initialized by an imported function's
-`helper(require("./p"))` (`cross_module_interop_import`) and a top-level
-default-object composition statement (`Object.assign(o, require("./p") ||
-{})`); and, in any position, a lowered `import()` around an imported helper
+`helper(require("./p"))` (`cross_module_interop_import`); and, in any
+position, a lowered `import()` around an imported helper
 (`Promise.resolve().then(() => helper(require("./p")))`,
-`lowered_dynamic_import_source_semantics`). The first two load their
-provider as an import, so after a barrier they keep the module CommonJS like
-any other require. When the facts do not prove the imported function an
+`lowered_dynamic_import_source_semantics`). The first loads its provider as
+an import, so after a barrier it keeps the module CommonJS like any other
+require. When the facts do not prove the imported function an
 interop helper, the call stays and only its require becomes an import of the
 value it returned (`import_unproven_helper_requires`; a default import for
 `module.exports = v` or a provider that stays CommonJS, a namespace for an
@@ -972,17 +971,8 @@ runtime calls made: `require.d` getters become `Object.defineProperty(exports,
 `cjs-module-lexer` finds the name for an ES module importer, and
 `require.r(exports)` becomes the `__esModule` definition.
 
-Recoveries that copy values at a specific program point (the default-object
-composition's `Object.assign` shells) prove the consumer's body exact but
-prove providers only at their export surface: a provider may run arbitrary
-side-effect statements before its single default assignment. Proving
-providers side-effect-free would reject essentially every real module for a
-hazard every `require`-to-`import` conversion in this codebase already
-accepts.
-
 Affects: `UnEsm` require conversion before the first barrier (including
 whole-chain recovery of `exports.a = exports.b = require("x")`),
-`commonjs_default_object_composition`,
 every fact-consuming recovery that imports a proven provider, and the esbuild
 unpacker's writer relocation, which moves a top-level state writer into the
 module that owns the state.

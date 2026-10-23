@@ -42,9 +42,6 @@ use super::schedule::par_map_largest_first;
 use super::source_index::{build_composed_output_sourcemap, InputOrigin};
 use super::webpack_commonjs_runtime::normalize_webpack_commonjs_runtime;
 use super::{recover_late_esm_from_factory_iifes, LateEsmRecoveryOptions};
-use crate::commonjs_default_object_composition::{
-    run_commonjs_default_object_composition, CommonJsDefaultObjectCompositionPlan,
-};
 use crate::facts::{
     collect_commonjs_default_attached_properties, collect_commonjs_default_object,
     collect_commonjs_value_is_default, collect_default_object_tail, collect_marks_es_module,
@@ -1182,8 +1179,6 @@ pub(super) fn unpack_multi_module_with_plan(
         }
     }
 
-    let commonjs_default_object_composition_plan =
-        CommonJsDefaultObjectCompositionPlan::build(&module_facts);
     let call_required_plan = crate::rules::CallRequiredPlan::build(&module_facts);
 
     // Cross-module barrier: resolve recovered filenames into a final rename
@@ -1200,7 +1195,6 @@ pub(super) fn unpack_multi_module_with_plan(
     // the original source only when Phase 1 failed to prepare an AST; otherwise
     // it continues from the Phase 1 normalized AST after the facts barrier.
     let facts_ref = &module_facts;
-    let composition_plan_ref = &commonjs_default_object_composition_plan;
     let call_required_plan_ref = &call_required_plan;
     let plan_ref = &interface_plan;
     let sm_ref = &parsed_sourcemap;
@@ -1267,12 +1261,6 @@ pub(super) fn unpack_multi_module_with_plan(
             });
             let barrier = ranged.as_ref().map(|_| module.clone());
             // Late pass at the barrier
-            run_commonjs_default_object_composition(
-                &mut module,
-                composition_plan_ref,
-                Some(&unpacked.module.filename),
-                unresolved_mark,
-            );
             run_provider_import_repair(
                 &mut module,
                 facts_ref,
@@ -4021,224 +4009,6 @@ module.exports = function(value) { return filter(map(value)); };
                 .iter()
                 .all(|module| module.source_map.is_some()),
             "provider repair must survive the source-map path's second parse"
-        );
-    }
-
-    #[test]
-    fn commonjs_default_object_composition_preserves_mutable_identity_and_copy_order() {
-        let modules = || {
-            vec![
-                UnpackedModule {
-                    id: "base-a".to_string(),
-                    code: r#"module.exports = { alpha: "a", shared: "first" };"#.to_string(),
-                    filename: "base-a.js".to_string(),
-                    ..Default::default()
-                },
-                UnpackedModule {
-                    id: "base-b".to_string(),
-                    code: r#"module.exports = { beta: "b", shared: "second" };"#.to_string(),
-                    filename: "base-b.js".to_string(),
-                    ..Default::default()
-                },
-                UnpackedModule {
-                    id: "middle".to_string(),
-                    code: r#"
-module.exports = {};
-Object.assign(module.exports, require("./base-a.js") || {});
-"#
-                    .to_string(),
-                    filename: "middle.js".to_string(),
-                    ..Default::default()
-                },
-                UnpackedModule {
-                    id: "entry".to_string(),
-                    is_entry: true,
-                    code: r#"
-module.exports = {};
-Object.assign(module.exports, require("./middle.js") || {});
-Object.assign(module.exports, require("./base-b.js") || {});
-"#
-                    .to_string(),
-                    filename: "entry.js".to_string(),
-                    ..Default::default()
-                },
-            ]
-        };
-
-        let output = unpack_multi_module(modules(), DecompileOptions::default())
-            .expect("default-object composition should decompile");
-        assert_eq!(validate_prepared_output(&output), vec![]);
-
-        for filename in ["middle.js", "entry.js"] {
-            let code = output
-                .modules
-                .iter()
-                .find(|module| module.filename == filename)
-                .map(|module| module.code.as_str())
-                .expect("expected composed module");
-            assert!(
-                !code.contains("module.exports") && !code.contains("require("),
-                "the exact composition should use recovered ESM edges:\n{code}"
-            );
-            assert!(
-                !code.contains("export default {};"),
-                "the exported value must be the same object that Object.assign mutates:\n{code}"
-            );
-            assert!(
-                code.contains("Object.assign(_defaultObject,")
-                    && code.contains("export default _defaultObject;"),
-                "both the copies and default export must share one local object:\n{code}"
-            );
-        }
-
-        let entry = output
-            .modules
-            .iter()
-            .find(|module| module.filename == "entry.js")
-            .map(|module| module.code.as_str())
-            .expect("expected entry module");
-        assert_eq!(
-            entry.matches("Object.assign(").count(),
-            2,
-            "both ordered copies must remain visible:\n{entry}"
-        );
-        assert!(
-            entry.find("./middle.js").expect("middle import")
-                < entry.find("./base-b.js").expect("base-b import"),
-            "provider imports should retain first-use order:\n{entry}"
-        );
-
-        let source_map_output = unpack_multi_module(
-            modules(),
-            DecompileOptions {
-                emit_source_map: true,
-                ..Default::default()
-            },
-        )
-        .expect("composition recovery should survive the source-map path");
-        assert_eq!(validate_prepared_output(&source_map_output), vec![]);
-        assert!(
-            source_map_output
-                .modules
-                .iter()
-                .all(|module| module.source_map.is_some()),
-            "composition recovery must preserve emitted source maps"
-        );
-    }
-
-    #[test]
-    fn commonjs_default_object_composition_requires_complete_provider_and_consumer_proofs() {
-        let cases = [
-            (
-                "unknown-provider",
-                "module.exports = makeStyles();",
-                r#"
-module.exports = {};
-Object.assign(module.exports, require("./provider.js") || {});
-"#,
-            ),
-            (
-                "authored-esm-provider",
-                "export default { value: 1 };",
-                r#"
-module.exports = {};
-Object.assign(module.exports, require("./provider.js") || {});
-"#,
-            ),
-            (
-                "mutated-provider-surface",
-                "module.exports = {}; module.exports.value = 1;",
-                r#"
-module.exports = {};
-Object.assign(module.exports, require("./provider.js") || {});
-"#,
-            ),
-            (
-                "extra-consumer-runtime-use",
-                "module.exports = { value: 1 };",
-                r#"
-module.exports = {};
-observe(module.exports);
-Object.assign(module.exports, require("./provider.js") || {});
-"#,
-            ),
-        ];
-
-        for (name, provider, consumer) in cases {
-            let modules = vec![
-                UnpackedModule {
-                    id: "provider".to_string(),
-                    code: provider.to_string(),
-                    filename: "provider.js".to_string(),
-                    ..Default::default()
-                },
-                UnpackedModule {
-                    id: "consumer".to_string(),
-                    is_entry: true,
-                    code: consumer.to_string(),
-                    filename: "consumer.js".to_string(),
-                    ..Default::default()
-                },
-            ];
-            let output = unpack_multi_module(modules, DecompileOptions::default())
-                .unwrap_or_else(|error| panic!("{name} fixture should decompile: {error}"));
-            let consumer = output
-                .modules
-                .iter()
-                .find(|module| module.filename == "consumer.js")
-                .map(|module| module.code.as_str())
-                .expect("expected consumer module");
-            assert!(
-                consumer.contains("module.exports") && consumer.contains("require("),
-                "{name} must fail closed instead of inventing a mutable default:\n{consumer}"
-            );
-            assert!(
-                validate_prepared_output(&output)
-                    .iter()
-                    .any(|finding| finding.kind == OutputFindingKind::EsmCommonJsResidual),
-                "{name} should retain an honest CommonJS residual"
-            );
-        }
-    }
-
-    #[test]
-    fn commonjs_default_object_composition_cycles_fail_closed() {
-        let modules = vec![
-            UnpackedModule {
-                id: "left".to_string(),
-                is_entry: true,
-                code: r#"
-module.exports = {};
-Object.assign(module.exports, require("./right.js") || {});
-"#
-                .to_string(),
-                filename: "left.js".to_string(),
-                ..Default::default()
-            },
-            UnpackedModule {
-                id: "right".to_string(),
-                code: r#"
-module.exports = {};
-Object.assign(module.exports, require("./left.js") || {});
-"#
-                .to_string(),
-                filename: "right.js".to_string(),
-                ..Default::default()
-            },
-        ];
-
-        let output = unpack_multi_module(modules, DecompileOptions::default())
-            .expect("cyclic composition fixture should decompile conservatively");
-        assert!(output.modules.iter().all(|module| {
-            module.code.contains("module.exports") && module.code.contains("require(")
-        }));
-        assert_eq!(
-            validate_prepared_output(&output)
-                .iter()
-                .filter(|finding| finding.kind == OutputFindingKind::EsmCommonJsResidual)
-                .count(),
-            2,
-            "the unresolved module target in each cyclic module should remain visible"
         );
     }
 
