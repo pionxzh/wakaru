@@ -9,7 +9,10 @@
 //! outside a Cocos registration frame: requiring it returns its `exports`
 //! object, where `default` is one property among the others, while a default
 //! from `module.exports = v` is the whole required value. A provider the input
-//! wrote as ESM is the same: `require` of it returns its namespace.
+//! wrote as ESM is the same: `require` of it returns its namespace. So is a
+//! read of only `.default` of a provider marked `__esModule` that may have
+//! replaced `module.exports` with its default value (Next's default-object
+//! tail): that value holds itself as `default`.
 //!
 //! Barrier 0 does not move this decision before `UnEsm`: the plan carries
 //! which providers a consumer writes to and which helpers they export, not
@@ -41,7 +44,7 @@ use swc_core::ecma::visit::{Visit, VisitWith};
 
 use crate::analysis::{binding_id, ident_matches_binding, BindingId};
 use crate::facts::ModuleFactsMap;
-use crate::provider_interface::ProviderInterface;
+use crate::provider_interface::{ProviderInterface, RequiredValue};
 use crate::require_edges::ImportTags;
 use crate::rules::expr_utils::is_unresolved_ident;
 use crate::utils::paren::strip_parens;
@@ -81,7 +84,14 @@ pub(crate) fn run_provider_namespace_repair(
             edges.uses_whole_value(source)
                 || (provider.marks_es_module() && edges.uses_only_wildcard_interop(source))
         });
-        provider.namespace_holds_default_import(whole_value)
+        // A marked provider that replaced `module.exports` may have returned
+        // its default value instead of its `exports` object: Next's
+        // default-object tail does when the default is an object or a
+        // function, which then holds itself as `default`, and does not for a
+        // primitive. Either way its `default` member is the default export.
+        let reads_marked_default = provider.value == RequiredValue::Marked { has_default: true }
+            && consumer.is_some_and(|edges| edges.reads_only_default(source));
+        provider.namespace_holds_default_import(whole_value) || reads_marked_default
     };
     let policy = UsagePolicy {
         allow_default_read: true,

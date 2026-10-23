@@ -1397,6 +1397,12 @@ expected. When the assumption is wrong, the tail left `module.exports` the
 exports object, and the rewritten `require(x).default` reads the primitive
 instead of that object.
 
+A provably primitive default leaves the module a provider marked
+`__esModule` whose value is unknown. A consumer that reads only
+`.default` of it reads the default export either way, so
+`provider_namespace_repair` gives it the namespace import, and namespace
+decomposition then the default import.
+
 Affects: `collect_default_object_tail` in `facts.rs`, read by
 `run_kept_require_default_reads` and `run_reexport_consolidation`.
 

@@ -628,7 +628,14 @@ Neither proof creates a default-object fact available to consumers.
   input wrote as ESM (`input_is_es_module`) while the consumer used the whole value
   without an interop wrapper (`uses_whole_value` on the consumer's require
   edges), or through a wildcard interop of a provider marked `__esModule`
-  (`uses_only_wildcard_interop` and `marks_es_module`).
+  (`uses_only_wildcard_interop` and `marks_es_module`). A provider marked
+  `__esModule` with a default export that may have replaced
+  `module.exports` (`RequiredValue::Marked`) is repaired when the consumer
+  reads nothing of the whole value but `.default` (`reads_only_default`):
+  Next's default-object tail returns the default value, which holds
+  itself as `default`, when that is an object or a function, and the
+  `exports` object, whose `default` getter returns it, when it is a
+  primitive (`default_object_tail_value` in rewrite-assumptions.md).
   It accepts static member reads, `Object.keys(namespace)`, and namespace values
   used as `Object.assign` sources, and a namespace passed on as a value
   (`use(ns)`, webpack's `require.t(ns, 2)` namespace object): the default

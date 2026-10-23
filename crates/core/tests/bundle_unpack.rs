@@ -4490,3 +4490,60 @@ fn commonjs_consumer_writing_a_named_only_provider_keeps_it_commonjs() {
     let provider = unpacked_module(&output, "module-1.js");
     assert!(provider.contains("exports.value = 1"), "{provider}");
 }
+
+#[test]
+fn a_default_read_of_a_marked_provider_that_may_replace_its_exports_reads_the_default_export() {
+    // Next's default-object tail replaces `module.exports` with the default
+    // only when that is an object or a function; with a primitive default,
+    // `require(p).default` reads the `exports` object's default getter. The
+    // consumer is a webpack harmony module reading a flagged provider's
+    // `.default` without interop (hypothetical).
+    let source = r#"
+(() => {
+  var __webpack_modules__ = ({
+    100: ((module, exports, __webpack_require__) => {
+      "use strict";
+      __webpack_require__.r(exports);
+      __webpack_require__.d(exports, { run: () => run });
+      var label = __webpack_require__(300);
+      function run() { return label.default; }
+    }),
+    300: ((module, exports) => {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      Object.defineProperty(exports, "default", { enumerable: true, get: function () { return value; } });
+      var value = "label";
+      if ((typeof exports.default === "function" || (typeof exports.default === "object" && exports.default !== null)) && typeof exports.default.__esModule === "undefined") {
+        Object.defineProperty(exports.default, "__esModule", { value: true });
+        Object.assign(exports.default, exports);
+        module.exports = exports.default;
+      }
+    })
+  });
+  var __webpack_module_cache__ = {};
+  function __webpack_require__(moduleId) {
+    var cached = __webpack_module_cache__[moduleId];
+    if (cached !== undefined) return cached.exports;
+    var module = __webpack_module_cache__[moduleId] = { exports: {} };
+    __webpack_modules__[moduleId](module, module.exports, __webpack_require__);
+    return module.exports;
+  }
+  __webpack_require__.r = (e) => { Object.defineProperty(e, "__esModule", { value: true }); };
+  __webpack_require__.d = (e, d) => { for (var k in d) Object.defineProperty(e, k, { enumerable: true, get: d[k] }); };
+  globalThis.lib = __webpack_require__(100);
+})();
+"#;
+    let output = unpack(source, DecompileOptions::default()).expect("the bundle should unpack");
+    let consumer = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "module-100.js")
+        .map(|(_, code)| code.as_str())
+        .expect("expected the consumer");
+    assert!(
+        consumer.contains(r#"import label from "./module-300.js";"#)
+            && consumer.contains("return label;"),
+        "{consumer}"
+    );
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}

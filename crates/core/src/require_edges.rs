@@ -433,6 +433,21 @@ impl RequireEdges {
         })
     }
 
+    /// Whether the module uses `source` as the plain required value
+    /// ([`Self::uses_whole_value`]) and reads nothing of it but its static
+    /// `default` member: no other member, call, write, or escape, on the AST
+    /// `UnEsm` sees.
+    pub fn reads_only_default(&self, source: &str) -> bool {
+        let only_default = RequireUses {
+            member_reads: vec!["default".into()],
+            ..RequireUses::default()
+        };
+        self.uses_whole_value(source)
+            && self.of_source(source).is_some_and(|mut edges| {
+                edges.all(|edge| edge.uses.as_ref() == Some(&only_default))
+            })
+    }
+
     /// Whether the module requires `source` only through a wildcard interop
     /// helper: every call is a top-level `var x = wildcard(require("src"))`,
     /// the helper declared or inlined at the call site. `UnEsm` unwraps the
@@ -2240,6 +2255,23 @@ var e = require.n(require("./e"));"#,
         assert!(!edges.uses_whole_value("./d"));
         assert!(!edges.uses_whole_value("./e"));
         assert!(!edges.uses_whole_value("./missing"));
+    }
+
+    #[test]
+    fn reading_only_default_needs_a_whole_value_read_only_as_default() {
+        let edges = edges(
+            r#"var a = require("./a"); function fa() { return a.default; } use(a.default);
+var b = require("./b"); b.default; b.other;
+var c = require("./c"); c.default();
+var d = require("./d"); d.default = 1;
+var e = require("./e"); use(e);
+var f = require("./f").default;
+var g = require("./g"); g.__esModule ? g.default : g;"#,
+        );
+        assert!(edges.reads_only_default("./a"));
+        for source in ["./b", "./c", "./d", "./e", "./f", "./g", "./missing"] {
+            assert!(!edges.reads_only_default(source), "{source}");
+        }
     }
 
     #[test]
