@@ -320,11 +320,17 @@ the module as it is. An ES module has no `exports` object, so this is the only
 format in which the consumer's write lands. An edge counts as a write for a
 member assignment, update, or `delete` on the value, the target of an
 `Object` method that writes, or the value passed to a function of the same
-module that writes that parameter. A write through a CommonJS passthrough,
-a module whose body is directives and one `module.exports = require("x")`
-(`passthrough_source`, read at the end of Phase 1a), counts on the module
-of the input the passthrough chain ends at too: requiring the passthrough
-returns that module's value. A chain that meets itself again has no end. The use collector follows such a call one
+module that writes that parameter. A module that assigns
+`module.exports` another module's required value writes that value when it
+writes `module.exports.x` or a binding of the assignment,
+`var t = module.exports = require("x"); t.x = …` (with a conditional,
+`if (c) module.exports = require("a"); else module.exports = require("b")`,
+every such value counts). A write through a module whose `module.exports`
+may be another module's required value (`exports_from_requires`, read at
+the end of Phase 1a: a CommonJS passthrough, a module whose body is
+directives and one `module.exports = require("x")` (`passthrough_source`),
+or a conditional one) counts on every module of the input that chain
+reaches too: requiring it may return that module's value. The use collector follows such a call one
 level, when the call reaches the function directly (a function literal, or a
 binding declared once and never written, in a module without `with` or
 direct eval) and the function does not read `arguments`. TypeScript's

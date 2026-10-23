@@ -357,6 +357,12 @@ impl RequireEdges {
             bindings: HashMap::default(),
         };
         module.visit_with(&mut sites);
+        let mut exports_values = ExportsValues {
+            unresolved_mark,
+            keys: &keys,
+            found: Vec::new(),
+        };
+        module.visit_with(&mut exports_values);
         let sources: HashMap<EdgeKey, Atom> = self
             .edges
             .iter()
@@ -367,6 +373,7 @@ impl RequireEdges {
             keys: &keys,
             local_helpers,
             bindings: &sites.bindings,
+            exports_values: &exports_values.found,
             sources: &sources,
             uses: HashMap::default(),
             local_callees: Vec::new(),
@@ -1132,11 +1139,88 @@ impl Visit for CallSites<'_> {
 
     fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
         if let (Pat::Ident(binding), Some(init)) = (&declarator.name, &declarator.init) {
+            // `var t = module.exports = require("src")` binds the value too.
+            let init = match strip_parens(init) {
+                Expr::Assign(assign)
+                    if assign.op == swc_core::ecma::ast::AssignOp::Assign
+                        && matches!(&assign.left,
+                            AssignTarget::Simple(SimpleAssignTarget::Member(member))
+                                if is_module_exports(member, self.unresolved_mark)) =>
+                {
+                    &assign.right
+                }
+                init => init,
+            };
             if let Some(key) = self.defining_key(init) {
                 self.bindings.insert(binding_id(&binding.id), key);
             }
         }
         declarator.visit_children_with(self);
+    }
+}
+
+/// The free `module.exports`.
+fn is_module_exports(member: &MemberExpr, unresolved_mark: Mark) -> bool {
+    matches!(strip_parens(&member.obj), Expr::Ident(object)
+        if is_unresolved_ident(object, "module", unresolved_mark))
+        && matches!(&member.prop, MemberProp::Ident(prop) if prop.sym == "exports")
+}
+
+/// The keyed calls whose value may become the module's `module.exports`:
+/// the right side of any `module.exports = …` assignment, or a branch of a
+/// conditional, a logical operator, or the last element of a sequence
+/// there. A write to `module.exports` may land on any of them.
+struct ExportsValues<'a> {
+    unresolved_mark: Mark,
+    keys: &'a HashSet<EdgeKey>,
+    found: Vec<EdgeKey>,
+}
+
+impl ExportsValues<'_> {
+    fn add(&mut self, expr: &Expr) {
+        match strip_parens(expr) {
+            Expr::Call(call) if require_call_source(call, self.unresolved_mark).is_some() => {
+                let key = key_of(call.span);
+                if self.keys.contains(&key) && !self.found.contains(&key) {
+                    self.found.push(key);
+                }
+            }
+            Expr::Cond(cond) => {
+                self.add(&cond.cons);
+                self.add(&cond.alt);
+            }
+            Expr::Bin(BinExpr {
+                op: BinaryOp::LogicalOr | BinaryOp::LogicalAnd | BinaryOp::NullishCoalescing,
+                left,
+                right,
+                ..
+            }) => {
+                self.add(left);
+                self.add(right);
+            }
+            Expr::Seq(seq) => {
+                if let Some(last) = seq.exprs.last() {
+                    self.add(last);
+                }
+            }
+            // `module.exports = t = require("src")`
+            Expr::Assign(assign) if assign.op == swc_core::ecma::ast::AssignOp::Assign => {
+                self.add(&assign.right)
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Visit for ExportsValues<'_> {
+    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+        if assign.op == swc_core::ecma::ast::AssignOp::Assign
+            && matches!(&assign.left, AssignTarget::Simple(SimpleAssignTarget::Member(member))
+                if is_module_exports(member, self.unresolved_mark))
+        {
+            self.add(&assign.right);
+        }
+        assign.visit_children_with(self);
     }
 }
 
@@ -1147,6 +1231,10 @@ struct UseCollector<'a> {
     keys: &'a HashSet<EdgeKey>,
     local_helpers: &'a LocalHelperContext,
     bindings: &'a HashMap<BindingId, EdgeKey>,
+    /// The keyed calls whose value may become `module.exports`
+    /// ([`ExportsValues`]): a write to a member of `module.exports`, or to
+    /// `module.exports` through an `Object` method, writes each of them.
+    exports_values: &'a [EdgeKey],
     /// Each keyed call's source.
     sources: &'a HashMap<EdgeKey, Atom>,
     uses: HashMap<EdgeKey, RequireUses>,
@@ -1206,21 +1294,40 @@ impl UseCollector<'_> {
         true
     }
 
-    /// A write to a member of an edge's value; `false` when `member` is on
-    /// something else.
-    fn member_write(&mut self, member: &MemberExpr) -> bool {
-        let Some(key) = self.value_of(&member.obj) else {
-            return false;
-        };
-        match static_member_name(&member.prop) {
-            Some(name) => {
-                let uses = self.uses(key);
-                uses.interop_key_write |= is_interop_key(&name);
-                if !uses.member_writes.contains(&name) {
-                    uses.member_writes.push(name);
-                }
+    /// The edges whose value `expr` is or may be: a keyed call, a binding
+    /// of one, or `module.exports` when a keyed call's value may have
+    /// become it.
+    fn written_values(&self, expr: &Expr) -> Vec<EdgeKey> {
+        if let Some(key) = self.value_of(expr) {
+            return vec![key];
+        }
+        match strip_parens(expr) {
+            Expr::Member(member) if is_module_exports(member, self.unresolved_mark) => {
+                self.exports_values.to_vec()
             }
-            None => self.uses(key).computed_write = true,
+            _ => Vec::new(),
+        }
+    }
+
+    /// A write to a member of an edge's value, or of `module.exports` that
+    /// may hold one; `false` when `member` is on something else.
+    fn member_write(&mut self, member: &MemberExpr) -> bool {
+        let keys = self.written_values(&member.obj);
+        if keys.is_empty() {
+            return false;
+        }
+        let name = static_member_name(&member.prop);
+        for key in keys {
+            let uses = self.uses(key);
+            match &name {
+                Some(name) => {
+                    uses.interop_key_write |= is_interop_key(name);
+                    if !uses.member_writes.contains(name) {
+                        uses.member_writes.push(name.clone());
+                    }
+                }
+                None => uses.computed_write = true,
+            }
         }
         if let MemberProp::Computed(computed) = &member.prop {
             computed.visit_with(self);
@@ -2033,6 +2140,20 @@ impl Visit for UseCollector<'_> {
         if let Some(method) = self.object_api(callee) {
             callee.visit_with(self);
             for (index, arg) in call.args.iter().enumerate() {
+                if index == 0 && arg.spread.is_none() && self.value_of(&arg.expr).is_none() {
+                    // `Object.assign(module.exports, …)` after
+                    // `module.exports = require("src")`.
+                    let keys = self.written_values(&arg.expr);
+                    if !keys.is_empty() {
+                        let interop_key = writes_interop_key(method, &call.args);
+                        for key in keys {
+                            let uses = self.uses(key);
+                            uses.object_api_write = true;
+                            uses.interop_key_write |= interop_key;
+                        }
+                        continue;
+                    }
+                }
                 let value = (arg.spread.is_none())
                     .then(|| self.value_of(&arg.expr))
                     .flatten();
@@ -2285,6 +2406,42 @@ var e = require.n(require("./e"));"#,
         assert!(!edges.uses_whole_value("./d"));
         assert!(!edges.uses_whole_value("./e"));
         assert!(!edges.uses_whole_value("./missing"));
+    }
+
+    #[test]
+    fn a_write_to_module_exports_writes_each_required_value_it_may_hold() {
+        // A module that passes a required value on and then adds to it.
+        let found = edges(
+            r#"module.exports = require("./a");
+module.exports.extra = 3;"#,
+        );
+        assert_eq!(only(&found, "./a").uses.unwrap().member_writes, ["extra"]);
+        let found = edges(
+            r#"var t = module.exports = require("./a");
+t.more = 4;
+use(t.read);"#,
+        );
+        let uses = only(&found, "./a").uses.unwrap();
+        assert_eq!(uses.member_writes, ["more"]);
+        assert_eq!(uses.member_reads, ["read"]);
+        let found = edges(
+            r#"if (c) module.exports = require("./a"); else module.exports = require("./b");
+Object.assign(module.exports, { extra: 1 });"#,
+        );
+        for source in ["./a", "./b"] {
+            assert!(
+                only(&found, source).uses.unwrap().object_api_write,
+                "{source}"
+            );
+        }
+        // Without a required value in `module.exports`, the write is the
+        // module's own.
+        let found = edges(
+            r#"var a = require("./a");
+module.exports = {};
+module.exports.extra = a;"#,
+        );
+        assert!(!only(&found, "./a").uses.unwrap().writes());
     }
 
     #[test]

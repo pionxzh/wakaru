@@ -50,7 +50,7 @@ use crate::facts::{
     is_normalized_commonjs_default, HelperFacts, ModuleFactsMap,
 };
 use crate::interface_plan::{
-    exports_only_whole_value, passthrough_source, InterfacePlan, PlanModule,
+    exports_from_requires, exports_only_whole_value, passthrough_source, InterfacePlan, PlanModule,
 };
 use crate::kept_require::run_kept_require_default_reads;
 use crate::namespace_decomposition::run_namespace_decomposition_with_tags;
@@ -219,6 +219,9 @@ struct Phase1aModule {
     /// The module is a CommonJS passthrough of this source, on the AST
     /// `UnEsm` will see.
     passthrough: Option<swc_core::atoms::Atom>,
+    /// The sources whose required value may become `module.exports`, on
+    /// the AST `UnEsm` will see.
+    exports_from_requires: Vec<swc_core::atoms::Atom>,
     warning: Option<UnpackWarning>,
     input_parse_warnings: Vec<UnpackWarning>,
     suggested_filename: Option<String>,
@@ -921,6 +924,11 @@ pub(super) fn unpack_multi_module_with_plan(
             let passthrough = exports_object_writable
                 .then(|| passthrough_source(&module, unresolved_mark))
                 .flatten();
+            let exports_from_requires = if exports_object_writable {
+                exports_from_requires(&module, unresolved_mark)
+            } else {
+                Vec::new()
+            };
             Ok((
                 module,
                 unresolved_mark,
@@ -930,6 +938,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 helpers,
                 exports_whole_value,
                 passthrough,
+                exports_from_requires,
                 residual_warning,
                 suggested_filename,
             ))
@@ -944,6 +953,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 helpers,
                 exports_whole_value,
                 passthrough,
+                exports_from_requires,
                 warning,
                 suggested_filename,
             )) => Phase1a::Pending(Box::new(Phase1aModule {
@@ -958,6 +968,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 helpers,
                 exports_whole_value,
                 passthrough,
+                exports_from_requires,
                 warning,
                 input_parse_warnings,
                 suggested_filename,
@@ -988,6 +999,7 @@ pub(super) fn unpack_multi_module_with_plan(
             helpers: _,
             exports_whole_value: _,
             passthrough: _,
+            exports_from_requires: _,
             warning,
             input_parse_warnings,
             suggested_filename,
@@ -1163,6 +1175,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 helpers: pending.helpers.as_ref(),
                 exports_whole_value: pending.exports_whole_value,
                 passthrough: pending.passthrough.clone(),
+                exports_from_requires: pending.exports_from_requires.clone(),
             }),
         }))
     };

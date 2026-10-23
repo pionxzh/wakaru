@@ -4785,3 +4785,77 @@ exports.run = function () { return [p.f(), p.default()]; };"#,
     );
     assert_valid_module_graph(&modules);
 }
+
+#[test]
+fn a_write_to_module_exports_holding_a_required_value_keeps_that_module_commonjs() {
+    // Modules 120 and 130 pass module 100 on and add a property to it, one
+    // through `module.exports`, one through an alias (hypothetical). The
+    // property lands on module 100's `exports` object.
+    let modules = r#"
+    100: function(module, exports) {
+      exports.f = function () { return 1; };
+    },
+    120: function(module, exports, __webpack_require__) {
+      module.exports = __webpack_require__(100);
+      module.exports.extra = 3;
+    },
+    130: function(module, exports, __webpack_require__) {
+      var t = module.exports = __webpack_require__(100);
+      t.more = 4;
+    },
+    400: function(module, exports, __webpack_require__) {
+      "use strict";
+      var p = __webpack_require__(120);
+      var q = __webpack_require__(130);
+      var r = __webpack_require__(100);
+      exports.run = function () { return [p.f(), p.extra, q.more, r.extra]; };
+    }"#;
+    let source = helper_provider_bundle(modules);
+    for emit_source_map in [false, true] {
+        let output = unpack_one(&source, emit_source_map);
+        assert_valid_module_graph(&output.modules);
+        let provider = module_named(&output.modules, "module-100.js");
+        assert!(provider.contains("exports.f = "), "{provider}");
+        assert!(!provider.contains("export "), "{provider}");
+    }
+}
+
+#[test]
+fn a_write_through_a_conditional_passthrough_keeps_both_targets_commonjs() {
+    // Module 120 returns module 100 or 101, chosen at run time; the
+    // consumer writes through it (hypothetical). Either may take the write.
+    let modules = r#"
+    100: function(module, exports) {
+      exports.f = function () { return 1; };
+    },
+    101: function(module, exports) {
+      exports.f = function () { return 2; };
+    },
+    120: function(module, exports, __webpack_require__) {
+      "use strict";
+      if (globalThis.PROD) module.exports = __webpack_require__(100);
+      else module.exports = __webpack_require__(101);
+    },
+    400: function(module, exports, __webpack_require__) {
+      "use strict";
+      var p = __webpack_require__(120);
+      p.f = function () { return 3; };
+      exports.run = function () { return p.f(); };
+    }"#;
+    let source = helper_provider_bundle(modules);
+    for emit_source_map in [false, true] {
+        let output = unpack_one(&source, emit_source_map);
+        assert_valid_module_graph(&output.modules);
+        for name in ["module-100.js", "module-101.js"] {
+            let provider = module_named(&output.modules, name);
+            assert!(provider.contains("exports.f = "), "{provider}");
+            assert!(!provider.contains("export "), "{provider}");
+        }
+        // No alias: the consumer still requires module 120.
+        assert!(
+            consumer_of(&output).contains("./module-120.js"),
+            "{}",
+            consumer_of(&output)
+        );
+    }
+}
