@@ -10,9 +10,10 @@
 //!
 //! Optional workflows live in cohesive namespaces: [`bun`] (single-file
 //! executable extraction), [`debug`] (normalization, rule tracing, rule
-//! metadata), [`gtm`] (Google Tag Manager container extraction),
-//! [`sourcemap`] (embedded-source extraction), and [`vue`] (experimental
-//! standalone SFC recovery).
+//! metadata), [`gtm`] (Google Tag Manager container extraction), [`rsc`]
+//! (experimental React Server Components payload decoding), [`sourcemap`]
+//! (embedded-source extraction), and [`vue`] (experimental standalone SFC
+//! recovery).
 //!
 //! The API is deliberately not an SWC transformation toolkit: it never exposes
 //! SWC AST types, individual rewrite visitors, detector objects, prepared
@@ -112,6 +113,7 @@ mod error;
 pub mod gtm;
 mod options;
 mod output;
+pub mod rsc;
 mod source;
 pub mod sourcemap;
 mod unpack;

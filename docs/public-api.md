@@ -33,9 +33,9 @@ Two root operations — `decompile(Source, DecompileOptions)` and
 `unpack(Vec<Source>, UnpackOptions)`, with `UnpackJob` as unpack's
 incremental-intake form — plus optional namespaces: `bun` (single-file
 executable extraction), `debug` (normalize, rule tracing, rule metadata),
-`gtm` (Google Tag Manager container extraction), `sourcemap`
-(embedded-source extraction), and `vue` (experimental standalone SFC
-recovery). See rustdoc for everything else.
+`gtm` (Google Tag Manager container extraction), `rsc` (experimental React
+Server Components payload decoding), `sourcemap` (embedded-source
+extraction), and `vue` (experimental standalone SFC recovery). See rustdoc for everything else.
 
 ## Design decisions
 

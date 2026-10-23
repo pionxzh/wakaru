@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use anyhow::{bail, Context, Result};
 use clap::Args;
 use serde::Serialize;
-use wakaru_core::rsc::{self, Capture, CaptureFormat, NextFlightKind, ProblemLocation};
+use wakaru::rsc::{self, Format, Payload, ProblemLocation};
 
 use crate::output::write_if_changed;
 
@@ -29,14 +29,14 @@ pub(crate) struct RscArgs {
 pub(crate) fn run(args: RscArgs, force: bool) -> Result<()> {
     let input = fs::read(&args.input)
         .with_context(|| format!("failed to read {}", args.input.display()))?;
-    let Some(capture) = rsc::decode_capture(&input) else {
+    let Some(payload) = rsc::decode(&input) else {
         bail!(
             "{} holds no React Server Components payload: it does not start with a \
              row such as `1:`, and has no `self.__next_f.push(...)` call",
             args.input.display()
         );
     };
-    let report = report(args.input.display().to_string(), &capture);
+    let report = report(args.input.display().to_string(), &payload);
     let json =
         serde_json::to_string_pretty(&report).context("failed to serialize the report")? + "\n";
 
@@ -58,39 +58,24 @@ pub(crate) fn run(args: RscArgs, force: bool) -> Result<()> {
     Ok(())
 }
 
-fn report(source: String, capture: &Capture) -> JsonRscReport {
-    let count = |kind| {
-        capture
-            .next_entries
-            .iter()
-            .filter(|entry| entry.kind == kind)
-            .count()
-    };
+fn report(source: String, payload: &Payload) -> JsonRscReport {
+    let entries = payload.next_entries;
     JsonRscReport {
         source,
-        format: match capture.format {
-            CaptureFormat::Raw => "raw",
-            CaptureFormat::NextFlight => "next.__next_f",
+        format: match payload.format {
+            Format::Raw => "raw",
+            Format::NextFlight => "next.__next_f",
+            _ => "unknown",
         },
-        next_entries: (capture.format == CaptureFormat::NextFlight).then(|| JsonNextEntries {
-            bootstrap: count(NextFlightKind::Bootstrap),
-            data: count(NextFlightKind::Data),
-            form_state: count(NextFlightKind::FormState),
-            binary: count(NextFlightKind::Binary),
+        next_entries: (payload.format == Format::NextFlight).then_some(JsonNextEntries {
+            bootstrap: entries.bootstrap,
+            data: entries.data,
+            form_state: entries.form_state,
+            binary: entries.binary,
         }),
-        assets: capture
-            .payload
-            .asset_paths()
-            .iter()
-            .map(|path| path.to_string())
-            .collect(),
-        rows: capture.payload.rows.iter().map(JsonRscRow::from).collect(),
-        problems: capture
-            .payload
-            .problems
-            .iter()
-            .map(JsonRscProblem::from)
-            .collect(),
+        assets: payload.assets.clone(),
+        rows: payload.rows.iter().map(JsonRscRow::from).collect(),
+        problems: payload.problems.iter().map(JsonRscProblem::from).collect(),
     }
 }
 
@@ -131,14 +116,18 @@ struct JsonRscRow {
     json: Option<serde_json::Value>,
 }
 
-impl From<&rsc::FlightRow> for JsonRscRow {
-    fn from(row: &rsc::FlightRow) -> Self {
+impl From<&rsc::Row> for JsonRscRow {
+    fn from(row: &rsc::Row) -> Self {
         JsonRscRow {
             id: row.id.map(|id| format!("{id:x}")),
             tag: row.tag.letter(),
             kind: row.tag.kind(),
             payload: row.text().into_owned(),
-            json: row.json.clone(),
+            // The façade only reports JSON text that parsed.
+            json: row
+                .json
+                .as_deref()
+                .and_then(|json| serde_json::from_str(json).ok()),
         }
     }
 }
@@ -152,12 +141,13 @@ struct JsonRscProblem {
     message: String,
 }
 
-impl From<&rsc::FlightProblem> for JsonRscProblem {
-    fn from(problem: &rsc::FlightProblem) -> Self {
+impl From<&rsc::Problem> for JsonRscProblem {
+    fn from(problem: &rsc::Problem) -> Self {
         JsonRscProblem {
             location: match problem.location {
                 ProblemLocation::Capture => "capture",
                 ProblemLocation::Payload => "payload",
+                _ => "unknown",
             },
             offset: problem.offset,
             message: problem.message.clone(),
@@ -176,8 +166,8 @@ mod tests {
     );
 
     fn report_of(input: &str) -> JsonRscReport {
-        let capture = rsc::decode_capture(input.as_bytes()).expect("a payload");
-        report("input".to_string(), &capture)
+        let payload = rsc::decode(input.as_bytes()).expect("a payload");
+        report("input".to_string(), &payload)
     }
 
     #[test]

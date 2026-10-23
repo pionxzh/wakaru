@@ -19,6 +19,7 @@ crates/
       output.rs, error.rs           — artifacts, reports, diagnostics, fatal errors
       debug.rs, sourcemap.rs, vue.rs — standalone auxiliary namespaces
       bun.rs, gtm.rs                — container extraction namespaces (Bun executables, GTM containers)
+      rsc.rs                        — experimental React Server Components payload decoding
 
   cli/
     src/
@@ -49,7 +50,7 @@ crates/
         types.rs                    — driver options, outputs, and warning types
       facts.rs                      — post-Stage-2 cross-module fact extraction
       gtm.rs                        — Google Tag Manager container extraction (façade: `wakaru::gtm`)
-      rsc.rs                        — React Server Components payload decoding and Next.js `__next_f` extraction (experimental)
+      rsc.rs                        — React Server Components payload decoding and Next.js `__next_f` extraction (façade: `wakaru::rsc`)
       commonjs_default_object_composition.rs — exact mutable-default composition recovery
       commonjs_export_residual.rs   — `exports` accesses left in ESM output (`commonjs_export_unrecovered`)
       kept_require.rs               — requires that stay calls: positions, the default read of a kept require, ES-source evidence, and their warnings
