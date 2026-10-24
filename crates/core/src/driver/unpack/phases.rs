@@ -43,11 +43,11 @@ use super::source_index::{build_composed_output_sourcemap, InputOrigin};
 use super::webpack_commonjs_runtime::normalize_webpack_commonjs_runtime;
 use super::{recover_late_esm_from_factory_iifes, LateEsmRecoveryOptions};
 use crate::facts::{
-    collect_commonjs_default_attached_properties, collect_commonjs_default_object,
-    collect_commonjs_value_is_default, collect_default_object_tail, collect_input_is_es_module,
-    collect_marks_es_module, collect_module_facts, collect_module_facts_with_helpers,
-    collect_replaces_module_exports, collect_require_returns_exports_object,
-    is_normalized_commonjs_default, HelperFacts, ModuleFactsMap,
+    collect_commonjs_default_object, collect_commonjs_value_is_default,
+    collect_default_object_tail, collect_input_is_es_module, collect_marks_es_module,
+    collect_module_facts, collect_module_facts_with_helpers, collect_replaces_module_exports,
+    collect_require_returns_exports_object, is_normalized_commonjs_default, HelperFacts,
+    ModuleFactsMap,
 };
 use crate::interface_plan::{
     exports_from_requires, exports_only_whole_value, passthrough_source, required_whole_value,
@@ -239,7 +239,6 @@ enum Phase1a {
 /// The CommonJS provider facts read on the resolved input, before any rule.
 struct RawCommonJsFacts {
     commonjs_default_object: Option<crate::facts::CommonJsDefaultObjectFact>,
-    commonjs_default_attached_properties: Vec<swc_core::atoms::Atom>,
     require_returns_exports_object: bool,
     input_is_es_module: bool,
     commonjs_value_is_default: bool,
@@ -251,7 +250,6 @@ struct RawCommonJsFacts {
 impl RawCommonJsFacts {
     fn apply(self, facts: &mut crate::facts::ModuleFacts) {
         facts.commonjs_default_object = self.commonjs_default_object;
-        facts.commonjs_default_attached_properties = self.commonjs_default_attached_properties;
         facts.require_returns_exports_object = self.require_returns_exports_object;
         facts.input_is_es_module = self.input_is_es_module;
         facts.commonjs_value_is_default = self.commonjs_value_is_default;
@@ -869,8 +867,6 @@ pub(super) fn unpack_multi_module_with_plan(
             );
             let commonjs_default_object =
                 collect_commonjs_default_object(&module, unresolved_mark);
-            let commonjs_default_attached_properties =
-                collect_commonjs_default_attached_properties(&module, unresolved_mark);
             let require_returns_exports_object =
                 collect_require_returns_exports_object(&module, unresolved_mark);
             let replaces_module_exports =
@@ -892,7 +888,6 @@ pub(super) fn unpack_multi_module_with_plan(
             let required_whole_value = required_whole_value(&module, unresolved_mark);
             let raw = RawCommonJsFacts {
                 commonjs_default_object,
-                commonjs_default_attached_properties,
                 require_returns_exports_object,
                 input_is_es_module,
                 commonjs_value_is_default,

@@ -5,11 +5,10 @@ use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::VisitMutWith;
 use wakaru_core::facts::{
-    collect_commonjs_default_attached_properties, collect_commonjs_default_object,
-    collect_commonjs_value_is_default, collect_default_object_tail, collect_input_is_es_module,
-    collect_marks_es_module, collect_module_facts, ExportFact, ExportKind, HelperExportFact,
-    HelperKind, ImportFact, ImportKind, ModuleFacts, ModuleFactsMap, TypeScriptHelperExportFact,
-    TypeScriptHelperKind,
+    collect_commonjs_default_object, collect_commonjs_value_is_default,
+    collect_default_object_tail, collect_input_is_es_module, collect_marks_es_module,
+    collect_module_facts, ExportFact, ExportKind, HelperExportFact, HelperKind, ImportFact,
+    ImportKind, ModuleFacts, ModuleFactsMap, TypeScriptHelperExportFact, TypeScriptHelperKind,
 };
 use wakaru_core::{apply_rules, RulePipelineOptions};
 
@@ -37,8 +36,6 @@ fn collect_facts(source: &str) -> ModuleFacts {
         let top_level_mark = Mark::new();
         module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
         let commonjs_default_object = collect_commonjs_default_object(&module, unresolved_mark);
-        let commonjs_default_attached_properties =
-            collect_commonjs_default_attached_properties(&module, unresolved_mark);
 
         // Run pipeline through end of Stage 2
         apply_rules(
@@ -49,7 +46,6 @@ fn collect_facts(source: &str) -> ModuleFacts {
 
         let mut facts = collect_module_facts(&module);
         facts.commonjs_default_object = commonjs_default_object;
-        facts.commonjs_default_attached_properties = commonjs_default_attached_properties;
         facts
     })
 }
@@ -462,65 +458,6 @@ fn empty_default_object_is_distinct_from_an_unknown_default_value() {
 }
 
 #[test]
-fn callable_default_properties_require_stable_unconditional_writes() {
-    let facts = collect_facts(
-        r#"
-function api(value) { return value; }
-api.parse = parse;
-api.Rule = Rule;
-module.exports = api;
-api.default = api;
-"#,
-    );
-    assert_eq!(
-        facts.commonjs_default_attached_properties,
-        vec!["Rule", "parse"],
-        "only properties attached unconditionally before the CommonJS export should be proven"
-    );
-
-    let reassigned = collect_facts(
-        r#"
-function api(value) { return value; }
-api.parse = parse;
-api = decorate(api);
-module.exports = api;
-"#,
-    );
-    assert!(
-        reassigned.commonjs_default_attached_properties.is_empty(),
-        "a reassigned callable binding must fail closed: {reassigned}"
-    );
-
-    let conditional = collect_facts(
-        r#"
-function api(value) { return value; }
-if (enabled) api.parse = parse;
-module.exports = api;
-"#,
-    );
-    assert!(
-        conditional.commonjs_default_attached_properties.is_empty(),
-        "a conditional property write does not prove the callable surface: {conditional}"
-    );
-}
-
-#[test]
-fn callable_default_properties_reject_a_conditional_default_rewrite() {
-    let facts = collect_facts(
-        r#"
-function api(value) { return value; }
-api.parse = function(value) { return value.length; };
-module.exports = api;
-if (globalThis.legacy) { module.exports = globalThis.wrap(api); }
-"#,
-    );
-    assert!(
-        facts.commonjs_default_attached_properties.is_empty(),
-        "a second module.exports assignment must make the callable default unknown: {facts}"
-    );
-}
-
-#[test]
 fn default_object_properties_follow_a_stable_local_alias() {
     let facts = collect_facts(
         r#"
@@ -554,23 +491,6 @@ fn default_object_proto_entry_is_not_a_declared_property() {
             .declared_properties,
         vec!["real"],
         "a plain __proto__ entry sets the prototype, not an own property"
-    );
-}
-
-#[test]
-fn callable_default_prototype_write_is_not_an_attached_property() {
-    let facts = collect_facts(
-        r#"
-function api(value) { return value; }
-api.__proto__ = base;
-api.parse = parse;
-module.exports = api;
-"#,
-    );
-    assert_eq!(
-        facts.commonjs_default_attached_properties,
-        vec!["parse"],
-        "a prototype write on the callable is not part of the export surface"
     );
 }
 

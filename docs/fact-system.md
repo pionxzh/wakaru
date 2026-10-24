@@ -12,12 +12,11 @@ A barrier-and-read mechanism that lets Phase 2 rules read provider shape from
 imports/exports. Deliberately narrow pre-`UnEsm` facts preserve CommonJS
 provider shape that `UnEsm` would otherwise erase: the proven identity and
 statically declared properties of an object assigned directly to
-`module.exports`, positively observed properties attached to a stable
-callable before it becomes `module.exports`, and whether the module marks itself `__esModule`; on the
+`module.exports`, and whether the module marks itself `__esModule`; on the
 consumer side, one record per `require()` call (its form, interop, and
 uses). For object defaults, the identity proof is independent of
 the property list: an empty list may describe a proven empty object rather
-than an unknown value. An empty callable-property list is not such a proof.
+than an unknown value.
 
 ## Why it's simpler than the original proposal
 
@@ -26,11 +25,10 @@ shared state, merging them at a barrier, and reading back immutable facts.
 We do not need that. After `UnEsm` runs, ESM `import`/`export` declarations are
 already a normalized, AST-level representation of module shape. That AST *is*
 the fact. The exceptions are syntactic facts collected from the resolved input
-before the rule range reaches `UnEsm`: whether raw `module.exports` receives an
-object literal (or a stable local alias to one), and whether a stable top-level
-function has static properties assigned unconditionally before that exact
-binding becomes `module.exports`. `UnEsm` otherwise erases the important
-distinction between these CommonJS values and ESM named exports. All collectors
+before the rule range reaches `UnEsm`, such as whether raw `module.exports`
+receives an object literal (or a stable local alias to one). `UnEsm` otherwise
+erases the important distinction between that CommonJS value and ESM named
+exports. All collectors
 remain pure functions of one module — no rule-written observations and no
 merge step.
 
@@ -45,7 +43,7 @@ before `UnEsm`, so every module reaches `UnEsm` before any runs it
 Phase 1a (per module, parallel):
     obtain resolved AST (prepared detector AST, or parse → resolver)
     normalize exact detector-proven webpack runtime branches
-    collect raw CommonJS default-object / callable-property facts
+    collect raw CommonJS provider facts (default object, exports shape)
     collect require edges: form and interop, keyed by call span
     rule range up to, not including, UnEsm
     add each edge's uses, on the AST UnEsm will see
@@ -184,7 +182,7 @@ conservatively retain the graph.
 - `ReexportFact { exported, imported, source }` — `export { A as B } from`
 - `ImportCallEdge { source, imported, consumed_by_exports }`
 - `ModuleFacts { imports, exports, helper_exports,
-  commonjs_default_object, commonjs_default_attached_properties,
+  commonjs_default_object,
   require_returns_exports_object, input_is_es_module, commonjs_value_is_default,
   replaces_module_exports,
   marks_es_module, require_edges, has_export_all, export_star_sources, reexports, import_call_edges,
@@ -201,20 +199,8 @@ Extraction (`collect_module_facts`) reads the post-Stage-2 AST. Before Stage 2,
 proven object whose declared-property list is empty. Multiple whole-value
 assignments, reassigned aliases, non-object values, nested callbacks, and
 `exports.default` fail closed. Computed keys and spreads are omitted from the
-declared-property list without weakening the proven object identity.
-
-`collect_commonjs_default_attached_properties` separately records static
-identifier properties assigned directly and unconditionally to a stable
-top-level callable around the sole `module.exports` assignment. This includes
-the localized webpack form `var alias = module.exports = functionBinding`
-followed by direct alias-property writes, including writes in the
-guaranteed-once right-hand side of a top-level `for ... in`. It is a
-positive-membership fact only: a recorded property is on the callable, but
-an absent property says nothing about the callable's runtime surface. No
-pass reads it since the Phase 2 import repair was removed; the module's
-facts still print it. Computed,
-conditional, nested, or reassigned shapes fail closed. Neither collector
-mutates the AST or shared state.
+declared-property list without weakening the proven object identity. The
+collector does not mutate the AST or shared state.
 
 `collect_require_returns_exports_object` records that the module has no
 unresolved `module` reference anywhere and no direct eval, so requiring it
