@@ -440,7 +440,9 @@ providers CommonJS with no write behind any of them.
    fact of its own (`required_whole_value`): a provider that reads its own
    `module.exports`, marks the `exports` object its assignment orphans, or
    calls a direct eval is listed too, while the written-provider decision
-   keeps the strict fact.
+   keeps the strict fact. A provider that adds names to its value with
+   top-level `module.exports.name = e` writes after the assignment is listed
+   with those names, whose reads stay named imports.
 
    A second follow-up the same day (maintainer decision): Phase 1b's prediction runs
    the rules Phase 2 runs before its late recovery, without the other

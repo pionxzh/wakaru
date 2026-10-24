@@ -216,9 +216,10 @@ struct Phase1aModule {
     /// The module's only export is one top-level `module.exports = v`, read
     /// on the input.
     exports_whole_value: bool,
-    /// Requiring the module returns that `v`, its default export, read on
-    /// the input (`required_whole_value`).
-    required_whole_value: bool,
+    /// Requiring the module returns that `v`, its default export, with the
+    /// names the module adds to it, read on the input
+    /// (`required_whole_value`).
+    required_whole_value: Option<Vec<swc_core::atoms::Atom>>,
     /// The module is a CommonJS passthrough of this source, on the AST
     /// `UnEsm` will see.
     passthrough: Option<swc_core::atoms::Atom>,
@@ -925,7 +926,7 @@ pub(super) fn unpack_multi_module_with_plan(
             // assigned value as its default.
             let lowers_namespace = lowers_to_commonjs_namespace(&module, unresolved_mark);
             let exports_whole_value = exports_whole_value && !lowers_namespace;
-            let required_whole_value = required_whole_value && !lowers_namespace;
+            let required_whole_value = required_whole_value.filter(|_| !lowers_namespace);
             let passthrough = exports_object_writable
                 .then(|| passthrough_source(&module, unresolved_mark))
                 .flatten();
@@ -1183,7 +1184,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 exports_object_writable: pending.exports_object_writable,
                 helpers: pending.helpers.as_ref(),
                 exports_whole_value: pending.exports_whole_value,
-                required_whole_value: pending.required_whole_value,
+                required_whole_value: pending.required_whole_value.clone(),
                 passthrough: pending.passthrough.clone(),
                 exports_from_requires: pending.exports_from_requires.clone(),
             }),

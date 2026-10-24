@@ -1,13 +1,19 @@
 //! Member reads of a whole-value provider, read through one binding of the
 //! provider's value.
 //!
-//! In unpack, barrier 0 proves which providers export only one top-level
-//! `module.exports = v` ([`crate::interface_plan`]). `require(p)` of such a
-//! provider returns `v`, and its ES form is `export default v`, so
+//! In unpack, barrier 0 proves which providers return from `require` the
+//! value `v` of their one top-level `module.exports = v`
+//! ([`crate::interface_plan`]). Its ES form is `export default v`, so
 //! `require(p).name` reads `name` of the default export, whether or not `v`
 //! has `name` and whether or not the provider ends ESM. The classification
 //! below would otherwise make `import { name } from "p"`, which fails to
 //! link against a default-only module.
+//!
+//! A provider may also add a name to `v` with a top-level
+//! `module.exports.name = e`, which `UnEsm` exports by name, not on the
+//! default. A read of such a name keeps the ordinary classification, a named
+//! import, and so does an object pattern that reads one, has a rest element,
+//! or has a computed key, as a whole.
 //!
 //! The pass binds the provider's value once and reads the member from that
 //! binding where the input read it:
@@ -45,7 +51,7 @@ use super::*;
 pub(super) fn read_whole_value_members(
     module: &mut Module,
     unresolved_mark: Mark,
-    sources: &HashSet<String>,
+    sources: &HashMap<String, Vec<Atom>>,
 ) -> Vec<(BindingId, Span)> {
     if sources.is_empty() {
         return Vec::new();
@@ -53,11 +59,13 @@ pub(super) fn read_whole_value_members(
     // The first read of each source: its item, and a name hint.
     let mut first_reads: Vec<(String, usize, Option<Atom>)> = Vec::new();
     for (index, item) in module.body.iter_mut().enumerate() {
-        visit_read_slots(item, unresolved_mark, &mut |slot, hint| {
+        visit_read_slots(item, unresolved_mark, &mut |slot, hint, names| {
             let Some(source) = slot_source(slot, unresolved_mark) else {
                 return;
             };
-            if sources.contains(&source) && !first_reads.iter().any(|(s, ..)| *s == source) {
+            if reads_through_default(sources, &source, names)
+                && !first_reads.iter().any(|(s, ..)| *s == source)
+            {
                 first_reads.push((source, index, hint));
             }
         });
@@ -96,10 +104,13 @@ pub(super) fn read_whole_value_members(
     let body = std::mem::take(&mut module.body);
     for (index, mut item) in body.into_iter().enumerate() {
         let mut calls: Vec<(String, CallExpr)> = Vec::new();
-        visit_read_slots(&mut item, unresolved_mark, &mut |slot, _| {
+        visit_read_slots(&mut item, unresolved_mark, &mut |slot, _, names| {
             let Some(source) = slot_source(slot, unresolved_mark) else {
                 return;
             };
+            if !reads_through_default(sources, &source, names) {
+                return;
+            }
             let Some(binding) = bindings.get(&source) else {
                 return;
             };
@@ -203,6 +214,26 @@ fn require_binding_item(local: Ident, call: CallExpr) -> ModuleItem {
     }))))
 }
 
+/// The names a slot reads of the value: `None` for a pattern that may read
+/// any name (a rest element or a computed key).
+type ReadNames<'a> = Option<&'a [Atom]>;
+
+/// Whether the slot of `source` reading `names` reads through the default
+/// import: `source` is a whole-value source, and the slot reads no name its
+/// module adds with `module.exports.name = e`, which `UnEsm` exports by
+/// name. A slot that touches an added name is left to the ordinary
+/// classification as a whole.
+fn reads_through_default(
+    sources: &HashMap<String, Vec<Atom>>,
+    source: &str,
+    names: ReadNames<'_>,
+) -> bool {
+    let Some(added) = sources.get(source) else {
+        return false;
+    };
+    added.is_empty() || names.is_some_and(|names| !names.iter().any(|name| added.contains(name)))
+}
+
 /// The source of the `require(source)` call a slot holds.
 fn slot_source(slot: &Expr, unresolved_mark: Mark) -> Option<String> {
     match strip_parens(slot) {
@@ -219,13 +250,13 @@ fn strip_parens_owned(expr: Box<Expr>) -> Box<Expr> {
 }
 
 /// Calls `f` with each slot of `item` that holds a `require()` call whose
-/// value is read at the top level, with a name hint: the declarator's
+/// value is read at the top level, with a name hint (the declarator's
 /// binding, the first key of the pattern destructuring the value, or the
-/// member read on it.
+/// member read on it) and the names the slot reads.
 fn visit_read_slots(
     item: &mut ModuleItem,
     unresolved_mark: Mark,
-    f: &mut impl FnMut(&mut Box<Expr>, Option<Atom>),
+    f: &mut impl FnMut(&mut Box<Expr>, Option<Atom>, ReadNames<'_>),
 ) {
     match item {
         ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
@@ -236,14 +267,15 @@ fn visit_read_slots(
                 match &declarator.name {
                     Pat::Object(pattern) => {
                         if slot_source(init, unresolved_mark).is_some() {
-                            f(init, first_pattern_key(pattern));
+                            let names = pattern_names(pattern);
+                            f(init, first_pattern_key(pattern), names.as_deref());
                             continue;
                         }
                     }
                     Pat::Ident(binding) => {
                         let local = binding.id.sym.clone();
-                        if visit_member_chain_slot(init, unresolved_mark, &mut |slot, _| {
-                            f(slot, Some(local.clone()))
+                        if visit_member_chain_slot(init, unresolved_mark, &mut |slot, _, names| {
+                            f(slot, Some(local.clone()), names)
                         }) {
                             continue;
                         }
@@ -268,7 +300,7 @@ fn visit_read_slots(
 fn visit_member_chain_slot(
     expr: &mut Box<Expr>,
     unresolved_mark: Mark,
-    f: &mut impl FnMut(&mut Box<Expr>, Option<Atom>),
+    f: &mut impl FnMut(&mut Box<Expr>, Option<Atom>, ReadNames<'_>),
 ) -> bool {
     let Expr::Member(member) = expr.as_mut() else {
         return false;
@@ -280,7 +312,11 @@ fn visit_member_chain_slot(
         if name == "default" {
             return false;
         }
-        f(&mut member.obj, Some(name));
+        f(
+            &mut member.obj,
+            Some(name.clone()),
+            Some(std::slice::from_ref(&name)),
+        );
         return true;
     }
     visit_member_chain_slot(&mut member.obj, unresolved_mark, f)
@@ -291,7 +327,7 @@ fn visit_member_chain_slot(
 fn visit_call_arg_slots(
     expr: &mut Expr,
     unresolved_mark: Mark,
-    f: &mut impl FnMut(&mut Box<Expr>, Option<Atom>),
+    f: &mut impl FnMut(&mut Box<Expr>, Option<Atom>, ReadNames<'_>),
 ) {
     let Expr::Call(call) = expr else {
         return;
@@ -311,9 +347,31 @@ fn visit_call_arg_slots(
             else {
                 continue;
             };
-            f(&mut member.obj, Some(name));
+            f(
+                &mut member.obj,
+                Some(name.clone()),
+                Some(std::slice::from_ref(&name)),
+            );
         }
     }
+}
+
+/// The keys an object pattern reads, or `None` when it has a rest element
+/// or a computed key.
+fn pattern_names(pattern: &ObjectPat) -> Option<Vec<Atom>> {
+    pattern
+        .props
+        .iter()
+        .map(|prop| match prop {
+            ObjectPatProp::KeyValue(prop) => match &prop.key {
+                PropName::Ident(key) => Some(key.sym.clone()),
+                PropName::Str(key) => key.value.as_str().map(Atom::from),
+                _ => None,
+            },
+            ObjectPatProp::Assign(prop) => Some(prop.key.id.sym.clone()),
+            ObjectPatProp::Rest(_) => None,
+        })
+        .collect()
 }
 
 fn first_pattern_key(pattern: &ObjectPat) -> Option<Atom> {
@@ -337,16 +395,71 @@ mod tests {
 
     /// `source` after the pass, with `./p` a whole-value source.
     fn read(source: &str) -> String {
+        read_adding(source, &[])
+    }
+
+    /// `source` after the pass, with `./p` a whole-value source whose module
+    /// adds `added` to its value.
+    fn read_adding(source: &str, added: &[&str]) -> String {
         GLOBALS.set(&Default::default(), || {
             let cm: Lrc<SourceMap> = Default::default();
             let mut module =
                 crate::unpacker::parse_es_module(source, "consumer.js", cm.clone()).unwrap();
             let unresolved_mark = Mark::new();
             module.visit_mut_with(&mut resolver(unresolved_mark, Mark::new(), false));
-            let sources = HashSet::from_iter(["./p".to_string()]);
+            let added = added.iter().map(|name| Atom::from(*name)).collect();
+            let sources = HashMap::from_iter([("./p".to_string(), added)]);
             read_whole_value_members(&mut module, unresolved_mark, &sources);
             crate::unpacker::emit_esm::emit_module_raw(&module, cm).unwrap()
         })
+    }
+
+    #[test]
+    fn a_read_of_an_added_name_keeps_its_require() {
+        // `UnEsm` exports `beta` by name: its read stays a named import.
+        assert_eq!(
+            read_adding(
+                r#"var alpha = require("./p").alpha;
+var beta = require("./p").beta;
+use(require("./p").beta, require("./p").gamma);
+x = require("./p").beta.delta;
+"#,
+                &["beta"]
+            ),
+            r#"var p = require("./p");
+var alpha = p.alpha;
+var beta = require("./p").beta;
+use(require("./p").beta, p.gamma);
+x = require("./p").beta.delta;
+"#
+        );
+    }
+
+    #[test]
+    fn a_pattern_that_may_read_an_added_name_keeps_its_require() {
+        // A pattern reads through the default only when every key it reads
+        // is known and none is added.
+        let source = r#"var { alpha, beta } = require("./p");
+var { gamma, ...rest } = require("./p");
+var { [key]: delta } = require("./p");
+"#;
+        assert_eq!(read_adding(source, &["beta"]), source);
+        assert_eq!(
+            read_adding(
+                r#"var { alpha, "gamma": g = 1 } = require("./p");"#,
+                &["beta"]
+            ),
+            r#"var p = require("./p");
+var { alpha, "gamma": g = 1 } = p;
+"#
+        );
+        // Without added names, any pattern reads through the default.
+        assert_eq!(
+            read(r#"var { gamma, ...rest } = require("./p");"#),
+            r#"var p = require("./p");
+var { gamma, ...rest } = p;
+"#
+        );
     }
 
     #[test]

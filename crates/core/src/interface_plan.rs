@@ -73,9 +73,9 @@
 use swc_core::atoms::Atom;
 use swc_core::common::Mark;
 use swc_core::ecma::ast::{
-    AssignExpr, AssignOp, AssignTarget, BinaryOp, CallExpr, Callee, Expr, ExprOrSpread, Ident, Lit,
-    MemberExpr, MemberProp, Module, ModuleItem, NewExpr, Pat, SimpleAssignTarget, Stmt, Str,
-    UnaryExpr, UnaryOp, UpdateExpr,
+    AssignExpr, AssignOp, AssignTarget, BinaryOp, CallExpr, Callee, Decl, Expr, ExprOrSpread,
+    Ident, Lit, MemberExpr, MemberProp, Module, ModuleItem, NewExpr, Pat, SimpleAssignTarget, Stmt,
+    Str, UnaryExpr, UnaryOp, UpdateExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -109,8 +109,9 @@ pub(crate) struct PlanModule<'a> {
     /// ([`exports_only_whole_value`]).
     pub(crate) exports_whole_value: bool,
     /// Requiring the module returns the `v` of its one top-level
-    /// `module.exports = v`, its default export ([`required_whole_value`]).
-    pub(crate) required_whole_value: bool,
+    /// `module.exports = v`, its default export, with the names the module
+    /// adds to `v` ([`required_whole_value`]).
+    pub(crate) required_whole_value: Option<Vec<Atom>>,
     /// The module is a CommonJS passthrough of this source
     /// ([`passthrough_source`]).
     pub(crate) passthrough: Option<Atom>,
@@ -382,67 +383,127 @@ pub(crate) fn exports_only_whole_value(module: &Module, unresolved_mark: Mark) -
 /// through the default import. Read on the input before any rule, like
 /// [`exports_only_whole_value`], which it relaxes for the consumer's side
 /// only: a provider that also reads its value is still kept CommonJS when a
-/// consumer writes to it.
+/// consumer writes to it. Returns the names the module adds to `v`, which
+/// `UnEsm` exports by name instead.
 ///
 /// The module assigns `module.exports` once, at the top level, and uses the
 /// free `module` only as `module.exports`; `v` is not rooted at a `require`
 /// call or at `module.exports`. Every other `module.exports` is read: a
 /// member read, a method call, or the bare value, but never the target of
-/// an assignment, update, or `delete` (a member write may become a named
-/// export) and never an argument of a call (`Object.defineProperty` may
-/// define one). The free `exports` appears only in `__esModule` marks on
+/// an assignment, update, or `delete` and never an argument of a call
+/// (`Object.defineProperty` may define a name `UnEsm` exports by name). The
+/// one write allowed adds a name: `module.exports.name = e` in a top-level
+/// statement after the assignment, `name` neither `default` nor
+/// `__esModule`. The free `exports` appears only in `__esModule` marks on
 /// it, which mark the object the assignment orphans. A direct eval is
 /// trusted not to touch `module` or `exports`. Phase 1a also rejects a
 /// module `UnEsm` lowers to the names of an esbuild namespace
 /// (`lowers_to_commonjs_namespace`).
-pub(crate) fn required_whole_value(module: &Module, unresolved_mark: Mark) -> bool {
-    let Some(assignments) = commonjs_value_assignments_through_eval(module, unresolved_mark) else {
-        return false;
-    };
+pub(crate) fn required_whole_value(module: &Module, unresolved_mark: Mark) -> Option<Vec<Atom>> {
+    let assignments = commonjs_value_assignments_through_eval(module, unresolved_mark)?;
     if assignments.top_level != 1 || assignments.total != 1 {
-        return false;
+        return None;
     }
-    // The references of the free `exports` that sit in an `__esModule` mark
-    // on it, among the statements that run on every evaluation.
+    // Over the expressions that run on every evaluation, in order: the one
+    // holding the assignment, the writes that add a name with the one each
+    // sits in, and the references of the free `exports` in an `__esModule`
+    // mark on it.
+    let mut assignment_at = None;
+    let mut added: Vec<(usize, Atom)> = Vec::new();
+    let mut allowed_writes: HashSet<*const AssignExpr> = HashSet::default();
     let mut marked_exports = 0;
-    for item in &module.body {
-        let ModuleItem::Stmt(Stmt::Expr(statement)) = item else {
-            continue;
-        };
-        let exprs: Vec<&Expr> = match strip_parens(&statement.expr) {
-            Expr::Seq(seq) => seq.exprs.iter().map(|expr| strip_parens(expr)).collect(),
-            expr => vec![expr],
-        };
-        for expr in exprs {
-            if marks_free_exports(expr, unresolved_mark) {
-                let mut count = FreeExportsCount {
-                    unresolved_mark,
-                    count: 0,
-                };
-                expr.visit_with(&mut count);
-                marked_exports += count.count;
-            }
+    let top_level_exprs = module.body.iter().flat_map(|item| -> Vec<&Expr> {
+        match item {
+            ModuleItem::Stmt(Stmt::Expr(statement)) => match strip_parens(&statement.expr) {
+                Expr::Seq(seq) => seq.exprs.iter().map(|expr| strip_parens(expr)).collect(),
+                expr => vec![expr],
+            },
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => var
+                .decls
+                .iter()
+                .filter_map(|declarator| declarator.init.as_deref())
+                .map(strip_parens)
+                .collect(),
+            _ => Vec::new(),
         }
+    });
+    for (at, expr) in top_level_exprs.enumerate() {
+        if marks_free_exports(expr, unresolved_mark) {
+            let mut count = FreeExportsCount {
+                unresolved_mark,
+                count: 0,
+            };
+            expr.visit_with(&mut count);
+            marked_exports += count.count;
+            continue;
+        }
+        // An assignment chain: `a = module.exports = v`,
+        // `module.exports.x = module.exports.y = e`.
+        let mut current = expr;
+        while let Expr::Assign(assign) = current {
+            if let AssignTarget::Simple(SimpleAssignTarget::Member(target)) = &assign.left {
+                if is_module_exports(&target.obj, unresolved_mark) {
+                    if let MemberProp::Ident(name) = &target.prop {
+                        if assign.op == AssignOp::Assign
+                            && name.sym != "default"
+                            && name.sym != "__esModule"
+                        {
+                            added.push((at, name.sym.clone()));
+                            allowed_writes.insert(assign as *const AssignExpr);
+                        }
+                    }
+                } else if is_unresolved_ident_member(target, "module", "exports", unresolved_mark) {
+                    assignment_at = Some(at);
+                }
+            }
+            current = strip_parens(&assign.right);
+        }
+    }
+    // A name written before the assignment, or in the same expression, is
+    // written to the object the assignment orphans.
+    let assignment_at = assignment_at?;
+    if added.iter().any(|(at, _)| *at <= assignment_at) {
+        return None;
     }
     if collect_marks_es_module(module, unresolved_mark) && marked_exports == 0 {
         // A mark through `module.exports`, or one of another form.
-        return false;
+        return None;
     }
     let mut surface = ReadOnlySurface {
         unresolved_mark,
+        allowed_writes: &allowed_writes,
         exports: 0,
         rejected: false,
     };
     module.visit_with(&mut surface);
-    !surface.rejected && surface.exports == marked_exports
+    if surface.rejected || surface.exports != marked_exports {
+        return None;
+    }
+    let mut names: Vec<Atom> = Vec::new();
+    for (_, name) in added {
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    Some(names)
+}
+
+/// `object.property` with the free `object`.
+fn is_unresolved_ident_member(
+    member: &MemberExpr,
+    object: &str,
+    property: &str,
+    unresolved_mark: Mark,
+) -> bool {
+    matches!(strip_parens(&member.obj), Expr::Ident(ident)
+        if is_unresolved_ident(ident, object, unresolved_mark))
+        && matches!(&member.prop, MemberProp::Ident(prop) if prop.sym == property)
 }
 
 /// `module.exports` with the free `module`.
 fn is_module_exports(expr: &Expr, unresolved_mark: Mark) -> bool {
     matches!(strip_parens(expr), Expr::Member(member)
-        if matches!(strip_parens(&member.obj), Expr::Ident(object)
-            if is_unresolved_ident(object, "module", unresolved_mark))
-            && matches!(&member.prop, MemberProp::Ident(prop) if prop.sym == "exports"))
+        if is_unresolved_ident_member(member, "module", "exports", unresolved_mark))
 }
 
 /// `module.exports`, or a member chain on it.
@@ -485,14 +546,17 @@ impl Visit for FreeExportsCount {
 }
 
 /// Rejects every use of `module.exports` [`required_whole_value`] does not
-/// read as a read, and counts the free `exports`.
-struct ReadOnlySurface {
+/// read as a read or a write that adds a name, and counts the free
+/// `exports`.
+struct ReadOnlySurface<'a> {
     unresolved_mark: Mark,
+    /// The writes that add a name.
+    allowed_writes: &'a HashSet<*const AssignExpr>,
     exports: usize,
     rejected: bool,
 }
 
-impl ReadOnlySurface {
+impl ReadOnlySurface<'_> {
     fn reject_passed_value(&mut self, args: &[ExprOrSpread]) {
         if args
             .iter()
@@ -503,19 +567,21 @@ impl ReadOnlySurface {
     }
 }
 
-impl Visit for ReadOnlySurface {
+impl Visit for ReadOnlySurface<'_> {
     fn visit_assign_expr(&mut self, assign: &AssignExpr) {
         if let AssignTarget::Simple(SimpleAssignTarget::Member(target)) = &assign.left {
-            let whole = matches!(strip_parens(&target.obj), Expr::Ident(object)
-                if is_unresolved_ident(object, "module", self.unresolved_mark))
-                && matches!(&target.prop, MemberProp::Ident(prop) if prop.sym == "exports");
+            let whole =
+                is_unresolved_ident_member(target, "module", "exports", self.unresolved_mark);
             if whole
                 && (is_rooted_at_require(&assign.right, self.unresolved_mark)
                     || is_rooted_at_module_exports(&assign.right, self.unresolved_mark))
             {
                 self.rejected = true;
             }
-            if !whole && is_rooted_at_module_exports(&target.obj, self.unresolved_mark) {
+            if !whole
+                && is_rooted_at_module_exports(&target.obj, self.unresolved_mark)
+                && !self.allowed_writes.contains(&(assign as *const AssignExpr))
+            {
                 self.rejected = true;
             }
         }
@@ -618,8 +684,9 @@ pub(crate) struct InterfacePlan {
     helper_sources: HashMap<String, Vec<(Atom, String)>>,
     /// For each consumer, by canonical key: the sources it requires that
     /// resolve to another module whose required value is the `v` of its one
-    /// `module.exports = v` ([`PlanModule::required_whole_value`]).
-    whole_value_sources: HashMap<String, Vec<Atom>>,
+    /// `module.exports = v` ([`PlanModule::required_whole_value`]), each with
+    /// the names that module adds to `v`.
+    whole_value_sources: HashMap<String, Vec<(Atom, Vec<Atom>)>>,
     /// For each consumer, by canonical key: the sources it requires that
     /// name a passthrough, with the specifier of the module the chain ends
     /// at.
@@ -643,10 +710,14 @@ impl InterfacePlan {
             .filter(|module| module.exports_whole_value)
             .map(|module| canonical_module_key(module.filename))
             .collect();
-        let required_whole_value: HashSet<String> = modules
+        let required_whole_value: HashMap<String, &[Atom]> = modules
             .iter()
-            .filter(|module| module.required_whole_value)
-            .map(|module| canonical_module_key(module.filename))
+            .filter_map(|module| {
+                Some((
+                    canonical_module_key(module.filename),
+                    module.required_whole_value.as_deref()?,
+                ))
+            })
             .collect();
         let passthroughs: HashMap<String, (&str, Atom)> = modules
             .iter()
@@ -798,20 +869,20 @@ impl InterfacePlan {
                 }
             }
         }
-        let mut whole_value_sources: HashMap<String, Vec<Atom>> = HashMap::default();
+        let mut whole_value_sources: HashMap<String, Vec<(Atom, Vec<Atom>)>> = HashMap::default();
         if !required_whole_value.is_empty() {
             for module in &modules {
                 let consumer = canonical_module_key(module.filename);
-                let mut sources: Vec<Atom> = Vec::new();
+                let mut sources: Vec<(Atom, Vec<Atom>)> = Vec::new();
                 for edge in module.edges.iter().chain(module.edges.unkeyed()) {
                     let (source, Some(provider)) = provider_of(module, &edge.source) else {
                         continue;
                     };
-                    if sources.contains(&source) {
+                    if provider == consumer || sources.iter().any(|(listed, _)| *listed == source) {
                         continue;
                     }
-                    if provider != consumer && required_whole_value.contains(&provider) {
-                        sources.push(source);
+                    if let Some(added) = required_whole_value.get(&provider) {
+                        sources.push((source, added.to_vec()));
                     }
                 }
                 if !sources.is_empty() {
@@ -883,13 +954,15 @@ impl InterfacePlan {
     /// required value is the `v` of its one `module.exports = v`
     /// ([`required_whole_value`]): `require(source)` returns `v`, which
     /// `UnEsm` makes that module's default export when it converts it, and
-    /// which stays its `module.exports` when it does not.
-    pub(crate) fn whole_value_sources(&self, filename: &str) -> HashSet<String> {
+    /// which stays its `module.exports` when it does not. Each comes with
+    /// the names that module adds to `v` with `module.exports.name = e`,
+    /// which `UnEsm` exports by name instead.
+    pub(crate) fn whole_value_sources(&self, filename: &str) -> HashMap<String, Vec<Atom>> {
         self.whole_value_sources
             .get(&canonical_module_key(filename))
             .into_iter()
             .flatten()
-            .map(|source| source.to_string())
+            .map(|(source, added)| (source.to_string(), added.clone()))
             .collect()
     }
 
@@ -968,6 +1041,10 @@ mod tests {
     }
 
     fn required_whole(source: &str) -> bool {
+        added_names(source).is_some()
+    }
+
+    fn added_names(source: &str) -> Option<Vec<Atom>> {
         with_module(source, required_whole_value)
     }
 
@@ -1015,7 +1092,7 @@ mod tests {
             exports_object_writable: consumer_writable,
             helpers: None,
             exports_whole_value: false,
-            required_whole_value: false,
+            required_whole_value: None,
             passthrough: None,
             exports_from_requires: Vec::new(),
         }];
@@ -1026,7 +1103,7 @@ mod tests {
                 exports_object_writable: !closed.contains(name),
                 helpers: None,
                 exports_whole_value: whole.contains(name),
-                required_whole_value: whole.contains(name),
+                required_whole_value: whole.contains(name).then(Vec::new),
                 passthrough: None,
                 exports_from_requires: Vec::new(),
             });
@@ -1160,7 +1237,7 @@ h(require("./other.js"));"#,
                 exports_object_writable: true,
                 helpers: None,
                 exports_whole_value: false,
-                required_whole_value: false,
+                required_whole_value: None,
                 passthrough: None,
                 exports_from_requires: Vec::new(),
             },
@@ -1170,7 +1247,7 @@ h(require("./other.js"));"#,
                 exports_object_writable: true,
                 helpers: Some(&helpers),
                 exports_whole_value: false,
-                required_whole_value: false,
+                required_whole_value: None,
                 passthrough: None,
                 exports_from_requires: Vec::new(),
             },
@@ -1180,7 +1257,7 @@ h(require("./other.js"));"#,
                 exports_object_writable: true,
                 helpers: Some(&helpers),
                 exports_whole_value: false,
-                required_whole_value: false,
+                required_whole_value: None,
                 passthrough: None,
                 exports_from_requires: Vec::new(),
             },
@@ -1429,7 +1506,7 @@ h.patched = true;"#,
                 exports_object_writable: true,
                 helpers: None,
                 exports_whole_value: false,
-                required_whole_value: false,
+                required_whole_value: None,
                 passthrough: None,
                 exports_from_requires: Vec::new(),
             },
@@ -1439,7 +1516,7 @@ h.patched = true;"#,
                 exports_object_writable: true,
                 helpers: Some(&helpers),
                 exports_whole_value: true,
-                required_whole_value: true,
+                required_whole_value: Some(Vec::new()),
                 passthrough: None,
                 exports_from_requires: Vec::new(),
             },
@@ -1510,6 +1587,68 @@ h.patched = true;"#,
     }
 
     #[test]
+    fn a_top_level_write_after_the_assignment_adds_a_name() {
+        for (source, names) in [
+            (
+                "module.exports = {}; module.exports.beta = 2;",
+                &["beta"][..],
+            ),
+            (
+                "module.exports = make(), module.exports.beta = 2, module.exports.beta = 3;",
+                &["beta"],
+            ),
+            (
+                "module.exports = make(); var b = module.exports.beta = module.exports.gamma = 2;",
+                &["beta", "gamma"],
+            ),
+            ("module.exports = make(); window.api = module.exports;", &[]),
+        ] {
+            let names: Vec<Atom> = names.iter().map(|name| Atom::from(*name)).collect();
+            assert_eq!(added_names(source), Some(names), "{source}");
+        }
+        for source in [
+            // The object the assignment orphans: before it, or in the same
+            // expression, whose target is read before the assignment runs.
+            "module.exports.beta = 2; module.exports = make();",
+            "module.exports.beta = module.exports = make();",
+            // Not an added name: the interop names, a compound or computed
+            // write, or one that may not run.
+            "module.exports = make(); module.exports.default = 2;",
+            "module.exports = make(); module.exports.__esModule = true;",
+            "module.exports = make(); module.exports.beta += 2;",
+            "module.exports = make(); module.exports[key] = 2;",
+            "module.exports = make(); if (c) module.exports.beta = 2;",
+            "module.exports = make(); f(module.exports.beta = 2);",
+        ] {
+            assert_eq!(added_names(source), None, "{source}");
+        }
+    }
+
+    #[test]
+    fn whole_value_sources_carry_the_names_a_provider_adds() {
+        let consumer = edges(r#"var a = require("./adds.js").alpha;"#);
+        let empty = RequireEdges::default();
+        let module = |filename, edges, required_whole_value| PlanModule {
+            filename,
+            edges,
+            exports_object_writable: true,
+            helpers: None,
+            exports_whole_value: false,
+            required_whole_value,
+            passthrough: None,
+            exports_from_requires: Vec::new(),
+        };
+        let plan = InterfacePlan::build([
+            module("src/consumer.js", &consumer, None),
+            module("src/adds.js", &empty, Some(vec![Atom::from("beta")])),
+        ]);
+        assert_eq!(
+            plan.whole_value_sources("src/consumer.js"),
+            HashMap::from_iter([("./adds.js".to_string(), vec![Atom::from("beta")])])
+        );
+    }
+
+    #[test]
     fn a_provider_required_whole_but_not_only_whole_is_still_kept_when_written() {
         let consumer = edges(
             r#"var name = require("./reader.js").name;
@@ -1528,12 +1667,12 @@ r.flag = 1;"#,
             exports_from_requires: Vec::new(),
         };
         let plan = InterfacePlan::build([
-            module("src/consumer.js", &consumer, false),
-            module("src/reader.js", &empty, true),
+            module("src/consumer.js", &consumer, None),
+            module("src/reader.js", &empty, Some(Vec::new())),
         ]);
         assert_eq!(
             plan.whole_value_sources("src/consumer.js"),
-            HashSet::from_iter(["./reader.js".to_string()])
+            HashMap::from_iter([("./reader.js".to_string(), Vec::new())])
         );
         assert!(plan.keeps_commonjs("src/reader.js"));
     }
@@ -1557,7 +1696,7 @@ module.exports = make();"#,
             exports_object_writable: true,
             helpers: None,
             exports_whole_value,
-            required_whole_value: exports_whole_value,
+            required_whole_value: exports_whole_value.then(Vec::new),
             passthrough: None,
             exports_from_requires: Vec::new(),
         };
@@ -1568,7 +1707,7 @@ module.exports = make();"#,
         ]);
         assert_eq!(
             plan.whole_value_sources("src/consumer.js"),
-            HashSet::from_iter(["./whole.js".to_string()])
+            HashMap::from_iter([("./whole.js".to_string(), Vec::new())])
         );
         assert!(plan.whole_value_sources("src/whole.js").is_empty());
     }
@@ -1636,7 +1775,7 @@ module.exports = make();"#,
             exports_object_writable: true,
             helpers: None,
             exports_whole_value: false,
-            required_whole_value: false,
+            required_whole_value: None,
             passthrough: None,
             exports_from_requires: Vec::new(),
         }];
@@ -1647,7 +1786,7 @@ module.exports = make();"#,
                 exports_object_writable: true,
                 helpers: None,
                 exports_whole_value: *whole,
-                required_whole_value: *whole,
+                required_whole_value: whole.then(Vec::new),
                 passthrough: passthrough.map(Atom::from),
                 exports_from_requires: passthrough
                     .iter()
@@ -1748,7 +1887,7 @@ p.f = 1;"#,
             exports_object_writable: true,
             helpers: None,
             exports_whole_value: false,
-            required_whole_value: false,
+            required_whole_value: None,
             passthrough: None,
             exports_from_requires: exports_from_requires
                 .iter()
@@ -1834,7 +1973,7 @@ var w = require("./whole-pass.js").size;"#,
             exports_object_writable: true,
             helpers,
             exports_whole_value: whole,
-            required_whole_value: whole,
+            required_whole_value: whole.then(Vec::new),
             passthrough: passthrough.map(Atom::from),
             exports_from_requires: passthrough
                 .iter()
@@ -1873,7 +2012,7 @@ var w = require("./whole-pass.js").size;"#,
         );
         assert_eq!(
             plan.whole_value_sources("src/consumer.js"),
-            HashSet::from_iter(["./whole.js".to_string()])
+            HashMap::from_iter([("./whole.js".to_string(), Vec::new())])
         );
     }
 

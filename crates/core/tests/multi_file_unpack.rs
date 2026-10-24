@@ -4958,3 +4958,36 @@ fn a_member_read_of_a_provider_that_reads_its_own_value_reads_its_default_import
         }
     }
 }
+
+#[test]
+fn a_name_a_whole_value_provider_adds_stays_a_named_import() {
+    // `UnEsm` exports `beta` by name, so its read stays a named import;
+    // every other member is read through the default import.
+    let modules = r#"
+    100: function(module) {
+      module.exports = makeValue(), module.exports.beta = { gamma: 2 };
+      function makeValue() { return { alpha: function () { return 1; } }; }
+    },
+    400: function(module, exports, __webpack_require__) {
+      "use strict";
+      var alpha = __webpack_require__(100).alpha, beta = __webpack_require__(100).beta;
+      exports.run = function () { return [alpha(), beta]; };
+    }"#;
+    let source = helper_provider_bundle(modules);
+    for emit_source_map in [false, true] {
+        let output = unpack_one(&source, emit_source_map);
+        assert_valid_module_graph(&output.modules);
+        let provider = module_named(&output.modules, "module-100.js");
+        assert!(provider.contains("export default"), "{provider}");
+        assert!(provider.contains("export const beta"), "{provider}");
+        let consumer = consumer_of(&output);
+        assert!(
+            consumer.contains("import _alpha, { beta } from \"./module-100.js\""),
+            "{consumer}"
+        );
+        assert!(
+            consumer.contains("const alpha = _alpha.alpha;"),
+            "{consumer}"
+        );
+    }
+}

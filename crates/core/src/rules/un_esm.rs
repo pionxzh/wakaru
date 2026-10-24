@@ -73,9 +73,10 @@ pub struct UnEsm {
     import_tags: ImportTags,
     /// A consumer in the input writes to this module's `exports` object.
     written_exports: bool,
-    /// The sources this module requires whose only export is one
-    /// `module.exports = v` (the unpack plan).
-    whole_value_sources: HashSet<String>,
+    /// The sources this module requires whose required value is the `v` of
+    /// their one `module.exports = v`, each with the names its module adds
+    /// to `v` (the unpack plan).
+    whole_value_sources: HashMap<String, Vec<Atom>>,
 }
 
 impl UnEsm {
@@ -89,7 +90,7 @@ impl UnEsm {
             later_unpack_stages: kept_require::LaterUnpackStages::None,
             import_tags: ImportTags::default(),
             written_exports: false,
-            whole_value_sources: HashSet::default(),
+            whole_value_sources: HashMap::default(),
         }
     }
 
@@ -101,12 +102,13 @@ impl UnEsm {
         self
     }
 
-    /// The sources this module requires that name a module whose only export
-    /// is one `module.exports = v` (the unpack plan,
+    /// The sources this module requires whose required value is the `v` of
+    /// their one `module.exports = v`, each with the names its module adds
+    /// to `v` (the unpack plan,
     /// [`crate::interface_plan::InterfacePlan::whole_value_sources`]): a
-    /// member read on such a require reads the default import
-    /// ([`whole_value_members`]).
-    pub(crate) fn with_whole_value_sources(mut self, sources: HashSet<String>) -> Self {
+    /// member read on such a require reads the default import unless it
+    /// reads an added name ([`whole_value_members`]).
+    pub(crate) fn with_whole_value_sources(mut self, sources: HashMap<String, Vec<Atom>>) -> Self {
         self.whole_value_sources = sources;
         self
     }

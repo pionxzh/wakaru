@@ -383,7 +383,12 @@ above. The module assigns `module.exports` once at the top level and uses
 at `module.exports`. Every other `module.exports` may be read (a member, a
 method call, the bare value) but is never written, updated, deleted, or
 passed to a call, where `Object.defineProperty` may define a name `UnEsm`
-then exports apart from the default. The free `exports` appears only in
+then exports apart from the default. The one write allowed adds a name:
+`module.exports.name = e` in a top-level statement after the assignment
+(`name` neither `default` nor `__esModule`), which `UnEsm` exports by name,
+not on the default. The plan lists such names with the source; a read of
+one keeps the named import, and so does an object pattern that reads one,
+has a rest element, or has a computed key. The free `exports` appears only in
 `__esModule` marks on it: they mark the object the assignment orphans, not
 `v`. A direct eval is trusted, as the Phase 2 import repair trusted it.
 `require(p)` of such a provider returns `v`, and its ES form is
@@ -660,9 +665,10 @@ Neither proof creates a default-object fact available to consumers.
   reaches it with no named import to repair, because `UnEsm` already read
   `require("./x").name` through the default import (the plan, above), present
   or absent, whatever the value. What it still repairs is a provider the plan
-  does not prove whole-value (an object default with named writes beside it,
-  `module.exports = { a }; module.exports.b = 2`, or a provider that marks
-  `module.exports` itself `__esModule`) and
+  does not prove whole-value (one that writes a name through `module.exports`
+  in a function or a condition, or marks `module.exports` itself
+  `__esModule`), the other keys of an object pattern left to named imports
+  because it reads a name a whole-value provider adds, and
   a specifier the input wrote that `UnEsm` merged into a synthesized import.
   Authored ESM imports, synthesized bindings without
   either a source position or a proven mutable-local capture, and providers
