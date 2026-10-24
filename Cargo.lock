@@ -2023,7 +2023,7 @@ checksum = "5c3082ca00d5a5ef149bb8b555a72ae84c9c59f7250f013ac822ac2e49b19c64"
 
 [[package]]
 name = "wakaru"
-version = "1.14.0"
+version = "1.15.0"
 dependencies = [
  "anyhow",
  "ruzstd",
@@ -2033,7 +2033,7 @@ dependencies = [
 
 [[package]]
 name = "wakaru-cli"
-version = "1.14.0"
+version = "1.15.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2052,7 +2052,7 @@ dependencies = [
 
 [[package]]
 name = "wakaru-core"
-version = "1.14.0"
+version = "1.15.0"
 dependencies = [
  "anyhow",
  "insta",
@@ -2068,7 +2068,7 @@ dependencies = [
 
 [[package]]
 name = "wakaru-formatter"
-version = "1.14.0"
+version = "1.15.0"
 dependencies = [
  "oxc_allocator",
  "oxc_formatter",
@@ -2080,7 +2080,7 @@ dependencies = [
 
 [[package]]
 name = "wakaru-wasm"
-version = "1.14.0"
+version = "1.15.0"
 dependencies = [
  "console_error_panic_hook",
  "getrandom 0.3.4",

@@ -26,6 +26,8 @@ wakaru input.js -o output.js
   scope-hoisted Rollup/Vite output.
 - Extracts Bun single-file executables (PE, Mach-O, ELF) and unpacks their
   embedded JavaScript.
+- Unpacks Google Tag Manager containers (`gtm.js`) into their Custom
+  JavaScript variables and Custom HTML scripts.
 - Recovers readable JavaScript from transpiler and minifier output.
 - Supports source maps for name recovery and output mappings.
 - Offers `minimal`, `standard`, and `aggressive` rewrite levels.
@@ -63,6 +65,9 @@ wakaru ./compiled-app --unpack -o out/
 - Directory inputs are recursive and detect-only; skipped files are not copied.
 - A Bun single-file executable input has its embedded JavaScript entries sent
   through the same unpack pipeline.
+- A Google Tag Manager container (`gtm.js`, as a file or stdin) is split into
+  one file per Custom JavaScript variable and Custom HTML script, plus an
+  `index.md` that lists the tags and their triggers.
 
 ### Extract a Bun single-file executable
 
@@ -75,6 +80,16 @@ Writes every embedded file record — JavaScript, assets, and binaries — to
 output paths. An app compiled with `--sourcemap` also embeds its original
 source files, which are written to `extracted/sources/`. Extraction only writes the files; it does not decompile or
 execute them.
+
+### Decode a React Server Components payload (experimental)
+
+```bash
+wakaru rsc payload.rsc -o rsc.json
+wakaru rsc page.html -o rsc.json
+```
+
+Reads a raw RSC payload, or a saved Next.js page that carries one, and prints
+it as JSON. The output format can change in any release.
 
 ### Formatter
 
