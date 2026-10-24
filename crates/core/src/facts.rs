@@ -1728,6 +1728,23 @@ pub(crate) fn commonjs_value_assignments(
     module: &Module,
     unresolved_mark: Mark,
 ) -> Option<ModuleExportsAssignments> {
+    count_commonjs_value_assignments(module, unresolved_mark, false)
+}
+
+/// [`commonjs_value_assignments`] of a module that may call a direct eval,
+/// whose code is trusted not to touch `module`.
+pub(crate) fn commonjs_value_assignments_through_eval(
+    module: &Module,
+    unresolved_mark: Mark,
+) -> Option<ModuleExportsAssignments> {
+    count_commonjs_value_assignments(module, unresolved_mark, true)
+}
+
+fn count_commonjs_value_assignments(
+    module: &Module,
+    unresolved_mark: Mark,
+    through_eval: bool,
+) -> Option<ModuleExportsAssignments> {
     struct Collector {
         unresolved_mark: Mark,
         module_uses: usize,
@@ -1832,12 +1849,11 @@ pub(crate) fn commonjs_value_assignments(
         has_direct_eval: false,
     };
     module.visit_with(&mut collector);
-    (collector.module_uses == collector.member_uses && !collector.has_direct_eval).then_some(
-        ModuleExportsAssignments {
+    (collector.module_uses == collector.member_uses && (through_eval || !collector.has_direct_eval))
+        .then_some(ModuleExportsAssignments {
             top_level: top_level_assignments,
             total: collector.assignments,
-        },
-    )
+        })
 }
 
 /// Whether the module, as extracted, ends in Next's default-object tail, so

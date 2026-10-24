@@ -4890,3 +4890,71 @@ fn a_provider_method_reading_its_own_exports_reads_the_default_binding() {
         assert!(!provider.contains("module.exports"), "{provider}");
     }
 }
+
+#[test]
+fn a_member_read_of_a_provider_that_reads_its_own_value_reads_its_default_import() {
+    // Each provider's `require` returns the value of its one
+    // `module.exports = v`, though it reads that value itself, calls a
+    // direct eval, or marks the `exports` object the assignment orphans.
+    let modules = r#"
+    100: function(module) {
+      module.exports = {
+        alpha: function () { return module.exports.beta(); },
+        beta: function () { return 2; }
+      };
+    },
+    110: function(module) {
+      module.exports = makeStore();
+      function makeStore() { return { size: 3 }; }
+      globalThis.syntheticStore = module.exports;
+    },
+    120: function(module) {
+      module.exports = makeStore();
+      function makeStore() { return { size: 3 }; }
+      eval("var probe = 1");
+    },
+    130: function(module) {
+      module.exports = makeStore();
+      function makeStore() { return { size: 3 }; }
+      eval(globalThis.syntheticCode);
+    },
+    140: function(module, exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      module.exports = makeStore();
+      function makeStore() { return { size: 3 }; }
+    },
+    400: function(module, exports, __webpack_require__) {
+      "use strict";
+      var alpha = __webpack_require__(100).alpha;
+      var read = __webpack_require__(110).size;
+      var literal = __webpack_require__(120).size;
+      var unknown = __webpack_require__(130).size;
+      var marked = __webpack_require__(140).size;
+      exports.run = function () { return [alpha(), read, literal, unknown, marked]; };
+    }"#;
+    let source = helper_provider_bundle(modules);
+    for emit_source_map in [false, true] {
+        let output = unpack_one(&source, emit_source_map);
+        assert_valid_module_graph(&output.modules);
+        assert!(
+            interop_warnings(&output).is_empty(),
+            "{:#?}",
+            output.warnings
+        );
+        let consumer = consumer_of(&output);
+        assert!(!consumer.contains("import {"), "{consumer}");
+        for (local, id) in [
+            ("_alpha", "100"),
+            ("_read", "110"),
+            ("_literal", "120"),
+            ("_unknown", "130"),
+            ("_marked", "140"),
+        ] {
+            assert!(
+                consumer.contains(&format!("import {local} from \"./module-{id}.js\"")),
+                "{consumer}"
+            );
+        }
+    }
+}

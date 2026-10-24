@@ -50,7 +50,8 @@ use crate::facts::{
     is_normalized_commonjs_default, HelperFacts, ModuleFactsMap,
 };
 use crate::interface_plan::{
-    exports_from_requires, exports_only_whole_value, passthrough_source, InterfacePlan, PlanModule,
+    exports_from_requires, exports_only_whole_value, passthrough_source, required_whole_value,
+    InterfacePlan, PlanModule,
 };
 use crate::kept_require::run_kept_require_default_reads;
 use crate::namespace_decomposition::run_namespace_decomposition_with_tags;
@@ -215,6 +216,9 @@ struct Phase1aModule {
     /// The module's only export is one top-level `module.exports = v`, read
     /// on the input.
     exports_whole_value: bool,
+    /// Requiring the module returns that `v`, its default export, read on
+    /// the input (`required_whole_value`).
+    required_whole_value: bool,
     /// The module is a CommonJS passthrough of this source, on the AST
     /// `UnEsm` will see.
     passthrough: Option<swc_core::atoms::Atom>,
@@ -885,6 +889,7 @@ pub(super) fn unpack_multi_module_with_plan(
             };
             let marks_es_module = collect_marks_es_module(&module, unresolved_mark);
             let exports_whole_value = exports_only_whole_value(&module, unresolved_mark);
+            let required_whole_value = required_whole_value(&module, unresolved_mark);
             let raw = RawCommonJsFacts {
                 commonjs_default_object,
                 commonjs_default_attached_properties,
@@ -918,8 +923,9 @@ pub(super) fn unpack_multi_module_with_plan(
             // `UnEsm` lowers esbuild's `module.exports = __toCommonJS(ns)` to
             // the namespace's names, so the module does not export the
             // assigned value as its default.
-            let exports_whole_value = exports_whole_value
-                && !lowers_to_commonjs_namespace(&module, unresolved_mark);
+            let lowers_namespace = lowers_to_commonjs_namespace(&module, unresolved_mark);
+            let exports_whole_value = exports_whole_value && !lowers_namespace;
+            let required_whole_value = required_whole_value && !lowers_namespace;
             let passthrough = exports_object_writable
                 .then(|| passthrough_source(&module, unresolved_mark))
                 .flatten();
@@ -936,6 +942,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 exports_object_writable,
                 helpers,
                 exports_whole_value,
+                required_whole_value,
                 passthrough,
                 exports_from_requires,
                 residual_warning,
@@ -951,6 +958,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 exports_object_writable,
                 helpers,
                 exports_whole_value,
+                required_whole_value,
                 passthrough,
                 exports_from_requires,
                 warning,
@@ -966,6 +974,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 exports_object_writable,
                 helpers,
                 exports_whole_value,
+                required_whole_value,
                 passthrough,
                 exports_from_requires,
                 warning,
@@ -997,6 +1006,7 @@ pub(super) fn unpack_multi_module_with_plan(
             exports_object_writable: _,
             helpers: _,
             exports_whole_value: _,
+            required_whole_value: _,
             passthrough: _,
             exports_from_requires: _,
             warning,
@@ -1173,6 +1183,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 exports_object_writable: pending.exports_object_writable,
                 helpers: pending.helpers.as_ref(),
                 exports_whole_value: pending.exports_whole_value,
+                required_whole_value: pending.required_whole_value,
                 passthrough: pending.passthrough.clone(),
                 exports_from_requires: pending.exports_from_requires.clone(),
             }),

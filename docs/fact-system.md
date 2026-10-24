@@ -374,8 +374,18 @@ written provider whose format still moved away from it would take writes on
 its namespace.
 
 The plan also lists, for each consumer, the sources that resolve to another
-module whose only export is one `module.exports = v` (the same
-`exports_only_whole_value` fact, written or not; `whole_value_sources`).
+module whose required value is the `v` of its one `module.exports = v`,
+written or not (`whole_value_sources`). That fact (`required_whole_value`,
+read on the input with the same `__toCommonJS` check) is wider than
+`exports_only_whole_value`, which still alone decides the written providers
+above. The module assigns `module.exports` once at the top level and uses
+`module` only as `module.exports`; `v` is not rooted at a `require` call or
+at `module.exports`. Every other `module.exports` may be read (a member, a
+method call, the bare value) but is never written, updated, deleted, or
+passed to a call, where `Object.defineProperty` may define a name `UnEsm`
+then exports apart from the default. The free `exports` appears only in
+`__esModule` marks on it: they mark the object the assignment orphans, not
+`v`. A direct eval is trusted, as the Phase 2 import repair trusted it.
 `require(p)` of such a provider returns `v`, and its ES form is
 `export default v`, so `UnEsm` reads a member of it through one binding of
 the value before it classifies the requires
@@ -651,7 +661,8 @@ Neither proof creates a default-object fact available to consumers.
   `require("./x").name` through the default import (the plan, above), present
   or absent, whatever the value. What it still repairs is a provider the plan
   does not prove whole-value (an object default with named writes beside it,
-  `module.exports = { a }; module.exports.b = 2`, or a marked provider) and
+  `module.exports = { a }; module.exports.b = 2`, or a provider that marks
+  `module.exports` itself `__esModule`) and
   a specifier the input wrote that `UnEsm` merged into a synthesized import.
   Authored ESM imports, synthesized bindings without
   either a source position or a proven mutable-local capture, and providers

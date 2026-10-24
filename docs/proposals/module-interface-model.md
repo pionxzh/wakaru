@@ -435,7 +435,12 @@ providers CommonJS with no write behind any of them.
    Status), and hand-written imports are unchanged. Whether `provider_import_repair`
    can go is a separate decision: it still serves object providers with
    named writes beside the default, marked providers, and hand-written
-   specifiers merged into a synthesized import.
+   specifiers merged into a synthesized import. A later relaxation
+   (maintainer decision, 2026-10-24) reads that list from a consumer-side
+   fact of its own (`required_whole_value`): a provider that reads its own
+   `module.exports`, marks the `exports` object its assignment orphans, or
+   calls a direct eval is listed too, while the written-provider decision
+   keeps the strict fact.
 
    A second follow-up the same day (maintainer decision): Phase 1b's prediction runs
    the rules Phase 2 runs before its late recovery, without the other
