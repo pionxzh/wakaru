@@ -1405,7 +1405,7 @@ A provably primitive default leaves the module a provider marked
 decomposition then the default import.
 
 Affects: `collect_default_object_tail` in `facts.rs`, read by
-`run_kept_require_default_reads` and the provider repairs through
+`run_kept_require_default_reads` and `provider_namespace_repair` through
 `ProviderInterface`.
 
 Level: every level. Without it the kept `require` reads the namespace, which

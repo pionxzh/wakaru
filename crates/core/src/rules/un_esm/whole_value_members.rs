@@ -172,8 +172,7 @@ fn earlier_require_binding(
 
 /// The name of a fresh binding of `source`'s value: the specifier's file
 /// stem when it is a free identifier, else `_` and the hint of the first
-/// read, as `provider_import_repair` names the default import it adds for
-/// `var x = require(p).name` (`_x`). Under a direct eval of unknown code,
+/// read (`_x` for `var x = require(p).name`). Under a direct eval of unknown code,
 /// a plain stem (`utils`) is a likelier name for that code to read than a
 /// `_`-prefixed one, so the stem is not used.
 fn binding_name(

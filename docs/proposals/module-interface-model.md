@@ -12,15 +12,19 @@ step 4 and [Done when](#done-when)). The maintainer decided the direction
 follow-up (2026-10-22) narrowed the written-provider rule of step 3 to let a
 whole-value provider become ESM. Another (2026-10-24) has `UnEsm` read
 `require(p).name` of a whole-value provider through the default import, from
-the plan, instead of importing `name` for `provider_import_repair` to fix;
-the repair pass stays for the providers the plan does not prove
-whole-value. A later round of Phase 2 pass cuts (maintainer decision,
+the plan, instead of importing `name` for `provider_import_repair` to fix.
+A later round of Phase 2 pass cuts (maintainer decision,
 2026-10-24) removed two passes: the CommonJS default-object composition,
 whose shell now stays CommonJS, and `reexport_consolidation`, replaced by
 barrier 0 retargeting a consumer's require of a CommonJS passthrough
 (`module.exports = require(x)`) to the module behind it before `UnEsm`, and
 counting a write through such a module on that module
-([fact-system.md](../fact-system.md)). This proposal absorbs the consumer-aware provider format proposal
+([fact-system.md](../fact-system.md)). A third cut (maintainer decision,
+2026-10-24) removed `provider_import_repair` once barrier 0 lists, from a
+consumer-side fact, the providers that read their own value, mark the
+`exports` object their assignment orphans, call a direct eval, or add names
+to their value, so `UnEsm` reads their members through the default import
+itself. This proposal absorbs the consumer-aware provider format proposal
 (deferred 2026-10-15), whose problem statement is
 [Consumer writes to a named-only provider](#consumer-writes-to-a-named-only-provider).
 
@@ -248,11 +252,11 @@ A hand-written specifier that `UnEsm` merges into a synthesized import is
 recorded as merged, and the pre-passes still treat it as synthesized, as
 the dummy span made them do. Step 2 kept that on purpose: its provider is
 converted from CommonJS too, so a hand-written `import { name }` of a
-`module.exports = { name }` provider stops linking unless
-`provider_import_repair` rewrites it. A hand-written import of such a
-provider with no require of the same source beside it is not repaired
-today; whether every hand-written import of a converted provider should be
-is open.
+`module.exports = { name }` provider stops linking. `provider_import_repair`
+rewrote such a merged specifier until it was removed (see Status); no pass
+does now, and a hand-written import of such a provider with no require of
+the same source beside it was never repaired. Whether every hand-written
+import of a converted provider should be is open.
 
 A detector that builds the module AST itself (a prepared AST) can write
 `require()` calls with a dummy or shared span. Such a call keeps what the
@@ -442,7 +446,8 @@ providers CommonJS with no write behind any of them.
    calls a direct eval is listed too, while the written-provider decision
    keeps the strict fact. A provider that adds names to its value with
    top-level `module.exports.name = e` writes after the assignment is listed
-   with those names, whose reads stay named imports.
+   with those names, whose reads stay named imports. With that, the
+   maintainer removed `provider_import_repair` (see Status).
 
    A second follow-up the same day (maintainer decision): Phase 1b's prediction runs
    the rules Phase 2 runs before its late recovery, without the other

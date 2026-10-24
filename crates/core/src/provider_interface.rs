@@ -165,49 +165,12 @@ impl<'a> ProviderInterface<'a> {
                 || ((self.facts.require_returns_exports_object || self.facts.input_is_es_module)
                     && whole_value))
     }
-
-    /// The properties of the provider's proven CommonJS default value that a
-    /// consumer's `require("./p").name` captured, `None` when no such value
-    /// is proven: no object assigned to `module.exports` nor property
-    /// attached to a callable one, no default export, or an `export *` whose
-    /// names this module cannot list.
-    pub(crate) fn default_value_properties(&self) -> Option<DefaultValueProperties<'a>> {
-        let facts = self.facts;
-        (!facts.has_export_all
-            && (facts.commonjs_default_object.is_some()
-                || !facts.commonjs_default_attached_properties.is_empty())
-            && self.has_default)
-            .then_some(DefaultValueProperties { interface: *self })
-    }
-}
-
-/// See [`ProviderInterface::default_value_properties`].
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct DefaultValueProperties<'a> {
-    interface: ProviderInterface<'a>,
-}
-
-impl DefaultValueProperties<'_> {
-    /// Whether `require("./p").name` read a property of the default value
-    /// rather than a named export. Every name not exported by name is a
-    /// property of a proven object, absent ones included (CommonJS reads
-    /// `undefined`); a callable default proves only the properties attached
-    /// to it.
-    pub(crate) fn captures(&self, name: &str) -> bool {
-        let facts = self.interface.facts;
-        !self.interface.is_named_export(name)
-            && (facts.commonjs_default_object.is_some()
-                || facts
-                    .commonjs_default_attached_properties
-                    .iter()
-                    .any(|property| property == name))
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::facts::{CommonJsDefaultObjectFact, ExportFact, ReexportFact};
+    use crate::facts::{ExportFact, ReexportFact};
 
     fn export(name: &str, kind: ExportKind) -> ExportFact {
         ExportFact {
@@ -458,67 +421,5 @@ mod tests {
                 "{name}"
             );
         }
-    }
-
-    #[test]
-    fn default_value_properties_need_a_proven_value_and_a_closed_surface() {
-        let object = Some(CommonJsDefaultObjectFact {
-            declared_properties: vec!["alpha".into()],
-        });
-        let proven_object = ModuleFacts {
-            commonjs_default_object: object.clone(),
-            ..default_and_named()
-        };
-        let callable = ModuleFacts {
-            commonjs_default_attached_properties: vec!["beta".into()],
-            ..default_only()
-        };
-        for (name, facts, proven) in [
-            ("a proven object", proven_object.clone(), true),
-            (
-                "a callable with attached properties",
-                callable.clone(),
-                true,
-            ),
-            ("no proven value", default_and_named(), false),
-            (
-                "no default export",
-                ModuleFacts {
-                    commonjs_default_object: object.clone(),
-                    ..named_only()
-                },
-                false,
-            ),
-            (
-                "export *",
-                ModuleFacts {
-                    has_export_all: true,
-                    ..proven_object.clone()
-                },
-                false,
-            ),
-        ] {
-            assert_eq!(
-                ProviderInterface::of(&facts)
-                    .default_value_properties()
-                    .is_some(),
-                proven,
-                "{name}"
-            );
-        }
-
-        let object = ProviderInterface::of(&proven_object)
-            .default_value_properties()
-            .expect("proven object");
-        assert!(!object.captures("alpha"), "a named export stays named");
-        assert!(
-            object.captures("gamma"),
-            "an absent property reads undefined"
-        );
-        let callable = ProviderInterface::of(&callable)
-            .default_value_properties()
-            .expect("proven callable");
-        assert!(callable.captures("beta"));
-        assert!(!callable.captures("gamma"), "absence proves nothing");
     }
 }

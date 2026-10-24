@@ -78,7 +78,6 @@ Phase 1b (per module, parallel):
 Phase 2 (per module, parallel; the late ESM recovery and the source-map
 path's rerun through UnEsm read the same plan):
     resume retained barrier AST
-    run_provider_import_repair(&mut module, facts)    ← proven CJS property edges
     run_provider_namespace_repair(&mut module, facts) ← proven ESM namespace edges
     run_cross_module_lowered_dynamic_imports(...)    ← helper export facts
     run_cross_module_webpack_lazy_imports(...)       ← provider facts
@@ -210,8 +209,10 @@ top-level callable around the sole `module.exports` assignment. This includes
 the localized webpack form `var alias = module.exports = functionBinding`
 followed by direct alias-property writes, including writes in the
 guaranteed-once right-hand side of a top-level `for ... in`. It is a
-positive-membership fact only: a recorded property can be repaired, but an
-absent property says nothing about the callable's runtime surface. Computed,
+positive-membership fact only: a recorded property is on the callable, but
+an absent property says nothing about the callable's runtime surface. No
+pass reads it since the Phase 2 import repair was removed; the module's
+facts still print it. Computed,
 conditional, nested, or reassigned shapes fail closed. Neither collector
 mutates the AST or shared state.
 
@@ -252,9 +253,8 @@ The Phase 2 passes do not combine these booleans themselves:
 from one provider's facts alone, what `require` of it returned
 (`RequiredValue`: a module that stays CommonJS, `module.exports = v` alone or
 beside named exports, a module marked `__esModule`, a value replaced another
-way, or the `exports` object), which import reads that value, whether a
-namespace import holds what a default import meant, and which properties of
-a proven default value a `require("./p").name` captured. The consumer's side
+way, or the `exports` object), which import reads that value, and whether
+a namespace import holds what a default import meant. The consumer's side
 is the module's own require edges (`require_edges`, below), which each pass
 queries.
 
@@ -390,7 +390,7 @@ not on the default. The plan lists such names with the source; a read of
 one keeps the named import, and so does an object pattern that reads one,
 has a rest element, or has a computed key. The free `exports` appears only in
 `__esModule` marks on it: they mark the object the assignment orphans, not
-`v`. A direct eval is trusted, as the Phase 2 import repair trusted it.
+`v`. A direct eval is trusted not to touch `module` or `exports`.
 `require(p)` of such a provider returns `v`, and its ES form is
 `export default v`, so `UnEsm` reads a member of it through one binding of
 the value before it classifies the requires
@@ -406,8 +406,8 @@ read whether or not `v` has the member, and whether the provider ends ESM
 or stays CommonJS, where its default import is its `module.exports`. The
 binding is an earlier `var L = require(p)` declared once and never written,
 or a fresh one named after the specifier's file stem, else `_` and the
-first read's local (`_x`, as `provider_import_repair` names its default
-import) or member, avoiding every name of the module and the names a direct
+first read's local (`_x` for `var x = require(p).name`) or member,
+avoiding every name of the module and the names a direct
 eval mentions. A direct eval of unknown code in the consumer does not stop
 the rewrite (`UnEsm` makes its requires imports anyway) but skips the stem,
 a likelier name for that code to read. A self-require is not a whole-value
@@ -483,8 +483,7 @@ specifier the input wrote that `UnEsm` merged into such an import is
 recorded as merged, and the passes treat it as synthesized, as they did when
 they read the dummy span. Another conversion `UnEsm` runs (an interop or
 getter helper turning `var x = helper(require("./p"))` into an import) is
-tagged by its declarator, and so is the cross-module interop import pass;
-`provider_import_repair` carries the tag to the default import it creates.
+tagged by its declarator, and so is the cross-module interop import pass.
 The binding `UnEsm` makes for whole-value member reads is tagged with the
 key of every call it replaced.
 The tags cross the barrier with the retained AST; the source-map path's
@@ -654,30 +653,6 @@ Neither proof creates a default-object fact available to consumers.
   left unpinned only on a prediction; after Phase 2, a module that still calls
   one of them gets a `cross_module_class_call` warning.
 
-- **`provider_import_repair`** — repairs only named imports synthesized by
-  `UnEsm` for `require("./x").name` (the import tags below). If provider facts prove that the raw
-  CommonJS value is the recovered default object, or positively prove `name`
-  was attached to a stable callable default, and `name` is not a true named
-  export, the pass imports that default value and captures `.name` into the
-  original local binding at the original `require` declaration position. An
-  object property absent from a proven empty object is also covered: CommonJS
-  returns `undefined`, whereas a guessed ESM named import fails during linking.
-  The pass itself never infers callable-property absence, and leaves an
-  unknown default value unchanged: a provider the plan proves whole-value
-  reaches it with no named import to repair, because `UnEsm` already read
-  `require("./x").name` through the default import (the plan, above), present
-  or absent, whatever the value. What it still repairs is a provider the plan
-  does not prove whole-value (one that writes a name through `module.exports`
-  in a function or a condition, or marks `module.exports` itself
-  `__esModule`), the other keys of an object pattern left to named imports
-  because it reads a name a whole-value provider adds, and
-  a specifier the input wrote that `UnEsm` merged into a synthesized import.
-  Authored ESM imports, synthesized bindings without
-  either a source position or a proven mutable-local capture, and providers
-  with `export *` remain unchanged. A whole-object CommonJS
-  consumer that mutates provider properties is also deliberately unresolved:
-  an ESM namespace is read-only, so preserving that case requires a separate
-  mutable facade design.
 - **`provider_namespace_repair`** — changes a default import `UnEsm`
   synthesized for a whole-object `require("./x")` into a namespace import when
   the provider facts prove a named or `export *` surface and no default export,

@@ -19,7 +19,6 @@ pub(crate) mod module_path;
 pub mod namespace_decomposition;
 pub mod output_validate;
 pub(crate) mod provider_helpers;
-pub(crate) mod provider_import_repair;
 pub(crate) mod provider_interface;
 pub(crate) mod provider_namespace_repair;
 pub mod require_edges;
