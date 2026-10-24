@@ -4991,3 +4991,31 @@ fn a_name_a_whole_value_provider_adds_stays_a_named_import() {
         );
     }
 }
+
+#[test]
+fn a_consumer_with_a_direct_eval_reads_a_whole_value_through_its_default_import() {
+    // The rest of `UnEsm` makes the consumer's requires imports under the
+    // eval too, so the member read takes the default import rather than a
+    // named one the provider does not export.
+    let modules = r#"
+    100: function(module) {
+      module.exports = new function () { this.x = 1; };
+    },
+    400: function(module, exports, __webpack_require__) {
+      "use strict";
+      var { x } = __webpack_require__(100);
+      eval(globalThis.syntheticCode);
+      exports.run = function () { return x; };
+    }"#;
+    let source = helper_provider_bundle(modules);
+    for emit_source_map in [false, true] {
+        let output = unpack_one(&source, emit_source_map);
+        assert_valid_module_graph(&output.modules);
+        let consumer = consumer_of(&output);
+        assert!(
+            consumer.contains("import _x from \"./module-100.js\""),
+            "{consumer}"
+        );
+        assert!(consumer.contains("{ x } = _x;"), "{consumer}");
+    }
+}

@@ -35,6 +35,11 @@
 //! default-member classification. A read inside a function, a condition, or
 //! any other expression keeps its `require`, as it would without the plan.
 //!
+//! A direct eval in the consumer does not stop the pass: the rest of `UnEsm`
+//! turns the consumer's requires into imports either way. The fresh binding
+//! avoids the names the eval's known code mentions, and under unknown code
+//! takes a `_`-prefixed name rather than the specifier's stem.
+//!
 //! A consumer's require of a CommonJS passthrough is rewritten to the module
 //! behind it before this pass runs (`InterfacePlan::passthrough_sources`), so
 //! a member read through a passthrough of a whole-value provider is read the
@@ -75,9 +80,6 @@ pub(super) fn read_whole_value_members(
     }
     let mut eval_analyzer = DirectEvalAnalyzer::default();
     module.visit_with(&mut eval_analyzer);
-    if eval_analyzer.unknown_direct_eval {
-        return Vec::new();
-    }
 
     let uses = BindingUseIndex::collect(module);
     let mut used_names = collect_all_identifier_names(module);
@@ -171,7 +173,9 @@ fn earlier_require_binding(
 /// The name of a fresh binding of `source`'s value: the specifier's file
 /// stem when it is a free identifier, else `_` and the hint of the first
 /// read, as `provider_import_repair` names the default import it adds for
-/// `var x = require(p).name` (`_x`).
+/// `var x = require(p).name` (`_x`). Under a direct eval of unknown code,
+/// a plain stem (`utils`) is a likelier name for that code to read than a
+/// `_`-prefixed one, so the stem is not used.
 fn binding_name(
     source: &str,
     hint: Option<&Atom>,
@@ -179,7 +183,9 @@ fn binding_name(
     eval_analyzer: &DirectEvalAnalyzer,
 ) -> Atom {
     if let Some(stem) = specifier_basename(source).filter(|stem| {
-        !used_names.contains(stem) && !direct_eval_mentions_name(eval_analyzer, stem)
+        !eval_analyzer.unknown_direct_eval
+            && !used_names.contains(stem)
+            && !direct_eval_mentions_name(eval_analyzer, stem)
     }) {
         used_names.insert(stem.clone());
         return stem;
@@ -412,6 +418,45 @@ mod tests {
             read_whole_value_members(&mut module, unresolved_mark, &sources);
             crate::unpacker::emit_esm::emit_module_raw(&module, cm).unwrap()
         })
+    }
+
+    #[test]
+    fn a_consumer_with_a_direct_eval_still_reads_through_the_default() {
+        // Unknown code: a `_` name rather than the stem.
+        assert_eq!(
+            read(
+                r#"var { x } = require("./p");
+eval(code);
+"#
+            ),
+            r#"var _x = require("./p");
+var { x } = _x;
+eval(code);
+"#
+        );
+        // Known code takes the stem unless it mentions it.
+        assert_eq!(
+            read(
+                r#"var x = require("./p").x;
+eval("probe()");
+"#
+            ),
+            r#"var p = require("./p");
+var x = p.x;
+eval("probe()");
+"#
+        );
+        assert_eq!(
+            read(
+                r#"var x = require("./p").x;
+eval("p(_x)");
+"#
+            ),
+            r#"var _x_2 = require("./p");
+var x = _x_2.x;
+eval("p(_x)");
+"#
+        );
     }
 
     #[test]

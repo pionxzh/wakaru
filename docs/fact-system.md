@@ -408,9 +408,11 @@ binding is an earlier `var L = require(p)` declared once and never written,
 or a fresh one named after the specifier's file stem, else `_` and the
 first read's local (`_x`, as `provider_import_repair` names its default
 import) or member, avoiding every name of the module and the names a direct
-eval mentions. A self-require is not a whole-value source, a `.default`
-read keeps the default-member classification, and a read in a function or
-a condition keeps its `require`. Single-file decompile and `--raw` have no
+eval mentions. A direct eval of unknown code in the consumer does not stop
+the rewrite (`UnEsm` makes its requires imports anyway) but skips the stem,
+a likelier name for that code to read. A self-require is not a whole-value
+source, a `.default` read keeps the default-member classification, and a
+read in a function or a condition keeps its `require`. Single-file decompile and `--raw` have no
 plan.
 
 The plan also names, for each consumer, the module at the end of every
