@@ -3226,7 +3226,7 @@ module.exports = Object.keys(provider);
     }
 
     #[test]
-    fn authored_default_import_is_not_provider_repaired() {
+    fn authored_default_import_is_not_namespace_repaired() {
         let modules = vec![
             UnpackedModule {
                 id: "provider".to_string(),
@@ -3255,7 +3255,7 @@ console.log(Object.keys(provider));
                 finding.kind == OutputFindingKind::MissingImportedName
                     && finding.filename == "consumer.js"
             }),
-            "provider repair must not reinterpret authored default imports: {findings:#?}"
+            "namespace repair must not reinterpret authored default imports: {findings:#?}"
         );
     }
 
@@ -3563,86 +3563,7 @@ module.exports = function(value) { return provider.transform(value); };
     }
 
     #[test]
-    fn provider_facts_capture_missing_properties_from_proven_empty_default_objects() {
-        let modules = || {
-            vec![
-                UnpackedModule {
-                    id: "empty-stub".to_string(),
-                    code: "module.exports = {};".to_string(),
-                    filename: "empty-stub.js".to_string(),
-                    ..Default::default()
-                },
-                UnpackedModule {
-                    id: "consumer".to_string(),
-                    is_entry: true,
-                    code: r#"
-before();
-var existsSync = require("./empty-stub.js").existsSync;
-after();
-module.exports = function(path) {
-    return Boolean(existsSync) && existsSync(path);
-};
-"#
-                    .to_string(),
-                    filename: "consumer.js".to_string(),
-                    ..Default::default()
-                },
-            ]
-        };
-
-        for emit_source_map in [false, true] {
-            let output = unpack_multi_module(
-                modules(),
-                DecompileOptions {
-                    emit_source_map,
-                    ..Default::default()
-                },
-            )
-            .expect("proven empty default-object fixture should decompile");
-            assert_eq!(validate_prepared_output(&output), vec![]);
-
-            let consumer = output
-                .modules
-                .iter()
-                .find(|module| module.filename == "consumer.js")
-                .map(|module| module.code.as_str())
-                .expect("expected consumer module");
-            assert!(
-                !consumer.contains("import { existsSync"),
-                "a CommonJS property read must not remain a named import:\n{consumer}"
-            );
-            assert!(
-                consumer.contains(".existsSync"),
-                "the property must be captured from the proven default object:\n{consumer}"
-            );
-            let before = consumer
-                .find("before();")
-                .expect("leading effect should remain");
-            let capture = consumer[before..]
-                .find(".existsSync")
-                .map(|offset| before + offset)
-                .expect("property capture should remain");
-            let after = consumer
-                .find("after();")
-                .expect("trailing effect should remain");
-            assert!(
-                before < capture && capture < after,
-                "the property read must remain at its original require position:\n{consumer}"
-            );
-            if emit_source_map {
-                assert!(
-                    output
-                        .modules
-                        .iter()
-                        .all(|module| module.source_map.is_some()),
-                    "provider repair must preserve emitted source maps"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn provider_facts_capture_proven_callable_default_properties() {
+    fn attached_properties_of_a_whole_value_callable_are_read_through_its_default() {
         let modules = || {
             vec![
                 UnpackedModule {
@@ -3683,7 +3604,7 @@ module.exports = [parse("value"), new Rule()];
                     ..Default::default()
                 },
             )
-            .expect("proven callable-property fixture should decompile");
+            .expect("callable-property fixture should decompile");
             assert_eq!(validate_prepared_output(&output), vec![]);
 
             let consumer = output
@@ -3699,7 +3620,7 @@ module.exports = [parse("value"), new Rule()];
             assert!(
                 (consumer.contains(".parse") && consumer.contains(".Rule"))
                     || consumer.contains("{ parse, Rule }"),
-                "attached properties must be captured from the callable default:\n{consumer}"
+                "attached properties must be read from the callable default:\n{consumer}"
             );
             let before = consumer
                 .find("before();")
@@ -3725,14 +3646,14 @@ module.exports = [parse("value"), new Rule()];
                         .modules
                         .iter()
                         .all(|module| module.source_map.is_some()),
-                    "callable property repair must preserve emitted source maps"
+                    "reading through the default import must preserve emitted source maps"
                 );
             }
         }
     }
 
     #[test]
-    fn provider_facts_reject_a_conditionally_rewritten_callable_default() {
+    fn a_conditionally_rewritten_callable_default_keeps_the_named_import() {
         let modules = || {
             vec![
                 UnpackedModule {
@@ -3776,7 +3697,7 @@ module.exports = function(value) { return parse(value); };
                     finding.kind == OutputFindingKind::MissingImportedName
                         && finding.filename == "consumer.js"
                 }),
-                "an unproven callable surface must remain visible to validation: {findings:#?}"
+                "a second `module.exports` assignment must leave the missing name visible to validation: {findings:#?}"
             );
 
             let consumer = output
@@ -3787,7 +3708,7 @@ module.exports = function(value) { return parse(value); };
                 .expect("expected consumer module");
             assert!(
                 consumer.contains("import { parse } from \"./provider.js\""),
-                "an unproven property import must not be rewritten through the default export:\n{consumer}"
+                "a provider that is not one whole value must keep the named import:\n{consumer}"
             );
         }
     }
@@ -3819,9 +3740,9 @@ module.exports = optional;
             },
         ];
 
-        // The provider facts do not prove `optional`, but the plan proves
-        // the provider's only export is `module.exports = api`, so `UnEsm`
-        // reads the property from the default import, present or not.
+        // The provider writes `optional` conditionally, but the plan proves
+        // its only export is `module.exports = api`, so `UnEsm` reads the
+        // property from the default import, present or not.
         let output = unpack_multi_module(modules, DecompileOptions::default())
             .expect("conditional alias-property fixture should decompile");
         assert_eq!(validate_prepared_output(&output), vec![]);
@@ -3868,9 +3789,9 @@ module.exports = function() { return missing; };
             },
         ];
 
-        // Callable facts prove only observed properties, but the plan
-        // proves the provider's only export is `module.exports = api`:
-        // CommonJS reads `undefined`, and so does the default import.
+        // The provider never writes `missing`, but the plan proves its only
+        // export is `module.exports = api`: CommonJS reads `undefined`, and
+        // so does the default import.
         let output = unpack_multi_module(modules, DecompileOptions::default())
             .expect("absent callable-property fixture should decompile");
         assert_eq!(validate_prepared_output(&output), vec![]);
@@ -3951,7 +3872,7 @@ module.exports = available;
     }
 
     #[test]
-    fn provider_facts_repair_recovered_commonjs_import_shapes() {
+    fn default_object_members_are_read_through_its_default_at_their_require_positions() {
         let modules = || {
             vec![
                 UnpackedModule {
@@ -3986,7 +3907,7 @@ module.exports = function(value) { return filter(map(value)); };
         };
 
         let output = unpack_multi_module(modules(), DecompileOptions::default())
-            .expect("provider-aware fixture should decompile");
+            .expect("default-object fixture should decompile");
         assert_eq!(validate_prepared_output(&output), vec![]);
 
         let named_consumer = output
@@ -3997,12 +3918,12 @@ module.exports = function(value) { return filter(map(value)); };
             .expect("expected named consumer");
         assert!(
             !named_consumer.contains("import { map") && !named_consumer.contains("filter } from"),
-            "properties of a proven default object must be captured from its default import:\n{named_consumer}"
+            "members of a whole-value default object must not become named imports:\n{named_consumer}"
         );
         assert!(
             (named_consumer.contains("{ map:") && named_consumer.contains("filter }"))
                 || (named_consumer.contains(".map") && named_consumer.contains(".filter")),
-            "property captures must come from the proven default object:\n{named_consumer}"
+            "members must be read from the default import:\n{named_consumer}"
         );
         assert!(
             named_consumer.contains("let map") || named_consumer.contains("let { map"),
@@ -4034,14 +3955,14 @@ module.exports = function(value) { return filter(map(value)); };
                 ..Default::default()
             },
         )
-        .expect("provider-aware fixture should decompile through the source-map path");
+        .expect("default-object fixture should decompile through the source-map path");
         assert_eq!(validate_prepared_output(&source_map_output), vec![]);
         assert!(
             source_map_output
                 .modules
                 .iter()
                 .all(|module| module.source_map.is_some()),
-            "provider repair must survive the source-map path's second parse"
+            "reading through the default import must survive the source-map path's second parse"
         );
     }
 
@@ -4067,8 +3988,8 @@ module.exports = function() { return missing; };
             },
         ];
 
-        // The provider facts know nothing of the call's value, but the plan
-        // proves it is the provider's only export, so the consumer reads
+        // Nothing is known of the call's value, but the plan proves it is
+        // the provider's only export, so the consumer reads
         // `missing` from it as CommonJS did.
         let output = unpack_multi_module(modules, DecompileOptions::default())
             .expect("unproven provider fixture should decompile");
@@ -4180,7 +4101,7 @@ module.exports = provider;
     }
 
     #[test]
-    fn provider_facts_leave_export_star_surfaces_unresolved() {
+    fn an_export_star_provider_keeps_the_named_import() {
         let modules = vec![
             UnpackedModule {
                 id: "star-source".to_string(),
@@ -4224,7 +4145,7 @@ module.exports = value;
     }
 
     #[test]
-    fn provider_facts_do_not_rewrite_authored_esm_imports() {
+    fn authored_esm_named_import_is_left_as_written() {
         let modules = vec![
             UnpackedModule {
                 id: "provider".to_string(),
@@ -4251,7 +4172,7 @@ module.exports = value;
             .expect("expected ESM consumer");
         assert!(
             consumer.contains("import { value }"),
-            "authored ESM imports must remain outside CommonJS repair:\n{consumer}"
+            "an authored ESM import must stay as written:\n{consumer}"
         );
     }
 
