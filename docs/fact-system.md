@@ -537,7 +537,15 @@ export shape after Stage 2. They do not speculate from consumer-side usage.
 
 UnEsm also recovers narrowly proven same-module CommonJS reads: a later
 `module.exports` read may use the sole stable default binding, and a later
-`exports.name` read may use a uniquely assigned stable export binding. Direct
+`exports.name` read may use a uniquely assigned stable export binding. A
+module whose one `module.exports = v` assigns any other value gets a binding
+of `v` that becomes the default export
+(`rules/un_esm/default_self_reads.rs`), and its reads of `module.exports`
+read that binding when each sits in a top-level statement after the
+assignment or in a function that is a property value of the object literal
+`v`; a write, update, or `delete` through `module.exports`, a
+`module.exports` passed to a call, a call of `module.exports` itself, or any
+read that may run earlier leaves the module as it was. Direct
 method calls additionally require a receiver-insensitive function. Earlier
 `undefined` export declarations are permitted; multiple value writes, later
 resets, computed writes, value escapes, receiver-sensitive calls, early

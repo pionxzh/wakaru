@@ -46,6 +46,7 @@ use super::un_interop_require_default::{InteropScope, UnInteropRequireDefault};
 use super::un_interop_require_wildcard::UnInteropRequireWildcard;
 use super::RewriteLevel;
 
+mod default_self_reads;
 mod export_getters;
 mod export_star;
 pub(crate) mod export_storage;
@@ -598,6 +599,9 @@ impl UnEsm {
         UnInteropRequireDefault::run_with_helpers(module, &local_helpers, InteropScope::All);
         UnInteropRequireWildcard::run_with_helpers(module, &local_helpers, InteropScope::All);
         recover_coupled_commonjs_default_binding(module, self.unresolved_mark);
+        // A read of `module.exports` after its one assignment reads a
+        // binding of the assigned value, which `export default` keeps.
+        default_self_reads::bind_default_self_reads(module, self.unresolved_mark);
         // A member read on the value of a whole-value provider reads its
         // default import, where the input read it. Runs before the hoisting
         // below would move a call argument's read ahead of the arguments

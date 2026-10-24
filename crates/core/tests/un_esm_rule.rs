@@ -1216,6 +1216,151 @@ consume(module.exports());
 }
 
 #[test]
+fn a_method_of_the_exported_object_reads_it_through_a_binding() {
+    let input = r#"
+module.exports = {
+  alpha(n) { return n * 2; },
+  beta: function(n) { return module.exports.alpha(n) + 1; },
+  get gamma() { return module.exports.beta(1); },
+  delta: () => module.exports
+};
+"#;
+    let expected = r#"
+var _default = {
+    alpha (n) {
+        return n * 2;
+    },
+    beta: function(n) {
+        return _default.alpha(n) + 1;
+    },
+    get gamma () {
+        return _default.beta(1);
+    },
+    delta: ()=>_default
+};
+export default _default;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+    assert!(validate_output_modules(&[("entry.js".into(), output)])
+        .iter()
+        .all(|finding| finding.kind != OutputFindingKind::EsmCommonJsResidual));
+}
+
+#[test]
+fn a_self_reading_exported_object_decompiles_to_a_linkable_default() {
+    let input = r#"
+module.exports = {
+  alpha: function(n) { return n * 2; },
+  beta: function(n) { return module.exports.alpha(n) + 1; }
+};
+"#;
+    let output = render_pipeline(input);
+    assert!(output.contains("export default _default;"), "{output}");
+    assert!(output.contains("return _default.alpha(n) + 1;"), "{output}");
+    assert!(!output.contains("module.exports"), "{output}");
+}
+
+#[test]
+fn a_top_level_read_after_the_exported_value_reads_its_binding() {
+    let input = r#"
+module.exports = makeApi();
+module.exports.start();
+window.syntheticApi = module.exports;
+later(function () { return module.exports.ready; });
+"#;
+    let expected = r#"
+const _default = makeApi();
+export default _default;
+_default.start();
+window.syntheticApi = _default;
+later(function() {
+    return _default.ready;
+});
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn a_self_read_of_the_exported_value_avoids_taken_names() {
+    let input = r#"
+var _default = 1;
+module.exports = { alpha() { return module.exports.beta + _default; }, beta: 2 };
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("_default_2.beta + _default"),
+        "the binding must not capture an existing name:\n{output}"
+    );
+}
+
+#[test]
+fn a_self_read_that_may_run_before_the_exported_value_keeps_the_module() {
+    // A hoisted function declared after the assignment, a function made
+    // before it, a read
+    // while the object is built, and a method of a nested object, which the
+    // outer literal may call while it is built: each may read the original
+    // `exports` object in CommonJS, before an ES binding is initialized.
+    for input in [
+        r#"
+module.exports = { alpha: 1, beta() { return module.exports.alpha; } };
+function read() { return module.exports.alpha; }
+"#,
+        r#"
+var read = function () { return module.exports.alpha; };
+module.exports = { alpha: 1, beta() { return module.exports.alpha; } };
+"#,
+        r#"
+module.exports = { alpha: 1, beta: module.exports.alpha };
+"#,
+        r#"
+module.exports = { alpha: { beta() { return module.exports.gamma; } }.beta() };
+"#,
+    ] {
+        let output = apply(input);
+        assert!(!output.contains("_default"), "{input}\n{output}");
+    }
+}
+
+#[test]
+fn a_write_through_the_exported_value_keeps_its_self_reads() {
+    // The statement-level rewrites own written shapes: a named write, a
+    // value passed to a callee that may define properties, a second
+    // assignment, a `module` alias, a direct call, whose receiver is
+    // `module`, and a direct eval.
+    for input in [
+        r#"
+module.exports = { alpha() { return module.exports.beta; } };
+module.exports.beta = 1;
+"#,
+        r#"
+module.exports = { alpha() { return module.exports.beta; } };
+Object.defineProperty(module.exports, "beta", { value: 1 });
+"#,
+        r#"
+module.exports = { alpha() { return module.exports.beta; } };
+if (legacy) module.exports = replacement;
+"#,
+        r#"
+module.exports = { alpha() { return module.exports.beta; } };
+register(module);
+"#,
+        r#"
+module.exports = function () { return 1; };
+consume(module.exports());
+"#,
+        r#"
+module.exports = { alpha() { return module.exports.beta; } };
+eval("module.exports.beta = 1");
+"#,
+    ] {
+        let output = apply(input);
+        assert!(!output.contains("_default"), "{input}\n{output}");
+    }
+}
+
+#[test]
 fn exports_named_const() {
     let input = "exports.foo = 1;";
     let expected = "export const foo = 1;";

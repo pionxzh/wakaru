@@ -76,6 +76,7 @@ crates/
         lowered_dynamic_import.rs   — lowered `import()` matcher, run by UnInteropRequireWildcard and by a Phase 2 pass for a cross-module helper (not a registered rule)
         webpack_lazy_import.rs      — webpack/Rspack lazy-load matcher (`require.e(c).then(() => require("./p"))`, `require.t`) and the Phase 2 pass that restores `import()` from provider facts (not a registered rule)
         cross_module_interop_import.rs — Phase 2 passes: `helper(require(x))` with a default/wildcard interop helper from another module becomes an import; any other imported function keeps its call around an import of `x` (not registered rules)
+        un_esm/default_self_reads.rs — reads of `module.exports` after its one non-identifier assignment, read through a binding of the value that becomes the default export
         un_esm/export_getters.rs    — swc / esbuild / sucrase export getter helpers and webpack `require.d` lowered to per-name definitions
         un_esm/export_storage.rs    — per-name CommonJS export storage model (getter / mirror / property)
         un_esm/harmony_requires.rs  — webpack harmony module detection and the loads Terser inlined into their use

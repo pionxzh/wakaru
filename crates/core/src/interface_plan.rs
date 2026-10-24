@@ -367,7 +367,7 @@ pub(crate) fn exports_only_whole_value(module: &Module, unresolved_mark: Mark) -
 
 /// `require(s)`, a member chain on it, or a call of an identifier whose
 /// first argument is `require(s)`.
-fn is_rooted_at_require(expr: &Expr, unresolved_mark: Mark) -> bool {
+pub(crate) fn is_rooted_at_require(expr: &Expr, unresolved_mark: Mark) -> bool {
     match strip_parens(expr) {
         Expr::Member(member) => is_rooted_at_require(&member.obj, unresolved_mark),
         Expr::Call(call) if require_call_source(call, unresolved_mark).is_some() => true,

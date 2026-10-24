@@ -4859,3 +4859,34 @@ fn a_write_through_a_conditional_passthrough_keeps_both_targets_commonjs() {
         );
     }
 }
+
+#[test]
+fn a_provider_method_reading_its_own_exports_reads_the_default_binding() {
+    // The late ESM recovery once took the residual `module.exports.alpha`
+    // for export storage and read an empty `var alpha` instead.
+    let modules = r#"
+    100: function(module) {
+      module.exports = {
+        alpha: function (n) { return n * 2; },
+        beta: function (n) { return module.exports.alpha(n) + 1; }
+      };
+    },
+    400: function(module, exports, __webpack_require__) {
+      "use strict";
+      var p = __webpack_require__(100);
+      exports.run = function () { return p.beta(1); };
+    }"#;
+    let source = helper_provider_bundle(modules);
+    for emit_source_map in [false, true] {
+        let output = unpack_one(&source, emit_source_map);
+        assert_valid_module_graph(&output.modules);
+        let provider = module_named(&output.modules, "module-100.js");
+        assert!(provider.contains("export default _default;"), "{provider}");
+        assert!(
+            provider.contains("return _default.alpha(n) + 1;"),
+            "{provider}"
+        );
+        assert!(!provider.contains("var alpha"), "{provider}");
+        assert!(!provider.contains("module.exports"), "{provider}");
+    }
+}
