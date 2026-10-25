@@ -10,7 +10,9 @@ use crate::unpacker::{BindingId, UnpackedModule};
 
 use super::bindings::{atom_binding_map_from_keys, atom_to_filename_binding_map, ExternalImport};
 use super::factories::CjsFactoryParams;
-use super::synthesis::{factory_owned_export_names, relative_import_path};
+use super::synthesis::{
+    entry_link_imported_name, factory_owned_export_names, relative_import_path,
+};
 
 /// A detected factory with its output filename and the top-level bindings its
 /// resolved body reads and writes, waiting for an ownership decision.
@@ -282,6 +284,9 @@ pub(super) struct FactoryOwnership {
     pub(super) relocated_writers: HashMap<String, Vec<TopLevelWriterItem>>,
     /// Declarations a merged scope module adopted; the entry drops its copy.
     pub(super) entry_duplicate_declarations: HashSet<BindingId>,
+    /// Entry bindings whose atom the entry's own export list already uses for
+    /// another binding, mapped to the name importers use instead.
+    pub(super) entry_link_export_names: HashMap<Atom, Atom>,
 }
 
 impl FactoryOwnership {
@@ -293,6 +298,7 @@ impl FactoryOwnership {
             affected: HashSet::default(),
             relocated_writers: HashMap::default(),
             entry_duplicate_declarations: HashSet::default(),
+            entry_link_export_names: HashMap::default(),
         }
     }
 
@@ -989,8 +995,9 @@ pub(super) struct MergedModulePlan {
     pub(super) module_index: usize,
     /// External imports to re-materialize, sorted by name.
     pub(super) external_imports: Vec<BindingId>,
-    /// Relative specifier and imported names, sorted by source filename.
-    pub(super) named_imports: Vec<(String, Vec<Atom>)>,
+    /// Relative specifier and `(imported, local)` names, sorted by source
+    /// filename.
+    pub(super) named_imports: Vec<(String, Vec<(Atom, Atom)>)>,
     /// Adopted support declarations: source item index and the binding names
     /// the module keeps from it, in source order.
     pub(super) owned_items: Vec<(usize, HashSet<Atom>)>,
@@ -1165,6 +1172,17 @@ pub(super) fn plan_merged_module(
         if names.is_empty() {
             continue;
         }
+        let names = names
+            .into_iter()
+            .map(|local| {
+                let imported = entry_link_imported_name(
+                    &ownership.entry_link_export_names,
+                    &source_filename,
+                    &local,
+                );
+                (imported, local)
+            })
+            .collect();
         named_imports.push((relative_import_path(filename, &source_filename), names));
     }
 

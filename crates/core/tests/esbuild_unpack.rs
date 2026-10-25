@@ -437,6 +437,64 @@ export{v as a,b as d};
 }
 
 #[test]
+fn entry_link_export_avoids_the_entrys_own_export_names() {
+    // producer esbuild@0.28.0 `--bundle --format=esm --minify`: the class
+    // `r` stays in the entry and the extracted `__export` module reads it,
+    // while the entry's own export list already exports the constant `y`
+    // under the name `r`.
+    let bundle = r#"
+var n=Object.defineProperty;var a=(o,c)=>{for(var s in c)n(o,s,{get:c[s],enumerable:!0})};var e=class{static describe(){return"alpha-core"}},r=class{static describe(){return"beta-core:"+e.describe()}},t=class{static describe(){return"gamma-core:"+r.describe()}};var i={};a(i,{combine:()=>p});function p(){return["helper-combine",e.describe(),r.describe(),t.describe()].join(",")}var x="entry-e",u="entry-t",y="entry-r",f="entry-n",h="entry-o";export{e as Alpha,r as Beta,t as Gamma,x as e,i as helpers,f as n,h as o,y as r,u as t};
+"#;
+
+    let raw_pairs = expect_unpack_raw(bundle);
+    assert!(
+        raw_pairs.len() > 1,
+        "the `__export` module should be extracted: {raw_pairs:#?}"
+    );
+    assert!(
+        exports_name(entry_code(&raw_pairs), "r"),
+        "the entry keeps its own `r` export:\n{raw_pairs:#?}"
+    );
+    assert_eq!(validate_output_modules(&raw_pairs), vec![]);
+
+    let raw_module = raw_pairs
+        .iter()
+        .find(|(name, _)| name != "entry.js")
+        .expect("extracted module");
+    assert!(
+        raw_module
+            .1
+            .contains(r#"import { Alpha as e, Beta as r, Gamma as t } from "./entry.js";"#),
+        "the module should import through the entry's existing aliases:\n{}",
+        raw_module.1
+    );
+
+    let normal_pairs = expect_unpack(bundle, "bundle.js");
+    assert_eq!(validate_output_modules(&normal_pairs), vec![]);
+}
+
+#[test]
+fn entry_link_export_takes_a_fresh_name_when_its_own_is_taken() {
+    // producer esbuild@0.28.0 `--bundle --format=esm --minify`: the entry
+    // imports the classes only for their side effects, so it exports none
+    // of them, but its export list uses `e` and `r` for its constants.
+    let bundle = r#"
+var n=Object.defineProperty;var a=(t,o)=>{for(var s in o)n(t,s,{get:o[s],enumerable:!0})};var e=class{static describe(){return"alpha-core"}},r=class{static describe(){return"beta-core:"+e.describe()}},c=class{static describe(){return"gamma-core:"+r.describe()}};var i={};a(i,{combine:()=>b});function b(){return["helper-combine",e.describe(),r.describe(),c.describe()].join(",")}var x="entry-e",u="entry-t",y="entry-r",f="entry-n",h="entry-o";export{x as e,i as helpers,f as n,h as o,y as r,u as t};
+"#;
+
+    let raw_pairs = expect_unpack_raw(bundle);
+    let raw_entry = entry_code(&raw_pairs);
+    assert!(
+        raw_entry.contains("export { c, e as e$2, r as r$2 };") && raw_entry.contains("y as r"),
+        "the links take fresh names beside the entry's own exports:\n{raw_entry}"
+    );
+    assert_eq!(validate_output_modules(&raw_pairs), vec![]);
+
+    let normal_pairs = expect_unpack(bundle, "bundle.js");
+    assert_eq!(validate_output_modules(&normal_pairs), vec![]);
+}
+
+#[test]
 fn exported_export_helper_keeps_its_dependencies() {
     // `__export` stays because the chunk exports it, so the property-define
     // alias it calls must stay too.

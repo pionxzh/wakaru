@@ -460,6 +460,7 @@ fn detect_from_prepared_factories(
         module_local_atoms,
         module_referenced_atoms,
         scope_claimed_factory_bindings,
+        entry_link_export_names,
     } = {
         let span = tracing::info_span!("esbuild: extract scope-hoisted modules");
         let _enter = span.enter();
@@ -483,6 +484,7 @@ fn detect_from_prepared_factories(
     // Phase 6: decide where every factory, support declaration, and state
     // writer goes, then emit. Emission never changes ownership.
     let mut ownership = FactoryOwnership::new(binding_to_filename);
+    ownership.entry_link_export_names = entry_link_export_names;
     let remaining_entry_spans: HashSet<(u32, u32)> = remaining_entry
         .iter()
         .map(|item| (item.span().lo.0, item.span().hi.0))

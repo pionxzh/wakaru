@@ -800,7 +800,7 @@ fn merged_module_plans_publish_adopted_declarations_to_later_modules() {
         second.named_imports,
         vec![(
             relative_import_path("second.js", "first.js"),
-            vec![Atom::from("support")]
+            vec![(Atom::from("support"), Atom::from("support"))]
         )]
     );
     assert_eq!(

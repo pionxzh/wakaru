@@ -33,10 +33,10 @@ use super::scope_boundaries::{
     ScopeHoistedBoundary,
 };
 use super::synthesis::{
-    dedup_filename, emit_items, filter_item_to_owned_bindings, make_external_import_stmt,
-    make_namespace_define_property_items, make_namespace_object_decl, relative_import_path,
-    reserve_import_atom, retain_owned_support_source_items, scope_owned_support_decl_items,
-    try_promote_scope_export, ScopeExportPromotion,
+    dedup_filename, emit_items, entry_link_imported_name, filter_item_to_owned_bindings,
+    make_external_import_stmt, make_namespace_define_property_items, make_namespace_object_decl,
+    relative_import_path, reserve_import_atom, retain_owned_support_source_items,
+    scope_owned_support_decl_items, try_promote_scope_export, ScopeExportPromotion,
 };
 
 /// Metadata collected during the first pass over scope-hoisted boundaries.
@@ -259,6 +259,9 @@ pub(super) struct ScopeExtractionResult {
     pub(super) module_local_atoms: HashMap<String, HashSet<Atom>>,
     pub(super) module_referenced_atoms: HashMap<String, HashSet<Atom>>,
     pub(super) scope_claimed_factory_bindings: HashMap<BindingId, String>,
+    /// Entry bindings imported from the entry under another name; see
+    /// `synthesis::entry_link_imported_name`.
+    pub(super) entry_link_export_names: HashMap<Atom, Atom>,
 }
 
 /// Module-level facts collected before any item is moved out of the entry.
@@ -305,6 +308,91 @@ struct ScopeImportExportMaps {
     pub(super) binding_filename_by_atom: HashMap<Atom, (BindingId, String)>,
     filename_to_module: HashMap<String, usize>,
     binding_module_by_atom: HashMap<Atom, (BindingId, usize)>,
+    /// Export names the remaining entry items already declare.
+    entry_exports: EntryExportNames,
+    /// Entry bindings that other modules import from the entry, keyed by
+    /// atom, whose own name is already one of the entry's export names for a
+    /// different binding, mapped to the name importers use: the binding's
+    /// existing export alias, or a fresh name the entry exports it under.
+    entry_link_export_names: HashMap<Atom, Atom>,
+}
+
+#[derive(Default)]
+struct EntryExportNames {
+    /// Local atoms exported under their own name (`export { ns_a }`,
+    /// `export const x`): importable as `import { ns_a }`. An aliased
+    /// export (`export { ns_a as math }`) is not.
+    direct: HashSet<Atom>,
+    /// Every name the items export, aliased or not.
+    all: HashSet<Atom>,
+    /// Local atoms the items export only under other names
+    /// (`export { t as Gamma }`), with the smallest such name.
+    aliased: HashMap<Atom, Atom>,
+}
+
+fn entry_export_names<'a>(items: impl Iterator<Item = &'a ModuleItem>) -> EntryExportNames {
+    let mut names = EntryExportNames::default();
+    let export_name = |name: &ModuleExportName| match name {
+        ModuleExportName::Ident(id) => Some(id.sym.clone()),
+        ModuleExportName::Str(_) => None,
+    };
+    for item in items {
+        match item {
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(_)) => {
+                for (atom, _) in module_item_declared_binding_ids(item) {
+                    names.direct.insert(atom.clone());
+                    names.all.insert(atom);
+                }
+            }
+            ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(named)) => {
+                for specifier in &named.specifiers {
+                    match specifier {
+                        ExportSpecifier::Named(n) => {
+                            let orig = export_name(&n.orig);
+                            let exported = match &n.exported {
+                                Some(exported) => export_name(exported),
+                                None => orig.clone(),
+                            };
+                            if let Some(exported) = exported {
+                                if let (None, Some(orig)) = (&named.src, orig) {
+                                    if orig == exported {
+                                        names.direct.insert(orig);
+                                    } else {
+                                        names
+                                            .aliased
+                                            .entry(orig)
+                                            .and_modify(|name| {
+                                                if exported < *name {
+                                                    *name = exported.clone();
+                                                }
+                                            })
+                                            .or_insert_with(|| exported.clone());
+                                    }
+                                }
+                                names.all.insert(exported);
+                            }
+                        }
+                        ExportSpecifier::Namespace(ns) => {
+                            names.all.extend(export_name(&ns.name));
+                        }
+                        ExportSpecifier::Default(default) => {
+                            names.all.insert(default.exported.sym.clone());
+                        }
+                    }
+                }
+            }
+            ModuleItem::ModuleDecl(
+                ModuleDecl::ExportDefaultDecl(_) | ModuleDecl::ExportDefaultExpr(_),
+            ) => {
+                names.all.insert("default".into());
+            }
+            _ => {}
+        }
+    }
+    for atom in &names.direct {
+        names.aliased.remove(atom);
+    }
+    names
 }
 
 struct ScopeEmittedModules {
@@ -361,6 +449,7 @@ pub(super) fn extract_scope_hoisted_modules(
         module_local_atoms: emitted.module_local_atoms,
         module_referenced_atoms: emitted.module_referenced_atoms,
         scope_claimed_factory_bindings: ie.scope_claimed_factory_bindings,
+        entry_link_export_names: ie.entry_link_export_names,
     }
 }
 
@@ -1432,7 +1521,48 @@ fn compute_scope_imports_exports(
             .or_insert_with(|| "entry.js".to_string());
     }
 
+    // The entry exports each linked binding under its own atom, but the
+    // entry's own export list can already use that atom as the name of a
+    // different binding: a minified chunk exports `l as r` while the class
+    // `r` stays in the entry for an extracted module to import. Import a
+    // binding the entry already exports under another name by that name;
+    // otherwise export it under a fresh name and import it by that one.
+    let entry_exports = entry_export_names(
+        remaining_indices
+            .iter()
+            .filter_map(|&i| source_slots[i].as_ref()),
+    );
+    let linked_atoms: HashSet<Atom> = scope_needed_entry_bindings
+        .iter()
+        .chain(
+            boundaries
+                .iter()
+                .map(|boundary| &boundary.ns_binding)
+                .filter(|binding| factory_referenced.contains(*binding)),
+        )
+        .map(|(atom, _)| atom.clone())
+        .collect();
+    let mut taken_export_names: HashSet<Atom> = entry_exports.all.clone();
+    taken_export_names.extend(linked_atoms.iter().cloned());
+    let mut colliding: Vec<&Atom> = linked_atoms
+        .iter()
+        .filter(|atom| entry_exports.all.contains(*atom) && !entry_exports.direct.contains(*atom))
+        .collect();
+    colliding.sort();
+    let entry_link_export_names: HashMap<Atom, Atom> = colliding
+        .into_iter()
+        .map(|atom| {
+            let exported = match entry_exports.aliased.get(atom) {
+                Some(existing) => existing.clone(),
+                None => reserve_import_atom(atom, &mut taken_export_names),
+            };
+            (atom.clone(), exported)
+        })
+        .collect();
+
     ScopeImportExportMaps {
+        entry_exports,
+        entry_link_export_names,
         remaining_indices,
         entry_referenced,
         scope_needed_entry_bindings,
@@ -1701,15 +1831,19 @@ fn emit_scope_modules(
             bindings.dedup();
             let mut names = Vec::new();
             for binding in bindings {
-                let imported = binding.0.clone();
-                let local = reserve_import_atom(&imported, &mut reserved_import_atoms);
-                if local != imported {
+                let local = reserve_import_atom(&binding.0, &mut reserved_import_atoms);
+                if local != binding.0 {
                     import_renames.push(BindingRename {
                         old: binding.clone(),
                         new: local.clone(),
                     });
                 }
                 imported_atoms.insert(local.clone());
+                let imported = entry_link_imported_name(
+                    &ie.entry_link_export_names,
+                    &source_filename,
+                    &binding.0,
+                );
                 names.push((imported, local));
             }
             let rel_path = relative_import_path(&meta.filename, &source_filename);
@@ -1874,6 +2008,8 @@ fn build_scope_entry(
         entry_referenced,
         scope_needed_entry_bindings,
         binding_module_by_atom,
+        entry_exports,
+        entry_link_export_names,
         ..
     } = ie;
     let factory_referenced = refs.factory_referenced;
@@ -1896,47 +2032,14 @@ fn build_scope_entry(
         module_already_imports.insert(meta.filename.clone(), imported);
     }
 
-    // Collect atoms that the remaining entry items already export via ESM
-    // `export { ... }` or `export <decl>` declarations.  Used below to avoid
-    // synthesizing duplicate exports for namespace and entry-owned bindings.
-    // Only count unaliased exports: `export { ns_a }` makes `ns_a`
-    // importable by name, but `export { ns_a as math }` does not —
-    // consumers would need `import { math }`, not `import { ns_a }`.
-    let entry_already_exports: HashSet<Atom> = remaining_indices
-        .iter()
-        .flat_map(|&i| match source_slots[i].as_ref().unwrap() {
-            item @ ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(_)) => {
-                module_item_declared_binding_ids(item)
-                    .into_iter()
-                    .map(|(atom, _)| atom)
-                    .collect::<Vec<_>>()
-            }
-            ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(named)) => named
-                .specifiers
-                .iter()
-                .filter_map(|s| match s {
-                    ExportSpecifier::Named(n) => {
-                        let orig_atom = match &n.orig {
-                            ModuleExportName::Ident(id) => &id.sym,
-                            ModuleExportName::Str(_) => return None,
-                        };
-                        let is_direct = match &n.exported {
-                            None => true,
-                            Some(ModuleExportName::Ident(id)) => id.sym == *orig_atom,
-                            Some(ModuleExportName::Str(_)) => false,
-                        };
-                        if is_direct {
-                            Some(orig_atom.clone())
-                        } else {
-                            None
-                        }
-                    }
-                    _ => None,
-                })
-                .collect::<Vec<_>>(),
-            _ => vec![],
-        })
-        .collect();
+    // Importers can already reach a binding the entry exports under its own
+    // name, or under the existing alias `entry_link_export_names` names.
+    let entry_already_exports = |atom: &Atom| {
+        entry_exports.direct.contains(atom)
+            || entry_link_export_names
+                .get(atom)
+                .is_some_and(|name| entry_exports.all.contains(name))
+    };
 
     // Restore consumed namespace decls + __export calls whose namespace
     // binding is still referenced by the remaining entry or by factory
@@ -1978,9 +2081,7 @@ fn build_scope_entry(
         // If a factory or scope module references this namespace but the
         // entry doesn't already export it via an ESM export declaration,
         // synthesize one so `import { ns_a } from "./entry.js"` resolves.
-        if (factory_needs || scope_module_needs)
-            && !entry_already_exports.contains(&boundary.ns_binding.0)
-        {
+        if (factory_needs || scope_module_needs) && !entry_already_exports(&boundary.ns_binding.0) {
             synthesized_entry_exports.push(boundary.ns_binding.0.clone());
         }
     }
@@ -1989,7 +2090,7 @@ fn build_scope_entry(
         .iter()
         .filter(|binding| !restored_namespace_bindings.contains(*binding))
     {
-        if !entry_already_exports.contains(atom) {
+        if !entry_already_exports(atom) {
             synthesized_entry_exports.push(atom.clone());
         }
     }
@@ -1999,7 +2100,17 @@ fn build_scope_entry(
     if !synthesized_entry_exports.is_empty() {
         synthesized_entry_exports.sort();
         synthesized_entry_exports.dedup();
-        restored_items.push(make_named_export_stmt(&synthesized_entry_exports));
+        let names: Vec<(Atom, Atom)> = synthesized_entry_exports
+            .into_iter()
+            .map(|atom| {
+                let exported = entry_link_export_names
+                    .get(&atom)
+                    .cloned()
+                    .unwrap_or_else(|| atom.clone());
+                (atom, exported)
+            })
+            .collect();
+        restored_items.push(make_named_export_stmt_with_aliases(&names));
     }
     let mut entry_imports: HashMap<usize, Vec<BindingId>> = HashMap::default();
     for ref_binding in entry_referenced.iter() {

@@ -31,6 +31,22 @@ pub(super) fn relative_import_path(importer: &str, target: &str) -> String {
     relative_import_specifier(importer, target)
 }
 
+/// The name to import `atom` by from `source_filename`: a linked entry
+/// binding whose own atom the entry already exports for another binding is
+/// imported through its existing alias or a fresh export name.
+pub(super) fn entry_link_imported_name(
+    entry_link_export_names: &HashMap<Atom, Atom>,
+    source_filename: &str,
+    atom: &Atom,
+) -> Atom {
+    if source_filename == "entry.js" {
+        if let Some(exported) = entry_link_export_names.get(atom) {
+            return exported.clone();
+        }
+    }
+    atom.clone()
+}
+
 pub(super) fn reserve_import_atom(imported: &Atom, reserved: &mut HashSet<Atom>) -> Atom {
     if reserved.insert(imported.clone()) {
         return imported.clone();

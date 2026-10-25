@@ -79,7 +79,11 @@ attempted in order — first match wins:
    declaration the last-module boundary search leaves in the remainder, or a
    restored lazy-module namespace object reached through the `import()`
    lowering `then(() => (init_x(), ns_x))`) are exported from `entry.js` and
-   imported by the scope modules that reference them. The edge is added only
+   imported by the scope modules that reference them. When the entry's own
+   export list already uses a binding's name for another binding (a minified
+   `export{l as r}` beside the linked `r`), the importers use the binding's
+   existing export alias, or a fresh name (`r$2`) the entry exports it under
+   when it has none. The edge is added only
    where the resulting entry/module cycle provably cannot observe the
    entry's initializers: every consumer reference sits inside a function or
    class bound to a top-level name unreachable from eager or unknown-timing

@@ -31,9 +31,9 @@ use super::ownership::{
     TopLevelWriterItem,
 };
 use super::synthesis::{
-    emit_items, export_items, factory_owned_decl_items, factory_owned_export_names,
-    filter_item_to_owned_bindings, make_external_import_stmt, relative_import_path,
-    reserve_import_atom,
+    emit_items, entry_link_imported_name, export_items, factory_owned_decl_items,
+    factory_owned_export_names, filter_item_to_owned_bindings, make_external_import_stmt,
+    relative_import_path, reserve_import_atom,
 };
 
 /// Re-synthesizes demoted factories into the entry at their source positions
@@ -244,14 +244,18 @@ pub(super) fn emit_standalone_group(
             bindings.dedup();
             let mut names = Vec::new();
             for binding in bindings {
-                let imported = binding.0.clone();
-                let local = reserve_import_atom(&imported, &mut reserved_import_atoms);
-                if local != imported {
+                let local = reserve_import_atom(&binding.0, &mut reserved_import_atoms);
+                if local != binding.0 {
                     import_renames.push(BindingRename {
                         old: binding.clone(),
                         new: local.clone(),
                     });
                 }
+                let imported = entry_link_imported_name(
+                    &ownership.entry_link_export_names,
+                    &source_filename,
+                    &binding.0,
+                );
                 names.push((imported, local));
             }
             let rel_path = relative_import_path(&group_filename, &source_filename);
@@ -483,7 +487,7 @@ pub(super) fn emit_merged_module_plan(
         .chain(
             named_imports
                 .iter()
-                .map(|(specifier, names)| make_named_import_stmt(names, specifier)),
+                .map(|(specifier, names)| make_named_import_stmt_with_aliases(names, specifier)),
         )
         .chain(owned_items.iter().filter_map(|(index, owned_atoms)| {
             filter_item_to_owned_bindings(&source_items[*index], owned_atoms)
