@@ -29,6 +29,17 @@ pub(super) fn detect_from_module(
     cm: Lrc<SourceMap>,
     positions: SourcePositions,
 ) -> Option<UnpackResult> {
+    detect_define_modules_from_module(module, cm.clone(), positions)
+        .or_else(|| emit_plain_umd_module(module, cm, positions))
+}
+
+/// A file of only top-level `define(…)` calls (and directives), split into
+/// one module per define.
+pub(super) fn detect_define_modules_from_module(
+    module: &Module,
+    cm: Lrc<SourceMap>,
+    positions: SourcePositions,
+) -> Option<UnpackResult> {
     let mut defines = Vec::new();
     let mut only_defines = true;
     for item in &module.body {
@@ -48,11 +59,10 @@ pub(super) fn detect_from_module(
         }
     }
 
-    if !defines.is_empty() && only_defines {
-        return emit_define_modules(defines, cm, positions);
+    if defines.is_empty() || !only_defines {
+        return None;
     }
-
-    emit_plain_umd_module(module, cm, positions)
+    emit_define_modules(defines, cm, positions)
 }
 
 fn parse_define_call(expr: &Expr) -> Option<AmdDefine<'_>> {

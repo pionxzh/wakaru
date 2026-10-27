@@ -2230,3 +2230,52 @@ fn trailing_iife_export_anchor_requires_exclusive_helper_uses() {
         }
     }
 }
+
+#[test]
+fn debug_id_snippet_merged_into_a_sequence_with_the_bootstrap_stays_in_entry() {
+    // `@sentry/webpack-plugin` injects its release and debug-id snippet before
+    // minification; Terser merges it and the bootstrap into one statement.
+    // shape: producer webpack@5.111.1 + @sentry/webpack-plugin@5.4.1 + Terser;
+    // release and debug ids synthetic, global renamed to `globalThis.lib`.
+    let source = r#"!function(){try{var e="undefined"!=typeof window?window:"undefined"!=typeof global?global:"undefined"!=typeof globalThis?globalThis:"undefined"!=typeof self?self:{};e.SENTRY_RELEASE={id:"release-a"};var t=(new e.Error).stack;t&&(e._sentryDebugIds=e._sentryDebugIds||{},e._sentryDebugIds[t]="00000000-0000-4000-8000-000000000001",e._sentryDebugIdIdentifier="sentry-dbid-00000000-0000-4000-8000-000000000001")}catch(e){}}(),(()=>{var r={574(r,e,n){var t=n(240);e.describe=t.describe,e.name="entry-name"},240(r,e){e.describe=function(r){return"provider:"+r}}};const e={};globalThis.lib=function n(t){const i=e[t];if(void 0!==i)return i.exports;const c=e[t]={exports:{}};return r[t](c,c.exports,n),c.exports}(574)})();"#;
+
+    let pairs = expect_unpack(source, "bundle.js");
+    for name in ["module-240.js", "module-574.js"] {
+        assert!(
+            pairs.iter().any(|(file, _)| file == name),
+            "{name} must be extracted, got {:?}",
+            pairs.iter().map(|(file, _)| file).collect::<Vec<_>>()
+        );
+    }
+    let entry = entry_of(&pairs);
+    let snippet = entry
+        .find(r#"id: "release-a""#)
+        .unwrap_or_else(|| panic!("the snippet must stay in entry.js, got:\n{entry}"));
+    let sink = entry
+        .find("globalThis.lib = lib")
+        .unwrap_or_else(|| panic!("the library assignment must stay, got:\n{entry}"));
+    assert!(snippet < sink, "the snippet must run first, got:\n{entry}");
+    assert!(
+        validate_output_modules(&pairs).is_empty(),
+        "output must validate: {:?}",
+        validate_output_modules(&pairs)
+    );
+}
+
+#[test]
+fn bootstrap_merged_into_a_sequence_with_a_footer_keeps_the_footer_last() {
+    // shape: producer webpack@5.111.1 mode=production (Terser), BannerPlugin
+    // raw=true footer=true at its default stage; global renamed to
+    // `globalThis.lib`.
+    let source = r#"(()=>{var r={574(r,e){e.name="entry-name"}};const e={};globalThis.lib=function n(t){const i=e[t];if(void 0!==i)return i.exports;const c=e[t]={exports:{}};return r[t](c,c.exports,n),c.exports}(574)})(),globalThis.footer=1;"#;
+
+    let pairs = expect_unpack(source, "bundle.js");
+    let entry = entry_of(&pairs);
+    let sink = entry
+        .find("globalThis.lib = lib")
+        .unwrap_or_else(|| panic!("the library assignment must stay, got:\n{entry}"));
+    let footer = entry
+        .find("globalThis.footer = 1")
+        .unwrap_or_else(|| panic!("the footer must stay in entry.js, got:\n{entry}"));
+    assert!(sink < footer, "the footer must run last, got:\n{entry}");
+}

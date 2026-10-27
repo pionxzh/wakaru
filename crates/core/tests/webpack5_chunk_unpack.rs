@@ -871,3 +871,74 @@ fn each_chunk_input_gets_its_own_prelude() {
     );
     assert_prelude_required_by_every_module(&pairs);
 }
+
+// ---------------------------------------------------------------------------
+// A push merged into a top-level sequence
+// ---------------------------------------------------------------------------
+
+/// The release and debug-id snippet `@sentry/webpack-plugin` injects before
+/// every chunk, with synthetic release and debug ids.
+const DEBUG_ID_SNIPPET: &str = r#"!function(){try{var e="undefined"!=typeof window?window:"undefined"!=typeof global?global:"undefined"!=typeof globalThis?globalThis:"undefined"!=typeof self?self:{};e.SENTRY_RELEASE={id:"release-a"};var n=(new e.Error).stack;n&&(e._sentryDebugIds=e._sentryDebugIds||{},e._sentryDebugIds[n]="00000000-0000-4000-8000-000000000001",e._sentryDebugIdIdentifier="sentry-dbid-00000000-0000-4000-8000-000000000001")}catch(e){}}()"#;
+
+#[test]
+fn snippet_merged_into_a_sequence_with_the_push_goes_to_a_prelude() {
+    // shape: producer webpack@5.111.1 + @sentry/webpack-plugin@5.4.1 + Terser
+    // (the plugin injects the snippet before minification, and Terser merges
+    // it with the push into one statement).
+    let source = format!("{DEBUG_ID_SNIPPET},{CHUNK_PUSH};");
+
+    let pairs = expect_unpack(&source, "204.js");
+    let prelude = file(&pairs, "prelude-204.js");
+    assert!(
+        prelude.contains(r#"id: "release-a""#) && prelude.contains("_sentryDebugIds"),
+        "the snippet must be kept in the prelude, got:\n{prelude}"
+    );
+    assert!(
+        !prelude.contains("webpackChunk_app"),
+        "the push is not prelude code, got:\n{prelude}"
+    );
+    assert_prelude_required_by_every_module(&pairs);
+    assert!(
+        validate_output_modules(&pairs).is_empty(),
+        "output must validate: {:?}",
+        validate_output_modules(&pairs)
+    );
+}
+
+#[test]
+fn code_after_the_push_in_the_sequence_goes_to_the_prelude() {
+    // shape: producer webpack@5.111.1 mode=production (Terser), BannerPlugin
+    // raw=true footer=true at its default stage; the footer writes a
+    // loaded flag.
+    let source =
+        format!(r#""use strict";{CHUNK_PUSH},self.loaded=self.loaded||{{}},self.loaded.chunk=1;"#);
+
+    let pairs = expect_unpack(&source, "204.js");
+    let prelude = file(&pairs, "prelude-204.js");
+    assert!(
+        prelude.contains("self.loaded = self.loaded || {};")
+            && prelude.contains("self.loaded.chunk = 1;"),
+        "the footer must be kept in the prelude, got:\n{prelude}"
+    );
+    assert!(
+        !prelude.contains("use strict"),
+        "the directive is not prelude code, got:\n{prelude}"
+    );
+    assert_prelude_required_by_every_module(&pairs);
+}
+
+#[test]
+fn push_inside_a_function_of_a_sequence_is_not_a_chunk() {
+    // Only top-level sequence elements are statements; a push-shaped call in
+    // a nested function runs only when that function is called.
+    // shape: hypothetical.
+    let source = format!("a(),function(){{{CHUNK_PUSH}}};");
+
+    let pairs = expect_unpack(&source, "page.js");
+    assert_eq!(
+        pairs.len(),
+        1,
+        "the input must stay one file, got {pairs:?}"
+    );
+    assert!(pairs[0].1.contains("webpackChunk_app"));
+}

@@ -406,6 +406,17 @@ fn assert_banner_runs_around_the_entry(pairs: &[(String, String)]) {
 }
 
 #[test]
+fn banner_merged_into_a_sequence_with_the_bootstrap_stays_in_entry() {
+    // shape: producer webpack@4.47.0 mode=production (Terser), BannerPlugin
+    // raw=true (webpack 4's BannerPlugin runs before minification, so Terser
+    // merges the banner and the bootstrap into one statement); globals
+    // renamed to `globalThis.banner` / `globalThis.lib`.
+    let source = format!("{BANNER},{WEBPACK4_BOOTSTRAP};");
+
+    assert_banner_runs_around_the_entry(&expect_pairs(&source));
+}
+
+#[test]
 fn code_before_the_bootstrap_statement_stays_in_entry() {
     // A script concatenated in front of the bundle. shape: hypothetical.
     let source = format!("{BANNER};\n!{WEBPACK4_BOOTSTRAP};");

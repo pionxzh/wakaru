@@ -8,6 +8,7 @@ pub(crate) mod emit_esm;
 pub mod esbuild;
 pub mod metro;
 pub mod scope_hoist;
+mod sequence_split;
 mod surrounding;
 pub mod systemjs;
 mod turbopack;
@@ -1372,25 +1373,97 @@ fn detect_parsed_source(
     collect_chunk_enumeration: bool,
     positions: SourcePositions,
 ) -> Option<DetectedBundle> {
+    if let Some(result) = detect_parsed_module(
+        module,
+        cm.clone(),
+        source,
+        collect_chunk_enumeration,
+        positions,
+    ) {
+        return Some(result);
+    }
+    // A minifier can merge the bundle statement with code minified alongside
+    // it into one top-level comma sequence. Detection runs again with every
+    // element as its own statement. An input that is still no bundle gets its
+    // parsed statements back, so its plain output does not change.
+    let span = tracing::info_span!("detect_split_top_level_sequences");
+    let _enter = span.enter();
+    let split = sequence_split::split_top_level_sequences(module)?;
+    let detected = detect_split_module(module, cm, source, collect_chunk_enumeration, positions);
+    if detected.is_none() {
+        split.restore(module);
+    }
+    detected
+}
+
+/// The detectors that run again on a module whose top-level sequences were
+/// split, in detection order. Each builds its output from the AST, where a
+/// split element carries the parentheses it needs to begin a statement.
+/// Detectors that copy top-level statements as source text (Turbopack's
+/// prelude, esbuild's scope hoisting, Closure's shared bootstrap) would copy
+/// an element without its `;` or those parentheses, and no producer merges
+/// their bundles into a sequence, so they do not run. AMD takes only its
+/// define-only path: the single-UMD fallback belongs to the parsed input.
+fn detect_split_module(
+    module: &mut Module,
+    cm: Lrc<SourceMap>,
+    source: &str,
+    collect_chunk_enumeration: bool,
+    positions: SourcePositions,
+) -> Option<DetectedBundle> {
+    let result = webpack5::detect_from_module_prepared(module, cm.clone(), positions)
+        .or_else(|| {
+            webpack5::detect_runtime_entry_from_module(module, source)
+                .map(DetectedBundle::from_result)
+        })
+        .or_else(|| webpack4::detect_from_module(module, cm.clone(), positions))
+        .or_else(|| webpack5::detect_chunk_from_module_prepared(module, cm.clone()))
+        .or_else(|| browserify::detect_from_module_prepared(module, cm.clone()))
+        .or_else(|| {
+            amd::detect_define_modules_from_module(module, cm, positions)
+                .map(DetectedBundle::from_result)
+        })?;
+    Some(finish_detected(result, module, collect_chunk_enumeration))
+}
+
+/// Adds the input-level facts every detection result carries.
+fn finish_detected(
+    mut result: DetectedBundle,
+    module: &mut Module,
+    collect_chunk_enumeration: bool,
+) -> DetectedBundle {
+    result.chunk_ids = webpack5::detect_chunk_ids_from_module(module);
+    result.chunk_loading_globals = chunk_loading_global::chunk_loading_globals(module);
+    result.input_has_esm_declarations = module
+        .body
+        .iter()
+        .any(|item| matches!(item, ModuleItem::ModuleDecl(_)));
+    if collect_chunk_enumeration {
+        let unresolved_mark = resolve_chunk_enumeration_module(module);
+        result.chunk_enumeration = chunk_enumeration::extract_chunk_enumeration(
+            module,
+            result.result.format,
+            unresolved_mark,
+        );
+    }
+    result
+}
+
+fn detect_parsed_module(
+    module: &mut Module,
+    cm: Lrc<SourceMap>,
+    source: &str,
+    collect_chunk_enumeration: bool,
+    positions: SourcePositions,
+) -> Option<DetectedBundle> {
+    if let Some(result) = detect_bundle_candidate(module, cm.clone(), source, true, positions) {
+        return Some(finish_detected(result, module, collect_chunk_enumeration));
+    }
     let input_has_esm_declarations = module
         .body
         .iter()
         .any(|item| matches!(item, ModuleItem::ModuleDecl(_)));
     let chunk_ids = webpack5::detect_chunk_ids_from_module(module);
-    if let Some(mut result) = detect_bundle_candidate(module, cm.clone(), source, true, positions) {
-        result.chunk_ids = chunk_ids;
-        result.chunk_loading_globals = chunk_loading_global::chunk_loading_globals(module);
-        result.input_has_esm_declarations = input_has_esm_declarations;
-        if collect_chunk_enumeration {
-            let unresolved_mark = resolve_chunk_enumeration_module(module);
-            result.chunk_enumeration = chunk_enumeration::extract_chunk_enumeration(
-                module,
-                result.result.format,
-                unresolved_mark,
-            );
-        }
-        return Some(result);
-    }
 
     if let Some(mut result) = wrappers::try_detect_bun_compile_candidate(module, |candidate| {
         detect_owned_bun_candidate(candidate, cm.clone(), source, positions)

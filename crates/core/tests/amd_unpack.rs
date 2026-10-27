@@ -691,3 +691,47 @@ boot();
         raw[0].1
     );
 }
+
+#[test]
+fn named_defines_merged_into_one_sequence_unpack() {
+    // shape: producer r.js@2.3.7 optimize=uglify (no loader; the bundled
+    // UglifyJS merges every define into one statement). Ids synthetic.
+    let source = r#"define("lib/twice",[],function(){return function(n){return 2*n}}),define("app/main",["lib/twice"],function(t){globalThis.sink=t(3)});"#;
+
+    let raw = raw_pairs(source);
+    let names: Vec<&str> = raw.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(names, vec!["lib/twice.js", "app/main.js"]);
+
+    let decompiled = pairs(source);
+    let main = decompiled
+        .iter()
+        .find(|(name, _)| name == "app/main.js")
+        .map(|(_, code)| code)
+        .expect("expected decompiled main module");
+    assert!(
+        main.contains(r#""../lib/twice.js""#),
+        "the dependency should link to the split module:\n{main}"
+    );
+    assert!(
+        validate_output_modules(&decompiled).is_empty(),
+        "output must validate: {:?}",
+        validate_output_modules(&decompiled)
+    );
+}
+
+#[test]
+fn define_merged_into_a_sequence_with_other_code_is_not_partially_unpacked() {
+    // The split copy holds a call that is no define, so the input is not
+    // define-only, and a split copy must not reach the single-UMD fallback
+    // either. shape: hypothetical.
+    let source = r#"define("config",{answer:42}),boot();"#;
+
+    let raw = raw_pairs(source);
+    assert_eq!(raw.len(), 1);
+    assert_eq!(raw[0].0, "module.js");
+    assert!(
+        raw[0].1.contains("boot()"),
+        "mixed top-level code should stay intact:\n{}",
+        raw[0].1
+    );
+}

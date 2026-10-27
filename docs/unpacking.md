@@ -178,6 +178,32 @@ top-level siblings retain their original boundary. Finally, **AMD** (`amd.rs`)
 detects files consisting of top-level `define(id, deps, factory)` calls and
 splits each define into a module.
 
+When nothing matches and the input has a top-level expression statement that
+is a comma sequence, detection runs once more with each element of such a
+statement as its own statement (`sequence_split.rs`). A minifier merges a
+bundle statement with code minified alongside it into one sequence: a raw
+banner or footer, a snippet a plugin injects before minification (producer
+`webpack@5.111.1` + `@sentry/webpack-plugin@5.4.1` + Terser:
+`!function(){try{…}catch(e){}}(),(()=>{…})();`), or every named `define` of an
+r.js build (producer `r.js@2.3.7` `optimize=uglify`). At statement level
+`a, b;` runs exactly as `a; b;`. An element that a statement cannot begin with
+gets parentheses around its leftmost part (`(function(){…})()`), and a string
+element is parenthesized so it cannot become a directive. Each element keeps
+its own span, so source ranges and raw extraction point at the element. Only
+top-level statements split; a sequence inside a function stays as it is.
+
+The second pass runs webpack 5 (bootstrap, runtime-only entry, chunk),
+webpack 4, Browserify, and AMD's define-only path, in that order. Each builds
+its output from the AST, where a split element carries its parentheses. The
+other detectors copy top-level statements as source text (Turbopack's
+prelude, esbuild's scope hoisting, Closure's shared bootstrap), which would
+lose an element's `;` and parentheses, and no producer is known to merge
+their bundles into a sequence. AMD's single-UMD fallback is left out because
+it belongs to the input as parsed. The split moves nodes in place and is
+undone when the second pass finds nothing, so an input that is still no
+bundle keeps its plain output, and an input detected without the split is
+never re-detected.
+
 ## Vercel ncc
 
 Vercel ncc CommonJS output with an IIFE webpack bootstrap is handled as a
@@ -252,8 +278,9 @@ surrounding code declares a name entry normalization uses (`require`,
 `exports`, `module`, `global`, `define`), or when the bootstrap has no
 startup to place it around: otherwise the code would be in no output file.
 At BannerPlugin's default stage Terser merges the banner and the bootstrap
-into one comma sequence, which is not detected as a bundle, so that input
-also stays one file.
+into one comma sequence; detection splits it (see the end of [Detection
+order](#detection-order-and-supported-shapes)) and the banner lands in
+`entry.js` the same way.
 
 `entry.js` is a module, so its imports are hoisted: the entry module
 evaluates before a banner that writes globals only from inside a function
@@ -261,22 +288,27 @@ evaluates before a banner that writes globals only from inside a function
 
 ### Webpack 4 code around the bootstrap
 
-webpack 4 keeps the code around its bootstrap call the same way. The startup
-only requires entry modules, so `entry.js` holds the code before the
-bootstrap, a `require` of each entry module in startup order, and the code
-after it, as for [Browserify](#browserify-and-cocos-creator). The entry
-modules then take `entry-<id>.js` names (a string-keyed table keeps its path
-names) and only `entry.js` is marked as the entry. The input stays one file
-when the code declares `require` at its top level or the bootstrap starts no
-entry module.
+webpack 4 keeps the code around its bootstrap call the same way. Its
+BannerPlugin has no stage, so Terser always merges a raw banner into the
+bootstrap's statement (producer `webpack@4.47.0` + Terser), which detection
+splits. The startup only requires entry modules, so `entry.js` holds the code
+before the bootstrap, a `require` of each entry module in startup order, and
+the code after it, as for [Browserify](#browserify-and-cocos-creator). The
+entry modules then take `entry-<id>.js` names (a string-keyed table keeps its
+path names) and only `entry.js` is marked as the entry. The input stays one
+file when the code declares `require` at its top level or the bootstrap
+starts no entry module.
 
 ### Webpack 5 chunk prelude
 
 Top-level code beside an async chunk's push runs when the chunk script loads,
-outside every module: a raw banner or footer added after minification
-(producer `webpack@5.111.1` BannerPlugin `raw: true` at
-`PROCESS_ASSETS_STAGE_REPORT`) or a concatenated script. That code goes, in
-source order, to a prelude file named after the chunk's first numeric id
+outside every module: a raw banner or footer (as its own statement at the
+report stage, merged into the push's sequence at the default stage), a
+loaded-flag write after the push, or the release and debug-id snippet
+`@sentry/webpack-plugin` injects before every chunk (producer
+`webpack@5.111.1` + `@sentry/webpack-plugin@5.4.1` + Terser, split as in
+[Detection order](#detection-order-and-supported-shapes)). That code goes,
+in source order, to a prelude file named after the chunk's first numeric id
 (`prelude-204.js`, otherwise `prelude.js`), and every module of the chunk
 starts with `require("./prelude-204.js")`, which `UnEsm` turns into
 `import "./prelude-204.js"` when the module becomes ESM. The code then still
@@ -777,12 +809,9 @@ layout directly is a proposal:
     at the report stage, outside the wrapper, is dropped. When the startup
     calls require once, Terser inlines it into the factory's `return`, and
     the bundle is not detected;
-  - a banner that Terser merges with the bundle into one comma sequence
-    (BannerPlugin's default stage; every webpack 4 raw banner, since its
-    BannerPlugin has no stage) keeps the bundle from being detected, as does
-    a Terser-minified Browserify prelude (`!function r(e,n,t){…}({…},{},[1])`,
-    producer `browserify@17.0.1` + `terser@5.51.2`). Nothing is lost there,
-    but the input stays one file.
+  - a Terser-minified Browserify prelude (`!function r(e,n,t){…}({…},{},[1])`,
+    producer `browserify@17.0.1` + `terser@5.51.2`) is not detected. Nothing
+    is lost there, but the input stays one file.
 
   AMD, Closure, Metro, and Turbopack were not checked with a producer.
 - **Some esbuild glob imports stay lookup maps.** A template or concatenated
