@@ -444,8 +444,9 @@ ordinary local after its last runtime use, and a factory may read one of the
 canonical names free (webpack emits a free `require` for
 `__non_webpack_require__` and keeps `typeof exports` free in ESM modules). When
 a `module` or loader reuse boundary cannot be proved, an `exports` write cannot
-be kept (below), or the rename would capture a free reference, Wakaru preserves that factory's extracted body unchanged and marks
-only that module as failed; other factories in the same structurally proven
+be kept (below), or the rename would capture a free reference, Wakaru
+preserves that factory's extracted body unchanged and marks only that module
+as failed; other factories in the same structurally proven
 container remain recoverable, with numeric and string module IDs alike. A
 fixed-point pass removes failed factory IDs from the rewrite map before
 retrying dependants, so a call to an opaque factory follows the absent-ID
@@ -520,8 +521,12 @@ a bare `var t` is dropped; a redeclaration that is not a plain statement (a
 written `exports` passed to a loader member call such as `require.d(exports,
 ...)`, because later recovery reads those calls as definitions on the module's
 exports object. A free `exports` reference in such a factory is a free-name
-capture, as above. The `module` and loader parameters have no such
-counterpart: a loader must stay canonical for module-id calls.
+capture, as above. The `module` parameter is a writable wrapper binding in
+Node too, but `UnEsm` does not keep a module that writes its `module` binding
+CommonJS (only an `exports` write counts as an escape), so a kept `module`
+write could reach ESM output as a free assignment; `module` reuse stays on the
+opaque path. So does loader reuse: a loader must stay canonical for module-id
+calls.
 
 Webpack 4 passes a module that reads `module` as a value through a generated
 decorator: `(function (m) { ... }).call(this, require(<id>)(module))`, where

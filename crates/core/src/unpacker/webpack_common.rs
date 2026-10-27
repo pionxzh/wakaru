@@ -569,9 +569,12 @@ pub(super) fn localize_reused_runtime_parameter(
 /// wrapper passes `module.exports` too), so `t = module.exports = value`
 /// becomes `exports = module.exports = value` without inferring any alias
 /// relation between the two names. `UnEsm` keeps a module that writes its
-/// `exports` binding CommonJS. The `module` and loader parameters have no such
-/// counterpart (a loader must stay canonical for module-id calls) and remain
-/// on the opaque-factory path.
+/// `exports` binding CommonJS. The `module` parameter is a writable wrapper
+/// binding in Node too, but `UnEsm` does not keep a module that writes its
+/// `module` binding CommonJS (`check_wrapper_write` marks only an `exports`
+/// write as an escape), so keeping a `module` write could leave a free
+/// `module` assignment in ESM output; it stays on the opaque-factory path. So
+/// does the loader, which must stay canonical for module-id calls.
 ///
 /// A top-level `var t = value` redeclares the parameter in the original
 /// factory but resolves as a local in the wrapper-free module. Each such
