@@ -878,6 +878,37 @@ fn each_chunk_input_gets_its_own_prelude() {
 
 /// The release and debug-id snippet `@sentry/webpack-plugin` injects before
 /// every chunk, with synthetic release and debug ids.
+#[test]
+fn chunk_module_reading_a_prelude_declaration_stays_unsplit() {
+    // Module 240 calls `decode`, a global the code before the push declares;
+    // in a prelude file the declaration would be module-scoped.
+    // shape: hypothetical (a string-array decoder as javascript-obfuscator
+    // declares one before the code it rewrites).
+    let source = r#"var strings=["label:"];var decode=function(i){return strings[i]};
+(self.webpackChunk_app=self.webpackChunk_app||[]).push([[204],{240(e,n,d){function a(e){return decode(0)+e}d.r(n),d.d(n,{label:()=>a})},311(e,n){n[globalThis.key]=1,e.exports.other=n}}]);"#;
+
+    let pairs = expect_unpack(source, "204.js");
+    assert_eq!(
+        pairs.len(),
+        1,
+        "the input must stay one file, got {:?}",
+        pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn prelude_declaration_used_only_by_the_prelude_still_splits() {
+    // shape: hypothetical.
+    let source = format!(
+        r#"var strings=["release-a"];globalThis.release=strings[0];
+{CHUNK_PUSH};"#
+    );
+
+    let pairs = expect_unpack(&source, "204.js");
+    assert!(file(&pairs, "prelude-204.js").contains("globalThis.release"));
+    assert_prelude_required_by_every_module(&pairs);
+}
+
 const DEBUG_ID_SNIPPET: &str = r#"!function(){try{var e="undefined"!=typeof window?window:"undefined"!=typeof global?global:"undefined"!=typeof globalThis?globalThis:"undefined"!=typeof self?self:{};e.SENTRY_RELEASE={id:"release-a"};var n=(new e.Error).stack;n&&(e._sentryDebugIds=e._sentryDebugIds||{},e._sentryDebugIds[n]="00000000-0000-4000-8000-000000000001",e._sentryDebugIdIdentifier="sentry-dbid-00000000-0000-4000-8000-000000000001")}catch(e){}}()"#;
 
 #[test]

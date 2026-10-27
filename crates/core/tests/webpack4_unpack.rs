@@ -453,3 +453,81 @@ fn code_around_a_webpack4_bootstrap_declaring_require_stays_unsplit() {
         "the input must stay one file, got {pairs:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Code around the bootstrap that a factory uses
+// ---------------------------------------------------------------------------
+
+/// A string-array decoder declared at the top level before the bundle.
+/// shape: hypothetical, reduced from producer javascript-obfuscator@5.9.0
+/// --string-array true --string-array-threshold 1 --compact true over a
+/// producer webpack@1.15.0 -p bundle, which declares the array function and
+/// its decoder at the top level and calls the decoder in every factory.
+const DECODER: &str =
+    r#"var strings=["lib","call","label"];var decode=function(i){return strings[i]};"#;
+
+fn names(pairs: &[(String, String)]) -> Vec<&str> {
+    pairs.iter().map(|(name, _)| name.as_str()).collect()
+}
+
+#[test]
+fn factory_reading_a_declaration_around_the_bootstrap_stays_unsplit() {
+    // The factory calls `decode` as a global. Split, `decode` would be
+    // module-scoped in entry.js and undefined in the factory's file.
+    let bootstrap = WEBPACK4_BOOTSTRAP.replace("globalThis.lib=", "globalThis[decode(0)]=");
+    let source = format!("{DECODER}\n!{bootstrap};");
+
+    let pairs = expect_pairs(&source);
+    assert_eq!(
+        pairs.len(),
+        1,
+        "the input must stay one file, got {:?}",
+        names(&pairs)
+    );
+}
+
+#[test]
+fn declaration_around_the_bootstrap_used_only_outside_the_factories_splits() {
+    // Only the bootstrap's require function and the code after the bundle
+    // call the decoder; no factory does.
+    let bootstrap = WEBPACK4_BOOTSTRAP.replace("e[t].call(", "e[t][decode(1)](");
+    let source = format!("{DECODER}\n!{bootstrap};\nglobalThis.label = decode(2);");
+
+    let pairs = expect_pairs(&source);
+    assert_eq!(names(&pairs), ["entry-0.js", "module-1.js", "entry.js"]);
+    // entry.js becomes ESM, so the require of the entry module is hoisted
+    // as an import (see `import_hoisting_eagerness`).
+    let entry = named(&pairs, "entry.js");
+    assert!(
+        entry.contains(r#"import "./entry-0.js";"#),
+        "entry.js must load the entry module, got:\n{entry}"
+    );
+    let declaration = entry
+        .find("const decode =")
+        .unwrap_or_else(|| panic!("the decoder must stay in entry.js, got:\n{entry}"));
+    let read = entry
+        .find("globalThis.label = decode(2)")
+        .unwrap_or_else(|| panic!("the code after must stay, got:\n{entry}"));
+    assert!(
+        declaration < read,
+        "source order must be kept, got:\n{entry}"
+    );
+    assert!(
+        validate_output_modules(&pairs).is_empty(),
+        "output must validate: {:?}",
+        validate_output_modules(&pairs)
+    );
+}
+
+#[test]
+fn factory_binding_named_like_a_declaration_around_the_bootstrap_splits() {
+    // The factory declares its own `decode`; it never reads the global one.
+    let bootstrap = WEBPACK4_BOOTSTRAP.replace(
+        "globalThis.lib=r(1)",
+        r#"var decode=function(){return"lib"};globalThis[decode()]=r(1)"#,
+    );
+    let source = format!("{DECODER}\n!{bootstrap};");
+
+    let pairs = expect_pairs(&source);
+    assert_eq!(names(&pairs), ["entry-0.js", "module-1.js", "entry.js"]);
+}

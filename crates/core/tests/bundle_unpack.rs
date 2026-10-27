@@ -249,6 +249,48 @@ fn browserify_directive_around_the_prelude_call_writes_no_extra_entry() {
 }
 
 #[test]
+fn browserify_module_reading_a_declaration_around_the_prelude_call_stays_unsplit() {
+    // Module 1 calls `decode`, a global the code before the prelude call
+    // declares; split, it would be module-scoped in entry.js. A module's own
+    // `decode` parameter in module 2 is not that global. shape: hypothetical
+    // (a string-array decoder as javascript-obfuscator declares one).
+    let source = r#"
+var strings = ["value"];
+function decode(i) { return strings[i]; }
+(function() { return function() {}; })()({
+  1: [function(require, module) { module.exports = decode(0); }, {}],
+  2: [function(require, module, exports, decode) { module.exports = decode; }, {}]
+}, {}, [1]);
+"#;
+
+    let output = unpack(source, DecompileOptions::default()).expect("unpack should succeed");
+    assert!(
+        !output.detected_formats.contains(&BundleFormat::Browserify),
+        "a module reading a declaration around the prelude call must keep the input whole, got {:?}",
+        output
+            .modules
+            .iter()
+            .map(|(name, _)| name)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn browserify_module_with_a_parameter_named_like_a_declaration_around_splits() {
+    // shape: hypothetical.
+    let source = r#"
+function decode(i) { return "banner" + i; }
+(function() { return function() {}; })()({
+  1: [function(require, module, exports, decode) { module.exports = decode; }, {}]
+}, {}, [1]);
+"#;
+
+    let output = unpack(source, DecompileOptions::default()).expect("unpack should succeed");
+    assert_eq!(output.detected_formats, [BundleFormat::Browserify]);
+    assert!(output.modules.iter().any(|(name, _)| name == "entry.js"));
+}
+
+#[test]
 fn browserify_code_around_declaring_require_stays_unsplit() {
     // entry.js calls the module's `require`; a top-level `require` declared
     // around the prelude call would capture it. shape: hypothetical.

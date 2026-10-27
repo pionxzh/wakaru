@@ -62,6 +62,8 @@ struct FactoryModule<'a> {
     body_stmts: &'a [Stmt],
     dependencies: HashMap<String, ModuleId>,
     source_span: swc_core::common::Span,
+    /// The factory function alone, without its dependency map.
+    factory_span: swc_core::common::Span,
 }
 
 pub fn detect_and_extract(source: &str) -> Option<UnpackResult> {
@@ -189,7 +191,12 @@ fn extract_commonjs_table(
 
     // Code around the prelude call runs before or after the bundle; entry.js
     // keeps it, in source order, around the entry modules' requires.
-    let surrounding = SurroundingCode::collect(surrounding, &["require"])?;
+    // The dependency map is the runtime's, so only the factory counts.
+    let factory_spans: Vec<_> = descriptors
+        .iter()
+        .map(|descriptor| descriptor.factory_span)
+        .collect();
+    let surrounding = SurroundingCode::collect(surrounding, &["require"], &factory_spans)?;
     assign_filenames(
         &mut descriptors,
         &entry_ids,
@@ -286,6 +293,7 @@ fn collect_factory_modules(
             body_stmts,
             dependencies,
             source_span: key_value.value.span(),
+            factory_span: factory_expr.span(),
         });
     }
     Some(result)

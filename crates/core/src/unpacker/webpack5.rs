@@ -17,7 +17,6 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::js_names::{is_reserved_binding_name, is_valid_identifier_name};
 use crate::rules::rename_utils::BindingRename;
-use crate::unpacker::chunk_prelude;
 use crate::unpacker::surrounding::{
     ContextSymCollector, IdentNameCollector, SurroundingCode, SurroundingItems,
 };
@@ -29,6 +28,7 @@ use crate::unpacker::webpack_common::{
     absent_loader_string_ids, is_external_require_call, isolated_failure, numeric_id_from_expr,
     split_array_concat, FactoryNormalizationError,
 };
+use crate::unpacker::{chunk_prelude, surrounding};
 use crate::unpacker::{
     deconflict_runtime_binding_renames, emit_module_with_positions, source_fallback_for_stmts,
     spans_byte_ranges, stmts_have_function_level_return,
@@ -464,6 +464,8 @@ pub(super) fn detect_chunk_from_module_prepared(
     let mut all_legacy_module_i = HashSet::default();
     // Code beside the pushes runs when the chunk loads; see chunk_prelude.
     let mut prelude_items = Vec::new();
+    let mut push_items = Vec::new();
+    let mut factory_spans = Vec::new();
     let mut first_chunk_id = None;
     let mut has_commonjs_chunk = false;
 
@@ -489,6 +491,8 @@ pub(super) fn detect_chunk_from_module_prepared(
                 });
             }
             let extracted = extract_modules_from_container(&modules_container, cm.clone())?;
+            push_items.push(item);
+            factory_spans.extend(extracted.factory_spans);
             if is_legacy_webpack_jsonp_push(expr) {
                 all_legacy_module_i.extend(extracted.numeric_module_ids.keys().cloned());
             }
@@ -520,6 +524,15 @@ pub(super) fn detect_chunk_from_module_prepared(
     // loading protocol and are not collected into a prelude.
     let mut script_modules = HashSet::default();
     if !prelude_items.is_empty() && !has_commonjs_chunk {
+        // A chunk module that uses a declaration of the prelude would lose it:
+        // the prelude file's top-level bindings are module-scoped.
+        if surrounding::factories_use_declarations(
+            prelude_items.iter().copied(),
+            push_items.iter().copied(),
+            &factory_spans,
+        ) {
+            return None;
+        }
         let filename = chunk_prelude::prelude_filename(first_chunk_id);
         chunk_prelude::attach(
             &prelude_items,
@@ -1845,6 +1858,8 @@ pub(super) fn prepare_translated_webpack_factories(
 
 struct ExtractedWebpack5Modules {
     modules: Vec<UnpackedModule>,
+    /// The factory bodies, for [`surrounding::factories_use_declarations`].
+    factory_spans: Vec<Span>,
     prepared: Vec<Option<PreparedModuleAst>>,
     failures: HashMap<String, DetectedModuleFailure>,
     numeric_module_ids: HashMap<String, f64>,
@@ -1883,6 +1898,7 @@ fn extract_modules_from_container(
 
     Some(ExtractedWebpack5Modules {
         modules,
+        factory_spans: factory_body_spans(&module_entries),
         prepared: prepared_factories.prepared,
         failures: prepared_factories.failures,
         numeric_module_ids: module_entries
@@ -1998,7 +2014,11 @@ fn extract_webpack5_modules_with_plan(
 
     // Code around the bootstrap runs before or after the bundle; entry.js
     // keeps it, in source order, around the startup.
-    let surrounding = SurroundingCode::collect(surrounding, &ENTRY_NORMALIZED_NAMES)?;
+    let surrounding = SurroundingCode::collect(
+        surrounding,
+        &ENTRY_NORMALIZED_NAMES,
+        &factory_body_spans(&module_entries),
+    )?;
     let entry = EntryEmitter {
         cm: &cm,
         id_to_filename,
@@ -4047,6 +4067,18 @@ fn module_descriptor_from_prop(prop: &PropOrSpread) -> Option<Webpack5ModuleDesc
         params,
         body_stmts,
     })
+}
+
+/// The span of each factory body, from its first statement to its last.
+fn factory_body_spans(descriptors: &[Webpack5ModuleDescriptor<'_>]) -> Vec<Span> {
+    descriptors
+        .iter()
+        .filter_map(|descriptor| {
+            let first = descriptor.body_stmts.first()?.span();
+            let last = descriptor.body_stmts.last()?.span();
+            Some(Span::new(first.lo, last.hi))
+        })
+        .collect()
 }
 
 fn descriptor_filename(module_id: &str) -> String {

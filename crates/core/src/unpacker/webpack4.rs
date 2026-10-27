@@ -1,7 +1,7 @@
 use crate::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::{sync::Lrc, Mark, SourceMap, GLOBALS};
+use swc_core::common::{sync::Lrc, Mark, SourceMap, Span, GLOBALS};
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, AutoAccessor, BinExpr,
@@ -771,7 +771,12 @@ fn extract_webpack4_array_modules(
 
     // Find entry module IDs by scanning the bootstrap function body
     let entry_ids = find_entry_ids(bootstrap_fn);
-    let surrounding = collect_surrounding(surrounding, &entry_ids)?;
+    let factory_spans: Vec<Span> = module_fns
+        .iter()
+        .flatten()
+        .map(|factory| factory.function.span)
+        .collect();
+    let surrounding = collect_surrounding(surrounding, &entry_ids, &factory_spans)?;
 
     let descriptors = module_fns
         .iter()
@@ -849,7 +854,11 @@ fn extract_webpack4_object_modules(
 
     // Find entry module IDs by scanning the bootstrap function body
     let entry_ids = find_entry_ids(bootstrap_fn);
-    let surrounding = collect_surrounding(surrounding, &entry_ids)?;
+    let factory_spans: Vec<Span> = module_entries
+        .iter()
+        .map(|(_, _, factory)| factory.function.span)
+        .collect();
+    let surrounding = collect_surrounding(surrounding, &entry_ids, &factory_spans)?;
 
     // Detect whether all keys are numeric (e.g. {0: fn, 1: fn}) vs string paths
     let all_numeric = module_entries
@@ -919,14 +928,15 @@ const SURROUNDING_ENTRY: &str = "entry.js";
 /// Code around the bootstrap call runs before or after the bundle; entry.js
 /// keeps it, in source order, around the entry modules' requires. `None`
 /// keeps the input one file: the code declares `require`, which would capture
-/// those requires, or the bootstrap starts no entry module, so entry.js would
-/// have no startup to place it around and the code would be in no output
-/// file.
+/// those requires, or a name one of the factories (`factory_spans`) uses, or
+/// the bootstrap starts no entry module, so entry.js would have no startup to
+/// place it around and the code would be in no output file.
 fn collect_surrounding(
     surrounding: SurroundingItems<'_>,
     entry_ids: &[ModuleId],
+    factory_spans: &[Span],
 ) -> Option<SurroundingCode> {
-    let surrounding = SurroundingCode::collect(surrounding, &["require"])?;
+    let surrounding = SurroundingCode::collect(surrounding, &["require"], factory_spans)?;
     if !surrounding.is_empty() && entry_ids.is_empty() {
         return None;
     }

@@ -1421,6 +1421,83 @@ fn code_around_a_bootstrap_declaring_require_stays_unsplit() {
 }
 
 #[test]
+fn module_reading_a_declaration_around_the_bootstrap_stays_unsplit() {
+    // The module calls `decode`, which the code before the bootstrap
+    // declares at the top level: a global in the input, but module-scoped in
+    // entry.js after a split. shape: hypothetical (a string-array decoder
+    // as javascript-obfuscator declares one before the code it rewrites).
+    let source = r#"
+var strings = ["value"];
+var decode = function (i) { return strings[i]; };
+(() => {
+    var modules = {
+        1: (module, exports) => {
+            exports[decode(0)] = 42;
+        }
+    };
+    var cache = {};
+    !function require(id) {
+        var cached = cache[id];
+        if (cached !== undefined) return cached.exports;
+        var module = cache[id] = { exports: {} };
+        modules[id].call(module.exports, module, module.exports, require);
+        return module.exports;
+    }(1);
+})();
+"#;
+
+    let pairs = expect_unpack(source, "bundle.js");
+    assert!(
+        !pairs.iter().any(|(name, _)| name == "module-1.js"),
+        "a module reading a declaration around the bootstrap must keep the bundle whole, got {:?}",
+        pairs.iter().map(|(name, _)| name).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn module_reading_a_bootstrap_local_named_like_a_declaration_around_it_splits() {
+    // `decode` in the module is the bootstrap's own local, not the
+    // declaration before the bootstrap. shape: hypothetical.
+    let source = r#"
+var decode = function (i) { return "banner" + i; };
+(() => {
+    var decode = function (i) { return "local" + i; };
+    var modules = {
+        1: (module, exports) => {
+            exports.value = decode(0);
+        }
+    };
+    var cache = {};
+    !function require(id) {
+        var cached = cache[id];
+        if (cached !== undefined) return cached.exports;
+        var module = cache[id] = { exports: {} };
+        modules[id].call(module.exports, module, module.exports, require);
+        return module.exports;
+    }(1);
+})();
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "bundle.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("unpack should succeed");
+    assert!(
+        output.modules.iter().any(|(name, _)| name == "entry.js"),
+        "the bootstrap's own `decode` must not block the split, got {:?}",
+        output
+            .modules
+            .iter()
+            .map(|(name, _)| name)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn intercept_module_execution_runtime_is_webpack5() {
     // HMR builds require `interceptModuleExecution`: the factory is read from
     // the table into an options object and invoked through it — the table is

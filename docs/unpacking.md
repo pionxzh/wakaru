@@ -282,9 +282,23 @@ into one comma sequence; detection splits it (see the end of [Detection
 order](#detection-order-and-supported-shapes)) and the banner lands in
 `entry.js` the same way.
 
+The input also stays one file when a module factory uses a name that the
+surrounding code declares at its top level (`var`, `let`, `const`,
+`function`, `class`, or an import). The input is a classic script, so that
+declaration is a global the factory reads or writes. In `entry.js` it would be
+module-scoped, and the factory's own file would throw a `ReferenceError`. A
+string-array decoder that an obfuscator declares before the code it rewrites,
+and calls in every factory, has this shape (producer
+`javascript-obfuscator@5.9.0` `--string-array true` over a minified bundle).
+Only a free name of the factory counts: a binding of the factory or of the
+bootstrap with that name is another variable.
+
 `entry.js` is a module, so its imports are hoisted: the entry module
 evaluates before a banner that writes globals only from inside a function
 (see [`import_hoisting_eagerness`](rewrite-assumptions.md#import_hoisting_eagerness)).
+Surrounding code that assigns an undeclared name (`x = 1`) is kept as written.
+That write creates a global only in sloppy code: when `entry.js` becomes ESM,
+it throws a `ReferenceError`, as it does in any module that becomes ESM.
 
 ### Webpack 4 code around the bootstrap
 
@@ -296,8 +310,9 @@ before the bootstrap, a `require` of each entry module in startup order, and
 the code after it, as for [Browserify](#browserify-and-cocos-creator). The
 entry modules then take `entry-<id>.js` names (a string-keyed table keeps its
 path names) and only `entry.js` is marked as the entry. The input stays one
-file when the code declares `require` at its top level or the bootstrap
-starts no entry module.
+file when the code declares `require` at its top level, declares a name a
+factory uses (as for [webpack 5](#webpack-5-code-around-the-bootstrap)), or
+the bootstrap starts no entry module.
 
 ### Webpack 5 chunk prelude
 
@@ -327,7 +342,8 @@ already uses the prelude's name, the input stays one file. Order against the
 push is not kept: code after the push runs before the modules, which matches
 the original unless the push itself runs modules (a third, runtime element).
 A top-level declaration in the prelude becomes module-scoped instead of
-global.
+global, so the input stays one file when a chunk module uses it, as for
+[webpack 5](#webpack-5-code-around-the-bootstrap).
 
 ## Turbopack
 
@@ -484,7 +500,10 @@ verbatim, in source order, around a `require` of each entry module in the
 prelude's entry order. The entry modules then take `entry-<id>.js` names, and
 only `entry.js` is marked as the entry. Directives and empty statements alone
 change nothing. Surrounding code that declares `require` at its top level
-keeps the input as one file, because it would capture those requires.
+keeps the input as one file, because it would capture those requires. So does
+a top-level declaration that a factory uses, as for
+[webpack 5](#webpack-5-code-around-the-bootstrap); a dependency map is not
+factory code.
 
 ## Factory normalization and failure boundaries
 

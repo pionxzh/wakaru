@@ -19,14 +19,16 @@ use crate::unpacker::{emit_module_with_source_map, spans_byte_ranges, UnpackedMo
 #[derive(Clone, Copy, Default)]
 pub(super) struct SurroundingItems<'a> {
     before: &'a [ModuleItem],
+    bundle: Option<&'a ModuleItem>,
     after: &'a [ModuleItem],
 }
 
 impl<'a> SurroundingItems<'a> {
-    /// The items around `body[idx]`.
+    /// The items around `body[idx]`, the bundle statement.
     pub(super) fn around(body: &'a [ModuleItem], idx: usize) -> Self {
         Self {
             before: &body[..idx],
+            bundle: Some(&body[idx]),
             after: &body[idx + 1..],
         }
     }
@@ -47,8 +49,15 @@ pub(super) struct SurroundingCode {
 impl SurroundingCode {
     /// `None` when the code declares one of `entry_free_names` at its top
     /// level: entry.js gives those free names a meaning of its own (the
-    /// module's `require`), and the declaration would capture them.
-    pub(super) fn collect(items: SurroundingItems<'_>, entry_free_names: &[&str]) -> Option<Self> {
+    /// module's `require`), and the declaration would capture them. Also
+    /// `None` when a factory in `factory_spans` (inside the bundle statement)
+    /// uses a name the code declares at its top level; see
+    /// [`factories_use_names`].
+    pub(super) fn collect(
+        items: SurroundingItems<'_>,
+        entry_free_names: &[&str],
+        factory_spans: &[Span],
+    ) -> Option<Self> {
         // Directives and empty statements alone are no reason to write
         // entry.js.
         let is_inert = |item: &ModuleItem| match item {
@@ -62,26 +71,18 @@ impl SurroundingCode {
             return Some(Self::default());
         }
 
-        let mut probe = Module {
-            span: DUMMY_SP,
-            body: items.before.iter().chain(items.after).cloned().collect(),
-            shebang: None,
-        };
-        let unresolved_mark = Mark::new();
-        let top_level_mark = Mark::new();
-        probe.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
-        let mut names = SurroundingNameCollector {
-            unresolved_ctxt: SyntaxContext::empty().apply_mark(unresolved_mark),
-            top_level_ctxt: SyntaxContext::empty().apply_mark(top_level_mark),
-            names: HashSet::default(),
-            top_level_names: HashSet::default(),
-            all_names: HashSet::default(),
-        };
-        probe.visit_with(&mut names);
+        let names = SurroundingNameCollector::collect(items.before.iter().chain(items.after));
         if entry_free_names
             .iter()
             .any(|name| names.top_level_names.contains(&Atom::from(*name)))
         {
+            return None;
+        }
+        if factories_use_names(
+            &names.top_level_names,
+            items.bundle.into_iter(),
+            factory_spans,
+        ) {
             return None;
         }
 
@@ -205,6 +206,93 @@ impl SurroundingCode {
     }
 }
 
+/// Whether a factory uses a top-level declaration of the code beside the
+/// bundle statement (`surrounding`), so the split must not happen.
+///
+/// The input is a classic script: a top-level declaration is a global binding,
+/// and a module factory in the bundle can read or write it as a free name (an
+/// obfuscator's string-array decoder, declared before the code it rewrites and
+/// called in every factory; producer `javascript-obfuscator@5.9.0
+/// --string-array true` over a minified bundle). The split moves the
+/// declaration to `entry.js` or a prelude file, where it is module-scoped, and
+/// the factory's own file would throw a `ReferenceError` on the name.
+pub(super) fn factories_use_declarations<'a>(
+    surrounding: impl Iterator<Item = &'a ModuleItem>,
+    bundle: impl Iterator<Item = &'a ModuleItem> + Clone,
+    factory_spans: &[Span],
+) -> bool {
+    let names = SurroundingNameCollector::collect(surrounding);
+    factories_use_names(&names.top_level_names, bundle, factory_spans)
+}
+
+/// Whether code inside `factory_spans`, which lie in the `bundle` statements,
+/// uses one of `declared` as a free name: free in the bundle statements, so in
+/// the input it is the top-level declaration beside them. A bundle statement
+/// is an expression statement and declares no top-level binding itself. Names
+/// are compared first, so the bundle is cloned and resolved only when a
+/// factory mentions a declared name at all.
+fn factories_use_names<'a>(
+    declared: &HashSet<Atom>,
+    bundle: impl Iterator<Item = &'a ModuleItem> + Clone,
+    factory_spans: &[Span],
+) -> bool {
+    if declared.is_empty() || factory_spans.is_empty() {
+        return false;
+    }
+    let mut spans = factory_spans.to_vec();
+    spans.sort_unstable_by_key(|span| span.lo);
+    let mut mentions = FactoryNameFinder {
+        declared,
+        spans: &spans,
+        ctxt: None,
+        found: false,
+    };
+    for item in bundle.clone() {
+        item.visit_with(&mut mentions);
+    }
+    if !mentions.found {
+        return false;
+    }
+
+    let mut probe = Module {
+        span: DUMMY_SP,
+        body: bundle.cloned().collect(),
+        shebang: None,
+    };
+    let unresolved_mark = Mark::new();
+    probe.visit_mut_with(&mut resolver(unresolved_mark, Mark::new(), false));
+    let mut uses = FactoryNameFinder {
+        declared,
+        spans: &spans,
+        ctxt: Some(SyntaxContext::empty().apply_mark(unresolved_mark)),
+        found: false,
+    };
+    probe.visit_with(&mut uses);
+    uses.found
+}
+
+/// Finds an identifier inside one of `spans` (sorted by start) named in
+/// `declared`, and with `ctxt` when it is set.
+struct FactoryNameFinder<'a> {
+    declared: &'a HashSet<Atom>,
+    spans: &'a [Span],
+    ctxt: Option<SyntaxContext>,
+    found: bool,
+}
+
+impl Visit for FactoryNameFinder<'_> {
+    fn visit_ident(&mut self, ident: &Ident) {
+        if self.found
+            || !self.declared.contains(&ident.sym)
+            || self.ctxt.is_some_and(|ctxt| ident.ctxt != ctxt)
+        {
+            return;
+        }
+        let after = self.spans.partition_point(|span| span.lo <= ident.span.lo);
+        self.found = after > 0 && ident.span.hi <= self.spans[after - 1].hi;
+    }
+}
+
 /// Splits the identifiers of code around the bundle by resolution.
 struct SurroundingNameCollector {
     unresolved_ctxt: SyntaxContext,
@@ -213,6 +301,29 @@ struct SurroundingNameCollector {
     names: HashSet<Atom>,
     top_level_names: HashSet<Atom>,
     all_names: HashSet<Atom>,
+}
+
+impl SurroundingNameCollector {
+    /// Resolve a copy of `items` as one program and split its identifiers.
+    fn collect<'a>(items: impl Iterator<Item = &'a ModuleItem>) -> Self {
+        let mut probe = Module {
+            span: DUMMY_SP,
+            body: items.cloned().collect(),
+            shebang: None,
+        };
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+        probe.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+        let mut names = Self {
+            unresolved_ctxt: SyntaxContext::empty().apply_mark(unresolved_mark),
+            top_level_ctxt: SyntaxContext::empty().apply_mark(top_level_mark),
+            names: HashSet::default(),
+            top_level_names: HashSet::default(),
+            all_names: HashSet::default(),
+        };
+        probe.visit_with(&mut names);
+        names
+    }
 }
 
 impl Visit for SurroundingNameCollector {
