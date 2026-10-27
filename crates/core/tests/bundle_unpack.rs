@@ -1556,7 +1556,7 @@ fn webpack4_conditional_exports_write_keeps_the_write_on_exports() {
             && provider.contains("module.exports = exports;"),
         "{provider}"
     );
-    let entry = module_code(&output, "module-2.js");
+    let entry = module_code(&output, "entry.js");
     assert!(entry.contains("./module-0.js"), "{entry}");
     assert!(entry.contains("./module-1.js"), "{entry}");
     assert!(!entry.contains("require("), "{entry}");
@@ -1703,7 +1703,7 @@ fn webpack4_reversed_exports_bridge_with_a_later_member_write_keeps_the_exports_
     let provider = assert_commonjs_exports_provider(&output, "module-0.js");
     assert!(provider.contains("createLib()"), "{provider}");
     assert!(provider.contains("exports.second = 2"), "{provider}");
-    let consumer = module_code(&output, "module-1.js");
+    let consumer = module_code(&output, "entry.js");
     assert!(consumer.contains("from \"./module-0.js\""), "{consumer}");
     assert_eq!(validate_output_modules(&output.modules), vec![]);
 }
@@ -2199,7 +2199,7 @@ fn webpack4_module_decorator_lookalikes_are_not_reduced() {
         );
         let output = unpack(&webpack4_bundle(&factories, 0), DecompileOptions::default())
             .expect("webpack4 unpack should succeed");
-        let consumer = module_code(&output, "module-0.js");
+        let consumer = module_code(&output, "entry.js");
         assert!(
             consumer.contains("(module)"),
             "a lookalike decorator call must stay:\n{consumer}"
@@ -2363,7 +2363,7 @@ fn webpack4_free_name_capture_isolates_only_its_factory() {
     let entry = output
         .modules
         .iter()
-        .find(|(filename, _)| filename == "module-2.js")
+        .find(|(filename, _)| filename == "entry.js")
         .map(|(_, code)| code)
         .expect("expected recoverable sibling factory");
     assert!(entry.contains("require(0)"), "{entry}");
@@ -2939,7 +2939,7 @@ fn webpack4_reused_loader_normalizes_prewrite_runtime_helpers() {
         findings[0].kind,
         wakaru_core::OutputFindingKind::EsmCommonJsResidual
     );
-    assert_eq!(findings[0].filename, "module-0.js");
+    assert_eq!(findings[0].filename, "entry.js");
 }
 
 #[test]

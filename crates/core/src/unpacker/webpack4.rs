@@ -1128,7 +1128,7 @@ fn sanitize_filename(module_id: &str) -> String {
 }
 
 /// Scan the bootstrap function body for `n.s = <number>` or `n(n.s = <number>)` patterns
-/// to identify the entry module ID(s).
+/// to identify the entry module ID(s), or for webpack 1's startup.
 fn find_entry_ids(bootstrap_fn: &FnExpr) -> Vec<ModuleId> {
     let body = match &bootstrap_fn.function.body {
         Some(b) => b,
@@ -1146,7 +1146,111 @@ fn find_entry_ids(bootstrap_fn: &FnExpr) -> Vec<ModuleId> {
     for stmt in &body.stmts {
         collect_entry_ids_from_stmt(stmt, &allowed_entry_objects, &mut entries);
     }
+    if entries.is_empty() {
+        entries.extend(find_webpack1_entry_id(bootstrap_fn));
+    }
     entries
+}
+
+/// webpack 1 starts its entry module with a plain call of the require
+/// function, last in the bootstrap's `return`, and records no `.s` id
+/// (producer `webpack@1.15.0`: `return __webpack_require__(0);`, and with
+/// `-p` `return t.m=r,t.c=n,t.p="",t(0)`). Only the bootstrap's own first
+/// top-level `return` counts, and only when the callee is the bootstrap's
+/// function declaration that calls `modules[id]`: a call anywhere else may
+/// never run, or may run something other than a module.
+fn find_webpack1_entry_id(bootstrap_fn: &FnExpr) -> Option<ModuleId> {
+    let body = bootstrap_fn.function.body.as_ref()?;
+    let Pat::Ident(modules_param) = &bootstrap_fn.function.params.first()?.pat else {
+        return None;
+    };
+    let returned = body.stmts.iter().find_map(|stmt| match stmt {
+        Stmt::Return(ret) => Some(ret.arg.as_deref()),
+        _ => None,
+    })??;
+    let returned = match strip_parens(returned) {
+        Expr::Seq(seq) => strip_parens(seq.exprs.last()?),
+        other => other,
+    };
+    let Expr::Call(call) = returned else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Ident(require_fn) = strip_parens(callee) else {
+        return None;
+    };
+    let [arg] = call.args.as_slice() else {
+        return None;
+    };
+    if arg.spread.is_some() {
+        return None;
+    }
+    let id = match strip_parens(&arg.expr) {
+        Expr::Lit(Lit::Num(n)) if n.value >= 0.0 && n.value.fract() == 0.0 => {
+            ModuleId::Numeric(n.value as usize)
+        }
+        Expr::Lit(Lit::Str(s)) => ModuleId::Named(s.value.as_str()?.to_string()),
+        _ => return None,
+    };
+    body.stmts
+        .iter()
+        .any(|stmt| match stmt {
+            Stmt::Decl(Decl::Fn(decl)) if decl.ident.sym == require_fn.sym => {
+                runs_module_factory(&decl.function, &modules_param.id.sym)
+            }
+            _ => false,
+        })
+        .then_some(id)
+}
+
+/// Whether `function`'s own body calls `modules[<first param>]`, the way
+/// webpack's require function runs a module factory: as
+/// `modules[id].call(…)`, or through any other member of it, since an
+/// obfuscator can turn `.call` into `[decode(0x1)]` (producer
+/// `javascript-obfuscator@5.9.0 --string-array true`).
+fn runs_module_factory(function: &Function, modules: &Atom) -> bool {
+    struct Finder<'a> {
+        modules: &'a Atom,
+        id_param: &'a Atom,
+        found: bool,
+    }
+    impl Finder<'_> {
+        fn is_factory(&self, expr: &Expr) -> bool {
+            matches!(strip_parens(expr), Expr::Member(MemberExpr {
+                obj,
+                prop: MemberProp::Computed(key),
+                ..
+            }) if matches!(&**obj, Expr::Ident(table) if &table.sym == self.modules)
+                && matches!(&*key.expr, Expr::Ident(id) if &id.sym == self.id_param))
+        }
+    }
+    impl Visit for Finder<'_> {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if let Callee::Expr(callee) = &call.callee {
+                let callee = strip_parens(callee);
+                if self.is_factory(callee)
+                    || matches!(callee, Expr::Member(member) if self.is_factory(&member.obj))
+                {
+                    self.found = true;
+                }
+            }
+            call.visit_children_with(self);
+        }
+        fn visit_function(&mut self, _: &Function) {}
+        fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+    }
+    let Some(Pat::Ident(id_param)) = function.params.first().map(|param| &param.pat) else {
+        return false;
+    };
+    let mut finder = Finder {
+        modules,
+        id_param: &id_param.id.sym,
+        found: false,
+    };
+    function.body.visit_with(&mut finder);
+    finder.found
 }
 
 fn collect_entry_ids_from_stmt(

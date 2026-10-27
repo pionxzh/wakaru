@@ -28,7 +28,10 @@ attempted in order — first match wins:
    unwrapped `output.iife: false` form. `experiments.outputModule` bundles that
    carry top-level ESM `export`/`import` declarations are left untouched — their
    public surface can't yet be recovered faithfully
-2. **webpack4** — `(function(modules) { ... })([...])` with `__webpack_require__` runtime
+2. **webpack4** — `(function(modules) { ... })([...])` with `__webpack_require__` runtime,
+   webpack 1 to 4. The entry module is the one the startup records in
+   `__webpack_require__.s`; webpack 1 records none (see [Webpack 4 code
+   around the bootstrap](#webpack-4-code-around-the-bootstrap))
 3. **webpack5 chunk** — JSONP chunk push with a webpack module object
 4. **Turbopack** — Next.js 15.3+ production chunks: the client
    `globalThis.TURBOPACK` push and the server `module.exports` payload. See
@@ -313,6 +316,17 @@ path names) and only `entry.js` is marked as the entry. The input stays one
 file when the code declares `require` at its top level, declares a name a
 factory uses (as for [webpack 5](#webpack-5-code-around-the-bootstrap)), or
 the bootstrap starts no entry module.
+
+webpack 1 starts its entry module with a plain call of the require function,
+last in the bootstrap's `return`: `return __webpack_require__(0);`, or
+`return t.m=r,t.c=n,t.p="",t(0)` with `-p` (producer `webpack@1.15.0`). That
+call marks the entry only in the bootstrap's own top-level `return`, with one
+literal id, and only when the callee is the bootstrap's function declaration
+that calls `modules[id]`: directly, through `.call`, or through the decoded
+computed member an obfuscator writes for `.call` (producer
+`javascript-obfuscator@5.9.0` `--string-array true`). Several bundles
+concatenated in one file are split at the first; the later ones are code
+after it and stay in `entry.js`.
 
 ### Webpack 5 chunk prelude
 

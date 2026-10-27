@@ -531,3 +531,159 @@ fn factory_binding_named_like_a_declaration_around_the_bootstrap_splits() {
     let pairs = expect_pairs(&source);
     assert_eq!(names(&pairs), ["entry-0.js", "module-1.js", "entry.js"]);
 }
+
+// ---------------------------------------------------------------------------
+// webpack 1 startup
+// ---------------------------------------------------------------------------
+
+/// webpack 1's minified bootstrap: the startup is the last element of the
+/// bootstrap's `return`, a plain call of the require function with the entry
+/// id. shape: producer webpack@1.15.0 -p; global renamed to `globalThis.lib`.
+const WEBPACK1_BOOTSTRAP: &str = r#"function(r){function t(o){if(n[o])return n[o].exports;var e=n[o]={exports:{},id:o,loaded:!1};return r[o].call(e.exports,e,e.exports,t),e.loaded=!0,e.exports}var n={};return t.m=r,t.c=n,t.p="",t(0)}([function(r,t,n){var o=n(1);globalThis.lib=o(21)},function(r,t){r.exports=function(r){return 2*r}}])"#;
+
+#[test]
+fn webpack1_startup_call_marks_the_entry_module() {
+    let output = unpack(
+        &format!("!{WEBPACK1_BOOTSTRAP};"),
+        DecompileOptions {
+            filename: "bundle.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("unpack should succeed");
+    assert_eq!(names(&output.modules), ["entry.js", "module-1.js"]);
+    assert!(
+        named(&output.modules, "entry.js").contains("globalThis.lib"),
+        "module 0 is the entry, got:\n{}",
+        named(&output.modules, "entry.js")
+    );
+    assert!(
+        output
+            .provenance
+            .iter()
+            .all(|module| module.is_entry == (module.filename == "entry.js")),
+        "only the started module is the entry: {:?}",
+        output.provenance
+    );
+}
+
+#[test]
+fn unminified_webpack1_startup_statement_marks_the_entry_module() {
+    // shape: producer webpack@1.15.0 (no -p), comments trimmed.
+    let source = r#"
+(function(modules) {
+	var installedModules = {};
+	function __webpack_require__(moduleId) {
+		if(installedModules[moduleId])
+			return installedModules[moduleId].exports;
+		var module = installedModules[moduleId] = {
+			exports: {},
+			id: moduleId,
+			loaded: false
+		};
+		modules[moduleId].call(module.exports, module, module.exports, __webpack_require__);
+		module.loaded = true;
+		return module.exports;
+	}
+	__webpack_require__.m = modules;
+	__webpack_require__.c = installedModules;
+	__webpack_require__.p = "";
+	return __webpack_require__(0);
+})([
+function(module, exports, __webpack_require__) {
+	var twice = __webpack_require__(1);
+	globalThis.lib = twice(21);
+},
+function(module, exports) {
+	module.exports = function (x) { return 2 * x; };
+}
+]);
+"#;
+
+    assert_eq!(names(&expect_pairs(source)), ["entry.js", "module-1.js"]);
+}
+
+#[test]
+fn concatenated_webpack1_bundles_keep_the_later_ones_in_entry() {
+    // Two bundles in one file: the first is split, the second runs after it
+    // from entry.js. shape: hypothetical (producer webpack@1.15.0 -p output,
+    // concatenated).
+    let second = WEBPACK1_BOOTSTRAP.replace("globalThis.lib", "globalThis.other");
+    let source = format!("!{WEBPACK1_BOOTSTRAP};!{second};");
+
+    let pairs = expect_pairs(&source);
+    assert_eq!(names(&pairs), ["entry-0.js", "module-1.js", "entry.js"]);
+    let entry = named(&pairs, "entry.js");
+    let load = entry
+        .find("./entry-0.js")
+        .unwrap_or_else(|| panic!("entry.js must load the entry module, got:\n{entry}"));
+    let later = entry
+        .find("globalThis.other")
+        .unwrap_or_else(|| panic!("the second bundle must stay, got:\n{entry}"));
+    assert!(load < later, "source order must be kept, got:\n{entry}");
+}
+
+#[test]
+fn webpack1_startup_must_be_the_last_returned_call_of_the_require_function() {
+    // Each variant has code around the bootstrap, so a startup the detector
+    // does not accept keeps the input one file. shape: hypothetical.
+    let cases = [
+        // Not last in the returned sequence.
+        WEBPACK1_BOOTSTRAP.replace(r#"t.p="",t(0)"#, r#"t(0),t.p="""#),
+        // Nested in a function that may never run.
+        WEBPACK1_BOOTSTRAP.replace(
+            r#"return t.m=r,t.c=n,t.p="",t(0)"#,
+            r#"return t.m=r,t.c=n,t.p="",function(){return t(0)}"#,
+        ),
+        // A declared function that does not run a module.
+        WEBPACK1_BOOTSTRAP.replace(
+            r#"var n={};return t.m=r,t.c=n,t.p="",t(0)"#,
+            r#"var n={};function u(o){return o}return t.m=r,t.c=n,t.p="",u(0)"#,
+        ),
+        // More than one argument.
+        WEBPACK1_BOOTSTRAP.replace(r#"t.p="",t(0)"#, r#"t.p="",t(0,1)"#),
+    ];
+    for bootstrap in cases {
+        assert!(
+            bootstrap != WEBPACK1_BOOTSTRAP,
+            "the replacement must apply"
+        );
+        let pairs = expect_pairs(&format!("{BANNER};\n!{bootstrap};"));
+        assert_eq!(
+            pairs.len(),
+            1,
+            "no entry is recognized, so the input stays one file, got {:?}",
+            names(&pairs)
+        );
+    }
+}
+
+#[test]
+fn obfuscated_webpack1_dispatch_still_marks_the_entry_module() {
+    // The obfuscator turns the require function's `.call` into a decoded
+    // computed member; only the runtime and the code after the bundle call
+    // the decoder.
+    let bootstrap = WEBPACK1_BOOTSTRAP.replace("r[o].call(", "r[o][decode(1)](");
+    let source = format!("{DECODER}\n!{bootstrap};\nglobalThis.label = decode(2);");
+
+    let pairs = expect_pairs(&source);
+    assert_eq!(names(&pairs), ["entry-0.js", "module-1.js", "entry.js"]);
+}
+
+#[test]
+fn obfuscated_webpack1_bundle_whose_factories_call_the_decoder_stays_unsplit() {
+    // With its startup recognized, the bundle would split; the factories'
+    // decoder calls keep it one file.
+    let bootstrap = WEBPACK1_BOOTSTRAP
+        .replace("r[o].call(", "r[o][decode(1)](")
+        .replace("globalThis.lib=", "globalThis[decode(0)]=");
+    let source = format!("{DECODER}\n!{bootstrap};");
+
+    let pairs = expect_pairs(&source);
+    assert_eq!(
+        pairs.len(),
+        1,
+        "the input must stay one file, got {:?}",
+        names(&pairs)
+    );
+}
