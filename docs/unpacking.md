@@ -523,6 +523,22 @@ exports object. A free `exports` reference in such a factory is a free-name
 capture, as above. The `module` and loader parameters have no such
 counterpart: a loader must stay canonical for module-id calls.
 
+Webpack 4 passes a module that reads `module` as a value through a generated
+decorator: `(function (m) { ... }).call(this, require(<id>)(module))`, where
+`<id>` is `buildin/module.js` (CommonJS) or `buildin/harmony-module.js` (ES
+modules). Both stand in for the host's `module`, like webpack 5's `nmd` /
+`hmd`, and calling the CommonJS one on a real `module` replaces its `loaded`
+with a getter, so the host's later `module.loaded = true` throws. The detector
+recognizes a decorator module by its factory body (the exact set of member
+definitions and result, minified or not; production ids are numeric) and
+reduces each `require(<id>)(module)` in the same table to `module`. A
+one-parameter wrapper that then receives `module` is lifted with its
+parameter renamed to `module` when it is the only statement besides
+`require.r(exports)`, its body cannot observe the function boundary, it never
+writes the parameter, and it declares no `module`, `exports`, or `require`;
+otherwise the wrapper stays as `.call(this, module)`. The decorator modules
+are still emitted.
+
 ## Scope-hoisted splitting
 
 Pure ESM scope-hoisted output (from esbuild, Bun, Rollup, or Vite) without

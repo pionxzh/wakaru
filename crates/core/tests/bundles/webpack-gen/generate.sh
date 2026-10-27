@@ -74,6 +74,9 @@ webpack4 --config webpack4-inner-umd-min.config.cjs 2>/dev/null
 echo "  wp4-exports-bridge-min: CommonJS modules that write their exports binding"
 webpack4 --config webpack4-exports-bridge-min.config.cjs 2>/dev/null
 
+echo "  wp4-module-decorator-min: buildin/module.js and harmony-module.js decorators"
+webpack4 --config webpack4-module-decorator-min.config.cjs 2>/dev/null
+
 # Drop the local webpack 4 install so the npx-invoked webpack 5 builds below
 # cannot resolve it (webpack-cli prefers a local install via import-local).
 rm -rf node_modules

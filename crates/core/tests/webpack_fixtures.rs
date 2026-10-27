@@ -168,6 +168,61 @@ fn wp4_inner_umd_commonjs_branches_recover_defaults() {
 }
 
 #[test]
+fn wp4_module_decorators_reduce_to_the_module() {
+    // shape: producer webpack@4.47.0 mode=production. Modules that read
+    // `module` as a value get `.call(this, n(<id>)(e))`, where `<id>` is the
+    // generated `buildin/module.js` or `buildin/harmony-module.js`.
+    let path = "wp4-module-decorator-min/bundle.js";
+    for emit_source_map in [false, true] {
+        let pairs = unpack_fixture_with_options(path, emit_source_map);
+        let code = |marker: &str| -> &str {
+            &pairs
+                .iter()
+                .find(|(_, code)| code.contains(marker))
+                .unwrap_or_else(|| panic!("{path}: no module contains {marker}"))
+                .1
+        };
+        // The decorators run on webpack's module object; on a real `module`
+        // they replace the host's `loaded` with a getter-only property.
+        for (name, module) in &pairs {
+            assert!(
+                !module.contains(".default(module)"),
+                "{name} still calls a decorator on `module`:\n{module}"
+            );
+        }
+        // Both decorator modules are still emitted.
+        assert_eq!(
+            pairs
+                .iter()
+                .filter(|(_, code)| code.contains("webpackPolyfill"))
+                .count(),
+            2
+        );
+        let commonjs = code("first: \"first\"");
+        assert!(commonjs.contains(".call(this, module)"), "{commonjs}");
+        let both = code("nodeType");
+        assert!(both.contains(", module)"), "{both}");
+        let harmony = code("\"alpha\"");
+        assert!(
+            harmony.contains("export const alpha") && !harmony.contains("require"),
+            "the harmony wrapper must lift so its exports recover:\n{harmony}"
+        );
+        // The ES module source reads `module` as a value; that read is its
+        // own and stays a reported residual.
+        let findings = validate_output_modules(&pairs);
+        assert!(
+            findings.iter().all(|finding| {
+                finding.kind == wakaru_core::OutputFindingKind::EsmCommonJsResidual
+                    && pairs
+                        .iter()
+                        .any(|(name, code)| *name == finding.filename && code == harmony)
+            }),
+            "{findings:?}"
+        );
+    }
+}
+
+#[test]
 fn wp4_exports_bridge_factories_keep_their_exports_writes() {
     // shape: producer webpack@4.47.0 mode=production
     assert_exports_bridge_providers("wp4-exports-bridge-min/bundle.js");

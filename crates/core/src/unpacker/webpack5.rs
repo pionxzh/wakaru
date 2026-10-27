@@ -1688,6 +1688,18 @@ fn prepare_webpack5_factories(
     isolate_fatal: bool,
 ) -> Option<PreparedWebpack5Factories> {
     let mut opaque_filenames: HashMap<String, DetectedModuleFailure> = HashMap::default();
+    // Webpack 4 chunks prepared through this path may carry the generated
+    // `buildin/module.js` decorators.
+    let module_decorator_ids: HashSet<String> = module_entries
+        .iter()
+        .filter(|entry| {
+            super::webpack4_module_decorator::is_module_decorator_factory(
+                factory_param_syms(&entry.params).first(),
+                entry.body_stmts,
+            )
+        })
+        .map(|entry| entry.id.clone())
+        .collect();
 
     loop {
         // Every round uses one immutable graph snapshot. Newly unsupported
@@ -1718,7 +1730,12 @@ fn prepare_webpack5_factories(
                 prepared.push(None);
                 continue;
             }
-            match prepare_webpack5_module(entry, &id_to_filename, &str_id_to_filename) {
+            match prepare_webpack5_module(
+                entry,
+                &id_to_filename,
+                &str_id_to_filename,
+                &module_decorator_ids,
+            ) {
                 Ok((ast, absent)) => {
                     if !absent.is_empty() {
                         absent_string_ids.insert(entry.filename.clone(), absent);
@@ -4053,6 +4070,7 @@ fn prepare_webpack5_module(
     descriptor: &Webpack5ModuleDescriptor<'_>,
     id_to_filename: &HashMap<usize, String>,
     str_id_to_filename: &HashMap<String, String>,
+    module_decorator_ids: &HashSet<String>,
 ) -> Result<(PreparedModuleAst, HashSet<String>), FactoryNormalizationError> {
     let span = tracing::info_span!("webpack5: prepare_module");
     let _enter = span.enter();
@@ -4060,7 +4078,12 @@ fn prepare_webpack5_module(
     let globals = Globals::new();
     let (synthetic_module, unresolved_mark, absent_string_ids) = GLOBALS.set(&globals, || {
         let (mut synthetic_module, unresolved_mark, absent_string_ids) =
-            normalize_extracted_webpack_module(descriptor, id_to_filename, str_id_to_filename)?;
+            normalize_extracted_webpack_module(
+                descriptor,
+                id_to_filename,
+                str_id_to_filename,
+                module_decorator_ids,
+            )?;
         let span = tracing::info_span!("webpack5: fixer");
         let _enter = span.enter();
         apply_fixer(&mut synthetic_module).map_err(|_| FactoryNormalizationError::Fatal)?;
@@ -4078,20 +4101,8 @@ fn prepare_webpack5_module(
     ))
 }
 
-/// Normalize a webpack5 factory body into a standalone module.
-///
-/// This does only bundler-format work: standardizes factory parameter names,
-/// rewrites extracted module references, expands `require.n`, and removes
-/// webpack runtime helper/decorator noise. General decompiler rules run later
-/// in the driver pipeline.
-fn normalize_extracted_webpack_module(
-    descriptor: &Webpack5ModuleDescriptor<'_>,
-    id_to_filename: &HashMap<usize, String>,
-    str_id_to_filename: &HashMap<String, String>,
-) -> Result<(Module, Mark, HashSet<String>), FactoryNormalizationError> {
-    let mut synthetic_module = build_module_from_stmts(descriptor.body_stmts.to_vec());
-
-    let param_syms: Vec<Atom> = match descriptor.params {
+fn factory_param_syms(params: &Webpack5FactoryParams<'_>) -> Vec<Atom> {
+    match params {
         Webpack5FactoryParams::Function(params) => params
             .iter()
             .filter_map(|p| match &p.pat {
@@ -4106,7 +4117,24 @@ fn normalize_extracted_webpack_module(
                 _ => None,
             })
             .collect(),
-    };
+    }
+}
+
+/// Normalize a webpack5 factory body into a standalone module.
+///
+/// This does only bundler-format work: standardizes factory parameter names,
+/// rewrites extracted module references, expands `require.n`, and removes
+/// webpack runtime helper/decorator noise. General decompiler rules run later
+/// in the driver pipeline.
+fn normalize_extracted_webpack_module(
+    descriptor: &Webpack5ModuleDescriptor<'_>,
+    id_to_filename: &HashMap<usize, String>,
+    str_id_to_filename: &HashMap<String, String>,
+    module_decorator_ids: &HashSet<String>,
+) -> Result<(Module, Mark, HashSet<String>), FactoryNormalizationError> {
+    let mut synthetic_module = build_module_from_stmts(descriptor.body_stmts.to_vec());
+
+    let param_syms = factory_param_syms(&descriptor.params);
 
     let unresolved_mark = {
         let span = tracing::info_span!("webpack5: resolver");
@@ -4196,6 +4224,12 @@ fn normalize_extracted_webpack_module(
             )?;
         }
 
+        let decorated_module = super::webpack4_module_decorator::reduce_module_decorator_calls(
+            &mut synthetic_module,
+            module_decorator_ids,
+            unresolved_mark,
+        );
+
         let require_sym = Atom::from("require");
 
         let mut id_rewriter = RequireIdRewriter {
@@ -4224,7 +4258,7 @@ fn normalize_extracted_webpack_module(
         // Webpack 4-era variable injection can appear inside containers that
         // the shared structural detector prepares through this path. Expose
         // the generated wrapper body before the driver reaches UnEsm.
-        unwrap_webpack_global_envelopes(&mut synthetic_module, unresolved_mark);
+        unwrap_webpack_global_envelopes(&mut synthetic_module, unresolved_mark, decorated_module);
     }
 
     Ok((synthetic_module, unresolved_mark, absent_string_ids))

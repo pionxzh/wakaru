@@ -518,6 +518,23 @@ fn prepare_webpack4_modules(
     positions: SourcePositions,
 ) -> Option<DetectedBundle> {
     let mut opaque_filenames: HashMap<String, DetectedModuleFailure> = HashMap::default();
+    let module_decorator_ids: HashSet<String> = descriptors
+        .iter()
+        .filter(|descriptor| {
+            let function = &descriptor.factory.function;
+            let module_param = function.params.first().and_then(|param| match &param.pat {
+                Pat::Ident(binding) => Some(&binding.id.sym),
+                _ => None,
+            });
+            function.body.as_ref().is_some_and(|body| {
+                super::webpack4_module_decorator::is_module_decorator_factory(
+                    module_param,
+                    &body.stmts,
+                )
+            })
+        })
+        .map(|descriptor| descriptor.id.clone())
+        .collect();
 
     loop {
         let num_id_to_filename: HashMap<usize, String> = if all_numeric {
@@ -555,6 +572,7 @@ fn prepare_webpack4_modules(
             }
             let normalized = normalize_extracted_webpack_module(
                 descriptor.factory,
+                &module_decorator_ids,
                 super::webpack_common::ReusedLoaderModuleIds {
                     from_filename: &descriptor.filename,
                     numeric: &num_id_to_filename,
@@ -877,6 +895,7 @@ fn extract_module_id(key: &PropName) -> Option<(String, Option<f64>)> {
 /// Returns `(module, unresolved_mark)`.
 fn normalize_extracted_webpack_module(
     fn_expr: &FnExpr,
+    module_decorator_ids: &HashSet<String>,
     loader_module_ids: super::webpack_common::ReusedLoaderModuleIds<'_>,
     require_rewrite: impl FnOnce(&Atom, Mark, &mut Module),
 ) -> Result<(Module, Mark, HashSet<String>), FactoryNormalizationError> {
@@ -996,6 +1015,12 @@ fn normalize_extracted_webpack_module(
         )?;
     }
 
+    let decorated_module = super::webpack4_module_decorator::reduce_module_decorator_calls(
+        &mut synthetic_module,
+        module_decorator_ids,
+        unresolved_mark,
+    );
+
     let post_rename_require_sym = Atom::from("require");
     require_rewrite(
         &post_rename_require_sym,
@@ -1014,7 +1039,7 @@ fn normalize_extracted_webpack_module(
     synthetic_module.visit_mut_with(&mut WebpackRuntimeNormalizer);
 
     // Step 2b: strip webpack's global-polyfill envelope
-    unwrap_webpack_global_envelopes(&mut synthetic_module, unresolved_mark);
+    unwrap_webpack_global_envelopes(&mut synthetic_module, unresolved_mark, decorated_module);
 
     Ok((synthetic_module, unresolved_mark, absent_string_ids))
 }
@@ -1240,7 +1265,15 @@ fn build_module_from_stmts(stmts: Vec<Stmt>) -> Module {
 /// Strip webpack4's global-polyfill IIFE wrapper on matching top-level
 /// statements. Called once per extracted module, after the webpack runtime
 /// normalizer and before the driver decompile pipeline.
-pub(crate) fn unwrap_webpack_global_envelopes(module: &mut Module, unresolved_mark: Mark) {
+///
+/// `decorated_module` reports that the factory's `buildin/module.js` /
+/// `harmony-module.js` decorator calls were reduced to `module`, so a bare
+/// `module` argument stands where webpack passed `require(<id>)(module)`.
+pub(crate) fn unwrap_webpack_global_envelopes(
+    module: &mut Module,
+    unresolved_mark: Mark,
+    decorated_module: bool,
+) {
     // A general webpack variable-injection envelope changes function scope
     // into module scope when lifted. Restrict that recovery to the sole
     // executable item in a factory; the older AMD-polyfill fingerprint below
@@ -1251,14 +1284,154 @@ pub(crate) fn unwrap_webpack_global_envelopes(module: &mut Module, unresolved_ma
         .filter(|item| !is_use_strict_item(item))
         .count()
         == 1;
+    // A harmony module's `module` wrapper follows its `require.r(exports)`
+    // marker, which reads no binding the lifted body could declare.
+    let can_lift_module_wrapper = decorated_module
+        && module
+            .body
+            .iter()
+            .filter(|item| !is_use_strict_item(item) && !is_esm_marker_item(item, unresolved_mark))
+            .count()
+            == 1;
     let mut new_body: Vec<ModuleItem> = Vec::with_capacity(module.body.len());
     for item in module.body.drain(..) {
-        match try_unwrap_global_envelope_item(&item, unresolved_mark, can_lift_injected_wrapper) {
+        let replacement = try_unwrap_global_envelope_item(
+            &item,
+            unresolved_mark,
+            can_lift_injected_wrapper,
+            decorated_module,
+        )
+        .or_else(|| {
+            can_lift_module_wrapper
+                .then(|| try_lift_module_wrapper_item(&item, unresolved_mark))
+                .flatten()
+        });
+        match replacement {
             Some(replacement) => new_body.extend(replacement),
             None => new_body.push(item),
         }
     }
     module.body = new_body;
+}
+
+/// `require.r(exports)`
+fn is_esm_marker_item(item: &ModuleItem, unresolved_mark: Mark) -> bool {
+    let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
+        return false;
+    };
+    let Expr::Call(call) = strip_parens(expr) else {
+        return false;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    let Expr::Member(member) = strip_parens(callee) else {
+        return false;
+    };
+    let is_runtime = |expr: &Expr, name: &str| {
+        matches!(strip_parens(expr), Expr::Ident(ident)
+            if ident.sym == name && ident.ctxt.outer() == unresolved_mark)
+    };
+    is_runtime(&member.obj, "require")
+        && matches!(&member.prop, MemberProp::Ident(prop) if prop.sym == "r")
+        && matches!(call.args.as_slice(), [argument]
+            if argument.spread.is_none() && is_runtime(&argument.expr, "exports"))
+}
+
+/// Lift webpack 4's `module` injection wrapper once its decorator call is
+/// reduced: `(function (m) { body }).call(this, module)` becomes `body` with
+/// `m` renamed to the factory's own `module`. Inside the wrapper `m` holds
+/// that same value and `this` is the module's own `this`, so the body means
+/// the same at module scope when nothing in it can observe the function
+/// boundary (`body_is_safe_to_lift`), it never reassigns `m`, and it declares
+/// no `module`, `exports`, or `require` binding that the rename or the lift
+/// could capture.
+fn try_lift_module_wrapper_item(
+    item: &ModuleItem,
+    unresolved_mark: Mark,
+) -> Option<Vec<ModuleItem>> {
+    let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
+        return None;
+    };
+    let Expr::Call(call) = strip_parens(expr) else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Member(member) = strip_parens(callee) else {
+        return None;
+    };
+    if !matches!(&member.prop, MemberProp::Ident(prop) if prop.sym == "call") {
+        return None;
+    }
+    let [receiver, argument] = call.args.as_slice() else {
+        return None;
+    };
+    if receiver.spread.is_some()
+        || argument.spread.is_some()
+        || !matches!(strip_parens(&receiver.expr), Expr::This(_))
+    {
+        return None;
+    }
+    let Expr::Ident(module_ident) = strip_parens(&argument.expr) else {
+        return None;
+    };
+    if module_ident.sym != "module" || module_ident.ctxt.outer() != unresolved_mark {
+        return None;
+    }
+    let (param_ids, mut body) = extract_inner_callee(&member.obj)?;
+    let [param] = param_ids.as_slice() else {
+        return None;
+    };
+    if matches!(body.first(), Some(Stmt::Expr(ExprStmt { expr, .. }))
+        if matches!(expr.as_ref(), Expr::Lit(Lit::Str(_))))
+    {
+        // A directive prologue would stop being one at module scope.
+        return None;
+    }
+    if !body_is_safe_to_lift(&body) || declares_runtime_name(&body, param, unresolved_mark) {
+        return None;
+    }
+    let uses = crate::analysis::binding_uses::BindingUseIndex::collect_stmts(&body);
+    if uses.has_direct_write(param) {
+        return None;
+    }
+    let module_ident = Ident::new(module_ident.sym.clone(), DUMMY_SP, module_ident.ctxt);
+    for stmt in &mut body {
+        replace_ident(stmt, param.clone(), &module_ident);
+    }
+    Some(body.into_iter().map(ModuleItem::Stmt).collect())
+}
+
+/// Whether any binding in `stmts` other than the wrapper's own `param` is
+/// spelled `module`, `exports`, or `require`. Unminified output names the
+/// wrapper parameter `module`; that one is the binding being renamed.
+fn declares_runtime_name(stmts: &[Stmt], param: &Id, unresolved_mark: Mark) -> bool {
+    struct Finder<'a> {
+        param: &'a Id,
+        unresolved_mark: Mark,
+        found: bool,
+    }
+    impl Visit for Finder<'_> {
+        fn visit_ident(&mut self, ident: &Ident) {
+            if ident.ctxt.outer() != self.unresolved_mark
+                && (ident.sym != self.param.0 || ident.ctxt != self.param.1)
+                && matches!(ident.sym.as_ref(), "module" | "exports" | "require")
+            {
+                self.found = true;
+            }
+        }
+    }
+    let mut finder = Finder {
+        param,
+        unresolved_mark,
+        found: false,
+    };
+    for stmt in stmts {
+        stmt.visit_with(&mut finder);
+    }
+    finder.found
 }
 
 fn is_use_strict_item(item: &ModuleItem) -> bool {
@@ -1274,6 +1447,7 @@ fn try_unwrap_global_envelope_item(
     item: &ModuleItem,
     unresolved_mark: Mark,
     can_lift_injected_wrapper: bool,
+    decorated_module: bool,
 ) -> Option<Vec<ModuleItem>> {
     let ModuleItem::Stmt(stmt) = item else {
         return None;
@@ -1318,13 +1492,15 @@ fn try_unwrap_global_envelope_item(
 
     // The defining fingerprint: at least one arg is `require(<str>)(module)`.
     // User code essentially never invokes a `require()` result with the raw
-    // `module` binding — this shape is the webpack AMD-define polyfill.
-    if call
-        .args
-        .iter()
-        .skip(1)
-        .any(|a| is_require_invoked_with_module(&a.expr, unresolved_mark))
-    {
+    // `module` binding — this shape is the webpack AMD-define polyfill. A
+    // reduced `buildin/module.js` decorator call leaves the bare `module` it
+    // returned in that argument.
+    if call.args.iter().skip(1).any(|a| {
+        is_require_invoked_with_module(&a.expr, unresolved_mark)
+            || (decorated_module
+                && matches!(strip_parens(&a.expr), Expr::Ident(ident)
+                    if ident.sym == "module" && ident.ctxt.outer() == unresolved_mark))
+    }) {
         // Rewrite a clone: replace the global-detect ternary with `globalThis`.
         // If no ternary matches our signature, bail — we don't want to strip the
         // wrapper without also neutralizing the param references inside it.
@@ -2020,7 +2196,7 @@ mod polyfill_tests {
             let unresolved_mark = Mark::new();
             let top_level_mark = Mark::new();
             module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
-            unwrap_webpack_global_envelopes(&mut module, unresolved_mark);
+            unwrap_webpack_global_envelopes(&mut module, unresolved_mark, false);
             apply_fixer(&mut module).expect("fixer should not panic on fixture");
             emit_module(&module, cm).expect("emit")
         })

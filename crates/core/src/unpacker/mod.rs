@@ -11,6 +11,7 @@ mod surrounding;
 pub mod systemjs;
 mod turbopack;
 pub mod webpack4;
+mod webpack4_module_decorator;
 pub mod webpack5;
 mod webpack_common;
 mod wrappers;

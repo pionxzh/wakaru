@@ -87,6 +87,7 @@ crates/
       unpacker/
         mod.rs                      — unpack_bundle() dispatch
         webpack4.rs                 — webpack4 splitter + normalization
+        webpack4_module_decorator.rs — webpack 4 `buildin/module.js` / `harmony-module.js` recognition and reduction
         webpack5.rs                 — webpack5 splitter (incl. runtime entry, ncc + chunk)
         turbopack.rs                — Turbopack chunk detection + translation to webpack factories
         browserify.rs               — browserify-family splitter (incl. Cocos Creator 2.x)

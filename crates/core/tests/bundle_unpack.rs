@@ -2010,6 +2010,192 @@ fn aggressive_nested_scope_split_leaves_a_commonjs_module_whole() {
     }
 }
 
+/// A webpack 4 array bundle around `factories` that starts at `entry`.
+fn webpack4_bundle(factories: &str, entry: usize) -> String {
+    format!(
+        r#"
+!function(modules) {{
+  var cache = {{}};
+  function load(id) {{
+    if (cache[id]) return cache[id].exports;
+    var module = cache[id] = {{ i: id, l: false, exports: {{}} }};
+    modules[id].call(module.exports, module, module.exports, load);
+    module.l = true;
+    return module.exports;
+  }}
+  return load({entry});
+}}([
+{factories}
+]);
+"#
+    )
+}
+
+/// `buildin/module.js` and `buildin/harmony-module.js` as webpack 4.47.0
+/// ships them, before minification.
+const WEBPACK4_MODULE_DECORATOR: &str = r#"
+  function(module, exports) {
+    module.exports = function(module) {
+      if (!module.webpackPolyfill) {
+        module.deprecate = function() {};
+        module.paths = [];
+        // module.parent = undefined by default
+        if (!module.children) module.children = [];
+        Object.defineProperty(module, "loaded", {
+          enumerable: true,
+          get: function() {
+            return module.l;
+          }
+        });
+        Object.defineProperty(module, "id", {
+          enumerable: true,
+          get: function() {
+            return module.i;
+          }
+        });
+        module.webpackPolyfill = 1;
+      }
+      return module;
+    };
+  }"#;
+const WEBPACK4_HARMONY_MODULE_DECORATOR: &str = r#"
+  function(module, exports) {
+    module.exports = function(originalModule) {
+      if (!originalModule.webpackPolyfill) {
+        var module = Object.create(originalModule);
+        // module.parent = undefined by default
+        if (!module.children) module.children = [];
+        Object.defineProperty(module, "loaded", {
+          enumerable: true,
+          get: function() {
+            return module.l;
+          }
+        });
+        Object.defineProperty(module, "id", {
+          enumerable: true,
+          get: function() {
+            return module.i;
+          }
+        });
+        Object.defineProperty(module, "exports", {
+          enumerable: true
+        });
+        module.webpackPolyfill = 1;
+      }
+      return module;
+    };
+  }"#;
+
+#[test]
+fn webpack4_unminified_module_decorators_reduce_to_the_module() {
+    // shape: hypothetical (webpack 4.47.0's `buildin/module.js` and
+    // `buildin/harmony-module.js` source, unminified; the minified
+    // production form is covered by wp4-module-decorator-min)
+    let factories = format!(
+        r#"
+  function(module, exports, __webpack_require__) {{
+    var lib = __webpack_require__(1), flags = __webpack_require__(2);
+    console.log(lib, flags.loaded);
+  }},
+  function(module, exports, __webpack_require__) {{
+    (function(module) {{
+      if (module && module.exports) module.exports = {{ first: "first" }};
+    }}).call(this, __webpack_require__(3)(module));
+  }},
+  function(module, __webpack_exports__, __webpack_require__) {{
+    "use strict";
+    __webpack_require__.r(__webpack_exports__);
+    (function(module) {{
+      __webpack_require__.d(__webpack_exports__, "loaded", function() {{ return loaded; }});
+      var loaded = typeof module.id;
+    }}).call(this, __webpack_require__(4)(module));
+  }},{WEBPACK4_MODULE_DECORATOR},{WEBPACK4_HARMONY_MODULE_DECORATOR}
+"#
+    );
+    let output = unpack(&webpack4_bundle(&factories, 0), DecompileOptions::default())
+        .expect("webpack4 unpack should succeed");
+    assert_eq!(output.detected_formats, [BundleFormat::Webpack4]);
+    for (name, code) in &output.modules {
+        assert!(!code.contains(".default(module)"), "{name}:\n{code}");
+    }
+    let commonjs = module_code(&output, "module-1.js");
+    assert!(
+        commonjs.contains(".call(this, module)") || commonjs.contains("module.exports"),
+        "{commonjs}"
+    );
+    let harmony = module_code(&output, "module-2.js");
+    assert!(
+        harmony.contains("export") && harmony.contains("module.id") && !harmony.contains("require"),
+        "{harmony}"
+    );
+    assert!(module_code(&output, "module-3.js").contains("webpackPolyfill"));
+    assert!(module_code(&output, "module-4.js").contains("Object.create"));
+}
+
+#[test]
+fn webpack4_module_decorator_lookalikes_are_not_reduced() {
+    // shape: hypothetical. A factory that only resembles the generated
+    // decorator (one more effect, or a different result) is user code; its
+    // call stays as written.
+    for decorator in [
+        WEBPACK4_MODULE_DECORATOR
+            .replace("module.paths = [];", "module.paths = []; module.extra = 1;"),
+        WEBPACK4_MODULE_DECORATOR.replace("return module;", "return module.exports;"),
+        WEBPACK4_HARMONY_MODULE_DECORATOR.replace(
+            "Object.create(originalModule)",
+            "Object.assign({}, originalModule)",
+        ),
+    ] {
+        let factories = format!(
+            r#"
+  function(module, exports, __webpack_require__) {{
+    (function(module) {{
+      if (module && module.exports) module.exports = {{ first: "first" }};
+    }}).call(this, __webpack_require__(1)(module));
+  }},{decorator}
+"#
+        );
+        let output = unpack(&webpack4_bundle(&factories, 0), DecompileOptions::default())
+            .expect("webpack4 unpack should succeed");
+        let consumer = module_code(&output, "module-0.js");
+        assert!(
+            consumer.contains("(module)"),
+            "a lookalike decorator call must stay:\n{consumer}"
+        );
+    }
+}
+
+#[test]
+fn webpack4_module_wrapper_that_writes_its_parameter_is_not_lifted() {
+    // shape: hypothetical. Renaming a written wrapper parameter to the
+    // factory's `module` would turn a local write into a module write.
+    let factories = format!(
+        r#"
+  function(module, exports, __webpack_require__) {{
+    var value = __webpack_require__(1);
+    console.log(value.loaded);
+  }},
+  function(module, __webpack_exports__, __webpack_require__) {{
+    "use strict";
+    __webpack_require__.r(__webpack_exports__);
+    (function(module) {{
+      __webpack_require__.d(__webpack_exports__, "loaded", function() {{ return loaded; }});
+      var loaded = typeof module.id;
+      module = null;
+    }}).call(this, __webpack_require__(2)(module));
+  }},{WEBPACK4_HARMONY_MODULE_DECORATOR}
+"#
+    );
+    let output = unpack(&webpack4_bundle(&factories, 0), DecompileOptions::default())
+        .expect("webpack4 unpack should succeed");
+    let harmony = module_code(&output, "module-1.js");
+    assert!(!harmony.contains(".default(module)"), "{harmony}");
+    assert!(
+        harmony.contains("})(module)"),
+        "the wrapper must stay:\n{harmony}"
+    );
+}
+
 fn free_name_capture_failures(
     output: &wakaru_core::driver::test_support::UnpackOutput,
 ) -> Vec<String> {
