@@ -341,3 +341,104 @@ fn assert_each_snapshot_checks_every_pair_and_names_each_failure() {
     assert_eq!(*checked.borrow(), ["first", "second", "third"]);
     assert!(message.contains("2 snapshot(s) failed: second, third"));
 }
+
+// ---------------------------------------------------------------------------
+// Code around the bootstrap
+// ---------------------------------------------------------------------------
+
+/// A minified webpack 4 bootstrap whose startup requires module 0, which
+/// assigns module 1's exports to a global.
+const WEBPACK4_BOOTSTRAP: &str = r#"function(e){var n={};function r(t){if(n[t])return n[t].exports;var o=n[t]={i:t,l:!1,exports:{}};return e[t].call(o.exports,o,o.exports,r),o.l=!0,o.exports}r.m=e,r.c=n,r.d=function(e,n,t){r.o(e,n)||Object.defineProperty(e,n,{enumerable:!0,get:t})},r.o=function(e,n){return Object.prototype.hasOwnProperty.call(e,n)},r.p="",r(r.s=0)}([function(e,n,r){globalThis.lib=r(1)},function(e,n){n.twice=function(e){return 2*e}}])"#;
+
+const BANNER: &str =
+    r#"!function(){try{globalThis.banner={v:1}}catch(e){console.error("bad banner")}}()"#;
+
+fn expect_pairs(source: &str) -> Vec<(String, String)> {
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "bundle.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("unpack should succeed");
+    assert!(
+        !output.has_errors(),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+    output.modules
+}
+
+fn named<'a>(pairs: &'a [(String, String)], name: &str) -> &'a str {
+    &pairs
+        .iter()
+        .find(|(file, _)| file == name)
+        .unwrap_or_else(|| {
+            panic!(
+                "{name} should exist, got {:?}",
+                pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+            )
+        })
+        .1
+}
+
+fn assert_banner_runs_around_the_entry(pairs: &[(String, String)]) {
+    let entry = named(pairs, "entry.js");
+    assert!(
+        entry.contains("globalThis.banner = {"),
+        "the banner must stay in entry.js, got:\n{entry}"
+    );
+    assert!(
+        entry.contains("./entry-0.js"),
+        "entry.js must load the entry module, got:\n{entry}"
+    );
+    assert!(
+        named(pairs, "entry-0.js").contains("globalThis.lib"),
+        "the entry module keeps its own code"
+    );
+    assert!(pairs.iter().any(|(name, _)| name == "module-1.js"));
+    assert!(
+        validate_output_modules(pairs).is_empty(),
+        "output must validate: {:?}",
+        validate_output_modules(pairs)
+    );
+}
+
+#[test]
+fn code_before_the_bootstrap_statement_stays_in_entry() {
+    // A script concatenated in front of the bundle. shape: hypothetical.
+    let source = format!("{BANNER};\n!{WEBPACK4_BOOTSTRAP};");
+
+    assert_banner_runs_around_the_entry(&expect_pairs(&source));
+}
+
+#[test]
+fn code_after_the_bootstrap_statement_follows_the_entry() {
+    // shape: hypothetical (a script concatenated after the bundle).
+    let source = format!("!{WEBPACK4_BOOTSTRAP};\nglobalThis.after = 2;");
+
+    let pairs = expect_pairs(&source);
+    let entry = named(&pairs, "entry.js");
+    let load = entry
+        .find("./entry-0.js")
+        .unwrap_or_else(|| panic!("entry.js must load the entry module, got:\n{entry}"));
+    let after = entry
+        .find("globalThis.after = 2")
+        .unwrap_or_else(|| panic!("the code after must stay, got:\n{entry}"));
+    assert!(load < after, "source order must be kept, got:\n{entry}");
+}
+
+#[test]
+fn code_around_a_webpack4_bootstrap_declaring_require_stays_unsplit() {
+    // entry.js calls `require`; a top-level `require` declared around the
+    // bootstrap would capture it. shape: hypothetical.
+    let source = format!("var require = function () {{}};\n!{WEBPACK4_BOOTSTRAP};");
+
+    let pairs = expect_pairs(&source);
+    assert_eq!(
+        pairs.len(),
+        1,
+        "the input must stay one file, got {pairs:?}"
+    );
+}

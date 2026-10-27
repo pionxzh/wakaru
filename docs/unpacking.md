@@ -259,6 +259,17 @@ also stays one file.
 evaluates before a banner that writes globals only from inside a function
 (see [`import_hoisting_eagerness`](rewrite-assumptions.md#import_hoisting_eagerness)).
 
+### Webpack 4 code around the bootstrap
+
+webpack 4 keeps the code around its bootstrap call the same way. The startup
+only requires entry modules, so `entry.js` holds the code before the
+bootstrap, a `require` of each entry module in startup order, and the code
+after it, as for [Browserify](#browserify-and-cocos-creator). The entry
+modules then take `entry-<id>.js` names (a string-keyed table keeps its path
+names) and only `entry.js` is marked as the entry. The input stays one file
+when the code declares `require` at its top level or the bootstrap starts no
+entry module.
+
 ## Turbopack
 
 Turbopack production chunks register factories into a runtime shared by
@@ -724,8 +735,8 @@ layout directly is a proposal:
 ## Known gaps
 
 - **Code around some bundles is still dropped or blocks the split.**
-  webpack 5 and Browserify keep top-level code around the bundle statement
-  in `entry.js` (see [Webpack 5 code around the
+  webpack 4, webpack 5, and Browserify keep top-level code around the bundle
+  statement in `entry.js` (see [Webpack 5 code around the
   bootstrap](#webpack-5-code-around-the-bootstrap)). Elsewhere:
   - an async chunk with a BannerPlugin `raw: true` banner at the report
     stage (producer `webpack@5.111.1`) is split and the banner is dropped:

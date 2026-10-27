@@ -6,12 +6,14 @@
 use crate::collections::HashSet;
 
 use swc_core::atoms::Atom;
-use swc_core::common::{Mark, Span, Spanned, SyntaxContext, DUMMY_SP};
-use swc_core::ecma::ast::{Expr, ExprStmt, Ident, Lit, Module, ModuleItem, Stmt};
+use swc_core::common::{sync::Lrc, Mark, SourceMap, Span, Spanned, SyntaxContext, DUMMY_SP};
+use swc_core::ecma::ast::{CallExpr, Callee, Expr, ExprStmt, Ident, Lit, Module, ModuleItem, Stmt};
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::{Visit, VisitMutWith, VisitWith};
 
+use crate::module_path::relative_import_specifier;
 use crate::rules::rename_utils::{rename_bindings_in_module, BindingRename};
+use crate::unpacker::{emit_module_with_source_map, spans_byte_ranges, UnpackedModule};
 
 /// The input's top-level items before and after the bundle statement.
 #[derive(Clone, Copy, Default)]
@@ -139,6 +141,52 @@ impl SurroundingCode {
             })
             .collect();
         rename_bindings_in_module(module, &renames);
+    }
+
+    /// The entry file `filename` for bundles whose startup only runs entry
+    /// modules: the code before the bundle statement, a `require` of each
+    /// entry module in startup order, and the code after it.
+    pub(super) fn entry_module(
+        &self,
+        filename: &str,
+        entry_filenames: &[&str],
+        cm: &Lrc<SourceMap>,
+    ) -> Option<UnpackedModule> {
+        let mut module = Module {
+            span: DUMMY_SP,
+            body: entry_filenames
+                .iter()
+                .map(|entry| {
+                    let specifier = relative_import_specifier(filename, entry);
+                    ModuleItem::Stmt(Stmt::Expr(ExprStmt {
+                        span: DUMMY_SP,
+                        expr: Box::new(Expr::Call(CallExpr {
+                            callee: Callee::Expr(Box::new(Expr::Ident(Ident::new_no_ctxt(
+                                "require".into(),
+                                DUMMY_SP,
+                            )))),
+                            args: vec![Expr::from(specifier.as_str()).into()],
+                            ..Default::default()
+                        })),
+                    }))
+                })
+                .collect(),
+            shebang: None,
+        };
+        self.place_around(&mut module);
+        let (code, generated_source_map) = emit_module_with_source_map(&module, cm.clone()).ok()?;
+        Some(UnpackedModule {
+            id: "entry".to_string(),
+            is_entry: true,
+            code,
+            filename: filename.to_string(),
+            source_ranges: spans_byte_ranges(cm, self.spans()),
+            inspection_context_ranges: Vec::new(),
+            source_input: String::new(),
+            generated_source_map,
+            verbatim_source_offset: None,
+            mapped_in_every_mode: false,
+        })
     }
 
     /// Place the code before and after the entry `module`'s statements.

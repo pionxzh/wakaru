@@ -2,13 +2,11 @@ use crate::collections::{HashMap, HashSet};
 use std::collections::BTreeMap;
 
 use swc_core::atoms::Atom;
-use swc_core::common::{
-    sync::Lrc, Globals, Mark, SourceMap, Spanned, SyntaxContext, DUMMY_SP, GLOBALS,
-};
+use swc_core::common::{sync::Lrc, Globals, Mark, SourceMap, Spanned, SyntaxContext, GLOBALS};
 use swc_core::ecma::ast::{
     ArrayLit, ArrowFunctionBody, AssignOp, AssignTarget, CallExpr, Callee, Expr, ExprOrSpread,
-    ExprStmt, FnExpr, Ident, Lit, MemberExpr, MemberProp, Module, ModuleItem, Number, ObjectLit,
-    Pat, Prop, PropName, PropOrSpread, SimpleAssignTarget, Stmt,
+    ExprStmt, FnExpr, Lit, MemberExpr, MemberProp, Module, ModuleItem, Number, ObjectLit, Pat,
+    Prop, PropName, PropOrSpread, SimpleAssignTarget, Stmt,
 };
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::utils::replace_ident;
@@ -18,9 +16,8 @@ use crate::module_path::relative_import_specifier;
 use crate::rules::rename_utils::BindingRename;
 use crate::unpacker::surrounding::{SurroundingCode, SurroundingItems};
 use crate::unpacker::{
-    deconflict_runtime_binding_renames, emit_module_with_source_map, sanitize_relative_path,
-    source_fallback_for_stmts, span_byte_range, spans_byte_ranges, BundleFormat, DetectedBundle,
-    PreparedModuleAst, UnpackResult, UnpackedModule,
+    deconflict_runtime_binding_renames, sanitize_relative_path, source_fallback_for_stmts,
+    span_byte_range, BundleFormat, DetectedBundle, PreparedModuleAst, UnpackResult, UnpackedModule,
 };
 use crate::utils::swc_safety::apply_fixer;
 
@@ -230,12 +227,11 @@ fn extract_commonjs_table(
         prepared.push(Some(ast));
     }
     if !surrounding.is_empty() {
-        modules.push(surrounding_entry_module(
-            &surrounding,
-            &entry_ids,
-            &id_to_filename,
-            &cm,
-        )?);
+        let entry_filenames = entry_ids
+            .iter()
+            .map(|id| id_to_filename.get(id).map(String::as_str))
+            .collect::<Option<Vec<_>>>()?;
+        modules.push(surrounding.entry_module(SURROUNDING_ENTRY, &entry_filenames, &cm)?);
         prepared.push(None);
     }
 
@@ -244,51 +240,6 @@ fn extract_commonjs_table(
         prepared,
         cm,
     ))
-}
-
-/// entry.js for code around the prelude call: the code before it, a
-/// `require` of each entry module in the prelude's order, and the code after
-/// it.
-fn surrounding_entry_module(
-    surrounding: &SurroundingCode,
-    entry_ids: &[ModuleId],
-    id_to_filename: &HashMap<ModuleId, String>,
-    cm: &Lrc<SourceMap>,
-) -> Option<UnpackedModule> {
-    let mut module = build_module_from_stmts(
-        entry_ids
-            .iter()
-            .map(|id| {
-                let specifier =
-                    relative_import_specifier(SURROUNDING_ENTRY, id_to_filename.get(id)?);
-                Some(Stmt::Expr(ExprStmt {
-                    span: DUMMY_SP,
-                    expr: Box::new(Expr::Call(CallExpr {
-                        callee: Callee::Expr(Box::new(Expr::Ident(Ident::new_no_ctxt(
-                            "require".into(),
-                            DUMMY_SP,
-                        )))),
-                        args: vec![Expr::from(specifier.as_str()).into()],
-                        ..Default::default()
-                    })),
-                }))
-            })
-            .collect::<Option<Vec<_>>>()?,
-    );
-    surrounding.place_around(&mut module);
-    let (code, generated_source_map) = emit_module_with_source_map(&module, cm.clone()).ok()?;
-    Some(UnpackedModule {
-        id: "entry".to_string(),
-        is_entry: true,
-        code,
-        filename: SURROUNDING_ENTRY.to_string(),
-        source_ranges: spans_byte_ranges(cm, surrounding.spans()),
-        inspection_context_ranges: Vec::new(),
-        source_input: String::new(),
-        generated_source_map,
-        verbatim_source_offset: None,
-        mapped_in_every_mode: false,
-    })
 }
 
 /// The file holding code around the prelude call. Entry modules then take

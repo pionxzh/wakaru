@@ -23,6 +23,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use crate::module_path::relative_import_specifier;
 use crate::rules::eval_utils::DirectEvalAnalyzer;
 use crate::rules::rename_utils::BindingRename;
+use crate::unpacker::surrounding::{SurroundingCode, SurroundingItems};
 use crate::unpacker::webpack_common::{
     is_external_require_call, isolated_failure, FactoryNormalizationError,
 };
@@ -426,11 +427,12 @@ pub(super) fn detect_from_module(
     cm: Lrc<SourceMap>,
     positions: SourcePositions,
 ) -> Option<DetectedBundle> {
-    for item in &module.body {
+    for (idx, item) in module.body.iter().enumerate() {
         let ModuleItem::Stmt(stmt) = item else {
             continue;
         };
-        if let Some(result) = try_extract_from_stmt(stmt, cm.clone(), positions) {
+        let surrounding = SurroundingItems::around(&module.body, idx);
+        if let Some(result) = try_extract_from_stmt(stmt, surrounding, cm.clone(), positions) {
             return Some(result);
         }
     }
@@ -440,6 +442,7 @@ pub(super) fn detect_from_module(
 /// Try to extract from a top-level statement that might be a webpack4 IIFE.
 fn try_extract_from_stmt(
     stmt: &Stmt,
+    surrounding: SurroundingItems<'_>,
     cm: Lrc<SourceMap>,
     positions: SourcePositions,
 ) -> Option<DetectedBundle> {
@@ -452,7 +455,7 @@ fn try_extract_from_stmt(
         _ => return None,
     };
 
-    extract_webpack4_modules(call, cm, positions)
+    extract_webpack4_modules(call, surrounding, cm, positions)
 }
 
 fn extract_call_from_expr(expr: &Expr) -> Option<&CallExpr> {
@@ -463,8 +466,10 @@ fn extract_call_from_expr(expr: &Expr) -> Option<&CallExpr> {
 }
 
 /// Given a CallExpr that should be `bootstrapFn([...])` or `bootstrapFn({...})`, extract modules.
+/// `surrounding` is the input's top-level code around the bootstrap call.
 fn extract_webpack4_modules(
     call: &CallExpr,
+    surrounding: SurroundingItems<'_>,
     cm: Lrc<SourceMap>,
     positions: SourcePositions,
 ) -> Option<DetectedBundle> {
@@ -487,15 +492,22 @@ fn extract_webpack4_modules(
     // with element indices offset by n.
     match &*call.args[0].expr {
         Expr::Array(array_lit) => {
-            extract_webpack4_array_modules(array_lit, 0, bootstrap_fn, cm, positions)
+            extract_webpack4_array_modules(array_lit, 0, bootstrap_fn, surrounding, cm, positions)
         }
         Expr::Object(object_lit) => {
-            extract_webpack4_object_modules(object_lit, bootstrap_fn, cm, positions)
+            extract_webpack4_object_modules(object_lit, bootstrap_fn, surrounding, cm, positions)
         }
         Expr::Call(concat_call) => {
             let (array_lit, id_offset) =
                 crate::unpacker::webpack_common::split_array_concat(concat_call)?;
-            extract_webpack4_array_modules(array_lit, id_offset, bootstrap_fn, cm, positions)
+            extract_webpack4_array_modules(
+                array_lit,
+                id_offset,
+                bootstrap_fn,
+                surrounding,
+                cm,
+                positions,
+            )
         }
         _ => None,
     }
@@ -511,9 +523,14 @@ struct Webpack4ModuleDescriptor<'a> {
     factory: &'a FnExpr,
 }
 
+/// With code around the bootstrap, entry.js holds it around a `require` of
+/// each entry module (`entry_ids`, in startup order), and the entry modules
+/// are not entries themselves.
 fn prepare_webpack4_modules(
     descriptors: &[Webpack4ModuleDescriptor<'_>],
     all_numeric: bool,
+    entry_ids: &[ModuleId],
+    surrounding: &SurroundingCode,
     cm: Lrc<SourceMap>,
     positions: SourcePositions,
 ) -> Option<DetectedBundle> {
@@ -654,7 +671,7 @@ fn prepare_webpack4_modules(
                 };
             modules.push(UnpackedModule {
                 id: descriptor.id.clone(),
-                is_entry: descriptor.is_entry,
+                is_entry: descriptor.is_entry && surrounding.is_empty(),
                 code,
                 filename: descriptor.filename.clone(),
                 source_ranges: span_byte_range(&cm, descriptor.factory.function.span)
@@ -669,6 +686,22 @@ fn prepare_webpack4_modules(
         }
         if modules.is_empty() {
             return None;
+        }
+        if !surrounding.is_empty() {
+            let entry_filenames = entry_ids
+                .iter()
+                .map(|entry_id| {
+                    let id = match entry_id {
+                        ModuleId::Numeric(id) => id.to_string(),
+                        ModuleId::Named(id) => id.clone(),
+                    };
+                    descriptors
+                        .iter()
+                        .find(|descriptor| descriptor.id == id)
+                        .map(|descriptor| descriptor.filename.as_str())
+                })
+                .collect::<Option<Vec<_>>>()?;
+            modules.push(surrounding.entry_module(SURROUNDING_ENTRY, &entry_filenames, &cm)?);
         }
         return Some(
             DetectedBundle::from_result(UnpackResult::new(modules, BundleFormat::Webpack4))
@@ -699,6 +732,7 @@ fn extract_webpack4_array_modules(
     array_lit: &swc_core::ecma::ast::ArrayLit,
     id_offset: usize,
     bootstrap_fn: &FnExpr,
+    surrounding: SurroundingItems<'_>,
     cm: Lrc<SourceMap>,
     positions: SourcePositions,
 ) -> Option<DetectedBundle> {
@@ -737,6 +771,7 @@ fn extract_webpack4_array_modules(
 
     // Find entry module IDs by scanning the bootstrap function body
     let entry_ids = find_entry_ids(bootstrap_fn);
+    let surrounding = collect_surrounding(surrounding, &entry_ids)?;
 
     let descriptors = module_fns
         .iter()
@@ -746,7 +781,7 @@ fn extract_webpack4_array_modules(
             let id = id_offset + index;
             let is_entry = entry_ids.contains(&ModuleId::Numeric(id));
             let filename = if is_entry {
-                if entry_ids.len() == 1 {
+                if entry_ids.len() == 1 && surrounding.is_empty() {
                     "entry.js".to_string()
                 } else {
                     format!("entry-{id}.js")
@@ -763,13 +798,14 @@ fn extract_webpack4_array_modules(
             })
         })
         .collect::<Vec<_>>();
-    prepare_webpack4_modules(&descriptors, true, cm, positions)
+    prepare_webpack4_modules(&descriptors, true, &entry_ids, &surrounding, cm, positions)
 }
 
 /// Extract modules from the object-form: `bootstrapFn({"./src/index.js": fn, ...})`
 fn extract_webpack4_object_modules(
     object_lit: &ObjectLit,
     bootstrap_fn: &FnExpr,
+    surrounding: SurroundingItems<'_>,
     cm: Lrc<SourceMap>,
     positions: SourcePositions,
 ) -> Option<DetectedBundle> {
@@ -813,6 +849,7 @@ fn extract_webpack4_object_modules(
 
     // Find entry module IDs by scanning the bootstrap function body
     let entry_ids = find_entry_ids(bootstrap_fn);
+    let surrounding = collect_surrounding(surrounding, &entry_ids)?;
 
     // Detect whether all keys are numeric (e.g. {0: fn, 1: fn}) vs string paths
     let all_numeric = module_entries
@@ -841,7 +878,7 @@ fn extract_webpack4_object_modules(
             let filename = if all_numeric {
                 let idx = key.parse::<usize>().unwrap_or(usize::MAX);
                 if is_entry {
-                    if entry_ids.len() == 1 {
+                    if entry_ids.len() == 1 && surrounding.is_empty() {
                         "entry.js".to_string()
                     } else {
                         format!("entry-{idx}.js")
@@ -865,7 +902,35 @@ fn extract_webpack4_object_modules(
             }
         })
         .collect::<Vec<_>>();
-    prepare_webpack4_modules(&descriptors, all_numeric, cm, positions)
+    prepare_webpack4_modules(
+        &descriptors,
+        all_numeric,
+        &entry_ids,
+        &surrounding,
+        cm,
+        positions,
+    )
+}
+
+/// The file holding code around the bootstrap call. Entry modules then take
+/// the multi-entry names (`entry-<id>.js`).
+const SURROUNDING_ENTRY: &str = "entry.js";
+
+/// Code around the bootstrap call runs before or after the bundle; entry.js
+/// keeps it, in source order, around the entry modules' requires. `None`
+/// keeps the input one file: the code declares `require`, which would capture
+/// those requires, or the bootstrap starts no entry module, so entry.js would
+/// have no startup to place it around and the code would be in no output
+/// file.
+fn collect_surrounding(
+    surrounding: SurroundingItems<'_>,
+    entry_ids: &[ModuleId],
+) -> Option<SurroundingCode> {
+    let surrounding = SurroundingCode::collect(surrounding, &["require"])?;
+    if !surrounding.is_empty() && entry_ids.is_empty() {
+        return None;
+    }
+    Some(surrounding)
 }
 
 /// Extract the public string id plus its runtime number when the object key is
