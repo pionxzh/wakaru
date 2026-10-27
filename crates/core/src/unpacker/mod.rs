@@ -2,6 +2,7 @@ pub mod amd;
 pub mod browserify;
 pub mod chunk_enumeration;
 mod chunk_loading_global;
+mod chunk_prelude;
 pub mod closure_module_manager;
 pub(crate) mod emit_esm;
 pub mod esbuild;
@@ -880,6 +881,10 @@ pub(crate) struct DetectedBundle {
     /// `module.i` module-identity spelling. Modern webpack uses `module.id`;
     /// a bare `.i` in a modern chunk must not be guessed from the table key.
     pub(crate) webpack_legacy_module_i: crate::collections::HashSet<String>,
+    /// Modules holding the input's own top-level code rather than a factory
+    /// (a webpack chunk's prelude). The bundle runtime does not call them, so
+    /// they get no factory runtime facts.
+    pub(crate) script_modules: crate::collections::HashSet<String>,
     pub(crate) chunk_ids: crate::collections::HashSet<usize>,
     /// Names of the chunk-loading globals the input pushes into or binds as a
     /// runtime: the input's build identity for cross-input module-id rewrites.
@@ -905,6 +910,7 @@ impl DetectedBundle {
             webpack_numeric_module_ids: Default::default(),
             webpack_absent_string_ids: Default::default(),
             webpack_legacy_module_i: Default::default(),
+            script_modules: Default::default(),
             chunk_ids: Default::default(),
             chunk_loading_globals: Vec::new(),
             chunk_enumeration: None,
@@ -931,6 +937,7 @@ impl DetectedBundle {
             webpack_numeric_module_ids: Default::default(),
             webpack_absent_string_ids: Default::default(),
             webpack_legacy_module_i: Default::default(),
+            script_modules: Default::default(),
             chunk_ids: Default::default(),
             chunk_loading_globals: Vec::new(),
             chunk_enumeration: None,
@@ -1001,6 +1008,19 @@ impl DetectedBundle {
             .iter()
             .any(|module| &module.filename == filename)));
         self.webpack_legacy_module_i = filenames;
+        self
+    }
+
+    pub(crate) fn with_script_modules(
+        mut self,
+        filenames: crate::collections::HashSet<String>,
+    ) -> Self {
+        debug_assert!(filenames.iter().all(|filename| self
+            .result
+            .modules
+            .iter()
+            .any(|module| &module.filename == filename)));
+        self.script_modules = filenames;
         self
     }
 
@@ -1250,7 +1270,7 @@ pub(crate) fn try_unpack_bundle_with_positions(
 }
 
 pub(crate) enum PreparedSource {
-    Bundle(DetectedBundle),
+    Bundle(Box<DetectedBundle>),
     Plain(Option<PreparedModuleAst>),
 }
 
@@ -1329,7 +1349,7 @@ pub(crate) fn try_prepare_source(
     })?;
 
     let source = match prepared {
-        PreparedSourceParts::Bundle(bundle) => PreparedSource::Bundle(*bundle),
+        PreparedSourceParts::Bundle(bundle) => PreparedSource::Bundle(bundle),
         PreparedSourceParts::Plain {
             module,
             unresolved_mark,

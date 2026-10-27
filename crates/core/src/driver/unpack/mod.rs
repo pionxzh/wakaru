@@ -207,7 +207,7 @@ pub fn prepare_unpack_input_with_policy(
                 filename,
                 source: needs_boundary_fallback.then_some(source),
                 detection: PreparedInputDetection::Bundle(format),
-                detected: Some(detected),
+                detected: Some(*detected),
                 scope_hoisted: None,
                 plain_prepared: fallback_prepared,
                 public_path_candidate,
@@ -527,6 +527,7 @@ fn unpack_prepared_inputs_impl(
                             .result
                             .modules
                             .iter()
+                            .filter(|module| !detected.script_modules.contains(&module.filename))
                             .map(|module| (module.id.clone(), module.filename.clone()))
                             .collect::<HashSet<_>>()
                     } else {

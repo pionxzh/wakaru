@@ -270,6 +270,33 @@ names) and only `entry.js` is marked as the entry. The input stays one file
 when the code declares `require` at its top level or the bootstrap starts no
 entry module.
 
+### Webpack 5 chunk prelude
+
+Top-level code beside an async chunk's push runs when the chunk script loads,
+outside every module: a raw banner or footer added after minification
+(producer `webpack@5.111.1` BannerPlugin `raw: true` at
+`PROCESS_ASSETS_STAGE_REPORT`) or a concatenated script. That code goes, in
+source order, to a prelude file named after the chunk's first numeric id
+(`prelude-204.js`, otherwise `prelude.js`), and every module of the chunk
+starts with `require("./prelude-204.js")`, which `UnEsm` turns into
+`import "./prelude-204.js"` when the module becomes ESM. The code then still
+runs once before any of the chunk's modules evaluates; a prelude file nothing
+loaded would never run, and the chunk has no `entry.js`. In multi-input
+unpack each chunk input gets its own prelude, and filename uniquing rewrites
+the `require` with the file. Directives and empty statements alone write no
+prelude. The prelude is not a webpack factory, so it gets none of the factory
+runtime facts.
+
+The `require` goes after the module's directive prologue. An opaque factory
+and an empty one (whose empty body tells the driver to restore
+`module.exports = {}`) get none, nor does a factory that declares its own
+top-level `require`. When no module of the chunk can take it, or a module
+already uses the prelude's name, the input stays one file. Order against the
+push is not kept: code after the push runs before the modules, which matches
+the original unless the push itself runs modules (a third, runtime element).
+A top-level declaration in the prelude becomes module-scoped instead of
+global.
+
 ## Turbopack
 
 Turbopack production chunks register factories into a runtime shared by
@@ -737,10 +764,11 @@ layout directly is a proposal:
 - **Code around some bundles is still dropped or blocks the split.**
   webpack 4, webpack 5, and Browserify keep top-level code around the bundle
   statement in `entry.js` (see [Webpack 5 code around the
-  bootstrap](#webpack-5-code-around-the-bootstrap)). Elsewhere:
-  - an async chunk with a BannerPlugin `raw: true` banner at the report
-    stage (producer `webpack@5.111.1`) is split and the banner is dropped:
-    a chunk has no `entry.js` to hold it;
+  bootstrap](#webpack-5-code-around-the-bootstrap)), and a webpack 5 async
+  chunk keeps it in a [prelude](#webpack-5-chunk-prelude). Elsewhere:
+  - a CommonJS chunk (`exports.ids = …; exports.modules = {…}`) drops its
+    other top-level statements; only a JSONP chunk gets a
+    [prelude](#webpack-5-chunk-prelude) (hypothetical shape);
   - a SystemJS bundle with `output.banner` or `output.footer` set to code
     (producer `rollup@4.63.6` `format: "system"`, unminified) drops it;
   - a UMD library (producer `webpack@5.111.1` `output.library.type: "umd"`

@@ -17,6 +17,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::js_names::{is_reserved_binding_name, is_valid_identifier_name};
 use crate::rules::rename_utils::BindingRename;
+use crate::unpacker::chunk_prelude;
 use crate::unpacker::surrounding::{
     ContextSymCollector, IdentNameCollector, SurroundingCode, SurroundingItems,
 };
@@ -461,12 +462,32 @@ pub(super) fn detect_chunk_from_module_prepared(
     let mut all_numeric_module_ids = HashMap::default();
     let mut all_absent_string_ids = HashMap::default();
     let mut all_legacy_module_i = HashSet::default();
+    // Code beside the pushes runs when the chunk loads; see chunk_prelude.
+    let mut prelude_items = Vec::new();
+    let mut first_chunk_id = None;
+    let mut has_commonjs_chunk = false;
 
     for item in &module.body {
         let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
+            if chunk_prelude::is_prelude_code(item) {
+                prelude_items.push(item);
+            }
             continue;
         };
-        if let Some(modules_container) = extract_chunk_push_modules(expr) {
+        if let Some((chunk_ids, modules_container)) = extract_chunk_push_parts(expr) {
+            if first_chunk_id.is_none() {
+                first_chunk_id = chunk_ids.elems.first().and_then(|elem| {
+                    let elem = elem.as_ref()?;
+                    match strip_parens(&elem.expr) {
+                        Expr::Lit(Lit::Num(num))
+                            if num.value >= 0.0 && num.value.fract() == 0.0 =>
+                        {
+                            Some(num.value as usize)
+                        }
+                        _ => None,
+                    }
+                });
+            }
             let extracted = extract_modules_from_container(&modules_container, cm.clone())?;
             if is_legacy_webpack_jsonp_push(expr) {
                 all_legacy_module_i.extend(extracted.numeric_module_ids.keys().cloned());
@@ -477,12 +498,15 @@ pub(super) fn detect_chunk_from_module_prepared(
             all_numeric_module_ids.extend(extracted.numeric_module_ids);
             all_absent_string_ids.extend(extracted.absent_string_ids);
         } else if let Some(modules_container) = extract_commonjs_chunk_modules(expr) {
+            has_commonjs_chunk = true;
             let extracted = extract_modules_from_container(&modules_container, cm.clone())?;
             all_modules.extend(extracted.modules);
             all_prepared.extend(extracted.prepared);
             all_failures.extend(extracted.failures);
             all_numeric_module_ids.extend(extracted.numeric_module_ids);
             all_absent_string_ids.extend(extracted.absent_string_ids);
+        } else if chunk_prelude::is_prelude_code(item) {
+            prelude_items.push(item);
         }
     }
 
@@ -490,6 +514,21 @@ pub(super) fn detect_chunk_from_module_prepared(
         // Preserve the historical whole-input fallback when no factory across
         // the complete chunk remains trustworthy.
         return None;
+    }
+
+    // A CommonJS chunk's other statements (`exports.id = …`) are its
+    // loading protocol and are not collected into a prelude.
+    let mut script_modules = HashSet::default();
+    if !prelude_items.is_empty() && !has_commonjs_chunk {
+        let filename = chunk_prelude::prelude_filename(first_chunk_id);
+        chunk_prelude::attach(
+            &prelude_items,
+            &filename,
+            &mut all_modules,
+            &mut all_prepared,
+            &cm,
+        )?;
+        script_modules.insert(filename);
     }
 
     Some(
@@ -504,7 +543,8 @@ pub(super) fn detect_chunk_from_module_prepared(
         .with_module_failures(all_failures)
         .with_webpack_numeric_module_ids(all_numeric_module_ids)
         .with_webpack_absent_string_ids(all_absent_string_ids)
-        .with_webpack_legacy_module_i(all_legacy_module_i),
+        .with_webpack_legacy_module_i(all_legacy_module_i)
+        .with_script_modules(script_modules),
     )
 }
 
@@ -1449,14 +1489,6 @@ impl Visit for RequireBodyScanner<'_> {
     }
 }
 
-/// Match the pattern: `(self.X = self.X || []).push([[ids], {modules}])`
-/// or `(window["X"] = window["X"] || []).push([[ids], {modules}])`.
-/// The modules payload may also be a sparse array — see
-/// [`Webpack5ModulesContainer`].
-fn extract_chunk_push_modules(expr: &Expr) -> Option<Webpack5ModulesContainer<'_>> {
-    extract_chunk_push_parts(expr).map(|(_, modules)| modules)
-}
-
 /// Webpack 4's default JSONP receiver begins with `webpackJsonp`, and its
 /// production module object exposes the numeric id as `module.i`. The generic
 /// chunk detector also accepts modern/custom push receivers, so keep this
@@ -1490,6 +1522,10 @@ fn is_legacy_webpack_jsonp_push(expr: &Expr) -> bool {
     }
 }
 
+/// Match the pattern: `(self.X = self.X || []).push([[ids], {modules}])`
+/// or `(window["X"] = window["X"] || []).push([[ids], {modules}])`, returning
+/// the chunk ids and the modules payload. The payload may also be a sparse
+/// array — see [`Webpack5ModulesContainer`].
 fn extract_chunk_push_parts(expr: &Expr) -> Option<(&ArrayLit, Webpack5ModulesContainer<'_>)> {
     let Expr::Call(call) = expr else {
         return None;

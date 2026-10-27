@@ -720,3 +720,154 @@ fn export_initialization_chains_survive_repeated_unpack_recovery() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Code beside the push: the chunk prelude
+// ---------------------------------------------------------------------------
+
+/// A BannerPlugin `raw: true` banner at the report stage, added after
+/// minification as its own statement; `{name}` is the global it writes.
+fn report_stage_banner(name: &str) -> String {
+    format!(
+        r#"!function(){{try{{globalThis.{name}={{v:1}}}}catch(e){{console.error("bad banner")}}}}();"#
+    )
+}
+
+/// An ESM module (240) and a module that stays CommonJS (311: a computed
+/// export name).
+const CHUNK_PUSH: &str = r#"(self.webpackChunk_app=self.webpackChunk_app||[]).push([[204],{240(e,n,d){function a(e){return"label:"+e}d.r(n),d.d(n,{label:()=>a})},311(e,n){n[globalThis.key]=1,e.exports.other=n}}])"#;
+
+fn file<'a>(pairs: &'a [(String, String)], name: &str) -> &'a str {
+    &pairs
+        .iter()
+        .find(|(file, _)| file == name)
+        .unwrap_or_else(|| {
+            panic!(
+                "{name} should exist, got {:?}",
+                pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+            )
+        })
+        .1
+}
+
+fn assert_prelude_required_by_every_module(pairs: &[(String, String)]) {
+    assert!(
+        file(pairs, "module-240.js").starts_with(r#"import "./prelude-204.js";"#),
+        "the ESM module must import the prelude first, got:\n{}",
+        file(pairs, "module-240.js")
+    );
+    assert!(
+        file(pairs, "module-311.js").starts_with(r#"require("./prelude-204.js");"#),
+        "the CommonJS module must require the prelude first, got:\n{}",
+        file(pairs, "module-311.js")
+    );
+}
+
+#[test]
+fn banner_statement_before_the_push_goes_to_the_prelude() {
+    // shape: producer webpack@5.111.1 mode=production (Terser), BannerPlugin
+    // raw=true stage=PROCESS_ASSETS_STAGE_REPORT (added after minification,
+    // so it stays its own statement); global renamed to `globalThis.banner`.
+    let source = format!(
+        "{}\n\"use strict\";{CHUNK_PUSH};",
+        report_stage_banner("banner")
+    );
+
+    let pairs = expect_unpack(&source, "204.js");
+    let prelude = file(&pairs, "prelude-204.js");
+    assert!(
+        prelude.contains("globalThis.banner = {"),
+        "the banner must be kept in the prelude, got:\n{prelude}"
+    );
+    assert!(
+        !prelude.contains("webpackChunk_app") && !prelude.contains("use strict"),
+        "the push and the directive are not prelude code, got:\n{prelude}"
+    );
+    assert_prelude_required_by_every_module(&pairs);
+    assert!(
+        !pairs.iter().any(|(name, _)| name == "entry.js"),
+        "a chunk has no entry, got {:?}",
+        pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+    assert!(
+        validate_output_modules(&pairs).is_empty(),
+        "output must validate: {:?}",
+        validate_output_modules(&pairs)
+    );
+}
+
+#[test]
+fn raw_unpack_keeps_the_prelude_and_its_requires() {
+    // shape: producer webpack@5.111.1 mode=production (Terser), BannerPlugin
+    // raw=true stage=PROCESS_ASSETS_STAGE_REPORT.
+    let source = format!("{}\n{CHUNK_PUSH};", report_stage_banner("banner"));
+
+    let output = unpack_raw(
+        &source,
+        &DecompileOptions {
+            filename: "204.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("raw unpack should succeed");
+    let pairs = output.modules;
+    assert!(file(&pairs, "prelude-204.js").contains("globalThis.banner"));
+    for name in ["module-240.js", "module-311.js"] {
+        assert!(
+            file(&pairs, name).contains(r#"require("./prelude-204.js")"#),
+            "{name} must require the prelude, got:\n{}",
+            file(&pairs, name)
+        );
+    }
+}
+
+#[test]
+fn directives_beside_the_push_write_no_prelude() {
+    // shape: producer webpack@5.111.1 mode=production (Terser).
+    let source = format!(r#""use strict";{CHUNK_PUSH};"#);
+
+    let pairs = expect_unpack(&source, "204.js");
+    assert!(
+        !pairs.iter().any(|(name, _)| name.starts_with("prelude")),
+        "a directive alone must not write a prelude, got {:?}",
+        pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+    assert!(!file(&pairs, "module-311.js").contains("prelude"));
+}
+
+#[test]
+fn each_chunk_input_gets_its_own_prelude() {
+    // shape: producer webpack@5.111.1 mode=production (Terser), BannerPlugin
+    // raw=true stage=PROCESS_ASSETS_STAGE_REPORT with the chunk name in the
+    // banner; two async chunks unpacked together.
+    let first = format!("{}\n{CHUNK_PUSH};", report_stage_banner("banner_a"));
+    let second = format!(
+        r#"{}
+(self.webpackChunk_app=self.webpackChunk_app||[]).push([[305],{{410(e,n,d){{e.exports=d(311)}}}}]);"#,
+        report_stage_banner("banner_b")
+    );
+
+    let output = wakaru_core::driver::test_support::unpack_files(
+        vec![
+            wakaru_core::driver::test_support::UnpackInput {
+                source: first,
+                filename: "204.js".to_string(),
+            },
+            wakaru_core::driver::test_support::UnpackInput {
+                source: second,
+                filename: "305.js".to_string(),
+            },
+        ],
+        DecompileOptions::default(),
+    )
+    .expect("unpack should succeed");
+    let pairs = output.modules;
+    assert!(file(&pairs, "prelude-204.js").contains("banner_a"));
+    assert!(file(&pairs, "prelude-305.js").contains("banner_b"));
+    let consumer = file(&pairs, "module-410.js");
+    assert!(
+        consumer.contains("./prelude-305.js") && consumer.contains("./module-311.js"),
+        "the second chunk's module must load its own prelude and link across inputs, got:\n{consumer}"
+    );
+    assert_prelude_required_by_every_module(&pairs);
+}

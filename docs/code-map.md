@@ -109,6 +109,7 @@ crates/
         metro.rs                    — Metro plain-bundle detection and extraction
         scope_hoist.rs              — heuristic scope-hoisted splitting (esbuild, Bun, Rollup, Vite)
         surrounding.rs              — top-level code around the bundle statement, kept in entry.js (webpack 4/5, Browserify)
+        chunk_prelude.rs            — top-level code beside a webpack 5 chunk push, written to prelude-<id>.js and required by the chunk's modules
         chunk_enumeration.rs        — fail-closed lazy-chunk URL / relative-import enumeration (`debug enumerate-chunks`)
         chunk_loading_global.rs     — an input's chunk-loading global names (its build identity for multi-input module-id rewrites)
       utils/
