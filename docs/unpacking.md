@@ -534,7 +534,11 @@ fallback is on by default for `--unpack` (disabled by `--unpack=strict`) and
 requires a minimum declaration count plus at least two clusters; otherwise
 the file goes through single-file decompile. The same splitter also runs on
 detected modules to break up scope-hoisted chunks nested inside another
-bundle format. Synthetic clusters that form an import cycle are merged before
+bundle format (aggressive level only). That nested split writes the parent and
+its children as ES modules linked by `import`, so it leaves a module whole
+when the module, run through `UnEsm` and the late factory-IIFE recovery, still
+references a free `module` or `exports` other than as a `typeof` operand.
+Synthetic clusters that form an import cycle are merged before
 normal emission so the recovered ESM graph preserves the original single-file
 initialization order. Internally, the splitter first builds a scope-hoist plan
 containing the finest useful clusters and their reference graph, then selects

@@ -1948,6 +1948,68 @@ fn webpack5_exports_writes_match_a_factory_that_names_its_parameter_exports() {
     assert_eq!(minified_output.warnings, named_output.warnings);
 }
 
+#[test]
+fn aggressive_nested_scope_split_leaves_a_commonjs_module_whole() {
+    // shape: producer webpack@5.109.0 mode=production (a library IIFE with
+    // two helper families and the guarded exports bridge, as in
+    // wp5-exports-bridge-min); the same body unwrapped is hypothetical and
+    // reaches the split of the module's own text. Splitting either would
+    // emit ES module children beside a parent that still writes
+    // `module.exports` and `exports`.
+    let body = r#"
+        var api = { version: "1", settings: { alpha: 1, beta: 2 } };
+        var map = Array.prototype.map;
+        function helperA1(x) { return x + api.settings.alpha; }
+        function helperA2(x) { return helperA1(x) * 2; }
+        function helperA3(x) { return helperA2(x) + 3; }
+        function helperB1(x) { return x - api.settings.beta; }
+        function helperB2(x) { return helperB1(x) * 4; }
+        function helperB3(x) { return map.call([x], helperB2)[0]; }
+        var first = api.first = function (x) { return helperA3(x); };
+        var second = api.second = function (x) { return helperB3(x); };
+        api.both = function (x) { return first(x) + second(x); };
+        e.exports && (t = e.exports = api), t.api = api;
+"#;
+    for factory in [format!("!function () {{ {body} }}();"), body.to_string()] {
+        let source = webpack5_bundle(
+            &format!(
+                r#"
+    0: ((e, t) => {{ {factory} }}),
+    1: ((e, t, n) => {{
+      var api = n(0);
+      t.api = api;
+    }}),
+"#
+            ),
+            1,
+        );
+        let output = unpack(
+            &source,
+            DecompileOptions {
+                filename: "webpack5-nested-commonjs.js".to_string(),
+                heuristic_split: true,
+                level: wakaru_core::RewriteLevel::Aggressive,
+                ..Default::default()
+            },
+        )
+        .expect("webpack5 unpack should succeed");
+        let names = output
+            .modules
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            names.iter().all(|name| !name.contains('/')),
+            "a CommonJS module must not be split into ES module children: {names:?}"
+        );
+        let provider = assert_commonjs_exports_provider(&output, "module-0.js");
+        assert!(provider.contains("function helperA1"), "{provider}");
+        assert!(provider.contains("function helperB1"), "{provider}");
+        assert!(provider.contains("exports.api = api"), "{provider}");
+        assert_eq!(validate_output_modules(&output.modules), vec![]);
+    }
+}
+
 fn free_name_capture_failures(
     output: &wakaru_core::driver::test_support::UnpackOutput,
 ) -> Vec<String> {

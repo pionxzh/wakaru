@@ -103,7 +103,11 @@ fn split_nested_scope_hoisted_module(
         positions,
     );
     if raw_split.as_ref().is_some_and(is_usable_nested_split) {
-        return raw_split;
+        // The split cost is already paid; the format check runs only for a
+        // usable candidate.
+        return recovers_without_commonjs(&module.code, &module.filename, level)
+            .then_some(raw_split)
+            .flatten();
     }
     if !module.mapped_in_every_mode {
         return None;
@@ -138,6 +142,40 @@ fn split_esm_recovered_scope_hoisted_module(
     positions: SourcePositions,
     level: RewriteLevel,
 ) -> Option<UnpackResult> {
+    with_recovered_module(source, filename, level, |module, cm, unresolved_mark| {
+        if references_commonjs_wrapper(module, unresolved_mark) {
+            return None;
+        }
+        scope_hoist::split_scope_hoisted_module_with_mode(
+            module,
+            cm,
+            render_mode,
+            scope_hoist::ScopeHoistSource::NestedModule,
+            positions,
+        )
+    })
+}
+
+/// Whether the module, run through the same recovery the nested split uses,
+/// keeps no CommonJS wrapper reference. Splitting writes the parent and its
+/// children as ES modules linked by `import`; a parent that still reads or
+/// writes `module` / `exports` would mix both module systems and could not
+/// load.
+fn recovers_without_commonjs(source: &str, filename: &str, level: RewriteLevel) -> bool {
+    with_recovered_module(source, filename, level, |module, _, unresolved_mark| {
+        (!references_commonjs_wrapper(module, unresolved_mark)).then_some(())
+    })
+    .is_some()
+}
+
+/// Parse `source`, then run the rule registry through `UnEsm` and the late
+/// factory-IIFE ESM recovery, as Phase 1 does for a module with no facts.
+fn with_recovered_module<R>(
+    source: &str,
+    filename: &str,
+    level: RewriteLevel,
+    then: impl FnOnce(&swc_core::ecma::ast::Module, Lrc<SourceMap>, Mark) -> Option<R>,
+) -> Option<R> {
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
         let mut module = parse_js(source, filename, cm.clone()).ok()?;
@@ -166,14 +204,49 @@ fn split_esm_recovered_scope_hoisted_module(
                 keep_commonjs: false,
             },
         );
-        scope_hoist::split_scope_hoisted_module_with_mode(
-            &module,
-            cm,
-            render_mode,
-            scope_hoist::ScopeHoistSource::NestedModule,
-            positions,
-        )
+        then(&module, cm, unresolved_mark)
     })
+}
+
+/// A free `module` or `exports` reference other than a `typeof` operand. A
+/// `typeof module` probe (UMD detection) is valid in an ES module.
+fn references_commonjs_wrapper(
+    module: &swc_core::ecma::ast::Module,
+    unresolved_mark: Mark,
+) -> bool {
+    use swc_core::ecma::ast::{Expr, Ident, UnaryExpr, UnaryOp};
+    use swc_core::ecma::visit::{Visit, VisitWith};
+
+    struct Finder {
+        unresolved_mark: Mark,
+        found: bool,
+    }
+
+    impl Visit for Finder {
+        fn visit_unary_expr(&mut self, unary: &UnaryExpr) {
+            if unary.op == UnaryOp::TypeOf {
+                if let Expr::Ident(_) = crate::utils::paren::strip_parens(&unary.arg) {
+                    return;
+                }
+            }
+            unary.visit_children_with(self);
+        }
+
+        fn visit_ident(&mut self, ident: &Ident) {
+            if ident.ctxt.outer() == self.unresolved_mark
+                && matches!(ident.sym.as_ref(), "module" | "exports")
+            {
+                self.found = true;
+            }
+        }
+    }
+
+    let mut finder = Finder {
+        unresolved_mark,
+        found: false,
+    };
+    module.visit_with(&mut finder);
+    finder.found
 }
 
 fn namespace_scope_hoisted_split(
