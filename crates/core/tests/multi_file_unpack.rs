@@ -107,9 +107,8 @@ fn webpack_chunks_recover_healthy_edges_beside_an_opaque_factory() {
         exports.answer = dependency.value;
     },
     300: function(module, exports, load) {
-        function capture() { return exports; }
-        exports = module.exports = load(200);
-        exports.capture = capture;
+        if (globalThis.useAlternate) load = globalThis.alternateLoader;
+        module.exports = load(200);
     }
 }]);
 "#;

@@ -443,8 +443,8 @@ minified factory may reuse its `module`, `exports`, or loader parameter as an
 ordinary local after its last runtime use, and a factory may read one of the
 canonical names free (webpack emits a free `require` for
 `__non_webpack_require__` and keeps `typeof exports` free in ESM modules). When
-the reuse boundary cannot be proved or the rename would capture a free
-reference, Wakaru preserves that factory's extracted body unchanged and marks
+a `module` or loader reuse boundary cannot be proved, an `exports` write cannot
+be kept (below), or the rename would capture a free reference, Wakaru preserves that factory's extracted body unchanged and marks
 only that module as failed; other factories in the same structurally proven
 container remain recoverable, with numeric and string module IDs alike. A
 fixed-point pass removes failed factory IDs from the rewrite map before
@@ -487,19 +487,41 @@ including one element of a top-level comma sequence, keeps the assignment chain
 in place and introduces an uninitialized local for the parameter's second
 lifetime. This bridge requires a declared, unwritten default binding and one
 whole-value export assignment, with no module-object escape or direct eval.
-Complex initializers and unproven defaults remain opaque so later ESM recovery
-cannot erase properties observable through the alias. Proven named property
-writes stay on the default object as well as becoming named exports.
+Complex initializers and unproven defaults take the kept-write path below, so
+later ESM recovery cannot erase properties observable through the alias. Proven
+named property writes stay on the default object as well as becoming named
+exports.
 Numeric calls
 absent from the current table remain explicit `require(<number>)` runtime calls
 and never synthesize an ESM edge; so do string calls the detector recorded as
 absent, as `require("<id>")` with the id as written. Webpack 5's pure `.g` and `.amdO`
 runtime-member reads may occur in a conditional loader prefix because its
-normalizer consumes them. Conditional first-write boundaries, hoisted or other
-deferred pre-write captures, unmapped string IDs, consumed mid-sequence
-assignment results, and `module` / `exports` initializers that read the old
-runtime value remain failed/opaque rather than triggering control-flow or
-facade inference.
+normalizer consumes them. For the `module` and loader parameters, conditional
+first-write boundaries, hoisted or other deferred pre-write captures, unmapped
+string IDs, consumed mid-sequence assignment results, and `module` initializers
+that read the old runtime value remain failed/opaque rather than triggering
+control-flow or facade inference.
+
+A written `exports` parameter whose boundary cannot be proved (or that is
+already spelled `exports`) keeps every write instead: the parameter takes the
+name `exports` and `t = module.exports = value` becomes
+`exports = module.exports = value`, in a nested function, an `if` test, a
+member object, or anywhere else. This is the original program, not an
+inference: webpack calls each factory with `module.exports` as both the
+receiver and the `exports` argument, so the parameter is a writable
+module-local binding that starts as `module.exports`, which is what a
+CommonJS module's own `exports` is. No relation between `exports` and
+`module.exports` after the write is assumed. `UnEsm` keeps a module that writes
+its `exports` binding CommonJS, and consumers link to it normally. A `var`
+redeclaration of the parameter (which resolves as a local once the wrapper is
+gone, and may sit in a nested block) is lowered to an assignment in place, and
+a bare `var t` is dropped; a redeclaration that is not a plain statement (a
+`for` head or a destructuring pattern) keeps the factory opaque. So does a
+written `exports` passed to a loader member call such as `require.d(exports,
+...)`, because later recovery reads those calls as definitions on the module's
+exports object. A free `exports` reference in such a factory is a free-name
+capture, as above. The `module` and loader parameters have no such
+counterpart: a loader must stay canonical for module-id calls.
 
 ## Scope-hoisted splitting
 

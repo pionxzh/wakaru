@@ -168,6 +168,12 @@ fn wp4_inner_umd_commonjs_branches_recover_defaults() {
 }
 
 #[test]
+fn wp4_exports_bridge_factories_keep_their_exports_writes() {
+    // shape: producer webpack@4.47.0 mode=production
+    assert_exports_bridge_providers("wp4-exports-bridge-min/bundle.js");
+}
+
+#[test]
 fn wp4_cjs_min_snapshots() {
     let mut pairs = unpack_fixture("wp4-cjs-min/bundle.js");
     pairs.sort_by(|(a, _), (b, _)| a.cmp(b));
@@ -377,6 +383,12 @@ fn wp5_inner_umd_commonjs_branches_recover_defaults() {
 }
 
 #[test]
+fn wp5_exports_bridge_factories_keep_their_exports_writes() {
+    // shape: producer webpack@5.109.0 mode=production
+    assert_exports_bridge_providers("wp5-exports-bridge-min/bundle.js");
+}
+
+#[test]
 fn wp5_variable_factory_call_recovers_the_default() {
     let path = "wp5-variable-factory-min/bundle.js";
     let raw = unpack_raw(
@@ -433,6 +445,42 @@ fn wp5_amd_return_factories_preserve_both_export_paths() {
                 .count(),
             4
         );
+    }
+}
+
+/// Each CommonJS module that writes its own `exports` binding (a library IIFE
+/// bridge, a top-level reversed bridge, a bridge in an `if` test) minifies
+/// into a factory that writes its exports parameter. Each must be recovered
+/// as CommonJS that keeps writing `exports`, and the entry must link to it.
+fn assert_exports_bridge_providers(path: &str) {
+    for emit_source_map in [false, true] {
+        let pairs = unpack_fixture_with_options(path, emit_source_map);
+        assert_eq!(pairs.len(), 5, "{path}: {}", filenames(&pairs).join(", "));
+        assert_eq!(validate_output_modules(&pairs), vec![]);
+        let entry = &pairs
+            .iter()
+            .find(|(name, _)| name == "entry.js")
+            .unwrap_or_else(|| panic!("{path}: missing entry.js"))
+            .1;
+        for marker in ["exports.Lib =", "exports.second =", "Copy`]"] {
+            let (provider, code) = pairs
+                .iter()
+                .find(|(_, code)| code.contains(marker))
+                .unwrap_or_else(|| panic!("{path}: no module writes {marker}"));
+            assert!(
+                code.lines()
+                    .all(|line| !line.starts_with("import ") && !line.starts_with("export ")),
+                "{path}: {provider} must stay CommonJS:\n{code}"
+            );
+            assert!(
+                code.contains("exports =") && code.contains("module.exports ="),
+                "{path}: {provider} must keep its exports writes:\n{code}"
+            );
+            assert!(
+                entry.contains(&format!("from \"./{provider}\"")),
+                "{path}: entry must link to {provider}:\n{entry}"
+            );
+        }
     }
 }
 

@@ -972,8 +972,10 @@ fn normalize_extracted_webpack_module(
     // position-insensitive webpack normalizer runs. Calls after the loader's
     // first write must retain their localized binding even when their numeric
     // ID is also present in the module table.
+    // A written `exports` parameter whose boundary cannot be proved keeps its
+    // writes on the recovered module's own `exports` binding.
     for parameter in reused_parameters {
-        if !super::webpack_common::localize_reused_runtime_parameter(
+        if super::webpack_common::localize_reused_runtime_parameter(
             &mut synthetic_module,
             parameter.kind,
             &parameter.source,
@@ -981,8 +983,17 @@ fn normalize_extracted_webpack_module(
             unresolved_mark,
             &loader_module_ids,
         ) {
+            continue;
+        }
+        if parameter.kind != super::webpack_common::FactoryRuntimeParameter::Exports {
             return Err(FactoryNormalizationError::RuntimeParameterReuse);
         }
+        super::webpack_common::keep_written_exports_parameter(
+            &mut synthetic_module,
+            &parameter,
+            param_syms.get(2),
+            unresolved_mark,
+        )?;
     }
 
     let post_rename_require_sym = Atom::from("require");

@@ -559,5 +559,6 @@ providers CommonJS with no write behind any of them.
   ([`exports_object_closed_to_consumers`](../rewrite-assumptions.md#exports_object_closed_to_consumers)).
 - A provider object that escapes into an unknown call that might write to
   it.
-- Opaque webpack factories whose `exports` parameter is reassigned; they
-  never reach `UnEsm`.
+- Webpack factories whose `exports` parameter is reassigned without a
+  provable lifetime boundary; they keep the write on `exports`, which keeps
+  them CommonJS ([unpacking.md](../unpacking.md#factory-normalization-and-failure-boundaries)).

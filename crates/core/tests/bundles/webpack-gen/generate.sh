@@ -71,6 +71,9 @@ webpack4 --config webpack4-var-inject.config.cjs 2>/dev/null
 echo "  wp4-inner-umd-min: Inner CommonJS modules with UMD export branches"
 webpack4 --config webpack4-inner-umd-min.config.cjs 2>/dev/null
 
+echo "  wp4-exports-bridge-min: CommonJS modules that write their exports binding"
+webpack4 --config webpack4-exports-bridge-min.config.cjs 2>/dev/null
+
 # Drop the local webpack 4 install so the npx-invoked webpack 5 builds below
 # cannot resolve it (webpack-cli prefers a local install via import-local).
 rm -rf node_modules
@@ -142,6 +145,9 @@ webpack5_5_109 --config webpack5-require-mutation-min.config.cjs 2>/dev/null
 
 echo "  wp5-inner-umd-min: Inner CommonJS modules with UMD export branches (5.109.0)"
 webpack5_5_109 --config webpack5-inner-umd-min.config.cjs 2>/dev/null
+
+echo "  wp5-exports-bridge-min: CommonJS modules that write their exports binding (5.109.0)"
+webpack5_5_109 --config webpack5-exports-bridge-min.config.cjs 2>/dev/null
 
 echo ""
 echo "  wp5-variable-factory-min: Variable-held AMD factory with nested arguments use (5.109.0)"

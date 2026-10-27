@@ -33,8 +33,9 @@ const JAVASCRIPT_LIKE_EXTENSIONS: &[&str] = &["js", "mjs", "cjs", "jsx", "ts", "
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum FactoryNormalizationError {
     /// A factory runtime parameter is written, but its runtime/local lifetime
-    /// boundary cannot be proved. Webpack extraction isolates it to one
-    /// opaque factory.
+    /// boundary cannot be proved and (for `exports`) its writes cannot be
+    /// kept on the recovered module's `exports` binding. Webpack extraction
+    /// isolates it to one opaque factory.
     RuntimeParameterReuse,
     /// Renaming a factory parameter to `module`/`exports`/`require` would
     /// capture a free reference of that name in the factory body. Webpack
@@ -229,11 +230,15 @@ pub(super) struct ReusedRuntimeParameter {
 
 /// Resolve the binding used when a stripped webpack factory runtime parameter
 /// is later reused as a writable local. Most parameter references resolve as
-/// the synthetic module's unresolved binding. A top-level
-/// `var load = load(id)` is special: in the original factory it redeclares the
-/// parameter, but resolving the wrapper-free body gives that declaration a
-/// local context. Return that context so localization still models JavaScript's
-/// parameter/`var` identity.
+/// the synthetic module's unresolved binding. A `var load = load(id)` in the
+/// factory's own function scope is special: in the original factory it
+/// redeclares the parameter, but resolving the wrapper-free body gives that
+/// declaration (and, through hoisting, every reference in the module scope) a
+/// local context. Return that context so localization still models
+/// JavaScript's parameter/`var` identity. The redeclaration may sit in a
+/// nested block, and may lack an initializer: either way the declared name
+/// still names the parameter, so it counts as reuse rather than as an
+/// unrelated local the canonical rename would miss.
 pub(super) fn runtime_parameter_reuse_binding(
     module: &Module,
     parameter: &Atom,
@@ -248,24 +253,37 @@ pub(super) fn runtime_parameter_reuse_binding(
         return Some(unresolved_id);
     }
 
-    for item in &module.body {
-        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
-            continue;
-        };
-        for declarator in &var.decls {
-            let Pat::Ident(binding) = &declarator.name else {
-                continue;
-            };
-            if binding.id.sym != *parameter {
-                continue;
-            }
-            let id = (binding.id.sym.clone(), binding.id.ctxt);
-            if declarator.init.is_some() || uses.has_direct_write(&id) {
-                return Some(id);
-            }
+    let mut redeclarations = FunctionScopeVarNames {
+        parameter,
+        found: None,
+    };
+    module.visit_with(&mut redeclarations);
+    redeclarations.found
+}
+
+/// The first `var` binding spelled `parameter` in the module's own function
+/// scope; nested functions, arrows, and static blocks own their `var`s.
+struct FunctionScopeVarNames<'a> {
+    parameter: &'a Atom,
+    found: Option<BindingId>,
+}
+
+impl Visit for FunctionScopeVarNames<'_> {
+    fn visit_var_decl(&mut self, var: &VarDecl) {
+        if var.kind == VarDeclKind::Var && self.found.is_none() {
+            let ids: Vec<swc_core::ecma::ast::Id> = swc_core::ecma::utils::find_pat_ids(&var.decls);
+            self.found = ids.into_iter().find(|id| id.0 == *self.parameter);
         }
+        var.visit_children_with(self);
     }
-    None
+
+    fn visit_function(&mut self, _: &swc_core::ecma::ast::Function) {}
+
+    fn visit_constructor(&mut self, _: &swc_core::ecma::ast::Constructor) {}
+
+    fn visit_arrow_expr(&mut self, _: &swc_core::ecma::ast::ArrowExpr) {}
+
+    fn visit_static_block(&mut self, _: &swc_core::ecma::ast::StaticBlock) {}
 }
 
 pub(super) fn reused_runtime_parameters(
@@ -456,7 +474,8 @@ impl ReusedLoaderModuleIds<'_> {
 /// Running the ordinary webpack normalizers afterwards therefore cannot
 /// mistake second-lifetime calls or member accesses for webpack operations. If
 /// the boundary is not a supported, unconditional write prefix, the caller
-/// must fail closed.
+/// must fail closed, except that a written `exports` parameter may keep its
+/// writes through [`keep_written_exports_parameter`].
 pub(super) fn localize_reused_runtime_parameter(
     module: &mut Module,
     kind: FactoryRuntimeParameter,
@@ -537,6 +556,225 @@ pub(super) fn localize_reused_runtime_parameter(
 
     *module = candidate;
     true
+}
+
+/// Keep a written webpack `exports` parameter as the recovered module's own
+/// `exports` binding, with every write in place, when
+/// [`localize_reused_runtime_parameter`] cannot prove a lifetime boundary.
+///
+/// The original factory parameter is a module-local, writable binding that
+/// starts as `module.exports`; webpack calls each factory as
+/// `factory.call(module.exports, module, module.exports, require)`. A
+/// recovered CommonJS module's `exports` is the same kind of binding (Node's
+/// wrapper passes `module.exports` too), so `t = module.exports = value`
+/// becomes `exports = module.exports = value` without inferring any alias
+/// relation between the two names. `UnEsm` keeps a module that writes its
+/// `exports` binding CommonJS. The `module` and loader parameters have no such
+/// counterpart (a loader must stay canonical for module-id calls) and remain
+/// on the opaque-factory path.
+///
+/// A top-level `var t = value` redeclares the parameter in the original
+/// factory but resolves as a local in the wrapper-free module. Each such
+/// declaration is lowered to the assignment `t = value` in place (a bare
+/// `var t` is dropped) before the rename; a redeclaration in a position that
+/// cannot be lowered to a statement keeps the factory opaque.
+///
+/// Webpack's runtime helpers take the exports object as an argument
+/// (`require.r(exports)`, `require.d(exports, getters)`) only in harmony
+/// modules, and later recovery reads them as definitions on the module's
+/// exports object. A written `exports` passed to a loader member call breaks
+/// that reading, so that shape keeps the factory opaque.
+pub(super) fn keep_written_exports_parameter(
+    module: &mut Module,
+    parameter: &ReusedRuntimeParameter,
+    loader: Option<&Atom>,
+    unresolved_mark: Mark,
+) -> Result<(), FactoryNormalizationError> {
+    debug_assert_eq!(parameter.kind, FactoryRuntimeParameter::Exports);
+    let unresolved_ctxt = SyntaxContext::empty().apply_mark(unresolved_mark);
+    let parameter_id: BindingId = (parameter.source.clone(), unresolved_ctxt);
+    let mut candidate = module.clone();
+
+    if parameter.binding != parameter_id {
+        candidate.visit_mut_with(&mut ParameterRedeclarationLowering {
+            target: &parameter.binding,
+        });
+        if BindingUseIndex::collect(&candidate).has_declaration(&parameter.binding) {
+            return Err(FactoryNormalizationError::RuntimeParameterReuse);
+        }
+        replace_binding(
+            &mut candidate,
+            &parameter.binding,
+            &Ident::new(parameter.source.clone(), DUMMY_SP, unresolved_ctxt),
+        );
+    }
+
+    let canonical = Atom::from(FactoryRuntimeParameter::Exports.canonical_name());
+    if parameter.source != canonical {
+        let rename = [BindingRename {
+            old: parameter_id.clone(),
+            new: canonical.clone(),
+        }];
+        if !super::deconflict_runtime_binding_renames(&mut candidate, &rename, None) {
+            return Err(FactoryNormalizationError::FreeNameCapture);
+        }
+        replace_binding(
+            &mut candidate,
+            &parameter_id,
+            &Ident::new(canonical.clone(), DUMMY_SP, unresolved_ctxt),
+        );
+    }
+
+    let exports_id = (canonical, unresolved_ctxt);
+    let loaders = [Some(Atom::from("require")), loader.cloned()]
+        .into_iter()
+        .flatten()
+        .map(|sym| (sym, unresolved_ctxt))
+        .collect::<Vec<_>>();
+    if passes_binding_to_loader_member_call(&candidate, &exports_id, &loaders) {
+        return Err(FactoryNormalizationError::RuntimeParameterReuse);
+    }
+
+    *module = candidate;
+    Ok(())
+}
+
+fn replace_binding(module: &mut Module, from: &BindingId, to: &Ident) {
+    swc_core::ecma::utils::replace_ident(module, from.clone(), to);
+}
+
+/// Lowers `var target = value` statements to `target = value` in statement
+/// lists, splitting a multi-declarator statement around the lowered
+/// declarator so evaluation order is unchanged. Declarations elsewhere (a
+/// `for` head, a destructuring pattern, a non-list statement position) are
+/// left for the caller to detect.
+struct ParameterRedeclarationLowering<'a> {
+    target: &'a BindingId,
+}
+
+impl ParameterRedeclarationLowering<'_> {
+    fn declares_target(&self, declarator: &VarDeclarator) -> bool {
+        matches!(&declarator.name, Pat::Ident(binding)
+            if binding.id.sym == self.target.0 && binding.id.ctxt == self.target.1)
+    }
+
+    fn lower(&self, stmt: Stmt) -> Vec<Stmt> {
+        let Stmt::Decl(Decl::Var(var)) = stmt else {
+            return vec![stmt];
+        };
+        if var.kind != VarDeclKind::Var
+            || !var
+                .decls
+                .iter()
+                .any(|declarator| self.declares_target(declarator))
+        {
+            return vec![Stmt::Decl(Decl::Var(var))];
+        }
+
+        let mut lowered = Vec::new();
+        let mut pending = Vec::new();
+        let flush = |pending: &mut Vec<VarDeclarator>, lowered: &mut Vec<Stmt>| {
+            if !pending.is_empty() {
+                let mut declaration = (*var).clone();
+                declaration.decls = std::mem::take(pending);
+                lowered.push(Stmt::Decl(Decl::Var(Box::new(declaration))));
+            }
+        };
+        for declarator in var.decls.iter().cloned() {
+            if !self.declares_target(&declarator) {
+                pending.push(declarator);
+                continue;
+            }
+            flush(&mut pending, &mut lowered);
+            let (Pat::Ident(binding), Some(init)) = (declarator.name, declarator.init) else {
+                continue;
+            };
+            lowered.push(Stmt::Expr(ExprStmt {
+                span: declarator.span,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: declarator.span,
+                    op: AssignOp::Assign,
+                    left: AssignTarget::Simple(SimpleAssignTarget::Ident(binding)),
+                    right: init,
+                })),
+            }));
+        }
+        flush(&mut pending, &mut lowered);
+        lowered
+    }
+}
+
+impl VisitMut for ParameterRedeclarationLowering<'_> {
+    fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
+        items.visit_mut_children_with(self);
+        let mut lowered = Vec::with_capacity(items.len());
+        for item in items.drain(..) {
+            match item {
+                ModuleItem::Stmt(stmt) => {
+                    lowered.extend(self.lower(stmt).into_iter().map(ModuleItem::Stmt));
+                }
+                item => lowered.push(item),
+            }
+        }
+        *items = lowered;
+    }
+
+    fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
+        stmts.visit_mut_children_with(self);
+        let mut lowered = Vec::with_capacity(stmts.len());
+        for stmt in stmts.drain(..) {
+            lowered.extend(self.lower(stmt));
+        }
+        *stmts = lowered;
+    }
+}
+
+/// Whether `binding` is an argument of a call to a member of one of the
+/// `loaders` bindings, such as `require.d(exports, getters)`.
+fn passes_binding_to_loader_member_call(
+    module: &Module,
+    binding: &BindingId,
+    loaders: &[BindingId],
+) -> bool {
+    struct Finder<'a> {
+        binding: &'a BindingId,
+        loaders: &'a [BindingId],
+        found: bool,
+    }
+
+    impl Visit for Finder<'_> {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            call.visit_children_with(self);
+            let Callee::Expr(callee) = &call.callee else {
+                return;
+            };
+            let Expr::Member(member) = strip_parens(callee) else {
+                return;
+            };
+            let Expr::Ident(object) = strip_parens(&member.obj) else {
+                return;
+            };
+            if !self
+                .loaders
+                .iter()
+                .any(|loader| object.sym == loader.0 && object.ctxt == loader.1)
+            {
+                return;
+            }
+            self.found |= call.args.iter().any(|argument| {
+                matches!(strip_parens(&argument.expr), Expr::Ident(ident)
+                    if ident.sym == self.binding.0 && ident.ctxt == self.binding.1)
+            });
+        }
+    }
+
+    let mut finder = Finder {
+        binding,
+        loaders,
+        found: false,
+    };
+    module.visit_with(&mut finder);
+    finder.found
 }
 
 // Only admit a new CommonJS alias bridge when the later ESM pass can prove

@@ -1163,7 +1163,10 @@ fn webpack5_reused_exports_parameter_in_commonjs_alias_chain_is_localized() {
 }
 
 #[test]
-fn webpack5_unproven_commonjs_alias_default_keeps_the_wrapper() {
+fn webpack5_unproven_commonjs_alias_default_keeps_the_exports_writes() {
+    // An alias bridge whose default the lifetime split cannot prove keeps
+    // the bridge on the module's own `exports` binding, so ESM recovery
+    // cannot erase a property observable through it.
     for (initializer, tail) in [
         ("(effect(), Engine)", ""),
         ("Engine", "Engine = replacement;"),
@@ -1196,23 +1199,16 @@ fn webpack5_unproven_commonjs_alias_default_keeps_the_wrapper() {
 }})();
 "#
         );
-        let output =
-            unpack(&source, DecompileOptions::default()).expect("preserve the original boundary");
-        assert!(
-            output.detected_formats.is_empty(),
-            "unproven default was extracted: {initializer}; {tail}: {:?}",
-            output.detected_formats
+        let output = unpack(&source, DecompileOptions::default()).expect("unpack the factory");
+        assert_eq!(
+            output.detected_formats,
+            [BundleFormat::Webpack5],
+            "{initializer}; {tail}"
         );
-        assert_eq!(output.modules.len(), 1);
+        let module = assert_commonjs_exports_provider(&output, "module-0.js");
         assert!(
-            !output.modules[0].1.contains("export default"),
-            "{}",
-            output.modules[0].1
-        );
-        assert!(
-            output.modules[0].1.contains("publicValue.Engine"),
-            "{}",
-            output.modules[0].1
+            module.contains("exports.Engine === Engine"),
+            "{initializer}; {tail}:\n{module}"
         );
     }
 }
@@ -1477,7 +1473,9 @@ fn webpack5_hoisted_function_capture_keeps_runtime_parameter_reuse_opaque() {
 }
 
 #[test]
-fn webpack4_unprovable_exports_reuse_isolates_only_its_factory() {
+fn webpack4_conditional_exports_write_keeps_the_write_on_exports() {
+    // shape: hypothetical (a conditional first write has no provable
+    // lifetime boundary)
     let source = r#"
 !function(modules) {
   function load(id) {
@@ -1507,38 +1505,447 @@ fn webpack4_unprovable_exports_reuse_isolates_only_its_factory() {
             ..Default::default()
         },
     )
-    .expect("an unprovable exports lifetime should isolate only its factory");
+    .expect("a conditional exports write should unpack");
 
     assert_eq!(output.detected_formats, [BundleFormat::Webpack4]);
-    let failures = output
-        .warnings
+    let provider = assert_commonjs_exports_provider(&output, "module-0.js");
+    assert!(
+        provider.contains("exports = globalThis.replacement;")
+            && provider.contains("module.exports = exports;"),
+        "{provider}"
+    );
+    let entry = module_code(&output, "module-2.js");
+    assert!(entry.contains("./module-0.js"), "{entry}");
+    assert!(entry.contains("./module-1.js"), "{entry}");
+    assert!(!entry.contains("require("), "{entry}");
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+/// The emitted code of `filename`.
+fn module_code(output: &wakaru_core::driver::test_support::UnpackOutput, filename: &str) -> String {
+    output
+        .modules
         .iter()
-        .filter(|warning| {
-            warning.kind == wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        failures.len(),
-        1,
+        .find(|(name, _)| name == filename)
+        .map(|(_, code)| code.clone())
+        .unwrap_or_else(|| panic!("missing {filename}: {:?}", output.modules))
+}
+
+/// A factory whose `exports` parameter is written is recovered, not isolated,
+/// and stays a CommonJS module that keeps writing its own `exports` binding.
+fn assert_commonjs_exports_provider(
+    output: &wakaru_core::driver::test_support::UnpackOutput,
+    filename: &str,
+) -> String {
+    assert!(
+        output.warnings.iter().all(|warning| {
+            warning.kind != wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed
+        }),
         "unexpected warnings: {:?}",
         output.warnings
     );
-    assert_eq!(failures[0].filename, "module-0.js");
+    let code = module_code(output, filename);
     assert!(
-        failures[0].message.contains("runtime-parameter reuse"),
-        "unexpected diagnostic: {}",
-        failures[0].message
+        code.lines()
+            .all(|line| !line.starts_with("import ") && !line.starts_with("export ")),
+        "{filename} must stay CommonJS:\n{code}"
     );
-    let entry = output
-        .modules
-        .iter()
-        .find(|(filename, _)| filename == "module-2.js")
-        .map(|(_, code)| code)
-        .expect("expected recoverable sibling factory");
-    assert!(entry.contains("require(0)"), "{entry}");
-    assert!(!entry.contains("./module-0.js"), "{entry}");
-    assert!(entry.contains("./module-1.js"), "{entry}");
+    assert!(code.contains("exports ="), "{filename}:\n{code}");
+    code
+}
+
+/// A webpack 5 object-table bundle around `factories` that starts at `entry`.
+fn webpack5_bundle(factories: &str, entry: usize) -> String {
+    format!(
+        r#"
+(() => {{
+  var modules = ({{
+{factories}
+  }});
+  var cache = {{}};
+  function load(id) {{
+    var cached = cache[id];
+    if (cached !== undefined) return cached.exports;
+    var module = cache[id] = {{ exports: {{}} }};
+    modules[id](module, module.exports, load);
+    return module.exports;
+  }}
+  load({entry});
+}})();
+"#
+    )
+}
+
+fn unpack_webpack5(
+    factories: &str,
+    entry: usize,
+) -> wakaru_core::driver::test_support::UnpackOutput {
+    let output = unpack(
+        &webpack5_bundle(factories, entry),
+        DecompileOptions {
+            filename: "webpack5-exports-writes.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("webpack5 unpack should succeed");
+    assert_eq!(output.detected_formats, [BundleFormat::Webpack5]);
+    output
+}
+
+#[test]
+fn webpack5_exports_bridge_in_a_library_iife_keeps_the_exports_writes() {
+    // shape: producer webpack@5.109.0 mode=production (the guarded bridge
+    // inside a library IIFE, as in wp5-exports-bridge-min)
+    let output = unpack_webpack5(
+        r#"
+    0: ((e, t, n) => {
+      !function () {
+        function Lib(name) { this.name = name; }
+        Lib.prototype.first = function () { return this.name; };
+        e.exports && (t = e.exports = Lib), t.Lib = Lib;
+      }();
+    }),
+    1: ((e, t, n) => {
+      var Lib = n(0);
+      console.log(new Lib("alpha").first());
+    }),
+"#,
+        1,
+    );
+    let provider = assert_commonjs_exports_provider(&output, "module-0.js");
+    assert!(provider.contains("module.exports = Lib"), "{provider}");
+    assert!(provider.contains("exports.Lib = Lib"), "{provider}");
+    assert!(!provider.contains("t.Lib"), "{provider}");
+    let consumer = module_code(&output, "module-1.js");
+    assert!(
+        consumer.contains("from \"./module-0.js\""),
+        "the consumer must link to the recovered provider:\n{consumer}"
+    );
     assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
+fn webpack4_reversed_exports_bridge_with_a_later_member_write_keeps_the_exports_writes() {
+    // shape: producer webpack@4.47.0 mode=production (a top-level
+    // `module.exports = exports = <call or literal>` bridge, as in
+    // wp4-exports-bridge-min)
+    let source = r#"
+!function(modules) {
+  function load(id) {
+    var module = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  }
+  return load(1);
+}([
+  function(e, t, n) {
+    function createLib() { return { first: 1 }; }
+    e.exports = t = createLib();
+    t.second = 2;
+  },
+  function(e, t, n) {
+    var lib = n(0);
+    console.log(lib.first, lib.second);
+  }
+]);
+"#;
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack4-reversed-exports-bridge.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("webpack4 unpack should succeed");
+    assert_eq!(output.detected_formats, [BundleFormat::Webpack4]);
+    let provider = assert_commonjs_exports_provider(&output, "module-0.js");
+    assert!(provider.contains("createLib()"), "{provider}");
+    assert!(provider.contains("exports.second = 2"), "{provider}");
+    let consumer = module_code(&output, "module-1.js");
+    assert!(consumer.contains("from \"./module-0.js\""), "{consumer}");
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
+fn webpack5_exports_bridge_in_an_if_test_keeps_the_exports_writes() {
+    // shape: wild-observed (the bridge as the first element of a comma `if`
+    // test); producer webpack@5.109.0 mode=production emits the member-object
+    // form `if ((t = e.exports = ...).alpha)` (wp5-exports-bridge-min)
+    let output = unpack_webpack5(
+        r#"
+    0: ((e, t, n) => {
+      var A = n(2);
+      if (t = e.exports = A.locals || {}, t.alpha) t.beta = 2;
+    }),
+    1: ((e, t, n) => {
+      console.log(n(0).beta);
+    }),
+    2: ((e) => {
+      e.exports = { locals: { alpha: true } };
+    }),
+"#,
+        1,
+    );
+    let provider = assert_commonjs_exports_provider(&output, "module-0.js");
+    assert!(provider.contains("module.exports = "), "{provider}");
+    assert!(provider.contains("exports.alpha"), "{provider}");
+    assert!(provider.contains("exports.beta = 2"), "{provider}");
+    assert!(provider.contains("./module-2.js"), "{provider}");
+    assert!(module_code(&output, "module-1.js").contains("./module-0.js"));
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
+fn webpack5_conditional_exports_bridge_as_a_member_object_keeps_the_exports_writes() {
+    // shape: hypothetical (the member-object bridge under a guard; the
+    // unconditional top-level form is localized instead)
+    let output = unpack_webpack5(
+        r#"
+    0: ((e, t, n) => {
+      globalThis.flag && ((t = e.exports = n(2)).extra = 3);
+      t.other = 4;
+    }),
+    1: ((e, t, n) => {
+      console.log(n(0).other);
+    }),
+    2: ((e) => {
+      e.exports = { base: true };
+    }),
+"#,
+        1,
+    );
+    let provider = assert_commonjs_exports_provider(&output, "module-0.js");
+    assert!(provider.contains(".extra = 3"), "{provider}");
+    assert!(provider.contains("exports.other = 4"), "{provider}");
+    assert!(provider.contains("./module-2.js"), "{provider}");
+    assert!(module_code(&output, "module-1.js").contains("./module-0.js"));
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
+fn webpack5_hoisted_function_capture_of_a_written_exports_keeps_the_exports_writes() {
+    // shape: hypothetical (a hoisted declaration reads the parameter before
+    // the bridge runs, so no lifetime split is possible)
+    let output = unpack_webpack5(
+        r#"
+    0: ((e, t, n) => {
+      function read() { return t.first; }
+      t = e.exports = { first: 1 };
+      t.read = read;
+    }),
+    1: ((e, t, n) => {
+      console.log(n(0).read());
+    }),
+"#,
+        1,
+    );
+    let provider = assert_commonjs_exports_provider(&output, "module-0.js");
+    assert!(provider.contains("return exports.first"), "{provider}");
+    assert!(provider.contains("exports.read = read"), "{provider}");
+    assert!(module_code(&output, "module-1.js").contains("./module-0.js"));
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
+fn webpack5_var_redeclared_exports_parameter_lowers_to_exports_writes() {
+    // shape: hypothetical (`var` redeclarations of the parameter that the
+    // lifetime split cannot lift)
+    for (body, expected) in [
+        (
+            "t.first = 1; if (globalThis.flag) { var t = e.exports = { second: 2 }; } t.third = 3;",
+            &["exports.first = 1", "exports = module.exports", "exports.third = 3"][..],
+        ),
+        (
+            "function read() { return t; } var other = 1, t = e.exports = { first: other }, last = 2; t.read = read; t.last = last;",
+            &["return exports;", "exports = module.exports", "exports.read = read", "exports.last = last"][..],
+        ),
+    ] {
+        let output = unpack_webpack5(
+            &format!(
+                r#"
+    0: ((e, t, n) => {{ {body} }}),
+    1: ((e, t, n) => {{ console.log(n(0)); }}),
+"#
+            ),
+            1,
+        );
+        let provider = assert_commonjs_exports_provider(&output, "module-0.js");
+        for snippet in expected {
+            assert!(provider.contains(snippet), "{body}: missing {snippet}:\n{provider}");
+        }
+        assert!(
+            !provider.contains("var ") && !provider.contains(" t =") && !provider.contains("t."),
+            "{body}: no local may stand in for the parameter:\n{provider}"
+        );
+        assert!(module_code(&output, "module-1.js").contains("./module-0.js"));
+        assert_eq!(validate_output_modules(&output.modules), vec![]);
+    }
+}
+
+#[test]
+fn webpack5_bare_var_redeclaration_still_names_the_exports_parameter() {
+    // shape: hypothetical. `var t;` does not change the parameter's value, so
+    // `t.first` is an export write, not a property write on an undefined local.
+    let output = unpack_webpack5(
+        r#"
+    0: ((e, t, n) => {
+      var t;
+      t.first = 1;
+    }),
+    1: ((e, t, n) => {
+      console.log(n(0).first);
+    }),
+"#,
+        1,
+    );
+    assert!(
+        output.warnings.iter().all(|warning| {
+            warning.kind != wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed
+        }),
+        "{:?}",
+        output.warnings
+    );
+    let provider = module_code(&output, "module-0.js");
+    assert!(provider.contains("first = 1"), "{provider}");
+    assert!(
+        !provider.contains("var t") && !provider.contains("let t") && !provider.contains("t.first"),
+        "{provider}"
+    );
+    assert!(module_code(&output, "module-1.js").contains("./module-0.js"));
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
+fn webpack5_tsc_enum_through_a_merged_exports_parameter_keeps_the_exports_writes() {
+    // shape: hypothetical (UglifyJS `merge_vars` reuses the dead exports
+    // parameter as the enum temp of tsc's CommonJS output)
+    let output = unpack_webpack5(
+        r#"
+    0: ((e, t, n) => {
+      Object.defineProperty(t, "__esModule", { value: !0 });
+      t.Kind = void 0;
+      (function (e) { e[e.alpha = 0] = "alpha"; e[e.beta = 1] = "beta"; })(t = t.Kind || (t.Kind = {}));
+    }),
+    1: ((e, t, n) => {
+      console.log(n(0).Kind.alpha);
+    }),
+"#,
+        1,
+    );
+    let provider = assert_commonjs_exports_provider(&output, "module-0.js");
+    assert!(
+        provider.contains("exports = exports.Kind || (exports.Kind = {})"),
+        "{provider}"
+    );
+    assert!(module_code(&output, "module-1.js").contains("./module-0.js"));
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
+fn webpack5_exports_writes_stay_opaque_where_keeping_them_is_unproven() {
+    // shape: hypothetical. Only the `exports` parameter has a CommonJS
+    // counterpart; a loader write, a written `exports` that webpack's runtime
+    // helpers also define getters on, and a redeclaration in a `for` head
+    // still isolate their factory.
+    for factory in [
+        "if (globalThis.flag) n = n(2); e.exports = n;",
+        "n.r(t); n.d(t, { alpha: () => r }); var r = 1; if (globalThis.flag) (t = t.Meta || (t.Meta = {})).x = 1;",
+        "t.first = 1; for (var t in globalThis.source) console.log(t);",
+    ] {
+        let output = unpack_webpack5(
+            &format!(
+                r#"
+    0: ((e, t, n) => {{ {factory} }}),
+    1: ((e, t, n) => {{ console.log(n(0), n(2)); }}),
+    2: ((e) => {{ e.exports = "stable"; }}),
+"#
+            ),
+            1,
+        );
+        let failures = output
+            .warnings
+            .iter()
+            .filter(|warning| {
+                warning.kind == wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(failures.len(), 1, "{factory}: {:?}", output.warnings);
+        assert_eq!(failures[0].filename, "module-0.js", "{factory}");
+        assert!(
+            failures[0].message.contains("runtime-parameter reuse"),
+            "{factory}: {}",
+            failures[0].message
+        );
+        let consumer = module_code(&output, "module-1.js");
+        assert!(consumer.contains("require(0)"), "{factory}: {consumer}");
+        assert!(consumer.contains("./module-2.js"), "{factory}: {consumer}");
+    }
+}
+
+#[test]
+fn webpack5_written_exports_beside_a_free_exports_reference_is_a_free_name_capture() {
+    // shape: hypothetical. Renaming the written parameter to `exports` would
+    // capture the free `exports` probe.
+    let output = unpack_webpack5(
+        r#"
+    0: ((e, t, n) => {
+      if (globalThis.flag) t = {};
+      e.exports = [t, typeof exports];
+    }),
+    1: ((e, t, n) => {
+      console.log(n(0));
+    }),
+"#,
+        1,
+    );
+    assert_eq!(free_name_capture_failures(&output), ["module-0.js"]);
+}
+
+#[test]
+fn webpack5_exports_writes_match_a_factory_that_names_its_parameter_exports() {
+    // The fallback keeps the writes exactly as a factory whose parameter is
+    // already spelled `exports` (the shape webpack emits without a minifier).
+    let minified = r#"
+    0: ((e, t, n) => {
+      !function () {
+        function Lib() {}
+        t = e.exports = Lib;
+        t.Lib = Lib;
+      }();
+      if (globalThis.flag) t.extra = n(2);
+    }),
+    1: ((e, t, n) => {
+      if (globalThis.flag) t = e.exports = { first: 1 };
+      t.second = 2;
+    }),
+    2: ((e, t, n) => {
+      console.log(n(0), n(1));
+    }),
+"#;
+    let named = minified
+        .replace(
+            "(e, t, n) => {\n      !function",
+            "(e, exports, n) => {\n      !function",
+        )
+        .replace(
+            "t = e.exports = Lib;\n        t.Lib",
+            "exports = e.exports = Lib;\n        exports.Lib",
+        )
+        .replace("t.extra", "exports.extra")
+        .replace(
+            "(e, t, n) => {\n      if (globalThis.flag) t = e.exports",
+            "(e, exports, n) => {\n      if (globalThis.flag) exports = e.exports",
+        )
+        .replace("t.second", "exports.second");
+    assert_eq!(named.matches("exports, n").count(), 2, "{named}");
+    assert!(!named.contains("t.") && !named.contains("t ="), "{named}");
+
+    let minified_output = unpack_webpack5(minified, 2);
+    let named_output = unpack_webpack5(&named, 2);
+    assert_commonjs_exports_provider(&minified_output, "module-0.js");
+    assert_commonjs_exports_provider(&minified_output, "module-1.js");
+    assert_eq!(minified_output.modules, named_output.modules);
+    assert_eq!(minified_output.warnings, named_output.warnings);
 }
 
 fn free_name_capture_failures(
@@ -1818,7 +2225,9 @@ fn webpack5_free_name_capture_in_a_named_id_container_stays_opaque() {
 }
 
 #[test]
-fn webpack5_exports_reuse_that_reads_the_old_value_stays_opaque() {
+fn webpack5_exports_reuse_that_reads_the_old_value_keeps_the_write() {
+    // shape: hypothetical (an initializer that reads the old value has no
+    // provable lifetime boundary)
     let source = r#"
 (() => {
   var modules = ({
@@ -1826,8 +2235,8 @@ fn webpack5_exports_reuse_that_reads_the_old_value_stays_opaque() {
       publicValue = chooseValue(publicValue, globalThis.replacement);
       module.exports = publicValue;
     }),
-    1: ((module) => {
-      module.exports = "stable";
+    1: ((module, exports, load) => {
+      module.exports = [load(0), "stable"];
     })
   });
   var cache = {};
@@ -1846,20 +2255,17 @@ fn webpack5_exports_reuse_that_reads_the_old_value_stays_opaque() {
             ..Default::default()
         },
     )
-    .expect("value-flow reuse should isolate only its factory");
+    .expect("value-flow reuse should unpack");
 
     assert_eq!(output.detected_formats, [BundleFormat::Webpack5]);
-    assert!(output.warnings.iter().any(|warning| {
-        warning.filename == "module-0.js"
-            && warning.kind == wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed
-    }));
-    let opaque = output
-        .modules
-        .iter()
-        .find(|(filename, _)| filename == "module-0.js")
-        .map(|(_, code)| code)
-        .expect("expected opaque value-flow factory");
-    assert!(opaque.contains("chooseValue(publicValue"), "{opaque}");
+    let provider = assert_commonjs_exports_provider(&output, "module-0.js");
+    assert!(
+        provider.contains("exports = chooseValue(exports, globalThis.replacement);"),
+        "the write reads the module's own exports binding:\n{provider}"
+    );
+    assert!(provider.contains("module.exports = exports;"), "{provider}");
+    let consumer = module_code(&output, "module-1.js");
+    assert!(consumer.contains("./module-0.js"), "{consumer}");
     assert_eq!(validate_output_modules(&output.modules), vec![]);
 }
 
