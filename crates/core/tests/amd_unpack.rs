@@ -735,3 +735,395 @@ fn define_merged_into_a_sequence_with_other_code_is_not_partially_unpacked() {
         raw[0].1
     );
 }
+
+// --- Plain UMD factory parameters ------------------------------------------
+//
+// A plain UMD file lifts to module scope only through the branch Node takes
+// (the CommonJS one), and each factory parameter is bound to the argument that
+// branch passes.
+
+fn single_module(modules: &[(String, String)]) -> &str {
+    assert_eq!(modules.len(), 1, "expected one module: {modules:?}");
+    &modules[0].1
+}
+
+fn assert_valid(modules: &[(String, String)]) {
+    let problems = validate_output_modules(modules);
+    assert!(problems.is_empty(), "output must validate: {problems:?}");
+}
+
+fn assert_kept_whole(source: &str, marker: &str) {
+    let raw = raw_pairs(source);
+    let code = single_module(&raw);
+    assert!(
+        code.contains(marker) && code.contains("typeof module"),
+        "the wrapper should stay in the output:\n{code}"
+    );
+}
+
+#[test]
+fn umd_external_parameter_becomes_an_import() {
+    // shape: producer rollup@4.63.6 format: "umd", external imports
+    let source = r#"(function (global, factory) {
+	typeof exports === 'object' && typeof module !== 'undefined' ? factory(exports, require('dep-alpha'), require('dep-beta')) :
+	typeof define === 'function' && define.amd ? define(['exports', 'dep-alpha', 'dep-beta'], factory) :
+	(global = typeof globalThis !== 'undefined' ? globalThis : global || self, factory(global.lib = {}, global.alpha, global.beta));
+})(this, (function (exports, depAlpha, fmt) { 'use strict';
+
+	function first(a) { return fmt(depAlpha.join(a, "x")); }
+	const second = 2;
+
+	exports.first = first;
+	exports.second = second;
+
+}));
+"#;
+
+    let raw = raw_pairs(source);
+    let code = single_module(&raw);
+    assert!(
+        code.contains(r#"var depAlpha = require("dep-alpha");"#)
+            && code.contains(r#"var fmt = require("dep-beta");"#),
+        "each external parameter should be bound to its require:\n{code}"
+    );
+    assert!(
+        code.find("use strict") < code.find("var depAlpha"),
+        "the factory's directive should stay first:\n{code}"
+    );
+
+    let decompiled = pairs(source);
+    let code = single_module(&decompiled);
+    assert!(
+        code.contains(r#"from "dep-alpha""#) && code.contains(r#"from "dep-beta""#),
+        "the bound requires should become imports:\n{code}"
+    );
+    assert!(
+        code.contains("export { first }") || code.contains("export function first"),
+        "named exports should be recovered:\n{code}"
+    );
+    assert_valid(&decompiled);
+}
+
+#[test]
+fn minified_umd_parameters_are_bound_and_exports_renamed() {
+    // shape: producer rollup@4.63.6 format: "umd" + terser@5.51.2
+    let source = r#"!function(e,t){"object"==typeof exports&&"undefined"!=typeof module?t(exports,require("dep-alpha"),require("dep-beta")):"function"==typeof define&&define.amd?define(["exports","dep-alpha","dep-beta"],t):t((e="undefined"!=typeof globalThis?globalThis:e||self).lib={},e.alpha,e.beta)}(this,function(e,t,i){"use strict";e.first=function(e){return i(t.join(e,"x"))},e.second=2});"#;
+
+    let raw = raw_pairs(source);
+    let code = single_module(&raw);
+    assert!(
+        code.contains(r#"var t = require("dep-alpha");"#)
+            && code.contains(r#"var i = require("dep-beta");"#),
+        "minified parameters should be bound:\n{code}"
+    );
+    assert!(
+        code.contains("exports.first = function(e)") && !code.contains("var e"),
+        "the exports parameter should take the global's name, not the inner `e`:\n{code}"
+    );
+
+    let decompiled = pairs(source);
+    let code = single_module(&decompiled);
+    assert!(
+        code.contains(r#"from "dep-alpha""#)
+            && code.contains("export const first")
+            && code.contains("export const second = 2"),
+        "the minified build should recover imports and exports:\n{code}"
+    );
+    assert_valid(&decompiled);
+}
+
+#[test]
+fn umd_default_export_factory_binds_its_parameter() {
+    // shape: producer rollup@4.63.6 format: "umd" + terser@5.51.2, default
+    // export only (`module.exports = factory(require(...))`)
+    let source = r#"!function(e,n){"object"==typeof exports&&"undefined"!=typeof module?module.exports=n(require("dep-alpha")):"function"==typeof define&&define.amd?define(["dep-alpha"],n):(e="undefined"!=typeof globalThis?globalThis:e||self).lib=n(e.alpha)}(this,function(e){"use strict";return function(n){return e.join(n,"x")}});"#;
+
+    let raw = raw_pairs(source);
+    let code = single_module(&raw);
+    assert!(
+        code.contains(r#"var e = require("dep-alpha");"#)
+            && code.contains("module.exports = function(n)"),
+        "the parameter should be bound and the return become module.exports:\n{code}"
+    );
+
+    let decompiled = pairs(source);
+    let code = single_module(&decompiled);
+    assert!(
+        code.contains(r#"from "dep-alpha""#) && code.contains("export default function"),
+        "the default export should be recovered with its import:\n{code}"
+    );
+    assert_valid(&decompiled);
+}
+
+#[test]
+fn babel_umd_exports_parameter_is_recovered() {
+    // shape: producer @babel/core@7.29.7 + @babel/plugin-transform-modules-umd@7.29.7
+    let source = r#"(function (global, factory) {
+  if (typeof define === "function" && define.amd) {
+    define(["exports", "dep-alpha", "dep-beta"], factory);
+  } else if (typeof exports !== "undefined") {
+    factory(exports, require("dep-alpha"), require("dep-beta"));
+  } else {
+    var mod = {
+      exports: {}
+    };
+    factory(mod.exports, global.depAlpha, global.depBeta);
+    global.named = mod.exports;
+  }
+})(typeof globalThis !== "undefined" ? globalThis : typeof self !== "undefined" ? self : this, function (_exports, _depAlpha, _depBeta) {
+  "use strict";
+
+  Object.defineProperty(_exports, "__esModule", {
+    value: true
+  });
+  _exports.first = first;
+  _exports.second = void 0;
+  _depBeta = _interopRequireDefault(_depBeta);
+  function _interopRequireDefault(e) { return e && e.__esModule ? e : { default: e }; }
+  function first(a) {
+    return (0, _depBeta.default)((0, _depAlpha.join)(a, "x"));
+  }
+  const second = _exports.second = 2;
+});
+"#;
+
+    let raw = raw_pairs(source);
+    let code = single_module(&raw);
+    assert!(
+        code.contains("exports.first = first;")
+            && code.contains(r#"var _depBeta = require("dep-beta");"#)
+            && code.contains("_depBeta = _interopRequireDefault(_depBeta);"),
+        "the parameters should be bound, including the one the factory writes:\n{code}"
+    );
+
+    let decompiled = pairs(source);
+    let code = single_module(&decompiled);
+    assert!(
+        code.contains(r#"from "dep-alpha""#) && code.contains(r#"from "dep-beta""#),
+        "the bound requires should become imports:\n{code}"
+    );
+    assert!(
+        code.contains("export const second = 2"),
+        "named exports should be recovered:\n{code}"
+    );
+    assert_valid(&decompiled);
+}
+
+#[test]
+fn umd_parameter_the_call_does_not_pass_is_undefined() {
+    // shape: hypothetical
+    let source = r#"(function (root, factory) {
+  typeof exports === "object" && typeof module !== "undefined" ? factory(exports) : factory(root.lib = {}, root);
+})(this, function (exports, host) {
+  exports.hasHost = typeof host !== "undefined";
+});
+"#;
+
+    let raw = raw_pairs(source);
+    let code = single_module(&raw);
+    assert!(
+        code.contains("var host;") && code.contains("exports.hasHost"),
+        "an unpassed parameter should be declared without a value:\n{code}"
+    );
+    assert_valid(&pairs(source));
+}
+
+#[test]
+fn umd_parameter_rename_does_not_capture_a_free_exports() {
+    // The body reads the CommonJS `exports` itself, so the parameter cannot
+    // take that name and stays an alias. shape: hypothetical
+    let source = r#"!function(e,t){"object"==typeof exports&&"undefined"!=typeof module?t(exports):t(e.lib={})}(this,function(e){e.kind=function(){return typeof exports}});"#;
+
+    let raw = raw_pairs(source);
+    let code = single_module(&raw);
+    assert!(
+        code.contains("var e = exports;") && code.contains("return typeof exports;"),
+        "the parameter should stay an alias:\n{code}"
+    );
+}
+
+#[test]
+fn umd_parameter_rename_moves_an_inner_binding_out_of_the_way() {
+    // An inner parameter named like the global would capture the renamed
+    // reference. shape: hypothetical
+    let source = r#"!function(e,t){"object"==typeof exports&&"undefined"!=typeof module?t(exports):t(e.lib={})}(this,function(e){e.same=function(exports){return e===exports}});"#;
+
+    let raw = raw_pairs(source);
+    let code = single_module(&raw);
+    assert!(
+        !code.contains("exports === exports"),
+        "the outer parameter must not be captured by the inner one:\n{code}"
+    );
+}
+
+#[test]
+fn umd_parameter_named_like_a_commonjs_global_is_kept_whole() {
+    // Binding `module` to a dependency would shadow the CommonJS `module` the
+    // lifted code writes. shape: hypothetical
+    let source = r#"(function (root, factory) {
+  typeof exports === "object" && typeof module !== "undefined" ? module.exports = factory(require("dep-alpha")) : root.lib = factory(root.alpha);
+})(this, function (module) {
+  return module.join("a", "b");
+});
+"#;
+    assert_kept_whole(source, "factory(require(\"dep-alpha\"))");
+}
+
+#[test]
+fn umd_with_a_conditional_node_branch_is_kept_whole() {
+    // The CommonJS branch picks between two calls on a property of the
+    // wrapper's root argument, and passes that root to the factory.
+    // shape: wild-observed (hand-written library wrapper), names synthetic
+    let source = r#"!function(e,t){"object"==typeof module&&"object"==typeof module.exports?module.exports=e.document?t(e,!0):function(e){return t(e)}:t(e)}("undefined"!=typeof window?window:this,function(host,skipGlobal){var page=host.document;function lib(){return page.title}"function"==typeof define&&define.amd&&define("lib",[],function(){return lib});return typeof skipGlobal==="undefined"&&(host.lib=lib),lib});"#;
+    assert_kept_whole(source, "skipGlobal");
+
+    let decompiled = pairs(source);
+    let code = single_module(&decompiled);
+    assert!(
+        code.contains("host.document") && code.contains("(host, skipGlobal)"),
+        "the factory should keep its parameters:\n{code}"
+    );
+    assert_valid(&decompiled);
+}
+
+#[test]
+fn umd_root_argument_read_of_a_browser_global_is_dropped() {
+    // Reading `window` has no effect beyond throwing outside a browser, so
+    // the lift may drop it. shape: hypothetical
+    let source = r#"(function (root, factory) {
+  if (typeof module === "object" && module.exports) {
+    module.exports = factory();
+  } else {
+    root.Lib = factory();
+  }
+})(window, function () {
+  return { value: 1 };
+});
+"#;
+    let raw = raw_pairs(source);
+    let code = single_module(&raw);
+    assert!(
+        code.contains("module.exports = {") && !code.contains("root.Lib"),
+        "the factory should be lifted:\n{code}"
+    );
+}
+
+#[test]
+fn umd_root_argument_with_an_effect_is_kept_whole() {
+    // The lift would drop the call. shape: hypothetical
+    let source = r#"(function (root, factory) {
+  if (typeof module === "object" && module.exports) {
+    module.exports = factory();
+  } else {
+    root.Lib = factory();
+  }
+})(setup(), function () {
+  return { value: 1 };
+});
+"#;
+    assert_kept_whole(source, "root.Lib = factory()");
+}
+
+#[test]
+fn umd_factory_without_a_return_sets_module_exports_to_undefined() {
+    // `module.exports = factory(...)` with a factory that only registers
+    // itself on its dependency. shape: wild-observed (hand-written plugin
+    // wrapper), names synthetic
+    let source = r#"(function(root,factory){if(typeof exports==='object'){module.exports=factory(require('dep-alpha'))}else if(typeof define==='function'&&define.amd){define(['dep-alpha'],factory)}else{factory(root.Alpha)}}(this,function(alpha){alpha.plugin=function(){return 1}}));"#;
+
+    let raw = raw_pairs(source);
+    let code = single_module(&raw);
+    assert!(
+        code.contains(r#"var alpha = require("dep-alpha");"#)
+            && code.trim_end().ends_with("module.exports = void 0;"),
+        "the lifted module should end by clearing module.exports:\n{code}"
+    );
+    assert_valid(&pairs(source));
+}
+
+#[test]
+fn umd_wrapper_variable_on_the_node_branch_is_followed() {
+    // The wrapper keeps "undefined" in a variable and compares against it.
+    // shape: wild-observed (generated SDK wrapper), names synthetic
+    let source = r#"!function(n,t){var u="undefined";if("object"==typeof exports&&typeof module!=u)t(exports);else if("function"==typeof define&&define.amd)define(["exports"],t);else{var r,n=typeof globalThis!=u?globalThis:n||self;t(n.Lib={})}}(this,function(n){"use strict";n.version="1.0.0"});"#;
+
+    let raw = raw_pairs(source);
+    let code = single_module(&raw);
+    assert!(
+        code.contains(r#"exports.version = "1.0.0""#),
+        "the exports parameter should be bound:\n{code}"
+    );
+}
+
+#[test]
+fn umd_template_literal_typeof_comparison_is_followed() {
+    // shape: wild-observed (minified wrapper with template-literal strings)
+    let source = r#"!function(n,t){typeof exports==`object`&&typeof module<`u`?module.exports=t():typeof define==`function`&&define.amd?define([],t):(n=typeof globalThis<`u`?globalThis:n||self,n.Lib=t())}(this,function(){return{value:1}});"#;
+
+    let raw = raw_pairs(source);
+    let code = single_module(&raw);
+    assert!(
+        code.contains("module.exports = {"),
+        "the factory should be lifted:\n{code}"
+    );
+}
+
+#[test]
+fn umd_factory_result_the_call_ignores_is_kept_whole() {
+    // Node's branch discards the factory's return value, so lifting its
+    // `return` into `module.exports` would change the exports.
+    // shape: hypothetical
+    let source = r#"(function (root, factory) {
+  typeof exports === "object" && typeof module !== "undefined" ? factory(exports) : root.lib = factory({});
+})(this, function (exports) {
+  exports.value = 1;
+  return { other: 2 };
+});
+"#;
+    assert_kept_whole(source, "factory(exports)");
+}
+
+#[test]
+fn umd_factory_declaring_a_function_named_like_a_parameter_is_kept_whole() {
+    // In the factory the declaration replaces the parameter; at module scope
+    // the binding would overwrite the hoisted declaration. shape: hypothetical
+    let source = r#"(function (root, factory) {
+  typeof module === "object" && module.exports ? module.exports = factory(require("dep-alpha")) : root.lib = factory(root.alpha);
+})(this, function (dep) {
+  function dep() { return 1; }
+  return dep;
+});
+"#;
+    assert_kept_whole(source, "function dep()");
+}
+
+#[test]
+fn esbuild_minified_umd_typeof_comparison_is_followed() {
+    // shape: producer rollup@4.63.6 format: "umd" + esbuild@0.28.0 --minify
+    // (`typeof module<"u"` for `typeof module !== "undefined"`)
+    let source = r#"(function(e,n){typeof exports=="object"&&typeof module<"u"?n(exports,require("dep-alpha"),require("dep-beta")):typeof define=="function"&&define.amd?define(["exports","dep-alpha","dep-beta"],n):(e=typeof globalThis<"u"?globalThis:e||self,n(e.lib={},e.alpha,e.beta))})(this,(function(e,n,i){"use strict";function t(f){return i(n.join(f,"x"))}const d=2;e.first=t,e.second=d}));"#;
+
+    let raw = raw_pairs(source);
+    let code = single_module(&raw);
+    assert!(
+        code.contains(r#"var n = require("dep-alpha");"#)
+            && code.contains(r#"var i = require("dep-beta");"#)
+            && code.contains("exports.first = t"),
+        "the parameters should be bound:\n{code}"
+    );
+    assert_valid(&pairs(source));
+}
+
+#[test]
+fn umd_wrapper_that_redeclares_the_factory_name_is_kept_whole() {
+    // The hoisted declaration replaces the factory parameter, so Node's
+    // branch calls the declaration, not the factory. shape: hypothetical
+    let source = r#"(function (root, factory) {
+  function factory() { return { swapped: true }; }
+  typeof module === "object" && module.exports ? module.exports = factory() : root.lib = factory();
+})(this, function () {
+  return { value: 1 };
+});
+"#;
+    assert_kept_whole(source, "swapped");
+}

@@ -12,6 +12,7 @@ mod sequence_split;
 mod surrounding;
 pub mod systemjs;
 mod turbopack;
+mod umd_node_branch;
 pub mod webpack4;
 mod webpack4_module_decorator;
 pub mod webpack5;

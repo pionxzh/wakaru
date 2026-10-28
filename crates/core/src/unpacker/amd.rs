@@ -1,14 +1,19 @@
-use crate::collections::HashMap;
+use crate::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::{sync::Lrc, SourceMap, Span, Spanned, SyntaxContext, DUMMY_SP};
+use swc_core::common::{sync::Lrc, Mark, SourceMap, Span, Spanned, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::*;
 use swc_core::ecma::codegen::Config;
+use swc_core::ecma::transforms::base::resolver;
+use swc_core::ecma::visit::{Visit, VisitMutWith, VisitWith};
 
 use crate::module_path::relative_import_specifier;
-use crate::unpacker::wrappers::body_looks_like_umd_wrapper;
+use crate::rules::rename_utils::{rename_bindings_in_module, BindingRename};
+use crate::unpacker::umd_node_branch::{
+    umd_node_call, HoistedNames, UmdArg, UmdNodeCall, UmdResult,
+};
 use crate::unpacker::{
-    arrow_iife_call_with_async, emit_module_with_positions,
+    arrow_iife_call_with_async, deconflict_runtime_binding_renames, emit_module_with_positions,
     expr_has_function_level_special_bindings, function_level_returns, sanitize_relative_path,
     span_byte_range, stmts_have_function_level_special_bindings, BundleFormat, MappedCode,
     SourcePositions, UnpackResult, UnpackedModule,
@@ -181,30 +186,35 @@ fn emit_define_modules(
     Some(UnpackResult::new(modules, BundleFormat::Amd))
 }
 
+/// A file whose only statement is a UMD wrapper call becomes one module: the
+/// factory body at module scope, with each parameter bound to the argument
+/// Node's CommonJS branch passes. A wrapper whose Node branch is not a plain
+/// factory call (`umd_node_branch`) is not lifted, and the file keeps its
+/// wrapper.
 fn emit_plain_umd_module(
     module: &Module,
     cm: Lrc<SourceMap>,
     positions: SourcePositions,
 ) -> Option<UnpackResult> {
-    let mut factory = None;
+    let mut node_call = None;
     for item in &module.body {
         match item {
             ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) => {
                 if is_directive_expr(expr) {
                     continue;
                 }
-                if factory.is_some() {
+                if node_call.is_some() {
                     return None;
                 }
-                factory = Some((umd_factory_arg(expr)?, expr.span()));
+                node_call = Some((umd_node_call(expr)?, expr.span()));
             }
             ModuleItem::Stmt(Stmt::Empty(_)) => {}
             _ => return None,
         }
     }
-    let (factory, wrapper_span) = factory?;
+    let (node_call, wrapper_span) = node_call?;
 
-    let synthetic = factory_to_module(factory, &[], "module.js", "module", &HashMap::default())?;
+    let synthetic = umd_factory_to_module(&node_call)?;
     let emitted = emit_module(synthetic, cm.clone(), positions).ok()?;
     Some(UnpackResult::new(
         vec![UnpackedModule {
@@ -227,48 +237,251 @@ fn is_directive_expr(expr: &Expr) -> bool {
     matches!(strip_parens(expr), Expr::Lit(Lit::Str(_)))
 }
 
-fn umd_factory_arg(expr: &Expr) -> Option<&Expr> {
-    let call = top_level_call(expr)?;
-    let (wrapper_params, wrapper_body) = wrapper_callee_parts(&call.callee)?;
-    let factory_sym = wrapper_params.get(1)?;
-    if !body_looks_like_umd_wrapper(wrapper_body, factory_sym) {
-        return None;
-    }
-
-    let factory_arg = call.args.get(1)?;
-    if factory_arg.spread.is_some() {
-        return None;
-    }
-    Some(strip_parens(&factory_arg.expr))
-}
-
-fn top_level_call(expr: &Expr) -> Option<&CallExpr> {
-    match strip_parens(expr) {
-        Expr::Call(call) => Some(call),
-        Expr::Unary(unary) if matches!(unary.op, UnaryOp::Bang) => match strip_parens(&unary.arg) {
-            Expr::Call(call) => Some(call),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-fn wrapper_callee_parts(callee: &Callee) -> Option<(Vec<Atom>, &FunctionBody)> {
-    let Callee::Expr(callee_expr) = callee else {
-        return None;
-    };
-    match strip_parens(callee_expr) {
-        Expr::Fn(FnExpr { function, .. }) => {
-            Some((function_params(&function.params), function.body.as_ref()?))
+/// Lifts the factory of Node's UMD branch to module scope.
+///
+/// Each parameter becomes a top-level `var` bound to its argument, declared
+/// in parameter order after the factory's directive prologue, so the
+/// `require` calls run in the order the call evaluated them. A parameter the
+/// call does not pass is `undefined`, as in the call. The generated code reads
+/// the CommonJS `exports`, `module`, and `require` (and writes
+/// `module.exports`), so a factory that declares one of those names, or binds
+/// a parameter of that name to anything but the same global, is not lifted.
+fn umd_factory_to_module(node_call: &UmdNodeCall<'_>) -> Option<Module> {
+    let (params, body) = match node_call.factory {
+        Expr::Fn(FnExpr { ident, function }) => {
+            if function.is_async || function.is_generator {
+                return None;
+            }
+            let body = function.body.as_ref()?;
+            // The lift drops the function's own name binding.
+            if let Some(ident) = ident {
+                if stmts_mention_name(&body.stmts, &ident.sym) {
+                    return None;
+                }
+            }
+            let params = function
+                .params
+                .iter()
+                .map(|param| plain_param_name(&param.pat))
+                .collect::<Option<Vec<_>>>()?;
+            let body = FactoryBody {
+                stmts: body.stmts.clone(),
+                returned_expr: None,
+                is_async: false,
+            };
+            (params, body)
         }
         Expr::Arrow(arrow) => {
-            let ArrowFunctionBody::FunctionBody(body) = &*arrow.body else {
+            if arrow.is_async || arrow.is_generator {
                 return None;
+            }
+            let params = arrow
+                .params
+                .iter()
+                .map(plain_param_name)
+                .collect::<Option<Vec<_>>>()?;
+            let body = match &*arrow.body {
+                ArrowFunctionBody::FunctionBody(body) => FactoryBody {
+                    stmts: body.stmts.clone(),
+                    returned_expr: None,
+                    is_async: false,
+                },
+                ArrowFunctionBody::Expr(expr) => FactoryBody {
+                    stmts: Vec::new(),
+                    returned_expr: Some(strip_parens(expr).clone()),
+                    is_async: false,
+                },
             };
-            Some((pat_params(&arrow.params), body))
+            (params, body)
         }
+        _ => return None,
+    };
+    let unique: HashSet<&Atom> = params.iter().collect();
+    if unique.len() != params.len() {
+        return None;
+    }
+
+    let FactoryBody {
+        stmts: mut body_stmts,
+        returned_expr,
+        ..
+    } = body;
+    if stmts_have_function_level_special_bindings(&body_stmts)
+        || returned_expr
+            .as_ref()
+            .is_some_and(expr_has_function_level_special_bindings)
+    {
+        return None;
+    }
+
+    let declared = HoistedNames::of_stmts(&body_stmts);
+    if ["exports", "module", "require"]
+        .iter()
+        .any(|name| declared.names.contains(&Atom::from(*name)))
+    {
+        return None;
+    }
+    // In the factory a parameter is bound before its body's function
+    // declarations replace it; at module scope the declarations hoist first
+    // and the binding would overwrite them.
+    if params
+        .iter()
+        .any(|param| declared.function_names.contains(param))
+    {
+        return None;
+    }
+
+    let (_, has_value_return) = function_level_returns(&body_stmts);
+    let returns_value = has_value_return || returned_expr.is_some();
+    // The call discards the factory's result; lifting a `return` would turn
+    // it into `module.exports`.
+    if node_call.result == UmdResult::Discarded && returns_value {
+        return None;
+    }
+
+    let mut param_bindings = Vec::new();
+    for (index, param) in params.iter().enumerate() {
+        let arg = node_call.args.get(index);
+        let same_global = match arg {
+            Some(UmdArg::Exports) => Some("exports"),
+            Some(UmdArg::Module) => Some("module"),
+            Some(UmdArg::Require) => Some("require"),
+            _ => None,
+        };
+        if matches!(param.as_ref(), "exports" | "module" | "require") {
+            if same_global != Some(param.as_ref()) {
+                return None;
+            }
+            continue;
+        }
+        param_bindings.push(match (arg, same_global) {
+            (_, Some(global)) => ParamBinding::Global(param.clone(), global),
+            (Some(UmdArg::RequireCall(specifier)), _) => ParamBinding::Var(
+                param.clone(),
+                Some(require_call_expr(specifier.to_string())),
+            ),
+            _ => ParamBinding::Var(param.clone(), None),
+        });
+    }
+    let extra_requires = node_call
+        .args
+        .iter()
+        .skip(params.len())
+        .filter_map(|arg| match arg {
+            UmdArg::RequireCall(specifier) => Some(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(require_call_expr(specifier.to_string())),
+            })),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    let prologue_len = body_stmts
+        .iter()
+        .take_while(
+            |stmt| matches!(stmt, Stmt::Expr(ExprStmt { expr, .. }) if is_directive_expr(expr)),
+        )
+        .count();
+    let rest = body_stmts.split_off(prologue_len);
+    let prologue = body_stmts;
+    let mut lowered = lower_factory_body(rest, false, &[])?;
+    if let Some(expr) = returned_expr {
+        lowered.push(module_exports_stmt(Box::new(expr)));
+    } else if node_call.result == UmdResult::ModuleExports && !returns_value {
+        // `module.exports = factory()` with a factory that returns nothing
+        // sets `module.exports` to `undefined` after the body ran.
+        lowered.push(module_exports_stmt(Box::new(Expr::Unary(UnaryExpr {
+            span: DUMMY_SP,
+            op: UnaryOp::Void,
+            arg: Box::new(Expr::Lit(Lit::Num(Number {
+                span: DUMMY_SP,
+                value: 0.0,
+                raw: None,
+            }))),
+        }))));
+    }
+
+    let assemble = |aliases: bool| {
+        let mut stmts = prologue.clone();
+        for binding in &param_bindings {
+            match binding {
+                ParamBinding::Var(name, init) => stmts.push(var_stmt(name.clone(), init.clone())),
+                ParamBinding::Global(name, global) if aliases => {
+                    stmts.push(mutable_alias_stmt(name.clone(), ident_expr(global)));
+                }
+                ParamBinding::Global(..) => {}
+            }
+        }
+        stmts.extend(extra_requires.iter().cloned());
+        stmts.extend(lowered.iter().cloned());
+        Module {
+            span: DUMMY_SP,
+            body: stmts.into_iter().map(ModuleItem::Stmt).collect(),
+            shebang: None,
+        }
+    };
+
+    // A parameter that receives `exports`, `module`, or `require` takes the
+    // global's name, so `e.x = …` reads as `exports.x = …` to the rules
+    // after unpack. Without a binding statement the parameter is free in the
+    // lifted module; the renamer gives it the global's name unless that
+    // would change what another name resolves to, and then the parameter
+    // keeps its name as an alias (`var e = exports`).
+    let globals = param_bindings
+        .iter()
+        .filter_map(|binding| match binding {
+            ParamBinding::Global(name, global) => Some((name.clone(), *global)),
+            ParamBinding::Var(..) => None,
+        })
+        .collect::<Vec<_>>();
+    if !globals.is_empty() {
+        let mut module = assemble(false);
+        let unresolved_mark = Mark::new();
+        module.visit_mut_with(&mut resolver(unresolved_mark, Mark::new(), false));
+        let unresolved_ctxt = SyntaxContext::empty().apply_mark(unresolved_mark);
+        let renames = globals
+            .into_iter()
+            .map(|(name, global)| BindingRename {
+                old: (name, unresolved_ctxt),
+                new: global.into(),
+            })
+            .collect::<Vec<_>>();
+        if deconflict_runtime_binding_renames(&mut module, &renames, None) {
+            rename_bindings_in_module(&mut module, &renames);
+            return Some(module);
+        }
+    }
+    Some(assemble(true))
+}
+
+/// How a lifted UMD factory parameter is bound at module scope.
+enum ParamBinding {
+    /// `var name = init;` (`var name;` when the call passes nothing).
+    Var(Atom, Option<Expr>),
+    /// The parameter receives the CommonJS global of this name.
+    Global(Atom, &'static str),
+}
+
+fn plain_param_name(pat: &Pat) -> Option<Atom> {
+    match pat {
+        Pat::Ident(binding) => Some(binding.sym.clone()),
         _ => None,
     }
+}
+
+fn stmts_mention_name(stmts: &[Stmt], name: &Atom) -> bool {
+    struct Finder<'a> {
+        name: &'a Atom,
+        found: bool,
+    }
+    impl Visit for Finder<'_> {
+        fn visit_ident(&mut self, ident: &Ident) {
+            self.found |= &ident.sym == self.name;
+        }
+    }
+    let mut finder = Finder { name, found: false };
+    stmts.visit_with(&mut finder);
+    finder.found
 }
 
 fn factory_to_module(
@@ -479,6 +692,10 @@ fn dependency_stmts(
 /// declaration contract when lifting them out of the factory; the normal rule
 /// pipeline can still narrow an untouched binding or recover it as an import.
 fn mutable_alias_stmt(name: Atom, value: Expr) -> Stmt {
+    var_stmt(name, Some(value))
+}
+
+fn var_stmt(name: Atom, init: Option<Expr>) -> Stmt {
     Stmt::Decl(Decl::Var(Box::new(VarDecl {
         span: DUMMY_SP,
         ctxt: SyntaxContext::empty(),
@@ -491,7 +708,7 @@ fn mutable_alias_stmt(name: Atom, value: Expr) -> Stmt {
                 DUMMY_SP,
                 SyntaxContext::empty(),
             ))),
-            init: Some(Box::new(value)),
+            init: init.map(Box::new),
             definite: false,
         }],
     })))

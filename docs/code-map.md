@@ -104,7 +104,8 @@ crates/
           emit.rs                   — factory group / merged module / entry.js emission
           synthesis.rs              — shared import/export synthesis, owned-declaration filtering
           bindings.rs               — top-level binding indexes, reference/write collectors
-        amd.rs                      — AMD define() bundle splitter
+        amd.rs                      — AMD define() bundle splitter; lifts a plain UMD file
+        umd_node_branch.rs          — the factory call a UMD wrapper makes under Node (plain UMD lift)
         wrappers.rs                 — UMD/AMD wrapper unwrapping for detection retry
         metro.rs                    — Metro plain-bundle detection and extraction
         scope_hoist.rs              — heuristic scope-hoisted splitting (esbuild, Bun, Rollup, Vite)

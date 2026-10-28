@@ -179,7 +179,8 @@ function-only binding observations (`this`, `arguments`, or `new.target`),
 parameters, async/generator wrappers, nested function-level returns, and
 top-level siblings retain their original boundary. Finally, **AMD** (`amd.rs`)
 detects files consisting of top-level `define(id, deps, factory)` calls and
-splits each define into a module.
+splits each define into a module, or lifts a file whose only statement is a
+UMD wrapper call (see [Plain UMD files](#plain-umd-files)).
 
 When nothing matches and the input has a top-level expression statement that
 is a comma sequence, detection runs once more with each element of such a
@@ -519,6 +520,57 @@ a top-level declaration that a factory uses, as for
 [webpack 5](#webpack-5-code-around-the-bootstrap); a dependency map is not
 factory code.
 
+## Plain UMD files
+
+A file whose only statement is a UMD wrapper call (a function called with a
+root value and a factory, whose body calls the factory and tests `define`,
+`exports`, or `module`) becomes one `module.js` holding the factory body
+(`emit_plain_umd_module` in `amd.rs`). The output follows Node's module rules,
+so the lift follows the branch Node takes (`umd_node_branch.rs`): the walk
+evaluates the wrapper's tests with Node's values for the globals it reads
+(`typeof module` is `"object"`, `typeof define` is `"undefined"`, and so on,
+plus values the wrapper's own variables take on that branch) and must reach
+exactly one factory call, either `factory(...)` or
+`module.exports = factory(...)`. Each argument of that call must be
+`exports`, `module`, `require`, or `require("<literal>")`. rollup
+(`format: "umd"`, also after Terser or esbuild minification) and Babel's
+`@babel/plugin-transform-modules-umd` emit this form.
+
+Each factory parameter is then bound to its argument at module scope, after
+the factory's directive prologue and in parameter order, so the `require`
+calls run in the order the call made them: `var dep = require("dep")`, which
+the rules turn into an import, or `var extra;` for a parameter the call does
+not pass. With `module.exports = factory(...)` the factory's return value
+becomes `module.exports`; a factory that returns nothing ends with
+`module.exports = void 0`, as the call leaves it. A parameter that receives
+`exports`, `module`, or `require` takes that name through `BindingRenamer`,
+so a minified `e.x = …` reads as `exports.x = …`. When the rename would change what another name resolves to
+(the body also reads the free `exports`), the parameter stays an alias
+(`var e = exports`).
+
+The file keeps its wrapper, as without `--unpack`, when the lift cannot
+match what Node runs:
+
+- a test the walk cannot decide, such as one on the wrapper's root
+  parameter (`e.document ? t(e, !0) : …`, a hand-written wrapper), or a
+  branch that does more than call the factory (`var v = factory(…)`);
+- a factory argument other than the four forms above, such as the root
+  value or a literal;
+- a wrapper argument other than the factory whose evaluation could have an
+  effect (a call, a member read). A plain read such as `window` is dropped:
+  it throws only outside a browser, so the lifted module runs where the
+  original threw and changes nothing the original did;
+- a factory that is async or a generator, has a non-identifier parameter,
+  reads `this`, `arguments`, or `new.target`, declares `exports`, `module`,
+  or `require`, declares a function named like a parameter, binds a
+  parameter named `exports`, `module`, or `require` to another value, or
+  (as a named function expression) refers to its own name;
+- a return value that Node's branch discards.
+
+tsc `--module umd` (producer `typescript@5.9.3`) is not lifted: its wrapper
+takes only the factory, so it is not a UMD wrapper call by the definition
+above, and its Node branch is `var v = factory(require, exports)`.
+
 ## Factory normalization and failure boundaries
 
 Factory-based webpack, Browserify/Cocos, and Metro extraction removes the
@@ -847,6 +899,13 @@ layout directly is a proposal:
     is lost there, but the input stays one file.
 
   AMD, Closure, Metro, and Turbopack were not checked with a producer.
+- **A hand-written UMD wrapper keeps its wrapper.** A plain UMD file lifts
+  only when Node's branch is a plain factory call with CommonJS arguments
+  (see [Plain UMD files](#plain-umd-files)). A wrapper that tests its root
+  argument there, or passes it to the factory (wild-observed: a library
+  wrapper whose Node branch is `module.exports = e.document ? t(e, !0) :
+  function (e) { … }`), stays whole, so its factory body is not recovered
+  as a module of its own. The same holds for tsc's `--module umd` output.
 - **Some esbuild glob imports stay lookup maps.** A template or concatenated
   `import()` / `require()` specifier (producer `esbuild@0.25.0 --bundle
   --platform=node`) keeps its `__glob` map and the call through it
