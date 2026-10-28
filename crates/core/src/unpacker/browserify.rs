@@ -4,13 +4,14 @@ use std::collections::BTreeMap;
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, Globals, Mark, SourceMap, Spanned, SyntaxContext, GLOBALS};
 use swc_core::ecma::ast::{
-    ArrayLit, ArrowFunctionBody, AssignOp, AssignTarget, CallExpr, Callee, Expr, ExprOrSpread,
-    ExprStmt, FnExpr, Lit, MemberExpr, MemberProp, Module, ModuleItem, Number, ObjectLit, Pat,
-    Prop, PropName, PropOrSpread, SimpleAssignTarget, Stmt,
+    ArrayLit, ArrowExpr, ArrowFunctionBody, AssignOp, AssignTarget, CallExpr, Callee, CatchClause,
+    Class, ClassDecl, Decl, Expr, ExprOrSpread, ExprStmt, FnDecl, FnExpr, Function, Lit,
+    MemberExpr, MemberProp, Module, ModuleItem, Number, ObjectLit, Pat, Prop, PropName,
+    PropOrSpread, SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp, VarDeclarator,
 };
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::utils::replace_ident;
-use swc_core::ecma::visit::{VisitMut, VisitMutWith};
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::module_path::relative_import_specifier;
 use crate::rules::rename_utils::BindingRename;
@@ -104,14 +105,255 @@ pub(super) fn detect_from_module_prepared(
     None
 }
 
+/// The prelude call: `prelude()(table, cache, entries)` from browser-pack
+/// 6.0.4 on, whose callee returns the prelude function, or the prelude
+/// function called directly, as browser-pack before 6.0.4 writes it and as
+/// Terser leaves 6.1's form after inlining the wrapper
+/// (`!function r(e,n,t){…}({…},{},[1])`). A statement-level `!` only
+/// discards the call's value.
 fn browserify_call(expr: &Expr) -> Option<&CallExpr> {
-    let Expr::Call(call) = strip_parens(expr) else {
+    let mut expr = strip_parens(expr);
+    if let Expr::Unary(UnaryExpr {
+        op: UnaryOp::Bang,
+        arg,
+        ..
+    }) = expr
+    {
+        expr = strip_parens(arg);
+    }
+    let Expr::Call(call) = expr else {
         return None;
     };
     let Callee::Expr(callee) = &call.callee else {
         return None;
     };
-    matches!(strip_parens(callee), Expr::Call(_)).then_some(call)
+    match strip_parens(callee) {
+        Expr::Call(_) => Some(call),
+        Expr::Fn(FnExpr { function, .. }) => is_browser_pack_prelude(function).then_some(call),
+        _ => None,
+    }
+}
+
+/// A function called directly could be any three-parameter loader, so its
+/// body must be browser-pack's prelude, checked by structure rather than by
+/// names (every published prelude is minified): parameters
+/// `(modules, cache, entry)`, a declared require function `(name, …)` that
+/// reads `cache[name]`, tests `modules[name]` before running it, and calls
+/// `modules[name][0]` (through `.call` from browser-pack 0.8 on), and a
+/// call of that function with an `entry[…]` element outside it.
+fn is_browser_pack_prelude(function: &Function) -> bool {
+    if function.is_async || function.is_generator || function.params.len() != 3 {
+        return false;
+    }
+    let Some(names) = ident_params(function) else {
+        return false;
+    };
+    let [modules, cache, entry] = [&names[0], &names[1], &names[2]];
+    if modules == cache || modules == entry || cache == entry {
+        return false;
+    }
+    let Some(body) = &function.body else {
+        return false;
+    };
+
+    body.stmts.iter().any(|stmt| {
+        let Stmt::Decl(Decl::Fn(require)) = stmt else {
+            return false;
+        };
+        is_prelude_require(&require.function, modules, cache)
+            && calls_require_with_entry(&body.stmts, &require.ident.sym, entry)
+    })
+}
+
+/// The parameter names, when every parameter is a plain identifier.
+fn ident_params(function: &Function) -> Option<Vec<Atom>> {
+    function
+        .params
+        .iter()
+        .map(|param| match &param.pat {
+            Pat::Ident(binding) => Some(binding.sym.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn is_prelude_require(function: &Function, modules: &Atom, cache: &Atom) -> bool {
+    if function.is_async || function.is_generator {
+        return false;
+    }
+    let Some(params) = ident_params(function) else {
+        return false;
+    };
+    let Some(name) = params.first() else {
+        return false;
+    };
+    if params
+        .iter()
+        .any(|param| param == modules || param == cache)
+    {
+        return false;
+    }
+    let Some(body) = &function.body else {
+        return false;
+    };
+    let mut scan = PreludeRequireScan {
+        modules,
+        cache,
+        name,
+        shadowed: false,
+        reads_cache: false,
+        tests_module: false,
+        runs_module: false,
+    };
+    body.visit_with(&mut scan);
+    !scan.shadowed && scan.reads_cache && scan.tests_module && scan.runs_module
+}
+
+/// Scans a prelude require function's own scope; nested functions (the
+/// `require` it passes to each factory) are not part of it.
+struct PreludeRequireScan<'a> {
+    modules: &'a Atom,
+    cache: &'a Atom,
+    name: &'a Atom,
+    /// The scope declares `modules`, `cache`, or the module name, so the
+    /// reads below may refer to something else.
+    shadowed: bool,
+    reads_cache: bool,
+    tests_module: bool,
+    runs_module: bool,
+}
+
+impl PreludeRequireScan<'_> {
+    /// `object[name]`
+    fn is_lookup(&self, member: &MemberExpr, object: &Atom) -> bool {
+        let MemberProp::Computed(prop) = &member.prop else {
+            return false;
+        };
+        matches!(strip_parens(&member.obj), Expr::Ident(id) if id.sym == *object)
+            && matches!(strip_parens(&prop.expr), Expr::Ident(id) if id.sym == *self.name)
+    }
+
+    /// `modules[name][0]` or `modules[name][0].call`
+    fn is_module_factory(&self, callee: &Expr) -> bool {
+        let mut callee = strip_parens(callee);
+        if let Expr::Member(member) = callee {
+            if member_prop_name_is(&member.prop, "call") {
+                callee = strip_parens(&member.obj);
+            }
+        }
+        let Expr::Member(factory) = callee else {
+            return false;
+        };
+        let MemberProp::Computed(index) = &factory.prop else {
+            return false;
+        };
+        let Expr::Member(module) = strip_parens(&factory.obj) else {
+            return false;
+        };
+        matches!(strip_parens(&index.expr), Expr::Lit(Lit::Num(Number { value, .. })) if *value == 0.0)
+            && self.is_lookup(module, self.modules)
+    }
+
+    fn declare(&mut self, name: &Atom) {
+        if name == self.modules || name == self.cache || name == self.name {
+            self.shadowed = true;
+        }
+    }
+}
+
+impl Visit for PreludeRequireScan<'_> {
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if let Callee::Expr(callee) = &call.callee {
+            if self.is_module_factory(callee) {
+                // The lookup inside the dispatch is not the missing-module test.
+                self.runs_module = true;
+                call.args.visit_with(self);
+                return;
+            }
+        }
+        call.visit_children_with(self);
+    }
+
+    fn visit_member_expr(&mut self, member: &MemberExpr) {
+        if self.is_lookup(member, self.cache) {
+            self.reads_cache = true;
+        } else if self.is_lookup(member, self.modules) {
+            self.tests_module = true;
+        }
+        member.visit_children_with(self);
+    }
+
+    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+        match &declarator.name {
+            Pat::Ident(binding) => self.declare(&binding.sym),
+            // A destructuring pattern could bind any of the names.
+            _ => self.shadowed = true,
+        }
+        declarator.init.visit_with(self);
+    }
+
+    fn visit_fn_decl(&mut self, decl: &FnDecl) {
+        self.declare(&decl.ident.sym);
+    }
+
+    fn visit_class_decl(&mut self, decl: &ClassDecl) {
+        self.declare(&decl.ident.sym);
+    }
+
+    fn visit_catch_clause(&mut self, clause: &CatchClause) {
+        // The parameter is scoped to the clause; any parameter counts as a
+        // possible shadow rather than tracking clause scope.
+        if clause.param.is_some() {
+            self.shadowed = true;
+        }
+        clause.body.visit_with(self);
+    }
+
+    fn visit_function(&mut self, _: &Function) {}
+
+    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+
+    fn visit_class(&mut self, _: &Class) {}
+}
+
+/// Whether the prelude's own scope calls `require(entry[…])`.
+fn calls_require_with_entry(stmts: &[Stmt], require: &Atom, entry: &Atom) -> bool {
+    struct Finder<'a> {
+        require: &'a Atom,
+        entry: &'a Atom,
+        found: bool,
+    }
+    impl Visit for Finder<'_> {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if let (Callee::Expr(callee), [arg]) = (&call.callee, call.args.as_slice()) {
+                if matches!(strip_parens(callee), Expr::Ident(id) if id.sym == *self.require)
+                    && arg.spread.is_none()
+                    && matches!(
+                        strip_parens(&arg.expr),
+                        Expr::Member(MemberExpr { obj, prop: MemberProp::Computed(_), .. })
+                            if matches!(strip_parens(obj), Expr::Ident(id) if id.sym == *self.entry)
+                    )
+                {
+                    self.found = true;
+                }
+            }
+            call.visit_children_with(self);
+        }
+
+        fn visit_function(&mut self, _: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+
+        fn visit_class(&mut self, _: &Class) {}
+    }
+
+    let mut finder = Finder {
+        require,
+        entry,
+        found: false,
+    };
+    stmts.visit_with(&mut finder);
+    finder.found
 }
 
 fn cocos_creator_call(expr: &Expr) -> Option<&CallExpr> {

@@ -343,6 +343,200 @@ fn browserify_deconflicts_factory_param_rename_capture() {
     );
 }
 
+/// browser-pack 6.1's prelude after Terser inlined its wrapper: the prelude
+/// function is the callee. producer `browserify@17.0.1` + `terser@5.51.2`
+/// (default options).
+const TERSER_INLINED_PRELUDE: &str = r#"!function r(e,n,i){function o(f,u){if(!n[f]){if(!e[f]){var c="function"==typeof require&&require;if(!u&&c)return c(f,!0);if(t)return t(f,!0);var s=new Error("Cannot find module '"+f+"'");throw s.code="MODULE_NOT_FOUND",s}var a=n[f]={exports:{}};e[f][0].call(a.exports,function(r){return o(e[f][1][r]||r)},a,a.exports,r,e,n,i)}return n[f].exports}for(var t="function"==typeof require&&require,f=0;f<i.length;f++)o(i[f]);return o}"#;
+
+const INLINED_PRELUDE_TABLE: &str = r#"({1:[function(r,e,n){globalThis.sink=r("./app.js")},{"./app.js":2}],2:[function(r,e,n){var i=r("./provider.js");n.describe=i.describe,n.name="entry-name"},{"./provider.js":3}],3:[function(r,e,n){n.describe=function(r){return"provider:"+r}},{}]},{},[1]);"#;
+
+fn module_names(output: &[(String, String)]) -> Vec<&str> {
+    output.iter().map(|(name, _)| name.as_str()).collect()
+}
+
+#[test]
+fn browserify_detects_a_terser_inlined_prelude() {
+    let source = format!("{TERSER_INLINED_PRELUDE}{INLINED_PRELUDE_TABLE}");
+
+    let output = unpack_raw(&source, &DecompileOptions::default())
+        .expect("an inlined Browserify prelude should unpack");
+    assert_eq!(output.detected_formats, [BundleFormat::Browserify]);
+    assert_eq!(
+        module_names(&output.modules),
+        ["entry.js", "app.js", "provider.js"]
+    );
+    let app = &output.modules[1].1;
+    assert!(
+        app.contains(r#"require("./provider.js")"#) && app.contains("exports.describe"),
+        "the factory's parameters take their runtime names:\n{app}"
+    );
+}
+
+#[test]
+fn browserify_inlined_prelude_recovers_esm_through_the_pipeline() {
+    let source = format!("{TERSER_INLINED_PRELUDE}{INLINED_PRELUDE_TABLE}");
+
+    let output = unpack(&source, DecompileOptions::default()).expect("unpack should succeed");
+    assert_eq!(output.detected_formats, [BundleFormat::Browserify]);
+    let app = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "app.js")
+        .map(|(_, code)| code)
+        .expect("app.js should exist");
+    assert!(
+        app.contains(r#"from "./provider.js""#) && app.contains("export const name"),
+        "the module's CommonJS should become ESM:\n{app}"
+    );
+}
+
+#[test]
+fn browserify_inlined_prelude_keeps_code_around_it_in_entry() {
+    // shape: hypothetical (a script concatenated before the minified bundle).
+    let source = format!(
+        "var banner = \"before\";\n{TERSER_INLINED_PRELUDE}{INLINED_PRELUDE_TABLE}\nconsole.log(banner);"
+    );
+
+    let output = unpack_raw(&source, &DecompileOptions::default())
+        .expect("an inlined Browserify prelude should unpack");
+    assert_eq!(output.detected_formats, [BundleFormat::Browserify]);
+    let entry = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "entry.js")
+        .map(|(_, code)| code)
+        .expect("entry.js should hold the surrounding code");
+    let positions = [
+        r#"var banner = "before""#,
+        r#"require("./entry-1.js")"#,
+        "console.log(banner)",
+    ]
+    .map(|needle| {
+        entry
+            .find(needle)
+            .unwrap_or_else(|| panic!("entry.js must contain `{needle}`:\n{entry}"))
+    });
+    assert!(
+        positions.windows(2).all(|pair| pair[0] < pair[1]),
+        "source order must be kept:\n{entry}"
+    );
+}
+
+#[test]
+fn browserify_detects_an_inlined_prelude_merged_into_a_sequence() {
+    // shape: hypothetical (a minifier merging a banner statement with the
+    // prelude call; the sequence split exposes the call).
+    let prelude = TERSER_INLINED_PRELUDE.trim_start_matches('!');
+    let source = format!("globalThis.banner=1,{prelude}{INLINED_PRELUDE_TABLE}");
+
+    let output = unpack_raw(&source, &DecompileOptions::default())
+        .expect("an inlined Browserify prelude should unpack");
+    assert_eq!(output.detected_formats, [BundleFormat::Browserify]);
+    let entry = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "entry.js")
+        .map(|(_, code)| code)
+        .expect("entry.js should hold the banner");
+    assert!(
+        entry.contains("globalThis.banner = 1") && entry.contains(r#"require("./entry-1.js")"#),
+        "{entry}"
+    );
+}
+
+#[test]
+fn browserify_detects_the_direct_call_prelude_before_browser_pack_6_0_4() {
+    // browser-pack 0.10 to 6.0.3 write the prelude as a function expression
+    // that the table call invokes directly. Prelude text: browser-pack@6.0.0
+    // `_prelude.js`.
+    let source = r#"(function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){
+module.exports = require("./value");
+},{"./value":2}],2:[function(require,module,exports){
+module.exports = "value";
+},{}]},{},[1]);
+"#;
+
+    let output =
+        unpack_raw(source, &DecompileOptions::default()).expect("the bundle should unpack");
+    assert_eq!(output.detected_formats, [BundleFormat::Browserify]);
+    assert_eq!(module_names(&output.modules), ["entry.js", "value.js"]);
+}
+
+#[test]
+fn browserify_detects_the_prelude_that_calls_the_factory_without_call() {
+    // browser-pack 0.6 and 0.7 call `modules[name][0](…)` without `.call`.
+    // Prelude text: browser-pack@0.7.0 `prelude.js` minified by its pinned
+    // uglify-js@1.3.4, as its `index.js` does before emitting it.
+    let source = r#"(function(e,t,n){function i(n,s){if(!t[n]){if(!e[n]){var o=typeof require=="function"&&require;if(!s&&o)return o(n,!0);if(r)return r(n,!0);throw new Error("Cannot find module '"+n+"'")}var u=t[n]={exports:{}};e[n][0](function(t){var r=e[n][1][t];return i(r?r:t)},u,u.exports)}return t[n].exports}var r=typeof require=="function"&&require;for(var s=0;s<n.length;s++)i(n[s]);return i})({1:[function(require,module,exports){
+module.exports = require("./value");
+},{"./value":2}],2:[function(require,module,exports){
+module.exports = "value";
+},{}]},{},[1]);
+"#;
+
+    let output =
+        unpack_raw(source, &DecompileOptions::default()).expect("the bundle should unpack");
+    assert_eq!(output.detected_formats, [BundleFormat::Browserify]);
+    assert_eq!(module_names(&output.modules), ["entry.js", "value.js"]);
+}
+
+/// Unpacks `source` and asserts that it stays one file.
+fn assert_not_browserify(source: &str, why: &str) {
+    let output = unpack_raw(source, &DecompileOptions::default()).expect("unpack should succeed");
+    assert!(
+        !output.detected_formats.contains(&BundleFormat::Browserify),
+        "{why}, got {:?}",
+        module_names(&output.modules)
+    );
+}
+
+#[test]
+fn browserify_rejects_a_direct_call_whose_body_is_not_the_prelude() {
+    // shape: hypothetical.
+    let source = format!(
+        "!function r(e,n,i){{for(var f=0;f<i.length;f++)globalThis.loaded=e[i[f]];return n}}{INLINED_PRELUDE_TABLE}"
+    );
+    assert_not_browserify(
+        &source,
+        "a three-parameter function that does not run the table must keep the input whole",
+    );
+}
+
+#[test]
+fn browserify_rejects_a_prelude_require_without_a_missing_module_test() {
+    // shape: hypothetical (the require runs `modules[name]` unchecked).
+    let source = format!(
+        "!function r(e,n,i){{function o(f){{if(!n[f]){{var a=n[f]={{exports:{{}}}};e[f][0].call(a.exports,o,a,a.exports)}}return n[f].exports}}for(var f=0;f<i.length;f++)o(i[f]);return o}}{INLINED_PRELUDE_TABLE}"
+    );
+    assert_not_browserify(
+        &source,
+        "a require without browser-pack's missing-module branch must keep the input whole",
+    );
+}
+
+#[test]
+fn browserify_rejects_an_inlined_prelude_with_a_nonliteral_table() {
+    // shape: hypothetical.
+    let source = format!(
+        "var table = {{1:[function(r,e,n){{e.exports=1}},{{}}]}};\n{TERSER_INLINED_PRELUDE}(table,{{}},[1]);"
+    );
+    assert_not_browserify(
+        &source,
+        "a table that is not a literal must keep the input whole",
+    );
+}
+
+#[test]
+fn browserify_rejects_an_inlined_prelude_called_without_an_entry_list() {
+    // shape: hypothetical.
+    let source =
+        format!("{TERSER_INLINED_PRELUDE}({{1:[function(r,e,n){{e.exports=1}},{{}}]}},{{}});");
+    assert_not_browserify(
+        &source,
+        "a call without an entry list must keep the input whole",
+    );
+}
+
 #[test]
 fn webpack5_deconflicts_factory_param_rename_capture() {
     let source = r#"

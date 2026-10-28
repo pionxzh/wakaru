@@ -36,9 +36,11 @@ attempted in order — first match wins:
 4. **Turbopack** — Next.js 15.3+ production chunks: the client
    `globalThis.TURBOPACK` push and the server `module.exports` payload. See
    [Turbopack](#turbopack) below
-5. **browserify family** — numeric-keyed
-   `(function e(t,n,r) { ... })({1:[function(...){...}, {...}], ...})`,
-   including Cocos Creator 2.x's string-keyed `window.__require` variant
+5. **browserify family** — a numeric-keyed table called by browser-pack's
+   prelude, `(function(){ ... return r })()({1:[function(...){...}, {...}], ...}, {}, [1])`,
+   or by the prelude function itself (`(function e(t,n,r){ ... })(…)`,
+   `!function r(e,n,t){ ... }(…)`), including Cocos Creator 2.x's
+   string-keyed `window.__require` variant
 6. **Closure ModuleManager** — Google/Closure shared-namespace module segments,
    usually guarded by loader `try/catch` blocks and optionally labeled by
    `/*_M:id*/`. Consecutive labels are retained as empty logical modules, and
@@ -502,6 +504,32 @@ The frame's `module` argument does not block export recovery
 [rewrite-assumptions.md](rewrite-assumptions.md)), so a script's own reads and
 writes of its exports become ESM bindings.
 
+browser-pack 6.0.4 and later wrap the prelude in a function that returns it,
+so the table call's callee is a call: `(function(){function r(e,n,t){…}return
+r})()({…},{},[1])`. Any call is accepted there. Releases 0.6 to 6.0.3 write
+the prelude function itself as the callee, `(function e(t,n,r){…})(…)`, and
+Terser's default options inline 6.1's wrapper into the same form behind a
+`!`: `!function r(e,n,t){…}({…},{},[1])` (producer `browserify@17.0.1` +
+`terser@5.51.2`). A statement-level `!` is accepted in both forms.
+
+A function called directly could be any loader, so its body must be the
+prelude. It is checked by structure, because every release ships it
+minified: three parameters `(modules, cache, entry)`; a declared require
+function `(name, …)` that reads `cache[name]`, tests `modules[name]`, and
+calls `modules[name][0]` (through `.call` from 0.8 on); and a call of that
+require function with an `entry[…]` element in the prelude's own scope.
+Nested functions do not count, and the require function's own scope must
+not redeclare `modules`, `cache`, or `name`. A function that fails any check
+leaves the input one file. So does a prelude called without an entry list or
+with a table that is not an object literal.
+
+Not detected in either form: browser-pack 0.5 and earlier, whose prelude
+takes the parent `require` as a fourth argument; the `require=` assignment
+browser-pack writes in front of the prelude for bundles that expose modules
+(producer `browserify@17.0.1 -r`); and the `--standalone` UMD wrapper
+(producer `browserify@17.0.1 --standalone`), which nests the prelude call in
+its factory. Both stay one file.
+
 Ordinary Browserify numeric module tables use an unambiguous dependency-map
 request path as the emitted filename when every hint for that module agrees.
 Ambiguous or missing hints retain `module-<id>.js`; entry names remain
@@ -916,10 +944,7 @@ layout directly is a proposal:
     which throws, because the factory returns the exports object; a banner
     at the report stage, outside the wrapper, is dropped. When the startup
     calls require once, Terser inlines it into the factory's `return`, and
-    the bundle is not detected;
-  - a Terser-minified Browserify prelude (`!function r(e,n,t){…}({…},{},[1])`,
-    producer `browserify@17.0.1` + `terser@5.51.2`) is not detected. Nothing
-    is lost there, but the input stays one file.
+    the bundle is not detected.
 
   AMD, Closure, Metro, and Turbopack were not checked with a producer.
 - **A hand-written UMD wrapper keeps its wrapper.** A plain UMD file lifts
