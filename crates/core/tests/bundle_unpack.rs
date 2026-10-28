@@ -1889,10 +1889,13 @@ fn webpack5_exports_writes_stay_opaque_where_keeping_them_is_unproven() {
     // counterpart; a loader write, a written `exports` that webpack's runtime
     // helpers also define getters on, and a redeclaration in a `for` head
     // still isolate their factory.
-    for factory in [
-        "if (globalThis.flag) n = n(2); e.exports = n;",
-        "n.r(t); n.d(t, { alpha: () => r }); var r = 1; if (globalThis.flag) (t = t.Meta || (t.Meta = {})).x = 1;",
-        "t.first = 1; for (var t in globalThis.source) console.log(t);",
+    for (factory, parameter) in [
+        ("if (globalThis.flag) n = n(2); e.exports = n;", "require"),
+        (
+            "n.r(t); n.d(t, { alpha: () => r }); var r = 1; if (globalThis.flag) (t = t.Meta || (t.Meta = {})).x = 1;",
+            "exports",
+        ),
+        ("t.first = 1; for (var t in globalThis.source) console.log(t);", "exports"),
     ] {
         let output = unpack_webpack5(
             &format!(
@@ -1913,8 +1916,11 @@ fn webpack5_exports_writes_stay_opaque_where_keeping_them_is_unproven() {
             .collect::<Vec<_>>();
         assert_eq!(failures.len(), 1, "{factory}: {:?}", output.warnings);
         assert_eq!(failures[0].filename, "module-0.js", "{factory}");
+        // The warning names the parameter whose reuse kept the factory opaque.
         assert!(
-            failures[0].message.contains("runtime-parameter reuse"),
+            failures[0]
+                .message
+                .contains(&format!("runtime-parameter reuse of its `{parameter}` parameter")),
             "{factory}: {}",
             failures[0].message
         );

@@ -619,7 +619,7 @@ fn prepare_webpack4_modules(
             let (mut module, _, absent) = match normalized {
                 Ok(normalized) => normalized,
                 Err(
-                    error @ (FactoryNormalizationError::RuntimeParameterReuse
+                    error @ (FactoryNormalizationError::RuntimeParameterReuse(_)
                     | FactoryNormalizationError::FreeNameCapture),
                 ) => {
                     newly_opaque.insert(descriptor.filename.clone(), isolated_failure(error));
@@ -1080,7 +1080,9 @@ fn normalize_extracted_webpack_module(
             continue;
         }
         if parameter.kind != super::webpack_common::FactoryRuntimeParameter::Exports {
-            return Err(FactoryNormalizationError::RuntimeParameterReuse);
+            return Err(FactoryNormalizationError::RuntimeParameterReuse(
+                parameter.kind,
+            ));
         }
         super::webpack_common::keep_written_exports_parameter(
             &mut synthetic_module,

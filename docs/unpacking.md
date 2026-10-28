@@ -601,7 +601,8 @@ canonical names free (webpack emits a free `require` for
 a `module` or loader reuse boundary cannot be proved, an `exports` write cannot
 be kept (below), or the rename would capture a free reference, Wakaru
 preserves that factory's extracted body unchanged and marks only that module
-as failed; other factories in the same structurally proven
+as failed (the `webpack_factory_recovery_failed` warning names the reused
+parameter by its canonical name); other factories in the same structurally proven
 container remain recoverable, with numeric and string module IDs alike. A
 fixed-point pass removes failed factory IDs from the rewrite map before
 retrying dependants, so a call to an opaque factory follows the absent-ID

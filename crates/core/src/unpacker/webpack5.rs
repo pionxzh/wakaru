@@ -1792,7 +1792,7 @@ fn prepare_webpack5_factories(
                     prepared.push(Some(ast));
                 }
                 Err(
-                    error @ (FactoryNormalizationError::RuntimeParameterReuse
+                    error @ (FactoryNormalizationError::RuntimeParameterReuse(_)
                     | FactoryNormalizationError::FreeNameCapture),
                 ) => {
                     newly_opaque.insert(entry.filename.clone(), isolated_failure(error));
@@ -4282,7 +4282,9 @@ fn normalize_extracted_webpack_module(
                 continue;
             }
             if parameter.kind != super::webpack_common::FactoryRuntimeParameter::Exports {
-                return Err(FactoryNormalizationError::RuntimeParameterReuse);
+                return Err(FactoryNormalizationError::RuntimeParameterReuse(
+                    parameter.kind,
+                ));
             }
             super::webpack_common::keep_written_exports_parameter(
                 &mut synthetic_module,

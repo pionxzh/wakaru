@@ -35,8 +35,8 @@ pub(super) enum FactoryNormalizationError {
     /// A factory runtime parameter is written, but its runtime/local lifetime
     /// boundary cannot be proved and (for `exports`) its writes cannot be
     /// kept on the recovered module's `exports` binding. Webpack extraction
-    /// isolates it to one opaque factory.
-    RuntimeParameterReuse,
+    /// isolates it to one opaque factory and names the parameter.
+    RuntimeParameterReuse(FactoryRuntimeParameter),
     /// Renaming a factory parameter to `module`/`exports`/`require` would
     /// capture a free reference of that name in the factory body. Webpack
     /// extraction isolates it to one opaque factory.
@@ -133,8 +133,10 @@ pub(super) fn is_external_require_call(
 /// The per-module failure reported for a factory that extraction isolated.
 pub(super) fn isolated_failure(error: FactoryNormalizationError) -> DetectedModuleFailure {
     match error {
-        FactoryNormalizationError::RuntimeParameterReuse => {
-            DetectedModuleFailure::WebpackRuntimeParameterReuse
+        FactoryNormalizationError::RuntimeParameterReuse(parameter) => {
+            DetectedModuleFailure::WebpackRuntimeParameterReuse {
+                parameter: parameter.canonical_name(),
+            }
         }
         FactoryNormalizationError::FreeNameCapture => DetectedModuleFailure::WebpackFreeNameCapture,
         FactoryNormalizationError::Fatal => DetectedModuleFailure::TranslatedFactoryNormalization,
@@ -603,7 +605,9 @@ pub(super) fn keep_written_exports_parameter(
             target: &parameter.binding,
         });
         if BindingUseIndex::collect(&candidate).has_declaration(&parameter.binding) {
-            return Err(FactoryNormalizationError::RuntimeParameterReuse);
+            return Err(FactoryNormalizationError::RuntimeParameterReuse(
+                FactoryRuntimeParameter::Exports,
+            ));
         }
         replace_binding(
             &mut candidate,
@@ -635,7 +639,9 @@ pub(super) fn keep_written_exports_parameter(
         .map(|sym| (sym, unresolved_ctxt))
         .collect::<Vec<_>>();
     if passes_binding_to_loader_member_call(&candidate, &exports_id, &loaders) {
-        return Err(FactoryNormalizationError::RuntimeParameterReuse);
+        return Err(FactoryNormalizationError::RuntimeParameterReuse(
+            FactoryRuntimeParameter::Exports,
+        ));
     }
 
     *module = candidate;

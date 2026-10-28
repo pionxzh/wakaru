@@ -1278,7 +1278,9 @@ mod tests {
             let mut modules = vec![
                 detected("100", "module-100.js", "7.js"),
                 detected("200", "module-200.js", "7.js").with_detector_failure(Some(
-                    DetectedModuleFailure::WebpackRuntimeParameterReuse,
+                    DetectedModuleFailure::WebpackRuntimeParameterReuse {
+                        parameter: "require",
+                    },
                 )),
             ];
             if duplicate {

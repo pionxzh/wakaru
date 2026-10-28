@@ -141,10 +141,12 @@ fn restore_lifted_function_boundary(module: &mut Module, enabled: bool) -> Bound
 
 fn detector_failure_warning(filename: &str, failure: DetectedModuleFailure) -> UnpackWarning {
     match failure {
-        DetectedModuleFailure::WebpackRuntimeParameterReuse => UnpackWarning::new(
+        DetectedModuleFailure::WebpackRuntimeParameterReuse { parameter } => UnpackWarning::new(
             filename,
             UnpackWarningKind::WebpackFactoryRecoveryFailed,
-            "webpack factory runtime-parameter reuse could not be normalized; preserving the opaque factory body",
+            format!(
+                "webpack factory runtime-parameter reuse of its `{parameter}` parameter could not be normalized; preserving the opaque factory body"
+            ),
         ),
         DetectedModuleFailure::WebpackFreeNameCapture => UnpackWarning::new(
             filename,

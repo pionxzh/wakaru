@@ -821,7 +821,9 @@ pub(crate) struct RecoverableParseError {
 /// driver turns this into a stable operational diagnostic and failed status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DetectedModuleFailure {
-    WebpackRuntimeParameterReuse,
+    /// A written factory parameter (`module`, `exports`, or the loader, by its
+    /// canonical name) whose second lifetime could not be separated.
+    WebpackRuntimeParameterReuse { parameter: &'static str },
     /// Renaming the factory parameters to `module`/`exports`/`require` would
     /// capture a free reference of that name.
     WebpackFreeNameCapture,
