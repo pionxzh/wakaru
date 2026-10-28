@@ -1027,12 +1027,15 @@ fn try_fold_sliced_to_array_module_item_group(
 
     let known_length = extraction.length;
     let mut elems = Vec::with_capacity(known_length.unwrap_or(2));
+    let mut elem_kind = None;
     let max_len = known_length.unwrap_or(64);
     for index in 0..max_len {
         let Some(item) = body.get(start + 1 + index) else {
             break;
         };
-        let Some(binding) = extract_ref_index_module_item(item, &extraction.ref_binding.id, index)
+        let Some((binding, kind)) =
+            extract_ref_index_module_item(item, &extraction.ref_binding.id, index)
+                .filter(|(_, kind)| elem_kind.is_none_or(|elem_kind| elem_kind == *kind))
         else {
             if known_length.is_some() {
                 return false;
@@ -1045,8 +1048,12 @@ fn try_fold_sliced_to_array_module_item_group(
         {
             return false;
         }
+        elem_kind = Some(kind);
         elems.push(Some(Pat::Ident(binding)));
     }
+    let Some(elem_kind) = elem_kind else {
+        return false;
+    };
     let length = elems.len();
     if length == 0 {
         return false;
@@ -1064,6 +1071,7 @@ fn try_fold_sliced_to_array_module_item_group(
     let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = &mut body[start] else {
         return false;
     };
+    var.kind = elem_kind;
     let Some(decl) = var.decls.first_mut() else {
         return false;
     };
@@ -1176,12 +1184,15 @@ fn try_fold_sliced_to_array_stmt_group(
 
     let known_length = extraction.length;
     let mut elems = Vec::with_capacity(known_length.unwrap_or(2));
+    let mut elem_kind = None;
     let max_len = known_length.unwrap_or(64);
     for index in 0..max_len {
         let Some(stmt) = stmts.get(start + 1 + index) else {
             break;
         };
-        let Some(binding) = extract_ref_index_stmt(stmt, &extraction.ref_binding.id, index) else {
+        let Some((binding, kind)) = extract_ref_index_stmt(stmt, &extraction.ref_binding.id, index)
+            .filter(|(_, kind)| elem_kind.is_none_or(|elem_kind| elem_kind == *kind))
+        else {
             if known_length.is_some() {
                 return false;
             }
@@ -1193,8 +1204,12 @@ fn try_fold_sliced_to_array_stmt_group(
         {
             return false;
         }
+        elem_kind = Some(kind);
         elems.push(Some(Pat::Ident(binding)));
     }
+    let Some(elem_kind) = elem_kind else {
+        return false;
+    };
     let length = elems.len();
     if length == 0 {
         return false;
@@ -1212,6 +1227,7 @@ fn try_fold_sliced_to_array_stmt_group(
     let Stmt::Decl(Decl::Var(var)) = &mut stmts[start] else {
         return false;
     };
+    var.kind = elem_kind;
     let Some(decl) = var.decls.first_mut() else {
         return false;
     };
@@ -1644,28 +1660,28 @@ fn extract_ref_index_module_item(
     item: &ModuleItem,
     ref_ident: &swc_core::ecma::ast::Ident,
     index: usize,
-) -> Option<BindingIdent> {
-    let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+) -> Option<(BindingIdent, VarDeclKind)> {
+    let ModuleItem::Stmt(stmt) = item else {
         return None;
     };
-    if var.decls.len() != 1 {
-        return None;
-    }
-    extract_ref_index_binding(&var.decls[0], ref_ident, index)
+    extract_ref_index_stmt(stmt, ref_ident, index)
 }
 
+/// Returns the element binding and the kind of the declaration holding it.
+/// The folded pattern declares the elements, so it takes their kind, not
+/// the temp's.
 fn extract_ref_index_stmt(
     stmt: &Stmt,
     ref_ident: &swc_core::ecma::ast::Ident,
     index: usize,
-) -> Option<BindingIdent> {
+) -> Option<(BindingIdent, VarDeclKind)> {
     let Stmt::Decl(Decl::Var(var)) = stmt else {
         return None;
     };
     if var.decls.len() != 1 {
         return None;
     }
-    extract_ref_index_binding(&var.decls[0], ref_ident, index)
+    extract_ref_index_binding(&var.decls[0], ref_ident, index).map(|binding| (binding, var.kind))
 }
 
 fn module_item_is_default_from_temp(item: &ModuleItem, temp: &swc_core::ecma::ast::Ident) -> bool {

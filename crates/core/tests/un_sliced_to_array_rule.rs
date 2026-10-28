@@ -55,6 +55,84 @@ function read(iter) {
     assert_eq_normalized(&render_pipeline_until(input, "UnSlicedToArray"), expected);
 }
 
+/// Babel lowers a `for (const [k, v] of …)` head into a `var` temp and
+/// `const` element declarations in the loop body. The folded pattern declares
+/// the elements, so it keeps their block-scoped kind: a `var` would hoist the
+/// element names into the function scope beside the outer bindings Terser
+/// gave the same short names. Shape: producer @babel/core@7.28.5
+/// plugin-transform-destructuring + plugin-transform-modules-commonjs, then
+/// terser@5.51.2 (default options); wild-observed.
+#[test]
+fn folded_pattern_keeps_block_scoped_element_kind_through_pipeline() {
+    let input = r#""use strict";function _slicedToArray(r,t){return _arrayWithHoles(r)||_iterableToArrayLimit(r,t)||_unsupportedIterableToArray(r,t)||_nonIterableRest()}function _nonIterableRest(){throw new TypeError("Invalid attempt to destructure non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method.")}function _unsupportedIterableToArray(r,t){if(r){if("string"==typeof r)return _arrayLikeToArray(r,t);var e={}.toString.call(r).slice(8,-1);return"Object"===e&&r.constructor&&(e=r.constructor.name),"Map"===e||"Set"===e?Array.from(r):"Arguments"===e||/^(?:Ui|I)nt(?:8|16|32)(?:Clamped)?Array$/.test(e)?_arrayLikeToArray(r,t):void 0}}function _arrayLikeToArray(r,t){(null==t||t>r.length)&&(t=r.length);for(var e=0,n=Array(t);e<t;e++)n[e]=r[e];return n}function _iterableToArrayLimit(r,t){var e=null==r?null:"undefined"!=typeof Symbol&&r[Symbol.iterator]||r["@@iterator"];if(null!=e){var n,o,a,i,l=[],s=!0,u=!1;try{if(a=(e=e.call(r)).next,0===t){if(Object(e)!==e)return;s=!1}else for(;!(s=(n=a.call(e)).done)&&(l.push(n.value),l.length!==t);s=!0);}catch(r){u=!0,o=r}finally{try{if(!s&&null!=e.return&&(i=e.return(),Object(i)!==i))return}finally{if(u)throw o}}return l}}function _arrayWithHoles(r){if(Array.isArray(r))return r}Object.defineProperty(exports,"__esModule",{value:!0}),exports.collectPairs=void 0;const collectPairs=r=>{const t=new Map(r),e=[];for(const r of t.entries()){var n=_slicedToArray(r,2);const t=n[0],o=n[1];t.startsWith("_")?e.push(t,o):e.push(`_${t}`,o)}return e.join(",")};exports.collectPairs=collectPairs;"#;
+    let expected = r#"
+export const collectPairs = (r)=>{
+    const t = new Map(r);
+    const e = [];
+    for (const r of t.entries()){
+        const [t, o] = r;
+        if (t.startsWith("_")) {
+            e.push(t, o);
+        } else {
+            e.push(`_${t}`, o);
+        }
+    }
+    return e.join(",");
+};
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn folded_pattern_takes_element_kind_not_temp_kind() {
+    let input = r#"
+var _slicedToArray = require("@babel/runtime/helpers/slicedToArray");
+function read(pairs) {
+    for (const pair of pairs) {
+        var _ref = _slicedToArray(pair, 2);
+        const key = _ref[0];
+        const value = _ref[1];
+        use(key, value);
+    }
+    const _ref2 = _slicedToArray(pairs, 1);
+    var first = _ref2[0];
+    return first;
+}
+"#;
+    let expected = r#"
+function read(pairs) {
+    for (const pair of pairs) {
+        const [key, value] = pair;
+        use(key, value);
+    }
+    var [first] = pairs;
+    return first;
+}
+"#;
+    assert_eq_normalized(&render_pipeline_until(input, "UnSlicedToArray"), expected);
+}
+
+/// Elements of different kinds cannot share one declaration; keep the group
+/// (hypothetical, a soundness check).
+#[test]
+fn keeps_group_whose_elements_differ_in_kind() {
+    let input = r#"
+var _slicedToArray = require("@babel/runtime/helpers/slicedToArray");
+function read(pair) {
+    var _ref = _slicedToArray(pair, 2);
+    const key = _ref[0];
+    let value = _ref[1];
+    value = key;
+    return value;
+}
+"#;
+    let output = render_pipeline_until(input, "UnSlicedToArray");
+    assert!(
+        output.contains("const key = _ref[0]") && output.contains("let value = _ref[1]"),
+        "mixed-kind group was folded:\n{output}"
+    );
+}
+
 #[test]
 fn handles_esm_import() {
     let input = r#"
@@ -664,8 +742,9 @@ var second = pairRef[1];
 var pairTemp;
 use(first, second);
 "#;
+    // The elements were `var`; `VarDeclToLetConst` narrows them later.
     let expected = r#"
-const [first, second] = readPair();
+var [first, second] = readPair();
 var pairTemp;
 use(first, second);
 "#;
