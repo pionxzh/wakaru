@@ -1263,11 +1263,20 @@ fn take_leading_parameter_assignment_expr(
     }
 }
 
-/// Split a direct first write that appears between elements of a sequence. A
-/// statement sequence discards every element's result, so its suffix may be
-/// empty. A declaration initializer consumes the sequence's final value and is
-/// supported only when a real suffix supplies that value; lifting a final write
-/// through an outer consumer would require broader value-flow reasoning.
+/// Split a sequence at the first element that writes the parameter. The
+/// element is either the write itself or an expression whose first evaluated
+/// operand is the write, such as the member object in
+/// `(param = value).key = other` (an inlined tsc enum whose temp reuses a dead
+/// parameter). Everything evaluated before the write sits in earlier elements,
+/// so those keep the runtime identity and the rest of the boundary element
+/// follows the local.
+///
+/// A statement sequence discards every element's result, so its suffix may be
+/// empty. A declaration initializer consumes the sequence's final value; a
+/// direct write is supported there only when a real suffix supplies that
+/// value, since lifting a final write through an outer consumer would require
+/// broader value-flow reasoning. A boundary element that only starts with the
+/// write stays in the suffix, so it still supplies the value.
 fn split_mid_sequence_parameter_assignment(
     expr: &mut Box<Expr>,
     kind: FactoryRuntimeParameter,
@@ -1282,10 +1291,32 @@ fn split_mid_sequence_parameter_assignment(
     let index = sequence
         .exprs
         .iter()
-        .position(|candidate| direct_parameter_assignment(candidate, target).is_some())?;
-    if result_is_consumed && index + 1 == sequence.exprs.len() {
-        return None;
-    }
+        .position(|candidate| BindingUseIndex::collect_expr(candidate).has_direct_write(target))?;
+
+    let (initializer, boundary_rest) =
+        if let Some(assignment) = direct_parameter_assignment(&sequence.exprs[index], target) {
+            if result_is_consumed && index + 1 == sequence.exprs.len() {
+                return None;
+            }
+            let initializer = canonicalize_parameter_initializer(
+                assignment.right.clone(),
+                kind,
+                target,
+                unresolved_mark,
+                module_ids,
+            )?;
+            (initializer, None)
+        } else {
+            let mut boundary = sequence.exprs[index].clone();
+            let initializer = take_leading_parameter_assignment(
+                &mut boundary,
+                kind,
+                target,
+                unresolved_mark,
+                module_ids,
+            )?;
+            (initializer, Some(boundary))
+        };
 
     let mut prefix = sequence.exprs[..index].to_vec();
     if !prefix.iter_mut().all(|expr| {
@@ -1293,15 +1324,10 @@ fn split_mid_sequence_parameter_assignment(
     }) {
         return None;
     }
-    let assignment = direct_parameter_assignment(&sequence.exprs[index], target)?;
-    let initializer = canonicalize_parameter_initializer(
-        assignment.right.clone(),
-        kind,
-        target,
-        unresolved_mark,
-        module_ids,
-    )?;
-    let suffix = sequence.exprs[index + 1..].to_vec();
+    let suffix = boundary_rest
+        .into_iter()
+        .chain(sequence.exprs[index + 1..].iter().cloned())
+        .collect::<Vec<_>>();
     let suffix = match suffix.len() {
         0 => None,
         1 => Some(suffix.into_iter().next().expect("single sequence suffix")),

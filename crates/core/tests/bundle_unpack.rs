@@ -2058,6 +2058,241 @@ fn aggressive_nested_scope_split_leaves_a_commonjs_module_whole() {
     }
 }
 
+fn assert_no_factory_recovery_failure(output: &wakaru_core::driver::test_support::UnpackOutput) {
+    assert!(
+        output.warnings.iter().all(|warning| {
+            warning.kind != wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed
+        }),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+}
+
+/// The one `webpack_factory_recovery_failed` warning, on `filename`, naming
+/// `parameter` as the reused one.
+fn assert_opaque_factory(
+    output: &wakaru_core::driver::test_support::UnpackOutput,
+    filename: &str,
+    parameter: &str,
+    case: &str,
+) {
+    let failures = output
+        .warnings
+        .iter()
+        .filter(|warning| {
+            warning.kind == wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(failures.len(), 1, "{case}: {:?}", output.warnings);
+    assert_eq!(failures[0].filename, filename, "{case}");
+    assert!(
+        failures[0].message.contains(&format!(
+            "runtime-parameter reuse of its `{parameter}` parameter"
+        )),
+        "{case}: {}",
+        failures[0].message
+    );
+}
+
+/// Two exported tsc enums in an ES module. UglifyJS inlines each enum IIFE
+/// and reuses a parameter that is dead after the `require.d` getters (the
+/// loader, then `exports`) as the enum temp, so the first write to each is the
+/// member object at the start of a sequence element.
+const ENUM_TEMP_HARMONY_PROVIDER: &str = r#"function(e,t,n){"use strict";var r,o;function u(e){return e?r.Alpha:o.Delta}n.d(t,"a",function(){return r}),n.d(t,"b",function(){return o}),n.d(t,"c",function(){return u}),(n=r=r||{}).Alpha="alpha",n.Beta="beta",(t=o=o||{}).Gamma="gamma",t.Delta="delta"}"#;
+const ENUM_TEMP_HARMONY_CONSUMER: &str =
+    r#"function(e,t,n){"use strict";n=n(0);console.log(n.a.Beta,n.b.Gamma,Object(n.c)(!0))}"#;
+
+#[test]
+fn webpack4_enum_temps_reusing_dead_runtime_parameters_start_local_lifetimes() {
+    // shape: producer typescript@5.9.3 {"module":"ESNext","target":"ES2015"}
+    // then webpack@4.47.0 mode=production minimize=false then
+    // uglify-js@3.19.3 (defaults); wild-observed
+    let source = webpack4_bundle(
+        &format!("{ENUM_TEMP_HARMONY_PROVIDER},\n{ENUM_TEMP_HARMONY_CONSUMER}"),
+        1,
+    );
+    let output = unpack(&source, DecompileOptions::default()).expect("webpack4 unpack");
+    assert_eq!(output.detected_formats, [BundleFormat::Webpack4]);
+    assert_no_factory_recovery_failure(&output);
+    let provider = module_code(&output, "module-0.js");
+    assert!(
+        !provider.contains("exports"),
+        "the getters define named exports, and the enum writes go to locals:\n{provider}"
+    );
+    assert!(provider.contains("export let a;"), "{provider}");
+    assert!(provider.contains("export function c("), "{provider}");
+    assert!(provider.contains("const _n = a = a || {};"), "{provider}");
+    assert!(provider.contains("_n.Beta = \"beta\";"), "{provider}");
+    assert!(provider.contains("const _t = b = b || {};"), "{provider}");
+    assert!(provider.contains("_t.Delta = \"delta\";"), "{provider}");
+    let consumer = module_code(&output, "entry.js");
+    assert!(
+        consumer.contains("import { a, b, c } from \"./module-0.js\";"),
+        "{consumer}"
+    );
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+
+    // Before any rule runs, the getters still define on the factory's real
+    // exports object, and only the writes after them follow the locals.
+    let raw = unpack_raw(&source, &DecompileOptions::default()).expect("webpack4 raw unpack");
+    let raw_provider = module_code(&raw, "module-0.js");
+    assert!(
+        raw_provider.contains("require.d(exports, \"c\""),
+        "{raw_provider}"
+    );
+    assert!(
+        raw_provider.contains("var _n = r = r || {};"),
+        "{raw_provider}"
+    );
+    assert!(
+        raw_provider.contains("var _t = o = o || {};"),
+        "{raw_provider}"
+    );
+    assert!(!raw_provider.contains("exports ="), "{raw_provider}");
+
+    // Equivalence: the same body written with fresh locals.
+    let named = ENUM_TEMP_HARMONY_PROVIDER.replace(
+        r#",(n=r=r||{}).Alpha="alpha",n.Beta="beta",(t=o=o||{}).Gamma="gamma",t.Delta="delta""#,
+        r#";var _n=r=r||{};_n.Alpha="alpha",_n.Beta="beta";var _t=o=o||{};_t.Gamma="gamma",_t.Delta="delta""#,
+    );
+    assert_ne!(named, ENUM_TEMP_HARMONY_PROVIDER);
+    let named_output = unpack(
+        &webpack4_bundle(&format!("{named},\n{ENUM_TEMP_HARMONY_CONSUMER}"), 1),
+        DecompileOptions::default(),
+    )
+    .expect("webpack4 unpack");
+    assert_eq!(output.modules, named_output.modules);
+    assert_eq!(output.warnings, named_output.warnings);
+}
+
+#[test]
+fn webpack4_enum_temp_rewritten_after_its_first_write_follows_the_local() {
+    // shape: producer typescript@5.9.3 {"module":"ESNext","target":"ES2015"}
+    // then webpack@4.47.0 mode=production minimize=false then
+    // uglify-js@3.14.5 (defaults): both enums reuse the exports parameter
+    let provider = ENUM_TEMP_HARMONY_PROVIDER
+        .replace("(n=r=r||{})", "(t=r=r||{})")
+        .replace(r#"n.Beta="beta""#, r#"t.Beta="beta""#);
+    let output = unpack(
+        &webpack4_bundle(&format!("{provider},\n{ENUM_TEMP_HARMONY_CONSUMER}"), 1),
+        DecompileOptions::default(),
+    )
+    .expect("webpack4 unpack");
+    assert_no_factory_recovery_failure(&output);
+    let provider = module_code(&output, "module-0.js");
+    assert!(!provider.contains("exports"), "{provider}");
+    assert!(provider.contains("let _t = a = a || {};"), "{provider}");
+    assert!(provider.contains("_t = b = b || {};"), "{provider}");
+    assert!(provider.contains("_t.Delta = \"delta\";"), "{provider}");
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
+fn webpack5_enum_temps_reusing_dead_runtime_parameters_start_local_lifetimes() {
+    // shape: producer typescript@5.9.3 {"module":"ESNext","target":"ES2015"}
+    // then webpack@5.111.1 mode=production minimize=false then
+    // uglify-js@3.19.3 (defaults), with the getter that UglifyJS inlined a
+    // function into left out
+    let output = unpack_webpack5(
+        r#"
+    0: ((e, t, a) => { var r, o; a.d(t, { Kt: () => r, kL: () => o }), (a = r = r || {}).Alpha = "alpha", a.Beta = "beta", (t = o = o || {}).Gamma = "gamma", t.Delta = "delta"; }),
+    1: ((e, t, a) => { a = a(0); console.log(a.Kt.Beta, a.kL.Gamma); }),
+"#,
+        1,
+    );
+    assert_no_factory_recovery_failure(&output);
+    let provider = module_code(&output, "module-0.js");
+    assert!(!provider.contains("exports"), "{provider}");
+    assert!(provider.contains("export let Kt;"), "{provider}");
+    assert!(provider.contains("const _a = Kt = Kt || {};"), "{provider}");
+    assert!(provider.contains("const _t = kL = kL || {};"), "{provider}");
+    assert!(module_code(&output, "module-1.js").contains("./module-0.js"));
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
+fn webpack5_module_parameter_enum_temp_in_an_initializer_sequence_starts_its_local_lifetime() {
+    // shape: hypothetical (the producer shape above, with the `module`
+    // parameter as the temp and the write in a declaration initializer)
+    let source = webpack5_bundle(
+        r#"
+    0: ((e, t, n) => { var r, s = (e.exports.ready = n(2), (e = r = r || {}).Alpha = "alpha"); e.Beta = s; }),
+    1: ((e, t, n) => { console.log(n(0)); }),
+    2: ((e) => { e.exports = "stable"; }),
+"#,
+        1,
+    );
+    let options = DecompileOptions {
+        filename: "webpack5-module-enum-temp.js".to_string(),
+        ..Default::default()
+    };
+    let raw = unpack_raw(&source, &options).expect("webpack5 raw unpack");
+    let provider = module_code(&raw, "module-0.js");
+    let runtime = provider
+        .find("module.exports.ready = require(\"./module-2.js\")")
+        .unwrap_or_else(|| panic!("{provider}"));
+    let local = provider
+        .find("var _e = r = r || {};")
+        .unwrap_or_else(|| panic!("{provider}"));
+    let suffix = provider
+        .find("s = _e.Alpha = \"alpha\"")
+        .unwrap_or_else(|| panic!("{provider}"));
+    assert!(runtime < local && local < suffix, "{provider}");
+    assert!(provider.contains("_e.Beta = s"), "{provider}");
+
+    let output = unpack(&source, options).expect("webpack5 unpack");
+    assert_no_factory_recovery_failure(&output);
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
+fn webpack5_enum_temp_writes_that_cannot_start_a_lifetime_stay_opaque() {
+    // shape: hypothetical. Each write sits where the old value is read first
+    // (in its own right-hand side, the assignment target's object, an earlier
+    // argument or operand) or where it may not run (a conditional). The
+    // harmony getters rule out keeping the writes on `exports`.
+    let harmony_factory = |write: &str| {
+        format!(
+            r#"
+    0: ((e, t, n) => {{ var r; n.r(t); n.d(t, {{ alpha: () => r }}), observe(), {write}; }}),
+    1: ((e, t, n) => {{ console.log(n(0), n(2)); }}),
+    2: ((e) => {{ e.exports = "stable"; }}),
+"#
+        )
+    };
+    // Control: the same factory with the write first in its element.
+    let control = unpack_webpack5(&harmony_factory("(t = r = r || {}).x = 1"), 1);
+    assert_no_factory_recovery_failure(&control);
+    assert!(module_code(&control, "module-0.js").contains("_t.x = 1"));
+
+    for factory in [
+        "(t = r = t.seed || {}).x = 1",
+        "t.alpha = (t = r = r || {}).beta",
+        "consume(t, (t = r = r || {}).x = 1)",
+        "t.alpha + (t = r = r || {}).beta",
+        "globalThis.flag && ((t = r = r || {}).x = 1)",
+        "globalThis.flag ? (t = r = r || {}).x = 1 : 0",
+        "(observe(), t = r = r || {}).x = 1",
+    ] {
+        let output = unpack_webpack5(&harmony_factory(factory), 1);
+        assert_opaque_factory(&output, "module-0.js", "exports", factory);
+        let consumer = module_code(&output, "module-1.js");
+        assert!(consumer.contains("require(0)"), "{factory}: {consumer}");
+        assert!(consumer.contains("./module-2.js"), "{factory}: {consumer}");
+    }
+
+    // The loader's old value is read in the same element before the write.
+    let output = unpack_webpack5(
+        r#"
+    0: ((e, t, n) => { var r; n.r(t); n.d(t, { alpha: () => r }), observe(), consume(n(2), (n = r = r || {}).x = 1); }),
+    1: ((e, t, n) => { console.log(n(0), n(2)); }),
+    2: ((e) => { e.exports = "stable"; }),
+"#,
+        1,
+    );
+    assert_opaque_factory(&output, "module-0.js", "require", "loader call argument");
+}
+
 /// A webpack 4 array bundle around `factories` that starts at `entry`.
 fn webpack4_bundle(factories: &str, entry: usize) -> String {
     format!(

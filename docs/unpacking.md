@@ -636,7 +636,17 @@ the read in top-level statement position. A decorator on a shadowing inner
 parameter keeps its write. A
 first real write may be a top-level assignment, a `var` redeclaration of the
 factory parameter, or a direct element inside a top-level/initializer sequence
-when splitting the sequence preserves its evaluation result. A consumed alias
+when splitting the sequence preserves its evaluation result. It may also be the
+first evaluated operand of such a statement or element, such as the member
+object in `(param = value).key = other`: UglifyJS inlines a tsc enum IIFE this
+way and reuses a parameter that is dead after the `require.d` getters as the
+enum temp (producer `typescript@5.9.3` ESM, then `webpack@4.47.0` or
+`webpack@5.111.1`, then `uglify-js@3.19.3`). Every operand evaluated before
+the write sits in an earlier statement or element, so those keep the canonical
+identity (the getters still define on the real `exports`), and the rest of the
+element follows the local. A write the element reaches only after reading the
+old value (an assignment target's object, an earlier argument or operand) or
+only conditionally is not a boundary. A consumed alias
 reset on the guaranteed-once right-hand side of a top-level `for ... in` is
 also supported by replacing the reset with the localized value before lifting
 its initializer. An exact `module.exports = exportsParameter = value` bridge,
