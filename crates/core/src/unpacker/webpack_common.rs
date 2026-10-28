@@ -9,6 +9,7 @@
 use crate::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
+use swc_core::common::util::take::Take;
 use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrayLit, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BindingIdent, CallExpr,
@@ -1359,6 +1360,29 @@ fn direct_parameter_assignment<'a>(expr: &'a Expr, target: &BindingId) -> Option
     .then_some(assign)
 }
 
+/// The `param.exports = value` assignment when `initializer` is exactly that
+/// and `param` is the reused `module` parameter.
+fn module_exports_bridge_mut<'a>(
+    initializer: &'a mut Box<Expr>,
+    kind: FactoryRuntimeParameter,
+    target: &BindingId,
+) -> Option<&'a mut AssignExpr> {
+    if kind != FactoryRuntimeParameter::Module {
+        return None;
+    }
+    let Expr::Assign(assign) = strip_parens_mut(initializer) else {
+        return None;
+    };
+    let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left else {
+        return None;
+    };
+    let is_bridge = assign.op == AssignOp::Assign
+        && matches!(member.obj.as_ref(), Expr::Ident(object)
+            if object.sym == target.0 && object.ctxt == target.1)
+        && matches!(&member.prop, MemberProp::Ident(name) if name.sym.as_ref() == "exports");
+    is_bridge.then_some(assign)
+}
+
 fn canonicalize_parameter_initializer(
     mut initializer: Box<Expr>,
     kind: FactoryRuntimeParameter,
@@ -1371,6 +1395,23 @@ fn canonicalize_parameter_initializer(
     // immediate-expression visitor because their invocation timing is unknown.
     let root_function = matches!(strip_parens(&initializer), Expr::Fn(_) | Expr::Arrow(_));
     if root_function {
+        return Some(initializer);
+    }
+    if let Some(bridge) = module_exports_bridge_mut(&mut initializer, kind, target) {
+        // `param = param.exports = value` (UglifyJS `merge_vars` folding
+        // `var local = module.exports = value` into the dead `module`
+        // parameter). The old value is read once, as the object of the
+        // `.exports` write, and that read happens inside the right-hand side,
+        // before the parameter is rebound. So it is the runtime `module`, and
+        // only `value` is checked as an ordinary initializer.
+        let value = bridge.right.take();
+        bridge.right =
+            canonicalize_parameter_initializer(value, kind, target, unresolved_mark, module_ids)?;
+        if let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &mut bridge.left {
+            if let Expr::Ident(object) = member.obj.as_mut() {
+                object.sym = Atom::from(kind.canonical_name());
+            }
+        }
         return Some(initializer);
     }
     if kind != FactoryRuntimeParameter::Loader {

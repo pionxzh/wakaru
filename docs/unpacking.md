@@ -667,7 +667,15 @@ normalizer consumes them. For the `module` and loader parameters, conditional
 first-write boundaries, hoisted or other deferred pre-write captures, unmapped
 string IDs, consumed mid-sequence assignment results, and `module` initializers
 that read the old runtime value remain failed/opaque rather than triggering
-control-flow or facade inference.
+control-flow or facade inference. One such read is exact:
+`param = param.exports = value` (or `var param = param.exports = value`),
+which UglifyJS's default `merge_vars` emits for core-js 2's
+`var global = module.exports = ...` (producer `core-js@2.6.12` under
+`webpack@4.47.0` or `webpack@5.111.1`, then `uglify-js@3.19.3`). The old
+value is read once, as the object of the `.exports` write, inside the
+right-hand side and before the rebinding, so it takes the canonical name and
+the local starts as `var _param = module.exports = value`. `value` itself
+must not read the parameter unless it is a function value.
 
 A written `exports` parameter whose boundary cannot be proved (or that is
 already spelled `exports`) keeps every write instead: the parameter takes the

@@ -2293,6 +2293,151 @@ fn webpack5_enum_temp_writes_that_cannot_start_a_lifetime_stay_opaque() {
     assert_opaque_factory(&output, "module-0.js", "require", "loader call argument");
 }
 
+/// A core-js 2 style global and version holder, each a factory that reuses
+/// its dead `module` parameter for `var local = module.exports = value`.
+const MODULE_EXPORTS_BRIDGE_FACTORIES: &str = r#"function(e,n,t){var r=t(1),t=t(2);n.version=t.version,n.hasMath=r.Math===Math},
+function(e,n){e=e.exports="undefined"!=typeof window&&window.Math==Math?window:"undefined"!=typeof self&&self.Math==Math?self:Function("return this")();"number"==typeof __alpha&&(__alpha=e)},
+function(e,n){e=e.exports={version:"1.0.0"};"number"==typeof __beta&&(__beta=e)}"#;
+
+#[test]
+fn webpack4_module_parameter_rebound_to_its_exports_value_starts_a_local_lifetime() {
+    // shape: producer core-js@2.6.12 (modules/_global.js, modules/_core.js)
+    // under webpack@4.47.0 mode=production target=node minimize=false then
+    // uglify-js@3.19.3 (defaults)
+    let source = webpack4_bundle(MODULE_EXPORTS_BRIDGE_FACTORIES, 0);
+    let output = unpack(&source, DecompileOptions::default()).expect("webpack4 unpack");
+    assert_eq!(output.detected_formats, [BundleFormat::Webpack4]);
+    assert_no_factory_recovery_failure(&output);
+    let global = module_code(&output, "module-1.js");
+    assert!(global.contains("export default _e;"), "{global}");
+    assert!(global.contains("__alpha = _e;"), "{global}");
+    assert!(!global.contains("module"), "{global}");
+    let core = module_code(&output, "module-2.js");
+    assert!(core.contains("const _e = {"), "{core}");
+    assert!(core.contains("export default _e;"), "{core}");
+    assert!(core.contains("__beta = _e;"), "{core}");
+    let consumer = module_code(&output, "entry.js");
+    assert!(consumer.contains("from \"./module-1.js\""), "{consumer}");
+    assert!(consumer.contains("from \"./module-2.js\""), "{consumer}");
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+
+    // Before any rule runs, the old value is the runtime `module`.
+    let raw = unpack_raw(&source, &DecompileOptions::default()).expect("webpack4 raw unpack");
+    let raw_core = module_code(&raw, "module-2.js");
+    assert!(
+        raw_core.contains("var _e = module.exports = {"),
+        "{raw_core}"
+    );
+
+    // Equivalence: the same bodies written with a fresh local.
+    let named = MODULE_EXPORTS_BRIDGE_FACTORIES
+        .replace("{e=e.exports=", "{var _e=e.exports=")
+        .replace("(__alpha=e)", "(__alpha=_e)")
+        .replace("(__beta=e)", "(__beta=_e)");
+    assert_eq!(named.matches("var _e=e.exports=").count(), 2, "{named}");
+    let named_output =
+        unpack(&webpack4_bundle(&named, 0), DecompileOptions::default()).expect("webpack4 unpack");
+    // The statement-level lift leaves the rebound statement behind as a bare
+    // read of the local (`_e;`), which has no effect; the rest is identical.
+    let without_bare_reads = |modules: &[(String, String)]| {
+        modules
+            .iter()
+            .map(|(name, code)| {
+                let code = code
+                    .lines()
+                    .filter(|line| line.trim() != "_e;")
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                (name.clone(), code)
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        without_bare_reads(&output.modules),
+        without_bare_reads(&named_output.modules)
+    );
+    assert_eq!(output.warnings, named_output.warnings);
+}
+
+#[test]
+fn webpack5_module_parameter_rebound_to_its_exports_value_starts_a_local_lifetime() {
+    // shape: producer core-js@2.6.12 (modules/_core.js) under
+    // webpack@5.111.1 mode=production target=node minimize=false then
+    // uglify-js@3.19.3 (defaults); the `var` form and the function value are
+    // wild-observed and hypothetical respectively
+    for (factory, expected) in [
+        (
+            r#"(e => { e = e.exports = { version: "1.0.0" }; "number" == typeof __beta && (__beta = e); })"#,
+            "__beta = _e;",
+        ),
+        (
+            r#"(e => { var e = e.exports = { version: "1.0.0" }; e.extra = 1; })"#,
+            "_e.extra = 1;",
+        ),
+        (
+            r#"(e => { e = e.exports = function () { return e.version; }; e.version = "1.0.0"; })"#,
+            "return _e.version;",
+        ),
+    ] {
+        let output = unpack_webpack5(
+            &format!(
+                r#"
+    0: {factory},
+    1: ((e, t, n) => {{ console.log(n(0)); }}),
+"#
+            ),
+            1,
+        );
+        assert_no_factory_recovery_failure(&output);
+        let provider = module_code(&output, "module-0.js");
+        assert!(provider.contains(expected), "{factory}:\n{provider}");
+        assert!(
+            provider.contains("export default _e;"),
+            "{factory}:\n{provider}"
+        );
+        assert!(!provider.contains("module"), "{factory}:\n{provider}");
+        assert!(
+            module_code(&output, "module-1.js").contains("./module-0.js"),
+            "{factory}"
+        );
+        assert_eq!(
+            validate_output_modules(&output.modules),
+            vec![],
+            "{factory}"
+        );
+    }
+}
+
+#[test]
+fn webpack5_module_parameter_rebinds_that_read_its_old_value_stay_opaque() {
+    // shape: hypothetical. Only `param = param.exports = value` whose value
+    // does not read the parameter is a lifetime boundary.
+    for factory in [
+        "e = e.exports = { self: e };",
+        "e = e.exports = e.id;",
+        "e = e.exports = (e.loaded, {});",
+        "e = e.other = {};",
+        "e = e.exports.inner = {};",
+        "e = e.exports += 1;",
+        "globalThis.flag && (e = e.exports = {});",
+    ] {
+        let output = unpack_webpack5(
+            &format!(
+                r#"
+    0: ((e, t, n) => {{ {factory} e.marker = n(2); }}),
+    1: ((e, t, n) => {{ console.log(n(0), n(2)); }}),
+    2: ((e) => {{ e.exports = "stable"; }}),
+"#
+            ),
+            1,
+        );
+        assert_opaque_factory(&output, "module-0.js", "module", factory);
+        let consumer = module_code(&output, "module-1.js");
+        assert!(consumer.contains("require(0)"), "{factory}: {consumer}");
+        assert!(consumer.contains("./module-2.js"), "{factory}: {consumer}");
+    }
+}
+
 /// A webpack 4 array bundle around `factories` that starts at `entry`.
 fn webpack4_bundle(factories: &str, entry: usize) -> String {
     format!(
