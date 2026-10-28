@@ -1360,14 +1360,15 @@ fn direct_parameter_assignment<'a>(expr: &'a Expr, target: &BindingId) -> Option
     .then_some(assign)
 }
 
-/// The `param.exports = value` assignment when `initializer` is exactly that
-/// and `param` is the reused `module` parameter.
-fn module_exports_bridge_mut<'a>(
+/// The `param.name = value` assignment when `initializer` is exactly that:
+/// `param.exports = value` for the reused `module` parameter, or any static
+/// `param.name = value` for the reused `exports` parameter.
+fn runtime_member_bridge_mut<'a>(
     initializer: &'a mut Box<Expr>,
     kind: FactoryRuntimeParameter,
     target: &BindingId,
 ) -> Option<&'a mut AssignExpr> {
-    if kind != FactoryRuntimeParameter::Module {
+    if kind == FactoryRuntimeParameter::Loader {
         return None;
     }
     let Expr::Assign(assign) = strip_parens_mut(initializer) else {
@@ -1379,7 +1380,8 @@ fn module_exports_bridge_mut<'a>(
     let is_bridge = assign.op == AssignOp::Assign
         && matches!(member.obj.as_ref(), Expr::Ident(object)
             if object.sym == target.0 && object.ctxt == target.1)
-        && matches!(&member.prop, MemberProp::Ident(name) if name.sym.as_ref() == "exports");
+        && matches!(&member.prop, MemberProp::Ident(name)
+            if kind == FactoryRuntimeParameter::Exports || name.sym.as_ref() == "exports");
     is_bridge.then_some(assign)
 }
 
@@ -1397,13 +1399,14 @@ fn canonicalize_parameter_initializer(
     if root_function {
         return Some(initializer);
     }
-    if let Some(bridge) = module_exports_bridge_mut(&mut initializer, kind, target) {
-        // `param = param.exports = value` (UglifyJS `merge_vars` folding
-        // `var local = module.exports = value` into the dead `module`
-        // parameter). The old value is read once, as the object of the
-        // `.exports` write, and that read happens inside the right-hand side,
-        // before the parameter is rebound. So it is the runtime `module`, and
-        // only `value` is checked as an ordinary initializer.
+    if let Some(bridge) = runtime_member_bridge_mut(&mut initializer, kind, target) {
+        // `param = param.exports = value` or `param = param.name = value`
+        // (UglifyJS `merge_vars` folding `var local = module.exports = value`
+        // or `var local = exports.name = value` into the dead parameter). The
+        // old value is read once, as the object of the member write, and that
+        // read happens inside the right-hand side, before the parameter is
+        // rebound. So it is the runtime `module` / `exports`, and only `value`
+        // is checked as an ordinary initializer.
         let value = bridge.right.take();
         bridge.right =
             canonicalize_parameter_initializer(value, kind, target, unresolved_mark, module_ids)?;

@@ -2293,6 +2293,22 @@ fn webpack5_enum_temp_writes_that_cannot_start_a_lifetime_stay_opaque() {
     assert_opaque_factory(&output, "module-0.js", "require", "loader call argument");
 }
 
+/// `modules` without statements that only read `local`.
+fn without_bare_reads(modules: &[(String, String)], local: &str) -> Vec<(String, String)> {
+    let bare_read = format!("{local};");
+    modules
+        .iter()
+        .map(|(name, code)| {
+            let code = code
+                .lines()
+                .filter(|line| line.trim() != bare_read)
+                .collect::<Vec<_>>()
+                .join("\n");
+            (name.clone(), code)
+        })
+        .collect()
+}
+
 /// A core-js 2 style global and version holder, each a factory that reuses
 /// its dead `module` parameter for `var local = module.exports = value`.
 const MODULE_EXPORTS_BRIDGE_FACTORIES: &str = r#"function(e,n,t){var r=t(1),t=t(2);n.version=t.version,n.hasMath=r.Math===Math},
@@ -2338,23 +2354,10 @@ fn webpack4_module_parameter_rebound_to_its_exports_value_starts_a_local_lifetim
     let named_output =
         unpack(&webpack4_bundle(&named, 0), DecompileOptions::default()).expect("webpack4 unpack");
     // The statement-level lift leaves the rebound statement behind as a bare
-    // read of the local (`_e;`), which has no effect; the rest is identical.
-    let without_bare_reads = |modules: &[(String, String)]| {
-        modules
-            .iter()
-            .map(|(name, code)| {
-                let code = code
-                    .lines()
-                    .filter(|line| line.trim() != "_e;")
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                (name.clone(), code)
-            })
-            .collect::<Vec<_>>()
-    };
+    // read of the local, which has no effect; the rest is identical.
     assert_eq!(
-        without_bare_reads(&output.modules),
-        without_bare_reads(&named_output.modules)
+        without_bare_reads(&output.modules, "_e"),
+        without_bare_reads(&named_output.modules, "_e")
     );
     assert_eq!(output.warnings, named_output.warnings);
 }
@@ -2435,6 +2438,84 @@ fn webpack5_module_parameter_rebinds_that_read_its_old_value_stay_opaque() {
         let consumer = module_code(&output, "module-1.js");
         assert!(consumer.contains("require(0)"), "{factory}: {consumer}");
         assert!(consumer.contains("./module-2.js"), "{factory}: {consumer}");
+    }
+}
+
+/// `var other = exports.other = value` in a CommonJS module, with the local
+/// folded into the dead `exports` parameter.
+const EXPORTS_MEMBER_BRIDGE_FACTORIES: &str = r#"function(e,t,n){n=n(1);console.log(n.helper(1),n.helper.extra,n.other.count)},
+function(e,t){(t.helper=function(e){return e+1}).extra=2;t=t.other={count:1};"number"==typeof globalThis.__probe&&(globalThis.__probe=t)}"#;
+
+#[test]
+fn webpack4_exports_parameter_rebound_to_an_export_value_starts_a_local_lifetime() {
+    // shape: producer webpack@4.47.0 mode=production target=node
+    // minimize=false then uglify-js@3.19.3 (defaults), over
+    // `var other = exports.other = { count: 1 }`
+    let source = webpack4_bundle(EXPORTS_MEMBER_BRIDGE_FACTORIES, 0);
+    let output = unpack(&source, DecompileOptions::default()).expect("webpack4 unpack");
+    assert_no_factory_recovery_failure(&output);
+    let provider = module_code(&output, "module-1.js");
+    assert!(
+        !provider.contains("exports"),
+        "the second lifetime is a local, not a kept `exports` write:\n{provider}"
+    );
+    assert!(provider.contains("export const other = {"), "{provider}");
+    assert!(
+        provider.contains("globalThis.__probe = other;"),
+        "{provider}"
+    );
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+
+    let raw = unpack_raw(&source, &DecompileOptions::default()).expect("webpack4 raw unpack");
+    let raw_provider = module_code(&raw, "module-1.js");
+    assert!(
+        raw_provider.contains("var _t = exports.other = {"),
+        "{raw_provider}"
+    );
+
+    // Equivalence: the same body written with a fresh local.
+    let named = EXPORTS_MEMBER_BRIDGE_FACTORIES
+        .replace(";t=t.other=", ";var _t=t.other=")
+        .replace("(globalThis.__probe=t)", "(globalThis.__probe=_t)");
+    assert_ne!(named, EXPORTS_MEMBER_BRIDGE_FACTORIES);
+    let named_output =
+        unpack(&webpack4_bundle(&named, 0), DecompileOptions::default()).expect("webpack4 unpack");
+    // The statement-level lift leaves a bare read of the local behind.
+    assert_eq!(
+        without_bare_reads(&output.modules, "other"),
+        without_bare_reads(&named_output.modules, "other")
+    );
+    assert_eq!(output.warnings, named_output.warnings);
+}
+
+#[test]
+fn webpack5_exports_rebinds_that_read_the_old_value_keep_the_exports_writes() {
+    // shape: hypothetical. A value that reads the parameter, or a chain that
+    // is not exactly `param = param.name = value`, is no lifetime boundary;
+    // CommonJS keeps the writes on `exports`.
+    for (factory, kept) in [
+        ("t = t.other = { self: t };", "exports = exports.other = {"),
+        (
+            "t = t.other = t.seed;",
+            "exports = exports.other = exports.seed",
+        ),
+        ("t = t[\"other\"] = {};", "exports = exports.other = {}"),
+        (
+            "t = t.other.inner = {};",
+            "exports = exports.other.inner = {}",
+        ),
+    ] {
+        let output = unpack_webpack5(
+            &format!(
+                r#"
+    0: ((e, t) => {{ {factory} t.marker = 1; }}),
+    1: ((e, t, n) => {{ console.log(n(0)); }}),
+"#
+            ),
+            1,
+        );
+        let provider = assert_commonjs_exports_provider(&output, "module-0.js");
+        assert!(provider.contains(kept), "{factory}:\n{provider}");
     }
 }
 
