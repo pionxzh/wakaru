@@ -342,6 +342,87 @@ function foo(a) {
     assert_eq_normalized(&apply_with_level(input, RewriteLevel::Minimal), input);
 }
 
+/// A minifier can reuse a parameter's name for a later argument once the
+/// first value is dead: the body `var` redeclares the parameter, so it is the
+/// same binding. Moving it into slot 1 would declare `e` twice, a
+/// SyntaxError beside a default. Shape wild-observed (Babel's
+/// `arguments`-based default after a destructured first parameter).
+#[test]
+fn arguments_default_var_redeclaring_another_param_stays_in_body() {
+    let input = r#"
+function foo(e) {
+  var n = e.items;
+  var e = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : fallback;
+  return e(n);
+}
+"#;
+    let expected = r#"
+function foo(e, _param_1 = fallback) {
+  var n = e.items;
+  var e = _param_1;
+  return e(n);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn arguments_alias_var_redeclaring_another_param_stays_in_body() {
+    let input = r#"
+function foo(e) {
+  var n = e.items;
+  var e = arguments[1];
+  return e(n);
+}
+"#;
+    let output = apply(input);
+    assert!(
+        !output.contains("function foo(e, e"),
+        "parameter declared twice:\n{output}"
+    );
+}
+
+#[test]
+fn inline_arguments_default_skips_empty_decl_name_taken_by_another_param() {
+    let input = r#"
+function foo(e) {
+  var n, e;
+  return use(n, arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : 1);
+}
+"#;
+    let expected = r#"
+function foo(e, _param_1 = 1) {
+  var n, e;
+  return use(n, _param_1);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn arguments_default_var_redeclaring_another_param_through_pipeline() {
+    let input = r#"
+var b = function (e) {
+  var n = e.items, t = e.mode, e = 1 < arguments.length && void 0 !== arguments[1] ? arguments[1] : fallback;
+  1 === t ? skip(n) : e(n);
+};
+use(b);
+"#;
+    let expected = r#"
+const b = function(e, _param_1 = fallback) {
+    const { items, mode } = e;
+    var e = _param_1;
+    if (mode === 1) {
+        skip(items);
+    } else {
+        e(items);
+    }
+};
+use(b);
+"#;
+    assert_eq_normalized(&common::render(input), expected);
+}
+
 #[test]
 fn arguments_inline_default_expression_becomes_param_default() {
     let input = r#"

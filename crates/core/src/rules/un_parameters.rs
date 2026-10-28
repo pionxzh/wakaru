@@ -3444,6 +3444,13 @@ fn is_placeholder(sym: &Atom, idx: usize) -> bool {
 }
 
 fn param_slot_can_use_name(params: &[Param], idx: usize, preferred_name: &Atom) -> bool {
+    // A body `var` that redeclares a parameter is that parameter's binding:
+    // `function (e) { var n = e.x, e = arguments[1]; }` reuses `e` for the
+    // second argument. Moving it into slot 1 would declare `e` twice, which a
+    // parameter list with a default rejects.
+    if param_name_taken_by_other_slot(params, idx, preferred_name) {
+        return false;
+    }
     let Some(param) = params.get(idx) else {
         return true;
     };
@@ -3451,6 +3458,18 @@ fn param_slot_can_use_name(params: &[Param], idx: usize, preferred_name: &Atom) 
         return false;
     };
     binding.id.sym == *preferred_name || is_placeholder(&binding.id.sym, idx)
+}
+
+fn param_name_taken_by_other_slot(params: &[Param], idx: usize, name: &Atom) -> bool {
+    params
+        .iter()
+        .enumerate()
+        .filter(|(other, _)| *other != idx)
+        .any(|(_, param)| {
+            let mut bindings = Vec::new();
+            collect_pat_binding_ids(&param.pat, &mut bindings);
+            bindings.iter().any(|(sym, _)| sym == name)
+        })
 }
 
 fn param_slot_can_use_ident(params: &[Param], idx: usize, preferred_ident: &Ident) -> bool {
@@ -3618,6 +3637,9 @@ impl InlineArgumentsDefaultRewriter<'_> {
                             .get(offset)
                             .and_then(|candidate| candidate.as_ref())
                     })
+            })
+            .filter(|candidate| {
+                !param_name_taken_by_other_slot(self.params, idx, &candidate.ident.sym)
             })
     }
 }
