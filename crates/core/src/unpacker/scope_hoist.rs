@@ -1,4 +1,5 @@
 use crate::collections::{HashMap, HashSet};
+use std::borrow::Cow;
 #[cfg(test)]
 use std::cell::Cell;
 use std::cmp::Reverse;
@@ -170,9 +171,8 @@ pub fn trace_scope_hoisted(source: &str) -> Option<ScopeHoistTrace> {
         if has_strict_mode_syntax_hazard(&module) {
             return None;
         }
-        let iife_body = unwrap_iife(&module);
-        let body = iife_body.as_deref().unwrap_or(&module.body);
-        Some(trace_scope_hoist_body(source.len(), body, &cm))
+        let body = split_scope_body(&module)?;
+        Some(trace_scope_hoist_body(source.len(), &body, &cm))
     })
 }
 
@@ -315,13 +315,114 @@ fn split_from_module(
         return None;
     }
 
-    // Unwrap IIFE wrapper if present: `(()=>{ ... })()`, `(function(){ ... })()`,
-    // or the minified `!function(){ ... }()` form.
-    let iife_body = unwrap_iife(module);
-    let body = iife_body.as_deref().unwrap_or(&module.body);
+    let body = split_scope_body(module)?;
+    let plan = analyze_scope_hoist(&body, render_mode, origin)?;
+    render_scope_hoist_plan(&body, plan, cm, render_mode, positions)
+}
 
-    let plan = analyze_scope_hoist(body, render_mode, origin)?;
-    render_scope_hoist_plan(body, plan, cm, render_mode, positions)
+/// The statements the splitter partitions: the body of a leading IIFE
+/// wrapper when one can be lifted (`(()=>{ ... })()`, `(function(){ ... })()`,
+/// or the minified `!function(){ ... }()` form), otherwise the module body,
+/// with repeated function declarations reduced to their last copy. `None`
+/// when that scope cannot become module scope.
+fn split_scope_body(module: &Module) -> Option<Cow<'_, [ModuleItem]>> {
+    let body = match unwrap_iife(module) {
+        Some(items) => Cow::Owned(items),
+        None => Cow::Borrowed(module.body.as_slice()),
+    };
+    match drop_shadowed_function_declarations(&body) {
+        RepeatedFunctionDeclarations::None => Some(body),
+        RepeatedFunctionDeclarations::Resolved(items) => Some(Cow::Owned(items)),
+        RepeatedFunctionDeclarations::Unsupported => None,
+    }
+}
+
+enum RepeatedFunctionDeclarations {
+    /// No function name is declared twice.
+    None,
+    /// The scope with every earlier declaration of a repeated name removed.
+    Resolved(Vec<ModuleItem>),
+    /// A repeated function name that another declaration kind also binds.
+    Unsupported,
+}
+
+/// A Script and a function body may declare one function name several
+/// times: the declarations share one binding, and only the last one is ever
+/// instantiated (GlobalDeclarationInstantiation and
+/// FunctionDeclarationInstantiation keep the last declaration of each name,
+/// and evaluating a function declaration statement does nothing). A call
+/// placed before the last copy therefore already runs the last body, and the
+/// earlier copies are never created. Concatenated classic scripts, each with
+/// its own inline transpiler helpers, have this shape. Module scope forbids
+/// it, so every emitted module would fail to parse; dropping the earlier
+/// copies keeps the program's behavior and leaves one declaration to
+/// partition.
+///
+/// Only direct statements of the split scope count. A repeated name that a
+/// `var`, lexical, class, import, or export declaration of the same scope
+/// also binds is `Unsupported`: in a Script such a `var` initializer
+/// overwrites the function at run time, and in module scope the pair is an
+/// early error, so the split is refused instead.
+fn drop_shadowed_function_declarations(body: &[ModuleItem]) -> RepeatedFunctionDeclarations {
+    let mut last_declaration = HashMap::<Atom, usize>::default();
+    let mut repeated = HashSet::<Atom>::default();
+    for (index, item) in body.iter().enumerate() {
+        if let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(function))) = item {
+            if last_declaration
+                .insert(function.ident.sym.clone(), index)
+                .is_some()
+            {
+                repeated.insert(function.ident.sym.clone());
+            }
+        }
+    }
+    if repeated.is_empty() {
+        return RepeatedFunctionDeclarations::None;
+    }
+
+    let other_binding = body.iter().any(|item| {
+        if matches!(item, ModuleItem::Stmt(Stmt::Decl(Decl::Fn(_)))) {
+            return false;
+        }
+        let mut names = module_item_declared_names(item);
+        names.extend(module_scope_var_names(item));
+        match item {
+            ModuleItem::ModuleDecl(ModuleDecl::Import(import)) => {
+                names.extend(import.specifiers.iter().map(|specifier| match specifier {
+                    ImportSpecifier::Named(named) => named.local.sym.clone(),
+                    ImportSpecifier::Default(default) => default.local.sym.clone(),
+                    ImportSpecifier::Namespace(namespace) => namespace.local.sym.clone(),
+                }));
+            }
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultDecl(default)) => match &default.decl {
+                DefaultDecl::Fn(function) => {
+                    names.extend(function.ident.as_ref().map(|ident| ident.sym.clone()));
+                }
+                DefaultDecl::Class(class) => {
+                    names.extend(class.ident.as_ref().map(|ident| ident.sym.clone()));
+                }
+                DefaultDecl::TsInterfaceDecl(_) => {}
+            },
+            _ => {}
+        }
+        names.iter().any(|name| repeated.contains(name))
+    });
+    if other_binding {
+        return RepeatedFunctionDeclarations::Unsupported;
+    }
+
+    RepeatedFunctionDeclarations::Resolved(
+        body.iter()
+            .enumerate()
+            .filter(|(index, item)| match item {
+                ModuleItem::Stmt(Stmt::Decl(Decl::Fn(function))) => {
+                    last_declaration.get(&function.ident.sym) == Some(index)
+                }
+                _ => true,
+            })
+            .map(|(_, item)| item.clone())
+            .collect(),
+    )
 }
 
 struct ScopeHoistPlan {

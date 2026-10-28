@@ -723,6 +723,153 @@ fn duplicate_var_declarations_follow_a_bare_entry_writer() {
     );
 }
 
+fn assert_valid_modules(modules: &[(String, String, bool)]) {
+    let pairs = modules
+        .iter()
+        .map(|(filename, code, _)| (filename.clone(), code.clone()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        crate::validate_output_modules(&pairs),
+        vec![],
+        "{modules:#?}"
+    );
+}
+
+fn split_scope_is_borrowed(source: &str) -> bool {
+    GLOBALS.set(&Default::default(), || {
+        let cm: Lrc<SourceMap> = Default::default();
+        let module = super::super::parse_es_module(source, "bundle.js", cm)
+            .expect("the fixture should parse");
+        matches!(split_scope_body(&module), Some(Cow::Borrowed(_)))
+    })
+}
+
+/// Two classic scripts that each carry their own copy of a helper, joined
+/// into one Script (shape: producer babel@7.29 preset-env ie11
+/// `sourceType: "script"` per file, then terser@5.51 given both files). The
+/// copies share one binding and the later body wins from the start.
+fn concatenated_scripts_with_repeated_helpers(first_body: &str, second_body: &str) -> String {
+    format!(
+        r#"
+        function describe(value) {{ return {first_body}; }}
+        function firstRead(value) {{ return describe(value); }}
+        function firstRun() {{ return firstRead(1); }}
+
+        function helperA1() {{ return 1; }}
+        function helperA2() {{ return helperA1() + 1; }}
+        function helperA3() {{ return helperA2() * 2; }}
+        function helperA4() {{ return helperA3() + 3; }}
+        function publicA() {{ return helperA4(); }}
+
+        function describe(value) {{ return {second_body}; }}
+        function secondRead(value) {{ return describe(value); }}
+        function secondRun() {{ return secondRead(2); }}
+
+        console.log(firstRun(), secondRun(), publicA());
+        "#
+    )
+}
+
+#[test]
+fn repeated_function_declarations_keep_only_the_last_copy() {
+    let input =
+        concatenated_scripts_with_repeated_helpers(r#""first:" + value"#, r#""second:" + value"#);
+
+    let modules = split(&input).expect("the concatenated scripts should still split");
+    assert!(modules.len() >= 2, "{modules:#?}");
+    assert!(
+        modules
+            .iter()
+            .all(|(_, code, _)| !code.contains("\"first:\"")),
+        "the earlier copy is never instantiated and must not reach any module:\n{modules:#?}"
+    );
+    let owners = modules
+        .iter()
+        .filter(|(_, code, _)| code.contains("function describe("))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        owners.len(),
+        1,
+        "exactly one module may declare the shared binding:\n{modules:#?}"
+    );
+    assert!(
+        owners[0].1.contains("\"second:\""),
+        "the kept declaration must be the last copy, whose body every call ran:\n{}",
+        owners[0].1
+    );
+    assert_valid_modules(&modules);
+}
+
+#[test]
+fn repeated_function_declarations_inside_a_lifted_iife_keep_the_last_copy() {
+    // shape: producer terser@5.51 `enclose: true` over the same per-file Babel
+    // output; the helpers are mangled, and the wrapper is a function body,
+    // where repeated declarations share one binding the same way.
+    let input = format!(
+        "!function () {{ {} }}();",
+        concatenated_scripts_with_repeated_helpers(r#""first:" + value"#, r#""second:" + value"#)
+    );
+
+    let modules = split(&input).expect("the lifted IIFE body should still split");
+    assert!(
+        modules
+            .iter()
+            .all(|(_, code, _)| !code.contains("\"first:\"")),
+        "{modules:#?}"
+    );
+    assert_eq!(
+        modules
+            .iter()
+            .filter(|(_, code, _)| code.contains("function describe("))
+            .count(),
+        1,
+        "{modules:#?}"
+    );
+    assert_valid_modules(&modules);
+}
+
+#[test]
+fn repeated_function_name_also_declared_by_var_is_not_split() {
+    // In a Script the `var` initializer overwrites the hoisted function when
+    // it runs; module scope rejects the pair, so no module output can keep
+    // both meanings.
+    let input = format!(
+        "{}\nvar describe = function (value) {{ return \"third:\" + value; }};",
+        concatenated_scripts_with_repeated_helpers(r#""first:" + value"#, r#""second:" + value"#)
+    );
+
+    GLOBALS.set(&Default::default(), || {
+        let cm: Lrc<SourceMap> = Default::default();
+        let module = super::super::parse_es_module(&input, "bundle.js", cm)
+            .expect("the fixture should parse");
+        assert!(matches!(
+            drop_shadowed_function_declarations(&module.body),
+            RepeatedFunctionDeclarations::Unsupported
+        ));
+    });
+    assert_does_not_split(
+        &input,
+        "a function name that a var declaration also binds must keep its Script scope",
+    );
+}
+
+#[test]
+fn single_function_declarations_leave_the_split_scope_unchanged() {
+    // A same-named function nested in a block, or a single declaration per
+    // name, is not a repeated top-level declaration; the scope is used as is.
+    let input = two_group_fixture(
+        r#"
+            function b1() { if (flag) { function a1() { return 0; } } return 10; }
+        "#,
+    );
+
+    assert!(
+        split_scope_is_borrowed(&input),
+        "a scope without repeated function declarations must be partitioned as written"
+    );
+    assert_splits(&input, "the two helper groups should split");
+}
+
 #[test]
 fn inspection_bounds_cross_item_write_components() {
     // Seven owner clusters plus the writer cluster sit exactly at the cap, so

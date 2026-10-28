@@ -5904,3 +5904,44 @@ fn a_default_read_of_a_marked_provider_that_may_replace_its_exports_reads_the_de
     );
     assert_eq!(validate_output_modules(&output.modules), vec![]);
 }
+
+#[test]
+fn concatenated_scripts_with_repeated_babel_helpers_split_into_valid_modules() {
+    // shape: producer babel@7.29 preset-env ie11 `sourceType: "script"` run per
+    // file, then terser@5.51 given both files (`terser a.js b.js`): each
+    // script carries its own inline helpers, so the joined Script declares
+    // every helper twice. The copies share one binding; the later body wins.
+    let helpers = r#"function _typeof(e){return _typeof="function"==typeof Symbol&&"symbol"==typeof Symbol.iterator?function(e){return typeof e}:function(e){return e&&"function"==typeof Symbol&&e.constructor===Symbol&&e!==Symbol.prototype?"symbol":typeof e},_typeof(e)}function _classCallCheck(e,t){if(!(e instanceof t))throw new TypeError("Cannot call a class as a function")}function _defineProperties(e,t){for(var r=0;r<t.length;r++){var o=t[r];o.enumerable=o.enumerable||!1,o.configurable=!0,"value"in o&&(o.writable=!0),Object.defineProperty(e,_toPropertyKey(o.key),o)}}function _createClass(e,t,r){return t&&_defineProperties(e.prototype,t),r&&_defineProperties(e,r),Object.defineProperty(e,"prototype",{writable:!1}),e}function _toPropertyKey(e){var t=_toPrimitive(e,"string");return"symbol"==_typeof(t)?t:t+""}function _toPrimitive(e,t){if("object"!=_typeof(e)||!e)return e;var r=e[Symbol.toPrimitive];if(void 0!==r){var o=r.call(e,t||"default");if("object"!=_typeof(o))return o;throw new TypeError("@@toPrimitive must return a primitive value.")}return("string"===t?String:Number)(e)}"#;
+    let source = format!(
+        r#"{helpers}var DEFAULTS={{retries:2}};function Config(e){{this.options=Object.assign({{}},DEFAULTS,e)}}var Registry=function(){{"use strict";return _createClass(function e(){{_classCallCheck(this,e),this.items=[]}},[{{key:"add",value:function(e){{return this.items.push(e),this}}}},{{key:"size",get:function(){{return this.items.length}}}}])}}();window.makeConfig=function(e){{return new Config(e).options}},window.configRegistry=new Registry;{helpers}var BASE={{color:"red"}};var Theme=function(){{"use strict";return _createClass(function e(t){{_classCallCheck(this,e),this.values=Object.assign({{}},BASE,t)}},[{{key:"label",get:function(){{return this.values.color}}}}])}}();window.makeTheme=function(e){{return new Theme(e).label}};"#
+    );
+
+    let output = unpack(
+        &source,
+        DecompileOptions {
+            filename: "pages.js".to_string(),
+            heuristic_split: true,
+            ..Default::default()
+        },
+    )
+    .expect("the concatenated scripts should unpack");
+
+    assert!(
+        output.modules.len() >= 2,
+        "the scope-hoisted split should still apply: {:?}",
+        module_names(&output.modules)
+    );
+    for helper in ["_defineProperties", "_createClass", "_toPrimitive"] {
+        let declarations = output
+            .modules
+            .iter()
+            .map(|(_, code)| code.matches(&format!("function {helper}(")).count())
+            .sum::<usize>();
+        assert_eq!(
+            declarations, 1,
+            "`{helper}` must keep one declaration:\n{:#?}",
+            output.modules
+        );
+    }
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}

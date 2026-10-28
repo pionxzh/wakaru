@@ -765,6 +765,21 @@ bundle format (aggressive level only). That nested split writes the parent and
 its children as ES modules linked by `import`, so it leaves a module whole
 when the module, run through `UnEsm` and the late factory-IIFE recovery, still
 references a free `module` or `exports` other than as a `typeof` operand.
+
+A classic script can declare one function name more than once. Concatenated
+scripts that each carry their own inline transpiler helpers have this shape
+(producer `babel@7.29` preset-env, ie11 target, `sourceType: "script"` per
+file, then `terser@5.51` given every file, with or without `enclose`). The
+declarations share one binding, and only the last one is ever created, so a
+call placed before it already runs the last body. Module scope rejects the
+repeat, and every module that kept two copies would fail to parse. Before
+clustering, the splitter therefore drops the earlier copies and keeps the
+last one. Only direct statements of the split scope count: the module body, or
+the body of a lifted IIFE. If a `var`, `let`, `const`, class, import, or export
+declaration in that scope binds the same name, the scope is not split: in a
+Script a `var` initializer replaces the function when it runs, and module
+scope rejects that pair too.
+
 Synthetic clusters that form an import cycle are merged before
 normal emission so the recovered ESM graph preserves the original single-file
 initialization order. Internally, the splitter first builds a scope-hoist plan
@@ -947,6 +962,13 @@ layout directly is a proposal:
     the bundle is not detected.
 
   AMD, Closure, Metro, and Turbopack were not checked with a producer.
+- **A repeated function declaration around a webpack 5 bootstrap.** Code
+  around the bootstrap goes to `entry.js` verbatim, and `entry.js` becomes an
+  ES module when it imports the startup module. When that code declares one
+  function name twice (wild-observed: classic scripts with per-file Babel
+  helpers concatenated with a bundle), `entry.js` does not parse. Only
+  [scope-hoisted splitting](#scope-hoisted-splitting) drops the earlier
+  copies.
 - **A hand-written UMD wrapper keeps its wrapper.** A plain UMD file lifts
   only when Node's branch is a plain factory call with CommonJS arguments
   (see [Plain UMD files](#plain-umd-files)). A wrapper that tests its root
