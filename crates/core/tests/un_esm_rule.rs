@@ -4317,6 +4317,101 @@ exports.a = function(x) { return a + x; };
     insta::assert_snapshot!(output);
 }
 
+/// A `var` in a module-level `for` head binds at module scope, so it must
+/// yield the export name like a top-level declaration. Shape: producer
+/// webpack@4.47.0 production, target node, concatenateModules off, Terser
+/// (webpack's default minimizer), an `export default function` module whose
+/// hoisted locals Terser folds into the loop head; the input is that
+/// module's factory body with its `exports` parameter named. Wild-observed.
+#[test]
+fn export_conflict_renames_var_declared_in_for_head() {
+    let input = r#"
+"use strict";for(var n=new Map,o=0,i=0,u=0,c=Number(process.env.TABLE_LIMIT||64),a=[],f=0;f<12;++f)a.push(3*f+1);function l(e){if(n.size>c&&(n.clear(),u++),n.has(e))return o++,n.get(e);i++;var r=a[e];return n.set(e,r),r}exports.a=function(e,r,t){return e.slice(r,t).map(l).join("-")+o+i+u};
+"#;
+    let output = render_pipeline(input);
+    assert_eq_normalized(
+        &output,
+        r#"
+const n = new Map;
+let o = 0;
+let i = 0;
+let u = 0;
+const c = Number(process.env.TABLE_LIMIT || 64);
+const _a = [];
+for (let f = 0; f < 12; ++f) {
+    _a.push(3 * f + 1);
+}
+function l(e) {
+    if (n.size > c) {
+        n.clear();
+        u++;
+    }
+    if (n.has(e)) {
+        o++;
+        return n.get(e);
+    }
+    i++;
+    const r = _a[e];
+    n.set(e, r);
+    return r;
+}
+export const a = function(e, r, t) {
+    return e.slice(r, t).map(l).join("-") + o + i + u;
+};
+"#,
+    );
+}
+
+/// The same collision through every other module-level statement that can
+/// hold a `var`; a `var` inside a nested function keeps its name.
+#[test]
+fn export_conflict_renames_var_nested_in_module_statements() {
+    let input = r#"
+if (globalThis.flag) var A = 1;
+try { var b = globalThis.x; } catch (e) {}
+for (var [c] of globalThis.rows) ;
+label: { var e = 5; }
+function f() { var d = 2; return d + A + b + c + e; }
+exports.A = globalThis.flag ? class {} : null;
+exports.b = function () { return f(); };
+exports.c = function () { return 3; };
+exports.d = function () { return 4; };
+exports.e = function () { return 5; };
+"#;
+    let output = render_pipeline_until(input, "UnEsm");
+    assert_eq_normalized(
+        &output,
+        r#"
+if (globalThis.flag) var _A = 1;
+try {
+    var _b = globalThis.x;
+} catch (e) {}
+for (var [_c] of globalThis.rows);
+label: {
+    var _e = 5;
+}
+function f() {
+    var d = 2;
+    return d + _A + _b + _c + _e;
+}
+export const A = globalThis.flag ? class {
+} : null;
+export const b = function() {
+    return f();
+};
+export const c = function() {
+    return 3;
+};
+export const d = function() {
+    return 4;
+};
+export const e = function() {
+    return 5;
+};
+"#,
+    );
+}
+
 #[test]
 fn no_rename_when_export_name_is_free() {
     // No conflict — export name is not used by any local binding

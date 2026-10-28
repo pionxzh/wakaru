@@ -1024,8 +1024,16 @@ impl UnEsm {
             }
         }
         for c in &classified {
-            if let Classified::Keep(ModuleItem::Stmt(Stmt::Decl(decl))) = c {
-                collect_decl_names(decl, &mut local_names);
+            match c {
+                Classified::Keep(ModuleItem::Stmt(Stmt::Decl(decl))) => {
+                    collect_decl_names(decl, &mut local_names);
+                }
+                Classified::Keep(ModuleItem::Stmt(stmt)) => {
+                    for_each_nested_module_var_pat(stmt, &mut |pat| {
+                        collect_pat_names(pat, &mut local_names)
+                    });
+                }
+                _ => {}
             }
         }
 
@@ -1103,13 +1111,26 @@ impl UnEsm {
                 &mut renames,
             );
             for c in &classified {
-                if let Classified::Keep(ModuleItem::Stmt(Stmt::Decl(decl))) = c {
-                    collect_conflicting_decl_renames(
-                        decl,
-                        &export_names,
-                        &mut used_names,
-                        &mut renames,
-                    );
+                match c {
+                    Classified::Keep(ModuleItem::Stmt(Stmt::Decl(decl))) => {
+                        collect_conflicting_decl_renames(
+                            decl,
+                            &export_names,
+                            &mut used_names,
+                            &mut renames,
+                        );
+                    }
+                    Classified::Keep(ModuleItem::Stmt(stmt)) => {
+                        for_each_nested_module_var_pat(stmt, &mut |pat| {
+                            collect_conflicting_pat_renames(
+                                pat,
+                                &export_names,
+                                &mut used_names,
+                                &mut renames,
+                            )
+                        });
+                    }
+                    _ => {}
                 }
             }
 
@@ -7477,6 +7498,36 @@ fn collect_conflicting_decl_renames(
     }
 }
 
+/// A `var` nested in a module-level loop head, block, `if`, `try`, `switch`,
+/// or label still binds at module scope, so it collides with an export name
+/// exactly like a top-level declaration. Stop at function, arrow, and class
+/// boundaries: their `var` declarations belong to another scope (a class
+/// static block's vars are local to the block).
+fn for_each_nested_module_var_pat(stmt: &Stmt, on_pat: &mut dyn FnMut(&Pat)) {
+    struct Collector<'a> {
+        on_pat: &'a mut dyn FnMut(&Pat),
+    }
+
+    impl Visit for Collector<'_> {
+        fn visit_var_decl(&mut self, var: &VarDecl) {
+            if var.kind == VarDeclKind::Var {
+                for declarator in &var.decls {
+                    (self.on_pat)(&declarator.name);
+                }
+            }
+            var.visit_children_with(self);
+        }
+
+        fn visit_function(&mut self, _: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+
+        fn visit_class(&mut self, _: &swc_core::ecma::ast::Class) {}
+    }
+
+    stmt.visit_with(&mut Collector { on_pat });
+}
+
 fn collect_conflicting_pat_renames(
     pat: &Pat,
     conflicts: &HashSet<Atom>,
@@ -7520,11 +7571,13 @@ fn collect_conflicting_ident_rename(
     if !conflicts.contains(&ident.sym) {
         return;
     }
+    let old = (ident.sym.clone(), ident.ctxt);
+    // A `var` binding may be declared more than once; rename it once.
+    if renames.iter().any(|rename| rename.old == old) {
+        return;
+    }
     let new = fresh_prefixed_name(&ident.sym, used_names);
-    renames.push(BindingRename {
-        old: (ident.sym.clone(), ident.ctxt),
-        new,
-    });
+    renames.push(BindingRename { old, new });
 }
 
 fn fresh_prefixed_name(name: &Atom, used_names: &mut HashSet<Atom>) -> Atom {
