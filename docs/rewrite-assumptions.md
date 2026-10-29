@@ -57,7 +57,8 @@ Without that evidence, the rule keeps the CommonJS behavior, even when the
 ESM form would read better. `namespace_interop_source_semantics`,
 `lowered_dynamic_import_source_semantics`,
 `webpack_lazy_import_source_semantics`,
-`esbuild_lazy_import_source_semantics`, and
+`esbuild_lazy_import_source_semantics`,
+`inlined_export_getter_declaration`, and
 `relative_require_esm_provider` are recoveries of this kind, and so is the
 `export *` recovery in [helper-detection.md](helper-detection.md).
 
@@ -1330,6 +1331,61 @@ Affects: esbuild unpack (`unpacker/esbuild/lazy_import.rs`,
 `unpacker/esbuild/glob_import.rs`), in normal and raw output.
 
 Level: every level, in unpack mode only.
+
+### `inlined_export_getter_declaration`
+
+webpack exports a function declaration through a `require.d` getter that
+returns it. UglifyJS inlines a declaration whose only use is that getter
+into the getter's arrow:
+
+```js
+// source
+export function format(value) { return "<" + value + ">"; }
+// webpack 5, then UglifyJS 3.19
+r.d(t, { G: () => function (e) { return "<" + e + ">"; } });
+```
+
+At `standard` and above, `UnEsm` moves such a function expression into a
+function declaration before the call (`function G(e) { … }`) and makes the
+getter return it, so the module exports one function, as the source did.
+The declaration takes the export name when no identifier in the module is
+spelled that way, and a fresh `_name` otherwise. A named function
+expression's own name, which UglifyJS keeps for a recursive function, is
+renamed to the declaration's name inside the body. The function keeps its
+own `this`, `arguments`, `new.target`, and async or generator kind, which a
+function expression and a declaration bind the same way.
+
+The result follows the source where the bundle differs:
+
+- Each access of the bundle's getter created a new function, so
+  `ns.G === ns.G` was false, and a property set on the value was gone on the
+  next access. The declaration is one function.
+- The function's `name` is the declaration's name instead of the empty or
+  minified name of the expression.
+- The declaration is hoisted, so in an import cycle the export can be called
+  before the module body runs, as the source's declaration could.
+
+The rewrite applies only to an arrow getter with no parameters whose body is
+a function expression, in a `require.d(exports, …)` call at the top level of
+a module that refers to `exports` only as the target of those calls and
+`require.r`, so the getter is the export's only definition. An arrow, a
+class, or any other value stays in the getter. So does a function expression
+whose body assigns its own name: that write does nothing to a function
+expression's name and would rebind a declaration. webpack's ES5 getter
+(`function () { return … }`) is not rewritten: UglifyJS does not inline a
+declaration into it.
+
+A getter of a function expression left in a webpack module that would
+otherwise become ESM keeps the module CommonJS, with the getters defined on
+the real `exports`: an ES module would throw on the definition when it
+loads. Below `standard` that is the result for every inlined function
+getter, and each access still creates a new function, as in the bundle.
+
+Affects: `UnEsm`'s pre-pass over webpack's `require.d` calls, which runs
+before they are lowered to getter definitions, and the check that keeps a
+webpack harmony module CommonJS when such a getter would be left.
+
+Level: `standard` and above.
 
 ### `relative_require_esm_provider`
 

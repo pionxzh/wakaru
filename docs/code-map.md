@@ -79,6 +79,7 @@ crates/
         un_esm/default_self_reads.rs — reads of `module.exports` after its one non-identifier assignment, read through a binding of the value that becomes the default export
         un_esm/export_getters.rs    — swc / esbuild / sucrase export getter helpers and webpack `require.d` lowered to per-name definitions
         un_esm/export_storage.rs    — per-name CommonJS export storage model (getter / mirror / property)
+        un_esm/inlined_getter_functions.rs — function expressions UglifyJS inlined into webpack `require.d` getters, moved back into declarations (`inlined_export_getter_declaration`)
         un_esm/harmony_requires.rs  — webpack harmony module detection and the loads Terser inlined into their use
         un_esm/leading_requires.rs  — the requires a top-level statement runs before any other effect, moved into bindings
         un_esm/whole_value_members.rs — member reads of a whole `module.exports = v` provider, read through one binding that becomes the default import

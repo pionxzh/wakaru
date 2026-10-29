@@ -52,6 +52,7 @@ mod export_star;
 pub(crate) mod export_storage;
 mod harmony_requires;
 mod hoist_barrier;
+mod inlined_getter_functions;
 mod leading_requires;
 mod whole_value_members;
 use export_getters::has_webpack_export_definitions;
@@ -77,6 +78,9 @@ pub struct UnEsm {
     /// their one `module.exports = v`, each with the names its module adds
     /// to `v` (the unpack plan).
     whole_value_sources: HashMap<String, Vec<Atom>>,
+    /// The last conversion attempt kept a webpack harmony module CommonJS
+    /// because ESM would keep a getter of an inlined function.
+    kept_export_definitions: bool,
 }
 
 impl UnEsm {
@@ -91,6 +95,7 @@ impl UnEsm {
             import_tags: ImportTags::default(),
             written_exports: false,
             whole_value_sources: HashMap::default(),
+            kept_export_definitions: false,
         }
     }
 
@@ -339,7 +344,7 @@ impl UnEsm {
         let original = keeps_require.then(|| module.clone());
         self.convert_module(module, Attempt::AsWritten);
         let Some(original) = original else {
-            self.finish(module);
+            self.finish_attempt(module);
             return;
         };
         // Some shapes convert only once the module is ESM, such as the
@@ -350,7 +355,7 @@ impl UnEsm {
             self.convert_module(module, Attempt::AsWritten);
         }
         if !self.keeps_require_in_esm(module, false) {
-            self.finish(module);
+            self.finish_attempt(module);
             return;
         }
         // A webpack harmony module's top-level loads all come from imports,
@@ -362,7 +367,7 @@ impl UnEsm {
             self.lowered_esbuild_namespace = false;
             self.convert_module(module, Attempt::Harmony);
             if !self.keeps_require_in_esm(module, true) {
-                self.finish(module);
+                self.finish_attempt(module);
                 return;
             }
         } else {
@@ -376,7 +381,7 @@ impl UnEsm {
                 self.convert_module(module, Attempt::AsWritten);
             }
             if has_module_decl(module) && !self.keeps_require_in_esm(module, false) {
-                self.finish(module);
+                self.finish_attempt(module);
                 return;
             }
         }
@@ -425,6 +430,19 @@ impl UnEsm {
         self.finish(module);
     }
 
+    /// Finishes `module` after a conversion attempt. An attempt that kept a
+    /// webpack harmony module CommonJS because a getter of an inlined
+    /// function would be left in ESM finishes as [`Self::keep_commonjs`] does: the
+    /// attempt restored the runtime calls, which the split output does not
+    /// define.
+    fn finish_attempt(&mut self, module: &mut Module) {
+        if std::mem::take(&mut self.kept_export_definitions) && !has_module_decl(module) {
+            self.keep_commonjs(module);
+        } else {
+            self.finish(module);
+        }
+    }
+
     /// Whether `module` became ESM with a require that no later stage
     /// converts. `harmony` as for [`Attempt::Harmony`]: a kept require is no
     /// hoisting barrier there.
@@ -447,8 +465,11 @@ impl UnEsm {
     /// One conversion attempt.
     fn convert_module(&mut self, module: &mut Module, attempt: Attempt) {
         let harmony = attempt == Attempt::Harmony;
+        self.kept_export_definitions = false;
         // Read before the lowering below removes webpack's `require.d` calls.
         let calls_bundler_helper = calls_bundler_require_helper(module, self.unresolved_mark);
+        let harmony_module = calls_bundler_helper
+            && harmony_requires::is_webpack_harmony_module(module, self.unresolved_mark);
         // webpack's `require.d` calls become per-name definitions, which the
         // analysis and the export rewrites share with every other producer.
         // A module that stays CommonJS keeps the calls as written.
@@ -456,7 +477,22 @@ impl UnEsm {
         let before_lowering = (was_commonjs
             && has_webpack_export_definitions(module, self.unresolved_mark))
         .then(|| module.body.clone());
+        // A function a minifier inlined into an export getter becomes a
+        // declaration again (`inlined_export_getter_declaration`). The
+        // restores below undo it with the lowering when the module stays
+        // CommonJS, where the getter keeps returning a new function.
+        let hoisted = before_lowering.is_some()
+            && self.level >= RewriteLevel::Standard
+            && inlined_getter_functions::hoist_inlined_getter_functions(
+                module,
+                self.unresolved_mark,
+            );
         let lowered = lower_webpack_export_definitions(module, self.unresolved_mark);
+        if hoisted && !lowered {
+            if let Some(original) = &before_lowering {
+                module.body = original.clone();
+            }
+        }
         let hidden_requires =
             hoist_barrier::hide_requires_after_barrier(module, self.unresolved_mark, harmony);
         match attempt {
@@ -468,7 +504,7 @@ impl UnEsm {
                 leading_requires::hoist_leading_requires(module, self.unresolved_mark)
             }
         }
-        self.convert(module, calls_bundler_helper);
+        self.convert(module, calls_bundler_helper, harmony_module);
         if let (true, Some(original)) = (lowered, before_lowering) {
             if !has_module_decl(module) {
                 module.body = original;
@@ -516,7 +552,9 @@ fn has_module_decl(module: &Module) -> bool {
 }
 
 impl UnEsm {
-    fn convert(&mut self, module: &mut Module, calls_bundler_helper: bool) {
+    /// `harmony_module`: the module called webpack's `require.r` or
+    /// `require.d` on `exports` before the lowering removed those calls.
+    fn convert(&mut self, module: &mut Module, calls_bundler_helper: bool, harmony_module: bool) {
         // Read before the pre-passes below turn interop-wrapped requires into
         // imports.
         let had_module_decl = has_module_decl(module);
@@ -1261,16 +1299,49 @@ impl UnEsm {
             // such as `require.d`, which no CommonJS loader provides; their
             // converted form keeps the recovered exports and reports the
             // leftover use instead.
+            //
+            // A webpack harmony module keeps CommonJS too when a getter of a
+            // function a minifier inlined is left at the top level: ESM would
+            // throw on load, while `keep_commonjs` defines the getters on the
+            // real `exports`.
             if unrecovered_commonjs_export_names(module, self.unresolved_mark)
                 .iter()
                 .any(|name| name == WHOLE_EXPORTS)
-                && !calls_bundler_helper
             {
-                *module = original;
-                self.import_tags = tags_before;
+                let keeps_definition = calls_bundler_helper
+                    && harmony_module
+                    && has_inlined_function_getter_definition(module, self.unresolved_mark);
+                if !calls_bundler_helper || keeps_definition {
+                    *module = original;
+                    self.import_tags = tags_before;
+                    self.kept_export_definitions = keeps_definition;
+                }
             }
         }
     }
+}
+
+/// Whether a top-level `Object.defineProperty(exports, "name", { get })` of
+/// `module` returns a function expression: a function a minifier inlined into
+/// a webpack export getter that [`inlined_getter_functions`] did not move out
+/// (`inlined_export_getter_declaration`). No later pass recovers it, and an
+/// ES module throws on the definition when it loads.
+fn has_inlined_function_getter_definition(module: &Module, unresolved_mark: Mark) -> bool {
+    module.body.iter().any(|item| {
+        let ModuleItem::Stmt(Stmt::Expr(statement)) = item else {
+            return false;
+        };
+        let Expr::Call(call) = strip_parens(&statement.expr) else {
+            return false;
+        };
+        let [target, _, descriptor] = call.args.as_slice() else {
+            return false;
+        };
+        is_object_define_property_global_call(call, unresolved_mark)
+            && is_cjs_export_object_expr(&target.expr, unresolved_mark)
+            && extract_define_property_getter_expr(&descriptor.expr)
+                .is_some_and(|value| matches!(strip_parens(&value), Expr::Fn(_)))
+    })
 }
 
 /// Whether `module` calls a member of the free `require` other than Node's

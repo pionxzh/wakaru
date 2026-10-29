@@ -1072,7 +1072,11 @@ unpacker could not resolve), and the ES module would throw on it. `UnEsm`
 then restores the CommonJS module, unless that module calls bundler runtime
 helpers such as `require.d`: no CommonJS loader provides them, so restoring
 gains nothing, and the converted form keeps the recovered exports and the
-warning. Before checking, `UnEsm` removes a default-object compatibility
+warning. A webpack harmony module whose conversion leaves a top-level getter
+that returns a function expression is the exception: it stays CommonJS, with its
+`require.d` calls lowered to definitions on the real `exports` (see
+`inlined_export_getter_declaration` in
+[rewrite-assumptions.md](../rewrite-assumptions.md)). Before checking, `UnEsm` removes a default-object compatibility
 block that the converted getters left dead, which unpack used to do only on
 its second `UnEsm` run. A module with a default export whose block is not
 rewritten (see [Next's compatibility tail](#nexts-compatibility-tail)) keeps

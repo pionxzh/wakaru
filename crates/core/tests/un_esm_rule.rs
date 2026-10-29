@@ -3905,6 +3905,119 @@ const b = 2;
     assert_eq!(output.matches("require.d(exports").count(), 2, "{output}");
 }
 
+// shape: producer webpack@5.111.1 production concatenateModules=false +
+// uglify-js@3.19.3. UglifyJS inlines a function declaration used only by
+// its export getter into that getter (`inlined_export_getter_declaration`).
+#[test]
+fn webpack_getter_of_an_inlined_function_exports_one_declaration() {
+    let input = r#"
+require.d(exports, { G: () => function(e) { return "<" + e + ">"; } });
+require.d(exports, ["f", 0, "provider"]);
+"#;
+    let expected = r#"
+function G(e) {
+    return `<${e}>`;
+}
+export { G };
+export const f = "provider";
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn webpack_getter_of_an_inlined_async_or_generator_function_exports_it() {
+    // shape: producer webpack@5.111.1 production concatenateModules=false +
+    // uglify-js@3.19.3, from `export async function` and `export function*`.
+    let input = r#"
+require.d(exports, { Hh: () => async function(e) { return e; }, Jk: () => function*(e) { yield e; } });
+"#;
+    let output = apply(input);
+    assert!(output.contains("async function Hh(e)"), "{output}");
+    assert!(output.contains("function* Jk(e)"), "{output}");
+    assert!(output.contains("export { Hh }"), "{output}");
+    assert!(output.contains("export { Jk }"), "{output}");
+    assert!(!output.contains("exports"), "{output}");
+}
+
+#[test]
+fn webpack_getter_of_an_inlined_recursive_function_keeps_its_self_reference() {
+    // shape: producer webpack@5.111.1 production concatenateModules=false +
+    // uglify-js@3.19.3 keeps a recursive function's own name. Here the name
+    // and the export name are both taken by module bindings, so the
+    // declaration gets a fresh name and the self reference follows it.
+    let input = r#"
+require.d(exports, { fK: () => function e(r) { return r <= 1 ? 1 : r * e(r - 1); } });
+var e = 5, fK = 6;
+globalThis.sink = [e, fK];
+"#;
+    let expected = r#"
+function _fK(r) {
+    if (r <= 1) {
+        return 1;
+    }
+    return r * _fK(r - 1);
+}
+export { _fK as fK };
+const e = 5;
+const fK = 6;
+globalThis.sink = [
+    e,
+    fK
+];
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn webpack_getter_of_an_inlined_function_that_writes_its_own_name_stays_commonjs() {
+    // shape: hypothetical. Assigning a function expression's own name does
+    // nothing; on a declaration it would rebind the export.
+    let input = r#"
+require.d(exports, { G: () => function e() { e = null; return 1; } });
+require.d(exports, ["f", 0, 1]);
+"#;
+    let output = apply(input);
+    assert!(!output.contains("export "), "{output}");
+    assert!(
+        output.contains("Object.defineProperty(exports, \"G\""),
+        "{output}"
+    );
+}
+
+#[test]
+fn webpack_getter_of_an_arrow_or_class_keeps_its_getter() {
+    // shape: hypothetical. Only a function expression is an inlined function
+    // declaration; any other value a getter returns stays in the getter.
+    for (getter, kept) in [
+        ("() => (v) => v + 1", "get: ()=>(v)=>v + 1"),
+        ("() => class {}", "get: ()=>class {"),
+        ("() => make()", "get: ()=>make()"),
+    ] {
+        let input =
+            format!("require.d(exports, {{ G: {getter} }});\nrequire.d(exports, [\"f\", 0, 1]);\n");
+        let output = apply(&input);
+        assert!(output.contains(kept), "{getter}: {output}");
+        assert!(!output.contains("function G"), "{getter}: {output}");
+        assert!(!output.contains("export const G"), "{getter}: {output}");
+    }
+}
+
+#[test]
+fn webpack_getter_of_an_inlined_function_also_written_stays_commonjs() {
+    // shape: hypothetical. The getter is not the export's only definition,
+    // so the declaration is not the export's value: the module keeps the
+    // getter as the bundle defined it.
+    let input = r#"
+require.d(exports, { G: () => function(e) { return e; } });
+require.d(exports, ["f", 0, 1]);
+exports.G = 1;
+"#;
+    let output = apply(input);
+    assert!(!output.contains("export "), "{output}");
+    assert!(!output.contains("function G"), "{output}");
+    assert!(!output.contains("function _G"), "{output}");
+}
+
 #[test]
 fn webpack_export_getter_to_mutable_binding_stays_live() {
     let input = r#"

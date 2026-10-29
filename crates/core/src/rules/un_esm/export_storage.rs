@@ -2351,7 +2351,7 @@ fn module_export_name_atom(name: &ModuleExportName) -> Atom {
 }
 
 /// A binding-name base for an export name that cannot be used as is.
-fn identifier_base(name: &Atom) -> Atom {
+pub(super) fn identifier_base(name: &Atom) -> Atom {
     let sanitized: String = name
         .chars()
         .map(|c| {

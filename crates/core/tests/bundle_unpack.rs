@@ -5945,3 +5945,80 @@ fn concatenated_scripts_with_repeated_babel_helpers_split_into_valid_modules() {
     }
     assert_eq!(validate_output_modules(&output.modules), vec![]);
 }
+
+// shape: producer webpack@5.111.1 production concatenateModules=false target
+// node + uglify-js@3.19.3, from
+// `export function format(value) { return "<" + value + ">"; }` and
+// `export const kind = "provider";` read through `import * as lib`. UglifyJS
+// inlined `format` into its export getter.
+const WEBPACK5_UGLIFY_INLINED_GETTER_FUNCTION: &str = r#"(()=>{"use strict";var t={97(e,r,t){t=t(240);globalThis.sink=[t.G("x"),t.f,t.G==t.G]},240(e,r,t){t.d(r,{G:()=>function(e){return"<"+e+">"}});t.d(r,["f",0,"provider"])}};const o={};function i(e){var r=o[e];return void 0!==r||(r=o[e]={exports:{}},t[e](r,r.exports,i)),r.exports}i.d=(e,r)=>{if(Array.isArray(r))for(var t=0;t<r.length;){var o=r[t++],a=r[t++],a=0===a?{enumerable:!0,value:r[t++]}:{enumerable:!0,get:a};i.o(e,o)||Object.defineProperty(e,o,a)}else for(var o in r)i.o(r,o)&&!i.o(e,o)&&Object.defineProperty(e,o,{enumerable:!0,get:r[o]})},i.o=(e,r)=>Object.prototype.hasOwnProperty.call(e,r);i(97);globalThis.__artificialSink=Object.freeze({})})();"#;
+
+#[test]
+fn webpack5_uglify_inlined_getter_function_becomes_an_exported_declaration() {
+    let output = unpack(
+        WEBPACK5_UGLIFY_INLINED_GETTER_FUNCTION,
+        DecompileOptions::default(),
+    )
+    .expect("bundle should unpack");
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+    assert!(
+        !output
+            .warnings
+            .iter()
+            .any(|w| w.kind == wakaru_core::UnpackWarningKind::CommonJsExportUnrecovered),
+        "{:#?}",
+        output.warnings
+    );
+    let provider = unpacked_module(&output, "module-240.js");
+    assert!(!provider.contains("exports"), "{provider}");
+    assert!(provider.contains("function G(e)"), "{provider}");
+    assert!(provider.contains("export { G }"), "{provider}");
+    assert!(
+        provider.contains(r#"export const f = "provider";"#),
+        "{provider}"
+    );
+    let consumer = unpacked_module(&output, "module-97.js");
+    assert!(
+        consumer.contains(r#"import { G, f } from "./module-240.js";"#),
+        "{consumer}"
+    );
+}
+
+#[test]
+fn webpack5_uglify_inlined_getter_function_stays_commonjs_at_minimal() {
+    // Below standard the getter keeps returning a new function on each
+    // access, which only the CommonJS `exports` object can define.
+    let output = unpack(
+        WEBPACK5_UGLIFY_INLINED_GETTER_FUNCTION,
+        DecompileOptions {
+            level: wakaru_core::RewriteLevel::Minimal,
+            ..Default::default()
+        },
+    )
+    .expect("bundle should unpack");
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+    assert!(
+        !output
+            .warnings
+            .iter()
+            .any(|w| w.kind == wakaru_core::UnpackWarningKind::CommonJsExportUnrecovered),
+        "{:#?}",
+        output.warnings
+    );
+    let provider = unpacked_module(&output, "module-240.js");
+    assert!(!provider.contains("export "), "{provider}");
+    assert!(!provider.contains("require.d"), "{provider}");
+    assert!(
+        provider.contains(r#"Object.defineProperty(exports, "G""#),
+        "{provider}"
+    );
+    assert!(
+        provider.contains(r#"exports.f = "provider";"#),
+        "{provider}"
+    );
+    let consumer = unpacked_module(&output, "module-97.js");
+    assert!(
+        consumer.contains(r#"import _t from "./module-240.js";"#),
+        "{consumer}"
+    );
+}
