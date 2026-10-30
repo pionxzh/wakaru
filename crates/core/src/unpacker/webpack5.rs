@@ -469,7 +469,13 @@ pub(super) fn detect_chunk_from_module_prepared(
     let mut first_chunk_id = None;
     let mut has_commonjs_chunk = false;
 
+    // Prelude items before the first push: only their declarations can be
+    // bound for the chunk's modules (see `PreludeNames::plan`).
+    let mut prelude_before_push = 0;
     for item in &module.body {
+        if push_items.is_empty() {
+            prelude_before_push = prelude_items.len();
+        }
         let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
             if chunk_prelude::is_prelude_code(item) {
                 prelude_items.push(item);
@@ -524,19 +530,21 @@ pub(super) fn detect_chunk_from_module_prepared(
     // loading protocol and are not collected into a prelude.
     let mut script_modules = HashSet::default();
     if !prelude_items.is_empty() && !has_commonjs_chunk {
-        // A chunk module that uses a declaration of the prelude would lose it:
-        // the prelude file's top-level bindings are module-scoped.
-        if surrounding::factories_use_declarations(
-            prelude_items.iter().copied(),
-            push_items.iter().copied(),
-            &factory_spans,
-        ) {
+        // The prelude file's top-level bindings are module-scoped: a chunk
+        // module that reads a declaration of the prelude gets a binding to its
+        // export, and any other use keeps the input whole.
+        let (before, after) = prelude_items.split_at(prelude_before_push);
+        let names =
+            surrounding::PreludeNames::plan(before, after, &push_items, &factory_spans, false)?;
+        // An opaque module keeps its raw body and gets no binding.
+        if names.is_some() && !all_failures.is_empty() {
             return None;
         }
         let filename = chunk_prelude::prelude_filename(first_chunk_id);
         chunk_prelude::attach(
             &prelude_items,
             &filename,
+            names.as_ref(),
             &mut all_modules,
             &mut all_prepared,
             &cm,
@@ -2019,6 +2027,27 @@ fn extract_webpack5_modules_with_plan(
         &ENTRY_NORMALIZED_NAMES,
         &factory_body_spans(&module_entries),
     )?;
+    if surrounding.has_prelude() {
+        // An opaque module keeps its raw body and gets no binding.
+        if !failures.is_empty() {
+            return None;
+        }
+        for (entry, prepared) in module_entries.iter().zip(prepared.iter_mut()) {
+            let Some(PreparedModuleAst {
+                globals,
+                module,
+                unresolved_mark,
+                ..
+            }) = prepared
+            else {
+                continue;
+            };
+            GLOBALS.set(globals, || {
+                let require_ctxt = SyntaxContext::empty().apply_mark(*unresolved_mark);
+                surrounding.bind_factory(module, require_ctxt, &entry.filename)
+            })?;
+        }
+    }
     let entry = EntryEmitter {
         cm: &cm,
         id_to_filename,
@@ -2117,6 +2146,11 @@ fn extract_webpack5_modules_with_plan(
     if !surrounding.is_empty() && !has_synthetic_entry {
         return None;
     }
+    let mut script_modules = HashSet::default();
+    if surrounding.push_prelude(&mut modules, &cm)? {
+        prepared.push(None);
+        script_modules.insert(surrounding::PRELUDE_FILENAME.to_string());
+    }
 
     if modules.is_empty() {
         return None;
@@ -2134,7 +2168,8 @@ fn extract_webpack5_modules_with_plan(
         )
         .with_module_failures(failures)
         .with_webpack_numeric_module_ids(numeric_module_ids)
-        .with_webpack_absent_string_ids(absent_string_ids),
+        .with_webpack_absent_string_ids(absent_string_ids)
+        .with_script_modules(script_modules),
     )
 }
 
@@ -2444,7 +2479,13 @@ impl EntryEmitter<'_> {
         );
         self.surrounding
             .rename_conflicts(&mut synthetic_module, top_level_mark);
-        self.surrounding.place_around(&mut synthetic_module);
+        if self
+            .surrounding
+            .place_around(&mut synthetic_module, "entry.js")
+            .is_none()
+        {
+            return (ranges, None);
+        }
         if apply_fixer(&mut synthetic_module).is_err() {
             return (ranges, None);
         }

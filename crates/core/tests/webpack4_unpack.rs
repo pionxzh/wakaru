@@ -470,20 +470,216 @@ fn names(pairs: &[(String, String)]) -> Vec<&str> {
     pairs.iter().map(|(name, _)| name.as_str()).collect()
 }
 
+/// A banner declaring a version and a configuration object before the
+/// bootstrap, and a bootstrap whose factories read both as globals.
+/// shape: wild-observed (a raw banner declaring a top-level `var` ahead of a
+/// webpack 4 bootstrap).
+fn bootstrap_reading_the_banner() -> String {
+    WEBPACK4_BOOTSTRAP
+        .replace(
+            "globalThis.lib=r(1)",
+            "globalThis.lib=r(1).twice(appVersion)+config.label",
+        )
+        .replace("return 2*e", "return 2*e*appVersion")
+}
+
+const VERSION_BANNER: &str = r#"var appVersion=4;var config={label:"v"};"#;
+
+fn assert_prelude_exports(pairs: &[(String, String)], exported: &str) {
+    let prelude = named(pairs, "prelude.js");
+    assert!(
+        prelude.contains(&format!("export {{ {exported} }};")),
+        "the prelude must export `{exported}`, got:\n{prelude}"
+    );
+}
+
 #[test]
-fn factory_reading_a_declaration_around_the_bootstrap_stays_unsplit() {
-    // The factory calls `decode` as a global. Split, `decode` would be
-    // module-scoped in entry.js and undefined in the factory's file.
-    let bootstrap = WEBPACK4_BOOTSTRAP.replace("globalThis.lib=", "globalThis[decode(0)]=");
-    let source = format!("{DECODER}\n!{bootstrap};");
+fn factory_reading_a_declaration_before_the_bootstrap_imports_it_from_the_prelude() {
+    // Split, the declarations are module-scoped: the code before the
+    // bootstrap goes to prelude.js, which entry.js loads first, and each
+    // module that reads one of its names imports it.
+    let source = format!(
+        "{VERSION_BANNER}\n!{};\nglobalThis.after = appVersion;",
+        bootstrap_reading_the_banner()
+    );
 
     let pairs = expect_pairs(&source);
+    assert_eq!(
+        names(&pairs),
+        ["entry-0.js", "module-1.js", "entry.js", "prelude.js"]
+    );
+    assert_prelude_exports(&pairs, "appVersion, config");
+    assert!(
+        named(&pairs, "prelude.js").contains("const appVersion = 4;"),
+        "the code before the bootstrap moves to the prelude, got:\n{}",
+        named(&pairs, "prelude.js")
+    );
+    let module = named(&pairs, "module-1.js");
+    assert!(
+        module.starts_with(r#"import { appVersion } from "./prelude.js";"#),
+        "a module reading the version must import it, got:\n{module}"
+    );
+    let entry_module = named(&pairs, "entry-0.js");
+    assert!(
+        entry_module.contains(r#"{ appVersion, config }"#)
+            && entry_module.contains(r#""./prelude.js""#),
+        "the entry module must bind both names, got:\n{entry_module}"
+    );
+    let entry = named(&pairs, "entry.js");
+    let prelude = entry
+        .find(r#"import { appVersion } from "./prelude.js";"#)
+        .unwrap_or_else(|| {
+            panic!(
+                "entry.js must load the prelude and bind what the code after reads, got:\n{entry}"
+            )
+        });
+    let start = entry
+        .find(r#"import "./entry-0.js";"#)
+        .unwrap_or_else(|| panic!("entry.js must load the entry module, got:\n{entry}"));
+    assert!(prelude < start, "the prelude must run first, got:\n{entry}");
+    assert!(
+        !entry.contains("const appVersion"),
+        "the declaration must not stay in entry.js, got:\n{entry}"
+    );
+    assert!(
+        validate_output_modules(&pairs).is_empty(),
+        "output must validate: {:?}",
+        validate_output_modules(&pairs)
+    );
+}
+
+#[test]
+fn raw_unpack_binds_prelude_names_with_require() {
+    let source = format!("{VERSION_BANNER}\n!{};", bootstrap_reading_the_banner());
+
+    let output = unpack_raw(
+        &source,
+        &DecompileOptions {
+            filename: "bundle.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("raw unpack should succeed");
+    let pairs = output.modules;
+    assert!(
+        named(&pairs, "module-1.js").contains(r#"var { appVersion } = require("./prelude.js");"#),
+        "got:\n{}",
+        named(&pairs, "module-1.js")
+    );
+    assert!(named(&pairs, "entry.js").starts_with(r#"require("./prelude.js");"#));
+    assert_prelude_exports(&pairs, "appVersion, config");
+}
+
+#[test]
+fn factory_keeps_a_nested_binding_named_like_a_prelude_name() {
+    // The factory reads the global `appVersion` and also declares its own
+    // `appVersion` parameter in a nested function: only the free read is
+    // bound to the prelude, and the inner binding keeps the inner value.
+    let bootstrap = WEBPACK4_BOOTSTRAP.replace(
+        "n.twice=function(e){return 2*e}",
+        "n.twice=function(appVersion){return 2*appVersion},n.base=appVersion",
+    );
+    let source = format!("{VERSION_BANNER}\n!{bootstrap};");
+
+    let pairs = expect_pairs(&source);
+    let module = named(&pairs, "module-1.js");
+    assert!(
+        module.starts_with(r#"import { appVersion } from "./prelude.js";"#)
+            && module.contains("export { appVersion as base };"),
+        "the free read must be bound, got:\n{module}"
+    );
+    assert!(
+        module.contains("return 2 * appVersion"),
+        "the parameter keeps its own binding, got:\n{module}"
+    );
+    assert_prelude_exports(&pairs, "appVersion");
+}
+
+#[test]
+fn factory_declaring_a_prelude_name_at_its_top_level_is_not_bound() {
+    // The factory's own top-level `config` is another variable: the factory
+    // reads no prelude name and gets no binding.
+    let bootstrap = WEBPACK4_BOOTSTRAP.replace(
+        "n.twice=function(e){return 2*e}",
+        r#"var config={label:"own"};n.twice=function(e){return 2*e*appVersion},n.label=config.label"#,
+    );
+    let source = format!("{VERSION_BANNER}\n!{bootstrap};");
+
+    let pairs = expect_pairs(&source);
+    let module = named(&pairs, "module-1.js");
+    assert!(
+        module.starts_with(r#"import { appVersion } from "./prelude.js";"#),
+        "only the free read is bound, got:\n{module}"
+    );
+    assert!(
+        module.contains(r#"label: "own""#),
+        "the factory keeps its own declaration, got:\n{module}"
+    );
+    assert_prelude_exports(&pairs, "appVersion");
+}
+
+/// The input stays one file.
+fn assert_unsplit(source: &str) {
+    let pairs = expect_pairs(source);
     assert_eq!(
         pairs.len(),
         1,
         "the input must stay one file, got {:?}",
         names(&pairs)
     );
+}
+
+#[test]
+fn factory_reading_a_declaration_after_the_bootstrap_stays_unsplit() {
+    // javascript-obfuscator declares its string-array functions after the
+    // code it rewrites (hoisted function declarations), and the array
+    // function reassigns itself. Split, the code after the bundle runs
+    // after every module, so the input stays one file.
+    // shape: producer javascript-obfuscator@5.9.0 --string-array true
+    // --string-array-threshold 1 --compact true over the bootstrap above,
+    // reduced (no rotation loop, readable names).
+    let bootstrap = WEBPACK4_BOOTSTRAP.replace("globalThis.lib=", "globalThis[decode(0)]=");
+    let source = format!(
+        r#"!{bootstrap};function decode(i){{return strings()[i]}}function strings(){{var list=["lib"];strings=function(){{return list}};return strings()}}"#
+    );
+
+    assert_unsplit(&source);
+}
+
+#[test]
+fn factory_writing_a_declaration_before_the_bootstrap_stays_unsplit() {
+    // An import binding cannot be assigned. shape: hypothetical.
+    let bootstrap =
+        bootstrap_reading_the_banner().replace("return 2*e*", "return appVersion++,2*e*");
+    assert_unsplit(&format!("{VERSION_BANNER}\n!{bootstrap};"));
+}
+
+#[test]
+fn code_after_the_bootstrap_writing_a_prelude_name_stays_unsplit() {
+    // shape: hypothetical.
+    assert_unsplit(&format!(
+        "{VERSION_BANNER}\n!{};\nappVersion = 5;",
+        bootstrap_reading_the_banner()
+    ));
+}
+
+#[test]
+fn prelude_name_reassigned_inside_a_function_stays_unsplit() {
+    // The code before the bootstrap can reassign `appVersion` after a module
+    // that stays CommonJS copied it. shape: hypothetical.
+    assert_unsplit(&format!(
+        "{VERSION_BANNER}function bump(){{appVersion=5}}\n!{};",
+        bootstrap_reading_the_banner()
+    ));
+}
+
+#[test]
+fn code_after_the_bootstrap_redeclaring_a_prelude_name_stays_unsplit() {
+    // shape: hypothetical.
+    assert_unsplit(&format!(
+        "{VERSION_BANNER}\n!{};\nvar config = {{}};",
+        bootstrap_reading_the_banner()
+    ));
 }
 
 #[test]
@@ -672,12 +868,17 @@ fn obfuscated_webpack1_dispatch_still_marks_the_entry_module() {
 
 #[test]
 fn obfuscated_webpack1_bundle_whose_factories_call_the_decoder_stays_unsplit() {
-    // With its startup recognized, the bundle would split; the factories'
-    // decoder calls keep it one file.
+    // With its startup recognized, the bundle would split; the factories
+    // call the decoder declared after the bundle, which keeps it one file.
+    // shape: producer javascript-obfuscator@5.9.0 --string-array true
+    // --string-array-threshold 1 --compact true, reduced (see
+    // `factory_reading_a_declaration_after_the_bootstrap_stays_unsplit`).
     let bootstrap = WEBPACK1_BOOTSTRAP
         .replace("r[o].call(", "r[o][decode(1)](")
         .replace("globalThis.lib=", "globalThis[decode(0)]=");
-    let source = format!("{DECODER}\n!{bootstrap};");
+    let source = format!(
+        r#"!{bootstrap};function decode(i){{return strings()[i]}}function strings(){{var list=["lib","call"];strings=function(){{return list}};return strings()}}"#
+    );
 
     let pairs = expect_pairs(&source);
     assert_eq!(

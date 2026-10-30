@@ -1420,36 +1420,117 @@ fn code_around_a_bootstrap_declaring_require_stays_unsplit() {
     );
 }
 
-#[test]
-fn module_reading_a_declaration_around_the_bootstrap_stays_unsplit() {
-    // The module calls `decode`, which the code before the bootstrap
-    // declares at the top level: a global in the input, but module-scoped in
-    // entry.js after a split. shape: hypothetical (a string-array decoder
-    // as javascript-obfuscator declares one before the code it rewrites).
-    let source = r#"
-var strings = ["value"];
-var decode = function (i) { return strings[i]; };
-(() => {
-    var modules = {
-        1: (module, exports) => {
-            exports[decode(0)] = 42;
-        }
-    };
-    var cache = {};
-    !function require(id) {
+/// A one-module bootstrap whose module calls `decode`, between `before` and
+/// `after`; the startup assigns the module's exports to `globalThis.lib`.
+fn bundle_calling_decode(before: &str, after: &str) -> String {
+    format!(
+        r#"{before}
+(() => {{
+    var modules = {{
+        1: (module, exports) => {{
+            exports.value = decode(0);
+        }}
+    }};
+    var cache = {{}};
+    globalThis.lib = function require(id) {{
         var cached = cache[id];
         if (cached !== undefined) return cached.exports;
-        var module = cache[id] = { exports: {} };
+        var module = cache[id] = {{ exports: {{}} }};
         modules[id].call(module.exports, module, module.exports, require);
         return module.exports;
-    }(1);
-})();
-"#;
+    }}(1);
+}})();
+{after}
+"#
+    )
+}
 
-    let pairs = expect_unpack(source, "bundle.js");
+#[test]
+fn module_reading_a_declaration_before_the_bootstrap_imports_it_from_the_prelude() {
+    // The module calls `decode`, which the code before the bootstrap
+    // declares at the top level: a global in the input, module-scoped once
+    // split. That code goes to prelude.js, which exports `decode`; the
+    // module imports it, and entry.js loads the prelude first and binds the
+    // name for the code after the bootstrap. shape: wild-observed (a banner
+    // declaring a top-level `var` ahead of a webpack 5 bootstrap).
+    let source = bundle_calling_decode(
+        r#"var strings = ["value", "after"];
+var decode = function (i) { return strings[i]; };"#,
+        "globalThis.after = decode(1);",
+    );
+
+    let pairs = expect_unpack(&source, "bundle.js");
+    let module = pairs
+        .iter()
+        .find(|(name, _)| name == "module-1.js")
+        .map(|(_, code)| code.as_str())
+        .expect("module-1.js must be extracted");
+    assert!(
+        module.starts_with(r#"import { decode } from "./prelude.js";"#),
+        "the module must import the decoder, got:\n{module}"
+    );
+    let prelude = pairs
+        .iter()
+        .find(|(name, _)| name == "prelude.js")
+        .map(|(_, code)| code.as_str())
+        .expect("prelude.js must hold the code before the bootstrap");
+    assert!(
+        prelude.contains("const strings = [") && prelude.contains("export const decode ="),
+        "the prelude must keep the code and export the decoder, got:\n{prelude}"
+    );
+    let entry = entry_of(&pairs);
+    let load = entry
+        .find(r#"import { decode } from "./prelude.js";"#)
+        .unwrap_or_else(|| panic!("entry.js must load the prelude, got:\n{entry}"));
+    let start = entry
+        .find(r#""./module-1.js""#)
+        .unwrap_or_else(|| panic!("entry.js must load the module, got:\n{entry}"));
+    let after = entry
+        .find("globalThis.after = decode(1)")
+        .unwrap_or_else(|| panic!("the code after must stay in entry.js, got:\n{entry}"));
+    assert!(
+        load < start && start < after,
+        "the prelude must run first, got:\n{entry}"
+    );
+    assert!(
+        !entry.contains("const strings"),
+        "the code before the bootstrap must leave entry.js, got:\n{entry}"
+    );
+    assert!(
+        validate_output_modules(&pairs).is_empty(),
+        "output must validate: {:?}",
+        validate_output_modules(&pairs)
+    );
+}
+
+#[test]
+fn module_reading_a_declaration_after_the_bootstrap_stays_unsplit() {
+    // A script concatenated after the bundle declares the name the module
+    // reads. In the input the module read whatever the global held when it
+    // ran, before that script; the code after the bundle stays in entry.js,
+    // after every module, so the input stays one file.
+    // shape: wild-observed (a script declaring a top-level `var` concatenated
+    // after a webpack 5 bootstrap whose module reads that name).
+    let source = bundle_calling_decode("", "var decode = function (i) { return i; };");
+
+    let pairs = expect_unpack(&source, "bundle.js");
     assert!(
         !pairs.iter().any(|(name, _)| name == "module-1.js"),
-        "a module reading a declaration around the bootstrap must keep the bundle whole, got {:?}",
+        "a module reading a declaration after the bootstrap must keep the bundle whole, got {:?}",
+        pairs.iter().map(|(name, _)| name).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn startup_reading_a_prelude_name_it_writes_stays_unsplit() {
+    // The startup would assign an import binding. shape: hypothetical.
+    let source =
+        bundle_calling_decode("var decode = function (i) { return i; };", "decode = null;");
+
+    let pairs = expect_unpack(&source, "bundle.js");
+    assert!(
+        !pairs.iter().any(|(name, _)| name == "module-1.js"),
+        "got {:?}",
         pairs.iter().map(|(name, _)| name).collect::<Vec<_>>()
     );
 }
@@ -1494,6 +1575,10 @@ var decode = function (i) { return "banner" + i; };
             .iter()
             .map(|(name, _)| name)
             .collect::<Vec<_>>()
+    );
+    assert!(
+        !output.modules.iter().any(|(name, _)| name == "prelude.js"),
+        "the bootstrap's own `decode` must not be bound to the declaration before it"
     );
 }
 

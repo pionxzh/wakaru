@@ -616,7 +616,7 @@ fn prepare_webpack4_modules(
                     }
                 },
             );
-            let (mut module, _, absent) = match normalized {
+            let (mut module, unresolved_mark, absent) = match normalized {
                 Ok(normalized) => normalized,
                 Err(
                     error @ (FactoryNormalizationError::RuntimeParameterReuse(_)
@@ -635,6 +635,11 @@ fn prepare_webpack4_modules(
             if !absent.is_empty() {
                 absent_string_ids.insert(descriptor.filename.clone(), absent);
             }
+            surrounding.bind_factory(
+                &mut module,
+                SyntaxContext::empty().apply_mark(unresolved_mark),
+                &descriptor.filename,
+            )?;
             apply_fixer(&mut module).ok()?;
             emitted.push(Some(
                 emit_module_with_positions(
@@ -652,6 +657,10 @@ fn prepare_webpack4_modules(
             continue;
         }
         if !emitted.iter().any(Option::is_some) {
+            return None;
+        }
+        // An opaque module keeps its raw body and gets no prelude binding.
+        if surrounding.has_prelude() && !opaque_filenames.is_empty() {
             return None;
         }
 
@@ -703,8 +712,13 @@ fn prepare_webpack4_modules(
                 .collect::<Option<Vec<_>>>()?;
             modules.push(surrounding.entry_module(SURROUNDING_ENTRY, &entry_filenames, &cm)?);
         }
+        let mut script_modules = HashSet::default();
+        if surrounding.push_prelude(&mut modules, &cm)? {
+            script_modules.insert(super::surrounding::PRELUDE_FILENAME.to_string());
+        }
         return Some(
             DetectedBundle::from_result(UnpackResult::new(modules, BundleFormat::Webpack4))
+                .with_script_modules(script_modules)
                 .with_module_failures(failures)
                 .with_webpack_absent_string_ids(absent_string_ids)
                 .with_webpack_numeric_module_ids(

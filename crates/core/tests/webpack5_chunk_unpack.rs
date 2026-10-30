@@ -878,14 +878,153 @@ fn each_chunk_input_gets_its_own_prelude() {
 
 /// The release and debug-id snippet `@sentry/webpack-plugin` injects before
 /// every chunk, with synthetic release and debug ids.
+/// esbuild's `--keep-names` helper, declared before the push and called in
+/// the factories, around module 240's `require.d` getter too. shape:
+/// producer esbuild@0.25.0 --minify --keep-names over a producer
+/// webpack@5.111.1-style chunk.
+const KEEP_NAMES_CHUNK: &str = r#""use strict";var u=Object.defineProperty;var l=(a,e)=>u(a,"name",{value:e,configurable:!0});(self.webpackChunk_app=self.webpackChunk_app||[]).push([[204],{240(a,e,n){n.d(e,{label:l(()=>p,"label")});const p=l(function(t){return"label:"+t},"label")},311(a,e,n){a.exports={make:l(function(){return n(240).label(1)},"make")}},312(a,e){e.flag=1}}]);"#;
+
 #[test]
-fn chunk_module_reading_a_prelude_declaration_stays_unsplit() {
-    // Module 240 calls `decode`, a global the code before the push declares;
-    // in a prelude file the declaration would be module-scoped.
-    // shape: hypothetical (a string-array decoder as javascript-obfuscator
-    // declares one before the code it rewrites).
-    let source = r#"var strings=["label:"];var decode=function(i){return strings[i]};
-(self.webpackChunk_app=self.webpackChunk_app||[]).push([[204],{240(e,n,d){function a(e){return decode(0)+e}d.r(n),d.d(n,{label:()=>a})},311(e,n){n[globalThis.key]=1,e.exports.other=n}}]);"#;
+fn chunk_module_reading_a_prelude_declaration_imports_it() {
+    // Split, the helper is module-scoped in the prelude: the prelude
+    // exports it, and the modules that call it bind it. A module that reads
+    // no prelude name still loads the prelude first.
+    let pairs = expect_unpack(KEEP_NAMES_CHUNK, "204.js");
+    let prelude = file(&pairs, "prelude-204.js");
+    assert!(
+        prelude.contains("export const l ="),
+        "the prelude must export the helper, got:\n{prelude}"
+    );
+    assert!(
+        !prelude.contains("webpackChunk_app") && !prelude.contains("use strict"),
+        "the push and the directive are not prelude code, got:\n{prelude}"
+    );
+    // The helper's call around the getter is the getter itself, so the
+    // export is recovered.
+    let reader = file(&pairs, "module-240.js");
+    assert!(
+        reader.starts_with(r#"import { l } from "./prelude-204.js";"#)
+            && reader.contains("export const label = l(function"),
+        "module 240 must import the helper and export `label`, got:\n{reader}"
+    );
+    // Module 311 stays CommonJS (its `require` is inside a function).
+    let commonjs = file(&pairs, "module-311.js");
+    assert!(
+        commonjs.starts_with(r#"const { l } = require("./prelude-204.js");"#),
+        "module 311 must bind the helper, got:\n{commonjs}"
+    );
+    let other = file(&pairs, "module-312.js");
+    assert!(
+        other.starts_with(r#"import "./prelude-204.js";"#),
+        "a module reading no prelude name must still load it, got:\n{other}"
+    );
+    assert!(
+        validate_output_modules(&pairs).is_empty(),
+        "output must validate: {:?}",
+        validate_output_modules(&pairs)
+    );
+}
+
+#[test]
+fn raw_chunk_binds_prelude_names_with_require() {
+    let output = unpack_raw(
+        KEEP_NAMES_CHUNK,
+        &DecompileOptions {
+            filename: "204.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("raw unpack should succeed");
+    let pairs = output.modules;
+    let reader = file(&pairs, "module-240.js");
+    assert!(
+        reader.contains(r#"var { l } = require("./prelude-204.js");"#),
+        "got:\n{reader}"
+    );
+    assert!(
+        reader.contains("label: ()=>p") && !reader.contains(r#"l(()=>p, "label")"#),
+        "the getter must lose its helper call, got:\n{reader}"
+    );
+    assert!(file(&pairs, "module-312.js").contains(r#"require("./prelude-204.js");"#));
+    assert!(file(&pairs, "prelude-204.js").contains("export { l };"));
+}
+
+/// Raw module 240 of `source`, which must split.
+fn raw_module_240(source: &str) -> String {
+    let output = unpack_raw(
+        source,
+        &DecompileOptions {
+            filename: "204.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("raw unpack should succeed");
+    file(&output.modules, "module-240.js").to_string()
+}
+
+#[test]
+fn getter_wrapped_by_a_reassigned_helper_keeps_the_call() {
+    // The code before the push reassigns `l` after declaring it, so the
+    // declaration does not prove what `l` is when the factories run; its
+    // call around the getter stays. shape: hypothetical.
+    let source =
+        KEEP_NAMES_CHUNK.replace(r#"configurable:!0});"#, r#"configurable:!0});l=(a,e)=>a;"#);
+
+    let module = raw_module_240(&source);
+    assert!(
+        module.contains(r#"var { l } = require("./prelude-204.js");"#)
+            && module.contains(r#"l(()=>p, "label")"#),
+        "got:\n{module}"
+    );
+}
+
+#[test]
+fn helper_reassigned_after_the_push_stays_unsplit() {
+    // shape: hypothetical.
+    let source = format!("{KEEP_NAMES_CHUNK}l=function(f){{return f}};");
+
+    let pairs = expect_unpack(&source, "204.js");
+    assert_eq!(
+        pairs.len(),
+        1,
+        "the input must stay one file, got {:?}",
+        pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn getter_wrapped_by_another_helper_keeps_the_call() {
+    // `l` takes the name from its argument but is not the keep-names
+    // helper, so its call around the getter stays. shape: hypothetical.
+    let source = KEEP_NAMES_CHUNK.replace(
+        r#"var l=(a,e)=>u(a,"name",{value:e,configurable:!0});"#,
+        r#"var l=(a,e)=>u(a,"name",{value:e+"!",configurable:!0});"#,
+    );
+
+    let module = raw_module_240(&source);
+    assert!(module.contains(r#"l(()=>p, "label")"#), "got:\n{module}");
+}
+
+#[test]
+fn chunk_module_reading_a_declaration_after_the_push_stays_unsplit() {
+    // Only a declaration before the push is bound. shape: hypothetical.
+    let source = r#"(self.webpackChunk_app=self.webpackChunk_app||[]).push([[204],{240(e,n,d){function a(e){return decode(0)+e}d.r(n),d.d(n,{label:()=>a})}}]);
+var decode=function(i){return"label:"};"#;
+
+    let pairs = expect_unpack(source, "204.js");
+    assert_eq!(
+        pairs.len(),
+        1,
+        "the input must stay one file, got {:?}",
+        pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn chunk_module_writing_a_prelude_declaration_stays_unsplit() {
+    // An import binding cannot be assigned. shape: hypothetical.
+    let source = r#"var count=0;
+(self.webpackChunk_app=self.webpackChunk_app||[]).push([[204],{240(e,n){n.next=function(){return++count}}}]);"#;
 
     let pairs = expect_unpack(source, "204.js");
     assert_eq!(

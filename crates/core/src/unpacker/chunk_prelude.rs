@@ -2,11 +2,12 @@
 //! injected snippet such as a release or debug-id record, or a concatenated
 //! script. It runs when the chunk script loads and belongs to no module, so
 //! it goes to a prelude file of its own, and every module of the chunk gets a
-//! side-effect `require` of that file. The code is kept and still runs once,
+//! side-effect `require` of that file, or one that binds the prelude's
+//! declarations the module reads. The code is kept and still runs once,
 //! before any of the chunk's modules evaluates; a prelude file nothing
 //! required would never run.
 
-use swc_core::common::{sync::Lrc, SourceMap, Spanned, SyntaxContext, DUMMY_SP, GLOBALS};
+use swc_core::common::{sync::Lrc, SourceMap, SyntaxContext, DUMMY_SP, GLOBALS};
 use swc_core::ecma::ast::{
     ArrowExpr, CallExpr, Callee, ClassDecl, Expr, ExprStmt, FnDecl, Function, GetterProp, Ident,
     Lit, Module, ModuleItem, SetterProp, Stmt, VarDeclarator,
@@ -15,9 +16,8 @@ use swc_core::ecma::utils::find_pat_ids;
 use swc_core::ecma::visit::{Visit, VisitWith};
 
 use crate::module_path::relative_import_specifier;
-use crate::unpacker::{
-    emit_module_with_source_map, spans_byte_ranges, PreparedModuleAst, UnpackedModule,
-};
+use crate::unpacker::surrounding::{prelude_module, PreludeNames};
+use crate::unpacker::{PreparedModuleAst, UnpackedModule};
 
 /// Whether a top-level item beside the chunk containers is worth a prelude.
 /// Directives and empty statements alone are not, as for the code around a
@@ -42,13 +42,18 @@ pub(super) fn prelude_filename(chunk_id: Option<usize>) -> String {
 }
 
 /// Write `items` (in source order) to the prelude file `filename` and give
-/// each prepared chunk module a side-effect `require` of it. Returns `None`
-/// when no module can carry the `require` (every factory is opaque or empty,
-/// or declares its own top-level `require`) or the name is taken: the code
-/// would then run from no output file, so the caller keeps the input whole.
+/// each prepared chunk module a side-effect `require` of it. With `names`,
+/// a module that reads a name the prelude declares gets
+/// `var { name } = require(...)` instead, and the prelude exports the name
+/// (see [`PreludeNames`]). Returns `None` when no module can carry the
+/// `require` (every factory is opaque or empty, or declares its own
+/// top-level `require`), a read cannot be bound, or the name is taken: the
+/// code would then run from no output file, or a module would read an
+/// unbound name, so the caller keeps the input whole.
 pub(super) fn attach(
     items: &[&ModuleItem],
     filename: &str,
+    names: Option<&PreludeNames>,
     modules: &mut Vec<UnpackedModule>,
     prepared: &mut Vec<Option<PreparedModuleAst>>,
     cm: &Lrc<SourceMap>,
@@ -67,37 +72,36 @@ pub(super) fn attach(
         // An empty factory's body is what tells the driver to restore
         // webpack's implicit `module.exports = {}`; it runs nothing that the
         // prelude must precede.
-        if prepared.module.body.is_empty() || declares_top_level(&prepared.module, "require") {
+        if prepared.module.body.is_empty() {
             continue;
         }
-        insert_require(
-            prepared,
-            &relative_import_specifier(&module.filename, filename),
-        );
+        let specifier = relative_import_specifier(&module.filename, filename);
+        if let Some(names) = names {
+            let PreparedModuleAst {
+                globals,
+                module,
+                unresolved_mark,
+                ..
+            } = prepared;
+            required |= GLOBALS.set(globals, || {
+                let require_ctxt = SyntaxContext::empty().apply_mark(*unresolved_mark);
+                names.bind_factory_reads(module, require_ctxt, &specifier, true)
+            })?;
+            continue;
+        }
+        if declares_top_level(&prepared.module, "require") {
+            continue;
+        }
+        insert_require(prepared, &specifier);
         required = true;
     }
     if !required {
         return None;
     }
 
-    let prelude = Module {
-        span: DUMMY_SP,
-        body: items.iter().map(|item| (*item).clone()).collect(),
-        shebang: None,
-    };
-    let (code, generated_source_map) = emit_module_with_source_map(&prelude, cm.clone()).ok()?;
-    modules.push(UnpackedModule {
-        id: filename.trim_end_matches(".js").to_string(),
-        is_entry: false,
-        code,
-        filename: filename.to_string(),
-        source_ranges: spans_byte_ranges(cm, items.iter().map(|item| item.span())),
-        inspection_context_ranges: Vec::new(),
-        source_input: String::new(),
-        generated_source_map,
-        verbatim_source_offset: None,
-        mapped_in_every_mode: false,
-    });
+    let exported = names.map(PreludeNames::exported).unwrap_or_default();
+    let prelude = prelude_module(items, exported, filename, cm)?;
+    modules.push(prelude);
     prepared.push(None);
     Some(())
 }
@@ -136,7 +140,7 @@ fn insert_require(prepared: &mut PreparedModuleAst, specifier: &str) {
 /// top-level declaration, or by a `var` or function declaration in a nested
 /// block that hoists to it. A block-scoped declaration also counts, which
 /// errs toward not inserting a call it could capture.
-fn declares_top_level(module: &Module, name: &str) -> bool {
+pub(super) fn declares_top_level(module: &Module, name: &str) -> bool {
     let mut finder = TopLevelDeclarationFinder { name, found: false };
     module.visit_with(&mut finder);
     finder.found

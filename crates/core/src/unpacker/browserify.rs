@@ -457,7 +457,11 @@ fn extract_commonjs_table(
     let mut modules = Vec::with_capacity(descriptors.len() + 1);
     let mut prepared = Vec::with_capacity(descriptors.len() + 1);
     for descriptor in &descriptors {
-        let ast = prepare_factory_module(descriptor, &id_to_filename, dialect)?;
+        let mut ast = prepare_factory_module(descriptor, &id_to_filename, dialect)?;
+        GLOBALS.set(&ast.globals, || {
+            let require_ctxt = SyntaxContext::empty().apply_mark(ast.unresolved_mark);
+            surrounding.bind_factory(&mut ast.module, require_ctxt, &descriptor.filename)
+        })?;
         modules.push(UnpackedModule {
             id: descriptor.id.as_string(),
             // With code around the call, entry.js runs the entries.
@@ -481,6 +485,9 @@ fn extract_commonjs_table(
             .map(|id| id_to_filename.get(id).map(String::as_str))
             .collect::<Option<Vec<_>>>()?;
         modules.push(surrounding.entry_module(SURROUNDING_ENTRY, &entry_filenames, &cm)?);
+        prepared.push(None);
+    }
+    if surrounding.push_prelude(&mut modules, &cm)? {
         prepared.push(None);
     }
 

@@ -249,29 +249,49 @@ fn browserify_directive_around_the_prelude_call_writes_no_extra_entry() {
 }
 
 #[test]
-fn browserify_module_reading_a_declaration_around_the_prelude_call_stays_unsplit() {
+fn browserify_module_reading_a_declaration_before_the_prelude_call_imports_it() {
     // Module 1 calls `decode`, a global the code before the prelude call
-    // declares; split, it would be module-scoped in entry.js. A module's own
-    // `decode` parameter in module 2 is not that global. shape: hypothetical
-    // (a string-array decoder as javascript-obfuscator declares one).
+    // declares; split, that code goes to prelude.js, which exports it, and
+    // module 1 imports it. A module's own `decode` parameter in module 2 is
+    // not that global and is not bound. shape: hypothetical (a script
+    // declaring a helper concatenated with a Browserify bundle).
     let source = r#"
 var strings = ["value"];
 function decode(i) { return strings[i]; }
 (function() { return function() {}; })()({
-  1: [function(require, module) { module.exports = decode(0); }, {}],
-  2: [function(require, module, exports, decode) { module.exports = decode; }, {}]
+  1: [function(require, module) { module.exports = decode(0) + require("./other"); }, { "./other": 2 }],
+  2: [function(require, module, exports, decode) { module.exports = typeof decode; }, {}]
 }, {}, [1]);
 "#;
 
     let output = unpack(source, DecompileOptions::default()).expect("unpack should succeed");
-    assert!(
-        !output.detected_formats.contains(&BundleFormat::Browserify),
-        "a module reading a declaration around the prelude call must keep the input whole, got {:?}",
+    assert_eq!(output.detected_formats, [BundleFormat::Browserify]);
+    let file = |name: &str| {
         output
             .modules
             .iter()
-            .map(|(name, _)| name)
-            .collect::<Vec<_>>()
+            .find(|(file, _)| file == name)
+            .map(|(_, code)| code.as_str())
+            .unwrap_or_else(|| panic!("{name} must exist, got {:?}", output.modules))
+    };
+    // Module 1 stays CommonJS (its `require` is inside an expression), so
+    // it binds the decoder with a destructured `require`.
+    assert!(
+        file("entry-1.js").starts_with(r#"const { decode } = require("./prelude.js");"#),
+        "module 1 must bind the decoder, got:\n{}",
+        file("entry-1.js")
+    );
+    assert!(
+        !file("other.js").contains("prelude"),
+        "module 2's parameter is another variable, got:\n{}",
+        file("other.js")
+    );
+    assert!(file("prelude.js").contains("export { decode };"));
+    assert!(file("entry.js").starts_with(r#"import "./prelude.js";"#));
+    assert!(
+        validate_output_modules(&output.modules).is_empty(),
+        "output must validate: {:?}",
+        validate_output_modules(&output.modules)
     );
 }
 

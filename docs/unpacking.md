@@ -288,16 +288,61 @@ into one comma sequence; detection splits it (see the end of [Detection
 order](#detection-order-and-supported-shapes)) and the banner lands in
 `entry.js` the same way.
 
-The input also stays one file when a module factory uses a name that the
-surrounding code declares at its top level (`var`, `let`, `const`,
-`function`, `class`, or an import). The input is a classic script, so that
-declaration is a global the factory reads or writes. In `entry.js` it would be
-module-scoped, and the factory's own file would throw a `ReferenceError`. A
-string-array decoder that an obfuscator declares before the code it rewrites,
-and calls in every factory, has this shape (producer
-`javascript-obfuscator@5.9.0` `--string-array true` over a minified bundle).
-Only a free name of the factory counts: a binding of the factory or of the
-bootstrap with that name is another variable.
+A module factory can read a name that the surrounding code declares at its
+top level (`var`, `let`, `const`, `function`, or `class`): the input is a
+classic script, so that declaration is a global. Split, the declaration is
+module-scoped. When the code before the bootstrap declares the name, that code
+goes to `prelude.js` instead of `entry.js`, and `prelude.js` exports every
+name a module reads. Each module that reads one gets
+`var { name } = require("./prelude.js")` as its first statement, which
+`UnEsm` turns into `import { name } from "./prelude.js"` when the module
+becomes ESM. `entry.js` loads the prelude first, before the startup, and
+binds the names the startup and the code after the bootstrap read. A raw
+banner's `var` (producer `webpack@5.111.1` BannerPlugin `raw: true` +
+Terser) and the helpers esbuild declares when it minifies the bundle
+(producer `esbuild@0.25.0 --minify --keep-names` over webpack output) have
+this shape. Only a free name of the factory counts: a binding of the factory
+or of the bootstrap with that name is another variable. Without such a read,
+the code before the bootstrap stays in `entry.js`.
+
+The code before the bootstrap runs to its end before any factory, so every
+module reads the value it left, unless something writes the binding later. A
+module that stays CommonJS copies the value when it loads the prelude, and an
+ES module reads the live binding; both read the same value only while no one
+writes it. So the input stays one file when:
+
+- a factory reads a name that only the code after the bootstrap declares, or
+  that it redeclares: that code runs after every module (a script
+  concatenated after the bundle, wild-observed; javascript-obfuscator
+  declares its string-array functions after the code it rewrites, producer
+  `javascript-obfuscator@5.9.0 --string-array true
+  --string-array-threshold 1 --compact true`);
+- a factory or the code after the bootstrap writes the name (an assignment,
+  `++`, `delete`, or a destructuring target), or the code before writes it
+  inside a function or class body, which can run after a module copied it;
+- the code after the bootstrap declares or writes any name the code before
+  declares, or the code before reads a name the code after declares: the
+  two end up in different files;
+- the code before has a `with` statement or a direct `eval`, or a module that
+  reads a name has one, or may declare the name or `require` in its own
+  top-level scope;
+- the name is one unpacking gives a meaning of its own (`require`, `module`,
+  `exports`, `global`, `define`) or one a strict-mode binding cannot take
+  (`eval`, `arguments`, `let`, `yield`, `await`, `static`, and the reserved
+  words `implements` to `public`);
+- a factory is opaque (it keeps its raw body and gets no binding).
+
+`prelude.js` is an ES module once it exports, so the code before the
+bootstrap runs in strict mode, as it already did in `entry.js`.
+
+esbuild's `--keep-names` helper wraps the getters webpack's `require.d`
+installs: `require.d(exports, { label: l(() => p, "label") })`. A helper
+declared before the bundle as `var l = (a, e) => u(a, "name", { value: e,
+configurable: !0 })`, where `u` is `Object.defineProperty` or a top-level
+alias of it, and never reassigned, returns its first argument after naming
+it. A getter wrapped by it under a key equal to the name loses the call:
+unwrapped, the arrow takes the key as its name anyway, and `UnEsm` reads only
+an unwrapped getter.
 
 `entry.js` is a module, so its imports are hoisted: the entry module
 evaluates before a banner that writes globals only from inside a function
@@ -315,9 +360,12 @@ splits. The startup only requires entry modules, so `entry.js` holds the code
 before the bootstrap, a `require` of each entry module in startup order, and
 the code after it, as for [Browserify](#browserify-and-cocos-creator). The
 entry modules then take `entry-<id>.js` names (a string-keyed table keeps its
-path names) and only `entry.js` is marked as the entry. The input stays one
-file when the code declares `require` at its top level, declares a name a
-factory uses (as for [webpack 5](#webpack-5-code-around-the-bootstrap)), or
+path names) and only `entry.js` is marked as the entry. A declaration before
+the bootstrap that a factory reads moves that code to `prelude.js`, as for
+[webpack 5](#webpack-5-code-around-the-bootstrap) (producer `webpack@4.47.0`
+BannerPlugin `raw: true` + Terser, with a banner `var`). The input stays one
+file when the code declares `require` at its top level, a factory uses a
+declaration of the code that `prelude.js` cannot bind (as for webpack 5), or
 the bootstrap starts no entry module.
 
 webpack 1 starts its entry module with a plain call of the require function,
@@ -359,8 +407,16 @@ already uses the prelude's name, the input stays one file. Order against the
 push is not kept: code after the push runs before the modules, which matches
 the original unless the push itself runs modules (a third, runtime element).
 A top-level declaration in the prelude becomes module-scoped instead of
-global, so the input stays one file when a chunk module uses it, as for
-[webpack 5](#webpack-5-code-around-the-bootstrap).
+global. A chunk module that reads one declared before the push binds it, and
+the prelude exports it, as for
+[webpack 5](#webpack-5-code-around-the-bootstrap): the module's `require`
+becomes `var { name } = require("./prelude-204.js")`. That section's limits
+apply, with the code after the push in the role of the code after the
+bootstrap, except the ones about the two parts declaring, writing, or reading
+each other's names: here both parts share the prelude file. A prelude that
+exports is an ES module, so its code then runs in strict mode. esbuild's
+minifier writes its helpers this way before every chunk push (producer
+`esbuild@0.25.0 --minify --keep-names` over a webpack chunk).
 
 ## Turbopack
 
@@ -543,10 +599,14 @@ verbatim, in source order, around a `require` of each entry module in the
 prelude's entry order. The entry modules then take `entry-<id>.js` names, and
 only `entry.js` is marked as the entry. Directives and empty statements alone
 change nothing. Surrounding code that declares `require` at its top level
-keeps the input as one file, because it would capture those requires. So does
-a top-level declaration that a factory uses, as for
-[webpack 5](#webpack-5-code-around-the-bootstrap); a dependency map is not
-factory code.
+keeps the input as one file, because it would capture those requires. A
+top-level declaration before the prelude call that a factory reads moves that
+code to `prelude.js`, and a declaration a factory uses otherwise keeps the
+input whole, as for [webpack 5](#webpack-5-code-around-the-bootstrap); a
+dependency map is not factory code. A factory's extra parameter (browser-pack
+passes the outer require and its tables after `exports`) is a binding of the
+factory, not the declaration, and normalization drops it, so only a read at
+the place the input reads the declaration is bound.
 
 ## Plain UMD files
 
@@ -951,7 +1011,10 @@ layout directly is a proposal:
   chunk keeps it in a [prelude](#webpack-5-chunk-prelude). Elsewhere:
   - a CommonJS chunk (`exports.ids = …; exports.modules = {…}`) drops its
     other top-level statements; only a JSONP chunk gets a
-    [prelude](#webpack-5-chunk-prelude) (hypothetical shape);
+    [prelude](#webpack-5-chunk-prelude). esbuild's minifier writes its
+    helpers before such a chunk, and its modules then call an unbound name
+    (producer `webpack@5.111.1` + `esbuild@0.28.0` esbuildMinify keepNames,
+    target node);
   - a SystemJS bundle with `output.banner` or `output.footer` set to code
     (producer `rollup@4.63.6` `format: "system"`, unminified) drops it;
   - a UMD library (producer `webpack@5.111.1` `output.library.type: "umd"`

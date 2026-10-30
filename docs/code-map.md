@@ -110,9 +110,9 @@ crates/
         wrappers.rs                 — UMD/AMD wrapper unwrapping for detection retry
         metro.rs                    — Metro plain-bundle detection and extraction
         scope_hoist.rs              — heuristic scope-hoisted splitting (esbuild, Bun, Rollup, Vite)
-        surrounding.rs              — top-level code around the bundle statement, kept in entry.js (webpack 4/5, Browserify); refuses a split whose factories use its declarations
+        surrounding.rs              — top-level code around the bundle statement, kept in entry.js (webpack 4/5, Browserify), or the code before it in prelude.js when a factory reads its declarations; binds those reads and refuses a split it cannot bind
         sequence_split.rs           — top-level comma sequences split for a second detection pass, undone when it fails
-        chunk_prelude.rs            — top-level code beside a webpack 5 chunk push, written to prelude-<id>.js and required by the chunk's modules
+        chunk_prelude.rs            — top-level code beside a webpack 5 chunk push, written to prelude-<id>.js and required by the chunk's modules, which bind the declarations they read
         chunk_enumeration.rs        — fail-closed lazy-chunk URL / relative-import enumeration (`debug enumerate-chunks`)
         chunk_loading_global.rs     — an input's chunk-loading global names (its build identity for multi-input module-id rewrites)
       utils/
