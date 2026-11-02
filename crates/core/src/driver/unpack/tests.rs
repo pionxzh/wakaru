@@ -1018,13 +1018,15 @@ fn public_input_paths_treat_backslashes_as_separators_before_the_safety_check() 
 
 /// Unix only: a Windows file name cannot contain `:` (it names an NTFS stream),
 /// and the host-path normalization reads such a segment as a drive there.
+/// The segment stays a name below the root; its `:` is replaced like any
+/// character Windows rejects.
 #[cfg(unix)]
 #[test]
-fn absolute_input_below_the_root_keeps_a_colon_segment() {
+fn absolute_input_below_the_root_keeps_a_colon_segment_as_a_name() {
     let root = std::env::temp_dir().join("wakaru-public-root");
     let input = root.join("src/a:b.js");
     assert_eq!(
         public_path_for_input(&input.to_string_lossy(), Some(&root)).expect("public path"),
-        "src/a:b.js"
+        "src/a_b.js"
     );
 }
