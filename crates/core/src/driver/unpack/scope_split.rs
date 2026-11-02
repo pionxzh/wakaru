@@ -388,7 +388,9 @@ fn split_parent_path_parts(filename: &str) -> (String, String, String) {
     let stem = basename
         .rsplit_once('.')
         .map(|(stem, _)| stem)
-        .filter(|stem| !stem.is_empty())
+        // `...js` would otherwise give the stem `..`, and children named below it would
+        // climb out of the parent's directory.
+        .filter(|stem| !matches!(*stem, "" | "." | ".."))
         .unwrap_or("module")
         .to_string();
     (parent, stem, basename.to_string())
@@ -672,6 +674,27 @@ fn resolve_relative_module_filename(current_filename: &str, specifier: &str) -> 
 mod tests {
     use super::*;
     use crate::unpacker::BundleFormat;
+
+    #[test]
+    fn child_filenames_never_climb_out_of_a_dot_stem_parent() {
+        assert_eq!(
+            public_path_child_filename("a/...js", "chunk_x.js"),
+            "a/module/chunk_x.js"
+        );
+        assert_eq!(
+            public_path_child_filename("..js", "chunk_x.js"),
+            "module/chunk_x.js"
+        );
+        assert_eq!(
+            public_path_child_filename("assets/chunk.js", "chunk_x.js"),
+            "assets/chunk/chunk_x.js"
+        );
+        // Longer dot runs are ordinary directory names.
+        assert_eq!(
+            public_path_child_filename("....js", "chunk_x.js"),
+            ".../chunk_x.js"
+        );
+    }
 
     #[test]
     fn text_edits_shift_later_points_and_drop_replaced_ones() {

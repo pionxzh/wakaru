@@ -131,7 +131,9 @@ pub(super) fn build_rename_map(
         let Some(suggested) = suggested else {
             continue;
         };
-        let Ok(safe) = safe_relative_module_path(suggested) else {
+        // Normalize separators before the check: on Unix `..\..\x` is one ordinary component
+        // that would become `../../x` if the separators were rewritten afterwards.
+        let Ok(safe) = safe_relative_module_path(&suggested.replace('\\', "/")) else {
             continue;
         };
         let recovered = safe.to_string_lossy().replace('\\', "/");
@@ -425,6 +427,18 @@ mod tests {
     fn rename_map_skips_unsafe_recovered_paths() {
         let entries = vec![("a.js".to_string(), Some("../escape.js".to_string()))];
         assert!(build_rename_map(&entries, &HashSet::default()).is_empty());
+    }
+
+    #[test]
+    fn rename_map_skips_backslash_traversal_on_every_platform() {
+        let entries = vec![
+            ("a.js".to_string(), Some(r"..\..\escape.js".to_string())),
+            ("b.js".to_string(), Some(r"\escape.js".to_string())),
+            ("c.js".to_string(), Some(r"src\Widget.jsx".to_string())),
+        ];
+        let map = build_rename_map(&entries, &HashSet::default());
+        assert_eq!(map.get("c.js").map(String::as_str), Some("src/Widget.jsx"));
+        assert_eq!(map.len(), 1, "{map:?}");
     }
 
     #[test]

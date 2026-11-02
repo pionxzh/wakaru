@@ -39,4 +39,12 @@ mod tests {
         assert_eq!(sources[0].path, "src/main.js");
         assert_eq!(sources[0].content, "export const value = 1;");
     }
+
+    #[test]
+    fn backslash_traversal_does_not_reappear_after_slash_normalization() {
+        let data = br#"{"version":3,"sources":["..\\..\\evil.js","src\\..\\..\\lib\\a.js"],"sourcesContent":["1","2"],"names":[],"mappings":""}"#;
+        let sources = embedded_sources(data).expect("valid source map should parse");
+        let paths: Vec<_> = sources.iter().map(|source| source.path.as_str()).collect();
+        assert_eq!(paths, ["evil.js", "src/lib/a.js"]);
+    }
 }

@@ -107,7 +107,10 @@ Each entry maps an emitted filename to its `input`, extraction `ranges`, and
 `extraction` strategy. Ranges are zero-based byte offsets with an exclusive
 end, `[start, end)`. They identify the input regions used to recover a module,
 not a position-by-position mapping of the rewritten code. Use
-`--emit-source-map` for output position mappings.
+`--emit-source-map` for output position mappings. If the bundle names a
+module `provenance.json` at the output root (compared ignoring case), the run
+stops before writing anything rather than overwrite it; rerun without
+`--provenance`.
 
 `input` is the input path exactly as passed on the command line. Wakaru does
 not make it absolute or resolve symlinks, and converts non-UTF-8 path bytes
@@ -388,6 +391,12 @@ wakaru extract input.js.map -o src/
 ```
 
 Writes files embedded in the source map's `sourcesContent` to disk.
+Each `sources` entry is treated as untrusted: bundler prefixes such as
+`webpack://`, leading slashes, drive prefixes, and `..` components are
+dropped, with `/` and `\` both counted as separators, so every file lands
+under the output directory. A write that would follow a symlink out of it is
+refused. Entries that collide (including by case) get a
+`_2`, `_3`, … suffix instead of overwriting each other, as with `--unpack`.
 
 ## Rewrite level
 

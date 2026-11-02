@@ -33,7 +33,10 @@ use json_output::{
     JsonDecompileOutput, JsonModule, JsonModuleKind, JsonModuleStatus, JsonPublicPath,
     JsonRelativeImport, JsonUnpackOutput, JsonWarning,
 };
-use output::{canonicalize_output_dir, resolve_unpack_output_path, write_file, write_if_changed};
+use output::{
+    canonicalize_output_dir, canonicalize_unpack_output_path, resolve_unpack_output_path,
+    write_file, write_if_changed,
+};
 use vue::{
     ensure_vue_sidecar_does_not_overwrite_input, format_vue_sfc_artifact_summary,
     is_vue_output_path, recover_single_file_vue_after_unpack, recover_single_file_vue_sidecar,
@@ -506,6 +509,11 @@ fn run_unpack(cli: Cli) -> Result<()> {
         })
         .collect();
 
+    if cli.provenance {
+        ensure_no_module_claims_provenance_path(
+            artifacts.iter().map(|artifact| artifact.filename.as_str()),
+        )?;
+    }
     let resolved: Vec<(PathBuf, &str)> = {
         let span = tracing::info_span!("cli_resolve_output_paths");
         let _enter = span.enter();
@@ -556,7 +564,12 @@ fn run_unpack(cli: Cli) -> Result<()> {
         artifacts.par_iter().zip(resolved.par_iter()).try_for_each(
             |(artifact, (out_path, _))| match artifact.source_map.as_deref() {
                 Some(map_json) => {
-                    write_output_source_map(&append_map_extension(out_path), map_json)
+                    let map_path = canonicalize_unpack_output_path(
+                        &out_dir,
+                        &append_map_extension(out_path),
+                        &artifact.filename,
+                    )?;
+                    write_output_source_map(&map_path, map_json)
                 }
                 None => Ok(()),
             },
@@ -574,9 +587,12 @@ fn run_unpack(cli: Cli) -> Result<()> {
             single_input_name.as_deref().unwrap_or(""),
             &output.detected_formats,
         );
-        let provenance_path = out_dir.join("provenance.json");
-        fs::write(&provenance_path, json)
-            .with_context(|| format!("failed to write {}", provenance_path.display()))?;
+        let provenance_path = canonicalize_unpack_output_path(
+            &out_dir,
+            &out_dir.join("provenance.json"),
+            "provenance.json",
+        )?;
+        write_file(&provenance_path, &json)?;
     }
 
     if !cli.json {
@@ -881,18 +897,21 @@ fn install_panic_hook() {
 fn run_extract(args: ExtractArgs, force: bool) -> Result<()> {
     let map_bytes = fs::read(&args.map)
         .with_context(|| format!("failed to read source map {}", args.map.display()))?;
-    ensure_output_dir(&args.output, force)?;
+    let check_existing_writes = ensure_output_dir(&args.output, force)?;
+    let out_dir = canonicalize_output_dir(&args.output)?;
 
+    // `sources` come from the map, so they get the same containment checks as unpacked
+    // module names, including symlinked directories already inside the output directory.
     let entries = wakaru::sourcemap::embedded_sources(&map_bytes)?;
+    let mut seen = std::collections::HashSet::new();
     let mut written = 0;
     for entry in &entries {
-        let out_path = args.output.join(&entry.path);
-        if let Some(parent) = out_path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create {}", parent.display()))?;
+        let out_path = resolve_unpack_output_path(&out_dir, &entry.path, &mut seen)?;
+        if check_existing_writes {
+            write_if_changed(&out_path, &entry.content)?;
+        } else {
+            write_file(&out_path, &entry.content)?;
         }
-        fs::write(&out_path, &entry.content)
-            .with_context(|| format!("failed to write {}", out_path.display()))?;
         written += 1;
     }
 
@@ -2510,6 +2529,31 @@ fn relative_path(from_dir: &Path, to: &Path) -> Option<String> {
         )
         .collect();
     Some(parts.join("/"))
+}
+
+/// `--provenance` writes `provenance.json` at the output root. A module the bundle names
+/// `provenance.json` would otherwise be overwritten by it, so refuse before creating anything.
+/// Deduplication only renames later claims, so the module keeps this exact name. The
+/// comparison ignores case, like deduplication, so the result does not depend on the
+/// filesystem.
+fn ensure_no_module_claims_provenance_path<'a>(
+    filenames: impl IntoIterator<Item = &'a str>,
+) -> Result<()> {
+    for filename in filenames {
+        let Ok(relative) = wakaru_core::safe_relative_module_path(filename) else {
+            // Rejected with a clearer error when output paths are resolved.
+            continue;
+        };
+        if relative
+            .to_string_lossy()
+            .eq_ignore_ascii_case("provenance.json")
+        {
+            bail!(
+                "a recovered module is named {filename:?}, which --provenance also writes; rerun without --provenance"
+            );
+        }
+    }
+    Ok(())
 }
 
 fn ensure_output_file(path: &Path, force: bool) -> Result<()> {

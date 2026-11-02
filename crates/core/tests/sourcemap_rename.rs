@@ -35,3 +35,26 @@ fn identifier_inside_a_computed_object_key_votes_for_its_original_name() {
     assert!(output.contains("var key = 1;"), "{output}");
     assert!(output.contains("[key]: 2"), "{output}");
 }
+
+#[test]
+fn source_paths_drop_traversal_written_with_either_separator() {
+    let out_dir = std::path::Path::new("out");
+    for (source, expected) in [
+        ("webpack:///../src/main.js", "src/main.js"),
+        (r"..\..\evil.js", "evil.js"),
+        (r"src\..\..\evil.js", "src/evil.js"),
+        (r"\\server\share\evil.js", "server/share/evil.js"),
+        (r"..\..\", ""),
+    ] {
+        let resolved = wakaru_core::resolve_source_path(out_dir, source);
+        let relative = resolved.strip_prefix(out_dir).expect("stays under out_dir");
+        let parts: Vec<_> = relative
+            .components()
+            .map(|component| match component {
+                std::path::Component::Normal(part) => part.to_str().expect("utf-8").to_string(),
+                other => panic!("{source:?} resolved to a non-normal component {other:?}"),
+            })
+            .collect();
+        assert_eq!(parts.join("/"), expected, "{source:?}");
+    }
+}

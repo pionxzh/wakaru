@@ -77,7 +77,8 @@ is included, and the end byte is excluded. These are extraction regions,
 not line-by-line mappings of the rewritten output. Each module's `input` is
 the path exactly as you passed it, or the directory argument joined with the
 file's path below it for a directory input. A module from an empty factory
-has no ranges but still names its `input`.
+has no ranges but still names its `input`. If a recovered module is itself
+named `provenance.json`, the run stops before writing anything.
 
 See [Read an unpacked bundle](/guides/read-an-unpacked-bundle#check-the-original-bundle)
 for an example, or use [source maps](/guides/source-maps) to trace output positions.
@@ -159,6 +160,9 @@ wakaru extract input.js.map -o src/
   `--formatter`, the map describes the formatted output.
 - `wakaru extract` writes the files embedded in a map's `sourcesContent` to
   disk. When the map carries original sources, this recovers them directly.
+  Paths from the map stay under the output directory: `..`, absolute, and
+  drive-prefixed entries are made relative, and colliding names get a `_2`
+  suffix.
 
 ## Vue SFC recovery (experimental)
 

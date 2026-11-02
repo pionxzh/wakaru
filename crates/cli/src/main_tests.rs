@@ -52,6 +52,91 @@ fn parses_extract_without_js_input() {
     }
 }
 
+fn write_extract_map(dir: &Path, sources: &[&str]) -> PathBuf {
+    let map = serde_json::json!({
+        "version": 3,
+        "sources": sources,
+        "sourcesContent": sources.iter().map(|source| format!("// {source}")).collect::<Vec<_>>(),
+        "names": [],
+        "mappings": "",
+    });
+    let map_path = dir.join("input.js.map");
+    fs::write(&map_path, map.to_string()).expect("write source map");
+    map_path
+}
+
+#[test]
+fn extract_keeps_backslash_traversal_inside_output_dir() {
+    let dir = temp_test_dir("extract-backslash");
+    let out_dir = dir.join("nested").join("out");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let map_path = write_extract_map(&dir, &["..\\..\\escape.js", "src/a.js", "./src/a.js"]);
+
+    run_extract(
+        ExtractArgs {
+            map: map_path,
+            output: out_dir.clone(),
+        },
+        false,
+    )
+    .expect("extract should succeed");
+
+    assert!(!dir.join("escape.js").exists(), "source escaped output dir");
+    assert_eq!(
+        fs::read_to_string(out_dir.join("escape.js")).expect("read escape.js"),
+        "// ..\\..\\escape.js"
+    );
+    assert_eq!(
+        fs::read_to_string(out_dir.join("src/a.js")).expect("read src/a.js"),
+        "// src/a.js"
+    );
+    assert_eq!(
+        fs::read_to_string(out_dir.join("src/a_2.js")).expect("read deduplicated src/a.js"),
+        "// ./src/a.js"
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn extract_refuses_symlinked_directory_that_points_outside() {
+    #[cfg(windows)]
+    fn create_dir_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
+        std::os::windows::fs::symlink_dir(target, link)
+    }
+    #[cfg(unix)]
+    fn create_dir_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
+        std::os::unix::fs::symlink(target, link)
+    }
+
+    let dir = temp_test_dir("extract-symlink");
+    let out_dir = dir.join("out");
+    let external_dir = dir.join("external");
+    fs::create_dir_all(&out_dir).expect("create output dir");
+    fs::create_dir_all(&external_dir).expect("create external dir");
+    if create_dir_symlink(&external_dir, &out_dir.join("link")).is_err() {
+        fs::remove_dir_all(&dir).expect("remove temp dir");
+        return;
+    }
+    let map_path = write_extract_map(&dir, &["link/pwn.js"]);
+
+    let err = run_extract(
+        ExtractArgs {
+            map: map_path,
+            output: out_dir,
+        },
+        true,
+    )
+    .expect_err("symlinked directory escaping the output dir should be refused");
+    assert!(
+        err.to_string().contains("path escapes output directory"),
+        "unexpected error: {err}"
+    );
+    assert!(!external_dir.join("pwn.js").exists());
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
 #[test]
 fn parses_bun_extract_with_binary_asset_options() {
     let cli = Cli::try_parse_from([
@@ -1419,6 +1504,63 @@ fn provenance_inputs(inputs: &[&str], out_dir: &Path) -> Vec<String> {
     names.sort();
     names.dedup();
     names
+}
+
+#[test]
+fn provenance_refuses_a_module_named_provenance_json() {
+    let dir = temp_test_dir("provenance-name-collision");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input = dir.join("bundle.js");
+    fs::write(
+        &input,
+        r#"var __getOwnPropNames = Object.getOwnPropertyNames;
+var __commonJS = (cb, mod) => function __require() {
+  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+};
+var require_a = __commonJS({
+  "Provenance.json"(exports, module) {
+    module.exports = { value: 1 };
+  }
+});
+var require_b = __commonJS({
+  "src/b.js"(exports, module) {
+    module.exports = require_a();
+  }
+});
+console.log(require_b());
+"#,
+    )
+    .expect("write bundle");
+    let out_dir = dir.join("out");
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input.to_str().expect("input path should be utf8"),
+        "--unpack",
+        "--provenance",
+        "-o",
+        out_dir.to_str().expect("output path should be utf8"),
+    ])
+    .expect("provenance unpack cli should parse");
+
+    let err = run_default(cli).expect_err("a module named provenance.json should be refused");
+    assert!(
+        err.to_string().contains("--provenance also writes"),
+        "unexpected error: {err}"
+    );
+    assert_eq!(
+        fs::read_dir(&out_dir).expect("read output dir").count(),
+        0,
+        "nothing should be written before the refusal"
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn provenance_name_check_ignores_case_and_dot_components_only() {
+    assert!(ensure_no_module_claims_provenance_path(["./PROVENANCE.json"]).is_err());
+    assert!(ensure_no_module_claims_provenance_path(["src/provenance.json"]).is_ok());
+    assert!(ensure_no_module_claims_provenance_path(["provenance_2.json", "a.js"]).is_ok());
 }
 
 #[test]

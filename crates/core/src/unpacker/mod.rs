@@ -1200,11 +1200,17 @@ pub(crate) use crate::analysis::BindingId;
 ///
 /// This is component-based instead of replacement-based so overlapping strings
 /// like `....//foo` cannot turn into `../foo` after a single sanitation pass.
-/// Each kept component is also made writable on Windows (see
+/// A leading drive (`C:\src`, `C:src`) is dropped too: Windows reads it as an
+/// absolute or drive-relative prefix, which the CLI refuses to write. Each
+/// kept component is also made writable on Windows (see
 /// [`windows_safe_path_component`]).
 pub(crate) fn sanitize_relative_path(raw: &str, fallback: &str) -> String {
     let normalized = raw.replace('\\', "/");
-    let parts: Vec<String> = normalized
+    let without_drive = match normalized.as_bytes() {
+        [drive, b':', ..] if drive.is_ascii_alphabetic() => &normalized[2..],
+        _ => normalized.as_str(),
+    };
+    let parts: Vec<String> = without_drive
         .split('/')
         .filter(|part| !part.is_empty() && *part != "." && *part != "..")
         .map(windows_safe_path_component)
@@ -2028,6 +2034,24 @@ mod tests {
         assert_eq!(sanitize_relative_path("./", "module.js"), "module.js");
         assert_eq!(sanitize_relative_path("../../..", "module.js"), "module.js");
         assert_eq!(sanitize_relative_path("..\\..\\", "module.js"), "module.js");
+    }
+
+    #[test]
+    fn sanitize_relative_path_drops_a_leading_drive() {
+        assert_eq!(
+            sanitize_relative_path("C:\\src\\a.js", "module.js"),
+            "src/a.js"
+        );
+        assert_eq!(
+            sanitize_relative_path("c:/src/a.js", "module.js"),
+            "src/a.js"
+        );
+        assert_eq!(sanitize_relative_path("C:a.js", "module.js"), "a.js");
+        assert_eq!(sanitize_relative_path("C:", "module.js"), "module.js");
+        // Only a leading drive is a prefix; a later colon, or one after a
+        // longer scheme, is replaced like any character Windows rejects.
+        assert_eq!(sanitize_relative_path("src/C:", "module.js"), "src/C_");
+        assert_eq!(sanitize_relative_path("ab:c.js", "module.js"), "ab_c.js");
     }
 
     #[test]

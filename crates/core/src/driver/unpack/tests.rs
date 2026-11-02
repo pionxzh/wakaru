@@ -997,3 +997,18 @@ __r(1);
         SplitRefusalReason::FactoryRecovery,
     );
 }
+
+#[test]
+fn public_input_paths_treat_backslashes_as_separators_before_the_safety_check() {
+    for (input, expected) in [
+        (r"pkg\..\..\bundle.js", "bundle.js"),
+        (r"..\pkg\bundle.js", "pkg/bundle.js"),
+        ("src/app.js", "src/app.js"),
+    ] {
+        assert_eq!(
+            public_path_for_input(input, None).expect("relative input has a public path"),
+            expected,
+            "{input:?}"
+        );
+    }
+}

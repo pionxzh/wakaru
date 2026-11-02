@@ -373,6 +373,14 @@ fn common_absolute_input_parent(inputs: &[PreparedUnpackInput]) -> Option<PathBu
 }
 
 fn public_path_for_input(filename: &str, absolute_root: Option<&Path>) -> Result<String> {
+    // The result below uses `/` for every `\`, so split on both before checking. Windows paths
+    // already do; on Unix `a\..\..\x.js` is one component until the separators are rewritten.
+    let filename = if cfg!(windows) {
+        std::borrow::Cow::Borrowed(filename)
+    } else {
+        std::borrow::Cow::Owned(filename.replace('\\', "/"))
+    };
+    let filename = filename.as_ref();
     let normalized = merge::normalize_path_lexically(Path::new(filename));
     let candidate = if normalized.is_absolute() {
         absolute_root

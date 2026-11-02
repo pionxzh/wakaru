@@ -61,9 +61,14 @@ pub fn extract_source_entries(sm: &SourceMap, out_dir: &Path) -> Vec<(PathBuf, S
 /// Source map paths often start with `../` (relative to the bundle's location)
 /// or contain webpack-internal prefixes like `webpack://`.  We strip these and
 /// resolve the result under `out_dir`, never escaping it.
+///
+/// Backslashes count as separators on every platform. On Unix `..\..\x` would
+/// otherwise survive as one ordinary component and turn into `../../x` once a
+/// caller writes the path with forward slashes.
 pub fn resolve_source_path(out_dir: &Path, source: &str) -> PathBuf {
+    let normalized = source.replace('\\', "/");
     // Strip common prefixes used by bundlers.
-    let stripped = source
+    let stripped = normalized
         .trim_start_matches("webpack://")
         .trim_start_matches("webpack:///")
         .trim_start_matches('/');
