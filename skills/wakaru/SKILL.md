@@ -271,6 +271,10 @@ reachability sweep is desired.
   `import.meta`, or top-level `await`) to `.cjs`, scripts included, update
   the specifiers, and add
   `{"type": "module"}` at the output root.
+- A `bundle_split_refused` warning (non-error) names a file from a directory
+  scan that matched a bundle format but was not split; the message gives the
+  format and the reason. It is in the output as one decompiled file, so read
+  it as a single module, not as a missing bundle.
 - A `runtime_residual` warning (non-error) means that module still calls a
   bundler runtime helper the output does not define, such as
   `__turbopack_context__.L(...)` (Turbopack chunk loading),

@@ -10,7 +10,8 @@ use crate::options::{
 };
 use crate::output::{
     BundleFormat, Diagnostic, EntryStatus, InputAction, InputDetection, InputId, InputReceipt,
-    InputReport, ModuleOutput, ModuleStatus, OutputSafety, SourceSpan, UnpackOutput,
+    InputReport, ModuleOutput, ModuleStatus, OutputSafety, SourceSpan, SplitRefusal,
+    SplitRefusalReason, UnpackOutput,
 };
 use crate::source::Source;
 
@@ -131,6 +132,7 @@ impl UnpackJob {
             Error::new(kind, Some(input_filename), error.into_inner())
         })?;
         let detection = map_prepared_detection(prepared.detection());
+        let refusal = prepared.refusal().and_then(map_split_refusal);
         let id = InputId::from_index(self.reports.len());
         let (action, retain, preserve) = match detection {
             InputDetection::Structural(_) | InputDetection::HeuristicScopeHoisted => {
@@ -138,7 +140,12 @@ impl UnpackJob {
             }
             InputDetection::Plain => match unmatched {
                 UnmatchedInput::Skip => (InputAction::Skipped, false, false),
-                UnmatchedInput::Process => (InputAction::Processed, true, false),
+                UnmatchedInput::SkipUnrecognized if refusal.is_none() => {
+                    (InputAction::Skipped, false, false)
+                }
+                UnmatchedInput::Process | UnmatchedInput::SkipUnrecognized => {
+                    (InputAction::Processed, true, false)
+                }
                 UnmatchedInput::Preserve => (InputAction::Preserved, true, true),
                 UnmatchedInput::Error => {
                     self.unmatched_error
@@ -152,6 +159,7 @@ impl UnpackJob {
             id,
             filename: prepared.filename().to_string(),
             detection,
+            refusal,
             action,
             module_indices: Vec::new(),
         });
@@ -163,7 +171,11 @@ impl UnpackJob {
             });
         }
 
-        Ok(InputReceipt { id, detection })
+        Ok(InputReceipt {
+            id,
+            detection,
+            refusal,
+        })
     }
 
     /// Run the shared cross-module phases and materialize final output.
@@ -244,6 +256,25 @@ fn map_prepared_detection(
         }
         wakaru_core::driver::PreparedInputDetection::Plain => InputDetection::Plain,
     }
+}
+
+fn map_split_refusal(refusal: wakaru_core::driver::SplitRefusal) -> Option<SplitRefusal> {
+    let InputDetection::Structural(format) = map_bundle_detection(refusal.format) else {
+        return None;
+    };
+    let reason = match refusal.reason {
+        wakaru_core::driver::SplitRefusalReason::SurroundingCode => {
+            SplitRefusalReason::SurroundingCode
+        }
+        wakaru_core::driver::SplitRefusalReason::FactoryRecovery => {
+            SplitRefusalReason::FactoryRecovery
+        }
+        wakaru_core::driver::SplitRefusalReason::EsmDeclarations => {
+            SplitRefusalReason::EsmDeclarations
+        }
+        wakaru_core::driver::SplitRefusalReason::Other => SplitRefusalReason::Other,
+    };
+    Some(SplitRefusal { format, reason })
 }
 
 fn map_bundle_detection(format: wakaru_core::BundleFormat) -> InputDetection {
@@ -708,6 +739,7 @@ mod tests {
             id: InputId::from_index(0),
             filename: "bundle.js".to_string(),
             detection: InputDetection::Structural(format),
+            refusal: None,
             action: InputAction::Unpacked,
             module_indices: Vec::new(),
         };
@@ -766,6 +798,60 @@ mod tests {
         assert!(output.inputs[1].module_indices.is_empty());
         assert_eq!(output.modules.len(), 1);
         assert!(output.modules[0].code.contains("explicit"));
+    }
+
+    /// A webpack 4 bootstrap whose factory reads a function declared after
+    /// it: detection matches the format and refuses the split.
+    const REFUSED_WEBPACK4: &str = r#"!function(modules){var cache={};function load(id){if(cache[id])return cache[id].exports;var module=cache[id]={exports:{}};return modules[id].call(module.exports,module,module.exports,load),module.exports}load.s=0,load(0)}([function(module,exports){module.exports=greeting()}]);
+function greeting(){return "hello"}"#;
+
+    #[test]
+    fn skip_unrecognized_processes_a_refused_bundle_and_skips_a_plain_input() {
+        let mut job = UnpackJob::new(
+            UnpackOptions::default()
+                .with_mode(UnpackMode::Strict)
+                .with_unmatched(UnmatchedInput::SkipUnrecognized),
+        )
+        .expect("options should be valid");
+        let refused = job
+            .push(Source::new("refused.js", REFUSED_WEBPACK4))
+            .expect("refused bundle should be accepted");
+        let plain = job
+            .push(Source::new("plain.js", "const value = 1;"))
+            .expect("plain input should be accepted");
+
+        let expected = Some(SplitRefusal {
+            format: BundleFormat::Webpack4,
+            reason: SplitRefusalReason::SurroundingCode,
+        });
+        assert_eq!(refused.detection, InputDetection::Plain);
+        assert_eq!(refused.refusal, expected);
+        assert_eq!(plain.refusal, None);
+
+        let output = job.finish().expect("job should finish");
+        assert_eq!(output.inputs[0].action, InputAction::Processed);
+        assert_eq!(output.inputs[0].refusal, expected);
+        assert_eq!(output.inputs[1].action, InputAction::Skipped);
+        assert_eq!(output.modules.len(), 1);
+        assert!(output.modules[0].code.contains("greeting"));
+    }
+
+    #[test]
+    fn skip_still_skips_a_refused_bundle() {
+        let mut job = UnpackJob::new(
+            UnpackOptions::default()
+                .with_mode(UnpackMode::Strict)
+                .with_unmatched(UnmatchedInput::Skip),
+        )
+        .expect("options should be valid");
+        let receipt = job
+            .push(Source::new("refused.js", REFUSED_WEBPACK4))
+            .expect("refused bundle should be accepted");
+        assert!(receipt.refusal.is_some());
+
+        let output = job.finish().expect("job should finish");
+        assert_eq!(output.inputs[0].action, InputAction::Skipped);
+        assert!(output.modules.is_empty());
     }
 
     #[test]
@@ -910,6 +996,7 @@ mod tests {
                 id: input.id,
                 filename: filename.to_string(),
                 detection: InputDetection::Plain,
+                refusal: None,
                 action: InputAction::Processed,
                 module_indices: Vec::new(),
             })
@@ -942,6 +1029,7 @@ mod tests {
             id: processed[0].id,
             filename: "chunk.js".to_string(),
             detection: InputDetection::Structural(BundleFormat::Webpack5),
+            refusal: None,
             action: InputAction::Processed,
             module_indices: Vec::new(),
         }];

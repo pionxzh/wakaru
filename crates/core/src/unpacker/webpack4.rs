@@ -23,6 +23,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use crate::module_path::relative_import_specifier;
 use crate::rules::eval_utils::DirectEvalAnalyzer;
 use crate::rules::rename_utils::BindingRename;
+use crate::unpacker::refusal::{self, because, SplitRefusalReason};
 use crate::unpacker::surrounding::{SurroundingCode, SurroundingItems};
 use crate::unpacker::webpack_common::{
     is_external_require_call, isolated_failure, FactoryNormalizationError,
@@ -626,7 +627,9 @@ fn prepare_webpack4_modules(
                     emitted.push(None);
                     continue;
                 }
-                Err(FactoryNormalizationError::Fatal) => return None,
+                Err(FactoryNormalizationError::Fatal) => {
+                    return because(None, SplitRefusalReason::FactoryRecovery)
+                }
             };
             // Runtime-parameter reuse and free-name capture are the only
             // factory-local failures. A fixer or emitter failure still invalidates the whole container;
@@ -635,10 +638,13 @@ fn prepare_webpack4_modules(
             if !absent.is_empty() {
                 absent_string_ids.insert(descriptor.filename.clone(), absent);
             }
-            surrounding.bind_factory(
-                &mut module,
-                SyntaxContext::empty().apply_mark(unresolved_mark),
-                &descriptor.filename,
+            because(
+                surrounding.bind_factory(
+                    &mut module,
+                    SyntaxContext::empty().apply_mark(unresolved_mark),
+                    &descriptor.filename,
+                ),
+                SplitRefusalReason::SurroundingCode,
             )?;
             apply_fixer(&mut module).ok()?;
             emitted.push(Some(
@@ -657,11 +663,11 @@ fn prepare_webpack4_modules(
             continue;
         }
         if !emitted.iter().any(Option::is_some) {
-            return None;
+            return because(None, SplitRefusalReason::FactoryRecovery);
         }
         // An opaque module keeps its raw body and gets no prelude binding.
         if surrounding.has_prelude() && !opaque_filenames.is_empty() {
-            return None;
+            return because(None, SplitRefusalReason::SurroundingCode);
         }
 
         let failures = opaque_filenames.clone();
@@ -710,10 +716,16 @@ fn prepare_webpack4_modules(
                         .map(|descriptor| descriptor.filename.as_str())
                 })
                 .collect::<Option<Vec<_>>>()?;
-            modules.push(surrounding.entry_module(SURROUNDING_ENTRY, &entry_filenames, &cm)?);
+            modules.push(because(
+                surrounding.entry_module(SURROUNDING_ENTRY, &entry_filenames, &cm),
+                SplitRefusalReason::SurroundingCode,
+            )?);
         }
         let mut script_modules = HashSet::default();
-        if surrounding.push_prelude(&mut modules, &cm)? {
+        if because(
+            surrounding.push_prelude(&mut modules, &cm),
+            SplitRefusalReason::SurroundingCode,
+        )? {
             script_modules.insert(super::surrounding::PRELUDE_FILENAME.to_string());
         }
         return Some(
@@ -782,6 +794,9 @@ fn extract_webpack4_array_modules(
     if !has_module_fn {
         return None;
     }
+    // A bootstrap called with a table of factories is the format; any
+    // failure from here on refuses a webpack 4 bundle.
+    let commitment = refusal::commit(BundleFormat::Webpack4);
 
     // Find entry module IDs by scanning the bootstrap function body
     let entry_ids = find_entry_ids(bootstrap_fn);
@@ -817,7 +832,14 @@ fn extract_webpack4_array_modules(
             })
         })
         .collect::<Vec<_>>();
-    prepare_webpack4_modules(&descriptors, true, &entry_ids, &surrounding, cm, positions)
+    commitment.accept(prepare_webpack4_modules(
+        &descriptors,
+        true,
+        &entry_ids,
+        &surrounding,
+        cm,
+        positions,
+    ))
 }
 
 /// Extract modules from the object-form: `bootstrapFn({"./src/index.js": fn, ...})`
@@ -865,6 +887,7 @@ fn extract_webpack4_object_modules(
     if !has_module_fn {
         return None;
     }
+    let commitment = refusal::commit(BundleFormat::Webpack4);
 
     // Find entry module IDs by scanning the bootstrap function body
     let entry_ids = find_entry_ids(bootstrap_fn);
@@ -925,14 +948,14 @@ fn extract_webpack4_object_modules(
             }
         })
         .collect::<Vec<_>>();
-    prepare_webpack4_modules(
+    commitment.accept(prepare_webpack4_modules(
         &descriptors,
         all_numeric,
         &entry_ids,
         &surrounding,
         cm,
         positions,
-    )
+    ))
 }
 
 /// The file holding code around the bootstrap call. Entry modules then take
@@ -950,9 +973,12 @@ fn collect_surrounding(
     entry_ids: &[ModuleId],
     factory_spans: &[Span],
 ) -> Option<SurroundingCode> {
-    let surrounding = SurroundingCode::collect(surrounding, &["require"], factory_spans)?;
+    let surrounding = because(
+        SurroundingCode::collect(surrounding, &["require"], factory_spans),
+        SplitRefusalReason::SurroundingCode,
+    )?;
     if !surrounding.is_empty() && entry_ids.is_empty() {
-        return None;
+        return because(None, SplitRefusalReason::SurroundingCode);
     }
     Some(surrounding)
 }

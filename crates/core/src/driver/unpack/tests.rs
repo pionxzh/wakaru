@@ -242,6 +242,7 @@ fn prepared_raw_scope_split_keeps_runnable_normalization() {
         }),
         plain_prepared: None,
         public_path_candidate: true,
+        refusal: None,
     };
 
     let output = unpack_prepared_inputs(vec![input], DecompileOptions::default(), true, false)
@@ -282,6 +283,7 @@ fn unprovable_public_boundary_falls_back_to_one_processed_module() {
         }),
         plain_prepared: None,
         public_path_candidate: true,
+        refusal: None,
     };
     let sibling = prepare_unpack_input(
         "consumer.js".to_string(),
@@ -849,5 +851,149 @@ function read() { return alpha; }
     assert!(
         !(output.contains("require(") && output.contains("export ")),
         "an ES module must not call require:\n{output}"
+    );
+}
+
+fn prepared_refusal(source: &str) -> (PreparedUnpackInput, Option<SplitRefusal>) {
+    let input = prepare_unpack_input("input.js".to_string(), source.to_string(), true, false)
+        .expect("input should prepare");
+    let refusal = input.refusal();
+    (input, refusal)
+}
+
+fn assert_refused(source: &str, format: BundleFormat, reason: SplitRefusalReason) {
+    let (input, refusal) = prepared_refusal(source);
+    assert_eq!(input.detection(), PreparedInputDetection::Plain);
+    assert_eq!(refusal, Some(SplitRefusal { format, reason }));
+    assert!(
+        input.plain_prepared.is_some(),
+        "a refused input keeps its AST for whole-file processing"
+    );
+}
+
+#[test]
+fn webpack_four_factory_reading_a_declaration_after_the_bootstrap_is_a_refusal() {
+    // shape: hypothetical.
+    assert_refused(
+        r#"!function(modules){var cache={};function load(id){if(cache[id])return cache[id].exports;var module=cache[id]={exports:{}};return modules[id].call(module.exports,module,module.exports,load),module.exports}load.s=0,load(0)}([function(module,exports){module.exports=greeting()}]);
+function greeting(){return "hello"}"#,
+        BundleFormat::Webpack4,
+        SplitRefusalReason::SurroundingCode,
+    );
+}
+
+#[test]
+fn browserify_code_around_declaring_require_is_a_refusal() {
+    // shape: hypothetical.
+    assert_refused(
+        r#"
+var require = function () {};
+(function() { return function() {}; })()({
+  1: [function(require, module) { module.exports = require("./value"); }, { "./value": 2 }],
+  2: [function(require, module) { module.exports = "value"; }, {}]
+}, {}, [1]);
+"#,
+        BundleFormat::Browserify,
+        SplitRefusalReason::SurroundingCode,
+    );
+}
+
+#[test]
+fn webpack_chunk_factory_writing_a_prelude_declaration_is_a_refusal() {
+    // shape: hypothetical.
+    assert_refused(
+        r#"
+var counter = 0;
+(self.webpackChunk = self.webpackChunk || []).push([[1], {
+  100: function(module, exports) { counter++; module.exports = counter; }
+}]);
+"#,
+        BundleFormat::Webpack5,
+        SplitRefusalReason::SurroundingCode,
+    );
+}
+
+#[test]
+fn unwrapped_webpack_five_bootstrap_with_esm_declarations_is_a_refusal() {
+    // `output.iife: false` with `experiments.outputModule`. shape: hypothetical.
+    assert_refused(
+        r#"
+var __webpack_modules__ = {
+  1: function(module) { module.exports = 1; }
+};
+var __webpack_module_cache__ = {};
+function __webpack_require__(moduleId) {
+  var cachedModule = __webpack_module_cache__[moduleId];
+  if (cachedModule !== undefined) return cachedModule.exports;
+  var module = __webpack_module_cache__[moduleId] = { exports: {} };
+  __webpack_modules__[moduleId](module, module.exports, __webpack_require__);
+  return module.exports;
+}
+var value = __webpack_require__(1);
+export { value };
+"#,
+        BundleFormat::Webpack5,
+        SplitRefusalReason::EsmDeclarations,
+    );
+}
+
+#[test]
+fn split_and_unmatched_inputs_carry_no_refusal() {
+    let (bundle, refusal) = prepared_refusal(
+        r#"(self.webpackChunk = self.webpackChunk || []).push([[1], {
+  100: function(module, exports) { module.exports = 1; }
+}]);"#,
+    );
+    assert_eq!(
+        bundle.detection(),
+        PreparedInputDetection::Bundle(BundleFormat::Webpack5)
+    );
+    assert_eq!(refusal, None);
+
+    let (plain, refusal) = prepared_refusal("const value = 1; console.log(value);");
+    assert_eq!(plain.detection(), PreparedInputDetection::Plain);
+    assert_eq!(refusal, None);
+    assert!(
+        plain.plain_prepared.is_none(),
+        "an unmatched input is not prepared when the caller does not ask"
+    );
+}
+
+#[test]
+fn umd_wrapper_kept_whole_is_no_refusal() {
+    // UMD wrappers are common in ordinary library files, so a wrapper the
+    // AMD detector keeps whole stays plain. shape: hypothetical.
+    let (input, refusal) = prepared_refusal(
+        r#"(function (root, factory) {
+  if (typeof module === "object" && module.exports) {
+    module.exports = factory();
+  } else {
+    root.Lib = factory();
+  }
+})(setup(), function () {
+  return { value: 1 };
+});
+"#,
+    );
+    assert_eq!(input.detection(), PreparedInputDetection::Plain);
+    assert_eq!(refusal, None);
+}
+
+#[test]
+fn metro_factory_reading_a_free_runtime_name_is_a_refusal() {
+    // The renamed loader parameter would capture the free `require`.
+    // shape: hypothetical.
+    assert_refused(
+        r#"
+__d(function(g, r, i, a, m, e, d) {
+  m.exports = [typeof require, r(d[0])];
+}, 1, [2]);
+__d(function(g, r, i, a, m, e, d) {
+  m.exports = "dependency";
+}, 2, []);
+__r(1);
+"#,
+        BundleFormat::Metro,
+        SplitRefusalReason::FactoryRecovery,
     );
 }

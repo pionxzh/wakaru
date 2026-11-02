@@ -19,6 +19,7 @@ use crate::rules::{
     apply_rules, ArrowFunction, ArrowReturn, PipelineMode, RewriteLevel, RulePipelineOptions,
     SmartRename, UnEsm, UnExportRename, UnIife,
 };
+pub use crate::unpacker::refusal::{SplitRefusal, SplitRefusalReason};
 use crate::unpacker::{
     scope_hoist, try_prepare_bundle, try_prepare_source, BundleFormat, DetectedBundle,
     PreparedModuleAst, PreparedSource, SourcePositions, UnpackResult, UnpackedModule,
@@ -101,6 +102,9 @@ pub struct PreparedUnpackInput {
     public_path_candidate: bool,
     /// Present only when output source maps were requested.
     origin: Option<Arc<source_index::InputOrigin>>,
+    /// Set on a plain input when a detector matched its format and then
+    /// refused to split it.
+    refusal: Option<SplitRefusal>,
 }
 
 impl PreparedUnpackInput {
@@ -110,6 +114,12 @@ impl PreparedUnpackInput {
 
     pub fn filename(&self) -> &str {
         &self.filename
+    }
+
+    /// Why a detector that matched this plain input's format refused to
+    /// split it. `None` for a bundle, and for an input no detector matched.
+    pub fn refusal(&self) -> Option<SplitRefusal> {
+        self.refusal
     }
 
     pub fn into_plain_source(self) -> Option<(String, String)> {
@@ -172,6 +182,7 @@ pub fn prepare_unpack_input_with_policy(
                         plain_prepared: None,
                         public_path_candidate: false,
                         origin,
+                        refusal: None,
                     });
                 }
                 Err(input_parse_error) => {
@@ -186,7 +197,7 @@ pub fn prepare_unpack_input_with_policy(
         }
     };
 
-    let mut plain_prepared = match prepared {
+    let (mut plain_prepared, refusal) = match prepared {
         PreparedSource::Bundle(detected) => {
             let format = detected.result.format;
             let public_path_candidate =
@@ -212,9 +223,10 @@ pub fn prepare_unpack_input_with_policy(
                 plain_prepared: fallback_prepared,
                 public_path_candidate,
                 origin,
+                refusal: None,
             });
         }
-        PreparedSource::Plain(prepared) => prepared,
+        PreparedSource::Plain { prepared, refusal } => (prepared, refusal),
     };
 
     // Detection always starts with the ES/JSX grammar. If that parser only
@@ -262,6 +274,7 @@ pub fn prepare_unpack_input_with_policy(
                 plain_prepared: fallback_prepared,
                 public_path_candidate: true,
                 origin,
+                refusal: None,
             });
         }
     }
@@ -275,6 +288,7 @@ pub fn prepare_unpack_input_with_policy(
         plain_prepared,
         public_path_candidate: false,
         origin,
+        refusal,
     })
 }
 
@@ -462,6 +476,7 @@ fn unpack_prepared_inputs_impl(
             plain_prepared,
             public_path_candidate: _,
             origin,
+            refusal: _,
         } = input;
         origins.push(origin);
         match detection {

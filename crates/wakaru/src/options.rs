@@ -187,6 +187,12 @@ impl Default for ModuleMode {
 pub enum UnmatchedInput {
     /// Do not produce a module for a plain input.
     Skip,
+    /// Skip a plain input no detector matched, as [`Skip`](Self::Skip) does,
+    /// but process one whose bundle format matched while its split was
+    /// refused (see [`InputReport::refusal`](crate::InputReport::refusal)),
+    /// as [`Process`](Self::Process) does: the input is one file of the
+    /// bundle set, not an unrelated script.
+    SkipUnrecognized,
     /// Apply the selected [`ModuleMode`] to a plain input.
     #[default]
     Process,

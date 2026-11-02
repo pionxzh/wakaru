@@ -128,7 +128,7 @@ pub use options::{
 pub use output::{
     BundleFormat, DecompileOutput, Diagnostic, DiagnosticCode, DiagnosticSeverity, EntryStatus,
     InputAction, InputDetection, InputId, InputReceipt, InputReport, ModuleOutput, ModuleStatus,
-    OutputSafety, SourceSpan, UnpackOutput,
+    OutputSafety, SourceSpan, SplitRefusal, SplitRefusalReason, UnpackOutput,
 };
 pub use source::{Source, SourceParts};
 pub use unpack::{unpack, UnpackJob};

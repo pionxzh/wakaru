@@ -15,6 +15,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::module_path::relative_import_specifier;
 use crate::rules::rename_utils::BindingRename;
+use crate::unpacker::refusal::{self, because, SplitRefusalReason};
 use crate::unpacker::surrounding::{SurroundingCode, SurroundingItems};
 use crate::unpacker::{
     deconflict_runtime_binding_renames, sanitize_relative_path, source_fallback_for_stmts,
@@ -430,6 +431,9 @@ fn extract_commonjs_table(
     if !matches_dialect {
         return None;
     }
+    // The prelude call over a factory table and entry list is the format;
+    // any failure from here on refuses a Browserify bundle.
+    let commitment = refusal::commit(BundleFormat::Browserify);
 
     // Code around the prelude call runs before or after the bundle; entry.js
     // keeps it, in source order, around the entry modules' requires.
@@ -438,7 +442,10 @@ fn extract_commonjs_table(
         .iter()
         .map(|descriptor| descriptor.factory_span)
         .collect();
-    let surrounding = SurroundingCode::collect(surrounding, &["require"], &factory_spans)?;
+    let surrounding = because(
+        SurroundingCode::collect(surrounding, &["require"], &factory_spans),
+        SplitRefusalReason::SurroundingCode,
+    )?;
     assign_filenames(
         &mut descriptors,
         &entry_ids,
@@ -457,11 +464,17 @@ fn extract_commonjs_table(
     let mut modules = Vec::with_capacity(descriptors.len() + 1);
     let mut prepared = Vec::with_capacity(descriptors.len() + 1);
     for descriptor in &descriptors {
-        let mut ast = prepare_factory_module(descriptor, &id_to_filename, dialect)?;
-        GLOBALS.set(&ast.globals, || {
-            let require_ctxt = SyntaxContext::empty().apply_mark(ast.unresolved_mark);
-            surrounding.bind_factory(&mut ast.module, require_ctxt, &descriptor.filename)
-        })?;
+        let mut ast = because(
+            prepare_factory_module(descriptor, &id_to_filename, dialect),
+            SplitRefusalReason::FactoryRecovery,
+        )?;
+        because(
+            GLOBALS.set(&ast.globals, || {
+                let require_ctxt = SyntaxContext::empty().apply_mark(ast.unresolved_mark);
+                surrounding.bind_factory(&mut ast.module, require_ctxt, &descriptor.filename)
+            }),
+            SplitRefusalReason::SurroundingCode,
+        )?;
         modules.push(UnpackedModule {
             id: descriptor.id.as_string(),
             // With code around the call, entry.js runs the entries.
@@ -484,18 +497,24 @@ fn extract_commonjs_table(
             .iter()
             .map(|id| id_to_filename.get(id).map(String::as_str))
             .collect::<Option<Vec<_>>>()?;
-        modules.push(surrounding.entry_module(SURROUNDING_ENTRY, &entry_filenames, &cm)?);
+        modules.push(because(
+            surrounding.entry_module(SURROUNDING_ENTRY, &entry_filenames, &cm),
+            SplitRefusalReason::SurroundingCode,
+        )?);
         prepared.push(None);
     }
-    if surrounding.push_prelude(&mut modules, &cm)? {
+    if because(
+        surrounding.push_prelude(&mut modules, &cm),
+        SplitRefusalReason::SurroundingCode,
+    )? {
         prepared.push(None);
     }
 
-    Some(DetectedBundle::new(
+    commitment.accept(Some(DetectedBundle::new(
         UnpackResult::new(modules, BundleFormat::Browserify),
         prepared,
         cm,
-    ))
+    )))
 }
 
 /// The file holding code around the prelude call. Entry modules then take

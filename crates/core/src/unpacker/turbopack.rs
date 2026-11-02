@@ -39,6 +39,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::js_names::is_valid_identifier_name;
 use crate::rules::rename_utils::{rename_bindings_in_module, BindingRename};
+use crate::unpacker::refusal::{self, because, SplitRefusalReason};
 use crate::unpacker::webpack5::{prepare_translated_webpack_factories, TranslatedWebpackFactory};
 use crate::unpacker::webpack_common::{numeric_id_from_expr, unique_webpack_module_filenames};
 use crate::unpacker::{
@@ -59,6 +60,9 @@ pub(super) fn detect_from_module_prepared(
     if entries.is_empty() {
         return None;
     }
+    // The registration containers are the format; any failure from here on
+    // refuses a Turbopack chunk.
+    let commitment = refusal::commit(BundleFormat::Turbopack);
 
     let mut seen_ids = HashSet::default();
     for entry in &entries {
@@ -171,11 +175,13 @@ pub(super) fn detect_from_module_prepared(
         })
         .collect();
 
-    let (mut prepared_translated, translated_failures) =
-        prepare_translated_webpack_factories(&translated)?;
+    let (mut prepared_translated, translated_failures) = because(
+        prepare_translated_webpack_factories(&translated),
+        SplitRefusalReason::FactoryRecovery,
+    )?;
     failures.extend(translated_failures);
     if failures.len() == modules_entries.len() {
-        return None;
+        return because(None, SplitRefusalReason::FactoryRecovery);
     }
     notes.retain(|filename, _| !failures.contains_key(filename));
 
@@ -228,7 +234,7 @@ pub(super) fn detect_from_module_prepared(
         prepared.push(None);
     }
 
-    Some(
+    commitment.accept(Some(
         DetectedBundle::new(
             // Chunks register into a runtime shared by every asset of the
             // app, so a module without a local importer is not dead.
@@ -238,7 +244,7 @@ pub(super) fn detect_from_module_prepared(
         )
         .with_module_failures(failures)
         .with_module_notes(notes),
-    )
+    ))
 }
 
 // ---------------------------------------------------------------------------

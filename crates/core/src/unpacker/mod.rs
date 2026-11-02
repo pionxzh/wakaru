@@ -7,6 +7,7 @@ pub mod closure_module_manager;
 pub(crate) mod emit_esm;
 pub mod esbuild;
 pub mod metro;
+pub(crate) mod refusal;
 pub mod scope_hoist;
 mod sequence_split;
 mod surrounding;
@@ -1275,7 +1276,12 @@ pub(crate) fn try_unpack_bundle_with_positions(
 
 pub(crate) enum PreparedSource {
     Bundle(Box<DetectedBundle>),
-    Plain(Option<PreparedModuleAst>),
+    /// No detector split the input. `refusal` is set when one matched its
+    /// format and then refused the split; see [`refusal`].
+    Plain {
+        prepared: Option<PreparedModuleAst>,
+        refusal: Option<refusal::SplitRefusal>,
+    },
 }
 
 pub(crate) fn try_prepare_bundle(
@@ -1292,16 +1298,17 @@ pub(crate) fn try_prepare_bundle(
         if !recoverable_parse_errors.is_empty() || has_strict_mode_syntax_hazard(&module) {
             return Ok(None);
         }
-        Ok(detect_parsed_source(
-            &mut module,
-            cm,
-            source,
-            false,
-            positions,
-        ))
+        // A refusal inside this detection (for example of a bundle nested in
+        // a SystemJS register) belongs to no caller's input.
+        let (detected, _) =
+            refusal::capture(|| detect_parsed_source(&mut module, cm, source, false, positions));
+        Ok(detected)
     })
 }
 
+/// A plain input's AST is prepared when `prepare_plain_ast` is set, and
+/// always for an input a detector refused: a caller that skips plain inputs
+/// may still process a refused bundle as one file.
 pub(crate) fn try_prepare_source(
     source: &str,
     filename: &str,
@@ -1319,6 +1326,7 @@ pub(crate) fn try_prepare_source(
     }
 
     let globals = Globals::new();
+    let mut split_refusal = None;
     let prepared = GLOBALS.set(&globals, || -> anyhow::Result<PreparedSourceParts> {
         let cm: Lrc<SourceMap> = Default::default();
         let (mut module, recoverable_parse_errors) = {
@@ -1328,12 +1336,16 @@ pub(crate) fn try_prepare_source(
         };
 
         if recoverable_parse_errors.is_empty() && !has_strict_mode_syntax_hazard(&module) {
-            if let Some(result) = detect_parsed_source(&mut module, cm, source, false, positions) {
+            let (detected, refused) = refusal::capture(|| {
+                detect_parsed_source(&mut module, cm, source, false, positions)
+            });
+            if let Some(result) = detected {
                 return Ok(PreparedSourceParts::Bundle(Box::new(result)));
             }
+            split_refusal = refused;
         }
 
-        if prepare_plain_ast {
+        if prepare_plain_ast || split_refusal.is_some() {
             let unresolved_mark = {
                 let span = tracing::info_span!("prepare_plain: resolver");
                 let _enter = span.enter();
@@ -1358,13 +1370,19 @@ pub(crate) fn try_prepare_source(
             module,
             unresolved_mark,
             recoverable_parse_errors,
-        } => PreparedSource::Plain(Some(PreparedModuleAst {
-            globals,
-            module,
-            unresolved_mark,
-            recoverable_parse_errors,
-        })),
-        PreparedSourceParts::PlainUnprepared => PreparedSource::Plain(None),
+        } => PreparedSource::Plain {
+            prepared: Some(PreparedModuleAst {
+                globals,
+                module,
+                unresolved_mark,
+                recoverable_parse_errors,
+            }),
+            refusal: split_refusal,
+        },
+        PreparedSourceParts::PlainUnprepared => PreparedSource::Plain {
+            prepared: None,
+            refusal: split_refusal,
+        },
     };
     Ok(source)
 }

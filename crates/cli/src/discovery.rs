@@ -10,11 +10,13 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 /// Counts produced by a directory scan: how many candidate files were read,
-/// how many were detected as bundle/chunk inputs, and how many were skipped.
+/// how many were detected as bundle/chunk inputs, how many matched a bundle
+/// format whose split was refused (kept whole), and how many were skipped.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DirectoryScanStats {
     pub scanned: usize,
     pub detected: usize,
+    pub refused: usize,
     pub skipped: usize,
 }
 

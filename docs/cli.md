@@ -41,6 +41,18 @@ Directory inputs are supported only with `--unpack`. Wakaru recursively scans
 files are not copied or decompiled. Explicit file inputs keep the normal
 fallback behavior when no bundle format is detected.
 
+A file can match a bundle format (webpack 4 or 5, a webpack 5 chunk push,
+Browserify, Turbopack, Metro, or SystemJS) and still not be split, because
+splitting would change what it does: for example, a module reads a name that
+code after the bundle declares. A directory scan keeps such a file: it is
+decompiled as one file, as an explicit input is, and placed like a plain
+input (see below). Wakaru also reports a non-error `bundle_split_refused`
+warning that names the file, the matched format, and the reason. An explicit
+input gets the same one-file output without this warning. A directory whose
+candidates are only such files and plain files is not an empty scan; the
+`no bundle or chunk files detected in directory input` error needs every
+candidate to be plain or unparseable.
+
 An explicit PE, Mach-O, or ELF file can be a Bun single-file executable. Wakaru
 validates Bun's embedded module graph, selects its JS/JSX/TS/TSX entries, and
 then sends those entries through the same unpack pipeline as ordinary bundle
@@ -432,7 +444,7 @@ result from a run that produced nothing.
 
 | Error-class (`is_error: true`) | Non-error |
 |---|---|
-| `raw_normalization_failed`, `fact_collection_failed`, `webpack_factory_recovery_failed`, `decompile_failed`, `duplicate_declaration`, `output_parse_recovered`, `output_parse_failed` | `input_parse_recovered`, `tdz_violation`, `import_cycle`, `cross_module_class_call`, `commonjs_export_unrecovered`, `commonjs_require_unrecovered`, `commonjs_require_of_esm`, `commonjs_exports_escape`, `missing_imported_name`, `es_source_kept_commonjs`, `runtime_residual`, `gtm_unsupported_escape` |
+| `raw_normalization_failed`, `fact_collection_failed`, `webpack_factory_recovery_failed`, `decompile_failed`, `duplicate_declaration`, `output_parse_recovered`, `output_parse_failed` | `input_parse_recovered`, `tdz_violation`, `import_cycle`, `cross_module_class_call`, `commonjs_export_unrecovered`, `commonjs_require_unrecovered`, `commonjs_require_of_esm`, `commonjs_exports_escape`, `missing_imported_name`, `es_source_kept_commonjs`, `runtime_residual`, `gtm_unsupported_escape`, `bundle_split_refused` |
 
 `duplicate_declaration`, `es_source_kept_commonjs`, and the `output_parse_*`
 checks run only with `--diagnostics`. Without it, Wakaru does not re-parse emitted modules, so a

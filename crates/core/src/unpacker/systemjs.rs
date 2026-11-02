@@ -19,6 +19,7 @@ use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::js_names::{is_reserved_binding_name, is_valid_identifier_name};
+use crate::unpacker::refusal;
 use crate::unpacker::{
     emit_module_with_positions, span_byte_range, BundleFormat, GeneratedSourceMapPoint,
     InputOffsets, MappedCode, SourcePositions, UnpackResult, UnpackedModule,
@@ -55,6 +56,9 @@ pub(super) fn detect_from_module(
     if registers.is_empty() {
         return None;
     }
+    // Every top-level register parsed: any failure from here on refuses a
+    // SystemJS bundle.
+    let commitment = refusal::commit(BundleFormat::SystemJs);
 
     let multiple = registers.len() > 1;
     let mut seen = HashSet::default();
@@ -90,7 +94,7 @@ pub(super) fn detect_from_module(
         });
     }
 
-    Some(UnpackResult::new(modules, BundleFormat::SystemJs))
+    commitment.accept(Some(UnpackResult::new(modules, BundleFormat::SystemJs)))
 }
 
 fn try_unpack_dynamic_export_bundle(

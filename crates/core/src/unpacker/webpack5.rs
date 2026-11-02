@@ -17,6 +17,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::js_names::{is_reserved_binding_name, is_valid_identifier_name};
 use crate::rules::rename_utils::BindingRename;
+use crate::unpacker::refusal::{self, because, SplitRefusalReason};
 use crate::unpacker::surrounding::{
     ContextSymCollector, IdentNameCollector, SurroundingCode, SurroundingItems,
 };
@@ -347,12 +348,13 @@ fn detect_webpack5_top_level(
     positions: SourcePositions,
 ) -> Option<DetectedBundle> {
     // This fallback runs for every input the IIFE scan rejects, so decide by
-    // reference before cloning anything: bail on any top-level ModuleDecl and
-    // find the modules container in the same pass.
+    // reference before cloning anything: find the modules container and note
+    // any top-level ModuleDecl in one pass.
     let mut modules_sym: Option<Atom> = None;
+    let mut has_module_decl = false;
     for item in &module.body {
         match item {
-            ModuleItem::ModuleDecl(_) => return None,
+            ModuleItem::ModuleDecl(_) => has_module_decl = true,
             ModuleItem::Stmt(Stmt::Decl(swc_core::ecma::ast::Decl::Var(var_decl))) => {
                 if modules_sym.is_none() {
                     if let Some((_, sym)) = extract_webpack_modules_container(var_decl, false) {
@@ -378,6 +380,11 @@ fn detect_webpack5_top_level(
     // webpack require lifecycle for the container. The plan is reused by
     // entry extraction below.
     let require_plan = plan_webpack_require_fn(&stmts, &modules_sym)?;
+    if has_module_decl {
+        // The bundle is matched, but its exports cannot be recovered yet.
+        let _refused = refusal::commit(BundleFormat::Webpack5);
+        return because(None, SplitRefusalReason::EsmDeclarations);
+    }
 
     let bootstrap_body = swc_core::ecma::ast::FunctionBody {
         span: DUMMY_SP,
@@ -468,6 +475,10 @@ pub(super) fn detect_chunk_from_module_prepared(
     let mut factory_spans = Vec::new();
     let mut first_chunk_id = None;
     let mut has_commonjs_chunk = false;
+    // A JSONP push proves the format. The CommonJS form (`exports.modules =
+    // {...}`) alone does not commit: ordinary CommonJS can export a table
+    // of functions under that name.
+    let mut commitment = None;
 
     // Prelude items before the first push: only their declarations can be
     // bound for the chunk's modules (see `PreludeNames::plan`).
@@ -483,6 +494,7 @@ pub(super) fn detect_chunk_from_module_prepared(
             continue;
         };
         if let Some((chunk_ids, modules_container)) = extract_chunk_push_parts(expr) {
+            commitment.get_or_insert_with(|| refusal::commit(BundleFormat::Webpack5));
             if first_chunk_id.is_none() {
                 first_chunk_id = chunk_ids.elems.first().and_then(|elem| {
                     let elem = elem.as_ref()?;
@@ -496,7 +508,10 @@ pub(super) fn detect_chunk_from_module_prepared(
                     }
                 });
             }
-            let extracted = extract_modules_from_container(&modules_container, cm.clone())?;
+            let extracted = because(
+                extract_modules_from_container(&modules_container, cm.clone()),
+                SplitRefusalReason::FactoryRecovery,
+            )?;
             push_items.push(item);
             factory_spans.extend(extracted.factory_spans);
             if is_legacy_webpack_jsonp_push(expr) {
@@ -523,7 +538,7 @@ pub(super) fn detect_chunk_from_module_prepared(
     if all_modules.is_empty() || all_prepared.iter().all(Option::is_none) {
         // Preserve the historical whole-input fallback when no factory across
         // the complete chunk remains trustworthy.
-        return None;
+        return because(None, SplitRefusalReason::FactoryRecovery);
     }
 
     // A CommonJS chunk's other statements (`exports.id = …`) are its
@@ -534,25 +549,30 @@ pub(super) fn detect_chunk_from_module_prepared(
         // module that reads a declaration of the prelude gets a binding to its
         // export, and any other use keeps the input whole.
         let (before, after) = prelude_items.split_at(prelude_before_push);
-        let names =
-            surrounding::PreludeNames::plan(before, after, &push_items, &factory_spans, false)?;
+        let names = because(
+            surrounding::PreludeNames::plan(before, after, &push_items, &factory_spans, false),
+            SplitRefusalReason::SurroundingCode,
+        )?;
         // An opaque module keeps its raw body and gets no binding.
         if names.is_some() && !all_failures.is_empty() {
-            return None;
+            return because(None, SplitRefusalReason::SurroundingCode);
         }
         let filename = chunk_prelude::prelude_filename(first_chunk_id);
-        chunk_prelude::attach(
-            &prelude_items,
-            &filename,
-            names.as_ref(),
-            &mut all_modules,
-            &mut all_prepared,
-            &cm,
+        because(
+            chunk_prelude::attach(
+                &prelude_items,
+                &filename,
+                names.as_ref(),
+                &mut all_modules,
+                &mut all_prepared,
+                &cm,
+            ),
+            SplitRefusalReason::SurroundingCode,
         )?;
         script_modules.insert(filename);
     }
 
-    Some(
+    let detected = Some(
         DetectedBundle::new(
             // A standalone chunk has no in-file runtime: its modules are
             // registered for consumption by runtimes in other physical assets,
@@ -566,7 +586,11 @@ pub(super) fn detect_chunk_from_module_prepared(
         .with_webpack_absent_string_ids(all_absent_string_ids)
         .with_webpack_legacy_module_i(all_legacy_module_i)
         .with_script_modules(script_modules),
-    )
+    );
+    match commitment {
+        Some(commitment) => commitment.accept(detected),
+        None => detected,
+    }
 }
 
 /// The webpack 5 modules container. Usually an object keyed by module id, but
@@ -1970,6 +1994,9 @@ fn extract_webpack5_modules_with_plan(
         }
         found?
     };
+    // The table and webpack's require lifecycle prove the format; any
+    // failure from here on refuses a webpack 5 bundle.
+    let commitment = refusal::commit(BundleFormat::Webpack5);
 
     let module_entries = {
         let span = tracing::info_span!("webpack5: collect module entries");
@@ -1987,11 +2014,14 @@ fn extract_webpack5_modules_with_plan(
         id_to_filename,
         str_id_to_filename,
         absent_string_ids,
-    } = prepare_webpack5_factories(&module_entries, false)?;
+    } = because(
+        prepare_webpack5_factories(&module_entries, false),
+        SplitRefusalReason::FactoryRecovery,
+    )?;
     if !module_entries.is_empty() && failures.len() == module_entries.len() {
         // A synthetic startup cannot make an entirely opaque module table
         // trustworthy; retain the original whole-input fallback.
-        return None;
+        return because(None, SplitRefusalReason::FactoryRecovery);
     }
     let id_to_filename = &id_to_filename;
     let str_id_to_filename = &str_id_to_filename;
@@ -2022,15 +2052,18 @@ fn extract_webpack5_modules_with_plan(
 
     // Code around the bootstrap runs before or after the bundle; entry.js
     // keeps it, in source order, around the startup.
-    let surrounding = SurroundingCode::collect(
-        surrounding,
-        &ENTRY_NORMALIZED_NAMES,
-        &factory_body_spans(&module_entries),
+    let surrounding = because(
+        SurroundingCode::collect(
+            surrounding,
+            &ENTRY_NORMALIZED_NAMES,
+            &factory_body_spans(&module_entries),
+        ),
+        SplitRefusalReason::SurroundingCode,
     )?;
     if surrounding.has_prelude() {
         // An opaque module keeps its raw body and gets no binding.
         if !failures.is_empty() {
-            return None;
+            return because(None, SplitRefusalReason::SurroundingCode);
         }
         for (entry, prepared) in module_entries.iter().zip(prepared.iter_mut()) {
             let Some(PreparedModuleAst {
@@ -2042,10 +2075,13 @@ fn extract_webpack5_modules_with_plan(
             else {
                 continue;
             };
-            GLOBALS.set(globals, || {
-                let require_ctxt = SyntaxContext::empty().apply_mark(*unresolved_mark);
-                surrounding.bind_factory(module, require_ctxt, &entry.filename)
-            })?;
+            because(
+                GLOBALS.set(globals, || {
+                    let require_ctxt = SyntaxContext::empty().apply_mark(*unresolved_mark);
+                    surrounding.bind_factory(module, require_ctxt, &entry.filename)
+                }),
+                SplitRefusalReason::SurroundingCode,
+            )?;
         }
     }
     let entry = EntryEmitter {
@@ -2144,10 +2180,13 @@ fn extract_webpack5_modules_with_plan(
     // With no entry.js to hold it, the code around the bootstrap would be in
     // no output file; the input stays one file instead.
     if !surrounding.is_empty() && !has_synthetic_entry {
-        return None;
+        return because(None, SplitRefusalReason::SurroundingCode);
     }
     let mut script_modules = HashSet::default();
-    if surrounding.push_prelude(&mut modules, &cm)? {
+    if because(
+        surrounding.push_prelude(&mut modules, &cm),
+        SplitRefusalReason::SurroundingCode,
+    )? {
         prepared.push(None);
         script_modules.insert(surrounding::PRELUDE_FILENAME.to_string());
     }
@@ -2160,7 +2199,7 @@ fn extract_webpack5_modules_with_plan(
         .filter_map(|entry| entry.numeric_id.map(|id| (entry.filename.clone(), id)))
         .collect();
 
-    Some(
+    commitment.accept(Some(
         DetectedBundle::new(
             UnpackResult::new(modules, BundleFormat::Webpack5),
             prepared,
@@ -2170,7 +2209,7 @@ fn extract_webpack5_modules_with_plan(
         .with_webpack_numeric_module_ids(numeric_module_ids)
         .with_webpack_absent_string_ids(absent_string_ids)
         .with_script_modules(script_modules),
-    )
+    ))
 }
 
 /// Callee spelling given to a directly invoked require call when its consumer

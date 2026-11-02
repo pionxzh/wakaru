@@ -605,8 +605,13 @@ fn run_unpack(cli: Cli) -> Result<()> {
         );
     } else if io::stderr().is_terminal() {
         if let Some(stats) = scan_stats {
+            let kept_whole = if stats.refused > 0 {
+                format!(", kept whole: {} file(s)", stats.refused)
+            } else {
+                String::new()
+            };
             eprintln!(
-                "scanned: {} file(s), detected: {} bundle/chunk file(s), skipped: {} file(s)",
+                "scanned: {} file(s), detected: {} bundle/chunk file(s){kept_whole}, skipped: {} file(s)",
                 stats.scanned, stats.detected, stats.skipped
             );
         }
@@ -1598,6 +1603,9 @@ fn run_public_unpack(
     let mut gtm = Vec::new();
     let mut bun_embedded_sources = Vec::new();
     let mut stats = DirectoryScanStats::default();
+    // directory candidates whose bundle split was refused; each is processed
+    // as one file and gets a warning
+    let mut refused_candidates = Vec::new();
     let mut pushed_inputs = 0usize;
     // inputs the job itself received; a run of containers only has none
     let mut job_inputs = 0usize;
@@ -1652,7 +1660,7 @@ fn run_public_unpack(
                         .with_context(|| format!("failed to read {}", candidate.display()))?;
                     let receipt = match job.push_with_unmatched(
                         wakaru::Source::new(candidate.to_string_lossy().to_string(), code),
-                        wakaru::UnmatchedInput::Skip,
+                        wakaru::UnmatchedInput::SkipUnrecognized,
                     ) {
                         Ok(receipt) => receipt,
                         Err(error) if error.kind() == wakaru::ErrorKind::Parse => {
@@ -1663,10 +1671,13 @@ fn run_public_unpack(
                     };
                     pushed_inputs += 1;
                     job_inputs += 1;
-                    if receipt.detection == wakaru::InputDetection::Plain {
-                        stats.skipped += 1;
-                    } else {
+                    if receipt.detection != wakaru::InputDetection::Plain {
                         stats.detected += 1;
+                    } else if receipt.refusal.is_some() {
+                        stats.refused += 1;
+                        refused_candidates.push(receipt.id);
+                    } else {
+                        stats.skipped += 1;
                     }
                 }
             }
@@ -1697,7 +1708,10 @@ fn run_public_unpack(
         }
         let single_input_name =
             (output.inputs.len() == 1).then(|| output.inputs[0].filename.clone());
-        (adapt_public_unpack_output(output), single_input_name)
+        let refusal_warnings = split_refusal_warnings(&output.inputs, &refused_candidates);
+        let mut output = adapt_public_unpack_output(output);
+        output.warnings.splice(0..0, refusal_warnings);
+        (output, single_input_name)
     };
     let (gtm_modules, gtm_warnings) = decompile_gtm_scripts(&gtm, raw, rewrite, diagnostics);
     output.modules.extend(gtm_modules);
@@ -1709,6 +1723,35 @@ fn run_public_unpack(
         gtm,
         bun_embedded_sources,
     })
+}
+
+/// Warning kind for a directory candidate that matched a bundle format whose split was refused.
+const BUNDLE_SPLIT_REFUSED_KIND: &str = "bundle_split_refused";
+
+/// One warning per directory candidate in `refused` (input IDs): it matched a bundle format, its
+/// split was refused, and it was kept as one file instead of being skipped as plain. Explicit
+/// inputs get none; they are always processed.
+fn split_refusal_warnings(
+    inputs: &[wakaru::InputReport],
+    refused: &[wakaru::InputId],
+) -> Vec<CliWarning> {
+    inputs
+        .iter()
+        .filter(|input| refused.contains(&input.id))
+        .filter_map(|input| {
+            let refusal = input.refusal?;
+            Some(CliWarning {
+                filename: input.filename.clone(),
+                kind: BUNDLE_SPLIT_REFUSED_KIND.to_string(),
+                is_error: false,
+                message: format!(
+                    "{} bundle not split: {}; kept as one file",
+                    refusal.format.as_str(),
+                    refusal.reason.message()
+                ),
+            })
+        })
+        .collect()
 }
 
 /// A Google Tag Manager container read from one input, kept for the index written next to its

@@ -11,6 +11,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use crate::analysis::binding_uses::BindingUseIndex;
 use crate::module_path::relative_import_specifier;
 use crate::rules::rename_utils::{rename_bindings_in_module, BindingRename};
+use crate::unpacker::refusal::{self, because, SplitRefusalReason};
 use crate::unpacker::{
     deconflict_runtime_binding_renames, sanitize_relative_path, span_byte_range, BundleFormat,
     DetectedBundle, PreparedModuleAst, UnpackResult, UnpackedModule,
@@ -128,6 +129,9 @@ pub(super) fn detect_from_module_prepared(
     if descriptors.is_empty() {
         return None;
     }
+    // Every definition of the selected prefix parsed: any failure from here
+    // on refuses a Metro bundle.
+    let commitment = refusal::commit(BundleFormat::Metro);
 
     let entry_ids = collect_entry_ids(module, &selected_prefix);
     let known_ids = descriptors
@@ -149,7 +153,10 @@ pub(super) fn detect_from_module_prepared(
     for descriptor in descriptors {
         let filename = filenames.get(&descriptor.id)?.clone();
         let is_entry = entry_ids.contains(&descriptor.id);
-        let prepared_module = prepare_metro_module(&descriptor, &filename, &filenames)?;
+        let prepared_module = because(
+            prepare_metro_module(&descriptor, &filename, &filenames),
+            SplitRefusalReason::FactoryRecovery,
+        )?;
         modules.push(UnpackedModule {
             id: descriptor.id.display(),
             is_entry,
@@ -167,11 +174,11 @@ pub(super) fn detect_from_module_prepared(
         prepared.push(Some(prepared_module));
     }
 
-    Some(DetectedBundle::new(
+    commitment.accept(Some(DetectedBundle::new(
         UnpackResult::new(modules, BundleFormat::Metro),
         prepared,
         cm,
-    ))
+    )))
 }
 
 fn assign_filenames(

@@ -68,6 +68,14 @@ extraction), and `vue` (experimental standalone SFC recovery). See rustdoc for e
   available during intake.
 - Evaluate `UnmatchedInput::Error` at `finish`, preserving operation-level
   failure semantics while keeping the job usable after every successful push.
+- Keep a bundle whose split a detector refused as `InputDetection::Plain`
+  and report the format and reason on `InputReport::refusal` (and the
+  receipt), so every existing `UnmatchedInput` policy treats it as before.
+  `UnmatchedInput::SkipUnrecognized` is the one policy that tells them
+  apart: it processes a refused input as one file and skips the rest, which
+  is what a directory walk needs. The core prepares a refused input's AST
+  even when plain ASTs are not requested, so processing it does not parse it
+  again.
 - Represent heuristic scope-hoist recovery as
   `InputDetection::HeuristicScopeHoisted` instead of pretending it identified
   a bundler; `BundleFormat` stays structural-only.
@@ -142,7 +150,8 @@ filename or sentinel string for a later adapter to decode.
 1. Each physical input is detected at most once per `unpack` call.
 2. A compatible plain JavaScript input is parsed at most once before rules.
 3. A prepared module is not emitted and reparsed before the rule pipeline.
-4. `UnmatchedInput::Skip` does not require a separate detection preflight.
+4. `UnmatchedInput::Skip` and `SkipUnrecognized` do not require a separate
+   detection preflight.
 5. `UnpackJob::push` releases a skipped candidate's source before accepting
    the next candidate. Peak intake memory is therefore bounded by retained
    detected/processed inputs rather than every file visited by a directory

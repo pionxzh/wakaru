@@ -44,7 +44,10 @@ Variants:
 | `--unpack=inspect` | Finer scope-hoist boundaries for static inspection. Always prints a warning. Not an executable reconstruction |
 
 Directory inputs scan `.js`, `.mjs`, and `.cjs` recursively, skipping hidden
-paths and `node_modules`. Input source maps (`--source-map`) are rejected
+paths and `node_modules`. Only bundles and chunks are kept; other files are
+not copied. A file that matches a bundle format but cannot be split safely is
+kept as one decompiled file, with a non-error `bundle_split_refused` warning
+that gives the reason. Input source maps (`--source-map`) are rejected
 with `--unpack`.
 
 Module filenames come from the paths in the bundle. Characters Windows does

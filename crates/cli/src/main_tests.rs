@@ -1770,6 +1770,7 @@ fn unpack_directory_inputs_are_recursive_detected_js_files_only() {
         Some(DirectoryScanStats {
             scanned: 4,
             detected: 2,
+            refused: 0,
             skipped: 2,
         })
     );
@@ -1822,6 +1823,7 @@ fn unpack_mixed_explicit_and_directory_inputs_processes_plain_explicit_file() {
         Some(DirectoryScanStats {
             scanned: 1,
             detected: 1,
+            refused: 0,
             skipped: 0,
         })
     );
@@ -2019,10 +2021,166 @@ fn unpack_directory_skips_malformed_javascript_candidate() {
         Some(DirectoryScanStats {
             scanned: 2,
             detected: 1,
+            refused: 0,
             skipped: 1,
         })
     );
     assert!(!execution.output.modules.is_empty());
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+/// A webpack 4 bootstrap whose factory reads a function declared after it:
+/// detection matches the format and refuses the split.
+fn refused_webpack4_source() -> &'static str {
+    r#"!function(modules){var cache={};function load(id){if(cache[id])return cache[id].exports;var module=cache[id]={exports:{}};return modules[id].call(module.exports,module,module.exports,load),module.exports}load.s=0,load(0)}([function(module,exports){module.exports=greeting()}]);
+function greeting(){return "hello"}"#
+}
+
+fn split_refusal_warnings_of(execution: &PublicUnpackExecution) -> Vec<&CliWarning> {
+    execution
+        .output
+        .warnings
+        .iter()
+        .filter(|warning| warning.kind == "bundle_split_refused")
+        .collect()
+}
+
+#[test]
+fn unpack_directory_keeps_a_refused_bundle_whole_with_a_warning() {
+    // A directory whose only candidates are a refused bundle and a plain
+    // file is not an empty scan: the refused bundle is kept as one file.
+    let dir = temp_test_dir("unpack-dir-refused");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    fs::write(dir.join("refused.js"), refused_webpack4_source()).expect("write refused bundle");
+    fs::write(dir.join("plain.js"), "const plainValue = 1;").expect("write plain file");
+
+    let execution = run_public_unpack(
+        std::slice::from_ref(&dir),
+        false,
+        UnpackMode::Auto,
+        DceMode::Off,
+        RewriteLevel::Standard,
+        false,
+        false,
+    )
+    .expect("a refused bundle counts as a directory input");
+
+    assert_eq!(
+        execution.scan_stats,
+        Some(DirectoryScanStats {
+            scanned: 2,
+            detected: 0,
+            refused: 1,
+            skipped: 1,
+        })
+    );
+    assert_eq!(execution.output.modules.len(), 1);
+    let (_, code) = &execution.output.modules[0];
+    assert!(
+        code.contains("greeting"),
+        "refused bundle kept whole: {code}"
+    );
+    assert!(!code.contains("plainValue"));
+
+    let warnings = split_refusal_warnings_of(&execution);
+    assert_eq!(
+        warnings.len(),
+        1,
+        "warnings: {:?}",
+        execution.output.warnings
+    );
+    assert!(warnings[0].filename.ends_with("refused.js"));
+    assert!(!warnings[0].is_error);
+    assert_eq!(
+        warnings[0].message,
+        "webpack4 bundle not split: code around the bundle cannot be separated from its modules safely; kept as one file"
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn unpack_directory_mixes_split_refused_and_skipped_candidates() {
+    let dir = temp_test_dir("unpack-dir-refused-mixed");
+    let nested = dir.join("nested");
+    fs::create_dir_all(&nested).expect("create nested dir");
+    fs::write(nested.join("chunk.js"), webpack5_chunk_source()).expect("write chunk");
+    fs::write(dir.join("refused.js"), refused_webpack4_source()).expect("write refused bundle");
+    fs::write(dir.join("plain.js"), "const plainValue = 1;").expect("write plain file");
+
+    let execution = run_public_unpack(
+        std::slice::from_ref(&dir),
+        false,
+        UnpackMode::Strict,
+        DceMode::Off,
+        RewriteLevel::Standard,
+        false,
+        false,
+    )
+    .expect("mixed directory should unpack");
+
+    assert_eq!(
+        execution.scan_stats,
+        Some(DirectoryScanStats {
+            scanned: 3,
+            detected: 1,
+            refused: 1,
+            skipped: 1,
+        })
+    );
+    let modules = &execution.output.modules;
+    assert!(
+        modules.iter().any(|(_, code)| code.contains("greeting")),
+        "refused bundle missing: {modules:?}"
+    );
+    assert!(
+        modules.iter().all(|(_, code)| !code.contains("plainValue")),
+        "plain file must stay skipped: {modules:?}"
+    );
+    assert!(
+        execution
+            .output
+            .provenance
+            .iter()
+            .any(|module| module.input.ends_with("nested\\chunk.js")
+                || module.input.ends_with("nested/chunk.js")),
+        "split chunk missing: {:?}",
+        execution.output.provenance
+    );
+    let warnings = split_refusal_warnings_of(&execution);
+    assert_eq!(
+        warnings.len(),
+        1,
+        "warnings: {:?}",
+        execution.output.warnings
+    );
+    assert!(warnings[0].filename.ends_with("refused.js"));
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn unpack_explicit_refused_bundle_is_processed_without_a_refusal_warning() {
+    let dir = temp_test_dir("unpack-explicit-refused");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let refused = dir.join("refused.js");
+    fs::write(&refused, refused_webpack4_source()).expect("write refused bundle");
+
+    let execution = run_public_unpack(
+        std::slice::from_ref(&refused),
+        false,
+        UnpackMode::Strict,
+        DceMode::Off,
+        RewriteLevel::Standard,
+        false,
+        false,
+    )
+    .expect("explicit refused bundle should fall back to one file");
+
+    assert_eq!(execution.scan_stats, None);
+    assert_eq!(execution.output.modules.len(), 1);
+    assert!(split_refusal_warnings_of(&execution).is_empty());
 
     fs::remove_dir_all(&dir).expect("remove temp dir");
 }

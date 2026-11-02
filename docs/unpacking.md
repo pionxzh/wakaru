@@ -1245,5 +1245,33 @@ detector output from all inputs and skips the normal decompile pipeline.
 The CLI also accepts directory inputs with `--unpack`. It expands directories
 recursively to `.js`, `.mjs`, and `.cjs` candidates while skipping hidden
 files/directories and `node_modules`, then pushes each candidate directly into
-one `UnpackJob`. Plain directory candidates are skipped and released during
-the walk; the CLI does not run a separate boolean detection preflight.
+one `UnpackJob` with `UnmatchedInput::SkipUnrecognized`. Plain directory
+candidates are skipped and released during the walk; the CLI does not run a
+separate boolean detection preflight. A candidate whose format matched while
+its split was refused is not skipped: it is processed as one file, like an
+explicit plain input.
+
+### Refused splits
+
+A detector that returns no bundle has either not matched its format or
+matched it and refused the split. The first kind is a plain input. The
+second is still one file of the bundle set, so callers that skip plain
+inputs need to tell them apart. A detector marks the point where its format
+is proven with `refusal::commit` (`unpacker/refusal.rs`); any return without
+a result after that point records a `SplitRefusal` with the format and, when
+the failing check names one, the reason. The first refusal during an
+input's detection is reported on its prepared input and on the façade's
+`InputReport::refusal`, and only when no later detector or the heuristic
+scope-hoist split succeeds.
+
+Commit points: webpack 5 after the module table and webpack's require
+lifecycle are proven (an unwrapped `output.iife: false` bootstrap with
+top-level `import`/`export` refuses with `esm_declarations`); a webpack 5
+JSONP chunk push; webpack 4 once the bootstrap is called with a table holding
+a factory; Browserify/Cocos once the dialect matches; Turbopack once the
+registration containers parse; Metro once every definition of the selected
+prefix parses; SystemJS once every top-level register parses. Closure
+ModuleManager, esbuild/Bun, AMD/UMD, the CommonJS chunk form (`exports.modules
+= {...}`), and heuristic scope hoisting never commit: their rejections are
+part of recognizing the shape, and AMD/UMD wrappers kept whole are common in
+ordinary library files.

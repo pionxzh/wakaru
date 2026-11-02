@@ -82,6 +82,8 @@ Use a fresh directory to avoid mixing new output with files from an earlier run.
 
 A directory scan found nothing it recognizes. Directory scans only look at
 `.js`, `.mjs`, and `.cjs` files, and skip hidden paths and `node_modules`.
+A file that matches a bundle format but is not split counts as found: it is
+kept as one file with a `bundle_split_refused` warning.
 Point Wakaru at the bundle file directly instead of the directory. A Bun
 single-file executable also needs an explicit path. Directory scans do not
 pick it up.

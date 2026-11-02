@@ -141,7 +141,60 @@ pub enum InputDetection {
     /// Scope-hoisted modules were recovered heuristically. This is not a
     /// detected bundler format.
     HeuristicScopeHoisted,
+    /// No detector split the input. An input whose format matched but whose
+    /// split was refused is also `Plain`; see [`InputReport::refusal`].
     Plain,
+}
+
+/// Why a structurally matched bundle was not split.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SplitRefusalReason {
+    /// Top-level code around the bundle statement cannot move to its own
+    /// file: a module depends on it in a way a split would change.
+    SurroundingCode,
+    /// No module factory could be recovered, or one failed in a way that
+    /// rejects the whole container.
+    FactoryRecovery,
+    /// The bundle has top-level `import`/`export` declarations whose public
+    /// surface cannot be recovered yet.
+    EsmDeclarations,
+    /// Another check after the format matched failed.
+    Other,
+}
+
+impl SplitRefusalReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::SurroundingCode => "surrounding_code",
+            Self::FactoryRecovery => "factory_recovery",
+            Self::EsmDeclarations => "esm_declarations",
+            Self::Other => "other",
+        }
+    }
+
+    /// A short description of the reason, for messages.
+    pub fn message(self) -> &'static str {
+        match self {
+            Self::SurroundingCode => {
+                "code around the bundle cannot be separated from its modules safely"
+            }
+            Self::FactoryRecovery => "its module factories could not be recovered",
+            Self::EsmDeclarations => "it has top-level import or export declarations",
+            Self::Other => "its modules could not be extracted safely",
+        }
+    }
+}
+
+/// A detector matched an input's bundle format and then refused to split it.
+/// The input is detected as [`InputDetection::Plain`], so the
+/// [`UnmatchedInput`](crate::UnmatchedInput) policy decides what happens to
+/// it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct SplitRefusal {
+    pub format: BundleFormat,
+    pub reason: SplitRefusalReason,
 }
 
 /// What the operation did with one input.
@@ -161,6 +214,9 @@ pub enum InputAction {
 pub struct InputReceipt {
     pub id: InputId,
     pub detection: InputDetection,
+    /// Set when the input is [`InputDetection::Plain`] because its split was
+    /// refused.
+    pub refusal: Option<SplitRefusal>,
 }
 
 /// Per-input summary in [`UnpackOutput::inputs`], in input order.
@@ -170,6 +226,10 @@ pub struct InputReport {
     pub id: InputId,
     pub filename: String,
     pub detection: InputDetection,
+    /// Set when the input is [`InputDetection::Plain`] because a detector
+    /// matched its format and then refused to split it. `None` for every
+    /// other input.
+    pub refusal: Option<SplitRefusal>,
     pub action: InputAction,
     /// Indices into [`UnpackOutput::modules`]. A module with provenance from
     /// multiple inputs appears in every applicable report. A synthesized
