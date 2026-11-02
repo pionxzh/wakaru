@@ -28,31 +28,26 @@ use swc_core::ecma::codegen::{text_writer::JsWriter, Emitter};
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum FilenameDedupStyle {
     /// Split at the last `.` anywhere in the string (a directory prefix
-    /// stays part of the stem) and default the extension to `js`; collision
-    /// keys are ASCII-lowercased. The CLI's final pass
-    /// (`deduplicate_name` in `crates/cli/src/output.rs`) suffixes the same
-    /// way but lowercases with Unicode rules, so a name pair differing only in
-    /// non-ASCII case is renamed there and not here.
+    /// stays part of the stem) and default the extension to `js`.
     Flat,
     /// Split stem/extension with `std::path` semantics and keep the parent
     /// directory, falling back to `{fallback_stem}` / `js` when the path has
-    /// no stem or extension; collision keys are Unicode-lowercased.
+    /// no stem or extension.
     PathAware { fallback_stem: &'static str },
 }
 
 /// Case-insensitive filename dedup. Probes `filename`, then `{stem}_2.{ext}`,
-/// `{stem}_3.{ext}`, ... until a name whose lowercased key is not in `seen`
-/// is found. Inserts the winner's key and returns the winner.
+/// `{stem}_3.{ext}`, ... until a name whose
+/// [`filename_case_key`](crate::driver::filename_case_key) is not in `seen`
+/// is found. Inserts the winner's key and returns the winner. Both styles fold
+/// case the same way, and so does the CLI's final pass.
 pub(crate) fn dedup_filename(
     filename: &str,
     seen: &mut HashSet<String>,
     style: FilenameDedupStyle,
 ) -> String {
-    let key = match style {
-        FilenameDedupStyle::Flat => filename.to_ascii_lowercase(),
-        FilenameDedupStyle::PathAware { .. } => filename.to_lowercase(),
-    };
-    if seen.insert(key) {
+    use crate::driver::filename_case_key;
+    if seen.insert(filename_case_key(filename)) {
         return filename.to_string();
     }
     match style {
@@ -63,7 +58,7 @@ pub(crate) fn dedup_filename(
             };
             for n in 2u32.. {
                 let candidate = format!("{stem}_{n}.{ext}");
-                if seen.insert(candidate.to_ascii_lowercase()) {
+                if seen.insert(filename_case_key(&candidate)) {
                     return candidate;
                 }
             }
@@ -79,7 +74,7 @@ pub(crate) fn dedup_filename(
             for n in 2u32.. {
                 let candidate = parent.join(format!("{stem}_{n}.{ext}"));
                 let candidate = candidate.to_string_lossy().replace('\\', "/");
-                if seen.insert(candidate.to_lowercase()) {
+                if seen.insert(filename_case_key(&candidate)) {
                     return candidate;
                 }
             }

@@ -30,7 +30,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
-use wakaru_core::safe_relative_module_name;
+use wakaru_core::{filename_case_key, safe_relative_module_name};
 
 /// An output directory and every name planned below it.
 #[derive(Debug)]
@@ -112,7 +112,7 @@ impl OutputDir {
             .and_then(|()| self.record_directories(&name, filename, None));
         if let Err(error) = checked {
             // A caller may skip a refused name and go on; it keeps no claim.
-            self.claimed.remove(&name.to_lowercase());
+            self.claimed.remove(&filename_case_key(&name));
             return Err(error);
         }
         Ok(PlannedPath {
@@ -125,7 +125,7 @@ impl OutputDir {
     /// writes it, for the error when input content asks for the same name.
     pub fn reserve(&mut self, name: &str, owner: &str) -> Result<PlannedPath> {
         let name = output_name(name)?;
-        let key = name.to_lowercase();
+        let key = filename_case_key(&name);
         if self.claimed.contains(&key) {
             bail!("a recovered module is named {name:?}, which {owner} also writes");
         }
@@ -151,7 +151,7 @@ impl OutputDir {
         requested: &str,
         owner: Option<&str>,
     ) -> Result<()> {
-        let key = name.to_lowercase();
+        let key = filename_case_key(name);
         if self.directories.contains(&key) {
             let by = owner.map_or_else(String::new, |owner| format!(" (by {owner})"));
             bail!(
@@ -190,7 +190,7 @@ impl OutputDir {
     }
 
     fn refuse_reserved(&self, name: &str, requested: &str) -> Result<()> {
-        if let Some(owner) = self.reserved.get(&name.to_lowercase()) {
+        if let Some(owner) = self.reserved.get(&filename_case_key(name)) {
             bail!("a recovered module is named {requested:?}, which {owner} also writes");
         }
         Ok(())
@@ -335,7 +335,7 @@ fn ensure_output_dir(path: &Path, force: bool) -> Result<bool> {
 /// Keys are lowercased, so names differing only in case collide. A name
 /// without an extension gets `.js`, as module deduplication always has.
 fn deduplicate_name(name: &str, claimed: &mut HashSet<String>) -> String {
-    if claimed.insert(name.to_lowercase()) {
+    if claimed.insert(filename_case_key(name)) {
         return name.to_string();
     }
     let (dir, file) = match name.rsplit_once('/') {
@@ -352,7 +352,7 @@ fn deduplicate_name(name: &str, claimed: &mut HashSet<String>) -> String {
             Some(dir) => format!("{dir}/{file}"),
             None => file,
         };
-        if claimed.insert(candidate.to_lowercase()) {
+        if claimed.insert(filename_case_key(&candidate)) {
             return candidate;
         }
     }

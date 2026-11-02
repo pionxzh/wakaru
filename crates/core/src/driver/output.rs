@@ -201,6 +201,18 @@ pub fn safe_relative_module_name(filename: &str) -> Result<String> {
     Ok(parts.join("/"))
 }
 
+/// The key two output filenames share when they would be one file on a
+/// case-insensitive filesystem; every filename deduplication compares these.
+///
+/// NTFS and the default macOS filesystems fold case across Unicode, not only
+/// ASCII, so `É.js` and `é.js` are one file there. Folding with Unicode
+/// lowercase can only over-match (an extra `_2`), while ASCII folding
+/// under-matches and lets one file overwrite the other. Unicode normalization
+/// (precomposed vs decomposed accents) is not folded.
+pub fn filename_case_key(name: &str) -> String {
+    name.to_lowercase()
+}
+
 /// [`safe_relative_module_name`] as a path, for joining below an output root.
 pub fn safe_relative_module_path(filename: &str) -> Result<PathBuf> {
     safe_relative_module_name(filename).map(PathBuf::from)
@@ -212,7 +224,7 @@ pub fn safe_relative_module_path(filename: &str) -> Result<PathBuf> {
 /// claimed.  When a collision is detected the stem gets a numeric suffix:
 /// `foo.js` → `foo_2.js` → `foo_3.js` …
 pub fn deduplicate_path(path: &Path, seen: &mut std::collections::HashSet<String>) -> PathBuf {
-    let key = path.to_string_lossy().to_lowercase();
+    let key = filename_case_key(&path.to_string_lossy());
     if seen.insert(key) {
         return path.to_path_buf();
     }
@@ -226,7 +238,7 @@ pub fn deduplicate_path(path: &Path, seen: &mut std::collections::HashSet<String
     let mut n = 2u32;
     loop {
         let candidate = parent.join(format!("{stem}_{n}.{ext}"));
-        let candidate_key = candidate.to_string_lossy().to_lowercase();
+        let candidate_key = filename_case_key(&candidate.to_string_lossy());
         if seen.insert(candidate_key) {
             return candidate;
         }
@@ -378,6 +390,27 @@ mod tests {
         assert_eq!(first, PathBuf::from("src/index.js"));
         assert_eq!(second, PathBuf::from("src/index_2.js"));
         assert_eq!(third, PathBuf::from("src/index_3.js"));
+    }
+
+    #[test]
+    fn every_filename_dedup_folds_unicode_case() {
+        use crate::unpacker::emit_esm::{dedup_filename, FilenameDedupStyle};
+        for style in [
+            FilenameDedupStyle::Flat,
+            FilenameDedupStyle::PathAware {
+                fallback_stem: "module",
+            },
+        ] {
+            let mut seen = HashSet::default();
+            assert_eq!(dedup_filename("src/É.js", &mut seen, style), "src/É.js");
+            assert_eq!(dedup_filename("src/é.js", &mut seen, style), "src/é_2.js");
+        }
+        let mut seen = HashSet::default();
+        deduplicate_path(Path::new("src/É.js"), &mut seen);
+        assert_eq!(
+            deduplicate_path(Path::new("src/é.js"), &mut seen),
+            PathBuf::from("src/é_2.js")
+        );
     }
 
     #[test]

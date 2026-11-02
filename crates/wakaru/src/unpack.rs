@@ -508,7 +508,7 @@ fn append_preserved_modules(
 ) {
     let mut seen: HashSet<String> = modules
         .iter()
-        .map(|module| module.filename.to_lowercase())
+        .map(|module| wakaru_core::filename_case_key(&module.filename))
         .collect();
     for input in preserved {
         let (source_filename, source_code) = input
@@ -569,7 +569,7 @@ fn unique_preserved_filename(filename: &str, seen: &mut HashSet<String>) -> Stri
     let basename = basename.as_str();
     let mut candidate = basename.to_string();
     let mut suffix = 2;
-    while !seen.insert(candidate.to_lowercase()) {
+    while !seen.insert(wakaru_core::filename_case_key(&candidate)) {
         let path = Path::new(basename);
         let stem = path
             .file_stem()

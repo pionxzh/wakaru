@@ -518,7 +518,7 @@ fn assign_unique_module_filenames(
     let mut seen = public_paths
         .input
         .values()
-        .map(|path| path.to_lowercase())
+        .map(|path| crate::driver::filename_case_key(path))
         .collect::<HashSet<_>>();
     for module in modules {
         // A module holding its input's planned public path keeps it: the

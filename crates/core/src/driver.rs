@@ -19,7 +19,8 @@ pub use error::{DriverError, DriverErrorKind, DriverResult};
 pub use export_storage::{explain_commonjs_exports, CommonJsExportDecision, CommonJsExportReport};
 pub use normalize::{normalize, NormalizeOptions};
 pub use output::{
-    deduplicate_path, safe_relative_module_name, safe_relative_module_path, sanitize_relative_path,
+    deduplicate_path, filename_case_key, safe_relative_module_name, safe_relative_module_path,
+    sanitize_relative_path,
 };
 pub(crate) use output::{split_logical_path, PathSegment};
 pub use single_file::{decompile, decompile_owned, OwnedDecompileFailure};

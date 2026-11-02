@@ -28,7 +28,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use super::super::output::safe_relative_module_name;
+use super::super::output::{filename_case_key, safe_relative_module_name};
 use crate::module_path::{relative_import_specifier, resolve_relative_specifier};
 
 const SOURCE_FILE_KEYS: &[&str] = &["data-sentry-source-file", "dataSentrySourceFile"];
@@ -114,18 +114,25 @@ fn prop_key_name(key: &PropName) -> Option<&str> {
 ///   provisional filename (would clobber a reference target);
 /// - never renames a reserved physical input path (facade or plain input), or
 ///   recovers another module onto a reserved physical input path.
+///
+/// Every comparison uses [`filename_case_key`], so names that would be one file
+/// on a case-insensitive filesystem count as the same name.
 pub(super) fn build_rename_map(
     entries: &[(String, Option<String>)],
     reserved_paths: &HashSet<String>,
 ) -> HashMap<String, String> {
-    let provisional: HashSet<&str> = entries.iter().map(|(name, _)| name.as_str()).collect();
+    let provisional: HashSet<String> = entries
+        .iter()
+        .map(|(name, _)| filename_case_key(name))
+        .collect();
+    let reserved: HashSet<String> = reserved_paths
+        .iter()
+        .map(|path| filename_case_key(path))
+        .collect();
     let mut target_count: HashMap<String, usize> = HashMap::default();
     let mut candidates: Vec<(String, String)> = Vec::new();
     for (provisional_name, suggested) in entries {
-        if reserved_paths
-            .iter()
-            .any(|reserved| reserved.eq_ignore_ascii_case(provisional_name))
-        {
+        if reserved.contains(&filename_case_key(provisional_name)) {
             continue;
         }
         let Some(suggested) = suggested else {
@@ -134,25 +141,28 @@ pub(super) fn build_rename_map(
         let Ok(recovered) = safe_relative_module_name(suggested) else {
             continue;
         };
-        if reserved_paths
-            .iter()
-            .any(|reserved| reserved.eq_ignore_ascii_case(&recovered))
-        {
+        let recovered_key = filename_case_key(&recovered);
+        if reserved.contains(&recovered_key) {
             continue;
         }
         if &recovered == provisional_name {
             continue;
         }
-        *target_count.entry(recovered.clone()).or_default() += 1;
+        *target_count.entry(recovered_key).or_default() += 1;
         candidates.push((provisional_name.clone(), recovered));
     }
 
     let mut map = HashMap::default();
     for (provisional_name, recovered) in candidates {
-        if target_count.get(&recovered).copied().unwrap_or(0) > 1 {
+        let recovered_key = filename_case_key(&recovered);
+        if target_count.get(&recovered_key).copied().unwrap_or(0) > 1 {
             continue;
         }
-        if provisional.contains(recovered.as_str()) {
+        // A case-only rename of the module itself (`widget.js` -> `Widget.js`)
+        // stays allowed; landing on the name of a different module does not.
+        if provisional.contains(&recovered_key)
+            && filename_case_key(&provisional_name) != recovered_key
+        {
             continue;
         }
         map.insert(provisional_name, recovered);
@@ -424,6 +434,28 @@ mod tests {
     fn rename_map_skips_unsafe_recovered_paths() {
         let entries = vec![("a.js".to_string(), Some("../escape.js".to_string()))];
         assert!(build_rename_map(&entries, &HashSet::default()).is_empty());
+    }
+
+    #[test]
+    fn rename_map_compares_names_by_unicode_case_key() {
+        // Two recoveries that are one file on a case-insensitive filesystem.
+        let twins = vec![
+            ("a.js".to_string(), Some("src/Élan.jsx".to_string())),
+            ("b.js".to_string(), Some("src/élan.jsx".to_string())),
+        ];
+        assert!(build_rename_map(&twins, &HashSet::default()).is_empty());
+
+        // A recovery onto a case twin of another module's provisional name.
+        let onto_other = vec![
+            ("Widget.js".to_string(), None),
+            ("a.js".to_string(), Some("widget.js".to_string())),
+        ];
+        assert!(build_rename_map(&onto_other, &HashSet::default()).is_empty());
+
+        // A module may still recover its own name in a different case.
+        let own_case = vec![("widget.js".to_string(), Some("Widget.js".to_string()))];
+        let map = build_rename_map(&own_case, &HashSet::default());
+        assert_eq!(map.get("widget.js").map(String::as_str), Some("Widget.js"));
     }
 
     #[test]

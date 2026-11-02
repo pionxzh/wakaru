@@ -708,7 +708,7 @@ fn browserify_filename_hints(modules: &[FactoryModule<'_>]) -> HashMap<ModuleId,
             let Some(candidate) = browserify_request_filename(request) else {
                 continue;
             };
-            let case_folded = candidate.to_ascii_lowercase();
+            let case_folded = crate::driver::filename_case_key(&candidate);
             candidates
                 .entry(target.clone())
                 .or_default()
@@ -766,7 +766,7 @@ fn named_module_filename(id: &ModuleId) -> String {
 }
 
 fn dedup_filename(filename: &str, seen: &mut HashSet<String>) -> String {
-    if seen.insert(filename.to_ascii_lowercase()) {
+    if seen.insert(crate::driver::filename_case_key(filename)) {
         return filename.to_string();
     }
     let (stem, extension) = filename
@@ -775,7 +775,7 @@ fn dedup_filename(filename: &str, seen: &mut HashSet<String>) -> String {
         .unwrap_or((filename, String::new()));
     for suffix in 2.. {
         let candidate = format!("{stem}-{suffix}{extension}");
-        if seen.insert(candidate.to_ascii_lowercase()) {
+        if seen.insert(crate::driver::filename_case_key(&candidate)) {
             return candidate;
         }
     }

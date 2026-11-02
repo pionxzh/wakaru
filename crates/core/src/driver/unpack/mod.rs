@@ -332,7 +332,7 @@ fn plan_public_paths(
             continue;
         }
         let public_path = public_path_for_input(&input.filename, absolute_root.as_deref())?;
-        let collision_key = public_path.to_lowercase();
+        let collision_key = super::filename_case_key(&public_path);
         if !claimed.insert(collision_key) {
             return Err(anyhow!(
                 "ambiguous public module path {:?}: multiple processed inputs claim the same normalized path",

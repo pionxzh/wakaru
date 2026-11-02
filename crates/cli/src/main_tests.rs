@@ -1622,6 +1622,70 @@ console.log(require_b());
 }
 
 #[test]
+fn unicode_case_twins_are_renamed_where_imports_follow() {
+    let dir = temp_test_dir("unicode-case-twins");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input = dir.join("bundle.js");
+    fs::write(
+        &input,
+        r#"var __getOwnPropNames = Object.getOwnPropertyNames;
+var __commonJS = (cb, mod) => function __require() {
+  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+};
+var require_upper = __commonJS({
+  "src/É.js"(exports, module) {
+    module.exports = "upper";
+  }
+});
+var require_lower = __commonJS({
+  "src/é.js"(exports, module) {
+    module.exports = "lower";
+  }
+});
+var require_main = __commonJS({
+  "src/main.js"(exports, module) {
+    module.exports = [require_upper(), require_lower()];
+  }
+});
+console.log(require_main());
+"#,
+    )
+    .expect("write bundle");
+    let out_dir = dir.join("out");
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input.to_str().expect("input path should be utf8"),
+        "--unpack",
+        "-o",
+        out_dir.to_str().expect("output path should be utf8"),
+    ])
+    .expect("unpack cli should parse");
+    run_default(cli).expect("unpack");
+
+    // `É.js` and `é.js` are one file on NTFS and default macOS volumes, so one
+    // is renamed, and the importer must name the file that was written.
+    let main = fs::read_to_string(out_dir.join("src/main.js")).expect("read main.js");
+    let specifiers: Vec<&str> = main
+        .lines()
+        .filter_map(|line| line.split_once(" from \"./")?.1.strip_suffix("\";"))
+        .collect();
+    assert_eq!(specifiers.len(), 2, "{main}");
+    for specifier in &specifiers {
+        assert!(
+            out_dir.join("src").join(specifier).is_file(),
+            "main.js imports {specifier:?}, which was not written:\n{main}"
+        );
+    }
+    assert_ne!(
+        specifiers[0].to_lowercase(),
+        specifiers[1].to_lowercase(),
+        "{main}"
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
 fn provenance_refuses_a_module_below_provenance_json() {
     let dir = temp_test_dir("provenance-below-collision");
     fs::create_dir_all(&dir).expect("create temp dir");
