@@ -1,5 +1,40 @@
 # Changelog
 
+## [1.16.0](https://github.com/pionxzh/wakaru/compare/v1.15.0...v1.16.0) (2026-11-03)
+
+### Bug Fixes
+
+* **unpack:** keep recovered names and glob-import names under the same filename rules ([3b6bc7415](https://github.com/pionxzh/wakaru/commit/3b6bc7415b998cee1a76978741568c41d9da3f81))
+* **unpack:** fold filename case with Unicode rules everywhere ([3d40ecedf](https://github.com/pionxzh/wakaru/commit/3d40ecedf75919e4952c862fd46f3fcdf8f260e4))
+* **extract:** skip a source that cannot be written safely, with a warning ([bda64162b](https://github.com/pionxzh/wakaru/commit/bda64162b228d7642de6029bcd3b37f16472dbad))
+* **output:** read a drive the same way in both path policies, and refuse file/directory clashes ([3c684577f](https://github.com/pionxzh/wakaru/commit/3c684577fedc59a134e905341865436947b00e83))
+* **extract:** strip the `webpack-internal://` scheme from source paths ([6742ca690](https://github.com/pionxzh/wakaru/commit/6742ca69033d76919790da601259f8ff7cf5f625))
+* **cli:** refuse an output name containing `:` on Windows ([7a6a9c2fa](https://github.com/pionxzh/wakaru/commit/7a6a9c2fa2c133640e1dfa7c15214c345250a4d7))
+* **cli:** keep extract and unpack side files inside the output directory ([efd790c68](https://github.com/pionxzh/wakaru/commit/efd790c683fb0fb95419be0e2d07233fbcf6255c))
+* **unpack:** read a webpack 4 entry id written through a computed 's' key ([a03023096](https://github.com/pionxzh/wakaru/commit/a0302309617c6afc4081c53c1becad4920ec9c74))
+* **cli:** keep a directory candidate whose bundle split was refused ([eaa998e1f](https://github.com/pionxzh/wakaru/commit/eaa998e1f2bb9ea8319310e3837de6bac6e263af))
+* **unpack:** bind declarations before a bundle that its factories read ([195d6ed83](https://github.com/pionxzh/wakaru/commit/195d6ed83d4df7972719105f38d2ff7f0cb02267))
+* **un-esm:** recover a function UglifyJS inlined into a webpack export getter ([571c3273e](https://github.com/pionxzh/wakaru/commit/571c3273e428dd91e2668e64df12a302f00a7c92))
+* **unpack:** keep only the last copy of a repeated function in a scope split ([2de6d6b27](https://github.com/pionxzh/wakaru/commit/2de6d6b27a0f4faa644422bafbcd2d0447fe8b65))
+* **un-sliced-to-array:** declare a folded pattern with its elements' kind ([545916551](https://github.com/pionxzh/wakaru/commit/54591655139fbaa4d272924948c8898a19f2380a))
+* **un-parameters:** keep an argument default whose name another parameter holds ([df23f6cdc](https://github.com/pionxzh/wakaru/commit/df23f6cdc8e448a9a761f439a2840bfd33d70dec))
+* **un-esm:** rename a nested module-scope `var` that takes an export name ([68ddf3e0a](https://github.com/pionxzh/wakaru/commit/68ddf3e0a2359e0d41055f9d5d0686a1558d7f27))
+* **unpack:** detect a Browserify prelude called directly ([063a211c9](https://github.com/pionxzh/wakaru/commit/063a211c9f0b75c2f0fc934249b472acaeadc8ae))
+* **unpack:** localize `exports = exports.name = value` ([36e7f4764](https://github.com/pionxzh/wakaru/commit/36e7f47649444926ee994b28fbd84d4b93fee35e))
+* **unpack:** localize `module = module.exports = value` ([6c03b0517](https://github.com/pionxzh/wakaru/commit/6c03b05175aecfbc396e5a945619324c76cd1a3e))
+* **unpack:** start a reused parameter's lifetime at a leading operand ([440fb9c3b](https://github.com/pionxzh/wakaru/commit/440fb9c3b36f3fa9c8aaf279f397e31f93748ade))
+* **unpack:** name the reused parameter in the opaque-factory warning ([66c620e89](https://github.com/pionxzh/wakaru/commit/66c620e89047e9366ae4355bc86b0e6a7601f2fd))
+* **unpack:** bind a plain UMD factory's parameters to Node's branch ([85382b8ac](https://github.com/pionxzh/wakaru/commit/85382b8ac2fb281afb941595511f12e4c4bccc6d))
+* **webpack4:** recognize webpack 1's startup call as the entry ([a735f47d5](https://github.com/pionxzh/wakaru/commit/a735f47d5032289fcbdb0d6daa80a656c514d2df))
+* **unpack:** keep a bundle whole when a factory uses a declaration beside it ([731fbbbfd](https://github.com/pionxzh/wakaru/commit/731fbbbfd0650c18ef8810cf740811e4c95f40ec))
+* **unpack:** detect a bundle merged into a top-level comma sequence ([d517713b8](https://github.com/pionxzh/wakaru/commit/d517713b874085a4fbfcf3de0c1f162aa062b565))
+* **unpack:** keep code beside a webpack 5 chunk push in a prelude ([ea621ed23](https://github.com/pionxzh/wakaru/commit/ea621ed2302ce51b2b167d3e79bad23f8770f2b6))
+* **unpack:** keep code around a webpack 4 bootstrap in entry.js ([5fa123c7e](https://github.com/pionxzh/wakaru/commit/5fa123c7edb3c161bcd36c047b9baea0eb432fc3))
+* **webpack4:** reduce buildin module decorator calls to `module` ([3effbe8eb](https://github.com/pionxzh/wakaru/commit/3effbe8ebb6366d6af9906241d4c73e39dc32bd3))
+* **unpack:** leave a CommonJS module whole in the nested scope split ([80511cf71](https://github.com/pionxzh/wakaru/commit/80511cf7156b71c3e1d0809ca6421d2806df5adf))
+* **unpack:** keep writes to a webpack exports parameter on `exports` ([088d2c48a](https://github.com/pionxzh/wakaru/commit/088d2c48a63d6fb9a6b6bbb061991d1f87a2702a))
+* **unpack:** keep esbuild entry link exports off the entry's own export names ([8c3759bc0](https://github.com/pionxzh/wakaru/commit/8c3759bc0d9b30df6eeae0dcb27e9b6e6fc67873))
+
 ## [1.15.0](https://github.com/pionxzh/wakaru/compare/v1.14.0...v1.15.0) (2026-10-25)
 
 ### Features
