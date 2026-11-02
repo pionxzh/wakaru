@@ -1,0 +1,14 @@
+# Every file the CLI writes goes through `src/output.rs`: names derived from
+# input content through `OutputDir`, which keeps them inside the output
+# directory, and paths the user typed through `write_user_named_file`. Only
+# that module (and tests building their own fixtures) may call these.
+disallowed-methods = [
+    { path = "std::fs::write", reason = "write through output::OutputDir or output::write_user_named_file" },
+    { path = "std::fs::create_dir", reason = "create directories through output::OutputDir" },
+    { path = "std::fs::create_dir_all", reason = "create directories through output::OutputDir" },
+    { path = "std::fs::File::create", reason = "create files through output.rs" },
+    { path = "std::fs::OpenOptions::open", reason = "open files for writing through output.rs" },
+    { path = "std::fs::copy", reason = "write through output::OutputDir" },
+    { path = "std::fs::rename", reason = "write through output::OutputDir" },
+    { path = "std::fs::hard_link", reason = "write through output::OutputDir" },
+]

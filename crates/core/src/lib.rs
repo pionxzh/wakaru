@@ -34,9 +34,10 @@ pub mod vue_template;
 
 pub use driver::{
     decompile, deduplicate_path, explain_commonjs_exports, format_trace_events,
-    is_detected_unpack_input, normalize, safe_relative_module_path, trace_rules, BundleFormat,
-    CommonJsExportDecision, CommonJsExportReport, DceMode, DecompileOptions, DecompileOutput,
-    NormalizeOptions, RuleTraceEvent, RuleTraceOptions, UnpackWarning, UnpackWarningKind,
+    is_detected_unpack_input, normalize, safe_relative_module_name, safe_relative_module_path,
+    sanitize_relative_path, trace_rules, BundleFormat, CommonJsExportDecision,
+    CommonJsExportReport, DceMode, DecompileOptions, DecompileOutput, NormalizeOptions,
+    RuleTraceEvent, RuleTraceOptions, UnpackWarning, UnpackWarningKind,
 };
 pub use facts::{
     collect_module_facts, ExportFact, ExportKind, HelperExportFact, HelperKind, ImportFact,

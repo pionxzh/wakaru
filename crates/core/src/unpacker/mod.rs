@@ -1196,72 +1196,7 @@ impl UnpackResult {
 
 pub(crate) use crate::analysis::BindingId;
 
-/// Convert a bundler-provided module path into a relative output path.
-///
-/// This is component-based instead of replacement-based so overlapping strings
-/// like `....//foo` cannot turn into `../foo` after a single sanitation pass.
-/// A leading drive (`C:\src`, `C:src`) is dropped too: Windows reads it as an
-/// absolute or drive-relative prefix, which the CLI refuses to write. Each
-/// kept component is also made writable on Windows (see
-/// [`windows_safe_path_component`]).
-pub(crate) fn sanitize_relative_path(raw: &str, fallback: &str) -> String {
-    let normalized = raw.replace('\\', "/");
-    let without_drive = match normalized.as_bytes() {
-        [drive, b':', ..] if drive.is_ascii_alphabetic() => &normalized[2..],
-        _ => normalized.as_str(),
-    };
-    let parts: Vec<String> = without_drive
-        .split('/')
-        .filter(|part| !part.is_empty() && *part != "." && *part != "..")
-        .map(windows_safe_path_component)
-        .collect();
-
-    if parts.is_empty() {
-        fallback.to_string()
-    } else {
-        parts.join("/")
-    }
-}
-
-/// Replace what Win32 rejects or silently rewrites in a path component: the
-/// characters `<>:"|?*` and ASCII controls, a trailing dot or space (Win32
-/// strips it, so the file on disk would not match the import specifier), and
-/// a reserved device stem (`con.js`, `NUL`, `com1.txt`).
-///
-/// The replacement is `_`, not a `%XX` escape: emitted filenames are also
-/// relative import specifiers, and ESM resolution percent-decodes a
-/// specifier, so `./a%22b.js` would load `a"b.js` instead of the file
-/// written. Distinct names that collapse to one spelling are separated by
-/// the callers' filename deduplication.
-fn windows_safe_path_component(component: &str) -> String {
-    let mut safe: String = component
-        .chars()
-        .map(|ch| match ch {
-            '<' | '>' | ':' | '"' | '|' | '?' | '*' | '\0'..='\x1f' => '_',
-            _ => ch,
-        })
-        .collect();
-    if safe.ends_with(['.', ' ']) {
-        safe.pop();
-        safe.push('_');
-    }
-    if is_windows_device_stem(safe.split('.').next().unwrap_or_default()) {
-        safe.insert(0, '_');
-    }
-    safe
-}
-
-fn is_windows_device_stem(stem: &str) -> bool {
-    let upper = stem.to_ascii_uppercase();
-    match upper.as_str() {
-        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$" => true,
-        _ => {
-            upper.len() == 4
-                && (upper.starts_with("COM") || upper.starts_with("LPT"))
-                && matches!(upper.as_bytes()[3], b'1'..=b'9')
-        }
-    }
-}
+pub(crate) use crate::driver::sanitize_relative_path;
 
 pub fn unpack_bundle(source: &str) -> Option<UnpackResult> {
     try_unpack_bundle(source).ok().flatten()

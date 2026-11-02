@@ -24,6 +24,7 @@ crates/
   cli/
     src/
       main.rs                       — CLI entry point (clap)
+      output.rs                     — the only file writer: `OutputDir` (plan names, refuse collisions, contain symlinks) and user-named paths; `clippy.toml` disallows `std::fs` writers elsewhere
 
   core/
     src/
@@ -45,7 +46,7 @@ crates/
         export_storage.rs           — `debug cjs-exports` driver (pipeline up to UnEsm, then the storage report)
         diagnostics.rs              — post-transform diagnostic warning collection
         discovery.rs                — internal structural-detection helper
-        output.rs                   — internal path normalization and dedup helpers
+        output.rs                   — the one path splitter (`/` and `\` on every platform), `sanitize_relative_path` (drop) and `safe_relative_module_name` (reject)
         io.rs                       — parse/print helpers
         types.rs                    — driver options, outputs, and warning types
       facts.rs                      — post-Stage-2 cross-module fact extraction

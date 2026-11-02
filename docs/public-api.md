@@ -88,6 +88,10 @@ extraction), and `vue` (experimental standalone SFC recovery). See rustdoc for e
   `DceMode::TransformOnly`; the library default is `Off`).
 - Filesystem path validation, output-directory writes, filename collision
   handling, and source-map extraction to disk remain CLI responsibilities.
+  The façade does check every unpack filename once before returning it: a
+  name that is not a normalized relative path (a `..` segment, a root, or a
+  drive, with either separator) fails the operation with `ErrorKind::Internal`
+  rather than reaching a caller, whichever unpacker produced it.
 - Container namespaces (`bun`, `gtm`) only extract: they return the pieces
   as data, and the caller feeds them to `decompile` or `unpack`. Output file
   names for the pieces and GTM's `index.md` are CLI layout, not façade API.

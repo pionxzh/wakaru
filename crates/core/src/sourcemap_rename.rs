@@ -1,6 +1,6 @@
 use crate::collections::{HashMap, HashSet};
 use std::io::BufReader;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use sourcemap::SourceMap;
@@ -60,33 +60,15 @@ pub fn extract_source_entries(sm: &SourceMap, out_dir: &Path) -> Vec<(PathBuf, S
 ///
 /// Source map paths often start with `../` (relative to the bundle's location)
 /// or contain webpack-internal prefixes like `webpack://`.  We strip these and
-/// resolve the result under `out_dir`, never escaping it.
-///
-/// Backslashes count as separators on every platform. On Unix `..\..\x` would
-/// otherwise survive as one ordinary component and turn into `../../x` once a
-/// caller writes the path with forward slashes.
+/// resolve the result under `out_dir`, never escaping it: `..` segments, a
+/// root, and a drive are dropped, with `/` and `\` both read as separators
+/// (see [`crate::driver::sanitize_relative_path`]).
 pub fn resolve_source_path(out_dir: &Path, source: &str) -> PathBuf {
-    let normalized = source.replace('\\', "/");
-    // Strip common prefixes used by bundlers.
-    let stripped = normalized
-        .trim_start_matches("webpack://")
-        .trim_start_matches("webpack:///")
-        .trim_start_matches('/');
-
-    // Normalise the path and drop any leading `..` components that would escape
-    // out_dir.  We use PathBuf component iteration so this works on all platforms.
+    let stripped = source.strip_prefix("webpack://").unwrap_or(source);
     let mut result = out_dir.to_path_buf();
-    for component in Path::new(stripped).components() {
-        match component {
-            Component::ParentDir => {
-                // Drop — we never let source paths escape the output root.
-            }
-            Component::CurDir | Component::RootDir | Component::Prefix(_) => {
-                // Ignore absolute roots / drive prefixes / current-dir dots.
-            }
-            Component::Normal(seg) => {
-                result.push(seg);
-            }
+    for segment in crate::driver::split_logical_path(stripped).segments {
+        if let crate::driver::PathSegment::Normal(part) = segment {
+            result.push(part);
         }
     }
     result

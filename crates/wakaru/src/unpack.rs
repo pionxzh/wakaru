@@ -232,6 +232,7 @@ impl UnpackJob {
         }
 
         append_preserved_modules(&mut modules, &mut self.reports, preserved);
+        ensure_module_filenames_are_safe(&modules)?;
 
         Ok(UnpackOutput {
             modules,
@@ -534,12 +535,32 @@ fn append_preserved_modules(
     }
 }
 
+/// Every filename an unpack returns is a normalized relative name (see
+/// [`ModuleOutput::filename`]). Producers sanitize bundle-derived names on their
+/// own; this is the one place that holds all of them to it, so a producer that
+/// misses a case fails here instead of handing a caller a path that escapes.
+fn ensure_module_filenames_are_safe(modules: &[ModuleOutput]) -> Result<()> {
+    for module in modules {
+        let safe = wakaru_core::safe_relative_module_name(&module.filename)
+            .map_err(|error| Error::new(ErrorKind::Internal, None, error))?;
+        if safe != module.filename {
+            return Err(Error::new(
+                ErrorKind::Internal,
+                None,
+                anyhow::anyhow!(
+                    "module filename {:?} is not normalized (expected {safe:?})",
+                    module.filename
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn unique_preserved_filename(filename: &str, seen: &mut HashSet<String>) -> String {
-    let basename = Path::new(filename)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .filter(|name| !name.is_empty())
-        .unwrap_or("module.js");
+    // Split as core splits every output name, so `\` separates on every platform.
+    let sanitized = wakaru_core::sanitize_relative_path(filename, "module.js");
+    let basename = sanitized.rsplit('/').next().unwrap_or("module.js");
     let mut candidate = basename.to_string();
     let mut suffix = 2;
     while !seen.insert(candidate.to_lowercase()) {

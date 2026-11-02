@@ -381,6 +381,7 @@ pub(crate) fn ensure_vue_sidecar_does_not_overwrite_input(
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods, reason = "tests build their own fixtures")]
 mod tests {
     use super::*;
     use crate::tests::{temp_test_dir, vue_render_module_source};

@@ -107,10 +107,13 @@ Each entry maps an emitted filename to its `input`, extraction `ranges`, and
 `extraction` strategy. Ranges are zero-based byte offsets with an exclusive
 end, `[start, end)`. They identify the input regions used to recover a module,
 not a position-by-position mapping of the rewritten code. Use
-`--emit-source-map` for output position mappings. If the bundle names a
-module `provenance.json` at the output root (compared ignoring case), the run
-stops before writing anything rather than overwrite it; rerun without
-`--provenance`.
+`--emit-source-map` for output position mappings.
+
+If a recovered module has the name of a file the CLI writes itself
+(`provenance.json` under `--provenance`, a GTM container's `index.md`, or
+another module's `.map` under `--emit-source-map`; compared ignoring case),
+the run stops before writing anything rather than overwrite one with the
+other. Rerun without the option that writes the second file.
 
 `input` is the input path exactly as passed on the command line. Wakaru does
 not make it absolute or resolve symlinks, and converts non-UTF-8 path bytes

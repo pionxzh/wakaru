@@ -13,7 +13,7 @@ use clap::Args;
 use serde::Serialize;
 use wakaru::rsc::{self, Format, Payload, ProblemLocation};
 
-use crate::output::write_if_changed;
+use crate::output::write_user_named_file;
 
 #[derive(Debug, Clone, Args)]
 pub(crate) struct RscArgs {
@@ -43,7 +43,7 @@ pub(crate) fn run(args: RscArgs, force: bool) -> Result<()> {
     match args.output {
         Some(path) => {
             crate::ensure_output_file(&path, force)?;
-            write_if_changed(&path, &json)?;
+            write_user_named_file(&path, json.as_bytes())?;
             println!(
                 "{}: {} rows, {} assets, {} problems -> {}",
                 report.format,

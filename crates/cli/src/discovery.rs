@@ -125,6 +125,7 @@ fn is_conventional_text_file_name(name: &str) -> bool {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods, reason = "tests build their own fixtures")]
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};

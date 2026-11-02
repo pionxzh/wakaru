@@ -1557,10 +1557,50 @@ console.log(require_b());
 }
 
 #[test]
-fn provenance_name_check_ignores_case_and_dot_components_only() {
-    assert!(ensure_no_module_claims_provenance_path(["./PROVENANCE.json"]).is_err());
-    assert!(ensure_no_module_claims_provenance_path(["src/provenance.json"]).is_ok());
-    assert!(ensure_no_module_claims_provenance_path(["provenance_2.json", "a.js"]).is_ok());
+fn emitted_source_map_refuses_a_module_with_the_same_name() {
+    let dir = temp_test_dir("source-map-name-collision");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input = dir.join("bundle.js");
+    fs::write(
+        &input,
+        r#"var __getOwnPropNames = Object.getOwnPropertyNames;
+var __commonJS = (cb, mod) => function __require() {
+  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+};
+var require_a = __commonJS({
+  "src/a.js.map"(exports, module) {
+    module.exports = { value: 1 };
+  }
+});
+var require_b = __commonJS({
+  "src/a.js"(exports, module) {
+    module.exports = require_a();
+  }
+});
+console.log(require_b());
+"#,
+    )
+    .expect("write bundle");
+    let out_dir = dir.join("out");
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input.to_str().expect("input path should be utf8"),
+        "--unpack",
+        "--emit-source-map",
+        "-o",
+        out_dir.to_str().expect("output path should be utf8"),
+    ])
+    .expect("unpack cli should parse");
+
+    let err = run_default(cli).expect_err("a module may not take its sibling's map name");
+    assert!(
+        err.to_string()
+            .contains(r#"the .map file of "src/a.js" also writes"#),
+        "unexpected error: {err}"
+    );
+    assert_eq!(fs::read_dir(&out_dir).expect("read output dir").count(), 0);
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
 }
 
 #[test]
@@ -1647,7 +1687,6 @@ fn provenance_input_names_empty_factory_source_among_several_inputs() {
 
 #[test]
 fn provenance_names_ignore_interleaved_vue_sfc_sidecars() {
-    let out_dir = PathBuf::from("/tmp/wakaru-out");
     let artifacts = vec![
         CliOutputArtifact {
             filename: "src/App.vue.js".to_string(),
@@ -1677,13 +1716,10 @@ fn provenance_names_ignore_interleaved_vue_sfc_sidecars() {
             source_map: None,
         },
     ];
-    let resolved = vec![
-        (out_dir.join("src/App.vue.js"), artifacts[0].code.as_str()),
-        (out_dir.join("src/App.vue"), artifacts[1].code.as_str()),
-        (out_dir.join("src/after.js"), artifacts[2].code.as_str()),
-    ];
-
-    let final_names = provenance_final_names(&artifacts, &resolved, &out_dir);
+    let final_names = provenance_final_names(
+        &artifacts,
+        ["src/App.vue.js", "src/App.vue", "src/after.js"],
+    );
 
     assert_eq!(
         final_names.get("src/App.vue").map(String::as_str),
@@ -2372,8 +2408,9 @@ fn output_dir_requires_force_when_non_empty() {
     fs::create_dir_all(&dir).expect("create temp dir");
     fs::write(dir.join("entry.js"), "old").expect("write temp file");
 
-    assert!(ensure_output_dir(&dir, false).is_err());
-    assert!(ensure_output_dir(&dir, true).expect("force should allow non-empty dir"));
+    let err = OutputDir::open(&dir, false).expect_err("non-empty dir needs --force");
+    assert!(err.to_string().contains("pass --force"), "{err}");
+    OutputDir::open(&dir, true).expect("force should allow non-empty dir");
 
     fs::remove_dir_all(&dir).expect("remove temp dir");
 }
@@ -2412,33 +2449,6 @@ fn unpack_cli_does_not_write_overlapping_dot_payload_outside_output_dir() {
     );
 
     fs::remove_dir_all(&dir).expect("remove temp dir");
-}
-
-#[test]
-fn output_dir_reports_when_existing_writes_need_checks() {
-    let empty_dir = temp_test_dir("output-dir-empty");
-    fs::create_dir_all(&empty_dir).expect("create temp dir");
-    assert!(
-        !ensure_output_dir(&empty_dir, false).expect("empty dir should be accepted"),
-        "empty directories can write directly without checking existing files"
-    );
-    fs::remove_dir_all(&empty_dir).expect("remove empty temp dir");
-
-    let new_dir = temp_test_dir("output-dir-new");
-    assert!(
-        !ensure_output_dir(&new_dir, false).expect("new dir should be created"),
-        "new directories can write directly without checking existing files"
-    );
-    fs::remove_dir_all(&new_dir).expect("remove new temp dir");
-
-    let non_empty_dir = temp_test_dir("output-dir-non-empty");
-    fs::create_dir_all(&non_empty_dir).expect("create temp dir");
-    fs::write(non_empty_dir.join("entry.js"), "old").expect("write temp file");
-    assert!(
-        ensure_output_dir(&non_empty_dir, true).expect("force should allow non-empty dir"),
-        "non-empty forced directories should preserve write-if-changed checks"
-    );
-    fs::remove_dir_all(&non_empty_dir).expect("remove non-empty temp dir");
 }
 
 pub(crate) fn temp_test_dir(name: &str) -> PathBuf {
@@ -2912,7 +2922,7 @@ fn gtm_test_dir(name: &str, inputs: &[(&str, &str)]) -> (PathBuf, PathBuf) {
     }
     let out_dir = dir.join("out");
     fs::create_dir_all(&out_dir).expect("create output dir");
-    let out_dir = canonicalize_output_dir(&out_dir).expect("canonicalize output dir");
+    let out_dir = out_dir.canonicalize().expect("canonicalize output dir");
     (dir, out_dir)
 }
 

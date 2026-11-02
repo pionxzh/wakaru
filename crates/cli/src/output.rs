@@ -1,168 +1,317 @@
-//! Filesystem output helpers for the CLI's `--unpack` writer.
+//! Filesystem output for the CLI.
 //!
-//! These functions translate decompiled module filenames (which originate from
-//! untrusted bundle contents) into concrete on-disk paths that are guaranteed
-//! to stay inside the chosen output directory, plus the write-if-changed logic
-//! the writer wires around them.
+//! Every file the CLI writes below an output directory goes through
+//! [`OutputDir`]: names that come from input content (module filenames, source
+//! map `sources`, Bun embedded paths) and the CLI's own files
+//! (`provenance.json`, a GTM `index.md`, `.map` sidecars) alike. A path the
+//! user typed on the command line goes through [`write_user_named_file`] or
+//! [`create_user_named_file`] instead. Nothing else in the crate writes files:
+//! `crates/cli/clippy.toml` disallows the `std::fs` writers, and only this
+//! module allows them.
 //!
-//! Pure path computation ([`safe_relative_module_path`], [`deduplicate_path`])
-//! lives in `wakaru-core` and is reused here; this module owns the genuine
-//! filesystem I/O (directory creation, symlink-resolving canonicalization, and
-//! the file writes) that is an application concern rather than a decompiler
-//! concern.
+//! Safety model: a name may contain `..`, a root, a drive or UNC prefix, or a
+//! directory component that resolves through a symlink pointing outside the
+//! output directory. Each of those must be rejected. Planning and writing are
+//! separate steps:
 //!
-//! Safety model: a module filename may contain `../` traversal, an absolute
-//! path, a Windows drive prefix, or a path component that resolves through a
-//! symlink pointing outside the output directory. Each of those must be
-//! rejected. The two-stage approach is:
-//!
-//! 1. core's `safe_relative_module_path` performs a lexical check, rejecting any
-//!    non-`Normal`/non-`CurDir` component before the path ever touches the
-//!    filesystem.
-//! 2. [`canonicalize_unpack_output_path`] walks the parent directories,
-//!    creating or canonicalizing each one and confirming the canonical result
-//!    still starts with the output directory. This catches symlink escapes that
-//!    a purely lexical check cannot.
+//! 1. [`OutputDir::plan`], [`OutputDir::plan_sidecar`] and
+//!    [`OutputDir::reserve`] check a name lexically with core's
+//!    `safe_relative_module_name` (which reads `/` and `\` as separators on
+//!    every platform), give it a unique case-insensitive name, and refuse a
+//!    name that two writers would share. They touch no filesystem, so a refusal
+//!    leaves the directory as it was.
+//! 2. [`OutputDir::materialize`] walks the parent directories, creating or
+//!    canonicalizing each one and confirming the canonical result still starts
+//!    with the output directory. This catches symlink escapes that a lexical
+//!    check cannot.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
-use wakaru_core::{deduplicate_path, safe_relative_module_path};
+use wakaru_core::safe_relative_module_name;
 
-/// Canonicalize the output directory so later path checks compare against a
-/// fully-resolved root (symlinks resolved, `.`/`..` removed).
-pub fn canonicalize_output_dir(path: &Path) -> Result<PathBuf> {
+/// An output directory and every name planned below it.
+#[derive(Debug)]
+pub struct OutputDir {
+    /// Fully-resolved root (symlinks resolved, `.`/`..` removed).
+    root: PathBuf,
+    /// Lowercased names already claimed, for case-insensitive deduplication.
+    claimed: HashSet<String>,
+    /// Lowercased names a later writer owns, with what owns them.
+    reserved: HashMap<String, String>,
+    /// The directory already had entries, so an unchanged file is not rewritten.
+    check_existing: bool,
+}
+
+/// A name planned below an [`OutputDir`], not yet on disk.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedPath {
+    /// Normalized, slash-separated relative name, after deduplication.
+    name: String,
+    /// The name as the caller asked for it, for error messages.
+    requested: String,
+}
+
+impl PlannedPath {
+    /// The relative name the file is written under.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+/// A [`PlannedPath`] whose parent directories exist inside the output directory.
+#[derive(Debug, Clone)]
+pub struct OutputFile {
+    path: PathBuf,
+}
+
+impl OutputFile {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl OutputDir {
+    /// Make `path` usable as an output directory, creating it when missing.
+    ///
+    /// A directory that already has entries needs `force`; writes into it skip
+    /// files whose bytes are unchanged.
+    pub fn open(path: &Path, force: bool) -> Result<Self> {
+        let check_existing = ensure_output_dir(path, force)?;
+        let root = path.canonicalize().with_context(|| {
+            format!("failed to canonicalize output directory {}", path.display())
+        })?;
+        Ok(Self {
+            root,
+            claimed: HashSet::new(),
+            reserved: HashMap::new(),
+            check_existing,
+        })
+    }
+
+    /// The canonical output root.
+    #[cfg(test)]
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// Plan a name that comes from input content. A colliding name gets a
+    /// `_2`, `_3`, … suffix; a name the CLI reserved for its own file is refused.
+    pub fn plan(&mut self, filename: &str) -> Result<PlannedPath> {
+        let name = safe_relative_module_name(filename)?;
+        self.refuse_reserved(&name, filename)?;
+        let name = deduplicate_name(&name, &mut self.claimed);
+        self.refuse_reserved(&name, filename)?;
+        Ok(PlannedPath {
+            name,
+            requested: filename.to_string(),
+        })
+    }
+
+    /// Reserve `name` for a file the CLI writes itself. `owner` says what
+    /// writes it, for the error when input content asks for the same name.
+    pub fn reserve(&mut self, name: &str, owner: &str) -> Result<PlannedPath> {
+        let name = safe_relative_module_name(name)?;
+        let key = name.to_lowercase();
+        if self.claimed.contains(&key) {
+            bail!("a recovered module is named {name:?}, which {owner} also writes");
+        }
+        if let Some(existing) = self.reserved.get(&key) {
+            bail!("{owner} and {existing} would both write {name:?}");
+        }
+        self.claimed.insert(key.clone());
+        self.reserved.insert(key, owner.to_string());
+        Ok(PlannedPath {
+            requested: name.clone(),
+            name,
+        })
+    }
+
+    /// Reserve the sidecar of `planned` named by appending `suffix`
+    /// (`a.js` → `a.js.map`).
+    pub fn plan_sidecar(&mut self, planned: &PlannedPath, suffix: &str) -> Result<PlannedPath> {
+        let owner = format!("the {suffix} file of {:?}", planned.name);
+        self.reserve(&format!("{}{suffix}", planned.name), &owner)
+    }
+
+    fn refuse_reserved(&self, name: &str, requested: &str) -> Result<()> {
+        if let Some(owner) = self.reserved.get(&name.to_lowercase()) {
+            bail!("a recovered module is named {requested:?}, which {owner} also writes");
+        }
+        Ok(())
+    }
+
+    /// Create the parent directories of `planned` and confirm that every
+    /// resolved component stays inside the output directory.
+    ///
+    /// This is what catches symlink escapes: a directory component that is a
+    /// symlink pointing outside the root resolves to a path that no longer
+    /// starts with it, and is rejected. So is an existing file at the target
+    /// that is a symlink to somewhere outside.
+    pub fn materialize(&self, planned: &PlannedPath) -> Result<OutputFile> {
+        let requested = planned.requested.as_str();
+        let relative = Path::new(&planned.name);
+        let Some(file_name) = relative.file_name() else {
+            bail!("unsafe module filename {requested:?}: empty output path");
+        };
+
+        let parent_relative = relative.parent().unwrap_or_else(|| Path::new(""));
+        let mut current = self.root.clone();
+        for component in parent_relative.components() {
+            let Component::Normal(part) = component else {
+                bail!("unsafe module filename {requested:?}: path escapes output directory");
+            };
+            current.push(part);
+            if current.exists() {
+                let canonical = canonicalize_dir(&current)?;
+                self.ensure_inside(&canonical, requested)?;
+                if !canonical.is_dir() {
+                    bail!(
+                        "output path {} exists and is not a directory",
+                        current.display()
+                    );
+                }
+                current = canonical;
+            } else {
+                #[allow(clippy::disallowed_methods, reason = "the one directory creator")]
+                fs::create_dir(&current).with_context(|| {
+                    format!("failed to create output directory {}", current.display())
+                })?;
+                let canonical = canonicalize_dir(&current)?;
+                self.ensure_inside(&canonical, requested)?;
+                current = canonical;
+            }
+        }
+
+        let candidate = current.join(file_name);
+        let path = if candidate.exists() {
+            candidate.canonicalize().with_context(|| {
+                format!("failed to canonicalize output file {}", candidate.display())
+            })?
+        } else {
+            candidate
+        };
+        self.ensure_inside(&path, requested)?;
+        Ok(OutputFile { path })
+    }
+
+    /// [`plan`](Self::plan) and [`materialize`](Self::materialize) one name.
+    #[cfg(test)]
+    pub fn claim(&mut self, filename: &str) -> Result<OutputFile> {
+        let planned = self.plan(filename)?;
+        self.materialize(&planned)
+    }
+
+    fn ensure_inside(&self, path: &Path, requested: &str) -> Result<()> {
+        if path.starts_with(&self.root) {
+            Ok(())
+        } else {
+            bail!("unsafe module filename {requested:?}: path escapes output directory");
+        }
+    }
+
+    /// Write `content` to `file`. When the directory already had entries, a
+    /// file whose bytes are unchanged is left alone (and keeps its timestamp).
+    pub fn write(&self, file: &OutputFile, content: &[u8]) -> Result<()> {
+        if self.check_existing && file_has_bytes(&file.path, content) {
+            return Ok(());
+        }
+        write_bytes(&file.path, content)
+    }
+}
+
+fn canonicalize_dir(path: &Path) -> Result<PathBuf> {
     path.canonicalize()
         .with_context(|| format!("failed to canonicalize output directory {}", path.display()))
 }
 
-/// Resolve a module `filename` to a concrete output path under `out_dir`.
-///
-/// Performs the lexical safety check, deduplicates against previously claimed
-/// paths in `seen`, then canonicalizes parent directories (creating them as
-/// needed) and confirms the result stays inside `out_dir`.
-pub fn resolve_unpack_output_path(
-    out_dir: &Path,
-    filename: &str,
-    seen: &mut HashSet<String>,
-) -> Result<PathBuf> {
-    let relative = safe_relative_module_path(filename)?;
-    let lexical_path = deduplicate_path(&out_dir.join(relative), seen);
-    canonicalize_unpack_output_path(out_dir, &lexical_path, filename)
+/// Returns true when the directory already contained entries.
+fn ensure_output_dir(path: &Path, force: bool) -> Result<bool> {
+    if path.exists() {
+        if !path.is_dir() {
+            bail!(
+                "output path {} exists and is not a directory",
+                path.display()
+            );
+        }
+        let is_empty = path
+            .read_dir()
+            .with_context(|| format!("failed to read output directory {}", path.display()))?
+            .next()
+            .is_none();
+        if !is_empty && !force {
+            bail!(
+                "output directory {} is not empty; pass --force to write into it",
+                path.display()
+            );
+        }
+        return Ok(!is_empty);
+    }
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "creates the output directory the user named"
+    )]
+    fs::create_dir_all(path)
+        .with_context(|| format!("failed to create output directory {}", path.display()))?;
+    Ok(false)
 }
 
-/// Canonicalize `lexical_path` (already known to be under `out_dir`
-/// lexically) against the real filesystem, creating missing parent
-/// directories and confirming every resolved component stays inside `out_dir`.
-///
-/// This is what catches symlink escapes: a directory component that is a
-/// symlink pointing outside `out_dir` resolves to a path that no longer starts
-/// with `out_dir`, and is rejected.
-pub fn canonicalize_unpack_output_path(
-    out_dir: &Path,
-    lexical_path: &Path,
-    filename: &str,
-) -> Result<PathBuf> {
-    let relative = lexical_path.strip_prefix(out_dir).with_context(|| {
-        format!("unsafe module filename {filename:?}: path escapes output directory")
-    })?;
-    let Some(file_name) = relative.file_name() else {
-        bail!("unsafe module filename {filename:?}: empty output path");
+/// Return `name` if unclaimed, else the first free `stem_N.ext` beside it.
+/// Keys are lowercased, so names differing only in case collide. A name
+/// without an extension gets `.js`, as module deduplication always has.
+fn deduplicate_name(name: &str, claimed: &mut HashSet<String>) -> String {
+    if claimed.insert(name.to_lowercase()) {
+        return name.to_string();
+    }
+    let (dir, file) = match name.rsplit_once('/') {
+        Some((dir, file)) => (Some(dir), file),
+        None => (None, name),
     };
-
-    let parent_relative = relative.parent().unwrap_or_else(|| Path::new(""));
-    let mut current = out_dir.to_path_buf();
-    for component in parent_relative.components() {
-        let Component::Normal(part) = component else {
-            bail!("unsafe module filename {filename:?}: path escapes output directory");
+    let (stem, extension) = file
+        .rsplit_once('.')
+        .filter(|(stem, _)| !stem.is_empty())
+        .unwrap_or((file, "js"));
+    for n in 2u32.. {
+        let file = format!("{stem}_{n}.{extension}");
+        let candidate = match dir {
+            Some(dir) => format!("{dir}/{file}"),
+            None => file,
         };
-        current.push(part);
-        if current.exists() {
-            let canonical = current.canonicalize().with_context(|| {
-                format!(
-                    "failed to canonicalize output directory {}",
-                    current.display()
-                )
-            })?;
-            ensure_path_inside_output_dir(out_dir, &canonical, filename)?;
-            if !canonical.is_dir() {
-                bail!(
-                    "output path {} exists and is not a directory",
-                    current.display()
-                );
-            }
-            current = canonical;
-        } else {
-            fs::create_dir(&current).with_context(|| {
-                format!("failed to create output directory {}", current.display())
-            })?;
-            let canonical = current.canonicalize().with_context(|| {
-                format!(
-                    "failed to canonicalize output directory {}",
-                    current.display()
-                )
-            })?;
-            ensure_path_inside_output_dir(out_dir, &canonical, filename)?;
-            current = canonical;
+        if claimed.insert(candidate.to_lowercase()) {
+            return candidate;
         }
     }
-
-    let candidate = current.join(file_name);
-    let target = if candidate.exists() {
-        candidate.canonicalize().with_context(|| {
-            format!("failed to canonicalize output file {}", candidate.display())
-        })?
-    } else {
-        candidate
-    };
-    ensure_path_inside_output_dir(out_dir, &target, filename)?;
-    Ok(target)
+    unreachable!("u32 suffixes are not exhausted")
 }
 
-fn ensure_path_inside_output_dir(out_dir: &Path, path: &Path, filename: &str) -> Result<()> {
-    if path.starts_with(out_dir) {
-        Ok(())
-    } else {
-        bail!("unsafe module filename {filename:?}: path escapes output directory");
-    }
+fn file_has_bytes(path: &Path, content: &[u8]) -> bool {
+    fs::metadata(path).is_ok_and(|metadata| metadata.len() == content.len() as u64)
+        && fs::read(path).is_ok_and(|existing| existing == content)
 }
 
-/// Write `content` to `path`, replacing any existing file.
-pub fn write_file(path: &Path, content: &str) -> Result<()> {
-    write_bytes(path, content.as_bytes())
-}
-
-/// Write arbitrary bytes to `path`, replacing any existing file.
-pub fn write_bytes(path: &Path, content: &[u8]) -> Result<()> {
+fn write_bytes(path: &Path, content: &[u8]) -> Result<()> {
+    #[allow(clippy::disallowed_methods, reason = "the one file writer")]
     fs::write(path, content).with_context(|| format!("failed to write {}", path.display()))
 }
 
-/// Write `content` to `path` only when it differs from the existing file.
-///
-/// Skips the write when the on-disk file already has identical length and
-/// bytes, avoiding redundant writes (and touch timestamps) when re-running
-/// against an existing output directory.
-pub fn write_if_changed(path: &Path, content: &str) -> Result<()> {
-    write_bytes_if_changed(path, content.as_bytes())
-}
-
-/// Write arbitrary bytes to `path` only when they differ from the existing
-/// file.
-pub fn write_bytes_if_changed(path: &Path, content: &[u8]) -> Result<()> {
-    if let Ok(metadata) = fs::metadata(path) {
-        if metadata.len() == content.len() as u64
-            && fs::read(path).is_ok_and(|existing| existing == content)
-        {
-            return Ok(());
-        }
-    }
-
+/// Write a file at a path the user typed on the command line (`-o out.js`, or
+/// a sidecar named after it). Never pass a path built from input content: that
+/// goes through [`OutputDir`].
+pub fn write_user_named_file(path: &Path, content: &[u8]) -> Result<()> {
     write_bytes(path, content)
 }
 
+/// Create a file at a path the user typed on the command line, such as
+/// `--profile`. Never pass a path built from input content.
+pub fn create_user_named_file(path: &Path) -> Result<fs::File> {
+    #[allow(clippy::disallowed_methods, reason = "creates a file the user named")]
+    fs::File::create(path).with_context(|| format!("failed to create {}", path.display()))
+}
+
 #[cfg(test)]
+#[allow(clippy::disallowed_methods, reason = "tests build their own fixtures")]
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -185,87 +334,50 @@ mod tests {
         std::os::unix::fs::symlink(target, link)
     }
 
-    #[test]
-    fn unpack_output_path_rejects_parent_dir_components() {
-        let dir = temp_test_dir("escape");
-        fs::create_dir_all(&dir).expect("create temp dir");
-        let out_dir = canonicalize_output_dir(&dir).expect("canonicalize output dir");
-        let mut seen = HashSet::new();
+    fn open_empty(name: &str) -> (PathBuf, OutputDir) {
+        let dir = temp_test_dir(name);
+        let out = OutputDir::open(&dir, false).expect("open output dir");
+        (dir, out)
+    }
 
-        let err = resolve_unpack_output_path(
-            &out_dir,
-            "../node_modules/@wakaru/cli/bin/wakaru",
-            &mut seen,
-        )
-        .expect_err("parent path should be rejected");
+    fn assert_escapes(result: Result<impl std::fmt::Debug>) {
+        let err = result.expect_err("path should be rejected");
         assert!(
             err.to_string().contains("path escapes output directory"),
             "unexpected error: {err}"
         );
+    }
 
+    #[test]
+    fn unpack_output_path_rejects_parent_dir_components() {
+        let (dir, mut out) = open_empty("escape");
+        assert_escapes(out.claim("../node_modules/@wakaru/cli/bin/wakaru"));
+        assert_escapes(out.claim(r"src\..\..\escape.js"));
         fs::remove_dir_all(&dir).expect("remove temp dir");
     }
 
     #[test]
     fn unpack_output_path_keeps_overlap_payload_inside_output_dir() {
-        let dir = temp_test_dir("overlap");
-        fs::create_dir_all(&dir).expect("create temp dir");
-        let out_dir = canonicalize_output_dir(&dir).expect("canonicalize output dir");
-        let mut seen = HashSet::new();
-
-        let path = resolve_unpack_output_path(
-            &out_dir,
-            "....//node_modules/@wakaru/cli/bin/wakaru",
-            &mut seen,
-        )
-        .expect("overlapping dots are an ordinary relative directory");
+        let (dir, mut out) = open_empty("overlap");
+        let file = out
+            .claim("....//node_modules/@wakaru/cli/bin/wakaru")
+            .expect("overlapping dots are an ordinary relative directory");
         assert!(
-            path.starts_with(&out_dir),
+            file.path().starts_with(out.root()),
             "resolved path should stay in output dir: {}",
-            path.display()
+            file.path().display()
         );
-        assert!(path.ends_with("node_modules/@wakaru/cli/bin/wakaru"));
-
+        assert!(file.path().ends_with("node_modules/@wakaru/cli/bin/wakaru"));
         fs::remove_dir_all(&dir).expect("remove temp dir");
     }
 
     #[test]
-    fn unpack_output_path_rejects_absolute_paths() {
-        let dir = temp_test_dir("absolute");
-        fs::create_dir_all(&dir).expect("create temp dir");
-        let out_dir = canonicalize_output_dir(&dir).expect("canonicalize output dir");
-        let mut seen = HashSet::new();
-        let absolute = format!(
-            "{}tmp{}escape.js",
-            std::path::MAIN_SEPARATOR,
-            std::path::MAIN_SEPARATOR
-        );
-
-        let err = resolve_unpack_output_path(&out_dir, &absolute, &mut seen)
-            .expect_err("absolute module path should be rejected");
-        assert!(
-            err.to_string().contains("path escapes output directory"),
-            "unexpected error: {err}"
-        );
-
-        fs::remove_dir_all(&dir).expect("remove temp dir");
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn unpack_output_path_rejects_windows_drive_prefixes() {
-        let dir = temp_test_dir("drive-prefix");
-        fs::create_dir_all(&dir).expect("create temp dir");
-        let out_dir = canonicalize_output_dir(&dir).expect("canonicalize output dir");
-        let mut seen = HashSet::new();
-
-        let err = resolve_unpack_output_path(&out_dir, r"C:\tmp\escape.js", &mut seen)
-            .expect_err("drive-prefixed module path should be rejected");
-        assert!(
-            err.to_string().contains("path escapes output directory"),
-            "unexpected error: {err}"
-        );
-
+    fn unpack_output_path_rejects_absolute_paths_and_drives() {
+        let (dir, mut out) = open_empty("absolute");
+        assert_escapes(out.claim("/tmp/escape.js"));
+        assert_escapes(out.claim(r"\tmp\escape.js"));
+        assert_escapes(out.claim(r"C:\tmp\escape.js"));
+        assert_escapes(out.claim("C:escape.js"));
         fs::remove_dir_all(&dir).expect("remove temp dir");
     }
 
@@ -274,127 +386,168 @@ mod tests {
         let dir = temp_test_dir("file-parent");
         fs::create_dir_all(&dir).expect("create temp dir");
         fs::write(dir.join("src"), "not a directory").expect("write file parent");
-        let out_dir = canonicalize_output_dir(&dir).expect("canonicalize output dir");
-        let mut seen = HashSet::new();
+        let mut out = OutputDir::open(&dir, true).expect("open output dir");
 
-        let err = resolve_unpack_output_path(&out_dir, "src/index.js", &mut seen)
+        let err = out
+            .claim("src/index.js")
             .expect_err("file parent should be rejected");
         assert!(
             err.to_string().contains("exists and is not a directory"),
             "unexpected error: {err}"
         );
-
         fs::remove_dir_all(&dir).expect("remove temp dir");
     }
 
     #[test]
     fn unpack_output_path_deduplicates_after_safety_checks() {
-        let dir = temp_test_dir("dedup");
-        fs::create_dir_all(&dir).expect("create temp dir");
-        let out_dir = canonicalize_output_dir(&dir).expect("canonicalize output dir");
-        let mut seen = HashSet::new();
-
-        let first = resolve_unpack_output_path(&out_dir, "src/index.js", &mut seen)
-            .expect("first path should resolve");
-        let second = resolve_unpack_output_path(&out_dir, "src/index.js", &mut seen)
-            .expect("second path should resolve with suffix");
-
-        assert!(first.starts_with(&out_dir), "{}", first.display());
-        assert!(second.starts_with(&out_dir), "{}", second.display());
-        assert_ne!(first, second);
-        assert_eq!(first.file_name().and_then(|s| s.to_str()), Some("index.js"));
+        let (dir, mut out) = open_empty("dedup");
+        let names: Vec<String> = [
+            "src/index.js",
+            "src/Index.js",
+            r"src\index.js",
+            "src/index_2.js",
+        ]
+        .into_iter()
+        .map(|name| out.plan(name).expect("plan").name().to_string())
+        .collect();
         assert_eq!(
-            second.file_name().and_then(|s| s.to_str()),
-            Some("index_2.js")
+            names,
+            [
+                "src/index.js",
+                "src/Index_2.js",
+                "src/index_3.js",
+                "src/index_2_2.js"
+            ]
+        );
+        let plain = out.plan("module-plain").expect("plan");
+        let again = out.plan("module-plain").expect("plan");
+        assert_eq!(
+            (plain.name(), again.name()),
+            ("module-plain", "module-plain_2.js")
+        );
+        fs::remove_dir_all(&dir).expect("remove temp dir");
+    }
+
+    #[test]
+    fn reserved_names_refuse_modules_in_either_order() {
+        let (dir, mut out) = open_empty("reserved");
+        out.reserve("provenance.json", "--provenance")
+            .expect("reserve provenance");
+        let err = out
+            .plan("Provenance.json")
+            .expect_err("module may not take a reserved name");
+        assert!(
+            err.to_string().contains("--provenance also writes"),
+            "unexpected error: {err}"
         );
 
+        let module = out.plan("a.js").expect("plan module");
+        let err = out
+            .reserve("A.js", "a GTM index")
+            .expect_err("reserving a claimed name fails");
+        assert!(err.to_string().contains("a GTM index also writes"), "{err}");
+
+        out.plan_sidecar(&module, ".map").expect("plan sidecar");
+        let err = out
+            .plan("a.js.map")
+            .expect_err("module may not take its sibling's source map name");
+        assert!(err.to_string().contains("the .map file of"), "{err}");
+        fs::remove_dir_all(&dir).expect("remove temp dir");
+    }
+
+    #[test]
+    fn open_checks_existing_files_only_in_a_non_empty_dir() {
+        let (empty_dir, out) = open_empty("open-new");
+        assert!(!out.check_existing, "a new directory writes directly");
+        fs::remove_dir_all(&empty_dir).expect("remove temp dir");
+
+        let existing = temp_test_dir("open-empty");
+        fs::create_dir_all(&existing).expect("create temp dir");
+        assert!(
+            !OutputDir::open(&existing, false)
+                .expect("open")
+                .check_existing
+        );
+        fs::write(existing.join("entry.js"), "old").expect("write temp file");
+        assert!(
+            OutputDir::open(&existing, true)
+                .expect("open")
+                .check_existing
+        );
+        fs::remove_dir_all(&existing).expect("remove temp dir");
+    }
+
+    #[test]
+    fn planning_touches_no_filesystem() {
+        let (dir, mut out) = open_empty("plan-only");
+        out.plan("src/deep/a.js").expect("plan");
+        assert_eq!(fs::read_dir(&dir).expect("read dir").count(), 0);
         fs::remove_dir_all(&dir).expect("remove temp dir");
     }
 
     #[test]
     fn unpack_output_path_rejects_symlink_parent_that_points_outside() {
         let dir = temp_test_dir("symlink-parent");
-        let out_dir_raw = dir.join("out");
+        let out_dir = dir.join("out");
         let external_dir = dir.join("external");
-        fs::create_dir_all(&out_dir_raw).expect("create output dir");
+        fs::create_dir_all(&out_dir).expect("create output dir");
         fs::create_dir_all(&external_dir).expect("create external dir");
-        let link_path = out_dir_raw.join("link");
-        if create_dir_symlink(&external_dir, &link_path).is_err() {
+        if create_dir_symlink(&external_dir, &out_dir.join("link")).is_err() {
             fs::remove_dir_all(&dir).expect("remove temp dir");
             return;
         }
-        let out_dir = canonicalize_output_dir(&out_dir_raw).expect("canonicalize output dir");
-        let mut seen = HashSet::new();
+        let mut out = OutputDir::open(&out_dir, true).expect("open output dir");
 
-        let err = resolve_unpack_output_path(&out_dir, "link/pwn.js", &mut seen)
-            .expect_err("symlink parent escaping output dir should be rejected");
-        assert!(
-            err.to_string().contains("path escapes output directory"),
-            "unexpected error: {err}"
-        );
-
+        assert_escapes(out.claim("link/pwn.js"));
         fs::remove_dir_all(&dir).expect("remove temp dir");
     }
 
     #[test]
-    fn write_if_changed_skips_identical_readonly_file() {
+    fn write_skips_identical_readonly_file_in_existing_dir() {
         let dir = temp_test_dir("write-if-changed");
         fs::create_dir_all(&dir).expect("create temp dir");
         let path = dir.join("entry.js");
         fs::write(&path, "same").expect("write temp file");
-
         let original_permissions = fs::metadata(&path).expect("metadata").permissions();
         let mut permissions = original_permissions.clone();
         permissions.set_readonly(true);
         fs::set_permissions(&path, permissions).expect("set readonly");
 
-        assert!(write_if_changed(&path, "same").is_ok());
+        let mut out = OutputDir::open(&dir, true).expect("open output dir");
+        let file = out.claim("entry.js").expect("claim");
+        assert!(out.write(&file, b"same").is_ok());
 
         fs::set_permissions(&path, original_permissions).expect("restore permissions");
         fs::remove_dir_all(&dir).expect("remove temp dir");
     }
 
     #[test]
-    fn write_if_changed_overwrites_different_length_file() {
+    fn write_overwrites_changed_file_in_existing_dir() {
         let dir = temp_test_dir("write-if-changed-length");
         fs::create_dir_all(&dir).expect("create temp dir");
-        let path = dir.join("entry.js");
-        fs::write(&path, "short").expect("write temp file");
+        fs::write(dir.join("entry.js"), "short").expect("write temp file");
 
-        write_if_changed(&path, "longer content").expect("write changed file");
+        let mut out = OutputDir::open(&dir, true).expect("open output dir");
+        let file = out.claim("entry.js").expect("claim");
+        out.write(&file, b"longer content")
+            .expect("write changed file");
 
         assert_eq!(
-            fs::read_to_string(&path).expect("read updated file"),
+            fs::read_to_string(dir.join("entry.js")).expect("read updated file"),
             "longer content"
         );
         fs::remove_dir_all(&dir).expect("remove temp dir");
     }
 
     #[test]
-    fn write_file_creates_and_overwrites() {
-        let dir = temp_test_dir("write-file");
-        fs::create_dir_all(&dir).expect("create temp dir");
-        let path = dir.join("entry.js");
-
-        write_file(&path, "first").expect("write new file");
-        assert_eq!(fs::read_to_string(&path).expect("read"), "first");
-
-        write_file(&path, "second").expect("overwrite file");
-        assert_eq!(fs::read_to_string(&path).expect("read"), "second");
-
-        fs::remove_dir_all(&dir).expect("remove temp dir");
-    }
-
-    #[test]
-    fn write_bytes_preserves_non_utf8_and_nul_bytes() {
-        let dir = temp_test_dir("write-bytes");
-        fs::create_dir_all(&dir).expect("create temp dir");
-        let path = dir.join("asset.bin");
+    fn write_preserves_non_utf8_and_nul_bytes() {
+        let (dir, mut out) = open_empty("write-bytes");
+        let file = out.claim("asset.bin").expect("claim");
         let bytes = [0, 0xff, b'B', b'U', b'N', 0];
 
-        write_bytes_if_changed(&path, &bytes).expect("write binary asset");
+        out.write(&file, &bytes).expect("write binary asset");
 
-        assert_eq!(fs::read(&path).expect("read binary asset"), bytes);
+        assert_eq!(fs::read(file.path()).expect("read binary asset"), bytes);
         fs::remove_dir_all(&dir).expect("remove temp dir");
     }
 }

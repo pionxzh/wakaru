@@ -373,33 +373,32 @@ fn common_absolute_input_parent(inputs: &[PreparedUnpackInput]) -> Option<PathBu
 }
 
 fn public_path_for_input(filename: &str, absolute_root: Option<&Path>) -> Result<String> {
-    // The result below uses `/` for every `\`, so split on both before checking. Windows paths
-    // already do; on Unix `a\..\..\x.js` is one component until the separators are rewritten.
-    let filename = if cfg!(windows) {
-        std::borrow::Cow::Borrowed(filename)
-    } else {
-        std::borrow::Cow::Owned(filename.replace('\\', "/"))
-    };
-    let filename = filename.as_ref();
-    let normalized = merge::normalize_path_lexically(Path::new(filename));
-    let candidate = if normalized.is_absolute() {
-        absolute_root
+    let host_path = Path::new(filename);
+    if host_path.is_absolute() {
+        // An absolute input is compared with the common root on the host's own terms.
+        let normalized = merge::normalize_path_lexically(host_path);
+        let candidate = absolute_root
             .and_then(|root| normalized.strip_prefix(root).ok())
             .map(Path::to_path_buf)
             .or_else(|| normalized.file_name().map(PathBuf::from))
-            .ok_or_else(|| anyhow!("cannot derive a public output path from {filename:?}"))?
-    } else {
-        // `wakaru --unpack ../pkg/bundle.js` is an ordinary invocation; the
-        // traversal prefix cannot be mirrored under the output root, so keep
-        // the in-bounds remainder rather than failing the whole run.
-        // Lexical normalization leaves `..` components only at the front.
-        normalized
-            .components()
-            .skip_while(|component| matches!(component, std::path::Component::ParentDir))
-            .collect()
-    };
-    let safe = super::output::safe_relative_module_path(&candidate.to_string_lossy())?;
-    Ok(safe.to_string_lossy().replace('\\', "/"))
+            .ok_or_else(|| anyhow!("cannot derive a public output path from {filename:?}"))?;
+        return super::output::safe_relative_module_name(&candidate.to_string_lossy());
+    }
+    // `wakaru --unpack ../pkg/bundle.js` is an ordinary invocation; the
+    // traversal prefix cannot be mirrored under the output root, so keep the
+    // in-bounds remainder rather than failing the whole run. `..` resolves
+    // against the segments before it, and one with nothing left to climb is
+    // dropped.
+    let mut parts = Vec::new();
+    for segment in super::split_logical_path(filename).segments {
+        match segment {
+            super::PathSegment::Normal(part) => parts.push(part),
+            super::PathSegment::Parent => {
+                parts.pop();
+            }
+        }
+    }
+    super::output::safe_relative_module_name(&parts.join("/"))
 }
 
 fn public_boundary_fallback_module(

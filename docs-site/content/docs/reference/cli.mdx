@@ -77,8 +77,9 @@ is included, and the end byte is excluded. These are extraction regions,
 not line-by-line mappings of the rewritten output. Each module's `input` is
 the path exactly as you passed it, or the directory argument joined with the
 file's path below it for a directory input. A module from an empty factory
-has no ranges but still names its `input`. If a recovered module is itself
-named `provenance.json`, the run stops before writing anything.
+has no ranges but still names its `input`. If a recovered module has the
+name of a file the CLI writes itself (`provenance.json`, a GTM `index.md`, or
+another module's `.map`), the run stops before writing anything.
 
 See [Read an unpacked bundle](/guides/read-an-unpacked-bundle#check-the-original-bundle)
 for an example, or use [source maps](/guides/source-maps) to trace output positions.

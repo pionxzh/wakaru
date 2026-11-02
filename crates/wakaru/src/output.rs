@@ -67,8 +67,10 @@ pub enum ModuleStatus {
 #[non_exhaustive]
 pub struct ModuleOutput {
     /// Logical output filename. Unpack output guarantees a unique,
-    /// normalized, slash-separated relative filename; single-file decompile
-    /// preserves the input filename.
+    /// normalized, slash-separated relative filename: no `..` segment, root,
+    /// or drive, and no `\` (unpack checks every name before returning and
+    /// fails with [`ErrorKind::Internal`](crate::ErrorKind::Internal)
+    /// otherwise). Single-file decompile preserves the input filename.
     pub filename: String,
     pub code: String,
     /// v3 source map JSON mapping `code` back to its input, when output

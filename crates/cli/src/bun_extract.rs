@@ -18,10 +18,7 @@ use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 use serde::Serialize;
 
-use crate::output::{
-    canonicalize_output_dir, canonicalize_unpack_output_path, resolve_unpack_output_path,
-    write_bytes, write_bytes_if_changed,
-};
+use crate::output::{OutputDir, PlannedPath};
 
 /// Schema 2: a record Bun stored as UTF-16 is written as its UTF-8 transcode,
 /// labeled `utf16le`, with the written length in `output_bytes`; original
@@ -124,49 +121,29 @@ fn run_extract(args: BunExtractArgs, force: bool) -> Result<()> {
         );
     }
 
-    let check_existing_writes = crate::ensure_output_dir(&args.output, force)?;
-    let output_root = canonicalize_output_dir(&args.output)?;
-    let mut exact_paths = HashSet::new();
+    let mut out_dir = OutputDir::open(&args.output, force)?;
+    let manifest_path = out_dir.reserve("manifest.json", "the Bun manifest")?;
     let mut case_folded_paths = HashSet::new();
     let mut planned = Vec::with_capacity(standalone.files.len());
 
     for file in &standalone.files {
         let sanitized = sanitize_embedded_path(file.name_bytes, file.index, file.loader_kind());
         let unique = allocate_case_insensitive_path(&sanitized, &mut case_folded_paths);
-        let relative_output = format!("files/{unique}");
-        let output_path =
-            resolve_unpack_output_path(&output_root, &relative_output, &mut exact_paths)?;
+        let output = out_dir.plan(&format!("files/{unique}"))?;
 
-        let source_map_output = plan_internal_output(
-            &output_root,
-            &mut exact_paths,
-            args.include_internals,
-            file.index,
-            "source-map.bunmap",
-            file.source_map,
-        )?;
-        let bytecode_output = plan_internal_output(
-            &output_root,
-            &mut exact_paths,
-            args.include_internals,
-            file.index,
-            "bytecode.bin",
-            file.bytecode,
-        )?;
-        let module_info_output = plan_internal_output(
-            &output_root,
-            &mut exact_paths,
-            args.include_internals,
-            file.index,
-            "module-info.bin",
-            file.module_info,
-        )?;
+        let mut internal = |filename: &str, bytes: &[u8]| {
+            (args.include_internals && !bytes.is_empty())
+                .then(|| out_dir.plan(&format!("internals/{:04}/{filename}", file.index)))
+                .transpose()
+        };
+        let source_map_output = internal("source-map.bunmap", file.source_map)?;
+        let bytecode_output = internal("bytecode.bin", file.bytecode)?;
+        let module_info_output = internal("module-info.bin", file.module_info)?;
 
         planned.push(PlannedFile {
             file,
-            output: file.file_bytes(),
-            relative_output,
-            output_path,
+            bytes: file.file_bytes(),
+            output,
             source_map_output,
             bytecode_output,
             module_info_output,
@@ -178,9 +155,7 @@ fn run_extract(args: BunExtractArgs, force: bool) -> Result<()> {
     for file in &sources.files {
         let sanitized = sanitize_source_path(file.path, file.record, file.index);
         let unique = allocate_case_insensitive_path(&sanitized, &mut source_case_folded_paths);
-        let relative = format!("sources/{unique}");
-        let path = resolve_unpack_output_path(&output_root, &relative, &mut exact_paths)?;
-        source_outputs.push((relative, path));
+        source_outputs.push(out_dir.plan(&format!("sources/{unique}"))?);
     }
 
     let written_bytes = sources
@@ -191,7 +166,7 @@ fn run_extract(args: BunExtractArgs, force: bool) -> Result<()> {
         + planned
             .iter()
             .map(|file| {
-                file.output.len()
+                file.bytes.len()
                     + file
                         .source_map_output
                         .as_ref()
@@ -208,19 +183,19 @@ fn run_extract(args: BunExtractArgs, force: bool) -> Result<()> {
             .sum::<usize>();
 
     for file in &planned {
-        write_output(&file.output_path, &file.output, check_existing_writes)?;
         for (output, bytes) in [
-            (&file.source_map_output, file.file.source_map),
-            (&file.bytecode_output, file.file.bytecode),
-            (&file.module_info_output, file.file.module_info),
+            (Some(&file.output), file.bytes.as_ref()),
+            (file.source_map_output.as_ref(), file.file.source_map),
+            (file.bytecode_output.as_ref(), file.file.bytecode),
+            (file.module_info_output.as_ref(), file.file.module_info),
         ] {
-            if let Some((_, path)) = output {
-                write_output(path, bytes, check_existing_writes)?;
+            if let Some(output) = output {
+                out_dir.write(&out_dir.materialize(output)?, bytes)?;
             }
         }
     }
-    for (file, (_, path)) in sources.files.iter().zip(&source_outputs) {
-        write_output(path, &file.bytes, check_existing_writes)?;
+    for (file, output) in sources.files.iter().zip(&source_outputs) {
+        out_dir.write(&out_dir.materialize(output)?, &file.bytes)?;
     }
 
     let manifest = BunManifest::new(
@@ -233,16 +208,7 @@ fn run_extract(args: BunExtractArgs, force: bool) -> Result<()> {
         written_bytes,
     );
     let serialized = format!("{}\n", serde_json::to_string_pretty(&manifest)?);
-    let manifest_path = canonicalize_unpack_output_path(
-        &output_root,
-        &output_root.join("manifest.json"),
-        "manifest.json",
-    )?;
-    if check_existing_writes {
-        write_bytes_if_changed(&manifest_path, serialized.as_bytes())?;
-    } else {
-        write_bytes(&manifest_path, serialized.as_bytes())?;
-    }
+    out_dir.write(&out_dir.materialize(&manifest_path)?, serialized.as_bytes())?;
 
     if args.json {
         print!("{serialized}");
@@ -250,7 +216,7 @@ fn run_extract(args: BunExtractArgs, force: bool) -> Result<()> {
         eprintln!(
             "extracted {} Bun file(s), {} byte(s), and {} original source file(s) to {}",
             planned.len(),
-            planned.iter().map(|file| file.output.len()).sum::<usize>(),
+            planned.iter().map(|file| file.bytes.len()).sum::<usize>(),
             sources.files.len(),
             args.output.display()
         );
@@ -400,40 +366,15 @@ fn file_output_bound(file: &wakaru::bun::BunEmbeddedFile<'_>) -> Result<usize> {
     bound.ok_or_else(|| anyhow::anyhow!("Bun extraction size overflows this platform"))
 }
 
-fn write_output(path: &Path, bytes: &[u8], check_existing: bool) -> Result<()> {
-    if check_existing {
-        write_bytes_if_changed(path, bytes)
-    } else {
-        write_bytes(path, bytes)
-    }
-}
-
-fn plan_internal_output(
-    output_root: &Path,
-    seen: &mut HashSet<String>,
-    include_internals: bool,
-    index: u32,
-    filename: &str,
-    bytes: &[u8],
-) -> Result<Option<(String, PathBuf)>> {
-    if !include_internals || bytes.is_empty() {
-        return Ok(None);
-    }
-    let relative = format!("internals/{index:04}/{filename}");
-    let output = resolve_unpack_output_path(output_root, &relative, seen)?;
-    Ok(Some((relative, output)))
-}
-
 struct PlannedFile<'file, 'data> {
     file: &'file wakaru::bun::BunEmbeddedFile<'data>,
     /// The bytes written below `files/`: the stored contents, or the
     /// transcode of a UTF-16 record.
-    output: Cow<'data, [u8]>,
-    relative_output: String,
-    output_path: PathBuf,
-    source_map_output: Option<(String, PathBuf)>,
-    bytecode_output: Option<(String, PathBuf)>,
-    module_info_output: Option<(String, PathBuf)>,
+    bytes: Cow<'data, [u8]>,
+    output: PlannedPath,
+    source_map_output: Option<PlannedPath>,
+    bytecode_output: Option<PlannedPath>,
+    module_info_output: Option<PlannedPath>,
 }
 
 fn sanitize_embedded_path(name: &[u8], index: u32, loader: wakaru::bun::BunLoader) -> String {
@@ -624,7 +565,7 @@ impl BunManifest {
         standalone: &wakaru::bun::BunStandalone<'_>,
         planned: &[PlannedFile<'_, '_>],
         sources: &RecoveredSources<'_>,
-        source_outputs: &[(String, PathBuf)],
+        source_outputs: &[PlannedPath],
         include_internals: bool,
         written_bytes: usize,
     ) -> Self {
@@ -655,7 +596,7 @@ impl BunManifest {
                     record: occurrence.source.record,
                     index: occurrence.source.index,
                     path: occurrence.source.path.to_string(),
-                    output_path: source_outputs[occurrence.file].0.clone(),
+                    output_path: source_outputs[occurrence.file].name().to_string(),
                     output_bytes: sources.files[occurrence.file].bytes.len(),
                     compressed_bytes: occurrence.source.compressed.len(),
                     executable_range: range_array(&occurrence.source.compressed_range),
@@ -695,7 +636,7 @@ impl BunManifestFile {
         Self {
             index: file.index,
             original_name: ManifestBytes::new(file.name_bytes),
-            output_path: planned.relative_output.clone(),
+            output_path: planned.output.name().to_string(),
             loader: file.loader_kind().as_str().to_string(),
             loader_id: file.loader,
             encoding: encoding_name(file.encoding),
@@ -703,7 +644,7 @@ impl BunManifestFile {
             side: side_name(file.side),
             is_entry: file.is_entry,
             bytes: file.contents.len(),
-            output_bytes: planned.output.len(),
+            output_bytes: planned.bytes.len(),
             executable_range: range_array(&file.executable_range),
             source_map: ManifestRegion::new(
                 file.source_map.len(),
@@ -751,11 +692,11 @@ struct ManifestRegion {
 }
 
 impl ManifestRegion {
-    fn new(bytes: usize, range: Option<&Range<usize>>, output: Option<&(String, PathBuf)>) -> Self {
+    fn new(bytes: usize, range: Option<&Range<usize>>, output: Option<&PlannedPath>) -> Self {
         Self {
             bytes,
             executable_range: range.map(range_array),
-            output_path: output.map(|(relative, _)| relative.clone()),
+            output_path: output.map(|output| output.name().to_string()),
         }
     }
 }
@@ -819,6 +760,7 @@ fn side_name(side: wakaru::bun::BunFileSide) -> &'static str {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods, reason = "tests build their own fixtures")]
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};

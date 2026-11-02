@@ -28,7 +28,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use super::super::output::safe_relative_module_path;
+use super::super::output::safe_relative_module_name;
 use crate::module_path::{relative_import_specifier, resolve_relative_specifier};
 
 const SOURCE_FILE_KEYS: &[&str] = &["data-sentry-source-file", "dataSentrySourceFile"];
@@ -131,12 +131,9 @@ pub(super) fn build_rename_map(
         let Some(suggested) = suggested else {
             continue;
         };
-        // Normalize separators before the check: on Unix `..\..\x` is one ordinary component
-        // that would become `../../x` if the separators were rewritten afterwards.
-        let Ok(safe) = safe_relative_module_path(&suggested.replace('\\', "/")) else {
+        let Ok(recovered) = safe_relative_module_name(suggested) else {
             continue;
         };
-        let recovered = safe.to_string_lossy().replace('\\', "/");
         if reserved_paths
             .iter()
             .any(|reserved| reserved.eq_ignore_ascii_case(&recovered))

@@ -33,10 +33,7 @@ use json_output::{
     JsonDecompileOutput, JsonModule, JsonModuleKind, JsonModuleStatus, JsonPublicPath,
     JsonRelativeImport, JsonUnpackOutput, JsonWarning,
 };
-use output::{
-    canonicalize_output_dir, canonicalize_unpack_output_path, resolve_unpack_output_path,
-    write_file, write_if_changed,
-};
+use output::{create_user_named_file, write_user_named_file, OutputDir};
 use vue::{
     ensure_vue_sidecar_does_not_overwrite_input, format_vue_sfc_artifact_summary,
     is_vue_output_path, recover_single_file_vue_after_unpack, recover_single_file_vue_sidecar,
@@ -384,9 +381,7 @@ fn run_unpack(cli: Cli) -> Result<()> {
 
     let dce_mode = dce_mode_for_flag(cli.dce);
 
-    let out_dir = cli.output.expect("checked above");
-    let check_existing_writes = ensure_output_dir(&out_dir, cli.force)?;
-    let out_dir = canonicalize_output_dir(&out_dir)?;
+    let mut out_dir = OutputDir::open(&cli.output.expect("checked above"), cli.force)?;
 
     let start = Instant::now();
     let execution = run_public_unpack(
@@ -509,90 +504,100 @@ fn run_unpack(cli: Cli) -> Result<()> {
         })
         .collect();
 
-    if cli.provenance {
-        ensure_no_module_claims_provenance_path(
-            artifacts.iter().map(|artifact| artifact.filename.as_str()),
-        )?;
-    }
-    let resolved: Vec<(PathBuf, &str)> = {
+    // Every name is planned before anything is created, so a collision between a
+    // module and a file the CLI writes itself stops the run with the directory
+    // untouched. The CLI's own names are reserved first.
+    let provenance_path = cli
+        .provenance
+        .then(|| out_dir.reserve("provenance.json", "--provenance"))
+        .transpose()?;
+    // Each container's index sits next to its pieces. It is not a module, so it is not in
+    // `--json` output.
+    let gtm_index_paths = execution
+        .gtm
+        .iter()
+        .map(|intake| {
+            out_dir.reserve(
+                &format!("{}index.md", intake.prefix),
+                &format!("the index of GTM container {}", intake.input),
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let planned = {
         let span = tracing::info_span!("cli_resolve_output_paths");
         let _enter = span.enter();
-        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-        artifacts
+        let planned = artifacts
             .iter()
-            .map(|artifact| {
-                let out_path = resolve_unpack_output_path(&out_dir, &artifact.filename, &mut seen)?;
-                Ok((out_path, artifact.code.as_str()))
+            .map(|artifact| out_dir.plan(&artifact.filename))
+            .collect::<Result<Vec<_>>>()?;
+        let map_paths = artifacts
+            .iter()
+            .zip(&planned)
+            .map(|(artifact, path)| {
+                artifact
+                    .source_map
+                    .is_some()
+                    .then(|| out_dir.plan_sidecar(path, ".map"))
+                    .transpose()
             })
-            .collect::<Result<_>>()?
+            .collect::<Result<Vec<_>>>()?;
+        planned.into_iter().zip(map_paths).collect::<Vec<_>>()
     };
+    let resolved = planned
+        .iter()
+        .map(|(path, map_path)| {
+            Ok((
+                out_dir.materialize(path)?,
+                map_path
+                    .as_ref()
+                    .map(|map_path| out_dir.materialize(map_path))
+                    .transpose()?,
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
 
     {
         let span = tracing::info_span!("cli_write_output_files", count = resolved.len());
         let _enter = span.enter();
-        if check_existing_writes {
-            resolved
-                .par_iter()
-                .try_for_each(|(path, code)| write_if_changed(path, code))?;
-        } else {
-            resolved
-                .par_iter()
-                .try_for_each(|(path, code)| write_file(path, code))?;
-        }
+        artifacts
+            .par_iter()
+            .zip(resolved.par_iter())
+            .try_for_each(|(artifact, (file, _))| out_dir.write(file, artifact.code.as_bytes()))?;
     }
 
-    // Each container's index sits next to its pieces. It is not a module, so it is not in
-    // `--json` output.
-    let mut index_seen = std::collections::HashSet::new();
-    for intake in &execution.gtm {
-        let filename = format!("{}index.md", intake.prefix);
-        let path = resolve_unpack_output_path(&out_dir, &filename, &mut index_seen)?;
-        let index = gtm_index_markdown(&intake.container);
-        if check_existing_writes {
-            write_if_changed(&path, &index)?;
-        } else {
-            write_file(&path, &index)?;
-        }
+    for (intake, index_path) in execution.gtm.iter().zip(&gtm_index_paths) {
+        let file = out_dir.materialize(index_path)?;
+        out_dir.write(&file, gtm_index_markdown(&intake.container).as_bytes())?;
     }
 
-    if artifacts
-        .iter()
-        .any(|artifact| artifact.source_map.is_some())
     {
         let span = tracing::info_span!("cli_write_source_maps");
         let _enter = span.enter();
         artifacts.par_iter().zip(resolved.par_iter()).try_for_each(
-            |(artifact, (out_path, _))| match artifact.source_map.as_deref() {
-                Some(map_json) => {
-                    let map_path = canonicalize_unpack_output_path(
-                        &out_dir,
-                        &append_map_extension(out_path),
-                        &artifact.filename,
-                    )?;
-                    write_output_source_map(&map_path, map_json)
-                }
-                None => Ok(()),
+            |(artifact, (_, map_file))| match (artifact.source_map.as_deref(), map_file) {
+                (Some(map_json), Some(map_file)) => out_dir.write(
+                    map_file,
+                    relativize_map_sources(map_file.path(), map_json).as_bytes(),
+                ),
+                _ => Ok(()),
             },
         )?;
     }
 
-    if cli.provenance {
+    if let Some(provenance_path) = provenance_path {
         // Map each original module to the final JavaScript artifact path.
         // Recovered Vue SFC sidecars interleave with JS artifacts, so this
         // must use artifact metadata rather than zipping modules directly.
-        let final_names = provenance_final_names(&artifacts, &resolved, &out_dir);
+        let final_names =
+            provenance_final_names(&artifacts, planned.iter().map(|(path, _)| path.name()));
         let json = render_provenance_json(
             &provenance,
             &final_names,
             single_input_name.as_deref().unwrap_or(""),
             &output.detected_formats,
         );
-        let provenance_path = canonicalize_unpack_output_path(
-            &out_dir,
-            &out_dir.join("provenance.json"),
-            "provenance.json",
-        )?;
-        write_file(&provenance_path, &json)?;
+        let file = out_dir.materialize(&provenance_path)?;
+        out_dir.write(&file, json.as_bytes())?;
     }
 
     if !cli.json {
@@ -784,16 +789,14 @@ fn run_single(cli: Cli) -> Result<()> {
             if let Some(ref sidecar_path) = vue_sidecar_path {
                 ensure_output_file(sidecar_path, cli.force)?;
             }
-            fs::write(path, &code)
-                .with_context(|| format!("failed to write {}", path.display()))?;
+            write_user_named_file(path, code.as_bytes())?;
             if let Some(ref map_json) = source_map {
                 write_output_source_map(&append_map_extension(path), map_json)?;
             }
             if let (Some(sidecar_path), Some(sidecar_code)) =
                 (vue_sidecar_path.as_ref(), vue_sidecar.as_ref())
             {
-                fs::write(sidecar_path, sidecar_code)
-                    .with_context(|| format!("failed to write {}", sidecar_path.display()))?;
+                write_user_named_file(sidecar_path, sidecar_code.as_bytes())?;
             }
         }
         let json = JsonDecompileOutput {
@@ -821,16 +824,14 @@ fn run_single(cli: Cli) -> Result<()> {
                 if let Some(ref sidecar_path) = vue_sidecar_path {
                     ensure_output_file(sidecar_path, cli.force)?;
                 }
-                fs::write(&path, &code)
-                    .with_context(|| format!("failed to write {}", path.display()))?;
+                write_user_named_file(&path, code.as_bytes())?;
                 if let Some(ref map_json) = source_map {
                     write_output_source_map(&append_map_extension(&path), map_json)?;
                 }
                 if let (Some(sidecar_path), Some(sidecar_code)) =
                     (vue_sidecar_path.as_ref(), vue_sidecar.as_ref())
                 {
-                    fs::write(sidecar_path, sidecar_code)
-                        .with_context(|| format!("failed to write {}", sidecar_path.display()))?;
+                    write_user_named_file(sidecar_path, sidecar_code.as_bytes())?;
                 }
             }
             None => {
@@ -897,21 +898,19 @@ fn install_panic_hook() {
 fn run_extract(args: ExtractArgs, force: bool) -> Result<()> {
     let map_bytes = fs::read(&args.map)
         .with_context(|| format!("failed to read source map {}", args.map.display()))?;
-    let check_existing_writes = ensure_output_dir(&args.output, force)?;
-    let out_dir = canonicalize_output_dir(&args.output)?;
+    let mut out_dir = OutputDir::open(&args.output, force)?;
 
     // `sources` come from the map, so they get the same containment checks as unpacked
     // module names, including symlinked directories already inside the output directory.
     let entries = wakaru::sourcemap::embedded_sources(&map_bytes)?;
-    let mut seen = std::collections::HashSet::new();
+    let planned = entries
+        .iter()
+        .map(|entry| out_dir.plan(&entry.path))
+        .collect::<Result<Vec<_>>>()?;
     let mut written = 0;
-    for entry in &entries {
-        let out_path = resolve_unpack_output_path(&out_dir, &entry.path, &mut seen)?;
-        if check_existing_writes {
-            write_if_changed(&out_path, &entry.content)?;
-        } else {
-            write_file(&out_path, &entry.content)?;
-        }
+    for (entry, path) in entries.iter().zip(&planned) {
+        let file = out_dir.materialize(path)?;
+        out_dir.write(&file, entry.content.as_bytes())?;
         written += 1;
     }
 
@@ -1296,8 +1295,7 @@ fn run_trace(args: TraceArgs, force: bool) -> Result<()> {
     match args.output {
         Some(path) => {
             ensure_output_file(&path, force)?;
-            fs::write(&path, output)
-                .with_context(|| format!("failed to write {}", path.display()))?;
+            write_user_named_file(&path, output.as_bytes())?;
         }
         None => {
             print!("{output}");
@@ -2297,11 +2295,7 @@ fn sanitize_bun_embedded_path(name: &str, index: u32) -> String {
         .into_iter()
         .find_map(|prefix| normalized.strip_prefix(prefix))
         .unwrap_or(&normalized);
-    let mut sanitized = without_prefix
-        .split('/')
-        .filter(|part| !part.is_empty() && *part != "." && *part != "..")
-        .collect::<Vec<_>>()
-        .join("/");
+    let mut sanitized = wakaru_core::sanitize_relative_path(without_prefix, "");
     if sanitized.is_empty() {
         sanitized = format!("embedded-{index}.js");
     } else if Path::new(&sanitized).extension().is_none() {
@@ -2450,16 +2444,19 @@ fn append_map_extension(path: &Path) -> PathBuf {
     PathBuf::from(map_name)
 }
 
-/// Write an output source map next to its JavaScript file.
-///
+/// Write the source map of a single-file output next to the file the user
+/// named with `-o`. Unpack maps are written through [`OutputDir`] instead.
+fn write_output_source_map(map_path: &Path, map_json: &str) -> Result<()> {
+    write_user_named_file(
+        map_path,
+        relativize_map_sources(map_path, map_json).as_bytes(),
+    )
+}
+
 /// Source map consumers resolve `sources` against the map's own location,
 /// while the engine names inputs as the CLI received them (relative to the
 /// working directory). Rewrite each source that names a file on disk to a
 /// path relative to the map; others (stdin, executable members) stay as-is.
-fn write_output_source_map(map_path: &Path, map_json: &str) -> Result<()> {
-    write_file(map_path, &relativize_map_sources(map_path, map_json))
-}
-
 fn relativize_map_sources(map_path: &Path, map_json: &str) -> String {
     #[derive(serde::Deserialize)]
     struct MapSources {
@@ -2531,31 +2528,6 @@ fn relative_path(from_dir: &Path, to: &Path) -> Option<String> {
     Some(parts.join("/"))
 }
 
-/// `--provenance` writes `provenance.json` at the output root. A module the bundle names
-/// `provenance.json` would otherwise be overwritten by it, so refuse before creating anything.
-/// Deduplication only renames later claims, so the module keeps this exact name. The
-/// comparison ignores case, like deduplication, so the result does not depend on the
-/// filesystem.
-fn ensure_no_module_claims_provenance_path<'a>(
-    filenames: impl IntoIterator<Item = &'a str>,
-) -> Result<()> {
-    for filename in filenames {
-        let Ok(relative) = wakaru_core::safe_relative_module_path(filename) else {
-            // Rejected with a clearer error when output paths are resolved.
-            continue;
-        };
-        if relative
-            .to_string_lossy()
-            .eq_ignore_ascii_case("provenance.json")
-        {
-            bail!(
-                "a recovered module is named {filename:?}, which --provenance also writes; rerun without --provenance"
-            );
-        }
-    }
-    Ok(())
-}
-
 fn ensure_output_file(path: &Path, force: bool) -> Result<()> {
     if path.exists() && !force {
         bail!(
@@ -2564,37 +2536,6 @@ fn ensure_output_file(path: &Path, force: bool) -> Result<()> {
         );
     }
     Ok(())
-}
-
-/// Ensures an output directory is usable.
-///
-/// Returns true when the directory already contained entries and writes should
-/// preserve the read-before-write unchanged-file fast path.
-fn ensure_output_dir(path: &PathBuf, force: bool) -> Result<bool> {
-    if path.exists() {
-        if !path.is_dir() {
-            bail!(
-                "output path {} exists and is not a directory",
-                path.display()
-            );
-        }
-        let is_empty = path
-            .read_dir()
-            .with_context(|| format!("failed to read output directory {}", path.display()))?
-            .next()
-            .is_none();
-        if !is_empty && !force {
-            bail!(
-                "output directory {} is not empty; pass --force to write into it",
-                path.display()
-            );
-        }
-        return Ok(!is_empty);
-    } else {
-        fs::create_dir_all(path)
-            .with_context(|| format!("failed to create output directory {}", path.display()))?;
-    }
-    Ok(false)
 }
 
 /// Render provenance entries as a JSON document.
@@ -2666,23 +2607,19 @@ fn render_provenance_json(
     json
 }
 
-fn provenance_final_names<'a>(
+/// `written_names` holds the relative name each artifact was written under, in
+/// artifact order.
+fn provenance_final_names<'a, 'n>(
     artifacts: &'a [CliOutputArtifact],
-    resolved: &[(PathBuf, &str)],
-    out_dir: &Path,
+    written_names: impl IntoIterator<Item = &'n str>,
 ) -> HashMap<&'a str, String> {
     let mut final_names = HashMap::new();
-    for (artifact, (path, _)) in artifacts.iter().zip(resolved.iter()) {
+    for (artifact, name) in artifacts.iter().zip(written_names) {
         if artifact.kind != JsonModuleKind::JavaScript {
             continue;
         }
         if let Some(source_filename) = artifact.source_map_filename.as_deref() {
-            let relative = path
-                .strip_prefix(out_dir)
-                .unwrap_or(path)
-                .to_string_lossy()
-                .replace('\\', "/");
-            final_names.insert(source_filename, relative);
+            final_names.insert(source_filename, name.to_string());
         }
     }
     final_names
@@ -2764,8 +2701,7 @@ fn init_profile(
     let Some(path) = path else {
         return Ok(None);
     };
-    let file = fs::File::create(path)
-        .with_context(|| format!("failed to create profile file {}", path.display()))?;
+    let file = create_user_named_file(path).context("failed to create profile file")?;
 
     let (chrome_layer, guard) = tracing_chrome::ChromeLayerBuilder::new()
         .writer(file)
@@ -2786,4 +2722,5 @@ fn init_profile(
 
 #[cfg(test)]
 #[path = "main_tests.rs"]
+#[allow(clippy::disallowed_methods, reason = "tests build their own fixtures")]
 mod tests;
