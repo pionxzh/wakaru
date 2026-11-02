@@ -131,21 +131,73 @@ fn extract_refuses_symlinked_directory_that_points_outside() {
         fs::remove_dir_all(&dir).expect("remove temp dir");
         return;
     }
-    let map_path = write_extract_map(&dir, &["link/pwn.js"]);
+    let entries = sources(&["link/pwn.js", "kept.js"]);
+    let mut out = OutputDir::open(&out_dir, true).expect("open output dir");
+
+    let extraction = extract_sources(&mut out, &entries).expect("other sources still extract");
+    assert_eq!(extraction.written, 1);
+    let [(path, reason)] = extraction.skipped.as_slice() else {
+        panic!("expected one skipped source");
+    };
+    assert_eq!(path, "link/pwn.js");
+    assert!(
+        reason.to_string().contains("path escapes output directory"),
+        "unexpected reason: {reason}"
+    );
+    assert!(!external_dir.join("pwn.js").exists());
+    assert!(out_dir.join("kept.js").exists());
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+fn sources(paths: &[&str]) -> Vec<wakaru::sourcemap::EmbeddedSource> {
+    let map = serde_json::json!({
+        "version": 3,
+        "sources": paths,
+        "sourcesContent": paths.iter().map(|path| format!("// {path}")).collect::<Vec<_>>(),
+        "names": [],
+        "mappings": "",
+    });
+    wakaru::sourcemap::embedded_sources(map.to_string().as_bytes()).expect("parse map")
+}
+
+#[test]
+fn extract_skips_a_refused_source_and_writes_the_rest() {
+    let dir = temp_test_dir("extract-skip");
+    let mut out = OutputDir::open(&dir, false).expect("open output dir");
+    // `lib/a.js` is a file, so `lib/a.js/x.js`, which needs it as a directory, is
+    // refused; the sources after it are still written.
+    let entries = sources(&["lib/a.js", "lib/a.js/x.js", "lib/b.js"]);
+
+    let extraction = extract_sources(&mut out, &entries).expect("extract");
+    assert_eq!(extraction.written, 2);
+    assert_eq!(extraction.skipped.len(), 1);
+    assert_eq!(extraction.skipped[0].0, "lib/a.js/x.js");
+    assert!(dir.join("lib/b.js").exists());
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn extract_fails_when_every_source_is_skipped() {
+    let dir = temp_test_dir("extract-all-skipped");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    fs::write(dir.join("src"), "a file, not a directory").expect("write file");
+    let map_path = write_extract_map(&dir, &["src/a.js"]);
 
     let err = run_extract(
         ExtractArgs {
             map: map_path,
-            output: out_dir,
+            output: dir.clone(),
         },
         true,
     )
-    .expect_err("symlinked directory escaping the output dir should be refused");
+    .expect_err("nothing could be written");
     assert!(
-        err.to_string().contains("path escapes output directory"),
+        err.to_string()
+            .contains("all 1 embedded source(s) were skipped"),
         "unexpected error: {err}"
     );
-    assert!(!external_dir.join("pwn.js").exists());
 
     fs::remove_dir_all(&dir).expect("remove temp dir");
 }

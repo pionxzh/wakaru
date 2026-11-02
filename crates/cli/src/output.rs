@@ -107,8 +107,14 @@ impl OutputDir {
         let name = output_name(filename)?;
         self.refuse_reserved(&name, filename)?;
         let name = deduplicate_name(&name, &mut self.claimed);
-        self.refuse_reserved(&name, filename)?;
-        self.record_directories(&name, filename, None)?;
+        let checked = self
+            .refuse_reserved(&name, filename)
+            .and_then(|()| self.record_directories(&name, filename, None));
+        if let Err(error) = checked {
+            // A caller may skip a refused name and go on; it keeps no claim.
+            self.claimed.remove(&name.to_lowercase());
+            return Err(error);
+        }
         Ok(PlannedPath {
             name,
             requested: filename.to_string(),

@@ -166,7 +166,8 @@ wakaru extract input.js.map -o src/
   disk. When the map carries original sources, this recovers them directly.
   Paths from the map stay under the output directory: `..`, absolute, and
   drive-prefixed entries are made relative, and colliding names get a `_2`
-  suffix.
+  suffix. An entry that cannot be written safely is skipped with a warning,
+  and the rest are still written.
 
 ## Vue SFC recovery (experimental)
 

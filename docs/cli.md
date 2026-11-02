@@ -118,8 +118,8 @@ other. Rerun without the option that writes the second file. Two modules
 where one would sit below the other's file name stop the run the same way.
 
 On Windows, an output name containing `:` (from a module id such as
-`node:fs`, or a source map entry) also stops the run before anything is
-written. NTFS would store the file as a hidden alternate data stream of a file
+`node:fs`) also stops the run before anything is written; `wakaru extract`
+skips such a source map entry with a warning instead. NTFS would store the file as a hidden alternate data stream of a file
 named by the part before the colon, so the content would not show in a
 directory listing and could be lost when the output is copied or archived.
 Linux and macOS write the name as it is.
@@ -407,9 +407,15 @@ Each `sources` entry is treated as untrusted: the `webpack://` and
 `webpack-internal://` schemes, leading slashes, `..` components, and a drive
 at the start of the path (`C:\src`, `/C:/src`; a letter and a colon there
 always reads as a drive) are dropped, with `/` and `\` both counted as
-separators, so every file lands under the output directory. A write that would follow a symlink out of it is
-refused. Entries that collide (including by case) get a
-`_2`, `_3`, … suffix instead of overwriting each other, as with `--unpack`.
+separators, so every file lands under the output directory. Entries that
+collide (including by case) get a `_2`, `_3`, … suffix instead of overwriting
+each other, as with `--unpack`.
+
+An entry that cannot be written safely is skipped with a warning on stderr,
+and the other entries are still written: one that would follow a symlink out
+of the output directory, one whose name another entry needs as a directory
+(or the reverse), and on Windows one whose name contains `:`. The command
+fails only when every entry is skipped, or when a write itself fails.
 
 ## Rewrite level
 

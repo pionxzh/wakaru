@@ -899,28 +899,69 @@ fn run_extract(args: ExtractArgs, force: bool) -> Result<()> {
     let map_bytes = fs::read(&args.map)
         .with_context(|| format!("failed to read source map {}", args.map.display()))?;
     let mut out_dir = OutputDir::open(&args.output, force)?;
-
-    // `sources` come from the map, so they get the same containment checks as unpacked
-    // module names, including symlinked directories already inside the output directory.
     let entries = wakaru::sourcemap::embedded_sources(&map_bytes)?;
-    let planned = entries
-        .iter()
-        .map(|entry| out_dir.plan(&entry.path))
-        .collect::<Result<Vec<_>>>()?;
-    let mut written = 0;
-    for (entry, path) in entries.iter().zip(&planned) {
-        let file = out_dir.materialize(path)?;
-        out_dir.write(&file, entry.content.as_bytes())?;
-        written += 1;
-    }
+    let extraction = extract_sources(&mut out_dir, &entries)?;
 
-    if io::stderr().is_terminal() {
+    let styled = Styled::for_stderr();
+    for (path, reason) in &extraction.skipped {
         eprintln!(
-            "extracted {written} source file(s) to {}",
+            "{}: skipped {path:?}: {reason:#}",
+            styled.warning("warning")
+        );
+    }
+    if extraction.written == 0 && !extraction.skipped.is_empty() {
+        bail!(
+            "no source was written: all {} embedded source(s) were skipped",
+            extraction.skipped.len()
+        );
+    }
+    if io::stderr().is_terminal() {
+        let skipped = match extraction.skipped.len() {
+            0 => String::new(),
+            n => format!(", skipped {n}"),
+        };
+        eprintln!(
+            "extracted {} source file(s) to {}{skipped}",
+            extraction.written,
             args.output.display()
         );
     }
     Ok(())
+}
+
+struct Extraction {
+    written: usize,
+    /// Each source that was not written, with why.
+    skipped: Vec<(String, anyhow::Error)>,
+}
+
+/// Write each embedded source below `out_dir`.
+///
+/// `sources` come from the map, so they get the same containment checks as unpacked module
+/// names, including symlinked directories already inside the output directory. One source
+/// whose name is refused (an escape, a file/directory clash, a `:` on Windows) is skipped
+/// rather than stopping the others; a failed write still stops the run.
+fn extract_sources(
+    out_dir: &mut OutputDir,
+    entries: &[wakaru::sourcemap::EmbeddedSource],
+) -> Result<Extraction> {
+    let mut written = 0;
+    let mut skipped = Vec::new();
+    for entry in entries {
+        let file = match out_dir
+            .plan(&entry.path)
+            .and_then(|path| out_dir.materialize(&path))
+        {
+            Ok(file) => file,
+            Err(reason) => {
+                skipped.push((entry.path.clone(), reason));
+                continue;
+            }
+        };
+        out_dir.write(&file, entry.content.as_bytes())?;
+        written += 1;
+    }
+    Ok(Extraction { written, skipped })
 }
 
 fn run_debug(args: DebugArgs, force: bool) -> Result<()> {
