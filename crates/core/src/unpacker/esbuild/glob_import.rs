@@ -249,7 +249,7 @@ pub(super) fn plan_glob_collapses(
             }
         };
         for (old, new) in renames {
-            seen_filenames.insert(new.to_ascii_lowercase());
+            seen_filenames.insert(crate::driver::filename_case_key(&new));
             plan.renamed_targets.insert(old, new);
         }
         plan.removed_init_calls
@@ -529,7 +529,7 @@ fn names_from_keys(
                 return None;
             }
             let name = format!("{below}{}", key.strip_prefix(static_prefix)?);
-            let lower = name.to_ascii_lowercase();
+            let lower = crate::driver::filename_case_key(&name);
             (sanitize_relative_path(&name, "") == name
                 && !seen_filenames.contains(&lower)
                 && taken.insert(lower))

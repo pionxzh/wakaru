@@ -28,7 +28,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use super::super::output::{filename_case_key, safe_relative_module_name};
+use super::super::output::{filename_case_key, safe_relative_module_name, sanitize_relative_path};
 use crate::module_path::{relative_import_specifier, resolve_relative_specifier};
 
 const SOURCE_FILE_KEYS: &[&str] = &["data-sentry-source-file", "dataSentrySourceFile"];
@@ -108,7 +108,9 @@ fn prop_key_name(key: &PropName) -> Option<&str> {
 /// module's `(filename, suggested)` pair.
 ///
 /// Conservative by construction:
-/// - skips unsafe recovered paths (absolute, `..`-escaping);
+/// - skips unsafe recovered paths (absolute, `..`-escaping) and names a
+///   Windows filesystem cannot hold as spelled (`a:b.js`, `con.js`), so the
+///   output tree is the same on every platform;
 /// - skips a recovered name claimed by more than one module (ambiguous);
 /// - skips a recovered name that collides with another module's existing
 ///   provisional filename (would clobber a reference target);
@@ -141,6 +143,9 @@ pub(super) fn build_rename_map(
         let Ok(recovered) = safe_relative_module_name(suggested) else {
             continue;
         };
+        if sanitize_relative_path(&recovered, "") != recovered {
+            continue;
+        }
         let recovered_key = filename_case_key(&recovered);
         if reserved.contains(&recovered_key) {
             continue;
@@ -470,6 +475,18 @@ mod tests {
         assert_eq!(map.len(), 1, "{map:?}");
     }
 
+    #[test]
+    fn rename_map_skips_names_windows_cannot_hold() {
+        let entries = vec![
+            ("a.js".to_string(), Some("src/a:b.js".to_string())),
+            ("b.js".to_string(), Some("src/con.js".to_string())),
+            ("c.js".to_string(), Some("src/trailing.".to_string())),
+            ("d.js".to_string(), Some("src/Widget.jsx".to_string())),
+        ];
+        let map = build_rename_map(&entries, &HashSet::default());
+        assert_eq!(map.get("d.js").map(String::as_str), Some("src/Widget.jsx"));
+        assert_eq!(map.len(), 1, "{map:?}");
+    }
     #[test]
     fn rename_map_skips_noop_recovery() {
         let entries = vec![("a.js".to_string(), Some("a.js".to_string()))];
