@@ -100,7 +100,7 @@ impl OutputDir {
     /// Plan a name that comes from input content. A colliding name gets a
     /// `_2`, `_3`, … suffix; a name the CLI reserved for its own file is refused.
     pub fn plan(&mut self, filename: &str) -> Result<PlannedPath> {
-        let name = safe_relative_module_name(filename)?;
+        let name = output_name(filename)?;
         self.refuse_reserved(&name, filename)?;
         let name = deduplicate_name(&name, &mut self.claimed);
         self.refuse_reserved(&name, filename)?;
@@ -113,7 +113,7 @@ impl OutputDir {
     /// Reserve `name` for a file the CLI writes itself. `owner` says what
     /// writes it, for the error when input content asks for the same name.
     pub fn reserve(&mut self, name: &str, owner: &str) -> Result<PlannedPath> {
-        let name = safe_relative_module_name(name)?;
+        let name = output_name(name)?;
         let key = name.to_lowercase();
         if self.claimed.contains(&key) {
             bail!("a recovered module is named {name:?}, which {owner} also writes");
@@ -220,6 +220,26 @@ impl OutputDir {
         }
         write_bytes(&file.path, content)
     }
+}
+
+/// Check a name with core's `safe_relative_module_name`, then refuse a `:` on
+/// Windows.
+///
+/// NTFS does not write `a:b.js` as a file with that name: it writes a hidden
+/// stream `b.js` of a file `a` (an alternate data stream). The write succeeds,
+/// a directory listing shows only an empty `a`, and copying or archiving the
+/// output can drop the content, so the name is refused instead. Other hosts
+/// write the name as it is. The check rejects a leading drive first, so a `:`
+/// here is always inside a segment.
+fn output_name(raw: &str) -> Result<String> {
+    let name = safe_relative_module_name(raw)?;
+    if cfg!(windows) && name.contains(':') {
+        bail!(
+            "output name {raw:?} contains `:`, which Windows would write as a hidden NTFS \
+             alternate data stream instead of a file; run this on Linux or macOS"
+        );
+    }
+    Ok(name)
 }
 
 fn canonicalize_dir(path: &Path) -> Result<PathBuf> {
@@ -475,6 +495,23 @@ mod tests {
                 .check_existing
         );
         fs::remove_dir_all(&existing).expect("remove temp dir");
+    }
+
+    #[test]
+    fn colon_in_a_name_is_refused_only_on_windows() {
+        let (dir, mut out) = open_empty("colon");
+        let result = out.plan("module-node:fs.js");
+        if cfg!(windows) {
+            let err = result.expect_err("NTFS would hide the content in a stream");
+            assert!(
+                err.to_string().contains("alternate data stream"),
+                "unexpected error: {err}"
+            );
+            assert!(out.reserve("gtm:a/index.md", "a GTM index").is_err());
+        } else {
+            assert_eq!(result.expect("plan").name(), "module-node:fs.js");
+        }
+        fs::remove_dir_all(&dir).expect("remove temp dir");
     }
 
     #[test]

@@ -1603,6 +1603,55 @@ console.log(require_b());
     fs::remove_dir_all(&dir).expect("remove temp dir");
 }
 
+#[cfg(windows)]
+#[test]
+fn unpack_refuses_a_colon_module_name_on_windows_before_writing() {
+    let dir = temp_test_dir("colon-module-name");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input = dir.join("bundle.js");
+    fs::write(
+        &input,
+        r#"(function (modules) {
+  var cache = {};
+  function __webpack_require__(id) {
+    if (cache[id]) return cache[id].exports;
+    var module = (cache[id] = { exports: {} });
+    modules[id].call(module.exports, module, module.exports, __webpack_require__);
+    return module.exports;
+  }
+  return __webpack_require__("./src/index.js");
+})({
+  "./src/index.js": function (module, exports, __webpack_require__) {
+    var fs = __webpack_require__("node:fs");
+    console.log(fs.readFileSync);
+  },
+  "node:fs": function (module) {
+    module.exports = require("fs");
+  }
+});
+"#,
+    )
+    .expect("write bundle");
+    let out_dir = dir.join("out");
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input.to_str().expect("input path should be utf8"),
+        "--unpack",
+        "-o",
+        out_dir.to_str().expect("output path should be utf8"),
+    ])
+    .expect("unpack cli should parse");
+
+    let err = run_default(cli).expect_err("a `:` name would become an NTFS stream");
+    assert!(
+        err.to_string().contains("alternate data stream"),
+        "unexpected error: {err}"
+    );
+    assert_eq!(fs::read_dir(&out_dir).expect("read output dir").count(), 0);
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
 #[test]
 fn provenance_input_is_each_explicit_path_as_passed() {
     let dir = temp_test_dir("provenance-input-files");

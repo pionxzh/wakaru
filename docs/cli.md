@@ -115,6 +115,13 @@ another module's `.map` under `--emit-source-map`; compared ignoring case),
 the run stops before writing anything rather than overwrite one with the
 other. Rerun without the option that writes the second file.
 
+On Windows, an output name containing `:` (from a module id such as
+`node:fs`, or a source map entry) also stops the run before anything is
+written. NTFS would store the file as a hidden alternate data stream of a file
+named by the part before the colon, so the content would not show in a
+directory listing and could be lost when the output is copied or archived.
+Linux and macOS write the name as it is.
+
 `input` is the input path exactly as passed on the command line. Wakaru does
 not make it absolute or resolve symlinks, and converts non-UTF-8 path bytes
 lossily. A file found by scanning a directory input is the directory argument

@@ -79,7 +79,9 @@ the path exactly as you passed it, or the directory argument joined with the
 file's path below it for a directory input. A module from an empty factory
 has no ranges but still names its `input`. If a recovered module has the
 name of a file the CLI writes itself (`provenance.json`, a GTM `index.md`, or
-another module's `.map`), the run stops before writing anything.
+another module's `.map`), the run stops before writing anything. On Windows,
+so does an output name containing `:`, which NTFS would hide in an alternate
+data stream instead of writing as a file.
 
 See [Read an unpacked bundle](/guides/read-an-unpacked-bundle#check-the-original-bundle)
 for an example, or use [source maps](/guides/source-maps) to trace output positions.
