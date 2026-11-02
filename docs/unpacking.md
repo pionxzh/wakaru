@@ -30,7 +30,8 @@ attempted in order — first match wins:
    public surface can't yet be recovered faithfully
 2. **webpack4** — `(function(modules) { ... })([...])` with `__webpack_require__` runtime,
    webpack 1 to 4. The entry module is the one the startup records in
-   `__webpack_require__.s`; webpack 1 records none (see [Webpack 4 code
+   `__webpack_require__.s` (or the computed `__webpack_require__['s']` an
+   obfuscator writes); webpack 1 records none (see [Webpack 4 code
    around the bootstrap](#webpack-4-code-around-the-bootstrap))
 3. **webpack5 chunk** — JSONP chunk push with a webpack module object
 4. **Turbopack** — Next.js 15.3+ production chunks: the client

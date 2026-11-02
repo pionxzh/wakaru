@@ -888,3 +888,130 @@ fn obfuscated_webpack1_bundle_whose_factories_call_the_decoder_stays_unsplit() {
         names(&pairs)
     );
 }
+
+// ---------------------------------------------------------------------------
+// Runtime members written as computed string keys
+// ---------------------------------------------------------------------------
+
+/// A webpack 4 bootstrap whose runtime members are computed string keys and
+/// whose numbers are hex, as an obfuscator writes them; the startup records
+/// entry module 2 as `r['s']=0x2`. shape: wild-observed (a
+/// javascript-obfuscator build of a webpack 4 bootstrap starts with
+/// `return n(n['s']=0x2)` and assigns `n['m']`, `n['c']`), reduced and
+/// hand-written.
+const COMPUTED_KEY_BOOTSTRAP: &str = r#"function(e){var n={};function r(t){if(n[t])return n[t]['exports'];var o=n[t]={'i':t,'l':!1,'exports':{}};return e[t]['call'](o['exports'],o,o['exports'],r),o['l']=!0,o['exports']}r['m']=e,r['c']=n,r['d']=function(e,n,t){r['o'](e,n)||Object['defineProperty'](e,n,{'enumerable':!0,'get':t})},r['o']=function(e,n){return Object['prototype']['hasOwnProperty']['call'](e,n)},r['p']='',r(r['s']=0x2)}([function(e,n){n['twice']=function(e){return 0x2*e}},function(e,n){n['half']=function(e){return e/0x2}},function(e,n,r){globalThis['lib']=r(0x0)['twice'](r(0x1)['half'](0x8))}])"#;
+
+fn sorted_names(pairs: &[(String, String)]) -> Vec<&str> {
+    let mut names = names(pairs);
+    names.sort_unstable();
+    names
+}
+
+#[test]
+fn computed_key_startup_marks_the_entry_module() {
+    let output = unpack(
+        &format!("!{COMPUTED_KEY_BOOTSTRAP};"),
+        DecompileOptions {
+            filename: "bundle.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("unpack should succeed");
+    assert_eq!(
+        sorted_names(&output.modules),
+        ["entry.js", "module-0.js", "module-1.js"]
+    );
+    assert!(
+        named(&output.modules, "entry.js").contains("globalThis.lib"),
+        "module 2 is the entry, got:\n{}",
+        named(&output.modules, "entry.js")
+    );
+    assert!(
+        output
+            .provenance
+            .iter()
+            .all(|module| module.is_entry == (module.filename == "entry.js")),
+        "only the started module is the entry: {:?}",
+        output.provenance
+    );
+}
+
+#[test]
+fn code_around_a_computed_key_startup_runs_around_the_entry() {
+    let source = format!("{BANNER};\n!{COMPUTED_KEY_BOOTSTRAP};\nglobalThis.after = 2;");
+
+    let pairs = expect_pairs(&source);
+    assert_eq!(
+        sorted_names(&pairs),
+        ["entry-2.js", "entry.js", "module-0.js", "module-1.js"]
+    );
+    let entry = named(&pairs, "entry.js");
+    assert!(
+        entry.contains("globalThis.banner = {"),
+        "the banner must stay in entry.js, got:\n{entry}"
+    );
+    let load = entry
+        .find("./entry-2.js")
+        .unwrap_or_else(|| panic!("entry.js must load the entry module, got:\n{entry}"));
+    let after = entry
+        .find("globalThis.after = 2")
+        .unwrap_or_else(|| panic!("the code after must stay, got:\n{entry}"));
+    assert!(load < after, "source order must be kept, got:\n{entry}");
+    assert!(
+        named(&pairs, "entry-2.js").contains("globalThis.lib"),
+        "the entry module keeps its own code"
+    );
+    assert!(
+        validate_output_modules(&pairs).is_empty(),
+        "output must validate: {:?}",
+        validate_output_modules(&pairs)
+    );
+}
+
+#[test]
+fn code_around_a_computed_key_startup_of_a_string_keyed_table_runs_around_the_entry() {
+    // shape: hypothetical (the object-form table under the same rewrite).
+    let bootstrap = COMPUTED_KEY_BOOTSTRAP
+        .replace("r['s']=0x2", "r['s']='./src/main.js'")
+        .replace("r(0x0)", "r('./src/twice.js')")
+        .replace("r(0x1)", "r('./src/half.js')")
+        .replace(
+            "}([function(e,n){n['twice']",
+            "}({'./src/twice.js':function(e,n){n['twice']",
+        )
+        .replace(
+            "},function(e,n){n['half']",
+            "},'./src/half.js':function(e,n){n['half']",
+        )
+        .replace("},function(e,n,r){", "},'./src/main.js':function(e,n,r){")
+        .replace("))}])", "))}})");
+    assert!(
+        bootstrap.contains("'./src/main.js':function") && bootstrap.ends_with("}})"),
+        "the replacements must apply, got:\n{bootstrap}"
+    );
+
+    let pairs = expect_pairs(&format!("{BANNER};\n!{bootstrap};"));
+    let entry = named(&pairs, "entry.js");
+    assert!(
+        entry.contains("globalThis.banner = {"),
+        "the banner must stay in entry.js, got:\n{entry}"
+    );
+    assert!(
+        entry.contains("./src/main.js"),
+        "entry.js must load the entry module, got:\n{entry}"
+    );
+    assert_eq!(pairs.len(), 4, "got {:?}", names(&pairs));
+}
+
+#[test]
+fn startup_through_a_computed_non_literal_key_marks_no_entry() {
+    // `r[k]=0x2` may write any member, so it records no entry; with code
+    // around the bootstrap the input stays one file. shape: hypothetical.
+    let bootstrap = COMPUTED_KEY_BOOTSTRAP.replace("r(r['s']=0x2)", "r(r[decode(0)]=0x2)");
+    assert!(
+        bootstrap != COMPUTED_KEY_BOOTSTRAP,
+        "the replacement must apply"
+    );
+
+    assert_unsplit(&format!("{DECODER}\n!{bootstrap};"));
+}

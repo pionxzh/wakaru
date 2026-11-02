@@ -33,6 +33,7 @@ use crate::unpacker::{
     span_byte_range, BundleFormat, DetectedBundle, DetectedModuleFailure, MappedCode,
     SourcePositions, UnpackResult, UnpackedModule,
 };
+use crate::utils::member::static_member_name;
 use crate::utils::paren::strip_parens;
 use crate::utils::swc_safety::apply_fixer;
 
@@ -1349,7 +1350,9 @@ fn extract_entry_id_from_assign(
     if assign.op != AssignOp::Assign {
         return None;
     }
-    // Left must be MemberExpr with prop "s"
+    // Left must be MemberExpr with prop "s": `.s`, or the computed `['s']`
+    // an obfuscator writes for it (wild-observed: a javascript-obfuscator
+    // build of a webpack 4 bootstrap starts with `return n(n['s']=0x2)`).
     let AssignTarget::Simple(SimpleAssignTarget::Member(m)) = &assign.left else {
         return None;
     };
@@ -1359,13 +1362,10 @@ fn extract_entry_id_from_assign(
     if !allowed_entry_objects.contains(&obj_ident.sym) {
         return None;
     };
-    let MemberProp::Ident(prop) = &m.prop else {
-        return None;
-    };
-    if prop.sym.as_ref() != "s" {
+    if static_member_name(&m.prop).as_deref() != Some("s") {
         return None;
     }
-    // Right must be a numeric literal or a string literal
+    // Right must be a numeric literal (decimal or hex) or a string literal
     match &*assign.right {
         Expr::Lit(Lit::Num(n)) => {
             let id = n.value as usize;
