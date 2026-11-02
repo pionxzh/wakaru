@@ -59,12 +59,16 @@ pub fn extract_source_entries(sm: &SourceMap, out_dir: &Path) -> Vec<(PathBuf, S
 /// Map a source map entry path to an output path under `out_dir`.
 ///
 /// Source map paths often start with `../` (relative to the bundle's location)
-/// or contain webpack-internal prefixes like `webpack://`.  We strip these and
+/// or carry webpack's URL schemes: `webpack://` in emitted maps, and
+/// `webpack-internal://` in maps of `eval` devtool builds. We strip these and
 /// resolve the result under `out_dir`, never escaping it: `..` segments, a
 /// root, and a drive are dropped, with `/` and `\` both read as separators
 /// (see [`crate::driver::sanitize_relative_path`]).
 pub fn resolve_source_path(out_dir: &Path, source: &str) -> PathBuf {
-    let stripped = source.strip_prefix("webpack://").unwrap_or(source);
+    let stripped = ["webpack-internal://", "webpack://"]
+        .into_iter()
+        .find_map(|scheme| source.strip_prefix(scheme))
+        .unwrap_or(source);
     let mut result = out_dir.to_path_buf();
     for segment in crate::driver::split_logical_path(stripped).segments {
         if let crate::driver::PathSegment::Normal(part) = segment {

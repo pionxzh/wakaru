@@ -401,8 +401,8 @@ wakaru extract input.js.map -o src/
 ```
 
 Writes files embedded in the source map's `sourcesContent` to disk.
-Each `sources` entry is treated as untrusted: bundler prefixes such as
-`webpack://`, leading slashes, drive prefixes, and `..` components are
+Each `sources` entry is treated as untrusted: the `webpack://` and
+`webpack-internal://` schemes, leading slashes, drive prefixes, and `..` components are
 dropped, with `/` and `\` both counted as separators, so every file lands
 under the output directory. A write that would follow a symlink out of it is
 refused. Entries that collide (including by case) get a

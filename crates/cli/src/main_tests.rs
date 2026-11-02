@@ -70,7 +70,15 @@ fn extract_keeps_backslash_traversal_inside_output_dir() {
     let dir = temp_test_dir("extract-backslash");
     let out_dir = dir.join("nested").join("out");
     fs::create_dir_all(&dir).expect("create temp dir");
-    let map_path = write_extract_map(&dir, &["..\\..\\escape.js", "src/a.js", "./src/a.js"]);
+    let map_path = write_extract_map(
+        &dir,
+        &[
+            "..\\..\\escape.js",
+            "src/a.js",
+            "./src/a.js",
+            "webpack-internal:///./src/eval.js",
+        ],
+    );
 
     run_extract(
         ExtractArgs {
@@ -93,6 +101,11 @@ fn extract_keeps_backslash_traversal_inside_output_dir() {
     assert_eq!(
         fs::read_to_string(out_dir.join("src/a_2.js")).expect("read deduplicated src/a.js"),
         "// ./src/a.js"
+    );
+    // The `eval` devtool's scheme is stripped like `webpack://`, so no `:` reaches the name.
+    assert_eq!(
+        fs::read_to_string(out_dir.join("src/eval.js")).expect("read src/eval.js"),
+        "// webpack-internal:///./src/eval.js"
     );
 
     fs::remove_dir_all(&dir).expect("remove temp dir");

@@ -41,6 +41,8 @@ fn source_paths_drop_traversal_written_with_either_separator() {
     let out_dir = std::path::Path::new("out");
     for (source, expected) in [
         ("webpack:///../src/main.js", "src/main.js"),
+        ("webpack-internal:///./src/a.js", "src/a.js"),
+        ("webpack://my-lib/./src/b.js", "my-lib/src/b.js"),
         (r"..\..\evil.js", "evil.js"),
         (r"src\..\..\evil.js", "src/evil.js"),
         (r"\\server\share\evil.js", "server/share/evil.js"),
