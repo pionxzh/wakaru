@@ -69,13 +69,14 @@ pub fn resolve_source_path(out_dir: &Path, source: &str) -> PathBuf {
         .into_iter()
         .find_map(|scheme| source.strip_prefix(scheme))
         .unwrap_or(source);
-    let mut result = out_dir.to_path_buf();
-    for segment in crate::driver::split_logical_path(stripped).segments {
-        if let crate::driver::PathSegment::Normal(part) = segment {
-            result.push(part);
-        }
+    // Join the cleaned name once rather than pushing segments: on Windows,
+    // pushing a segment such as `D:` replaces the whole path.
+    let relative = crate::driver::sanitize_relative_path(stripped, "");
+    if relative.is_empty() {
+        out_dir.to_path_buf()
+    } else {
+        out_dir.join(relative)
     }
-    result
 }
 
 /// Apply source-map-driven identifier renaming to `module`.

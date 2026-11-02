@@ -487,8 +487,8 @@ fn make_noop_export_function(name: &Atom) -> ModuleItem {
     }))
 }
 
-/// Case-insensitive filename dedup matching the CLI's `deduplicate_path`
-/// logic (see `emit_esm::FilenameDedupStyle` for the pointer to that copy).
+/// Case-insensitive filename dedup in the flat style (see
+/// `emit_esm::FilenameDedupStyle`).
 pub(super) fn dedup_filename(filename: &str, seen: &mut HashSet<String>) -> String {
     emit_esm::dedup_filename(filename, seen, FilenameDedupStyle::Flat)
 }

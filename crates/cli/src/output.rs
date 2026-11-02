@@ -41,6 +41,8 @@ pub struct OutputDir {
     claimed: HashSet<String>,
     /// Lowercased names a later writer owns, with what owns them.
     reserved: HashMap<String, String>,
+    /// Lowercased directories that claimed names sit below.
+    directories: HashSet<String>,
     /// The directory already had entries, so an unchanged file is not rewritten.
     check_existing: bool,
 }
@@ -87,6 +89,7 @@ impl OutputDir {
             root,
             claimed: HashSet::new(),
             reserved: HashMap::new(),
+            directories: HashSet::new(),
             check_existing,
         })
     }
@@ -98,12 +101,14 @@ impl OutputDir {
     }
 
     /// Plan a name that comes from input content. A colliding name gets a
-    /// `_2`, `_3`, … suffix; a name the CLI reserved for its own file is refused.
+    /// `_2`, `_3`, … suffix; a name the CLI reserved for its own file is refused,
+    /// and so is a name that another planned name needs as a directory.
     pub fn plan(&mut self, filename: &str) -> Result<PlannedPath> {
         let name = output_name(filename)?;
         self.refuse_reserved(&name, filename)?;
         let name = deduplicate_name(&name, &mut self.claimed);
         self.refuse_reserved(&name, filename)?;
+        self.record_directories(&name, filename, None)?;
         Ok(PlannedPath {
             name,
             requested: filename.to_string(),
@@ -121,12 +126,54 @@ impl OutputDir {
         if let Some(existing) = self.reserved.get(&key) {
             bail!("{owner} and {existing} would both write {name:?}");
         }
+        self.record_directories(&name, &name, Some(owner))?;
         self.claimed.insert(key.clone());
         self.reserved.insert(key, owner.to_string());
         Ok(PlannedPath {
             requested: name.clone(),
             name,
         })
+    }
+
+    /// One name cannot be both a file and a directory: refuse `name` when an
+    /// earlier name sits below it, or when one of its own directories is an
+    /// earlier file. Either way the second write would fail, after other
+    /// files were already written. Then record `name`'s directories.
+    fn record_directories(
+        &mut self,
+        name: &str,
+        requested: &str,
+        owner: Option<&str>,
+    ) -> Result<()> {
+        let key = name.to_lowercase();
+        if self.directories.contains(&key) {
+            let by = owner.map_or_else(String::new, |owner| format!(" (by {owner})"));
+            bail!(
+                "output name {requested:?}{by} is also the directory other output is written below"
+            );
+        }
+        let ancestors: Vec<&str> = key
+            .match_indices('/')
+            .map(|(index, _)| &key[..index])
+            .collect();
+        if let Some(file) = ancestors
+            .iter()
+            .find(|ancestor| self.claimed.contains(**ancestor))
+        {
+            bail!(
+                "output name {requested:?} is below {file:?}, which is also written as a file{}",
+                self.owned_by(file)
+            );
+        }
+        self.directories
+            .extend(ancestors.into_iter().map(str::to_string));
+        Ok(())
+    }
+
+    fn owned_by(&self, key: &str) -> String {
+        self.reserved
+            .get(key)
+            .map_or_else(String::new, |owner| format!(" (by {owner})"))
     }
 
     /// Reserve the sidecar of `planned` named by appending `suffix`
@@ -511,6 +558,37 @@ mod tests {
         } else {
             assert_eq!(result.expect("plan").name(), "module-node:fs.js");
         }
+        fs::remove_dir_all(&dir).expect("remove temp dir");
+    }
+
+    #[test]
+    fn a_name_cannot_be_both_a_file_and_a_directory() {
+        let (dir, mut out) = open_empty("file-and-dir");
+        out.reserve("provenance.json", "--provenance")
+            .expect("reserve provenance");
+        let err = out
+            .plan("Provenance.json/x.js")
+            .expect_err("a module below a reserved file");
+        assert!(
+            err.to_string()
+                .contains("which is also written as a file (by --provenance)"),
+            "{err}"
+        );
+
+        let module = out.plan("a.js").expect("plan module");
+        out.plan("a.js.map/x.js")
+            .expect("a directory named like a future sidecar");
+        let err = out
+            .plan_sidecar(&module, ".map")
+            .expect_err("the sidecar name is already a directory");
+        assert!(err.to_string().contains("is also the directory"), "{err}");
+
+        out.plan("lib/util.js").expect("plan module");
+        assert!(out.plan("lib").is_err(), "a module named like a directory");
+        assert!(
+            out.plan("lib/util.js/x.js").is_err(),
+            "a module below a module"
+        );
         fs::remove_dir_all(&dir).expect("remove temp dir");
     }
 

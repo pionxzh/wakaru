@@ -29,9 +29,10 @@ use swc_core::ecma::codegen::{text_writer::JsWriter, Emitter};
 pub(crate) enum FilenameDedupStyle {
     /// Split at the last `.` anywhere in the string (a directory prefix
     /// stays part of the stem) and default the extension to `js`; collision
-    /// keys are ASCII-lowercased. Matches the CLI-facing `deduplicate_path`
-    /// logic (a fourth, `Path`-based copy of this probing lives in
-    /// `crate::driver::output::deduplicate_path`).
+    /// keys are ASCII-lowercased. The CLI's final pass
+    /// (`deduplicate_name` in `crates/cli/src/output.rs`) suffixes the same
+    /// way but lowercases with Unicode rules, so a name pair differing only in
+    /// non-ASCII case is renamed there and not here.
     Flat,
     /// Split stem/extension with `std::path` semantics and keep the parent
     /// directory, falling back to `{fallback_stem}` / `js` when the path has

@@ -44,59 +44,96 @@ pub(crate) struct LogicalPath<'a> {
 
 /// Split `raw` with `/` and `\` as separators, independent of the host.
 ///
-/// A leading drive (`C:`, `C:\`) or separator marks the path anchored. After a
-/// leading separator, a verbatim `?` segment and the drive after it are part
-/// of the prefix (`\\?\C:\x` keeps only `x`).
+/// A leading separator marks the path anchored, and so does a drive opening
+/// the first segment that is not `.`: `C:\x`, `C:x`, `./C:x`, and `/C:/x` (the
+/// path of a `file:` URL). After a leading separator, a verbatim `?` segment
+/// is part of the prefix too, so `\\?\C:\x` keeps only `x`. The drive is
+/// removed from the segments.
+///
+/// A drive is a letter and a colon at the start of a segment, so `a:b.js` as a
+/// first segment counts as one: Windows reads it as the drive-relative path
+/// `b.js` on drive `a:`, and the result must not depend on the host.
 pub(crate) fn split_logical_path(raw: &str) -> LogicalPath<'_> {
-    let (mut anchored, rest) = match raw.as_bytes() {
-        [drive, b':', ..] if drive.is_ascii_alphabetic() => (true, &raw[2..]),
-        _ => (false, raw),
-    };
-    anchored |= rest.starts_with(['/', '\\']);
-    let mut parts = rest
+    let mut anchored = raw.starts_with(['/', '\\']);
+    let mut parts = raw
         .split(['/', '\\'])
         .filter(|part| !part.is_empty() && *part != ".")
         .peekable();
-    if anchored && parts.next_if_eq(&"?").is_some() {
-        parts.next_if(|part| is_drive(part));
+    if anchored {
+        parts.next_if_eq(&"?");
     }
-    let segments = parts
-        .map(|part| {
-            if part == ".." {
-                PathSegment::Parent
-            } else {
-                PathSegment::Normal(part)
-            }
-        })
-        .collect();
+    let mut segments = Vec::new();
+    if let Some(rest) = parts.peek().and_then(|first| strip_drive(first)) {
+        anchored = true;
+        parts.next();
+        if !matches!(rest, "" | ".") {
+            segments.push(path_segment(rest));
+        }
+    }
+    segments.extend(parts.map(path_segment));
     LogicalPath { anchored, segments }
 }
 
-fn is_drive(part: &str) -> bool {
-    matches!(part.as_bytes(), [drive, b':'] if drive.is_ascii_alphabetic())
+fn path_segment(part: &str) -> PathSegment<'_> {
+    if part == ".." {
+        PathSegment::Parent
+    } else {
+        PathSegment::Normal(part)
+    }
+}
+
+/// The rest of `part` after a leading drive (`C:`), if it has one.
+fn strip_drive(part: &str) -> Option<&str> {
+    match part.as_bytes() {
+        [drive, b':', ..] if drive.is_ascii_alphabetic() => Some(&part[2..]),
+        _ => None,
+    }
 }
 
 /// Convert a bundler-provided path into a relative output path, dropping what
-/// cannot stay: `..` segments, a root, and a leading drive or UNC prefix.
+/// cannot stay: `..` segments, a root, and a drive or UNC prefix.
 ///
 /// This is component-based instead of replacement-based so overlapping strings
 /// like `....//foo` cannot turn into `../foo` after a single sanitation pass.
 /// Each kept component is also made writable on Windows (see
 /// [`windows_safe_path_component`]). Returns `fallback` when nothing is left.
+/// The result always passes [`safe_relative_module_name`] unchanged (or is
+/// `fallback`).
 pub fn sanitize_relative_path(raw: &str, fallback: &str) -> String {
-    let parts: Vec<String> = split_logical_path(raw)
-        .segments
+    let parts: Vec<String> = relative_parts(raw)
         .into_iter()
-        .filter_map(|segment| match segment {
-            PathSegment::Normal(part) => Some(windows_safe_path_component(part)),
-            PathSegment::Parent => None,
-        })
+        .map(windows_safe_path_component)
         .collect();
     if parts.is_empty() {
         fallback.to_string()
     } else {
         parts.join("/")
     }
+}
+
+/// The ordinary segments of `raw`, with dropped `..` segments and drives.
+///
+/// Dropping a leading `..` can bring a drive-like segment to the front
+/// (`../x:y.js`), which would read as anchored once joined, so a drive is
+/// stripped from the first kept segment until none is left.
+fn relative_parts(raw: &str) -> Vec<&str> {
+    let mut parts: Vec<&str> = split_logical_path(raw)
+        .segments
+        .into_iter()
+        .filter_map(|segment| match segment {
+            PathSegment::Normal(part) => Some(part),
+            PathSegment::Parent => None,
+        })
+        .collect();
+    while let Some(rest) = parts.first().and_then(|first| strip_drive(first)) {
+        match rest {
+            "" | "." | ".." => {
+                parts.remove(0);
+            }
+            rest => parts[0] = rest,
+        }
+    }
+    parts
 }
 
 /// Replace what Win32 rejects or silently rewrites in a path component: the
@@ -245,6 +282,9 @@ mod tests {
             ),
             (r"\\?\C:\x", true, vec![Normal("x")]),
             ("src/C:", false, vec![Normal("src"), Normal("C:")]),
+            ("./C:x", true, vec![Normal("x")]),
+            ("/C:/proj/a.js", true, vec![Normal("proj"), Normal("a.js")]),
+            ("C:..", true, vec![Parent]),
             ("ab:c.js", false, vec![Normal("ab:c.js")]),
             ("....//x", false, vec![Normal("...."), Normal("x")]),
         ] {
@@ -264,6 +304,40 @@ mod tests {
         );
         assert_eq!(sanitize_relative_path(r"\\?\C:\x.js", "m.js"), "x.js");
         assert_eq!(sanitize_relative_path("/../..", "m.js"), "m.js");
+        assert_eq!(sanitize_relative_path("./a:b.js", "m.js"), "b.js");
+        assert_eq!(sanitize_relative_path("../x:y.js", "m.js"), "y.js");
+        assert_eq!(sanitize_relative_path("/C:/proj/a.js", "m.js"), "proj/a.js");
+        assert_eq!(sanitize_relative_path("../C:..", "m.js"), "m.js");
+        assert_eq!(sanitize_relative_path("src/D:/a.js", "m.js"), "src/D_/a.js");
+    }
+
+    /// Every short string over the characters that matter: what the drop
+    /// policy returns, the reject policy accepts unchanged, and it is a plain
+    /// relative path on this host too.
+    #[test]
+    fn sanitized_names_always_pass_the_final_check() {
+        const ALPHABET: [char; 7] = ['a', 'C', ':', '/', '\\', '.', '?'];
+        let mut inputs = vec![String::new()];
+        for _ in 0..6 {
+            let longer: Vec<String> = inputs
+                .iter()
+                .filter(|input| input.len() == inputs.last().map_or(0, String::len))
+                .flat_map(|input| ALPHABET.iter().map(move |ch| format!("{input}{ch}")))
+                .collect();
+            inputs.extend(longer);
+        }
+        for raw in &inputs {
+            let sanitized = sanitize_relative_path(raw, "m.js");
+            let checked = safe_relative_module_name(&sanitized)
+                .unwrap_or_else(|error| panic!("{raw:?} -> {sanitized:?}: {error}"));
+            assert_eq!(checked, sanitized, "{raw:?}");
+            assert!(
+                Path::new(&checked)
+                    .components()
+                    .all(|component| matches!(component, std::path::Component::Normal(_))),
+                "{raw:?} -> {checked:?} is not a plain relative path on this host"
+            );
+        }
     }
 
     #[test]

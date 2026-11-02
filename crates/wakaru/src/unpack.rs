@@ -560,7 +560,13 @@ fn ensure_module_filenames_are_safe(modules: &[ModuleOutput]) -> Result<()> {
 fn unique_preserved_filename(filename: &str, seen: &mut HashSet<String>) -> String {
     // Split as core splits every output name, so `\` separates on every platform.
     let sanitized = wakaru_core::sanitize_relative_path(filename, "module.js");
-    let basename = sanitized.rsplit('/').next().unwrap_or("module.js");
+    // Clean the last segment again on its own: `dir/a:b.js` ends in a segment
+    // that reads as a drive once it stands first.
+    let basename = wakaru_core::sanitize_relative_path(
+        sanitized.rsplit('/').next().unwrap_or_default(),
+        "module.js",
+    );
+    let basename = basename.as_str();
     let mut candidate = basename.to_string();
     let mut suffix = 2;
     while !seen.insert(candidate.to_lowercase()) {

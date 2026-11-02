@@ -1004,6 +1004,8 @@ fn public_input_paths_treat_backslashes_as_separators_before_the_safety_check() 
         (r"pkg\..\..\bundle.js", "bundle.js"),
         (r"..\pkg\bundle.js", "pkg/bundle.js"),
         ("src/app.js", "src/app.js"),
+        ("src/a:b.js", "src/a_b.js"),
+        ("../x:y.js", "y.js"),
     ] {
         assert_eq!(
             public_path_for_input(input, None).expect("relative input has a public path"),
@@ -1011,4 +1013,18 @@ fn public_input_paths_treat_backslashes_as_separators_before_the_safety_check() 
             "{input:?}"
         );
     }
+    assert!(public_path_for_input("..", None).is_err());
+}
+
+/// Unix only: a Windows file name cannot contain `:` (it names an NTFS stream),
+/// and the host-path normalization reads such a segment as a drive there.
+#[cfg(unix)]
+#[test]
+fn absolute_input_below_the_root_keeps_a_colon_segment() {
+    let root = std::env::temp_dir().join("wakaru-public-root");
+    let input = root.join("src/a:b.js");
+    assert_eq!(
+        public_path_for_input(&input.to_string_lossy(), Some(&root)).expect("public path"),
+        "src/a:b.js"
+    );
 }

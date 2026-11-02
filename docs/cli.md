@@ -112,8 +112,10 @@ not a position-by-position mapping of the rewritten code. Use
 If a recovered module has the name of a file the CLI writes itself
 (`provenance.json` under `--provenance`, a GTM container's `index.md`, or
 another module's `.map` under `--emit-source-map`; compared ignoring case),
+or would need one of those names as a directory (`provenance.json/x.js`),
 the run stops before writing anything rather than overwrite one with the
-other. Rerun without the option that writes the second file.
+other. Rerun without the option that writes the second file. Two modules
+where one would sit below the other's file name stop the run the same way.
 
 On Windows, an output name containing `:` (from a module id such as
 `node:fs`, or a source map entry) also stops the run before anything is
@@ -402,9 +404,10 @@ wakaru extract input.js.map -o src/
 
 Writes files embedded in the source map's `sourcesContent` to disk.
 Each `sources` entry is treated as untrusted: the `webpack://` and
-`webpack-internal://` schemes, leading slashes, drive prefixes, and `..` components are
-dropped, with `/` and `\` both counted as separators, so every file lands
-under the output directory. A write that would follow a symlink out of it is
+`webpack-internal://` schemes, leading slashes, `..` components, and a drive
+at the start of the path (`C:\src`, `/C:/src`; a letter and a colon there
+always reads as a drive) are dropped, with `/` and `\` both counted as
+separators, so every file lands under the output directory. A write that would follow a symlink out of it is
 refused. Entries that collide (including by case) get a
 `_2`, `_3`, … suffix instead of overwriting each other, as with `--unpack`.
 

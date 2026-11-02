@@ -1,5 +1,5 @@
 use crate::collections::{HashMap, HashSet};
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use swc_core::common::{sync::Lrc, Mark, SourceMap, GLOBALS};
@@ -382,7 +382,7 @@ fn public_path_for_input(filename: &str, absolute_root: Option<&Path>) -> Result
             .map(Path::to_path_buf)
             .or_else(|| normalized.file_name().map(PathBuf::from))
             .ok_or_else(|| anyhow!("cannot derive a public output path from {filename:?}"))?;
-        return super::output::safe_relative_module_name(&candidate.to_string_lossy());
+        return public_name(filename, &candidate.to_string_lossy());
     }
     // `wakaru --unpack ../pkg/bundle.js` is an ordinary invocation; the
     // traversal prefix cannot be mirrored under the output root, so keep the
@@ -398,7 +398,18 @@ fn public_path_for_input(filename: &str, absolute_root: Option<&Path>) -> Result
             }
         }
     }
-    super::output::safe_relative_module_name(&parts.join("/"))
+    public_name(filename, &parts.join("/"))
+}
+
+/// Clean `candidate` with the drop policy, so a name such as `src/a:b.js` from
+/// below the common root, or a drive-like segment left first, cannot fail the
+/// run; nothing left is still an error.
+fn public_name(filename: &str, candidate: &str) -> Result<String> {
+    let name = super::sanitize_relative_path(candidate, "");
+    if name.is_empty() {
+        bail!("cannot derive a public output path from {filename:?}");
+    }
+    Ok(name)
 }
 
 fn public_boundary_fallback_module(

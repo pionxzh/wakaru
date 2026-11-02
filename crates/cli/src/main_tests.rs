@@ -1570,6 +1570,52 @@ console.log(require_b());
 }
 
 #[test]
+fn provenance_refuses_a_module_below_provenance_json() {
+    let dir = temp_test_dir("provenance-below-collision");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input = dir.join("bundle.js");
+    fs::write(
+        &input,
+        r#"var __getOwnPropNames = Object.getOwnPropertyNames;
+var __commonJS = (cb, mod) => function __require() {
+  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+};
+var require_a = __commonJS({
+  "provenance.json/x.js"(exports, module) {
+    module.exports = { value: 1 };
+  }
+});
+var require_b = __commonJS({
+  "src/b.js"(exports, module) {
+    module.exports = require_a();
+  }
+});
+console.log(require_b());
+"#,
+    )
+    .expect("write bundle");
+    let out_dir = dir.join("out");
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input.to_str().expect("input path should be utf8"),
+        "--unpack",
+        "--provenance",
+        "-o",
+        out_dir.to_str().expect("output path should be utf8"),
+    ])
+    .expect("provenance unpack cli should parse");
+
+    let err = run_default(cli).expect_err("provenance.json cannot be a directory");
+    assert!(
+        err.to_string().contains("(by --provenance)"),
+        "unexpected error: {err}"
+    );
+    assert_eq!(fs::read_dir(&out_dir).expect("read output dir").count(), 0);
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
 fn emitted_source_map_refuses_a_module_with_the_same_name() {
     let dir = temp_test_dir("source-map-name-collision");
     fs::create_dir_all(&dir).expect("create temp dir");
