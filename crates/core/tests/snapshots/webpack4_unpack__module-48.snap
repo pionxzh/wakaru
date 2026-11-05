@@ -1232,8 +1232,8 @@ const bt = [];
 let gt = null;
 let wt = null;
 let Et = null;
-const xt = new Map;
-const kt = new Map;
+const map = new Map;
+const map_1 = new Map;
 const Tt = [];
 const St = "mousedown mouseup touchcancel touchend touchstart auxclick dblclick pointercancel pointerdown pointerup dragend dragstart drop compositionend compositionstart keydown keypress keyup input textInput close cancel copy cut paste click change contextmenu reset submit".split(" ");
 const Ot = "focus blur dragenter dragleave mouseover mouseout pointerover pointerout gotpointercapture lostpointercapture".split(" ");
@@ -1262,11 +1262,11 @@ function Pt(e, t) {
             break;
         case "pointerover":
         case "pointerout":
-            xt.delete(t.pointerId);
+            map.delete(t.pointerId);
             break;
         case "gotpointercapture":
         case "lostpointercapture":
-            kt.delete(t.pointerId);
+            map_1.delete(t.pointerId);
     }
 }
 function _t(e, t, n, r, o, i) {
@@ -1344,8 +1344,8 @@ function Mt() {
     if (Et !== null && Rt(Et)) {
         Et = null;
     }
-    xt.forEach(Nt);
-    kt.forEach(Nt);
+    map.forEach(Nt);
+    map_1.forEach(Nt);
 }
 function At(e, t) {
     if (e.blockedOn === t) {
@@ -1378,8 +1378,8 @@ function Lt(e) {
     if (Et !== null) {
         At(Et, e);
     }
-    xt.forEach(t);
-    kt.forEach(t);
+    map.forEach(t);
+    map_1.forEach(t);
     for(n = 0; n < Tt.length; n++){
         if ((r = Tt[n]).blockedOn === e) {
             r.blockedOn = null;
@@ -1393,8 +1393,8 @@ function Lt(e) {
     }
 }
 const It = {};
-const Dt = new Map;
-const Ft = new Map;
+const map_2 = new Map;
+const map_3 = new Map;
 const zt = [
     "abort",
     "abort",
@@ -1462,8 +1462,8 @@ function qt(e, eventPriority) {
             ],
             eventPriority
         };
-        Ft.set(r, eventPriority);
-        Dt.set(r, bubbled);
+        map_3.set(r, eventPriority);
+        map_2.set(r, bubbled);
         It[o] = bubbled;
     }
 }
@@ -1471,7 +1471,7 @@ qt("blur blur cancel cancel click click close close contextmenu contextMenu copy
 qt("drag drag dragenter dragEnter dragexit dragExit dragleave dragLeave dragover dragOver mousemove mouseMove mouseout mouseOut mouseover mouseOver pointermove pointerMove pointerout pointerOut pointerover pointerOver scroll scroll toggle toggle touchmove touchMove wheel wheel".split(" "), 1);
 qt(zt, 2);
 for(let Ut = "change selectionchange textInput compositionstart compositionend compositionupdate".split(" "), Ht = 0; Ht < Ut.length; Ht++){
-    Ft.set(Ut[Ht], 0);
+    map_3.set(Ut[Ht], 0);
 }
 const unstable_UserBlockingPriority_1 = unstable_UserBlockingPriority;
 const unstable_runWithPriority_1 = unstable_runWithPriority;
@@ -1480,7 +1480,7 @@ function Vt(e, t) {
     Qt(t, e, false);
 }
 function Qt(e, t, n) {
-    let r = Ft.get(t);
+    let r = map_3.get(t);
     switch(r === undefined ? 2 : r){
         case 0:
             r = (function(e, t, n, r) {
@@ -1538,11 +1538,11 @@ function Kt(e, t, n, r) {
                         return true;
                     case "pointerover":
                         var i = o.pointerId;
-                        xt.set(i, _t(xt.get(i) || null, e, t, n, r, o));
+                        map.set(i, _t(map.get(i) || null, e, t, n, r, o));
                         return true;
                     case "gotpointercapture":
                         i = o.pointerId;
-                        kt.set(i, _t(kt.get(i) || null, e, t, n, r, o));
+                        map_1.set(i, _t(map_1.get(i) || null, e, t, n, r, o));
                         return true;
                 }
                 return false;
@@ -2945,7 +2945,7 @@ const io = Ar.extend({
 const SimpleEventPlugin = {
     eventTypes: It,
     extractEvents: function(e, t, n, r) {
-        const o = Dt.get(e);
+        const o = map_2.get(e);
         if (!o) {
             return null;
         }

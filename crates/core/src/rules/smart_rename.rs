@@ -148,6 +148,8 @@ impl VisitMut for SmartRename {
         call_site_param_rename_module(module, &value_named);
         role_rename_module(module, self.unresolved_mark);
         jsx_component_alias_rename_module(module, &exported_bindings);
+        // The weakest evidence goes last; see the type-name section.
+        type_name_rename_module(module, self.unresolved_mark, &value_named);
         self.pending_value_position_names = previous_pending_names;
         self.this_aliases = previous_this_aliases;
     }
@@ -5316,6 +5318,339 @@ fn pascalize(input: &str) -> String {
     }
 }
 
+// ============================================================
+// Type-name renames
+//
+// A short generated alias whose initializer says what kind of value it
+// holds is named after that kind:
+//
+//   var e = new Map()                → map
+//   var e = new XMLHttpRequest       → xmlHttpRequest
+//
+// The callee must be a plain identifier that starts with an uppercase letter
+// and is not itself a generated alias: a global (`Map`, `URL`) or a local
+// class or function of more than three characters (`Matrix`); a shorter
+// local (`Kq2`, `Zvb`) is usually a minified name. Only the zero-argument
+// form (`new C()`, `new C`) is named. A member callee (`new e.Map()`,
+// `new a.default()`) is skipped. A leading acronym is lowered as a word
+// (`DOMParser` → `domParser`, `URL` → `url`), and a name that is reserved
+// (`new Function()` → `function`) is skipped.
+//
+// A type is the weakest naming evidence: two `Map`s in one function hold
+// different things, and a role name says which. So this pass runs after
+// every other SmartRename pass, renames only bindings that are still short
+// generated aliases, and leaves alone a binding value-position renames just
+// named, whose new name can itself be short (`id`). Destructuring, React,
+// member-init, call-site, and role renames never name this declarator shape.
+//
+// The binding must keep its initializer, under the `AliasStability` proof:
+// one declaration, no direct write, no parameter of the same name. Exported
+// bindings keep their names, as in the other module-level passes. Like
+// member-init, the pass names the direct `var`/`let`/`const` statements of
+// the module body and of each function, method, constructor, and arrow body,
+// outer scopes first, against every name spelled in that body (nested
+// functions included) and its parameters, adding a `_N` suffix on a
+// collision. An outer rename is applied before the inner body is read, so
+// an inner reference to it counts as a spelled name; a name no reference
+// in the body uses can only shadow bindings the body never reads.
+//
+// Member-init names `var t = e.signal` `e_signal` long before `e` becomes
+// `abortController`; `rename_stale_member_prefixes` then moves the derived
+// name to `abortController_signal`.
+// ============================================================
+
+fn type_name_rename_module(
+    module: &mut Module,
+    unresolved_mark: Mark,
+    value_named: &HashSet<BindingId>,
+) {
+    let mut finder = TypeNameCandidateFinder {
+        unresolved_mark,
+        found: false,
+    };
+    module.visit_with(&mut finder);
+    if !finder.found {
+        return;
+    }
+    let ctx = TypeNameContext {
+        unresolved_mark,
+        value_named,
+        uses: BindingUseIndex::collect(module),
+    };
+
+    let exported_bindings = collect_exported_binding_ids(module);
+    let used_names = collect_names_in_module(&module.body);
+    let mut renames = collect_type_name_renames(
+        module.body.iter().filter_map(|item| match item {
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => Some(&**var),
+            _ => None,
+        }),
+        used_names,
+        &HashSet::default(),
+        &ctx,
+    );
+    renames.retain(|rename| !exported_bindings.contains(&rename.old));
+    if !renames.is_empty() {
+        rename_bindings_in_module(module, &renames);
+    }
+    let mut renamer = TypeNameRenamer {
+        ctx: &ctx,
+        applied: renames,
+    };
+    module.visit_mut_children_with(&mut renamer);
+    let applied = renamer.applied;
+    rename_stale_member_prefixes(module, &applied, &exported_bindings);
+}
+
+/// Member-init ran before this pass and spelled the old name into the
+/// bindings it derived from a renamed binding: `var t = e.signal` became
+/// `e_signal`, and `e` is now `abortController`. Such a binding takes the
+/// name member-init would have given it, `abortController_signal`, when it
+/// still has exactly the derived name and the new name is spelled nowhere in
+/// the module, so it can neither capture nor be shadowed.
+fn rename_stale_member_prefixes(
+    module: &mut Module,
+    applied: &[BindingRename],
+    exported_bindings: &HashSet<BindingId>,
+) {
+    struct Collector<'a> {
+        old_names: HashMap<BindingId, &'a Atom>,
+        found: Vec<(BindingId, String)>,
+    }
+
+    impl Visit for Collector<'_> {
+        fn visit_var_declarator(&mut self, decl: &VarDeclarator) {
+            if let (Pat::Ident(binding), Some(Expr::Member(member))) =
+                (&decl.name, decl.init.as_deref())
+            {
+                if let (Expr::Ident(obj), MemberProp::Ident(prop)) =
+                    (member.obj.as_ref(), &member.prop)
+                {
+                    if let Some(old) = self.old_names.get(&(obj.sym.clone(), obj.ctxt)) {
+                        if binding.id.sym.as_ref() == format!("{old}_{}", prop.sym) {
+                            self.found.push((
+                                (binding.id.sym.clone(), binding.id.ctxt),
+                                format!("{}_{}", obj.sym, prop.sym),
+                            ));
+                        }
+                    }
+                }
+            }
+            decl.visit_children_with(self);
+        }
+    }
+
+    if applied.is_empty() {
+        return;
+    }
+    let mut collector = Collector {
+        old_names: applied
+            .iter()
+            .map(|rename| ((rename.new.clone(), rename.old.1), &rename.old.0))
+            .collect(),
+        found: Vec::new(),
+    };
+    module.visit_with(&mut collector);
+    if collector.found.is_empty() {
+        return;
+    }
+    let mut used_names = collect_names_in_module(&module.body);
+    let mut renames = Vec::new();
+    for (old, new) in collector.found {
+        let new = Atom::from(new);
+        if exported_bindings.contains(&old) || !used_names.insert(new.clone()) {
+            continue;
+        }
+        renames.push(BindingRename { old, new });
+    }
+    if !renames.is_empty() {
+        rename_bindings_in_module(module, &renames);
+    }
+}
+
+struct TypeNameContext<'a> {
+    unresolved_mark: Mark,
+    value_named: &'a HashSet<BindingId>,
+    /// Module-wide, collected before any rename of this pass. A candidate is
+    /// looked up under its own identity, which no rename of this pass touches
+    /// before the candidate's own scope is named.
+    uses: BindingUseIndex,
+}
+
+struct TypeNameRenamer<'a> {
+    ctx: &'a TypeNameContext<'a>,
+    /// Every rename applied so far, for `rename_stale_member_prefixes`.
+    applied: Vec<BindingRename>,
+}
+
+impl TypeNameRenamer<'_> {
+    fn rename_body(&mut self, stmts: &mut Vec<Stmt>, param_names: HashSet<Atom>) {
+        if !stmts
+            .iter()
+            .any(|stmt| matches!(stmt, Stmt::Decl(Decl::Var(var)) if has_type_name_candidate(var, self.ctx.unresolved_mark)))
+        {
+            return;
+        }
+        let mut used_names = collect_names_in_stmts(stmts);
+        used_names.extend(param_names.iter().cloned());
+        let renames = collect_type_name_renames(
+            stmts.iter().filter_map(|stmt| match stmt {
+                Stmt::Decl(Decl::Var(var)) => Some(&**var),
+                _ => None,
+            }),
+            used_names,
+            &param_names,
+            self.ctx,
+        );
+        if !renames.is_empty() {
+            rename_bindings(stmts, &renames);
+            self.applied.extend(renames);
+        }
+    }
+}
+
+impl VisitMut for TypeNameRenamer<'_> {
+    fn visit_mut_function(&mut self, func: &mut Function) {
+        if let Some(body) = &mut func.body {
+            self.rename_body(&mut body.stmts, names_in(&func.params));
+        }
+        func.visit_mut_children_with(self);
+    }
+
+    fn visit_mut_constructor(&mut self, ctor: &mut Constructor) {
+        if let Some(body) = &mut ctor.body {
+            self.rename_body(&mut body.stmts, names_in(&ctor.params));
+        }
+        ctor.visit_mut_children_with(self);
+    }
+
+    fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
+        if let ArrowFunctionBody::FunctionBody(body) = arrow.body.as_mut() {
+            self.rename_body(&mut body.stmts, names_in(&arrow.params));
+        }
+        arrow.visit_mut_children_with(self);
+    }
+}
+
+fn collect_type_name_renames<'a>(
+    vars: impl Iterator<Item = &'a VarDecl>,
+    mut used_names: HashSet<Atom>,
+    param_names: &HashSet<Atom>,
+    ctx: &TypeNameContext<'_>,
+) -> Vec<BindingRename> {
+    let mut renames = Vec::new();
+    for var in vars {
+        for decl in &var.decls {
+            let Pat::Ident(binding) = &decl.name else {
+                continue;
+            };
+            let Some(init) = decl.init.as_deref() else {
+                continue;
+            };
+            if !is_likely_generated_alias(&binding.id.sym) {
+                continue;
+            }
+            let Some(type_name) = type_name_for_init(init, ctx.unresolved_mark) else {
+                continue;
+            };
+            let id = (binding.id.sym.clone(), binding.id.ctxt);
+            if ctx.value_named.contains(&id)
+                || param_names.contains(&id.0)
+                || !ctx.uses.has_single_declaration(&id)
+                || ctx.uses.has_direct_write(&id)
+            {
+                continue;
+            }
+            let new_name = find_non_conflicting_name(&type_name, &used_names);
+            if new_name == binding.id.sym.as_ref() {
+                continue;
+            }
+            used_names.insert(Atom::from(new_name.as_str()));
+            renames.push(BindingRename {
+                old: id,
+                new: new_name.into(),
+            });
+        }
+    }
+    renames
+}
+
+fn has_type_name_candidate(var: &VarDecl, unresolved_mark: Mark) -> bool {
+    var.decls.iter().any(|decl| {
+        matches!(&decl.name, Pat::Ident(binding) if is_likely_generated_alias(&binding.id.sym))
+            && decl
+                .init
+                .as_deref()
+                .is_some_and(|init| type_name_for_init(init, unresolved_mark).is_some())
+    })
+}
+
+struct TypeNameCandidateFinder {
+    unresolved_mark: Mark,
+    found: bool,
+}
+
+impl Visit for TypeNameCandidateFinder {
+    fn visit_var_decl(&mut self, var: &VarDecl) {
+        if self.found || has_type_name_candidate(var, self.unresolved_mark) {
+            self.found = true;
+            return;
+        }
+        var.visit_children_with(self);
+    }
+}
+
+/// The name a type-revealing initializer gives its binding.
+fn type_name_for_init(init: &Expr, unresolved_mark: Mark) -> Option<String> {
+    match init {
+        Expr::New(new) => {
+            if new.args.as_ref().is_some_and(|args| !args.is_empty()) {
+                return None;
+            }
+            let Expr::Ident(callee) = new.callee.as_ref() else {
+                return None;
+            };
+            if is_likely_generated_alias(&callee.sym)
+                || !callee.sym.starts_with(|c: char| c.is_ascii_uppercase())
+            {
+                return None;
+            }
+            // A minifier spells short locals like `Kq2`, `Zvb`, or `QRX`; a
+            // short global such as `URL` is a real name.
+            if callee.sym.chars().count() <= 3 && callee.ctxt.outer() != unresolved_mark {
+                return None;
+            }
+            let name = lower_camel_type_name(&callee.sym);
+            (is_valid_js_ident(&name) && !is_reserved_binding_name(&name)).then_some(name)
+        }
+        _ => None,
+    }
+}
+
+/// Lowers the leading capital, or a leading acronym as one word:
+/// `Map` → `map`, `XMLHttpRequest` → `xmlHttpRequest`, `URL` → `url`,
+/// `UTF8Decoder` → `utf8Decoder`.
+fn lower_camel_type_name(name: &str) -> String {
+    let chars: Vec<char> = name.chars().collect();
+    let upper_run = chars.iter().take_while(|c| c.is_ascii_uppercase()).count();
+    // In `XMLHttp` the last capital of the run starts the next word.
+    let lowered = match chars.get(upper_run) {
+        Some(next) if next.is_ascii_lowercase() && upper_run > 1 => upper_run - 1,
+        _ => upper_run,
+    };
+    chars
+        .iter()
+        .enumerate()
+        .map(|(idx, c)| {
+            if idx < lowered {
+                c.to_ascii_lowercase()
+            } else {
+                *c
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5329,5 +5664,21 @@ mod tests {
         ]);
 
         assert_eq!(find_non_conflicting_name("rest", &used_names), "rest_3");
+    }
+
+    #[test]
+    fn lower_camel_type_name_lowers_a_leading_acronym_as_one_word() {
+        for (input, expected) in [
+            ("Map", "map"),
+            ("XMLHttpRequest", "xmlHttpRequest"),
+            ("URLSearchParams", "urlSearchParams"),
+            ("DOMParser", "domParser"),
+            ("URL", "url"),
+            ("UTF8Codec", "utf8Codec"),
+            ("Float32Array", "float32Array"),
+            ("AbortController", "abortController"),
+        ] {
+            assert_eq!(lower_camel_type_name(input), expected);
+        }
     }
 }

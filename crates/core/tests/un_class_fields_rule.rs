@@ -496,9 +496,10 @@ class Foo {
 }
 "#;
     let output = render(input);
+    // SmartRename later names the unpromoted map after its type.
     assert!(!output.contains("#KE"), "{output}");
-    assert!(output.contains("KE.set(this, undefined)"), "{output}");
-    assert!(output.contains("A4(this, KE"), "{output}");
+    assert!(output.contains("weakMap.set(this, undefined)"), "{output}");
+    assert!(output.contains("A4(this, weakMap"), "{output}");
 }
 
 #[test]

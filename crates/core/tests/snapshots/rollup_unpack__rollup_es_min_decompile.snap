@@ -58,25 +58,25 @@ class n {
         return new n(this._level, this._prefix ? `${this._prefix}:${t}` : t);
     }
 }
-const r = new WeakMap;
-const o = new WeakMap;
+const weakMap = new WeakMap;
+const weakMap_1 = new WeakMap;
 const i = Symbol("change");
 const a = Symbol("reset");
 class c {
     constructor(t = {}){
-        r.set(this, {
+        weakMap.set(this, {
             ...t
         });
-        o.set(this, []);
+        weakMap_1.set(this, []);
     }
     get(t) {
-        const e = r.get(this);
+        const e = weakMap.get(this);
         if (e) {
             return e[t];
         }
     }
     set(t, e) {
-        const s = r.get(this);
+        const s = weakMap.get(this);
         const old = s[t];
         s[t] = e;
         if (old !== e) {
@@ -88,16 +88,16 @@ class c {
         }
     }
     reset(t = {}) {
-        r.set(this, {
+        weakMap.set(this, {
             ...t
         });
         this._notify(a, t);
     }
     get size() {
-        return Object.keys(r.get(this)).length;
+        return Object.keys(weakMap.get(this)).length;
     }
     subscribe(t) {
-        const e = o.get(this);
+        const e = weakMap_1.get(this);
         e.push(t);
         return ()=>{
             const s = e.indexOf(t);
@@ -107,7 +107,7 @@ class c {
         };
     }
     _notify(t, e) {
-        for (const s of o.get(this)){
+        for (const s of weakMap_1.get(this)){
             s(t, e);
         }
     }

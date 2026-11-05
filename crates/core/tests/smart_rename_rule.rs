@@ -4222,3 +4222,336 @@ export function f(e) {
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
+
+// `var e = new Map()`: a zero-argument `new` of a readable constructor names
+// its binding after the type, after every other pass had its say.
+
+#[test]
+fn type_name_rename_new_without_arguments() {
+    let input = r#"
+var u = new FormData;
+function f() {
+    var e = new Map();
+    var t = new Set;
+    var n = new XMLHttpRequest;
+    var r = new URLSearchParams();
+    var o = new AbortController();
+    var i = new TextDecoder;
+    var a = new DOMParser();
+    var s = new UTF8Codec();
+    return [u, e, t, n, r, o, i, a, s];
+}
+"#;
+    let expected = r#"
+var formData = new FormData;
+function f() {
+    var map = new Map();
+    var set = new Set;
+    var xmlHttpRequest = new XMLHttpRequest;
+    var urlSearchParams = new URLSearchParams();
+    var abortController = new AbortController();
+    var textDecoder = new TextDecoder;
+    var domParser = new DOMParser();
+    var utf8Codec = new UTF8Codec();
+    return [formData, map, set, xmlHttpRequest, urlSearchParams, abortController, textDecoder, domParser, utf8Codec];
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn type_name_rename_local_class_and_all_caps_callee() {
+    let input = r#"
+class Matrix {}
+function Vector() {}
+const g = () => {
+    const e = new Matrix();
+    const t = new Vector;
+    const n = new URL;
+    return [e, t, n];
+};
+"#;
+    let expected = r#"
+class Matrix {}
+function Vector() {}
+const g = () => {
+    const matrix = new Matrix();
+    const vector = new Vector;
+    const url = new URL;
+    return [matrix, vector, url];
+};
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn type_name_rename_in_method_and_constructor() {
+    let input = r#"
+class Store {
+    constructor() {
+        var e = new Map();
+        this.read = function() { return e; };
+    }
+    reset() {
+        const t = new WeakMap();
+        return t;
+    }
+}
+"#;
+    let expected = r#"
+class Store {
+    constructor() {
+        var map = new Map();
+        this.read = function() { return map; };
+    }
+    reset() {
+        const weakMap = new WeakMap();
+        return weakMap;
+    }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn type_name_rename_skips_other_new_shapes() {
+    let inputs = [
+        // Arguments say more than the type; out of scope for now.
+        "function f(x) { var e = new Map(x); return e; }",
+        "function f() { var e = new Error(\"failed\"); return e; }",
+        // Member callees.
+        "function f(e) { var t = new e.Map(); return t; }",
+        "function f(a) { var t = new a.default(); return t; }",
+        // Generated alias or lowercase callees.
+        "function f(Ab) { var t = new Ab(); return t; }",
+        "function f(c) { var t = new c(); return t; }",
+        "function f() { var t = new factory(); return t; }",
+        "function f() { var t = new _Thing(); return t; }",
+        // Short locals read like minified names; only short globals count.
+        "class Qx9 {} function f() { var t = new Qx9(); return t; }",
+        "function Zvb() {} function f() { var t = new Zvb; return t; }",
+        "var QRX = load(); function f() { var t = new QRX(); return t; }",
+        // The lowered name is reserved.
+        "function f() { var t = new Function(); return t; }",
+        "function f() { var t = new Function; return t; }",
+        // The binding already has a readable name.
+        "function f() { var cache = new Map(); return cache; }",
+        // Not a declarator initializer.
+        "function f() { var t; t = new Map(); return t; }",
+    ];
+    for input in inputs {
+        assert_eq_normalized(&apply(input), input);
+    }
+}
+
+#[test]
+fn type_name_rename_new_object_and_array_are_valid_names() {
+    let input = "function f() { var e = new Object(), t = new Array(); return [e, t]; }";
+    let expected =
+        "function f() { var object = new Object(), array = new Array(); return [object, array]; }";
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn type_name_rename_skips_unstable_and_exported_bindings() {
+    let inputs = [
+        // The binding later holds another value.
+        "function f() { var e = new Map(); e = load(); return e; }",
+        "function f() { var e = new Map(); e++; return e; }",
+        "function f() { var e = new Map(); for (e in source) use(e); return e; }",
+        "function f() { var e = new Map(); [e] = load(); return e; }",
+        // Redeclared, or a parameter of the same name.
+        "function f() { var e = new Map(); var e = new Set(); return e; }",
+        "function f(e) { var e = new Map(); return e; }",
+        "const g = (e) => { var e = new Map(); return e; };",
+        // An exported declaration keeps its public name.
+        "export var e = new Map();",
+    ];
+    for input in inputs {
+        assert_eq_normalized(&apply(input), input);
+    }
+    // A specifier export keeps its public name through an alias.
+    assert_eq_normalized(
+        &apply("var e = new Map(); export { e };"),
+        "var map = new Map(); export { map as e };",
+    );
+}
+
+#[test]
+fn type_name_rename_skips_dynamic_scope() {
+    let inputs = [
+        "function f() { var e = new Map(); eval(\"use(e)\"); return e; }",
+        "function f(o) { var e = new Map(); with (o) { use(e); } return e; }",
+    ];
+    for input in inputs {
+        assert_eq_normalized(&apply(input), input);
+    }
+}
+
+#[test]
+fn type_name_rename_avoids_names_taken_in_scope() {
+    // A free `map` in the body would be captured; two maps in one body need
+    // distinct names; sibling bodies do not see each other.
+    let input = r#"
+function f() {
+    var e = new Map();
+    return [e, map];
+}
+function g() {
+    var e = new Map(), t = new Map();
+    return [e, t];
+}
+function h() {
+    var e = new Map();
+    return e;
+}
+"#;
+    let expected = r#"
+function f() {
+    var map_1 = new Map();
+    return [map_1, map];
+}
+function g() {
+    var map = new Map(), map_1 = new Map();
+    return [map, map_1];
+}
+function h() {
+    var map = new Map();
+    return map;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn type_name_rename_nested_scope_avoids_outer_name_it_reads() {
+    // The outer rename is applied first, so the inner body sees the `map`
+    // it reads and its own map takes `map_1`. An inner body that does not
+    // read the outer binding may reuse the name.
+    let input = r#"
+function f() {
+    var e = new Map();
+    function g() {
+        var t = new Map();
+        return [e, t];
+    }
+    function h() {
+        var t = new Map();
+        return t;
+    }
+    return [g, h];
+}
+"#;
+    let expected = r#"
+function f() {
+    var map = new Map();
+    function g() {
+        var map_1 = new Map();
+        return [map, map_1];
+    }
+    function h() {
+        var map = new Map();
+        return map;
+    }
+    return [g, h];
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn type_name_rename_yields_to_value_position_name() {
+    // A role name from value position says which map this is; the type
+    // name never overrides it, even when the role name is itself short.
+    let input = r#"
+function f(k, v) {
+    var t = new Map();
+    t.set(k, v);
+    return { cache: t };
+}
+function g() {
+    var n = new Token();
+    n.init();
+    return { id: n };
+}
+"#;
+    let expected = r#"
+function f(k, v) {
+    var cache = new Map();
+    cache.set(k, v);
+    return { cache };
+}
+function g() {
+    var id = new Token();
+    id.init();
+    return { id };
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn type_name_rename_updates_member_init_names_built_from_the_old_name() {
+    // Member-init ran first and named `e.signal` `e_signal`; once `e` is
+    // `abortController`, the derived name follows it.
+    let input = r#"
+function f() {
+    var e = new AbortController();
+    var t = e.signal;
+    return function() {
+        var n = e.headers;
+        return [e, t, n];
+    };
+}
+"#;
+    let expected = r#"
+function f() {
+    var abortController = new AbortController();
+    var abortController_signal = abortController.signal;
+    return function() {
+        var abortController_headers = abortController.headers;
+        return [abortController, abortController_signal, abortController_headers];
+    };
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+    // The new name must be spelled nowhere in the module.
+    let input = r#"
+function g() {
+    var e = new AbortController();
+    var t = e.signal;
+    return [e, t, abortController_signal];
+}
+"#;
+    let expected = r#"
+function g() {
+    var abortController = new AbortController();
+    var e_signal = abortController.signal;
+    return [abortController, e_signal, abortController_signal];
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn type_name_rename_runs_in_full_pipeline() {
+    let input = r#"var a=function(){var e=new Map,t=new XMLHttpRequest;t.open("GET","/");e.set(t,1);return e.size+e.size}"#;
+    let expected = r#"
+const a = function() {
+    const map = new Map;
+    const xmlHttpRequest = new XMLHttpRequest;
+    xmlHttpRequest.open("GET", "/");
+    map.set(xmlHttpRequest, 1);
+    return map.size + map.size;
+};
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn type_name_rename_full_pipeline_prefers_value_position_name() {
+    let input = r#"var a=function(k,v){var t=new Map;t.set(k,v);return{cache:t}}"#;
+    let output = render(input);
+    assert!(output.contains("const cache = new Map;"), "{output}");
+    assert!(!output.contains("map"), "{output}");
+}

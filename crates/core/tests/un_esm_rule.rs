@@ -4445,7 +4445,7 @@ fn export_conflict_renames_var_declared_in_for_head() {
     assert_eq_normalized(
         &output,
         r#"
-const n = new Map;
+const map = new Map;
 let o = 0;
 let i = 0;
 let u = 0;
@@ -4455,17 +4455,17 @@ for (let f = 0; f < 12; ++f) {
     _a.push(3 * f + 1);
 }
 function l(e) {
-    if (n.size > c) {
-        n.clear();
+    if (map.size > c) {
+        map.clear();
         u++;
     }
-    if (n.has(e)) {
+    if (map.has(e)) {
         o++;
-        return n.get(e);
+        return map.get(e);
     }
     i++;
     const r = _a[e];
-    n.set(e, r);
+    map.set(e, r);
     return r;
 }
 export const a = function(e, r, t) {
