@@ -120,7 +120,12 @@ impl VisitMut for SmartRename {
             &exported_bindings,
         );
         destructuring_rename_module_with(module, &mut cached_names, &exported_bindings);
-        member_init_rename_module_with(module, &mut cached_names, &exported_bindings);
+        member_init_rename_module_with(
+            module,
+            &mut cached_names,
+            self.unresolved_mark,
+            &exported_bindings,
+        );
         import_snapshot_alias_rename_module(module, &mut cached_names);
         symbol_for_rename_module_with(
             module,
@@ -144,7 +149,10 @@ impl VisitMut for SmartRename {
     fn visit_mut_function(&mut self, func: &mut Function) {
         react_rename_function_body(func, &self.pending_value_position_names);
         destructuring_rename_function(func);
-        member_init_rename_function(func, self.receiver_scope.function_scope());
+        member_init_rename_function(
+            func,
+            self.receiver_scope.function_scope(self.unresolved_mark),
+        );
         symbol_for_rename_function(func, self.unresolved_mark);
         self.receiver_scope.enter();
         func.visit_mut_children_with(self);
@@ -153,7 +161,10 @@ impl VisitMut for SmartRename {
 
     fn visit_mut_constructor(&mut self, ctor: &mut Constructor) {
         destructuring_rename_constructor(ctor);
-        member_init_rename_constructor(ctor, self.receiver_scope.constructor_scope());
+        member_init_rename_constructor(
+            ctor,
+            self.receiver_scope.constructor_scope(self.unresolved_mark),
+        );
         self.receiver_scope.enter();
         ctor.visit_mut_children_with(self);
         self.receiver_scope.leave();
@@ -162,7 +173,7 @@ impl VisitMut for SmartRename {
     fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
         react_rename_arrow_body(arrow, &self.pending_value_position_names);
         destructuring_rename_arrow(arrow);
-        member_init_rename_arrow(arrow, self.receiver_scope.arrow_scope());
+        member_init_rename_arrow(arrow, self.receiver_scope.arrow_scope(self.unresolved_mark));
         symbol_for_rename_arrow(arrow, self.unresolved_mark);
         arrow.visit_mut_children_with(self);
     }
@@ -221,7 +232,10 @@ impl VisitMut for SmartRenameSecondPass {
     fn visit_mut_function(&mut self, func: &mut Function) {
         react_rename_function_body(func, &self.pending_value_position_names);
         destructuring_rename_function(func);
-        member_init_rename_function(func, self.receiver_scope.function_scope());
+        member_init_rename_function(
+            func,
+            self.receiver_scope.function_scope(self.unresolved_mark),
+        );
         symbol_for_rename_function(func, self.unresolved_mark);
         self.receiver_scope.enter();
         func.visit_mut_children_with(self);
@@ -230,7 +244,10 @@ impl VisitMut for SmartRenameSecondPass {
 
     fn visit_mut_constructor(&mut self, ctor: &mut Constructor) {
         destructuring_rename_constructor(ctor);
-        member_init_rename_constructor(ctor, self.receiver_scope.constructor_scope());
+        member_init_rename_constructor(
+            ctor,
+            self.receiver_scope.constructor_scope(self.unresolved_mark),
+        );
         self.receiver_scope.enter();
         ctor.visit_mut_children_with(self);
         self.receiver_scope.leave();
@@ -239,7 +256,7 @@ impl VisitMut for SmartRenameSecondPass {
     fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
         react_rename_arrow_body(arrow, &self.pending_value_position_names);
         destructuring_rename_arrow(arrow);
-        member_init_rename_arrow(arrow, self.receiver_scope.arrow_scope());
+        member_init_rename_arrow(arrow, self.receiver_scope.arrow_scope(self.unresolved_mark));
         symbol_for_rename_arrow(arrow, self.unresolved_mark);
         arrow.visit_mut_children_with(self);
     }
@@ -1340,8 +1357,9 @@ impl ReceiverScope {
     }
 
     /// Scope for a non-arrow function's own body: `this` is its receiver.
-    fn function_scope(&self) -> AliasInitScope {
+    fn function_scope(&self, unresolved_mark: Mark) -> AliasInitScope {
         AliasInitScope {
+            unresolved_mark,
             this_is_receiver: true,
             member_shape: true,
         }
@@ -1350,8 +1368,9 @@ impl ReceiverScope {
     /// Scope for a class constructor body. Only the alias shapes run there;
     /// the `obj.prop` shape has never covered constructor bodies, and
     /// extending it would be a separate naming change.
-    fn constructor_scope(&self) -> AliasInitScope {
+    fn constructor_scope(&self, unresolved_mark: Mark) -> AliasInitScope {
         AliasInitScope {
+            unresolved_mark,
             this_is_receiver: true,
             member_shape: false,
         }
@@ -1359,8 +1378,9 @@ impl ReceiverScope {
 
     /// Scope for an arrow body: `this` is the nearest enclosing non-arrow
     /// function's receiver, if there is one.
-    fn arrow_scope(&self) -> AliasInitScope {
+    fn arrow_scope(&self, unresolved_mark: Mark) -> AliasInitScope {
         AliasInitScope {
+            unresolved_mark,
             this_is_receiver: self.depth > 0,
             member_shape: true,
         }
@@ -1369,12 +1389,93 @@ impl ReceiverScope {
 
 // ============================================================
 // Member-init renames: `var x = obj.prop` → `obj_prop`, and the alias
-// shape `var x = this` → `_this`
+// shapes `var x = this` → `_this` and `var x = window` → `_window`
 // ============================================================
+
+/// Globals whose short alias (`var e = window`) the member-init pass names
+/// `_<global>`. The initializer must be an unresolved reference
+/// (`unresolved_mark`), so a local binding that shadows the name is never
+/// matched. The list holds host globals and standard builtins that a
+/// minifier hoists into a short local. It leaves out value-like globals
+/// (`NaN`, `Infinity`, `undefined`), whose alias reads as a constant rather
+/// than an alias, and `eval`, whose aliased call is an indirect eval. It is
+/// separate from `js_names::is_stable_builtin_alias_root`, which decides
+/// when SmartInline may replace an alias with the global: naming an alias
+/// claims less than replacing it.
+const ALIASABLE_GLOBALS: &[&str] = &[
+    // Host global objects
+    "window",
+    "self",
+    "globalThis",
+    "global",
+    "document",
+    "navigator",
+    "location",
+    "history",
+    "localStorage",
+    "sessionStorage",
+    "performance",
+    "console",
+    "top",
+    "parent",
+    "frames",
+    // Standard builtins
+    "Object",
+    "Array",
+    "String",
+    "Number",
+    "Boolean",
+    "Symbol",
+    "BigInt",
+    "Math",
+    "JSON",
+    "Reflect",
+    "Promise",
+    "Date",
+    "RegExp",
+    "Error",
+    "TypeError",
+    "RangeError",
+    "SyntaxError",
+    "Function",
+    "Map",
+    "Set",
+    "WeakMap",
+    "WeakSet",
+    "Proxy",
+    "Intl",
+    "ArrayBuffer",
+    "DataView",
+    "Uint8Array",
+    "Uint8ClampedArray",
+    "Uint16Array",
+    "Uint32Array",
+    "Int8Array",
+    "Int16Array",
+    "Int32Array",
+    "Float32Array",
+    "Float64Array",
+    // Global functions
+    "parseInt",
+    "parseFloat",
+    "isNaN",
+    "isFinite",
+    "encodeURIComponent",
+    "decodeURIComponent",
+    "encodeURI",
+    "decodeURI",
+    "setTimeout",
+    "clearTimeout",
+    "setInterval",
+    "clearInterval",
+    "requestAnimationFrame",
+    "cancelAnimationFrame",
+];
 
 /// What a member-init scope knows about the alias initializers it may name.
 #[derive(Clone, Copy)]
 struct AliasInitScope {
+    unresolved_mark: Mark,
     /// `this` in this statement list is a function receiver. False at module
     /// top level, where `this` is `undefined` (ESM) or `module.exports`
     /// (CommonJS) and `_this` would mislead, and in an arrow with no
@@ -1385,10 +1486,17 @@ struct AliasInitScope {
     member_shape: bool,
 }
 
-/// The name an alias initializer gives its binding: `var n = this` → `_this`.
+/// The name an alias initializer gives its binding: `var n = this` →
+/// `_this`, `var e = window` → `_window`.
 fn alias_init_name(init: &Expr, scope: AliasInitScope) -> Option<String> {
     match init {
         Expr::This(_) if scope.this_is_receiver => Some("_this".to_string()),
+        Expr::Ident(id)
+            if id.ctxt.outer() == scope.unresolved_mark
+                && ALIASABLE_GLOBALS.contains(&id.sym.as_ref()) =>
+        {
+            Some(format!("_{}", id.sym))
+        }
         _ => None,
     }
 }
@@ -1435,11 +1543,12 @@ fn stmts_have_alias_init_candidate(stmts: &[Stmt], scope: AliasInitScope) -> boo
 }
 
 /// An alias name describes the value the alias was initialized with, so the
-/// alias shapes (`var n = this`) need the binding to keep that value: one
-/// declaration, no direct write anywhere in the scope (`n = x`, `n++`,
-/// a destructuring-assignment target, a `for (n in ...)` head), and no
-/// parameter of the same name, whose argument the `var` would overwrite.
-/// The `obj.prop` shape keeps its historical behavior without this proof.
+/// alias shapes (`var n = this`, `var e = window`) need the binding to keep
+/// that value: one declaration, no direct write anywhere in the scope
+/// (`n = x`, `n++`, a destructuring-assignment target, a `for (n in ...)`
+/// head), and no parameter of the same name, whose argument the `var` would
+/// overwrite. The `obj.prop` shape keeps its historical behavior without
+/// this proof.
 struct AliasStability {
     uses: BindingUseIndex,
     param_names: HashSet<Atom>,
@@ -1505,10 +1614,12 @@ fn member_init_rename_arrow(arrow: &mut ArrowExpr, scope: AliasInitScope) {
 fn member_init_rename_module_with(
     module: &mut Module,
     all_names: &mut HashSet<Atom>,
+    unresolved_mark: Mark,
     exported_bindings: &HashSet<BindingId>,
 ) {
     // Module top level: `this` is not a receiver.
     let scope = AliasInitScope {
+        unresolved_mark,
         this_is_receiver: false,
         member_shape: true,
     };

@@ -1348,6 +1348,145 @@ fn this_alias_rename_full_pipeline_keeps_top_level_and_reassigned_alias() {
     assert!(!output.contains("_this"), "{output}");
 }
 
+// `var e = window` aliases of whitelisted globals: named `_<global>`.
+
+#[test]
+fn global_alias_rename_at_module_level() {
+    let input = r#"
+var e = window;
+var t = Object, n = document;
+e.addEventListener("load", function() { n.title = t.keys(e).join(); });
+"#;
+    let expected = r#"
+var _window = window;
+var _Object = Object, _document = document;
+_window.addEventListener("load", function() { _document.title = _Object.keys(_window).join(); });
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn global_alias_rename_in_function_arrow_and_constructor() {
+    let input = r#"
+function schedule(task) {
+    var r = setTimeout;
+    return r(task, 0);
+}
+var read = () => {
+    var o = localStorage;
+    return o.getItem("key");
+};
+class Store {
+    constructor() {
+        var s = sessionStorage;
+        this.read = function() { return s.getItem("key"); };
+    }
+}
+"#;
+    let expected = r#"
+function schedule(task) {
+    var _setTimeout = setTimeout;
+    return _setTimeout(task, 0);
+}
+var read = () => {
+    var _localStorage = localStorage;
+    return _localStorage.getItem("key");
+};
+class Store {
+    constructor() {
+        var _sessionStorage = sessionStorage;
+        this.read = function() { return _sessionStorage.getItem("key"); };
+    }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn global_alias_rename_skips_shadowed_global() {
+    // A local binding named like the global is not the global.
+    let inputs = [
+        "function f(window) { var e = window; return e.x; }",
+        "var window = createWindow(); var e = window; use(e);",
+        "function f() { let document = load(); var e = document; return e; }",
+    ];
+    for input in inputs {
+        assert_eq_normalized(&apply(input), input);
+    }
+}
+
+#[test]
+fn global_alias_rename_skips_globals_off_the_list() {
+    let input = r#"
+var a = NaN, b = Infinity, c = undefined, d = eval, e = foo, f = process;
+use(a, b, c, d, e, f);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn global_alias_rename_avoids_existing_name() {
+    // `_window` is already a free reference; the alias must not capture it.
+    let input = r#"
+var e = window;
+use(e, _window);
+function f() {
+    var t = document;
+    return [t, _document];
+}
+"#;
+    let expected = r#"
+var _window_1 = window;
+use(_window_1, _window);
+function f() {
+    var _document_1 = document;
+    return [_document_1, _document];
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn global_alias_rename_skips_readable_reassigned_and_exported_aliases() {
+    let inputs = [
+        // Not a generated alias.
+        "var win = window; use(win);",
+        // The alias later holds another value.
+        "var e = window; e = frame.contentWindow; use(e);",
+        "function f() { var e = document; if (x) e = other; return e; }",
+        // An exported binding keeps its public name.
+        "export var e = window;",
+    ];
+    for input in inputs {
+        assert_eq_normalized(&apply(input), input);
+    }
+}
+
+#[test]
+fn global_alias_rename_skips_module_with_dynamic_scope() {
+    // A `with` body can still reach the alias by its old name.
+    let input = r#"
+var e = window;
+with (scope) { use(e); }
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn global_alias_rename_runs_in_full_pipeline() {
+    let input = r#"var e=window;e.addEventListener("load",go);function f(){var t=document;t.title="x";return t}"#;
+    let expected = r#"
+const _window = window;
+_window.addEventListener("load", go);
+function f() {
+    const _document = document;
+    _document.title = "x";
+    return _document;
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
 #[test]
 fn named_import_snapshot_alias_uses_readable_local_name() {
     let input = r#"
