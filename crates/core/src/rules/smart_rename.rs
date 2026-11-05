@@ -5324,8 +5324,12 @@ fn pascalize(input: &str) -> String {
 // A short generated alias whose initializer says what kind of value it
 // holds is named after that kind:
 //
-//   var e = new Map()                → map
-//   var e = new XMLHttpRequest       → xmlHttpRequest
+//   var e = new Map()                         → map
+//   var e = new XMLHttpRequest                → xmlHttpRequest
+//   var e = document.createElement("button")  → buttonElement
+//   var e = x.getElementById("submit-btn")    → submitBtnElement
+//   var e = x.querySelector("#main")          → mainElement
+//   var e = x.querySelectorAll("li")          → liElements
 //
 // The callee must be a plain identifier that starts with an uppercase letter
 // and is not itself a generated alias: a global (`Map`, `URL`) or a local
@@ -5335,6 +5339,18 @@ fn pascalize(input: &str) -> String {
 // `new a.default()`) is skipped. A leading acronym is lowered as a word
 // (`DOMParser` → `domParser`, `URL` → `url`), and a name that is reserved
 // (`new Function()` → `function`) is skipped.
+//
+// DOM calls need one string argument (a literal, or a template literal
+// without expressions) at the position that names the element. A tag must
+// match `[A-Za-z][A-Za-z0-9-]*` and an id `[A-Za-z][A-Za-z0-9_-]*`; their
+// `-`/`_` words join in camelCase. `createElement` lowers the tag (HTML tags
+// are case-insensitive) while `createElementNS(ns, tag)` keeps its case.
+// `querySelector` takes one tag or one `#id`, and `querySelectorAll` one
+// tag; any other selector is skipped. React and Preact spell
+// `createElement(type, props, ...children)` too, so a `createElement` call
+// with more than one argument needs a receiver that is provably a document:
+// the global `document`, a binding that keeps it, or a `.ownerDocument` or
+// `.document` read.
 //
 // A type is the weakest naming evidence: two `Map`s in one function hold
 // different things, and a role name says which. So this pass runs after
@@ -5376,6 +5392,10 @@ fn type_name_rename_module(
         unresolved_mark,
         value_named,
         uses: BindingUseIndex::collect(module),
+        document_aliases: collect_stable_aliases(
+            module,
+            |init| matches!(init, Expr::Ident(id) if is_unresolved_ident(id, "document", unresolved_mark)),
+        ),
     };
 
     let exported_bindings = collect_exported_binding_ids(module);
@@ -5475,6 +5495,10 @@ struct TypeNameContext<'a> {
     /// looked up under its own identity, which no rename of this pass touches
     /// before the candidate's own scope is named.
     uses: BindingUseIndex,
+    /// Bindings that keep the global `document` (`var e = document`, by now
+    /// usually `_document`). This pass renames no such binding: their
+    /// initializer is an identifier, not a shape it names.
+    document_aliases: HashSet<BindingId>,
 }
 
 struct TypeNameRenamer<'a> {
@@ -5550,7 +5574,9 @@ fn collect_type_name_renames<'a>(
             if !is_likely_generated_alias(&binding.id.sym) {
                 continue;
             }
-            let Some(type_name) = type_name_for_init(init, ctx.unresolved_mark) else {
+            let Some(type_name) =
+                type_name_for_init(init, ctx.unresolved_mark, Some(&ctx.document_aliases))
+            else {
                 continue;
             };
             let id = (binding.id.sym.clone(), binding.id.ctxt);
@@ -5581,7 +5607,7 @@ fn has_type_name_candidate(var: &VarDecl, unresolved_mark: Mark) -> bool {
             && decl
                 .init
                 .as_deref()
-                .is_some_and(|init| type_name_for_init(init, unresolved_mark).is_some())
+                .is_some_and(|init| type_name_for_init(init, unresolved_mark, None).is_some())
     })
 }
 
@@ -5601,8 +5627,15 @@ impl Visit for TypeNameCandidateFinder {
 }
 
 /// The name a type-revealing initializer gives its binding.
-fn type_name_for_init(init: &Expr, unresolved_mark: Mark) -> Option<String> {
+/// `document_aliases` is `None` for the quick scan that only decides whether
+/// the pass has work; it then counts any receiver as a possible document.
+fn type_name_for_init(
+    init: &Expr,
+    unresolved_mark: Mark,
+    document_aliases: Option<&HashSet<BindingId>>,
+) -> Option<String> {
     match init {
+        Expr::Call(call) => dom_lookup_name(call, unresolved_mark, document_aliases),
         Expr::New(new) => {
             if new.args.as_ref().is_some_and(|args| !args.is_empty()) {
                 return None;
@@ -5625,6 +5658,129 @@ fn type_name_for_init(init: &Expr, unresolved_mark: Mark) -> Option<String> {
         }
         _ => None,
     }
+}
+
+/// `x.createElement("button")` → `buttonElement`, `x.getElementById("main")`
+/// → `mainElement`, `x.querySelector("#main")` → `mainElement`,
+/// `x.querySelectorAll("li")` → `liElements`.
+fn dom_lookup_name(
+    call: &CallExpr,
+    unresolved_mark: Mark,
+    document_aliases: Option<&HashSet<BindingId>>,
+) -> Option<String> {
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Member(member) = callee.as_ref() else {
+        return None;
+    };
+    let MemberProp::Ident(method) = &member.prop else {
+        return None;
+    };
+    if call.args.iter().any(|arg| arg.spread.is_some()) {
+        return None;
+    }
+    let string_arg = |idx: usize| call.args.get(idx).and_then(|arg| static_string(&arg.expr));
+    let stem = match method.sym.as_ref() {
+        // React and Preact spell `createElement(type, props, ...children)`
+        // too; the receiver must be a document unless the call has the
+        // DOM's one-argument form.
+        "createElement"
+            if call.args.len() == 1
+                || (!call.args.is_empty()
+                    && document_aliases.is_none_or(|aliases| {
+                        is_document_receiver(&member.obj, unresolved_mark, aliases)
+                    })) =>
+        {
+            tag_stem(string_arg(0)?, true)?
+        }
+        "createElementNS" if call.args.len() == 2 => tag_stem(string_arg(1)?, false)?,
+        "getElementById" if call.args.len() == 1 => id_stem(string_arg(0)?)?,
+        "querySelector" | "querySelectorAll" if call.args.len() == 1 => {
+            let selector = string_arg(0)?;
+            let all = method.sym.as_ref() == "querySelectorAll";
+            let stem = match selector.strip_prefix('#') {
+                Some(_) if all => return None,
+                Some(id) => id_stem(id)?,
+                None => tag_stem(selector, true)?,
+            };
+            return Some(format!(
+                "{stem}{}",
+                if all { "Elements" } else { "Element" }
+            ));
+        }
+        _ => return None,
+    };
+    Some(format!("{stem}Element"))
+}
+
+/// A receiver that is provably a document: the global `document`, a stable
+/// alias of it (`var e = document`, often renamed `_document` by now), or a
+/// `.ownerDocument` / `.document` read.
+fn is_document_receiver(
+    obj: &Expr,
+    unresolved_mark: Mark,
+    document_aliases: &HashSet<BindingId>,
+) -> bool {
+    match obj {
+        Expr::Ident(id) => {
+            is_unresolved_ident(id, "document", unresolved_mark)
+                || document_aliases.contains(&(id.sym.clone(), id.ctxt))
+        }
+        Expr::Member(member) => matches!(
+            &member.prop,
+            MemberProp::Ident(prop) if matches!(prop.sym.as_ref(), "ownerDocument" | "document")
+        ),
+        _ => false,
+    }
+}
+
+/// A string literal, or a template literal without expressions.
+fn static_string(expr: &Expr) -> Option<&str> {
+    match expr {
+        Expr::Lit(Lit::Str(s)) => s.value.as_str(),
+        Expr::Tpl(tpl) if tpl.exprs.is_empty() => tpl.quasis.first()?.cooked.as_ref()?.as_str(),
+        _ => None,
+    }
+}
+
+/// A tag name (`button`, `my-widget`) as a camelCase stem. HTML tag names
+/// are case-insensitive, so `createElement` and selector tags are lowered;
+/// `createElementNS` keeps the case its namespace may depend on
+/// (`linearGradient`).
+fn tag_stem(tag: &str, lowercase: bool) -> Option<String> {
+    let mut chars = tag.chars();
+    if !chars.next()?.is_ascii_alphabetic() || !chars.all(|c| c.is_ascii_alphanumeric() || c == '-')
+    {
+        return None;
+    }
+    if lowercase {
+        camel_stem(&tag.to_ascii_lowercase())
+    } else {
+        camel_stem(tag)
+    }
+}
+
+/// An element id (`main`, `submit-btn`, `main_nav`) as a camelCase stem.
+fn id_stem(id: &str) -> Option<String> {
+    let mut chars = id.chars();
+    if !chars.next()?.is_ascii_alphabetic()
+        || !chars.all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return None;
+    }
+    camel_stem(id)
+}
+
+/// Joins `-`/`_`-separated words in camelCase, lowering the first word as
+/// `lower_camel_type_name` does.
+fn camel_stem(raw: &str) -> Option<String> {
+    let mut words = raw.split(['-', '_']).filter(|word| !word.is_empty());
+    let mut stem = lower_camel_type_name(words.next()?);
+    for word in words {
+        stem.push_str(&pascal_case_first(word));
+    }
+    Some(stem)
 }
 
 /// Lowers the leading capital, or a leading acronym as one word:

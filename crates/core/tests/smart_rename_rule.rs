@@ -4555,3 +4555,209 @@ fn type_name_rename_full_pipeline_prefers_value_position_name() {
     assert!(output.contains("const cache = new Map;"), "{output}");
     assert!(!output.contains("map"), "{output}");
 }
+
+// DOM lookups and element creation name their element:
+// `document.createElement("button")` → `buttonElement`.
+
+#[test]
+fn dom_name_rename_create_element() {
+    let input = r#"
+function f(x) {
+    var e = document.createElement("button");
+    var t = document.createElement("my-widget");
+    var n = document.createElement("DIV");
+    var r = document.createElement("a");
+    var o = x.createElementNS("http://www.w3.org/2000/svg", "svg");
+    var i = x.createElementNS(ns, "linearGradient");
+    var a = document.createElement(`span`);
+    return [e, t, n, r, o, i, a];
+}
+"#;
+    let expected = r#"
+function f(x) {
+    var buttonElement = document.createElement("button");
+    var myWidgetElement = document.createElement("my-widget");
+    var divElement = document.createElement("DIV");
+    var aElement = document.createElement("a");
+    var svgElement = x.createElementNS("http://www.w3.org/2000/svg", "svg");
+    var linearGradientElement = x.createElementNS(ns, "linearGradient");
+    var spanElement = document.createElement(`span`);
+    return [buttonElement, myWidgetElement, divElement, aElement, svgElement, linearGradientElement, spanElement];
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn dom_name_rename_create_element_document_receivers() {
+    // With more than one argument the receiver must be a document: the
+    // global, a stable alias of it, or an `ownerDocument` / `document` read.
+    let input = r#"
+var d = document;
+function f(node, win) {
+    var e = d.createElement("div", options);
+    var t = node.ownerDocument.createElement("span", options);
+    var n = win.document.createElement("p", options);
+    var r = document.createElement("li", options);
+    var o = node.createElement("ul");
+    return [e, t, n, r, o];
+}
+"#;
+    let expected = r#"
+var _document = document;
+function f(node, win) {
+    var divElement = _document.createElement("div", options);
+    var spanElement = node.ownerDocument.createElement("span", options);
+    var pElement = win.document.createElement("p", options);
+    var liElement = document.createElement("li", options);
+    var ulElement = node.createElement("ul");
+    return [divElement, spanElement, pElement, liElement, ulElement];
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn dom_name_rename_skips_react_style_create_element() {
+    let inputs = [
+        // React and Preact: `createElement(type, props, ...children)`.
+        "function f(React) { var e = React.createElement(\"div\", { className: \"box\" }, child); return e; }",
+        "function f(t) { var e = t.createElement(\"div\", null); return e; }",
+        "function f(t) { var e = t.createElement(\"button\", props, \"OK\"); return e; }",
+        // An alias that does not keep `document` proves nothing.
+        "var d = document; d = other; function f() { var e = d.createElement(\"div\", props); return e; }",
+        // A local named `document` is not the global.
+        "function f(document) { var e = document.createElement(\"div\", props); return e; }",
+    ];
+    for input in inputs {
+        assert_eq_normalized(&apply(input), input);
+    }
+}
+
+#[test]
+fn dom_name_rename_lookups() {
+    let input = r##"
+function f(root) {
+    var e = document.getElementById("main");
+    var t = document.getElementById("submit-btn");
+    var n = root.getElementById("main_nav");
+    var r = root.querySelector("#app-root");
+    var o = root.querySelector("button");
+    var i = root.querySelectorAll("li");
+    var a = root.querySelectorAll("my-item");
+    return [e, t, n, r, o, i, a];
+}
+"##;
+    let expected = r##"
+function f(root) {
+    var mainElement = document.getElementById("main");
+    var submitBtnElement = document.getElementById("submit-btn");
+    var mainNavElement = root.getElementById("main_nav");
+    var appRootElement = root.querySelector("#app-root");
+    var buttonElement = root.querySelector("button");
+    var liElements = root.querySelectorAll("li");
+    var myItemElements = root.querySelectorAll("my-item");
+    return [mainElement, submitBtnElement, mainNavElement, appRootElement, buttonElement, liElements, myItemElements];
+}
+"##;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn dom_name_rename_skips_other_arguments_and_selectors() {
+    let inputs = [
+        // Ids that do not start with a letter or hold other characters.
+        "function f() { var e = document.getElementById(\"1st\"); return e; }",
+        "function f() { var e = document.getElementById(\"a.b\"); return e; }",
+        "function f() { var e = document.getElementById(\"main content\"); return e; }",
+        // Selectors other than one tag or one id.
+        "function f() { var e = document.querySelector(\".item\"); return e; }",
+        "function f() { var e = document.querySelector(\"ul li\"); return e; }",
+        "function f() { var e = document.querySelector(\"ul > li\"); return e; }",
+        "function f() { var e = document.querySelector(\"input[type=text]\"); return e; }",
+        "function f() { var e = document.querySelector(\"a:hover\"); return e; }",
+        "function f() { var e = document.querySelector(\"#main.active\"); return e; }",
+        "function f() { var e = document.querySelectorAll(\"#main\"); return e; }",
+        // Dynamic or missing arguments, spreads, extra arguments.
+        "function f(id) { var e = document.getElementById(id); return e; }",
+        "function f(id) { var e = document.getElementById(`item-${id}`); return e; }",
+        "function f(tag) { var e = document.createElement(tag); return e; }",
+        "function f(a) { var e = document.createElement(...a); return e; }",
+        "function f() { var e = document.querySelector(); return e; }",
+        "function f() { var e = document.querySelector(\"li\", extra); return e; }",
+        "function f() { var e = document.createElementNS(\"svg\"); return e; }",
+        // Invalid tags.
+        "function f() { var e = document.createElement(\"1x\"); return e; }",
+        "function f() { var e = document.createElement(\"svg:rect\"); return e; }",
+        // Computed or optional calls.
+        "function f() { var e = document[\"createElement\"](\"div\"); return e; }",
+        "function f() { var e = document?.createElement(\"div\"); return e; }",
+    ];
+    for input in inputs {
+        assert_eq_normalized(&apply(input), input);
+    }
+}
+
+#[test]
+fn dom_name_rename_shares_type_name_guards() {
+    let inputs = [
+        "function f() { var e = document.getElementById(\"main\"); e = other; return e; }",
+        "function f(e) { var e = document.createElement(\"div\"); return e; }",
+        "export var e = document.createElement(\"div\");",
+        "function f() { var view = document.createElement(\"div\"); return view; }",
+    ];
+    for input in inputs {
+        assert_eq_normalized(&apply(input), input);
+    }
+}
+
+#[test]
+fn dom_name_rename_avoids_names_and_yields_to_role_names() {
+    let input = r#"
+function f() {
+    var e = document.createElement("div"), t = document.createElement("div");
+    return [e, t, divElement];
+}
+function g() {
+    var n = document.getElementById("main");
+    n.focus();
+    return { container: n };
+}
+"#;
+    let expected = r#"
+function f() {
+    var divElement_1 = document.createElement("div"), divElement_2 = document.createElement("div");
+    return [divElement_1, divElement_2, divElement];
+}
+function g() {
+    var container = document.getElementById("main");
+    container.focus();
+    return { container };
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn dom_name_rename_runs_in_full_pipeline() {
+    let input = r#"var a=function(){var e=document.createElement("button"),t=document.querySelectorAll("li");e.type="submit";e.textContent=t.length;return e}"#;
+    let expected = r#"
+const a = function() {
+    const buttonElement = document.createElement("button");
+    const liElements = document.querySelectorAll("li");
+    buttonElement.type = "submit";
+    buttonElement.textContent = liElements.length;
+    return buttonElement;
+};
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn dom_name_rename_full_pipeline_leaves_react_create_element_alone() {
+    // UnJsx turns an element call into JSX before SmartRename runs; the call
+    // through an unknown receiver with props stays unnamed either way.
+    let input = r#"var a=function(t,p){var e=t.createElement("div",p);e.x=1;return e}"#;
+    let output = render(input);
+    assert!(!output.contains("divElement"), "{output}");
+}

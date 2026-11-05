@@ -1,6 +1,5 @@
 ---
 source: crates/core/tests/webpack4_unpack.rs
-assertion_line: 210
 expression: code
 ---
 import { a as a_1 } from "./module-7.js";
@@ -610,9 +609,9 @@ export function createHashHistory(e = {}) {
         action: "POP",
         location: A,
         createHref: function(e) {
-            const t = document.querySelector("base");
+            const baseElement = document.querySelector("base");
             let n = "";
-            if (t && t.getAttribute("href")) {
+            if (baseElement && baseElement.getAttribute("href")) {
                 n = _(window.location.href);
             }
             return `${n}#${encodePath(l + createPath(e))}`;
