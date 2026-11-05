@@ -81,6 +81,7 @@ pub struct SmartRename {
     pending_value_position_names: HashMap<BindingId, String>,
     extracted_function_names: SharedExtractedFunctionNames,
     receiver_scope: ReceiverScope,
+    this_aliases: ThisAliases,
 }
 
 impl SmartRename {
@@ -90,6 +91,7 @@ impl SmartRename {
             pending_value_position_names: HashMap::default(),
             extracted_function_names: Rc::new(RefCell::new(HashMap::default())),
             receiver_scope: ReceiverScope::default(),
+            this_aliases: ThisAliases::default(),
         }
     }
 }
@@ -111,6 +113,8 @@ impl VisitMut for SmartRename {
             &mut self.pending_value_position_names,
             collect_value_position_rename_map_module(module),
         );
+        let previous_this_aliases =
+            std::mem::replace(&mut self.this_aliases, ThisAliases::collect(module));
         let exported_bindings = collect_exported_binding_ids(module);
         let mut cached_names = collect_names_in_module(&module.body);
         react_rename_module_with(
@@ -125,6 +129,7 @@ impl VisitMut for SmartRename {
             &mut cached_names,
             self.unresolved_mark,
             &exported_bindings,
+            &mut self.this_aliases,
         );
         import_snapshot_alias_rename_module(module, &mut cached_names);
         symbol_for_rename_module_with(
@@ -144,6 +149,7 @@ impl VisitMut for SmartRename {
         role_rename_module(module, self.unresolved_mark);
         jsx_component_alias_rename_module(module, &exported_bindings);
         self.pending_value_position_names = previous_pending_names;
+        self.this_aliases = previous_this_aliases;
     }
 
     fn visit_mut_function(&mut self, func: &mut Function) {
@@ -152,6 +158,7 @@ impl VisitMut for SmartRename {
         member_init_rename_function(
             func,
             self.receiver_scope.function_scope(self.unresolved_mark),
+            &mut self.this_aliases,
         );
         symbol_for_rename_function(func, self.unresolved_mark);
         self.receiver_scope.enter();
@@ -164,6 +171,7 @@ impl VisitMut for SmartRename {
         member_init_rename_constructor(
             ctor,
             self.receiver_scope.constructor_scope(self.unresolved_mark),
+            &mut self.this_aliases,
         );
         self.receiver_scope.enter();
         ctor.visit_mut_children_with(self);
@@ -173,7 +181,11 @@ impl VisitMut for SmartRename {
     fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
         react_rename_arrow_body(arrow, &self.pending_value_position_names);
         destructuring_rename_arrow(arrow);
-        member_init_rename_arrow(arrow, self.receiver_scope.arrow_scope(self.unresolved_mark));
+        member_init_rename_arrow(
+            arrow,
+            self.receiver_scope.arrow_scope(self.unresolved_mark),
+            &mut self.this_aliases,
+        );
         symbol_for_rename_arrow(arrow, self.unresolved_mark);
         arrow.visit_mut_children_with(self);
     }
@@ -189,6 +201,7 @@ pub struct SmartRenameSecondPass {
     pending_value_position_names: HashMap<BindingId, String>,
     extracted_function_names: SharedExtractedFunctionNames,
     receiver_scope: ReceiverScope,
+    this_aliases: ThisAliases,
 }
 
 impl SmartRenameSecondPass {
@@ -205,6 +218,7 @@ impl SmartRenameSecondPass {
             pending_value_position_names: HashMap::default(),
             extracted_function_names,
             receiver_scope: ReceiverScope::default(),
+            this_aliases: ThisAliases::default(),
         }
     }
 }
@@ -220,6 +234,8 @@ impl VisitMut for SmartRenameSecondPass {
             &mut self.pending_value_position_names,
             collect_value_position_rename_map_module(module),
         );
+        let previous_this_aliases =
+            std::mem::replace(&mut self.this_aliases, ThisAliases::collect(module));
         let exported_bindings = collect_exported_binding_ids(module);
         sentry_component_rename_module(module, &exported_bindings);
         react_function_shape_rename_module(module, &self.extracted_function_names.borrow());
@@ -227,6 +243,7 @@ impl VisitMut for SmartRenameSecondPass {
         value_position_rename_module(module);
         jsx_component_alias_rename_module(module, &exported_bindings);
         self.pending_value_position_names = previous_pending_names;
+        self.this_aliases = previous_this_aliases;
     }
 
     fn visit_mut_function(&mut self, func: &mut Function) {
@@ -235,6 +252,7 @@ impl VisitMut for SmartRenameSecondPass {
         member_init_rename_function(
             func,
             self.receiver_scope.function_scope(self.unresolved_mark),
+            &mut self.this_aliases,
         );
         symbol_for_rename_function(func, self.unresolved_mark);
         self.receiver_scope.enter();
@@ -247,6 +265,7 @@ impl VisitMut for SmartRenameSecondPass {
         member_init_rename_constructor(
             ctor,
             self.receiver_scope.constructor_scope(self.unresolved_mark),
+            &mut self.this_aliases,
         );
         self.receiver_scope.enter();
         ctor.visit_mut_children_with(self);
@@ -256,7 +275,11 @@ impl VisitMut for SmartRenameSecondPass {
     fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
         react_rename_arrow_body(arrow, &self.pending_value_position_names);
         destructuring_rename_arrow(arrow);
-        member_init_rename_arrow(arrow, self.receiver_scope.arrow_scope(self.unresolved_mark));
+        member_init_rename_arrow(
+            arrow,
+            self.receiver_scope.arrow_scope(self.unresolved_mark),
+            &mut self.this_aliases,
+        );
         symbol_for_rename_arrow(arrow, self.unresolved_mark);
         arrow.visit_mut_children_with(self);
     }
@@ -1389,7 +1412,11 @@ impl ReceiverScope {
 
 // ============================================================
 // Member-init renames: `var x = obj.prop` → `obj_prop`, and the alias
-// shapes `var x = this` → `_this` and `var x = window` → `_window`
+// shapes `var x = this` → `_this` and `var x = window` → `_window`.
+// A read of a non-identifier object (`this.props`, `f().props`) or of a
+// `this` alias (`_this.props`, see `ThisAliases`) is named after the
+// property alone (`props`), and skipped when the property has at most two
+// characters.
 // ============================================================
 
 /// Globals whose short alias (`var e = window`) the member-init pass names
@@ -1562,12 +1589,133 @@ impl AliasStability {
     }
 }
 
+/// Every binding in the module that keeps its initializer for its whole
+/// life, under the `AliasStability` proof, and whose initializer satisfies
+/// `init_matches`: one declaration, no direct write, and no parameter of the
+/// same name in the enclosing function-like.
+fn collect_stable_aliases(
+    module: &Module,
+    init_matches: impl Fn(&Expr) -> bool,
+) -> HashSet<BindingId> {
+    struct Collector<F> {
+        init_matches: F,
+        /// Parameter names of each enclosing function-like, innermost last.
+        params: Vec<HashSet<Atom>>,
+        candidates: Vec<BindingId>,
+    }
+
+    impl<F> Collector<F> {
+        fn with_params(&mut self, params: HashSet<Atom>, visit: impl FnOnce(&mut Self)) {
+            self.params.push(params);
+            visit(self);
+            self.params.pop();
+        }
+    }
+
+    impl<F: Fn(&Expr) -> bool> Visit for Collector<F> {
+        fn visit_function(&mut self, function: &Function) {
+            self.with_params(names_in(&function.params), |this| {
+                function.visit_children_with(this)
+            });
+        }
+
+        fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
+            self.with_params(names_in(&arrow.params), |this| {
+                arrow.visit_children_with(this)
+            });
+        }
+
+        fn visit_constructor(&mut self, ctor: &Constructor) {
+            self.with_params(names_in(&ctor.params), |this| {
+                ctor.visit_children_with(this)
+            });
+        }
+
+        fn visit_static_block(&mut self, block: &swc_core::ecma::ast::StaticBlock) {
+            self.with_params(HashSet::default(), |this| block.visit_children_with(this));
+        }
+
+        fn visit_var_declarator(&mut self, decl: &VarDeclarator) {
+            if let (Pat::Ident(binding), Some(init)) = (&decl.name, decl.init.as_deref()) {
+                let shadows_param = self
+                    .params
+                    .last()
+                    .is_some_and(|params| params.contains(&binding.id.sym));
+                if !shadows_param && (self.init_matches)(init) {
+                    self.candidates
+                        .push((binding.id.sym.clone(), binding.id.ctxt));
+                }
+            }
+            decl.visit_children_with(self);
+        }
+    }
+
+    let mut collector = Collector {
+        init_matches,
+        params: Vec::new(),
+        candidates: Vec::new(),
+    };
+    module.visit_with(&mut collector);
+    if collector.candidates.is_empty() {
+        return HashSet::default();
+    }
+    let uses = BindingUseIndex::collect(module);
+    collector
+        .candidates
+        .into_iter()
+        .filter(|id| uses.has_single_declaration(id) && !uses.has_direct_write(id))
+        .collect()
+}
+
+/// Bindings that hold `this`: `var n = this`, or a readable `var self = this`
+/// written by a compiler or by hand, kept stable as `collect_stable_aliases`
+/// proves. The member-init pass names `var t = n.props` `props`, as it names
+/// `var t = this.props`, rather than `n_props` or `_this_props`.
+///
+/// The set covers the whole module and is collected before any pass runs:
+/// the alias is usually declared in an outer function and read in an inner
+/// one, and the descent renames the inner body on its own, where the outer
+/// declaration is out of sight. Entries are resolver identities, so every
+/// member-init rename is applied to the set as well (`n` → `_this` keeps its
+/// `ctxt`); member-init is the only pass that renames a `var n = this`
+/// declarator before the descent ends. An entry that went stale through some
+/// other rename would only cost the `this`-style name, never give a wrong
+/// one: the set holds no binding that does not hold `this`.
+#[derive(Default)]
+struct ThisAliases {
+    bindings: HashSet<BindingId>,
+}
+
+impl ThisAliases {
+    fn collect(module: &Module) -> Self {
+        Self {
+            bindings: collect_stable_aliases(module, |init| matches!(init, Expr::This(_))),
+        }
+    }
+
+    fn contains(&self, ident: &Ident) -> bool {
+        !self.bindings.is_empty() && self.bindings.contains(&(ident.sym.clone(), ident.ctxt))
+    }
+
+    fn follow_renames(&mut self, renames: &[BindingRename]) {
+        if self.bindings.is_empty() {
+            return;
+        }
+        for rename in renames {
+            if self.bindings.remove(&rename.old) {
+                self.bindings.insert((rename.new.clone(), rename.old.1));
+            }
+        }
+    }
+}
+
 /// Member-init renames for a function-like body. `param_names` returns every
 /// name in the parameter list; it runs only when the body has a candidate.
 fn member_init_renames_for_body(
     stmts: &[Stmt],
     param_names: impl FnOnce() -> HashSet<Atom>,
     scope: AliasInitScope,
+    this_aliases: &ThisAliases,
 ) -> Vec<BindingRename> {
     if !has_member_init_candidates_in_stmts(stmts, scope) {
         return Vec::new();
@@ -1579,36 +1727,64 @@ fn member_init_renames_for_body(
         uses: BindingUseIndex::collect_stmts(stmts),
         param_names,
     });
-    collect_member_init_renames_from_stmts(stmts, &all_names, scope, stability.as_ref())
+    collect_member_init_renames_from_stmts(
+        stmts,
+        &all_names,
+        scope,
+        stability.as_ref(),
+        this_aliases,
+    )
 }
 
-fn member_init_rename_function(func: &mut Function, scope: AliasInitScope) {
+fn member_init_rename_function(
+    func: &mut Function,
+    scope: AliasInitScope,
+    this_aliases: &mut ThisAliases,
+) {
     let Some(body) = &mut func.body else { return };
-    let renames = member_init_renames_for_body(&body.stmts, || names_in(&func.params), scope);
+    let renames =
+        member_init_renames_for_body(&body.stmts, || names_in(&func.params), scope, this_aliases);
     if renames.is_empty() {
         return;
     }
     rename_bindings(&mut body.stmts, &renames);
+    this_aliases.follow_renames(&renames);
 }
 
-fn member_init_rename_constructor(ctor: &mut Constructor, scope: AliasInitScope) {
+fn member_init_rename_constructor(
+    ctor: &mut Constructor,
+    scope: AliasInitScope,
+    this_aliases: &mut ThisAliases,
+) {
     let Some(body) = &mut ctor.body else { return };
-    let renames = member_init_renames_for_body(&body.stmts, || names_in(&ctor.params), scope);
+    let renames =
+        member_init_renames_for_body(&body.stmts, || names_in(&ctor.params), scope, this_aliases);
     if renames.is_empty() {
         return;
     }
     rename_bindings(&mut body.stmts, &renames);
+    this_aliases.follow_renames(&renames);
 }
 
-fn member_init_rename_arrow(arrow: &mut ArrowExpr, scope: AliasInitScope) {
+fn member_init_rename_arrow(
+    arrow: &mut ArrowExpr,
+    scope: AliasInitScope,
+    this_aliases: &mut ThisAliases,
+) {
     let ArrowFunctionBody::FunctionBody(block) = arrow.body.as_mut() else {
         return;
     };
-    let renames = member_init_renames_for_body(&block.stmts, || names_in(&arrow.params), scope);
+    let renames = member_init_renames_for_body(
+        &block.stmts,
+        || names_in(&arrow.params),
+        scope,
+        this_aliases,
+    );
     if renames.is_empty() {
         return;
     }
     rename_bindings(&mut block.stmts, &renames);
+    this_aliases.follow_renames(&renames);
 }
 
 fn member_init_rename_module_with(
@@ -1616,6 +1792,7 @@ fn member_init_rename_module_with(
     all_names: &mut HashSet<Atom>,
     unresolved_mark: Mark,
     exported_bindings: &HashSet<BindingId>,
+    this_aliases: &mut ThisAliases,
 ) {
     // Module top level: `this` is not a receiver.
     let scope = AliasInitScope {
@@ -1637,8 +1814,13 @@ fn member_init_rename_module_with(
             uses: BindingUseIndex::collect(module),
             param_names: HashSet::default(),
         });
-    let mut renames =
-        collect_member_init_renames_from_module(&module.body, all_names, scope, stability.as_ref());
+    let mut renames = collect_member_init_renames_from_module(
+        &module.body,
+        all_names,
+        scope,
+        stability.as_ref(),
+        this_aliases,
+    );
     renames.retain(|rename| !exported_bindings.contains(&rename.old));
     if renames.is_empty() {
         return;
@@ -1647,6 +1829,7 @@ fn member_init_rename_module_with(
         all_names.insert(r.new.clone());
     }
     rename_bindings_in_module(module, &renames);
+    this_aliases.follow_renames(&renames);
 }
 
 fn collect_member_init_renames_from_module(
@@ -1654,6 +1837,7 @@ fn collect_member_init_renames_from_module(
     all_names: &HashSet<Atom>,
     scope: AliasInitScope,
     stability: Option<&AliasStability>,
+    this_aliases: &ThisAliases,
 ) -> Vec<BindingRename> {
     let mut renames = Vec::new();
     let mut used_names = all_names.clone();
@@ -1661,7 +1845,14 @@ fn collect_member_init_renames_from_module(
         let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
             continue;
         };
-        collect_member_init_var_renames(var, &mut renames, &mut used_names, scope, stability);
+        collect_member_init_var_renames(
+            var,
+            &mut renames,
+            &mut used_names,
+            scope,
+            stability,
+            this_aliases,
+        );
     }
     renames
 }
@@ -1671,6 +1862,7 @@ fn collect_member_init_renames_from_stmts(
     all_names: &HashSet<Atom>,
     scope: AliasInitScope,
     stability: Option<&AliasStability>,
+    this_aliases: &ThisAliases,
 ) -> Vec<BindingRename> {
     let mut renames = Vec::new();
     let mut used_names = all_names.clone();
@@ -1678,7 +1870,14 @@ fn collect_member_init_renames_from_stmts(
         let Stmt::Decl(Decl::Var(var)) = stmt else {
             continue;
         };
-        collect_member_init_var_renames(var, &mut renames, &mut used_names, scope, stability);
+        collect_member_init_var_renames(
+            var,
+            &mut renames,
+            &mut used_names,
+            scope,
+            stability,
+            this_aliases,
+        );
     }
     renames
 }
@@ -1689,6 +1888,7 @@ fn collect_member_init_var_renames(
     used_names: &mut HashSet<Atom>,
     scope: AliasInitScope,
     stability: Option<&AliasStability>,
+    this_aliases: &ThisAliases,
 ) {
     for decl in &var.decls {
         let Pat::Ident(bi) = &decl.name else { continue };
@@ -1729,20 +1929,24 @@ fn collect_member_init_var_renames(
         };
         let prop_name = prop.sym.to_string();
 
-        // Build new name: obj_prop
-        let new_name = if let Expr::Ident(obj) = member.obj.as_ref() {
-            let obj_name = obj.sym.to_string();
-            // Skip if both obj and prop are short — the combined name wouldn't help
-            if obj_name.chars().count() <= 2 && prop_name.chars().count() <= 2 {
-                continue;
+        // Build new name: obj_prop. An alias of `this` reads like `this`
+        // itself, so `_this.props` names its binding `props`, as `this.props`
+        // does.
+        let new_name = match member.obj.as_ref() {
+            Expr::Ident(obj) if !this_aliases.contains(obj) => {
+                let obj_name = obj.sym.to_string();
+                // Skip if both obj and prop are short — the combined name wouldn't help
+                if obj_name.chars().count() <= 2 && prop_name.chars().count() <= 2 {
+                    continue;
+                }
+                format!("{}_{}", obj_name, prop_name)
             }
-            format!("{}_{}", obj_name, prop_name)
-        } else {
-            // Non-ident obj (e.g. call().prop) — skip if prop is too short
-            if prop_name.chars().count() <= 2 {
-                continue;
+            _ => {
+                if prop_name.chars().count() <= 2 {
+                    continue;
+                }
+                prop_name.clone()
             }
-            prop_name.clone()
         };
 
         if to_valid_identifier_name(&new_name) == old_name {

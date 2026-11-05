@@ -1348,6 +1348,165 @@ fn this_alias_rename_full_pipeline_keeps_top_level_and_reassigned_alias() {
     assert!(!output.contains("_this"), "{output}");
 }
 
+// A member read through a `this` alias names its binding like a read of
+// `this`: the property name alone, and nothing for a short property.
+
+#[test]
+fn this_alias_member_read_in_nested_function_uses_prop_name() {
+    let input = r#"
+function Widget() {
+    var n = this;
+    return function() {
+        var t = n.props;
+        var r = n.c;
+        return [t, r];
+    };
+}
+"#;
+    let expected = r#"
+function Widget() {
+    var _this = this;
+    return function() {
+        var props = _this.props;
+        var r = _this.c;
+        return [props, r];
+    };
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn this_alias_member_read_in_same_body_uses_prop_name() {
+    let input = r#"
+function f() {
+    var n = this, t = n.state;
+    return () => t;
+}
+"#;
+    let expected = r#"
+function f() {
+    var _this = this, state = _this.state;
+    return () => state;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn this_alias_member_read_through_readable_alias_uses_prop_name() {
+    // Aliases a compiler or a person already named are matched by binding,
+    // not by spelling; a module-level `this` alias counts too.
+    let input = r#"
+var n = this;
+var o = n.options;
+function f() {
+    var self = this;
+    return function() {
+        var t = self.state;
+        return t;
+    };
+}
+function g() {
+    var _this = this;
+    return () => {
+        var e = _this.props;
+        return e;
+    };
+}
+use(o);
+"#;
+    let expected = r#"
+var n = this;
+var options = n.options;
+function f() {
+    var self = this;
+    return function() {
+        var state = self.state;
+        return state;
+    };
+}
+function g() {
+    var _this = this;
+    return () => {
+        var props = _this.props;
+        return props;
+    };
+}
+use(options);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn this_alias_member_read_skips_unstable_or_other_aliases() {
+    // Without the stability proof the object is any binding, and the
+    // `obj_prop` name stays.
+    let inputs = [
+        (
+            "function f() { var n = this; n = other; return function() { var t = n.props; return t; }; }",
+            "function f() { var n = this; n = other; return function() { var n_props = n.props; return n_props; }; }",
+        ),
+        (
+            "function f(n) { var n = this; return function() { var t = n.props; return t; }; }",
+            "function f(n) { var n = this; return function() { var n_props = n.props; return n_props; }; }",
+        ),
+        (
+            "function f() { var n = this; var n = other; return function() { var t = n.props; return t; }; }",
+            "function f() { var n = this; var n = other; return function() { var n_props = n.props; return n_props; }; }",
+        ),
+        (
+            "function f() { var n = other; return function() { var t = n.props; return t; }; }",
+            "function f() { var n = other; return function() { var n_props = n.props; return n_props; }; }",
+        ),
+    ];
+    for (input, expected) in inputs {
+        assert_eq_normalized(&apply(input), expected);
+    }
+}
+
+#[test]
+fn this_alias_member_read_avoids_name_taken_in_scope() {
+    // `props` is the outer parameter, read inside the inner function.
+    let input = r#"
+function f(props) {
+    var n = this;
+    return function() {
+        var t = n.props;
+        return [t, props];
+    };
+}
+"#;
+    let expected = r#"
+function f(props) {
+    var _this = this;
+    return function() {
+        var props_1 = _this.props;
+        return [props_1, props];
+    };
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn this_alias_member_read_runs_in_full_pipeline() {
+    // A single read: UnDestructuring would group two reads of the alias
+    // into a pattern, which the destructuring pass names instead.
+    let input =
+        r#"var a=function(){var n=this;return function(){var t=n.props;return t.x+t.y+n.c}}"#;
+    let expected = r#"
+const a = function() {
+    const _this = this;
+    return function() {
+        const props = _this.props;
+        return props.x + props.y + _this.c;
+    };
+};
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
 // `var e = window` aliases of whitelisted globals: named `_<global>`.
 
 #[test]

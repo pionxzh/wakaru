@@ -447,15 +447,15 @@ export class StaticRouter extends Component {
             return X(_this.props.basename + Z(e));
         };
         this.handlePush = function(e) {
-            const _this_props = _this.props;
-            const { basename, context } = _this_props;
+            const props = _this.props;
+            const { basename, context } = props;
             context.action = "PUSH";
             context.location = J(basename, createLocation(e));
             context.url = Z(context.location);
         };
         this.handleReplace = function(e) {
-            const _this_props = _this.props;
-            const { basename, context } = _this_props;
+            const props = _this.props;
+            const { basename, context } = props;
             context.action = "REPLACE";
             context.location = J(basename, createLocation(e));
             context.url = Z(context.location);
