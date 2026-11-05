@@ -1,6 +1,5 @@
 ---
 source: crates/core/tests/webpack4_unpack.rs
-assertion_line: 210
 expression: code
 ---
 import { Component } from "./module-50.js";
@@ -23,9 +22,9 @@ export function routerReducer(e = s, { type, payload } = {}) {
 export class ConnectedRouter extends Component {
     constructor(...i){
         super(...i);
-        var r = this;
+        var _this = this;
         this.handleLocationChange = function(payload) {
-            r.store.dispatch({
+            _this.store.dispatch({
                 type: LOCATION_CHANGE,
                 payload
             });

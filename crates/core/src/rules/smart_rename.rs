@@ -1,3 +1,4 @@
+use crate::analysis::binding_uses::BindingUseIndex;
 use crate::collections::{HashMap, HashSet};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -11,7 +12,7 @@ use swc_core::ecma::ast::{
     JSXAttr, JSXAttrName, JSXAttrOrSpread, JSXAttrValue, JSXElementName, JSXExpr, JSXExprContainer,
     JSXMemberExpr, JSXObject, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleDecl,
     ModuleItem, ObjectPat, ObjectPatProp, ParamOrTsParamProp, Pat, Prop, PropName, Stmt,
-    SwitchStmt, VarDecl, VarDeclKind, VarDeclOrExpr,
+    SwitchStmt, VarDecl, VarDeclKind, VarDeclOrExpr, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -79,6 +80,7 @@ pub struct SmartRename {
     unresolved_mark: Mark,
     pending_value_position_names: HashMap<BindingId, String>,
     extracted_function_names: SharedExtractedFunctionNames,
+    receiver_scope: ReceiverScope,
 }
 
 impl SmartRename {
@@ -87,6 +89,7 @@ impl SmartRename {
             unresolved_mark,
             pending_value_position_names: HashMap::default(),
             extracted_function_names: Rc::new(RefCell::new(HashMap::default())),
+            receiver_scope: ReceiverScope::default(),
         }
     }
 }
@@ -141,20 +144,25 @@ impl VisitMut for SmartRename {
     fn visit_mut_function(&mut self, func: &mut Function) {
         react_rename_function_body(func, &self.pending_value_position_names);
         destructuring_rename_function(func);
-        member_init_rename_function(func);
+        member_init_rename_function(func, self.receiver_scope.function_scope());
         symbol_for_rename_function(func, self.unresolved_mark);
+        self.receiver_scope.enter();
         func.visit_mut_children_with(self);
+        self.receiver_scope.leave();
     }
 
     fn visit_mut_constructor(&mut self, ctor: &mut Constructor) {
         destructuring_rename_constructor(ctor);
+        member_init_rename_constructor(ctor, self.receiver_scope.constructor_scope());
+        self.receiver_scope.enter();
         ctor.visit_mut_children_with(self);
+        self.receiver_scope.leave();
     }
 
     fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
         react_rename_arrow_body(arrow, &self.pending_value_position_names);
         destructuring_rename_arrow(arrow);
-        member_init_rename_arrow(arrow);
+        member_init_rename_arrow(arrow, self.receiver_scope.arrow_scope());
         symbol_for_rename_arrow(arrow, self.unresolved_mark);
         arrow.visit_mut_children_with(self);
     }
@@ -169,6 +177,7 @@ pub struct SmartRenameSecondPass {
     unresolved_mark: Mark,
     pending_value_position_names: HashMap<BindingId, String>,
     extracted_function_names: SharedExtractedFunctionNames,
+    receiver_scope: ReceiverScope,
 }
 
 impl SmartRenameSecondPass {
@@ -184,6 +193,7 @@ impl SmartRenameSecondPass {
             unresolved_mark,
             pending_value_position_names: HashMap::default(),
             extracted_function_names,
+            receiver_scope: ReceiverScope::default(),
         }
     }
 }
@@ -211,20 +221,25 @@ impl VisitMut for SmartRenameSecondPass {
     fn visit_mut_function(&mut self, func: &mut Function) {
         react_rename_function_body(func, &self.pending_value_position_names);
         destructuring_rename_function(func);
-        member_init_rename_function(func);
+        member_init_rename_function(func, self.receiver_scope.function_scope());
         symbol_for_rename_function(func, self.unresolved_mark);
+        self.receiver_scope.enter();
         func.visit_mut_children_with(self);
+        self.receiver_scope.leave();
     }
 
     fn visit_mut_constructor(&mut self, ctor: &mut Constructor) {
         destructuring_rename_constructor(ctor);
+        member_init_rename_constructor(ctor, self.receiver_scope.constructor_scope());
+        self.receiver_scope.enter();
         ctor.visit_mut_children_with(self);
+        self.receiver_scope.leave();
     }
 
     fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
         react_rename_arrow_body(arrow, &self.pending_value_position_names);
         destructuring_rename_arrow(arrow);
-        member_init_rename_arrow(arrow);
+        member_init_rename_arrow(arrow, self.receiver_scope.arrow_scope());
         symbol_for_rename_arrow(arrow, self.unresolved_mark);
         arrow.visit_mut_children_with(self);
     }
@@ -1305,59 +1320,182 @@ impl VisitMut for ObjectPatShorthandConverter {
     }
 }
 
+/// Tracks whether the descent is inside a non-arrow function (a function,
+/// method, accessor, or constructor), so the member-init pass knows whether
+/// an arrow body's lexical `this` is a receiver or the module's top-level
+/// `this`. An arrow in a class field initializer at module level counts as
+/// top level here, so its `this` alias keeps its name.
+#[derive(Default)]
+struct ReceiverScope {
+    depth: usize,
+}
+
+impl ReceiverScope {
+    fn enter(&mut self) {
+        self.depth += 1;
+    }
+
+    fn leave(&mut self) {
+        self.depth -= 1;
+    }
+
+    /// Scope for a non-arrow function's own body: `this` is its receiver.
+    fn function_scope(&self) -> AliasInitScope {
+        AliasInitScope {
+            this_is_receiver: true,
+            member_shape: true,
+        }
+    }
+
+    /// Scope for a class constructor body. Only the alias shapes run there;
+    /// the `obj.prop` shape has never covered constructor bodies, and
+    /// extending it would be a separate naming change.
+    fn constructor_scope(&self) -> AliasInitScope {
+        AliasInitScope {
+            this_is_receiver: true,
+            member_shape: false,
+        }
+    }
+
+    /// Scope for an arrow body: `this` is the nearest enclosing non-arrow
+    /// function's receiver, if there is one.
+    fn arrow_scope(&self) -> AliasInitScope {
+        AliasInitScope {
+            this_is_receiver: self.depth > 0,
+            member_shape: true,
+        }
+    }
+}
+
 // ============================================================
-// Member-init renames: var x = obj.prop → rename x to obj_prop
+// Member-init renames: `var x = obj.prop` → `obj_prop`, and the alias
+// shape `var x = this` → `_this`
 // ============================================================
 
-fn has_member_init_candidates_in_stmts(stmts: &[Stmt]) -> bool {
+/// What a member-init scope knows about the alias initializers it may name.
+#[derive(Clone, Copy)]
+struct AliasInitScope {
+    /// `this` in this statement list is a function receiver. False at module
+    /// top level, where `this` is `undefined` (ESM) or `module.exports`
+    /// (CommonJS) and `_this` would mislead, and in an arrow with no
+    /// enclosing non-arrow function, whose lexical `this` is that same
+    /// top-level value.
+    this_is_receiver: bool,
+    /// Whether the `obj.prop` shape applies here, besides the alias shapes.
+    member_shape: bool,
+}
+
+/// The name an alias initializer gives its binding: `var n = this` → `_this`.
+fn alias_init_name(init: &Expr, scope: AliasInitScope) -> Option<String> {
+    match init {
+        Expr::This(_) if scope.this_is_receiver => Some("_this".to_string()),
+        _ => None,
+    }
+}
+
+fn is_member_init_candidate(decl: &VarDeclarator, scope: AliasInitScope) -> bool {
+    let Pat::Ident(bi) = &decl.name else {
+        return false;
+    };
+    if !is_likely_generated_alias(&bi.id.sym) {
+        return false;
+    }
+    match decl.init.as_deref() {
+        Some(Expr::Member(m)) => scope.member_shape && matches!(&m.prop, MemberProp::Ident(_)),
+        Some(init) => alias_init_name(init, scope).is_some(),
+        None => false,
+    }
+}
+
+fn has_alias_init_candidate(decls: &[VarDeclarator], scope: AliasInitScope) -> bool {
+    decls.iter().any(|decl| {
+        matches!(&decl.name, Pat::Ident(bi) if is_likely_generated_alias(&bi.id.sym))
+            && decl
+                .init
+                .as_deref()
+                .is_some_and(|init| alias_init_name(init, scope).is_some())
+    })
+}
+
+fn has_member_init_candidates_in_stmts(stmts: &[Stmt], scope: AliasInitScope) -> bool {
     stmts.iter().any(|stmt| {
         let Stmt::Decl(Decl::Var(var)) = stmt else {
             return false;
         };
-        var.decls.iter().any(|decl| {
-            let Pat::Ident(bi) = &decl.name else {
-                return false;
-            };
-            if !is_likely_generated_alias(&bi.id.sym) {
-                return false;
-            }
-            matches!(
-                decl.init.as_deref(),
-                Some(Expr::Member(m)) if matches!(&m.prop, MemberProp::Ident(_))
-            )
-        })
+        var.decls
+            .iter()
+            .any(|decl| is_member_init_candidate(decl, scope))
     })
 }
 
-fn member_init_rename_function(func: &mut Function) {
+fn stmts_have_alias_init_candidate(stmts: &[Stmt], scope: AliasInitScope) -> bool {
+    stmts.iter().any(|stmt| {
+        matches!(stmt, Stmt::Decl(Decl::Var(var)) if has_alias_init_candidate(&var.decls, scope))
+    })
+}
+
+/// An alias name describes the value the alias was initialized with, so the
+/// alias shapes (`var n = this`) need the binding to keep that value: one
+/// declaration, no direct write anywhere in the scope (`n = x`, `n++`,
+/// a destructuring-assignment target, a `for (n in ...)` head), and no
+/// parameter of the same name, whose argument the `var` would overwrite.
+/// The `obj.prop` shape keeps its historical behavior without this proof.
+struct AliasStability {
+    uses: BindingUseIndex,
+    param_names: HashSet<Atom>,
+}
+
+impl AliasStability {
+    fn holds(&self, id: &BindingId) -> bool {
+        !self.param_names.contains(&id.0)
+            && self.uses.has_single_declaration(id)
+            && !self.uses.has_direct_write(id)
+    }
+}
+
+/// Member-init renames for a function-like body. `param_names` returns every
+/// name in the parameter list; it runs only when the body has a candidate.
+fn member_init_renames_for_body(
+    stmts: &[Stmt],
+    param_names: impl FnOnce() -> HashSet<Atom>,
+    scope: AliasInitScope,
+) -> Vec<BindingRename> {
+    if !has_member_init_candidates_in_stmts(stmts, scope) {
+        return Vec::new();
+    }
+    let param_names = param_names();
+    let mut all_names = collect_names_in_stmts(stmts);
+    all_names.extend(param_names.iter().cloned());
+    let stability = stmts_have_alias_init_candidate(stmts, scope).then(|| AliasStability {
+        uses: BindingUseIndex::collect_stmts(stmts),
+        param_names,
+    });
+    collect_member_init_renames_from_stmts(stmts, &all_names, scope, stability.as_ref())
+}
+
+fn member_init_rename_function(func: &mut Function, scope: AliasInitScope) {
     let Some(body) = &mut func.body else { return };
-    if !has_member_init_candidates_in_stmts(&body.stmts) {
-        return;
-    }
-    let mut all_names = collect_names_in_stmts(&body.stmts);
-    for p in &func.params {
-        collect_names_in_pat(&p.pat, &mut all_names);
-    }
-    let renames = collect_member_init_renames_from_stmts(&body.stmts, &all_names);
+    let renames = member_init_renames_for_body(&body.stmts, || names_in(&func.params), scope);
     if renames.is_empty() {
         return;
     }
     rename_bindings(&mut body.stmts, &renames);
 }
 
-fn member_init_rename_arrow(arrow: &mut ArrowExpr) {
+fn member_init_rename_constructor(ctor: &mut Constructor, scope: AliasInitScope) {
+    let Some(body) = &mut ctor.body else { return };
+    let renames = member_init_renames_for_body(&body.stmts, || names_in(&ctor.params), scope);
+    if renames.is_empty() {
+        return;
+    }
+    rename_bindings(&mut body.stmts, &renames);
+}
+
+fn member_init_rename_arrow(arrow: &mut ArrowExpr, scope: AliasInitScope) {
     let ArrowFunctionBody::FunctionBody(block) = arrow.body.as_mut() else {
         return;
     };
-    if !has_member_init_candidates_in_stmts(&block.stmts) {
-        return;
-    }
-    let mut all_names = collect_names_in_stmts(&block.stmts);
-    for p in &arrow.params {
-        collect_names_in_pat(p, &mut all_names);
-    }
-    let all_names = all_names;
-    let renames = collect_member_init_renames_from_stmts(&block.stmts, &all_names);
+    let renames = member_init_renames_for_body(&block.stmts, || names_in(&arrow.params), scope);
     if renames.is_empty() {
         return;
     }
@@ -1369,7 +1507,27 @@ fn member_init_rename_module_with(
     all_names: &mut HashSet<Atom>,
     exported_bindings: &HashSet<BindingId>,
 ) {
-    let mut renames = collect_member_init_renames_from_module(&module.body, all_names);
+    // Module top level: `this` is not a receiver.
+    let scope = AliasInitScope {
+        this_is_receiver: false,
+        member_shape: true,
+    };
+    let stability = module
+        .body
+        .iter()
+        .any(|item| {
+            matches!(
+                item,
+                ModuleItem::Stmt(Stmt::Decl(Decl::Var(var)))
+                    if has_alias_init_candidate(&var.decls, scope)
+            )
+        })
+        .then(|| AliasStability {
+            uses: BindingUseIndex::collect(module),
+            param_names: HashSet::default(),
+        });
+    let mut renames =
+        collect_member_init_renames_from_module(&module.body, all_names, scope, stability.as_ref());
     renames.retain(|rename| !exported_bindings.contains(&rename.old));
     if renames.is_empty() {
         return;
@@ -1383,6 +1541,8 @@ fn member_init_rename_module_with(
 fn collect_member_init_renames_from_module(
     body: &[ModuleItem],
     all_names: &HashSet<Atom>,
+    scope: AliasInitScope,
+    stability: Option<&AliasStability>,
 ) -> Vec<BindingRename> {
     let mut renames = Vec::new();
     let mut used_names = all_names.clone();
@@ -1390,7 +1550,7 @@ fn collect_member_init_renames_from_module(
         let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
             continue;
         };
-        collect_member_init_var_renames(var, &mut renames, &mut used_names);
+        collect_member_init_var_renames(var, &mut renames, &mut used_names, scope, stability);
     }
     renames
 }
@@ -1398,6 +1558,8 @@ fn collect_member_init_renames_from_module(
 fn collect_member_init_renames_from_stmts(
     stmts: &[Stmt],
     all_names: &HashSet<Atom>,
+    scope: AliasInitScope,
+    stability: Option<&AliasStability>,
 ) -> Vec<BindingRename> {
     let mut renames = Vec::new();
     let mut used_names = all_names.clone();
@@ -1405,7 +1567,7 @@ fn collect_member_init_renames_from_stmts(
         let Stmt::Decl(Decl::Var(var)) = stmt else {
             continue;
         };
-        collect_member_init_var_renames(var, &mut renames, &mut used_names);
+        collect_member_init_var_renames(var, &mut renames, &mut used_names, scope, stability);
     }
     renames
 }
@@ -1414,6 +1576,8 @@ fn collect_member_init_var_renames(
     var: &VarDecl,
     renames: &mut Vec<BindingRename>,
     used_names: &mut HashSet<Atom>,
+    scope: AliasInitScope,
+    stability: Option<&AliasStability>,
 ) {
     for decl in &var.decls {
         let Pat::Ident(bi) = &decl.name else { continue };
@@ -1422,6 +1586,26 @@ fn collect_member_init_var_renames(
 
         // Only rename short (minified) names
         if !is_likely_generated_alias(old_name.as_str()) {
+            continue;
+        }
+
+        if let Some(alias_name) = alias_init_name(init, scope) {
+            let id = (bi.id.sym.clone(), bi.id.ctxt);
+            if alias_name == old_name || !stability.is_some_and(|stability| stability.holds(&id)) {
+                continue;
+            }
+            let new_name = find_non_conflicting_name(&alias_name, used_names);
+            if new_name == old_name {
+                continue;
+            }
+            used_names.insert(Atom::from(new_name.as_str()));
+            renames.push(BindingRename {
+                old: id,
+                new: new_name.as_str().into(),
+            });
+            continue;
+        }
+        if !scope.member_shape {
             continue;
         }
 

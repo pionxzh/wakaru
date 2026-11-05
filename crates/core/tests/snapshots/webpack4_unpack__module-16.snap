@@ -1,6 +1,5 @@
 ---
 source: crates/core/tests/webpack4_unpack.rs
-assertion_line: 210
 expression: code
 ---
 import r from "./module-4.js";
@@ -35,13 +34,13 @@ export class a extends Component {
         };
     }
     componentWillMount() {
-        const e = this;
+        const _this = this;
         const props = this.props;
         const { children, history } = props;
         i(children == null || Children.count(children) === 1, "A <Router> may have only one child element");
         this.unlisten = history.listen(function() {
-            e.setState({
-                match: e.computeMatch(history.location.pathname)
+            _this.setState({
+                match: _this.computeMatch(history.location.pathname)
             });
         });
     }

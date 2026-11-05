@@ -1,6 +1,5 @@
 ---
 source: crates/core/tests/webpack4_unpack.rs
-assertion_line: 210
 expression: code
 ---
 import r from "./module-4.js";
@@ -58,15 +57,15 @@ const x = (e)=>!!(e.metaKey || e.altKey || e.ctrlKey || e.shiftKey);
 export class Link extends Component {
     constructor(...i_1){
         super(...i_1);
-        var r = this;
+        var _this = this;
         this.handleClick = function(e) {
-            if (r.props.onClick) {
-                r.props.onClick(e);
+            if (_this.props.onClick) {
+                _this.props.onClick(e);
             }
-            if (!e.defaultPrevented && e.button === 0 && !r.props.target && !x(e)) {
+            if (!e.defaultPrevented && e.button === 0 && !_this.props.target && !x(e)) {
                 e.preventDefault();
-                const t = r.context.router.history;
-                const n = r.props;
+                const t = _this.context.router.history;
+                const n = _this.props;
                 const { replace, to } = n;
                 if (replace) {
                     t.replace(to);
@@ -443,20 +442,20 @@ const te = function() {};
 export class StaticRouter extends Component {
     constructor(...i){
         super(...i);
-        var r = this;
+        var _this = this;
         this.createHref = function(e) {
-            return X(r.props.basename + Z(e));
+            return X(_this.props.basename + Z(e));
         };
         this.handlePush = function(e) {
-            const r_props = r.props;
-            const { basename, context } = r_props;
+            const _this_props = _this.props;
+            const { basename, context } = _this_props;
             context.action = "PUSH";
             context.location = J(basename, createLocation(e));
             context.url = Z(context.location);
         };
         this.handleReplace = function(e) {
-            const r_props = r.props;
-            const { basename, context } = r_props;
+            const _this_props = _this.props;
+            const { basename, context } = _this_props;
             context.action = "REPLACE";
             context.location = J(basename, createLocation(e));
             context.url = Z(context.location);

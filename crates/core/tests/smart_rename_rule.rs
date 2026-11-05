@@ -1,6 +1,6 @@
 mod common;
 
-use common::{assert_eq_normalized, normalize, render_pipeline_between, render_rule};
+use common::{assert_eq_normalized, normalize, render, render_pipeline_between, render_rule};
 use wakaru_core::rules::{SmartRename, SmartRenameSecondPass};
 
 fn apply(input: &str) -> String {
@@ -1066,6 +1066,286 @@ function f() {
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+// `var n = this` aliases: named `_this` inside a function, with the
+// existing `_N` suffix on collision.
+
+#[test]
+fn this_alias_rename_nested_functions_get_distinct_names() {
+    // The inner body reads the outer alias, so the inner alias must not
+    // take the outer's new name.
+    let input = r#"
+var a = function() {
+    var n = this;
+    n.x = function() { return "x"; };
+    (function() {
+        var r = this;
+        r.x = n.x();
+    })();
+};
+"#;
+    let expected = r#"
+var a = function() {
+    var _this = this;
+    _this.x = function() { return "x"; };
+    (function() {
+        var _this_1 = this;
+        _this_1.x = _this.x();
+    })();
+};
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn this_alias_rename_outer_avoids_inner_name_already_taken() {
+    // The inner scope already holds `_this` (as if it were renamed first)
+    // and reads the outer alias: the outer alias must not be captured.
+    let input = r#"
+function outer() {
+    var n = this;
+    return function() {
+        var _this = this;
+        return [_this, n];
+    };
+}
+"#;
+    let expected = r#"
+function outer() {
+    var _this_1 = this;
+    return function() {
+        var _this = this;
+        return [_this, _this_1];
+    };
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn this_alias_rename_inner_shadowing_alias_reuses_name() {
+    // The inner `n` shadows the outer one, so the inner body cannot read the
+    // outer alias and both may be named `_this`.
+    let input = r#"
+function outer() {
+    var n = this;
+    use(n);
+    return function() {
+        var n = this;
+        return n;
+    };
+}
+"#;
+    let expected = r#"
+function outer() {
+    var _this = this;
+    use(_this);
+    return function() {
+        var _this = this;
+        return _this;
+    };
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn this_alias_rename_skips_module_top_level() {
+    // Top-level `this` is `undefined` in ESM and `module.exports` in
+    // CommonJS, not a receiver.
+    let input = r#"
+var n = this;
+use(n);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn this_alias_rename_skips_arrow_outside_any_function() {
+    // An arrow's `this` is lexical: at module level it is the top-level
+    // `this`, even through nested arrows.
+    let input = r#"
+var f = () => {
+    var n = this;
+    return () => {
+        var r = this;
+        return [n, r];
+    };
+};
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn this_alias_rename_arrow_inside_function() {
+    let input = r#"
+function outer() {
+    return () => {
+        var n = this;
+        return function() { return n; };
+    };
+}
+"#;
+    let expected = r#"
+function outer() {
+    return () => {
+        var _this = this;
+        return function() { return _this; };
+    };
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn this_alias_rename_in_class_method_and_constructor() {
+    let input = r#"
+class Widget {
+    constructor() {
+        var n = this;
+        this.onClick = function() { return n.value; };
+    }
+    bind() {
+        var r = this;
+        return function() { return r; };
+    }
+    get handler() {
+        var e = this;
+        return () => e;
+    }
+}
+"#;
+    let expected = r#"
+class Widget {
+    constructor() {
+        var _this = this;
+        this.onClick = function() { return _this.value; };
+    }
+    bind() {
+        var _this = this;
+        return function() { return _this; };
+    }
+    get handler() {
+        var _this = this;
+        return () => _this;
+    }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn constructor_body_gets_alias_shapes_but_not_member_shape() {
+    // Constructor bodies get the alias shapes only; the `obj.prop` shape
+    // keeps its function, arrow, and module coverage.
+    let input = r#"
+class Widget {
+    constructor(options) {
+        var e = options.element;
+        var n = this;
+        this.onClick = function() { return [n, e]; };
+    }
+}
+"#;
+    let expected = r#"
+class Widget {
+    constructor(options) {
+        var e = options.element;
+        var _this = this;
+        this.onClick = function() { return [_this, e]; };
+    }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn this_alias_rename_skips_reassigned_alias() {
+    // Once the alias holds another value, `_this` would lie.
+    let inputs = [
+        "function f() { var n = this; n = other; use(n); }",
+        "function f() { var n = this; n += 1; use(n); }",
+        "function f() { var n = this; n++; use(n); }",
+        "function f() { var n = this; [n] = list; use(n); }",
+        "function f() { var n = this; ({ value: n } = record); use(n); }",
+        "function f() { var n = this; for (n in record) use(n); }",
+        "function f() { var n = this; for (n of list) use(n); }",
+        "function f() { var n = this; return function() { n = other; }; }",
+    ];
+    for input in inputs {
+        assert_eq_normalized(&apply(input), input);
+    }
+}
+
+#[test]
+fn this_alias_rename_skips_redeclared_or_parameter_alias() {
+    let inputs = [
+        // A second declaration rebinds the alias.
+        "function f() { var n = this; use(n); var n = other; use(n); }",
+        "function f() { var n = this; use(n); function n() {} }",
+        // The `var` overwrites the argument; reads before it see the argument.
+        "function f(n) { use(n); var n = this; use(n); }",
+        "var f = function(n) { use(n); var n = this; use(n); };",
+    ];
+    for input in inputs {
+        assert_eq_normalized(&apply(input), input);
+    }
+}
+
+#[test]
+fn this_alias_rename_avoids_free_reference_with_same_name() {
+    // `_this` is a free (global) reference inside the body; the alias must
+    // not capture it.
+    let input = r#"
+function f() {
+    var n = this;
+    return [n, _this];
+}
+"#;
+    let expected = r#"
+function f() {
+    var _this_1 = this;
+    return [_this_1, _this];
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn this_alias_rename_skips_readable_names() {
+    let input = r#"
+function f() {
+    var self = this;
+    return function() { return self; };
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn this_alias_rename_runs_in_full_pipeline() {
+    let input = r#"var a=function(){var n=this;n.x=function(){return "x"};(function(){var r=this;r.x=n.x()})()}"#;
+    let expected = r#"
+const a = function() {
+    const _this = this;
+    _this.x = function() {
+        return "x";
+    };
+    (function() {
+        const _this_1 = this;
+        _this_1.x = _this.x();
+    })();
+};
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn this_alias_rename_full_pipeline_keeps_top_level_and_reassigned_alias() {
+    let input = r#"var n=this;use(n);function f(){var e=this;e=other;use(e)}"#;
+    let output = render(input);
+    assert!(!output.contains("_this"), "{output}");
 }
 
 #[test]

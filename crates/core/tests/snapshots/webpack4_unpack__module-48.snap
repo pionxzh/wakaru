@@ -2092,16 +2092,16 @@ Bn.Interface = {
 Bn.extend = function(e) {
     function t() {}
     function n() {
-        return r.apply(this, arguments);
+        return _this.apply(this, arguments);
     }
-    var r = this;
-    t.prototype = r.prototype;
+    var _this = this;
+    t.prototype = _this.prototype;
     const i = new t;
     o(i, n.prototype);
     n.prototype = i;
     n.prototype.constructor = n;
-    n.Interface = o({}, r.Interface, e);
-    n.extend = r.extend;
+    n.Interface = o({}, _this.Interface, e);
+    n.extend = _this.extend;
     Kn(n);
     return n;
 };
