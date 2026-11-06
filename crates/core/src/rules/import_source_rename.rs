@@ -37,6 +37,12 @@
 //!   and JavaScript and TypeScript extensions are stripped.
 //! - An unpacked module's provisional `module-<id>` stem names only itself
 //!   (`./module-221.js` → `module221`): its directory says nothing about it.
+//!   The `_<n>` that filename deduplication appends when several inputs emit
+//!   one name stays (`./module-221_2.js` → `module221_2`).
+//!
+//! Words join in camelCase, except that two digit runs keep a `_` between
+//! them (`./chunk-12_3.js` → `chunk12_3`, not `chunk123`), so the name never
+//! reads like a different file.
 //! - A Node builtin (`node:x`, or a bare `x` in [`NODE_BUILTIN_MODULES`])
 //!   names the module, then the module with a `node` prefix: `path`,
 //!   `nodePath`; `child_process` → `childProcess`, `nodeChildProcess`.
@@ -457,8 +463,14 @@ fn relative_word_candidates(path: &str) -> Vec<Vec<String>> {
     let Some(stem) = segments.pop() else {
         return Vec::new();
     };
-    if is_provisional_module_stem(stem) {
-        return vec![split_words(stem)];
+    if let Some((id, collision)) = provisional_module_stem(stem) {
+        let mut words = vec!["module".to_string(), id.to_string()];
+        // `_2` stays a separate word, so `module-aB3x_2` cannot read as
+        // `module-aB3x2`.
+        if let Some(collision) = collision {
+            words.push(format!("_{collision}"));
+        }
+        return vec![words];
     }
 
     let mut candidates = vec![split_words(stem)];
@@ -476,10 +488,16 @@ fn relative_word_candidates(path: &str) -> Vec<Vec<String>> {
 }
 
 /// The provisional name an unpacker gives a module without a recovered path:
-/// `module-221` for a numeric id, `module-<id>` for a short string id.
-fn is_provisional_module_stem(stem: &str) -> bool {
-    stem.strip_prefix("module-")
-        .is_some_and(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric()))
+/// `module-221` for a numeric id, `module-<id>` for a short string id. When
+/// several inputs emit the same name, filename deduplication appends `_<n>`
+/// (`module-221_2`). Returns the id and that collision number.
+fn provisional_module_stem(stem: &str) -> Option<(&str, Option<&str>)> {
+    let rest = stem.strip_prefix("module-")?;
+    let (id, collision) = match rest.rsplit_once('_') {
+        Some((id, n)) if !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) => (id, Some(n)),
+        _ => (rest, None),
+    };
+    (!id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric())).then_some((id, collision))
 }
 
 /// `child_process` → `[child, process]`, then `[node, child, process]`.
@@ -667,10 +685,17 @@ fn split_words(segment: &str) -> Vec<String> {
 }
 
 /// Join words in camelCase (`dateFormat`, a leading acronym lowered as one
-/// word: `URLParser` → `urlParser`) or PascalCase (`DateFormat`).
+/// word: `URLParser` → `urlParser`) or PascalCase (`DateFormat`). Two digit
+/// runs keep a `_` between them, so `chunk-12_3` → `chunk12_3` does not read
+/// as `chunk-123`.
 fn join_words(words: &[String], case: NameCase) -> String {
     let mut name = String::new();
     for (index, word) in words.iter().enumerate() {
+        if name.ends_with(|c: char| c.is_ascii_digit())
+            && word.starts_with(|c: char| c.is_ascii_digit())
+        {
+            name.push('_');
+        }
         if index == 0 && case == NameCase::Camel {
             name.push_str(&lower_camel_type_name(word));
         } else {
@@ -731,6 +756,23 @@ mod tests {
         assert_eq!(camel("../chunks/module-12.js"), ["module12"]);
         assert_eq!(camel("./module-aB3x.js"), ["moduleAB3x"]);
         assert_eq!(pascal("./module-12.js"), ["Module12"]);
+    }
+
+    #[test]
+    fn a_deduplicated_provisional_name_keeps_its_collision_suffix() {
+        assert_eq!(camel("./module-221_2.js"), ["module221_2"]);
+        assert_eq!(camel("../chunks/module-12_3.js"), ["module12_3"]);
+        assert_eq!(camel("./module-aB3x_2.js"), ["moduleAB3x_2"]);
+        assert_eq!(pascal("./module-12_2.js"), ["Module12_2"]);
+    }
+
+    #[test]
+    fn adjacent_digit_runs_keep_a_separator() {
+        assert_eq!(camel("./chunk-12_3.js"), ["chunk12_3"]);
+        assert_eq!(camel("./v2/3d.js"), ["v2_3d"]);
+        assert_eq!(camel("./parts-4-5-6.js"), ["parts4_5_6"]);
+        assert_eq!(camel("./render/3d-utils.js"), ["render3dUtils"]);
+        assert_eq!(camel("./v2-utils.js"), ["v2Utils"]);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 mod common;
 
 use common::{assert_eq_normalized, render, render_rule, render_with_level};
-use wakaru_core::driver::test_support::unpack;
+use wakaru_core::driver::test_support::{unpack, unpack_files, UnpackInput};
 use wakaru_core::rules::ImportSourceRename;
 use wakaru_core::{DecompileOptions, RewriteLevel};
 
@@ -33,6 +33,47 @@ Qc.run(Ab);
 import * as module221 from "./module-221.js";
 import module12 from "../module-12.js";
 module221.run(module12);
+"#,
+    );
+}
+
+#[test]
+fn a_deduplicated_provisional_name_keeps_its_collision_suffix() {
+    assert_renamed(
+        r#"
+import Ab from "./module-221_2.js";
+import * as Cd from "./module-221.js";
+Ab(Cd);
+"#,
+        r#"
+import module221_2 from "./module-221_2.js";
+import * as module221 from "./module-221.js";
+module221_2(module221);
+"#,
+    );
+    // The namespace name builds on the suffixed one.
+    assert_renamed(
+        r#"
+import Ab, * as Cd from "./module-221_2.js";
+use(Ab, Cd);
+"#,
+        r#"
+import module221_2, * as module221_2Namespace from "./module-221_2.js";
+use(module221_2, module221_2Namespace);
+"#,
+    );
+}
+
+#[test]
+fn adjacent_digit_runs_keep_a_separator() {
+    assert_renamed(
+        r#"
+import Ab from "./parts/chunk-12_3.js";
+Ab();
+"#,
+        r#"
+import chunk12_3 from "./parts/chunk-12_3.js";
+chunk12_3();
 "#,
     );
 }
@@ -687,6 +728,20 @@ export { Qc, Ab };
 }
 
 #[test]
+fn pipeline_keeps_the_collision_suffix_of_a_deduplicated_module() {
+    let input = r#"
+var a = require("./module-221_2.js");
+module.exports = function () { return a.run(); };
+"#;
+    let output = render(input);
+    assert!(
+        output.contains(r#"import module221_2 from "./module-221_2.js";"#)
+            && output.contains("module221_2.run()"),
+        "{output}"
+    );
+}
+
+#[test]
 fn pipeline_keeps_names_at_minimal_level() {
     let input = r#"
 var a = require("./module-221.js");
@@ -723,6 +778,72 @@ export const view = () => Rk.createElement(Ab, null);
 // ---------------------------------------------------------------------------
 // Unpack
 // ---------------------------------------------------------------------------
+
+fn unpack_inputs(inputs: &[(&str, &str)]) -> Vec<(String, String)> {
+    unpack_files(
+        inputs
+            .iter()
+            .map(|(filename, source)| UnpackInput {
+                filename: filename.to_string(),
+                source: source.to_string(),
+            })
+            .collect(),
+        DecompileOptions::default(),
+    )
+    .expect("inputs should unpack together")
+    .modules
+}
+
+fn module_code<'a>(modules: &'a [(String, String)], name: &str) -> &'a str {
+    modules
+        .iter()
+        .find(|(filename, _)| filename == name)
+        .map(|(_, code)| code.as_str())
+        .unwrap_or_else(|| {
+            panic!(
+                "{name} should exist, got {:?}",
+                modules.iter().map(|(name, _)| name).collect::<Vec<_>>()
+            )
+        })
+}
+
+/// Two builds each emit a module 200; the second becomes `module-200_2.js`.
+const WIDGET_CHUNK: &str = r#"
+(self.webpackChunk_widget = self.webpackChunk_widget || []).push([[9], {
+    200: function(module) { module.exports = { run: function () { return "widget"; } }; }
+}]);
+"#;
+
+const APP_PROVIDER_CHUNK: &str = r#"
+(self.webpackChunk_app = self.webpackChunk_app || []).push([[2], {
+    200: function(module) { module.exports = { run: function () { return "app"; } }; }
+}]);
+"#;
+
+#[test]
+fn unpacked_consumer_keeps_the_collision_suffix_of_a_deduplicated_provider() {
+    let consumer_chunk = r#"
+(self.webpackChunk_app = self.webpackChunk_app || []).push([[1], {
+    100: function(module, exports, require) {
+        var p = require(200);
+        module.exports = function () { return p.run(); };
+    }
+}]);
+"#;
+    let modules = unpack_inputs(&[
+        ("widget.js", WIDGET_CHUNK),
+        ("app-provider.js", APP_PROVIDER_CHUNK),
+        ("app.js", consumer_chunk),
+    ]);
+    let provider = module_code(&modules, "module-200_2.js");
+    assert!(provider.contains("\"app\""), "{provider}");
+    let consumer = module_code(&modules, "module-100.js");
+    assert!(
+        consumer.contains(r#"import module200_2 from "./module-200_2.js";"#)
+            && consumer.contains("module200_2.run()"),
+        "{consumer}"
+    );
+}
 
 #[test]
 fn unpacked_consumer_names_provisional_module_imports() {
