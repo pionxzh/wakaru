@@ -1944,7 +1944,10 @@ fn collect_member_init_var_renames(
                 format!("{}_{}", obj_name, prop_name)
             }
             _ => {
-                if prop_name.chars().count() <= 2 {
+                // `.default` names nothing (`_default`). A
+                // `require("./dep").default` binding gets its name from the
+                // source in ImportSourceRename instead.
+                if prop_name.chars().count() <= 2 || prop_name == "default" {
                     continue;
                 }
                 prop_name.clone()

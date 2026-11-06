@@ -29,7 +29,8 @@
 //! A `require` that `UnEsm` did not turn into an import (a module it could
 //! not normalize, or a call inside a function) is named like a default import
 //! of its source, without the `Namespace` form. The declarator must be
-//! `<ident> = require("<string>")` with the global `require`, and the
+//! `<ident> = require("<string>")` with the global `require`, or that call's
+//! `.default` read. The
 //! binding must keep that value for its whole life: one declaration, no
 //! direct write, no parameter of the same name (`collect_stable_aliases`). A
 //! `var` belongs to its function-like scope wherever it sits; a `let` or
@@ -133,8 +134,8 @@ use swc_core::common::Mark;
 use swc_core::ecma::ast::{
     ArrowExpr, BlockStmt, Callee, CatchClause, ClassDecl, ClassExpr, Constructor, ExportSpecifier,
     Expr, FnDecl, FnExpr, ForInStmt, ForOfStmt, ForStmt, Function, Ident, ImportSpecifier, Lit,
-    Module, ModuleDecl, ModuleExportName, ModuleItem, ParamOrTsParamProp, Pat, StaticBlock,
-    SwitchStmt, TsParamPropParam, VarDecl, VarDeclKind, VarDeclarator,
+    MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, ParamOrTsParamProp, Pat,
+    StaticBlock, SwitchStmt, TsParamPropParam, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::utils::find_pat_ids;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitWith};
@@ -436,8 +437,16 @@ fn is_generated_import_local(name: &str) -> bool {
     is_likely_generated_alias(name)
 }
 
-/// `require("<source>")` with the global `require` and one string argument.
+/// `require("<source>")` with the global `require` and one string argument,
+/// or its `.default` read (`require("<source>").default`), which holds what a
+/// default import of the source holds.
 fn require_source(init: &Expr, unresolved_mark: Mark) -> Option<&str> {
+    let init = match init {
+        Expr::Member(member) if matches!(&member.prop, MemberProp::Ident(prop) if prop.sym == "default") => {
+            member.obj.as_ref()
+        }
+        _ => init,
+    };
     let Expr::Call(call) = init else {
         return None;
     };

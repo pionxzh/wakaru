@@ -1047,6 +1047,19 @@ const x = q.y;
 }
 
 #[test]
+fn member_init_rename_skips_default_read_of_a_call() {
+    // `_default` says nothing; a `require(...).default` binding is named
+    // after its source later, by ImportSourceRename.
+    let input = r#"
+const x = require("./dep.js").default;
+const y = load().default;
+use(x, y);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn member_init_rename_in_function_body() {
     let input = r#"
 function f() {

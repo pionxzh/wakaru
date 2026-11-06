@@ -799,6 +799,34 @@ module210.run(baseCodec);
 }
 
 #[test]
+fn a_require_default_read_takes_its_source_name() {
+    assert_renamed(
+        r#"
+var p = require("./module-210.js").default;
+function f() {
+  const q = require("./shared/base-codec.js").default;
+  return q(p);
+}
+"#,
+        r#"
+var module210 = require("./module-210.js").default;
+function f() {
+  const baseCodec = require("./shared/base-codec.js").default;
+  return baseCodec(module210);
+}
+"#,
+    );
+    // Another member read is not the module's default value.
+    assert_unchanged(
+        r#"
+var p = require("./module-210.js").default.inner;
+var q = require("./module-211.js")["default"];
+use(p, q);
+"#,
+    );
+}
+
+#[test]
 fn a_nested_require_alias_takes_its_source_name() {
     assert_renamed(
         r#"
@@ -847,7 +875,7 @@ function f(c) {
 fn requires_that_do_not_hold_their_module_are_left_alone() {
     assert_unchanged(
         r#"
-var a = require("./module-210.js").default;
+var a = require("./module-210.js").named;
 var b = require(name);
 var c = require("./module-210.js", extra);
 var { d } = require("./module-210.js");
@@ -1203,6 +1231,22 @@ module.exports = function () {
     );
     let minimal = render_with_level(input, RewriteLevel::Minimal);
     assert!(!minimal.contains("baseCodec"), "{minimal}");
+}
+
+#[test]
+fn pipeline_names_a_require_default_read_kept_inside_a_function() {
+    let input = r#"
+module.exports = function () {
+  var b = require("./shared/base-codec.js").default;
+  return b("x");
+};
+"#;
+    let output = render(input);
+    assert!(
+        output.contains(r#"const baseCodec = require("./shared/base-codec.js").default;"#)
+            && output.contains(r#"baseCodec("x")"#),
+        "{output}"
+    );
 }
 
 #[test]

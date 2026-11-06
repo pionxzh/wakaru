@@ -3735,7 +3735,7 @@ fn a_whole_value_provider_its_consumers_write_becomes_a_default_export() {
             cjs_writer.contains("require(\"./module-100.js\").default"),
             "{cjs_writer}"
         );
-        assert!(cjs_writer.contains("r.second = 2"), "{cjs_writer}");
+        assert!(cjs_writer.contains("module100.second = 2"), "{cjs_writer}");
         let reader = module_named(&output.modules, "module-400.js");
         assert!(
             reader.contains("import module100 from \"./module-100.js\""),
