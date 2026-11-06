@@ -1137,8 +1137,8 @@ fn a_named_only_provider_a_consumer_writes_stays_commonjs() {
             assert!(!code.contains("export "), "{provider}:\n{code}");
         }
         let consumer = module(&output, "module-11.js");
-        assert!(consumer.contains("n.f = function"), "{consumer}");
-        assert!(consumer.contains("o.f = function"), "{consumer}");
+        assert!(consumer.contains("module22.f = function"), "{consumer}");
+        assert!(consumer.contains("module33.f = function"), "{consumer}");
     }
 }
 

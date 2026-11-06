@@ -1595,7 +1595,7 @@ impl AliasStability {
 /// life, under the `AliasStability` proof, and whose initializer satisfies
 /// `init_matches`: one declaration, no direct write, and no parameter of the
 /// same name in the enclosing function-like.
-fn collect_stable_aliases(
+pub(super) fn collect_stable_aliases(
     module: &Module,
     init_matches: impl Fn(&Expr) -> bool,
 ) -> HashSet<BindingId> {

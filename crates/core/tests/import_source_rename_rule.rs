@@ -680,6 +680,347 @@ use(module110_version);
 }
 
 // ---------------------------------------------------------------------------
+// `require` declarations
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_module_scope_require_alias_takes_its_source_name() {
+    assert_renamed(
+        r#"
+var n = require("./module-210.js");
+const W = require("./shared/base-codec.js");
+n.run(W);
+"#,
+        r#"
+var module210 = require("./module-210.js");
+const baseCodec = require("./shared/base-codec.js");
+module210.run(baseCodec);
+"#,
+    );
+}
+
+#[test]
+fn a_nested_require_alias_takes_its_source_name() {
+    assert_renamed(
+        r#"
+function f() {
+  var n = require("./module-210.js");
+  return n.run();
+}
+const g = () => {
+  const W = require("node:path");
+  return W.join("x");
+};
+"#,
+        r#"
+function f() {
+  var module210 = require("./module-210.js");
+  return module210.run();
+}
+const g = () => {
+  const path = require("node:path");
+  return path.join("x");
+};
+"#,
+    );
+    // A `var` in a nested block belongs to its function.
+    assert_renamed(
+        r#"
+function f(c) {
+  if (c) {
+    var n = require("./module-210.js");
+    n.run();
+  }
+}
+"#,
+        r#"
+function f(c) {
+  if (c) {
+    var module210 = require("./module-210.js");
+    module210.run();
+  }
+}
+"#,
+    );
+}
+
+#[test]
+fn requires_that_do_not_hold_their_module_are_left_alone() {
+    assert_unchanged(
+        r#"
+var a = require("./module-210.js").default;
+var b = require(name);
+var c = require("./module-210.js", extra);
+var { d } = require("./module-210.js");
+var e = require("./module-211.js");
+e = other;
+var helpers = require("./module-212.js");
+function f(g) {
+  var g = require("./module-213.js");
+  return g;
+}
+function h(require) {
+  var k = require("./module-214.js");
+  return k;
+}
+use(a, b, c, d, e, helpers);
+"#,
+    );
+    // A `let` or `const` in a nested block is not named.
+    assert_unchanged(
+        r#"
+function f(c) {
+  if (c) {
+    const n = require("./module-210.js");
+    n.run();
+  }
+}
+"#,
+    );
+}
+
+#[test]
+fn a_nested_scope_declaring_the_name_blocks_it() {
+    assert_renamed(
+        r#"
+function f(dateFormat) {
+  var n = require("./utils/date-format.js");
+  return n(dateFormat);
+}
+"#,
+        r#"
+function f(dateFormat) {
+  var utilsDateFormat = require("./utils/date-format.js");
+  return utilsDateFormat(dateFormat);
+}
+"#,
+    );
+}
+
+#[test]
+fn an_outer_name_the_scope_reads_blocks_it() {
+    assert_renamed(
+        r#"
+const dateFormat = 1;
+function f() {
+  var n = require("./utils/date-format.js");
+  return n(dateFormat);
+}
+function g() {
+  var W = require("node:process");
+  return W.exit(process.exitCode);
+}
+"#,
+        r#"
+const dateFormat = 1;
+function f() {
+  var utilsDateFormat = require("./utils/date-format.js");
+  return utilsDateFormat(dateFormat);
+}
+function g() {
+  var nodeProcess = require("node:process");
+  return nodeProcess.exit(process.exitCode);
+}
+"#,
+    );
+}
+
+#[test]
+fn an_outer_name_the_scope_does_not_read_does_not_block_it() {
+    assert_renamed(
+        r#"
+const dateFormat = 1;
+function f() {
+  var n = require("./utils/date-format.js");
+  return n();
+}
+use(dateFormat);
+"#,
+        r#"
+const dateFormat = 1;
+function f() {
+  var dateFormat = require("./utils/date-format.js");
+  return dateFormat();
+}
+use(dateFormat);
+"#,
+    );
+}
+
+#[test]
+fn an_inner_function_blocks_the_name_only_around_a_read() {
+    assert_renamed(
+        r#"
+function f() {
+  var n = require("node:path");
+  function g(path) {
+    return path.length;
+  }
+  return n.join(g("x"));
+}
+function h() {
+  var W = require("node:path");
+  function k(path) {
+    return W.join(path);
+  }
+  return k;
+}
+"#,
+        r#"
+function f() {
+  var path = require("node:path");
+  function g(path) {
+    return path.length;
+  }
+  return path.join(g("x"));
+}
+function h() {
+  var nodePath = require("node:path");
+  function k(path) {
+    return nodePath.join(path);
+  }
+  return k;
+}
+"#,
+    );
+}
+
+#[test]
+fn a_nested_alias_sees_the_new_names_of_outer_bindings() {
+    // The import becomes `dateFormat`, which `f` reads.
+    assert_renamed(
+        r#"
+import Ab from "./utils/date-format.js";
+function f() {
+  var n = require("./forms/date-format.js");
+  return n(Ab);
+}
+"#,
+        r#"
+import dateFormat from "./utils/date-format.js";
+function f() {
+  var formsDateFormat = require("./forms/date-format.js");
+  return formsDateFormat(dateFormat);
+}
+"#,
+    );
+    // An enclosing scope's alias is named first, whatever the source order.
+    assert_renamed(
+        r#"
+function f() {
+  function g() {
+    var m = require("./forms/date-format.js");
+    return m(n);
+  }
+  var n = require("./utils/date-format.js");
+  return g;
+}
+"#,
+        r#"
+function f() {
+  function g() {
+    var formsDateFormat = require("./forms/date-format.js");
+    return formsDateFormat(dateFormat);
+  }
+  var dateFormat = require("./utils/date-format.js");
+  return g;
+}
+"#,
+    );
+}
+
+#[test]
+fn aliases_of_one_scope_take_distinct_names_and_sibling_scopes_reuse_them() {
+    assert_renamed(
+        r#"
+function f() {
+  var a = require("./module-12.js");
+  var b = require("./module-12.js");
+  return a(b);
+}
+function g() {
+  var c = require("./module-12.js");
+  return c;
+}
+"#,
+        r#"
+function f() {
+  var module12 = require("./module-12.js");
+  var module12_1 = require("./module-12.js");
+  return module12(module12_1);
+}
+function g() {
+  var module12 = require("./module-12.js");
+  return module12;
+}
+"#,
+    );
+}
+
+#[test]
+fn a_require_alias_never_takes_a_namespace_name() {
+    assert_renamed(
+        r#"
+import Ab from "./module-12.js";
+var n = require("./module-12.js");
+use(Ab, n);
+"#,
+        r#"
+import module12 from "./module-12.js";
+var module12_1 = require("./module-12.js");
+use(module12, module12_1);
+"#,
+    );
+}
+
+#[test]
+fn a_require_alias_used_as_a_jsx_tag_takes_pascal_case() {
+    assert_renamed(
+        r#"
+var W = require("./shared/date-format.js");
+const el = <W />;
+"#,
+        r#"
+var DateFormat = require("./shared/date-format.js");
+const el = <DateFormat />;
+"#,
+    );
+}
+
+#[test]
+fn an_exported_require_alias_keeps_its_public_name() {
+    assert_renamed(
+        r#"
+var n = require("./module-12.js");
+var W = require("./module-14.js");
+export { n, W as codec };
+"#,
+        r#"
+var module12 = require("./module-12.js");
+var codec = require("./module-14.js");
+export { module12 as n, codec };
+"#,
+    );
+    assert_unchanged(
+        r#"
+export var n = require("./module-12.js");
+"#,
+    );
+}
+
+#[test]
+fn a_require_alias_follows_the_dynamic_scope_skip() {
+    assert_unchanged(
+        r#"
+function f() {
+  var n = require("./module-12.js");
+  return eval("n");
+}
+"#,
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Full pipeline
 // ---------------------------------------------------------------------------
 
@@ -739,6 +1080,30 @@ module.exports = function () { return a.run(); };
             && output.contains("module221_2.run()"),
         "{output}"
     );
+}
+
+#[test]
+fn pipeline_names_requires_kept_inside_functions() {
+    let input = r#"
+var a = require("./module-221.js");
+module.exports = function () {
+  var b = require("./shared/base-codec.js");
+  var c = require("node:path");
+  if (a.ready) { return b.encode(c.join("x")); }
+  return a.run();
+};
+"#;
+    let output = render(input);
+    assert!(
+        output.contains(r#"const module221 = require("./module-221.js");"#)
+            && output.contains(r#"const baseCodec = require("./shared/base-codec.js");"#)
+            && output.contains(r#"const path = require("node:path");"#)
+            && output.contains("baseCodec.encode(path.join(\"x\"))")
+            && output.contains("module221.run()"),
+        "{output}"
+    );
+    let minimal = render_with_level(input, RewriteLevel::Minimal);
+    assert!(!minimal.contains("baseCodec"), "{minimal}");
 }
 
 #[test]
@@ -872,4 +1237,36 @@ fn unpacked_consumer_names_provisional_module_imports() {
     );
     let minimal = consumer(RewriteLevel::Minimal);
     assert!(!minimal.contains("module1 "), "{minimal}");
+}
+
+#[test]
+fn unpacked_consumer_names_a_require_kept_inside_a_function() {
+    let widget = r#"
+(self.webpackChunk_widget = self.webpackChunk_widget || []).push([[9], {
+    200: function(module, exports) { exports.run = function () { return "widget"; }; }
+}]);
+"#;
+    let provider = r#"
+(self.webpackChunk_app = self.webpackChunk_app || []).push([[2], {
+    200: function(module, exports) { exports.run = function () { return "app"; }; }
+}]);
+"#;
+    let consumer_chunk = r#"
+(self.webpackChunk_app = self.webpackChunk_app || []).push([[1], {
+    100: function(module, exports, require) {
+        module.exports = function () { var p = require(200); return p.run(); };
+    }
+}]);
+"#;
+    let modules = unpack_inputs(&[
+        ("widget.js", widget),
+        ("app-provider.js", provider),
+        ("app.js", consumer_chunk),
+    ]);
+    let consumer = module_code(&modules, "module-100.js");
+    assert!(
+        consumer.contains(r#"const module200_2 = require("./module-200_2.js");"#)
+            && consumer.contains("module200_2.run()"),
+        "{consumer}"
+    );
 }

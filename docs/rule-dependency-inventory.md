@@ -697,10 +697,13 @@ rationale, or level gating appear.
   Candidate consumer of source-map-recovered names. Unpack's late ESM
   recovery runs it at `standard` and above, like the registry.
 - **ImportSourceRename** — names a still-generated default or namespace
-  import local after its source (`./module-221.js` → `module221`). A source
+  import local, or a stable `x = require("<string>")` alias that UnEsm left
+  (module scope or nested), after its source (`./module-221.js` →
+  `module221`). A source
   path is the weakest naming evidence, so the rule runs after every pass that
   can name an import binding: the value-position renames of SmartRename and
-  SmartRename2, UnImportRename2, UnExportRename2, and the JSX passes. Unpack
+  SmartRename2, UnImportRename2, UnExportRename2, and the JSX passes. No
+  later rule renames these bindings or rewrites the `require` declarators. Unpack
   runs it on each finished Phase 2 module instead of in the rule range (the
   gate skips it under `UnpackPhase2` and `UnpackLatePrediction`): after the
   late ESM recovery and its `SmartRename` pass, source-map names, and the

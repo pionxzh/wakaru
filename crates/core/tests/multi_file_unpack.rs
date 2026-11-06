@@ -4423,7 +4423,7 @@ fn a_typescript_enum_provider_unenum_converts_is_read_as_esm() {
         // takes from the require.
         let commonjs_reader = module_named(&output.modules, "module-200.js");
         assert!(
-            commonjs_reader.contains("const p = require(\"./module-100.js\");"),
+            commonjs_reader.contains("const module100 = require(\"./module-100.js\");"),
             "{commonjs_reader}"
         );
         let esm_reader = module_named(&output.modules, "module-400.js");

@@ -5402,7 +5402,7 @@ fn kept_require_of_a_function_with_named_exports_reads_default_per_use() {
     );
     let output = unpack(&source, DecompileOptions::default()).expect("bundle should unpack");
     let consumer = unpacked_module(&output, "module-1.js");
-    for present in ["i.default({", "i.flag", "i.default.name"] {
+    for present in ["module2.default({", "module2.flag", "module2.default.name"] {
         assert!(
             consumer.contains(present),
             "missing `{present}`:\n{consumer}"
@@ -5798,7 +5798,7 @@ fn kept_require_of_a_marked_provider_drops_the_local_interop() {
     let output = unpack(&source, DecompileOptions::default()).expect("bundle should unpack");
     let consumer = unpacked_module(&output, "module-1.js");
     assert!(
-        consumer.contains(r#"const Q = require("./module-2.js");"#),
+        consumer.contains(r#"const module2 = require("./module-2.js");"#),
         "{consumer}"
     );
     assert!(output.warnings.is_empty(), "{:#?}", output.warnings);
