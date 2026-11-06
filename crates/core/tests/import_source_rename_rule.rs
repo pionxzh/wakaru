@@ -362,6 +362,74 @@ const el = <module12.Panel />;
     );
 }
 
+#[test]
+fn a_pascal_case_stem_keeps_its_case_whatever_the_use() {
+    assert_renamed(
+        r#"
+import Ab from "./Wrapper.js";
+import * as Cd from "./utils/LoginService.js";
+var n = require("./widgets/ModalV2.js");
+const w = new Ab();
+class Session extends Cd.Base {}
+n.open(w, Session);
+"#,
+        r#"
+import Wrapper from "./Wrapper.js";
+import * as LoginService from "./utils/LoginService.js";
+var ModalV2 = require("./widgets/ModalV2.js");
+const w = new Wrapper();
+class Session extends LoginService.Base {}
+ModalV2.open(w, Session);
+"#,
+    );
+    // Prefixed candidates and the namespace name stay PascalCase.
+    assert_renamed(
+        r#"
+import Ab from "./utils/LoginService.js";
+import Ef, * as Gh from "./Wrapper.js";
+const LoginService = 1;
+use(Ab, Ef, Gh, LoginService);
+"#,
+        r#"
+import UtilsLoginService from "./utils/LoginService.js";
+import Wrapper, * as WrapperNamespace from "./Wrapper.js";
+const LoginService = 1;
+use(UtilsLoginService, Wrapper, WrapperNamespace, LoginService);
+"#,
+    );
+    // A readable lowercase export name still comes first.
+    assert_renamed(
+        r#"
+import Ab from "./Wrapper.js";
+export { Ab as wrap };
+"#,
+        r#"
+import wrap from "./Wrapper.js";
+export { wrap };
+"#,
+    );
+}
+
+#[test]
+fn a_leading_capital_decides_the_case() {
+    assert_renamed(
+        r#"
+import Ab from "./Ad.js";
+import Cd from "./ads/InLine.js";
+import Ef from "./Ab3x9QzK.js";
+import Gh from "./wrapper.js";
+use(Ab, Cd, Ef, Gh);
+"#,
+        r#"
+import Ad from "./Ad.js";
+import InLine from "./ads/InLine.js";
+import Ab3x9QzK from "./Ab3x9QzK.js";
+import wrapper from "./wrapper.js";
+use(Ad, InLine, Ab3x9QzK, wrapper);
+"#,
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Collisions
 // ---------------------------------------------------------------------------
@@ -1104,6 +1172,23 @@ module.exports = function () {
     );
     let minimal = render_with_level(input, RewriteLevel::Minimal);
     assert!(!minimal.contains("baseCodec"), "{minimal}");
+}
+
+#[test]
+fn pipeline_keeps_a_pascal_case_stem_for_a_class_import() {
+    let input = r#"
+var a = require("./widgets/Wrapper.js");
+var b = require("./widgets/panel.js");
+module.exports = class extends a { run() { return new a(b); } };
+"#;
+    let output = render(input);
+    assert!(
+        output.contains(r#"import Wrapper from "./widgets/Wrapper.js";"#)
+            && output.contains(r#"import panel from "./widgets/panel.js";"#)
+            && output.contains("extends Wrapper")
+            && output.contains("new Wrapper(panel)"),
+        "{output}"
+    );
 }
 
 #[test]

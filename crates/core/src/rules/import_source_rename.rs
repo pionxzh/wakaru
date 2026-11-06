@@ -71,7 +71,13 @@
 //!   (`export { Qc as utils }`) comes before all of these.
 //!
 //! A local used as a bare JSX tag (`<Ab />`) takes every candidate in
-//! PascalCase: a lowercase tag is an intrinsic element, not a reference.
+//! PascalCase: a lowercase tag is an intrinsic element, not a reference. So
+//! does a local of a relative source whose naming stem starts with an
+//! uppercase letter, whatever its use: `./Wrapper.js` → `Wrapper`,
+//! `./utils/LoginService.js` → `LoginService`, then `UtilsLoginService`, so
+//! `new Wrapper()` and `extends LoginService` read as they were written. A
+//! hash-like stem (`./Ab3x9QzK.js` → `Ab3x9QzK`) keeps its capital too; that
+//! costs nothing.
 //!
 //! A namespace import of a module that the module also imports by default
 //! (`node:` prefix ignored) takes `<base>Namespace` instead, whatever the
@@ -215,7 +221,8 @@ impl VisitMut for ImportSourceRename {
         let mut planned: HashMap<BindingId, Atom> = HashMap::default();
         for target in &targets {
             let local = &target.local;
-            let case = if jsx_tags.contains(local) {
+            let jsx_tag = jsx_tags.contains(local);
+            let case = if jsx_tag || has_pascal_case_stem(target.source) {
                 NameCase::Pascal
             } else {
                 NameCase::Camel
@@ -230,7 +237,7 @@ impl VisitMut for ImportSourceRename {
                     name.as_str() != local.0.as_ref()
                         && is_usable_name(name)
                         && !is_likely_generated_alias(name)
-                        && !(case == NameCase::Pascal && starts_with_lowercase(name))
+                        && !(jsx_tag && starts_with_lowercase(name))
                 })
                 .cloned()
                 .collect();
@@ -927,22 +934,44 @@ fn is_forbidden_target(name: &str) -> bool {
     )
 }
 
-/// Candidate names as word lists. A word list joins into one identifier in
-/// the requested case.
-fn source_word_candidates(source: &str) -> Vec<Vec<String>> {
-    // A loader prefix (`raw-loader!./x`) or a URL is not a module path.
+/// The module path of `source`, without a query or hash and with `/`
+/// separators. A loader prefix (`raw-loader!./x`) or a URL is not a module
+/// path.
+fn module_path(source: &str) -> Option<String> {
     if source.contains('!') || source.contains("://") || source.starts_with("data:") {
-        return Vec::new();
+        return None;
     }
     let source = source
         .split(['?', '#'])
         .next()
         .unwrap_or_default()
         .replace('\\', "/");
-    if source.is_empty() {
+    (!source.is_empty()).then_some(source)
+}
+
+fn is_relative_path(path: &str) -> bool {
+    path.starts_with('.') || path.starts_with('/')
+}
+
+/// A relative source whose naming stem starts with an uppercase letter
+/// (`./Wrapper.js`, `./utils/LoginService.js`) names a class or a component
+/// by convention, so every candidate keeps PascalCase, used as a JSX tag or
+/// not.
+fn has_pascal_case_stem(source: &str) -> bool {
+    module_path(source).is_some_and(|path| {
+        is_relative_path(&path)
+            && relative_naming_segments(&path)
+                .is_some_and(|(stem, _)| stem.starts_with(|c: char| c.is_ascii_uppercase()))
+    })
+}
+
+/// Candidate names as word lists. A word list joins into one identifier in
+/// the requested case.
+fn source_word_candidates(source: &str) -> Vec<Vec<String>> {
+    let Some(source) = module_path(source) else {
         return Vec::new();
-    }
-    if source.starts_with('.') || source.starts_with('/') {
+    };
+    if is_relative_path(&source) {
         return relative_word_candidates(&source);
     }
     if let Some(builtin) = source.strip_prefix("node:") {
@@ -958,29 +987,7 @@ fn source_word_candidates(source: &str) -> Vec<Vec<String>> {
 /// `./shared/utils/date-format.js` → `[date, format]`, `[utils, date,
 /// format]`, `[shared, utils, date, format]`.
 fn relative_word_candidates(path: &str) -> Vec<Vec<String>> {
-    let directory_index = path.ends_with('/');
-    let mut segments: Vec<&str> = path
-        .split('/')
-        .filter(|segment| !segment.is_empty() && *segment != ".")
-        .collect();
-    if !directory_index {
-        let Some(file) = segments.pop() else {
-            return Vec::new();
-        };
-        let stem = strip_script_extension(file);
-        if stem != "index" {
-            segments.push(stem);
-        }
-    }
-    // An `index` file, or a directory import, takes the name of the nearest
-    // informative directory.
-    while segments
-        .last()
-        .is_some_and(|segment| is_uninformative_directory(segment))
-    {
-        segments.pop();
-    }
-    let Some(stem) = segments.pop() else {
+    let Some((stem, segments)) = relative_naming_segments(path) else {
         return Vec::new();
     };
     if let Some((id, collision)) = provisional_module_stem(stem) {
@@ -1005,6 +1012,34 @@ fn relative_word_candidates(path: &str) -> Vec<Vec<String>> {
         candidates.push(words.clone());
     }
     candidates
+}
+
+/// The segment that names a relative path, and the directories above it:
+/// the file stem without its script extension, or for an `index` file or a
+/// directory import the nearest informative directory.
+fn relative_naming_segments(path: &str) -> Option<(&str, Vec<&str>)> {
+    let directory_index = path.ends_with('/');
+    let mut segments: Vec<&str> = path
+        .split('/')
+        .filter(|segment| !segment.is_empty() && *segment != ".")
+        .collect();
+    if !directory_index {
+        let file = segments.pop()?;
+        let stem = strip_script_extension(file);
+        if stem != "index" {
+            segments.push(stem);
+        }
+    }
+    // An `index` file, or a directory import, takes the name of the nearest
+    // informative directory.
+    while segments
+        .last()
+        .is_some_and(|segment| is_uninformative_directory(segment))
+    {
+        segments.pop();
+    }
+    let stem = segments.pop()?;
+    Some((stem, segments))
 }
 
 /// The provisional name an unpacker gives a module without a recovered path:
@@ -1346,6 +1381,28 @@ mod tests {
         assert_eq!(pascal("node:path"), ["Path", "NodePath"]);
         // `module` is a CommonJS name.
         assert_eq!(camel("node:module"), ["nodeModule"]);
+    }
+
+    #[test]
+    fn a_stem_with_a_leading_capital_is_pascal_case() {
+        for source in [
+            "./Wrapper.js",
+            "./utils/LoginService.js",
+            "./Header/index.js",
+            "./Ad.js",
+            "./Ab3x9QzK.js",
+            "./URLParser.ts",
+        ] {
+            assert!(has_pascal_case_stem(source), "{source}");
+        }
+        for source in [
+            "./wrapper.js",
+            "./module-12.js",
+            "some-kit/Wrapper",
+            "./9Ab.js",
+        ] {
+            assert!(!has_pascal_case_stem(source), "{source}");
+        }
     }
 
     #[test]
