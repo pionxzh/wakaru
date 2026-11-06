@@ -3,7 +3,7 @@ source: crates/core/tests/webpack4_unpack.rs
 assertion_line: 210
 expression: code
 ---
-import r from "./module-40.js";
+import module40 from "./module-40.js";
 export default h;
 export const parse = h.parse = i;
 export const compile = h.compile = function(e, t) {
@@ -98,7 +98,7 @@ function l(e, t) {
                     }
                     throw new TypeError(`Expected "${f.name}" to be defined`);
                 }
-                if (r(p)) {
+                if (module40(p)) {
                     if (!f.repeat) {
                         throw new TypeError(`Expected "${f.name}" to not repeat, but received \`${JSON.stringify(p)}\``);
                     }
@@ -146,7 +146,7 @@ function d(e) {
     return "i";
 }
 function p(e, t, n) {
-    if (!r(t)) {
+    if (!module40(t)) {
         n = t || n;
         t = [];
     }
@@ -175,7 +175,7 @@ function p(e, t, n) {
     return f(new RegExp(`^${a}`, d(n)), t);
 }
 function h(e, t, n) {
-    if (!r(t)) {
+    if (!module40(t)) {
         n = t || n;
         t = [];
     }
@@ -200,7 +200,7 @@ function h(e, t, n) {
             return f(e, t);
         })(e, t);
     }
-    if (r(e)) {
+    if (module40(e)) {
         return ((e, t, n)=>{
             const r = [];
             for(let o = 0; o < e.length; o++){

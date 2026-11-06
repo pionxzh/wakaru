@@ -19,6 +19,7 @@ mod extract_inlined_function;
 mod flip_comparisons;
 pub(crate) mod helper_matcher;
 mod import_dedup;
+mod import_source_rename;
 pub(crate) mod lowered_dynamic_import;
 pub(crate) mod match_context;
 mod merge_declaration_init;
@@ -181,6 +182,7 @@ pub use extract_inlined_function::{
 };
 pub use flip_comparisons::FlipComparisons;
 pub use import_dedup::ImportDedup;
+pub use import_source_rename::ImportSourceRename;
 pub use merge_declaration_init::MergeDeclarationInit;
 pub use obj_shorthand::ObjShorthand;
 pub use object_assign_spread::ObjectAssignSpread;

@@ -1,35 +1,36 @@
 ---
 source: crates/core/tests/un_export_rename_alias_rule.rs
+assertion_line: 82
 expression: code
 ---
-import r from "./module-4.js";
+import module4 from "./module-4.js";
 import { Children, Component, cloneElement, createElement, isValidElement } from "./module-50.js";
-import u from "./module-1.js";
+import module1 from "./module-1.js";
 import { createBrowserHistory, createHashHistory, createLocation, createMemoryHistory, createPath, locationsAreEqual } from "./module-8.js";
-import * as s from "./module-16.js";
-import b from "./module-5.js";
+import * as module16 from "./module-16.js";
+import module5 from "./module-5.js";
 import { a } from "./module-15.js";
 import { compile } from "./module-14.js";
-import le from "./module-30.js";
-export const Router = s.a;
+import module30 from "./module-30.js";
+export const Router = module16.a;
 export class BrowserRouter extends Component {
     constructor(...i){
         super(...i);
         this.history = createBrowserHistory(this.props);
     }
     componentWillMount() {
-        r(!this.props.history, "<BrowserRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { BrowserRouter as Router }`.");
+        module4(!this.props.history, "<BrowserRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { BrowserRouter as Router }`.");
     }
     render() {
         return <Router history={this.history} children={this.props.children}/>;
     }
 }
 BrowserRouter.propTypes = {
-    basename: u.string,
-    forceRefresh: u.bool,
-    getUserConfirmation: u.func,
-    keyLength: u.number,
-    children: u.node
+    basename: module1.string,
+    forceRefresh: module1.bool,
+    getUserConfirmation: module1.func,
+    keyLength: module1.number,
+    children: module1.node
 };
 export class HashRouter extends Component {
     constructor(...i){
@@ -37,21 +38,21 @@ export class HashRouter extends Component {
         this.history = createHashHistory(this.props);
     }
     componentWillMount() {
-        r(!this.props.history, "<HashRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { HashRouter as Router }`.");
+        module4(!this.props.history, "<HashRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { HashRouter as Router }`.");
     }
     render() {
         return <Router history={this.history} children={this.props.children}/>;
     }
 }
 HashRouter.propTypes = {
-    basename: u.string,
-    getUserConfirmation: u.func,
-    hashType: u.oneOf([
+    basename: module1.string,
+    getUserConfirmation: module1.func,
+    hashType: module1.oneOf([
         "hashbang",
         "noslash",
         "slash"
     ]),
-    children: u.node
+    children: module1.node
 };
 const x = (e)=>!!(e.metaKey || e.altKey || e.ctrlKey || e.shiftKey);
 export class Link extends Component {
@@ -78,8 +79,8 @@ export class Link extends Component {
     render() {
         const props = this.props;
         const { replace: _replace, to, innerRef, ...rest } = props;
-        b(this.context.router, "You should not use <Link> outside a <Router>");
-        b(to !== undefined, 'You must specify the "to" property');
+        module5(this.context.router, "You should not use <Link> outside a <Router>");
+        module5(to !== undefined, 'You must specify the "to" property');
         const history = this.context.router.history;
         const i = typeof to === "string" ? createLocation(to, null, null, history.location) : to;
         const href = history.createHref(i);
@@ -87,27 +88,27 @@ export class Link extends Component {
     }
 }
 Link.propTypes = {
-    onClick: u.func,
-    target: u.string,
-    replace: u.bool,
-    to: u.oneOfType([
-        u.string,
-        u.object
+    onClick: module1.func,
+    target: module1.string,
+    replace: module1.bool,
+    to: module1.oneOfType([
+        module1.string,
+        module1.object
     ]).isRequired,
-    innerRef: u.oneOfType([
-        u.string,
-        u.func
+    innerRef: module1.oneOfType([
+        module1.string,
+        module1.func
     ])
 };
 Link.defaultProps = {
     replace: false
 };
 Link.contextTypes = {
-    router: u.shape({
-        history: u.shape({
-            push: u.func.isRequired,
-            replace: u.func.isRequired,
-            createHref: u.func.isRequired
+    router: module1.shape({
+        history: module1.shape({
+            push: module1.func.isRequired,
+            replace: module1.func.isRequired,
+            createHref: module1.func.isRequired
         }).isRequired
     }).isRequired
 };
@@ -117,18 +118,18 @@ export class MemoryRouter extends Component {
         this.history = createMemoryHistory(this.props);
     }
     componentWillMount() {
-        r(!this.props.history, "<MemoryRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { MemoryRouter as Router }`.");
+        module4(!this.props.history, "<MemoryRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { MemoryRouter as Router }`.");
     }
     render() {
-        return <s.a history={this.history} children={this.props.children}/>;
+        return <module16.a history={this.history} children={this.props.children}/>;
     }
 }
 MemoryRouter.propTypes = {
-    initialEntries: u.array,
-    initialIndex: u.number,
-    getUserConfirmation: u.func,
-    keyLength: u.number,
-    children: u.node
+    initialEntries: module1.array,
+    initialIndex: module1.number,
+    getUserConfirmation: module1.func,
+    keyLength: module1.number,
+    children: module1.node
 };
 const R = (children)=>Children.count(children) === 0;
 export class Route extends Component {
@@ -153,7 +154,7 @@ export class Route extends Component {
         if (computedMatch) {
             return computedMatch;
         }
-        b(t, "You should not use <Route> or withRouter() outside a <Router>");
+        module5(t, "You should not use <Route> or withRouter() outside a <Router>");
         const t_route = t.route;
         const pathname = (location || t_route.location).pathname;
         return a(pathname, {
@@ -164,13 +165,13 @@ export class Route extends Component {
         }, t_route.match);
     }
     componentWillMount() {
-        r(!(this.props.component && this.props.render), "You should not use <Route component> and <Route render> in the same route; <Route render> will be ignored");
-        r(!(this.props.component && this.props.children && !R(this.props.children)), "You should not use <Route component> and <Route children> in the same route; <Route children> will be ignored");
-        r(!(this.props.render && this.props.children && !R(this.props.children)), "You should not use <Route render> and <Route children> in the same route; <Route children> will be ignored");
+        module4(!(this.props.component && this.props.render), "You should not use <Route component> and <Route render> in the same route; <Route render> will be ignored");
+        module4(!(this.props.component && this.props.children && !R(this.props.children)), "You should not use <Route component> and <Route children> in the same route; <Route children> will be ignored");
+        module4(!(this.props.render && this.props.children && !R(this.props.children)), "You should not use <Route render> and <Route children> in the same route; <Route children> will be ignored");
     }
     componentWillReceiveProps(e, t) {
-        r(!(e.location && !this.props.location), '<Route> elements should not change from uncontrolled to controlled (or vice versa). You initially used no "location" prop and then provided one on a subsequent render.');
-        r(!(!e.location && this.props.location), '<Route> elements should not change from controlled to uncontrolled (or vice versa). You provided a "location" prop initially but omitted it on a subsequent render.');
+        module4(!(e.location && !this.props.location), '<Route> elements should not change from uncontrolled to controlled (or vice versa). You initially used no "location" prop and then provided one on a subsequent render.');
+        module4(!(!e.location && this.props.location), '<Route> elements should not change from controlled to uncontrolled (or vice versa). You provided a "location" prop initially but omitted it on a subsequent render.');
         this.setState({
             match: this.computeMatch(e, t.router)
         });
@@ -209,28 +210,28 @@ export class Route extends Component {
     }
 }
 Route.propTypes = {
-    computedMatch: u.object,
-    path: u.string,
-    exact: u.bool,
-    strict: u.bool,
-    sensitive: u.bool,
-    component: u.func,
-    render: u.func,
-    children: u.oneOfType([
-        u.func,
-        u.node
+    computedMatch: module1.object,
+    path: module1.string,
+    exact: module1.bool,
+    strict: module1.bool,
+    sensitive: module1.bool,
+    component: module1.func,
+    render: module1.func,
+    children: module1.oneOfType([
+        module1.func,
+        module1.node
     ]),
-    location: u.object
+    location: module1.object
 };
 Route.contextTypes = {
-    router: u.shape({
-        history: u.object.isRequired,
-        route: u.object.isRequired,
-        staticContext: u.object
+    router: module1.shape({
+        history: module1.object.isRequired,
+        route: module1.object.isRequired,
+        staticContext: module1.object
     })
 };
 Route.childContextTypes = {
-    router: u.object.isRequired
+    router: module1.object.isRequired
 };
 export const NavLink = function({ to, exact, strict, location, activeClassName, className, activeStyle, style, isActive, "aria-current": aria_current, ...rest }) {
     const p = (to === undefined ? "undefined" : typeof to) === "object" ? to.pathname : to;
@@ -248,15 +249,15 @@ export const NavLink = function({ to, exact, strict, location, activeClassName, 
 };
 NavLink.propTypes = {
     to: Link.propTypes.to,
-    exact: u.bool,
-    strict: u.bool,
-    location: u.object,
-    activeClassName: u.string,
-    className: u.string,
-    activeStyle: u.object,
-    style: u.object,
-    isActive: u.func,
-    "aria-current": u.oneOf([
+    exact: module1.bool,
+    strict: module1.bool,
+    location: module1.object,
+    activeClassName: module1.string,
+    className: module1.string,
+    activeStyle: module1.object,
+    style: module1.object,
+    isActive: module1.func,
+    "aria-current": module1.oneOf([
         "page",
         "step",
         "location",
@@ -283,7 +284,7 @@ export class Prompt extends Component {
         }
     }
     componentWillMount() {
-        b(this.context.router, "You should not use <Prompt> outside a <Router>");
+        module5(this.context.router, "You should not use <Prompt> outside a <Router>");
         if (this.props.when) {
             this.enable(this.props.message);
         }
@@ -305,19 +306,19 @@ export class Prompt extends Component {
     }
 }
 Prompt.propTypes = {
-    when: u.bool,
-    message: u.oneOfType([
-        u.func,
-        u.string
+    when: module1.bool,
+    message: module1.oneOfType([
+        module1.func,
+        module1.string
     ]).isRequired
 };
 Prompt.defaultProps = {
     when: true
 };
 Prompt.contextTypes = {
-    router: u.shape({
-        history: u.shape({
-            block: u.func.isRequired
+    router: module1.shape({
+        history: module1.shape({
+            block: module1.func.isRequired
         }).isRequired
     }).isRequired
 };
@@ -348,7 +349,7 @@ export class Redirect extends Component {
         return this.context.router && this.context.router.staticContext;
     }
     componentWillMount() {
-        b(this.context.router, "You should not use <Redirect> outside a <Router>");
+        module5(this.context.router, "You should not use <Redirect> outside a <Router>");
         if (this.isStatic()) {
             this.perform();
         }
@@ -362,7 +363,7 @@ export class Redirect extends Component {
         const t = createLocation(e.to);
         const n = createLocation(this.props.to);
         if (locationsAreEqual(t, n)) {
-            r(false, `You tried to redirect to the same route you're currently on: "${n.pathname}${n.search}"`);
+            module4(false, `You tried to redirect to the same route you're currently on: "${n.pathname}${n.search}"`);
         } else {
             this.perform();
         }
@@ -394,24 +395,24 @@ export class Redirect extends Component {
     }
 }
 Redirect.propTypes = {
-    computedMatch: u.object,
-    push: u.bool,
-    from: u.string,
-    to: u.oneOfType([
-        u.string,
-        u.object
+    computedMatch: module1.object,
+    push: module1.bool,
+    from: module1.string,
+    to: module1.oneOfType([
+        module1.string,
+        module1.object
     ]).isRequired
 };
 Redirect.defaultProps = {
     push: false
 };
 Redirect.contextTypes = {
-    router: u.shape({
-        history: u.shape({
-            push: u.func.isRequired,
-            replace: u.func.isRequired
+    router: module1.shape({
+        history: module1.shape({
+            push: module1.func.isRequired,
+            replace: module1.func.isRequired
         }).isRequired,
-        staticContext: u.object
+        staticContext: module1.object
     }).isRequired
 };
 const X = (e)=>{
@@ -436,7 +437,7 @@ const Z = (e)=>{
     return createPath(e);
 };
 const ee = (e)=>function() {
-        b(false, "You cannot %s with <StaticRouter>", e);
+        module5(false, "You cannot %s with <StaticRouter>", e);
     };
 const te = function() {};
 export class StaticRouter extends Component {
@@ -475,7 +476,7 @@ export class StaticRouter extends Component {
         };
     }
     componentWillMount() {
-        r(!this.props.history, "<StaticRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { StaticRouter as Router }`.");
+        module4(!this.props.history, "<StaticRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { StaticRouter as Router }`.");
     }
     render() {
         const props = this.props;
@@ -504,15 +505,15 @@ export class StaticRouter extends Component {
             listen: this.handleListen,
             block: this.handleBlock
         };
-        return <s.a {...rest} history={history}/>;
+        return <module16.a {...rest} history={history}/>;
     }
 }
 StaticRouter.propTypes = {
-    basename: u.string,
-    context: u.object.isRequired,
-    location: u.oneOfType([
-        u.string,
-        u.object
+    basename: module1.string,
+    context: module1.object.isRequired,
+    location: module1.oneOfType([
+        module1.string,
+        module1.object
     ])
 };
 StaticRouter.defaultProps = {
@@ -520,15 +521,15 @@ StaticRouter.defaultProps = {
     location: "/"
 };
 StaticRouter.childContextTypes = {
-    router: u.object.isRequired
+    router: module1.object.isRequired
 };
 export class Switch extends Component {
     componentWillMount() {
-        b(this.context.router, "You should not use <Switch> outside a <Router>");
+        module5(this.context.router, "You should not use <Switch> outside a <Router>");
     }
     componentWillReceiveProps(e) {
-        r(!(e.location && !this.props.location), '<Switch> elements should not change from uncontrolled to controlled (or vice versa). You initially used no "location" prop and then provided one on a subsequent render.');
-        r(!(!e.location && this.props.location), '<Switch> elements should not change from controlled to uncontrolled (or vice versa). You provided a "location" prop initially but omitted it on a subsequent render.');
+        module4(!(e.location && !this.props.location), '<Switch> elements should not change from uncontrolled to controlled (or vice versa). You initially used no "location" prop and then provided one on a subsequent render.');
+        module4(!(!e.location && this.props.location), '<Switch> elements should not change from controlled to uncontrolled (or vice versa). You provided a "location" prop initially but omitted it on a subsequent render.');
     }
     render() {
         const route = this.context.router.route;
@@ -560,13 +561,13 @@ export class Switch extends Component {
     }
 }
 Switch.contextTypes = {
-    router: u.shape({
-        route: u.object.isRequired
+    router: module1.shape({
+        route: module1.object.isRequired
     }).isRequired
 };
 Switch.propTypes = {
-    children: u.node,
-    location: u.object
+    children: module1.node,
+    location: module1.object
 };
 export const matchPath = a;
 export const withRouter = function(e) {
@@ -582,7 +583,7 @@ export const withRouter = function(e) {
     TComponent.displayName = `withRouter(${e.displayName || e.name})`;
     TComponent.WrappedComponent = e;
     TComponent.propTypes = {
-        wrappedComponentRef: u.func
+        wrappedComponentRef: module1.func
     };
-    return le(TComponent, e);
+    return module30(TComponent, e);
 };

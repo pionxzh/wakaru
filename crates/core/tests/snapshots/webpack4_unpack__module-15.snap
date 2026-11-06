@@ -1,8 +1,9 @@
 ---
 source: crates/core/tests/webpack4_unpack.rs
+assertion_line: 210
 expression: code
 ---
-import _r from "./module-14.js";
+import module14 from "./module-14.js";
 const i = {};
 let _a = 0;
 export const a = function(e, path_1 = {}, n) {
@@ -23,7 +24,7 @@ export const a = function(e, path_1 = {}, n) {
         }
         const keys_1 = [];
         const l = {
-            re: _r(path_1, keys_1, t),
+            re: module14(path_1, keys_1, t),
             keys: keys_1
         };
         if (_a < 10000) {

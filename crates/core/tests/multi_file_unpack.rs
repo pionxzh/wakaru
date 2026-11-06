@@ -2994,13 +2994,16 @@ fn a_provider_its_consumer_writes_stays_commonjs() {
         assert!(!provider.contains("export "), "{provider}");
         let consumer = module_named(&output.modules, "module-200.js");
         assert!(
-            consumer.contains("import p from \"./module-100.js\""),
+            consumer.contains("import module100 from \"./module-100.js\""),
             "{consumer}"
         );
-        assert!(consumer.contains("p.f = function patched"), "{consumer}");
+        assert!(
+            consumer.contains("module100.f = function patched"),
+            "{consumer}"
+        );
         let reader = module_named(&output.modules, "module-300.js");
         assert!(
-            reader.contains("import p from \"./module-100.js\""),
+            reader.contains("import module100 from \"./module-100.js\""),
             "{reader}"
         );
         assert!(output.warnings.iter().all(|warning| {
@@ -3066,7 +3069,7 @@ fn a_provider_its_consumers_only_read_still_becomes_esm() {
         assert!(provider.contains("export const f"), "{provider}");
         let consumer = module_named(&output.modules, "module-200.js");
         assert!(
-            consumer.contains("import * as p from \"./module-100.js\""),
+            consumer.contains("import * as module100 from \"./module-100.js\""),
             "{consumer}"
         );
         assert!(escape_warnings(&output).is_empty());
@@ -3416,10 +3419,10 @@ fn a_terser_inlined_call_of_a_bundled_tslib_helper_recovers_esm() {
         );
         let consumer = module_named(&output.modules, "module-400.js");
         assert!(
-            consumer.contains("import n from \"./module-300.js\""),
+            consumer.contains("import module300 from \"./module-300.js\""),
             "{consumer}"
         );
-        assert!(consumer.contains("new n()"), "{consumer}");
+        assert!(consumer.contains("new module300()"), "{consumer}");
         assert!(!consumer.contains("require("), "{consumer}");
     }
 }
@@ -3722,11 +3725,11 @@ fn a_whole_value_provider_its_consumers_write_becomes_a_default_export() {
         assert!(!provider.contains("module.exports"), "{provider}");
         let esm_writer = module_named(&output.modules, "module-200.js");
         assert!(
-            esm_writer.contains("import r from \"./module-100.js\""),
+            esm_writer.contains("import module100 from \"./module-100.js\""),
             "{esm_writer}"
         );
-        assert!(esm_writer.contains("r[key] = true"), "{esm_writer}");
-        assert!(esm_writer.contains("r.first = 1"), "{esm_writer}");
+        assert!(esm_writer.contains("module100[key] = true"), "{esm_writer}");
+        assert!(esm_writer.contains("module100.first = 1"), "{esm_writer}");
         let cjs_writer = module_named(&output.modules, "module-300.js");
         assert!(
             cjs_writer.contains("require(\"./module-100.js\").default"),
@@ -3735,7 +3738,7 @@ fn a_whole_value_provider_its_consumers_write_becomes_a_default_export() {
         assert!(cjs_writer.contains("r.second = 2"), "{cjs_writer}");
         let reader = module_named(&output.modules, "module-400.js");
         assert!(
-            reader.contains("import r from \"./module-100.js\""),
+            reader.contains("import module100 from \"./module-100.js\""),
             "{reader}"
         );
     }
@@ -3892,8 +3895,8 @@ fn a_written_esbuild_namespace_provider_stays_commonjs() {
             "{provider}"
         );
         let consumer = module_named(&output.modules, "module-400.js");
-        assert!(consumer.contains("p.extra = 1"), "{consumer}");
-        assert!(consumer.contains("p.foo()"), "{consumer}");
+        assert!(consumer.contains("module100.extra = 1"), "{consumer}");
+        assert!(consumer.contains("module100.foo()"), "{consumer}");
         assert!(!consumer.contains("mod_default"), "{consumer}");
         assert!(!consumer.contains(".default"), "{consumer}");
     }
@@ -4007,7 +4010,11 @@ fn a_member_read_of_a_whole_value_provider_reads_its_default_import() {
         let consumer = consumer_of(&output);
         assert!(!consumer.contains("import {"), "{consumer}");
         for (local, source, members) in [
-            ("_M", "100", ["Math: Math_1", "noSuchGlobal: noGlobal"]),
+            (
+                "module100",
+                "100",
+                ["Math: Math_1", "noSuchGlobal: noGlobal"],
+            ),
             ("_create", "110", ["create", "gone"]),
             ("_parse", "120", ["parse", "absent"]),
             ("_size", "130", ["size", "none"]),
@@ -4367,7 +4374,7 @@ fn a_provider_the_rules_after_unesm_let_convert_is_read_as_esm() {
         );
         let esm_reader = module_named(&output.modules, "module-400.js");
         assert!(
-            esm_reader.contains("import p from \"./module-100.js\""),
+            esm_reader.contains("import module100 from \"./module-100.js\""),
             "{esm_reader}"
         );
     }
@@ -4569,7 +4576,8 @@ fn a_write_through_a_passthrough_keeps_the_module_it_reaches_commonjs() {
         assert!(!provider.contains("export "), "{provider}");
         let reader = module_named(&output.modules, "module-410.js");
         assert!(
-            reader.contains(r#"import r from "./module-100.js";"#) && reader.contains("r.f()"),
+            reader.contains(r#"import module100 from "./module-100.js";"#)
+                && reader.contains("module100.f()"),
             "{reader}"
         );
     }
@@ -4675,9 +4683,9 @@ fn a_require_of_a_passthrough_of_a_whole_value_reads_its_default() {
         assert_valid_module_graph(&output.modules);
         let consumer = consumer_of(&output);
         assert!(
-            consumer.contains(r#"import p from "./module-110.js";"#)
-                && consumer.contains("p.version;")
-                && consumer.contains("p(1)"),
+            consumer.contains(r#"import module110 from "./module-110.js";"#)
+                && consumer.contains("module110.version;")
+                && consumer.contains("module110(1)"),
             "{consumer}"
         );
         assert!(!consumer.contains("./module-120.js"), "{consumer}");
@@ -4747,8 +4755,8 @@ fn an_interop_read_through_a_passthrough_reads_the_marked_module_behind_it() {
         assert_valid_module_graph(&output.modules);
         let consumer = consumer_of(&output);
         assert!(
-            consumer.contains(r#"import p from "./module-100.js";"#)
-                && consumer.contains("return p();"),
+            consumer.contains(r#"import module100 from "./module-100.js";"#)
+                && consumer.contains("return module100();"),
             "{consumer}"
         );
     }

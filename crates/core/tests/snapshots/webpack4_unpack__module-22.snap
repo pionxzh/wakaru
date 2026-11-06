@@ -3,37 +3,37 @@ source: crates/core/tests/webpack4_unpack.rs
 assertion_line: 210
 expression: code
 ---
-import * as o from "./module-0.js";
+import * as module0 from "./module-0.js";
 import { q as is } from "./module-0.js";
-import * as i from "./module-6.js";
-import * as a from "./module-12.js";
+import * as module6 from "./module-6.js";
+import * as module12 from "./module-12.js";
 import { d as asEffect } from "./module-2.js";
 import { a as a_1 } from "./module-9.js";
-import * as E from "./module-17.js";
+import * as effects from "./module-17.js";
 export const utils = {
     get TASK () {
-        return o.e;
+        return module0.e;
     },
     get SAGA_ACTION () {
-        return o.c;
+        return module0.c;
     },
     get noop () {
-        return o.u;
+        return module0.u;
     },
     get is () {
         return is;
     },
     get deferred () {
-        return o.l;
+        return module0.l;
     },
     get arrayOfDeffered () {
-        return o.g;
+        return module0.g;
     },
     get createMockTask () {
-        return o.j;
+        return module0.j;
     },
     get cloneableGenerator () {
-        return o.i;
+        return module0.i;
     },
     get asEffect () {
         return asEffect;
@@ -55,7 +55,7 @@ const p = {
 };
 var h = {
     wildcard: function() {
-        return o.r;
+        return module0.r;
     },
     default: function(e) {
         if ((e === undefined ? "undefined" : typeof e) === "symbol") {
@@ -85,13 +85,13 @@ const y = (fn)=>({
         fn
     });
 function v(e, t = function() {
-    return o.u;
-}, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymous", w) {
-    o.h(e, is.iterator, f);
-    var E = o.n(z, o.z("[...effects]", "all([...effects])"));
+    return module0.u;
+}, n = module0.u, r = module0.u, s = {}, h = {}, b = 0, g = "anonymous", w) {
+    module0.h(e, is.iterator, f);
+    var E = module0.n(z, module0.z("[...effects]", "all([...effects])"));
     var h_sagaMonitor = h.sagaMonitor;
     const { logger, onError } = h;
-    const S = logger || o.s;
+    const S = logger || module0.s;
     var O = (e)=>{
         let e_sagaStack = e.sagaStack;
         if (!e_sagaStack && e.stack) {
@@ -100,15 +100,15 @@ ${e.stack}`;
         }
         S("error", `uncaught at ${g}`, e_sagaStack || e.message || e);
     };
-    var C = i.f(t);
+    var C = module6.f(t);
     var P = Object.create(s);
-    M.cancel = o.u;
+    M.cancel = module0.u;
     var task = ((e, t, n, r)=>{
         let i;
         let a;
         n._deferredEnd = null;
         i = {};
-        i[o.e] = true;
+        i[module0.e] = true;
         i.id = e;
         i.name = t;
         a = {};
@@ -117,7 +117,7 @@ ${e.stack}`;
             if (n._deferredEnd) {
                 return n._deferredEnd.promise;
             }
-            const e = o.l();
+            const e = module0.l();
             n._deferredEnd = e;
             if (!n._isRunning) {
                 if (n._error) {
@@ -147,8 +147,8 @@ ${e.stack}`;
             return n._error;
         };
         i.setContext = function(e) {
-            o.h(e, is.object, o.k("task", e));
-            o.v.assign(P, e);
+            module0.h(e, is.object, module0.k("task", e));
+            module0.v.assign(P, e);
         };
         ((e, t)=>{
             for(const n in t){
@@ -185,8 +185,8 @@ ${e.stack}`;
             r.push(e);
             e.cont = function(l, c) {
                 if (!a) {
-                    o.w(r, e);
-                    e.cont = o.u;
+                    module0.w(r, e);
+                    e.cont = module0.u;
                     if (c) {
                         abort(l);
                     } else {
@@ -205,7 +205,7 @@ ${e.stack}`;
             if (!a) {
                 a = true;
                 r.forEach((e)=>{
-                    e.cont = o.u;
+                    e.cont = module0.u;
                     e.cancel();
                 });
                 r = [];
@@ -309,7 +309,7 @@ ${e.stack}`;
         task.joiners = null;
     }
     function L(effect, parentEffectId, label = "", h) {
-        const v = o.y();
+        const v = module0.y();
         if (h_sagaMonitor) {
             h_sagaMonitor.effectTriggered({
                 effectId: v,
@@ -322,7 +322,7 @@ ${e.stack}`;
         function w(e, t) {
             if (!b) {
                 b = true;
-                h.cancel = o.u;
+                h.cancel = module0.u;
                 if (h_sagaMonitor) {
                     if (t) {
                         h_sagaMonitor.effectRejected(v, e);
@@ -333,7 +333,7 @@ ${e.stack}`;
                 h(e, t);
             }
         }
-        w.cancel = o.u;
+        w.cancel = module0.u;
         h.cancel = function() {
             if (!b) {
                 b = true;
@@ -342,7 +342,7 @@ ${e.stack}`;
                 } catch (error) {
                     O(error);
                 }
-                w.cancel = o.u;
+                w.cancel = module0.u;
                 if (h_sagaMonitor) {
                     h_sagaMonitor.effectCancelled(v);
                 }
@@ -368,7 +368,7 @@ ${e.stack}`;
                     if (e instanceof Error) {
                         return t(e, true);
                     }
-                    if (i.e(e) && !maybe) {
+                    if (module6.e(e) && !maybe) {
                         return t(CHANNEL_END);
                     }
                     return t(e);
@@ -383,7 +383,7 @@ ${e.stack}`;
         }
         if (k = asEffect.put(effect)) {
             return (({ channel, action, resolve }, t)=>{
-                a.a(function() {
+                module12.a(function() {
                     let e;
                     try {
                         e = (channel ? channel.put : n)(action);
@@ -414,7 +414,7 @@ ${e.stack}`;
                             if (l) {
                                 n.cancel();
                                 n(u, true);
-                            } else if (!i.e(u) && u !== CHANNEL_END && u !== p) {
+                            } else if (!module6.e(u) && u !== CHANNEL_END && u !== p) {
                                 n.cancel();
                                 r = true;
                                 const f = {
@@ -427,7 +427,7 @@ ${e.stack}`;
                             }
                         }
                     };
-                    l.cancel = o.u;
+                    l.cancel = module0.u;
                     u[t] = l;
                 });
                 n.cancel = function() {
@@ -491,7 +491,7 @@ ${e.stack}`;
                         cb
                     };
                     cb.cancel = function() {
-                        return o.w(e.joiners, n);
+                        return module0.w(e.joiners, n);
                     };
                     e.joiners.push(n);
                 } else {
@@ -505,7 +505,7 @@ ${e.stack}`;
         }
         if (k = asEffect.cancel(effect)) {
             return ((e, t)=>{
-                if (e === o.d) {
+                if (e === module0.d) {
                     e = task;
                 }
                 if (e.isRunning()) {
@@ -530,7 +530,7 @@ ${e.stack}`;
             return (({ pattern, buffer }, n)=>{
                 const a = m(pattern);
                 a.pattern = pattern;
-                n(i.d(t, buffer || a_1.fixed(), a));
+                n(module6.d(t, buffer || a_1.fixed(), a));
             })(k, w);
         }
         if (k = asEffect.flush(effect)) {
@@ -551,14 +551,14 @@ ${e.stack}`;
         }
         if (k = asEffect.setContext(effect)) {
             return ((e, t)=>{
-                o.v.assign(P, e);
+                module0.v.assign(P, e);
                 t();
             })(k, w);
         }
         return w(effect);
     }
     function I(e, t) {
-        const n = e[o.a];
+        const n = e[module0.a];
         if (is.func(n)) {
             t.cancel = n;
         } else if (is.func(e.abort)) {
@@ -587,11 +587,11 @@ ${e.stack}`;
                 return i;
             }
             if (a) {
-                return o.t(function() {
+                return module0.t(function() {
                     throw a;
                 });
             }
-            return o.t((()=>{
+            return module0.t((()=>{
                 let e;
                 const t = {
                     done: false,
@@ -614,8 +614,8 @@ ${e.stack}`;
             args
         });
         try {
-            a.c();
-            const p = v(d, t, n, r, P, h, i, fn.name, detached ? null : o.u);
+            module12.c();
+            const p = v(d, t, n, r, P, h, i, fn.name, detached ? null : module0.u);
             if (detached) {
                 u(p);
             } else if (d._isRunning) {
@@ -627,7 +627,7 @@ ${e.stack}`;
                 u(p);
             }
         } finally{
-            a.b();
+            module12.b();
         }
     }
     function z(e, t, n) {
@@ -642,14 +642,14 @@ ${e.stack}`;
         r.forEach((t)=>{
             const f = function(s, f) {
                 if (!u) {
-                    if (f || i.e(s) || s === CHANNEL_END || s === p) {
+                    if (f || module6.e(s) || s === CHANNEL_END || s === p) {
                         n.cancel();
                         n(s, f);
                     } else {
                         l[t] = s;
                         if (++a === r.length) {
                             u = true;
-                            n(is.array(e) ? o.f.from({
+                            n(is.array(e) ? module0.f.from({
                                 ...l,
                                 length: r.length
                             }) : l);
@@ -657,7 +657,7 @@ ${e.stack}`;
                     }
                 }
             };
-            f.cancel = o.u;
+            f.cancel = module0.u;
             s[t] = f;
         });
         n.cancel = function() {
@@ -676,19 +676,19 @@ export function runSaga(e, saga, ...args) {
         a = e;
         e = saga;
     } else {
-        o.h(saga, is.func, b);
+        module0.h(saga, is.func, b);
         a = saga(...args);
-        o.h(a, is.iterator, b);
+        module0.h(a, is.iterator, b);
     }
     const u = e;
     const { subscribe, dispatch, getState, context, sagaMonitor, logger, onError } = u;
-    const m = o.y();
+    const m = module0.y();
     if (sagaMonitor) {
-        sagaMonitor.effectTriggered = sagaMonitor.effectTriggered || o.u;
-        sagaMonitor.effectResolved = sagaMonitor.effectResolved || o.u;
-        sagaMonitor.effectRejected = sagaMonitor.effectRejected || o.u;
-        sagaMonitor.effectCancelled = sagaMonitor.effectCancelled || o.u;
-        sagaMonitor.actionDispatched = sagaMonitor.actionDispatched || o.u;
+        sagaMonitor.effectTriggered = sagaMonitor.effectTriggered || module0.u;
+        sagaMonitor.effectResolved = sagaMonitor.effectResolved || module0.u;
+        sagaMonitor.effectRejected = sagaMonitor.effectRejected || module0.u;
+        sagaMonitor.effectCancelled = sagaMonitor.effectCancelled || module0.u;
+        sagaMonitor.actionDispatched = sagaMonitor.actionDispatched || module0.u;
         sagaMonitor.effectTriggered({
             effectId: m,
             root: true,
@@ -700,7 +700,7 @@ export function runSaga(e, saga, ...args) {
             }
         });
     }
-    const y = v(a, subscribe, o.A(dispatch), getState, context, {
+    const y = v(a, subscribe, module0.A(dispatch), getState, context, {
         sagaMonitor,
         logger,
         onError
@@ -720,7 +720,7 @@ export { e as throttle } from "./module-10.js";
 export { m as delay } from "./module-0.js";
 export { a as CANCEL } from "./module-0.js";
 export { i as detach } from "./module-2.js";
-export { E as effects };
+export { effects };
 export default function({ context = {}, ...rest } = {}) {
     const { sagaMonitor, logger, onError } = rest;
     if (is.func(rest)) {
@@ -736,8 +736,8 @@ export default function({ context = {}, ...rest } = {}) {
         throw new Error("`options.emitter` passed to the Saga middleware is not a function!");
     }
     function c({ getState, dispatch }) {
-        const f = i.c();
-        f.emit = (rest.emitter || o.o)(f.emit);
+        const f = module6.c();
+        f.emit = (rest.emitter || module0.o)(f.emit);
         c.run = runSaga.bind(null, {
             context,
             subscribe: f.subscribe,
@@ -762,8 +762,8 @@ export default function({ context = {}, ...rest } = {}) {
         throw new Error("Before running a Saga, you must mount the Saga middleware on the Store using applyMiddleware");
     };
     c.setContext = function(e) {
-        o.h(e, is.object, o.k("sagaMiddleware", e));
-        o.v.assign(context, e);
+        module0.h(e, is.object, module0.k("sagaMiddleware", e));
+        module0.v.assign(context, e);
     };
     return c;
 };

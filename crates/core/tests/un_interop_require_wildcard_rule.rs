@@ -10,8 +10,8 @@ var _a = _interopRequireWildcard(require("a"));
 console.log(_a);
 "#;
     let expected = r#"
-import * as _a from "a";
-console.log(_a);
+import * as a from "a";
+console.log(a);
 "#;
     assert_eq_normalized(&render(input), expected);
 }
@@ -24,8 +24,8 @@ var _b = _interopRequireWildcard(require("b"), true);
 console.log(_b);
 "#;
     let expected = r#"
-import * as _b from "b";
-console.log(_b);
+import * as b from "b";
+console.log(b);
 "#;
     assert_eq_normalized(&render(input), expected);
 }
@@ -38,8 +38,8 @@ var _ns = _interop_require_wildcard(require("my-lib"));
 console.log(_ns);
 "#;
     let expected = r#"
-import * as _ns from "my-lib";
-console.log(_ns);
+import * as myLib from "my-lib";
+console.log(myLib);
 "#;
     assert_eq_normalized(&render(input), expected);
 }
@@ -165,8 +165,8 @@ var ns = __importStar(require("./mod.js"));
 console.log(ns);
 "#;
     let expected = r#"
-import * as ns from "./mod.js";
-console.log(ns);
+import * as mod from "./mod.js";
+console.log(mod);
 "#;
     assert_eq_normalized(&render(input), expected);
 }
@@ -205,8 +205,8 @@ use(ns);
 "#;
     let expected = r#"
 import "./typeof.js";
-import * as ns from "./mod.js";
-use(ns);
+import * as mod from "./mod.js";
+use(mod);
 "#;
 
     assert_eq_normalized(&render(input), expected);
@@ -246,8 +246,8 @@ use(ns);
 "#;
     let expected = r#"
 import "./typeof.js";
-import * as ns from "./mod.js";
-use(ns);
+import * as mod from "./mod.js";
+use(mod);
 "#;
 
     assert_eq_normalized(&render(input), expected);
@@ -410,8 +410,8 @@ exports.ns = tslib_1.__importStar(require("dep"));
 "#;
     let expected = r#"
 import tslib_1 from "tslib";
-import * as ns from "dep";
-export { ns };
+import * as dep from "dep";
+export { dep as ns };
 "#;
     assert_eq_normalized(&render(input), expected);
 }
@@ -444,7 +444,10 @@ var ns = _interopRequireWildcard(_dep);
 console.log(ns, _dep.value);
 "#;
     let output = render(input);
-    assert!(output.contains(r#"import * as ns from "dep";"#), "{output}");
+    assert!(
+        output.contains(r#"import * as depNamespace from "dep";"#),
+        "{output}"
+    );
 }
 
 #[test]
@@ -588,7 +591,10 @@ console.log(ns, dep.value);
 "#
         );
         let output = render(&input);
-        assert!(output.contains(r#"import * as ns from "dep";"#), "{output}");
+        assert!(
+            output.contains(r#"import * as depNamespace from "dep";"#),
+            "{output}"
+        );
         assert!(!output.contains("_interopNamespaceDefault"), "{output}");
     }
 }

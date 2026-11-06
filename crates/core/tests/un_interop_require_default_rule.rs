@@ -17,8 +17,8 @@ var _a = _interopRequireDefault(require("a"));
 console.log(_a.default);
 "#;
     let expected = r#"
-import _a from "a";
-console.log(_a);
+import a from "a";
+console.log(a);
 "#;
     assert_eq_normalized(&render(input), expected);
 }
@@ -31,8 +31,8 @@ var _a = _interopRequireDefault(require("a"));
 console.log(_a.default.default);
 "#;
     let expected = r#"
-import _a from "a";
-console.log(_a.default);
+import a from "a";
+console.log(a.default);
 "#;
     assert_eq_normalized(&render(input), expected);
 }
@@ -45,8 +45,8 @@ var _b = _interopRequireDefault(require("b"));
 _b.default();
 "#;
     let expected = r#"
-import _b from "b";
-_b();
+import b from "b";
+b();
 "#;
     assert_eq_normalized(&render(input), expected);
 }
@@ -89,8 +89,8 @@ var _a = _interopRequireDefault(require("a"));
 console.log(_a.default);
 "#;
     let expected = r#"
-import _a from "a";
-console.log(_a);
+import a from "a";
+console.log(a);
 "#;
     assert_eq_normalized(&render(input), expected);
 }
@@ -106,8 +106,8 @@ var _a = _interopRequireDefault(require("a"));
 _a.default();
 "#;
     let expected = r#"
-import _a from "a";
-_a();
+import a from "a";
+a();
 "#;
     assert_eq_normalized(&render(input), expected);
 }
@@ -122,8 +122,8 @@ var _c = a(require("c"));
 console.log(_c.default);
 "#;
     let expected = r#"
-import _c from "c";
-console.log(_c);
+import c from "c";
+console.log(c);
 "#;
     assert_eq_normalized(&render(input), expected);
 }
@@ -138,8 +138,8 @@ var _a = _interopRequireDefault(require("a"));
 _a.default;
 "#;
     let expected = r#"
-import _a from "a";
-_a;
+import a from "a";
+a;
 "#;
     assert_eq_normalized(&render(input), expected);
 }
@@ -155,8 +155,8 @@ var _d = _interopRequireDefault(require("d")).default;
 console.log(_d);
 "#;
     let expected = r#"
-import _d from "d";
-console.log(_d);
+import d from "d";
+console.log(d);
 "#;
     assert_eq_normalized(&render(input), expected);
 }
@@ -209,8 +209,8 @@ var _a = _interopRequireDefault(require("a"));
 _a.default;
 "#;
     let expected = r#"
-import _a from "a";
-_a;
+import a from "a";
+a;
 "#;
     assert_eq_normalized(&render(input), expected);
 }
@@ -243,8 +243,8 @@ var i = function(e) {
 console.log(i.default);
 "#;
     let expected = r#"
-import i from "./module-36.js";
-console.log(i);
+import module36 from "./module-36.js";
+console.log(module36);
 "#;
     assert_eq_normalized(&render(input), expected);
 }
@@ -257,8 +257,8 @@ var _a = _interop_require_default(require("a"));
 console.log(_a.default);
 "#;
     let expected = r#"
-import _a from "a";
-console.log(_a);
+import a from "a";
+console.log(a);
 "#;
     assert_eq_normalized(&render(input), expected);
 }
@@ -770,8 +770,8 @@ var i = ((e) => e && e.__esModule ? e : { default: e })(require("./mod.js"));
 console.log(i.default);
 "#;
     let expected = r#"
-import i from "./mod.js";
-console.log(i);
+import mod from "./mod.js";
+console.log(mod);
 "#;
     assert_eq_normalized(&render(input), expected);
 }
@@ -859,8 +859,8 @@ exports.helper = _interopRequireDefault;
         output.contains("function _interopRequireDefault(obj)"),
         "{output}"
     );
-    assert!(output.contains("import _a from \"a\";"), "{output}");
-    assert!(output.contains("console.log(_a);"), "{output}");
+    assert!(output.contains("import a from \"a\";"), "{output}");
+    assert!(output.contains("console.log(a);"), "{output}");
     assert!(
         output.contains("export { _interopRequireDefault as helper };"),
         "{output}"
@@ -939,10 +939,10 @@ function _interopRequireDefault(e) { return e && e.__esModule ? e : { default: e
 function run() { return _a.default(); }
 "#;
     let expected = r#"
-import _a from "./a";
+import a from "./a";
 export { run };
 function run() {
-    return _a();
+    return a();
 }
 "#;
     assert_eq_normalized(&render(input), expected);

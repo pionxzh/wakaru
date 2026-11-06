@@ -5428,7 +5428,7 @@ fn type_name_rename_module(
 /// name member-init would have given it, `abortController_signal`, when it
 /// still has exactly the derived name and the new name is spelled nowhere in
 /// the module, so it can neither capture nor be shadowed.
-fn rename_stale_member_prefixes(
+pub(super) fn rename_stale_member_prefixes(
     module: &mut Module,
     applied: &[BindingRename],
     exported_bindings: &HashSet<BindingId>,
@@ -5786,7 +5786,7 @@ fn camel_stem(raw: &str) -> Option<String> {
 /// Lowers the leading capital, or a leading acronym as one word:
 /// `Map` → `map`, `XMLHttpRequest` → `xmlHttpRequest`, `URL` → `url`,
 /// `UTF8Decoder` → `utf8Decoder`.
-fn lower_camel_type_name(name: &str) -> String {
+pub(super) fn lower_camel_type_name(name: &str) -> String {
     let chars: Vec<char> = name.chars().collect();
     let upper_run = chars.iter().take_while(|c| c.is_ascii_uppercase()).count();
     // In `XMLHttp` the last capital of the run starts the next word.

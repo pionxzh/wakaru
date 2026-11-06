@@ -1,11 +1,12 @@
 ---
 source: crates/core/tests/webpack4_unpack.rs
+assertion_line: 210
 expression: code
 ---
-import r from "./module-4.js";
-import i from "./module-5.js";
+import module4 from "./module-4.js";
+import module5 from "./module-5.js";
 import { Children, Component } from "./module-50.js";
-import c from "./module-1.js";
+import module1 from "./module-1.js";
 export class a extends Component {
     constructor(...i){
         super(...i);
@@ -37,7 +38,7 @@ export class a extends Component {
         const _this = this;
         const props = this.props;
         const { children, history } = props;
-        i(children == null || Children.count(children) === 1, "A <Router> may have only one child element");
+        module5(children == null || Children.count(children) === 1, "A <Router> may have only one child element");
         this.unlisten = history.listen(function() {
             _this.setState({
                 match: _this.computeMatch(history.location.pathname)
@@ -45,7 +46,7 @@ export class a extends Component {
         });
     }
     componentWillReceiveProps(e) {
-        r(this.props.history === e.history, "You cannot change <Router history>");
+        module4(this.props.history === e.history, "You cannot change <Router history>");
     }
     componentWillUnmount() {
         this.unlisten();
@@ -59,12 +60,12 @@ export class a extends Component {
     }
 }
 a.propTypes = {
-    history: c.object.isRequired,
-    children: c.node
+    history: module1.object.isRequired,
+    children: module1.node
 };
 a.contextTypes = {
-    router: c.object
+    router: module1.object
 };
 a.childContextTypes = {
-    router: c.object.isRequired
+    router: module1.object.isRequired
 };

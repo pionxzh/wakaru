@@ -1,12 +1,13 @@
 ---
 source: crates/core/tests/webpack4_unpack.rs
+assertion_line: 210
 expression: code
 ---
 import "./module-50.js";
-import * as o from "./module-49.js";
+import * as module49 from "./module-49.js";
 import { Provider } from "./module-23.js";
 import { ConnectedRouter } from "./module-18.js";
-import U from "./module-39.js";
-import l from "./module-34.js";
-const store = l;
-o.render(<Provider store={store}><ConnectedRouter history={l.history}><U/></ConnectedRouter></Provider>, document.getElementById("app"));
+import Module39 from "./module-39.js";
+import module34 from "./module-34.js";
+const store = module34;
+module49.render(<Provider store={store}><ConnectedRouter history={module34.history}><Module39/></ConnectedRouter></Provider>, document.getElementById("app"));

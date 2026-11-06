@@ -122,9 +122,9 @@ fn commonjs_factories_keep_module_and_exports() {
     );
     assert_eq!(
         module(&output, "module-202.js").trim(),
-        r#"import n from "./module-101.js";
+        r#"import module101 from "./module-101.js";
 export const read = function() {
-    return n.value;
+    return module101.value;
 };"#
     );
 }
@@ -165,7 +165,7 @@ fn alias_ids_resolve_to_the_first_id_of_their_factory() {
         .any(|(name, _)| name == "module-102.js"));
     assert_eq!(
         module(&output, "module-202.js").trim(),
-        "import e from \"./module-101.js\";\nexport default e;"
+        "import module101 from \"./module-101.js\";\nexport default module101;"
     );
 }
 
@@ -268,8 +268,8 @@ fn server_chunks_and_externals_are_recovered() {
     // builtin itself, whose default import is the object `require` returns.
     assert_eq!(
         module(&output, "module-202.js").trim(),
-        r#"import b from "node:crypto";
-export const hash = ()=>b.randomUUID();"#
+        r#"import crypto from "node:crypto";
+export const hash = ()=>crypto.randomUUID();"#
     );
 }
 

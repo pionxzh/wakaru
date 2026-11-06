@@ -752,8 +752,8 @@ import s from "./router.js";
 const el = createElement(s.a, { history });
 "#;
     let expected = r#"
-import s from "./router.js";
-const el = <s.a history={history}/>;
+import router from "./router.js";
+const el = <router.a history={history}/>;
 "#;
     assert_eq_normalized(
         &run_decomp_then_late_pipeline(input, &facts),
@@ -828,9 +828,9 @@ a.a();
 export const buffers = l.a;
 "#;
     let expected = r#"
-import a from "./module-12.js";
+import module12 from "./module-12.js";
 import { a as a_1 } from "./module-9.js";
-a.a();
+module12.a();
 export const buffers = a_1;
 "#;
     assert_eq_normalized(

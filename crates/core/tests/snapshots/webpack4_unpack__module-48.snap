@@ -1,9 +1,10 @@
 ---
 source: crates/core/tests/webpack4_unpack.rs
+assertion_line: 210
 expression: code
 ---
-import * as r from "./module-50.js";
-import o from "./module-29.js";
+import * as module50 from "./module-50.js";
+import module29 from "./module-29.js";
 import { unstable_IdlePriority, unstable_ImmediatePriority, unstable_LowPriority, unstable_NormalPriority, unstable_UserBlockingPriority, unstable_cancelCallback, unstable_getCurrentPriorityLevel, unstable_now, unstable_requestPaint, unstable_runWithPriority, unstable_scheduleCallback, unstable_shouldYield } from "./module-46.js";
 function a(e) {
     let t = `https://reactjs.org/docs/error-decoder.html?invariant=${e}`;
@@ -12,7 +13,7 @@ function a(e) {
     }
     return `Minified React error #${e}; visit ${t} for the full message or use the non-minified dev environment for full errors and additional helpful warnings.`;
 }
-if (!r) {
+if (!module50) {
     throw Error(a(227));
 }
 let u = false;
@@ -329,7 +330,7 @@ V.xlinkHref = new B("xlinkHref", 1, false, "xlink:href", "http://www.w3.org/1999
 ].forEach((e)=>{
     V[e] = new B(e, 1, false, e.toLowerCase(), null, true);
 });
-const r___SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED = r.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED;
+const module50___SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED = module50.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED;
 function G(e, t, n, r) {
     let o = V.hasOwnProperty(t) ? V[t] : null;
     if (!(o !== null ? o.type === 0 : !r && t.length > 2 && (t[0] === "o" || t[0] === "O") && (t[1] === "n" || t[1] === "N"))) {
@@ -395,13 +396,13 @@ function G(e, t, n, r) {
         }
     }
 }
-if (!r___SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.hasOwnProperty("ReactCurrentDispatcher")) {
-    r___SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentDispatcher = {
+if (!module50___SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.hasOwnProperty("ReactCurrentDispatcher")) {
+    module50___SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentDispatcher = {
         current: null
     };
 }
-if (!r___SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.hasOwnProperty("ReactCurrentBatchConfig")) {
-    r___SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentBatchConfig = {
+if (!module50___SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.hasOwnProperty("ReactCurrentBatchConfig")) {
+    module50___SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentBatchConfig = {
         suspense: null
     };
 }
@@ -582,7 +583,7 @@ function we(e) {
 }
 function Ee(e, t) {
     const t_checked = t.checked;
-    return o({}, t, {
+    return module29({}, t, {
         defaultChecked: undefined,
         defaultValue: undefined,
         value: undefined,
@@ -658,12 +659,12 @@ function Oe(e, t, n) {
     }
 }
 function Ce(e, t) {
-    e = o({
+    e = module29({
         children: undefined
     }, t);
     if (t = ((e)=>{
         let t = "";
-        r.Children.forEach(e, function(e) {
+        module50.Children.forEach(e, function(e) {
             if (e != null) {
                 t += e;
             }
@@ -711,7 +712,7 @@ function _e(e, t) {
     if (t.dangerouslySetInnerHTML != null) {
         throw Error(a(91));
     }
-    return o({}, t, {
+    return module29({}, t, {
         value: undefined,
         defaultValue: undefined,
         children: `${e._wrapperState.initialValue}`
@@ -1675,7 +1676,7 @@ Object.keys(Gt).forEach((e)=>{
         Gt[t] = Gt[e];
     });
 });
-const en = o({
+const en = module29({
     menuitem: true
 }, {
     area: true,
@@ -2035,7 +2036,7 @@ function Kn(e) {
     e.getPooled = Vn;
     e.release = Qn;
 }
-o(Bn.prototype, {
+module29(Bn.prototype, {
     preventDefault: function() {
         this.defaultPrevented = true;
         const nativeEvent = this.nativeEvent;
@@ -2097,10 +2098,10 @@ Bn.extend = function(e) {
     var _this = this;
     t.prototype = _this.prototype;
     const i = new t;
-    o(i, n.prototype);
+    module29(i, n.prototype);
     n.prototype = i;
     n.prototype.constructor = n;
-    n.Interface = o({}, _this.Interface, e);
+    n.Interface = module29({}, _this.Interface, e);
     n.extend = _this.extend;
     Kn(n);
     return n;
@@ -3110,7 +3111,7 @@ function wo(e, t, n) {
             throw Error(a(108, me(t) || "Unknown", i));
         }
     }
-    return o({}, n, {}, e_stateNode);
+    return module29({}, n, {}, e_stateNode);
 }
 function Eo(e) {
     e = (e = e.stateNode) && e.__reactInternalMemoizedMergedChildContext || fo;
@@ -3244,7 +3245,7 @@ function Yo(e, t, n) {
 }
 function Go(e, t) {
     if (e && e.defaultProps) {
-        t = o({}, t);
+        t = module29({}, t);
         for(const n in e = e.defaultProps){
             if (t[n] === undefined) {
                 t[n] = e[n];
@@ -3458,7 +3459,7 @@ function di(e, t, n, r) {
                                 if ((pending = typeof (y = v.payload) === "function" ? y.call(m, c, pending) : y) === null || pending === undefined) {
                                     break e;
                                 }
-                                c = o({}, c, pending);
+                                c = module29({}, c, pending);
                                 break e;
                             case 2:
                                 ai = true;
@@ -3517,10 +3518,10 @@ function pi(e, t, n) {
         }
     }
 }
-const Y_ReactCurrentBatchConfig = r___SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentBatchConfig;
-const refs = (new r.Component).refs;
+const Y_ReactCurrentBatchConfig = module50___SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentBatchConfig;
+const refs = (new module50.Component).refs;
 function yi(e, t, n, r) {
-    n = (n = n(r, t = e.memoizedState)) === null || n === undefined ? t : o({}, t, n);
+    n = (n = n(r, t = e.memoizedState)) === null || n === undefined ? t : module29({}, t, n);
     e.memoizedState = n;
     if (e.expirationTime === 0) {
         e.updateQueue.baseState = n;
@@ -4216,8 +4217,8 @@ function useResponder(responder, props) {
         props
     };
 }
-var Y_ReactCurrentDispatcher = r___SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentDispatcher;
-const Y_ReactCurrentBatchConfig_1 = r___SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentBatchConfig;
+var Y_ReactCurrentDispatcher = module50___SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentDispatcher;
+const Y_ReactCurrentBatchConfig_1 = module50___SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentBatchConfig;
 var Hi = 0;
 var Wi = null;
 var $i = null;
@@ -4914,7 +4915,7 @@ function _a() {
     xa = null;
     ka = false;
 }
-const Y_ReactCurrentOwner = r___SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentOwner;
+const Y_ReactCurrentOwner = module50___SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentOwner;
 var Ra = false;
 function Na(e, t, n, r) {
     t.child = e === null ? Ci(t, null, n, r) : Oi(t, e.child, n, r);
@@ -5672,7 +5673,7 @@ function Ja(e, t, n) {
                             e._wrapperState = {
                                 wasMultiple: !!t_pendingProps.multiple
                             };
-                            c = o({}, t_pendingProps, {
+                            c = module29({}, t_pendingProps, {
                                 value: undefined
                             });
                             Vt("invalid", e);
@@ -6049,10 +6050,10 @@ Wa = function(e, t, n, r, i) {
                 e = [];
                 break;
             case "select":
-                e_memoizedProps = o({}, e_memoizedProps, {
+                e_memoizedProps = module29({}, e_memoizedProps, {
                     value: undefined
                 });
-                r = o({}, r, {
+                r = module29({}, r, {
                     value: undefined
                 });
                 e = [];
@@ -6784,8 +6785,8 @@ function vu(e, t, n) {
     return n;
 }
 var bu;
-var Y_ReactCurrentDispatcher_1 = r___SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentDispatcher;
-var Y_ReactCurrentOwner_1 = r___SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentOwner;
+var Y_ReactCurrentDispatcher_1 = module50___SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentDispatcher;
+var Y_ReactCurrentOwner_1 = module50___SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentOwner;
 var xu = 0;
 var ku = 8;
 var Tu = 16;
@@ -8844,12 +8845,12 @@ export const __SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED = {
                 } catch (e) {}
             };
         } catch (e) {}
-    })(o({}, e, {
+    })(module29({}, e, {
         overrideHookState: null,
         overrideProps: null,
         setSuspenseHandler: null,
         scheduleUpdate: null,
-        currentDispatcherRef: r___SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentDispatcher,
+        currentDispatcherRef: module50___SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentDispatcher,
         findHostInstanceByFiber: function(e) {
             if ((e = tt(e)) === null) {
                 return null;

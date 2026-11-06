@@ -125,6 +125,19 @@ fn standard_or_above(ctx: RuleRunContext<'_>) -> bool {
     ctx.rewrite_level >= RewriteLevel::Standard
 }
 
+/// Unpack's Phase 2 runs `ImportSourceRename` once its module is otherwise
+/// final instead: after the late ESM recovery and its `SmartRename` pass,
+/// source-map names, and the recovered-filename remap of import sources, so
+/// the weakest naming evidence still goes last and reads the final source.
+/// The Phase 1 prediction of that range follows Phase 2.
+fn import_source_rename_enabled(ctx: RuleRunContext<'_>) -> bool {
+    ctx.rewrite_level >= RewriteLevel::Standard
+        && !matches!(
+            ctx.mode,
+            PipelineMode::UnpackPhase2 | PipelineMode::UnpackLatePrediction
+        )
+}
+
 fn aggressive_only(ctx: RuleRunContext<'_>) -> bool {
     ctx.rewrite_level == RewriteLevel::Aggressive
 }
@@ -621,6 +634,9 @@ runner!(run_smart_rename_second_pass, |ctx| {
         Rc::clone(&ctx.extracted_function_names),
     )
 });
+runner!(run_import_source_rename, |ctx| ImportSourceRename::new(
+    ctx.unresolved_mark
+));
 runner!(run_dead_uninitialized_decls, DeadUninitializedDecls);
 
 fn run_dead_decls(module: &mut Module, ctx: RuleRunContext<'_>) {
@@ -894,6 +910,16 @@ define_rule_registry! {
     // pass is disabled.
     ("SmartRename2", Cleanup, run_smart_rename_second_pass, standard_or_above, requires: [
         "UnJsx2"
+    ]),
+    // A source path is the weakest naming evidence: name a default or
+    // namespace import after its source only once every pass that can give
+    // it a better name has run (value-position renames in both SmartRename
+    // passes, UnImportRename2, UnExportRename2, the JSX passes). Gated like
+    // SmartRename; unpack runs it on the finished module instead.
+    ("ImportSourceRename", Cleanup, run_import_source_rename, import_source_rename_enabled, requires: [
+        "SmartRename2",
+        "UnImportRename2",
+        "UnExportRename2"
     ]),
     // Late structural rewrites can consume uninitialized temps used by lowered
     // optional chaining / nullish coalescing. Keep this after name-recovery

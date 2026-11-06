@@ -1,10 +1,11 @@
 ---
 source: crates/core/tests/webpack4_unpack.rs
+assertion_line: 210
 expression: code
 ---
 import { Component } from "./module-50.js";
-import i from "./module-1.js";
-import * as u from "./module-16.js";
+import module1 from "./module-1.js";
+import * as module16 from "./module-16.js";
 import { a } from "./module-15.js";
 export const LOCATION_CHANGE = "@@router/LOCATION_CHANGE";
 const s = {
@@ -45,17 +46,17 @@ export class ConnectedRouter extends Component {
         }
     }
     render() {
-        return <u.a {...this.props}/>;
+        return <module16.a {...this.props}/>;
     }
 }
 ConnectedRouter.propTypes = {
-    store: i.object,
-    history: i.object.isRequired,
-    children: i.node,
-    isSSR: i.bool
+    store: module1.object,
+    history: module1.object.isRequired,
+    children: module1.node,
+    isSSR: module1.bool
 };
 ConnectedRouter.contextTypes = {
-    store: i.object
+    store: module1.object
 };
 export const getLocation = function(e) {
     return e.router.location;

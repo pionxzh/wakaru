@@ -3,9 +3,9 @@ source: crates/core/tests/webpack4_unpack.rs
 assertion_line: 210
 expression: code
 ---
-import * as r from "./module-0.js";
+import * as module0 from "./module-0.js";
 import { q } from "./module-0.js";
-import * as l from "./module-2.js";
+import * as module2 from "./module-2.js";
 import { k } from "./module-2.js";
 import { a as a_1 } from "./module-6.js";
 import { a as a_2 } from "./module-9.js";
@@ -47,14 +47,14 @@ function u(e, t, n = "iterator") {
         }
         return c;
     }
-    return r.t(l, function(e) {
+    return module0.t(l, function(e) {
         return l(null, e);
     }, n, true);
 }
 export function b(e, t, ...r) {
     const s = {
         done: false,
-        value: l.s(e)
+        value: module2.s(e)
     };
     let f;
     const d = function(e) {
@@ -87,7 +87,7 @@ export function b(e, t, ...r) {
 export function d(e, t, ...r) {
     const s = {
         done: false,
-        value: l.s(e)
+        value: module2.s(e)
     };
     const f = (e)=>({
             done: false,
@@ -120,7 +120,7 @@ export function d(e, t, ...r) {
                     "q3",
                     ((e)=>({
                             done: false,
-                            value: l.f(e)
+                            value: module2.f(e)
                         }))(d)
                 ];
             }
@@ -144,11 +144,11 @@ export function f(e, t, n, ...s) {
     let h;
     const m = {
         done: false,
-        value: l.a(t, a_2.sliding(1))
+        value: module2.a(t, a_2.sliding(1))
     };
     const y = {
         done: false,
-        value: l.e(r.m, e)
+        value: module2.e(module0.m, e)
     };
     const v = function(e) {
         return p = e;
@@ -169,7 +169,7 @@ export function f(e, t, n, ...s) {
                 "q3",
                 {
                     done: false,
-                    value: l.s(h)
+                    value: module2.s(h)
                 },
                 v
             ];
@@ -199,7 +199,7 @@ export function f(e, t, n, ...s) {
 const h = (e)=>`import { ${e} } from 'redux-saga' has been deprecated in favor of import { ${e} } from 'redux-saga/effects'.
 The latter will not work with yield*, as helper effects are wrapped automatically for you in fork effect.
 Therefore yield ${e} will return task descriptor to your saga and execute next lines of code.`;
-const m = r.n(b, h("takeEvery"));
+const m = module0.n(b, h("takeEvery"));
 export { m as a };
-export const c = r.n(d, h("takeLatest"));
-export const e = r.n(f, h("throttle"));
+export const c = module0.n(d, h("takeLatest"));
+export const e = module0.n(f, h("throttle"));

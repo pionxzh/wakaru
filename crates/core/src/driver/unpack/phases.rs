@@ -71,9 +71,9 @@ use crate::rules::transpiler_helper_utils::LocalHelperContext;
 use crate::rules::webpack_lazy_import::run_cross_module_webpack_lazy_imports;
 use crate::rules::{
     apply_rules, apply_rules_to_recovered_module, contains_local_self_require,
-    lowers_to_commonjs_namespace, ImportDedup, PipelineMode, RewriteLevel, RulePipelineOptions,
-    SimplifySequence, UnAssignmentMerging, UnConditionals, UnConditionalsAssignmentOnly,
-    UnImportRename, UnOptionalChaining,
+    lowers_to_commonjs_namespace, ImportDedup, ImportSourceRename, PipelineMode, RewriteLevel,
+    RulePipelineOptions, SimplifySequence, UnAssignmentMerging, UnConditionals,
+    UnConditionalsAssignmentOnly, UnImportRename, UnOptionalChaining,
 };
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
 use crate::synthetic_import_cleanup::downgrade_unused_synthetic_imports;
@@ -365,8 +365,9 @@ fn run_rules_before_late_recovery(
 /// `default_object_helper_exports`, `ts_helper_exports`,
 /// `ts_helper_namespace_factory_exports`); with all of them empty, a lookup
 /// finds what a run without facts finds. `UnEs6Class` and
-/// `UnPrototypeClass` read this module's `CallRequiredPlan` pins. No rule in
-/// the range reads the pipeline mode. A rule added to the range that reads
+/// `UnPrototypeClass` read this module's `CallRequiredPlan` pins. Only
+/// `ImportSourceRename`'s gate reads the pipeline mode, and it skips the
+/// range under both unpack modes alike. A rule added to the range that reads
 /// facts another way must be covered here.
 fn range_ignores_facts(module: &Module, facts: LateRangeFacts<'_>, filename: &str) -> bool {
     struct ProviderSources<'a> {
@@ -1523,6 +1524,13 @@ pub(super) fn unpack_multi_module_with_plan(
                     unresolved_mark,
                 );
             }
+            // The weakest naming evidence goes last, after every other rename
+            // (the late recovery's `SmartRename`, source-map names) and after
+            // the remap, so an import is named after its final source.
+            // Gated like `SmartRename`; the registry range skips it here.
+            if options.level >= RewriteLevel::Standard {
+                module.visit_mut_with(&mut ImportSourceRename::new(unresolved_mark));
+            }
 
             let final_filename = rename_ref
                 .get(&unpacked.module.filename)
@@ -2612,15 +2620,15 @@ exports.default = o.default(l);
             .expect("fixture should decompile");
         let code = &output.modules[0].code;
         assert!(
-            code.contains("import a from \"./module-2.js\";"),
+            code.contains("import module2 from \"./module-2.js\";"),
             "expected require binding to become an import:\n{code}"
         );
         assert!(
-            code.contains("import o from \"./module-3.js\";"),
+            code.contains("import module3 from \"./module-3.js\";"),
             "expected interop require to become an import:\n{code}"
         );
         assert!(
-            code.contains("a;\nclass l extends a.Component"),
+            code.contains("module2;\nclass l extends module2.Component"),
             "expected lowered interop binding read to survive until import recovery:\n{code}"
         );
     }

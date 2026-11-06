@@ -42,12 +42,18 @@ fn method_call_on_receiver_reading_export_keeps_namespace_receiver() {
         RewriteLevel::Aggressive,
     ] {
         let code = consumer(level);
+        // Standard and above name the import after its source.
+        let local = if level == RewriteLevel::Minimal {
+            "t"
+        } else {
+            "module240"
+        };
         assert!(
-            code.contains("import * as t from \"./module-240.js\""),
+            code.contains(&format!("import * as {local} from \"./module-240.js\"")),
             "{level:?}: the consumer must keep a namespace import:\n{code}"
         );
         assert!(
-            code.contains("t.describe()"),
+            code.contains(&format!("{local}.describe()")),
             "{level:?}: the call must keep the namespace as its receiver:\n{code}"
         );
     }

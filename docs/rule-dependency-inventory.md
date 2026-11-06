@@ -696,6 +696,18 @@ rationale, or level gating appear.
 - **SmartRename** — after SmartInline (aliases removed, names stabilized).
   Candidate consumer of source-map-recovered names. Unpack's late ESM
   recovery runs it at `standard` and above, like the registry.
+- **ImportSourceRename** — names a still-generated default or namespace
+  import local after its source (`./module-221.js` → `module221`). A source
+  path is the weakest naming evidence, so the rule runs after every pass that
+  can name an import binding: the value-position renames of SmartRename and
+  SmartRename2, UnImportRename2, UnExportRename2, and the JSX passes. Unpack
+  runs it on each finished Phase 2 module instead of in the rule range (the
+  gate skips it under `UnpackPhase2` and `UnpackLatePrediction`): after the
+  late ESM recovery and its `SmartRename` pass, source-map names, and the
+  recovered-filename remap, so a provider that got its original filename
+  back names the import, not its provisional `module-<id>`. Gated at
+  `standard` like SmartRename. In a single-file decompile a source-map
+  rename (`-m`) runs after the pipeline and overrides its names.
 - **UnReturn** — removes tail `return undefined`; runs before the final
   UnConditionals pass, which can simplify patterns this exposes.
 

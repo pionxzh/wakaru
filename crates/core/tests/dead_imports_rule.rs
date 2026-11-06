@@ -39,8 +39,8 @@ import r from "./x.js";
 console.log(r);
 "#;
     let expected = r#"
-import r from "./x.js";
-console.log(r);
+import x from "./x.js";
+console.log(x);
 "#;
     assert_eq_normalized(&render_with_dce(input), expected.trim());
 }
@@ -66,8 +66,8 @@ import R, { a, b } from "./x.js";
 console.log(R, a);
 "#;
     let expected = r#"
-import R, { a } from "./x.js";
-console.log(R, a);
+import x, { a } from "./x.js";
+console.log(x, a);
 "#;
     assert_eq_normalized(&render_with_dce(input), expected.trim());
 }
@@ -79,8 +79,8 @@ import * as ns from "./x.js";
 console.log(ns.foo);
 "#;
     let expected = r#"
-import * as ns from "./x.js";
-console.log(ns.foo);
+import * as x from "./x.js";
+console.log(x.foo);
 "#;
     assert_eq_normalized(&render_with_dce(input), expected.trim());
 }
@@ -148,8 +148,8 @@ import r from "./x.js";
 const e = <r.Switch/>;
 "#;
     let expected = r#"
-import r from "./x.js";
-const e = <r.Switch/>;
+import x from "./x.js";
+const e = <x.Switch/>;
 "#;
     assert_eq_normalized(&render_with_dce(input), expected.trim());
 }

@@ -1,14 +1,15 @@
 ---
 source: crates/core/tests/webpack4_unpack.rs
+assertion_line: 210
 expression: code
 ---
-import r from "./module-44.js";
+import module44 from "./module-44.js";
 function resetWarningCache() {}
 function checkPropTypes() {}
 checkPropTypes.resetWarningCache = resetWarningCache;
 export default function() {
     function e(e, t, n, o, i, a) {
-        if (a !== r) {
+        if (a !== module44) {
             const u = new Error("Calling PropTypes validators directly is not supported by the `prop-types` package. Use PropTypes.checkPropTypes() to call them. Read more at http://fb.me/use-check-prop-types");
             u.name = "Invariant Violation";
             throw u;

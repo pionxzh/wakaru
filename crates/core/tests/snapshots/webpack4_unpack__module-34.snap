@@ -1,19 +1,20 @@
 ---
 source: crates/core/tests/webpack4_unpack.rs
+assertion_line: 210
 expression: code
 ---
 import { applyMiddleware, createStore } from "./module-11.js";
-import o from "./module-22.js";
+import module22 from "./module-22.js";
 import { routerMiddleware } from "./module-18.js";
 import { createBrowserHistory } from "./module-8.js";
-import u from "./module-27.js";
-import l from "./module-33.js";
+import module27 from "./module-27.js";
+import module33 from "./module-33.js";
 export const history = createBrowserHistory();
-const f = o();
+const f = module22();
 const d = [
     routerMiddleware(history),
     f
 ];
-const p = createStore(u, applyMiddleware(...d));
-f.run(l);
+const p = createStore(module27, applyMiddleware(...d));
+f.run(module33);
 export default p;

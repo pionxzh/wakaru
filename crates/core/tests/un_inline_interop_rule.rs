@@ -13,8 +13,8 @@ const a = i.default;
 "#;
     // After full pipeline: unwrap IIFE → drop .default → UnEsm → import
     let expected = r#"
-import i from "./module-36.js";
-const a = i;
+import module36 from "./module-36.js";
+const a = module36;
 "#;
     assert_eq_normalized(&render(input), expected.trim());
 }
@@ -29,8 +29,8 @@ const a = (function(e) {
 const b = a.default;
 "#;
     let expected = r#"
-import a from "./module-35.js";
-const b = a;
+import module35 from "./module-35.js";
+const b = module35;
 "#;
     assert_eq_normalized(&render(input), expected.trim());
 }
@@ -46,8 +46,8 @@ console.log(i);
 "#;
     // IIFE unwrapped, require converted to import by UnEsm
     let expected = r#"
-import i from "./module-36.js";
-console.log(i);
+import module36 from "./module-36.js";
+console.log(module36);
 "#;
     assert_eq_normalized(&render(input), expected.trim());
 }

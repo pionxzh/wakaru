@@ -3,8 +3,8 @@ source: crates/core/tests/webpack4_unpack.rs
 assertion_line: 210
 expression: code
 ---
-import * as r from "./module-0.js";
-const o = r.x("IO");
+import * as module0 from "./module-0.js";
+const o = module0.x("IO");
 const i = "TAKE";
 const a = "PUT";
 const u = "ALL";
@@ -26,21 +26,21 @@ const E = (e, t)=>({
         [e]: t
     });
 const x = function(e) {
-    r.h(W.fork(e), r.q.object, "detach(eff): argument must be a fork effect");
+    module0.h(W.fork(e), module0.q.object, "detach(eff): argument must be a fork effect");
     e[f].detached = true;
     return e;
 };
 export { x as i };
 function k(e = "*") {
     if (arguments.length) {
-        r.h(arguments[0], r.q.notUndef, "take(patternOrChannel): patternOrChannel is undefined");
+        module0.h(arguments[0], module0.q.notUndef, "take(patternOrChannel): patternOrChannel is undefined");
     }
-    if (r.q.pattern(e)) {
+    if (module0.q.pattern(e)) {
         return E(i, {
             pattern: e
         });
     }
-    if (r.q.channel(e)) {
+    if (module0.q.channel(e)) {
         return E(i, {
             channel: e
         });
@@ -53,14 +53,14 @@ k.maybe = function() {
     e[i].maybe = true;
     return e;
 };
-export const t = r.n(k.maybe, r.z("takem", "take.maybe"));
+export const t = module0.n(k.maybe, module0.z("takem", "take.maybe"));
 export function n(channel, action) {
     if (arguments.length > 1) {
-        r.h(channel, r.q.notUndef, "put(channel, action): argument channel is undefined");
-        r.h(channel, r.q.channel, `put(channel, action): argument ${channel} is not a valid channel`);
-        r.h(action, r.q.notUndef, "put(channel, action): argument action is undefined");
+        module0.h(channel, module0.q.notUndef, "put(channel, action): argument channel is undefined");
+        module0.h(channel, module0.q.channel, `put(channel, action): argument ${channel} is not a valid channel`);
+        module0.h(action, module0.q.notUndef, "put(channel, action): argument action is undefined");
     } else {
-        r.h(channel, r.q.notUndef, "put(action): argument action is undefined");
+        module0.h(channel, module0.q.notUndef, "put(action): argument action is undefined");
         action = channel;
         channel = null;
     }
@@ -78,9 +78,9 @@ function C(e) {
 }
 export { C as o };
 function P(e, fn, args) {
-    r.h(fn, r.q.notUndef, `${e}: argument fn is undefined`);
+    module0.h(fn, module0.q.notUndef, `${e}: argument fn is undefined`);
     let context = null;
-    if (r.q.array(fn)) {
+    if (module0.q.array(fn)) {
         const i = fn;
         context = i[0];
         fn = i[1];
@@ -89,10 +89,10 @@ function P(e, fn, args) {
         context = a.context;
         fn = a.fn;
     }
-    if (context && r.q.string(fn) && r.q.func(context[fn])) {
+    if (context && module0.q.string(fn) && module0.q.func(context[fn])) {
         fn = context[fn];
     }
-    r.h(fn, r.q.func, `${e}: argument ${fn} is not a function`);
+    module0.h(fn, module0.q.func, `${e}: argument ${fn} is not a function`);
     return {
         context,
         fn,
@@ -126,8 +126,8 @@ function A(...t) {
         return O(t.map((e)=>A(e)));
     }
     const o = t[0];
-    r.h(o, r.q.notUndef, "join(task): argument task is undefined");
-    r.h(o, r.q.task, `join(task): argument ${o} is not a valid Task object ${w}`);
+    module0.h(o, module0.q.notUndef, "join(task): argument task is undefined");
+    module0.h(o, module0.q.task, `join(task): argument ${o} is not a valid Task object ${w}`);
     return E(d, o);
 }
 export { A as m };
@@ -137,10 +137,10 @@ function L(...t) {
     }
     const o = t[0];
     if (t.length === 1) {
-        r.h(o, r.q.notUndef, "cancel(task): argument task is undefined");
-        r.h(o, r.q.task, `cancel(task): argument ${o} is not a valid Task object ${w}`);
+        module0.h(o, module0.q.notUndef, "cancel(task): argument task is undefined");
+        module0.h(o, module0.q.task, `cancel(task): argument ${o} is not a valid Task object ${w}`);
     }
-    return E(p, o || r.d);
+    return E(p, o || module0.d);
 }
 export { L as f };
 function I(selector) {
@@ -148,10 +148,10 @@ function I(selector) {
         args[o - 1] = arguments[o];
     }
     if (arguments.length === 0) {
-        selector = r.o;
+        selector = module0.o;
     } else {
-        r.h(selector, r.q.notUndef, "select(selector,[...]): argument selector is undefined");
-        r.h(selector, r.q.func, `select(selector,[...]): argument ${selector} is not a function`);
+        module0.h(selector, module0.q.notUndef, "select(selector,[...]): argument selector is undefined");
+        module0.h(selector, module0.q.func, `select(selector,[...]): argument ${selector} is not a function`);
     }
     return E(h, {
         selector,
@@ -160,10 +160,10 @@ function I(selector) {
 }
 export { I as p };
 function D(pattern, buffer) {
-    r.h(pattern, r.q.notUndef, "actionChannel(pattern,...): argument pattern is undefined");
+    module0.h(pattern, module0.q.notUndef, "actionChannel(pattern,...): argument pattern is undefined");
     if (arguments.length > 1) {
-        r.h(buffer, r.q.notUndef, "actionChannel(pattern, buffer): argument buffer is undefined");
-        r.h(buffer, r.q.buffer, `actionChannel(pattern, buffer): argument ${buffer} is not a valid buffer`);
+        module0.h(buffer, module0.q.notUndef, "actionChannel(pattern, buffer): argument buffer is undefined");
+        module0.h(buffer, module0.q.buffer, `actionChannel(pattern, buffer): argument ${buffer} is not a valid buffer`);
     }
     return E(m, {
         pattern,
@@ -176,17 +176,17 @@ function F() {
 }
 export { F as g };
 function z(e) {
-    r.h(e, r.q.channel, `flush(channel): argument ${e} is not valid channel`);
+    module0.h(e, module0.q.channel, `flush(channel): argument ${e} is not valid channel`);
     return E(v, e);
 }
 export { z as j };
 function q(e) {
-    r.h(e, r.q.string, `getContext(prop): argument ${e} is not a string`);
+    module0.h(e, module0.q.string, `getContext(prop): argument ${e} is not a string`);
     return E(b, e);
 }
 export { q as l };
 function U(e) {
-    r.h(e, r.q.object, r.k(null, e));
+    module0.h(e, module0.q.object, module0.k(null, e));
     return E(g, e);
 }
 export { U as q };
@@ -195,7 +195,7 @@ n.resolve = function() {
     e[a].resolve = true;
     return e;
 };
-n.sync = r.n(n.resolve, r.z("put.sync", "put.resolve"));
+n.sync = module0.n(n.resolve, module0.z("put.sync", "put.resolve"));
 const H = (e)=>function(t) {
         return t && t[o] && t[e];
     };

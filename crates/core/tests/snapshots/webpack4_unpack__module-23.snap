@@ -4,22 +4,22 @@ assertion_line: 210
 expression: code
 ---
 import { Children, Component, forwardRef } from "./module-50.js";
-import u from "./module-1.js";
+import module1 from "./module-1.js";
 import { a } from "./module-7.js";
-import y from "./module-32.js";
-import _b from "./module-5.js";
+import module32 from "./module-32.js";
+import module5 from "./module-5.js";
 import { isValidElementType } from "./module-43.js";
 import { bindActionCreators } from "./module-11.js";
-const c = u.shape({
-    trySubscribe: u.func.isRequired,
-    tryUnsubscribe: u.func.isRequired,
-    notifyNestedSubs: u.func.isRequired,
-    isSubscribed: u.func.isRequired
+const c = module1.shape({
+    trySubscribe: module1.func.isRequired,
+    tryUnsubscribe: module1.func.isRequired,
+    notifyNestedSubs: module1.func.isRequired,
+    isSubscribed: module1.func.isRequired
 });
-const s = u.shape({
-    subscribe: u.func.isRequired,
-    dispatch: u.func.isRequired,
-    getState: u.func.isRequired
+const s = module1.shape({
+    subscribe: module1.func.isRequired,
+    dispatch: module1.func.isRequired,
+    getState: module1.func.isRequired
 });
 forwardRef;
 export function createProvider(e = "store") {
@@ -41,7 +41,7 @@ export function createProvider(e = "store") {
     }
     r.propTypes = {
         store: s.isRequired,
-        children: u.element.isRequired
+        children: module1.element.isRequired
     };
     r.childContextTypes = {
         [e]: s.isRequired,
@@ -137,7 +137,7 @@ export function connectAdvanced(e, { getDisplayName = function(e) {
         [M]: c
     };
     return function(WrappedComponent) {
-        _b(isValidElementType(WrappedComponent), `You must pass a component to the function returned by ${methodName}. Instead received ${JSON.stringify(WrappedComponent)}`);
+        module5(isValidElementType(WrappedComponent), `You must pass a component to the function returned by ${methodName}. Instead received ${JSON.stringify(WrappedComponent)}`);
         const wrappedComponentName = WrappedComponent.displayName || WrappedComponent.name || "Component";
         const displayName = getDisplayName(wrappedComponentName);
         const a = {
@@ -161,7 +161,7 @@ export function connectAdvanced(e, { getDisplayName = function(e) {
                 this.store = e[storeKey] || t[storeKey];
                 this.propsMode = Boolean(e[storeKey]);
                 this.setWrappedInstance = this.setWrappedInstance.bind(this);
-                _b(this.store, `Could not find "${storeKey}" in either the context or props of "${displayName}". Either wrap the root component in a <Provider>, or explicitly pass "${storeKey}" as a prop to "${displayName}".`);
+                module5(this.store, `Could not find "${storeKey}" in either the context or props of "${displayName}". Either wrap the root component in a <Provider>, or explicitly pass "${storeKey}" as a prop to "${displayName}".`);
                 this.initSelector();
                 this.initSubscription();
             }
@@ -197,7 +197,7 @@ export function connectAdvanced(e, { getDisplayName = function(e) {
                 this.selector.shouldComponentUpdate = false;
             }
             getWrappedInstance() {
-                _b(withRef, `To access the wrapped instance, you need to specify { withRef: true } in the options argument of the ${methodName}() call.`);
+                module5(withRef, `To access the wrapped instance, you need to specify { withRef: true } in the options argument of the ${methodName}() call.`);
                 return this.wrappedInstance;
             }
             setWrappedInstance(e) {
@@ -284,7 +284,7 @@ export function connectAdvanced(e, { getDisplayName = function(e) {
         u.childContextTypes = I;
         u.contextTypes = L;
         u.propTypes = L;
-        return y(u, WrappedComponent);
+        return module32(u, WrappedComponent);
     };
 }
 const hasOwnProperty = Object.prototype.hasOwnProperty;

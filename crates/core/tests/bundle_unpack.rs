@@ -702,14 +702,19 @@ fn webpack5_bundled_tslib_interop_helpers_become_imports() {
     assert_interop_consumer_imports(
         source,
         &[
-            r#"import o from "./module-805.js";"#,
-            r#"import u from "./module-30.js";"#,
-            r#"import * as i from "./module-701.js";"#,
-            "new o(\"w\")",
-            "u.version",
-            "i.default",
+            r#"import module805 from "./module-805.js";"#,
+            r#"import module30 from "./module-30.js";"#,
+            r#"import * as module701 from "./module-701.js";"#,
+            "new module805(\"w\")",
+            "module30.version",
+            "module701.default",
         ],
-        &["__importDefault", "__importStar", "o.default", "u.default"],
+        &[
+            "__importDefault",
+            "__importStar",
+            "module805.default",
+            "module30.default",
+        ],
     );
 }
 
@@ -725,13 +730,13 @@ fn webpack5_bundled_babel_runtime_interop_helper_becomes_imports() {
     assert_interop_consumer_imports(
         source,
         &[
-            r#"import o from "./module-805.js";"#,
-            r#"import u from "./module-30.js";"#,
-            r#"import * as i from "./module-701.js";"#,
-            "new o(\"w\")",
-            "u.version",
+            r#"import module805 from "./module-805.js";"#,
+            r#"import module30 from "./module-30.js";"#,
+            r#"import * as module701 from "./module-701.js";"#,
+            "new module805(\"w\")",
+            "module30.version",
         ],
-        &["o.default", "u.default"],
+        &["module805.default", "module30.default"],
     );
 }
 
@@ -760,16 +765,16 @@ fn webpack5_bundled_babel_runtime_interop_of_a_commonjs_provider_becomes_a_defau
     assert!(!provider.contains("export "), "{provider}");
     let consumer = module("module-393.js");
     for present in [
-        r#"import u from "./module-30.js";"#,
-        r#"u("v")"#,
-        "u.version",
+        r#"import module30 from "./module-30.js";"#,
+        r#"module30("v")"#,
+        "module30.version",
     ] {
         assert!(
             consumer.contains(present),
             "missing `{present}`:\n{consumer}"
         );
     }
-    for absent in ["require(", "u.default"] {
+    for absent in ["require(", "module30.default"] {
         assert!(!consumer.contains(absent), "kept `{absent}`:\n{consumer}");
     }
 }
@@ -783,13 +788,13 @@ fn webpack5_bundled_swc_external_interop_helpers_become_imports() {
     assert_interop_consumer_imports(
         source,
         &[
-            r#"import u from "./module-805.js";"#,
-            r#"import i from "./module-30.js";"#,
-            r#"import * as c from "./module-701.js";"#,
-            "new u(\"w\")",
-            "i.version",
+            r#"import module805 from "./module-805.js";"#,
+            r#"import module30 from "./module-30.js";"#,
+            r#"import * as module701 from "./module-701.js";"#,
+            "new module805(\"w\")",
+            "module30.version",
         ],
-        &["._(", "u.default", "i.default"],
+        &["._(", "module805.default", "module30.default"],
     );
 }
 
@@ -5497,7 +5502,7 @@ fn destructured_import_through_a_passthrough_reads_the_esm_provider() {
     let output = unpack(&source, DecompileOptions::default()).expect("bundle should unpack");
     let consumer = unpacked_module(&output, "module-1.js");
     assert!(
-        consumer.contains(r#"import * as z from "./module-3.js""#),
+        consumer.contains(r#"import * as module3 from "./module-3.js""#),
         "{consumer}"
     );
 }
@@ -5513,7 +5518,7 @@ fn import_through_a_passthrough_of_a_function_provider_reads_its_default() {
     let output = unpack(&source, DecompileOptions::default()).expect("bundle should unpack");
     let consumer = unpacked_module(&output, "module-1.js");
     assert!(
-        consumer.contains(r#"import z from "./module-3.js""#),
+        consumer.contains(r#"import module3 from "./module-3.js""#),
         "{consumer}"
     );
     let provider = unpacked_module(&output, "module-3.js");
@@ -5549,7 +5554,7 @@ fn import_through_a_passthrough_of_a_next_tail_provider_reads_its_default() {
     );
     let consumer = unpacked_module(&output, "module-1.js");
     assert!(
-        consumer.contains(r#"import z from "./module-3.js""#),
+        consumer.contains(r#"import module3 from "./module-3.js""#),
         "{consumer}"
     );
 }
@@ -5707,10 +5712,10 @@ fn imported_call_of_a_marked_provider_now_esm_keeps_what_the_marker_meant() {
     let output = unpack(&source, DecompileOptions::default()).expect("bundle should unpack");
     let module = unpacked_module(&output, "module-1.js");
     assert!(
-        module.contains(r#"import r from "./module-4.js";"#),
+        module.contains(r#"import module4 from "./module-4.js";"#),
         "{module}"
     );
-    assert!(module.contains("return r(1)"), "{module}");
+    assert!(module.contains("return module4(1)"), "{module}");
     assert!(!module.contains("require("), "{module}");
     let findings = validate_output_modules(&output.modules);
     assert!(findings.is_empty(), "{findings:#?}");
@@ -5840,10 +5845,10 @@ fn es_module_consumer_writing_a_named_only_provider_keeps_it_commonjs() {
         assert_eq!(!provider.contains("export "), kept, "{provider}");
         let consumer = unpacked_module(&output, "module-2.js");
         assert!(
-            consumer.contains("import p from \"./module-1.js\""),
+            consumer.contains("import module1 from \"./module-1.js\""),
             "{consumer}"
         );
-        assert!(consumer.contains("p.value = 2"), "{consumer}");
+        assert!(consumer.contains("module1.value = 2"), "{consumer}");
     }
 }
 

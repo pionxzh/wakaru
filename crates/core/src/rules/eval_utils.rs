@@ -283,7 +283,8 @@ pub(crate) fn module_has_with_stmt(module: &Module) -> bool {
 /// A direct eval whose known source only reads CommonJS `require`
 /// (`is_require_read_source`) does not count while the module declares no
 /// binding named `require`: no rule in this set can then rename or remove
-/// the binding it reads, and SmartRename never names a binding `require`.
+/// the binding it reads, and neither SmartRename nor ImportSourceRename
+/// names a binding `require`.
 pub(crate) fn has_dynamic_scope_construct(module: &Module) -> bool {
     let mut finder = DynamicScopeConstructFinder::default();
     module.visit_with(&mut finder);

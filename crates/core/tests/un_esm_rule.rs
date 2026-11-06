@@ -4682,9 +4682,9 @@ function build() {
     assert_eq_normalized(&output, expected);
 
     let expected_final = r#"
-import r from "./base.js";
+import base from "./base.js";
 function build() {
-  return factory(r);
+  return factory(base);
 }
 "#;
     assert_eq_normalized(&render_pipeline(input), expected_final);

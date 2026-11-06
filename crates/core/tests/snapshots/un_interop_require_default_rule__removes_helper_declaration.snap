@@ -1,5 +1,6 @@
 ---
 source: crates/core/tests/un_interop_require_default_rule.rs
+assertion_line: 173
 expression: output
 ---
-import _a from "a";
+import a from "a";

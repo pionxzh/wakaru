@@ -16,8 +16,8 @@ var countRef = (0, s.useRef)(0);
 "#;
     // VarDeclToLetConst converts var to const since countRef is never reassigned.
     let expected = r#"
-import s from "react";
-const countRef = s.useRef(0);
+import React from "react";
+const countRef = React.useRef(0);
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
@@ -64,9 +64,9 @@ var secondRef = (0, s.useMemo)(() => {}, []);
 "#;
     // VarDeclToLetConst converts var to const since these vars are never reassigned.
     let expected = r#"
-import s from "react";
-const countRef = s.useRef(0);
-const secondRef = s.useMemo(()=>{}, []);
+import React from "react";
+const countRef = React.useRef(0);
+const secondRef = React.useMemo(()=>{}, []);
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);

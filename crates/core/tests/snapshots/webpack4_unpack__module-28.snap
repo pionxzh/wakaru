@@ -8,7 +8,7 @@ import { compose } from "./module-11.js";
 import "./module-27.js";
 import "./module-13.js";
 import { fetchData } from "./module-25.js";
-import a from "./module-35.js";
+import module35 from "./module-35.js";
 const u = {
     fetchData
 };
@@ -16,4 +16,4 @@ export default compose(connect(function(e) {
     return {
         data: e.main.data
     };
-}, u))(a);
+}, u))(module35);

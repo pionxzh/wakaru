@@ -218,3 +218,32 @@ fn plain_input_public_path_is_not_recovered_from_sentry_marker() {
         "unexpected graph findings: {findings:#?}"
     );
 }
+
+#[test]
+fn an_import_of_a_renamed_module_is_named_after_its_recovered_filename() {
+    // `ImportSourceRename` runs after the remap, so the consumer's import
+    // reads the recovered source, not the provisional `module-<id>`.
+    let inputs = browserify_inputs(
+        r#"
+exports.Comp = function Comp() {
+    return _jsx("div", {
+        "data-sentry-component": "MyAwesomeComponent",
+        "data-sentry-source-file": "myAwesomeComponent.jsx",
+        children: "hi"
+    });
+}
+"#,
+        r#"var m = require("./a.js"); exports.read = function () { return [m.Comp, m]; };"#,
+    );
+    let output =
+        unpack_files(inputs, DecompileOptions::default()).expect("two modules should unpack");
+    let (_, consumer) = output
+        .modules
+        .iter()
+        .find(|(_, code)| code.contains("myAwesomeComponent.jsx\""))
+        .expect("a module should import the recovered file");
+    assert!(
+        consumer.contains("import * as myAwesomeComponent from \"./myAwesomeComponent.jsx\""),
+        "{consumer}"
+    );
+}

@@ -177,8 +177,9 @@ Stage 5: Modernization
 
 Stage 6: Cleanup and renaming
   inlining, rename recovery, import/export cleanup, optional DCE
-  e.g. SmartInline, SmartRename, ImportDedup, DeadDecls/DeadImports (optional),
-  plus most repeat passes (UnIife2, UnJsx2, SmartRename2, ...)
+  e.g. SmartInline, SmartRename, ImportSourceRename, ImportDedup,
+  DeadDecls/DeadImports (optional), plus most repeat passes (UnIife2, UnJsx2,
+  SmartRename2, ...)
 ```
 
 `DeadImports` and `DeadDecls` are an optional late cleanup phase controlled by
