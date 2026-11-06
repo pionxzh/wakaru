@@ -7,10 +7,10 @@ use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignPat, BindingIdent, BlockStmt, CatchClause, Class, ClassDecl, ClassExpr,
     ComputedPropName, Constructor, Decl, DefaultDecl, ExportNamedSpecifier, Expr, FnDecl, FnExpr,
-    Function, Ident, ImportDecl, ImportNamedSpecifier, ImportSpecifier, JSXElementName,
-    KeyValuePatProp, KeyValueProp, Lit, MemberProp, Module, ModuleDecl, ModuleExportName,
-    ModuleItem, NamedExport, ObjectPatProp, ParamOrTsParamProp, Pat, Prop, PropName, Stmt, Str,
-    TsParamPropParam, VarDecl, VarDeclKind, VarDeclarator,
+    ForInStmt, ForOfStmt, ForStmt, Function, Ident, ImportDecl, ImportNamedSpecifier,
+    ImportSpecifier, JSXElementName, KeyValuePatProp, KeyValueProp, Lit, MemberProp, Module,
+    ModuleDecl, ModuleExportName, ModuleItem, NamedExport, ObjectPatProp, ParamOrTsParamProp, Pat,
+    Prop, PropName, Stmt, Str, SwitchStmt, TsParamPropParam, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -229,6 +229,9 @@ impl RenameShadowIndex {
         struct ScopeFrame {
             declared_names: HashSet<Atom>,
             referenced_bindings: HashSet<BindingId>,
+            /// A function, arrow, or constructor body: where a nested `var`
+            /// is declared.
+            is_function: bool,
         }
 
         struct Builder<'a> {
@@ -242,6 +245,15 @@ impl RenameShadowIndex {
                 self.scope_stack.push(ScopeFrame {
                     declared_names,
                     referenced_bindings: HashSet::default(),
+                    is_function: false,
+                });
+            }
+
+            fn push_function_scope(&mut self, declared_names: HashSet<Atom>) {
+                self.scope_stack.push(ScopeFrame {
+                    declared_names,
+                    referenced_bindings: HashSet::default(),
+                    is_function: true,
                 });
             }
 
@@ -317,15 +329,83 @@ impl RenameShadowIndex {
 
         impl Visit for Builder<'_> {
             fn visit_function(&mut self, function: &Function) {
-                self.push_scope(Self::collect_param_names(&function.params));
+                self.push_function_scope(Self::collect_param_names(&function.params));
                 function.visit_children_with(self);
                 self.pop_scope();
             }
 
             fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
-                self.push_scope(Self::collect_arrow_param_names(&arrow.params));
+                self.push_function_scope(Self::collect_arrow_param_names(&arrow.params));
                 arrow.visit_children_with(self);
                 self.pop_scope();
+            }
+
+            // A named function or class expression binds its name in a
+            // scope of its own, around the body.
+            fn visit_fn_expr(&mut self, expr: &FnExpr) {
+                let Some(ident) = &expr.ident else {
+                    expr.function.visit_with(self);
+                    return;
+                };
+                self.push_scope(HashSet::from_iter([ident.sym.clone()]));
+                expr.function.visit_with(self);
+                self.pop_scope();
+            }
+
+            fn visit_class_expr(&mut self, expr: &ClassExpr) {
+                let Some(ident) = &expr.ident else {
+                    expr.class.visit_with(self);
+                    return;
+                };
+                self.push_scope(HashSet::from_iter([ident.sym.clone()]));
+                expr.class.visit_with(self);
+                self.pop_scope();
+            }
+
+            // A `for` head and a `switch` body are block scopes that are not
+            // `BlockStmt`s; without a frame, their declarations land in the
+            // enclosing scope, or nowhere at the top level.
+            fn visit_for_stmt(&mut self, stmt: &ForStmt) {
+                self.push_scope(HashSet::default());
+                stmt.visit_children_with(self);
+                self.pop_scope();
+            }
+
+            fn visit_for_in_stmt(&mut self, stmt: &ForInStmt) {
+                self.push_scope(HashSet::default());
+                stmt.visit_children_with(self);
+                self.pop_scope();
+            }
+
+            fn visit_for_of_stmt(&mut self, stmt: &ForOfStmt) {
+                self.push_scope(HashSet::default());
+                stmt.visit_children_with(self);
+                self.pop_scope();
+            }
+
+            fn visit_switch_stmt(&mut self, stmt: &SwitchStmt) {
+                stmt.discriminant.visit_with(self);
+                self.push_scope(HashSet::default());
+                stmt.cases.visit_with(self);
+                self.pop_scope();
+            }
+
+            // A `var` in a nested block is declared for the whole enclosing
+            // function, so it also captures the function's other references.
+            fn visit_var_decl(&mut self, declaration: &VarDecl) {
+                if declaration.kind == VarDeclKind::Var {
+                    if let Some(scope) = self
+                        .scope_stack
+                        .iter_mut()
+                        .rev()
+                        .find(|scope| scope.is_function)
+                    {
+                        for declarator in &declaration.decls {
+                            collect_pat_names(&declarator.name, &mut scope.declared_names);
+                        }
+                    }
+                }
+                declaration.visit_children_with(self);
             }
 
             // A constructor is not a `Function`, and its body is a
@@ -333,7 +413,7 @@ impl RenameShadowIndex {
             // parameters and body declarations are lost, or land in the
             // enclosing scope.
             fn visit_constructor(&mut self, ctor: &Constructor) {
-                self.push_scope(Self::collect_constructor_param_names(&ctor.params));
+                self.push_function_scope(Self::collect_constructor_param_names(&ctor.params));
                 ctor.visit_children_with(self);
                 self.pop_scope();
             }
@@ -1392,6 +1472,63 @@ use(globalName);
                 assert!(!index.rename_causes_shadowing(&v, &Atom::from("other")));
             },
         );
+    }
+
+    /// Each source references the module binding `target` inside a scope
+    /// that declares `inner`, so renaming `target` to `inner` would let that
+    /// declaration capture the reference.
+    #[test]
+    fn every_scope_that_declares_a_name_blocks_renames_it_would_capture() {
+        for source in [
+            // A named function or class expression binds its own name inside.
+            "var target = 1; var f = function inner() { return target; };",
+            "var target = 1; var C = class inner { m() { return target; } };",
+            // A `var` in a nested block belongs to the whole function.
+            "var target = 1; function f() { use(target); if (c) { var inner = 2; } }",
+            // A `for` head declares its bindings for the loop, even at the
+            // top level.
+            "var target = 1; for (let inner of xs) use(target, inner);",
+            "var target = 1; for (let inner = 0; inner < 2; inner++) { use(target); }",
+            "var target = 1; for (const inner in o) { use(target); }",
+            // A `switch` body is one block scope.
+            "var target = 1; switch (k) { case 1: let inner = 2; use(target, inner); }",
+        ] {
+            with_parsed_module(source, |module| {
+                let target = top_level_binding(module, "target");
+                let bindings = HashSet::from_iter([target.clone()]);
+                let index = RenameShadowIndex::for_bindings(module, &bindings);
+                assert!(
+                    index.rename_causes_shadowing(&target, &Atom::from("inner")),
+                    "{source}"
+                );
+                assert!(
+                    !index.rename_causes_shadowing(&target, &Atom::from("other")),
+                    "{source}"
+                );
+            });
+        }
+    }
+
+    /// A scope that declares the name but never reads the binding only
+    /// shadows it; the rename changes no reference.
+    #[test]
+    fn a_scope_that_never_reads_the_binding_does_not_block_its_name() {
+        for source in [
+            "var target = 1; use(target); var f = function inner() { return 1; };",
+            "var target = 1; use(target); function f() { if (c) { var inner = 2; } }",
+            "var target = 1; use(target); for (let inner of xs) use(inner);",
+            "var target = 1; use(target); switch (k) { case 1: let inner = 2; }",
+        ] {
+            with_parsed_module(source, |module| {
+                let target = top_level_binding(module, "target");
+                let bindings = HashSet::from_iter([target.clone()]);
+                let index = RenameShadowIndex::for_bindings(module, &bindings);
+                assert!(
+                    !index.rename_causes_shadowing(&target, &Atom::from("inner")),
+                    "{source}"
+                );
+            });
+        }
     }
 
     #[test]
