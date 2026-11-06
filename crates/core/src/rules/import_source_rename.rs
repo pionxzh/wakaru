@@ -40,7 +40,14 @@
 //!
 //! Each source yields candidate names, tried in order. A candidate that is
 //! not a valid identifier, or is reserved, is skipped; a `_N` suffix on the
-//! first valid candidate comes only after every candidate is rejected.
+//! first valid candidate comes only after every candidate is rejected. A
+//! first candidate that is a reserved word or a forbidden target
+//! ([`is_forbidden_target`]) is tried as `_<name>` right after it, before
+//! the directory prefixes, as `var e = window` becomes `_window`:
+//! `./typeof.js` → `_typeof`, `./global-this.js` → `_globalThis`,
+//! `@babel/runtime/helpers/extends` → `_extends`. `require`, `module`, and
+//! `exports` are the exception: `_require` would read as a CommonJS alias.
+//! A stem that starts with a digit (`./9aa.js`) still names nothing.
 //!
 //! - A relative path names its file stem in camelCase, then prefixes the
 //!   parent directories one level at a time, nearest first:
@@ -907,13 +914,35 @@ pub(crate) fn source_name_candidates(source: &str, case: NameCase) -> Vec<String
         return vec![name.to_string()];
     }
     let mut names = Vec::new();
-    for words in source_word_candidates(source) {
-        let name = join_words(&words, case);
-        if is_usable_name(&name) && !names.contains(&name) {
-            names.push(name);
+    for (index, words) in source_word_candidates(source).iter().enumerate() {
+        let name = join_words(words, case);
+        if is_usable_name(&name) {
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        } else if index == 0 {
+            // `./typeof.js` → `_typeof`, as `var e = window` becomes
+            // `_window`: the stem still names the module best.
+            if let Some(name) = underscored_stem(&name) {
+                names.push(name);
+            }
         }
     }
     names
+}
+
+/// `_<stem>` for a stem that is a reserved word or a forbidden target
+/// (`class`, `typeof`, `globalThis`). `_require`, `_module`, and `_exports`
+/// would read as aliases of the CommonJS names, so those stems fall through
+/// to the next candidate instead.
+fn underscored_stem(stem: &str) -> Option<String> {
+    if !(is_reserved_binding_name(stem) || is_forbidden_target(stem))
+        || matches!(stem, "require" | "module" | "exports")
+    {
+        return None;
+    }
+    let name = format!("_{stem}");
+    is_usable_name(&name).then_some(name)
 }
 
 fn is_usable_name(name: &str) -> bool {
@@ -1332,11 +1361,35 @@ mod tests {
 
     #[test]
     fn invalid_or_reserved_stems_fall_through_to_prefixed_names() {
-        assert_eq!(camel("./parts/class.js"), ["partsClass"]);
         assert_eq!(camel("./render/3d-utils.js"), ["render3dUtils"]);
         assert!(camel("./3d-utils.js").is_empty());
-        assert!(camel("./class.js").is_empty());
+        assert!(camel("./9aa.js").is_empty());
         assert_eq!(camel("./loaders/require.js"), ["loadersRequire"]);
+        assert!(camel("./module.js").is_empty());
+        assert_eq!(camel("./lib/exports.js"), Vec::<String>::new());
+        assert_eq!(camel("./shared/exports.js"), ["sharedExports"]);
+    }
+
+    #[test]
+    fn reserved_and_forbidden_stems_try_an_underscore_first() {
+        assert_eq!(camel("./parts/class.js"), ["_class", "partsClass"]);
+        assert_eq!(camel("./class.js"), ["_class"]);
+        assert_eq!(camel("./helpers/typeof.js"), ["_typeof", "helpersTypeof"]);
+        assert_eq!(camel("./global-this.js"), ["_globalThis"]);
+        assert_eq!(camel("./undefined.js"), ["_undefined"]);
+        assert_eq!(
+            camel("@babel/runtime/helpers/extends"),
+            [
+                "_extends",
+                "helpersExtends",
+                "runtimeHelpersExtends",
+                "babelRuntimeHelpersExtends"
+            ]
+        );
+        // A JSX tag's PascalCase stem is not reserved.
+        assert_eq!(pascal("./parts/class.js"), ["Class", "PartsClass"]);
+        // Only the stem; a prefixed candidate is never reserved.
+        assert_eq!(camel("node:module"), ["nodeModule"]);
     }
 
     #[test]

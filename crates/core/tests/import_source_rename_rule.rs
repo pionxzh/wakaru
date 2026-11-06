@@ -292,25 +292,56 @@ ReactDOM.render(React.createElement("div"));
 fn invalid_or_reserved_stems_skip_to_the_next_candidate() {
     assert_renamed(
         r#"
-import Ab from "./parts/class.js";
 import Cd from "./render/3d-utils.js";
 import Ef from "./loaders/require.js";
-Ab(Cd, Ef);
+Cd(Ef);
 "#,
         r#"
-import partsClass from "./parts/class.js";
 import render3dUtils from "./render/3d-utils.js";
 import loadersRequire from "./loaders/require.js";
-partsClass(render3dUtils, loadersRequire);
+render3dUtils(loadersRequire);
 "#,
     );
     // No valid candidate at all: the import keeps its name.
     assert_unchanged(
         r#"
-import Ab from "./class.js";
 import Cd from "./3d-utils.js";
 import Ef from "./require.js";
-Ab(Cd, Ef);
+import Gh from "./module.js";
+Cd(Ef, Gh);
+"#,
+    );
+}
+
+#[test]
+fn reserved_and_forbidden_stems_try_an_underscore_first() {
+    assert_renamed(
+        r#"
+import Ab from "./parts/class.js";
+import Cd from "./helpers/typeof.js";
+import * as Ef from "./global-this.js";
+var n = require("./default.js");
+Ab(Cd, Ef, n);
+"#,
+        r#"
+import _class from "./parts/class.js";
+import _typeof from "./helpers/typeof.js";
+import * as _globalThis from "./global-this.js";
+var _default = require("./default.js");
+_class(_typeof, _globalThis, _default);
+"#,
+    );
+    // A taken underscore name falls through to the directory prefixes.
+    assert_renamed(
+        r#"
+import Ab from "./parts/class.js";
+const _class = 1;
+Ab(_class);
+"#,
+        r#"
+import partsClass from "./parts/class.js";
+const _class = 1;
+partsClass(_class);
 "#,
     );
 }
@@ -1187,6 +1218,22 @@ module.exports = class extends a { run() { return new a(b); } };
             && output.contains(r#"import panel from "./widgets/panel.js";"#)
             && output.contains("extends Wrapper")
             && output.contains("new Wrapper(panel)"),
+        "{output}"
+    );
+}
+
+#[test]
+fn pipeline_names_a_reserved_stem_with_an_underscore() {
+    let input = r#"
+var a = require("./helpers/typeof.js");
+var b = require("./parts/class.js");
+module.exports = function (x) { return a(x) === "object" && b(x); };
+"#;
+    let output = render(input);
+    assert!(
+        output.contains(r#"import _typeof from "./helpers/typeof.js";"#)
+            && output.contains(r#"import _class from "./parts/class.js";"#)
+            && output.contains("_typeof(x) === \"object\" && _class(x)"),
         "{output}"
     );
 }
