@@ -58,8 +58,9 @@ ESM form would read better. `namespace_interop_source_semantics`,
 `lowered_dynamic_import_source_semantics`,
 `webpack_lazy_import_source_semantics`,
 `esbuild_lazy_import_source_semantics`,
-`inlined_export_getter_declaration`, and
-`relative_require_esm_provider` are recoveries of this kind, and so is the
+`inlined_export_getter_declaration`,
+`relative_require_esm_provider`, and
+`lowered_spread_call_source_semantics` are recoveries of this kind, and so is the
 `export *` recovery in [helper-detection.md](helper-detection.md).
 
 ## Assumptions
@@ -654,13 +655,53 @@ f();               // false
 
 An `undefined` receiver needs no assumption: a sloppy callee gets the global
 object from `apply` and from a bare call alike, and a strict callee gets
-`undefined` from both. The known lowerers of spread calls emit `void 0` or
-`undefined` (TypeScript, Babel 6 and 7, SWC); `null` appears in handwritten
-code.
+`undefined` from both. TypeScript, Babel 6 to 8 and SWC lower a spread call
+with `void 0` or `undefined`. Closure Compiler lowers it with `null`
+(producer `google-closure-compiler@20260629.0.0`), and handwritten code uses
+`null` too. A Closure call whose argument carries its spread helper is
+recovered under `lowered_spread_call_source_semantics` instead; this
+assumption covers a `null` receiver with no such evidence, such as
+`fn.apply(null, arguments)`.
 
-Affects: `UnArgumentSpread` for a `null` receiver.
+Affects: `UnArgumentSpread` for a `null` receiver without spread-helper
+evidence.
 
 Level: `aggressive` only.
+
+### `lowered_spread_call_source_semantics`
+
+An `.apply` call whose argument carries a lowerer's spread helper is a
+lowered spread call, and its receiver is the one the lowerer chose for that
+call, so the source spread call is the recovery:
+
+```js
+fn.apply(null, $jscomp.arrayFromIterable(xs))  // Closure: fn(...xs)
+root.a.m.apply(root.a, u(xs))                  // Closure ADVANCED: root.a.m(...u(xs))
+make().apply(this, [...xs])                    // swc, after helper recovery: make()(...xs)
+```
+
+The evidence is the argument: Closure's `$jscomp.arrayFromIterable` (named,
+or renamed and recognized by body), or an array literal with a spread element,
+which in the pipeline comes from a recovered lowering helper
+(`_toConsumableArray`, `__spreadArray`, Closure's concat). Three behaviors
+move from the lowered output to the source's:
+
+- Closure passes `null` where the source call had no receiver, so a strict
+  callee saw `this === null` in the output and sees `undefined` again.
+- Closure lowers `root.a.m(...xs)` without a temporary, reading `root.a`
+  twice; the recovered call reads it once, as the source did. A getter on
+  `root.a` runs once instead of twice.
+- swc 1.16 lowers `make()(...xs)` to `make().apply(this, …)`, passing the
+  enclosing `this`; the recovered call passes none, as the source did.
+
+The same receivers without helper evidence keep `.apply`:
+`this.getHandler().apply(this, args)` is a common handwritten forward, and a
+handwritten `root.a.m.apply(root.a, args)` may rely on reading `root.a`
+twice.
+
+Affects: `UnArgumentSpread`.
+
+Level: `standard` and above.
 
 ### `set_computed_properties`
 

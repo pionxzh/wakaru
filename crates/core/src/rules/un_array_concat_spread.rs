@@ -607,11 +607,7 @@ impl Visit for ProofUseScanner<'_> {
 /// `var $jscomp = $jscomp || {}` bootstrap; its body is versioned runtime code
 /// and is not matched.
 fn recover_closure_array_spread(module: &mut Module, unresolved_mark: Mark) {
-    let runtime = ClosureRuntime {
-        namespaces: collect_closure_jscomp_namespaces(module),
-        array_helpers: collect_renamed_array_from_iterable(module, unresolved_mark),
-        unresolved_mark,
-    };
+    let runtime = ClosureRuntime::collect(module, unresolved_mark);
     let arrays = ProvenArrays {
         closure: Some(runtime),
         ..ProvenArrays::default()
@@ -619,7 +615,9 @@ fn recover_closure_array_spread(module: &mut Module, unresolved_mark: Mark) {
     module.visit_mut_with(&mut ProvenConcatRewriter { arrays: &arrays });
 }
 
-struct ClosureRuntime {
+/// Closure Compiler's spread runtime in one module: the named
+/// `$jscomp.arrayFromIterable` and the renamed helpers of ADVANCED output.
+pub(super) struct ClosureRuntime {
     namespaces: HashSet<BindingKey>,
     /// Renamed `arrayFromIterable` helpers recognized by body shape.
     array_helpers: HashSet<BindingId>,
@@ -627,8 +625,28 @@ struct ClosureRuntime {
 }
 
 impl ClosureRuntime {
+    pub(super) fn collect(module: &Module, unresolved_mark: Mark) -> Self {
+        Self {
+            namespaces: collect_closure_jscomp_namespaces(module),
+            array_helpers: collect_renamed_array_from_iterable(module, unresolved_mark),
+            unresolved_mark,
+        }
+    }
+
+    /// A call of a renamed helper. Its body proves an Array result, but a
+    /// castArray-like body has the same outline, so only the named runtime
+    /// proves that it iterates its argument.
+    pub(super) fn is_renamed_helper_call(&self, expr: &Expr) -> bool {
+        matches!(
+            strip_parens(expr),
+            Expr::Call(CallExpr { callee: Callee::Expr(callee), .. })
+                if matches!(callee.as_ref(), Expr::Ident(ident)
+                    if self.array_helpers.contains(&binding_id(ident)))
+        )
+    }
+
     /// `xs` in `$jscomp.arrayFromIterable(xs)`.
-    fn array_from_iterable_source<'a>(&self, expr: &'a Expr) -> Option<&'a Expr> {
+    pub(super) fn array_from_iterable_source<'a>(&self, expr: &'a Expr) -> Option<&'a Expr> {
         let Expr::Call(call) = expr else {
             return None;
         };

@@ -292,7 +292,14 @@ rationale, or level gating appear.
   `arguments` copy, or an unwritten binding initialized to an Array, read
   where it already holds one (code comment on `ProvenArgumentLists`). Unknown
   lists and a `null` receiver convert only at `aggressive`
-  (`apply_arguments_are_arrays`, `apply_null_receiver_unobserved`).
+  (`apply_arguments_are_arrays`, `apply_null_receiver_unobserved`). An
+  argument that carries a lowerer's spread helper (Closure's
+  `arrayFromIterable`, or a recovered `[...xs]`) is evidence of a lowered
+  spread call: then Closure's `null` and unmemoized member-chain receivers and
+  swc's `this` on a call-result callee also recover
+  (`lowered_spread_call_source_semantics`). The named
+  `$jscomp.arrayFromIterable(xs)` is dropped from the spread; a renamed helper
+  stays, since its body only proves an Array result.
   `obj.fn.apply(null, args)` is *intentionally skipped* — rewriting it to
   `fn(...args)` is not semantics-preserving without cross-module proof that
   the member is a plain imported function (candidate fact reader).

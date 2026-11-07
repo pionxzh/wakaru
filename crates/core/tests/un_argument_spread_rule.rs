@@ -185,7 +185,7 @@ fn converts_obj_method_apply_with_array_expression() {
 obj.fn.apply(obj, [1, 2, 3]);
 "#;
     let expected = r#"
-obj.fn(...[1, 2, 3]);
+obj.fn(1, 2, 3);
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
@@ -198,7 +198,7 @@ var _app_info;
 const out = (_app_info = app_info).build.apply(_app_info, [prefix, ...items, tail]);
 "#;
     let expected = r#"
-const out = app_info.build(...[prefix, ...items, tail]);
+const out = app_info.build(prefix, ...items, tail);
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
@@ -767,7 +767,7 @@ fn.apply(null, [1]);
 "#;
     assert_eq_normalized(&apply(input), input);
     let expected = r#"
-fn(...[1]);
+fn(1);
 "#;
     assert_eq_normalized(&aggressive(input), expected);
 }
@@ -779,8 +779,8 @@ fn.apply(void 0, [a, b]);
 obj.fn.apply(obj, [a, ...rest]);
 "#;
     let expected = r#"
-fn(...[a, b]);
-obj.fn(...[a, ...rest]);
+fn(a, b);
+obj.fn(a, ...rest);
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
@@ -1170,4 +1170,285 @@ function f(Array) {
 }
 "#;
     assert_eq_normalized(&apply(input), input);
+}
+
+// A spread-helper argument is producer evidence that the call was a spread
+// call (`lowered_spread_call_source_semantics`): its receiver is a lowering
+// artifact, so `null`, a duplicated member-chain receiver, and `this` on a
+// call-result callee recover to the source call.
+
+#[test]
+fn closure_named_array_from_iterable_recovers_at_standard() {
+    // producer google-closure-compiler@20260629.0.0 --compilation_level=SIMPLE
+    // --language_out=ECMASCRIPT5 (the parenthesized form; 20240317.0.0 emits
+    // the bare member call).
+    let input = r#"
+function plain(fn, xs) {
+    return fn.apply(null, (0, $jscomp.arrayFromIterable)(xs));
+}
+function method(obj, xs) {
+    return obj.m.apply(obj, $jscomp.arrayFromIterable(xs));
+}
+"#;
+    let expected = r#"
+function plain(fn, xs) {
+    return fn(...xs);
+}
+function method(obj, xs) {
+    return obj.m(...xs);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn closure_renamed_array_from_iterable_recovers_with_its_receivers() {
+    // producer google-closure-compiler@20260629.0.0
+    // --compilation_level=ADVANCED --language_out=ECMASCRIPT5: the helper is
+    // renamed, and `box.inner.m(...xs)` reads `box.inner` twice.
+    let input = r#"
+function r(a) {
+    return a[Symbol.iterator]();
+}
+function u(a) {
+    if (!(a instanceof Array)) {
+        a = r(a);
+        for (var e, h = []; !(e = a.next()).done;) h.push(e.value);
+        a = h;
+    }
+    return a;
+}
+function plain(g, a) {
+    return g.apply(null, u(a));
+}
+function chain(b, a) {
+    return b.a.g.apply(b.a, u(a));
+}
+function self(a) {
+    return this.g.apply(this, u(a));
+}
+"#;
+    let expected = r#"
+function r(a) {
+    return a[Symbol.iterator]();
+}
+function u(a) {
+    if (!(a instanceof Array)) {
+        a = r(a);
+        for (var e, h = []; !(e = a.next()).done;) h.push(e.value);
+        a = h;
+    }
+    return a;
+}
+function plain(g, a) {
+    return g(...u(a));
+}
+function chain(b, a) {
+    return b.a.g(...u(a));
+}
+function self(a) {
+    return this.g(...u(a));
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn recovered_spread_array_literal_is_evidence_for_the_receiver() {
+    // producer @swc/core@1.16.2 {"jsc":{"target":"es5"}}:
+    // `make()(...xs)` becomes `make().apply(this, _to_consumable_array(xs))`,
+    // and UnToConsumableArray has turned the helper into `[...xs]`. Closure's
+    // `[a].concat($jscomp.arrayFromIterable(xs))` becomes `[a, ...xs]`.
+    let input = r#"
+function callCallee(make, xs) {
+    return make().apply(this, [...xs]);
+}
+function prefix(fn, xs) {
+    return fn.apply(null, [0, ...xs]);
+}
+"#;
+    let expected = r#"
+function callCallee(make, xs) {
+    return make()(...xs);
+}
+function prefix(fn, xs) {
+    return fn(0, ...xs);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn receivers_without_spread_evidence_keep_apply() {
+    // Hand-written code forwards `this` to a computed function and reads a
+    // member-chain receiver twice; an array literal without a spread element
+    // carries no evidence.
+    let input = r#"
+function forward(xs) {
+    return this.getHandler().apply(this, [xs, 1]);
+}
+function chain(root) {
+    return root.a.m.apply(root.a, [1, 2]);
+}
+function nullReceiver(fn) {
+    return fn.apply(null, [1, 2]);
+}
+function callInReceiver(root, xs) {
+    return root.a().m.apply(root.a(), [...xs]);
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+    assert_eq_normalized(
+        &aggressive(input),
+        r#"
+function forward(xs) {
+    return this.getHandler().apply(this, [xs, 1]);
+}
+function chain(root) {
+    return root.a.m.apply(root.a, [1, 2]);
+}
+function nullReceiver(fn) {
+    return fn(1, 2);
+}
+function callInReceiver(root, xs) {
+    return root.a().m.apply(root.a(), [...xs]);
+}
+"#,
+    );
+}
+
+#[test]
+fn shadowed_jscomp_is_not_closure_evidence() {
+    let input = r#"
+function f($jscomp, fn, xs) {
+    return fn.apply(null, $jscomp.arrayFromIterable(xs));
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn pipeline_recovers_closure_advanced_spread_calls() {
+    // producer google-closure-compiler@20260629.0.0
+    // --compilation_level=ADVANCED --language_out=ECMASCRIPT5 (helper `f` is
+    // the renamed `$jscomp.arrayFromIterable`; the source called `fn(...xs)`,
+    // `obj.a.m(...xs)`, `this.m(...xs)`, `make()(...xs)` and `fn(a, ...xs)`).
+    let input = r#"
+function d(a) {
+  var b = 0;
+  return function() {
+    return b < a.length ? {done:!1, value:a[b++]} : {done:!0};
+  };
+}
+function f(a) {
+  if (!(a instanceof Array)) {
+    var b = typeof Symbol != "undefined" && Symbol.iterator && a[Symbol.iterator];
+    if (b) {
+      a = b.call(a);
+    } else {
+      if (typeof a.length == "number") {
+        a = {next:d(a)};
+      } else {
+        throw Error(String(a) + " is not an iterable or ArrayLike");
+      }
+    }
+    for (var c = []; !(b = a.next()).done;) {
+      c.push(b.value);
+    }
+    a = c;
+  }
+  return a;
+}
+globalThis.o = {u:function(a, b) {
+  return a.apply(null, f(b));
+}, j:function(a, b) {
+  return a.a.g.apply(a.a, f(b));
+}, A:function(a) {
+  return this.g.apply(this, f(a));
+}, i:function(a, b) {
+  return a().apply(null, f(b));
+}, prefix:function(a, b, c) {
+  return a.apply(null, [b].concat(f(c)));
+}};
+"#;
+    let output = common::render(input);
+    assert!(output.contains("return a(...f(b));"), "{output}");
+    assert!(output.contains("return a.a.g(...f(b));"), "{output}");
+    assert!(output.contains("return this.g(...f(a));"), "{output}");
+    assert!(output.contains("return a()(...f(b));"), "{output}");
+    assert!(output.contains("return a(b, ...f(c));"), "{output}");
+    assert!(!output.contains(".apply("), "{output}");
+}
+
+#[test]
+fn pipeline_recovers_swc_call_result_spread_call() {
+    // producer @swc/core@1.16.2 {"jsc":{"target":"es5"},"module":{"type":"commonjs"}}:
+    // `make()(...xs)` becomes `make().apply(this, _to_consumable_array(xs))`.
+    let input = r#"
+function _array_like_to_array(arr, len) {
+    if (len == null || len > arr.length) len = arr.length;
+    for(var i = 0, arr2 = new Array(len); i < len; i++)arr2[i] = arr[i];
+    return arr2;
+}
+function _array_without_holes(arr) {
+    if (Array.isArray(arr)) return _array_like_to_array(arr);
+}
+function _construct(Parent, args, Class) {
+    if (_is_native_reflect_construct()) _construct = Reflect.construct;
+    else {
+        _construct = function construct(Parent, args, Class) {
+            var a = [
+                null
+            ];
+            a.push.apply(a, args);
+            var Constructor = Function.bind.apply(Parent, a);
+            var instance = new Constructor();
+            if (Class) _set_prototype_of(instance, Class.prototype);
+            return instance;
+        };
+    }
+    return _construct.apply(null, arguments);
+}
+function _is_native_reflect_construct() {
+    try {
+        var result = !Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function() {}));
+    } catch (_) {}
+    return (_is_native_reflect_construct = function() {
+        return !!result;
+    })();
+}
+function _iterable_to_array(iter) {
+    if (typeof Symbol !== "undefined" && iter[Symbol.iterator] != null || iter["@@iterator"] != null) {
+        return Array.from(iter);
+    }
+}
+function _non_iterable_spread() {
+    throw new TypeError("Invalid attempt to spread non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method.");
+}
+function _set_prototype_of(o, p) {
+    _set_prototype_of = Object.setPrototypeOf || function setPrototypeOf(o, p) {
+        o.__proto__ = p;
+        return o;
+    };
+    return _set_prototype_of(o, p);
+}
+function _to_consumable_array(arr) {
+    return _array_without_holes(arr) || _iterable_to_array(arr) || _unsupported_iterable_to_array(arr) || _non_iterable_spread();
+}
+function _unsupported_iterable_to_array(o, minLen) {
+    if (!o) return;
+    if (typeof o === "string") return _array_like_to_array(o, minLen);
+    var n = Object.prototype.toString.call(o).slice(8, -1);
+    if (n === "Object" && o.constructor) n = o.constructor.name;
+    if (n === "Map" || n === "Set") return Array.from(n);
+    if (n === "Arguments" || /^(?:Ui|I)nt(?:8|16|32)(?:Clamped)?Array$/.test(n)) return _array_like_to_array(o, minLen);
+}
+function callCallee(make, xs) {
+    return make().apply(this, _to_consumable_array(xs));
+}
+globalThis.out = { callCallee };
+"#;
+    let output = common::render(input);
+    assert!(output.contains("return make()(...xs);"), "{output}");
+    assert!(!output.contains("make().apply("), "{output}");
 }

@@ -12,6 +12,7 @@ use super::binding_facts::TempIsolation;
 use super::dead_decls::remove_consumed_uninitialized_decls;
 use super::decl_utils::same_ident;
 use super::expr_utils::{exprs_structurally_equal, is_unresolved_ident, is_unresolved_undefined};
+use super::un_array_concat_spread::ClosureRuntime;
 use super::RewriteLevel;
 
 use crate::analysis::binding_id;
@@ -29,6 +30,14 @@ use crate::utils::paren::strip_parens;
 /// under the `apply_arguments_are_arrays` assumption. A `null` receiver is
 /// `aggressive` too (`apply_null_receiver_unobserved`): a strict callee sees
 /// `this === null` through `apply` but `undefined` in a bare call.
+///
+/// An argument that carries a lowerer's spread helper (a recovered
+/// `[...xs]`, or Closure's `arrayFromIterable`) proves the call was a spread
+/// call, so the receiver the lowerer chose recovers to the source call at
+/// every level (`lowered_spread_call_source_semantics`): Closure's `null` and
+/// its unmemoized member-chain receiver, and swc's `this` on a call-result
+/// callee. The named `$jscomp.arrayFromIterable(xs)` is dropped from the
+/// spread; a renamed helper stays (see `ClosureRuntime`).
 pub struct UnArgumentSpread {
     unresolved_mark: Mark,
     level: RewriteLevel,
@@ -71,6 +80,35 @@ impl UnArgumentSpread {
         self.proven.deactivate(&candidates);
         self.rewrite_split_memoized_applies(stmts, &candidates);
         self.proven.deactivate(&candidates);
+    }
+
+    /// `fn(...[a, ...xs])` → `fn(a, ...xs)` for a hole-free literal, and
+    /// `fn(...$jscomp.arrayFromIterable(xs))` → `fn(...xs)`: the named helper
+    /// returns an Array `xs` as is and otherwise iterates it, as spread does.
+    fn finish_spread_call(&self, expr: &mut Expr) {
+        let Expr::Call(call) = expr else {
+            return;
+        };
+        let [arg] = call.args.as_mut_slice() else {
+            return;
+        };
+        if arg.spread.is_none() {
+            return;
+        }
+        if let Some(source) = self
+            .proven
+            .closure
+            .as_ref()
+            .and_then(|closure| closure.array_from_iterable_source(&arg.expr))
+        {
+            *arg.expr = source.clone();
+            return;
+        }
+        if matches!(arg.expr.as_ref(), Expr::Array(array) if array.elems.iter().all(Option::is_some))
+        {
+            let arg = call.args.remove(0);
+            call.args = args_from_apply_arg(arg.expr);
+        }
     }
 
     fn visit_function_body(&mut self, body: &mut FunctionBody, fixed_param_count: Option<usize>) {
@@ -204,6 +242,9 @@ impl VisitMut for UnArgumentSpread {
         if !is_apply_call(call) || !self.argument_list_converts(&call.args[1].expr) {
             return;
         }
+        let lowered_spread = self
+            .proven
+            .lowered_spread_evidence(&call.args[1].expr, self.dynamic_scope);
         let call = call.clone();
 
         let choices: &[bool] = if expr_memoized_apply_assign(&call).is_some() {
@@ -212,15 +253,17 @@ impl VisitMut for UnArgumentSpread {
             &[false]
         };
         for &drop_receiver in choices {
-            let Ok(rewritten) = try_convert_apply(
+            let Ok(mut rewritten) = try_convert_apply(
                 call.clone(),
                 self.unresolved_mark,
                 drop_receiver,
                 self.dynamic_scope,
-                self.level >= RewriteLevel::Aggressive,
+                self.level >= RewriteLevel::Aggressive || lowered_spread,
+                lowered_spread,
             ) else {
                 return;
             };
+            self.finish_spread_call(&mut rewritten);
             if self.isolation.accept_expr_rewrite(
                 expr,
                 &rewritten,
@@ -275,6 +318,7 @@ fn try_convert_apply(
     drop_receiver: bool,
     dynamic_scope: bool,
     allow_null_receiver: bool,
+    lowered_spread: bool,
 ) -> Result<Expr, CallExpr> {
     // callee must be a member expression ending in `.apply`
     let callee_member = match &call.callee {
@@ -330,6 +374,16 @@ fn try_convert_apply(
             let receiver = memoized_receiver(assign, drop_receiver);
             return Ok(make_spread_call_with_member_receiver(call, receiver));
         }
+        // Closure Compiler lowers `root.a.m(...xs)` to the unmemoized
+        // `root.a.m.apply(root.a, …)`, reading `root.a` twice where the source
+        // read it once; with spread-helper evidence, the source call is the
+        // recovery.
+        if lowered_spread
+            && is_static_member_chain(first_arg)
+            && exprs_structurally_equal(first_arg, &callee_member_obj.obj)
+        {
+            return Ok(make_spread_call(call));
+        }
         // obj.fn.apply(null/undefined, ...) — Babel spread artifact for standalone
         // function calls on module namespaces (e.g. `r.applyMiddleware.apply(void 0, d)`).
         // Not converted here because it changes `this` from undefined to obj.
@@ -351,6 +405,15 @@ fn try_convert_apply(
     // callee sees `this === null` only through `apply`.
     if is_unresolved_undefined(first_arg, unresolved_mark)
         || (allow_null_receiver && matches!(first_arg, Expr::Lit(Lit::Null(_))))
+    {
+        return Ok(make_spread_call(call));
+    }
+    // swc lowers `make()(...xs)` to `make().apply(this, …)`; the source call
+    // had no receiver. Without spread-helper evidence, `getFn().apply(this,
+    // args)` is a common hand-written forward.
+    if lowered_spread
+        && matches!(first_arg, Expr::This(_))
+        && matches!(strip_parens(callee_obj), Expr::Call(_))
     {
         return Ok(make_spread_call(call));
     }
@@ -596,6 +659,21 @@ fn make_spread_call_with_member_receiver(mut call: CallExpr, receiver: Box<Expr>
     make_spread_call(call)
 }
 
+/// `a.b.c` / `this.a`: identifier or `this` root, static property names.
+fn is_static_member_chain(expr: &Expr) -> bool {
+    match strip_parens(expr) {
+        Expr::Member(MemberExpr {
+            obj,
+            prop: MemberProp::Ident(_),
+            ..
+        }) => {
+            matches!(strip_parens(obj), Expr::Ident(_) | Expr::This(_))
+                || is_static_member_chain(obj)
+        }
+        _ => false,
+    }
+}
+
 fn contains_apply_call(module: &Module) -> bool {
     struct Finder(bool);
     impl Visit for Finder {
@@ -668,6 +746,7 @@ struct ProvenArgumentLists {
     fn_decl_depth: usize,
     arguments_written: bool,
     dynamic_scope: bool,
+    closure: Option<ClosureRuntime>,
 }
 
 impl ProvenArgumentLists {
@@ -690,6 +769,34 @@ impl ProvenArgumentLists {
             fn_decl_depth: 0,
             arguments_written,
             dynamic_scope,
+            closure: Some(ClosureRuntime::collect(module, unresolved_mark)),
+        }
+    }
+
+    /// A Closure `arrayFromIterable` call, named or renamed: always an Array.
+    fn is_closure_array_helper_call(&self, expr: &Expr) -> bool {
+        self.closure.as_ref().is_some_and(|closure| {
+            closure
+                .array_from_iterable_source(strip_parens(expr))
+                .is_some()
+                || closure.is_renamed_helper_call(expr)
+        })
+    }
+
+    /// The argument list carries a lowerer's spread helper: an array literal
+    /// with a spread element (a recovered `_toConsumableArray`, `__spreadArray`
+    /// or Closure concat), or a Closure `arrayFromIterable` call.
+    fn lowered_spread_evidence(&self, expr: &Expr, dynamic_scope: bool) -> bool {
+        if dynamic_scope {
+            return false;
+        }
+        match strip_parens(expr) {
+            Expr::Array(array) => array
+                .elems
+                .iter()
+                .flatten()
+                .any(|elem| elem.spread.is_some()),
+            expr => self.is_closure_array_helper_call(expr),
         }
     }
 
@@ -785,6 +892,7 @@ impl ProvenArgumentLists {
                         .get(&binding)
                         .is_some_and(|depth| *depth == self.fn_decl_depth)
             }
+            expr if !dynamic_scope && self.is_closure_array_helper_call(expr) => true,
             expr => is_array_value(expr, unresolved_mark, &|receiver| {
                 self.proves_array(receiver, unresolved_mark, dynamic_scope)
             }),
