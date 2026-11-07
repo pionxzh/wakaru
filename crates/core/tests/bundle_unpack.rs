@@ -6047,3 +6047,37 @@ fn webpack5_uglify_inlined_getter_function_stays_commonjs_at_minimal() {
         "{consumer}"
     );
 }
+
+#[test]
+fn webpack5_bundled_tslib_spread_array_is_proven_by_its_body() {
+    // shape: producer tsc@5.9.3 module=CommonJS target=ES5 importHelpers
+    // output (`tslib_1.__spreadArray([void 0], xs, false)` around
+    // `C.bind.apply`), bundled with tslib@2.8.1 by webpack@5.111.1
+    // mode=production (Terser); the tslib module trimmed to `__spreadArray`,
+    // sink renamed to `globalThis.lib`. Module 92 exports a function under
+    // the same name whose body is not tslib's: its calls stay.
+    let source = r#"(()=>{var e={97(e,t,r){"use strict";Object.defineProperty(t,"__esModule",{value:!0}),t.make=function(e,t){return new(e.bind.apply(e,n.__spreadArray([void 0],t,!1)))},t.makeFmt=function(e){var t;return new((t=Intl.NumberFormat).bind.apply(t,n.__spreadArray([void 0],e,!1)))},t.log=function(e){return console.log.apply(console,n.__spreadArray(["x"],e,!1))},t.other=function(e){return a.__spreadArray(["y"],e,!1)};var n=r(91),a=r(92)},91(e,t,r){"use strict";r.r(t),r.d(t,{__spreadArray:()=>O});function O(e,t,r){if(r||2===arguments.length)for(var n,o=0,a=t.length;o<a;o++)!n&&o in t||(n||(n=Array.prototype.slice.call(t,0,o)),n[o]=t[o]);return e.concat(n||Array.prototype.slice.call(t))}},92(e,t,r){"use strict";r.r(t),r.d(t,{__spreadArray:()=>F});function F(e,t,r){return e.concat(t)}}};const t={};function r(n){const o=t[n];if(void 0!==o)return o.exports;const a=t[n]={exports:{}};return e[n](a,a.exports,r),a.exports}r.d=(e,t)=>{for(var o in t)r.o(t,o)&&!r.o(e,o)&&Object.defineProperty(e,o,{enumerable:!0,get:t[o]})},r.o=(e,t)=>Object.prototype.hasOwnProperty.call(e,t),r.r=e=>{Object.defineProperty(e,Symbol.toStringTag,{value:"Module"}),Object.defineProperty(e,"__esModule",{value:!0})},globalThis.lib=r(97)})();"#;
+    let output = unpack(source, DecompileOptions::default()).expect("bundle should unpack");
+    let findings = validate_output_modules(&output.modules);
+    assert!(findings.is_empty(), "{findings:#?}");
+    let consumer = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "module-97.js")
+        .map(|(_, code)| code.clone())
+        .expect("consumer module should exist");
+    for present in [
+        "return new e(...t);",
+        "return new Intl.NumberFormat(...e);",
+        r#"return console.log("x", ...e);"#,
+        r#"import { __spreadArray } from "./module-92.js";"#,
+    ] {
+        assert!(
+            consumer.contains(present),
+            "missing `{present}`:\n{consumer}"
+        );
+    }
+    for absent in [".bind", ".apply("] {
+        assert!(!consumer.contains(absent), "kept `{absent}`:\n{consumer}");
+    }
+}

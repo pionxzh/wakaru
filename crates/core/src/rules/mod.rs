@@ -256,6 +256,7 @@ pub use un_spread_array_literal::UnSpreadArrayLiteral;
 pub use un_string_escape::UnStringEscape;
 pub use un_template_literal::UnTemplateLiteral;
 pub use un_to_array::UnToArray;
+pub(crate) use un_to_consumable_array::run_cross_module_ts_spread_helpers;
 pub use un_to_consumable_array::UnToConsumableArray;
 pub use un_type_constructor::UnTypeConstructor;
 pub use un_typeof::UnTypeof;

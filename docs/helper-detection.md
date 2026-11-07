@@ -261,6 +261,9 @@ Helper utilities include `LocalHelperContext::helpers_of_kind()` (filter by kind
   An anonymous default export (`module.exports = function (e) {…}` after a
   minifier drops the helper's name) is matched by the same body shapes.
 - `ts_helper_exports` for raw TypeScript/tslib helpers such as `__awaiter`, `__generator`, and `__spreadArray`.
+  A body-matched `__spreadArray` is a fact under whatever name the module
+  exports it; unpack's late pass `run_cross_module_ts_spread_helpers`
+  converts its consumers' calls ([fact-system.md](fact-system.md)).
   tslib's ES module build exports `__importStar` as a function declaration;
   that export is a fact only under its public name and with the helper's body
   shape (`ts_import_star_function_matches`).

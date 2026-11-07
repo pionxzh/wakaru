@@ -87,6 +87,45 @@ impl VisitMut for UnToConsumableArray<'_> {
     }
 }
 
+/// The unpack late pass for TypeScript spread helpers of another module.
+///
+/// The rule itself runs before `UnEsm`, where a bundled tslib is still a
+/// `require` of a module whose exports nothing has proven yet. Here the
+/// module facts prove the provider's export by the helper's body (or its
+/// registration under tslib's name), so `ns.__spreadArray(...)` and an
+/// imported `__spreadArray(...)` of that module convert as a local helper's
+/// call does. A provider export the facts do not prove keeps its calls,
+/// whatever its name.
+pub(crate) fn run_cross_module_ts_spread_helpers(
+    module: &mut Module,
+    module_facts: &ModuleFactsMap,
+    current_filename: Option<&str>,
+    unresolved_mark: Mark,
+) {
+    let imports_spread_helper = [
+        TypeScriptHelperKind::SpreadArray,
+        TypeScriptHelperKind::SpreadArrays,
+        TypeScriptHelperKind::Spread,
+    ]
+    .into_iter()
+    .any(|kind| {
+        let refs =
+            collect_cross_module_ts_helper_refs(module, module_facts, current_filename, kind);
+        !refs.direct.is_empty() || !refs.namespaces.is_empty()
+    });
+    if !imports_spread_helper {
+        return;
+    }
+    let local_helpers = LocalHelperContext::collect_with_mark(module, unresolved_mark);
+    run_un_to_consumable_array(
+        module,
+        Some(unresolved_mark),
+        &local_helpers,
+        Some(module_facts),
+        current_filename,
+    );
+}
+
 fn run_un_to_consumable_array(
     module: &mut Module,
     unresolved_mark: Option<Mark>,

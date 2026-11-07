@@ -81,6 +81,7 @@ path's rerun through UnEsm read the same plan):
     run_cross_module_webpack_lazy_imports(...)       ← provider facts
     run_cross_module_interop_imports(...)            ← helper export facts
     import_unproven_helper_requires(...)             ← provider facts
+    run_cross_module_ts_spread_helpers(...)          ← raw TS helper facts
     run_namespace_decomposition(&mut module, facts)  ← reads cross-module facts
     downgrade_unused_synthetic_imports(&mut module)  ← preserve require effects
     registry rule range resuming after UnEsm, through UnReturn
@@ -723,6 +724,17 @@ Neither proof creates a default-object fact available to consumers.
   barrier 0 (see [Shape](#shape)); this pass covers a helper proven only by
   the facts after the provider's own `UnEsm`, the same three sources as the
   lowered `import()` restore above.
+- **`run_cross_module_ts_spread_helpers`** — converts calls of TypeScript's
+  `__spreadArray`, `__spreadArrays` and `__spread` imported from (or read off
+  a namespace of) another module, when that module's raw TypeScript helper
+  facts prove the export: by the helper's body, under any export name
+  (webpack mangles tslib's export names), or by its registration under
+  tslib's name. `UnToConsumableArray` runs before `UnEsm`, where a bundled
+  tslib is still a `require` that nothing has proven, so this pass gives
+  those calls the treatment a local helper's calls get. An export that only
+  carries a tslib name keeps its calls. It runs before namespace
+  decomposition, so a namespace read only for the helper gains no named
+  import.
 - **`namespace_decomposition`** — rewrites `import r from "./x"; r.foo()` into
   `import { foo } from "./x"; foo()` when `./x` exports `foo` and no collision
   prevents the rewrite. On a namespace import, `ns.default` becomes a default

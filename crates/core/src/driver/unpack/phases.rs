@@ -67,6 +67,7 @@ use crate::rules::eval_utils::DirectEvalAnalyzer;
 use crate::rules::expr_utils::is_unresolved_ident;
 use crate::rules::is_webpack_harmony_module;
 use crate::rules::lowered_dynamic_import::run_cross_module_lowered_dynamic_imports;
+use crate::rules::run_cross_module_ts_spread_helpers;
 use crate::rules::transpiler_helper_utils::LocalHelperContext;
 use crate::rules::webpack_lazy_import::run_cross_module_webpack_lazy_imports;
 use crate::rules::{
@@ -1335,6 +1336,14 @@ pub(super) fn unpack_multi_module_with_plan(
             );
             tag_declarator_imports(&module, &declarator_requires, &mut import_tags);
             import_unproven_helper_requires(
+                &mut module,
+                facts_ref,
+                Some(&unpacked.module.filename),
+                unresolved_mark,
+            );
+            // Before decomposition, so a namespace read only for its spread
+            // helper does not gain a named import that the call no longer uses.
+            run_cross_module_ts_spread_helpers(
                 &mut module,
                 facts_ref,
                 Some(&unpacked.module.filename),
