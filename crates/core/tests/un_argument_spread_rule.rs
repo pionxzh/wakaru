@@ -1452,3 +1452,456 @@ globalThis.out = { callCallee };
     assert!(output.contains("return make()(...xs);"), "{output}");
     assert!(!output.contains("make().apply("), "{output}");
 }
+
+// Bound constructs. `new (F.bind(t, ...args))()` constructs the same object
+// as `new F(...args)`: [[Construct]] of a bound function ignores the bound
+// `this` and passes the target as `new.target`.
+
+#[test]
+fn bound_construct_of_a_proven_list_becomes_a_spread_construct() {
+    // producer typescript@5.9.3 ES5, after UnToConsumableArray turned
+    // `__spreadArray([void 0], xs, false)` into `[void 0, ...xs]`.
+    let input = r#"
+function make(C, xs) {
+    return new (C.bind.apply(C, [void 0, ...xs]))();
+}
+function lead(C, xs) {
+    return new (C.bind.apply(C, [void 0, 0, ...xs]))();
+}
+function readProp(C, xs) {
+    return new (C.bind.apply(C, [void 0, ...xs]))().args;
+}
+"#;
+    let expected = r#"
+function make(C, xs) {
+    return new C(...xs);
+}
+function lead(C, xs) {
+    return new C(0, ...xs);
+}
+function readProp(C, xs) {
+    return new C(...xs).args;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn bound_construct_accepts_every_effect_free_bound_this() {
+    let input = r#"
+a = new (C.bind(undefined, ...xs))();
+b = new (C.bind(void 0, x))();
+c = new (C.bind(null, ...xs, y))();
+"#;
+    let expected = r#"
+a = new C(...xs);
+b = new C(x);
+c = new C(...xs, y);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn function_prototype_bind_apply_construct_becomes_a_spread_construct() {
+    // producer babel-core@6.26.3 es2015, after the concat rules made
+    // `[null].concat(_toConsumableArray(xs))` an array literal; producer
+    // google-closure-compiler@20260629.0.0 omits the outer `()`.
+    let input = r#"
+a = new (Function.prototype.bind.apply(C, [null, ...xs]))();
+b = new (Function.prototype.bind.apply(C, [null, 0, ...xs]));
+c = (new (Function.prototype.bind.apply(box.inner.Ctor, [null, ...xs]))).args;
+d = new (Function.bind.apply(C, [null, ...xs]))();
+"#;
+    let expected = r#"
+a = new C(...xs);
+b = new C(0, ...xs);
+c = new box.inner.Ctor(...xs).args;
+d = new C(...xs);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn memoized_bind_receiver_drops_an_isolated_temp() {
+    // producer typescript@5.9.3 ES5 memoizes a member constructor.
+    let input = r#"
+function make(box, xs) {
+    var _a;
+    return new ((_a = box.inner.Ctor).bind.apply(_a, [void 0, ...xs]))();
+}
+"#;
+    let expected = r#"
+function make(box, xs) {
+    return new box.inner.Ctor(...xs);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn memoized_bind_receiver_keeps_a_temp_with_another_use() {
+    let input = r#"
+function make(box, xs) {
+    var _a;
+    var made = new ((_a = box.inner.Ctor).bind.apply(_a, [void 0, ...xs]))();
+    return [made, _a];
+}
+"#;
+    let expected = r#"
+function make(box, xs) {
+    var _a;
+    var made = new (_a = box.inner.Ctor)(...xs);
+    return [made, _a];
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn bound_construct_keeps_an_observable_bound_this() {
+    // The construct ignores the bound `this`, but evaluating it can have an
+    // effect; only `null`, `void 0` and `undefined` are dropped.
+    let input = r#"
+a = new (C.bind(ctx, ...xs))();
+b = new (C.bind(getThis(), ...xs))();
+c = new (Function.prototype.bind.apply(C, [ctx, ...xs]))();
+d = new (C.bind(...xs))();
+e = new (Function.prototype.bind.apply(C, [...xs]))();
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn bound_construct_keeps_outer_arguments() {
+    let input = r#"
+a = new (C.bind(undefined, ...xs))(extra);
+b = new (Function.prototype.bind.apply(C, [null, ...xs]))(extra);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn bind_apply_with_a_different_target_is_kept() {
+    // `C.bind.apply(D, …)` binds `D` with `C`'s `bind`: the `apply` rewrite
+    // keeps it, so no bound construct appears.
+    let input = r#"
+function make(C, D, xs) {
+    return new (C.bind.apply(D, [void 0, ...xs]))();
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn function_bind_apply_construct_needs_the_global_function() {
+    let input = r#"
+function make(Function, C, xs) {
+    return new (Function.prototype.bind.apply(C, [null, ...xs]))();
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn function_bind_apply_construct_skips_a_module_with_dynamic_scope() {
+    let input = r#"
+with (scope) {
+    a = new (Function.prototype.bind.apply(C, [null, ...xs]))();
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn function_bind_apply_construct_keeps_a_list_with_holes() {
+    let input = r#"
+a = new (Function.prototype.bind.apply(C, [null, , x]))();
+b = new (Function.prototype.bind.apply(C, [, x]))();
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn bound_construct_of_an_unknown_list_follows_the_apply_level() {
+    // `apply_arguments_are_arrays`: an unknown list never reaches a bound
+    // construct at `standard`. At `aggressive` the `apply` rewrite turns it
+    // into `C.bind(...args)`, whose bound `this` is unknown.
+    let input = r#"
+function make(C, args) {
+    return new (C.bind.apply(C, args))();
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+    assert_eq_normalized(
+        &aggressive(input),
+        r#"
+function make(C, args) {
+    return new (C.bind(...args))();
+}
+"#,
+    );
+}
+
+#[test]
+fn bound_construct_is_kept_at_minimal() {
+    let input = r#"
+a = new (C.bind(undefined, ...xs))();
+b = new (Function.prototype.bind.apply(C, [null, ...xs]))();
+"#;
+    assert_eq_normalized(&apply_with_level(input, RewriteLevel::Minimal), input);
+}
+
+#[test]
+fn bound_construct_parenthesizes_a_call_constructor() {
+    let input = r#"
+a = new (make().bind(undefined, ...xs))();
+b = new (Function.prototype.bind.apply(a.b().c, [null, ...xs]))();
+"#;
+    let expected = r#"
+a = new (make())(...xs);
+b = new (a.b()).c(...xs);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+// Lowered spread constructs through the whole pipeline. Each input is the
+// producer's output for `new C(...xs)` and its variants, trimmed to the
+// functions shown.
+
+#[test]
+fn babel_six_spread_construct_recovers_through_the_pipeline() {
+    // producer babel-core@6.26.3 {"presets":["es2015"]}
+    let input = r#"
+"use strict";
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.make = make;
+exports.makeLead = makeLead;
+exports.makeMember = makeMember;
+exports.makeRest = makeRest;
+
+function _toConsumableArray(arr) { if (Array.isArray(arr)) { for (var i = 0, arr2 = Array(arr.length); i < arr.length; i++) { arr2[i] = arr[i]; } return arr2; } else { return Array.from(arr); } }
+
+function make(C, xs) {
+  return new (Function.prototype.bind.apply(C, [null].concat(_toConsumableArray(xs))))();
+}
+function makeLead(C, xs) {
+  return new (Function.prototype.bind.apply(C, [null].concat([0], _toConsumableArray(xs))))();
+}
+function makeMember(box, xs) {
+  return new (Function.prototype.bind.apply(box.inner.Ctor, [null].concat(_toConsumableArray(xs))))();
+}
+function makeRest(C) {
+  for (var _len = arguments.length, rest = Array(_len > 1 ? _len - 1 : 0), _key = 1; _key < _len; _key++) {
+    rest[_key - 1] = arguments[_key];
+  }
+
+  return new (Function.prototype.bind.apply(C, [null].concat(rest)))();
+}
+"#;
+    let expected = r#"
+export { make };
+export { makeLead };
+export { makeMember };
+export { makeRest };
+function make(C, xs) {
+    return new C(...xs);
+}
+function makeLead(C, xs) {
+    return new C(0, ...xs);
+}
+function makeMember(box, xs) {
+    return new box.inner.Ctor(...xs);
+}
+function makeRest(C, ...rest) {
+    return new C(...rest);
+}
+"#;
+    assert_eq_normalized(
+        &common::render_with_level(input, RewriteLevel::Standard),
+        expected,
+    );
+}
+
+#[test]
+fn typescript_spread_construct_recovers_through_the_pipeline() {
+    // producer typescript@5.9.3 {"module":"CommonJS","target":"ES5","esModuleInterop":true}
+    let input = r#"
+"use strict";
+var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
+    if (pack || arguments.length === 2) for (var i = 0, l = from.length, ar; i < l; i++) {
+        if (ar || !(i in from)) {
+            if (!ar) ar = Array.prototype.slice.call(from, 0, i);
+            ar[i] = from[i];
+        }
+    }
+    return to.concat(ar || Array.prototype.slice.call(from));
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.make = make;
+exports.makeTail = makeTail;
+exports.makeMember = makeMember;
+exports.makeRest = makeRest;
+exports.readProp = readProp;
+function make(C, xs) {
+    return new (C.bind.apply(C, __spreadArray([void 0], xs, false)))();
+}
+function makeTail(C, xs, b) {
+    return new (C.bind.apply(C, __spreadArray(__spreadArray([void 0], xs, false), [b], false)))();
+}
+function makeMember(box, xs) {
+    var _a;
+    return new ((_a = box.inner.Ctor).bind.apply(_a, __spreadArray([void 0], xs, false)))();
+}
+function makeRest(C) {
+    var rest = [];
+    for (var _i = 1; _i < arguments.length; _i++) {
+        rest[_i - 1] = arguments[_i];
+    }
+    return new (C.bind.apply(C, __spreadArray([void 0], rest, false)))();
+}
+function readProp(C, xs) {
+    return new (C.bind.apply(C, __spreadArray([void 0], xs, false)))().args;
+}
+"#;
+    let expected = r#"
+export { make };
+export { makeTail };
+export { makeMember };
+export { makeRest };
+export { readProp };
+function make(C, xs) {
+    return new C(...xs);
+}
+function makeTail(C, xs, b) {
+    return new C(...xs, b);
+}
+function makeMember(box, xs) {
+    return new box.inner.Ctor(...xs);
+}
+function makeRest(C, ...rest) {
+    return new C(...rest);
+}
+function readProp(C, xs) {
+    return new C(...xs).args;
+}
+"#;
+    assert_eq_normalized(
+        &common::render_with_level(input, RewriteLevel::Standard),
+        expected,
+    );
+}
+
+#[test]
+fn typescript_downlevel_iteration_spread_construct_recovers_through_the_pipeline() {
+    // producer typescript@5.9.3 {"module":"CommonJS","target":"ES5","downlevelIteration":true,"esModuleInterop":true}
+    let input = r#"
+"use strict";
+var __read = (this && this.__read) || function (o, n) {
+    var m = typeof Symbol === "function" && o[Symbol.iterator];
+    if (!m) return o;
+    var i = m.call(o), r, ar = [], e;
+    try {
+        while ((n === void 0 || n-- > 0) && !(r = i.next()).done) ar.push(r.value);
+    }
+    catch (error) { e = { error: error }; }
+    finally {
+        try {
+            if (r && !r.done && (m = i["return"])) m.call(i);
+        }
+        finally { if (e) throw e.error; }
+    }
+    return ar;
+};
+var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
+    if (pack || arguments.length === 2) for (var i = 0, l = from.length, ar; i < l; i++) {
+        if (ar || !(i in from)) {
+            if (!ar) ar = Array.prototype.slice.call(from, 0, i);
+            ar[i] = from[i];
+        }
+    }
+    return to.concat(ar || Array.prototype.slice.call(from));
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.makeLead = makeLead;
+exports.makeFmt = makeFmt;
+function makeLead(C, xs) {
+    return new (C.bind.apply(C, __spreadArray([void 0, 0], __read(xs), false)))();
+}
+function makeFmt(t) {
+    var _a;
+    return new ((_a = Intl.NumberFormat).bind.apply(_a, __spreadArray([void 0], __read(t), false)))();
+}
+"#;
+    let expected = r#"
+export { makeLead };
+export { makeFmt };
+function makeLead(C, xs) {
+    return new C(0, ...xs);
+}
+function makeFmt(t) {
+    return new Intl.NumberFormat(...t);
+}
+"#;
+    assert_eq_normalized(
+        &common::render_with_level(input, RewriteLevel::Standard),
+        expected,
+    );
+}
+
+#[test]
+fn closure_spread_construct_recovers_through_the_pipeline() {
+    // producer @babel/core@7.28.5 {"plugins":["@babel/plugin-transform-modules-commonjs"]}
+    // then google-closure-compiler@20260629.0.0 {"compilation_level":"SIMPLE","language_out":"ECMASCRIPT5"}
+    let input = r#"var $jscomp=$jscomp||{};$jscomp.scope={};$jscomp.arrayIteratorImpl=function(a){var b=0;return function(){return b<a.length?{done:!1,value:a[b++]}:{done:!0}}};$jscomp.arrayIterator=function(a){return{next:$jscomp.arrayIteratorImpl(a)}};$jscomp.makeIterator=function(a){var b=typeof Symbol!="undefined"&&Symbol.iterator&&a[Symbol.iterator];if(b)return b.call(a);if(typeof a.length=="number")return $jscomp.arrayIterator(a);throw Error(String(a)+" is not an iterable or ArrayLike");};
+$jscomp.arrayFromIterator=function(a){for(var b,c=[];!(b=a.next()).done;)c.push(b.value);return c};$jscomp.arrayFromIterable=function(a){return a instanceof Array?a:$jscomp.arrayFromIterator($jscomp.makeIterator(a))};Object.defineProperty(exports,"__esModule",{value:!0});exports.make=make;exports.makeLead=makeLead;exports.makeMember=makeMember;exports.readProp=readProp;
+function make(a,b){return new (Function.prototype.bind.apply(a,[null].concat((0,$jscomp.arrayFromIterable)(b))))}function makeLead(a,b){return new (Function.prototype.bind.apply(a,[null,0].concat((0,$jscomp.arrayFromIterable)(b))))}
+function makeMember(a,b){return new (Function.prototype.bind.apply(a.inner.Ctor,[null].concat((0,$jscomp.arrayFromIterable)(b))))}
+function readProp(a,b){return(new (Function.prototype.bind.apply(a,[null].concat((0,$jscomp.arrayFromIterable)(b))))).args};
+"#;
+    let output = common::render_with_level(input, RewriteLevel::Standard);
+    for present in [
+        "return new a(...b);",
+        "return new a(0, ...b);",
+        "return new a.inner.Ctor(...b);",
+        "return new a(...b).args;",
+    ] {
+        assert!(output.contains(present), "missing `{present}`:\n{output}");
+    }
+    assert!(!output.contains("bind"), "{output}");
+}
+
+#[test]
+fn unproven_concat_spread_construct_recovers_only_at_aggressive() {
+    // shape: hypothetical, per `concat_arguments_are_arrays` (TypeScript
+    // before 3.6 targeting ES5 without downlevelIteration lowered spread to
+    // `[void 0].concat(xs)`; not reproduced with a pinned producer here).
+    // Whether `xs` reads the same through concat and spread is the concat
+    // rule's question, so the construct follows its level.
+    let input = r#"
+function make(C, xs) {
+    return new (C.bind.apply(C, [void 0].concat(xs)))();
+}
+function makeNull(C, xs) {
+    return new (Function.prototype.bind.apply(C, [null].concat(xs)))();
+}
+export { make, makeNull };
+"#;
+    let standard = common::render_with_level(input, RewriteLevel::Standard);
+    assert!(standard.contains(".concat(xs)"), "{standard}");
+    assert!(!standard.contains("new C("), "{standard}");
+    assert_eq_normalized(
+        &common::render_with_level(input, RewriteLevel::Aggressive),
+        r#"
+function make(C, xs) {
+    return new C(...xs);
+}
+function makeNull(C, xs) {
+    return new C(...xs);
+}
+export { make, makeNull };
+"#,
+    );
+}

@@ -307,6 +307,17 @@ rationale, or level gating appear.
   `expr.fn(...args)` only when `TempIsolation` accepts dropping the write
   (every use of `t` is in that call); otherwise `(t = expr)` stays on the
   callee object. A temp reused by two sites therefore keeps both writes.
+  A construct of a bound function, `new (F.bind(t, ...args))()` with `t`
+  `null`/`void 0`/`undefined` and no outer arguments, becomes
+  `new F(...args)` (`intrinsic_function_bind`). TypeScript's
+  `new (F.bind.apply(F, list))()` reaches that shape through the `apply`
+  rewrite in the same pass, so its list takes the `apply` proof. Babel 6's
+  and Closure's `Function.prototype.bind.apply(F, [null].concat(...))` are
+  recovered only once the list is an array literal `[null, ...args]`: that
+  needs UnToConsumableArray, UnArrayConcatSpread and UnSpreadArrayLiteral
+  (and UnArrayConcatSpreadRest for a rest parameter), so these constructs
+  convert in the second pass, UnArgumentSpread2, and an unproven
+  `[null].concat(xs)` follows `concat_arguments_are_arrays`.
 - **UnTemplateLiteral** — level gating is per path, not per rule (the rule is
   always enabled because tagged-template helper recovery is provenance-checked
   and runs at every level). The `+`-chain path (`string_coercion_hint`) and the

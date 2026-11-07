@@ -2,8 +2,8 @@ use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BindingIdent, CallExpr,
     Callee, Constructor, Decl, Expr, ExprOrSpread, ExprStmt, FnDecl, Function, FunctionBody, Ident,
-    Lit, MemberExpr, MemberProp, Module, ModuleItem, ParamOrTsParamProp, Pat, SimpleAssignTarget,
-    Stmt, UpdateExpr, VarDeclKind, VarDeclarator,
+    Lit, MemberExpr, MemberProp, Module, ModuleItem, NewExpr, ParamOrTsParamProp, Pat,
+    SimpleAssignTarget, Stmt, UpdateExpr, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -38,6 +38,13 @@ use crate::utils::paren::strip_parens;
 /// its unmemoized member-chain receiver, and swc's `this` on a call-result
 /// callee. The named `$jscomp.arrayFromIterable(xs)` is dropped from the
 /// spread; a renamed helper stays (see `ClosureRuntime`).
+///
+/// A lowered spread construct ends as a construct of a bound function,
+/// which becomes `new F(...args)` (see `bound_construct`). Its argument list
+/// takes the same proof: TypeScript's `F.bind.apply(F, list)` reaches it
+/// through the `apply` rewrite above, and Babel 6's and Closure's
+/// `Function.prototype.bind.apply(F, [null, ...args])` only once the list is
+/// an array literal, after the concat and helper rules made it one.
 pub struct UnArgumentSpread {
     unresolved_mark: Mark,
     level: RewriteLevel,
@@ -236,6 +243,13 @@ impl VisitMut for UnArgumentSpread {
             return;
         }
 
+        if let Expr::New(new) = &*expr {
+            if let Some(rewritten) = self.bound_construct(new) {
+                *expr = rewritten;
+            }
+            return;
+        }
+
         let Expr::Call(call) = &*expr else {
             return;
         };
@@ -277,6 +291,117 @@ impl VisitMut for UnArgumentSpread {
 }
 
 impl UnArgumentSpread {
+    /// `new (F.bind(t, ...args))()` → `new F(...args)`, and
+    /// `new (Function.prototype.bind.apply(F, [t, ...args]))()` likewise.
+    ///
+    /// [[Construct]] of a bound function ignores the bound `this` and passes
+    /// the target as `new.target`, so the two construct the same object when
+    /// `t` has no side effect and the outer call adds no arguments.
+    /// `Function.prototype.bind` (or `Function.bind`) on the global `Function`
+    /// is the intrinsic under the execution baseline; `F.bind` is the
+    /// intrinsic only under `intrinsic_function_bind`, since `F` may define
+    /// its own `bind`. The list of the `apply` form must already be a
+    /// hole-free array literal: an unknown list cannot be split into its
+    /// bound `this` and arguments.
+    fn bound_construct(&self, new: &NewExpr) -> Option<Expr> {
+        if new.args.as_ref().is_some_and(|args| !args.is_empty()) {
+            return None;
+        }
+        let Expr::Call(call) = strip_parens(&new.callee) else {
+            return None;
+        };
+        let Callee::Expr(callee) = &call.callee else {
+            return None;
+        };
+        let Expr::Member(MemberExpr {
+            obj,
+            prop: MemberProp::Ident(prop),
+            ..
+        }) = strip_parens(callee)
+        else {
+            return None;
+        };
+        let (target, args) = match prop.sym.as_ref() {
+            "bind" => {
+                let (bound_this, args) = call.args.split_first()?;
+                if bound_this.spread.is_some() || !self.is_ignored_bound_this(&bound_this.expr) {
+                    return None;
+                }
+                (obj.clone(), args.to_vec())
+            }
+            "apply" if self.is_intrinsic_bind(obj) => {
+                let [target, list] = call.args.as_slice() else {
+                    return None;
+                };
+                if target.spread.is_some() || list.spread.is_some() {
+                    return None;
+                }
+                let Expr::Array(list) = strip_parens(&list.expr) else {
+                    return None;
+                };
+                let (Some(Some(bound_this)), rest) = (list.elems.first(), list.elems.get(1..)?)
+                else {
+                    return None;
+                };
+                if bound_this.spread.is_some()
+                    || !self.is_ignored_bound_this(&bound_this.expr)
+                    || rest.iter().any(Option::is_none)
+                {
+                    return None;
+                }
+                (
+                    target.expr.clone(),
+                    rest.iter().flatten().cloned().collect(),
+                )
+            }
+            _ => return None,
+        };
+        Some(Expr::New(NewExpr {
+            span: new.span,
+            ctxt: new.ctxt,
+            callee: target,
+            args: Some(args),
+            type_args: new.type_args.clone(),
+        }))
+    }
+
+    /// A bound `this` whose evaluation has no effect: `null`, `void 0`, or
+    /// the global `undefined` outside a module with dynamic scope.
+    fn is_ignored_bound_this(&self, expr: &Expr) -> bool {
+        match strip_parens(expr) {
+            Expr::Lit(Lit::Null(_)) => true,
+            Expr::Ident(_) if self.dynamic_scope => false,
+            expr => is_unresolved_undefined(expr, self.unresolved_mark),
+        }
+    }
+
+    /// `Function.prototype.bind` or `Function.bind` on the global `Function`.
+    fn is_intrinsic_bind(&self, expr: &Expr) -> bool {
+        if self.dynamic_scope {
+            return false;
+        }
+        let Expr::Member(MemberExpr {
+            obj,
+            prop: MemberProp::Ident(prop),
+            ..
+        }) = strip_parens(expr)
+        else {
+            return false;
+        };
+        if prop.sym != "bind" {
+            return false;
+        }
+        let is_function = |expr: &Expr| matches!(strip_parens(expr), Expr::Ident(id) if is_unresolved_ident(id, "Function", self.unresolved_mark));
+        match strip_parens(obj) {
+            Expr::Member(MemberExpr {
+                obj,
+                prop: MemberProp::Ident(prop),
+                ..
+            }) => prop.sym == "prototype" && is_function(obj),
+            obj => is_function(obj),
+        }
+    }
+
     fn try_rewrite_split_memoized_apply(&mut self, pair: &[Stmt]) -> Option<Stmt> {
         let matched = match_split_memoized_apply(&pair[0], &pair[1])?;
         if !self.argument_list_converts(&matched.apply_call.args[1].expr) {
@@ -674,6 +799,7 @@ fn is_static_member_chain(expr: &Expr) -> bool {
     }
 }
 
+/// An `apply` call, or a construct of a `bind` call (`bound_construct`).
 fn contains_apply_call(module: &Module) -> bool {
     struct Finder(bool);
     impl Visit for Finder {
@@ -686,6 +812,24 @@ fn contains_apply_call(module: &Module) -> bool {
                 return;
             }
             call.visit_children_with(self);
+        }
+
+        fn visit_new_expr(&mut self, new: &NewExpr) {
+            if self.0 {
+                return;
+            }
+            if let Expr::Call(CallExpr {
+                callee: Callee::Expr(callee),
+                ..
+            }) = strip_parens(&new.callee)
+            {
+                if matches!(strip_parens(callee), Expr::Member(MemberExpr { prop: MemberProp::Ident(prop), .. }) if prop.sym == "bind")
+                {
+                    self.0 = true;
+                    return;
+                }
+            }
+            new.visit_children_with(self);
         }
     }
     let mut finder = Finder(false);

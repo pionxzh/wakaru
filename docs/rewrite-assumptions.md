@@ -278,6 +278,39 @@ flattened, statement, and `if` forms).
 
 Level: `standard` and above. `minimal` keeps the lowered form.
 
+### `intrinsic_function_bind`
+
+The `.bind` that a lowered spread construct reads on the constructor is
+`Function.prototype.bind`.
+
+TypeScript lowers `new C(...xs)` to a construct of a bound function
+(producer `typescript@5.9.3` ES5):
+
+```js
+new (C.bind.apply(C, __spreadArray([void 0], xs, false)))()
+// -> new (C.bind(undefined, ...xs))()   (helper and `apply` recovery)
+// -> new C(...xs)
+```
+
+[[Construct]] of a bound function ignores the bound `this` and passes the
+target as `new.target`, so with the intrinsic `bind` the two forms construct
+the same object. The recovered form no longer reads `C.bind`. A constructor
+with its own `bind` (a class with `static bind()`) runs that method in the
+lowered code and is constructed directly in the recovered code. `bind` also
+reads the target's `length` and `name`, which only an accessor can observe.
+
+Babel 6 and Closure Compiler read `Function.prototype.bind` on the global
+`Function` instead; that form depends only on the execution environment
+baseline.
+
+Affects: `UnArgumentSpread` (bound constructs whose bound `this` is `null`,
+`void 0` or `undefined`, with no arguments to the outer `new`).
+
+Level: `standard` and above, like the rest of the rule. The argument list
+keeps the `apply` proof: an unknown list reaches a bound construct only at
+`aggressive` (`apply_arguments_are_arrays`, or `concat_arguments_are_arrays`
+for Babel 6's and Closure's `[null].concat(xs)`).
+
 ### `pure_getters`
 
 Property reads on the rewritten base are stable and side-effect-free.
@@ -636,7 +669,8 @@ parameter, a recognized `arguments` copy, and an unwritten binding
 initialized to one of these, read where it already holds that value (see
 `rules/un_argument_spread.rs`).
 
-Affects: `UnArgumentSpread` for argument lists it cannot prove.
+Affects: `UnArgumentSpread` for argument lists it cannot prove, including the
+list of a lowered spread construct (`C.bind.apply(C, xs)`).
 
 Level: `aggressive` only. `minimal` keeps every `apply` call; `standard`
 recovers the proven argument lists.
