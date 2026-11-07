@@ -29,6 +29,7 @@ mod matchers;
 mod paths;
 mod ts_helpers;
 mod ts_registrar;
+mod ts_spread_array;
 
 pub(crate) use collect::collect_transpiler_helpers;
 use collect::{collect_swc_member_helpers, collect_transpiler_helpers_inner};

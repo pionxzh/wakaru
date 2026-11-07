@@ -1465,3 +1465,37 @@ fn is_helper_module_false_for_plain_module() {
     let facts = collect_facts(r#"export const value = compute();"#);
     assert!(!facts.is_helper_module);
 }
+
+#[test]
+fn exported_spread_array_function_fact_is_proven_by_body_under_any_name() {
+    // producer tslib@2.8.1 `tslib.es6.mjs` bundled by webpack@5.111.1 with
+    // Terser, which renames the export.
+    let facts = collect_facts(
+        r#"
+function O(e,t,r){if(r||2===arguments.length)for(var n,o=0,a=t.length;o<a;o++)!n&&o in t||(n||(n=Array.prototype.slice.call(t,0,o)),n[o]=t[o]);return e.concat(n||Array.prototype.slice.call(t))}
+export { O as fX };
+"#,
+    );
+    assert_eq!(
+        facts.ts_helper_exports,
+        vec![ts_helper_export(
+            "fX",
+            Some("O"),
+            TypeScriptHelperKind::SpreadArray
+        )]
+    );
+}
+
+#[test]
+fn exported_spread_array_name_alone_is_not_a_fact() {
+    let facts = collect_facts(
+        r#"
+function F(e, t, r) { return e.concat(t); }
+export { F as __spreadArray };
+"#,
+    );
+    assert!(
+        facts.ts_helper_exports.is_empty(),
+        "a tslib export name without the helper's body must not become a fact: {facts}"
+    );
+}

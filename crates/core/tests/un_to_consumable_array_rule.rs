@@ -1,9 +1,10 @@
 mod common;
-use common::{assert_eq_normalized, render, render_rule};
+use common::{assert_eq_normalized, render, render_rule, render_with_level};
 use wakaru_core::facts::{
     ModuleFacts, ModuleFactsMap, TypeScriptHelperExportFact, TypeScriptHelperKind,
 };
 use wakaru_core::rules::UnToConsumableArray;
+use wakaru_core::RewriteLevel;
 
 #[test]
 fn replaces_to_consumable_array_with_spread() {
@@ -673,4 +674,150 @@ use(out);
         output.contains("@swc/helpers/_/_array_without_holes"),
         "pre-existing dead sub-helper imports should survive: {output}"
     );
+}
+
+// tslib's `__spreadArray` inlined without its `this && this.__spreadArray`
+// guard and name is matched by its whole body, and converts at the same
+// levels as the named helper.
+
+/// producer typescript@5.9.3 ES5 ESM, bundled by webpack@5.111.1 with
+/// Terser: the helper's own `ar` reuses the helper's outer name.
+const TERSER_SPREAD_ARRAY: &str = "var t=function(e,r,n){if(n||2===arguments.length)for(var t,o=0,i=r.length;o<i;o++)!t&&o in r||(t||(t=Array.prototype.slice.call(r,0,o)),t[o]=r[o]);return e.concat(t||Array.prototype.slice.call(r))};";
+
+#[test]
+fn unwraps_terser_minified_spread_array_helper_by_body() {
+    let input = format!(
+        "{TERSER_SPREAD_ARRAY}\nexport function make(e, r) {{ return new (e.bind.apply(e, t([void 0], r, !1))); }}\nexport function log(r) {{ return console.log.apply(console, t([\"x\"], r, !1)); }}\n"
+    );
+    let expected = r#"
+export function make(e, r) {
+    return new e(...r);
+}
+export function log(r) {
+    return console.log("x", ...r);
+}
+"#;
+    assert_eq_normalized(&render(&input), expected);
+}
+
+#[test]
+fn unwraps_esbuild_minified_spread_array_helper_by_body() {
+    // producer typescript@5.9.3 ES5 ESM, bundled by esbuild@0.28.0 --minify.
+    let input = r#"
+var t=function(r,e,a){if(a||arguments.length===2)for(var n=0,_=e.length,l;n<_;n++)(l||!(n in e))&&(l||(l=Array.prototype.slice.call(e,0,n)),l[n]=e[n]);return r.concat(l||Array.prototype.slice.call(e))};
+export function make(r, e) { return new (r.bind.apply(r, t(t([void 0], e, !1), [0], !1))); }
+"#;
+    let expected = r#"
+export function make(r, e) {
+    return new r(...e, 0);
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn unwraps_renamed_spread_array_function_declaration_by_body() {
+    // The tslib@2.8.1 `tslib.es6.mjs` body under another name.
+    let input = r#"
+function spreadInto(to, from, pack) {
+    if (pack || arguments.length === 2) for (var i = 0, l = from.length, ar; i < l; i++) {
+        if (ar || !(i in from)) {
+            if (!ar) ar = Array.prototype.slice.call(from, 0, i);
+            ar[i] = from[i];
+        }
+    }
+    return to.concat(ar || Array.prototype.slice.call(from));
+}
+export const out = spreadInto([head], items, false);
+"#;
+    let expected = r#"
+export const out = [head, ...items];
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn unwraps_braced_minified_spread_array_helper_by_body() {
+    // The Terser body after `UnCurlyBraces`, as module facts see it.
+    let input = r#"
+var t = function(e, r, n) {
+    if (n || arguments.length === 2) {
+        for (var t, o = 0, i = r.length; o < i; o++) {
+            !t && o in r || (t || (t = Array.prototype.slice.call(r, 0, o)), t[o] = r[o]);
+        }
+    }
+    return e.concat(t || Array.prototype.slice.call(r));
+};
+var out = t([head], items, false);
+"#;
+    let expected = r#"
+var out = [head, ...items];
+"#;
+    assert_eq_normalized(
+        &render_rule(input, |_| UnToConsumableArray::new()),
+        expected,
+    );
+}
+
+#[test]
+fn body_matched_spread_array_converts_at_every_level_like_the_named_helper() {
+    let input = format!("{TERSER_SPREAD_ARRAY}\nexport const out = t([head], items, !1);\n");
+    for level in [RewriteLevel::Minimal, RewriteLevel::Standard] {
+        let output = render_with_level(&input, level);
+        assert!(output.contains("...items"), "{level:?}:\n{output}");
+        assert!(!output.contains("arguments"), "{level:?}:\n{output}");
+    }
+}
+
+#[test]
+fn lookalike_spread_array_bodies_keep_their_calls() {
+    let bodies = [
+        // castArray-like concat, no copy loop
+        "function h(e, r, n) { return e.concat(r); }",
+        // no hole check
+        "function h(e,r,n){if(n||2===arguments.length)for(var t,o=0,i=r.length;o<i;o++)t||(t=Array.prototype.slice.call(r,0,o)),t[o]=r[o];return e.concat(t||Array.prototype.slice.call(r))}",
+        // copies from the wrong start
+        "function h(e,r,n){if(n||2===arguments.length)for(var t,o=0,i=r.length;o<i;o++)!t&&o in r||(t||(t=Array.prototype.slice.call(r,1,o)),t[o]=r[o]);return e.concat(t||Array.prototype.slice.call(r))}",
+        // concatenates onto the source
+        "function h(e,r,n){if(n||2===arguments.length)for(var t,o=0,i=r.length;o<i;o++)!t&&o in r||(t||(t=Array.prototype.slice.call(r,0,o)),t[o]=r[o]);return r.concat(t||Array.prototype.slice.call(e))}",
+        // tests the wrong argument count
+        "function h(e,r,n){if(n||3===arguments.length)for(var t,o=0,i=r.length;o<i;o++)!t&&o in r||(t||(t=Array.prototype.slice.call(r,0,o)),t[o]=r[o]);return e.concat(t||Array.prototype.slice.call(r))}",
+    ];
+    for body in bodies {
+        let input = format!("{body}\nexport const out = h([head], items, false);\n");
+        let output = render(&input);
+        assert!(output.contains("h(["), "{body}\n{output}");
+    }
+}
+
+#[test]
+fn spread_array_body_with_a_local_array_keeps_its_calls() {
+    let input = r#"
+var Array = { prototype: { slice: custom } };
+var h = function(e,r,n){if(n||2===arguments.length)for(var t,o=0,i=r.length;o<i;o++)!t&&o in r||(t||(t=Array.prototype.slice.call(r,0,o)),t[o]=r[o]);return e.concat(t||Array.prototype.slice.call(r))};
+export const out = h([head], items, false);
+"#;
+    let output = render(input);
+    assert!(output.contains("h(["), "{output}");
+}
+
+#[test]
+fn written_or_redeclared_spread_array_helper_keeps_its_calls() {
+    let written = format!("{TERSER_SPREAD_ARRAY}\nexport function set(f) {{ t = f; }}\nexport const out = t([head], items, false);\n");
+    let redeclared = format!(
+        "{TERSER_SPREAD_ARRAY}\nvar t = custom;\nexport const out = t([head], items, false);\n"
+    );
+    let function_twice = r#"
+function h(e,r,n){if(n||2===arguments.length)for(var t,o=0,i=r.length;o<i;o++)!t&&o in r||(t||(t=Array.prototype.slice.call(r,0,o)),t[o]=r[o]);return e.concat(t||Array.prototype.slice.call(r))}
+function h(e, r) { return custom(e, r); }
+export const out = h([head], items, false);
+"#;
+    for (input, callee) in [
+        (written.as_str(), "t(["),
+        (redeclared.as_str(), "t(["),
+        (function_twice, "h(["),
+    ] {
+        let output = render(input);
+        assert!(output.contains(callee), "{input}\n{output}");
+    }
 }

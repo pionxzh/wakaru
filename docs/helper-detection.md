@@ -135,7 +135,19 @@ Rules still own domain-specific shape recognition. For example:
   matched against the declaration's `BindingKey`: both the cache assignment
   and recursive call must target the same function binding and the recursive
   argument must be the helper parameter.
-- `un_to_consumable_array.rs` recognizes TypeScript `__spreadArray`.
+- `un_to_consumable_array.rs` recognizes TypeScript `__spreadArray`. A
+  bundler that inlines tslib's three-parameter `__spreadArray` drops its
+  `this && this.__spreadArray` guard and its name, so the central TS
+  collector also matches that helper by its whole body
+  (`transpiler_helper_utils/ts_spread_array.rs`): the `pack ||
+  arguments.length === 2` guard, the hole-filling copy loop as written or as
+  Terser and esbuild compress it, and `to.concat(ar ||
+  Array.prototype.slice.call(from))`, every name by binding and `Array` as
+  the global. The binding must be declared once and never written. Calls
+  then convert exactly as the named helper's do, at the same levels. tslib
+  2.1 and 2.2 shipped a two-parameter `__spreadArray(to, from)` whose call
+  sites the conversion does not accept, named or not, so its body is not
+  matched.
 - `un_template_literal.rs` recognizes Babel/SWC/TypeScript tagged-template
   helper calls and cache factories. Detection uses body-shape signals —
   see "Tagged template body shapes" below.

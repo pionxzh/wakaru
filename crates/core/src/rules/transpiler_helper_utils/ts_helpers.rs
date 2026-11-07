@@ -18,6 +18,7 @@ use swc_core::ecma::visit::{Visit, VisitWith};
 use crate::rules::helper_matcher::{binding_key, var_declarator_binding_key};
 use crate::utils::paren::strip_parens;
 
+use super::ts_spread_array::ts_spread_array_function_matches;
 use super::*;
 
 pub(super) fn collect_ts_helpers(
@@ -117,7 +118,67 @@ pub(super) fn collect_ts_helpers(
         }
     }
 
+    collect_body_matched_ts_helpers(module, unresolved_mark, &mut helpers);
     helpers
+}
+
+/// Module-level helpers known only by their body: a bundler that inlines a
+/// tslib helper drops the `this && this.__helper ||` guard and the name. The
+/// body is checked in full (`ts_spread_array_function_matches`), and the
+/// binding must be declared once and never written, so every call reaches
+/// that body.
+fn collect_body_matched_ts_helpers(
+    module: &Module,
+    unresolved_mark: Option<Mark>,
+    helpers: &mut HashMap<BindingKey, TsHelperInfo>,
+) {
+    let mut candidates = Vec::new();
+    for item in &module.body {
+        let (ModuleItem::Stmt(Stmt::Decl(decl))
+        | ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(swc_core::ecma::ast::ExportDecl {
+            decl,
+            ..
+        }))) = item
+        else {
+            continue;
+        };
+        match decl {
+            Decl::Fn(fn_decl) => {
+                if ts_spread_array_function_matches(&fn_decl.function, unresolved_mark) {
+                    candidates.push(binding_key(&fn_decl.ident));
+                }
+            }
+            Decl::Var(var) => {
+                for decl in &var.decls {
+                    let (Pat::Ident(binding), Some(Expr::Fn(fn_expr))) =
+                        (&decl.name, decl.init.as_deref().map(strip_parens))
+                    else {
+                        continue;
+                    };
+                    if ts_spread_array_function_matches(&fn_expr.function, unresolved_mark) {
+                        candidates.push(binding_key(&binding.id));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    candidates.retain(|key| !helpers.contains_key(key));
+    if candidates.is_empty() {
+        return;
+    }
+    let uses = crate::analysis::binding_uses::BindingUseIndex::collect(module);
+    for key in candidates {
+        if uses.has_single_declaration(&key) && !uses.has_direct_write(&key) {
+            helpers.insert(
+                key,
+                TsHelperInfo {
+                    kind: TsHelperKind::SpreadArray,
+                    source: TsHelperSource::Inline,
+                },
+            );
+        }
+    }
 }
 pub(crate) fn collect_inline_ts_helpers_deep(module: &Module) -> HashMap<BindingKey, TsHelperKind> {
     struct Collector {

@@ -179,9 +179,7 @@ fn run_un_to_consumable_array(
         };
         module.visit_mut_with(&mut replacer);
 
-        local_helpers.remove_unused_ts_helper_bindings(module, TsHelperKind::SpreadArray);
-        local_helpers.remove_unused_ts_helper_bindings(module, TsHelperKind::Spread);
-        local_helpers.remove_unused_ts_helper_bindings(module, TsHelperKind::SpreadArrays);
+        remove_unused_ts_spread_helpers(module, local_helpers);
         return;
     }
 
@@ -208,9 +206,15 @@ fn run_un_to_consumable_array(
     // (`_arrayWithoutHoles`, `_iterableToArray`, …) once the call sites are gone,
     // so the non-external (inlined) lowering does not leave dead declarations.
     local_helpers.remove_helpers_with_dependencies(module, helpers);
+    remove_unused_ts_spread_helpers(module, local_helpers);
+}
+
+fn remove_unused_ts_spread_helpers(module: &mut Module, local_helpers: &LocalHelperContext) {
     local_helpers.remove_unused_ts_helper_bindings(module, TsHelperKind::SpreadArray);
     local_helpers.remove_unused_ts_helper_bindings(module, TsHelperKind::Spread);
     local_helpers.remove_unused_ts_helper_bindings(module, TsHelperKind::SpreadArrays);
+    // A `__spreadArray` matched by its body can be a function declaration.
+    local_helpers.remove_unused_inline_ts_helpers(module, &[TsHelperKind::SpreadArray]);
 }
 
 struct ToConsumableArrayReplacer<'a> {
