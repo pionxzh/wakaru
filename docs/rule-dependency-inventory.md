@@ -564,6 +564,8 @@ rationale, or level gating appear.
   binding gets the same check: if another binding shares its name, choose an
   unused suffix and rename only the copy binding and its resolved references
   before removing the loop. This applies to functions and constructors.
+  Getters and setters are skipped (a getter takes no parameters and a setter
+  exactly one), but functions nested in them are still rewritten.
   ArgRest also recovers Closure Compiler's rest lowering,
   `H.apply(K, arguments)` where `K` is the fixed-parameter count and `H` is
   `$jscomp.getRestArguments` (under the namespace check UnForOf uses) or a

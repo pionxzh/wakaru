@@ -3,10 +3,11 @@ use crate::collections::HashSet;
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BindingIdent, Callee, CondExpr,
-    Constructor, Decl, Expr, Function, FunctionBody, Ident, Lit, MemberExpr, MemberProp, Module,
-    Number, Param, ParamOrTsParamProp, Pat, RestPat, SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp,
-    UpdateExpr, UpdateOp, VarDecl, VarDeclKind, VarDeclOrExpr, VarDeclarator,
+    AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BindingIdent, Callee, ClassMethod,
+    CondExpr, Constructor, Decl, Expr, Function, FunctionBody, GetterProp, Ident, Lit, MemberExpr,
+    MemberProp, MethodKind, Module, Number, Param, ParamOrTsParamProp, Pat, PrivateMethod, RestPat,
+    SetterProp, SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp, UpdateExpr, UpdateOp, VarDecl,
+    VarDeclKind, VarDeclOrExpr, VarDeclarator,
 };
 use swc_core::ecma::utils::find_pat_ids;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -74,6 +75,36 @@ impl VisitMut for ArgRest {
         }
         module.visit_mut_children_with(self);
         self.closure = None;
+    }
+
+    // A getter takes no parameters and a setter exactly one, so neither can
+    // take a rest parameter. Functions nested in them are still visited.
+    fn visit_mut_getter_prop(&mut self, prop: &mut GetterProp) {
+        prop.key.visit_mut_with(self);
+        prop.function.visit_mut_children_with(self);
+    }
+
+    fn visit_mut_setter_prop(&mut self, prop: &mut SetterProp) {
+        prop.key.visit_mut_with(self);
+        prop.function.visit_mut_children_with(self);
+    }
+
+    fn visit_mut_class_method(&mut self, method: &mut ClassMethod) {
+        if is_accessor(method.kind) {
+            method.key.visit_mut_with(self);
+            method.function.visit_mut_children_with(self);
+        } else {
+            method.visit_mut_children_with(self);
+        }
+    }
+
+    fn visit_mut_private_method(&mut self, method: &mut PrivateMethod) {
+        if is_accessor(method.kind) {
+            method.key.visit_mut_with(self);
+            method.function.visit_mut_children_with(self);
+        } else {
+            method.visit_mut_children_with(self);
+        }
     }
 
     fn visit_mut_function(&mut self, func: &mut Function) {
@@ -228,6 +259,10 @@ impl VisitMut for ArgRest {
 
         restore_if_strict_directive(ctor, original, |ctor| ctor.body.as_ref());
     }
+}
+
+fn is_accessor(kind: MethodKind) -> bool {
+    matches!(kind, MethodKind::Getter | MethodKind::Setter)
 }
 
 /// A rest parameter makes the parameter list non-simple, which forbids a

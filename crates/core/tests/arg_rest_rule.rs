@@ -1511,3 +1511,56 @@ export const o = {
         );
     }
 }
+
+#[test]
+fn accessors_keep_their_arguments() {
+    // A getter takes no parameters and a setter exactly one, so neither can
+    // take a rest parameter. Functions nested in them are still rewritten.
+    let input = r#"
+var o = {
+    get x() {
+        return arguments[0];
+    },
+    set y(v) {
+        use(arguments[1], function() {
+            return arguments[0];
+        });
+    }
+};
+class C {
+    get x() {
+        return arguments[0];
+    }
+    set y(v) {
+        use($jscomp.getRestArguments.apply(1, arguments));
+    }
+    static set #z(v) {
+        use(arguments[1]);
+    }
+}
+"#;
+    let expected = r#"
+var o = {
+    get x() {
+        return arguments[0];
+    },
+    set y(v) {
+        use(arguments[1], function(...args) {
+            return args[0];
+        });
+    }
+};
+class C {
+    get x() {
+        return arguments[0];
+    }
+    set y(v) {
+        use($jscomp.getRestArguments.apply(1, arguments));
+    }
+    static set #z(v) {
+        use(arguments[1]);
+    }
+}
+"#;
+    assert_eq_normalized(&apply_with_mark(input, RewriteLevel::Standard), expected);
+}
