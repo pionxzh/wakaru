@@ -564,6 +564,19 @@ rationale, or level gating appear.
   binding gets the same check: if another binding shares its name, choose an
   unused suffix and rename only the copy binding and its resolved references
   before removing the loop. This applies to functions and constructors.
+  ArgRest also recovers Closure Compiler's rest lowering,
+  `H.apply(K, arguments)` where `K` is the fixed-parameter count and `H` is
+  `$jscomp.getRestArguments` (under the namespace check UnForOf uses) or a
+  renamed ADVANCED copy proven by its whole body. It runs after
+  UnArgumentSpread has turned `fn.apply(null, $jscomp.arrayFromIterable(xs))`
+  into `fn(...xs)` (or `fn(...h(xs))` for a renamed helper), and its helper
+  matcher accepts the body both as emitted and after earlier rules split the
+  loop head. A top-level `var xs = H.apply(K, arguments)` becomes `...xs`; a
+  call elsewhere becomes a fresh `args`, only when it runs at most once per
+  invocation (outside loops and nested arrows). A Closure `arrayFromIterable`
+  call (named or renamed) around the never-written rest binding is dropped,
+  since every accepted helper returns an Array argument unchanged. The
+  module-wide `with`/direct-`eval` skip applies to this path.
 - **ArrowFunction** — converts a function expression only where positive
   evidence shows its value never reaches `new`, because an arrow has no
   `[[Construct]]` or `prototype` and "never constructed" cannot be decided

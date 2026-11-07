@@ -556,7 +556,10 @@ fn run_un_prototype_class(module: &mut Module, ctx: RuleRunContext<'_>) {
     module.visit_mut_with(&mut UnPrototypeClass::with_pins(pin_exports));
 }
 runner!(run_exponent, |ctx| Exponent::new(ctx.unresolved_mark));
-runner!(run_arg_rest, |ctx| ArgRest::new(ctx.rewrite_level));
+runner!(run_arg_rest, |ctx| ArgRest::new_with_mark(
+    ctx.unresolved_mark,
+    ctx.rewrite_level
+));
 runner!(run_un_rest_array_copy, |ctx| UnRestArrayCopy::new(
     ctx.unresolved_mark
 ));

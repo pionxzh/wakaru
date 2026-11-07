@@ -617,6 +617,8 @@ fn recover_closure_array_spread(module: &mut Module, unresolved_mark: Mark) {
 
 /// Closure Compiler's spread runtime in one module: the named
 /// `$jscomp.arrayFromIterable` and the renamed helpers of ADVANCED output.
+/// ArgRest also uses its `$jscomp` namespace check for
+/// `$jscomp.getRestArguments`.
 pub(super) struct ClosureRuntime {
     namespaces: HashSet<BindingKey>,
     /// Renamed `arrayFromIterable` helpers recognized by body shape.
@@ -645,6 +647,23 @@ impl ClosureRuntime {
         )
     }
 
+    /// `$jscomp.<name>` (also as `(0, $jscomp.<name>)`) on an unresolved
+    /// `$jscomp` or the canonical `var $jscomp = $jscomp || {}` bootstrap.
+    pub(super) fn is_jscomp_member(&self, expr: &Expr, name: &str) -> bool {
+        let Expr::Member(member) = strip_closure_indirect_call(expr) else {
+            return false;
+        };
+        if static_member_prop_name(&member.prop) != Some(name) {
+            return false;
+        }
+        let Expr::Ident(namespace) = strip_parens(&member.obj) else {
+            return false;
+        };
+        namespace.sym.as_ref() == "$jscomp"
+            && (self.namespaces.contains(&binding_key(namespace))
+                || namespace.ctxt.outer() == self.unresolved_mark)
+    }
+
     /// `xs` in `$jscomp.arrayFromIterable(xs)`.
     pub(super) fn array_from_iterable_source<'a>(&self, expr: &'a Expr) -> Option<&'a Expr> {
         let Expr::Call(call) = expr else {
@@ -653,25 +672,39 @@ impl ClosureRuntime {
         let Callee::Expr(callee) = &call.callee else {
             return None;
         };
-        let Expr::Member(member) = strip_closure_indirect_call(callee) else {
-            return None;
-        };
-        if static_member_prop_name(&member.prop) != Some("arrayFromIterable") {
+        if !self.is_jscomp_member(callee, "arrayFromIterable") {
             return None;
         }
-        let Expr::Ident(namespace) = strip_parens(&member.obj) else {
+        single_plain_argument(call)
+    }
+
+    /// `xs` in `$jscomp.arrayFromIterable(xs)` or in a call of a renamed
+    /// helper. Every helper shape accepted here returns its argument
+    /// unchanged when it is an Array, so a caller that proves `xs` is one
+    /// can replace the whole call with `xs`.
+    pub(super) fn array_from_iterable_argument<'a>(&self, expr: &'a Expr) -> Option<&'a Expr> {
+        if let Some(source) = self.array_from_iterable_source(expr) {
+            return Some(source);
+        }
+        let Expr::Call(call) = expr else {
             return None;
         };
-        if namespace.sym.as_ref() != "$jscomp"
-            || !(self.namespaces.contains(&binding_key(namespace))
-                || namespace.ctxt.outer() == self.unresolved_mark)
-        {
+        let Callee::Expr(callee) = &call.callee else {
             return None;
-        }
-        match call.args.as_slice() {
-            [arg] if arg.spread.is_none() => Some(&arg.expr),
+        };
+        match strip_parens(callee) {
+            Expr::Ident(helper) if self.array_helpers.contains(&binding_id(helper)) => {
+                single_plain_argument(call)
+            }
             _ => None,
         }
+    }
+}
+
+fn single_plain_argument(call: &CallExpr) -> Option<&Expr> {
+    match call.args.as_slice() {
+        [arg] if arg.spread.is_none() => Some(&arg.expr),
+        _ => None,
     }
 }
 
@@ -906,7 +939,7 @@ fn collect_renamed_array_from_iterable(
 
 /// Bindings of function declarations and `var f = function () {}`
 /// declarators whose function satisfies `predicate`.
-fn collect_function_bindings(
+pub(super) fn collect_function_bindings(
     module: &Module,
     predicate: impl Fn(&Function) -> bool,
 ) -> HashSet<BindingId> {

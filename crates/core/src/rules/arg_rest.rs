@@ -4,10 +4,11 @@ use swc_core::atoms::Atom;
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BindingIdent, Callee, CondExpr,
-    Constructor, Decl, Expr, Function, FunctionBody, Ident, Lit, MemberExpr, MemberProp, Number,
-    Param, ParamOrTsParamProp, Pat, RestPat, SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp,
+    Constructor, Decl, Expr, Function, FunctionBody, Ident, Lit, MemberExpr, MemberProp, Module,
+    Number, Param, ParamOrTsParamProp, Pat, RestPat, SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp,
     UpdateExpr, UpdateOp, VarDecl, VarDeclKind, VarDeclOrExpr, VarDeclarator,
 };
+use swc_core::ecma::utils::find_pat_ids;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::decl_utils::{
@@ -19,6 +20,10 @@ use super::rename_utils::{rename_bindings, BindingRename};
 use super::RewriteLevel;
 use crate::utils::paren::strip_parens;
 
+mod closure;
+
+use closure::{recover_closure_rest, ClosureRestRuntime};
+
 /// Replaces `arguments[N]` / `arguments.length` patterns with a rest parameter
 /// `...args` and rewrites safe accesses to use `args`.
 ///
@@ -26,13 +31,31 @@ use crate::utils::paren::strip_parens;
 /// - The function does not already have a rest parameter
 /// - All `arguments` usages are via subscript (`arguments[expr]`) or `.length`
 /// - In functions with fixed params, the accessed indices are provably in the tail
+///
+/// With the resolver's unresolved mark it also recovers Closure Compiler's
+/// rest lowering, `H.apply(K, arguments)` through `$jscomp.getRestArguments`
+/// or its renamed ADVANCED copy (see `arg_rest/closure.rs`).
 pub struct ArgRest {
     level: RewriteLevel,
+    unresolved_mark: Option<Mark>,
+    closure: Option<ClosureRestRuntime>,
 }
 
 impl ArgRest {
     pub fn new(level: RewriteLevel) -> Self {
-        Self { level }
+        Self {
+            level,
+            unresolved_mark: None,
+            closure: None,
+        }
+    }
+
+    pub fn new_with_mark(unresolved_mark: Mark, level: RewriteLevel) -> Self {
+        Self {
+            level,
+            unresolved_mark: Some(unresolved_mark),
+            closure: None,
+        }
     }
 }
 
@@ -43,6 +66,16 @@ impl Default for ArgRest {
 }
 
 impl VisitMut for ArgRest {
+    fn visit_mut_module(&mut self, module: &mut Module) {
+        if self.level >= RewriteLevel::Standard {
+            self.closure = self
+                .unresolved_mark
+                .and_then(|mark| ClosureRestRuntime::collect(module, mark));
+        }
+        module.visit_mut_children_with(self);
+        self.closure = None;
+    }
+
     fn visit_mut_function(&mut self, func: &mut Function) {
         if self.level < RewriteLevel::Standard {
             return;
@@ -67,6 +100,26 @@ impl VisitMut for ArgRest {
         let original = contains_use_strict_string_statement(body).then(|| func.clone());
         let fixed_param_count = func.params.len();
 
+        if let Some(runtime) = &self.closure {
+            let param_bindings = func
+                .params
+                .iter()
+                .flat_map(|param| find_pat_ids::<_, BindingId>(&param.pat))
+                .collect();
+            if let Some(rest) = recover_closure_rest(
+                func.body.as_mut().expect("body was checked above"),
+                &func.params,
+                &param_bindings,
+                fixed_param_count,
+                runtime,
+            ) {
+                func.params.push(make_rest_param(rest));
+                restore_if_strict_directive(func, original, |func| func.body.as_ref());
+                return;
+            }
+        }
+
+        let Some(body) = &func.body else { return };
         let copy_var = detect_copy_var_ident(body, fixed_param_count);
         let mut checker = ArgumentsChecker::new(fixed_param_count);
         body.visit_with(&mut checker);
@@ -94,15 +147,7 @@ impl VisitMut for ArgRest {
             });
         }
 
-        if let Some(original) = original {
-            if func
-                .body
-                .as_ref()
-                .is_some_and(has_direct_use_strict_directive)
-            {
-                *func = original;
-            }
-        }
+        restore_if_strict_directive(func, original, |func| func.body.as_ref());
     }
 
     fn visit_mut_constructor(&mut self, ctor: &mut Constructor) {
@@ -129,6 +174,30 @@ impl VisitMut for ArgRest {
         let original = contains_use_strict_string_statement(body).then(|| ctor.clone());
         let fixed_param_count = ctor.params.len();
 
+        if let Some(runtime) = &self.closure {
+            let param_bindings = ctor
+                .params
+                .iter()
+                .flat_map(|param| match param {
+                    ParamOrTsParamProp::Param(param) => find_pat_ids::<_, BindingId>(&param.pat),
+                    ParamOrTsParamProp::TsParamProp(prop) => find_pat_ids(&prop.param),
+                })
+                .collect();
+            if let Some(rest) = recover_closure_rest(
+                ctor.body.as_mut().expect("body was checked above"),
+                &ctor.params,
+                &param_bindings,
+                fixed_param_count,
+                runtime,
+            ) {
+                ctor.params
+                    .push(ParamOrTsParamProp::Param(make_rest_param(rest)));
+                restore_if_strict_directive(ctor, original, |ctor| ctor.body.as_ref());
+                return;
+            }
+        }
+
+        let Some(body) = &ctor.body else { return };
         let copy_var = detect_copy_var_ident(body, fixed_param_count);
         let mut checker = ArgumentsChecker::new(fixed_param_count);
         body.visit_with(&mut checker);
@@ -157,14 +226,21 @@ impl VisitMut for ArgRest {
             });
         }
 
-        if let Some(original) = original {
-            if ctor
-                .body
-                .as_ref()
-                .is_some_and(has_direct_use_strict_directive)
-            {
-                *ctor = original;
-            }
+        restore_if_strict_directive(ctor, original, |ctor| ctor.body.as_ref());
+    }
+}
+
+/// A rest parameter makes the parameter list non-simple, which forbids a
+/// `"use strict"` directive. Removing statements can promote a later
+/// `"use strict"` string to one, so undo the rewrite when that happened.
+fn restore_if_strict_directive<T>(
+    node: &mut T,
+    original: Option<T>,
+    body: impl Fn(&T) -> Option<&FunctionBody>,
+) {
+    if let Some(original) = original {
+        if body(node).is_some_and(has_direct_use_strict_directive) {
+            *node = original;
         }
     }
 }

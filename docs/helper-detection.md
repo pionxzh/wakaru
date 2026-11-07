@@ -170,6 +170,18 @@ Rules still own domain-specific shape recognition. For example:
   `if (!(a instanceof Array)) { ...; a = h } return a`. That proves
   only that the call returns an Array, so the concat becomes `...helper(xs)`
   and the call stays: a castArray-like body has the same outline.
+- `arg_rest/closure.rs` recognizes `$jscomp.getRestArguments.apply(K,
+  arguments)` the same way, by member name on the same namespace, and turns
+  it into a rest parameter when `K` is the fixed-parameter count. Its
+  ADVANCED rename is matched by the complete body (`Number(this)` start,
+  copy `arguments[c]` to `b[c - a]`, return `b`), as emitted or with the
+  loop head split into declarations. That body returns a fresh Array of the
+  remaining arguments, which is exactly what a rest parameter holds, so the
+  call is removed. When the rest binding is never written, an
+  `arrayFromIterable` call around it (named or renamed) is dropped too:
+  every accepted helper shape returns an Array argument unchanged. The
+  helper declarations are left in place; the renamed ADVANCED helper goes
+  through the normal transform-induced dead-code removal once unused.
 
 This is deliberate. A helper matcher should encode the smallest semantic shape
 that proves the transform is safe, while shared utilities handle binding

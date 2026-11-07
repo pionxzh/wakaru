@@ -1039,3 +1039,475 @@ function outer(...args) {
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
+
+fn apply_with_mark(input: &str, level: RewriteLevel) -> String {
+    render_rule(input, |unresolved_mark| {
+        ArgRest::new_with_mark(unresolved_mark, level)
+    })
+}
+
+const CLOSURE_REST_HELPER: &str = r#"
+var $jscomp = $jscomp || {};
+$jscomp.getRestArguments = function() {
+    for (var a = Number(this), b = [], c = a; c < arguments.length; c++) b[c - a] = arguments[c];
+    return b;
+};
+"#;
+
+#[test]
+fn closure_rest_helper_declaration_becomes_rest_param() {
+    // producer google-closure-compiler@20260629.0.0
+    // --compilation_level=SIMPLE --language_out=ECMASCRIPT5
+    let body = r#"
+function rest(a) {
+    var b = $jscomp.getRestArguments.apply(1, arguments);
+    return a.apply(null, (0, $jscomp.arrayFromIterable)(b));
+}
+"#;
+    let expected = r#"
+function rest(a, ...b) {
+    return a.apply(null, b);
+}
+"#;
+    let output = apply_with_mark(
+        &format!("{CLOSURE_REST_HELPER}{body}"),
+        RewriteLevel::Standard,
+    );
+    assert_eq_normalized(&output, &format!("{CLOSURE_REST_HELPER}{expected}"));
+}
+
+#[test]
+fn closure_rest_helper_without_indirect_call_wrapper_becomes_rest_param() {
+    // producer google-closure-compiler@20240317.0.0 emits the
+    // arrayFromIterable call without the `(0, …)` wrapper.
+    let input = r#"
+function rest(a) {
+    var b = $jscomp.getRestArguments.apply(1, arguments);
+    return a.apply(this, $jscomp.arrayFromIterable(b));
+}
+"#;
+    let expected = r#"
+function rest(a, ...b) {
+    return a.apply(this, b);
+}
+"#;
+    assert_eq_normalized(&apply_with_mark(input, RewriteLevel::Standard), expected);
+}
+
+#[test]
+fn closure_rest_helper_inlined_with_no_fixed_params_becomes_args() {
+    // producer google-closure-compiler@20260629.0.0 SIMPLE inlines a
+    // single-use rest binding.
+    let input = r#"
+function zero() {
+    return $jscomp.getRestArguments.apply(0, arguments).length;
+}
+"#;
+    let expected = r#"
+function zero(...args) {
+    return args.length;
+}
+"#;
+    assert_eq_normalized(&apply_with_mark(input, RewriteLevel::Standard), expected);
+}
+
+#[test]
+fn closure_rest_helper_after_a_lowered_default_becomes_rest_param() {
+    // producer google-closure-compiler@20260629.0.0 SIMPLE for
+    // `function defaults(a, b = 2, ...xs)`.
+    let input = r#"
+function defaults(a, b) {
+    var c = $jscomp.getRestArguments.apply(2, arguments);
+    return [a, b === void 0 ? 2 : b, c];
+}
+"#;
+    let expected = r#"
+function defaults(a, b, ...c) {
+    return [a, b === void 0 ? 2 : b, c];
+}
+"#;
+    assert_eq_normalized(&apply_with_mark(input, RewriteLevel::Standard), expected);
+}
+
+#[test]
+fn renamed_closure_rest_helper_becomes_rest_param() {
+    // producer google-closure-compiler@20260629.0.0
+    // --compilation_level=ADVANCED --language_out=ECMASCRIPT5
+    let input = r#"
+function d() {
+    for (var c = Number(this), a = [], b = c; b < arguments.length; b++) a[b - c] = arguments[b];
+    return a;
+}
+window.h = function(c) {
+    var a = d.apply(1, arguments);
+    a.push(1);
+    return c.apply(this, a);
+};
+window.g = function(b, c) {
+    return [b, c === void 0 ? 2 : c, d.apply(2, arguments)];
+};
+"#;
+    let expected = r#"
+function d() {
+    for (var c = Number(this), a = [], b = c; b < arguments.length; b++) a[b - c] = arguments[b];
+    return a;
+}
+window.h = function(c, ...a) {
+    a.push(1);
+    return c.apply(this, a);
+};
+window.g = function(b, c, ...args) {
+    return [b, c === void 0 ? 2 : c, args];
+};
+"#;
+    assert_eq_normalized(&apply_with_mark(input, RewriteLevel::Standard), expected);
+}
+
+#[test]
+fn renamed_closure_rest_helper_split_by_earlier_rules_is_recognized() {
+    // The pipeline splits the helper's loop head before ArgRest runs.
+    let input = r#"
+var h = function() {
+    const a = Number(this);
+    const b = [];
+    for (let c = a; c < arguments.length; ++c) {
+        b[c - a] = arguments[c];
+    }
+    return b;
+};
+function rest(a) {
+    const b = h.apply(1, arguments);
+    return a(...b);
+}
+"#;
+    let output = apply_with_mark(input, RewriteLevel::Standard);
+    assert!(
+        output.contains("function rest(a, ...b) {\n    return a(...b);"),
+        "{output}"
+    );
+}
+
+#[test]
+fn renamed_closure_rest_call_inside_array_from_iterable_becomes_args() {
+    // wild-observed: the call is inlined into the renamed arrayFromIterable
+    // helper's argument. Every recognized helper returns an Array unchanged.
+    let helpers = r#"
+var ya = function(a) {
+    for (var b, c = []; !(b = a.next()).done;) c.push(b.value);
+    return c;
+}, w = function(a) {
+    return a instanceof Array ? a : ya(m(a));
+};
+function Oa() {
+    for (var a = Number(this), b = [], c = a; c < arguments.length; c++) b[c - a] = arguments[c];
+    return b;
+}
+"#;
+    let body = r#"
+var o = {
+    v: function(a) {
+        var args = a;
+        return args.apply(this, w(Oa.apply(1, arguments)));
+    }
+};
+"#;
+    let expected = r#"
+var o = {
+    v: function(a, ...args_1) {
+        var args = a;
+        return args.apply(this, args_1);
+    }
+};
+"#;
+    let output = apply_with_mark(&format!("{helpers}{body}"), RewriteLevel::Standard);
+    assert_eq_normalized(&output, &format!("{helpers}{expected}"));
+}
+
+#[test]
+fn closure_rest_binding_that_is_reassigned_keeps_array_from_iterable() {
+    let input = r#"
+function rest(a) {
+    var b = $jscomp.getRestArguments.apply(1, arguments);
+    if (a) b = a;
+    return f.apply(null, $jscomp.arrayFromIterable(b));
+}
+"#;
+    let expected = r#"
+function rest(a, ...b) {
+    if (a) b = a;
+    return f.apply(null, $jscomp.arrayFromIterable(b));
+}
+"#;
+    assert_eq_normalized(&apply_with_mark(input, RewriteLevel::Standard), expected);
+}
+
+#[test]
+fn closure_rest_helper_in_a_constructor_becomes_rest_param() {
+    let input = r#"
+class A {
+    constructor(a) {
+        var b = $jscomp.getRestArguments.apply(1, arguments);
+        this.items = b;
+    }
+}
+"#;
+    let expected = r#"
+class A {
+    constructor(a, ...b) {
+        this.items = b;
+    }
+}
+"#;
+    assert_eq_normalized(&apply_with_mark(input, RewriteLevel::Standard), expected);
+}
+
+#[test]
+fn closure_rest_start_that_differs_from_fixed_params_is_kept() {
+    let input = r#"
+function short(a, b) {
+    var c = $jscomp.getRestArguments.apply(1, arguments);
+    return c;
+}
+function long(a) {
+    return $jscomp.getRestArguments.apply(2, arguments);
+}
+"#;
+    assert_eq_normalized(&apply_with_mark(input, RewriteLevel::Standard), input);
+}
+
+#[test]
+fn lookalike_rest_helper_bodies_are_not_recognized() {
+    let input = r#"
+function keepsHoles() {
+    for (var a = Number(this), b = [], c = a; c < arguments.length; c++) b[c] = arguments[c];
+    return b;
+}
+function overruns() {
+    for (var a = Number(this), b = [], c = a; c <= arguments.length; c++) b[c - a] = arguments[c];
+    return b;
+}
+function castArray() {
+    return [].concat(this);
+}
+function x(a) {
+    return keepsHoles.apply(1, arguments);
+}
+function y(a) {
+    return overruns.apply(1, arguments);
+}
+function z(a) {
+    return castArray.apply(1, arguments);
+}
+"#;
+    assert_eq_normalized(&apply_with_mark(input, RewriteLevel::Standard), input);
+}
+
+#[test]
+fn reassigned_renamed_rest_helper_is_not_trusted() {
+    let input = r#"
+function h() {
+    for (var a = Number(this), b = [], c = a; c < arguments.length; c++) b[c - a] = arguments[c];
+    return b;
+}
+h = other;
+function rest(a) {
+    return h.apply(1, arguments);
+}
+"#;
+    assert_eq_normalized(&apply_with_mark(input, RewriteLevel::Standard), input);
+}
+
+#[test]
+fn local_jscomp_binding_is_not_the_closure_rest_helper() {
+    let input = r#"
+function outer($jscomp) {
+    return function(a) {
+        var b = $jscomp.getRestArguments.apply(1, arguments);
+        return b;
+    };
+}
+"#;
+    assert_eq_normalized(&apply_with_mark(input, RewriteLevel::Standard), input);
+}
+
+#[test]
+fn closure_rest_helper_with_other_arguments_use_is_kept() {
+    let input = r#"
+function read(a) {
+    var b = $jscomp.getRestArguments.apply(1, arguments);
+    return arguments.length + b.length;
+}
+function write(a) {
+    arguments[1] = a;
+    var b = $jscomp.getRestArguments.apply(1, arguments);
+    return b;
+}
+function arrow(a) {
+    var b = $jscomp.getRestArguments.apply(1, arguments);
+    return () => arguments[0] + b.length;
+}
+"#;
+    assert_eq_normalized(&apply_with_mark(input, RewriteLevel::Standard), input);
+}
+
+#[test]
+fn closure_rest_call_that_can_run_repeatedly_is_kept() {
+    let input = r#"
+function loop(a) {
+    for (var i = 0; i < 3; i++) a($jscomp.getRestArguments.apply(1, arguments));
+}
+function arrow(a) {
+    return () => $jscomp.getRestArguments.apply(1, arguments);
+}
+"#;
+    assert_eq_normalized(&apply_with_mark(input, RewriteLevel::Standard), input);
+}
+
+#[test]
+fn closure_rest_binding_readable_before_its_declaration_is_kept() {
+    let input = r#"
+function early(a) {
+    log();
+    var b = $jscomp.getRestArguments.apply(1, arguments);
+    return b;
+    function log() {
+        console.log(b);
+    }
+}
+function param(b) {
+    var b = $jscomp.getRestArguments.apply(1, arguments);
+    return b;
+}
+function twice(a) {
+    var b = $jscomp.getRestArguments.apply(1, arguments);
+    var b;
+    return b;
+}
+"#;
+    assert_eq_normalized(&apply_with_mark(input, RewriteLevel::Standard), input);
+}
+
+#[test]
+fn closure_rest_removal_that_exposes_use_strict_is_undone() {
+    let input = r#"
+function f(a) {
+    var b = $jscomp.getRestArguments.apply(1, arguments);
+    "use strict";
+    return b;
+}
+"#;
+    assert_eq_normalized(&apply_with_mark(input, RewriteLevel::Standard), input);
+}
+
+#[test]
+fn closure_rest_helper_under_direct_eval_is_kept() {
+    let input = r#"
+function f(a) {
+    var b = $jscomp.getRestArguments.apply(1, arguments);
+    return eval(a) + b;
+}
+"#;
+    assert_eq_normalized(&apply_with_mark(input, RewriteLevel::Standard), input);
+}
+
+#[test]
+fn minimal_keeps_closure_rest_helper() {
+    let input = r#"
+function rest(a) {
+    var b = $jscomp.getRestArguments.apply(1, arguments);
+    return b;
+}
+"#;
+    assert_eq_normalized(&apply_with_mark(input, RewriteLevel::Minimal), input);
+}
+
+#[test]
+fn pipeline_recovers_closure_simple_rest() {
+    // producer google-closure-compiler@20260629.0.0
+    // --compilation_level=SIMPLE --language_out=ECMASCRIPT5, input
+    // `function rest(fn, ...xs) { return fn(...xs); }` plus
+    // `function zero(...xs) { return xs.length; }`.
+    let input = r#"var $jscomp=$jscomp||{};$jscomp.scope={};$jscomp.arrayIteratorImpl=function(a){var b=0;return function(){return b<a.length?{done:!1,value:a[b++]}:{done:!0}}};$jscomp.arrayIterator=function(a){return{next:$jscomp.arrayIteratorImpl(a)}};$jscomp.makeIterator=function(a){var b=typeof Symbol!="undefined"&&Symbol.iterator&&a[Symbol.iterator];if(b)return b.call(a);if(typeof a.length=="number")return $jscomp.arrayIterator(a);throw Error(String(a)+" is not an iterable or ArrayLike");};
+$jscomp.arrayFromIterator=function(a){for(var b,c=[];!(b=a.next()).done;)c.push(b.value);return c};$jscomp.arrayFromIterable=function(a){return a instanceof Array?a:$jscomp.arrayFromIterator($jscomp.makeIterator(a))};$jscomp.getRestArguments=function(){for(var a=Number(this),b=[],c=a;c<arguments.length;c++)b[c-a]=arguments[c];return b};function rest(a){var b=$jscomp.getRestArguments.apply(1,arguments);return a.apply(null,(0,$jscomp.arrayFromIterable)(b))}window.rest=rest;
+function zero(){return $jscomp.getRestArguments.apply(0,arguments).length}window.zero=zero;"#;
+    for level in [RewriteLevel::Standard, RewriteLevel::Aggressive] {
+        let output = common::render_with_level(input, level);
+        let tail = output.split("function rest").nth(1).unwrap_or_default();
+        assert_eq_normalized(
+            &format!("function rest{tail}"),
+            r#"
+function rest(a, ...b) {
+    return a(...b);
+}
+window.rest = rest;
+function zero(...args) {
+    return args.length;
+}
+window.zero = zero;
+"#,
+        );
+    }
+}
+
+#[test]
+fn pipeline_recovers_closure_advanced_rest() {
+    // producer google-closure-compiler@20260629.0.0
+    // --compilation_level=ADVANCED --language_out=ECMASCRIPT5, input
+    // `function rest(fn, ...xs) { xs.push(1); return fn.apply(this, xs); }`
+    // and `function(a, ...xs) { for (...) a(xs); return xs; }`.
+    let input = r#"function d(){for(var c=Number(this),a=[],b=c;b<arguments.length;b++)a[b-c]=arguments[b];return a}window.h=function(c){var a=d.apply(1,arguments);a.push(1);return c.apply(this,a)};window.g=function(c){for(var a=d.apply(1,arguments),b=0;b<3;b++)c(a);return a};"#;
+    for level in [RewriteLevel::Standard, RewriteLevel::Aggressive] {
+        // The renamed helper is left for transform-induced dead-code
+        // removal, which the CLI runs after the pipeline.
+        let output = common::render_with_level(input, level);
+        let tail = output.split("window.h").nth(1).unwrap_or_default();
+        assert_eq_normalized(
+            &format!("window.h{tail}"),
+            r#"
+window.h = function(c, ...a) {
+    a.push(1);
+    return c.apply(this, a);
+};
+window.g = function(c, ...a) {
+    for (let b = 0; b < 3; b++) {
+        c(a);
+    }
+    return a;
+};
+"#,
+        );
+    }
+}
+
+#[test]
+fn pipeline_recovers_closure_advanced_rest_through_array_from_iterable() {
+    // wild-observed outline: the rest call is inlined into the renamed
+    // arrayFromIterable helper's argument.
+    let input = r#"
+var ya = function(a) {
+    for (var b, c = []; !(b = a.next()).done;) c.push(b.value);
+    return c;
+}, w = function(a) {
+    return a instanceof Array ? a : ya(a[Symbol.iterator]());
+};
+function Oa() {
+    for (var a = Number(this), b = [], c = a; c < arguments.length; c++) b[c - a] = arguments[c];
+    return b;
+}
+export var o = { v: function(a) { return a.apply(null, w(Oa.apply(1, arguments))); } };
+"#;
+    for level in [RewriteLevel::Standard, RewriteLevel::Aggressive] {
+        let output = common::render_with_level(input, level);
+        let tail = output.split("export const o").nth(1).unwrap_or_default();
+        assert_eq_normalized(
+            &format!("export const o{tail}"),
+            r#"
+export const o = {
+    v: function(a, ...args) {
+        return a(...args);
+    }
+};
+"#,
+        );
+    }
+}
