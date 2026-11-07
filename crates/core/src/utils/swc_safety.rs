@@ -4,7 +4,7 @@ use anyhow::anyhow;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
     AssignTarget, CallExpr, Callee, Class, Expr, ExprStmt, Module, NewExpr, OptCall, OptChainBase,
-    ParenExpr, SimpleAssignTarget,
+    ParenExpr, SimpleAssignTarget, TaggedTpl,
 };
 use swc_core::ecma::transforms::base::fixer::fixer;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
@@ -70,38 +70,73 @@ fn parenthesize_callee(callee: &mut Box<Expr>) {
 
 struct LeftHandSideOperandParens;
 
+/// A position that takes a left-hand-side or member expression.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LeftHandSidePosition {
+    Callee,
+    OptionalCallee,
+    NewCallee,
+    Heritage,
+    Tag,
+}
+
 impl VisitMut for LeftHandSideOperandParens {
     fn visit_mut_call_expr(&mut self, node: &mut CallExpr) {
         node.visit_mut_children_with(self);
         if let Callee::Expr(callee) = &mut node.callee {
-            parenthesize_left_hand_side_operand(callee);
+            parenthesize_left_hand_side_operand(callee, LeftHandSidePosition::Callee);
         }
     }
 
     fn visit_mut_opt_call(&mut self, node: &mut OptCall) {
         node.visit_mut_children_with(self);
-        parenthesize_left_hand_side_operand(&mut node.callee);
+        parenthesize_left_hand_side_operand(&mut node.callee, LeftHandSidePosition::OptionalCallee);
     }
 
     fn visit_mut_new_expr(&mut self, node: &mut NewExpr) {
         node.visit_mut_children_with(self);
-        parenthesize_left_hand_side_operand(&mut node.callee);
+        parenthesize_left_hand_side_operand(&mut node.callee, LeftHandSidePosition::NewCallee);
     }
 
     fn visit_mut_class(&mut self, node: &mut Class) {
         node.visit_mut_children_with(self);
         if let Some(super_class) = &mut node.super_class {
-            parenthesize_left_hand_side_operand(super_class);
+            parenthesize_left_hand_side_operand(super_class, LeftHandSidePosition::Heritage);
         }
+    }
+
+    fn visit_mut_tagged_tpl(&mut self, node: &mut TaggedTpl) {
+        node.visit_mut_children_with(self);
+        parenthesize_left_hand_side_operand(&mut node.tag, LeftHandSidePosition::Tag);
     }
 }
 
-/// Wrap an operand a call callee, a `new` callee, or a `class ... extends`
-/// clause cannot hold without parentheses. The fixer's own lists cover the
-/// remaining kinds (conditional, assignment, sequence, binary) in those
-/// positions, but not an update or an arrow.
-fn parenthesize_left_hand_side_operand(expression: &mut Box<Expr>) {
-    if matches!(expression.as_ref(), Expr::Update(_) | Expr::Arrow(_)) {
+/// Wrap an operand that a left-hand-side position cannot hold without
+/// parentheses, for the kinds SWC's fixer leaves bare there. Its member-object
+/// list is complete; the lists for the other positions are not:
+///
+/// - An update or arrow operand does not parse in any of these positions
+///   (`x++()`, `new ()=>{}()`, `x++`t``), and `++x()` reparses as `++(x())`.
+/// - A tag drops `await` and `yield` (`await a`t`` tags `a`, then awaits) and
+///   a class (`class {}`t`` at a statement's start is a declaration).
+/// - A call drops an argument-less `new`: `new a()` constructs `a` instead of
+///   calling the constructed value.
+/// - An optional call keeps no `new` callee bare: `new a()?.()` is valid, but
+///   SWC's emitter asserts against printing it.
+fn parenthesize_left_hand_side_operand(expression: &mut Box<Expr>, position: LeftHandSidePosition) {
+    use LeftHandSidePosition::{Callee, OptionalCallee, Tag};
+
+    let needs_parens = match expression.as_ref() {
+        Expr::Update(_) | Expr::Arrow(_) => true,
+        Expr::Await(_) | Expr::Yield(_) | Expr::Class(_) => position == Tag,
+        Expr::New(new) => match position {
+            Callee => new.args.is_none(),
+            OptionalCallee => true,
+            _ => false,
+        },
+        _ => false,
+    };
+    if needs_parens {
         parenthesize(expression);
     }
 }
@@ -127,11 +162,10 @@ pub(crate) fn apply_fixer(module: &mut Module) -> anyhow::Result<()> {
         // Limit the repair to the statement's left edge: the same callee in a
         // variable initializer or assignment RHS is already valid JavaScript.
         module.visit_mut_with(&mut FunctionExpressionCalleeParens);
-        // SWC's fixer also drops the parentheses an update or arrow operand
-        // needs in a call callee, a `new` callee, and a `class ... extends`
-        // clause, so those print as `x++()` or `new o.n++()`. The positions
-        // take a left-hand-side expression, so the repair is not limited to a
-        // statement's left edge.
+        // SWC's fixer also drops parentheses that a call or `new` callee, a
+        // `class ... extends` clause, or a template tag needs, so those print
+        // as `x++()` or `new o.n++()`. The positions take a left-hand-side
+        // expression, so the repair is not limited to a statement's left edge.
         module.visit_mut_with(&mut LeftHandSideOperandParens);
     }))
     .map_err(|payload| {
@@ -318,6 +352,53 @@ keep([f((y++)())]);
         assert_fixed_output(source, false, "((x++)(),");
         assert_fixed_output(source, false, "f((y++)())");
         roundtrips_after_paren_strip(source);
+    }
+
+    // A template tag is a member-expression position too. The fixer drops the
+    // parentheses of an update (which then does not parse), of `await` and
+    // `yield` (which then apply to the tagged template), and of a class (which
+    // then starts a declaration at a statement's start).
+    #[test]
+    fn fixer_keeps_tag_parens_the_fixer_drops() {
+        let cases = [
+            ("(x++)`t`;", "(x++)`t`;"),
+            ("(++x)`t`;", "(++x)`t`;"),
+            ("y = [f((o.n--)`t`)];", "f((o.n--)`t`)"),
+            ("(class {})`t`;", "(class {\n})`t`;"),
+            (
+                "export default (class {})`t`;",
+                "export default (class {\n})`t`;",
+            ),
+            ("async function f() { (await a)`t`; }", "(await a)`t`;"),
+            ("function* g() { (yield a)`t`; }", "(yield a)`t`;"),
+        ];
+        for (source, expected) in cases {
+            assert_fixed_output(source, false, expected);
+            assert_fixed_output(source, true, expected);
+        }
+    }
+
+    // `new a()` constructs `a`, while `(new a)()` calls the value `new a`
+    // constructed. The fixer keeps the parentheses on a member object but not
+    // on a callee.
+    #[test]
+    fn fixer_keeps_argumentless_new_callee_parens() {
+        for strip_parens in [false, true] {
+            assert_fixed_output("(new a)();", strip_parens, "(new a)();");
+            assert_fixed_output("y = f((new a)());", strip_parens, "f((new a)())");
+        }
+        // With an argument list the callee needs no parentheses.
+        assert_fixed_output("(new a())();", false, "new a()();");
+    }
+
+    // `new a()?.()` is valid, but SWC's emitter asserts that an optional
+    // call's callee is not a `new` expression, so the parentheses stay.
+    #[test]
+    fn fixer_keeps_new_parens_in_optional_call_callee() {
+        for strip_parens in [false, true] {
+            assert_fixed_output("(new a)?.();", strip_parens, "(new a)?.();");
+            assert_fixed_output("(new a())?.();", strip_parens, "(new a())?.();");
+        }
     }
 
     #[test]

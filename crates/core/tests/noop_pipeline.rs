@@ -58,6 +58,35 @@ fn minimal_level_keeps_parens_for_prefix_update_async_arrow_and_optional_call() 
     }
 }
 
+/// A template tag takes a member expression, and a call or optional call
+/// callee must not absorb a `new` that has no argument list.
+#[test]
+fn minimal_level_keeps_parens_required_by_tag_and_new_callee() {
+    let input = r#"(x++)`t`;
+(class {})`t`;
+(new a)();
+(new b())?.();
+async function f() {
+    (await c)`t`;
+}
+"#;
+    let expected = r#"(x++)`t`;
+(class {
+})`t`;
+(new a)();
+(new b())?.();
+async function f() {
+    (await c)`t`;
+}
+"#;
+
+    let output = render_with_level(input, RewriteLevel::Minimal);
+    assert_eq!(output, expected);
+
+    let cm: Lrc<SourceMap> = Default::default();
+    common::parse_module_with_filename(&output, "output.js", cm);
+}
+
 #[test]
 fn minimal_level_adds_no_parens_to_valid_call_new_and_heritage() {
     let input = r#"foo();
