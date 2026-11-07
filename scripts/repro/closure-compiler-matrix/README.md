@@ -6,6 +6,8 @@ checks the reversible, stable syntax shapes Wakaru currently targets:
 
 - ES5 class/prototype lowering, including `$jscomp.inherits`;
 - ES5 iterable loops using `$jscomp.makeIterator`;
+- ES5 rest parameters and spread calls (`$jscomp.getRestArguments`,
+  `$jscomp.arrayFromIterable`);
 - optional chaining and nullish coalescing;
 - the corresponding ES2020 output, to guard native-syntax pass-through.
 

@@ -93,6 +93,20 @@ consume(closureAvatar({ profile: { avatar: "ada.png" } }));
     execute: true,
     expected: ["?.", "??"],
   },
+  {
+    name: "rest-spread-forward",
+    source: `
+function closureForward(fn, ...rest) {
+  return fn(...rest);
+}
+window["closureForward"] = closureForward;
+consume(closureForward(function (a, b) { return a + b; }, 1, 2));
+`,
+    execute: true,
+    // ES5 output lowers the rest parameter to `$jscomp.getRestArguments` and
+    // the spread call to `.apply(null, $jscomp.arrayFromIterable(...))`.
+    expected: ["function closureForward(", ", ...", "(..."],
+  },
 ];
 
 const allSources = snippets.map((snippet) => snippet.source);
