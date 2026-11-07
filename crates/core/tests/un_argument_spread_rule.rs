@@ -1905,3 +1905,270 @@ export { make, makeNull };
 "#,
     );
 }
+
+// Babel 7's and swc's `_construct(C, list)` helper.
+
+/// producer @babel/core@7.29.7 {"presets":[["@babel/preset-env",{"targets":{"ie":"11"},"modules":false}]]}
+const BABEL_CONSTRUCT: &str = r#"
+function _construct(t, e, r) { if (_isNativeReflectConstruct()) return Reflect.construct.apply(null, arguments); var o = [null]; o.push.apply(o, e); var p = new (t.bind.apply(t, o))(); return r && _setPrototypeOf(p, r.prototype), p; }
+function _setPrototypeOf(t, e) { return _setPrototypeOf = Object.setPrototypeOf ? Object.setPrototypeOf.bind() : function (t, e) { return t.__proto__ = e, t; }, _setPrototypeOf(t, e); }
+function _isNativeReflectConstruct() { try { var t = !Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {})); } catch (t) {} return (_isNativeReflectConstruct = function _isNativeReflectConstruct() { return !!t; })(); }
+"#;
+
+/// producer @swc/core@1.16.2 {"jsc":{"target":"es5"},"module":{"type":"commonjs"}}
+const SWC_CONSTRUCT: &str = r#"
+function _construct(Parent, args, Class) {
+    if (_is_native_reflect_construct()) _construct = Reflect.construct;
+    else {
+        _construct = function construct(Parent, args, Class) {
+            var a = [
+                null
+            ];
+            a.push.apply(a, args);
+            var Constructor = Function.bind.apply(Parent, a);
+            var instance = new Constructor();
+            if (Class) _set_prototype_of(instance, Class.prototype);
+            return instance;
+        };
+    }
+    return _construct.apply(null, arguments);
+}
+function _is_native_reflect_construct() {
+    try {
+        var result = !Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function() {}));
+    } catch (_) {}
+    return (_is_native_reflect_construct = function() {
+        return !!result;
+    })();
+}
+function _set_prototype_of(o, p) {
+    _set_prototype_of = Object.setPrototypeOf || function setPrototypeOf(o, p) {
+        o.__proto__ = p;
+        return o;
+    };
+    return _set_prototype_of(o, p);
+}
+"#;
+
+#[test]
+fn babel_construct_helper_with_two_arguments_becomes_a_spread_construct() {
+    let input = format!(
+        "{BABEL_CONSTRUCT}\nexport function make(C, xs) {{ return _construct(C, [...xs]); }}\nexport function lead(C, xs) {{ return _construct(C, [0, ...xs]); }}\n"
+    );
+    let expected = r#"
+export function make(C, xs) {
+    return new C(...xs);
+}
+export function lead(C, xs) {
+    return new C(0, ...xs);
+}
+"#;
+    assert_eq_normalized(&apply(&input), expected);
+}
+
+#[test]
+fn swc_construct_helper_with_two_arguments_becomes_a_spread_construct() {
+    let input = format!(
+        "{SWC_CONSTRUCT}\nfunction make(C, ...rest) {{ return _construct(C, rest); }}\nexport {{ make }};\n"
+    );
+    let expected = r#"
+function make(C, ...rest) {
+    return new C(...rest);
+}
+export { make };
+"#;
+    assert_eq_normalized(&apply(&input), expected);
+}
+
+#[test]
+fn construct_helper_keeps_the_three_argument_native_super_call() {
+    // `_wrapNativeSuper` constructs the parent with another prototype.
+    let input = format!(
+        "{BABEL_CONSTRUCT}\nexport function wrap(t) {{ return function Wrapper() {{ return _construct(t, arguments, _getPrototypeOf(this).constructor); }}; }}\nexport function make(C, xs) {{ return _construct(C, [...xs]); }}\n"
+    );
+    let output = apply(&input);
+    assert!(
+        output.contains("_construct(t, arguments, _getPrototypeOf(this).constructor)"),
+        "{output}"
+    );
+    assert!(output.contains("return new C(...xs);"), "{output}");
+    assert!(output.contains("function _construct(t, e, r)"), "{output}");
+    assert!(
+        output.contains("function _isNativeReflectConstruct()"),
+        "{output}"
+    );
+}
+
+#[test]
+fn construct_helper_with_an_unknown_list_follows_the_apply_level() {
+    // producer @babel/core@7.29.7 preset-env ie11 loose passes the operand
+    // as is; `Reflect.construct` reads it as an array-like.
+    let input =
+        format!("{BABEL_CONSTRUCT}\nexport function make(C, xs) {{ return _construct(C, xs); }}\n");
+    let standard = apply(&input);
+    assert!(standard.contains("return _construct(C, xs);"), "{standard}");
+    assert!(
+        standard.contains("function _construct(t, e, r)"),
+        "{standard}"
+    );
+    assert_eq_normalized(
+        &aggressive(&input),
+        r#"
+export function make(C, xs) {
+    return new C(...xs);
+}
+"#,
+    );
+}
+
+#[test]
+fn construct_helper_lookalikes_keep_their_calls() {
+    let lookalikes = [
+        // the native check is not a `Reflect.construct` probe
+        BABEL_CONSTRUCT.replace(
+            "Reflect.construct(Boolean, [], function () {})",
+            "track(Boolean)",
+        ),
+        // a local `Reflect`
+        format!("var Reflect = custom;\n{BABEL_CONSTRUCT}"),
+        // the fallback does not copy the arguments
+        BABEL_CONSTRUCT.replace("o.push.apply(o, e); ", ""),
+        // the fallback binds another constructor
+        BABEL_CONSTRUCT.replace("t.bind.apply(t, o)", "t.bind.apply(other, o)"),
+        // the native branch forwards other arguments
+        BABEL_CONSTRUCT.replace(
+            "Reflect.construct.apply(null, arguments)",
+            "Reflect.construct.apply(null, extra)",
+        ),
+    ];
+    for helper in lookalikes {
+        let input =
+            format!("{helper}\nexport function make(C, xs) {{ return _construct(C, [...xs]); }}\n");
+        let output = apply(&input);
+        assert!(output.contains("_construct(C, ["), "{helper}\n{output}");
+    }
+}
+
+#[test]
+fn written_or_redeclared_construct_helper_keeps_its_calls() {
+    let written = format!(
+        "{BABEL_CONSTRUCT}\nexport function swap(f) {{ _construct = f; }}\nexport function make(C, xs) {{ return _construct(C, [...xs]); }}\n"
+    );
+    let redeclared = format!(
+        "{SWC_CONSTRUCT}\nvar _construct = custom;\nexport function make(C, xs) {{ return _construct(C, [...xs]); }}\n"
+    );
+    for input in [written, redeclared] {
+        let output = apply(&input);
+        assert!(output.contains("_construct(C, ["), "{input}\n{output}");
+    }
+}
+
+#[test]
+fn babel_seven_construct_helper_recovers_through_the_pipeline() {
+    // producer @babel/core@7.29.7 {"presets":[["@babel/preset-env",{"targets":{"ie":"11"},"modules":false}]]}
+    let input = r#"
+function _construct(t, e, r) { if (_isNativeReflectConstruct()) return Reflect.construct.apply(null, arguments); var o = [null]; o.push.apply(o, e); var p = new (t.bind.apply(t, o))(); return r && _setPrototypeOf(p, r.prototype), p; }
+function _setPrototypeOf(t, e) { return _setPrototypeOf = Object.setPrototypeOf ? Object.setPrototypeOf.bind() : function (t, e) { return t.__proto__ = e, t; }, _setPrototypeOf(t, e); }
+function _isNativeReflectConstruct() { try { var t = !Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {})); } catch (t) {} return (_isNativeReflectConstruct = function _isNativeReflectConstruct() { return !!t; })(); }
+function _toConsumableArray(r) { return _arrayWithoutHoles(r) || _iterableToArray(r) || _unsupportedIterableToArray(r) || _nonIterableSpread(); }
+function _nonIterableSpread() { throw new TypeError("Invalid attempt to spread non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method."); }
+function _unsupportedIterableToArray(r, a) { if (r) { if ("string" == typeof r) return _arrayLikeToArray(r, a); var t = {}.toString.call(r).slice(8, -1); return "Object" === t && r.constructor && (t = r.constructor.name), "Map" === t || "Set" === t ? Array.from(r) : "Arguments" === t || /^(?:Ui|I)nt(?:8|16|32)(?:Clamped)?Array$/.test(t) ? _arrayLikeToArray(r, a) : void 0; } }
+function _iterableToArray(r) { if ("undefined" != typeof Symbol && null != r[Symbol.iterator] || null != r["@@iterator"]) return Array.from(r); }
+function _arrayWithoutHoles(r) { if (Array.isArray(r)) return _arrayLikeToArray(r); }
+function _arrayLikeToArray(r, a) { (null == a || a > r.length) && (a = r.length); for (var e = 0, n = Array(a); e < a; e++) n[e] = r[e]; return n; }
+export function make(C, xs) {
+  return _construct(C, _toConsumableArray(xs));
+}
+export function makeLead(C, xs) {
+  return _construct(C, [0].concat(_toConsumableArray(xs)));
+}
+export function makeMember(box, xs) {
+  return _construct(box.inner.Ctor, _toConsumableArray(xs));
+}
+export function makeRest(C) {
+  for (var _len = arguments.length, rest = new Array(_len > 1 ? _len - 1 : 0), _key = 1; _key < _len; _key++) {
+    rest[_key - 1] = arguments[_key];
+  }
+  return _construct(C, rest);
+}
+"#;
+    let expected = r#"
+export function make(C, xs) {
+    return new C(...xs);
+}
+export function makeLead(C, xs) {
+    return new C(0, ...xs);
+}
+export function makeMember(box, xs) {
+    return new box.inner.Ctor(...xs);
+}
+export function makeRest(C, ...rest) {
+    return new C(...rest);
+}
+"#;
+    assert_eq_normalized(
+        &common::render_with_level(input, RewriteLevel::Standard),
+        expected,
+    );
+}
+
+#[test]
+fn babel_seven_loose_construct_helper_follows_the_apply_level() {
+    // producer @babel/core@7.29.7 {"presets":[["@babel/preset-env",{"targets":{"ie":"11"},"modules":false,"loose":true}]]}
+    let input = r#"
+function _construct(t, e, r) { if (_isNativeReflectConstruct()) return Reflect.construct.apply(null, arguments); var o = [null]; o.push.apply(o, e); var p = new (t.bind.apply(t, o))(); return r && _setPrototypeOf(p, r.prototype), p; }
+function _setPrototypeOf(t, e) { return _setPrototypeOf = Object.setPrototypeOf ? Object.setPrototypeOf.bind() : function (t, e) { return t.__proto__ = e, t; }, _setPrototypeOf(t, e); }
+function _isNativeReflectConstruct() { try { var t = !Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {})); } catch (t) {} return (_isNativeReflectConstruct = function _isNativeReflectConstruct() { return !!t; })(); }
+export function make(C, xs) {
+  return _construct(C, xs);
+}
+export function makeLead(C, xs) {
+  return _construct(C, [0].concat(xs));
+}
+"#;
+    let standard = common::render_with_level(input, RewriteLevel::Standard);
+    assert!(standard.contains("return _construct(C, xs);"), "{standard}");
+    assert!(standard.contains("return new C(...[\n"), "{standard}");
+    assert_eq_normalized(
+        &common::render_with_level(input, RewriteLevel::Aggressive),
+        r#"
+export function make(C, xs) {
+    return new C(...xs);
+}
+export function makeLead(C, xs) {
+    return new C(0, ...xs);
+}
+"#,
+    );
+}
+
+#[test]
+fn swc_construct_helper_recovers_through_the_pipeline() {
+    // producer @swc/core@1.16.2 {"jsc":{"target":"es5"},"module":{"type":"commonjs"}},
+    // trimmed to the construct helpers.
+    let input = format!(
+        r#""use strict";
+Object.defineProperty(exports, "__esModule", {{
+    value: true
+}});
+exports.makeRest = makeRest;
+{SWC_CONSTRUCT}
+function makeRest(C) {{
+    for(var _len = arguments.length, rest = new Array(_len > 1 ? _len - 1 : 0), _key = 1; _key < _len; _key++){{
+        rest[_key - 1] = arguments[_key];
+    }}
+    return _construct(C, rest);
+}}
+"#
+    );
+    let expected = r#"
+export { makeRest };
+function makeRest(C, ...rest) {
+    return new C(...rest);
+}
+"#;
+    assert_eq_normalized(
+        &common::render_with_level(&input, RewriteLevel::Standard),
+        expected,
+    );
+}

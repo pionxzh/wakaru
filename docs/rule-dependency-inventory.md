@@ -318,6 +318,15 @@ rationale, or level gating appear.
   (and UnArrayConcatSpreadRest for a rest parameter), so these constructs
   convert in the second pass, UnArgumentSpread2, and an unproven
   `[null].concat(xs)` follows `concat_arguments_are_arrays`.
+  Babel 7's and swc's `_construct(C, list)` with two arguments becomes
+  `new C(...list)` under the same list proof (`Reflect.construct` and its
+  fallback read the list as an array-like); the three-argument
+  `_wrapNativeSuper` call stays. The helper is proven by its body
+  (`rules/construct_helper.rs`) as the first pass sees it, after
+  UnCurlyBraces and SimplifySequence and before UnConditionals; that pass
+  also rewrites the helper's own `apply` calls, so a later pass no longer
+  recognizes it. It and the functions it calls are removed once no call
+  remains.
 - **UnTemplateLiteral** — level gating is per path, not per rule (the rule is
   always enabled because tagged-template helper recovery is provenance-checked
   and runs at every level). The `+`-chain path (`string_coercion_hint`) and the

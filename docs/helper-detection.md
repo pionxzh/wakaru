@@ -148,6 +148,17 @@ Rules still own domain-specific shape recognition. For example:
   2.1 and 2.2 shipped a two-parameter `__spreadArray(to, from)` whose call
   sites the conversion does not accept, named or not, so its body is not
   matched.
+- `construct_helper.rs` recognizes Babel 7's and swc's `_construct` for
+  `UnArgumentSpread`, which turns its two-argument calls into
+  `new C(...list)`. Both bodies are accepted: Babel 7.21+'s
+  `if (check()) return Reflect.construct.apply(null, arguments)` plus the
+  bound-function fallback, and swc's (and older Babel's) self-redefinition
+  to `Reflect.construct` or that fallback, followed by
+  `_construct.apply(null, arguments)`. The native check must call a
+  module-level function that probes `Reflect.construct`; the only writes to
+  the helper binding allowed are inside its own body. The helper, its native
+  check and its prototype setter go through `remove_unused_helper_declarations`
+  once no call remains.
 - `un_template_literal.rs` recognizes Babel/SWC/TypeScript tagged-template
   helper calls and cache factories. Detection uses body-shape signals —
   see "Tagged template body shapes" below.

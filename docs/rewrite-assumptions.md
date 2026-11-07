@@ -670,7 +670,9 @@ initialized to one of these, read where it already holds that value (see
 `rules/un_argument_spread.rs`).
 
 Affects: `UnArgumentSpread` for argument lists it cannot prove, including the
-list of a lowered spread construct (`C.bind.apply(C, xs)`).
+list of a lowered spread construct (`C.bind.apply(C, xs)`) and of Babel 7's
+and swc's `_construct(C, xs)` helper, which reads it as an array-like too
+(producer `@babel/preset-env@7.29` loose passes the operand as is).
 
 Level: `aggressive` only. `minimal` keeps every `apply` call; `standard`
 recovers the proven argument lists.

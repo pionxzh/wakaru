@@ -9,6 +9,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::arg_rest::find_rest_array_copy_proof;
 use super::binding_facts::TempIsolation;
+use super::construct_helper::ConstructHelpers;
 use super::dead_decls::remove_consumed_uninitialized_decls;
 use super::decl_utils::same_ident;
 use super::expr_utils::{exprs_structurally_equal, is_unresolved_ident, is_unresolved_undefined};
@@ -45,6 +46,10 @@ use crate::utils::paren::strip_parens;
 /// through the `apply` rewrite above, and Babel 6's and Closure's
 /// `Function.prototype.bind.apply(F, [null, ...args])` only once the list is
 /// an array literal, after the concat and helper rules made it one.
+///
+/// Babel 7's and swc's `_construct(C, list)` helper, proven by its body
+/// (`ConstructHelpers`), constructs `C` with `list` read as an array-like, so
+/// a two-argument call becomes `new C(...list)` under the same proof.
 pub struct UnArgumentSpread {
     unresolved_mark: Mark,
     level: RewriteLevel,
@@ -53,6 +58,8 @@ pub struct UnArgumentSpread {
     /// The module contains a `with` statement or a direct eval.
     dynamic_scope: bool,
     proven: ProvenArgumentLists,
+    construct_helpers: ConstructHelpers,
+    rewrote_construct_helper_call: bool,
 }
 
 impl UnArgumentSpread {
@@ -64,6 +71,8 @@ impl UnArgumentSpread {
             consumed_uninitialized_bindings: HashSet::default(),
             dynamic_scope: false,
             proven: ProvenArgumentLists::default(),
+            construct_helpers: ConstructHelpers::default(),
+            rewrote_construct_helper_call: false,
         }
     }
 
@@ -183,8 +192,26 @@ impl VisitMut for UnArgumentSpread {
         self.proven =
             ProvenArgumentLists::collect(module, self.unresolved_mark, self.dynamic_scope);
         self.consumed_uninitialized_bindings.clear();
+        self.construct_helpers = if self.dynamic_scope {
+            ConstructHelpers::default()
+        } else {
+            ConstructHelpers::collect(module, self.unresolved_mark)
+        };
+        self.rewrote_construct_helper_call = false;
         module.visit_mut_children_with(self);
         remove_consumed_uninitialized_decls(module, &self.consumed_uninitialized_bindings);
+        if self.rewrote_construct_helper_call {
+            // A helper still called (the three-argument `_wrapNativeSuper`
+            // form, an unproven list) keeps itself and what it calls.
+            let candidates = self
+                .construct_helpers
+                .helpers
+                .iter()
+                .chain(&self.construct_helpers.dependencies)
+                .cloned()
+                .collect();
+            super::helper_matcher::remove_unused_helper_declarations(module, &candidates);
+        }
     }
 
     fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
@@ -253,6 +280,11 @@ impl VisitMut for UnArgumentSpread {
         let Expr::Call(call) = &*expr else {
             return;
         };
+        if let Some(rewritten) = self.construct_helper_call(call) {
+            *expr = rewritten;
+            self.rewrote_construct_helper_call = true;
+            return;
+        }
         if !is_apply_call(call) || !self.argument_list_converts(&call.args[1].expr) {
             return;
         }
@@ -291,6 +323,21 @@ impl VisitMut for UnArgumentSpread {
 }
 
 impl UnArgumentSpread {
+    /// `_construct(C, list)` → `new C(...list)`, with the list's proof.
+    fn construct_helper_call(&self, call: &CallExpr) -> Option<Expr> {
+        let (target, list) = self.construct_helpers.two_argument_call(call)?;
+        if !self.argument_list_converts(&list.expr) {
+            return None;
+        }
+        Some(Expr::New(NewExpr {
+            span: call.span,
+            ctxt: call.ctxt,
+            callee: target.expr.clone(),
+            args: Some(args_from_apply_arg(list.expr.clone())),
+            type_args: None,
+        }))
+    }
+
     /// `new (F.bind(t, ...args))()` → `new F(...args)`, and
     /// `new (Function.prototype.bind.apply(F, [t, ...args]))()` likewise.
     ///

@@ -68,6 +68,7 @@ crates/
           collect.rs                — module-level helper scan/orchestration
           matchers.rs               — Babel/SWC body-shape matchers + per-node detection dispatch
           ts_helpers.rs             — TypeScript/tslib detection (raw TsHelperKind channel)
+          ts_spread_array.rs        — body-shape proof of tslib's `__spreadArray` for an inlined, renamed copy
           paths.rs                  — runtime import-path constants + path classification
           lifecycle.rs              — helper-declaration reference tracking + removal
         match_context.rs            — binding-aware slots for helper body matchers
@@ -84,6 +85,7 @@ crates/
         un_esm/harmony_requires.rs  — webpack harmony module detection and the loads Terser inlined into their use
         un_esm/leading_requires.rs  — the requires a top-level statement runs before any other effect, moved into bindings
         un_esm/whole_value_members.rs — member reads of a whole `module.exports = v` provider, read through one binding that becomes the default import
+        construct_helper.rs         — body-shape proof of Babel 7's and swc's `_construct`, whose two-argument calls UnArgumentSpread turns into `new C(...list)`
         cocos_rf.rs                 — Cocos Creator 2.x `cc._RF.push/pop` registration-frame matching shared by UnEnum and export storage
         *.rs                        — one file per transformation rule
       unpacker/
