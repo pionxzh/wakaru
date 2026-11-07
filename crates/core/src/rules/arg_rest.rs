@@ -3,10 +3,10 @@ use crate::collections::HashSet;
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignOp, AssignTarget, BinExpr, BinaryOp, BindingIdent, Callee, CondExpr, Constructor, Decl,
-    Expr, Function, FunctionBody, Ident, Lit, MemberExpr, MemberProp, Number, Param,
-    ParamOrTsParamProp, Pat, RestPat, SimpleAssignTarget, Stmt, UpdateOp, VarDecl, VarDeclKind,
-    VarDeclOrExpr, VarDeclarator,
+    AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BindingIdent, Callee, CondExpr,
+    Constructor, Decl, Expr, Function, FunctionBody, Ident, Lit, MemberExpr, MemberProp, Number,
+    Param, ParamOrTsParamProp, Pat, RestPat, SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp,
+    UpdateExpr, UpdateOp, VarDecl, VarDeclKind, VarDeclOrExpr, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -17,6 +17,7 @@ use super::decl_utils::{
 use super::helper_matcher::count_binding_refs;
 use super::rename_utils::{rename_bindings, BindingRename};
 use super::RewriteLevel;
+use crate::utils::paren::strip_parens;
 
 /// Replaces `arguments[N]` / `arguments.length` patterns with a rest parameter
 /// `...args` and rewrites safe accesses to use `args`.
@@ -631,6 +632,11 @@ impl ArgumentsChecker {
         }
     }
 
+    fn mark_arguments_write(&mut self) {
+        self.has_any = true;
+        self.has_unsafe = true;
+    }
+
     fn is_safe_arguments_index(&self, expr: &Expr) -> bool {
         if self.fixed_param_count == 0 {
             return extract_numeric_index(expr).is_some()
@@ -712,6 +718,46 @@ impl Visit for ArgumentsChecker {
             return;
         }
         expr.visit_children_with(self);
+    }
+
+    // The rest array is a copy, so a write through `arguments[i]` would stay
+    // on the arguments object while reads move to the copy, and a write past
+    // the end grows the copy's `length` but not `arguments.length`. Any write
+    // target (assignment, update, `delete`, destructuring or loop head) blocks
+    // the rewrite.
+    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+        if let AssignTarget::Simple(target) = &assign.left {
+            let written = match target {
+                SimpleAssignTarget::Member(member) => is_arguments_ident(&member.obj),
+                SimpleAssignTarget::Paren(paren) => is_arguments_member(&paren.expr),
+                _ => false,
+            };
+            if written {
+                self.mark_arguments_write();
+            }
+        }
+        assign.visit_children_with(self);
+    }
+
+    fn visit_update_expr(&mut self, update: &UpdateExpr) {
+        if is_arguments_member(&update.arg) {
+            self.mark_arguments_write();
+        }
+        update.visit_children_with(self);
+    }
+
+    fn visit_unary_expr(&mut self, unary: &UnaryExpr) {
+        if unary.op == UnaryOp::Delete && is_arguments_member(&unary.arg) {
+            self.mark_arguments_write();
+        }
+        unary.visit_children_with(self);
+    }
+
+    fn visit_pat(&mut self, pat: &Pat) {
+        if matches!(pat, Pat::Expr(expr) if is_arguments_member(expr)) {
+            self.mark_arguments_write();
+        }
+        pat.visit_children_with(self);
     }
 
     fn visit_ident(&mut self, id: &Ident) {
@@ -826,6 +872,10 @@ impl Visit for IdentNameCollector {
 
 fn is_arguments_ident(expr: &Expr) -> bool {
     matches!(expr, Expr::Ident(id) if id.sym == "arguments")
+}
+
+fn is_arguments_member(expr: &Expr) -> bool {
+    matches!(strip_parens(expr), Expr::Member(member) if is_arguments_ident(&member.obj))
 }
 
 fn arguments_length_alias_from_stmt(stmt: &Stmt) -> Option<BindingId> {

@@ -538,7 +538,11 @@ rationale, or level gating appear.
   they are checked and rewritten with the body; nested regular functions and
   class constructors have their own `arguments` and are skipped (a constructor
   is a separate AST node, not a `Function`). A parameter initializer that
-  mentions `arguments` blocks the rewrite. The fresh rest name is `args`, or
+  mentions `arguments` blocks the rewrite, and so does any write through
+  `arguments[i]` (assignment, update, `delete`, destructuring or loop-head
+  target): the rest array is a copy, so the write would stay on `arguments`
+  and a write past the end would change only the copy's `length`. The fresh
+  rest name is `args`, or
   `args_1`, `args_2`, ... when the body or parameter list already spells that
   identifier anywhere (a declaration or a reference to an outer binding),
   since printed code has no `SyntaxContext` to keep them apart. A reused copy

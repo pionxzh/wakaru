@@ -921,3 +921,121 @@ function f(a, b, ...args) {
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
+
+// A rest array is a copy: a write to `arguments[i]` would stay on the
+// arguments object while reads move to the copy, and writes past the end
+// change the copy's `length` but not `arguments.length`. Any write blocks the
+// rewrite.
+#[test]
+fn assignment_to_arguments_index_preserves_arguments() {
+    let input = r#"
+function f() {
+    arguments[0] = 7;
+    return arguments[0];
+}
+function g() {
+    arguments[0] += 1;
+    return arguments.length;
+}
+function h() {
+    (arguments[0]) = 7;
+    return arguments[0];
+}
+"#;
+    let expected = r#"
+function f() {
+    arguments[0] = 7;
+    return arguments[0];
+}
+function g() {
+    arguments[0] += 1;
+    return arguments.length;
+}
+function h() {
+    arguments[0] = 7;
+    return arguments[0];
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn update_of_arguments_index_preserves_arguments() {
+    let input = r#"
+function f() {
+    arguments[1]--;
+    return arguments[1];
+}
+function g() {
+    return ++arguments[0];
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn delete_of_arguments_index_preserves_arguments() {
+    let input = r#"
+function f() {
+    delete arguments[0];
+    return arguments[0];
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn destructuring_and_loop_targets_on_arguments_preserve_arguments() {
+    let input = r#"
+function f(o) {
+    [arguments[1]] = [o];
+    return arguments[1];
+}
+function g(o) {
+    ({ a: arguments[1] } = o);
+    return arguments[1];
+}
+function h(o) {
+    for (arguments[1] in o);
+    return arguments[1];
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn write_in_nested_arrow_preserves_arguments() {
+    let input = r#"
+function f() {
+    const set = () => {
+        arguments[0] = 7;
+    };
+    set();
+    return arguments[0];
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn write_to_inner_function_arguments_does_not_block_outer_rewrite() {
+    let input = r#"
+function outer() {
+    function inner() {
+        arguments[0] = 7;
+        return arguments[0];
+    }
+    return inner(arguments[0]);
+}
+"#;
+    let expected = r#"
+function outer(...args) {
+    function inner() {
+        arguments[0] = 7;
+        return arguments[0];
+    }
+    return inner(args[0]);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
