@@ -3,14 +3,80 @@ use std::path::{Path, PathBuf};
 
 mod common;
 
-use common::{assert_eq_normalized, render};
-use wakaru_core::{decompile, DecompileOptions};
+use common::{assert_eq_normalized, render, render_with_level};
+use swc_core::common::{sync::Lrc, SourceMap};
+use wakaru_core::{decompile, DecompileOptions, RewriteLevel};
 
 #[test]
 fn then_rejection_handler_without_promise_provenance_is_preserved() {
     let input = r#"const result = customThenable.then(null, onRejected);"#;
 
     assert_eq_normalized(&render(input), input);
+}
+
+/// A call callee, a `new` callee, and a `class ... extends` clause must be a
+/// left-hand-side expression, so an update or arrow operand there keeps its
+/// parentheses through emission.
+#[test]
+fn minimal_level_keeps_parens_required_by_call_new_and_heritage() {
+    let input = r#"(x++)();
+new (o.n++)();
+new (() => {})();
+class C extends (() => {}) {}
+"#;
+    let expected = r#"(x++)();
+new (o.n++)();
+new (()=>{})();
+class C extends (()=>{}) {
+}
+"#;
+
+    let output = render_with_level(input, RewriteLevel::Minimal);
+    assert_eq!(output, expected);
+
+    let cm: Lrc<SourceMap> = Default::default();
+    common::parse_module_with_filename(&output, "output.js", cm);
+}
+
+#[test]
+fn minimal_level_keeps_parens_for_prefix_update_async_arrow_and_optional_call() {
+    let cases = [
+        "(++x)();",
+        "(x--)();",
+        "new (++x)();",
+        "new (async () => {})();",
+        "class C extends (async () => {}) {}",
+        "(x++)?.();",
+    ];
+
+    for input in cases {
+        let output = render_with_level(input, RewriteLevel::Minimal);
+        assert_eq_normalized(&output, input);
+
+        let cm: Lrc<SourceMap> = Default::default();
+        common::parse_module_with_filename(&output, "output.js", cm);
+    }
+}
+
+#[test]
+fn minimal_level_adds_no_parens_to_valid_call_new_and_heritage() {
+    let input = r#"foo();
+new Foo();
+class D extends Foo {}
+(x => x)();
+o.m++;
+"#;
+    let expected = r#"foo();
+new Foo();
+class D extends Foo {
+}
+((x)=>x)();
+o.m++;
+"#;
+
+    let output = render_with_level(input, RewriteLevel::Minimal);
+
+    assert_eq!(output, expected);
 }
 
 #[test]

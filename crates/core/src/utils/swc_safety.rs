@@ -3,7 +3,8 @@ use std::panic::{self, AssertUnwindSafe};
 use anyhow::anyhow;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    AssignTarget, Callee, Expr, ExprStmt, Module, OptChainBase, ParenExpr, SimpleAssignTarget,
+    AssignTarget, CallExpr, Callee, Class, Expr, ExprStmt, Module, NewExpr, OptCall, OptChainBase,
+    ParenExpr, SimpleAssignTarget,
 };
 use swc_core::ecma::transforms::base::fixer::fixer;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
@@ -61,14 +62,56 @@ fn parenthesize_leading_function_callee(expression: &mut Expr) {
 
 fn parenthesize_callee(callee: &mut Box<Expr>) {
     if matches!(callee.as_ref(), Expr::Fn(_) | Expr::Class(_)) {
-        let expression = std::mem::replace(callee, Box::new(Expr::Invalid(Default::default())));
-        **callee = Expr::Paren(ParenExpr {
-            span: DUMMY_SP,
-            expr: expression,
-        });
+        parenthesize(callee);
     } else {
         parenthesize_leading_function_callee(callee);
     }
+}
+
+struct LeftHandSideOperandParens;
+
+impl VisitMut for LeftHandSideOperandParens {
+    fn visit_mut_call_expr(&mut self, node: &mut CallExpr) {
+        node.visit_mut_children_with(self);
+        if let Callee::Expr(callee) = &mut node.callee {
+            parenthesize_left_hand_side_operand(callee);
+        }
+    }
+
+    fn visit_mut_opt_call(&mut self, node: &mut OptCall) {
+        node.visit_mut_children_with(self);
+        parenthesize_left_hand_side_operand(&mut node.callee);
+    }
+
+    fn visit_mut_new_expr(&mut self, node: &mut NewExpr) {
+        node.visit_mut_children_with(self);
+        parenthesize_left_hand_side_operand(&mut node.callee);
+    }
+
+    fn visit_mut_class(&mut self, node: &mut Class) {
+        node.visit_mut_children_with(self);
+        if let Some(super_class) = &mut node.super_class {
+            parenthesize_left_hand_side_operand(super_class);
+        }
+    }
+}
+
+/// Wrap an operand a call callee, a `new` callee, or a `class ... extends`
+/// clause cannot hold without parentheses. The fixer's own lists cover the
+/// remaining kinds (conditional, assignment, sequence, binary) in those
+/// positions, but not an update or an arrow.
+fn parenthesize_left_hand_side_operand(expression: &mut Box<Expr>) {
+    if matches!(expression.as_ref(), Expr::Update(_) | Expr::Arrow(_)) {
+        parenthesize(expression);
+    }
+}
+
+fn parenthesize(expression: &mut Box<Expr>) {
+    let inner = std::mem::replace(expression, Box::new(Expr::Invalid(Default::default())));
+    **expression = Expr::Paren(ParenExpr {
+        span: DUMMY_SP,
+        expr: inner,
+    });
 }
 
 /// Run SWC's fixer pass, catching panics from malformed AST that the
@@ -84,6 +127,12 @@ pub(crate) fn apply_fixer(module: &mut Module) -> anyhow::Result<()> {
         // Limit the repair to the statement's left edge: the same callee in a
         // variable initializer or assignment RHS is already valid JavaScript.
         module.visit_mut_with(&mut FunctionExpressionCalleeParens);
+        // SWC's fixer also drops the parentheses an update or arrow operand
+        // needs in a call callee, a `new` callee, and a `class ... extends`
+        // clause, so those print as `x++()` or `new o.n++()`. The positions
+        // take a left-hand-side expression, so the repair is not limited to a
+        // statement's left edge.
+        module.visit_mut_with(&mut LeftHandSideOperandParens);
     }))
     .map_err(|payload| {
         let msg = payload
@@ -205,6 +254,92 @@ function accept(value) {
     #[test]
     fn fixer_repairs_postfix_update_left_edges() {
         roundtrips_after_paren_strip(r#"(function() { return { count: 0 }; })().count++;"#);
+    }
+
+    // A call callee, a `new` callee, and a `class ... extends` clause each take
+    // a left-hand-side expression, so an update or arrow operand keeps its
+    // parentheses. SWC's fixer drops them, printing `x++()`, `new o.n++()`, and
+    // `class C extends ()=>{}`.
+    #[test]
+    fn fixer_keeps_update_and_arrow_parens_in_left_hand_side_positions() {
+        let source = r#"
+(x++)();
+new (o.n++)();
+new (() => {})();
+class C extends (() => {}) {}
+"#;
+        assert_fixed_output(source, false, "(x++)();");
+        assert_fixed_output(source, false, "new (o.n++)();");
+        assert_fixed_output(source, false, "new (()=>{})();");
+        assert_fixed_output(source, false, "class C extends (()=>{})");
+    }
+
+    #[test]
+    fn fixer_repairs_update_and_arrow_operands_without_source_parens() {
+        let source = r#"
+(x++)();
+new (o.n++)();
+new (() => {})();
+class C extends (() => {}) {}
+"#;
+        assert_fixed_output(source, true, "(x++)();");
+        assert_fixed_output(source, true, "new (o.n++)();");
+        assert_fixed_output(source, true, "new (()=>{})();");
+        assert_fixed_output(source, true, "class C extends (()=>{})");
+
+        roundtrips_after_paren_strip(source);
+    }
+
+    #[test]
+    fn fixer_keeps_parens_for_prefix_update_async_arrow_and_optional_call() {
+        let cases = [
+            ("(++x)();", "(++x)();"),
+            ("(x--)();", "(x--)();"),
+            ("new (++x)();", "new (++x)();"),
+            ("new (async () => {})();", "new (async ()=>{})();"),
+            (
+                "class C extends (async () => {}) {}",
+                "class C extends (async ()=>{})",
+            ),
+            ("(x++)?.();", "(x++)?.();"),
+        ];
+        for (source, expected) in cases {
+            assert_fixed_output(source, false, expected);
+            roundtrips_after_paren_strip(source);
+        }
+    }
+
+    #[test]
+    fn fixer_keeps_update_and_arrow_parens_in_nested_positions() {
+        let source = r#"
+var wrapped = ((x++)(), (0, y)());
+keep([f((y++)())]);
+"#;
+        assert_fixed_output(source, false, "((x++)(),");
+        assert_fixed_output(source, false, "f((y++)())");
+        roundtrips_after_paren_strip(source);
+    }
+
+    #[test]
+    fn fixer_does_not_parenthesize_valid_left_hand_side_operands() {
+        GLOBALS.set(&Default::default(), || {
+            let cm: Lrc<SourceMap> = Default::default();
+            let source = r#"
+foo();
+new Foo();
+class D extends Foo {}
+o.m++;
+"#;
+            let mut module = crate::unpacker::parse_es_module(source, "input.js", cm.clone())
+                .expect("fixture should parse");
+
+            apply_fixer(&mut module).expect("fixer should succeed");
+            let output = crate::unpacker::emit_esm::emit_module_raw(&module, cm)
+                .expect("fixture should emit");
+
+            let expected = "foo();\nnew Foo();\nclass D extends Foo {\n}\no.m++;";
+            assert_eq!(output.trim(), expected, "unexpected output:\n{output}");
+        });
     }
 
     #[test]
