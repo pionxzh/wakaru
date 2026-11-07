@@ -179,26 +179,6 @@
       "note": "Test262 script execution preloads a global harness binding named assert. Top-level script `var assert` can coexist with that environment, but decompiled top-level `const assert` is a lexical redeclaration."
     },
     {
-      "reason": "swc-print-class-extends-arrow-parens",
-      "status": "rejected",
-      "phase": "swc-fidelity",
-      "when": {
-        "pathIncludes": ["/class/heritage-", "arrow-function"],
-        "errorIncludes": ["Unexpected token '=>'"],
-        "decompiledRegex": ["\\bclass\\s+extends\\s+(?:async\\s*)?\\([^)]*\\)\\s*=>"]
-      }
-    },
-    {
-      "reason": "swc-print-new-arrow-parens",
-      "status": "rejected",
-      "phase": "swc-fidelity",
-      "when": {
-        "pathIncludes": ["test/language/expressions/arrow-function/throw-new.js"],
-        "errorIncludes": ["Malformed arrow function parameter list"],
-        "decompiledRegex": ["\\bnew\\s*\\(\\s*\\)\\s*=>"]
-      }
-    },
-    {
       "reason": "swc-print-export-default-function-expression",
       "status": "rejected",
       "phase": "swc-fidelity",

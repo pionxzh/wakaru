@@ -32,8 +32,8 @@
     "runnable": 8426,
     "skipped": 0,
     "unsupported": 35,
-    "rejected": 526,
-    "passed": 7865,
+    "rejected": 524,
+    "passed": 7867,
     "failed": 0
   },
   "outcomes": [
@@ -2132,22 +2132,6 @@
       "kind": "node-vm-baseline",
       "fingerprint": "121bd23ee6859c8941733d01093e743ecf740f3c77487ebe7834835bdad2d59d",
       "summary": "Error: sloppy: expected success, got parse SyntaxError: Unexpected identifier '$'"
-    },
-    {
-      "path": "test/language/expressions/class/heritage-arrow-function.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "swc-print-class-extends-arrow-parens",
-      "fingerprint": "2def7ae2ed80747ffa71fe82ea29fb12db544bd63b04943eae265a5eb9353556",
-      "summary": "Error: sloppy: expected success, got parse SyntaxError: Unexpected token '=>'"
-    },
-    {
-      "path": "test/language/expressions/class/heritage-async-arrow-function.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "swc-print-class-extends-arrow-parens",
-      "fingerprint": "3afcdb9bc582520f586ee7a1273334372c34c88b0a569aee71e7a5a9c13a244d",
-      "summary": "Error: sloppy: expected success, got parse SyntaxError: Unexpected token '=>'"
     },
     {
       "path": "test/language/expressions/class/name.js",

@@ -36,8 +36,8 @@
     "runnable": 1396,
     "skipped": 0,
     "unsupported": 19,
-    "rejected": 2,
-    "passed": 1375,
+    "rejected": 1,
+    "passed": 1376,
     "failed": 0
   },
   "outcomes": [
@@ -64,14 +64,6 @@
       "kind": "swc-parse-yield-arrow-parameter",
       "fingerprint": "d27dc65d17ed203aa875a5fa4e518ab1e415eb1daec9a86cdb5ad6abef8c13c0",
       "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (8..13, TS1109) }"
-    },
-    {
-      "path": "test/language/expressions/arrow-function/throw-new.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "swc-print-new-arrow-parens",
-      "fingerprint": "673b8e33cb868fdf75b10d9334f59d3f66d227bb5d153f32f15080807570c191",
-      "summary": "Error: sloppy: expected success, got parse SyntaxError: Malformed arrow function parameter list"
     },
     {
       "path": "test/language/expressions/function/param-dflt-yield-non-strict.js",

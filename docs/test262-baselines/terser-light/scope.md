@@ -23,13 +23,12 @@
 
 | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---:|---:|---:|---:|---:|---:|---:|
-| 1396 | 1396 | 0 | 19 | 2 | 1375 | 0 |
+| 1396 | 1396 | 0 | 19 | 1 | 1376 | 0 |
 
 ## Reasons
 
 | Status | Reason | Count |
 |---|---|---:|
-| rejected | swc-print-new-arrow-parens | 1 |
 | rejected | transform-runtime | 1 |
 | unsupported | node-vm-baseline | 10 |
 | unsupported | sloppy-only-strict-ident | 3 |

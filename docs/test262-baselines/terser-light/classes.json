@@ -32,8 +32,8 @@
     "runnable": 8426,
     "skipped": 0,
     "unsupported": 41,
-    "rejected": 990,
-    "passed": 7395,
+    "rejected": 988,
+    "passed": 7397,
     "failed": 0
   },
   "outcomes": [
@@ -3780,22 +3780,6 @@
       "kind": "transform-runtime",
       "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
       "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
-    },
-    {
-      "path": "test/language/expressions/class/heritage-arrow-function.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "swc-print-class-extends-arrow-parens",
-      "fingerprint": "a5f0940fd008e997f7ee9ea10a421dcd37c2994342ce9a2560c3dc71a38db835",
-      "summary": "Error: sloppy: expected success, got parse SyntaxError: Unexpected token '=>'"
-    },
-    {
-      "path": "test/language/expressions/class/heritage-async-arrow-function.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "swc-print-class-extends-arrow-parens",
-      "fingerprint": "9a1ab9495b9b3cb09081a22cd7c2f327a8cc1955832a6a2e44f7bfa61aa7a04d",
-      "summary": "Error: sloppy: expected success, got parse SyntaxError: Unexpected token '=>'"
     },
     {
       "path": "test/language/expressions/class/ident-name-method-def-break-escaped.js",

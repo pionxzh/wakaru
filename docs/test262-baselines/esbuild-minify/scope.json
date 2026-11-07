@@ -36,8 +36,8 @@
     "runnable": 1396,
     "skipped": 0,
     "unsupported": 10,
-    "rejected": 185,
-    "passed": 1201,
+    "rejected": 184,
+    "passed": 1202,
     "failed": 0
   },
   "outcomes": [
@@ -192,14 +192,6 @@
       "kind": "transform-runtime-inferred-name",
       "fingerprint": "87e14f19ab86dd4eddcc317bed1eaaf81fbbc2c3a4dc7b0030e19b26e33fceb9",
       "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«\"xGen\"», «\"xGen\"») to be false"
-    },
-    {
-      "path": "test/language/expressions/arrow-function/throw-new.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "swc-print-new-arrow-parens",
-      "fingerprint": "b99412fcd75bdd9126d9988f79604ffab563dd6c54e6190ad1ff8038b902d62f",
-      "summary": "Error: sloppy: expected success, got parse SyntaxError: Malformed arrow function parameter list"
     },
     {
       "path": "test/language/expressions/arrow-function/unscopables-with-in-nested-fn.js",

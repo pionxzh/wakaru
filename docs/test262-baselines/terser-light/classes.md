@@ -23,13 +23,12 @@
 
 | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---:|---:|---:|---:|---:|---:|---:|
-| 8426 | 8426 | 0 | 41 | 990 | 7395 | 0 |
+| 8426 | 8426 | 0 | 41 | 988 | 7397 | 0 |
 
 ## Reasons
 
 | Status | Reason | Count |
 |---|---|---:|
-| rejected | swc-print-class-extends-arrow-parens | 2 |
 | rejected | transform-reject | 74 |
 | rejected | transform-runtime | 914 |
 | unsupported | node-vm-baseline | 35 |

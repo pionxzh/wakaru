@@ -23,13 +23,12 @@
 
 | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---:|---:|---:|---:|---:|---:|---:|
-| 8426 | 8426 | 0 | 35 | 526 | 7865 | 0 |
+| 8426 | 8426 | 0 | 35 | 524 | 7867 | 0 |
 
 ## Reasons
 
 | Status | Reason | Count |
 |---|---|---:|
-| rejected | swc-print-class-extends-arrow-parens | 2 |
 | rejected | transform-reject | 7 |
 | rejected | transform-reject-top-level-await | 8 |
 | rejected | transform-runtime | 125 |

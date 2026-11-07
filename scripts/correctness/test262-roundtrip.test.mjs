@@ -876,6 +876,8 @@ test("knownWakaruParseUnsupportedReason classifies SWC parser gaps", () => {
 });
 
 test("knownSwcFidelityIssueReason classifies known swc printer gaps", () => {
+  // Wakaru repairs the arrow parens SWC's fixer drops in `extends` and `new`
+  // positions, so a recurrence counts as a Wakaru failure.
   assert.equal(
     knownSwcFidelityIssueReason({
       path: "test/language/statements/for-of/dstr/obj-id.js",
@@ -890,7 +892,7 @@ test("knownSwcFidelityIssueReason classifies known swc printer gaps", () => {
       error: new Error("SyntaxError: Unexpected token '=>'"),
       decompiled: "var C = class extends ()=>{} {\n};",
     }),
-    "swc-print-class-extends-arrow-parens",
+    null,
   );
   assert.equal(
     knownSwcFidelityIssueReason({
@@ -898,7 +900,7 @@ test("knownSwcFidelityIssueReason classifies known swc printer gaps", () => {
       error: new Error("SyntaxError: Malformed arrow function parameter list"),
       decompiled: "new ()=>{};",
     }),
-    "swc-print-new-arrow-parens",
+    null,
   );
   assert.equal(
     knownSwcFidelityIssueReason({

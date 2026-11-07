@@ -219,9 +219,7 @@ Known non-Wakaru reasons currently classified:
 - `swc-parse-yield-function-name`
 - `swc-parse-yield-ident`
 - `swc-parse-yield-label`
-- `swc-print-class-extends-arrow-parens`
 - `swc-print-export-default-function-expression`
-- `swc-print-new-arrow-parens`
 
 Most known non-Wakaru classifications live in
 `scripts/correctness/test262-known-blockers.json`. Keep entries narrow: match the
