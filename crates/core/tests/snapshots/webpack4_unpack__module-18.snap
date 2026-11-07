@@ -110,7 +110,7 @@ export function routerMiddleware(e) {
                 }
                 const n_payload = n.payload;
                 const { method, args } = n_payload;
-                e[method](...args);
+                e[method].apply(e, args);
             };
         };
     };

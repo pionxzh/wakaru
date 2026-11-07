@@ -607,6 +607,61 @@ Level: `aggressive` only, and never for a single argument of an empty
 receiver. `minimal` and `standard` preserve unknown concat arguments;
 `standard` may still recover the proof-backed forms.
 
+### `apply_arguments_are_arrays`
+
+The argument list of `fn.apply(thisArg, xs)` is an Array or the `arguments`
+object, so the call can be recovered as a spread call:
+
+```js
+fn.apply(void 0, xs)   // -> fn(...xs)
+obj.m.apply(obj, xs)   // -> obj.m(...xs)
+```
+
+This is not true for an arbitrary value. `apply` reads `length` and each
+index of any array-like object and treats `null` or `undefined` as no
+arguments. Spread calls `xs[Symbol.iterator]`, so it throws on `null`,
+`undefined`, and a non-iterable array-like such as `{ length: 2 }`. Several
+producers emit this `apply` shape for a source spread after assuming its
+operand is an array: TypeScript targeting ES5 without `downlevelIteration`
+(producer `typescript@3.8.3` and `typescript@5.9.3`, for any operand), and
+the loose and `iterableIsArray` modes listed under
+`concat_arguments_are_arrays`. Handwritten ES5 code uses the same call for
+any array-like.
+
+An argument list proven to read the same both ways does not depend on this
+assumption: an array literal, an Array built by `new Array`, `Array()`,
+`Array.from`, `Array.of` or an Array method that returns a new Array, the `arguments` object, a rest
+parameter, a recognized `arguments` copy, and an unwritten binding
+initialized to one of these, read where it already holds that value (see
+`rules/un_argument_spread.rs`).
+
+Affects: `UnArgumentSpread` for argument lists it cannot prove.
+
+Level: `aggressive` only. `minimal` keeps every `apply` call; `standard`
+recovers the proven argument lists.
+
+### `apply_null_receiver_unobserved`
+
+A function called as `fn.apply(null, xs)` does not observe the difference
+between a `null` and an `undefined` receiver:
+
+```js
+"use strict";
+function f() { return this === null; }
+f.apply(null, []); // true
+f();               // false
+```
+
+An `undefined` receiver needs no assumption: a sloppy callee gets the global
+object from `apply` and from a bare call alike, and a strict callee gets
+`undefined` from both. The known lowerers of spread calls emit `void 0` or
+`undefined` (TypeScript, Babel 6 and 7, SWC); `null` appears in handwritten
+code.
+
+Affects: `UnArgumentSpread` for a `null` receiver.
+
+Level: `aggressive` only.
+
 ### `set_computed_properties`
 
 Folding a sequence of member assignments back into an object literal assumes

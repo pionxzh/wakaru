@@ -284,7 +284,15 @@ rationale, or level gating appear.
   whole: `UnEsm` exports that binding by name, and an inlined global would
   leave an ESM export of an undeclared binding.
 - **UnArgumentSpread** — `standard+`. Pattern subtleties:
-  `fn.apply(null, args)` and `obj.fn.apply(obj, args)` are safe;
+  `fn.apply(undefined, xs)` and `obj.fn.apply(obj, xs)` keep their receiver
+  as a spread call, but `apply` and spread read `xs` differently (`apply`
+  takes any array-like and treats `null`/`undefined` as no arguments; spread
+  iterates and throws). At `standard` the argument list must be proven: an
+  array literal or Array-building call, `arguments`, a rest parameter, an
+  `arguments` copy, or an unwritten binding initialized to an Array, read
+  where it already holds one (code comment on `ProvenArgumentLists`). Unknown
+  lists and a `null` receiver convert only at `aggressive`
+  (`apply_arguments_are_arrays`, `apply_null_receiver_unobserved`).
   `obj.fn.apply(null, args)` is *intentionally skipped* — rewriting it to
   `fn(...args)` is not semantics-preserving without cross-module proof that
   the member is a plain imported function (candidate fact reader).
@@ -761,8 +769,9 @@ changes.
    `() => { return mod && mod.__esModule ? mod.default : mod; }`. Unlocks
    moving UnCurlyBraces to Stage 1 and may simplify getter detection.
 2. **Cross-module receiver proof for UnArgumentSpread** — a fact proving
-   "binding X is a direct import, not a namespace" would make
-   `obj.fn.apply(null, args)` → `fn(...args)` safe to recover.
+   "binding X is a direct import, not a namespace" would make the receiver
+   of `obj.fn.apply(void 0, args)` → `fn(...args)` safe to drop; the
+   argument list still needs its own proof at `standard`.
 3. **Source-map names for SmartRename** — feed recovered original names into
    rename decisions.
 4. **SmartInline / SmartRename validation** — the late pipeline has complex

@@ -16,15 +16,20 @@ fn apply_with_level(input: &str, level: RewriteLevel) -> String {
     })
 }
 
+// Receiver and temp tests below pass an unknown argument list, which converts
+// only at `aggressive` (`apply_arguments_are_arrays`); the receiver logic does
+// not depend on the level. Argument-list proofs at `standard` are tested at
+// the end of the file.
+
 #[test]
-fn converts_apply_with_undefined_to_spread() {
+fn converts_apply_with_undefined_to_spread_at_aggressive() {
     let input = r#"
 fn.apply(undefined, args);
 "#;
     let expected = r#"
 fn(...args);
 "#;
-    let output = apply(input);
+    let output = aggressive(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -49,14 +54,14 @@ function wrapper(undefined) {
 }
 
 #[test]
-fn converts_apply_with_null_to_spread() {
+fn converts_apply_with_null_to_spread_at_aggressive() {
     let input = r#"
 fn.apply(null, args);
 "#;
     let expected = r#"
 fn(...args);
 "#;
-    let output = apply(input);
+    let output = aggressive(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -68,7 +73,7 @@ obj.fn.apply(obj, someArray);
     let expected = r#"
 obj.fn(...someArray);
 "#;
-    let output = apply(input);
+    let output = aggressive(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -170,7 +175,7 @@ function foo() {
   this.fn(...someArray);
 }
 "#;
-    let output = apply(input);
+    let output = aggressive(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -232,7 +237,7 @@ function collect(output, args) {
   output.push(...args);
 }
 "#;
-    let output = apply(input);
+    let output = aggressive(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -297,7 +302,7 @@ function collect(first, second, args) {
   second.push(...args);
 }
 "#;
-    let output = apply(input);
+    let output = aggressive(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -352,7 +357,7 @@ let t;
 t.length;
 recover(t);
 "#;
-    assert_eq_normalized(&apply(input), expected);
+    assert_eq_normalized(&aggressive(input), expected);
 }
 
 #[test]
@@ -420,7 +425,7 @@ function collect(output, args) {
   observe(receiver);
 }
 "#;
-    assert_eq_normalized(&apply(input), expected);
+    assert_eq_normalized(&aggressive(input), expected);
 }
 
 #[test]
@@ -468,7 +473,7 @@ function collect(output, args) {
   output[method = "push"](...args);
 }
 "#;
-    assert_eq_normalized(&apply(input), expected);
+    assert_eq_normalized(&aggressive(input), expected);
 }
 
 #[test]
@@ -484,7 +489,7 @@ function add(items) {
   this.list.push(...items);
 }
 "#;
-    assert_eq_normalized(&apply(input), expected);
+    assert_eq_normalized(&aggressive(input), expected);
 }
 
 #[test]
@@ -505,7 +510,7 @@ function add(x, y) {
   (_a = this.b).push(...y);
 }
 "#;
-    assert_eq_normalized(&apply(input), expected);
+    assert_eq_normalized(&aggressive(input), expected);
 }
 
 #[test]
@@ -526,7 +531,7 @@ function add(x, y) {
   return _a;
 }
 "#;
-    assert_eq_normalized(&apply(input), expected);
+    assert_eq_normalized(&aggressive(input), expected);
 }
 
 #[test]
@@ -544,7 +549,7 @@ function add(t, items) {
   return arguments[0];
 }
 "#;
-    assert_eq_normalized(&apply(input), expected);
+    assert_eq_normalized(&aggressive(input), expected);
 }
 
 #[test]
@@ -562,7 +567,7 @@ function add(items) {
   let t;
 }
 "#;
-    assert_eq_normalized(&apply(input), expected);
+    assert_eq_normalized(&aggressive(input), expected);
 }
 
 #[test]
@@ -583,7 +588,7 @@ function add(items) {
   return eval("t");
 }
 "#;
-    assert_eq_normalized(&apply(input), expected);
+    assert_eq_normalized(&aggressive(input), expected);
 }
 
 #[test]
@@ -606,7 +611,7 @@ function collect(output, args) {
   return peek();
 }
 "#;
-    assert_eq_normalized(&apply(input), expected);
+    assert_eq_normalized(&aggressive(input), expected);
 }
 
 #[test]
@@ -650,7 +655,7 @@ export var t;
 export var t;
 (t = get()).push(...items);
 "#;
-    assert_eq_normalized(&apply(input), expected);
+    assert_eq_normalized(&aggressive(input), expected);
 }
 
 #[test]
@@ -671,7 +676,7 @@ function collect(output, args) {
   }
 }
 "#;
-    assert_eq_normalized(&apply(input), expected);
+    assert_eq_normalized(&aggressive(input), expected);
 }
 
 #[test]
@@ -706,5 +711,463 @@ obj.fn.apply(obj, args);
 eval(s);
 obj.fn(...args);
 "#;
+    assert_eq_normalized(&aggressive(input), expected);
+}
+
+// `apply` reads `length` and indexes of any array-like and treats
+// `null`/`undefined` as no arguments; spread iterates and throws on both. At
+// `standard` only proven argument lists convert (`apply_arguments_are_arrays`
+// covers the rest at `aggressive`).
+
+fn aggressive(input: &str) -> String {
+    apply_with_level(input, RewriteLevel::Aggressive)
+}
+
+#[test]
+fn unknown_argument_list_keeps_apply_at_standard() {
+    let input = r#"
+fn.apply(undefined, args);
+fn.apply(void 0, args);
+obj.fn.apply(obj, args);
+this.fn.apply(this, args);
+const out = (_t = get()).fn.apply(_t, args);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn unknown_argument_list_converts_at_aggressive() {
+    let input = r#"
+fn.apply(void 0, args);
+obj.fn.apply(obj, args);
+"#;
+    let expected = r#"
+fn(...args);
+obj.fn(...args);
+"#;
+    assert_eq_normalized(&aggressive(input), expected);
+}
+
+#[test]
+fn split_memoized_apply_with_unknown_arguments_keeps_apply_at_standard() {
+    let input = r#"
+let _method, _receiver;
+_method = (_receiver = output).push;
+_method.apply(_receiver, items);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn null_receiver_keeps_apply_at_standard() {
+    // A strict callee sees `this === null` through `apply` and `undefined` in
+    // a bare call.
+    let input = r#"
+fn.apply(null, [1]);
+"#;
+    assert_eq_normalized(&apply(input), input);
+    let expected = r#"
+fn(...[1]);
+"#;
+    assert_eq_normalized(&aggressive(input), expected);
+}
+
+#[test]
+fn array_literal_argument_list_converts_at_standard() {
+    let input = r#"
+fn.apply(void 0, [a, b]);
+obj.fn.apply(obj, [a, ...rest]);
+"#;
+    let expected = r#"
+fn(...[a, b]);
+obj.fn(...[a, ...rest]);
+"#;
     assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn rest_parameter_argument_list_converts_at_standard() {
+    let input = r#"
+function f(...args) {
+    return g.apply(void 0, args);
+}
+const h = (...args) => g.apply(void 0, args);
+"#;
+    let expected = r#"
+function f(...args) {
+    return g(...args);
+}
+const h = (...args) => g(...args);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn reassigned_rest_parameter_keeps_apply() {
+    let input = r#"
+function f(...args) {
+    args = null;
+    return g.apply(void 0, args);
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn arguments_object_converts_at_standard() {
+    // producer babel-core@6.26.3 {"presets":["es2015"]}:
+    // `target(...args)` for a rest `args` becomes `target.apply(undefined, arguments)`.
+    let input = r#"
+function f() {
+    return target.apply(undefined, arguments);
+}
+"#;
+    let expected = r#"
+function f() {
+    return target(...arguments);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn assigned_arguments_keeps_apply() {
+    let input = r#"
+function f() {
+    arguments = null;
+    return target.apply(undefined, arguments);
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn declared_arguments_binding_keeps_apply() {
+    let input = r#"
+function f(arguments) {
+    return target.apply(undefined, arguments);
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn typescript_arguments_copy_converts_at_standard() {
+    // producer typescript@5.9.3 {"module":"CommonJS","target":"ES5"} (same in
+    // typescript@3.8.3): a rest parameter forwarded by spread.
+    let input = r#"
+function forward() {
+    var args = [];
+    for (var _i = 0; _i < arguments.length; _i++) {
+        args[_i] = arguments[_i];
+    }
+    return target.apply(void 0, args);
+}
+function forwardMethod(obj) {
+    var rest = [];
+    for (var _i = 1; _i < arguments.length; _i++) {
+        rest[_i - 1] = arguments[_i];
+    }
+    return obj.method.apply(obj, rest);
+}
+"#;
+    let expected = r#"
+function forward() {
+    var args = [];
+    for (var _i = 0; _i < arguments.length; _i++) {
+        args[_i] = arguments[_i];
+    }
+    return target(...args);
+}
+function forwardMethod(obj) {
+    var rest = [];
+    for (var _i = 1; _i < arguments.length; _i++) {
+        rest[_i - 1] = arguments[_i];
+    }
+    return obj.method(...rest);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn babel_arguments_copy_loop_converts_at_standard() {
+    // producer babel-core@6.26.3 {"presets":["es2015"]}: the rest copy loop,
+    // then a `.concat` on an array literal.
+    let input = r#"
+function prefix(a) {
+    for (var _len = arguments.length, rest = Array(_len > 1 ? _len - 1 : 0), _key = 1; _key < _len; _key++) {
+        rest[_key - 1] = arguments[_key];
+    }
+    obj.method.apply(obj, rest);
+    return target.apply(undefined, [a].concat(rest));
+}
+"#;
+    let expected = r#"
+function prefix(a) {
+    for (var _len = arguments.length, rest = Array(_len > 1 ? _len - 1 : 0), _key = 1; _key < _len; _key++) {
+        rest[_key - 1] = arguments[_key];
+    }
+    obj.method(...rest);
+    return target(...[a].concat(rest));
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn local_array_binding_converts_after_its_declaration() {
+    // producer typescript@5.9.3 {"module":"CommonJS","target":"ES5"}:
+    // `const xs = [1, 2]; target(...xs)`.
+    let input = r#"
+function fromLocal() {
+    var xs = [1, 2];
+    return target.apply(void 0, xs);
+}
+function fromConst() {
+    const xs = [1, 2];
+    return target.apply(void 0, xs);
+}
+"#;
+    let expected = r#"
+function fromLocal() {
+    var xs = [1, 2];
+    return target(...xs);
+}
+function fromConst() {
+    const xs = [1, 2];
+    return target(...xs);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn var_array_read_before_its_declaration_keeps_apply() {
+    // The `var` is still `undefined` at the first call, which `apply` accepts
+    // and spread does not.
+    let input = r#"
+function f() {
+    target.apply(void 0, xs);
+    var xs = [1, 2];
+    return target.apply(void 0, xs);
+}
+"#;
+    let expected = r#"
+function f() {
+    target.apply(void 0, xs);
+    var xs = [1, 2];
+    return target(...xs);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn var_array_read_in_hoisted_function_declaration_keeps_apply() {
+    // `h` is hoisted and may run before `xs` is assigned.
+    let input = r#"
+function f() {
+    h();
+    var xs = [1, 2];
+    function h() {
+        return target.apply(void 0, xs);
+    }
+    const k = () => target.apply(void 0, xs);
+    return k;
+}
+"#;
+    let expected = r#"
+function f() {
+    h();
+    var xs = [1, 2];
+    function h() {
+        return target.apply(void 0, xs);
+    }
+    const k = () => target(...xs);
+    return k;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn reassigned_or_redeclared_array_binding_keeps_apply() {
+    let input = r#"
+function f(other) {
+    var xs = [1, 2];
+    xs = other;
+    return target.apply(void 0, xs);
+}
+function g(other) {
+    var ys = [1, 2];
+    var ys = other;
+    return target.apply(void 0, ys);
+}
+function h(other) {
+    let zs = [1, 2];
+    zs = other;
+    return target.apply(void 0, zs);
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn shadowed_array_constructor_keeps_apply() {
+    let input = r#"
+function f(Array) {
+    var xs = new Array(2);
+    return target.apply(void 0, xs);
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn module_level_var_array_converts_after_its_declaration() {
+    let input = r#"
+var xs = [1, 2];
+target.apply(void 0, xs);
+"#;
+    let expected = r#"
+var xs = [1, 2];
+target(...xs);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn pipeline_keeps_apply_semantics_for_unproven_argument_lists() {
+    // `null` receiver for a strict callee, an `undefined` argument list, and a
+    // non-iterable array-like: each behaves differently as a spread call.
+    let input = r#"
+"use strict";
+function isNullThis() { return this === null; }
+function count() { return arguments.length; }
+var empty;
+var arrayLike = { length: 2 };
+console.log(isNullThis.apply(null, [1]));
+console.log(count.apply(null, empty));
+console.log(count.apply(null, arrayLike));
+"#;
+    let output = common::render(input);
+    assert!(output.contains("isNullThis.apply(null, ["), "{output}");
+    assert!(output.contains("count.apply(null, empty)"), "{output}");
+    assert!(output.contains("count.apply(null, arrayLike)"), "{output}");
+}
+
+#[test]
+fn pipeline_recovers_typescript_es5_rest_forwarding() {
+    // producer typescript@5.9.3 {"module":"CommonJS","target":"ES5"}:
+    // `function forward(...args) { return target(...args); }` and
+    // `function fromLocal() { const xs = [1, 2]; return target(...xs); }`.
+    let input = r#"
+function forward() {
+    var args = [];
+    for (var _i = 0; _i < arguments.length; _i++) {
+        args[_i] = arguments[_i];
+    }
+    return target.apply(void 0, args);
+}
+function fromLocal() {
+    var xs = [1, 2];
+    return target.apply(void 0, xs);
+}
+"#;
+    let expected = r#"
+function forward(...args) {
+    return target(...args);
+}
+function fromLocal() {
+    const xs = [1, 2];
+    return target(...xs);
+}
+"#;
+    assert_eq_normalized(&common::render(input), expected);
+}
+
+#[test]
+fn pipeline_recovers_babel6_rest_forwarding() {
+    // producer babel-core@6.26.3 {"presets":["es2015"]}:
+    // `function forward(...args) { return target(...args); }` and
+    // `function prefix(a, ...rest) { return target(a, ...rest); }`.
+    let input = r#"
+function forward() {
+    return target.apply(undefined, arguments);
+}
+function prefix(a) {
+    for (var _len = arguments.length, rest = Array(_len > 1 ? _len - 1 : 0), _key = 1; _key < _len; _key++) {
+        rest[_key - 1] = arguments[_key];
+    }
+    return target.apply(undefined, [a].concat(rest));
+}
+"#;
+    let output = common::render(input);
+    assert!(output.contains("return target(...arguments);"), "{output}");
+    assert!(output.contains("function prefix(a, ...rest)"), "{output}");
+    assert!(!output.contains(".apply("), "{output}");
+}
+
+#[test]
+fn array_method_result_of_a_proven_array_converts() {
+    let input = r#"
+function applyAll(...fns) {
+    var chain = fns.map(function (f) { return f(api); });
+    return compose.apply(undefined, chain);
+}
+function sliced(...xs) {
+    return target.apply(void 0, xs.filter(Boolean).slice(1));
+}
+"#;
+    let expected = r#"
+function applyAll(...fns) {
+    var chain = fns.map(function (f) { return f(api); });
+    return compose(...chain);
+}
+function sliced(...xs) {
+    return target(...xs.filter(Boolean).slice(1));
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn array_method_result_of_an_unproven_receiver_keeps_apply() {
+    // A non-Array receiver can define its own `map` returning anything.
+    let input = r#"
+function f(list) {
+    var chain = list.map(g);
+    target.apply(void 0, chain);
+    return target.apply(void 0, list.slice(1));
+}
+function h() {
+    var chain = arguments.map(g);
+    return target.apply(void 0, chain);
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn array_from_and_of_argument_lists_convert() {
+    let input = r#"
+nodes.push.apply(nodes, Array.from(list));
+target.apply(void 0, Array.of(a, b));
+"#;
+    let expected = r#"
+nodes.push(...Array.from(list));
+target(...Array.of(a, b));
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn shadowed_array_from_keeps_apply() {
+    let input = r#"
+function f(Array) {
+    return target.apply(void 0, Array.from(list));
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
 }

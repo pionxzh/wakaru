@@ -1,20 +1,34 @@
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignOp, AssignTarget, CallExpr, Callee, Expr, ExprOrSpread, ExprStmt, Ident, Lit,
-    MemberExpr, MemberProp, Module, SimpleAssignTarget, Stmt,
+    ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BindingIdent, CallExpr,
+    Callee, Constructor, Decl, Expr, ExprOrSpread, ExprStmt, FnDecl, Function, FunctionBody, Ident,
+    Lit, MemberExpr, MemberProp, Module, ModuleItem, ParamOrTsParamProp, Pat, SimpleAssignTarget,
+    Stmt, UpdateExpr, VarDeclKind, VarDeclarator,
 };
-use swc_core::ecma::visit::{VisitMut, VisitMutWith};
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use super::arg_rest::find_rest_array_copy_proof;
 use super::binding_facts::TempIsolation;
 use super::dead_decls::remove_consumed_uninitialized_decls;
 use super::decl_utils::same_ident;
-use super::expr_utils::{exprs_structurally_equal, is_unresolved_undefined};
+use super::expr_utils::{exprs_structurally_equal, is_unresolved_ident, is_unresolved_undefined};
 use super::RewriteLevel;
 
-use crate::analysis::binding_uses::BindingId;
-use crate::collections::HashSet;
+use crate::analysis::binding_id;
+use crate::analysis::binding_uses::{BindingId, BindingUseIndex};
+use crate::collections::{HashMap, HashSet};
 use crate::utils::paren::strip_parens;
 
+/// Rewrites `fn.apply(thisArg, args)` to a spread call `fn(...args)`.
+///
+/// `apply` and spread read their argument list differently. `apply` reads
+/// `length` and indexes of any array-like and treats `null`/`undefined` as no
+/// arguments; spread iterates and throws on both. At `standard` the argument
+/// must therefore be proven to read the same both ways (see
+/// `ProvenArgumentLists`); an unknown value converts only at `aggressive`,
+/// under the `apply_arguments_are_arrays` assumption. A `null` receiver is
+/// `aggressive` too (`apply_null_receiver_unobserved`): a strict callee sees
+/// `this === null` through `apply` but `undefined` in a bare call.
 pub struct UnArgumentSpread {
     unresolved_mark: Mark,
     level: RewriteLevel,
@@ -22,6 +36,7 @@ pub struct UnArgumentSpread {
     consumed_uninitialized_bindings: HashSet<BindingId>,
     /// The module contains a `with` statement or a direct eval.
     dynamic_scope: bool,
+    proven: ProvenArgumentLists,
 }
 
 impl UnArgumentSpread {
@@ -32,6 +47,68 @@ impl UnArgumentSpread {
             isolation: TempIsolation::default(),
             consumed_uninitialized_bindings: HashSet::default(),
             dynamic_scope: false,
+            proven: ProvenArgumentLists::default(),
+        }
+    }
+
+    /// `apply_arguments_are_arrays`: only `aggressive` spreads an argument
+    /// list that is not proven to be an Array or the `arguments` object.
+    fn argument_list_converts(&self, expr: &Expr) -> bool {
+        self.level >= RewriteLevel::Aggressive
+            || self
+                .proven
+                .proves(expr, self.unresolved_mark, self.dynamic_scope)
+    }
+
+    /// Visit a body's statements in order. A positional candidate (a `var`
+    /// array or an `arguments` copy) holds an Array only from its ready index
+    /// on, so it is activated as the walk passes that index.
+    fn visit_body_stmts(&mut self, stmts: &mut Vec<Stmt>, candidates: Vec<PositionalCandidate>) {
+        for (index, stmt) in stmts.iter_mut().enumerate() {
+            self.proven.activate(&candidates, index);
+            stmt.visit_mut_with(self);
+        }
+        self.proven.deactivate(&candidates);
+        self.rewrite_split_memoized_applies(stmts, &candidates);
+        self.proven.deactivate(&candidates);
+    }
+
+    fn visit_function_body(&mut self, body: &mut FunctionBody, fixed_param_count: Option<usize>) {
+        let candidates = self.proven.body_candidates(
+            &body.stmts,
+            fixed_param_count
+                .and_then(|count| find_rest_array_copy_proof(body, count, self.unresolved_mark)),
+        );
+        self.visit_body_stmts(&mut body.stmts, candidates);
+    }
+
+    fn rewrite_split_memoized_applies(
+        &mut self,
+        stmts: &mut Vec<Stmt>,
+        candidates: &[PositionalCandidate],
+    ) {
+        if self.level < RewriteLevel::Standard {
+            return;
+        }
+
+        let mut old = std::mem::take(stmts);
+        let mut index = 0;
+        while index < old.len() {
+            if index + 1 < old.len() {
+                // The apply statement is the second of the pair.
+                self.proven.activate(candidates, index + 1);
+                if let Some(stmt) = self.try_rewrite_split_memoized_apply(&old[index..index + 2]) {
+                    stmts.push(stmt);
+                    index += 2;
+                    continue;
+                }
+            }
+
+            stmts.push(std::mem::replace(
+                &mut old[index],
+                Stmt::Empty(swc_core::ecma::ast::EmptyStmt { span: DUMMY_SP }),
+            ));
+            index += 1;
         }
     }
 }
@@ -53,37 +130,65 @@ impl VisitMut for UnArgumentSpread {
         if self.level < RewriteLevel::Standard {
             return;
         }
+        if !contains_apply_call(module) {
+            return;
+        }
         self.dynamic_scope = super::eval_utils::has_dynamic_scope_construct(module);
         self.isolation = TempIsolation::collect(module);
+        self.proven =
+            ProvenArgumentLists::collect(module, self.unresolved_mark, self.dynamic_scope);
         self.consumed_uninitialized_bindings.clear();
         module.visit_mut_children_with(self);
         remove_consumed_uninitialized_decls(module, &self.consumed_uninitialized_bindings);
     }
 
+    fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
+        let candidates = self.proven.body_candidates(items, None);
+        for (index, item) in items.iter_mut().enumerate() {
+            self.proven.activate(&candidates, index);
+            item.visit_mut_with(self);
+        }
+        self.proven.deactivate(&candidates);
+    }
+
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
-        stmts.visit_mut_children_with(self);
+        self.visit_body_stmts(stmts, Vec::new());
+    }
 
-        if self.level < RewriteLevel::Standard {
-            return;
+    // Function bodies are visited here, not through `visit_mut_function_body`,
+    // so the `arguments` copy proof can see the parameter count.
+    fn visit_mut_function(&mut self, function: &mut Function) {
+        function.decorators.visit_mut_with(self);
+        function.params.visit_mut_with(self);
+        if let Some(body) = &mut function.body {
+            self.visit_function_body(body, Some(function.params.len()));
         }
+    }
 
-        let mut old = std::mem::take(stmts);
-        let mut index = 0;
-        while index < old.len() {
-            if index + 1 < old.len() {
-                if let Some(stmt) = self.try_rewrite_split_memoized_apply(&old[index..index + 2]) {
-                    stmts.push(stmt);
-                    index += 2;
-                    continue;
-                }
-            }
-
-            stmts.push(std::mem::replace(
-                &mut old[index],
-                Stmt::Empty(swc_core::ecma::ast::EmptyStmt { span: DUMMY_SP }),
-            ));
-            index += 1;
+    fn visit_mut_constructor(&mut self, constructor: &mut Constructor) {
+        constructor.key.visit_mut_with(self);
+        constructor.params.visit_mut_with(self);
+        let fixed_param_count = constructor.params.len();
+        if let Some(body) = &mut constructor.body {
+            self.visit_function_body(body, Some(fixed_param_count));
         }
+    }
+
+    fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
+        arrow.params.visit_mut_with(self);
+        match arrow.body.as_mut() {
+            // Arrows have no own `arguments`, so there is no copy to prove.
+            ArrowFunctionBody::FunctionBody(body) => self.visit_function_body(body, None),
+            ArrowFunctionBody::Expr(expr) => expr.visit_mut_with(self),
+        }
+    }
+
+    // A hoisted function declaration can run before a positional candidate is
+    // initialized, so its body sees only position-independent proofs.
+    fn visit_mut_fn_decl(&mut self, decl: &mut FnDecl) {
+        self.proven.fn_decl_depth += 1;
+        decl.visit_mut_children_with(self);
+        self.proven.fn_decl_depth -= 1;
     }
 
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
@@ -96,7 +201,7 @@ impl VisitMut for UnArgumentSpread {
         let Expr::Call(call) = &*expr else {
             return;
         };
-        if !is_apply_call(call) {
+        if !is_apply_call(call) || !self.argument_list_converts(&call.args[1].expr) {
             return;
         }
         let call = call.clone();
@@ -112,6 +217,7 @@ impl VisitMut for UnArgumentSpread {
                 self.unresolved_mark,
                 drop_receiver,
                 self.dynamic_scope,
+                self.level >= RewriteLevel::Aggressive,
             ) else {
                 return;
             };
@@ -130,6 +236,9 @@ impl VisitMut for UnArgumentSpread {
 impl UnArgumentSpread {
     fn try_rewrite_split_memoized_apply(&mut self, pair: &[Stmt]) -> Option<Stmt> {
         let matched = match_split_memoized_apply(&pair[0], &pair[1])?;
+        if !self.argument_list_converts(&matched.apply_call.args[1].expr) {
+            return None;
+        }
         let choices: &[bool] = match matched.receiver {
             SplitReceiver::Memoized(_) => &RECEIVER_CHOICES,
             SplitReceiver::Direct => &[false],
@@ -165,6 +274,7 @@ fn try_convert_apply(
     unresolved_mark: Mark,
     drop_receiver: bool,
     dynamic_scope: bool,
+    allow_null_receiver: bool,
 ) -> Result<Expr, CallExpr> {
     // callee must be a member expression ending in `.apply`
     let callee_member = match &call.callee {
@@ -236,8 +346,11 @@ fn try_convert_apply(
     if dynamic_scope {
         return Err(call);
     }
-    if matches!(first_arg, Expr::Lit(Lit::Null(_)))
-        || is_unresolved_undefined(first_arg, unresolved_mark)
+    // An `undefined` receiver reads the same both ways: a sloppy callee gets
+    // the global object from `apply` and from a bare call alike. A strict
+    // callee sees `this === null` only through `apply`.
+    if is_unresolved_undefined(first_arg, unresolved_mark)
+        || (allow_null_receiver && matches!(first_arg, Expr::Lit(Lit::Null(_))))
     {
         return Ok(make_spread_call(call));
     }
@@ -481,4 +594,388 @@ fn make_spread_call_with_member_receiver(mut call: CallExpr, receiver: Box<Expr>
         }
     }
     make_spread_call(call)
+}
+
+fn contains_apply_call(module: &Module) -> bool {
+    struct Finder(bool);
+    impl Visit for Finder {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if self.0 {
+                return;
+            }
+            if is_apply_call(call) {
+                self.0 = true;
+                return;
+            }
+            call.visit_children_with(self);
+        }
+    }
+    let mut finder = Finder(false);
+    module.visit_with(&mut finder);
+    finder.0
+}
+
+/// A binding that holds an Array from body item `ready` on: a `var`
+/// initialized to an Array, a declaration whose Array proof depends on
+/// another binding, or an `arguments` copy filled by a loop.
+struct PositionalCandidate {
+    binding: BindingId,
+    ready: usize,
+    /// The initializer is an Array only if this binding holds one when the
+    /// candidate becomes ready (`var c = t.map(f)`).
+    depends_on: Option<Ident>,
+}
+
+/// Array methods that return a new Array when called on a plain Array
+/// (`ArraySpeciesCreate` with the intrinsic constructor, `stable_builtins`).
+const ARRAY_RESULT_METHODS: [&str; 6] = ["concat", "filter", "flat", "flatMap", "map", "slice"];
+
+/// Argument lists that `apply` and spread read the same way.
+///
+/// `apply` reads `length` and each index; spread calls
+/// `Array.prototype[Symbol.iterator]`, which reads the same for an Array (holes
+/// included) and for the `arguments` object while the builtins are unpatched
+/// (`stable_builtins`). So a proven argument list is:
+///
+/// - an array literal, `new Array(…)`, `Array(…)`, `Array.from(…)`,
+///   `Array.of(…)`, or a `concat`, `filter`,
+///   `flat`, `flatMap`, `map` or `slice` call on a proven Array (producer
+///   `babel-core@6.26.3` es2015 emits `[a].concat(rest)`);
+/// - the `arguments` object, unless the module assigns to it (producer
+///   `babel-core@6.26.3` es2015 emits `target.apply(undefined, arguments)`);
+/// - a rest parameter, or a `let`/`const` initialized to an Array by
+///   construction (a read in the TDZ throws either way);
+/// - a `var` initialized to an Array, a declaration whose initializer is an
+///   Array only if another binding holds one (`c = t.map(f)`, checked when
+///   `c` becomes ready), or a recognized `arguments` copy
+///   (producers `typescript@3.8.3` and `typescript@5.9.3` ES5 emit
+///   `var args = []; for (…) args[_i] = arguments[_i]; f.apply(void 0, args)`),
+///   read in a later statement of the same body and outside a function
+///   declaration that hoisting could run earlier.
+///
+/// Every binding must have one declaration and no write after it, and is
+/// trusted only without `with` or direct eval in the module.
+#[derive(Default)]
+struct ProvenArgumentLists {
+    unresolved_mark: Mark,
+    /// `None` until `collect` runs; nothing is proven without it.
+    uses: Option<BindingUseIndex>,
+    /// Rest parameters and `let`/`const` Arrays: proven wherever they resolve.
+    always: HashSet<BindingId>,
+    /// Activated positional candidates, keyed to the function-declaration depth
+    /// of the body that declares them.
+    positional: HashMap<BindingId, usize>,
+    fn_decl_depth: usize,
+    arguments_written: bool,
+    dynamic_scope: bool,
+}
+
+impl ProvenArgumentLists {
+    fn collect(module: &Module, unresolved_mark: Mark, dynamic_scope: bool) -> Self {
+        let uses = BindingUseIndex::collect(module);
+        let mut collector = AlwaysProvenCollector {
+            unresolved_mark,
+            uses: &uses,
+            always: HashSet::default(),
+            arguments_written: false,
+        };
+        module.visit_with(&mut collector);
+        let always = collector.always;
+        let arguments_written = collector.arguments_written;
+        Self {
+            unresolved_mark,
+            uses: Some(uses),
+            always,
+            positional: HashMap::default(),
+            fn_decl_depth: 0,
+            arguments_written,
+            dynamic_scope,
+        }
+    }
+
+    fn unwritten_single_binding(&self, binding: &BindingId) -> bool {
+        self.uses.as_ref().is_some_and(|uses| {
+            uses.has_single_declaration(binding) && !uses.has_direct_write(binding)
+        })
+    }
+
+    fn body_candidates<T: AsStmt>(
+        &self,
+        items: &[T],
+        copy: Option<super::arg_rest::RestArrayCopyProof>,
+    ) -> Vec<PositionalCandidate> {
+        if self.uses.is_none() {
+            return Vec::new();
+        }
+        let mut candidates = Vec::new();
+        for (index, item) in items.iter().enumerate() {
+            let Some(Stmt::Decl(Decl::Var(var))) = item.as_stmt() else {
+                continue;
+            };
+            for decl in &var.decls {
+                let Some((binding, depends_on)) =
+                    array_initialized_binding(decl, self.unresolved_mark)
+                else {
+                    continue;
+                };
+                // A self-contained `let`/`const` is already proven everywhere.
+                if var.kind != VarDeclKind::Var && depends_on.is_none() {
+                    continue;
+                }
+                if self.unwritten_single_binding(&binding) {
+                    candidates.push(PositionalCandidate {
+                        binding,
+                        ready: index + 1,
+                        depends_on,
+                    });
+                }
+            }
+        }
+        if let Some(copy) = copy {
+            let binding = binding_id(&copy.binding);
+            if self.unwritten_single_binding(&binding) {
+                candidates.push(PositionalCandidate {
+                    binding,
+                    ready: copy.ready_stmt,
+                    depends_on: None,
+                });
+            }
+        }
+        candidates
+    }
+
+    fn activate(&mut self, candidates: &[PositionalCandidate], index: usize) {
+        for candidate in candidates {
+            if candidate.ready > index || self.positional.contains_key(&candidate.binding) {
+                continue;
+            }
+            let dependency_holds = candidate.depends_on.as_ref().is_none_or(|dependency| {
+                self.proves_array(
+                    &Expr::Ident(dependency.clone()),
+                    self.unresolved_mark,
+                    self.dynamic_scope,
+                )
+            });
+            if dependency_holds {
+                self.positional
+                    .insert(candidate.binding.clone(), self.fn_decl_depth);
+            }
+        }
+    }
+
+    fn deactivate(&mut self, candidates: &[PositionalCandidate]) {
+        for candidate in candidates {
+            self.positional.remove(&candidate.binding);
+        }
+    }
+
+    fn proves(&self, expr: &Expr, unresolved_mark: Mark, dynamic_scope: bool) -> bool {
+        match strip_parens(expr) {
+            Expr::Ident(ident) => {
+                if dynamic_scope {
+                    return false;
+                }
+                if is_unresolved_ident(ident, "arguments", unresolved_mark) {
+                    return !self.arguments_written;
+                }
+                let binding = binding_id(ident);
+                self.always.contains(&binding)
+                    || self
+                        .positional
+                        .get(&binding)
+                        .is_some_and(|depth| *depth == self.fn_decl_depth)
+            }
+            expr => is_array_value(expr, unresolved_mark, &|receiver| {
+                self.proves_array(receiver, unresolved_mark, dynamic_scope)
+            }),
+        }
+    }
+
+    /// Like `proves`, but excludes the `arguments` object, which has no
+    /// `concat` method.
+    fn proves_array(&self, expr: &Expr, unresolved_mark: Mark, dynamic_scope: bool) -> bool {
+        match strip_parens(expr) {
+            Expr::Ident(ident) if ident.sym == "arguments" => false,
+            expr => self.proves(expr, unresolved_mark, dynamic_scope),
+        }
+    }
+}
+
+/// An Array by construction: an array literal, `new Array(…)`, `Array(…)`,
+/// `Array.from(…)` or `Array.of(…)` on the global, or an
+/// `ARRAY_RESULT_METHODS` call on a receiver `is_array` accepts.
+fn is_array_value(expr: &Expr, unresolved_mark: Mark, is_array: &dyn Fn(&Expr) -> bool) -> bool {
+    match strip_parens(expr) {
+        Expr::Array(_) => true,
+        Expr::New(new) => {
+            matches!(new.callee.as_ref(), Expr::Ident(id) if is_unresolved_ident(id, "Array", unresolved_mark))
+        }
+        Expr::Call(call) => {
+            let Callee::Expr(callee) = &call.callee else {
+                return false;
+            };
+            match strip_parens(callee) {
+                Expr::Ident(id) => is_unresolved_ident(id, "Array", unresolved_mark),
+                Expr::Member(MemberExpr {
+                    obj,
+                    prop: MemberProp::Ident(prop),
+                    ..
+                }) => {
+                    if ARRAY_RESULT_METHODS.contains(&prop.sym.as_ref()) {
+                        return is_array(obj);
+                    }
+                    // `Array.from(…)` / `Array.of(…)` construct with `this`,
+                    // the global `Array` here.
+                    matches!(prop.sym.as_ref(), "from" | "of")
+                        && matches!(strip_parens(obj), Expr::Ident(id) if is_unresolved_ident(id, "Array", unresolved_mark))
+                }
+                _ => false,
+            }
+        }
+        _ => false,
+    }
+}
+
+/// The binding of `x = <Array>` before any write check, with the binding the
+/// initializer's Array proof depends on (`t` in `x = t.map(f)`), if any.
+fn array_initialized_binding(
+    decl: &VarDeclarator,
+    unresolved_mark: Mark,
+) -> Option<(BindingId, Option<Ident>)> {
+    let Pat::Ident(name) = &decl.name else {
+        return None;
+    };
+    let depends_on = array_dependency(decl.init.as_deref()?, unresolved_mark)?;
+    Some((binding_id(&name.id), depends_on))
+}
+
+/// `Some(None)` for an Array by construction, `Some(Some(t))` for an Array
+/// whenever `t` holds one, `None` otherwise.
+fn array_dependency(expr: &Expr, unresolved_mark: Mark) -> Option<Option<Ident>> {
+    match strip_parens(expr) {
+        Expr::Ident(ident) if !is_unresolved_ident(ident, "arguments", unresolved_mark) => {
+            Some(Some(ident.clone()))
+        }
+        Expr::Call(call) => {
+            if let Callee::Expr(callee) = &call.callee {
+                if let Expr::Member(MemberExpr {
+                    obj,
+                    prop: MemberProp::Ident(prop),
+                    ..
+                }) = strip_parens(callee)
+                {
+                    if ARRAY_RESULT_METHODS.contains(&prop.sym.as_ref()) {
+                        return array_dependency(obj, unresolved_mark);
+                    }
+                }
+            }
+            is_array_value(expr, unresolved_mark, &|_| false).then_some(None)
+        }
+        expr => is_array_value(expr, unresolved_mark, &|_| false).then_some(None),
+    }
+}
+
+trait AsStmt {
+    fn as_stmt(&self) -> Option<&Stmt>;
+}
+
+impl AsStmt for Stmt {
+    fn as_stmt(&self) -> Option<&Stmt> {
+        Some(self)
+    }
+}
+
+impl AsStmt for ModuleItem {
+    fn as_stmt(&self) -> Option<&Stmt> {
+        match self {
+            ModuleItem::Stmt(stmt) => Some(stmt),
+            ModuleItem::ModuleDecl(_) => None,
+        }
+    }
+}
+
+struct AlwaysProvenCollector<'a> {
+    unresolved_mark: Mark,
+    uses: &'a BindingUseIndex,
+    always: HashSet<BindingId>,
+    arguments_written: bool,
+}
+
+impl AlwaysProvenCollector<'_> {
+    fn add_if_unwritten(&mut self, binding: BindingId) {
+        if self.uses.has_single_declaration(&binding) && !self.uses.has_direct_write(&binding) {
+            self.always.insert(binding);
+        }
+    }
+
+    fn add_rest_params<'p>(&mut self, params: impl Iterator<Item = &'p Pat>) {
+        for param in params {
+            if let Pat::Rest(rest) = param {
+                if let Pat::Ident(binding) = rest.arg.as_ref() {
+                    self.add_if_unwritten(binding_id(&binding.id));
+                }
+            }
+        }
+    }
+}
+
+impl Visit for AlwaysProvenCollector<'_> {
+    fn visit_function(&mut self, function: &Function) {
+        self.add_rest_params(function.params.iter().map(|param| &param.pat));
+        function.visit_children_with(self);
+    }
+
+    fn visit_constructor(&mut self, constructor: &Constructor) {
+        self.add_rest_params(constructor.params.iter().filter_map(|param| match param {
+            ParamOrTsParamProp::Param(param) => Some(&param.pat),
+            ParamOrTsParamProp::TsParamProp(_) => None,
+        }));
+        constructor.visit_children_with(self);
+    }
+
+    fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
+        self.add_rest_params(arrow.params.iter());
+        arrow.visit_children_with(self);
+    }
+
+    // A `let`/`const` read before its declaration throws in both forms, so
+    // its proof does not depend on position.
+    fn visit_var_decl(&mut self, var: &swc_core::ecma::ast::VarDecl) {
+        if var.kind != VarDeclKind::Var {
+            for decl in &var.decls {
+                if let Some((binding, None)) = array_initialized_binding(decl, self.unresolved_mark)
+                {
+                    self.add_if_unwritten(binding);
+                }
+            }
+        }
+        var.visit_children_with(self);
+    }
+
+    // `arguments = …`, `arguments++`, or `arguments` as a destructuring or
+    // loop-head target. A declared `arguments` binding is not unresolved and
+    // is never proven, so declarations need no exclusion here.
+    fn visit_binding_ident(&mut self, binding: &BindingIdent) {
+        if is_unresolved_ident(&binding.id, "arguments", self.unresolved_mark) {
+            self.arguments_written = true;
+        }
+    }
+
+    fn visit_update_expr(&mut self, update: &UpdateExpr) {
+        if matches!(strip_parens(&update.arg), Expr::Ident(id) if is_unresolved_ident(id, "arguments", self.unresolved_mark))
+        {
+            self.arguments_written = true;
+        }
+        update.visit_children_with(self);
+    }
+
+    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+        if let AssignTarget::Simple(SimpleAssignTarget::Paren(paren)) = &assign.left {
+            if matches!(strip_parens(&paren.expr), Expr::Ident(id) if is_unresolved_ident(id, "arguments", self.unresolved_mark))
+            {
+                self.arguments_written = true;
+            }
+        }
+        assign.visit_children_with(self);
+    }
 }

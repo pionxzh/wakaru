@@ -1424,7 +1424,7 @@ fn minimal_disables_array_concat_spread_recovery() {
 
 #[test]
 fn standard_keeps_argument_spread_recovery() {
-    let input = r#"fn.apply(undefined, args);"#;
+    let input = r#"export function f(...args) { return fn.apply(undefined, args); }"#;
 
     let output = decompile(
         input,
@@ -1437,8 +1437,33 @@ fn standard_keeps_argument_spread_recovery() {
     .expect("decompile should succeed")
     .code;
 
-    let expected = r#"fn(...args);"#;
+    let expected = r#"
+export function f(...args) {
+    return fn(...args);
+}
+"#;
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn aggressive_spreads_unproven_apply_argument_list() {
+    let input = r#"fn.apply(undefined, args);"#;
+
+    let decompile_at = |level| {
+        decompile(
+            input,
+            DecompileOptions {
+                filename: "fixture.js".to_string(),
+                level,
+                ..Default::default()
+            },
+        )
+        .expect("decompile should succeed")
+        .code
+    };
+
+    assert_eq_normalized(&decompile_at(RewriteLevel::Standard), input);
+    assert_eq_normalized(&decompile_at(RewriteLevel::Aggressive), "fn(...args);");
 }
 
 #[test]
