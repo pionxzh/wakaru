@@ -253,11 +253,6 @@ pub(super) fn rewrite_module_fact_sources(
     for import in &mut facts.commonjs_whole_value_imports {
         rewrite(&mut import.source);
     }
-    if let Some(default_object) = &mut facts.commonjs_default_object {
-        for source in &mut default_object.composition_sources {
-            rewrite(source);
-        }
-    }
     for source in &mut facts.export_star_sources {
         rewrite(source);
     }
@@ -267,9 +262,10 @@ pub(super) fn rewrite_module_fact_sources(
     for edge in &mut facts.import_call_edges {
         rewrite(&mut edge.source);
     }
-    if let Some(target) = &mut facts.passthrough_target {
-        rewrite(target);
-    }
+    // The require edges stay keyed by provisional sources, and no root
+    // analyzer reads them, so the snapshot drops them instead of mixing the
+    // two namespaces.
+    facts.require_edges = Default::default();
 }
 
 struct ImportSourceRewriter<'a> {
@@ -666,11 +662,6 @@ import { internal } from "./chunk_internal.js";
                 local: "requiredDependency".into(),
                 source: "./a.js".into(),
             }],
-            commonjs_default_object: Some(crate::facts::CommonJsDefaultObjectFact {
-                declared_properties: Vec::new(),
-                default_assignment_is_only_commonjs_use: false,
-                composition_sources: vec!["./a.js".into()],
-            }),
             export_star_sources: vec!["./a.js".into()],
             reexports: vec![crate::facts::ReexportFact {
                 exported: "forwarded".into(),
@@ -682,7 +673,6 @@ import { internal } from "./chunk_internal.js";
                 imported: "dependency".into(),
                 consumed_by_exports: None,
             }],
-            passthrough_target: Some("./a.js".into()),
             ..Default::default()
         };
         let rename_map = HashMap::from_iter([
@@ -697,18 +687,8 @@ import { internal } from "./chunk_internal.js";
             facts.commonjs_whole_value_imports[0].source.as_ref(),
             "./Widget.js"
         );
-        assert_eq!(
-            facts
-                .commonjs_default_object
-                .as_ref()
-                .expect("default-object fact should remain present")
-                .composition_sources[0]
-                .as_ref(),
-            "./Widget.js"
-        );
         assert_eq!(facts.export_star_sources[0].as_ref(), "./Widget.js");
         assert_eq!(facts.reexports[0].source.as_ref(), "./Widget.js");
         assert_eq!(facts.import_call_edges[0].source.as_ref(), "./Widget.js");
-        assert_eq!(facts.passthrough_target.as_deref(), Some("./Widget.js"));
     }
 }
