@@ -666,9 +666,13 @@ any array-like.
 An argument list proven to read the same both ways does not depend on this
 assumption: an array literal, an Array built by `new Array`, `Array()`,
 `Array.from`, `Array.of` or an Array method that returns a new Array, the `arguments` object, a rest
-parameter, a recognized `arguments` copy, and an unwritten binding
-initialized to one of these, read where it already holds that value (see
-`rules/un_argument_spread.rs`).
+parameter, a recognized `arguments` copy, an `Array.prototype.slice.call`
+(or `[].slice.call`) copy of the `arguments` object or of one of these, and
+an unwritten binding initialized to one of these, read where it already
+holds that value (see `rules/un_argument_spread.rs`). `slice` on a receiver
+that is not an Array, such as `arguments`, always builds a plain Array; on
+any other operand it may build an Array subclass through the receiver's
+species, so `[].slice.call(x)` of an unknown `x` stays at `aggressive`.
 
 Affects: `UnArgumentSpread` for argument lists it cannot prove, including the
 list of a lowered spread construct (`C.bind.apply(C, xs)`) and of Babel 7's

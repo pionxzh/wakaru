@@ -289,8 +289,12 @@ rationale, or level gating appear.
   takes any array-like and treats `null`/`undefined` as no arguments; spread
   iterates and throws). At `standard` the argument list must be proven: an
   array literal or Array-building call, `arguments`, a rest parameter, an
-  `arguments` copy, or an unwritten binding initialized to an Array, read
-  where it already holds one (code comment on `ProvenArgumentLists`). Unknown
+  `arguments` copy, an `Array.prototype.slice.call` copy of `arguments` or of
+  a proven Array, or an unwritten binding initialized to an Array, read
+  where it already holds one (code comment on `ProvenArgumentLists`). A
+  whole copy `...Array.prototype.slice.call(arguments)` is spread as
+  `...arguments`, and a list `[a].concat(b…)` whose arguments are array
+  literals or fresh Arrays is spread in place as `a, ...b`. Unknown
   lists and a `null` receiver convert only at `aggressive`
   (`apply_arguments_are_arrays`, `apply_null_receiver_unobserved`). An
   argument that carries a lowerer's spread helper (Closure's
@@ -313,7 +317,10 @@ rationale, or level gating appear.
   `new (F.bind.apply(F, list))()` reaches that shape through the `apply`
   rewrite in the same pass, so its list takes the `apply` proof. Babel 6's
   and Closure's `Function.prototype.bind.apply(F, [null].concat(...))` are
-  recovered only once the list is an array literal `[null, ...args]`: that
+  recovered in the first pass when every concat argument is an array literal
+  or a fresh Array (Babel 6's `Array.prototype.slice.call(arguments)` for
+  `new C(...arguments)`), and otherwise only once the list is an array
+  literal `[null, ...args]`: that
   needs UnToConsumableArray, UnArrayConcatSpread and UnSpreadArrayLiteral
   (and UnArrayConcatSpreadRest for a rest parameter), so these constructs
   convert in the second pass, UnArgumentSpread2, and an unproven

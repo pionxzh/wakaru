@@ -2172,3 +2172,332 @@ function makeRest(C, ...rest) {
         expected,
     );
 }
+
+// `Array.prototype.slice.call(x)` builds a plain Array when `x` is the
+// `arguments` object or a proven Array.
+
+#[test]
+fn slice_copy_of_arguments_converts_at_standard() {
+    // wild-observed: hand-written ES5 forwarding.
+    let input = r#"
+function f() {
+    fn.apply(void 0, Array.prototype.slice.call(arguments));
+    fn.apply(void 0, Array.prototype.slice.call(arguments, 0));
+    fn.apply(void 0, [].slice.call(arguments));
+    obj.fn.apply(obj, Array.prototype.slice.call(arguments, 1));
+    obj.fn.apply(obj, [].slice.call(arguments, 1, end()));
+}
+"#;
+    let expected = r#"
+function f() {
+    fn(...arguments);
+    fn(...arguments);
+    fn(...arguments);
+    obj.fn(...Array.prototype.slice.call(arguments, 1));
+    obj.fn(...[].slice.call(arguments, 1, end()));
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn slice_copy_of_a_proven_array_converts_at_standard() {
+    let input = r#"
+function f(...xs) {
+    g.apply(void 0, Array.prototype.slice.call(xs, 1));
+}
+"#;
+    let expected = r#"
+function f(...xs) {
+    g(...Array.prototype.slice.call(xs, 1));
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn slice_copy_of_written_arguments_keeps_apply() {
+    let input = r#"
+function f(x) {
+    arguments = x;
+    fn.apply(void 0, Array.prototype.slice.call(arguments));
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn slice_copy_with_a_shadowed_array_keeps_apply() {
+    let input = r#"
+function f(Array) {
+    fn.apply(void 0, Array.prototype.slice.call(arguments));
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn slice_copy_skips_a_module_with_dynamic_scope() {
+    let input = r#"
+function f(o) {
+    with (o) {
+        obj.fn.apply(obj, [].slice.call(arguments, 1));
+    }
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn slice_copy_of_an_unknown_operand_follows_the_apply_level() {
+    // wild-observed: `[].slice.call(u)` of any array-like. An Array subclass
+    // instance builds its slice through its own species.
+    let input = r#"
+function f(u) {
+    fn.apply(void 0, [].slice.call(u));
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+    assert_eq_normalized(
+        &aggressive(input),
+        r#"
+function f(u) {
+    fn(...[].slice.call(u));
+}
+"#,
+    );
+}
+
+#[test]
+fn slice_lookalikes_keep_apply() {
+    let input = r#"
+function f() {
+    fn.apply(void 0, Array.prototype.slice.apply(arguments));
+    fn.apply(void 0, Array.prototype["slice"].call(arguments));
+    fn.apply(void 0, Array.prototype.slice.call?.(arguments));
+    fn.apply(void 0, Array.prototype.slice.call(...arguments));
+    fn.apply(void 0, Array.prototype.slice.call());
+    fn.apply(void 0, list.slice.call(arguments));
+    fn.apply(void 0, Array.slice.call(arguments));
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn slice_copy_keeps_each_functions_own_arguments() {
+    // An arrow reads the enclosing function's `arguments`; a nested function
+    // has its own. The rewrite leaves `arguments` where it was.
+    let input = r#"
+function outer() {
+    const viaArrow = () => fn.apply(void 0, [].slice.call(arguments));
+    const viaFunction = function() {
+        return fn.apply(void 0, Array.prototype.slice.call(arguments, 1));
+    };
+    return [viaArrow, viaFunction];
+}
+"#;
+    let expected = r#"
+function outer() {
+    const viaArrow = () => fn(...arguments);
+    const viaFunction = function() {
+        return fn(...Array.prototype.slice.call(arguments, 1));
+    };
+    return [viaArrow, viaFunction];
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn concat_of_fresh_arrays_spreads_in_place() {
+    // producer babel-core@6.26.3 {"presets":["es2015"]}: `fn(x, ...arguments)`.
+    let input = r#"
+function f(x) {
+    fn.apply(undefined, [x].concat(Array.prototype.slice.call(arguments)));
+    fn.apply(undefined, [x].concat([1], Array.prototype.slice.call(arguments, 1)));
+}
+"#;
+    let expected = r#"
+function f(x) {
+    fn(x, ...arguments);
+    fn(x, 1, ...Array.prototype.slice.call(arguments, 1));
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn concat_of_a_proven_binding_stays_one_spread() {
+    // Code holding `xs` may have set its `Symbol.isConcatSpreadable`; the
+    // concat result is still a proven Array.
+    let input = r#"
+function f(...xs) {
+    fn.apply(void 0, [a].concat(xs));
+}
+"#;
+    let expected = r#"
+function f(...xs) {
+    fn(...[a].concat(xs));
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn bound_construct_of_a_concat_slice_copy_becomes_a_spread_construct() {
+    let input = r#"
+function f(C) {
+    return new (Function.prototype.bind.apply(C, [null].concat([0], Array.prototype.slice.call(arguments, 1))))();
+}
+function g(C, u) {
+    return new (Function.prototype.bind.apply(C, [null].concat([].slice.call(u))))();
+}
+"#;
+    let expected = r#"
+function f(C) {
+    return new C(0, ...Array.prototype.slice.call(arguments, 1));
+}
+function g(C, u) {
+    return new (Function.prototype.bind.apply(C, [null].concat([].slice.call(u))))();
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn babel_six_arguments_spread_recovers_through_the_pipeline() {
+    // producer babel-core@6.26.3 {"presets":["es2015"]}
+    let input = r#"
+"use strict";
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.make = make;
+exports.makeLead = makeLead;
+exports.call = call;
+function make(C) {
+  return function () {
+    return new (Function.prototype.bind.apply(C, [null].concat(Array.prototype.slice.call(arguments))))();
+  };
+}
+function makeLead(C) {
+  return function () {
+    return new (Function.prototype.bind.apply(C, [null].concat([0], Array.prototype.slice.call(arguments))))();
+  };
+}
+function call(fn, x) {
+  return fn.apply(undefined, [x].concat(Array.prototype.slice.call(arguments)));
+}
+"#;
+    let expected = r#"
+export { make };
+export { makeLead };
+export { call };
+function make(C) {
+    return function() {
+        return new C(...arguments);
+    };
+}
+function makeLead(C) {
+    return function() {
+        return new C(0, ...arguments);
+    };
+}
+function call(fn, x) {
+    return fn(x, ...arguments);
+}
+"#;
+    assert_eq_normalized(
+        &common::render_with_level(input, RewriteLevel::Standard),
+        expected,
+    );
+}
+
+#[test]
+fn babel_seven_arguments_spread_recovers_through_the_pipeline() {
+    // producer @babel/core@7.29.7 {"presets":[["@babel/preset-env",{"targets":{"ie":"11"},"modules":false}]]}
+    let input = format!(
+        r#"{BABEL_CONSTRUCT}
+export function make(C) {{
+  return function () {{
+    return _construct(C, Array.prototype.slice.call(arguments));
+  }};
+}}
+export function makeLead(C) {{
+  return function () {{
+    return _construct(C, [0].concat(Array.prototype.slice.call(arguments)));
+  }};
+}}
+export function call(fn, x) {{
+  return fn.apply(void 0, [x].concat(Array.prototype.slice.call(arguments)));
+}}
+"#
+    );
+    let expected = r#"
+export function make(C) {
+    return function() {
+        return new C(...arguments);
+    };
+}
+export function makeLead(C) {
+    return function() {
+        return new C(0, ...arguments);
+    };
+}
+export function call(fn, x) {
+    return fn(x, ...arguments);
+}
+"#;
+    assert_eq_normalized(
+        &common::render_with_level(&input, RewriteLevel::Standard),
+        expected,
+    );
+}
+
+#[test]
+fn swc_arguments_spread_recovers_through_the_pipeline() {
+    // producer @swc/core@1.16.2 {"jsc":{"target":"es5"},"module":{"type":"commonjs"}},
+    // trimmed to the construct helpers.
+    let input = format!(
+        r#""use strict";
+Object.defineProperty(exports, "__esModule", {{
+    value: true
+}});
+exports.make = make;
+exports.makeLead = makeLead;
+{SWC_CONSTRUCT}
+function make(C) {{
+    return function() {{
+        return _construct(C, Array.prototype.slice.call(arguments));
+    }};
+}}
+function makeLead(C) {{
+    return function() {{
+        return _construct(C, [
+            0
+        ].concat(Array.prototype.slice.call(arguments)));
+    }};
+}}
+"#
+    );
+    let expected = r#"
+export { make };
+export { makeLead };
+function make(C) {
+    return function() {
+        return new C(...arguments);
+    };
+}
+function makeLead(C) {
+    return function() {
+        return new C(0, ...arguments);
+    };
+}
+"#;
+    assert_eq_normalized(
+        &common::render_with_level(&input, RewriteLevel::Standard),
+        expected,
+    );
+}

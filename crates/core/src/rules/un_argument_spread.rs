@@ -1,9 +1,9 @@
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BindingIdent, CallExpr,
-    Callee, Constructor, Decl, Expr, ExprOrSpread, ExprStmt, FnDecl, Function, FunctionBody, Ident,
-    Lit, MemberExpr, MemberProp, Module, ModuleItem, NewExpr, ParamOrTsParamProp, Pat,
-    SimpleAssignTarget, Stmt, UpdateExpr, VarDeclKind, VarDeclarator,
+    ArrayLit, ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BindingIdent,
+    CallExpr, Callee, Constructor, Decl, Expr, ExprOrSpread, ExprStmt, FnDecl, Function,
+    FunctionBody, Ident, Lit, MemberExpr, MemberProp, Module, ModuleItem, NewExpr,
+    ParamOrTsParamProp, Pat, SimpleAssignTarget, Stmt, UpdateExpr, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -44,8 +44,10 @@ use crate::utils::paren::strip_parens;
 /// which becomes `new F(...args)` (see `bound_construct`). Its argument list
 /// takes the same proof: TypeScript's `F.bind.apply(F, list)` reaches it
 /// through the `apply` rewrite above, and Babel 6's and Closure's
-/// `Function.prototype.bind.apply(F, [null, ...args])` only once the list is
-/// an array literal, after the concat and helper rules made it one.
+/// `Function.prototype.bind.apply(F, [null].concat(…))` once the list is an
+/// array literal, after the concat and helper rules made it one, or directly
+/// when every concat argument is an array literal or a fresh Array (Babel 6's
+/// `Array.prototype.slice.call(arguments)`; see `concat_list_elements`).
 ///
 /// Babel 7's and swc's `_construct(C, list)` helper, proven by its body
 /// (`ConstructHelpers`), constructs `C` with `list` read as an array-like, so
@@ -98,7 +100,8 @@ impl UnArgumentSpread {
         self.proven.deactivate(&candidates);
     }
 
-    /// `fn(...[a, ...xs])` → `fn(a, ...xs)` for a hole-free literal, and
+    /// `fn(...[a, ...xs])` → `fn(a, ...xs)` for a hole-free literal or a
+    /// concat `concat_list_elements` accepts, and
     /// `fn(...$jscomp.arrayFromIterable(xs))` → `fn(...xs)`: the named helper
     /// returns an Array `xs` as is and otherwise iterates it, as spread does.
     fn finish_spread_call(&self, expr: &mut Expr) {
@@ -120,11 +123,8 @@ impl UnArgumentSpread {
             *arg.expr = source.clone();
             return;
         }
-        if matches!(arg.expr.as_ref(), Expr::Array(array) if array.elems.iter().all(Option::is_some))
-        {
-            let arg = call.args.remove(0);
-            call.args = args_from_apply_arg(arg.expr);
-        }
+        let arg = call.args.remove(0);
+        call.args = self.spread_arguments(arg.expr);
     }
 
     fn visit_function_body(&mut self, body: &mut FunctionBody, fixed_param_count: Option<usize>) {
@@ -333,7 +333,7 @@ impl UnArgumentSpread {
             span: call.span,
             ctxt: call.ctxt,
             callee: target.expr.clone(),
-            args: Some(args_from_apply_arg(list.expr.clone())),
+            args: Some(self.spread_arguments(list.expr.clone())),
             type_args: None,
         }))
     }
@@ -347,9 +347,10 @@ impl UnArgumentSpread {
     /// `Function.prototype.bind` (or `Function.bind`) on the global `Function`
     /// is the intrinsic under the execution baseline; `F.bind` is the
     /// intrinsic only under `intrinsic_function_bind`, since `F` may define
-    /// its own `bind`. The list of the `apply` form must already be a
-    /// hole-free array literal: an unknown list cannot be split into its
-    /// bound `this` and arguments.
+    /// its own `bind`. The list of the `apply` form must be a hole-free array
+    /// literal, or a concat `concat_list_elements` reads as one (Babel 6's
+    /// `[null].concat(Array.prototype.slice.call(arguments))`): an unknown
+    /// list cannot be split into its bound `this` and arguments.
     fn bound_construct(&self, new: &NewExpr) -> Option<Expr> {
         if new.args.as_ref().is_some_and(|args| !args.is_empty()) {
             return None;
@@ -383,26 +384,20 @@ impl UnArgumentSpread {
                 if target.spread.is_some() || list.spread.is_some() {
                     return None;
                 }
-                let Expr::Array(list) = strip_parens(&list.expr) else {
-                    return None;
+                let elems = match strip_parens(&list.expr) {
+                    Expr::Array(list) => hole_free_elements(list)?,
+                    list => self.concat_list_elements(list)?,
                 };
-                let (Some(Some(bound_this)), rest) = (list.elems.first(), list.elems.get(1..)?)
-                else {
-                    return None;
-                };
-                if bound_this.spread.is_some()
-                    || !self.is_ignored_bound_this(&bound_this.expr)
-                    || rest.iter().any(Option::is_none)
-                {
+                let (bound_this, rest) = elems.split_first()?;
+                if bound_this.spread.is_some() || !self.is_ignored_bound_this(&bound_this.expr) {
                     return None;
                 }
-                (
-                    target.expr.clone(),
-                    rest.iter().flatten().cloned().collect(),
-                )
+                (target.expr.clone(), rest.to_vec())
             }
             _ => return None,
         };
+        let mut args = args;
+        self.spread_arguments_directly(&mut args);
         Some(Expr::New(NewExpr {
             span: new.span,
             ctxt: new.ctxt,
@@ -410,6 +405,97 @@ impl UnArgumentSpread {
             args: Some(args),
             type_args: new.type_args.clone(),
         }))
+    }
+
+    /// The elements of `[e…].concat(a…)` as one list, when the receiver and
+    /// every array-literal argument are hole-free and every other argument
+    /// is a fresh Array (`proves_fresh_array`), spread in place.
+    ///
+    /// Concat appends the elements of an Array argument
+    /// (`IsConcatSpreadable`), and a fresh Array has no own
+    /// `Symbol.isConcatSpreadable` to say otherwise; its holes stay holes,
+    /// which a list read by `apply` or by iteration reads as `undefined`
+    /// either way. A binding is not taken even when proven: code holding it
+    /// may have set its `Symbol.isConcatSpreadable`.
+    fn concat_list_elements(&self, expr: &Expr) -> Option<Vec<ExprOrSpread>> {
+        let Expr::Call(call) = strip_parens(expr) else {
+            return None;
+        };
+        let Callee::Expr(callee) = &call.callee else {
+            return None;
+        };
+        let Expr::Member(MemberExpr {
+            obj,
+            prop: MemberProp::Ident(prop),
+            ..
+        }) = strip_parens(callee)
+        else {
+            return None;
+        };
+        if prop.sym != "concat" {
+            return None;
+        }
+        let Expr::Array(receiver) = strip_parens(obj) else {
+            return None;
+        };
+        let mut elems = hole_free_elements(receiver)?;
+        for arg in &call.args {
+            if arg.spread.is_some() {
+                return None;
+            }
+            match strip_parens(&arg.expr) {
+                Expr::Array(array) => elems.extend(hole_free_elements(array)?),
+                expr if self.proven.proves_fresh_array(
+                    expr,
+                    self.unresolved_mark,
+                    self.dynamic_scope,
+                ) =>
+                {
+                    elems.push(ExprOrSpread {
+                        spread: Some(DUMMY_SP),
+                        expr: arg.expr.clone(),
+                    })
+                }
+                _ => return None,
+            }
+        }
+        Some(elems)
+    }
+
+    /// The arguments of a spread call or construct of `list`: the elements
+    /// of a hole-free array literal or of a concat `concat_list_elements`
+    /// accepts, else `...list`.
+    fn spread_arguments(&self, list: Box<Expr>) -> Vec<ExprOrSpread> {
+        let mut args = match self.concat_list_elements(&list) {
+            Some(elems) => elems,
+            None => args_from_apply_arg(list),
+        };
+        self.spread_arguments_directly(&mut args);
+        args
+    }
+
+    /// `...Array.prototype.slice.call(arguments)` → `...arguments`, also
+    /// with a literal `0` start.
+    ///
+    /// Spreading the copy and spreading the `arguments` object read the
+    /// same values: `Get` of each index below `length`, `undefined` for a
+    /// missing one, under the baseline that already lets the argument list
+    /// `arguments` itself convert (`ProvenArgumentLists`). The dropped reads
+    /// of `Array.prototype.slice` and `call` are intrinsic (`stable_builtins`).
+    fn spread_arguments_directly(&self, args: &mut [ExprOrSpread]) {
+        if self.dynamic_scope || self.proven.arguments_written {
+            return;
+        }
+        for arg in args {
+            if arg.spread.is_none() {
+                continue;
+            }
+            let Some(arguments) = arguments_copy_source(&arg.expr, self.unresolved_mark).cloned()
+            else {
+                continue;
+            };
+            *arg.expr = Expr::Ident(arguments);
+        }
     }
 
     /// A bound `this` whose evaluation has no effect: `null`, `void 0`, or
@@ -737,6 +823,11 @@ fn expr_stmt_call(stmt: &Stmt) -> Option<&CallExpr> {
     Some(call)
 }
 
+/// The elements of an array literal without holes.
+fn hole_free_elements(array: &ArrayLit) -> Option<Vec<ExprOrSpread>> {
+    array.elems.iter().cloned().collect()
+}
+
 fn args_from_apply_arg(arg: Box<Expr>) -> Vec<ExprOrSpread> {
     match *arg {
         Expr::Array(array) if array.elems.iter().all(Option::is_some) => {
@@ -912,6 +1003,11 @@ const ARRAY_RESULT_METHODS: [&str; 6] = ["concat", "filter", "flat", "flatMap", 
 ///   `babel-core@6.26.3` es2015 emits `[a].concat(rest)`);
 /// - the `arguments` object, unless the module assigns to it (producer
 ///   `babel-core@6.26.3` es2015 emits `target.apply(undefined, arguments)`);
+/// - an `Array.prototype.slice.call(…)` or `[].slice.call(…)` copy of that
+///   `arguments` object or of a proven Array (producers `babel-core@6.26.3`
+///   es2015, `@babel/preset-env@7.29` and `@swc/core@1.16.2` es5 emit
+///   `Array.prototype.slice.call(arguments)` for `...arguments`; see
+///   `proves_fresh_array`);
 /// - a rest parameter, or a `let`/`const` initialized to an Array by
 ///   construction (a read in the TDZ throws either way);
 /// - a `var` initialized to an Array, a declaration whose initializer is an
@@ -1084,9 +1180,37 @@ impl ProvenArgumentLists {
                         .is_some_and(|depth| *depth == self.fn_decl_depth)
             }
             expr if !dynamic_scope && self.is_closure_array_helper_call(expr) => true,
-            expr => is_array_value(expr, unresolved_mark, &|receiver| {
-                self.proves_array(receiver, unresolved_mark, dynamic_scope)
-            }),
+            expr => self.proves_fresh_array(expr, unresolved_mark, dynamic_scope),
+        }
+    }
+
+    /// A new plain Array that no other code holds yet: `is_array_value`, or a
+    /// `slice` copy (`array_slice_call_receiver`) of the unwritten `arguments`
+    /// object or of a proven Array.
+    ///
+    /// `Array.prototype.slice` builds its result with `ArraySpeciesCreate`,
+    /// which uses the intrinsic `Array` for a receiver that is not an Array,
+    /// such as `arguments`, and the receiver's `constructor` for an Array,
+    /// the intrinsic one for a plain Array (`stable_builtins`, as for
+    /// `ARRAY_RESULT_METHODS`). Any other receiver may be an Array subclass
+    /// whose species builds something else, so it stays unproven.
+    fn proves_fresh_array(&self, expr: &Expr, unresolved_mark: Mark, dynamic_scope: bool) -> bool {
+        if is_array_value(expr, unresolved_mark, &|receiver| {
+            self.proves_array(receiver, unresolved_mark, dynamic_scope)
+        }) {
+            return true;
+        }
+        if dynamic_scope {
+            return false;
+        }
+        let Some(receiver) = array_slice_call_receiver(expr, unresolved_mark) else {
+            return false;
+        };
+        match strip_parens(receiver) {
+            Expr::Ident(ident) if is_unresolved_ident(ident, "arguments", unresolved_mark) => {
+                !self.arguments_written
+            }
+            receiver => self.proves_array(receiver, unresolved_mark, dynamic_scope),
         }
     }
 
@@ -1132,6 +1256,82 @@ fn is_array_value(expr: &Expr, unresolved_mark: Mark, is_array: &dyn Fn(&Expr) -
             }
         }
         _ => false,
+    }
+}
+
+/// `X` of `Array.prototype.slice.call(X, …)` or `[…].slice.call(X, …)`, with
+/// `slice` read from the global `Array` or an array literal. The remaining
+/// arguments (`start`, `end`) are not inspected: the call stays in the
+/// output, so they run the same either way.
+fn array_slice_call_receiver(expr: &Expr, unresolved_mark: Mark) -> Option<&Expr> {
+    let Expr::Call(call) = strip_parens(expr) else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Member(MemberExpr {
+        obj: slice,
+        prop: MemberProp::Ident(call_prop),
+        ..
+    }) = strip_parens(callee)
+    else {
+        return None;
+    };
+    let Expr::Member(MemberExpr {
+        obj: owner,
+        prop: MemberProp::Ident(slice_prop),
+        ..
+    }) = strip_parens(slice)
+    else {
+        return None;
+    };
+    if call_prop.sym != "call" || slice_prop.sym != "slice" {
+        return None;
+    }
+    let owner_is_array_prototype = match strip_parens(owner) {
+        Expr::Array(_) => true,
+        Expr::Member(MemberExpr {
+            obj,
+            prop: MemberProp::Ident(prop),
+            ..
+        }) => {
+            prop.sym == "prototype"
+                && matches!(strip_parens(obj), Expr::Ident(id) if is_unresolved_ident(id, "Array", unresolved_mark))
+        }
+        _ => false,
+    };
+    if !owner_is_array_prototype {
+        return None;
+    }
+    match call.args.first() {
+        Some(receiver) if receiver.spread.is_none() => Some(&receiver.expr),
+        _ => None,
+    }
+}
+
+/// The `arguments` of `Array.prototype.slice.call(arguments)` or
+/// `….slice.call(arguments, 0)`: a whole copy of the `arguments` object.
+fn arguments_copy_source(expr: &Expr, unresolved_mark: Mark) -> Option<&Ident> {
+    let Expr::Ident(arguments) = strip_parens(array_slice_call_receiver(expr, unresolved_mark)?)
+    else {
+        return None;
+    };
+    if !is_unresolved_ident(arguments, "arguments", unresolved_mark) {
+        return None;
+    }
+    let Expr::Call(call) = strip_parens(expr) else {
+        return None;
+    };
+    match call.args.as_slice() {
+        [_] => Some(arguments),
+        [_, start]
+            if start.spread.is_none()
+                && matches!(strip_parens(&start.expr), Expr::Lit(Lit::Num(num)) if num.value == 0.0) =>
+        {
+            Some(arguments)
+        }
+        _ => None,
     }
 }
 
