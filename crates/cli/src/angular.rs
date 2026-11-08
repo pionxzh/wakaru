@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 
 use crate::json_output::{JsonModule, JsonModuleKind, JsonModuleStatus};
 use crate::CliOutputArtifact;
@@ -166,8 +166,9 @@ pub(crate) fn ensure_angular_sidecar_does_not_overwrite_input(
 
 pub(crate) fn write_angular_sidecars(sidecars: &[SingleFileArtifactSidecar]) -> Result<()> {
     for sidecar in sidecars {
-        fs::write(&sidecar.path, &sidecar.artifact.code)
-            .with_context(|| format!("failed to write {}", sidecar.path.display()))?;
+        // The directory is the user's `-o` parent; the name is one sanitized
+        // component (`single_file_angular_sidecar_path`).
+        crate::output::write_user_named_file(&sidecar.path, sidecar.artifact.code.as_bytes())?;
     }
     Ok(())
 }
