@@ -18,6 +18,10 @@ use super::transpiler_helper_utils::{
 };
 
 /// Detects and replaces `_toConsumableArray(arr)` with `[...arr]`.
+///
+/// TypeScript's `__spreadArray`, `__spreadArrays` and `__spread` read their
+/// operand by index rather than iterating it; recovering them as spread is
+/// `typescript_spread_helper_source_semantics` (docs/rewrite-assumptions.md).
 pub struct UnToConsumableArray<'a> {
     module_facts: Option<&'a ModuleFactsMap>,
     current_filename: Option<&'a str>,

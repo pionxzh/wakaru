@@ -59,8 +59,9 @@ ESM form would read better. `namespace_interop_source_semantics`,
 `webpack_lazy_import_source_semantics`,
 `esbuild_lazy_import_source_semantics`,
 `inlined_export_getter_declaration`,
-`relative_require_esm_provider`, and
-`lowered_spread_call_source_semantics` are recoveries of this kind, and so is the
+`relative_require_esm_provider`,
+`lowered_spread_call_source_semantics`, and
+`typescript_spread_helper_source_semantics` are recoveries of this kind, and so is the
 `export *` recovery in [helper-detection.md](helper-detection.md).
 
 ## Assumptions
@@ -738,6 +739,49 @@ twice.
 Affects: `UnArgumentSpread`.
 
 Level: `standard` and above.
+
+### `typescript_spread_helper_source_semantics`
+
+A call of TypeScript's spread helpers is a lowered array spread, so the
+source spread is the recovery:
+
+```js
+__spreadArray([a], xs, false)            // -> [a, ...xs]
+__spreadArray([], __read(xs), false)     // downlevelIteration: [...xs]
+__spreadArrays([a], xs)                  // TypeScript 3.6–4.1: [a, ...xs]
+__spread([a], xs)                        // TypeScript 3.5 and older, downlevelIteration
+```
+
+The evidence is the helper: tslib's name through the
+`this && this.__spreadArray ||` guard, a tslib import or namespace, or the
+helper's whole body (a bundler-inlined copy, or the export of a bundled
+tslib module proven by module facts). These helpers do not read their
+operand the way spread does. `__spreadArray(to, from, false)` copies `from`
+with `Array.prototype.slice.call`, by `length` and index, and `__spreadArrays`
+reads by index too; `__read(xs)` returns `xs` unchanged when it has no
+`Symbol.iterator`. Spread always iterates. Three behaviors move from the
+lowered output to the source's:
+
+- A Set, Map or other iterable without `length` (TypeScript without
+  `downlevelIteration`) produced an empty array; the recovered spread
+  yields its elements.
+- An array-like without `Symbol.iterator`, such as `{ length: 2 }`, was
+  copied; the recovered spread throws a TypeError.
+- With `pack` false, a hole in an array operand stayed a hole; the
+  recovered spread fills it with `undefined`, as the source spread did.
+
+TypeScript rejects the first two operands in a source spread unless they are
+typed `any`, and the third is the helper's own deviation, so the recovered
+form is the one the code was compiled from. `apply_arguments_are_arrays`
+covers the bare `fn.apply(void 0, xs)` of the same compiler, which carries
+no helper and stays `aggressive`.
+
+Affects: `UnToConsumableArray` for TypeScript's `__spreadArray`,
+`__spreadArrays` and `__spread`, at every level, and through it the
+`apply` and construct recoveries of `UnArgumentSpread` whose argument list
+is a recovered helper call.
+
+Level: every level. The helper call itself is the producer evidence.
 
 ### `set_computed_properties`
 
