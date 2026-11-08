@@ -1758,6 +1758,7 @@ fn json_decompile_output_keeps_contract_fields() {
         status: Some(JsonModuleStatus::VueSfcSourceJs),
         source_filename: Some("App.vue".to_string()),
         vue_sidecar_filename: Some("App.vue".to_string()),
+        artifacts: Vec::new(),
         warnings: Vec::new(),
         elapsed_ms: 1,
     })
@@ -2658,6 +2659,7 @@ fn angular_mixed_input_keeps_auto_detection_for_the_explicit_file() {
         Some(DirectoryScanStats {
             scanned: 1,
             detected: 0,
+            refused: 0,
             processed: 1,
             skipped: 0,
         })
@@ -2762,6 +2764,7 @@ fn unpack_reports_original_sources_embedded_in_bun_source_maps() {
             UnpackMode::Auto,
             DceMode::Off,
             RewriteLevel::Standard,
+            false,
             false,
             false,
         )
@@ -2882,6 +2885,7 @@ fn unpack_directory_keeps_a_refused_bundle_whole_with_a_warning() {
         RewriteLevel::Standard,
         false,
         false,
+        false,
     )
     .expect("a refused bundle counts as a directory input");
 
@@ -2891,6 +2895,7 @@ fn unpack_directory_keeps_a_refused_bundle_whole_with_a_warning() {
             scanned: 2,
             detected: 0,
             refused: 1,
+            processed: 0,
             skipped: 1,
         })
     );
@@ -2936,6 +2941,7 @@ fn unpack_directory_mixes_split_refused_and_skipped_candidates() {
         RewriteLevel::Standard,
         false,
         false,
+        false,
     )
     .expect("mixed directory should unpack");
 
@@ -2945,6 +2951,7 @@ fn unpack_directory_mixes_split_refused_and_skipped_candidates() {
             scanned: 3,
             detected: 1,
             refused: 1,
+            processed: 0,
             skipped: 1,
         })
     );
@@ -2992,6 +2999,7 @@ fn unpack_explicit_refused_bundle_is_processed_without_a_refusal_warning() {
         UnpackMode::Strict,
         DceMode::Off,
         RewriteLevel::Standard,
+        false,
         false,
         false,
     )

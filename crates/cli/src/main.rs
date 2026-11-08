@@ -1898,6 +1898,7 @@ fn run_public_unpack(
     let (mut output, single_input_name) = if job_inputs == 0 && !gtm.is_empty() {
         let empty = CliUnpackOutput {
             modules: Vec::new(),
+            artifacts: Vec::new(),
             provenance: Vec::new(),
             warnings: Vec::new(),
             detected_formats: Vec::new(),

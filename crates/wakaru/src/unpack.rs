@@ -1597,12 +1597,15 @@ function greeting(){return "hello"}"#;
             action: InputAction::Processed,
             module_indices: Vec::new(),
         }];
-        let output = wakaru_core::driver::PreparedUnpackOutput {
-            modules: vec![wakaru_core::driver::PreparedModuleOutput {
-                filename: "module-1.js".to_string(),
+        let output = wakaru_core::driver::CapturedUnpackOutput {
+            output: wakaru_core::driver::PreparedUnpackOutput {
+                modules: vec![wakaru_core::driver::PreparedModuleOutput {
+                    filename: "module-1.js".to_string(),
+                    ..Default::default()
+                }],
+                warnings: vec![decompile_failed_warning("module-1.js")],
                 ..Default::default()
-            }],
-            warnings: vec![decompile_failed_warning("module-1.js")],
+            },
             ..Default::default()
         };
 
