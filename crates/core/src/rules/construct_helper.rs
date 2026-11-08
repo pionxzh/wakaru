@@ -29,7 +29,22 @@
 //! }
 //! ```
 //!
-//! Called with two arguments, both forms construct `Parent` with the list
+//! Terser (producer `@swc/core@1.16.2` es5 then `terser@5.51.2`) folds the
+//! redefinition into a conditional, which reaches the matcher as:
+//!
+//! ```js
+//! function _construct(r, t, e) {
+//!     _construct = _is_native_reflect_construct() ? Reflect.construct : function(r, t, e) {
+//!         var n = [null]; n.push.apply(n, t);
+//!         var o = new (Function.bind.apply(r, n));
+//!         e && _set_prototype_of(o, e.prototype);
+//!         return o;
+//!     };
+//!     return _construct.apply(null, arguments);
+//! }
+//! ```
+//!
+//! Called with two arguments, every form constructs `Parent` with the list
 //! read as an array-like (`Reflect.construct`, or the bound-function
 //! fallback), and the `Class` step never runs. The three-argument form, which
 //! `_wrapNativeSuper` uses, sets another prototype and is not covered. The
@@ -40,8 +55,8 @@
 use swc_core::common::{Mark, Span};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignOp, AssignTarget, CallExpr, Callee, Decl, Expr, ExprOrSpread, FnDecl,
-    Function, Ident, Lit, MemberExpr, MemberProp, Module, ModuleItem, Pat, SimpleAssignTarget,
-    Stmt, VarDecl, VarDeclKind,
+    Function, Ident, Lit, MemberExpr, MemberProp, Module, ModuleItem, Pat, ReturnStmt,
+    SimpleAssignTarget, Stmt, VarDecl, VarDeclKind,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -143,7 +158,7 @@ struct Matcher<'a> {
 const PARAMS: [&str; 3] = ["parent", "args", "class"];
 
 impl Matcher<'_> {
-    /// The helper's dependencies when `function` is either form.
+    /// The helper's dependencies when `function` is one of the forms.
     fn matches(&self, function: &Function) -> Option<Vec<BindingId>> {
         if function.is_async || function.is_generator {
             return None;
@@ -151,6 +166,16 @@ impl Matcher<'_> {
         let ctx = MatchContext::from_params(function, &PARAMS)?;
         let stmts = &function.body.as_ref()?.stmts;
         let (check, rest) = stmts.split_first()?;
+        // Terser: `_construct = check() ? Reflect.construct : function (…) {…};`
+        if let Some(Expr::Cond(cond)) = self.self_assignment(check).map(strip_parens) {
+            let [Stmt::Return(ret)] = rest else {
+                return None;
+            };
+            let native_check = self.native_check(&cond.test)?;
+            let mut dependencies = self.redefinition(&cond.cons, &cond.alt, ret)?;
+            dependencies.push(native_check);
+            return Some(dependencies);
+        }
         let Stmt::If(check) = check else {
             return None;
         };
@@ -172,27 +197,41 @@ impl Matcher<'_> {
             // swc / Babel before 7.21: redefine, then call the new definition.
             (Some(alt), [Stmt::Return(ret)]) => {
                 let reflect = self.self_assignment(single_stmt(&check.cons)?)?;
-                if !self.is_reflect_construct(reflect) {
-                    return None;
-                }
-                let Expr::Fn(inner) = strip_parens(self.self_assignment(single_stmt(alt)?)?) else {
-                    return None;
-                };
-                let inner_ctx = MatchContext::from_params(&inner.function, &PARAMS)?;
-                if inner.function.is_async || inner.function.is_generator {
-                    return None;
-                }
-                dependencies
-                    .extend(self.fallback(&inner_ctx, &inner.function.body.as_ref()?.stmts)?);
-                if !ret.arg.as_deref().is_some_and(|arg| {
-                    self.is_apply_of_arguments(arg, |callee| {
-                        matches!(callee, Expr::Ident(id) if id.sym == self.helper.sym && id.ctxt == self.helper.ctxt)
-                    })
-                }) {
-                    return None;
-                }
+                let fallback = self.self_assignment(single_stmt(alt)?)?;
+                dependencies.extend(self.redefinition(reflect, fallback, ret)?);
             }
             _ => return None,
+        }
+        Some(dependencies)
+    }
+
+    /// The redefining form after its native check: the helper becomes
+    /// `reflect` (`Reflect.construct`) or the `fallback` function, then
+    /// `return _construct.apply(null, arguments)` calls the new definition.
+    /// Returns the bindings the fallback's class step calls.
+    fn redefinition(
+        &self,
+        reflect: &Expr,
+        fallback: &Expr,
+        ret: &ReturnStmt,
+    ) -> Option<Vec<BindingId>> {
+        if !self.is_reflect_construct(reflect) {
+            return None;
+        }
+        let Expr::Fn(inner) = strip_parens(fallback) else {
+            return None;
+        };
+        if inner.function.is_async || inner.function.is_generator {
+            return None;
+        }
+        let inner_ctx = MatchContext::from_params(&inner.function, &PARAMS)?;
+        let dependencies = self.fallback(&inner_ctx, &inner.function.body.as_ref()?.stmts)?;
+        if !ret.arg.as_deref().is_some_and(|arg| {
+            self.is_apply_of_arguments(arg, |callee| {
+                matches!(callee, Expr::Ident(id) if id.sym == self.helper.sym && id.ctxt == self.helper.ctxt)
+            })
+        }) {
+            return None;
         }
         Some(dependencies)
     }

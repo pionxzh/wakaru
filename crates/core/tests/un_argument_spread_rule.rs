@@ -2063,6 +2063,107 @@ fn written_or_redeclared_construct_helper_keeps_its_calls() {
     }
 }
 
+/// producer @swc/core@1.16.2 {"jsc":{"target":"es5"},"module":{"type":"commonjs"}}
+/// then terser@5.51.2, as it reaches the rule after SimplifySequence.
+const TERSER_SWC_CONSTRUCT: &str = r#"
+function _construct(r, t, e) {
+    _construct = _is_native_reflect_construct() ? Reflect.construct : function(r, t, e) {
+        var n = [null];
+        n.push.apply(n, t);
+        var o = new (Function.bind.apply(r, n));
+        e && _set_prototype_of(o, e.prototype);
+        return o;
+    };
+    return _construct.apply(null, arguments);
+}
+function _is_native_reflect_construct() {
+    try {
+        var r = !Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function() {}));
+    } catch (r) {}
+    return (_is_native_reflect_construct = function() {
+        return !!r;
+    })();
+}
+function _set_prototype_of(r, t) {
+    _set_prototype_of = Object.setPrototypeOf || function(r, t) {
+        r.__proto__ = t;
+        return r;
+    };
+    return _set_prototype_of(r, t);
+}
+"#;
+
+#[test]
+fn conditional_construct_helper_redefinition_becomes_a_spread_construct() {
+    let input = format!(
+        "{TERSER_SWC_CONSTRUCT}\nexport function make(C, xs) {{ return _construct(C, [0, ...xs]); }}\n"
+    );
+    let expected = r#"
+export function make(C, xs) {
+    return new C(0, ...xs);
+}
+"#;
+    assert_eq_normalized(&apply(&input), expected);
+}
+
+#[test]
+fn conditional_construct_helper_lookalikes_keep_their_calls() {
+    let lookalikes = [
+        // the branches are swapped
+        TERSER_SWC_CONSTRUCT
+            .replace(
+                "? Reflect.construct : function(r, t, e) {",
+                "? function(r, t, e) {",
+            )
+            .replace(
+                "        return o;\n    };",
+                "        return o;\n    } : Reflect.construct;",
+            ),
+        // the test is not the native check
+        TERSER_SWC_CONSTRUCT.replace("_is_native_reflect_construct() ?", "probe() ?"),
+        // the native branch is another constructor
+        TERSER_SWC_CONSTRUCT.replace("? Reflect.construct :", "? Reflect.apply :"),
+        // the conditional is assigned to another binding
+        TERSER_SWC_CONSTRUCT.replace(
+            "    _construct = _is_native_reflect_construct()",
+            "    other = _is_native_reflect_construct()",
+        ),
+        // the redefinition is not called afterwards
+        TERSER_SWC_CONSTRUCT.replace(
+            "return _construct.apply(null, arguments);",
+            "return other.apply(null, arguments);",
+        ),
+        // the fallback binds another constructor
+        TERSER_SWC_CONSTRUCT.replace("Function.bind.apply(r, n)", "Function.bind.apply(t, n)"),
+    ];
+    for helper in lookalikes {
+        assert_ne!(helper, TERSER_SWC_CONSTRUCT);
+        let input =
+            format!("{helper}\nexport function make(C, xs) {{ return _construct(C, [...xs]); }}\n");
+        let output = apply(&input);
+        assert!(output.contains("_construct(C, ["), "{helper}\n{output}");
+    }
+}
+
+#[test]
+fn terser_swc_construct_helper_recovers_through_the_pipeline() {
+    // producer @swc/core@1.16.2 {"jsc":{"target":"es5"},"module":{"type":"commonjs"}}
+    // then terser@5.51.2, for `new ns.C(a, ...xs)`.
+    let input = r#""use strict";Object.defineProperty(exports,"__esModule",{value:!0}),Object.defineProperty(exports,"make",{enumerable:!0,get:function(){return make}});var _c=_interop_require_wildcard(require("./c.js"));function _array_like_to_array(r,t){(null==t||t>r.length)&&(t=r.length);for(var e=0,n=new Array(t);e<t;e++)n[e]=r[e];return n}function _array_without_holes(r){if(Array.isArray(r))return _array_like_to_array(r)}function _construct(r,t,e){return _construct=_is_native_reflect_construct()?Reflect.construct:function(r,t,e){var n=[null];n.push.apply(n,t);var o=new(Function.bind.apply(r,n));return e&&_set_prototype_of(o,e.prototype),o},_construct.apply(null,arguments)}function _getRequireWildcardCache(r){if("function"!=typeof WeakMap)return null;var t=new WeakMap,e=new WeakMap;return(_getRequireWildcardCache=function(r){return r?e:t})(r)}function _interop_require_wildcard(r,t){if(!t&&r&&r.__esModule)return r;if(null===r||"object"!=typeof r&&"function"!=typeof r)return{default:r};var e=_getRequireWildcardCache(t);if(e&&e.has(r))return e.get(r);var n={__proto__:null},o=Object.defineProperty&&Object.getOwnPropertyDescriptor;for(var a in r)if("default"!==a&&Object.prototype.hasOwnProperty.call(r,a)){var _=o?Object.getOwnPropertyDescriptor(r,a):null;_&&(_.get||_.set)?Object.defineProperty(n,a,_):n[a]=r[a]}return n.default=r,e&&e.set(r,n),n}function _is_native_reflect_construct(){try{var r=!Boolean.prototype.valueOf.call(Reflect.construct(Boolean,[],function(){}))}catch(r){}return(_is_native_reflect_construct=function(){return!!r})()}function _iterable_to_array(r){if("undefined"!=typeof Symbol&&null!=r[Symbol.iterator]||null!=r["@@iterator"])return Array.from(r)}function _non_iterable_spread(){throw new TypeError("Invalid attempt to spread non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method.")}function _set_prototype_of(r,t){return _set_prototype_of=Object.setPrototypeOf||function(r,t){return r.__proto__=t,r},_set_prototype_of(r,t)}function _to_consumable_array(r){return _array_without_holes(r)||_iterable_to_array(r)||_unsupported_iterable_to_array(r)||_non_iterable_spread()}function _unsupported_iterable_to_array(r,t){if(r){if("string"==typeof r)return _array_like_to_array(r,t);var e=Object.prototype.toString.call(r).slice(8,-1);return"Object"===e&&r.constructor&&(e=r.constructor.name),"Map"===e||"Set"===e?Array.from(e):"Arguments"===e||/^(?:Ui|I)nt(?:8|16|32)(?:Clamped)?Array$/.test(e)?_array_like_to_array(r,t):void 0}}function make(r,t){return _construct(_c.C,[t].concat(_to_consumable_array(r)))}
+"#;
+    let expected = r#"
+import * as c from "./c.js";
+function make(r, t) {
+    return new c.C(t, ...r);
+}
+export { make };
+"#;
+    assert_eq_normalized(
+        &common::render_with_level(input, RewriteLevel::Standard),
+        expected,
+    );
+}
+
 #[test]
 fn babel_seven_construct_helper_recovers_through_the_pipeline() {
     // producer @babel/core@7.29.7 {"presets":[["@babel/preset-env",{"targets":{"ie":"11"},"modules":false}]]}

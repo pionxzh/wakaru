@@ -154,7 +154,11 @@ Rules still own domain-specific shape recognition. For example:
   `if (check()) return Reflect.construct.apply(null, arguments)` plus the
   bound-function fallback, and swc's (and older Babel's) self-redefinition
   to `Reflect.construct` or that fallback, followed by
-  `_construct.apply(null, arguments)`. The native check must call a
+  `_construct.apply(null, arguments)`. The redefinition may be an
+  `if`/`else` or, as Terser folds it, one conditional assignment
+  `_construct = check() ? Reflect.construct : function (…) {…}`
+  (SimplifySequence has split Terser's `return _construct = …,
+  _construct.apply(null, arguments)` by then). The native check must call a
   module-level function that probes `Reflect.construct`; the only writes to
   the helper binding allowed are inside its own body. The helper, its native
   check and its prototype setter go through `remove_unused_helper_declarations`
