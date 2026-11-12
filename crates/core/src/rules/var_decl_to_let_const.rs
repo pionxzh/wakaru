@@ -2,10 +2,10 @@ use crate::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignTarget, BlockStmt, Class, Decl, ExportSpecifier, Expr, ForHead,
-    ForInStmt, ForOfStmt, ForStmt, Function, Ident, Lit, MemberProp, Module, ModuleDecl,
-    ModuleExportName, ModuleItem, Pat, SimpleAssignTarget, Stmt, SwitchStmt, UpdateExpr, VarDecl,
-    VarDeclKind, WithStmt,
+    ArrowExpr, AssignExpr, AssignTarget, BlockStmt, CatchClause, Class, Decl, ExportSpecifier,
+    Expr, ForHead, ForInStmt, ForOfStmt, ForStmt, Function, Ident, Lit, MemberProp, Module,
+    ModuleDecl, ModuleExportName, ModuleItem, Pat, SimpleAssignTarget, Stmt, SwitchStmt,
+    UpdateExpr, VarDecl, VarDeclKind, WithStmt,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -60,6 +60,10 @@ impl VisitMut for VarDeclToLetConst {
         // must stay as `var` to preserve the hoisting-based access.
         let mut must_stay_var = collect_block_escaping_vars_module(&module.body);
         must_stay_var.extend(collect_duplicate_decl_bindings_module(&module.body));
+        must_stay_var.extend(collect_catch_param_redeclared_vars_module(
+            &module.body,
+            &var_ids,
+        ));
         must_stay_var.extend(collect_use_before_decl_vars_module(&module.body, &var_ids));
         must_stay_var.extend(collect_loop_captured_vars_module(&module.body));
         keep_eval_affected_vars(&module.body, &var_ids, &mut must_stay_var, true);
@@ -104,6 +108,10 @@ impl VisitMut for VarDeclToLetConst {
 
         let mut must_stay_var = collect_block_escaping_vars_stmts(&body.stmts);
         must_stay_var.extend(collect_duplicate_decl_bindings_stmts(&body.stmts));
+        must_stay_var.extend(collect_catch_param_redeclared_vars_stmts(
+            &body.stmts,
+            &var_ids,
+        ));
         must_stay_var.extend(collect_param_duplicate_var_bindings(
             &param_ids,
             &body.stmts,
@@ -261,6 +269,74 @@ fn collect_exported_var_bindings_module(
         }
     }
     exported
+}
+
+// ============================================================
+// `var` redeclaring a simple catch parameter (Annex B.3.4):
+//   function f() { var e = 1; try {} catch (e) { var e = 2; } return e; }
+// The inner `var e` resolves to the catch parameter, so it gets the catch
+// binding's SyntaxContext, but its declaration still hoists to the function
+// scope. Every scope-level var with that name has to stay `var`: turning the
+// outer one into `let`/`const` would make the hoisted inner `var` a
+// redeclaration error.
+// ============================================================
+
+fn collect_catch_param_redeclared_vars_module(
+    items: &[ModuleItem],
+    var_ids: &HashSet<BindingId>,
+) -> HashSet<BindingId> {
+    let mut collector = CatchParamRedeclCollector::default();
+    for item in items {
+        item.visit_with(&mut collector);
+    }
+    collector.matching(var_ids)
+}
+
+fn collect_catch_param_redeclared_vars_stmts(
+    stmts: &[Stmt],
+    var_ids: &HashSet<BindingId>,
+) -> HashSet<BindingId> {
+    let mut collector = CatchParamRedeclCollector::default();
+    for stmt in stmts {
+        stmt.visit_with(&mut collector);
+    }
+    collector.matching(var_ids)
+}
+
+#[derive(Default)]
+struct CatchParamRedeclCollector {
+    names: HashSet<Atom>,
+}
+
+impl CatchParamRedeclCollector {
+    fn matching(self, var_ids: &HashSet<BindingId>) -> HashSet<BindingId> {
+        if self.names.is_empty() {
+            return HashSet::default();
+        }
+        var_ids
+            .iter()
+            .filter(|(sym, _)| self.names.contains(sym))
+            .cloned()
+            .collect()
+    }
+}
+
+impl Visit for CatchParamRedeclCollector {
+    fn visit_catch_clause(&mut self, clause: &CatchClause) {
+        // Only a plain identifier parameter may be redeclared by `var`;
+        // a destructuring parameter makes that a syntax error.
+        if let Some(Pat::Ident(param)) = &clause.param {
+            let body_vars = collect_all_var_ids_in_stmts(&clause.body.stmts);
+            if body_vars.iter().any(|(sym, _)| *sym == param.id.sym) {
+                self.names.insert(param.id.sym.clone());
+            }
+        }
+        clause.body.visit_with(self);
+    }
+
+    fn visit_function(&mut self, _: &Function) {}
+    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+    fn visit_class(&mut self, _: &Class) {}
 }
 
 #[derive(Default)]
