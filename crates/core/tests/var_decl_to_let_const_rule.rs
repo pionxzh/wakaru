@@ -2313,17 +2313,26 @@ try {
 }
 console.log(e);
 "#;
-    let expected = r#"
-var e = 1;
-try {
-  throw 2;
-} catch (e) {
-  var e = 3;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
 }
-console.log(e);
+
+#[test]
+fn var_redeclared_in_catch_without_outer_decl_stays_var() {
+    // Only the catch body declares `var e`. It still hoists to the function, and
+    // `let e` inside `catch (e)` would be a redeclaration error.
+    let input = r#"
+function f() {
+  try {
+    throw 2;
+  } catch (e) {
+    var e = 3;
+  }
+  return e;
+}
 "#;
     let output = apply_rule(input);
-    assert_eq_normalized(&output, expected);
+    assert_eq_normalized(&output, input);
 }
 
 #[test]
