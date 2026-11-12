@@ -2271,3 +2271,106 @@ fn cached_object_survives_exception_before_capture_initialization() {
         "#,
     );
 }
+
+#[test]
+fn var_redeclared_in_catch_with_same_param_stays_var() {
+    // `var e` inside `catch (e)` assigns to the catch parameter, but its declaration
+    // still hoists to the function, so the outer `var e` cannot become `let`/`const`.
+    let input = r#"
+function f() {
+  var e = 1;
+  try {
+    throw 2;
+  } catch (e) {
+    var e = 3;
+  }
+  return e;
+}
+"#;
+    let expected = r#"
+function f() {
+  var e = 1;
+  try {
+    throw 2;
+  } catch (e) {
+    var e = 3;
+  }
+  return e;
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn module_var_redeclared_in_catch_with_same_param_stays_var() {
+    let input = r#"
+var e = 1;
+try {
+  throw 2;
+} catch (e) {
+  var e = 3;
+}
+console.log(e);
+"#;
+    let expected = r#"
+var e = 1;
+try {
+  throw 2;
+} catch (e) {
+  var e = 3;
+}
+console.log(e);
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn var_in_catch_with_other_param_name_still_converts() {
+    let input = r#"
+function f() {
+  var e = 1;
+  try {
+    throw 2;
+  } catch (err) {
+    var x = 3;
+    console.log(x);
+  }
+  return e;
+}
+"#;
+    let expected = r#"
+function f() {
+  const e = 1;
+  try {
+    throw 2;
+  } catch (err) {
+    const x = 3;
+    console.log(x);
+  }
+  return e;
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn var_redeclared_in_nested_block_of_catch_stays_var() {
+    let input = r#"
+function f(a) {
+  var e = 1;
+  try {
+    throw 2;
+  } catch (e) {
+    if (a) {
+      var e = 3;
+    }
+  }
+  return e;
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
