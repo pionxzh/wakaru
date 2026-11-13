@@ -3,43 +3,36 @@
 //!
 //! A string-literal expression statement is a directive only when it is
 //! unparenthesized and sits in a body's directive prologue, before any other
-//! statement. Two things can move a plain string statement there:
+//! statement. Several things can move a plain string there:
 //!
 //! - a rewrite removes the statements before it (`var x; "use strict";` loses
-//!   the unused `var x;`), and
+//!   the unused `var x;`),
+//! - a rewrite splits a sequence (`"use strict", g();` becomes
+//!   `"use strict"; g();`), and
 //! - SWC's fixer drops the parentheses of `("use strict");` as redundant.
 //!
 //! The string then prints as a directive, and a `"use strict"` makes the
-//! function strict. Wrapping it in parentheses keeps it an ordinary
-//! expression statement.
+//! function strict. So record the directives before the change, and after it
+//! wrap the first prologue string that was not one in parentheses, which keeps
+//! it an ordinary expression statement and ends the prologue.
 
 use swc_core::common::{BytePos, Span, DUMMY_SP};
 use swc_core::ecma::ast::{Expr, ExprStmt, FunctionBody, Lit, Module, ModuleItem, ParenExpr, Stmt};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use crate::collections::HashSet;
-use crate::utils::paren::strip_parens;
 
-/// Spans of string literals, keyed by position.
-pub(crate) type StringSpans = HashSet<(BytePos, BytePos)>;
+/// Spans of directive string literals, keyed by position.
+pub(crate) type DirectiveSpans = HashSet<(BytePos, BytePos)>;
 
-enum StringStatement {
-    /// `"text";`: a directive when it is in the prologue.
-    Bare(Span),
-    /// `("text");`: never a directive, and it ends the prologue.
-    Parenthesized(Span),
-}
-
-fn classify(stmt: &Stmt) -> Option<StringStatement> {
+/// The string of a bare `"text";` statement, the only form that can be a
+/// directive. A parenthesized `("text");` never is, and it ends the prologue.
+fn bare_string(stmt: &Stmt) -> Option<Span> {
     let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
         return None;
     };
     match expr.as_ref() {
-        Expr::Lit(Lit::Str(string)) => Some(StringStatement::Bare(string.span)),
-        Expr::Paren(_) => match strip_parens(expr) {
-            Expr::Lit(Lit::Str(string)) => Some(StringStatement::Parenthesized(string.span)),
-            _ => None,
-        },
+        Expr::Lit(Lit::Str(string)) => Some(string.span),
         _ => None,
     }
 }
@@ -66,78 +59,32 @@ impl<F: FnMut(&mut dyn Iterator<Item = &mut Stmt>)> VisitMut for Bodies<F> {
     }
 }
 
-/// Every string-literal expression statement in `module`, parenthesized or
-/// not, that is not a directive.
-pub(crate) fn collect_non_directive_strings(module: &mut Module) -> StringSpans {
-    struct AllStrings(StringSpans);
-
-    impl VisitMut for AllStrings {
-        fn visit_mut_stmt(&mut self, stmt: &mut Stmt) {
-            stmt.visit_mut_children_with(self);
-            if let Some(StringStatement::Bare(span) | StringStatement::Parenthesized(span)) =
-                classify(stmt)
-            {
-                self.0.extend(key(span));
-            }
-        }
-    }
-
-    let mut all = AllStrings(StringSpans::default());
-    module.visit_mut_with(&mut all);
-    let mut strings = all.0;
-    if strings.is_empty() {
-        return strings;
-    }
-
+/// Spans of every directive in `module`: the bare strings at the start of each
+/// body.
+pub(crate) fn collect_directives(module: &mut Module) -> DirectiveSpans {
+    let mut directives = DirectiveSpans::default();
     module.visit_mut_with(&mut Bodies(|stmts: &mut dyn Iterator<Item = &mut Stmt>| {
         for stmt in stmts {
-            let Some(StringStatement::Bare(span)) = classify(stmt) else {
+            let Some(span) = bare_string(stmt) else {
                 break;
             };
-            if let Some(key) = key(span) {
-                strings.remove(&key);
-            }
+            directives.extend(key(span));
         }
     }));
-    strings
+    directives
 }
 
-/// Spans of the parenthesized strings that end a directive prologue. SWC's
-/// fixer drops those parentheses, so collect them before it runs and restore
-/// them with [`parenthesize_non_directive_strings`] after.
-pub(crate) fn collect_prologue_parenthesized_strings(module: &mut Module) -> StringSpans {
-    let mut strings = StringSpans::default();
+/// Parenthesize the first bare string in each directive prologue that is not
+/// in `directives`. That string ends the prologue, so the strings after it stay
+/// ordinary statements too. A string without a source span was built by a
+/// rewrite rather than moved, so it is left alone.
+pub(crate) fn parenthesize_new_directives(module: &mut Module, directives: &DirectiveSpans) {
     module.visit_mut_with(&mut Bodies(|stmts: &mut dyn Iterator<Item = &mut Stmt>| {
         for stmt in stmts {
-            match classify(stmt) {
-                Some(StringStatement::Bare(_)) => {}
-                Some(StringStatement::Parenthesized(span)) => {
-                    strings.extend(key(span));
-                    break;
-                }
-                None => break,
-            }
-        }
-    }));
-    strings
-}
-
-/// Parenthesize the first unparenthesized string in each directive prologue
-/// whose span is in `non_directives`. That string ends the prologue, so the
-/// strings after it stay ordinary statements too.
-pub(crate) fn parenthesize_non_directive_strings(
-    module: &mut Module,
-    non_directives: &StringSpans,
-) {
-    if non_directives.is_empty() {
-        return;
-    }
-    module.visit_mut_with(&mut Bodies(|stmts: &mut dyn Iterator<Item = &mut Stmt>| {
-        for stmt in stmts {
-            let Some(StringStatement::Bare(span)) = classify(stmt) else {
+            let Some(span) = bare_string(stmt) else {
                 break;
             };
-            if key(span).is_some_and(|key| non_directives.contains(&key)) {
+            if key(span).is_some_and(|key| !directives.contains(&key)) {
                 if let Stmt::Expr(statement) = stmt {
                     let string = std::mem::replace(
                         &mut statement.expr,

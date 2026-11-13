@@ -9,9 +9,7 @@ use crate::facts::ModuleFactsMap;
 use crate::interface_plan::InterfacePlan;
 use crate::kept_require::LaterUnpackStages;
 use crate::require_edges::ImportTags;
-use crate::utils::directive_prologue::{
-    collect_non_directive_strings, parenthesize_non_directive_strings,
-};
+use crate::utils::directive_prologue::{collect_directives, parenthesize_new_directives};
 use crate::DceMode;
 
 use super::dead_decls::compute_pre_dead_decl_spans;
@@ -1165,11 +1163,11 @@ fn apply_rules_impl(
     observer: Option<&mut dyn FnMut(&'static str, &Module)>,
     preserve_input_import_link_checks: bool,
 ) {
-    // A rule that removes the statements before a string-literal statement
-    // can move it into a directive prologue, where `"use strict"` would make
-    // the function strict. Remember which strings were not directives so the
-    // ones that moved stay ordinary statements.
-    let non_directive_strings = collect_non_directive_strings(module);
+    // A rule that removes the statements before a string, or splits the
+    // sequence that holds it, can move the string into a directive prologue,
+    // where `"use strict"` would make the function strict. Remember the
+    // directives so a string that moved there stays an ordinary statement.
+    let directives = collect_directives(module);
     run_rules(
         module,
         unresolved_mark,
@@ -1177,7 +1175,7 @@ fn apply_rules_impl(
         observer,
         preserve_input_import_link_checks,
     );
-    parenthesize_non_directive_strings(module, &non_directive_strings);
+    parenthesize_new_directives(module, &directives);
 }
 
 fn run_rules(
