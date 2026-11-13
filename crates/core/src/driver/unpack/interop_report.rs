@@ -296,17 +296,12 @@ pub fn explain_interop(source: &str, mut options: DecompileOptions) -> Result<In
     .map_err(super::super::DriverError::into_inner)?;
     let sink = InteropSink::default();
     let nested = nested_scope_split_enabled(&options);
-    unpack_prepared_inputs_impl(
-        vec![prepared],
-        options,
-        false,
-        if nested {
-            ScopeHoistPolicy::Recursive
-        } else {
-            ScopeHoistPolicy::Fallback
-        },
-        Some(&sink),
-    )?;
+    let policy = if nested {
+        ScopeHoistPolicy::Recursive
+    } else {
+        ScopeHoistPolicy::Fallback
+    };
+    unpack_prepared_inputs_impl(vec![(prepared, policy)], options, false, Some(&sink), false)?;
     let mut modules = sink
         .modules
         .into_inner()

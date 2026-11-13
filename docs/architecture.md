@@ -35,14 +35,23 @@ Two main operations:
         ┌───────────────────────────────────────────┐
         │              Decompile pipeline            │
         │                                            │
-        │  parse → resolver → rules → fixer → emit  │
+        │  parse → resolver → rules → fixer          │
         │                                            │
         │  (parallel via rayon when unpacking)        │
         └───────────────────────────────────────────┘
-              │                │                │
-              ▼                ▼                ▼
-         readable JS      readable JS      readable JS
+                               │
+                   ┌───────────┴───────────┐
+                   ▼                       ▼
+                 emit JS           optional artifact
+                                      recovery
 ```
+
+Framework artifact recovery consumes generic module views owned by the root
+operation: compiler evidence captured before readability rewrites and the
+finalized readable modules. It is not part of bundle detection or the ordered
+JavaScript rewrite registry.
+See [angular-decompile.md](angular-decompile.md) for the Angular Ivy boundary
+and [vue-decompile.md](vue-decompile.md) for the existing Vue recovery path.
 
 ## Components
 
@@ -304,14 +313,19 @@ When unpacking bundles, the driver runs a two-phase pipeline:
 1. **Phase 1 (parallel, largest modules first):** Obtain a resolved module AST. Source-only detector
    output is parsed and resolved here; webpack5 can hand off its already
    resolved, bundler-normalized AST directly. Apply exact normal-only rewrites
-   backed by detector-owned runtime facts, then run the rule registry up to
-   `UnEsm` and read each `require()` call's edge (Phase 1a). Once every module
+   backed by detector-owned runtime facts. When root framework recovery is
+   enabled, materialize an optional generic evidence view after those exact
+   normalizations and before the readability registry. Capture stable
+   whole-value CommonJS import edges at the same boundary. Then run the rule
+   registry up to `UnEsm` and read each `require()` call's edge (Phase 1a).
+   Once every module
    has reached `UnEsm` (barrier 0) and the plan is built from every module's
    edges (`InterfacePlan`: a provider a consumer writes to stays CommonJS,
    unless its only export is one `module.exports = v` every write lands on;
    a member read of such a provider reads its default import),
-   run `UnEsm`, then run the webpack factory-IIFE recovery on a clone of
-   that barrier AST and extract import/export facts from it (Phase 1b).
+   run `UnEsm`, then run the webpack factory-IIFE recovery, without its
+   readability-only binding renames, on a clone of that barrier AST and
+   extract import/export facts from it (Phase 1b).
    Unless `UnEsm` left an ES module with no CommonJS the late recovery can
    convert, the clone first runs the steps Phase 2 runs before its late
    recovery that need no other module (the registry range after `UnEsm`,
@@ -360,6 +374,18 @@ private prepared AST sidecar. Public/raw unpack APIs materialize every sidecar
 back into `UnpackedModule::code`; the normal driver consumes it once at the
 Phase 1 boundary. Aggressive nested scope splitting likewise materializes first
 because that pass operates on emitted module text.
+
+The optional pre-rewrite evidence view is also format-neutral. Enabling it does
+not make the driver assign Angular, Vue, or other framework meaning; it only
+preserves the compiler shapes that a root artifact analyzer requested. The
+normal JavaScript output continues through the same rule pipeline. For modules
+whose evidence view survives, root capture also exposes a filtered, final-name
+snapshot of the generic Stage-2 transport facts and a binding-correspondence
+sidecar. The latter relates top-level evidence and readable names only when the
+same non-synthetic declaration span survives the pipeline uniquely; replaced,
+removed, or ambiguous declarations have no edge. Artifact analyzers can derive
+cross-module symbol equivalences and cross-view names from those generic proofs
+without placing framework roles in the driver or fact system.
 
 ## File structure
 

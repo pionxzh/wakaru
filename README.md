@@ -22,7 +22,9 @@ Run without a global install:
 ```bash
 npx wakaru input.js -o output.js       # decompile a file
 npx wakaru bundle.js --unpack -o out/  # unpack and decompile a bundle
+npx wakaru bundle.js --unpack --angular -o out/ # recover Angular Ivy artifacts
 npx wakaru dist/ --unpack -o out/      # scan a bundle output directory
+npx wakaru dist/ --unpack --angular -o out/ # inspect a production Angular chunk set
 ```
 
 See the [CLI reference](https://wakarujs.com/docs/reference/cli) for rewrite levels, source maps, and more options.
@@ -77,6 +79,7 @@ short because the input does not provide their original names.
 - **Bundles:** split webpack, esbuild/Bun, Browserify, and Metro output into readable modules.
 - **Transpiled code:** recover modern syntax from Babel, TypeScript, and SWC output.
 - **Minified code:** expand compact expressions and simplify control flow.
+- **Experimental framework artifacts:** recover Angular Ivy TypeScript modules with inline component templates and Vue 3 SFC-like artifacts.
 
 See [supported inputs](https://wakarujs.com/docs/reference/supported-inputs) for the full list and format-specific limits.
 

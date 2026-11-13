@@ -106,6 +106,7 @@
 //! # }
 //! ```
 
+mod artifacts;
 pub mod bun;
 pub mod debug;
 mod decompile;
@@ -122,13 +123,14 @@ pub mod vue;
 pub use decompile::decompile;
 pub use error::{Error, ErrorKind, Result};
 pub use options::{
-    DceMode, DecompileOptions, ModuleMode, RewriteLevel, RewriteOptions, UnmatchedInput,
-    UnpackMode, UnpackOptions,
+    DceMode, DecompileOptions, ModuleMode, RecoveryOptions, RewriteLevel, RewriteOptions,
+    UnmatchedInput, UnpackMode, UnpackOptions,
 };
 pub use output::{
-    BundleFormat, DecompileOutput, Diagnostic, DiagnosticCode, DiagnosticSeverity, EntryStatus,
-    InputAction, InputDetection, InputId, InputReceipt, InputReport, ModuleOutput, ModuleStatus,
-    OutputSafety, SourceSpan, SplitRefusal, SplitRefusalReason, UnpackOutput,
+    ArtifactKind, ArtifactOutput, ArtifactStatus, BundleFormat, DecompileOutput, Diagnostic,
+    DiagnosticCode, DiagnosticSeverity, EntryStatus, InputAction, InputDetection, InputId,
+    InputReceipt, InputReport, ModuleOutput, ModuleStatus, OutputSafety, SourceSpan, SplitRefusal,
+    SplitRefusalReason, UnpackOutput,
 };
 pub use source::{Source, SourceParts};
 pub use unpack::{unpack, UnpackJob};
