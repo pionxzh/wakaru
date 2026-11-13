@@ -9,6 +9,10 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::transforms::base::fixer::fixer;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
+use crate::utils::directive_prologue::{
+    collect_prologue_parenthesized_strings, parenthesize_non_directive_strings,
+};
+
 struct FunctionExpressionCalleeParens;
 
 impl VisitMut for FunctionExpressionCalleeParens {
@@ -153,7 +157,11 @@ fn parenthesize(expression: &mut Box<Expr>) {
 /// error-recovery parser accepted but the fixer doesn't handle.
 pub(crate) fn apply_fixer(module: &mut Module) -> anyhow::Result<()> {
     panic::catch_unwind(AssertUnwindSafe(|| {
+        // SWC's fixer drops the parentheses of `("use strict");`, which turns
+        // the string into a directive when it sits in a directive prologue.
+        let prologue_strings = collect_prologue_parenthesized_strings(module);
         module.visit_mut_with(&mut fixer(None));
+        parenthesize_non_directive_strings(module, &prologue_strings);
         // SWC's fixer can drop the source parentheses from an immediately
         // invoked function expression when the call is the left edge of a
         // larger expression statement. Its emitter then prints a forbidden

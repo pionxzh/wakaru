@@ -38,6 +38,74 @@ class C extends (()=>{}) {
     common::parse_module_with_filename(&output, "output.js", cm);
 }
 
+/// A string-literal statement after another statement is not a directive.
+/// Removing the statement before it must not turn it into one: `"use strict"`
+/// would make the function strict.
+#[test]
+fn string_statement_does_not_become_directive_when_leading_statement_is_removed() {
+    let input = r#"function h() { var x; "use strict"; return this === undefined; }
+console.log(h());
+"#;
+    let expected = r#"function h() {
+    ("use strict");
+    return this === undefined;
+}
+console.log(h());
+"#;
+
+    assert_eq!(render_with_level(input, RewriteLevel::Minimal), expected);
+    assert_eq!(render(input), expected);
+}
+
+/// A parenthesized string statement is never a directive, and it ends the
+/// directive prologue, so the strings after it are not directives either.
+#[test]
+fn parenthesized_string_statement_keeps_its_parens() {
+    let cases = [
+        r#"function h() {
+    ("use strict");
+    return this === undefined;
+}
+"#,
+        r#"function h() {
+    ("x");
+    "use strict";
+    return this === undefined;
+}
+"#,
+        r#"function h() {
+    "use asm";
+    ("use strict");
+    return this === undefined;
+}
+"#,
+        r#"const h = ()=>{
+    ("use strict");
+    return this;
+};
+"#,
+    ];
+
+    for input in cases {
+        assert_eq!(render_with_level(input, RewriteLevel::Minimal), input);
+        assert_eq!(render(input), input);
+    }
+}
+
+/// Real directives stay bare, including one after an earlier directive.
+#[test]
+fn directive_prologue_is_preserved() {
+    let input = r#"function h() {
+    "use asm";
+    "use strict";
+    return this === undefined;
+}
+"#;
+
+    assert_eq!(render_with_level(input, RewriteLevel::Minimal), input);
+    assert_eq!(render(input), input);
+}
+
 #[test]
 fn minimal_level_keeps_parens_for_prefix_update_async_arrow_and_optional_call() {
     let cases = [

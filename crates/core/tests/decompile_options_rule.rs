@@ -243,6 +243,28 @@ function inspectThis() {
     );
 }
 
+/// A top-level `"use strict"` after a removed declaration is kept as a
+/// non-directive `("use strict");` in scripts. A module is strict anyway, so
+/// the cleanup still removes it there.
+#[test]
+fn module_extension_removes_top_level_use_strict_that_was_not_a_directive() {
+    let input = "var unused;\n\"use strict\";\nexport const a = 1;\n";
+    let output = decompile(
+        input,
+        DecompileOptions {
+            filename: "fixture.mjs".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code;
+
+    assert!(
+        !output.contains("use strict"),
+        "the .mjs goal should remove the moved top-level string: {output}"
+    );
+}
+
 #[test]
 fn import_meta_proves_module_goal_for_top_level_use_strict_cleanup() {
     let output = decompile(
