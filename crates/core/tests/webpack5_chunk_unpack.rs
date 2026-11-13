@@ -615,6 +615,56 @@ fn webpack5_chunk_logical_assignment_needs_an_empty_array() {
 }
 
 #[test]
+fn webpack5_chunk_with_array_checked_push() {
+    // webpack reuses the global only when it is an array, so a page element
+    // whose `id` is the global's name is replaced.
+    let source = r#"
+(Array.isArray(self["webpackChunk_app"]) ? self["webpackChunk_app"] : (self["webpackChunk_app"] = [])).push([
+  [10],
+  {
+    100(module, exports, require) {
+      "use strict";
+      var dep = require(200);
+      exports.default = dep.value;
+    },
+    200(module, exports, require) {
+      "use strict";
+      exports.value = 42;
+    }
+  }
+]);
+"#;
+
+    let pairs = expect_unpack(source, "chunk.js");
+
+    assert_eq!(pairs.len(), 2, "{pairs:#?}");
+    let mod_100 = file(&pairs, "module-100.js");
+    assert!(
+        mod_100.contains("./module-200.js"),
+        "numeric require should be rewritten:\n{mod_100}"
+    );
+    file(&pairs, "module-200.js");
+}
+
+#[test]
+fn webpack5_chunk_array_check_must_guard_the_pushed_global() {
+    for array in [
+        r#"(Array.isArray(self.a) ? self.b : (self.a = []))"#,
+        r#"(Array.isArray(self.a) ? self.a : (self.b = []))"#,
+        r#"(Array.isArray(self.a) ? self.a : (self.a = [1]))"#,
+        r#"(isArray(self.a) ? self.a : (self.a = []))"#,
+    ] {
+        let source =
+            format!("{array}.push([[10], {{ 100(module, exports) {{ exports.value = 42; }} }}]);");
+        let pairs = expect_unpack(&source, "chunk.js");
+        assert!(
+            pairs.iter().all(|(name, _)| name != "module-100.js"),
+            "{array} is not a chunk-loading global:\n{pairs:#?}"
+        );
+    }
+}
+
+#[test]
 fn webpack5_chunk_rewrites_numeric_require_in_method_factory() {
     let source = r#"
 (self.webpackChunk_N_E = self.webpackChunk_N_E || []).push([

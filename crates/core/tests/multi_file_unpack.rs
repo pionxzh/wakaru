@@ -880,6 +880,70 @@ exports.modules = {
 }
 
 #[test]
+fn webpack5_multi_file_links_array_checked_chunks_within_their_build() {
+    let push = |global: &str, payload: &str| {
+        format!(
+            r#"(Array.isArray(self["{global}"]) ? self["{global}"] : (self["{global}"] = [])).push({payload});"#
+        )
+    };
+    // Another build on the same page also has a module 100; only the chunk
+    // pushing into the same global may satisfy `r(100)`.
+    let inputs = [
+        (
+            "provider.js",
+            push("webpackChunk_app", "[[1],{100(e,t){t.value=42}}]"),
+        ),
+        (
+            "other.js",
+            push("webpackChunk_widget", "[[1],{100(e,t){t.other=1}}]"),
+        ),
+        (
+            "consumer.js",
+            push(
+                "webpackChunk_app",
+                "[[2],{200(e,t,r){var n=r(100);t.result=n.value}}]",
+            ),
+        ),
+    ];
+
+    let output = unpack_files(
+        inputs
+            .into_iter()
+            .map(|(filename, source)| UnpackInput {
+                filename: filename.to_string(),
+                source,
+            })
+            .collect(),
+        DecompileOptions::default(),
+    )
+    .expect("array-checked chunks should unpack together");
+
+    assert_valid_module_graph(&output.modules);
+    let names = output
+        .modules
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect::<Vec<_>>();
+    let module_200 = output
+        .modules
+        .iter()
+        .find(|(name, _)| name.ends_with("module-200.js"))
+        .map(|(_, code)| code)
+        .unwrap_or_else(|| panic!("module-200.js should exist: {names:?}"));
+    let provider = output
+        .modules
+        .iter()
+        .find(|(name, code)| name.ends_with("module-100.js") && code.contains("42"))
+        .map(|(name, _)| name)
+        .unwrap_or_else(|| panic!("provider module should exist: {names:?}"));
+    let provider_file = provider.rsplit('/').next().unwrap();
+    assert!(
+        module_200.contains(provider_file),
+        "numeric require should link to its own build's module ({provider}):\n{module_200}\n{names:?}"
+    );
+}
+
+#[test]
 fn webpack5_multi_file_unpacks_logical_assignment_chunks() {
     let provider = r#"(globalThis.rspackChunkapp||=[]).push([[1],{100(e,t){t.value=42}}]);"#;
     let consumer = r#"(globalThis.rspackChunkapp||=[]).push([[2],{200(e,t,r){var n=r(100);t.result=n.value}}]);"#;

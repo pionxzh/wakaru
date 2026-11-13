@@ -18,6 +18,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::js_names::{is_reserved_binding_name, is_valid_identifier_name};
 use crate::rules::rename_utils::BindingRename;
+use crate::unpacker::chunk_loading_global::array_checked_global;
 use crate::unpacker::refusal::{self, because, SplitRefusalReason};
 use crate::unpacker::surrounding::{
     ContextSymCollector, IdentNameCollector, SurroundingCode, SurroundingItems,
@@ -1721,8 +1722,9 @@ fn is_legacy_webpack_jsonp_push(expr: &Expr) -> bool {
 }
 
 /// Match the pattern: `(self.X = self.X || []).push([[ids], {modules}])`,
-/// `(window["X"] = window["X"] || []).push([[ids], {modules}])`, or the
-/// logical-assignment form `(self.X ||= []).push(...)`, returning
+/// `(window["X"] = window["X"] || []).push([[ids], {modules}])`, the
+/// logical-assignment form `(self.X ||= []).push(...)`, or webpack's
+/// `(Array.isArray(self.X) ? self.X : (self.X = [])).push(...)`, returning
 /// the chunk ids and the modules payload. The payload may also be a sparse
 /// array — see [`Webpack5ModulesContainer`].
 fn extract_chunk_push_parts(expr: &Expr) -> Option<(&ArrayLit, Webpack5ModulesContainer<'_>)> {
@@ -1743,10 +1745,22 @@ fn extract_chunk_push_parts(expr: &Expr) -> Option<(&ArrayLit, Webpack5ModulesCo
         return None;
     }
 
+    if !is_chunk_loading_array(obj) {
+        return None;
+    }
+    extract_push_arg_parts(call)
+}
+
+/// The array a chunk pushes into: `(self.X = self.X || [])`, `(self.X ||= [])`,
+/// or `(Array.isArray(self.X) ? self.X : (self.X = []))`.
+fn is_chunk_loading_array(obj: &Expr) -> bool {
+    if array_checked_global(obj).is_some() {
+        return true;
+    }
     // obj is (self.X = self.X || []) or (self.X ||= []) — a parenthesized
     // assignment
     let Expr::Assign(AssignExpr { op, right, .. }) = strip_parens(obj) else {
-        return None;
+        return false;
     };
     let empty_fallback = match op {
         // right side: self.X || []
@@ -1756,21 +1770,19 @@ fn extract_chunk_push_parts(expr: &Expr) -> Option<(&ArrayLit, Webpack5ModulesCo
                 right: or_right,
                 ..
             }) => or_right,
-            _ => return None,
+            _ => return false,
         },
         // rspack writes `(self.X ||= [])` when its target supports logical
         // assignment: right side is the `[]`
         AssignOp::OrAssign => right,
-        _ => return None,
+        _ => return false,
     };
     // Verify the fallback is an empty array
-    let Expr::Array(ArrayLit { elems, .. }) = &**empty_fallback else {
-        return None;
-    };
-    if !elems.is_empty() {
-        return None;
-    }
+    matches!(&**empty_fallback, Expr::Array(ArrayLit { elems, .. }) if elems.is_empty())
+}
 
+/// `[[chunkIds], modules, ...]`, the argument of a chunk push.
+fn extract_push_arg_parts(call: &CallExpr) -> Option<(&ArrayLit, Webpack5ModulesContainer<'_>)> {
     // push argument: [[chunkIds], {modules}, ...]
     if call.args.is_empty() {
         return None;

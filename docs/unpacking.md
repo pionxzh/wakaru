@@ -34,9 +34,11 @@ attempted in order — first match wins:
    obfuscator writes); webpack 1 records none (see [Webpack 4 code
    around the bootstrap](#webpack-4-code-around-the-bootstrap))
 3. **webpack5 chunk** — JSONP chunk push with a webpack module object
-   (`(self.X = self.X || []).push(…)`, or the logical-assignment form
+   (`(self.X = self.X || []).push(…)`; the logical-assignment form
    `(self.X ||= []).push(…)` that rspack writes when its target supports
-   logical assignment), or the ESM chunk form (`output.chunkFormat: "module"`)
+   logical assignment; or `(Array.isArray(self.X) ? self.X : (self.X =
+   [])).push(…)`, which newer webpack writes so that a page element whose `id`
+   is the global's name is replaced instead of reused), or the ESM chunk form (`output.chunkFormat: "module"`)
    that exports the chunk ids and modules (`export const __webpack_esm_ids__ =
    [...]` and `export const __webpack_esm_modules__ = {...}`; older releases
    name them `ids`/`modules` or `__webpack_ids__`/`__webpack_modules__`, and
@@ -1201,9 +1203,11 @@ several unrelated builds (an app, an ad SDK, a support widget), each numbering
 its modules from its own table. Each input's build identity is the
 chunk-loading global it pushes into (`(self.webpackChunk_app =
 self.webpackChunk_app || []).push(…)`, `(self.webpackChunk_app ||=
-[]).push(…)`, Turbopack's `globalThis.TURBOPACK…`) or, for a runtime, the one
-it binds to a local (`var n = self.webpackChunk_app = self.webpackChunk_app ||
-[]`, or `||= []`). An input that names a global matches only
+[]).push(…)`, the `Array.isArray` form, Turbopack's `globalThis.TURBOPACK…`)
+or, for a runtime, the one it binds to a local (`var n = self.webpackChunk_app
+= self.webpackChunk_app || []`, `||= []`, or `const n =
+Array.isArray(self.webpackChunk_app) ? … : (self.webpackChunk_app = [])`). An
+input that names a global matches only
 inputs sharing a name; inputs that name none (CommonJS and ESM chunks and their
 runtime, server chunks, a self-contained bundle) match only each other. A
 reference is rewritten when exactly one candidate of its build carries the ID,

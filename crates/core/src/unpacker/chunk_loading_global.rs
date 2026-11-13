@@ -7,6 +7,7 @@
 //! unpack uses these names to keep a numeric `require(<id>)` from linking into
 //! another build's module that happens to carry the same id.
 
+use swc_core::common::EqIgnoreSpan;
 use swc_core::ecma::ast::{
     AssignExpr, AssignOp, AssignTarget, BinaryOp, Callee, Expr, ExprStmt, MemberExpr, MemberProp,
     Module, ModuleItem, SimpleAssignTarget, Stmt, VarDeclarator,
@@ -44,7 +45,9 @@ pub(crate) fn chunk_loading_globals(module: &Module) -> Vec<String> {
     names
 }
 
-/// `(G = G || []).push(...)` (webpack) or `(G || (G = [])).push(...)` (Turbopack).
+/// `(G = G || []).push(...)`, `(G ||= []).push(...)`,
+/// `(Array.isArray(G) ? G : (G = [])).push(...)` (webpack) or
+/// `(G || (G = [])).push(...)` (Turbopack).
 fn pushed_global(expr: &Expr) -> Option<String> {
     let Expr::Call(call) = strip_parens(expr) else {
         return None;
@@ -58,7 +61,9 @@ fn pushed_global(expr: &Expr) -> Option<String> {
     if !matches!(&member.prop, MemberProp::Ident(prop) if prop.sym == "push") {
         return None;
     }
-    initialized_global(&member.obj).or_else(|| guarded_global(&member.obj))
+    initialized_global(&member.obj)
+        .or_else(|| guarded_global(&member.obj))
+        .or_else(|| array_checked_global_name(&member.obj))
 }
 
 #[derive(Default)]
@@ -68,7 +73,11 @@ struct RuntimeBindingCollector {
 
 impl Visit for RuntimeBindingCollector {
     fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
-        if let Some(name) = declarator.init.as_deref().and_then(initialized_global) {
+        if let Some(name) = declarator
+            .init
+            .as_deref()
+            .and_then(|init| initialized_global(init).or_else(|| array_checked_global_name(init)))
+        {
             self.names.push(name);
         }
         declarator.visit_children_with(self);
@@ -78,7 +87,9 @@ impl Visit for RuntimeBindingCollector {
     // `r = self.webpackChunk_app = self.webpackChunk_app || []`.
     fn visit_assign_expr(&mut self, assign: &AssignExpr) {
         if assign.op == AssignOp::Assign {
-            if let Some(name) = initialized_global(&assign.right) {
+            if let Some(name) = initialized_global(&assign.right)
+                .or_else(|| array_checked_global_name(&assign.right))
+            {
                 self.names.push(name);
             }
         }
@@ -137,6 +148,59 @@ fn guarded_global(expr: &Expr) -> Option<String> {
         return None;
     };
     same_global(target, read)
+}
+
+/// `Array.isArray(G) ? G : (G = [])`, which webpack writes so that a page
+/// element whose `id` is the global's name (reachable as `window[name]`) is
+/// replaced instead of reused. Returns the global when all three operands
+/// are the same member, so a chunk push and a runtime binding can both read
+/// it.
+pub(crate) fn array_checked_global(expr: &Expr) -> Option<&MemberExpr> {
+    let Expr::Cond(cond) = strip_parens(expr) else {
+        return None;
+    };
+    let Expr::Call(check) = strip_parens(&cond.test) else {
+        return None;
+    };
+    let Callee::Expr(callee) = &check.callee else {
+        return None;
+    };
+    let Expr::Member(is_array) = strip_parens(callee) else {
+        return None;
+    };
+    let array_object =
+        matches!(strip_parens(&is_array.obj), Expr::Ident(array) if array.sym == "Array");
+    if !array_object || !matches!(&is_array.prop, MemberProp::Ident(prop) if prop.sym == "isArray")
+    {
+        return None;
+    }
+    let [checked] = check.args.as_slice() else {
+        return None;
+    };
+    if checked.spread.is_some() {
+        return None;
+    }
+    let Expr::Member(checked) = strip_parens(&checked.expr) else {
+        return None;
+    };
+    let Expr::Member(kept) = strip_parens(&cond.cons) else {
+        return None;
+    };
+    let Expr::Assign(reset) = strip_parens(&cond.alt) else {
+        return None;
+    };
+    if reset.op != AssignOp::Assign || !is_empty_array(&reset.right) {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Member(target)) = &reset.left else {
+        return None;
+    };
+    (checked.eq_ignore_span(kept) && checked.eq_ignore_span(target)).then_some(checked)
+}
+
+fn array_checked_global_name(expr: &Expr) -> Option<String> {
+    let global = array_checked_global(expr)?;
+    same_global(global, global)
 }
 
 /// The property name when both members read the same property of the same
@@ -226,6 +290,29 @@ mod tests {
         );
         assert!(globals("(self.x ||= [1]).push(2);").is_empty());
         assert!(globals("(window.a.b ||= []).push([[1], {}]);").is_empty());
+    }
+
+    #[test]
+    fn array_checked_pushes_name_their_global() {
+        assert_eq!(
+            globals(
+                r#"(Array.isArray(self["webpackChunk_app"]) ? self["webpackChunk_app"] : (self["webpackChunk_app"] = [])).push([[1], {}]);"#
+            ),
+            ["webpackChunk_app"]
+        );
+        assert_eq!(
+            globals(
+                r#"(() => { const n = Array.isArray(self["webpackChunk_app"]) ? self["webpackChunk_app"] : (self["webpackChunk_app"] = []); })();"#
+            ),
+            ["webpackChunk_app"]
+        );
+        assert!(
+            globals("(Array.isArray(self.a) ? self.b : (self.a = [])).push([[1], {}]);").is_empty()
+        );
+        assert!(
+            globals("(Array.isArray(self.a) ? self.a : (self.a = [1])).push([[1], {}]);")
+                .is_empty()
+        );
     }
 
     #[test]
