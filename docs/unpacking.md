@@ -33,10 +33,14 @@ attempted in order — first match wins:
    `__webpack_require__.s` (or the computed `__webpack_require__['s']` an
    obfuscator writes); webpack 1 records none (see [Webpack 4 code
    around the bootstrap](#webpack-4-code-around-the-bootstrap))
-3. **webpack5 chunk** — JSONP chunk push with a webpack module object,
-   `(self.X = self.X || []).push(…)` or the logical-assignment form
+3. **webpack5 chunk** — JSONP chunk push with a webpack module object
+   (`(self.X = self.X || []).push(…)`, or the logical-assignment form
    `(self.X ||= []).push(…)` that rspack writes when its target supports
-   logical assignment
+   logical assignment), or the ESM chunk form (`output.chunkFormat: "module"`)
+   that exports the chunk ids and modules (`export const __webpack_esm_ids__ =
+   [...]` and `export const __webpack_esm_modules__ = {...}`; older releases
+   name them `ids`/`modules` or `__webpack_ids__`/`__webpack_modules__`, and
+   Rspack exports `__rspack_esm_ids` beside `__webpack_modules__`)
 4. **Turbopack** — Next.js 15.3+ production chunks: the client
    `globalThis.TURBOPACK` push and the server `module.exports` payload. See
    [Turbopack](#turbopack) below
@@ -385,8 +389,8 @@ after it and stay in `entry.js`.
 
 ### Webpack 5 chunk prelude
 
-Top-level code beside an async chunk's push runs when the chunk script loads,
-outside every module: a raw banner or footer (as its own statement at the
+Top-level code beside an async chunk's push (or, in an ESM chunk, beside its
+chunk exports) runs when the chunk script loads, outside every module: a raw banner or footer (as its own statement at the
 report stage, merged into the push's sequence at the default stage), a
 loaded-flag write after the push, or the release and debug-id snippet
 `@sentry/webpack-plugin` injects before every chunk (producer
@@ -1019,6 +1023,8 @@ layout directly is a proposal:
     helpers before such a chunk, and its modules then call an unbound name
     (producer `webpack@5.111.1` + `esbuild@0.28.0` esbuildMinify keepNames,
     target node);
+  - a webpack 5 ESM chunk with other `import`/`export` declarations beside
+    its chunk exports, or one that also exports runtime modules, stays whole;
   - a SystemJS bundle with `output.banner` or `output.footer` set to code
     (producer `rollup@4.63.6` `format: "system"`, unminified) drops it;
   - a UMD library (producer `webpack@5.111.1` `output.library.type: "umd"`
@@ -1198,7 +1204,7 @@ self.webpackChunk_app || []).push(…)`, `(self.webpackChunk_app ||=
 []).push(…)`, Turbopack's `globalThis.TURBOPACK…`) or, for a runtime, the one
 it binds to a local (`var n = self.webpackChunk_app = self.webpackChunk_app ||
 []`, or `||= []`). An input that names a global matches only
-inputs sharing a name; inputs that name none (CommonJS chunks and their
+inputs sharing a name; inputs that name none (CommonJS and ESM chunks and their
 runtime, server chunks, a self-contained bundle) match only each other. A
 reference is rewritten when exactly one candidate of its build carries the ID,
 so the same ID in an unrelated build no longer blocks the rewrite, and two
@@ -1272,7 +1278,8 @@ scope-hoist split succeeds.
 Commit points: webpack 5 after the module table and webpack's require
 lifecycle are proven (an unwrapped `output.iife: false` bootstrap with
 top-level `import`/`export` refuses with `esm_declarations`); a webpack 5
-JSONP chunk push; webpack 4 once the bootstrap is called with a table holding
+JSONP chunk push; a webpack 5 ESM chunk once it exports both its ids and a
+modules container; webpack 4 once the bootstrap is called with a table holding
 a factory; Browserify/Cocos once the dialect matches; Turbopack once the
 registration containers parse; Metro once every definition of the selected
 prefix parses; SystemJS once every top-level register parses. Closure

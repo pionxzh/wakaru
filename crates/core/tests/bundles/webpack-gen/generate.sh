@@ -164,6 +164,16 @@ npx --yes -p webpack@5.109.0 -p webpack-cli@5.1.4 \
   -p minimizer-webpack-plugin@5.6.1 -p terser@5.49.0 \
   webpack --config webpack5-amd-return-min.config.cjs 2>/dev/null
 
+echo "  wp5-esm-chunk-min: ESM output with a lazy chunk in chunkFormat \"module\" (5.112.2)"
+npx --yes -p webpack@5.112.2 -p webpack-cli@6.0.1 webpack \
+  --config webpack5-esm-chunk-min.config.cjs 2>/dev/null
+
+echo "=== Rspack (2.3.2) ==="
+
+echo "  rspack-esm-chunk-min: ESM output with a lazy chunk in chunkFormat \"module\""
+npx --yes -p @rspack/core@2.3.2 -p @rspack/cli@2.3.2 rspack build \
+  --config rspack-esm-chunk-min.config.cjs 2>/dev/null
+
 echo "=== Vercel ncc (0.44.1) ==="
 # ncc's numeric module ids change with the directory it runs in: a checkout at
 # another path regenerates these two bundles with different ids only.

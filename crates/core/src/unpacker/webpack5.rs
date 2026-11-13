@@ -6,9 +6,10 @@ use swc_core::common::{
 };
 use swc_core::ecma::ast::{
     ArrayLit, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, CallExpr,
-    Callee, Expr, ExprStmt, FnExpr, Id, Ident, IdentName, KeyValueProp, Lit, MemberExpr,
-    MemberProp, Module, ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread, SeqExpr,
-    SimpleAssignTarget, Stmt, Str, UnaryExpr, UnaryOp, VarDecl, VarDeclarator,
+    Callee, Decl, ExportDecl, Expr, ExprStmt, FnExpr, Id, Ident, IdentName, KeyValueProp, Lit,
+    MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit, Pat, Prop, PropName,
+    PropOrSpread, SeqExpr, SimpleAssignTarget, Stmt, Str, UnaryExpr, UnaryOp, VarDecl,
+    VarDeclarator,
 };
 use swc_core::ecma::codegen::Config;
 use swc_core::ecma::transforms::base::resolver;
@@ -454,7 +455,131 @@ pub(crate) fn detect_chunk_ids_from_module(module: &Module) -> HashSet<usize> {
         }
         ids.extend(extract_commonjs_chunk_ids(expr));
     }
+    if let Some(chunk) = EsmChunkExports::find(module) {
+        ids.extend(numeric_ids_from_array(chunk.ids));
+    }
     ids
+}
+
+/// The export names of one ESM chunk naming. webpack 5 releases renamed them
+/// twice and Rspack has its own; a chunk uses one naming throughout, matching
+/// its runtime.
+struct EsmChunkNames {
+    id: &'static str,
+    ids: &'static str,
+    modules: &'static str,
+    runtime: &'static str,
+}
+
+const ESM_CHUNK_NAMINGS: [EsmChunkNames; 4] = [
+    EsmChunkNames {
+        id: "id",
+        ids: "ids",
+        modules: "modules",
+        runtime: "runtime",
+    },
+    EsmChunkNames {
+        id: "__webpack_id__",
+        ids: "__webpack_ids__",
+        modules: "__webpack_modules__",
+        runtime: "__webpack_runtime__",
+    },
+    EsmChunkNames {
+        id: "__webpack_esm_id__",
+        ids: "__webpack_esm_ids__",
+        modules: "__webpack_esm_modules__",
+        runtime: "__webpack_esm_runtime__",
+    },
+    // Rspack's default runtime mode keeps webpack's modules name.
+    EsmChunkNames {
+        id: "__rspack_esm_id",
+        ids: "__rspack_esm_ids",
+        modules: "__webpack_modules__",
+        runtime: "__rspack_esm_runtime",
+    },
+];
+
+/// A webpack 5 ESM chunk (`output.chunkFormat: "module"`): top-level
+/// `export const` declarations hand the chunk ids and modules container to
+/// the runtime that imports the file, instead of a JSONP push. The item
+/// exporting the modules takes the push's place for the chunk prelude.
+struct EsmChunkExports<'a> {
+    ids: &'a ArrayLit,
+    modules: Webpack5ModulesContainer<'a>,
+    /// Index of the top-level item that exports the modules.
+    modules_item: usize,
+    /// The chunk also exports runtime modules for the importing runtime.
+    has_runtime: bool,
+    /// Indices of the top-level items that only declare chunk exports.
+    items: HashSet<usize>,
+}
+
+impl<'a> EsmChunkExports<'a> {
+    /// Both an ids array and a valid modules container are required: an
+    /// ordinary module can export a `modules` object on its own.
+    fn find(module: &'a Module) -> Option<Self> {
+        ESM_CHUNK_NAMINGS
+            .iter()
+            .find_map(|names| Self::find_with_names(module, names))
+    }
+
+    fn find_with_names(module: &'a Module, names: &EsmChunkNames) -> Option<Self> {
+        let mut ids = None;
+        let mut modules = None;
+        let mut has_runtime = false;
+        let mut items = HashSet::default();
+        for (idx, item) in module.body.iter().enumerate() {
+            let ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+                decl: Decl::Var(var),
+                ..
+            })) = item
+            else {
+                continue;
+            };
+            let mut only_chunk_exports = true;
+            for decl in &var.decls {
+                let (Pat::Ident(name), Some(init)) = (&decl.name, decl.init.as_deref()) else {
+                    only_chunk_exports = false;
+                    continue;
+                };
+                let sym = name.id.sym.as_ref();
+                if sym == names.ids {
+                    match strip_parens(init) {
+                        Expr::Array(array) => ids = Some(array),
+                        _ => return None,
+                    }
+                } else if sym == names.modules {
+                    modules = Some((Webpack5ModulesContainer::from_expr(init)?, idx));
+                } else if sym == names.runtime {
+                    has_runtime = true;
+                } else if sym != names.id {
+                    only_chunk_exports = false;
+                }
+            }
+            if only_chunk_exports {
+                items.insert(idx);
+            }
+        }
+        let (modules, modules_item) = modules?;
+        Some(Self {
+            ids: ids?,
+            modules,
+            modules_item,
+            has_runtime,
+            items,
+        })
+    }
+}
+
+/// The first chunk id when it is a non-negative integer literal.
+fn first_numeric_chunk_id(chunk_ids: &ArrayLit) -> Option<usize> {
+    let elem = chunk_ids.elems.first()?.as_ref()?;
+    match strip_parens(&elem.expr) {
+        Expr::Lit(Lit::Num(num)) if num.value >= 0.0 && num.value.fract() == 0.0 => {
+            Some(num.value as usize)
+        }
+        _ => None,
+    }
 }
 
 pub(super) fn detect_chunk_from_module_prepared(
@@ -480,12 +605,50 @@ pub(super) fn detect_chunk_from_module_prepared(
     // of functions under that name.
     let mut commitment = None;
 
+    // An ESM chunk's exports prove the format the way a push does. Runtime
+    // modules it exports would have to run in the importing runtime, and any
+    // other `import`/`export` is public surface the split cannot keep.
+    let esm_chunk = EsmChunkExports::find(module);
+    if let Some(chunk) = &esm_chunk {
+        commitment = Some(refusal::commit(BundleFormat::Webpack5));
+        if chunk.has_runtime {
+            return because(None, SplitRefusalReason::Other);
+        }
+    }
+
     // Prelude items before the first push: only their declarations can be
     // bound for the chunk's modules (see `PreludeNames::plan`).
     let mut prelude_before_push = 0;
-    for item in &module.body {
+    for (idx, item) in module.body.iter().enumerate() {
         if push_items.is_empty() {
             prelude_before_push = prelude_items.len();
+        }
+        if let Some(chunk) = &esm_chunk {
+            if !chunk.items.contains(&idx) {
+                // Includes a declaration exporting another name beside a
+                // chunk export.
+                if matches!(item, ModuleItem::ModuleDecl(_)) {
+                    return because(None, SplitRefusalReason::EsmDeclarations);
+                }
+                if chunk_prelude::is_prelude_code(item) {
+                    prelude_items.push(item);
+                }
+            } else if idx == chunk.modules_item {
+                first_chunk_id = first_numeric_chunk_id(chunk.ids);
+                let extracted = because(
+                    extract_modules_from_container(&chunk.modules, cm.clone()),
+                    SplitRefusalReason::FactoryRecovery,
+                )?;
+                push_items.push(item);
+                factory_spans.extend(extracted.factory_spans);
+                all_modules.extend(extracted.modules);
+                all_prepared.extend(extracted.prepared);
+                all_failures.extend(extracted.failures);
+                all_numeric_module_ids.extend(extracted.numeric_module_ids);
+                all_absent_string_ids.extend(extracted.absent_string_ids);
+            }
+            // Other chunk exports (the ids) belong to the loading protocol.
+            continue;
         }
         let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
             if chunk_prelude::is_prelude_code(item) {
@@ -496,17 +659,7 @@ pub(super) fn detect_chunk_from_module_prepared(
         if let Some((chunk_ids, modules_container)) = extract_chunk_push_parts(expr) {
             commitment.get_or_insert_with(|| refusal::commit(BundleFormat::Webpack5));
             if first_chunk_id.is_none() {
-                first_chunk_id = chunk_ids.elems.first().and_then(|elem| {
-                    let elem = elem.as_ref()?;
-                    match strip_parens(&elem.expr) {
-                        Expr::Lit(Lit::Num(num))
-                            if num.value >= 0.0 && num.value.fract() == 0.0 =>
-                        {
-                            Some(num.value as usize)
-                        }
-                        _ => None,
-                    }
-                });
+                first_chunk_id = first_numeric_chunk_id(chunk_ids);
             }
             let extracted = because(
                 extract_modules_from_container(&modules_container, cm.clone()),

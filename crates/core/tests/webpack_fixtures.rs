@@ -683,6 +683,24 @@ fn wp5_ncc_minified_inline_entry() {
     );
 }
 
+#[test]
+fn esm_chunk_min_fixtures() {
+    // `output.chunkFormat: "module"` exports the chunk ids and modules
+    // instead of pushing them to a JSONP array.
+    for path in [
+        "wp5-esm-chunk-min/529.bundle.js",
+        "rspack-esm-chunk-min/466.bundle.js",
+    ] {
+        let pairs = unpack_fixture(path);
+        assert_eq!(filenames(&pairs), vec!["module-529.js"], "{path}");
+        assert!(
+            pairs[0].1.contains("greet"),
+            "{path}: the chunk module should keep its export:\n{}",
+            pairs[0].1
+        );
+    }
+}
+
 // ========================================================================
 // Webpack 5 — require.s entry (hand-crafted)
 // ========================================================================

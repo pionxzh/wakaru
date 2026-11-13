@@ -5071,3 +5071,61 @@ fn a_consumer_with_a_direct_eval_reads_a_whole_value_through_its_default_import(
         assert!(consumer.contains("{ x } = _x;"), "{consumer}");
     }
 }
+
+#[test]
+fn webpack5_multi_file_links_an_esm_chunk_to_its_entry() {
+    let entry = r#"
+(() => {
+  var __webpack_modules__ = ({
+    10: function(module, exports, __webpack_require__) {
+      module.exports = "entry";
+    }
+  });
+  var __webpack_module_cache__ = {};
+  function __webpack_require__(id) {
+    var cached = __webpack_module_cache__[id];
+    if (cached !== undefined) return cached.exports;
+    var module = __webpack_module_cache__[id] = { exports: {} };
+    __webpack_modules__[id](module, module.exports, __webpack_require__);
+    return module.exports;
+  }
+  __webpack_require__.e = function(id) { return Promise.resolve(id); };
+  __webpack_require__.t = function(value) { return value; };
+  (() => {
+    __webpack_require__.e(529).then(__webpack_require__.t.bind(__webpack_require__, 529, 19));
+  })();
+})();
+"#;
+    let chunk = "export const __webpack_esm_ids__=[529];export const __webpack_esm_modules__={529(e,t){t.answer=42}};";
+
+    let output = unpack_files(
+        vec![
+            UnpackInput {
+                filename: "entry.js".to_string(),
+                source: entry.to_string(),
+            },
+            UnpackInput {
+                filename: "529.bundle.js".to_string(),
+                source: chunk.to_string(),
+            },
+        ],
+        DecompileOptions::default(),
+    )
+    .expect("entry and ESM chunk should unpack together");
+
+    assert!(
+        !output.has_errors(),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+    let entry = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "entry.js")
+        .map(|(_, code)| code)
+        .expect("entry.js should exist");
+    assert!(
+        entry.contains("./module-529.js"),
+        "entry should reference the ESM chunk's module:\n{entry}"
+    );
+}

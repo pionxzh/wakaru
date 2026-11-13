@@ -1165,3 +1165,111 @@ fn push_inside_a_function_of_a_sequence_is_not_a_chunk() {
     );
     assert!(pairs[0].1.contains("webpackChunk_app"));
 }
+
+fn esm_chunk_source(declare: &str, ids: &str, modules: &str) -> String {
+    format!(
+        "export {declare} {ids}=[11111];export {declare} {modules}={{11111(e,t,r){{r.r(t),r.d(t,{{default:()=>n}});function n(){{return 1}}}},22222(e,t){{t.value=2}}}};"
+    )
+}
+
+#[test]
+fn esm_chunk_unpacks_under_each_export_naming() {
+    // webpack 5 `output.chunkFormat: "module"` renamed these exports twice,
+    // and newer releases may declare them with `var`. Rspack has its own ids
+    // name.
+    for (declare, ids, modules) in [
+        ("const", "ids", "modules"),
+        ("const", "__webpack_ids__", "__webpack_modules__"),
+        ("const", "__webpack_esm_ids__", "__webpack_esm_modules__"),
+        ("var", "__webpack_esm_ids__", "__webpack_esm_modules__"),
+        ("const", "__rspack_esm_ids", "__webpack_modules__"),
+    ] {
+        let source = esm_chunk_source(declare, ids, modules);
+        let pairs = expect_unpack(&source, "chunk.js");
+        let mut filenames: Vec<&str> = pairs.iter().map(|(name, _)| name.as_str()).collect();
+        filenames.sort();
+        assert_eq!(
+            filenames,
+            vec!["module-11111.js", "module-22222.js"],
+            "naming `{ids}`/`{modules}` should split"
+        );
+        let module = file(&pairs, "module-11111.js");
+        assert!(!module.contains("r.r("), "got:\n{module}");
+        assert!(module.contains("as default"), "got:\n{module}");
+    }
+}
+
+#[test]
+fn esm_chunk_with_separate_id_export_unpacks() {
+    let source = "export const id = 11111;\nexport const ids = [11111];\nexport const modules = {\n  11111: (module, exports) => { exports.value = 1; }\n};\n";
+    let pairs = expect_unpack(source, "chunk.js");
+    let filenames: Vec<&str> = pairs.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(filenames, vec!["module-11111.js"]);
+}
+
+fn assert_stays_one_file(source: &str) {
+    let pairs = expect_unpack(source, "chunk.js");
+    assert_eq!(
+        pairs.len(),
+        1,
+        "the input must stay one file, got {:?}",
+        pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+    assert!(!pairs[0].0.starts_with("module-"), "got {:?}", pairs[0].0);
+}
+
+#[test]
+fn esm_chunk_exporting_runtime_modules_stays_unsplit() {
+    let source = format!(
+        "{}export const __webpack_esm_runtime__=e=>{{e.x=1}};",
+        esm_chunk_source("const", "__webpack_esm_ids__", "__webpack_esm_modules__")
+    );
+    assert_stays_one_file(&source);
+}
+
+#[test]
+fn esm_chunk_beside_other_module_declarations_stays_unsplit() {
+    let chunk = esm_chunk_source("const", "__webpack_esm_ids__", "__webpack_esm_modules__");
+    assert_stays_one_file(&format!("import {{ run }} from \"./runtime.js\";\n{chunk}"));
+    assert_stays_one_file(&format!("{chunk}\nexport const label = \"chunk\";"));
+    // Another name declared beside the modules export.
+    assert_stays_one_file(
+        "export const __webpack_esm_ids__=[11111];export const __webpack_esm_modules__={11111(e,t){t.value=1}},label=\"chunk\";",
+    );
+}
+
+#[test]
+fn esm_chunk_banner_goes_to_the_prelude() {
+    // shape: hypothetical, a banner statement before the chunk exports.
+    let source = format!(
+        "performance.mark(\"chunk\");\n{}",
+        esm_chunk_source("const", "__rspack_esm_ids", "__webpack_modules__")
+    );
+
+    let pairs = expect_unpack(&source, "chunk.js");
+    let prelude = file(&pairs, "prelude-11111.js");
+    assert!(
+        prelude.contains("performance.mark(\"chunk\")") && !prelude.contains("export"),
+        "only the banner belongs in the prelude, got:\n{prelude}"
+    );
+    for name in ["module-11111.js", "module-22222.js"] {
+        let module = file(&pairs, name);
+        assert!(
+            module.contains("./prelude-11111.js"),
+            "{name} must load the prelude, got:\n{module}"
+        );
+    }
+    assert!(
+        validate_output_modules(&pairs).is_empty(),
+        "output must validate: {:?}",
+        validate_output_modules(&pairs)
+    );
+}
+
+#[test]
+fn module_exporting_a_modules_table_without_ids_is_not_a_chunk() {
+    // An ordinary module can export a table of functions named `modules`.
+    let source =
+        "export const modules = {\n  11111: (module, exports) => { exports.value = 1; }\n};\n";
+    assert_stays_one_file(source);
+}
