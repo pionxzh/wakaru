@@ -33,7 +33,10 @@ attempted in order — first match wins:
    `__webpack_require__.s` (or the computed `__webpack_require__['s']` an
    obfuscator writes); webpack 1 records none (see [Webpack 4 code
    around the bootstrap](#webpack-4-code-around-the-bootstrap))
-3. **webpack5 chunk** — JSONP chunk push with a webpack module object
+3. **webpack5 chunk** — JSONP chunk push with a webpack module object,
+   `(self.X = self.X || []).push(…)` or the logical-assignment form
+   `(self.X ||= []).push(…)` that rspack writes when its target supports
+   logical assignment
 4. **Turbopack** — Next.js 15.3+ production chunks: the client
    `globalThis.TURBOPACK` push and the server `module.exports` payload. See
    [Turbopack](#turbopack) below
@@ -1191,9 +1194,10 @@ A numeric reference only links within its own build. One page often loads
 several unrelated builds (an app, an ad SDK, a support widget), each numbering
 its modules from its own table. Each input's build identity is the
 chunk-loading global it pushes into (`(self.webpackChunk_app =
-self.webpackChunk_app || []).push(…)`, Turbopack's `globalThis.TURBOPACK…`) or,
-for a runtime, the one it binds to a local (`var n = self.webpackChunk_app =
-self.webpackChunk_app || []`). An input that names a global matches only
+self.webpackChunk_app || []).push(…)`, `(self.webpackChunk_app ||=
+[]).push(…)`, Turbopack's `globalThis.TURBOPACK…`) or, for a runtime, the one
+it binds to a local (`var n = self.webpackChunk_app = self.webpackChunk_app ||
+[]`, or `||= []`). An input that names a global matches only
 inputs sharing a name; inputs that name none (CommonJS chunks and their
 runtime, server chunks, a self-contained bundle) match only each other. A
 reference is rewritten when exactly one candidate of its build carries the ID,

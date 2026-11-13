@@ -86,17 +86,24 @@ impl Visit for RuntimeBindingCollector {
     }
 }
 
-/// `G = G || []`.
+/// `G = G || []` or `G ||= []`.
 fn initialized_global(expr: &Expr) -> Option<String> {
     let Expr::Assign(assign) = strip_parens(expr) else {
         return None;
     };
-    if assign.op != AssignOp::Assign {
-        return None;
-    }
     let AssignTarget::Simple(SimpleAssignTarget::Member(target)) = &assign.left else {
         return None;
     };
+    if assign.op == AssignOp::OrAssign {
+        let global_object = matches!(strip_parens(&target.obj), Expr::Ident(_) | Expr::This(_));
+        if !global_object || !is_empty_array(&assign.right) {
+            return None;
+        }
+        return static_prop_name(&target.prop);
+    }
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
     let Expr::Bin(fallback) = strip_parens(&assign.right) else {
         return None;
     };
@@ -201,6 +208,24 @@ mod tests {
             ),
             ["webpackChunk_a"]
         );
+    }
+
+    #[test]
+    fn logical_assignment_pushes_name_their_global() {
+        assert_eq!(
+            globals("(globalThis.rspackChunkapp ||= []).push([[1], {}]);"),
+            ["rspackChunkapp"]
+        );
+        assert_eq!(
+            globals(r#"(self["webpackChunk_app"] ||= []).push([[1], {}]);"#),
+            ["webpackChunk_app"]
+        );
+        assert_eq!(
+            globals("(() => { var n = self.webpackChunk_app ||= []; })();"),
+            ["webpackChunk_app"]
+        );
+        assert!(globals("(self.x ||= [1]).push(2);").is_empty());
+        assert!(globals("(window.a.b ||= []).push([[1], {}]);").is_empty());
     }
 
     #[test]

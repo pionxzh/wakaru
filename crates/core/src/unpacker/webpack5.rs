@@ -1567,8 +1567,9 @@ fn is_legacy_webpack_jsonp_push(expr: &Expr) -> bool {
     }
 }
 
-/// Match the pattern: `(self.X = self.X || []).push([[ids], {modules}])`
-/// or `(window["X"] = window["X"] || []).push([[ids], {modules}])`, returning
+/// Match the pattern: `(self.X = self.X || []).push([[ids], {modules}])`,
+/// `(window["X"] = window["X"] || []).push([[ids], {modules}])`, or the
+/// logical-assignment form `(self.X ||= []).push(...)`, returning
 /// the chunk ids and the modules payload. The payload may also be a sparse
 /// array — see [`Webpack5ModulesContainer`].
 fn extract_chunk_push_parts(expr: &Expr) -> Option<(&ArrayLit, Webpack5ModulesContainer<'_>)> {
@@ -1589,28 +1590,28 @@ fn extract_chunk_push_parts(expr: &Expr) -> Option<(&ArrayLit, Webpack5ModulesCo
         return None;
     }
 
-    // obj is (self.X = self.X || []) — a parenthesized assignment
-    let obj = strip_parens(obj);
-    let Expr::Assign(AssignExpr {
-        op: AssignOp::Assign,
-        right,
-        ..
-    }) = obj
-    else {
+    // obj is (self.X = self.X || []) or (self.X ||= []) — a parenthesized
+    // assignment
+    let Expr::Assign(AssignExpr { op, right, .. }) = strip_parens(obj) else {
         return None;
     };
-
-    // right side: self.X || []
-    let Expr::Bin(BinExpr {
-        op: BinaryOp::LogicalOr,
-        right: or_right,
-        ..
-    }) = &**right
-    else {
-        return None;
+    let empty_fallback = match op {
+        // right side: self.X || []
+        AssignOp::Assign => match &**right {
+            Expr::Bin(BinExpr {
+                op: BinaryOp::LogicalOr,
+                right: or_right,
+                ..
+            }) => or_right,
+            _ => return None,
+        },
+        // rspack writes `(self.X ||= [])` when its target supports logical
+        // assignment: right side is the `[]`
+        AssignOp::OrAssign => right,
+        _ => return None,
     };
-    // Verify right side of || is an empty array
-    let Expr::Array(ArrayLit { elems, .. }) = &**or_right else {
+    // Verify the fallback is an empty array
+    let Expr::Array(ArrayLit { elems, .. }) = &**empty_fallback else {
         return None;
     };
     if !elems.is_empty() {

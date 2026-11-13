@@ -562,6 +562,59 @@ fn webpack5_chunk_unpacks_arrow_and_method_factories() {
 }
 
 #[test]
+fn webpack5_chunk_with_logical_assignment_push() {
+    // rspack writes the chunk-loading global as `(G ||= []).push(...)` when
+    // its target supports logical assignment.
+    let source = r#"
+(globalThis.rspackChunkapp ||= []).push([
+  [10],
+  {
+    100(module, exports, require) {
+      "use strict";
+      var dep = require(200);
+      exports.default = dep.value;
+    },
+    200(module, exports, require) {
+      "use strict";
+      exports.value = 42;
+    }
+  }
+]);
+"#;
+
+    let pairs = expect_unpack(source, "chunk.js");
+
+    assert_eq!(pairs.len(), 2, "{pairs:#?}");
+    let mod_100 = file(&pairs, "module-100.js");
+    assert!(
+        mod_100.contains("./module-200.js"),
+        "numeric require should be rewritten:\n{mod_100}"
+    );
+    file(&pairs, "module-200.js");
+}
+
+#[test]
+fn webpack5_chunk_logical_assignment_needs_an_empty_array() {
+    let source = r#"
+(globalThis.rspackChunkapp ||= [1]).push([
+  [10],
+  {
+    100(module, exports) {
+      exports.value = 42;
+    }
+  }
+]);
+"#;
+
+    let pairs = expect_unpack(source, "chunk.js");
+
+    assert!(
+        pairs.iter().all(|(name, _)| name != "module-100.js"),
+        "a non-empty fallback is not a chunk-loading global:\n{pairs:#?}"
+    );
+}
+
+#[test]
 fn webpack5_chunk_rewrites_numeric_require_in_method_factory() {
     let source = r#"
 (self.webpackChunk_N_E = self.webpackChunk_N_E || []).push([
