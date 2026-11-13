@@ -4,6 +4,7 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitWith};
 
 use crate::output_validate::{filename_source_goal, SourceGoal};
+use crate::utils::paren::strip_parens;
 
 /// Remove an otherwise empty top-level `"use strict"` body, or remove top-level
 /// `"use strict"` expressions when the final output has a trusted Module goal.
@@ -26,12 +27,15 @@ pub(super) fn strip_redundant_module_use_strict(
     module.body.retain(|item| !is_use_strict_item(item));
 }
 
+/// Also matches `("use strict");`: the rule pipeline parenthesizes a
+/// `"use strict"` that was not a directive in the input once it reaches the
+/// prologue, and it is just as redundant in a module.
 fn is_use_strict_item(item: &ModuleItem) -> bool {
     matches!(
         item,
         ModuleItem::Stmt(Stmt::Expr(statement))
             if matches!(
-                statement.expr.as_ref(),
+                strip_parens(&statement.expr),
                 Expr::Lit(Lit::Str(value))
                     if value.value.as_str() == Some("use strict")
             )
