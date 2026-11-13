@@ -92,6 +92,23 @@ fn parenthesized_string_statement_keeps_its_parens() {
     }
 }
 
+/// A string that was an operand of a sequence is not a directive either.
+/// Splitting the sequence must not turn it into one.
+#[test]
+fn string_statement_does_not_become_directive_when_sequence_is_split() {
+    let input = r#"function h() { "use strict", g(); return this === undefined; }
+"#;
+    let expected = r#"function h() {
+    ("use strict");
+    g();
+    return this === undefined;
+}
+"#;
+
+    assert_eq!(render_with_level(input, RewriteLevel::Minimal), expected);
+    assert_eq!(render(input), expected);
+}
+
 /// Real directives stay bare, including one after an earlier directive.
 #[test]
 fn directive_prologue_is_preserved() {
