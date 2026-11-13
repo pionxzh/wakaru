@@ -880,6 +880,51 @@ exports.modules = {
 }
 
 #[test]
+fn webpack5_multi_file_unpacks_logical_assignment_chunks() {
+    let provider = r#"(globalThis.rspackChunkapp||=[]).push([[1],{100(e,t){t.value=42}}]);"#;
+    let consumer = r#"(globalThis.rspackChunkapp||=[]).push([[2],{200(e,t,r){var n=r(100);t.result=n.value}}]);"#;
+
+    let output = unpack_files(
+        vec![
+            UnpackInput {
+                filename: "provider.js".to_string(),
+                source: provider.to_string(),
+            },
+            UnpackInput {
+                filename: "consumer.js".to_string(),
+                source: consumer.to_string(),
+            },
+        ],
+        DecompileOptions::default(),
+    )
+    .expect("logical-assignment chunks should unpack together");
+
+    assert_valid_module_graph(&output.modules);
+    let module_200 = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "module-200.js")
+        .map(|(_, code)| code)
+        .expect("module-200.js should exist");
+    assert!(
+        module_200.contains("./module-100.js"),
+        "numeric require should link across chunks:\n{module_200}"
+    );
+    assert!(
+        output
+            .modules
+            .iter()
+            .any(|(name, _)| name == "module-100.js"),
+        "provider chunk module should be emitted: {:?}",
+        output
+            .modules
+            .iter()
+            .map(|(name, _)| name)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn webpack5_multi_file_raw_rewrites_unambiguous_bare_require_across_inputs() {
     let entry = r#"
 (() => {
