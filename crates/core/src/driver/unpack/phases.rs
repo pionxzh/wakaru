@@ -45,9 +45,9 @@ use super::{recover_late_esm_from_factory_iifes, LateEsmRecoveryOptions};
 use crate::facts::{
     collect_commonjs_default_object, collect_commonjs_value_is_default,
     collect_default_object_tail, collect_input_is_es_module, collect_marks_es_module,
-    collect_module_facts, collect_module_facts_with_helpers, collect_replaces_module_exports,
-    collect_require_returns_exports_object, is_normalized_commonjs_default, HelperFacts,
-    ModuleFactsMap,
+    collect_module_facts, collect_module_facts_with_helpers, collect_never_names_es_module,
+    collect_replaces_module_exports, collect_require_returns_exports_object,
+    is_normalized_commonjs_default, HelperFacts, ModuleFactsMap,
 };
 use crate::interface_plan::{
     exports_from_requires, exports_only_whole_value, passthrough_source, required_whole_value,
@@ -56,7 +56,9 @@ use crate::interface_plan::{
 use crate::kept_require::run_kept_require_default_reads;
 use crate::namespace_decomposition::run_namespace_decomposition_with_tags;
 use crate::provider_helpers::ProviderHelpers;
-use crate::provider_namespace_repair::run_provider_namespace_repair;
+use crate::provider_namespace_repair::{
+    run_provider_namespace_repair, run_whole_value_wildcard_repair,
+};
 use crate::require_edges::{
     declarator_require_calls, tag_declarator_imports, ImportTags, RequireEdges,
 };
@@ -248,6 +250,7 @@ struct RawCommonJsFacts {
     replaces_module_exports: bool,
     es_source_evidence: Vec<&'static str>,
     marks_es_module: bool,
+    never_names_es_module: bool,
 }
 
 impl RawCommonJsFacts {
@@ -259,6 +262,7 @@ impl RawCommonJsFacts {
         facts.replaces_module_exports = self.replaces_module_exports;
         facts.es_source_evidence = self.es_source_evidence;
         facts.marks_es_module = self.marks_es_module;
+        facts.never_names_es_module = self.never_names_es_module;
     }
 }
 
@@ -898,6 +902,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 replaces_module_exports,
                 es_source_evidence,
                 marks_es_module,
+                never_names_es_module: collect_never_names_es_module(&module),
             };
             let require_edges = {
                 let span = tracing::info_span!("phase1: rules");
@@ -1312,6 +1317,11 @@ pub(super) fn unpack_multi_module_with_plan(
                 unresolved_mark,
                 true,
                 &import_tags,
+            );
+            run_whole_value_wildcard_repair(
+                &mut module,
+                facts_ref,
+                Some(&unpacked.module.filename),
             );
             run_cross_module_lowered_dynamic_imports(
                 &mut module,

@@ -31,16 +31,23 @@
 //! cannot link against a provider without a default export. Mutation,
 //! computed/meta access, `__esModule` observation, and (without facts) binding
 //! escape leave the original import unchanged.
+//!
+//! The opposite repair lives here too ([`run_whole_value_wildcard_repair`]).
+//! The wildcard interop rule makes a namespace import before the provider is
+//! known. When the provider turns out to export only the default `v` of its
+//! `module.exports = v`, that namespace holds only `default`, while the
+//! consumer read `v`'s members on it. A default import reads them again.
 
 use crate::collections::HashSet;
 
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignOp, AssignTarget, CallExpr, Callee, Expr, FnDecl, Ident, ImportSpecifier,
-    ImportStarAsSpecifier, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, Pat,
-    SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp, UpdateExpr, VarDeclarator,
+    AssignExpr, AssignOp, AssignTarget, CallExpr, Callee, Expr, FnDecl, Ident,
+    ImportDefaultSpecifier, ImportSpecifier, ImportStarAsSpecifier, MemberExpr, MemberProp, Module,
+    ModuleDecl, ModuleItem, OptChainBase, Pat, SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp,
+    UpdateExpr, VarDeclarator,
 };
-use swc_core::ecma::visit::{Visit, VisitWith};
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::analysis::{binding_id, ident_matches_binding, BindingId};
 use crate::facts::ModuleFactsMap;
@@ -127,6 +134,208 @@ pub(crate) fn run_relative_namespace_repair(
         import_tags,
         |_, binding| bindings.contains(binding),
     );
+}
+
+/// Turn the namespace imports the wildcard interop rule made of a provider
+/// whose one export is the default `v` of its `module.exports = v` into
+/// default imports.
+///
+/// `_interopRequireWildcard(require("./p"))` of such a provider returned a
+/// copy of `v`'s own properties with `default` set to `v`. The rule made it
+/// `import * as ns from "./p"` before the provider was known, and the
+/// provider became `export default v`, so its namespace holds only
+/// `default`. The default import holds `v`: `ns.name` keeps reading `name`
+/// of `v`, and `ns.default` becomes the binding itself.
+///
+/// The provider must never name `__esModule`: a value that carries the
+/// marker was returned as is, and its `.default` is its own member. Only a
+/// consumer that required the source through top-level wildcard interops
+/// alone, and reads the binding only through static members other
+/// than `__esModule`, is rewritten. Writes, a computed or optional member,
+/// and any other use keep the namespace import: they observe the copy
+/// itself, whose keys and identity differ from `v`.
+pub(crate) fn run_whole_value_wildcard_repair(
+    module: &mut Module,
+    module_facts: &ModuleFactsMap,
+    current_filename: Option<&str>,
+) {
+    let Some(current_filename) = current_filename else {
+        return;
+    };
+    let Some(consumer) = module_facts
+        .get(current_filename)
+        .map(|facts| &facts.require_edges)
+    else {
+        return;
+    };
+    if crate::rules::eval_utils::has_dynamic_scope_construct(module) {
+        return;
+    }
+    let mut candidates = HashSet::default();
+    for item in &module.body {
+        let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+            continue;
+        };
+        let [ImportSpecifier::Namespace(namespace)] = import.specifiers.as_slice() else {
+            continue;
+        };
+        if import.type_only {
+            continue;
+        }
+        let Some(source) = import.src.value.as_str() else {
+            continue;
+        };
+        if !consumer.uses_only_wildcard_interop(source) {
+            continue;
+        }
+        let Some(provider) = module_facts.get_from(Some(current_filename), source) else {
+            continue;
+        };
+        if ProviderInterface::of(provider).value != (RequiredValue::Default { marked: false })
+            || !provider.never_names_es_module
+        {
+            continue;
+        }
+        let binding = binding_id(&namespace.local);
+        let mut usage = MemberReadsOnly {
+            binding: &binding,
+            compatible: true,
+        };
+        module.visit_with(&mut usage);
+        if usage.compatible {
+            candidates.insert(binding);
+        }
+    }
+    if candidates.is_empty() {
+        return;
+    }
+
+    module.visit_mut_with(&mut DefaultReadToBinding {
+        candidates: &candidates,
+    });
+    for item in &mut module.body {
+        let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+            continue;
+        };
+        let [ImportSpecifier::Namespace(namespace)] = import.specifiers.as_slice() else {
+            continue;
+        };
+        if !candidates.contains(&binding_id(&namespace.local)) {
+            continue;
+        }
+        let local = namespace.local.clone();
+        import.specifiers = vec![ImportSpecifier::Default(ImportDefaultSpecifier {
+            span: DUMMY_SP,
+            local,
+        })];
+    }
+}
+
+/// Whether a binding is used only as the object of static member reads.
+struct MemberReadsOnly<'a> {
+    binding: &'a BindingId,
+    compatible: bool,
+}
+
+impl MemberReadsOnly<'_> {
+    fn is_binding(&self, expr: &Expr) -> bool {
+        matches!(expr, Expr::Ident(ident) if ident_matches_binding(ident, self.binding))
+    }
+
+    fn is_binding_member(&self, member: &MemberExpr) -> bool {
+        self.is_binding(&member.obj)
+    }
+}
+
+impl Visit for MemberReadsOnly<'_> {
+    fn visit_import_decl(&mut self, _: &swc_core::ecma::ast::ImportDecl) {
+        // The declaration is not a runtime use.
+    }
+
+    fn visit_member_expr(&mut self, member: &MemberExpr) {
+        if self.is_binding_member(member) {
+            if !matches!(&member.prop, MemberProp::Ident(property) if property.sym != "__esModule")
+            {
+                self.compatible = false;
+            }
+            return;
+        }
+        member.visit_children_with(self);
+    }
+
+    fn visit_opt_chain_base(&mut self, base: &OptChainBase) {
+        if matches!(base, OptChainBase::Member(member) if self.is_binding_member(member)) {
+            self.compatible = false;
+            return;
+        }
+        base.visit_children_with(self);
+    }
+
+    fn visit_assign_target(&mut self, target: &AssignTarget) {
+        let written = match target {
+            AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) => {
+                ident_matches_binding(&binding.id, self.binding)
+            }
+            AssignTarget::Simple(SimpleAssignTarget::Member(member)) => {
+                self.is_binding_member(member)
+            }
+            _ => false,
+        };
+        if written {
+            self.compatible = false;
+            return;
+        }
+        target.visit_children_with(self);
+    }
+
+    fn visit_update_expr(&mut self, update: &UpdateExpr) {
+        let written = match update.arg.as_ref() {
+            Expr::Member(member) => self.is_binding_member(member),
+            expr => self.is_binding(expr),
+        };
+        if written {
+            self.compatible = false;
+            return;
+        }
+        update.visit_children_with(self);
+    }
+
+    fn visit_unary_expr(&mut self, unary: &UnaryExpr) {
+        if unary.op == UnaryOp::Delete
+            && matches!(unary.arg.as_ref(), Expr::Member(member) if self.is_binding_member(member))
+        {
+            self.compatible = false;
+            return;
+        }
+        unary.visit_children_with(self);
+    }
+
+    fn visit_ident(&mut self, ident: &Ident) {
+        if ident_matches_binding(ident, self.binding) {
+            self.compatible = false;
+        }
+    }
+}
+
+/// Rewrites `ns.default` of each candidate binding to the binding.
+struct DefaultReadToBinding<'a> {
+    candidates: &'a HashSet<BindingId>,
+}
+
+impl VisitMut for DefaultReadToBinding<'_> {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        if let Expr::Member(member) = expr {
+            if let (Expr::Ident(object), MemberProp::Ident(property)) =
+                (member.obj.as_ref(), &member.prop)
+            {
+                if property.sym == "default" && self.candidates.contains(&binding_id(object)) {
+                    *expr = Expr::Ident(object.clone());
+                    return;
+                }
+            }
+        }
+        expr.visit_mut_children_with(self);
+    }
 }
 
 /// Which uses beyond static member reads keep a binding a namespace candidate.

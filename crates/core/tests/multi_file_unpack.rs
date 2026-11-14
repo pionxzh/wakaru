@@ -5251,3 +5251,106 @@ fn webpack5_multi_file_links_an_esm_chunk_to_its_entry() {
         "entry should reference the ESM chunk's module:\n{entry}"
     );
 }
+
+/// producer @babel/core@7.28.5 with @babel/plugin-transform-modules-commonjs
+/// @7.28.6, bundled by webpack@5.111 (mode production, no minimizer): an ES
+/// module consumer reads a CommonJS provider through a namespace import,
+/// and the provider's whole value is one object.
+const BABEL_WILDCARD_HELPER: &str = r#"function _interopRequireWildcard(e, t) { if ("function" == typeof WeakMap) var r = new WeakMap(), n = new WeakMap(); return (_interopRequireWildcard = function (e, t) { if (!t && e && e.__esModule) return e; var o, i, f = { __proto__: null, default: e }; if (null === e || "object" != typeof e && "function" != typeof e) return f; if (o = t ? n : r) { if (o.has(e)) return o.get(e); o.set(e, f); } for (const t in e) "default" !== t && {}.hasOwnProperty.call(e, t) && ((i = (o = Object.defineProperty) && Object.getOwnPropertyDescriptor(e, t)) && (i.get || i.set) ? o(f, t, i) : f[t] = e[t]); return f; })(e, t); }"#;
+
+fn wildcard_consumer_bundle(provider: &str, run_body: &str) -> String {
+    helper_provider_bundle(&format!(
+        r#"    200: function(module, exports) {{
+{provider}
+    }},
+    400: function(module, exports, __webpack_require__) {{
+      "use strict";
+      Object.defineProperty(exports, "__esModule", {{ value: true }});
+      exports.run = run;
+      var lib = _interopRequireWildcard(__webpack_require__(200));
+      {BABEL_WILDCARD_HELPER}
+      function run() {{ {run_body} }}
+    }}"#
+    ))
+}
+
+const WHOLE_OBJECT_PROVIDER: &str = r#"      const tag = "provider";
+      module.exports = { tag, describe(x) { return x + " via " + tag; } };"#;
+
+#[test]
+fn a_wildcard_of_a_whole_value_provider_reads_its_default_import() {
+    let source = wildcard_consumer_bundle(
+        WHOLE_OBJECT_PROVIDER,
+        r#"return lib.describe("x") + " " + typeof lib.default + " " + lib.default.tag;"#,
+    );
+    for emit_source_map in [false, true] {
+        let output = unpack_one(&source, emit_source_map);
+        assert_valid_module_graph(&output.modules);
+        let provider = module_named(&output.modules, "module-200.js");
+        assert!(provider.contains("export default {"), "{provider}");
+        let consumer = module_named(&output.modules, "module-400.js");
+        assert!(
+            consumer.contains("import lib from \"./module-200.js\""),
+            "{consumer}"
+        );
+        assert!(consumer.contains("lib.describe(\"x\")"), "{consumer}");
+        assert!(consumer.contains("typeof lib}"), "{consumer}");
+        assert!(consumer.contains("lib.tag"), "{consumer}");
+        assert!(!consumer.contains(".default"), "{consumer}");
+    }
+}
+
+#[test]
+fn a_wildcard_copy_that_escapes_keeps_its_namespace_import() {
+    // `Object.keys` sees the copy's `default` key, which the provider's
+    // value does not have.
+    let source = wildcard_consumer_bundle(
+        WHOLE_OBJECT_PROVIDER,
+        r#"return Object.keys(lib).join(",") + " " + lib.default.tag;"#,
+    );
+    let output = unpack_one(&source, false);
+    let consumer = module_named(&output.modules, "module-400.js");
+    assert!(
+        consumer.contains("import * as lib from \"./module-200.js\""),
+        "{consumer}"
+    );
+}
+
+#[test]
+fn a_written_wildcard_copy_keeps_its_namespace_import() {
+    // The write keeps the provider CommonJS, so it never becomes a
+    // default-only module.
+    let source = wildcard_consumer_bundle(
+        WHOLE_OBJECT_PROVIDER,
+        r#"lib.tag = "changed"; return lib.default.tag;"#,
+    );
+    let output = unpack_one(&source, false);
+    let consumer = module_named(&output.modules, "module-400.js");
+    assert!(!consumer.contains("import lib from"), "{consumer}");
+}
+
+#[test]
+fn a_wildcard_of_a_provider_with_named_exports_keeps_its_namespace_import() {
+    let source = wildcard_consumer_bundle(
+        r#"      exports.tag = "provider";
+      exports.describe = function(x) { return x + " via " + exports.tag; };"#,
+        r#"return lib.describe("x") + " " + lib.tag;"#,
+    );
+    let output = unpack_one(&source, false);
+    assert_valid_module_graph(&output.modules);
+    let consumer = module_named(&output.modules, "module-400.js");
+    assert!(!consumer.contains("import lib from"), "{consumer}");
+}
+
+#[test]
+fn a_wildcard_of_a_marked_whole_value_provider_keeps_its_namespace_import() {
+    // The wildcard helper returns a marked value as is, so `lib.default`
+    // reads the value's own `default`, not the value.
+    let source = wildcard_consumer_bundle(
+        r#"      module.exports = { __esModule: true, tag: "provider", default: "own default" };"#,
+        r#"return lib.default + " " + lib.tag;"#,
+    );
+    let output = unpack_one(&source, false);
+    let consumer = module_named(&output.modules, "module-400.js");
+    assert!(!consumer.contains("import lib from"), "{consumer}");
+}

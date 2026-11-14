@@ -216,6 +216,11 @@ pub struct ModuleFacts {
     /// before `UnEsm` removes the marker. A wildcard interop helper returns
     /// such a module's required value unchanged.
     pub marks_es_module: bool,
+    /// True when the module never names `__esModule` before `UnEsm`
+    /// ([`collect_never_names_es_module`]). A value it assigns to
+    /// `module.exports` does not mark itself, so a wildcard interop helper
+    /// copied it.
+    pub never_names_es_module: bool,
     /// Each `require()` call of the module: its form and interop, read on
     /// the input, and its uses, read where the rule range reaches `UnEsm`
     /// (see [`crate::require_edges`]).
@@ -2097,6 +2102,35 @@ pub fn is_normalized_commonjs_default(module: &Module) -> bool {
         (declarations.next(), declarations.next()),
         (Some(ModuleDecl::ExportDefaultExpr(_)), None)
     )
+}
+
+/// Whether the module never names `__esModule`: no identifier, property
+/// name, string, or template text spells it. Collected on the input before
+/// any rule. A value such a module assigns to `module.exports` cannot carry
+/// the marker from its own code, so a wildcard interop helper copied it
+/// rather than returning it as is.
+pub fn collect_never_names_es_module(module: &Module) -> bool {
+    struct NamesEsModule(bool);
+    impl Visit for NamesEsModule {
+        fn visit_ident(&mut self, ident: &swc_core::ecma::ast::Ident) {
+            self.0 |= ident.sym == "__esModule";
+        }
+        fn visit_ident_name(&mut self, ident: &swc_core::ecma::ast::IdentName) {
+            self.0 |= ident.sym == "__esModule";
+        }
+        fn visit_str(&mut self, string: &swc_core::ecma::ast::Str) {
+            self.0 |= string
+                .value
+                .as_str()
+                .is_none_or(|value| value.contains("__esModule"));
+        }
+        fn visit_tpl_element(&mut self, element: &swc_core::ecma::ast::TplElement) {
+            self.0 |= element.raw.contains("__esModule");
+        }
+    }
+    let mut names = NamesEsModule(false);
+    module.visit_with(&mut names);
+    !names.0
 }
 
 /// Whether the module marks its `exports` `__esModule` at the top level.
