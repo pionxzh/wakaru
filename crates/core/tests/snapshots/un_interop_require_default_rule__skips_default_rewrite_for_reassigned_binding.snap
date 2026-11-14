@@ -2,7 +2,14 @@
 source: crates/core/tests/un_interop_require_default_rule.rs
 expression: output
 ---
-import __a from "a";
-let _a = __a;
+function _interopRequireDefault(obj) {
+    if (obj && obj.__esModule) {
+        return obj;
+    }
+    return {
+        default: obj
+    };
+}
+let _a = _interopRequireDefault(require("a"));
 _a = other;
 console.log(_a.default);

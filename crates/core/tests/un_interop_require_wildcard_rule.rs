@@ -1263,3 +1263,33 @@ fn cross_module_call_of_a_non_helper_is_not_a_lowered_import() {
         "{consumer}"
     );
 }
+
+#[test]
+fn wildcard_call_in_an_expression_keeps_its_helper() {
+    // A `require` that cannot become an import keeps the helper: it builds a
+    // namespace object, which the raw `require` result is not (its
+    // `default` differs for a provider without `__esModule`).
+    let input = r#"
+var _interopRequireWildcard = require("@babel/runtime/helpers/interopRequireWildcard");
+register(_interopRequireWildcard(require(moduleId)));
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("register(_interopRequireWildcard(")
+            || output.contains("register(interopRequireWildcard("),
+        "{output}"
+    );
+}
+
+#[test]
+fn discarded_wildcard_call_drops_its_helper() {
+    let input = r#"
+var _interopRequireWildcard = require("@babel/runtime/helpers/interopRequireWildcard");
+_interopRequireWildcard(require("a"));
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("import \"a\";") && !output.contains("nteropRequireWildcard"),
+        "{output}"
+    );
+}

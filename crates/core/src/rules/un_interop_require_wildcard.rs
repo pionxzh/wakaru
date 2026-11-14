@@ -1,12 +1,11 @@
 use crate::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::util::take::Take;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignOp, AssignTarget, Callee, Class, Decl, Expr, ExprStmt, Function, Ident,
-    ImportDecl, ImportStarAsSpecifier, Lit, MemberProp, Module, ModuleDecl, ModuleItem, Pat,
-    SimpleAssignTarget, Stmt, UnaryOp, VarDecl,
+    AssignOp, AssignTarget, Callee, Decl, Expr, ExprStmt, Ident, ImportDecl, ImportStarAsSpecifier,
+    Lit, MemberProp, Module, ModuleDecl, ModuleItem, Pat, SimpleAssignTarget, Stmt, UnaryOp,
+    VarDecl,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -34,11 +33,9 @@ use crate::js_names::{is_reserved_binding_name, is_valid_identifier_name};
 /// `import * as ns from "a"` when `_a` is declared once and never written.
 ///
 /// A top-level `target.x = _irw(require("a"))` gets its own binding:
-/// `import * as x from "a"; target.x = x;`. Any other `_irw(require("a"))`
-/// outside a function or class body is unwrapped to the `require` call;
-/// other arguments are left wrapped. Inside one, the `require` stays a
-/// `require`, so the call stays too, except a lowered `import()`, which
-/// becomes that call.
+/// `import * as x from "a"; target.x = x;`. A lowered `import()` becomes
+/// that call. Any other call stays: the helper builds a namespace object,
+/// which the raw `require` result is not.
 ///
 /// Both produce ESM semantics, so they belong to a module that becomes ESM.
 /// The registered rule ([`InteropScope::RuntimeHelpers`]) only drops unused
@@ -132,10 +129,9 @@ fn run_un_interop_require_wildcard(
     }
     module.body = new_body;
 
-    // Phase 2: Unwrap remaining call sites in expressions (non-var-decl contexts)
+    // Phase 2: Restore lowered `import()` calls.
     let mut unwrapper = WildcardCallUnwrapper {
         local_helpers,
-        nesting: 0,
         restore_dynamic_imports: !module_blocks_global_reference(module, "Promise"),
     };
     module.visit_mut_with(&mut unwrapper);
@@ -495,40 +491,16 @@ fn extract_wildcard_require(
     Some(source.clone())
 }
 
-/// Unwrap remaining wildcard calls in non-var-decl contexts,
-/// but only when the argument is a `require()` call.
-/// Non-require arguments are left as-is because the helper synthesizes
-/// a namespace object that may differ from the raw expression value.
+/// Restore a lowered `import()` (`Promise.resolve().then(() =>
+/// _irw(require("a")))`) to the call.
 struct WildcardCallUnwrapper<'a> {
     local_helpers: &'a LocalHelperContext,
-    /// Function and class bodies around the visited node: a `require` there
-    /// stays a `require`, so its interop call stays unless it is a lowered
-    /// `import()`.
-    nesting: usize,
     /// Whether `Promise` is provably the global: no `with` statement or
     /// direct `eval` can shadow it.
     restore_dynamic_imports: bool,
 }
 
 impl VisitMut for WildcardCallUnwrapper<'_> {
-    fn visit_mut_function(&mut self, function: &mut Function) {
-        self.nesting += 1;
-        function.visit_mut_children_with(self);
-        self.nesting -= 1;
-    }
-
-    fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
-        self.nesting += 1;
-        arrow.visit_mut_children_with(self);
-        self.nesting -= 1;
-    }
-
-    fn visit_mut_class(&mut self, class: &mut Class) {
-        self.nesting += 1;
-        class.visit_mut_children_with(self);
-        self.nesting -= 1;
-    }
-
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         if self.restore_dynamic_imports {
             let matcher = LoweredImportMatcher {
@@ -542,40 +514,37 @@ impl VisitMut for WildcardCallUnwrapper<'_> {
                 *expr = import;
             }
         }
+        // A wildcard call elsewhere stays: the helper builds a namespace
+        // object, which the raw `require` result is not, and no binding
+        // rewrite here accounts for the difference.
         expr.visit_mut_children_with(self);
+    }
 
-        let Expr::Call(call) = expr else { return };
+    fn visit_mut_expr_stmt(&mut self, stmt: &mut ExprStmt) {
+        stmt.visit_mut_children_with(self);
+        // `_irw(require("a"));` discards the namespace, so only the
+        // `require` is evaluated.
+        let Expr::Call(call) = &mut *stmt.expr else {
+            return;
+        };
         let Callee::Expr(callee) = &call.callee else {
             return;
         };
-
         if !self
             .local_helpers
             .is_helper_callee(callee, TranspilerHelperKind::InteropRequireWildcard)
+            || call.args.is_empty()
+            || call.args.len() > 2
+            || call.args.iter().any(|arg| arg.spread.is_some())
+            || call
+                .args
+                .get(1)
+                .is_some_and(|flag| !is_canonical_interop_flag(&flag.expr))
         {
             return;
         }
-
-        if call.args.is_empty() || call.args.len() > 2 {
-            return;
-        }
-        if call.args.iter().any(|arg| arg.spread.is_some()) {
-            return;
-        }
-        // Unwrapping drops the second argument, so it must be a canonical
-        // side-effect-free interop flag.
-        if let Some(second) = call.args.get(1) {
-            if !is_canonical_interop_flag(second.expr.as_ref()) {
-                return;
-            }
-        }
-
-        // Only unwrap when the first arg is require("...") outside a function.
-        if is_require_call(&call.args[0].expr, self.local_helpers)
-            && InteropScope::All.reaches(self.nesting, &call.args[0].expr, self.local_helpers)
-        {
-            *expr = *call.args[0].expr.take();
-        }
+        let arg = std::mem::replace(&mut *call.args[0].expr, Expr::Invalid(Default::default()));
+        *stmt.expr = arg;
     }
 }
 

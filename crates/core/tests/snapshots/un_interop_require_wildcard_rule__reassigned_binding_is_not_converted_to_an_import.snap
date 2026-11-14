@@ -1,8 +1,9 @@
 ---
 source: crates/core/tests/un_interop_require_wildcard_rule.rs
-expression: render(input)
+expression: "&output"
 ---
-import __a from "a";
-let _a = __a;
+import _interopRequireWildcard from "@babel/runtime/helpers/interopRequireWildcard";
+import a from "a";
+let _a = _interopRequireWildcard(a, true);
 _a = fallback();
 console.log(_a.x);

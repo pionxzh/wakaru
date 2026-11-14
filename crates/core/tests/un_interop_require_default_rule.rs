@@ -477,10 +477,13 @@ var wrapped;
 wrapped = _interop_require_default(_react);
 console.log(wrapped.default);
 "#;
+    // Not the assignment form: `wrapped.default` is not rewritten, so the
+    // call keeps the `{ default }` wrapper it reads.
     let expected = r#"
+import { _ as _interop_require_default } from "@swc/helpers/_/_interop_require_default";
 var _react = require("react");
 var wrapped;
-wrapped = _react;
+wrapped = _interop_require_default(_react);
 console.log(wrapped.default);
 "#;
     assert_eq_normalized(&apply_rule(input), expected);
@@ -791,6 +794,56 @@ console.log(o.Component);
 "#;
     let output = render(input);
     insta::assert_snapshot!(output);
+}
+
+#[test]
+fn reassigned_inline_interop_binding_keeps_its_iife() {
+    // Its `.default` reads are not rewritten, so the wrapper they read stays.
+    let input = r#"
+var i = function(e) {
+    return e && e.__esModule ? e : { default: e };
+}(require("./mod.js"));
+i = fallback();
+console.log(i.default);
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("__esModule") && output.contains("i.default"),
+        "{output}"
+    );
+}
+
+#[test]
+fn conditional_interop_call_keeps_its_helper() {
+    // Only a declarator whose `.default` reads are rewritten may drop the
+    // wrapper; `b.default` here reads the `{ default }` the helper builds.
+    let input = r#"
+function _interopRequireDefault(obj) {
+    return obj && obj.__esModule ? obj : { default: obj };
+}
+var b = cond ? _interopRequireDefault(require("b")) : null;
+console.log(b.default);
+"#;
+    let output = apply_rule(input);
+    assert!(
+        output.contains("_interopRequireDefault(require(\"b\"))") && output.contains("b.default"),
+        "{output}"
+    );
+}
+
+#[test]
+fn discarded_interop_call_drops_its_helper() {
+    // Terser keeps an interop call whose result is unused as a statement.
+    let input = r#"
+function _interopRequireDefault(obj) {
+    return obj && obj.__esModule ? obj : { default: obj };
+}
+var a = require("a");
+_interopRequireDefault(a);
+console.log(a.x);
+"#;
+    let output = apply_rule(input);
+    assert!(!output.contains("_interopRequireDefault"), "{output}");
 }
 
 #[test]

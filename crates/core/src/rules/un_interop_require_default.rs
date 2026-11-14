@@ -129,11 +129,11 @@ fn run_un_interop_require_default(
     let has_bundled_helper =
         local_helpers.has_bundled_helper(TranspilerHelperKind::InteropRequireDefault);
 
-    if !helpers.is_empty()
+    let has_named_helper_path = !helpers.is_empty()
         || !tslib_namespaces.is_empty()
         || has_direct_tslib_calls
-        || has_bundled_helper
-    {
+        || has_bundled_helper;
+    if has_named_helper_path {
         // Phase 1: Collect which bindings receive helper-wrapped values
         let mut collector = AffectedBindingCollector {
             local_helpers,
@@ -167,12 +167,37 @@ fn run_un_interop_require_default(
                 })
                 .collect();
         }
+    }
 
-        // Phase 2a: Unwrap helper calls — replace `helper(arg)` with `arg`.
+    // --- Inline IIFE interop path ---
+    // Detect: `const x = ((e) => { if (e && e.__esModule) return e; return {default: e} })(require(...))`
+    // and record `x` as affected; the IIFE is replaced below.
+    if scope == InteropScope::All {
+        collect_inline_interop_iifes(module, &mut affected_bindings);
+    }
+
+    // A binding loses its helper only when every `.default` read on it is
+    // rewritten, which needs a binding that is never reassigned.
+    if !affected_bindings.is_empty() {
+        let mut reassigned = HashSet::default();
+        let mut checker = ReassignmentChecker {
+            candidates: &affected_bindings,
+            reassigned: &mut reassigned,
+        };
+        module.visit_with(&mut checker);
+        for key in &reassigned {
+            affected_bindings.remove(key);
+        }
+    }
+
+    if has_named_helper_path {
+        // Phase 2a: Unwrap helper calls — replace `helper(arg)` with `arg`
+        // where the `.default` rewrite below accounts for the difference.
         let mut call_unwrapper = CallUnwrapper {
             local_helpers,
             scope,
             nesting: 0,
+            affected: &affected_bindings,
             preserved_assignment_form: false,
         };
         module.visit_mut_with(&mut call_unwrapper);
@@ -197,27 +222,11 @@ fn run_un_interop_require_default(
             );
         }
     }
-
-    // --- Inline IIFE interop path ---
-    // Detect: `const x = ((e) => { if (e && e.__esModule) return e; return {default: e} })(require(...))`
-    // Replace with: `const x = require(...)`  and record `x` as affected
     if scope == InteropScope::All {
-        unwrap_inline_interop_iifes(module, &mut affected_bindings);
+        unwrap_inline_interop_iifes(module, &affected_bindings);
     }
 
-    // Phase 2b: Rewrite `.default` member access on affected bindings,
-    //           but only if the binding is never reassigned.
-    if !affected_bindings.is_empty() {
-        let mut reassigned = HashSet::default();
-        let mut checker = ReassignmentChecker {
-            candidates: &affected_bindings,
-            reassigned: &mut reassigned,
-        };
-        module.visit_with(&mut checker);
-        for key in &reassigned {
-            affected_bindings.remove(key);
-        }
-    }
+    // Phase 2b: Rewrite `.default` member access on affected bindings.
     if !affected_bindings.is_empty() {
         let mut ref_rewriter = DefaultRefRewriter {
             affected: &affected_bindings,
@@ -969,10 +978,34 @@ struct CallUnwrapper<'a> {
     scope: InteropScope,
     /// Function and class bodies around the visited node.
     nesting: usize,
+    /// Bindings whose `.default` reads are all rewritten: only their
+    /// declarator's `helper(arg)` may lose the helper.
+    affected: &'a HashSet<BindingKey>,
     preserved_assignment_form: bool,
 }
 
 impl VisitMut for CallUnwrapper<'_> {
+    fn visit_mut_var_declarator(&mut self, decl: &mut VarDeclarator) {
+        decl.visit_mut_children_with(self);
+        let Pat::Ident(binding) = &decl.name else {
+            return;
+        };
+        if !self
+            .affected
+            .contains(&(binding.id.sym.clone(), binding.id.ctxt))
+        {
+            return;
+        }
+        let Some(Expr::Call(call)) = decl.init.as_deref() else {
+            return;
+        };
+        if let Some(arg) = extract_helper_call_arg(call, self.local_helpers, self.scope)
+            .filter(|arg| self.scope.reaches(self.nesting, arg, self.local_helpers))
+        {
+            decl.init = Some(Box::new(arg));
+        }
+    }
+
     fn visit_mut_assign_expr(&mut self, assign: &mut AssignExpr) {
         // Accepted top-level assignment initializers were removed before this
         // pass. Any exact self-wrapper assignment still present was rejected
@@ -1012,22 +1045,30 @@ impl VisitMut for CallUnwrapper<'_> {
                 .filter(|arg| self.scope.reaches(self.nesting, arg, self.local_helpers))
         };
 
-        // helper(arg).default → arg
+        // helper(arg).default → arg.default: UnEsm reads `.default` of a
+        // module binding as its default import, which applies the same
+        // interop. A bare `helper(arg)` elsewhere stays: its value is
+        // `{ default: arg }`, and only a declarator whose reads are rewritten
+        // (above) or a discarded value (below) can drop the wrapper.
         if let Expr::Member(member) = expr {
             if is_default_prop(&member.prop) {
                 if let Expr::Call(call) = member.obj.as_ref() {
                     if let Some(arg) = unwrapped(call) {
-                        *expr = arg;
-                        return;
+                        *member.obj = arg;
                     }
                 }
             }
         }
+    }
 
-        // helper(arg) → arg
-        if let Expr::Call(call) = expr {
-            if let Some(arg) = unwrapped(call) {
-                *expr = arg;
+    fn visit_mut_expr_stmt(&mut self, stmt: &mut swc_core::ecma::ast::ExprStmt) {
+        stmt.visit_mut_children_with(self);
+        // `helper(arg);` discards the wrapper, so only `arg` is evaluated.
+        if let Expr::Call(call) = &*stmt.expr {
+            if let Some(arg) = extract_helper_call_arg(call, self.local_helpers, self.scope)
+                .filter(|arg| self.scope.reaches(self.nesting, arg, self.local_helpers))
+            {
+                *stmt.expr = arg;
             }
         }
     }
@@ -1124,41 +1165,74 @@ impl VisitMut for DefaultRefRewriter<'_> {
 /// (`var Lib = function (exports) { … }({})`) can carry them all: the
 /// commonjs plugin's `x.__esModule` read and rollup's `__esModule`
 /// `defineProperty` marker.
-fn unwrap_inline_interop_iifes(module: &mut Module, affected: &mut HashSet<BindingKey>) {
+///
+/// A default interop records its binding: the binding's `.default` reads
+/// become the binding, and the IIFE goes only while the binding is never
+/// reassigned. A wildcard interop is replaced as is and records nothing; its
+/// `.default` reads depend on whether the provider is marked `__esModule`,
+/// which the provider namespace repair reads from module facts.
+fn collect_inline_interop_iifes(module: &Module, affected: &mut HashSet<BindingKey>) {
+    for item in &module.body {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) = item else {
+            continue;
+        };
+        for declarator in &var_decl.decls {
+            if let Some((key, TranspilerHelperKind::InteropRequireDefault)) =
+                inline_interop_binding(declarator)
+            {
+                affected.insert(key);
+            }
+        }
+    }
+}
+
+/// Replace each inline interop IIFE with its argument. A default interop's
+/// binding must still be affected (never reassigned), so its `.default`
+/// reads are rewritten too; otherwise the IIFE stays.
+fn unwrap_inline_interop_iifes(module: &mut Module, affected: &HashSet<BindingKey>) {
     for item in &mut module.body {
         let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) = item else {
             continue;
         };
         for declarator in &mut var_decl.decls {
-            let Pat::Ident(binding) = &declarator.name else {
+            let Some((key, kind)) = inline_interop_binding(declarator) else {
                 continue;
             };
-            let Some(init) = &declarator.init else {
-                continue;
-            };
-            let Expr::Call(call) = init.as_ref() else {
-                continue;
-            };
-            let Some((kind, inner_arg)) = classify_inline_helper_call(call) else {
-                continue;
-            };
-            if !matches!(strip_parens(inner_arg), Expr::Call(_)) {
+            if kind == TranspilerHelperKind::InteropRequireDefault && !affected.contains(&key) {
                 continue;
             }
-            // Only strip `.default` for the default interop, not wildcard.
-            match kind {
-                TranspilerHelperKind::InteropRequireDefault => {
-                    let key = (binding.id.sym.clone(), binding.id.ctxt);
-                    affected.insert(key);
-                }
-                TranspilerHelperKind::InteropRequireWildcard => {}
-                // Other helper IIFEs are handled by their own rules.
-                _ => continue,
-            }
-            let inner_arg = Box::new(inner_arg.clone());
-            declarator.init = Some(inner_arg);
+            let Some(Expr::Call(call)) = declarator.init.as_deref() else {
+                continue;
+            };
+            let Some((_, inner_arg)) = classify_inline_helper_call(call) else {
+                continue;
+            };
+            declarator.init = Some(Box::new(inner_arg.clone()));
         }
     }
+}
+
+/// The binding `x` of `var x = <inline interop IIFE>(<call>)`, with the
+/// interop's kind.
+fn inline_interop_binding(
+    declarator: &VarDeclarator,
+) -> Option<(BindingKey, TranspilerHelperKind)> {
+    let Pat::Ident(binding) = &declarator.name else {
+        return None;
+    };
+    let Expr::Call(call) = declarator.init.as_deref()? else {
+        return None;
+    };
+    let (kind, inner_arg) = classify_inline_helper_call(call)?;
+    if !matches!(strip_parens(inner_arg), Expr::Call(_)) {
+        return None;
+    }
+    // Other helper IIFEs are handled by their own rules.
+    matches!(
+        kind,
+        TranspilerHelperKind::InteropRequireDefault | TranspilerHelperKind::InteropRequireWildcard
+    )
+    .then(|| ((binding.id.sym.clone(), binding.id.ctxt), kind))
 }
 
 fn is_default_prop(prop: &MemberProp) -> bool {
