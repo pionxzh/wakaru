@@ -410,6 +410,15 @@ fn rspack_es2022_entry_and_chunk_unpack_together() {
         caller.contains("./module-529.js"),
         "the lazy import should link to the chunk module:\n{caller}"
     );
+    // The JSONP install sits in the runtime's sequence, not in its own
+    // IIFE as in webpack; it is runtime and must not reach the entry.
+    let entry = module("entry.js");
+    assert!(
+        entry.contains("./module-128.js")
+            && !entry.contains("rspackChunk")
+            && !entry.contains("forEach"),
+        "entry.js should hold only the startup:\n{entry}"
+    );
 }
 
 #[test]

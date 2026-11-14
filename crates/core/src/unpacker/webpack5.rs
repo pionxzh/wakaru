@@ -2993,7 +2993,9 @@ fn extract_webpack5_startup_region(
     let named_anchor_idx =
         find_named_exports_anchor(&bootstrap_body.stmts, require_idx.saturating_add(1));
     let runtime_boundary =
-        find_inline_runtime_boundary(&probe_stmts, require_idx, &require_id, named_anchor_idx);
+        find_inline_runtime_boundary(&probe_stmts, require_idx, &require_id, named_anchor_idx).map(
+            |boundary| extend_boundary_over_jsonp_install(&probe_stmts, boundary, &require_id),
+        );
     let last_runtime_idx = runtime_boundary.as_ref().map(|boundary| boundary.stmt_idx);
 
     let startup_scan_from = last_runtime_idx
@@ -3550,6 +3552,245 @@ fn find_inline_runtime_boundary(
         stmt_idx,
         seq_expr_idx,
     })
+}
+
+/// Webpack wraps the JSONP chunk-loading install in its own runtime IIFE.
+/// Rspack's minified output instead puts it in the main sequence, after the
+/// last `require.x = ...` assignment and before the startup:
+///
+/// ```js
+/// t = (t, r) => { ...; i.m[o] = c[o]; ... },
+/// (r = self.rspackChunk ||= []).forEach(t.bind(null, 0)),
+/// r.push = t.bind(null, r.push.bind(r)),
+/// i(128)
+/// ```
+///
+/// Move the boundary past such an install, so it stays with the runtime.
+/// The run must end with the `push` override, startup code must follow it,
+/// and nothing after it may reference the callback or the chunk array.
+fn extend_boundary_over_jsonp_install(
+    stmts: &[Stmt],
+    boundary: RuntimeBoundary,
+    require_id: &Id,
+) -> RuntimeBoundary {
+    let mut install = JsonpInstall::default();
+    let mut end = None;
+    'stmts: for (stmt_idx, stmt) in stmts.iter().enumerate().skip(boundary.stmt_idx) {
+        let first_in_stmt = if stmt_idx == boundary.stmt_idx {
+            match boundary.seq_expr_idx {
+                Some(idx) => idx + 1,
+                None => continue,
+            }
+        } else {
+            0
+        };
+        match stmt {
+            Stmt::Expr(stmt) => match strip_parens(&stmt.expr) {
+                Expr::Seq(seq) => {
+                    for (idx, expr) in seq.exprs.iter().enumerate().skip(first_in_stmt) {
+                        if !install.accept_expr(expr, require_id) {
+                            break 'stmts;
+                        }
+                        if install.complete {
+                            end = Some((stmt_idx, Some(idx)));
+                        }
+                    }
+                }
+                expr => {
+                    if !install.accept_expr(expr, require_id) {
+                        break;
+                    }
+                    if install.complete {
+                        end = Some((stmt_idx, None));
+                    }
+                }
+            },
+            Stmt::Decl(Decl::Var(var)) if install.accept_callback_decl(var, require_id) => {}
+            _ => break,
+        }
+    }
+
+    let Some((stmt_idx, seq_expr_idx)) = end else {
+        return boundary;
+    };
+    // A runtime-only file (Next.js `webpack-runtime.js`) has no startup after
+    // the install. Its region would be left empty and the file would not be
+    // detected, so keep the old boundary there.
+    let seq_tail_is_empty = match (seq_expr_idx, &stmts[stmt_idx]) {
+        (Some(idx), Stmt::Expr(stmt)) => match strip_parens(&stmt.expr) {
+            Expr::Seq(seq) => idx + 1 >= seq.exprs.len(),
+            _ => true,
+        },
+        _ => true,
+    };
+    if seq_tail_is_empty && stmt_idx + 1 >= stmts.len() {
+        return boundary;
+    }
+    let mut finder = IdRefFinder {
+        ids: install.callbacks.iter().chain(&install.arrays).collect(),
+        found: false,
+    };
+    if let (Some(idx), Stmt::Expr(stmt)) = (seq_expr_idx, &stmts[stmt_idx]) {
+        if let Expr::Seq(seq) = strip_parens(&stmt.expr) {
+            seq.exprs[idx + 1..].visit_with(&mut finder);
+        }
+    }
+    stmts[stmt_idx + 1..].visit_with(&mut finder);
+    if finder.found {
+        return boundary;
+    }
+    RuntimeBoundary {
+        stmt_idx,
+        seq_expr_idx,
+    }
+}
+
+/// The pieces of a JSONP install seen so far, in source order.
+#[derive(Default)]
+struct JsonpInstall {
+    /// Bindings of the chunk callback, whose body installs modules into
+    /// `require.m`.
+    callbacks: Vec<Id>,
+    /// Bindings of the chunk array the callback is installed on.
+    arrays: Vec<Id>,
+    /// The `push` override, the last piece, was seen.
+    complete: bool,
+}
+
+impl JsonpInstall {
+    fn accept_expr(&mut self, expr: &Expr, require_id: &Id) -> bool {
+        match strip_parens(expr) {
+            // t = (t, r) => { ... require.m[o] = c[o] ... }
+            Expr::Assign(assign) if assign.op == AssignOp::Assign => {
+                if let AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) = &assign.left {
+                    if installs_modules(&assign.right, require_id) {
+                        self.callbacks.push(binding.id.to_id());
+                        return true;
+                    }
+                    return false;
+                }
+                // r.push = t.bind(null, r.push.bind(r))
+                let AssignTarget::Simple(SimpleAssignTarget::Member(target)) = &assign.left else {
+                    return false;
+                };
+                let accepted = static_member_property_name(&target.prop) == Some("push")
+                    && matches!(strip_parens(&target.obj), Expr::Ident(array) if self.arrays.contains(&array.to_id()))
+                    && self.is_callback_bind(&assign.right);
+                self.complete |= accepted;
+                accepted
+            }
+            // (r = self.rspackChunk ||= []).forEach(t.bind(null, 0)), or
+            // r.forEach(...) once `r` is known.
+            Expr::Call(call) => {
+                let Callee::Expr(callee) = &call.callee else {
+                    return false;
+                };
+                let Expr::Member(callee) = strip_parens(callee) else {
+                    return false;
+                };
+                if static_member_property_name(&callee.prop) != Some("forEach")
+                    || call.args.len() != 1
+                    || call.args[0].spread.is_some()
+                    || !self.is_callback_bind(&call.args[0].expr)
+                {
+                    return false;
+                }
+                match strip_parens(&callee.obj) {
+                    Expr::Ident(array) => self.arrays.contains(&array.to_id()),
+                    Expr::Assign(assign) => match &assign.left {
+                        AssignTarget::Simple(SimpleAssignTarget::Ident(array)) => {
+                            self.arrays.push(array.id.to_id());
+                            true
+                        }
+                        _ => false,
+                    },
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
+
+    /// `var t = (t, r) => { ... }` with only callback declarators.
+    fn accept_callback_decl(&mut self, var: &VarDecl, require_id: &Id) -> bool {
+        let mut callbacks = Vec::new();
+        for declarator in &var.decls {
+            let (Pat::Ident(binding), Some(init)) = (&declarator.name, &declarator.init) else {
+                return false;
+            };
+            if !installs_modules(init, require_id) {
+                return false;
+            }
+            callbacks.push(binding.id.to_id());
+        }
+        self.callbacks.extend(callbacks);
+        true
+    }
+
+    /// `t.bind(...)` on a known callback.
+    fn is_callback_bind(&self, expr: &Expr) -> bool {
+        let Expr::Call(call) = strip_parens(expr) else {
+            return false;
+        };
+        let Callee::Expr(callee) = &call.callee else {
+            return false;
+        };
+        let Expr::Member(callee) = strip_parens(callee) else {
+            return false;
+        };
+        static_member_property_name(&callee.prop) == Some("bind")
+            && matches!(strip_parens(&callee.obj), Expr::Ident(callback) if self.callbacks.contains(&callback.to_id()))
+    }
+}
+
+/// A function or arrow whose body writes `require.m[id]`.
+fn installs_modules(expr: &Expr, require_id: &Id) -> bool {
+    if !matches!(strip_parens(expr), Expr::Fn(_) | Expr::Arrow(_)) {
+        return false;
+    }
+    let mut finder = ModuleInstallFinder {
+        require_id,
+        found: false,
+    };
+    expr.visit_with(&mut finder);
+    finder.found
+}
+
+struct ModuleInstallFinder<'a> {
+    require_id: &'a Id,
+    found: bool,
+}
+
+impl Visit for ModuleInstallFinder<'_> {
+    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+        assign.visit_children_with(self);
+        let AssignTarget::Simple(SimpleAssignTarget::Member(target)) = &assign.left else {
+            return;
+        };
+        if !matches!(target.prop, MemberProp::Computed(_)) {
+            return;
+        }
+        if let Expr::Member(table) = strip_parens(&target.obj) {
+            if matches!(strip_parens(&table.obj), Expr::Ident(root) if root.to_id() == *self.require_id)
+                && static_member_property_name(&table.prop) == Some("m")
+            {
+                self.found = true;
+            }
+        }
+    }
+}
+
+struct IdRefFinder<'a> {
+    ids: Vec<&'a Id>,
+    found: bool,
+}
+
+impl Visit for IdRefFinder<'_> {
+    fn visit_ident(&mut self, ident: &Ident) {
+        if self.ids.contains(&&ident.to_id()) {
+            self.found = true;
+        }
+    }
 }
 
 fn find_first_executed_startup(

@@ -2441,3 +2441,67 @@ fn bootstrap_merged_into_a_sequence_with_a_footer_keeps_the_footer_last() {
         .unwrap_or_else(|| panic!("the footer must stay in entry.js, got:\n{entry}"));
     assert!(sink < footer, "the footer must run last, got:\n{entry}");
 }
+
+/// Rspack's minifier puts the JSONP chunk install in the runtime's sequence,
+/// between the last `require.x = ...` and the startup (producer
+/// `@rspack/core@2.3.2`, target web; see the `rspack-chunk-es2022-min`
+/// fixture). `tail` continues the sequence after the install.
+fn rspack_style_jsonp_install(tail: &str) -> String {
+    format!(
+        r#"
+(() => {{
+    var e = [, (e) => {{ e.exports = {{ value: 7 }}; }}];
+    var n = {{}}, t, a;
+    function r(o) {{
+        var s = n[o];
+        if (s !== undefined) return s.exports;
+        var c = n[o] = {{ exports: {{}} }};
+        e[o](c, c.exports, r);
+        return c.exports;
+    }}
+    r.m = e, r.o = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key), t = (p, c) => {{
+        var [ids, mods] = c;
+        for (var k in mods) r.o(mods, k) && (r.m[k] = mods[k]);
+    }}, (a = globalThis.appChunk ||= []).forEach(t.bind(null, 0)), a.push = t.bind(null, a.push.bind(a)){tail};
+}})();
+"#
+    )
+}
+
+#[test]
+fn jsonp_install_in_the_runtime_sequence_stays_with_the_runtime() {
+    let source = rspack_style_jsonp_install(", console.log(r(1).value)");
+    let pairs = expect_unpack(&source, "bundle.js");
+    let entry = entry_of(&pairs);
+    assert!(
+        entry.contains("./module-1.js")
+            && !entry.contains("appChunk")
+            && !entry.contains("forEach"),
+        "the JSONP install belongs to the runtime, got:\n{entry}"
+    );
+}
+
+#[test]
+fn jsonp_install_used_by_the_startup_stays_in_the_entry() {
+    // Moving the install out would leave `a` unbound in the entry.
+    let source = rspack_style_jsonp_install(", console.log(r(1).value, a.length)");
+    let pairs = expect_unpack(&source, "bundle.js");
+    let entry = entry_of(&pairs);
+    assert!(
+        entry.contains("./module-1.js") && entry.contains("appChunk") && entry.contains("a.length"),
+        "an install the startup reads must stay in the entry, got:\n{entry}"
+    );
+}
+
+#[test]
+fn runtime_only_file_keeps_its_jsonp_install_in_the_entry() {
+    // Nothing follows the install (Next.js `webpack-runtime.js`), so moving
+    // it to the runtime would leave no startup and the file would not unpack.
+    let source = rspack_style_jsonp_install("");
+    let pairs = expect_unpack(&source, "bundle.js");
+    let entry = entry_of(&pairs);
+    assert!(
+        entry.contains("appChunk") && entry.contains("forEach"),
+        "a runtime-only file keeps its install, got:\n{entry}"
+    );
+}
