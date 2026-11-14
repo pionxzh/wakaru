@@ -364,6 +364,55 @@ fn webpack5_dynamic_min_runtime_entry_and_chunk_unpack_together() {
 }
 
 #[test]
+fn rspack_es2022_entry_and_chunk_unpack_together() {
+    // An ES2022 target makes Rspack push chunks through
+    // `(globalThis.rspackChunk ||= []).push(...)`.
+    let chunk = fixture("rspack-chunk-es2022-min/466.bundle.js");
+    assert!(
+        chunk.contains("(globalThis.rspackChunk||=[]).push("),
+        "fixture should use the logical-assignment push:\n{chunk}"
+    );
+
+    let output = unpack_files(
+        vec![
+            UnpackInput {
+                filename: "bundle.js".to_string(),
+                source: fixture("rspack-chunk-es2022-min/bundle.js"),
+            },
+            UnpackInput {
+                filename: "466.bundle.js".to_string(),
+                source: chunk,
+            },
+        ],
+        DecompileOptions::default(),
+    )
+    .expect("entry and chunk should unpack together");
+
+    let names = output
+        .modules
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect::<Vec<_>>();
+    let module = |name: &str| {
+        output
+            .modules
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, code)| code)
+            .unwrap_or_else(|| panic!("{name} should exist: {names:?}"))
+    };
+    assert!(
+        module("module-529.js").contains("greet"),
+        "the chunk module should keep its export"
+    );
+    let caller = module("module-128.js");
+    assert!(
+        caller.contains("./module-529.js"),
+        "the lazy import should link to the chunk module:\n{caller}"
+    );
+}
+
+#[test]
 fn webpack5_multi_file_rewrites_unambiguous_numeric_chunk_id() {
     let entry = r#"
 (() => {

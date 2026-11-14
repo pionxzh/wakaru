@@ -174,6 +174,10 @@ echo "  rspack-esm-chunk-min: ESM output with a lazy chunk in chunkFormat \"modu
 npx --yes -p @rspack/core@2.3.2 -p @rspack/cli@2.3.2 rspack build \
   --config rspack-esm-chunk-min.config.cjs 2>/dev/null
 
+echo "  rspack-chunk-es2022-min: JSONP chunk pushed with (globalThis.rspackChunk ||= [])"
+npx --yes -p @rspack/core@2.3.2 -p @rspack/cli@2.3.2 rspack build \
+  --config rspack-chunk-es2022-min.config.cjs 2>/dev/null
+
 echo "=== Vercel ncc (0.44.1) ==="
 # ncc's numeric module ids change with the directory it runs in: a checkout at
 # another path regenerates these two bundles with different ids only.

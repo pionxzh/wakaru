@@ -1,0 +1,1 @@
+(globalThis.rspackChunk||=[]).push([[466],{529(e,l){l.greet=function(e){return`Hello, ${e}!`}}}]);
