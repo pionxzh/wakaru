@@ -491,8 +491,17 @@ impl GetterHelpers {
                 Some((module_exports_index + 1 + offset, call))
             })
             .collect();
+        // The cjs-module-lexer annotation never runs; it goes with the
+        // assignment it annotates.
+        let annotations: Vec<usize> = module
+            .body
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| is_lexer_export_annotation(item, unresolved_mark))
+            .map(|(index, _)| index)
+            .collect();
         if count_binding_refs(module, &exports_key) != 0
-            || count_binding_refs(module, &module_key) != 1 + re_exports.len()
+            || count_binding_refs(module, &module_key) != 1 + re_exports.len() + annotations.len()
             || !uses.has_single_declaration(&namespace_key)
             || uses.has_direct_write(&namespace_key)
             || uses.use_count(&namespace_key) != 2 + re_exports.len()
@@ -544,10 +553,12 @@ impl GetterHelpers {
                 (index, item)
             })
             .collect();
+        let mut removed = vec![declaration_index, definition_index];
+        removed.extend(annotations);
         Some(LoweredNamespace {
             module_exports_index,
             definitions,
-            removed: vec![declaration_index, definition_index],
+            removed,
             consumed: vec![getter_map, to_common_js],
             rewritten,
         })
@@ -652,6 +663,42 @@ impl GetterHelpers {
         };
         Some((callee, getter_map_entries(entries, *map)?))
     }
+}
+
+/// The annotation esbuild appends to CommonJS output so Node's
+/// cjs-module-lexer finds the export names:
+///
+/// ```text
+/// 0 && (module.exports = { get });
+/// ```
+///
+/// The assignment never runs.
+fn is_lexer_export_annotation(item: &ModuleItem, unresolved_mark: Mark) -> bool {
+    let ModuleItem::Stmt(Stmt::Expr(statement)) = item else {
+        return false;
+    };
+    let Expr::Bin(BinExpr {
+        op: BinaryOp::LogicalAnd,
+        left,
+        right,
+        ..
+    }) = strip_parens(&statement.expr)
+    else {
+        return false;
+    };
+    let never_runs = match strip_parens(left) {
+        Expr::Lit(Lit::Num(number)) => number.value == 0.0,
+        Expr::Lit(Lit::Bool(boolean)) => !boolean.value,
+        _ => false,
+    };
+    let Expr::Assign(assign) = strip_parens(right) else {
+        return false;
+    };
+    never_runs
+        && assign.op == AssignOp::Assign
+        && matches!(&assign.left, AssignTarget::Simple(SimpleAssignTarget::Member(member))
+            if is_module_exports_expr(&Expr::Member(member.clone()), unresolved_mark))
+        && matches!(strip_parens(&assign.right), Expr::Object(_))
 }
 
 struct LoweredNamespace {
@@ -1102,21 +1149,24 @@ fn copy_props_helper(
     {
         return None;
     }
-    let Stmt::If(skip) = single_stmt(body)? else {
-        return None;
+    // `if (GUARD) define(...)`, or minified `GUARD && define(...)`.
+    let (guard, define) = match single_stmt(body)? {
+        Stmt::If(skip) if skip.alt.is_none() => (&*skip.test, call_stmt(&skip.cons)?),
+        Stmt::Expr(statement) => match strip_parens(&statement.expr) {
+            Expr::Bin(BinExpr {
+                op: BinaryOp::LogicalAnd,
+                left,
+                right,
+                ..
+            }) => match strip_parens(right) {
+                Expr::Call(define) => (&**left, define),
+                _ => return None,
+            },
+            _ => return None,
+        },
+        _ => return None,
     };
-    if skip.alt.is_some() {
-        return None;
-    }
-    let has_own = copy_guard_has_own(
-        &skip.test,
-        to,
-        key,
-        except,
-        has_own_aliases,
-        unresolved_mark,
-    )?;
-    let define = call_stmt(&skip.cons)?;
+    let has_own = copy_guard_has_own(guard, to, key, except, has_own_aliases, unresolved_mark)?;
     let Callee::Expr(define_callee) = &define.callee else {
         return None;
     };

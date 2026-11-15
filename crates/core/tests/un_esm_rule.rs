@@ -2028,6 +2028,63 @@ var mod_default = count;
 }
 
 #[test]
+fn esbuild_to_common_js_namespace_drops_the_lexer_annotation() {
+    // `--format=cjs` appends `0 && (module.exports = {...})` so Node's
+    // cjs-module-lexer finds the names; it never runs.
+    let input = format!(
+        r#"
+{ESBUILD_CJS_HELPERS}
+var entry_exports = {{}};
+__export(entry_exports, {{
+  get: () => get
+}});
+module.exports = __toCommonJS(entry_exports);
+function get() {{
+  return 1;
+}}
+// Annotate the CommonJS export names for ESM import in node:
+0 && (module.exports = {{
+  get
+}});
+"#
+    );
+    let output = apply(&input);
+    assert!(!output.contains("module"), "{output}");
+    assert!(!output.contains("__toCommonJS"), "{output}");
+    assert!(output.contains("export { get }"), "{output}");
+}
+
+#[test]
+fn minified_esbuild_to_common_js_namespace_becomes_live_exports() {
+    let input = r#"var n=Object.defineProperty;var u=Object.getOwnPropertyDescriptor;var x=Object.getOwnPropertyNames;var s=Object.prototype.hasOwnProperty;var b=(t,r)=>{for(var o in r)n(t,o,{get:r[o],enumerable:!0})},c=(t,r,o,p)=>{if(r&&typeof r=="object"||typeof r=="function")for(let e of x(r))!s.call(t,e)&&e!==o&&n(t,e,{get:()=>r[e],enumerable:!(p=u(r,e))||p.enumerable});return t};var h=t=>c(n({},"__esModule",{value:!0}),t);var k={};b(k,{get:()=>j});module.exports=h(k);function j(){return 1}0&&(module.exports={get});"#;
+    let output = apply(input);
+    assert!(!output.contains("module"), "{output}");
+    assert!(output.contains("export function get()"), "{output}");
+}
+
+#[test]
+fn lexer_annotation_stays_when_the_namespace_stays() {
+    let input = format!(
+        r#"
+{ESBUILD_CJS_HELPERS}
+var mod_exports = {{}};
+__export(mod_exports, {{
+  count: () => count
+}});
+module.exports = __toCommonJS(mod_exports);
+let count = 0;
+exports.extra = 1;
+0 && (module.exports = {{
+  count
+}});
+"#
+    );
+    let output = apply(&input);
+    assert!(output.contains("__toCommonJS(mod_exports)"), "{output}");
+    assert!(output.contains("count\n"), "{output}");
+}
+
+#[test]
 fn esbuild_to_common_js_namespace_stays_when_module_reads_exports() {
     // Getters on `exports` would differ from getters on the replaced
     // `module.exports` once the module refers to `exports` itself.
