@@ -1,0 +1,1 @@
+export const __webpack_esm_ids__=[792];export const __webpack_esm_modules__={};import{__webpack_require__ as _}from"./runtime.js";_.C({__webpack_esm_ids__,__webpack_esm_modules__}),console.log("1.0.0"),async function(){return(await _.e(529).then(()=>_.t(529,19))).greet("dynamic")}().then(console.log);

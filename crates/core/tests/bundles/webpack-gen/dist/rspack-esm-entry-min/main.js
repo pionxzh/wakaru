@@ -1,0 +1,1 @@
+export const __rspack_esm_ids=[889];export const __webpack_modules__={128(o,e,n){console.log("1.0.0"),(async function(){return(await n.e(466).then(n.t.bind(n,529,19))).greet("dynamic")})().then(console.log)}};import{__webpack_require__ as o}from"./runtime.js";import*as e from"./main.js";o.C(e),o(o.s=128);

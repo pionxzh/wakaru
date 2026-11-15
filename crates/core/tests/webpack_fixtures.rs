@@ -701,6 +701,29 @@ fn esm_chunk_min_fixtures() {
     }
 }
 
+#[test]
+fn esm_entry_chunk_min_fixtures() {
+    // With a separate runtime chunk, Rspack's entry chunk imports the
+    // runtime's require and starts its entry module.
+    let pairs = unpack_fixture("rspack-esm-entry-min/main.js");
+    assert_eq!(filenames(&pairs), vec!["module-128.js"]);
+    assert!(
+        pairs[0].1.contains("greet") && !pairs[0].1.contains("runtime.js"),
+        "the entry module should keep its code, not the startup:\n{}",
+        pairs[0].1
+    );
+
+    // webpack 5 inlines its entry module after the install, reading the
+    // runtime's require; the file stays whole.
+    let pairs = unpack_fixture("wp5-esm-entry-min/main.js");
+    assert_eq!(pairs.len(), 1, "{:?}", filenames(&pairs));
+    assert!(
+        !pairs[0].0.starts_with("module-"),
+        "{:?}",
+        filenames(&pairs)
+    );
+}
+
 // ========================================================================
 // Webpack 5 — require.s entry (hand-crafted)
 // ========================================================================

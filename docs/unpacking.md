@@ -42,7 +42,14 @@ attempted in order — first match wins:
    that exports the chunk ids and modules (`export const __webpack_esm_ids__ =
    [...]` and `export const __webpack_esm_modules__ = {...}`; older releases
    name them `ids`/`modules` or `__webpack_ids__`/`__webpack_modules__`, and
-   Rspack exports `__rspack_esm_ids` beside `__webpack_modules__`)
+   Rspack exports `__rspack_esm_ids` beside `__webpack_modules__`).
+   An ESM entry chunk whose runtime is a chunk of its own (producer
+   `rspack@2.3.2 output.module optimization.runtimeChunk`) also imports the
+   runtime's require and every chunk it needs, installs them, and starts its
+   entry module (`import { __webpack_require__ as e } from "./runtime.js";
+   import * as t from "./main.js"; e.C(t), e(e.s = 128);`). That protocol
+   is runtime work and leaves the split, as a JSONP push's startup callback
+   does, and the started module is marked as the entry.
 4. **Turbopack** — Next.js 15.3+ production chunks: the client
    `globalThis.TURBOPACK` push and the server `module.exports` payload. See
    [Turbopack](#turbopack) below
@@ -1038,8 +1045,12 @@ layout directly is a proposal:
     helpers before such a chunk, and its modules then call an unbound name
     (producer `webpack@5.111.1` + `esbuild@0.28.0` esbuildMinify keepNames,
     target node);
-  - a webpack 5 ESM chunk with other `import`/`export` declarations beside
-    its chunk exports, or one that also exports runtime modules, stays whole;
+  - a webpack 5 ESM chunk with `import`/`export` declarations beside its
+    chunk exports, other than an entry chunk's startup, or one that also
+    exports runtime modules, stays whole. webpack's own ESM entry chunk is one of
+    them (producer `webpack@5.112.2 output.module
+    optimization.runtimeChunk`): it inlines the entry module after the
+    install, reading the imported require;
   - a SystemJS bundle with `output.banner` or `output.footer` set to code
     (producer `rollup@4.63.6` `format: "system"`, unminified) drops it;
   - a UMD library (producer `webpack@5.111.1` `output.library.type: "umd"`

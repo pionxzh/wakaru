@@ -6,10 +6,10 @@ use swc_core::common::{
 };
 use swc_core::ecma::ast::{
     ArrayLit, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, CallExpr,
-    Callee, Decl, ExportDecl, Expr, ExprStmt, FnExpr, Id, Ident, IdentName, KeyValueProp, Lit,
-    MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit, Pat, Prop, PropName,
-    PropOrSpread, SeqExpr, SimpleAssignTarget, Stmt, Str, UnaryExpr, UnaryOp, VarDecl,
-    VarDeclarator,
+    Callee, Decl, ExportDecl, Expr, ExprStmt, FnExpr, Id, Ident, IdentName, ImportSpecifier,
+    KeyValueProp, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem,
+    ObjectLit, Pat, Prop, PropName, PropOrSpread, SeqExpr, SimpleAssignTarget, Stmt, Str,
+    UnaryExpr, UnaryOp, VarDecl, VarDeclarator,
 };
 use swc_core::ecma::codegen::Config;
 use swc_core::ecma::transforms::base::resolver;
@@ -572,6 +572,154 @@ impl<'a> EsmChunkExports<'a> {
     }
 }
 
+/// The loading protocol of an ESM entry chunk whose runtime is a chunk of
+/// its own (Rspack `output.module` with a separate runtime chunk):
+///
+/// ```text
+/// import { __webpack_require__ as e } from "./runtime.js";
+/// import * as t from "./vendor.js"; e.C(t);
+/// import * as r from "./main.js"; e.C(r), e(e.s = 128);
+/// ```
+///
+/// The runtime installs each imported chunk, this one included, and starts
+/// the entry module. Like a JSONP push's startup callback, the protocol is
+/// runtime work and leaves the split; the started module becomes the entry.
+#[derive(Default)]
+struct EsmChunkStartup {
+    /// Indices of the top-level items of the protocol.
+    items: HashSet<usize>,
+    /// The ids of the modules the protocol starts, in order.
+    entry_ids: Vec<String>,
+}
+
+impl EsmChunkStartup {
+    /// `None` when an `import`/`export` beside the chunk exports is not the
+    /// protocol, or when other code reads the runtime or an installed chunk
+    /// (webpack inlines its entry module there, reading the runtime's
+    /// require).
+    fn find(module: &Module, chunk: &EsmChunkExports) -> Option<Self> {
+        let mut startup = Self::default();
+        let mut runtime: Option<Atom> = None;
+        let mut namespaces: HashSet<Atom> = HashSet::default();
+        for (idx, item) in module.body.iter().enumerate() {
+            if chunk.items.contains(&idx) {
+                continue;
+            }
+            let ModuleItem::ModuleDecl(decl) = item else {
+                continue;
+            };
+            let ModuleDecl::Import(import) = decl else {
+                return None;
+            };
+            if import.type_only || import.with.is_some() {
+                return None;
+            }
+            match import.specifiers.as_slice() {
+                [ImportSpecifier::Named(named)] => {
+                    let imported = match &named.imported {
+                        Some(ModuleExportName::Ident(ident)) => ident.sym.clone(),
+                        Some(ModuleExportName::Str(_)) => return None,
+                        None => named.local.sym.clone(),
+                    };
+                    if imported.as_ref() != "__webpack_require__" || runtime.is_some() {
+                        return None;
+                    }
+                    runtime = Some(named.local.sym.clone());
+                }
+                [ImportSpecifier::Namespace(namespace)] => {
+                    namespaces.insert(namespace.local.sym.clone());
+                }
+                _ => return None,
+            }
+            startup.items.insert(idx);
+        }
+        let Some(runtime) = runtime else {
+            return namespaces.is_empty().then_some(startup);
+        };
+
+        for (idx, item) in module.body.iter().enumerate() {
+            if chunk.items.contains(&idx) || startup.items.contains(&idx) {
+                continue;
+            }
+            if let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item {
+                let parts: Vec<&Expr> = match strip_parens(expr) {
+                    Expr::Seq(SeqExpr { exprs, .. }) => exprs.iter().map(|e| &**e).collect(),
+                    expr => vec![expr],
+                };
+                let mut entry_ids = Vec::new();
+                let protocol = parts.iter().all(|part| {
+                    if is_chunk_install(part, &runtime, &namespaces) {
+                        return true;
+                    }
+                    match startup_module_id(part, &runtime) {
+                        Some(id) => {
+                            entry_ids.push(id);
+                            true
+                        }
+                        None => false,
+                    }
+                });
+                if protocol {
+                    startup.items.insert(idx);
+                    startup.entry_ids.extend(entry_ids);
+                    continue;
+                }
+            }
+            let mut names = surrounding::IdentNameCollector(HashSet::default());
+            item.visit_with(&mut names);
+            if names.0.contains(&runtime) || names.0.iter().any(|name| namespaces.contains(name)) {
+                return None;
+            }
+        }
+        Some(startup)
+    }
+}
+
+/// `e.C(t)`: the runtime installs the chunk `t` imported as a namespace.
+fn is_chunk_install(expr: &Expr, runtime: &Atom, namespaces: &HashSet<Atom>) -> bool {
+    let Expr::Call(call) = strip_parens(expr) else {
+        return false;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    let Expr::Member(member) = strip_parens(callee) else {
+        return false;
+    };
+    matches!(strip_parens(&member.obj), Expr::Ident(obj) if obj.sym == *runtime)
+        && matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "C")
+        && matches!(call.args.as_slice(), [arg] if arg.spread.is_none()
+            && matches!(strip_parens(&arg.expr), Expr::Ident(ns) if namespaces.contains(&ns.sym)))
+}
+
+/// `e(e.s = 128)`: the runtime starts module `128`.
+fn startup_module_id(expr: &Expr, runtime: &Atom) -> Option<String> {
+    let Expr::Call(call) = strip_parens(expr) else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    if !matches!(strip_parens(callee), Expr::Ident(callee) if callee.sym == *runtime) {
+        return None;
+    }
+    let [arg] = call.args.as_slice() else {
+        return None;
+    };
+    let Expr::Assign(assign) = strip_parens(&arg.expr) else {
+        return None;
+    };
+    let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left else {
+        return None;
+    };
+    if arg.spread.is_some()
+        || !matches!(strip_parens(&member.obj), Expr::Ident(obj) if obj.sym == *runtime)
+    {
+        return None;
+    }
+    find_require_s_in_expr(&Expr::Call(call.clone()))
+}
+
 /// The first chunk id when it is a non-negative integer literal.
 fn first_numeric_chunk_id(chunk_ids: &ArrayLit) -> Option<usize> {
     let elem = chunk_ids.elems.first()?.as_ref()?;
@@ -610,11 +758,16 @@ pub(super) fn detect_chunk_from_module_prepared(
     // modules it exports would have to run in the importing runtime, and any
     // other `import`/`export` is public surface the split cannot keep.
     let esm_chunk = EsmChunkExports::find(module);
+    let mut esm_startup = EsmChunkStartup::default();
     if let Some(chunk) = &esm_chunk {
         commitment = Some(refusal::commit(BundleFormat::Webpack5));
         if chunk.has_runtime {
             return because(None, SplitRefusalReason::Other);
         }
+        esm_startup = because(
+            EsmChunkStartup::find(module, chunk),
+            SplitRefusalReason::EsmDeclarations,
+        )?;
     }
 
     // Prelude items before the first push: only their declarations can be
@@ -625,6 +778,9 @@ pub(super) fn detect_chunk_from_module_prepared(
             prelude_before_push = prelude_items.len();
         }
         if let Some(chunk) = &esm_chunk {
+            if esm_startup.items.contains(&idx) {
+                continue;
+            }
             if !chunk.items.contains(&idx) {
                 // Includes a declaration exporting another name beside a
                 // chunk export.
@@ -724,6 +880,14 @@ pub(super) fn detect_chunk_from_module_prepared(
             SplitRefusalReason::SurroundingCode,
         )?;
         script_modules.insert(filename);
+    }
+
+    // An ESM entry chunk's startup names its entry module, as `require.s`
+    // does in a bootstrap.
+    for id in &esm_startup.entry_ids {
+        if let Some(module) = all_modules.iter_mut().find(|module| module.id == *id) {
+            module.is_entry = true;
+        }
     }
 
     let detected = Some(

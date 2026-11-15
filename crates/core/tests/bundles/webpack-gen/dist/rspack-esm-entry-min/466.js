@@ -1,0 +1,1 @@
+export const __rspack_esm_ids=[466];export const __webpack_modules__={529(e,_){_.greet=function(e){return`Hello, ${e}!`}}};

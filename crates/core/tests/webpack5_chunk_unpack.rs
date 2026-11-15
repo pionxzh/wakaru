@@ -1316,6 +1316,62 @@ fn esm_chunk_banner_goes_to_the_prelude() {
     );
 }
 
+/// An Rspack ESM entry chunk with a separate runtime chunk (producer
+/// `rspack@2.3.2 output.module optimization.runtimeChunk`): the runtime's
+/// require is imported, each chunk the entry needs is imported as a
+/// namespace and installed, and the entry module is started.
+fn esm_entry_chunk_source(startup: &str) -> String {
+    format!(
+        "{}import{{__webpack_require__ as e}}from\"./runtime.js\";import*as t from\"./vendor.js\";e.C(t);import*as r from\"./main.js\";{startup}",
+        esm_chunk_source("const", "__rspack_esm_ids", "__webpack_modules__")
+    )
+}
+
+#[test]
+fn esm_entry_chunk_startup_leaves_the_split() {
+    let source = format!(
+        "performance.mark(\"main\");\n{}",
+        esm_entry_chunk_source("e.C(r),e(e.s=11111);")
+    );
+    let pairs = expect_unpack(&source, "main.js");
+    let mut filenames: Vec<&str> = pairs.iter().map(|(name, _)| name.as_str()).collect();
+    filenames.sort();
+    assert_eq!(
+        filenames,
+        vec!["module-11111.js", "module-22222.js", "prelude-11111.js"]
+    );
+    for (name, code) in &pairs {
+        assert!(
+            !code.contains("__webpack_require__") && !code.contains(".C("),
+            "{name} keeps the loading protocol:\n{code}"
+        );
+    }
+    assert!(
+        validate_output_modules(&pairs).is_empty(),
+        "output must validate: {:?}",
+        validate_output_modules(&pairs)
+    );
+}
+
+#[test]
+fn esm_entry_chunk_with_other_code_reading_the_runtime_stays_unsplit() {
+    // webpack 5 inlines its entry module after the install, reading the
+    // runtime's require (producer `webpack@5.112.2 output.module
+    // optimization.runtimeChunk`).
+    assert_stays_one_file(&esm_entry_chunk_source("e.C(r),console.log(e.m);"));
+    assert_stays_one_file(&esm_entry_chunk_source("e.C(r);console.log(t);"));
+    // A namespace import with no runtime to install it.
+    assert_stays_one_file(&format!(
+        "{}import*as r from\"./main.js\";console.log(r);",
+        esm_chunk_source("const", "__rspack_esm_ids", "__webpack_modules__")
+    ));
+    // A second runtime import.
+    assert_stays_one_file(&format!(
+        "{}import{{__webpack_require__ as o}}from\"./other.js\";",
+        esm_entry_chunk_source("e.C(r),e(e.s=11111);")
+    ));
+}
+
 #[test]
 fn module_exporting_a_modules_table_without_ids_is_not_a_chunk() {
     // An ordinary module can export a table of functions named `modules`.
