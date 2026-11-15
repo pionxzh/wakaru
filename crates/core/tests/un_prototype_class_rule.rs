@@ -1783,3 +1783,130 @@ fn pipeline_keeps_constructed_static_member_constructible() {
     assert!(output.contains("Hasher.Buffer = function"), "{output}");
     assert!(!output.contains("static Buffer"), "{output}");
 }
+
+// ============================================================
+// Enumeration: class methods are not enumerable
+// (docs/rewrite-assumptions.md, `prototype_methods_not_enumerated`)
+// ============================================================
+
+#[test]
+fn a_prototype_the_scope_enumerates_keeps_its_methods_assigned() {
+    // shape: hypothetical, the component-emitter mixin form
+    for enumeration in [
+        "for (var key in Emitter.prototype) target[key] = Emitter.prototype[key];",
+        "mixin(target, Emitter.prototype);",
+        "Object.assign(target, Emitter.prototype);",
+        "var proto = Emitter.prototype; mixin(target, proto);",
+        "var proto = Emitter.prototype; for (var key in proto) list.push(key);",
+        "for (var key in new Emitter()) list.push(key);",
+        "var emitter = new Emitter(); for (var key in emitter) list.push(key);",
+        "Object.keys(Emitter).forEach(log);",
+    ] {
+        let input = format!(
+            "function Emitter() {{ this.handlers = {{}}; }}\n\
+             Emitter.prototype.on = function (name) {{ this.handlers[name] = true; }};\n\
+             Emitter.create = function () {{ return new Emitter(); }};\n\
+             {enumeration}"
+        );
+        let output = apply_resolved(&input);
+        assert!(
+            output.contains("Emitter.prototype.on = function"),
+            "{enumeration}\n{output}"
+        );
+        assert!(!output.contains("class Emitter"), "{enumeration}\n{output}");
+    }
+}
+
+#[test]
+fn a_method_that_enumerates_this_keeps_the_constructor_a_function() {
+    // shape: hypothetical, a hand-written ES5 toJSON over every key
+    let input = r#"
+function Model(data) { this.data = data; }
+Model.prototype.toJSON = function () {
+    var out = {};
+    for (var key in this) out[key] = this[key];
+    return out;
+};
+"#;
+    let output = apply_resolved(input);
+    assert!(
+        output.contains("Model.prototype.toJSON = function"),
+        "{output}"
+    );
+}
+
+#[test]
+fn inheritance_and_member_reads_of_the_prototype_still_recover_a_class() {
+    // shape: hypothetical, ES5 inheritance without enumeration
+    let input = r#"
+function Base() { this.ready = true; }
+Base.prototype.start = function () { return this.ready; };
+function Child() { Base.call(this); }
+Child.prototype = Object.create(Base.prototype);
+Child.prototype.constructor = Child;
+Child.prototype.run = function () { return Base.prototype.start.call(this); };
+Object.defineProperty(Child.prototype, "name", { get: function () { return "child"; }, configurable: true });
+Object.assign(Child, { kind: "child" });
+var arrow = function () { for (var key in this) log(key); };
+"#;
+    let output = apply_resolved(input);
+    assert!(output.contains("class Base"), "{output}");
+    assert!(output.contains("class Child extends Base"), "{output}");
+}
+
+#[test]
+fn minimal_keeps_prototype_assignments() {
+    let input = r#"
+function Point(x) { this.x = x; }
+Point.prototype.read = function () { return this.x; };
+export default Point;
+"#;
+    let minimal = common::render_with_level(input, wakaru_core::rules::RewriteLevel::Minimal);
+    assert!(
+        minimal.contains("Point.prototype.read = function"),
+        "{minimal}"
+    );
+    let standard = render(input);
+    assert!(standard.contains("class Point"), "{standard}");
+}
+
+#[test]
+fn comparing_with_the_prototype_still_recovers_a_class() {
+    // shape: hypothetical, a receiver check against the prototype
+    let input = r#"
+function Widget() { this.ready = true; }
+Widget.prototype.receiver = function () { return this === Widget.prototype ? "prototype" : "other"; };
+"#;
+    let output = apply_resolved(input);
+    assert!(output.contains("class Widget"), "{output}");
+}
+
+#[test]
+fn members_written_through_a_prototype_variable_still_recover_a_class() {
+    // shape: hypothetical, the long.js `var LongPrototype = Long.prototype` form
+    let input = r#"
+function Long(low, high) { this.low = low; this.high = high; }
+Long.fromBits = function (low, high) { return new Long(low, high); };
+Long.prototype.isZero = function () { return this.low === 0; };
+var LongPrototype = Long.prototype;
+LongPrototype.toInt = function () { return this.low; };
+"#;
+    let output = apply_resolved(input);
+    assert!(output.contains("class Long"), "{output}");
+    assert!(
+        output.contains("LongPrototype.toInt = function"),
+        "{output}"
+    );
+}
+
+#[test]
+fn assigning_into_the_prototype_still_recovers_a_class() {
+    // shape: hypothetical, `Object.assign(F.prototype, {…})` adds members
+    let input = r#"
+function Store() { this.items = []; }
+Store.prototype.add = function (item) { this.items.push(item); };
+Object.assign(Store.prototype, { size: function () { return this.items.length; } });
+"#;
+    let output = apply_resolved(input);
+    assert!(output.contains("class Store"), "{output}");
+}

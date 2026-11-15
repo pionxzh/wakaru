@@ -19,6 +19,7 @@ use super::decl_utils::{
     ensure_setter_has_value_param, has_duplicate_param_names, ClassAccessorDescriptorAttributes,
 };
 use super::helper_matcher::{binding_key, BindingKey};
+use super::prototype_enumeration::EnumeratedConstructors;
 use super::un_es6_class::constructor_calls_super;
 
 #[derive(Default)]
@@ -80,13 +81,14 @@ impl UnPrototypeClass {
 
 struct UnPrototypeClassPass<'a> {
     callability: &'a CallabilityIndex,
+    enumerated: &'a EnumeratedConstructors,
     converted_any: bool,
 }
 
 impl VisitMut for UnPrototypeClassPass<'_> {
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
         stmts.visit_mut_children_with(self);
-        self.converted_any |= transform_stmts(stmts, &[], self.callability);
+        self.converted_any |= transform_stmts(stmts, &[], self.callability, self.enumerated);
     }
 
     fn visit_mut_function(&mut self, function: &mut Function) {
@@ -121,7 +123,12 @@ impl VisitMut for UnPrototypeClassPass<'_> {
 impl UnPrototypeClassPass<'_> {
     fn visit_parameter_body(&mut self, body: &mut FunctionBody, parameters: &[BindingKey]) {
         body.stmts.visit_mut_children_with(self);
-        self.converted_any |= transform_stmts(&mut body.stmts, parameters, self.callability);
+        self.converted_any |= transform_stmts(
+            &mut body.stmts,
+            parameters,
+            self.callability,
+            self.enumerated,
+        );
     }
 }
 
@@ -131,12 +138,14 @@ fn transform_module_items_to_fixpoint(items: &mut Vec<ModuleItem>, pin_exports: 
         // exported IIFE returns, which is the binding this rule would class-ify.
         let roots = super::callability::pinned_binding_keys(items, pin_exports);
         let callability = CallabilityIndex::collect_module_items_with_roots(items, &roots);
+        let enumerated = EnumeratedConstructors::collect_module_items(items);
         let mut pass = UnPrototypeClassPass {
             callability: &callability,
+            enumerated: &enumerated,
             converted_any: false,
         };
         items.visit_mut_children_with(&mut pass);
-        pass.converted_any |= transform_module_items(items, &callability);
+        pass.converted_any |= transform_module_items(items, &callability, &enumerated);
         if !pass.converted_any {
             break;
         }
@@ -146,12 +155,14 @@ fn transform_module_items_to_fixpoint(items: &mut Vec<ModuleItem>, pin_exports: 
 fn transform_stmts_to_fixpoint(stmts: &mut Vec<Stmt>, parameters: &[BindingKey]) {
     loop {
         let callability = CallabilityIndex::collect_stmts(stmts);
+        let enumerated = EnumeratedConstructors::collect_stmts(stmts);
         let mut pass = UnPrototypeClassPass {
             callability: &callability,
+            enumerated: &enumerated,
             converted_any: false,
         };
         stmts.visit_mut_children_with(&mut pass);
-        pass.converted_any |= transform_stmts(stmts, parameters, &callability);
+        pass.converted_any |= transform_stmts(stmts, parameters, &callability, &enumerated);
         if !pass.converted_any {
             break;
         }
@@ -192,7 +203,11 @@ enum ConstructorKind {
     VariableFunction,
 }
 
-fn transform_module_items(items: &mut Vec<ModuleItem>, callability: &CallabilityIndex) -> bool {
+fn transform_module_items(
+    items: &mut Vec<ModuleItem>,
+    callability: &CallabilityIndex,
+    enumerated: &EnumeratedConstructors,
+) -> bool {
     // Extract statements for analysis
     let stmts: Vec<Option<&Stmt>> = items
         .iter()
@@ -202,7 +217,7 @@ fn transform_module_items(items: &mut Vec<ModuleItem>, callability: &Callability
         })
         .collect();
 
-    let candidates: Vec<_> = find_candidates(&stmts, true, callability)
+    let candidates: Vec<_> = find_candidates(&stmts, true, callability, enumerated)
         .into_iter()
         .filter(|candidate| {
             candidate.constructor_kind != ConstructorKind::FunctionDeclaration
@@ -271,9 +286,10 @@ fn transform_stmts(
     stmts: &mut Vec<Stmt>,
     parameters: &[BindingKey],
     callability: &CallabilityIndex,
+    enumerated: &EnumeratedConstructors,
 ) -> bool {
     let stmt_opts: Vec<Option<&Stmt>> = stmts.iter().map(Some).collect();
-    let candidates: Vec<_> = find_candidates(&stmt_opts, false, callability)
+    let candidates: Vec<_> = find_candidates(&stmt_opts, false, callability, enumerated)
         .into_iter()
         .filter(|candidate| {
             !parameters
@@ -367,6 +383,7 @@ fn find_candidates(
     stmts: &[Option<&Stmt>],
     allow_module_var: bool,
     callability: &CallabilityIndex,
+    enumerated: &EnumeratedConstructors,
 ) -> Vec<ClassCandidate> {
     let len = stmts.len();
     let get_stmt = |i: usize| stmts[i];
@@ -414,6 +431,15 @@ fn find_candidates(
 
     for (fn_idx, binding, constructor_kind) in &fn_decls {
         if !names_with_proto_methods.contains(binding) || callability.requires_call(binding) {
+            continue;
+        }
+        // Class methods are not enumerable. A scope that enumerates the
+        // prototype, an instance, or the constructor keeps the function
+        // (docs/rewrite-assumptions.md, `prototype_methods_not_enumerated`).
+        if collect_constructor_aliases(stmts, binding)
+            .iter()
+            .any(|alias| enumerated.contains(alias))
+        {
             continue;
         }
 

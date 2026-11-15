@@ -809,7 +809,7 @@ define_rule_registry! {
         "VarDeclToLetConst"
     ]),
     ("ObjShorthand", Modernization, run_obj_shorthand, always_enabled),
-    ("UnPrototypeClass", Modernization, run_un_prototype_class, always_enabled),
+    ("UnPrototypeClass", Modernization, run_un_prototype_class, standard_or_above),
     // UnEs6Class and UnPrototypeClass clone constructor bodies, including a
     // Babel classCallCheck that must stay while the constructor is still a
     // function. Strip it only after both recoveries have committed to class

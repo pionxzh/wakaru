@@ -701,7 +701,9 @@ rationale, or level gating appear.
   would evaluate the iterable in the element's TDZ); this applies to every
   for-of recovery path, not only `for await`.
 - **UnUndefinedInit** — needs RemoveVoid; feeds VarDeclToLetConst.
-- **UnPrototypeClass** — runs before ArrowFunction so Closure Compiler's
+- **UnPrototypeClass** — standard and above; a constructor whose members the
+  scope enumerates stays a function (`prototype_methods_not_enumerated`). Runs
+  before ArrowFunction so Closure Compiler's
   single-declarator anonymous function initializers remain available for class
   recovery. It also accepts ordinary function declarations. A constructor sharing
   an enclosing function parameter name stays in prototype form: replacing its

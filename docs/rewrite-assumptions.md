@@ -962,7 +962,54 @@ large corpus of real sites about 8% of them had that evidence.
 
 Affects: `UnPrototypeClass`, `UnEs6Class`.
 
-Level: every level, like both rules.
+Level: wherever each rule runs (`UnEs6Class` at every level,
+`UnPrototypeClass` at `standard` and above).
+
+### `prototype_methods_not_enumerated`
+
+Hand-written ES5 methods are never enumerated and never called detached in
+sloppy mode. `UnPrototypeClass` turns `F.prototype.m = function () {}` into a
+class method and `F.m = function () {}` into a static method. Both become
+non-enumerable, so `for…in` over an instance or the prototype, and a mixin
+that copies the prototype with `for…in` or `Object.assign`, no longer see
+them. Class bodies are also strict, so a method called without a receiver
+sees `undefined` as `this` instead of the global object.
+
+Nothing in `F.prototype.m = function` proves a class compiler wrote it, so
+the rule runs only at `standard` and above, and it keeps the constructor a
+function when the scope enumerates its members:
+
+- `for…in` over `F.prototype`, `new F()`, `F`, a variable assigned
+  `new F()`, or `this` inside the constructor or a prototype method;
+- `F.prototype` used as a value: passed to a call (a mixin, a copy with
+  `Object.assign`, `Object.keys`) or returned. A variable that holds it
+  (`var proto = F.prototype`) counts the same way when it is used as a
+  value; writing members through it (`proto.m = …`) does not.
+  `Object.create`, `Object.defineProperty`, `Object.defineProperties`, and
+  `Object.setPrototypeOf` build or extend a prototype from it, and
+  `Object.assign(F.prototype, …)` adds to it; these do not count, nor does
+  an identity comparison (`x === F.prototype`). Any other call receiving the
+  prototype counts, because a helper's name does not say whether it reads
+  or writes;
+- `Object.keys`, `Object.values`, or `Object.entries` of `F`, or
+  `Object.assign` copying from `F`.
+
+```js
+function Component(props) { this.props = props; }
+Component.prototype.setState = function (state) { /* … */ };
+function PureComponent(props) { this.props = props; }
+PureComponent.prototype = new Dummy();
+Object.assign(PureComponent.prototype, Component.prototype);
+// → Component stays a function: a class would leave PureComponent
+//   without setState.
+```
+
+Enumeration the scope cannot see (a consumer iterating an instance, or a
+helper reached through another module) is assumed absent.
+
+Affects: `UnPrototypeClass`.
+
+Level: `standard` and above. `minimal` keeps the prototype assignments.
 
 ### `single_file_esm_consumers`
 

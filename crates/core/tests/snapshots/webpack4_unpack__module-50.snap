@@ -33,22 +33,11 @@ const b = {
     enqueueSetState: function() {}
 };
 const g = {};
-export class Component {
-    constructor(e, t, n){
-        this.props = e;
-        this.context = t;
-        this.refs = g;
-        this.updater = n || b;
-    }
-    setState(e, t) {
-        if (typeof e !== "object" && typeof e !== "function" && e != null) {
-            throw Error(v(85));
-        }
-        this.updater.enqueueSetState(this, e, t, "setState");
-    }
-    forceUpdate(e) {
-        this.updater.enqueueForceUpdate(this, e, "forceUpdate");
-    }
+export function Component(e, t, n) {
+    this.props = e;
+    this.context = t;
+    this.refs = g;
+    this.updater = n || b;
 }
 function E() {}
 export function PureComponent(e, t, n) {
@@ -58,6 +47,15 @@ export function PureComponent(e, t, n) {
     this.updater = n || b;
 }
 Component.prototype.isReactComponent = {};
+Component.prototype.setState = function(e, t) {
+    if (typeof e !== "object" && typeof e !== "function" && e != null) {
+        throw Error(v(85));
+    }
+    this.updater.enqueueSetState(this, e, t, "setState");
+};
+Component.prototype.forceUpdate = function(e) {
+    this.updater.enqueueForceUpdate(this, e, "forceUpdate");
+};
 E.prototype = Component.prototype;
 const k = PureComponent.prototype = new E;
 k.constructor = PureComponent;

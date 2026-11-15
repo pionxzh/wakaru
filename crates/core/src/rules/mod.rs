@@ -27,6 +27,7 @@ mod merge_declaration_init;
 mod obj_shorthand;
 mod object_assign_spread;
 mod pipeline;
+mod prototype_enumeration;
 mod relative_namespace_import;
 mod remove_void;
 pub(crate) mod rename_utils;
