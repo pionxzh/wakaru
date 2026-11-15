@@ -749,6 +749,10 @@ fn ts_inline_helper_fallback_matches(expr: &Expr, kind: TsHelperKind) -> bool {
         }
     }
 }
+/// The helper's function body. A call is followed to its callee: TypeScript
+/// 5.9 builds `__importStar` in a factory, `(function () { … return
+/// function (mod) { … } })()`, behind the `this && this.__importStar ||`
+/// guard.
 fn ts_helper_callable_body(expr: &Expr) -> Option<(usize, &[Stmt])> {
     match strip_parens(expr) {
         Expr::Fn(fn_expr) => {
@@ -768,6 +772,16 @@ fn ts_helper_callable_body(expr: &Expr) -> Option<(usize, &[Stmt])> {
             ts_helper_callable_body(strip_parens(callee))
         }
         _ => None,
+    }
+}
+/// The body of a helper bound directly to a name, `var h = function (o) {…}`.
+/// No call is followed: `var h = function (o) {…}(x)` binds the call's
+/// result, and an unused binding of it is not a removable helper (the call
+/// may be the whole program).
+fn ts_helper_function_body(expr: &Expr) -> Option<(usize, &[Stmt])> {
+    match strip_parens(expr) {
+        Expr::Call(_) => None,
+        expr => ts_helper_callable_body(expr),
     }
 }
 #[derive(Default)]
@@ -803,8 +817,8 @@ struct TsHelperBodySignals {
 fn collect_ts_helper_body_signals(stmts: &[Stmt]) -> TsHelperBodySignals {
     collect_ts_helper_signals(stmts, true)
 }
-/// Signals from the helper's own statements only; nested functions and arrows
-/// are not entered.
+/// Signals from the helper's own statements only; nested functions, arrows,
+/// classes, and object accessors are not entered.
 fn collect_ts_helper_own_body_signals(stmts: &[Stmt]) -> TsHelperBodySignals {
     collect_ts_helper_signals(stmts, false)
 }
@@ -824,6 +838,26 @@ fn collect_ts_helper_signals(stmts: &[Stmt], descend_into_functions: bool) -> Ts
         fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
             if self.descend_into_functions {
                 arrow.visit_children_with(self);
+            }
+        }
+
+        // A class constructor and an accessor body are their own functions,
+        // but not `Function` nodes.
+        fn visit_class(&mut self, class: &swc_core::ecma::ast::Class) {
+            if self.descend_into_functions {
+                class.visit_children_with(self);
+            }
+        }
+
+        fn visit_getter_prop(&mut self, prop: &swc_core::ecma::ast::GetterProp) {
+            if self.descend_into_functions {
+                prop.visit_children_with(self);
+            }
+        }
+
+        fn visit_setter_prop(&mut self, prop: &swc_core::ecma::ast::SetterProp) {
+            if self.descend_into_functions {
+                prop.visit_children_with(self);
             }
         }
 
@@ -1105,7 +1139,7 @@ fn ts_generated_values_callable_kind(ident: &Ident, expr: &Expr) -> Option<TsHel
     if !is_likely_generated_alias(ident.sym.as_ref()) {
         return None;
     }
-    let (param_len, body) = ts_helper_callable_body(expr)?;
+    let (param_len, body) = ts_helper_function_body(expr)?;
     if ts_values_body_matches(param_len, body) {
         Some(TsHelperKind::Values)
     } else if ts_async_values_body_matches(param_len, body) {
@@ -1125,7 +1159,7 @@ fn ts_generated_fact_callable_kind(ident: &Ident, expr: &Expr) -> Option<TsHelpe
     {
         return None;
     }
-    let (param_len, body) = ts_helper_callable_body(expr)?;
+    let (param_len, body) = ts_helper_function_body(expr)?;
     let signals = collect_ts_helper_body_signals(body);
     if param_len >= 4 && signals.generator_apply && signals.next_call {
         Some(TsHelperKind::Awaiter)

@@ -2058,3 +2058,23 @@ for (const step of entries) {
 "#;
     assert_eq_normalized(&render(input), expected);
 }
+
+#[test]
+fn an_unused_iife_binding_is_not_a_values_helper() {
+    // shape: hypothetical, a UMD-style library IIFE bound to a short minified
+    // name: one parameter, `Symbol.iterator` in its own body, and a class
+    // constructor that throws `TypeError`. It reads like an inlined
+    // `__values` helper, but the binding holds the call's result.
+    let input = r#"
+var W3 = function (e) {
+    function ug(e) { for (var t = e, i = 0; i < t.length; i++) { g(t[i]); } }
+    Symbol.iterator;
+    class Dg { constructor() { throw new TypeError("x"); } }
+    e.Dg = Dg;
+    return e;
+}({});
+"#;
+    let output = render(input);
+    assert!(output.contains("W3"), "{output}");
+    assert!(output.contains("class Dg"), "{output}");
+}
