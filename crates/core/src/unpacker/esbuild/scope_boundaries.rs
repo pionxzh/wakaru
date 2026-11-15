@@ -2,8 +2,8 @@
 
 use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
-    ArrowFunctionBody, Callee, Decl, Expr, ExprStmt, ForInStmt, MemberProp, ModuleDecl, ModuleItem,
-    ObjectLit, Pat, PropName, Stmt, VarDeclarator,
+    ArrowFunctionBody, AssignOp, AssignTarget, Callee, Decl, Expr, ExprStmt, ForInStmt, MemberProp,
+    ModuleDecl, ModuleItem, ObjectLit, Pat, PropName, SimpleAssignTarget, Stmt, VarDeclarator,
 };
 
 use crate::collections::{HashMap, HashSet};
@@ -69,12 +69,19 @@ pub(super) fn collect_scope_hoisted_boundaries(
     export_helper: &BindingId,
 ) -> Vec<ScopeHoistedBoundary> {
     let mut boundaries = Vec::new();
+    let entry_namespaces: HashSet<BindingId> =
+        items.iter().filter_map(commonjs_entry_namespace).collect();
 
     for i in 0..items.len().saturating_sub(1) {
         // Check: var NS = {};
         let Some(ns_binding) = extract_empty_object_decl(&items[i]) else {
             continue;
         };
+        // The entry's own namespace in `--format=cjs` output stays with the
+        // entry, where `UnEsm` turns it into the entry's exports.
+        if entry_namespaces.contains(&ns_binding) {
+            continue;
+        }
 
         // Check: __export(NS, { ... }) at i+1
         if !is_export_call(&items[i + 1], export_helper, &ns_binding) {
@@ -98,6 +105,53 @@ pub(super) fn collect_scope_hoisted_boundaries(
     }
 
     boundaries
+}
+
+/// The namespace of the entry module in esbuild's `--format=cjs` output:
+///
+/// ```text
+/// var entry_exports = {};
+/// __export(entry_exports, { get: () => get });
+/// module.exports = __toCommonJS(entry_exports);
+/// ```
+fn commonjs_entry_namespace(item: &ModuleItem) -> Option<BindingId> {
+    let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
+        return None;
+    };
+    let Expr::Assign(assign) = &**expr else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Member(target)) = &assign.left else {
+        return None;
+    };
+    let (Expr::Ident(object), MemberProp::Ident(property)) = (&*target.obj, &target.prop) else {
+        return None;
+    };
+    if object.sym != "module" || property.sym != "exports" {
+        return None;
+    }
+    let Expr::Call(call) = &*assign.right else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    if !matches!(&**callee, Expr::Ident(_)) {
+        return None;
+    }
+    let [argument] = call.args.as_slice() else {
+        return None;
+    };
+    if argument.spread.is_some() {
+        return None;
+    }
+    let Expr::Ident(namespace) = &*argument.expr else {
+        return None;
+    };
+    Some((namespace.sym.clone(), namespace.ctxt))
 }
 
 /// Check if a namespace atom appears in any ESM export declaration.
@@ -414,11 +468,31 @@ pub(super) fn is_scope_support_declaration_for_binding(
             pat_declared_binding_ids(&decl.name)
                 .iter()
                 .any(|decl_binding| decl_binding == binding)
-                && decl
-                    .init
-                    .as_deref()
-                    .is_some_and(|init| matches!(init, Expr::Fn(_) | Expr::Arrow(_)))
+                && decl.init.as_deref().is_some_and(|init| {
+                    matches!(init, Expr::Fn(_) | Expr::Arrow(_)) || is_object_builtin_alias(init)
+                })
         }),
+        _ => false,
+    }
+}
+
+/// `Object.defineProperty` or `Object.prototype.hasOwnProperty`: the aliases
+/// esbuild declares for its runtime helpers. A module that adopts a helper
+/// adopts them too, since the entry imports that module before its own
+/// declarations run.
+fn is_object_builtin_alias(init: &Expr) -> bool {
+    let Expr::Member(member) = init else {
+        return false;
+    };
+    if !matches!(&member.prop, MemberProp::Ident(_)) {
+        return false;
+    }
+    match member.obj.as_ref() {
+        Expr::Ident(ident) => ident.sym == *"Object",
+        Expr::Member(prototype) => {
+            matches!(&prototype.prop, MemberProp::Ident(name) if name.sym == *"prototype")
+                && matches!(prototype.obj.as_ref(), Expr::Ident(ident) if ident.sym == *"Object")
+        }
         _ => false,
     }
 }

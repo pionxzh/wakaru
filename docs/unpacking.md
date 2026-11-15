@@ -170,6 +170,19 @@ attempted in order — first match wins:
    are not adopted by this path; property mutations and shadowed locals do not
    count as writes to the exported binding. Functions whose own binding is
    reassigned stay in entry, avoiding a new imported-function write.
+   A scope module that adopts a runtime helper (`__toESM`, `__copyProps`)
+   also adopts the `Object` aliases the helper reads (`var __defProp =
+   Object.defineProperty`, `var __hasOwnProp =
+   Object.prototype.hasOwnProperty`): the entry imports that module before
+   its own declarations run. A minified build declares several helpers in
+   one statement; a helper declared beside `__commonJS` stays in the entry
+   while entry code still reads it.
+   In `--format=cjs` output (producer `esbuild@0.28 --bundle --format=cjs
+   --platform=node`, minified or not), the entry module ends with `module.exports =
+   __toCommonJS(entry_exports)`. That namespace is the entry's own exports,
+   so it is no module boundary: it stays in `entry.js`, where `UnEsm` turns
+   it into the entry's named exports and drops the `0 && (module.exports =
+   { … })` annotation esbuild adds for Node's cjs-module-lexer.
 9. **Metro** — React Native/Expo plain-JavaScript bundles made of top-level
    `__d(factory, moduleId, dependencyMap)` definitions and `__r(entryId)`
    startup calls. The extractor resolves indexed dependencies, normalizes the
@@ -1062,6 +1075,13 @@ layout directly is a proposal:
   of it would return the initializer instead of the module. A literal
   `import()` of a CommonJS module lowered the same way stays lowered for the
   same reason.
+- **`export *` from CommonJS into an escaping esbuild namespace.** When the
+  entry's namespace object escapes (`globalThis.x = entry_exports` in an
+  iife build) and the entry module re-exports a CommonJS module
+  (`__reExport(entry_exports, __toESM(require_x()))`), the split output
+  throws: the namespace's module copies into a namespace object it declares
+  after that call, and `entry.js` builds its own copy of the namespace with
+  only the `__export` getters.
 - **Relative `require` inside a top-level expression.** A module binding
   assigned inside an expression (`r = f((e = require("./m")).x)`) is not
   turned into an import, so the module stays CommonJS. rspack production

@@ -5876,3 +5876,161 @@ fn esbuild_lazy_module_followed_by_a_state_only_module_becomes_import() {
     assert!(!entry.contains("impl_exports"), "{entry}");
     assert_eq!(validate_output_modules(&pairs), vec![]);
 }
+
+/// `esbuild --bundle --format=cjs` output of an entry with exports: the
+/// entry's own namespace becomes `module.exports` through `__toCommonJS`.
+const CJS_FORMAT_ENTRY_WITH_EXPORTS: &str = r#"
+var __create = Object.create;
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __commonJS = (cb, mod) => function __require() {
+  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+};
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+
+// c.js
+var require_c = __commonJS({
+  "c.js"(exports2, module2) {
+    module2.exports = { q: 1 };
+  }
+});
+
+// entry.js
+var entry_exports = {};
+__export(entry_exports, {
+  get: () => get
+});
+module.exports = __toCommonJS(entry_exports);
+var import_c = __toESM(require_c());
+function get() {
+  return import_c.default.q;
+}
+// Annotate the CommonJS export names for ESM import in node:
+0 && (module.exports = {
+  get
+});
+"#;
+
+/// The same build minified: `__commonJS`, `__export`, and `__copyProps`
+/// share one declaration.
+const MINIFIED_CJS_FORMAT_ENTRY_WITH_EXPORTS: &str = r#"var q=Object.create;var n=Object.defineProperty;var u=Object.getOwnPropertyDescriptor;var x=Object.getOwnPropertyNames;var g=Object.getPrototypeOf,s=Object.prototype.hasOwnProperty;var a=(t,r)=>()=>{try{return r||t((r={exports:{}}).exports,r),r.exports}catch(o){throw r=0,o}},b=(t,r)=>{for(var o in r)n(t,o,{get:r[o],enumerable:!0})},c=(t,r,o,p)=>{if(r&&typeof r=="object"||typeof r=="function")for(let e of x(r))!s.call(t,e)&&e!==o&&n(t,e,{get:()=>r[e],enumerable:!(p=u(r,e))||p.enumerable});return t};var d=(t,r,o)=>(o=t!=null?q(g(t)):{},c(r||!t||!t.__esModule?n(o,"default",{value:t,enumerable:!0}):o,t)),h=t=>c(n({},"__esModule",{value:!0}),t);var i=a((v,f)=>{f.exports={q:1}});var k={};b(k,{get:()=>j});module.exports=h(k);var m=d(i());function j(){return m.default.q}0&&(module.exports={get});"#;
+
+#[test]
+fn cjs_format_entry_namespace_stays_in_the_entry() {
+    for bundle in [
+        CJS_FORMAT_ENTRY_WITH_EXPORTS,
+        MINIFIED_CJS_FORMAT_ENTRY_WITH_EXPORTS,
+    ] {
+        let raw_pairs = expect_unpack_raw(bundle);
+        let names: Vec<&str> = raw_pairs.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(names.len(), 2, "the namespace is no module: {raw_pairs:#?}");
+        let raw_entry = entry_code(&raw_pairs);
+        assert!(
+            raw_entry.contains("module.exports = "),
+            "the entry keeps its namespace:\n{raw_entry}"
+        );
+
+        let pairs = expect_unpack(bundle, "bundle.js");
+        let entry = entry_code(&pairs);
+        assert!(
+            !entry.contains("module") && !entry.contains("if (0)"),
+            "the entry becomes ESM:\n{entry}"
+        );
+        assert!(
+            entry.contains("export { get }") || entry.contains("export function get"),
+            "{entry}"
+        );
+        assert_eq!(validate_output_modules(&pairs), vec![]);
+    }
+}
+
+#[test]
+fn scope_module_adopts_the_builtin_aliases_of_its_helpers() {
+    // The entry namespace escapes, and the entry module default-imports a
+    // CommonJS module: `__toESM` and `__copyProps` move into the namespace's
+    // module, which the entry imports before its own declarations run, so
+    // `__defProp` and the other aliases they read move with them.
+    let bundle = r#"
+(() => {
+  var __create = Object.create;
+  var __defProp = Object.defineProperty;
+  var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+  var __getOwnPropNames = Object.getOwnPropertyNames;
+  var __getProtoOf = Object.getPrototypeOf;
+  var __hasOwnProp = Object.prototype.hasOwnProperty;
+  var __commonJS = (cb, mod) => function __require() {
+    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  };
+  var __export = (target, all) => {
+    for (var name in all)
+      __defProp(target, name, { get: all[name], enumerable: true });
+  };
+  var __copyProps = (to, from, except, desc) => {
+    if (from && typeof from === "object" || typeof from === "function") {
+      for (let key of __getOwnPropNames(from))
+        if (!__hasOwnProp.call(to, key) && key !== except)
+          __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+    }
+    return to;
+  };
+  var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+    isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+    mod
+  ));
+
+  // config.js
+  var require_config = __commonJS({
+    "config.js"(exports, module) {
+      module.exports = { q: "value" };
+    }
+  });
+
+  // entry.js
+  var entry_exports = {};
+  __export(entry_exports, {
+    get: () => get,
+    label: () => label
+  });
+  var import_config = __toESM(require_config());
+  function get() {
+    return import_config.default.q;
+  }
+  var label = "label";
+  globalThis.sink = entry_exports;
+})();
+"#;
+
+    for pairs in [
+        expect_unpack_raw(bundle),
+        expect_unpack(bundle, "bundle.js"),
+    ] {
+        assert_eq!(validate_output_modules(&pairs), vec![], "{pairs:#?}");
+        let (_, module) = pairs
+            .iter()
+            .find(|(name, _)| name == "entry_exports.js")
+            .unwrap_or_else(|| panic!("missing the namespace module: {pairs:#?}"));
+        assert!(
+            module.contains("__toESM") && module.contains("Object.create"),
+            "{module}"
+        );
+    }
+}

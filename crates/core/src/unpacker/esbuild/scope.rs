@@ -956,18 +956,44 @@ fn adopt_scope_support_decls(
             consumed.insert(*index);
         }
     }
-    for index in drop_unowned_helper_sibling_indices {
-        // Mixed helper declarations are filtered before scope partitioning.
-        // Only discard a surviving sibling when it remains entry-owned; a
-        // scope boundary may have claimed the filtered statement as module
-        // body, namespace setup, or export setup.
-        if consumed.contains(index) {
-            continue;
+    // Mixed helper declarations are filtered before scope partitioning.
+    // Only discard a surviving sibling when it remains entry-owned; a scope
+    // boundary may have claimed the filtered statement as module body,
+    // namespace setup, or export setup. A sibling that entry code still reads
+    // stays: in a minified `--format=cjs` build, the entry's own namespace
+    // calls `__export`, declared beside `__commonJS`.
+    let mut dropped: HashSet<usize> = drop_unowned_helper_sibling_indices
+        .iter()
+        .copied()
+        .filter(|index| {
+            !consumed.contains(index) && source_slots.get(*index).and_then(Option::as_ref).is_some()
+        })
+        .collect();
+    loop {
+        let read: Vec<usize> = dropped
+            .iter()
+            .copied()
+            .filter(|&index| {
+                item_infos[index].declared.iter().any(|binding| {
+                    item_infos.iter().enumerate().any(|(reader, info)| {
+                        !dropped.contains(&reader)
+                            && !consumed.contains(&reader)
+                            && source_slots.get(reader).and_then(Option::as_ref).is_some()
+                            && info.references.contains(binding)
+                    })
+                })
+            })
+            .collect();
+        if read.is_empty() {
+            break;
         }
-        if source_slots.get(*index).and_then(Option::as_ref).is_some() {
-            source_slots[*index] = None;
-            consumed.insert(*index);
+        for index in read {
+            dropped.remove(&index);
         }
+    }
+    for index in dropped {
+        source_slots[index] = None;
+        consumed.insert(index);
     }
 
     owned_support_source_items
