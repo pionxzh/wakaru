@@ -494,6 +494,16 @@ rationale, or level gating appear.
   and at `standard+` object destructuring declarations). A parameter read or
   written before its guard (ws `ping`, commander `_prepareUserArgs`) keeps the
   guard, and so does `seed = 1; if (a === void 0) a = seed;`.
+  The `arguments[i]` forms (`var b = arguments.length > 1 && ... : d`, the
+  alias `var b = arguments[1]`, and the inline expression) follow the same
+  order proof: a declaration after other statements moves only under the
+  guard rules above, an alias only when nothing before it mentions its
+  binding, and an inline default only when it is side-effect-free, reads no
+  parameter written up to its statement, and (for outer, global, or property
+  reads) sits after inert statements only. Both are undone together when the
+  rest of the function can see the slots whose mapping they change (a default
+  unmaps the original parameters; a plain alias maps a new slot); a Babel or
+  TypeScript rest copy loop that starts past those slots does not count.
   `Function.length` still drops to the first default's index; that arity
   change is accepted. Pitfall: `stmts_reference_ident` matches by *emitted name*,
   ignoring SyntaxContext — intentional (prevents invalid parameter lists

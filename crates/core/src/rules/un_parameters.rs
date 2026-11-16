@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use crate::collections::HashMap;
 
 use swc_core::atoms::Atom;
@@ -14,6 +16,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::js_names::{is_likely_generated_alias, is_reserved_binding_name};
 
+use super::arg_rest::find_rest_array_copy_proof;
 use super::decl_utils::{
     contains_use_strict_string_statement, fresh_binding_ident, has_direct_use_strict_directive,
     same_ident,
@@ -98,8 +101,7 @@ fn process_function_params_inner(
     process_pattern_a_params(params, body, level, unresolved_mark, &body_bindings);
     if level >= RewriteLevel::Standard {
         process_pattern_c_params(params, body, unresolved_mark, &body_bindings);
-        process_pattern_b_params(params, body, unresolved_mark, &body_bindings);
-        rewrite_inline_arguments_defaults(params, body, unresolved_mark, &body_bindings);
+        recover_arguments_params(params, body, level, unresolved_mark, &body_bindings);
         materialize_inline_temp_defaults(body, unresolved_mark);
         fold_object_property_param_aliases(params, body, unresolved_mark);
         fold_array_index_param_aliases(params, body, unresolved_mark);
@@ -620,6 +622,33 @@ fn function_observes_parameter_mapping(
     param_count: usize,
     unresolved_mark: Mark,
 ) -> bool {
+    function_observes_mapping_of_slots(body, 0..param_count, unresolved_mark)
+}
+
+/// True when the function body can observe whether the `arguments` slots in
+/// `slots` are mapped to parameters: a literal index inside `slots`, any other
+/// use of `arguments` except `arguments.length`, or a direct `eval` that may
+/// mention it.
+fn function_observes_mapping_of_slots(
+    body: &FunctionBody,
+    slots: Range<usize>,
+    unresolved_mark: Mark,
+) -> bool {
+    function_observes_mapping_of_slots_outside(body, slots, 0..0, unresolved_mark)
+}
+
+/// Like `function_observes_mapping_of_slots`, but the top-level statements in
+/// `ignored_stmts` are not inspected for `arguments` reads (direct `eval` is
+/// still checked everywhere).
+fn function_observes_mapping_of_slots_outside(
+    body: &FunctionBody,
+    slots: Range<usize>,
+    ignored_stmts: Range<usize>,
+    unresolved_mark: Mark,
+) -> bool {
+    if slots.is_empty() {
+        return false;
+    }
     let mut eval_analyzer = DirectEvalAnalyzer::default();
     body.visit_with(&mut eval_analyzer);
     if eval_analyzer.unknown_direct_eval {
@@ -636,16 +665,20 @@ fn function_observes_parameter_mapping(
 
     let mut detector = MappedArgumentsObserver {
         unresolved_mark,
-        param_count,
+        slots,
         found: false,
     };
-    body.visit_with(&mut detector);
+    for (idx, stmt) in body.stmts.iter().enumerate() {
+        if !ignored_stmts.contains(&idx) {
+            stmt.visit_with(&mut detector);
+        }
+    }
     detector.found
 }
 
 struct MappedArgumentsObserver {
     unresolved_mark: Mark,
-    param_count: usize,
+    slots: Range<usize>,
     found: bool,
 }
 
@@ -659,7 +692,8 @@ impl Visit for MappedArgumentsObserver {
                         Expr::Lit(Lit::Num(index)) => {
                             index.value.fract() == 0.0
                                 && index.value >= 0.0
-                                && index.value >= self.param_count as f64
+                                && (index.value < self.slots.start as f64
+                                    || index.value >= self.slots.end as f64)
                         }
                         _ => false,
                     },
@@ -3096,35 +3130,144 @@ impl Visit for IdentReferenceFinder<'_> {
 // Pattern B: arguments-based default params
 // ============================================================
 
-fn process_pattern_b_params(
+/// Pattern B and the inline form turn `arguments` reads back into parameters.
+/// That changes which `arguments` slots are mapped to parameters: a default
+/// makes the list non-simple, which unmaps every slot, and a plain alias
+/// parameter maps a slot that was not mapped before. When the rest of the
+/// function can see that change (it reads or writes a changed slot, lets
+/// `arguments` escape, or has a direct `eval`), both rewrites are undone.
+fn recover_arguments_params(
     params: &mut Vec<Param>,
     body: &mut FunctionBody,
+    level: RewriteLevel,
     unresolved_mark: Mark,
     body_bindings: &[BindingId],
 ) {
+    if !body_mentions_arguments(body, unresolved_mark) {
+        return;
+    }
+    let original_mapped = mapped_param_count(params);
+    let original = (params.clone(), body.clone());
+
+    process_pattern_b_params(params, body, level, unresolved_mark, body_bindings);
+    rewrite_inline_arguments_defaults(params, body, level, unresolved_mark, body_bindings);
+
+    let mapped = mapped_param_count(params);
+    let changed = original_mapped.min(mapped)..original_mapped.max(mapped);
+    // Babel's and TypeScript's rest copy loop reads `arguments[i]` from the
+    // first slot past the parameter list; when that is past every changed
+    // slot, the loop cannot see the mapping change.
+    let rest_copy = find_rest_array_copy_proof(body, params.len(), unresolved_mark)
+        .filter(|_| params.len() >= changed.end)
+        .map_or(0..0, |proof| proof.start_stmt..proof.ready_stmt);
+    if function_observes_mapping_of_slots_outside(body, changed, rest_copy, unresolved_mark) {
+        (*params, *body) = original;
+    }
+}
+
+/// How many leading `arguments` slots are mapped to parameters: all of them
+/// for a simple parameter list (plain identifiers only), none otherwise.
+fn mapped_param_count(params: &[Param]) -> usize {
+    if params
+        .iter()
+        .all(|param| matches!(param.pat, Pat::Ident(_)))
+    {
+        params.len()
+    } else {
+        0
+    }
+}
+
+fn body_mentions_arguments(body: &FunctionBody, unresolved_mark: Mark) -> bool {
+    struct Finder {
+        unresolved_mark: Mark,
+        found: bool,
+    }
+
+    impl Visit for Finder {
+        fn visit_ident(&mut self, ident: &Ident) {
+            if is_arguments_ident(ident, self.unresolved_mark) {
+                self.found = true;
+            }
+        }
+
+        // Nested regular functions and class constructors have their own
+        // `arguments`; arrows do not.
+        fn visit_function(&mut self, _: &Function) {}
+        fn visit_constructor(&mut self, _: &Constructor) {}
+    }
+
+    let mut finder = Finder {
+        unresolved_mark,
+        found: false,
+    };
+    body.visit_with(&mut finder);
+    finder.found
+}
+
+/// A matched declaration ran at its own place in the body, so it moves into
+/// the parameter list only when that is unobservable: the same proof Pattern A
+/// uses for a guard that follows other statements. An alias has no default to
+/// run; it only needs its binding to be untouched before the declaration (a
+/// `var` read there is `undefined`, not the argument).
+fn process_pattern_b_params(
+    params: &mut Vec<Param>,
+    body: &mut FunctionBody,
+    level: RewriteLevel,
+    unresolved_mark: Mark,
+    body_bindings: &[BindingId],
+) {
+    let hoisted_fn_mentions = HoistedFnDeclMentions::collect(body);
+    let param_bindings = current_or_later_param_bindings(params, 0);
     let mut to_remove: Vec<usize> = Vec::new();
+    let mut skipped: Vec<usize> = Vec::new();
 
     // Scan entire body for var declarations matching the arguments pattern
     for (stmt_idx, stmt) in body.stmts.iter().enumerate() {
         if let Some((param_idx, param_ident, default_val)) =
             extract_arguments_default(stmt, unresolved_mark)
         {
+            let binding = (param_ident.sym.clone(), param_ident.ctxt);
             if param_slot_can_use_ident(params, param_idx, &param_ident)
+                && can_hoist_default_past_skipped(
+                    &body.stmts,
+                    &skipped,
+                    &binding,
+                    &param_bindings,
+                    &default_val,
+                    &hoisted_fn_mentions,
+                    level,
+                    unresolved_mark,
+                )
                 && ensure_default_param(params, param_idx, param_ident, default_val, body_bindings)
                     .is_some()
             {
                 to_remove.push(stmt_idx);
+            } else {
+                skipped.push(stmt_idx);
             }
             continue;
         }
 
         if let Some((param_idx, param_ident)) = extract_arguments_alias(stmt, unresolved_mark) {
-            if param_slot_can_use_ident(params, param_idx, &param_ident)
+            let binding = (param_ident.sym.clone(), param_ident.ctxt);
+            let untouched_before = skipped.is_empty()
+                || !(hoisted_fn_mentions.mentions(&binding)
+                    || skipped
+                        .iter()
+                        .any(|&idx| stmt_mentions_binding(&body.stmts[idx], &binding)));
+            if untouched_before
+                && param_slot_can_use_ident(params, param_idx, &param_ident)
                 && ensure_plain_param(params, param_idx, param_ident).is_some()
             {
                 to_remove.push(stmt_idx);
+            } else {
+                skipped.push(stmt_idx);
             }
+            continue;
         }
+
+        skipped.push(stmt_idx);
     }
 
     for idx in to_remove.into_iter().rev() {
@@ -3403,25 +3546,77 @@ fn make_ident_param(name: Atom) -> Param {
     }
 }
 
+/// An inline default runs where the expression sits; as a parameter default
+/// it runs before the body. So it must be safe to run earlier (pure), every
+/// parameter it reads must be unwritten up to and including its statement,
+/// and when it reads outer bindings, globals, or properties, everything before
+/// it must be inert. The `arguments` reads themselves are pure, so a statement
+/// is judged with them set aside.
 fn rewrite_inline_arguments_defaults(
     params: &mut Vec<Param>,
     body: &mut FunctionBody,
+    level: RewriteLevel,
     unresolved_mark: Mark,
     body_bindings: &[BindingId],
 ) {
     let param_name_candidates = collect_inline_param_name_candidates(body);
     let initial_param_count = params.len();
+    let param_bindings = current_or_later_param_bindings(params, 0);
+    let hoisted_fn_mentions = HoistedFnDeclMentions::collect(body);
     let mut rewriter = InlineArgumentsDefaultRewriter {
         params,
         initial_param_count,
+        level,
         unresolved_mark,
         body_bindings,
         param_name_candidates,
         consumed_param_name_bindings: Vec::new(),
         placeholder_idents: HashMap::default(),
+        param_bindings: param_bindings.clone(),
+        written_params: param_bindings
+            .iter()
+            .filter(|binding| hoisted_fn_mentions.mentions(binding))
+            .cloned()
+            .collect(),
+        prefix_is_inert: true,
     };
-    body.visit_mut_with(&mut rewriter);
+    for stmt in body.stmts.iter_mut() {
+        for binding in &param_bindings {
+            if !rewriter.written_params.contains(binding) && stmt_may_write_binding(stmt, binding) {
+                rewriter.written_params.push(binding.clone());
+            }
+        }
+        let stmt_is_inert_without_arguments_reads = rewriter.prefix_is_inert && {
+            let mut neutral = stmt.clone();
+            neutral.visit_mut_with(&mut ArgumentsReadNeutralizer { unresolved_mark });
+            stmt_is_inert(&neutral, level, unresolved_mark)
+        };
+        rewriter.prefix_is_inert = stmt_is_inert_without_arguments_reads;
+        stmt.visit_mut_with(&mut rewriter);
+    }
     remove_consumed_empty_param_name_decls(body, &rewriter.consumed_param_name_bindings);
+}
+
+/// Replaces every inline `arguments` default or optional read with `void 0`,
+/// so a statement's inertness can be judged without them.
+struct ArgumentsReadNeutralizer {
+    unresolved_mark: Mark,
+}
+
+impl VisitMut for ArgumentsReadNeutralizer {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        if extract_arguments_default_expr(expr, self.unresolved_mark).is_some()
+            || extract_simple_arguments_optional(expr, self.unresolved_mark).is_some()
+        {
+            *expr = Expr::Unary(UnaryExpr {
+                span: DUMMY_SP,
+                op: UnaryOp::Void,
+                arg: Box::new(Expr::Lit(Lit::Num(0.0.into()))),
+            });
+            return;
+        }
+        expr.visit_mut_children_with(self);
+    }
 }
 
 fn ensure_params_len(params: &mut Vec<Param>, idx: usize) {
@@ -3537,7 +3732,16 @@ struct InlineParamNameCandidate {
 struct InlineArgumentsDefaultRewriter<'a> {
     params: &'a mut Vec<Param>,
     initial_param_count: usize,
+    level: RewriteLevel,
     unresolved_mark: Mark,
+    /// The function's own parameters before this rewrite.
+    param_bindings: Vec<BindingId>,
+    /// Parameters that the current statement, an earlier one, or a hoisted
+    /// function declaration may write.
+    written_params: Vec<BindingId>,
+    /// Whether every statement before the current one, and the current one
+    /// apart from its `arguments` reads, is inert.
+    prefix_is_inert: bool,
     body_bindings: &'a [BindingId],
     param_name_candidates: Vec<Option<InlineParamNameCandidate>>,
     consumed_param_name_bindings: Vec<BindingId>,
@@ -3553,6 +3757,9 @@ impl VisitMut for InlineArgumentsDefaultRewriter<'_> {
 
         if let Some((idx, default_val)) = extract_arguments_default_expr(expr, self.unresolved_mark)
         {
+            if !self.default_can_run_first(&default_val) {
+                return;
+            }
             let original_span = expr.span();
             let preferred_ident = self.preferred_param_ident(idx);
             if param_slot_can_use_ident(self.params, idx, &preferred_ident) {
@@ -3596,6 +3803,24 @@ impl VisitMut for InlineArgumentsDefaultRewriter<'_> {
 }
 
 impl InlineArgumentsDefaultRewriter<'_> {
+    fn default_can_run_first(&self, default_val: &Expr) -> bool {
+        if !is_pure_default_expr(default_val, self.level, self.unresolved_mark) {
+            return false;
+        }
+        let dependencies = default_dependencies(default_val, self.unresolved_mark);
+        let mut needs_inert_prefix = dependencies.needs_inert_prefix;
+        for dependency in &dependencies.bindings {
+            if self.param_bindings.contains(dependency) {
+                if self.written_params.contains(dependency) {
+                    return false;
+                }
+            } else {
+                needs_inert_prefix = true;
+            }
+        }
+        !needs_inert_prefix || self.prefix_is_inert
+    }
+
     fn preferred_param_ident(&mut self, idx: usize) -> Ident {
         if let Some(candidate) = self.param_name_candidate(idx) {
             return candidate.ident.clone();

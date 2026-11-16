@@ -2367,3 +2367,216 @@ function nested({ outer: _ref$outer } = {}, mode = _ref$outer.mode) {
 "#;
     assert_eq_normalized(&apply(input), input);
 }
+
+// --- `arguments`-based defaults keep their place and `arguments` mapping ---
+
+#[test]
+fn arguments_default_after_param_write_stays_in_body() {
+    // The default reads `x` after the body wrote it; as a parameter default it
+    // would read the argument instead.
+    let input = r#"
+function f(x) {
+  x = 10;
+  var y = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : x;
+  return y;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn impure_arguments_default_after_statement_stays_in_body() {
+    let input = r#"
+function f() {
+  log("body");
+  var y = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : make();
+  return y;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn arguments_default_after_early_return_stays_in_body() {
+    // `f(0)` returns before the default reads `a.missing`.
+    let input = r#"
+function f(a) {
+  if (!a) return "early";
+  var b = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : a.missing.deep;
+  return b;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn arguments_default_read_before_its_declaration_stays_in_body() {
+    // Before its `var` runs, `y` is `undefined`, not the default, so the
+    // declaration keeps its place and only reads the new parameter.
+    let input = r#"
+function f() {
+  var before = typeof y;
+  var y = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : 1;
+  return before + y;
+}
+"#;
+    let expected = r#"
+function f(_param_0 = 1) {
+  var before = typeof y;
+  var y = _param_0;
+  return before + y;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn arguments_alias_read_before_its_declaration_stays_in_body() {
+    let input = r#"
+function f() {
+  var before = typeof a;
+  var a = arguments[0];
+  return before + a;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn arguments_default_after_inert_statement_becomes_param_default() {
+    let input = r#"
+function f(x) {
+  var self = this;
+  var y = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : 2;
+  return [self, x, y];
+}
+"#;
+    let expected = r#"
+function f(x, y = 2) {
+  var self = this;
+  return [self, x, y];
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn arguments_default_stays_when_body_writes_mapped_arguments() {
+    // A default unmaps `arguments`, so `arguments[0] = 9` would stop updating `x`.
+    let input = r#"
+function f(x) {
+  var y = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : 2;
+  arguments[0] = 9;
+  return [x, y];
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn arguments_default_stays_when_body_reads_mapped_arguments() {
+    let input = r#"
+function f(x) {
+  var y = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : 2;
+  x = 5;
+  return [arguments[0], y];
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn arguments_alias_stays_when_its_slot_is_used_again() {
+    // A plain parameter maps slot 0: the write would reach `a`, and writing `a`
+    // would change `arguments[0]`.
+    let input = r#"
+function f() {
+  var a = arguments[0];
+  arguments[0] = 2;
+  return a;
+}
+function g() {
+  var a = arguments.length > 0 ? arguments[0] : undefined;
+  a = 5;
+  return arguments[0];
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn arguments_default_without_original_params_ignores_mapping() {
+    // No parameter was mapped before, and a default keeps it that way.
+    let input = r#"
+function f() {
+  var a = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : 1;
+  return use(a, arguments);
+}
+"#;
+    let expected = r#"
+function f(a = 1) {
+  return use(a, arguments);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn inline_arguments_default_after_param_write_stays_inline() {
+    let input = r#"
+function f(x) {
+  x = 10;
+  return use(arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : x);
+}
+function g(x) {
+  return use((x = 3, arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : x));
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn inline_impure_arguments_default_stays_inline() {
+    // The default only runs when `c` is truthy.
+    let input = r#"
+function f(c) {
+  if (c) return use(arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : make());
+  return 0;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn inline_arguments_default_reading_global_after_call_stays_inline() {
+    let input = r#"
+function f() {
+  bump();
+  return use(arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : outer);
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn arguments_default_before_rest_copy_loop_becomes_param_default() {
+    // The rest copy reads slots from 2 on; the default only changes slot 0.
+    let input = r#"
+function f(a) {
+  var b = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : 1;
+  for (var _len = arguments.length, rest = new Array(_len > 2 ? _len - 2 : 0), _key = 2; _key < _len; _key++) {
+    rest[_key - 2] = arguments[_key];
+  }
+  return [a, b, rest];
+}
+"#;
+    let expected = r#"
+function f(a, b = 1) {
+  for (var _len = arguments.length, rest = new Array(_len > 2 ? _len - 2 : 0), _key = 2; _key < _len; _key++) {
+    rest[_key - 2] = arguments[_key];
+  }
+  return [a, b, rest];
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
