@@ -3,13 +3,14 @@
 //!
 //! A string-literal expression statement is a directive only when it is
 //! unparenthesized and sits in a body's directive prologue, before any other
-//! statement. Several things can move a plain string there:
+//! statement. A rewrite can move a plain string there:
 //!
-//! - a rewrite removes the statements before it (`var x; "use strict";` loses
-//!   the unused `var x;`),
-//! - a rewrite splits a sequence (`"use strict", g();` becomes
-//!   `"use strict"; g();`), and
-//! - SWC's fixer drops the parentheses of `("use strict");` as redundant.
+//! - it removes the statements before it (`var x; "use strict";` loses the
+//!   unused `var x;`), or
+//! - it splits a sequence (`"use strict", g();` becomes `"use strict"; g();`).
+//!
+//! SWC's fixer keeps the parentheses of `("use strict");` since swc_core 84
+//! (swc#12633); the tests in `noop_pipeline.rs` guard that.
 //!
 //! The string then prints as a directive, and a `"use strict"` makes the
 //! function strict. So record the directives before the change, and after it

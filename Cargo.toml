@@ -15,7 +15,7 @@ wakaru-formatter = { path = "crates/formatter" }
 anyhow = "1.0"
 ruzstd = "0.9.1"
 sourcemap = "9"
-swc_core = { version = "=82.0.0", features = [
+swc_core = { version = "=84.1.2", features = [
   "common",
   "ecma_ast",
   "ecma_codegen",
