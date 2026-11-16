@@ -543,8 +543,10 @@ fn parse_original_sources(
 /// time); a trailing odd byte would be ignored.
 fn utf16le_to_wtf8(bytes: &[u8]) -> Vec<u8> {
     let units = bytes
-        .chunks_exact(2)
-        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]));
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&pair| u16::from_le_bytes(pair));
     let mut output = Vec::with_capacity(bytes.len());
     for decoded in char::decode_utf16(units) {
         match decoded {

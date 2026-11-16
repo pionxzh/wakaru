@@ -303,14 +303,10 @@ fn can_hoist_default_past_skipped(
             needs_inert_prefix = true;
         }
     }
-    if needs_inert_prefix
-        && !skipped
+    !needs_inert_prefix
+        || skipped
             .iter()
             .all(|&idx| stmt_is_inert(&stmts[idx], level, unresolved_mark))
-    {
-        return false;
-    }
-    true
 }
 
 /// What a hoisted default reads: bindings referenced directly (closures are
