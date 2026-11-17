@@ -2580,3 +2580,462 @@ function f(a, b = 1) {
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
+
+// --- what ran before an `arguments` read decides whether it can move ---
+
+#[test]
+fn arguments_alias_after_arguments_shift_stays_in_body() {
+    // `[].shift.call(arguments)` moves argument 2 into slot 1, so `b` reads
+    // the shifted value, not what the call passed in slot 1.
+    let input = r#"
+function f() {
+  var a = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : 1;
+  [].shift.call(arguments);
+  var b = arguments[1];
+  return [a, b];
+}
+"#;
+    let expected = r#"
+function f(a = 1) {
+  [].shift.call(arguments);
+  var b = arguments[1];
+  return [a, b];
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn arguments_reads_after_arguments_write_stay_in_body() {
+    let input = r#"
+function f(a = 0) {
+  arguments[1] = 7;
+  var b = arguments[1];
+  return b;
+}
+function g(a = 0) {
+  arguments[1] = 7;
+  var b = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : 2;
+  return b;
+}
+function h(a = 0) {
+  arguments[1] = 7;
+  return use(arguments.length > 1 ? arguments[1] : undefined);
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn inline_arguments_defaults_keep_their_order() {
+    // `next()` runs first and may change `counter.n`; both defaults move, in
+    // the same order.
+    let input = r#"
+function f() {
+  var a = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : next(), b = 0;
+  var c = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : counter.n, d = 0;
+  return [a, b, c, d];
+}
+"#;
+    let expected = r#"
+function f(_param_0 = next(), _param_1 = counter.n) {
+  var a = _param_0, b = 0;
+  var c = _param_1, d = 0;
+  return [a, b, c, d];
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn inline_arguments_default_stays_when_a_later_slot_would_run_first() {
+    // Slot 0's default would run before slot 1's `next()`, but the body reads
+    // it after.
+    let input = r#"
+function f() {
+  var a = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : next(), b = 0;
+  var c = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : counter.n, d = 0;
+  return [a, b, c, d];
+}
+"#;
+    let expected = r#"
+function f(_param_0, _param_1 = next()) {
+  var a = _param_1, b = 0;
+  var c = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : counter.n, d = 0;
+  return [a, b, c, d];
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn first_evaluated_impure_inline_default_becomes_param_default() {
+    // Nothing runs before the default, so it may call anything.
+    let input = r#"
+function f(e) {
+  return (arguments.length > 1 && arguments[1] !== void 0 ? arguments[1] : make()).then(e);
+}
+function g() {
+  var d = (function (x) { return x; })(arguments.length > 0 && arguments[0] !== void 0 ? arguments[0] : new Date());
+  return d;
+}
+function h(c) {
+  if (arguments.length > 1 && arguments[1] !== void 0 ? arguments[1] : check(c)) return c;
+  return 0;
+}
+"#;
+    let expected = r#"
+function f(e, _param_1 = make()) {
+  return _param_1.then(e);
+}
+function g(_param_0 = new Date()) {
+  var d = function (x) { return x; }(_param_0);
+  return d;
+}
+function h(c, _param_1 = check(c)) {
+  if (_param_1) return c;
+  return 0;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn impure_inline_default_after_a_call_stays_inline() {
+    let input = r#"
+function f() {
+  log();
+  return (arguments.length > 0 && arguments[0] !== void 0 ? arguments[0] : make()).then(use);
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn arguments_default_after_inert_statement_ignores_hoisted_function() {
+    // Only inert statements run before the default, so the hoisted `run`
+    // cannot have run yet.
+    let input = r#"
+function f() {
+  var self = this;
+  var cb = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : noop;
+  function run() { return cb.call(self); }
+  return run;
+}
+"#;
+    let expected = r#"
+function f(cb = noop) {
+  var self = this;
+  function run() { return cb.call(self); }
+  return run;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn strict_function_ignores_arguments_mapping() {
+    // Strict functions never map `arguments`, so the `_arguments` capture
+    // cannot see the default unmap it.
+    let input = r#"
+"use strict";
+function debounce(func, wait) {
+  var _this = this, _arguments = arguments;
+  var immediate = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : false;
+  return function () { return immediate ? func.apply(_this, _arguments) : wait; };
+}
+"#;
+    let expected = r#"
+"use strict";
+function debounce(func, wait, immediate = false) {
+  var _this = this, _arguments = arguments;
+  return function () { return immediate ? func.apply(_this, _arguments) : wait; };
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn sloppy_function_keeps_arguments_mapping_check() {
+    let input = r#"
+function debounce(func, wait) {
+  var _this = this, _arguments = arguments;
+  var immediate = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : false;
+  return function () { return immediate ? func.apply(_this, _arguments) : wait; };
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn class_method_and_strict_guard_ignore_arguments_mapping() {
+    let input = r#"
+class A {
+  m(x) {
+    var y = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : 2;
+    return use(x, y, arguments);
+  }
+}
+function outer() {
+  "use strict";
+  return function (a) {
+    if (a === void 0) a = 1;
+    return use(a, arguments);
+  };
+}
+"#;
+    let expected = r#"
+class A {
+  m(x, y = 2) {
+    return use(x, y, arguments);
+  }
+}
+function outer() {
+  "use strict";
+  return function (a = 1) {
+    return use(a, arguments);
+  };
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn minified_first_evaluated_arguments_defaults_become_params_through_pipeline() {
+    // Babel lowers the defaults; terser then inlines the single-use default
+    // into its first use and merges the Babel `_this`/`_arguments` captures.
+    let input = r#"
+"use strict";
+function a(e) {
+  return (arguments.length > 1 && void 0 !== arguments[1] ? arguments[1] : load()).then(e);
+}
+function b(e, t) {
+  var n = this, r = arguments, i = arguments.length > 2 && void 0 !== arguments[2] ? arguments[2] : 300;
+  return function () { return i ? e.apply(n, r) : t; };
+}
+use(a, b);
+"#;
+    let output = common::render(input);
+    assert!(
+        output.contains("function a(e, _param_1 = load())") && output.contains("_param_1.then(e)"),
+        "{output}"
+    );
+    assert!(output.contains("function b(e, t, i = 300)"), "{output}");
+}
+
+#[test]
+fn first_evaluated_default_that_awaits_stays_inline() {
+    // A parameter default cannot `await` or `yield`.
+    let input = r#"
+async function f() {
+  return (arguments.length > 0 && arguments[0] !== void 0 ? arguments[0] : await load()).then(use);
+}
+function* g() {
+  var a = arguments.length > 0 && arguments[0] !== void 0 ? arguments[0] : yield 1;
+  return a;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn inline_default_after_pure_reads_in_its_statement_becomes_param_default() {
+    // Only pure reads (`g`, `e`, the IIFE) run before these pure defaults.
+    let input = r#"
+function f(e) {
+  return g(e, arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : u);
+}
+function h(t) {
+  (function (n, r) { use(n, r); })(t, arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : document);
+}
+function k(t) {
+  for (var e = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : O, n = t; e > 0; e--) use(n);
+}
+"#;
+    let expected = r#"
+function f(e, _param_1 = u) {
+  return g(e, _param_1);
+}
+function h(t, _param_1 = document) {
+  (function (n, r) { use(n, r); })(t, _param_1);
+}
+function k(t, _param_1 = O) {
+  for (var e = _param_1, n = t; e > 0; e--) use(n);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn impure_inline_default_after_pure_reads_stays_inline() {
+    // `g` is read before `make()` runs; `make()` may replace it.
+    let input = r#"
+function f(e) {
+  return g(e, arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : make());
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn inline_default_on_the_right_of_a_logical_operator_stays_inline() {
+    // `make()` only runs when `c` is truthy.
+    let input = r#"
+function f(c) {
+  return c && (arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : make());
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn sloppy_mapping_change_without_writes_keeps_the_rewrite() {
+    // Neither the parameters nor `arguments` are written, so the slots the
+    // rewrite maps or unmaps always agree with their parameters.
+    let input = r#"
+function f(e, t, r) {
+  var flag = arguments.length > 3 && arguments[3] !== undefined && arguments[3];
+  var i = arguments.length > 4 ? arguments[4] : undefined;
+  return use(e, t, r, flag, i);
+}
+function g(e) {
+  var l = !(arguments.length > 1) || arguments[1] === undefined || arguments[1];
+  var r = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : document;
+  return use(e, l, r);
+}
+"#;
+    let expected = r#"
+function f(e, t, r, _param_3, i) {
+  var flag = arguments.length > 3 && arguments[3] !== undefined && arguments[3];
+  return use(e, t, r, flag, i);
+}
+function g(e, _param_1, r = document) {
+  var l = !(arguments.length > 1) || arguments[1] === undefined || arguments[1];
+  return use(e, l, r);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn first_evaluated_default_may_precede_constant_later_defaults() {
+    let input = r#"
+function f() {
+  var r = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : "";
+  var a = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : make();
+  return [a, r];
+}
+"#;
+    let expected = r#"
+function f(_param_0, a = make(), r = "") {
+  return [a, r];
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn closure_reading_a_parameter_does_not_count_as_a_write() {
+    // `n` is only read inside the arrow, so mapping slot 2 to it shows nowhere.
+    let input = r#"
+function f(e) {
+  var t = arguments.length > 1 && arguments[1] !== undefined && arguments[1];
+  var n = arguments.length > 2 ? arguments[2] : undefined;
+  return () => n(e, t);
+}
+"#;
+    let expected = r#"
+function f(e, _param_1, n) {
+  var t = arguments.length > 1 && arguments[1] !== undefined && arguments[1];
+  return () => n(e, t);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn mapping_check_sees_eval_in_a_nested_function() {
+    // The nested `eval` may write `x`, which slot 0 must then follow.
+    let input = r#"
+function f(x) {
+  var y = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : 2;
+  function g(s) { eval(s); }
+  g("x = 1");
+  return [arguments[0], y];
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn arrow_use_strict_directive_makes_nested_functions_strict() {
+    let input = r#"
+var m = (e, t) => {
+  "use strict";
+  t.default = function (e) {
+    var y = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : 2;
+    e = 3;
+    return [arguments[0], y];
+  };
+};
+"#;
+    let expected = r#"
+var m = (e, t) => {
+  "use strict";
+  t.default = function (e, y = 2) {
+    e = 3;
+    return [arguments[0], y];
+  };
+};
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn inline_default_in_object_literal_becomes_param_default() {
+    let input = r#"
+function f() {
+  return {
+    size: 2,
+    className: arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : m
+  };
+}
+"#;
+    let expected = r#"
+function f(_param_0, _param_1 = m) {
+  return {
+    size: 2,
+    className: _param_1
+  };
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn constructor_arguments_read_stays_in_the_constructor() {
+    // A constructor has its own `arguments`; the enclosing function's
+    // parameter list must not take its reads.
+    let input = r#"
+function outer(e) {
+  var x = arguments.length > 1 ? arguments[1] : undefined;
+  class A {
+    constructor() {
+      use(arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : 1);
+    }
+  }
+  return [e, x, A];
+}
+"#;
+    let expected = r#"
+function outer(e, x) {
+  class A {
+    constructor() {
+      use(arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : 1);
+    }
+  }
+  return [e, x, A];
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}

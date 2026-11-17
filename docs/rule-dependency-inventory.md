@@ -477,15 +477,19 @@ rationale, or level gating appear.
   RemoveVoid, UnConditionals, and UnCurlyBraces. Pattern A
   (`if (arg === undefined) arg = val`) runs at all levels; `arguments[i]`
   reconstruction, object-alias defaults, and destructured-alias folding are
-  `standard+`. Pattern A bails when the function or a nested arrow can
+  `standard+`. Pattern A bails when a sloppy function or a nested arrow can
   observe the `arguments` mapping that a simple parameter list keeps
   (`arguments.length` and literal tail indexes are fine; other uses and direct
   `eval` are not), so a TypeScript rest-parameter copy loop blocks the first
   pass and UnParameters2 recovers the default after ArgRest has replaced the
-  loop. Guards convert in ascending parameter order within the first 15
+  loop. Strict functions (a `"use strict"` directive on the module or an
+  enclosing function, or a class body) never map `arguments`, so they skip
+  this check. Guards convert in ascending parameter order within the first 15
   statements; a guard that follows other statements converts only when the
   default is side-effect-free (literals, function values, `this`, identifier
-  reads, structures of those; property reads at `standard+`), no skipped
+  reads, structures of those, `===`/`!==` and logical operators over them,
+  comparisons between numbers and `arguments.length`; property reads at
+  `standard+`), no skipped
   statement or hoisted function declaration mentions the parameter, and every
   value the default reads is stable across the skipped statements: a parameter
   it reads must not be written there (directly, by `++`, or by a closure
@@ -495,15 +499,34 @@ rationale, or level gating appear.
   written before its guard (ws `ping`, commander `_prepareUserArgs`) keeps the
   guard, and so does `seed = 1; if (a === void 0) a = seed;`.
   The `arguments[i]` forms (`var b = arguments.length > 1 && ... : d`, the
-  alias `var b = arguments[1]`, and the inline expression) follow the same
-  order proof: a declaration after other statements moves only under the
-  guard rules above, an alias only when nothing before it mentions its
-  binding, and an inline default only when it is side-effect-free, reads no
-  parameter written up to its statement, and (for outer, global, or property
-  reads) sits after inert statements only. Both are undone together when the
-  rest of the function can see the slots whose mapping they change (a default
-  unmaps the original parameters; a plain alias maps a new slot); a Babel or
-  TypeScript rest copy loop that starts past those slots does not count.
+  alias `var b = arguments[1]`, and the inline expressions) are judged by what
+  ran before them, not by proving that a default commutes with arbitrary
+  code. A default moves when it already ran first: it is the first read its
+  statement evaluates (a declaration's or `for` initializer,
+  `return (read).then(f)`, `g(e, read)`, an IIFE's argument, an object
+  literal's property; never the right
+  side of `&&`/`||`/`??` or a conditional branch), and no later parameter
+  has a default other than a constant. Before it, nothing may have run code
+  (statements that run nothing, such as `var self = this, args = arguments;`
+  and function declarations, and constants within its statement), or, for a
+  side-effect-free default, nothing but inert statements and pure reads. Any
+  other default moves only when it is side-effect-free and reads only
+  parameters nothing before it wrote. A default that awaits or yields never
+  moves. Every form also needs `arguments` unchanged before it: everything
+  before is inert, or used `arguments` only through `.length` and
+  literal-index reads, with no direct `eval`. A declaration or alias also
+  needs its binding unmentioned before it. In sloppy functions the rewrites
+  change which slots are mapped (a default unmaps the original parameters; a
+  plain alias maps a new slot). That shows only through a write, so both are
+  undone together when the body may write a changed slot's parameter (an
+  assignment, also inside a closure; a closure that only reads it does not
+  count), uses `arguments` other than through `.length` and literal-index
+  reads, or has a direct `eval` anywhere, and the
+  rest of the function can see a changed slot; a Babel or TypeScript rest
+  copy loop that starts past those slots does not count. Calls through
+  `fn.apply(x, arguments)` or `[].slice.call(arguments)` count as escapes:
+  nothing proves the callee is the builtin. Reads through the legacy
+  `f.arguments` property are not considered.
   `Function.length` still drops to the first default's index; that arity
   change is accepted. Pitfall: `stmts_reference_ident` matches by *emitted name*,
   ignoring SyntaxContext — intentional (prevents invalid parameter lists

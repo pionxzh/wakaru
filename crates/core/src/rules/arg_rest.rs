@@ -889,13 +889,13 @@ impl Visit for ArgumentsChecker {
 
 /// True when any node in `node` mentions `arguments` from the enclosing
 /// function's activation: nested arrows count, nested functions do not.
-fn mentions_arguments<N: VisitWith<ArgumentsMentionDetector>>(node: &N) -> bool {
+pub(super) fn mentions_arguments<N: VisitWith<ArgumentsMentionDetector>>(node: &N) -> bool {
     let mut detector = ArgumentsMentionDetector { found: false };
     node.visit_with(&mut detector);
     detector.found
 }
 
-struct ArgumentsMentionDetector {
+pub(super) struct ArgumentsMentionDetector {
     found: bool,
 }
 

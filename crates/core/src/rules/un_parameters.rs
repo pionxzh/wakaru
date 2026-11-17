@@ -1,22 +1,22 @@
 use std::ops::Range;
 
-use crate::collections::HashMap;
+use crate::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, Spanned, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrayPat, ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignPat, AssignPatProp,
-    AssignTarget, BinExpr, BinaryOp, BindingIdent, Bool, CatchClause, ClassDecl, ComputedPropName,
-    Constructor, Decl, Expr, FnDecl, Function, FunctionBody, Ident, IdentName, IfStmt,
-    KeyValuePatProp, Lit, MemberExpr, MemberProp, Number, ObjectPat, ObjectPatProp, Param, Pat,
-    Prop, PropName, PropOrSpread, SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp, UpdateExpr,
-    VarDecl, VarDeclKind,
+    AssignTarget, BinExpr, BinaryOp, BindingIdent, Bool, Callee, CatchClause, Class, ClassDecl,
+    ComputedPropName, Constructor, Decl, Expr, FnDecl, Function, FunctionBody, Ident, IdentName,
+    IfStmt, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleItem, Number, ObjectPat,
+    ObjectPatProp, Param, Pat, Prop, PropName, PropOrSpread, Script, SimpleAssignTarget, Stmt,
+    UnaryExpr, UnaryOp, UpdateExpr, VarDecl, VarDeclKind, VarDeclOrExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::js_names::{is_likely_generated_alias, is_reserved_binding_name};
 
-use super::arg_rest::find_rest_array_copy_proof;
+use super::arg_rest::{find_rest_array_copy_proof, mentions_arguments};
 use super::decl_utils::{
     contains_use_strict_string_statement, fresh_binding_ident, has_direct_use_strict_directive,
     same_ident,
@@ -31,6 +31,10 @@ use crate::analysis::BindingId;
 pub struct UnParameters {
     unresolved_mark: Mark,
     level: RewriteLevel,
+    /// Whether the code being visited is strict: a `"use strict"` directive
+    /// on the module or an enclosing function, or a class body. Strict
+    /// functions never map `arguments` to their parameters.
+    strict: bool,
 }
 
 impl UnParameters {
@@ -38,24 +42,87 @@ impl UnParameters {
         Self {
             unresolved_mark,
             level,
+            strict: false,
         }
     }
 }
 
 impl VisitMut for UnParameters {
+    fn visit_mut_module(&mut self, module: &mut Module) {
+        let outer = self.strict;
+        self.strict = outer
+            || has_use_strict_prologue(module.body.iter().map(|item| match item {
+                ModuleItem::Stmt(stmt) => Some(stmt),
+                ModuleItem::ModuleDecl(_) => None,
+            }));
+        module.visit_mut_children_with(self);
+        self.strict = outer;
+    }
+
+    fn visit_mut_script(&mut self, script: &mut Script) {
+        let outer = self.strict;
+        self.strict = outer || has_use_strict_prologue(script.body.iter().map(Some));
+        script.visit_mut_children_with(self);
+        self.strict = outer;
+    }
+
+    fn visit_mut_class(&mut self, class: &mut Class) {
+        let outer = self.strict;
+        self.strict = true;
+        class.visit_mut_children_with(self);
+        self.strict = outer;
+    }
+
     fn visit_mut_function(&mut self, func: &mut Function) {
+        let outer = self.strict;
+        self.strict = outer
+            || func
+                .body
+                .as_ref()
+                .is_some_and(has_direct_use_strict_directive);
         func.visit_mut_children_with(self);
+        let strict = self.strict;
+        self.strict = outer;
         if let Some(body) = &mut func.body {
-            process_function_params(&mut func.params, body, self.level, self.unresolved_mark);
+            process_function_params(
+                &mut func.params,
+                body,
+                self.level,
+                self.unresolved_mark,
+                strict,
+            );
         }
     }
 
     fn visit_mut_arrow_expr(&mut self, expr: &mut ArrowExpr) {
+        let outer = self.strict;
+        self.strict = outer
+            || matches!(&*expr.body, ArrowFunctionBody::FunctionBody(body)
+                if has_direct_use_strict_directive(body));
         expr.visit_mut_children_with(self);
+        self.strict = outer;
         if let ArrowFunctionBody::FunctionBody(body) = &mut *expr.body {
             process_arrow_params(&mut expr.params, body, self.level, self.unresolved_mark);
         }
     }
+}
+
+/// Whether a module or script prologue (its leading string expression
+/// statements; `None` stands for a module declaration, which ends it) holds a
+/// `"use strict"` directive. A parenthesized string is not a directive.
+fn has_use_strict_prologue<'a>(items: impl Iterator<Item = Option<&'a Stmt>>) -> bool {
+    for item in items {
+        let Some(Stmt::Expr(expr_stmt)) = item else {
+            return false;
+        };
+        let Expr::Lit(Lit::Str(directive)) = expr_stmt.expr.as_ref() else {
+            return false;
+        };
+        if directive.value.as_str() == Some("use strict") {
+            return true;
+        }
+    }
+    false
 }
 
 /// Process Pattern A (TypeScript/Babel simple form) and Pattern B (arguments-based)
@@ -65,12 +132,13 @@ fn process_function_params(
     body: &mut FunctionBody,
     level: RewriteLevel,
     unresolved_mark: Mark,
+    strict: bool,
 ) {
     if has_direct_use_strict_directive(body) {
         return;
     }
     if !contains_use_strict_string_statement(body) {
-        process_function_params_inner(params, body, level, unresolved_mark);
+        process_function_params_inner(params, body, level, unresolved_mark, strict);
         return;
     }
 
@@ -81,6 +149,7 @@ fn process_function_params(
         &mut candidate_body,
         level,
         unresolved_mark,
+        strict,
     );
 
     if has_direct_use_strict_directive(&candidate_body) {
@@ -95,13 +164,14 @@ fn process_function_params_inner(
     body: &mut FunctionBody,
     level: RewriteLevel,
     unresolved_mark: Mark,
+    strict: bool,
 ) {
     let body_bindings = collect_body_bindings(body);
 
-    process_pattern_a_params(params, body, level, unresolved_mark, &body_bindings);
+    process_pattern_a_params(params, body, level, unresolved_mark, strict, &body_bindings);
     if level >= RewriteLevel::Standard {
         process_pattern_c_params(params, body, unresolved_mark, &body_bindings);
-        recover_arguments_params(params, body, level, unresolved_mark, &body_bindings);
+        recover_arguments_params(params, body, level, unresolved_mark, strict, &body_bindings);
         materialize_inline_temp_defaults(body, unresolved_mark);
         fold_object_property_param_aliases(params, body, unresolved_mark);
         fold_array_index_param_aliases(params, body, unresolved_mark);
@@ -187,9 +257,10 @@ fn process_pattern_a_params(
     body: &mut FunctionBody,
     level: RewriteLevel,
     unresolved_mark: Mark,
+    strict: bool,
     body_bindings: &[BindingId],
 ) {
-    if function_observes_parameter_mapping(body, params.len(), unresolved_mark) {
+    if !strict && function_observes_mapping_of_slots(body, 0..params.len(), 0..0, unresolved_mark) {
         return;
     }
 
@@ -364,15 +435,24 @@ fn default_dependencies(expr: &Expr, unresolved_mark: Mark) -> DefaultDependenci
 /// declares it again, or creates a closure (function, arrow, class) that
 /// mentions it and could therefore run before the guard.
 fn stmt_may_write_binding(stmt: &Stmt, binding: &BindingId) -> bool {
-    struct Detector<'a> {
-        binding: &'a BindingId,
+    stmt_written_bindings(stmt, true).contains(binding)
+}
+
+/// Every binding `stmt` may write: assigned, updated, or declared again,
+/// directly or inside a closure it creates. With `closure_mentions`, a
+/// closure that merely mentions a binding counts too (`stmt_may_write_binding`
+/// uses that to also catch a closure that reads a guarded parameter early).
+/// A direct `eval` is not seen here; callers check for it themselves.
+fn stmt_written_bindings(stmt: &Stmt, closure_mentions: bool) -> HashSet<BindingId> {
+    struct Collector {
+        closure_mentions: bool,
         closure_depth: usize,
-        found: bool,
+        written: HashSet<BindingId>,
     }
 
-    impl Detector<'_> {
-        fn matches(&self, ident: &Ident) -> bool {
-            ident.sym == self.binding.0 && ident.ctxt == self.binding.1
+    impl Collector {
+        fn push(&mut self, ident: &Ident) {
+            self.written.insert((ident.sym.clone(), ident.ctxt));
         }
 
         fn in_closure<N: VisitWith<Self>>(&mut self, node: &N) {
@@ -382,33 +462,27 @@ fn stmt_may_write_binding(stmt: &Stmt, binding: &BindingId) -> bool {
         }
     }
 
-    impl Visit for Detector<'_> {
+    impl Visit for Collector {
         fn visit_ident(&mut self, ident: &Ident) {
-            if self.closure_depth > 0 && self.matches(ident) {
-                self.found = true;
+            if self.closure_mentions && self.closure_depth > 0 {
+                self.push(ident);
             }
         }
 
         fn visit_binding_ident(&mut self, ident: &BindingIdent) {
-            if self.matches(&ident.id) {
-                self.found = true;
-            }
+            self.push(&ident.id);
         }
 
         fn visit_simple_assign_target(&mut self, target: &SimpleAssignTarget) {
             if let SimpleAssignTarget::Ident(ident) = target {
-                if self.matches(&ident.id) {
-                    self.found = true;
-                }
+                self.push(&ident.id);
             }
             target.visit_children_with(self);
         }
 
         fn visit_update_expr(&mut self, update: &UpdateExpr) {
             if let Expr::Ident(ident) = update.arg.as_ref() {
-                if self.matches(ident) {
-                    self.found = true;
-                }
+                self.push(ident);
             }
             update.visit_children_with(self);
         }
@@ -425,18 +499,18 @@ fn stmt_may_write_binding(stmt: &Stmt, binding: &BindingId) -> bool {
             self.in_closure(constructor);
         }
 
-        fn visit_class(&mut self, class: &swc_core::ecma::ast::Class) {
+        fn visit_class(&mut self, class: &Class) {
             self.in_closure(class);
         }
     }
 
-    let mut detector = Detector {
-        binding,
+    let mut collector = Collector {
+        closure_mentions,
         closure_depth: 0,
-        found: false,
+        written: HashSet::default(),
     };
-    stmt.visit_with(&mut detector);
-    detector.found
+    stmt.visit_with(&mut collector);
+    collector.written
 }
 
 /// A statement that declares without running anything observable: an empty
@@ -581,13 +655,20 @@ fn is_pure_default_expr(expr: &Expr, level: RewriteLevel, unresolved_mark: Mark)
                 Prop::Getter(_) | Prop::Setter(_) | Prop::Assign(_) => false,
             },
         }),
-        Expr::Bin(binary) => {
-            matches!(
-                binary.op,
-                BinaryOp::LogicalOr | BinaryOp::LogicalAnd | BinaryOp::NullishCoalescing
-            ) && pure(&binary.left)
-                && pure(&binary.right)
-        }
+        Expr::Bin(binary) => match binary.op {
+            // Strict equality never converts its operands.
+            BinaryOp::LogicalOr
+            | BinaryOp::LogicalAnd
+            | BinaryOp::NullishCoalescing
+            | BinaryOp::EqEqEq
+            | BinaryOp::NotEqEq => pure(&binary.left) && pure(&binary.right),
+            // Comparing two numbers converts nothing: `arguments.length > 1`.
+            BinaryOp::Gt | BinaryOp::GtEq | BinaryOp::Lt | BinaryOp::LtEq => {
+                is_number_operand(&binary.left, unresolved_mark)
+                    && is_number_operand(&binary.right, unresolved_mark)
+            }
+            _ => false,
+        },
         Expr::Cond(cond) => pure(&cond.test) && pure(&cond.cons) && pure(&cond.alt),
         Expr::Member(member) => {
             level >= RewriteLevel::Standard && is_pure_static_member_read(member)
@@ -614,33 +695,13 @@ fn is_pure_static_member_read(member: &MemberExpr) -> bool {
 }
 
 /// True when the function body (including nested arrows, which share the
-/// activation) can observe whether `arguments` is mapped to the parameters:
-/// any use of `arguments` other than `arguments.length` or a literal index at
-/// or past the parameter count, or a direct `eval` that may mention it.
-fn function_observes_parameter_mapping(
-    body: &FunctionBody,
-    param_count: usize,
-    unresolved_mark: Mark,
-) -> bool {
-    function_observes_mapping_of_slots(body, 0..param_count, unresolved_mark)
-}
-
-/// True when the function body can observe whether the `arguments` slots in
-/// `slots` are mapped to parameters: a literal index inside `slots`, any other
-/// use of `arguments` except `arguments.length`, or a direct `eval` that may
-/// mention it.
+/// activation) can observe whether the `arguments` slots in `slots` are mapped
+/// to parameters: a literal index inside `slots`, any other use of `arguments`
+/// except `arguments.length`, or a direct `eval` that may mention it. The
+/// top-level statements in `ignored_stmts` are not inspected for `arguments`
+/// reads (direct `eval` is still checked everywhere). Only sloppy functions
+/// with a simple parameter list map `arguments`, so strict callers skip this.
 fn function_observes_mapping_of_slots(
-    body: &FunctionBody,
-    slots: Range<usize>,
-    unresolved_mark: Mark,
-) -> bool {
-    function_observes_mapping_of_slots_outside(body, slots, 0..0, unresolved_mark)
-}
-
-/// Like `function_observes_mapping_of_slots`, but the top-level statements in
-/// `ignored_stmts` are not inspected for `arguments` reads (direct `eval` is
-/// still checked everywhere).
-fn function_observes_mapping_of_slots_outside(
     body: &FunctionBody,
     slots: Range<usize>,
     ignored_stmts: Range<usize>,
@@ -3131,21 +3192,38 @@ impl Visit for IdentReferenceFinder<'_> {
 // ============================================================
 
 /// Pattern B and the inline form turn `arguments` reads back into parameters.
-/// That changes which `arguments` slots are mapped to parameters: a default
-/// makes the list non-simple, which unmaps every slot, and a plain alias
-/// parameter maps a slot that was not mapped before. When the rest of the
-/// function can see that change (it reads or writes a changed slot, lets
-/// `arguments` escape, or has a direct `eval`), both rewrites are undone.
+///
+/// Each read moves to the start of the call, so it may move only when that
+/// is unobservable. That is decided from what ran before the read
+/// (`RunBefore`), never by proving that arbitrary code commutes: a default
+/// that already ran first may be anything, and one that ran later must be
+/// pure and read only parameters that nothing before it wrote.
+///
+/// In sloppy functions the rewrite also changes which `arguments` slots are
+/// mapped to parameters: a default makes the list non-simple, which unmaps
+/// every slot, and a plain alias parameter maps a slot that was not mapped
+/// before. The change shows only through a write on one side: a changed
+/// slot's parameter is written, or `arguments` is written, escapes, or meets
+/// a direct `eval`. When that can happen and the rest of the function can see
+/// a changed slot, both rewrites are undone. Strict functions never map
+/// `arguments`.
 fn recover_arguments_params(
     params: &mut Vec<Param>,
     body: &mut FunctionBody,
     level: RewriteLevel,
     unresolved_mark: Mark,
+    strict: bool,
     body_bindings: &[BindingId],
 ) {
-    if !body_mentions_arguments(body, unresolved_mark) {
+    if !mentions_arguments(body) {
         return;
     }
+    if strict {
+        process_pattern_b_params(params, body, level, unresolved_mark, body_bindings);
+        rewrite_inline_arguments_defaults(params, body, level, unresolved_mark, body_bindings);
+        return;
+    }
+
     let original_mapped = mapped_param_count(params);
     let original = (params.clone(), body.clone());
 
@@ -3154,14 +3232,574 @@ fn recover_arguments_params(
 
     let mapped = mapped_param_count(params);
     let changed = original_mapped.min(mapped)..original_mapped.max(mapped);
+    if changed.is_empty() || !mapping_change_can_show(params, body, &changed, unresolved_mark) {
+        return;
+    }
     // Babel's and TypeScript's rest copy loop reads `arguments[i]` from the
-    // first slot past the parameter list; when that is past every changed
-    // slot, the loop cannot see the mapping change.
+    // first slot past the parameter list, which is past every changed slot,
+    // so the loop cannot see the mapping change.
     let rest_copy = find_rest_array_copy_proof(body, params.len(), unresolved_mark)
-        .filter(|_| params.len() >= changed.end)
         .map_or(0..0, |proof| proof.start_stmt..proof.ready_stmt);
-    if function_observes_mapping_of_slots_outside(body, changed, rest_copy, unresolved_mark) {
+    if function_observes_mapping_of_slots(body, changed, rest_copy, unresolved_mark) {
         (*params, *body) = original;
+    }
+}
+
+/// Mapping ties a parameter to its `arguments` slot, so it only shows when
+/// one of them is written: the body may write a parameter in `changed`, uses
+/// `arguments` other than through `.length` and literal-index reads (which
+/// covers writes and escapes), or has a direct `eval`, even in a nested
+/// function.
+fn mapping_change_can_show(
+    params: &[Param],
+    body: &FunctionBody,
+    changed: &Range<usize>,
+    unresolved_mark: Mark,
+) -> bool {
+    let mut changed_params = Vec::new();
+    for param in &params[changed.clone()] {
+        collect_pat_binding_ids(&param.pat, &mut changed_params);
+    }
+    body.stmts.iter().any(|stmt| {
+        !stmt_reads_arguments_only(stmt, unresolved_mark)
+            || stmt_has_direct_eval(stmt, unresolved_mark)
+            || {
+                let written = stmt_written_bindings(stmt, false);
+                changed_params
+                    .iter()
+                    .any(|binding| written.contains(binding))
+            }
+    })
+}
+
+/// What ran in the body before a matched `arguments` read.
+#[derive(Clone)]
+struct RunBefore {
+    /// Only empty statements, string expression statements, function
+    /// declarations, and declarations with constant initializers
+    /// (`var self = this, args = arguments;`): no code ran at all.
+    runs_nothing: bool,
+    /// Every statement is inert (`stmt_is_inert`): it may read values, but it
+    /// calls nothing and writes only the bindings it declares.
+    inert: bool,
+    /// `arguments` was only read through `.length` and literal indexes, and
+    /// there was no direct `eval`.
+    reads_arguments_only: bool,
+    /// The function's parameters that these statements may write.
+    written_params: Vec<BindingId>,
+}
+
+impl RunBefore {
+    fn nothing() -> Self {
+        Self {
+            runs_nothing: true,
+            inert: true,
+            reads_arguments_only: true,
+            written_params: Vec::new(),
+        }
+    }
+
+    fn add(
+        &mut self,
+        stmt: &Stmt,
+        param_bindings: &[BindingId],
+        level: RewriteLevel,
+        unresolved_mark: Mark,
+    ) {
+        self.runs_nothing = self.runs_nothing && stmt_runs_nothing(stmt, unresolved_mark);
+        self.inert = self.inert && stmt_is_inert(stmt, level, unresolved_mark);
+        self.reads_arguments_only =
+            self.reads_arguments_only && stmt_reads_arguments_only(stmt, unresolved_mark);
+        let eval = stmt_has_direct_eval(stmt, unresolved_mark);
+        self.reads_arguments_only = self.reads_arguments_only && !eval;
+        let written = stmt_written_bindings(stmt, false);
+        for binding in param_bindings {
+            if (eval || written.contains(binding)) && !self.written_params.contains(binding) {
+                self.written_params.push(binding.clone());
+            }
+        }
+    }
+
+    /// Whether `arguments` still holds the call's values: nothing before
+    /// could reach it (inert statements call nothing; an alias they create
+    /// stays unused until later), or nothing before used it except to read.
+    fn arguments_unchanged(&self) -> bool {
+        self.inert || self.reads_arguments_only
+    }
+
+    /// Whether a parameter may hold another value than the call passed. A
+    /// hoisted function declaration that mentions it only matters when
+    /// something before could have called it.
+    fn may_have_written(
+        &self,
+        binding: &BindingId,
+        hoisted_fn_mentions: &HoistedFnDeclMentions,
+    ) -> bool {
+        self.written_params.contains(binding)
+            || (!self.inert && hoisted_fn_mentions.mentions(binding))
+    }
+}
+
+/// Whether a matched `arguments` default can become a parameter default,
+/// given what ran before it. Parameter defaults run before the body, in
+/// parameter order, so either:
+/// - the default already ran first: it is the first read its statement
+///   evaluates (`leading` says what the statement evaluated before it),
+///   nothing before it ran any code (or, for a pure default, nothing but
+///   inert statements and pure reads), and no later parameter has a default
+///   that would now run after it instead of before; or
+/// - running it earlier gives the same value: it is pure and reads only
+///   parameters that nothing before it wrote.
+///
+/// Either way `arguments` must still hold the call's values where it sat.
+#[allow(clippy::too_many_arguments)]
+fn arguments_default_can_move(
+    default_val: &Expr,
+    param_idx: usize,
+    leading: Option<EvaluatedBefore>,
+    before: &RunBefore,
+    params: &[Param],
+    param_bindings: &[BindingId],
+    hoisted_fn_mentions: &HoistedFnDeclMentions,
+    level: RewriteLevel,
+    unresolved_mark: Mark,
+) -> bool {
+    if !before.arguments_unchanged() || expr_awaits_or_yields(default_val) {
+        return false;
+    }
+    let dependencies = default_dependencies(default_val, unresolved_mark);
+    if dependencies.bindings.iter().any(|dependency| {
+        param_bindings.contains(dependency)
+            && before.may_have_written(dependency, hoisted_fn_mentions)
+    }) {
+        return false;
+    }
+    let pure = is_pure_default_expr(default_val, level, unresolved_mark);
+    let reads_only_params = !dependencies.needs_inert_prefix
+        && dependencies
+            .bindings
+            .iter()
+            .all(|dependency| param_bindings.contains(dependency));
+    if pure && reads_only_params {
+        return true;
+    }
+    let Some(evaluated_before) = leading else {
+        return false;
+    };
+    later_params_are_plain(params, param_idx, unresolved_mark)
+        && if pure {
+            before.inert
+        } else {
+            before.runs_nothing && evaluated_before == EvaluatedBefore::Nothing
+        }
+}
+
+/// Whether `stmt` calls `eval` directly anywhere, nested functions included:
+/// the evaluated code may write any binding it can see, `arguments` too.
+fn stmt_has_direct_eval(stmt: &Stmt, unresolved_mark: Mark) -> bool {
+    struct Finder {
+        unresolved_mark: Mark,
+        found: bool,
+    }
+
+    impl Visit for Finder {
+        fn visit_call_expr(&mut self, call: &swc_core::ecma::ast::CallExpr) {
+            if let Callee::Expr(callee) = &call.callee {
+                if matches!(callee.as_ref(), Expr::Ident(ident)
+                    if ident.sym.as_ref() == "eval" && ident.ctxt.outer() == self.unresolved_mark)
+                {
+                    self.found = true;
+                }
+            }
+            call.visit_children_with(self);
+        }
+    }
+
+    let mut finder = Finder {
+        unresolved_mark,
+        found: false,
+    };
+    stmt.visit_with(&mut finder);
+    finder.found
+}
+
+/// Whether `expr` awaits or yields for its own function. A parameter default
+/// may do neither, so such a default stays in the body.
+fn expr_awaits_or_yields(expr: &Expr) -> bool {
+    struct Finder {
+        found: bool,
+    }
+
+    impl Visit for Finder {
+        fn visit_await_expr(&mut self, _: &swc_core::ecma::ast::AwaitExpr) {
+            self.found = true;
+        }
+
+        fn visit_yield_expr(&mut self, _: &swc_core::ecma::ast::YieldExpr) {
+            self.found = true;
+        }
+
+        fn visit_function(&mut self, _: &Function) {}
+        fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+        fn visit_class(&mut self, _: &Class) {}
+    }
+
+    let mut finder = Finder { found: false };
+    expr.visit_with(&mut finder);
+    finder.found
+}
+
+/// Whether every parameter after `idx` is a plain identifier or has a
+/// constant default: none of them runs code that the default placed at `idx`
+/// would now run before.
+fn later_params_are_plain(params: &[Param], idx: usize, unresolved_mark: Mark) -> bool {
+    params.iter().skip(idx + 1).all(|param| match &param.pat {
+        Pat::Ident(_) => true,
+        // A constant default reads nothing, so its order does not matter.
+        Pat::Assign(assign) => {
+            matches!(assign.left.as_ref(), Pat::Ident(_))
+                && is_constant_value(&assign.right, unresolved_mark)
+        }
+        _ => false,
+    })
+}
+
+/// A number literal or `arguments.length`: a comparison between two of them
+/// runs no conversion code.
+fn is_number_operand(expr: &Expr, unresolved_mark: Mark) -> bool {
+    match strip_parens(expr) {
+        Expr::Lit(Lit::Num(_)) => true,
+        expr => is_arguments_length(expr, unresolved_mark),
+    }
+}
+
+/// A statement that runs no code: an empty statement, a string expression
+/// statement (a directive), a function declaration, or a variable
+/// declaration whose initializers are constants.
+fn stmt_runs_nothing(stmt: &Stmt, unresolved_mark: Mark) -> bool {
+    match stmt {
+        Stmt::Empty(_) | Stmt::Decl(Decl::Fn(_)) => true,
+        Stmt::Expr(expr_stmt) => matches!(expr_stmt.expr.as_ref(), Expr::Lit(Lit::Str(_))),
+        Stmt::Decl(Decl::Var(var)) => var.decls.iter().all(|decl| {
+            matches!(decl.name, Pat::Ident(_))
+                && decl
+                    .init
+                    .as_deref()
+                    .is_none_or(|init| is_constant_value(init, unresolved_mark))
+        }),
+        _ => false,
+    }
+}
+
+/// A value whose evaluation runs no code and reads nothing that code could
+/// change: literals, function values, `this`, `arguments`, `undefined`.
+fn is_constant_value(expr: &Expr, unresolved_mark: Mark) -> bool {
+    match strip_parens(expr) {
+        Expr::Lit(_) | Expr::This(_) | Expr::Fn(_) | Expr::Arrow(_) => true,
+        Expr::Ident(ident) => {
+            is_arguments_ident(ident, unresolved_mark) || is_undefined_ident(ident, unresolved_mark)
+        }
+        Expr::Unary(unary) => {
+            unary.op == UnaryOp::Void && matches!(strip_parens(&unary.arg), Expr::Lit(_))
+        }
+        _ => false,
+    }
+}
+
+/// True when `stmt` uses `arguments` (its own activation's: nested arrows
+/// count, nested functions do not) only through `.length` and literal-index
+/// reads, and makes no direct `eval` call. Such a statement cannot change
+/// what `arguments[N]` holds.
+fn stmt_reads_arguments_only(stmt: &Stmt, unresolved_mark: Mark) -> bool {
+    struct Checker {
+        unresolved_mark: Mark,
+        ok: bool,
+    }
+
+    impl Checker {
+        fn is_arguments_member(&self, expr: &Expr) -> bool {
+            matches!(strip_parens(expr), Expr::Member(member)
+                if matches!(member.obj.as_ref(), Expr::Ident(obj)
+                    if is_arguments_ident(obj, self.unresolved_mark)))
+        }
+    }
+
+    impl Visit for Checker {
+        fn visit_member_expr(&mut self, member: &MemberExpr) {
+            if let Expr::Ident(obj) = member.obj.as_ref() {
+                if is_arguments_ident(obj, self.unresolved_mark) {
+                    let read = match &member.prop {
+                        MemberProp::Ident(prop) => prop.sym.as_ref() == "length",
+                        MemberProp::Computed(computed) => {
+                            extract_num_literal(&computed.expr).is_some()
+                        }
+                        MemberProp::PrivateName(_) => false,
+                    };
+                    if !read {
+                        self.ok = false;
+                    }
+                    return;
+                }
+            }
+            member.visit_children_with(self);
+        }
+
+        fn visit_ident(&mut self, ident: &Ident) {
+            if is_arguments_ident(ident, self.unresolved_mark) {
+                self.ok = false;
+            }
+        }
+
+        fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+            if let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left {
+                if matches!(member.obj.as_ref(), Expr::Ident(obj)
+                    if is_arguments_ident(obj, self.unresolved_mark))
+                {
+                    self.ok = false;
+                }
+            }
+            assign.visit_children_with(self);
+        }
+
+        fn visit_update_expr(&mut self, update: &UpdateExpr) {
+            if self.is_arguments_member(&update.arg) {
+                self.ok = false;
+            }
+            update.visit_children_with(self);
+        }
+
+        fn visit_unary_expr(&mut self, unary: &UnaryExpr) {
+            if unary.op == UnaryOp::Delete && self.is_arguments_member(&unary.arg) {
+                self.ok = false;
+            }
+            unary.visit_children_with(self);
+        }
+
+        fn visit_pat(&mut self, pat: &Pat) {
+            if let Pat::Expr(expr) = pat {
+                if self.is_arguments_member(expr) {
+                    self.ok = false;
+                }
+            }
+            pat.visit_children_with(self);
+        }
+
+        fn visit_call_expr(&mut self, call: &swc_core::ecma::ast::CallExpr) {
+            if let swc_core::ecma::ast::Callee::Expr(callee) = &call.callee {
+                if matches!(callee.as_ref(), Expr::Ident(ident)
+                    if ident.sym.as_ref() == "eval" && ident.ctxt.outer() == self.unresolved_mark)
+                {
+                    self.ok = false;
+                }
+            }
+            call.visit_children_with(self);
+        }
+
+        // Nested regular functions and class constructors have their own
+        // `arguments`; arrows do not.
+        fn visit_function(&mut self, _: &Function) {}
+        fn visit_constructor(&mut self, _: &Constructor) {}
+    }
+
+    let mut checker = Checker {
+        unresolved_mark,
+        ok: true,
+    };
+    stmt.visit_with(&mut checker);
+    checker.ok
+}
+
+/// What a statement evaluates before its first `arguments` read.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum EvaluatedBefore {
+    /// Side-effect-free reads (`is_pure_default_expr`), such as the callee
+    /// and the earlier arguments in `g(e, read)`.
+    PureReads,
+    /// Only constants (`is_constant_value`): nothing ran at all.
+    Nothing,
+}
+
+/// The first `arguments` default or optional read that `stmt` evaluates, and
+/// what the statement evaluates before it: `return (read).then(f)`,
+/// `if (read) …`, `(function (x) { … })(t, read)`, `for (var e = read; …)`.
+/// The read must run whenever the statement does, so the right side of `&&`,
+/// `||`, and `??`, conditional branches, and loop bodies are not followed.
+fn first_evaluated_arguments_read(
+    stmt: &Stmt,
+    level: RewriteLevel,
+    unresolved_mark: Mark,
+) -> Option<(&Expr, EvaluatedBefore)> {
+    let finder = FirstReadFinder {
+        level,
+        unresolved_mark,
+    };
+    match stmt {
+        Stmt::Expr(expr_stmt) => finder.find(&expr_stmt.expr),
+        Stmt::Return(ret) => finder.find(ret.arg.as_deref()?),
+        Stmt::Throw(throw) => finder.find(&throw.arg),
+        Stmt::If(if_stmt) => finder.find(&if_stmt.test),
+        Stmt::Switch(switch) => finder.find(&switch.discriminant),
+        Stmt::Decl(Decl::Var(var)) => finder.find_in_var_decl(var),
+        Stmt::For(for_stmt) => match for_stmt.init.as_ref()? {
+            VarDeclOrExpr::VarDecl(var) => finder.find_in_var_decl(var),
+            VarDeclOrExpr::Expr(expr) => finder.find(expr),
+        },
+        _ => None,
+    }
+}
+
+struct FirstReadFinder {
+    level: RewriteLevel,
+    unresolved_mark: Mark,
+}
+
+impl FirstReadFinder {
+    fn find<'e>(&self, expr: &'e Expr) -> Option<(&'e Expr, EvaluatedBefore)> {
+        // Parentheses first: the rewriter replaces the innermost match.
+        if let Expr::Paren(paren) = expr {
+            return self.find(&paren.expr);
+        }
+        if extract_arguments_default_expr(expr, self.unresolved_mark).is_some()
+            || extract_simple_arguments_optional(expr, self.unresolved_mark).is_some()
+        {
+            return Some((expr, EvaluatedBefore::Nothing));
+        }
+        match expr {
+            Expr::Seq(seq) => self.find_in_order(seq.exprs.iter().map(|expr| Some(&**expr))),
+            Expr::Bin(bin)
+                if matches!(
+                    bin.op,
+                    BinaryOp::LogicalAnd | BinaryOp::LogicalOr | BinaryOp::NullishCoalescing
+                ) =>
+            {
+                self.find(&bin.left)
+            }
+            Expr::Bin(bin) => self.find_in_order([Some(&*bin.left), Some(&*bin.right)].into_iter()),
+            Expr::Cond(cond) => self.find(&cond.test),
+            Expr::Member(member) => self.find(&member.obj),
+            Expr::Unary(unary) if unary.op != UnaryOp::Delete => self.find(&unary.arg),
+            Expr::Await(await_expr) => self.find(&await_expr.arg),
+            Expr::Assign(assign)
+                if assign.op == AssignOp::Assign
+                    && matches!(
+                        assign.left,
+                        AssignTarget::Simple(SimpleAssignTarget::Ident(_))
+                    ) =>
+            {
+                self.find(&assign.right)
+            }
+            Expr::Call(call) => {
+                let Callee::Expr(callee) = &call.callee else {
+                    return None;
+                };
+                self.find_in_order(
+                    std::iter::once(Some(&**callee)).chain(
+                        call.args
+                            .iter()
+                            .map(|arg| arg.spread.is_none().then_some(&*arg.expr)),
+                    ),
+                )
+            }
+            Expr::New(new) => self.find_in_order(
+                std::iter::once(Some(&*new.callee)).chain(
+                    new.args
+                        .iter()
+                        .flatten()
+                        .map(|arg| arg.spread.is_none().then_some(&*arg.expr)),
+                ),
+            ),
+            Expr::Array(array) => self.find_in_order(
+                array
+                    .elems
+                    .iter()
+                    .flatten()
+                    .map(|elem| elem.spread.is_none().then_some(&*elem.expr)),
+            ),
+            Expr::Tpl(tpl) => self.find_in_order(tpl.exprs.iter().map(|expr| Some(&**expr))),
+            Expr::Object(object) => self.find_in_object(object),
+            _ => None,
+        }
+    }
+
+    /// Operands evaluated left to right: the first one that holds a read wins,
+    /// and every operand before it must be a constant or a pure read. `None`
+    /// stands for an operand that cannot be passed over (a spread).
+    fn find_in_order<'e>(
+        &self,
+        operands: impl Iterator<Item = Option<&'e Expr>>,
+    ) -> Option<(&'e Expr, EvaluatedBefore)> {
+        let mut before = EvaluatedBefore::Nothing;
+        for operand in operands {
+            let operand = operand?;
+            if let Some((read, inner)) = self.find(operand) {
+                return Some((read, before.min(inner)));
+            }
+            before = before.min(self.classify(operand)?);
+        }
+        None
+    }
+
+    /// Properties run in order: a computed key, then the value. A method only
+    /// creates a function; a spread, getter, or setter ends the search.
+    fn find_in_object<'e>(
+        &self,
+        object: &'e swc_core::ecma::ast::ObjectLit,
+    ) -> Option<(&'e Expr, EvaluatedBefore)> {
+        let mut before = EvaluatedBefore::Nothing;
+        for prop in &object.props {
+            let PropOrSpread::Prop(prop) = prop else {
+                return None;
+            };
+            match prop.as_ref() {
+                Prop::KeyValue(kv) => {
+                    let key = match &kv.key {
+                        PropName::Computed(key) => Some(&*key.expr),
+                        _ => None,
+                    };
+                    for operand in key.into_iter().chain(std::iter::once(&*kv.value)) {
+                        if let Some((read, inner)) = self.find(operand) {
+                            return Some((read, before.min(inner)));
+                        }
+                        before = before.min(self.classify(operand)?);
+                    }
+                }
+                Prop::Shorthand(ident) => {
+                    before = before.min(self.classify(&Expr::Ident(ident.clone()))?);
+                }
+                Prop::Method(method) if !matches!(method.key, PropName::Computed(_)) => {}
+                _ => return None,
+            }
+        }
+        None
+    }
+
+    /// Declarators run in order; one without an initializer runs nothing,
+    /// and a destructuring pattern may call getters, so nothing after it
+    /// counts.
+    fn find_in_var_decl<'e>(&self, var: &'e VarDecl) -> Option<(&'e Expr, EvaluatedBefore)> {
+        let mut before = EvaluatedBefore::Nothing;
+        for decl in &var.decls {
+            if let Some(init) = decl.init.as_deref() {
+                if let Some((read, inner)) = self.find(init) {
+                    return Some((read, before.min(inner)));
+                }
+                before = before.min(self.classify(init)?);
+            }
+            if !matches!(decl.name, Pat::Ident(_)) {
+                return None;
+            }
+        }
+        None
+    }
+
+    fn classify(&self, expr: &Expr) -> Option<EvaluatedBefore> {
+        if is_constant_value(expr, self.unresolved_mark) {
+            Some(EvaluatedBefore::Nothing)
+        } else if is_pure_default_expr(expr, self.level, self.unresolved_mark) {
+            Some(EvaluatedBefore::PureReads)
+        } else {
+            None
+        }
     }
 }
 
@@ -3178,38 +3816,11 @@ fn mapped_param_count(params: &[Param]) -> usize {
     }
 }
 
-fn body_mentions_arguments(body: &FunctionBody, unresolved_mark: Mark) -> bool {
-    struct Finder {
-        unresolved_mark: Mark,
-        found: bool,
-    }
-
-    impl Visit for Finder {
-        fn visit_ident(&mut self, ident: &Ident) {
-            if is_arguments_ident(ident, self.unresolved_mark) {
-                self.found = true;
-            }
-        }
-
-        // Nested regular functions and class constructors have their own
-        // `arguments`; arrows do not.
-        fn visit_function(&mut self, _: &Function) {}
-        fn visit_constructor(&mut self, _: &Constructor) {}
-    }
-
-    let mut finder = Finder {
-        unresolved_mark,
-        found: false,
-    };
-    body.visit_with(&mut finder);
-    finder.found
-}
-
-/// A matched declaration ran at its own place in the body, so it moves into
-/// the parameter list only when that is unobservable: the same proof Pattern A
-/// uses for a guard that follows other statements. An alias has no default to
-/// run; it only needs its binding to be untouched before the declaration (a
-/// `var` read there is `undefined`, not the argument).
+/// A matched declaration moves into the parameter list when
+/// `arguments_default_can_move` allows it (the declaration's initializer is
+/// the first thing it evaluates). An alias has no default to run; it needs
+/// `arguments` unchanged before it. Both need their binding untouched before
+/// the declaration: a `var` read there is `undefined`, not the argument.
 fn process_pattern_b_params(
     params: &mut Vec<Param>,
     body: &mut FunctionBody,
@@ -3221,53 +3832,53 @@ fn process_pattern_b_params(
     let param_bindings = current_or_later_param_bindings(params, 0);
     let mut to_remove: Vec<usize> = Vec::new();
     let mut skipped: Vec<usize> = Vec::new();
+    let mut before = RunBefore::nothing();
 
     // Scan entire body for var declarations matching the arguments pattern
     for (stmt_idx, stmt) in body.stmts.iter().enumerate() {
-        if let Some((param_idx, param_ident, default_val)) =
+        let untouched_before = |binding: &BindingId| {
+            !((!before.inert && hoisted_fn_mentions.mentions(binding))
+                || skipped
+                    .iter()
+                    .any(|&idx| stmt_mentions_binding(&body.stmts[idx], binding)))
+        };
+        let moved = if let Some((param_idx, param_ident, default_val)) =
             extract_arguments_default(stmt, unresolved_mark)
         {
             let binding = (param_ident.sym.clone(), param_ident.ctxt);
-            if param_slot_can_use_ident(params, param_idx, &param_ident)
-                && can_hoist_default_past_skipped(
-                    &body.stmts,
-                    &skipped,
-                    &binding,
-                    &param_bindings,
+            untouched_before(&binding)
+                && param_slot_can_use_ident(params, param_idx, &param_ident)
+                && arguments_default_can_move(
                     &default_val,
+                    param_idx,
+                    Some(EvaluatedBefore::Nothing),
+                    &before,
+                    params,
+                    &param_bindings,
                     &hoisted_fn_mentions,
                     level,
                     unresolved_mark,
                 )
                 && ensure_default_param(params, param_idx, param_ident, default_val, body_bindings)
                     .is_some()
-            {
-                to_remove.push(stmt_idx);
-            } else {
-                skipped.push(stmt_idx);
-            }
-            continue;
-        }
-
-        if let Some((param_idx, param_ident)) = extract_arguments_alias(stmt, unresolved_mark) {
+        } else if let Some((param_idx, param_ident)) =
+            extract_arguments_alias(stmt, unresolved_mark)
+        {
             let binding = (param_ident.sym.clone(), param_ident.ctxt);
-            let untouched_before = skipped.is_empty()
-                || !(hoisted_fn_mentions.mentions(&binding)
-                    || skipped
-                        .iter()
-                        .any(|&idx| stmt_mentions_binding(&body.stmts[idx], &binding)));
-            if untouched_before
+            untouched_before(&binding)
+                && before.arguments_unchanged()
                 && param_slot_can_use_ident(params, param_idx, &param_ident)
                 && ensure_plain_param(params, param_idx, param_ident).is_some()
-            {
-                to_remove.push(stmt_idx);
-            } else {
-                skipped.push(stmt_idx);
-            }
-            continue;
-        }
+        } else {
+            false
+        };
 
-        skipped.push(stmt_idx);
+        if moved {
+            to_remove.push(stmt_idx);
+        } else {
+            skipped.push(stmt_idx);
+            before.add(stmt, &param_bindings, level, unresolved_mark);
+        }
     }
 
     for idx in to_remove.into_iter().rev() {
@@ -3546,12 +4157,11 @@ fn make_ident_param(name: Atom) -> Param {
     }
 }
 
-/// An inline default runs where the expression sits; as a parameter default
-/// it runs before the body. So it must be safe to run earlier (pure), every
-/// parameter it reads must be unwritten up to and including its statement,
-/// and when it reads outer bindings, globals, or properties, everything before
-/// it must be inert. The `arguments` reads themselves are pure, so a statement
-/// is judged with them set aside.
+/// An inline read runs where the expression sits; as a parameter it runs
+/// before the body. Each statement is judged by what ran before it
+/// (`RunBefore`): the first read a statement evaluates has only the earlier
+/// statements before it, any other read also has the rest of its own
+/// statement.
 fn rewrite_inline_arguments_defaults(
     params: &mut Vec<Param>,
     body: &mut FunctionBody,
@@ -3559,10 +4169,12 @@ fn rewrite_inline_arguments_defaults(
     unresolved_mark: Mark,
     body_bindings: &[BindingId],
 ) {
+    if !body_has_inline_arguments_read(body, unresolved_mark) {
+        return;
+    }
     let param_name_candidates = collect_inline_param_name_candidates(body);
     let initial_param_count = params.len();
     let param_bindings = current_or_later_param_bindings(params, 0);
-    let hoisted_fn_mentions = HoistedFnDeclMentions::collect(body);
     let mut rewriter = InlineArgumentsDefaultRewriter {
         params,
         initial_param_count,
@@ -3572,51 +4184,61 @@ fn rewrite_inline_arguments_defaults(
         param_name_candidates,
         consumed_param_name_bindings: Vec::new(),
         placeholder_idents: HashMap::default(),
-        param_bindings: param_bindings.clone(),
-        written_params: param_bindings
-            .iter()
-            .filter(|binding| hoisted_fn_mentions.mentions(binding))
-            .cloned()
-            .collect(),
-        prefix_is_inert: true,
+        hoisted_fn_mentions: HoistedFnDeclMentions::collect(body),
+        param_bindings,
+        leading: None,
+        before_stmt: RunBefore::nothing(),
+        before_rest: RunBefore::nothing(),
     };
     for stmt in body.stmts.iter_mut() {
-        for binding in &param_bindings {
-            if !rewriter.written_params.contains(binding) && stmt_may_write_binding(stmt, binding) {
-                rewriter.written_params.push(binding.clone());
-            }
-        }
-        let stmt_is_inert_without_arguments_reads = rewriter.prefix_is_inert && {
-            let mut neutral = stmt.clone();
-            neutral.visit_mut_with(&mut ArgumentsReadNeutralizer { unresolved_mark });
-            stmt_is_inert(&neutral, level, unresolved_mark)
-        };
-        rewriter.prefix_is_inert = stmt_is_inert_without_arguments_reads;
+        rewriter.leading = first_evaluated_arguments_read(stmt, level, unresolved_mark)
+            .map(|(expr, evaluated_before)| (expr as *const Expr, evaluated_before));
+        rewriter.before_rest = rewriter.before_stmt.clone();
+        rewriter
+            .before_rest
+            .add(stmt, &rewriter.param_bindings, level, unresolved_mark);
         stmt.visit_mut_with(&mut rewriter);
+        // Judge what the statement still runs after its reads moved out.
+        let mut before_stmt = std::mem::replace(&mut rewriter.before_stmt, RunBefore::nothing());
+        before_stmt.add(stmt, &rewriter.param_bindings, level, unresolved_mark);
+        rewriter.before_stmt = before_stmt;
     }
-    remove_consumed_empty_param_name_decls(body, &rewriter.consumed_param_name_bindings);
+    let consumed = rewriter.consumed_param_name_bindings;
+    remove_consumed_empty_param_name_decls(body, &consumed);
 }
 
-/// Replaces every inline `arguments` default or optional read with `void 0`,
-/// so a statement's inertness can be judged without them.
-struct ArgumentsReadNeutralizer {
-    unresolved_mark: Mark,
-}
+/// Whether the body still has an `arguments` default or optional read
+/// (declarations Pattern B moved are already gone).
+fn body_has_inline_arguments_read(body: &FunctionBody, unresolved_mark: Mark) -> bool {
+    struct Finder {
+        unresolved_mark: Mark,
+        found: bool,
+    }
 
-impl VisitMut for ArgumentsReadNeutralizer {
-    fn visit_mut_expr(&mut self, expr: &mut Expr) {
-        if extract_arguments_default_expr(expr, self.unresolved_mark).is_some()
-            || extract_simple_arguments_optional(expr, self.unresolved_mark).is_some()
-        {
-            *expr = Expr::Unary(UnaryExpr {
-                span: DUMMY_SP,
-                op: UnaryOp::Void,
-                arg: Box::new(Expr::Lit(Lit::Num(0.0.into()))),
-            });
-            return;
+    impl Visit for Finder {
+        fn visit_expr(&mut self, expr: &Expr) {
+            if self.found {
+                return;
+            }
+            if extract_arguments_default_expr(expr, self.unresolved_mark).is_some()
+                || extract_simple_arguments_optional(expr, self.unresolved_mark).is_some()
+            {
+                self.found = true;
+                return;
+            }
+            expr.visit_children_with(self);
         }
-        expr.visit_mut_children_with(self);
+
+        fn visit_function(&mut self, _: &Function) {}
+        fn visit_constructor(&mut self, _: &Constructor) {}
     }
+
+    let mut finder = Finder {
+        unresolved_mark,
+        found: false,
+    };
+    body.visit_with(&mut finder);
+    finder.found
 }
 
 fn ensure_params_len(params: &mut Vec<Param>, idx: usize) {
@@ -3736,12 +4358,16 @@ struct InlineArgumentsDefaultRewriter<'a> {
     unresolved_mark: Mark,
     /// The function's own parameters before this rewrite.
     param_bindings: Vec<BindingId>,
-    /// Parameters that the current statement, an earlier one, or a hoisted
-    /// function declaration may write.
-    written_params: Vec<BindingId>,
-    /// Whether every statement before the current one, and the current one
-    /// apart from its `arguments` reads, is inert.
-    prefix_is_inert: bool,
+    hoisted_fn_mentions: HoistedFnDeclMentions,
+    /// The read the current statement evaluates first, if any, and what the
+    /// statement evaluates before it. The read is only compared by address,
+    /// never dereferenced.
+    leading: Option<(*const Expr, EvaluatedBefore)>,
+    /// What ran before the current statement.
+    before_stmt: RunBefore,
+    /// What may have run before any other read in the current statement:
+    /// the earlier statements and the statement itself.
+    before_rest: RunBefore,
     body_bindings: &'a [BindingId],
     param_name_candidates: Vec<Option<InlineParamNameCandidate>>,
     consumed_param_name_bindings: Vec<BindingId>,
@@ -3753,11 +4379,30 @@ struct InlineArgumentsDefaultRewriter<'a> {
 
 impl VisitMut for InlineArgumentsDefaultRewriter<'_> {
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        let leading = self
+            .leading
+            .filter(|(read, _)| std::ptr::eq(*read, expr as *const Expr))
+            .map(|(_, evaluated_before)| evaluated_before);
         expr.visit_mut_children_with(self);
+        let before = if leading.is_some() {
+            &self.before_stmt
+        } else {
+            &self.before_rest
+        };
 
         if let Some((idx, default_val)) = extract_arguments_default_expr(expr, self.unresolved_mark)
         {
-            if !self.default_can_run_first(&default_val) {
+            if !arguments_default_can_move(
+                &default_val,
+                idx,
+                leading,
+                before,
+                self.params,
+                &self.param_bindings,
+                &self.hoisted_fn_mentions,
+                self.level,
+                self.unresolved_mark,
+            ) {
                 return;
             }
             let original_span = expr.span();
@@ -3783,6 +4428,9 @@ impl VisitMut for InlineArgumentsDefaultRewriter<'_> {
         let Some(idx) = extract_simple_arguments_optional(expr, self.unresolved_mark) else {
             return;
         };
+        if !before.arguments_unchanged() {
+            return;
+        }
 
         let original_span = expr.span();
         let preferred_ident = self.preferred_param_ident(idx);
@@ -3799,28 +4447,12 @@ impl VisitMut for InlineArgumentsDefaultRewriter<'_> {
 
     fn visit_mut_function(&mut self, _: &mut Function) {}
 
+    fn visit_mut_constructor(&mut self, _: &mut Constructor) {}
+
     fn visit_mut_arrow_expr(&mut self, _: &mut ArrowExpr) {}
 }
 
 impl InlineArgumentsDefaultRewriter<'_> {
-    fn default_can_run_first(&self, default_val: &Expr) -> bool {
-        if !is_pure_default_expr(default_val, self.level, self.unresolved_mark) {
-            return false;
-        }
-        let dependencies = default_dependencies(default_val, self.unresolved_mark);
-        let mut needs_inert_prefix = dependencies.needs_inert_prefix;
-        for dependency in &dependencies.bindings {
-            if self.param_bindings.contains(dependency) {
-                if self.written_params.contains(dependency) {
-                    return false;
-                }
-            } else {
-                needs_inert_prefix = true;
-            }
-        }
-        !needs_inert_prefix || self.prefix_is_inert
-    }
-
     fn preferred_param_ident(&mut self, idx: usize) -> Ident {
         if let Some(candidate) = self.param_name_candidate(idx) {
             return candidate.ident.clone();
