@@ -116,6 +116,7 @@ export function setupTest262Corpus({
     prepareRepository(absoluteRoot, upstream, { force: false });
     status = inspectTest262CorpusWithUpstream(absoluteRoot, upstream);
   }
+  ensureLfCheckout(absoluteRoot, status.head);
 
   if (status.head !== upstream.revision) {
     if (offline) {
@@ -255,6 +256,26 @@ function prepareRepository(root, upstream, { force }) {
   if (!isGitRepository(root)) {
     git(root, ["init"]);
     git(root, ["remote", "add", "origin", upstream.url]);
+  }
+}
+
+// Check the corpus out with the LF line endings it is stored with, whatever
+// the machine's global `core.autocrlf` says. A CRLF checkout shifts byte
+// offsets in parse errors, so reports fingerprint differently than on CI.
+// An existing CRLF checkout is clean to git, so rebuild the index to rewrite
+// its files; callers have already refused or replaced a dirty checkout.
+function ensureLfCheckout(root, head) {
+  const autocrlf = gitText(root, ["config", "--local", "--get", "core.autocrlf"], {
+    allowFailure: true,
+  });
+  if (autocrlf === "false") {
+    return;
+  }
+  git(root, ["config", "--local", "core.autocrlf", "false"]);
+  git(root, ["config", "--local", "core.eol", "lf"]);
+  if (head) {
+    git(root, ["rm", "-r", "-q", "--cached", "."]);
+    git(root, ["reset", "-q", "--hard", "HEAD"]);
   }
 }
 

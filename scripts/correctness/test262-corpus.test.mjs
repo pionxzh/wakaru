@@ -108,6 +108,37 @@ test("update verifies the requested revision before rewriting the pin", () => {
   }
 });
 
+test("setup checks files out with LF even when git converts to CRLF", () => {
+  const fixture = makeFixture();
+  const globalConfig = join(fixture.root, "global.gitconfig");
+  writeFileSync(globalConfig, "[core]\n\tautocrlf = true\n");
+  const previousGlobal = process.env.GIT_CONFIG_GLOBAL;
+  process.env.GIT_CONFIG_GLOBAL = globalConfig;
+  const harness = join(fixture.checkout, "harness", "assert.js");
+  try {
+    setupTest262Corpus(fixture.options());
+    assert.equal(readFileSync(harness, "utf8"), "void 0;\n");
+
+    // A checkout made before the fix: CRLF files that git reports as clean.
+    git(fixture.checkout, ["config", "--local", "core.autocrlf", "true"]);
+    git(fixture.checkout, ["rm", "-r", "-q", "--cached", "."]);
+    rmSync(harness);
+    git(fixture.checkout, ["reset", "-q", "--hard", "HEAD"]);
+    assert.equal(readFileSync(harness, "utf8"), "void 0;\r\n");
+
+    const status = setupTest262Corpus(fixture.options());
+    assert.equal(status.ready, true);
+    assert.equal(readFileSync(harness, "utf8"), "void 0;\n");
+  } finally {
+    if (previousGlobal === undefined) {
+      delete process.env.GIT_CONFIG_GLOBAL;
+    } else {
+      process.env.GIT_CONFIG_GLOBAL = previousGlobal;
+    }
+    fixture.cleanup();
+  }
+});
+
 function makeFixture() {
   const root = mkdtempSync(join(tmpdir(), "wakaru-test262-corpus-unit-"));
   const remote = join(root, "remote");
