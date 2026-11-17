@@ -18,7 +18,11 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: ubuntu-latest
+          # Pinned: the glibc a Linux build needs follows the runner's C
+          # toolchain. On ubuntu-26.04 (GCC 15, C23 by default) mimalloc's C
+          # code links __isoc23_strtol and raises the floor to 2.38. The glibc
+          # floor check below catches the next drift.
+          - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             artifact: wakaru
             archive: wakaru-linux-x64.tar.gz
@@ -54,6 +58,19 @@ jobs:
       - name: Build
         run: cargo build --release --target ${{ matrix.target }} -p wakaru-cli
 
+      - name: Check glibc floor (linux)
+        if: runner.os == 'Linux'
+        run: |
+          FLOOR=2.34
+          BIN="target/${{ matrix.target }}/release/${{ matrix.artifact }}"
+          NEEDED="$(objdump -T "$BIN" | grep -o 'GLIBC_[0-9.]*' | sed 's/^GLIBC_//' | sort -uV | tail -1)"
+          echo "highest glibc symbol version: $NEEDED (floor $FLOOR)"
+          if [ "$(printf '%s\n%s\n' "$NEEDED" "$FLOOR" | sort -V | tail -1)" != "$FLOOR" ]; then
+            echo "::error::$BIN needs glibc $NEEDED, above the $FLOOR floor"
+            objdump -T "$BIN" | grep "GLIBC_$NEEDED"
+            exit 1
+          fi
+
       - name: Package (unix)
         if: runner.os != 'Windows'
         run: |
@@ -86,10 +103,21 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/download-artifact@v7
         with:
           path: artifacts
+
+      - name: Attest release archives
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            artifacts/**/*.tar.gz
+            artifacts/**/*.zip
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
