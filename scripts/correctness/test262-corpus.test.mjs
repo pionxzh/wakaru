@@ -108,6 +108,20 @@ test("update verifies the requested revision before rewriting the pin", () => {
   }
 });
 
+test("setup enables long paths before checking files out", () => {
+  const fixture = makeFixture();
+  try {
+    setupTest262Corpus(fixture.options());
+
+    assert.equal(
+      git(fixture.checkout, ["config", "--local", "--get", "core.longpaths"]).stdout.trim(),
+      "true",
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("setup checks files out with LF even when git converts to CRLF", () => {
   const fixture = makeFixture();
   const globalConfig = join(fixture.root, "global.gitconfig");

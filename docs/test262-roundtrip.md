@@ -32,7 +32,9 @@ node scripts\correctness\test262-metadata-audit.mjs
 
 Setup checks the corpus out with LF line endings regardless of the global
 `core.autocrlf`, and converts an existing CRLF checkout, so parse-error
-offsets and report fingerprints match CI on Windows too. The default
+offsets and report fingerprints match CI on Windows too. It also enables
+`core.longpaths`, so a `--root` under a deep directory can hold Test262's
+longest file names past Windows' 260-character limit. The default
 Windows main-thread stack (1 MB) is still smaller than Linux's, so deeply
 nested cases can overflow locally while they pass on CI.
 

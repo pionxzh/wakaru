@@ -116,7 +116,7 @@ export function setupTest262Corpus({
     prepareRepository(absoluteRoot, upstream, { force: false });
     status = inspectTest262CorpusWithUpstream(absoluteRoot, upstream);
   }
-  ensureLfCheckout(absoluteRoot, status.head);
+  configureCheckout(absoluteRoot, status.head);
 
   if (status.head !== upstream.revision) {
     if (offline) {
@@ -259,12 +259,19 @@ function prepareRepository(root, upstream, { force }) {
   }
 }
 
-// Check the corpus out with the LF line endings it is stored with, whatever
-// the machine's global `core.autocrlf` says. A CRLF checkout shifts byte
-// offsets in parse errors, so reports fingerprint differently than on CI.
-// An existing CRLF checkout is clean to git, so rebuild the index to rewrite
-// its files; callers have already refused or replaced a dirty checkout.
-function ensureLfCheckout(root, head) {
+// Configure the checkout before any files are written.
+//
+// `core.longpaths`: some Test262 file names are long enough that a checkout
+// under a deep directory passes Windows' 260-character path limit, and Git for
+// Windows then fails to write them. Other platforms ignore the setting.
+//
+// LF line endings: check the corpus out with the line endings it is stored
+// with, whatever the machine's global `core.autocrlf` says. A CRLF checkout
+// shifts byte offsets in parse errors, so reports fingerprint differently than
+// on CI. An existing CRLF checkout is clean to git, so rebuild the index to
+// rewrite its files; callers have already refused or replaced a dirty checkout.
+function configureCheckout(root, head) {
+  git(root, ["config", "--local", "core.longpaths", "true"]);
   const autocrlf = gitText(root, ["config", "--local", "--get", "core.autocrlf"], {
     allowFailure: true,
   });
