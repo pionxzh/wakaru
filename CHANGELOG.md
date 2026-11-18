@@ -1,5 +1,57 @@
 # Changelog
 
+## [1.17.0](https://github.com/pionxzh/wakaru/compare/v1.16.0...v1.17.0) (2026-11-19)
+
+### Features
+
+* **unpack:** split Rspack ESM entry chunks whose runtime is a chunk of its own ([5c3524fa7](https://github.com/pionxzh/wakaru/commit/5c3524fa7860cc21d051c709b8f8576b4bce1006))
+* **webpack5:** detect chunks pushed through an `Array.isArray` guard ([663ce71ce](https://github.com/pionxzh/wakaru/commit/663ce71ceb683e7034ceb79a6fae8531e2dafb1d))
+* **webpack5:** unpack ESM chunks ([f943eea56](https://github.com/pionxzh/wakaru/commit/f943eea563b0d08c7beee456f3ce323840cf4ad6))
+* **argument-spread:** match the conditional `_construct` redefinition ([0e4e3fd67](https://github.com/pionxzh/wakaru/commit/0e4e3fd671b88cb565e5434b872ac6780f7b1074))
+* **argument-spread:** prove slice copies of `arguments` as argument lists ([f0b8efd15](https://github.com/pionxzh/wakaru/commit/f0b8efd15c52815095c66c454b255f5f0214fa86))
+* **argument-spread:** recover spread constructs from Babel 7 and swc `_construct` ([aadae39f3](https://github.com/pionxzh/wakaru/commit/aadae39f3bd5e62723e7f2d268fec7eccc563b9f))
+* **unpack:** convert TypeScript spread helpers imported from a bundled tslib ([19b2cc1b9](https://github.com/pionxzh/wakaru/commit/19b2cc1b99608a7fb4cdbf43a2c1af4cf5f28689))
+* **helpers:** match tslib's __spreadArray by its body ([30db4570d](https://github.com/pionxzh/wakaru/commit/30db4570d460d367d5a484576fb627160157f2b8))
+* **argument-spread:** recover spread constructs from bound-function constructs ([31c6314aa](https://github.com/pionxzh/wakaru/commit/31c6314aa878ec457e3ab6f49d0d3c219ec9e386))
+* **arg-rest:** recover rest parameters from Closure's getRestArguments ([eef37ad74](https://github.com/pionxzh/wakaru/commit/eef37ad7404ab9f9daa5d39280859a4504cf6684))
+* **rules:** name `require("...").default` aliases after their source ([6f2609490](https://github.com/pionxzh/wakaru/commit/6f2609490117f2a87475af31da5c9201688720f6))
+* **rules:** name reserved source stems with a leading underscore ([4386b9022](https://github.com/pionxzh/wakaru/commit/4386b90229f3385b5f961483d50e864cad47e074))
+* **rules:** keep PascalCase file stems PascalCase in source names ([859d432a1](https://github.com/pionxzh/wakaru/commit/859d432a1e3cce8252b81aa264a6cc7bdb6be4e9))
+* **rules:** name require aliases after their source ([9946fa9e7](https://github.com/pionxzh/wakaru/commit/9946fa9e7f1bfe6d94e673bd2bb0120a708846fa))
+* **rules:** name generated default and namespace imports after their source ([aaadb8de4](https://github.com/pionxzh/wakaru/commit/aaadb8de4f8a4ead1d1d3e75fffb2c22bbb8e384))
+* **smart-rename:** name DOM lookups and created elements ([9a1c23f03](https://github.com/pionxzh/wakaru/commit/9a1c23f03fcaddd9bcd5b1f32b244c792c1dd0ff))
+* **smart-rename:** name `new Ctor()` aliases after the constructor ([645cba4f5](https://github.com/pionxzh/wakaru/commit/645cba4f54103c51797033d772efe54bf614f553))
+* **smart-rename:** name short aliases of known globals `_<global>` ([2e97e2485](https://github.com/pionxzh/wakaru/commit/2e97e2485c410fffed6a3e2d6a9961803a19a368))
+* **smart-rename:** name short `this` aliases `_this` ([baedc1e9e](https://github.com/pionxzh/wakaru/commit/baedc1e9ee7ad5f99ec4cb2d6300ee3d092dd23f))
+
+### Bug Fixes
+
+* **un-parameters:** treat intrinsic arguments copies as reads ([a00176f55](https://github.com/pionxzh/wakaru/commit/a00176f55dd7cbda47a527c76f50e4b21811246b))
+* **un-parameters:** judge arguments defaults by what ran before them ([2fe610c54](https://github.com/pionxzh/wakaru/commit/2fe610c54dfb5051899811eecacf932f0589a3e0))
+* **un-parameters:** keep arguments defaults in place when moving them is observable ([b4cf78a2f](https://github.com/pionxzh/wakaru/commit/b4cf78a2f124630fb8bbd00508082676235419b5))
+* **release:** build linux binaries against glibc 2.17 with cargo-zigbuild ([ff332ba67](https://github.com/pionxzh/wakaru/commit/ff332ba67c08a267c979cdd5673671c82851d4ca))
+* **release:** attest the GitHub Release archives with build provenance ([b555d975b](https://github.com/pionxzh/wakaru/commit/b555d975b2eb967cf0c8445825b4531dc647c200))
+* **unpack:** keep esbuild runtime helpers with the code that calls them ([58346cbac](https://github.com/pionxzh/wakaru/commit/58346cbac0282d5624d6c682ac2acf15b8182950))
+* **un-esm:** lower esbuild's CommonJS namespace past its lexer annotation ([83c70e140](https://github.com/pionxzh/wakaru/commit/83c70e1401c2c986799b3360deffa9c51d0a9112))
+* **helpers:** never read an unused IIFE result as a tslib __values helper ([4fdcb07f3](https://github.com/pionxzh/wakaru/commit/4fdcb07f3eef8e9205fa3d6e5b72816144efad0b))
+* **class:** keep a constructor a function when its members are enumerated ([aa5bfd8a5](https://github.com/pionxzh/wakaru/commit/aa5bfd8a5daa9ebd8505f5804f25f38f27be710f))
+* **unpack:** read a wildcard of a whole-value provider through its default ([635dce443](https://github.com/pionxzh/wakaru/commit/635dce443030f46beba8ae55f7fd0df0254b2c3e))
+* **interop:** keep an interop helper unless its reads are rewritten ([bca77f9a3](https://github.com/pionxzh/wakaru/commit/bca77f9a3f5c6b049b9f56995f8bb9e237f879e7))
+* **webpack5:** keep Rspack's JSONP install out of the entry ([08028e596](https://github.com/pionxzh/wakaru/commit/08028e596c7a2cf04470556e8160dfd9a27e610a))
+* **core:** guard every string that reaches a prologue, not only moved statements ([0ad267173](https://github.com/pionxzh/wakaru/commit/0ad267173531a9dde4e2a9975d45c011fa3bf530))
+* **core:** keep a non-directive string out of the directive prologue ([248ef9271](https://github.com/pionxzh/wakaru/commit/248ef927117584d20af91a3cb1f17cdbe6028c00))
+* **unpack:** detect rspack chunks pushed with `(G ||= []).push` ([c1a362dbc](https://github.com/pionxzh/wakaru/commit/c1a362dbcf7c13efbfe4c47841bf6a2e301b154e))
+* **var-decl-to-let-const:** keep var when a catch body redeclares the catch parameter ([5e95eb026](https://github.com/pionxzh/wakaru/commit/5e95eb02608edb7e35ee20fbd8515064642ef5f9))
+* **core:** keep the tag and `new` callee parens SWC's fixer drops ([540b17a1c](https://github.com/pionxzh/wakaru/commit/540b17a1c05136b7efb50470e4a51e628255382c))
+* **core:** re-add update and arrow parens in left-hand-side operands ([b3d8965d0](https://github.com/pionxzh/wakaru/commit/b3d8965d0f871e62c5cd447b8afe8a5a72cdaf4d))
+* **arg-rest:** leave getter and setter parameter lists alone ([f770f726e](https://github.com/pionxzh/wakaru/commit/f770f726e2fccd113e76b676060ca3f14aeec718))
+* **argument-spread:** recover lowered spread calls from their helper argument ([6691cc906](https://github.com/pionxzh/wakaru/commit/6691cc90656972c6dd769c85cc5fc8e4830f20b2))
+* **argument-spread:** spread an `apply` argument list only when it reads the same ([ecc40cf0c](https://github.com/pionxzh/wakaru/commit/ecc40cf0cff240a834bcf78b85e05ffcb321640b))
+* **arg-rest:** keep `arguments` when the function writes through it ([005534ca1](https://github.com/pionxzh/wakaru/commit/005534ca18098255ae72cf692f476ac8f410f799))
+* **rules:** keep digit runs apart when naming imports after their source ([af46ca19a](https://github.com/pionxzh/wakaru/commit/af46ca19a48bae8a964f608a0b77913b66d886df))
+* **rules:** see every block scope in RenameShadowIndex ([0f03a91bc](https://github.com/pionxzh/wakaru/commit/0f03a91bca3dd069fc03cc5d72528e6a4d8620f3))
+* **smart-rename:** name reads through a `this` alias like reads of `this` ([29a0c30ef](https://github.com/pionxzh/wakaru/commit/29a0c30ef90a680f78507251970cfea7b56549ed))
+
 ## [1.16.0](https://github.com/pionxzh/wakaru/compare/v1.15.0...v1.16.0) (2026-11-03)
 
 ### Bug Fixes
