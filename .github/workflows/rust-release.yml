@@ -18,17 +18,19 @@ jobs:
     strategy:
       matrix:
         include:
-          # Pinned: the glibc a Linux build needs follows the runner's C
-          # toolchain. On ubuntu-26.04 (GCC 15, C23 by default) mimalloc's C
-          # code links __isoc23_strtol and raises the floor to 2.38. The glibc
-          # floor check below catches the next drift.
+          # Linux builds link against glibc `glibc` through cargo-zigbuild, so
+          # the floor no longer follows the runner's toolchain (ubuntu-26.04's
+          # GCC 15 compiles mimalloc's C as C23 and links __isoc23_strtol,
+          # which needs 2.38). The glibc floor check below enforces it.
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
+            glibc: "2.17"
             artifact: wakaru
             archive: wakaru-linux-x64.tar.gz
             npm-pkg: cli-linux-x64
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
+            glibc: "2.17"
             artifact: wakaru
             archive: wakaru-linux-arm64.tar.gz
             npm-pkg: cli-linux-arm64
@@ -55,13 +57,31 @@ jobs:
         run: rustup target add ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
 
+      - name: Install zig (linux)
+        if: matrix.glibc
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.13.0
+      - name: Install cargo-zigbuild (linux)
+        if: matrix.glibc
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild@0.24.1
+
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }} -p wakaru-cli
+        shell: bash
+        run: |
+          if [ -n "${{ matrix.glibc }}" ]; then
+            # zigbuild writes to target/<target>/, without the glibc suffix.
+            cargo zigbuild --release --target "${{ matrix.target }}.${{ matrix.glibc }}" -p wakaru-cli
+          else
+            cargo build --release --target "${{ matrix.target }}" -p wakaru-cli
+          fi
 
       - name: Check glibc floor (linux)
-        if: runner.os == 'Linux'
+        if: matrix.glibc
         run: |
-          FLOOR=2.34
+          FLOOR=${{ matrix.glibc }}
           BIN="target/${{ matrix.target }}/release/${{ matrix.artifact }}"
           NEEDED="$(objdump -T "$BIN" | grep -o 'GLIBC_[0-9.]*' | sed 's/^GLIBC_//' | sort -uV | tail -1)"
           echo "highest glibc symbol version: $NEEDED (floor $FLOOR)"
