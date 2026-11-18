@@ -259,7 +259,8 @@ temps (see `pure_getters` and `intrinsic_function_call` for what else
 ### `intrinsic_function_call`
 
 The `.call` that a lowered optional call reads on the checked value is
-`Function.prototype.call`.
+`Function.prototype.call`, and the `.apply` that `fn.apply(x, arguments)`
+reads on `fn` is `Function.prototype.apply`.
 
 Babel, TypeScript, and SWC lower `o.f?.(1)` to a temp and an explicit
 receiver (TypeScript 5.9 output shown):
@@ -274,10 +275,22 @@ call. For a callable object with its own `call` method, or a function whose
 `call` was replaced, the lowered code runs that method and the recovered
 code calls the value directly (a `TypeError` for a plain object).
 
-Affects: `UnOptionalChaining` (every `.call(context, ...)` unwrap: ternary,
-flattened, statement, and `if` forms).
+The intrinsic `apply` copies `arguments` into a fresh list, so the callee can
+read the values but cannot write the caller's `arguments` object. A callable
+object with its own `apply` method receives the object itself and could
+write it. `UnParameters` moves an `arguments[N]` read into the parameter list
+only when nothing before the read can change `arguments`, and treats
+`fn.apply(x, arguments)` as a read. (A copy through `Array.prototype.slice`
+or `[].slice` needs no assumption beyond the execution environment baseline:
+`slice` is intrinsic there.)
 
-Level: `standard` and above. `minimal` keeps the lowered form.
+Affects: `UnOptionalChaining` (every `.call(context, ...)` unwrap: ternary,
+flattened, statement, and `if` forms); `UnParameters` (`arguments` reads
+moved past `fn.apply(x, arguments)`, and the `arguments` mapping check of
+sloppy functions).
+
+Level: `standard` and above. `minimal` keeps the lowered form and does not
+recover `arguments` defaults at all.
 
 ### `intrinsic_function_bind`
 
