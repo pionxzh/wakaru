@@ -20,7 +20,11 @@
 //!   `Object.setPrototypeOf` take it to build or extend a prototype, and
 //!   `Object.assign(F.prototype, …)` adds to it; these do
 //!   not count, nor does a member access `F.prototype.k` or an identity
-//!   comparison `x === F.prototype`;
+//!   comparison `x === F.prototype`. `Object.getOwnPropertyDescriptor(
+//!   F.prototype, "k")` counts only when `k` is written by assignment
+//!   (`F.prototype.k = …`, or any computed-key write): that member's
+//!   enumerability changes, while a `defineProperty` accessor the rule
+//!   converts already has the class attributes;
 //! - `Object.keys`, `values`, or `entries` given `F` itself, or
 //!   `Object.assign` copying from it.
 //!
@@ -114,6 +118,12 @@ struct Collector {
     this_owner: Vec<Option<BindingKey>>,
     /// Owner for the next function visited.
     pending_owner: Option<BindingKey>,
+    /// `F.prototype.k = …`: the static keys written on each prototype.
+    written_keys: HashMap<BindingKey, HashSet<String>>,
+    /// Prototypes written through a computed key (`F.prototype[k] = …`).
+    written_dynamic: HashSet<BindingKey>,
+    /// `Object.getOwnPropertyDescriptor(F.prototype, "k")`: F and k.
+    descriptor_reads: Vec<(BindingKey, String)>,
 }
 
 impl Collector {
@@ -126,6 +136,20 @@ impl Collector {
     }
 
     fn finish(mut self) -> EnumeratedConstructors {
+        // A descriptor read sees the change only for a key written by
+        // assignment: that member becomes a non-enumerable class member. An
+        // accessor from `Object.defineProperty` keeps its descriptor, since
+        // the rule converts only native class attributes.
+        for (owner, key) in &self.descriptor_reads {
+            if self.written_dynamic.contains(owner)
+                || self
+                    .written_keys
+                    .get(owner)
+                    .is_some_and(|keys| keys.contains(key))
+            {
+                self.enumerated.insert(owner.clone());
+            }
+        }
         for binding in &self.for_in_bindings {
             if let Some(constructors) = self.instances.get(binding) {
                 self.enumerated.extend(constructors.iter().cloned());
@@ -170,6 +194,23 @@ fn member_prototype_owner(member: &MemberExpr) -> Option<BindingKey> {
         MemberProp::PrivateName(_) => false,
     };
     is_prototype.then(|| binding_key(owner))
+}
+
+/// A member key known without running code: `.k`, `["k"]`, `[0]`.
+fn static_key(prop: &MemberProp) -> Option<String> {
+    match prop {
+        MemberProp::Ident(name) => Some(name.sym.to_string()),
+        MemberProp::Computed(computed) => static_key_expr(&computed.expr),
+        MemberProp::PrivateName(_) => None,
+    }
+}
+
+fn static_key_expr(expr: &Expr) -> Option<String> {
+    match strip_parens(expr) {
+        Expr::Lit(swc_core::ecma::ast::Lit::Str(s)) => s.value.as_str().map(str::to_owned),
+        Expr::Lit(swc_core::ecma::ast::Lit::Num(n)) => Some(n.value.to_string()),
+        _ => None,
+    }
 }
 
 /// `Object.<name>` callee name.
@@ -233,6 +274,17 @@ impl Visit for Collector {
                 }
                 // `F.prototype.m = function () {…}`: `this` is an F.
                 if let Some(owner) = self.prototype_of(&member.obj) {
+                    match static_key(&member.prop) {
+                        Some(key) => {
+                            self.written_keys
+                                .entry(owner.clone())
+                                .or_default()
+                                .insert(key);
+                        }
+                        None => {
+                            self.written_dynamic.insert(owner.clone());
+                        }
+                    }
                     {
                         if matches!(strip_parens(&assign.right), Expr::Fn(_)) {
                             member.prop.visit_with(self);
@@ -301,6 +353,24 @@ impl Visit for Collector {
                     arg.visit_with(self);
                 }
                 return;
+            }
+            Some("getOwnPropertyDescriptor") => {
+                // Reads one named member's descriptor; whether the class
+                // changes it is decided in `finish`.
+                if let [target, key, ..] = call.args.as_slice() {
+                    if target.spread.is_none() && key.spread.is_none() {
+                        if let (Some(owner), Some(key)) =
+                            (self.prototype_of(&target.expr), static_key_expr(&key.expr))
+                        {
+                            self.descriptor_reads.push((owner, key));
+                            call.callee.visit_with(self);
+                            for arg in &call.args[1..] {
+                                arg.visit_with(self);
+                            }
+                            return;
+                        }
+                    }
+                }
             }
             Some(name @ ("keys" | "values" | "entries" | "assign")) => {
                 // `Object.assign`'s first argument is written, not read.

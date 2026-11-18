@@ -1001,9 +1001,14 @@ function when the scope enumerates its members:
   `Object.create`, `Object.defineProperty`, `Object.defineProperties`, and
   `Object.setPrototypeOf` build or extend a prototype from it, and
   `Object.assign(F.prototype, …)` adds to it; these do not count, nor does
-  an identity comparison (`x === F.prototype`). Any other call receiving the
-  prototype counts, because a helper's name does not say whether it reads
-  or writes;
+  an identity comparison (`x === F.prototype`). Reading one member's
+  descriptor (`Object.getOwnPropertyDescriptor(F.prototype, "k")` with a
+  literal key) counts only when `k` is assigned as a member
+  (`F.prototype.k = …`) or the prototype gets a computed-key assignment.
+  An accessor defined with `Object.defineProperty` is converted only when
+  it already has the class attributes, so its descriptor does not change.
+  Any other call receiving the prototype counts, because a helper's name
+  does not say whether it reads or writes;
 - `Object.keys`, `Object.values`, or `Object.entries` of `F`, or
   `Object.assign` copying from `F`.
 

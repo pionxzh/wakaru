@@ -1910,3 +1910,40 @@ Object.assign(Store.prototype, { size: function () { return this.items.length; }
     let output = apply_resolved(input);
     assert!(output.contains("class Store"), "{output}");
 }
+
+#[test]
+fn reading_an_accessor_descriptor_still_recovers_a_class() {
+    // shape: hypothetical, a reflection check on a native-attribute accessor
+    let input = r#"
+function Widget() {}
+Object.defineProperty(Widget.prototype, "value", {
+    enumerable: false,
+    configurable: true,
+    get: function () { return this._value; },
+    set: function () {}
+});
+var descriptor = Object.getOwnPropertyDescriptor(Widget.prototype, "value");
+use(descriptor.enumerable, descriptor.configurable);
+"#;
+    let output = apply_resolved(input);
+    assert!(output.contains("class Widget"), "{output}");
+    assert!(output.contains("get value()"), "{output}");
+}
+
+#[test]
+fn reading_the_descriptor_of_an_assigned_method_keeps_the_constructor_a_function() {
+    // shape: hypothetical; the class method would turn non-enumerable
+    for read in [
+        r#"Object.getOwnPropertyDescriptor(Widget.prototype, "render")"#,
+        r#"Object.getOwnPropertyDescriptor(Widget.prototype, key)"#,
+        r#"(Widget.prototype[name] = null, Object.getOwnPropertyDescriptor(Widget.prototype, "other"))"#,
+    ] {
+        let input = format!(
+            "function Widget() {{}}\n\
+             Widget.prototype.render = function () {{ return 1; }};\n\
+             use({read});"
+        );
+        let output = apply_resolved(&input);
+        assert!(!output.contains("class Widget"), "{read}\n{output}");
+    }
+}
