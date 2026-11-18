@@ -4,6 +4,9 @@ on:
   push:
     tags:
       - "v*"
+  # Manual runs build and check the binaries only; release, npm and
+  # crates.io jobs run for tag pushes alone.
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -121,6 +124,7 @@ jobs:
           path: ${{ matrix.archive }}
 
   release:
+    if: github.event_name == 'push'
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -148,6 +152,7 @@ jobs:
           generate_release_notes: true
 
   npm-publish:
+    if: github.event_name == 'push'
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -209,6 +214,7 @@ jobs:
           npm publish --tag latest --access public
 
   crates-publish:
+    if: github.event_name == 'push'
     needs: build
     runs-on: ubuntu-latest
     steps:
