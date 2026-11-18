@@ -3232,7 +3232,9 @@ fn recover_arguments_params(
 
     let mapped = mapped_param_count(params);
     let changed = original_mapped.min(mapped)..original_mapped.max(mapped);
-    if changed.is_empty() || !mapping_change_can_show(params, body, &changed, unresolved_mark) {
+    if changed.is_empty()
+        || !mapping_change_can_show(params, body, &changed, level, unresolved_mark)
+    {
         return;
     }
     // Babel's and TypeScript's rest copy loop reads `arguments[i]` from the
@@ -3254,6 +3256,7 @@ fn mapping_change_can_show(
     params: &[Param],
     body: &FunctionBody,
     changed: &Range<usize>,
+    level: RewriteLevel,
     unresolved_mark: Mark,
 ) -> bool {
     let mut changed_params = Vec::new();
@@ -3261,7 +3264,7 @@ fn mapping_change_can_show(
         collect_pat_binding_ids(&param.pat, &mut changed_params);
     }
     body.stmts.iter().any(|stmt| {
-        !stmt_reads_arguments_only(stmt, unresolved_mark)
+        !stmt_reads_arguments_only(stmt, level, unresolved_mark)
             || stmt_has_direct_eval(stmt, unresolved_mark)
             || {
                 let written = stmt_written_bindings(stmt, false);
@@ -3309,7 +3312,7 @@ impl RunBefore {
         self.runs_nothing = self.runs_nothing && stmt_runs_nothing(stmt, unresolved_mark);
         self.inert = self.inert && stmt_is_inert(stmt, level, unresolved_mark);
         self.reads_arguments_only =
-            self.reads_arguments_only && stmt_reads_arguments_only(stmt, unresolved_mark);
+            self.reads_arguments_only && stmt_reads_arguments_only(stmt, level, unresolved_mark);
         let eval = stmt_has_direct_eval(stmt, unresolved_mark);
         self.reads_arguments_only = self.reads_arguments_only && !eval;
         let written = stmt_written_bindings(stmt, false);
@@ -3507,16 +3510,68 @@ fn is_constant_value(expr: &Expr, unresolved_mark: Mark) -> bool {
 }
 
 /// True when `stmt` uses `arguments` (its own activation's: nested arrows
-/// count, nested functions do not) only through `.length` and literal-index
-/// reads, and makes no direct `eval` call. Such a statement cannot change
-/// what `arguments[N]` holds.
-fn stmt_reads_arguments_only(stmt: &Stmt, unresolved_mark: Mark) -> bool {
+/// count, nested functions do not) only to read it, and makes no direct
+/// `eval` call. Such a statement cannot change what `arguments[N]` holds.
+/// Reads are `.length`, literal indexes, a spread (`...arguments`), and a
+/// copy through the intrinsic `slice` (`Array.prototype.slice.call(arguments,
+/// k)` or `[].slice.call(arguments)`), all under the execution environment
+/// baseline. At `standard+`, `fn.apply(x, arguments)` is a read too
+/// (`intrinsic_function_call`): the intrinsic `apply` passes a copy, while a
+/// callable object with its own `apply` method would receive the object.
+fn stmt_reads_arguments_only(stmt: &Stmt, level: RewriteLevel, unresolved_mark: Mark) -> bool {
     struct Checker {
+        level: RewriteLevel,
         unresolved_mark: Mark,
         ok: bool,
     }
 
     impl Checker {
+        fn is_arguments(&self, expr: &Expr) -> bool {
+            matches!(strip_parens(expr), Expr::Ident(ident)
+                if is_arguments_ident(ident, self.unresolved_mark))
+        }
+
+        /// The index of a call argument that hands `arguments` to a reader:
+        /// the receiver of an intrinsic `slice` copy, or the list of `apply`.
+        fn reading_arguments_arg(&self, call: &swc_core::ecma::ast::CallExpr) -> Option<usize> {
+            let Callee::Expr(callee) = &call.callee else {
+                return None;
+            };
+            let Expr::Member(member) = strip_parens(callee) else {
+                return None;
+            };
+            let MemberProp::Ident(method) = &member.prop else {
+                return None;
+            };
+            let idx = match method.sym.as_ref() {
+                "call" if self.is_intrinsic_slice(&member.obj) => 0,
+                "apply" if self.level >= RewriteLevel::Standard => 1,
+                _ => return None,
+            };
+            let arg = call.args.get(idx)?;
+            (arg.spread.is_none() && self.is_arguments(&arg.expr)).then_some(idx)
+        }
+
+        /// `Array.prototype.slice` (with the global `Array`) or `[].slice`.
+        fn is_intrinsic_slice(&self, expr: &Expr) -> bool {
+            let Expr::Member(member) = strip_parens(expr) else {
+                return false;
+            };
+            if !matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "slice") {
+                return false;
+            }
+            match strip_parens(&member.obj) {
+                Expr::Array(array) => array.elems.is_empty(),
+                Expr::Member(proto) => {
+                    matches!(&proto.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "prototype")
+                        && matches!(proto.obj.as_ref(), Expr::Ident(array)
+                            if array.sym.as_ref() == "Array"
+                                && array.ctxt.outer() == self.unresolved_mark)
+                }
+                _ => false,
+            }
+        }
+
         fn is_arguments_member(&self, expr: &Expr) -> bool {
             matches!(strip_parens(expr), Expr::Member(member)
                 if matches!(member.obj.as_ref(), Expr::Ident(obj)
@@ -3592,7 +3647,23 @@ fn stmt_reads_arguments_only(stmt: &Stmt, unresolved_mark: Mark) -> bool {
                     self.ok = false;
                 }
             }
+            if let Some(skip) = self.reading_arguments_arg(call) {
+                call.callee.visit_with(self);
+                for (idx, arg) in call.args.iter().enumerate() {
+                    if idx != skip {
+                        arg.visit_with(self);
+                    }
+                }
+                return;
+            }
             call.visit_children_with(self);
+        }
+
+        fn visit_expr_or_spread(&mut self, arg: &swc_core::ecma::ast::ExprOrSpread) {
+            if arg.spread.is_some() && self.is_arguments(&arg.expr) {
+                return;
+            }
+            arg.visit_children_with(self);
         }
 
         // Nested regular functions and class constructors have their own
@@ -3602,6 +3673,7 @@ fn stmt_reads_arguments_only(stmt: &Stmt, unresolved_mark: Mark) -> bool {
     }
 
     let mut checker = Checker {
+        level,
         unresolved_mark,
         ok: true,
     };

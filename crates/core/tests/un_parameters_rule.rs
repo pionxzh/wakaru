@@ -3039,3 +3039,44 @@ function outer(e, x) {
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
+
+#[test]
+fn intrinsic_arguments_copies_do_not_block_recovery() {
+    // `slice` and `apply` only read `arguments` (the execution environment
+    // baseline and `intrinsic_function_call`), and nothing writes a parameter,
+    // so the mapping change cannot show.
+    let input = r#"
+function tk() {
+  var e = arguments[0];
+  var t = Array.prototype.slice.call(arguments, 1);
+  return use(e, t);
+}
+function f(a) {
+  var b = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : 2;
+  return [b, g.apply(this, arguments), [].slice.call(arguments), h(...arguments)];
+}
+"#;
+    let expected = r#"
+function tk(e) {
+  var t = Array.prototype.slice.call(arguments, 1);
+  return use(e, t);
+}
+function f(a, b = 2) {
+  return [b, g.apply(this, arguments), [].slice.call(arguments), h(...arguments)];
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn shadowed_array_slice_still_blocks_recovery() {
+    // `Array` is a parameter here, so its `slice` may write `arguments`.
+    let input = r#"
+function tk(Array) {
+  var e = arguments[1];
+  var t = Array.prototype.slice.call(arguments, 2);
+  return use(e, t);
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}

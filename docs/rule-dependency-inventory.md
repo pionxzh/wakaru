@@ -513,20 +513,20 @@ rationale, or level gating appear.
   other default moves only when it is side-effect-free and reads only
   parameters nothing before it wrote. A default that awaits or yields never
   moves. Every form also needs `arguments` unchanged before it: everything
-  before is inert, or used `arguments` only through `.length` and
-  literal-index reads, with no direct `eval`. A declaration or alias also
+  before is inert, or only read `arguments` (`.length`, literal indexes,
+  `...arguments`, an intrinsic `slice` copy such as
+  `Array.prototype.slice.call(arguments, 1)`, and `fn.apply(x, arguments)`
+  under `intrinsic_function_call`), with no direct `eval`. A declaration or alias also
   needs its binding unmentioned before it. In sloppy functions the rewrites
   change which slots are mapped (a default unmaps the original parameters; a
   plain alias maps a new slot). That shows only through a write, so both are
   undone together when the body may write a changed slot's parameter (an
   assignment, also inside a closure; a closure that only reads it does not
-  count), uses `arguments` other than through `.length` and literal-index
-  reads, or has a direct `eval` anywhere, and the
+  count), uses `arguments` other than through the reads listed above, or
+  has a direct `eval` anywhere, and the
   rest of the function can see a changed slot; a Babel or TypeScript rest
-  copy loop that starts past those slots does not count. Calls through
-  `fn.apply(x, arguments)` or `[].slice.call(arguments)` count as escapes:
-  nothing proves the callee is the builtin. Reads through the legacy
-  `f.arguments` property are not considered.
+  copy loop that starts past those slots does not count. Reads through the
+  legacy `f.arguments` property are not considered.
   `Function.length` still drops to the first default's index; that arity
   change is accepted. Pitfall: `stmts_reference_ident` matches by *emitted name*,
   ignoring SyntaxContext — intentional (prevents invalid parameter lists
