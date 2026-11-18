@@ -36,7 +36,8 @@ npm install -g wakaru@latest
 ```
 
 Standalone binaries are available from
-[GitHub Releases](https://github.com/pionxzh/wakaru/releases).
+[GitHub Releases](https://github.com/pionxzh/wakaru/releases). Linux binaries
+need glibc 2.17 or newer; musl-based systems such as Alpine are not supported.
 
 ## What it does
 

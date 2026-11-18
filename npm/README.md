@@ -18,6 +18,9 @@ npm install -g @wakaru/cli@latest
 wakaru input.js -o output.js
 ```
 
+Linux builds need glibc 2.17 or newer; musl-based systems such as Alpine are
+not supported.
+
 ## What It Does
 
 - Splits webpack 4/5 bundles (including supported Vercel ncc output), Turbopack
