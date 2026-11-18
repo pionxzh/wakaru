@@ -23,7 +23,7 @@ not supported.
 
 ## What It Does
 
-- Splits webpack 4/5 bundles (including supported Vercel ncc output), Turbopack
+- Splits webpack 4/5 and Rspack bundles (including supported Vercel ncc output), Turbopack
   production chunks (Next.js 15.3+), esbuild, Bun, Browserify (including Cocos
   Creator 2.x), Metro, Closure ModuleManager, SystemJS, and AMD/UMD, plus
   scope-hoisted Rollup/Vite output.
