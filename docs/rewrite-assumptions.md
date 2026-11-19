@@ -193,11 +193,13 @@ every level, `minimal` included. Compressed indexed returns recovered into
 complete patterns share the same boundary.
 
 Affects: `UnDestructuring` (complete sliced-helper groups with defaults) and
-`UnSlicedToArray` (every recovered `__read` group, plus compressed indexed
-returns recovered into complete patterns). `UnParameters2` may subsequently
+`UnSlicedToArray` (every recovered `__read` group, Babel and SWC helper groups
+whose source is not an array literal, plus compressed indexed returns
+recovered into complete patterns). `UnParameters2` may subsequently
 fold the recovered pattern into a parameter.
 
-Level: the default-ordering difference and compressed indexed returns need
+Level: the default-ordering difference, compressed indexed returns, and Babel
+or SWC helper groups over a source that is not an array literal need
 `standard` or above; `minimal` retains the helper materialization for those.
 The `__read` close-on-throw difference is accepted at every level, because
 `minimal` already recovers plain `__read` groups. These recoveries use the

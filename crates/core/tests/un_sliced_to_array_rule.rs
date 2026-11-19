@@ -1490,3 +1490,114 @@ fn indexed_return_keeps_suffix_effects_and_interleaved_leaves() {
         );
     }
 }
+
+#[test]
+fn minimal_keeps_a_generic_iterable_group() {
+    // Babel's and swc's helpers take any iterable (a Set, a string); native
+    // destructuring of one is standard recovery.
+    for input in [
+        r#"
+import _slicedToArray from "@babel/runtime/helpers/slicedToArray";
+function firstTwo(source) {
+    var _source = _slicedToArray(source, 2);
+    var a = _source[0];
+    var b = _source[1];
+    return [a, b];
+}
+"#,
+        r#"
+import { _ as _sliced_to_array } from "@swc/helpers/_/_sliced_to_array";
+function firstTwo(source) {
+    var _source = _sliced_to_array(source, 2);
+    var a = _source[0];
+    var b = _source[1];
+    return [a, b];
+}
+"#,
+    ] {
+        assert_eq_normalized(
+            &common::render_rule(input, |_| {
+                UnSlicedToArray::new_with_level(RewriteLevel::Minimal)
+            }),
+            input,
+        );
+        let standard = common::render_rule(input, |_| {
+            UnSlicedToArray::new_with_level(RewriteLevel::Standard)
+        });
+        assert!(standard.contains("[a, b] = source"), "{standard}");
+    }
+}
+
+#[test]
+fn minimal_recovers_an_array_literal_group() {
+    let input = r#"
+import _slicedToArray from "@babel/runtime/helpers/slicedToArray";
+function pair(x, y) {
+    var _ref = _slicedToArray([x, y], 2);
+    var a = _ref[0];
+    var b = _ref[1];
+    return [b, a];
+}
+"#;
+    let output = common::render_rule(input, |_| {
+        UnSlicedToArray::new_with_level(RewriteLevel::Minimal)
+    });
+    assert!(
+        output.contains("[a, b] = [") && !output.contains("_slicedToArray("),
+        "{output}"
+    );
+}
+
+#[test]
+fn minimal_keeps_the_inlined_babel_helper_chain_for_a_generic_iterable() {
+    let input = r#"
+function firstTwo(source) {
+    var _source = function(value) {
+        if (Array.isArray(value)) {
+            return value;
+        }
+    }(source) || function(value) {
+        var iterator = value == null ? null : typeof Symbol !== "undefined" && value[Symbol.iterator] || value["@@iterator"];
+        if (iterator != null) {
+            return Array.from(value).slice(0, 2);
+        }
+    }(source) || function(value) {
+        if (value) {
+            return Array.from(value);
+        }
+    }(source) || function() {
+        throw new TypeError("Invalid attempt to destructure non-iterable instance.");
+    }();
+    var a = _source[0];
+    var b = _source[1];
+    return [a, b];
+}
+"#;
+    assert_eq_normalized(
+        &common::render_rule(input, |_| {
+            UnSlicedToArray::new_with_level(RewriteLevel::Minimal)
+        }),
+        input,
+    );
+    let standard = common::render_rule(input, |_| {
+        UnSlicedToArray::new_with_level(RewriteLevel::Standard)
+    });
+    assert!(standard.contains("[a, b] = source"), "{standard}");
+}
+
+#[test]
+fn minimal_still_recovers_a_typescript_read_group() {
+    let input = r#"
+import { __read } from "tslib";
+function firstTwo(source) {
+    var _a = __read(source, 2);
+    var a = _a[0];
+    var b = _a[1];
+    return [a, b];
+}
+"#;
+    let output = common::render_rule(input, |_| {
+        UnSlicedToArray::new_with_level(RewriteLevel::Minimal)
+    });
+    assert!(output.contains("[a, b] = source"), "{output}");
+}

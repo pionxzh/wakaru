@@ -15,14 +15,14 @@ use swc_core::ecma::ast::{
 
 use super::cross_module_helper_refs::{
     collect_cross_module_helper_refs, collect_cross_module_ts_helper_refs,
-    cross_module_member_helper_kind, CrossModuleHelperRefs,
+    cross_module_member_helper_kind, CrossModuleHelperRefs, CrossModuleTsHelperRefs,
 };
 use super::decl_utils::{
     can_remove_prior_uninitialized_decls_by, contains_use_strict_string_statement,
     has_direct_use_strict_directive, remove_prior_uninitialized_decls_by, UninitializedDeclKind,
 };
 use super::eval_utils::is_direct_eval_call;
-use super::helper_matcher::BindingKey;
+use super::helper_matcher::{static_member_prop_name, BindingKey};
 use super::transpiler_helper_utils::{
     collect_maybe_array_like_bindings, extract_inline_sliced_to_array_call,
     ts_expr_matches_helper_kind, tslib_member_ts_helper_kind, tslib_require_ts_helper_kind,
@@ -143,15 +143,17 @@ fn run_un_sliced_to_array(
             })
         })
         .unwrap_or_default();
+    let mut ts_read_cross_module = CrossModuleTsHelperRefs::default();
     if let Some(facts) = module_facts {
+        ts_read_cross_module = collect_cross_module_ts_helper_refs(
+            module,
+            facts,
+            current_filename,
+            TypeScriptHelperKind::Read,
+        );
         extend_cross_module_helpers(
             &mut cross_module_helpers,
-            collect_cross_module_ts_helper_refs(
-                module,
-                facts,
-                current_filename,
-                TypeScriptHelperKind::Read,
-            ),
+            ts_read_cross_module.clone(),
             TranspilerHelperKind::SlicedToArray,
         );
     }
@@ -177,7 +179,11 @@ fn run_un_sliced_to_array(
     module.visit_mut_children_with(&mut SlicedToArrayRewriter {
         local_helpers,
         cross_module_helpers: &cross_module_helpers,
-        maybe_array_like: &maybe_array_like,
+        sources: SlicedSources {
+            maybe_array_like: &maybe_array_like,
+            generic_iterables: level >= RewriteLevel::Standard,
+            ts_read_cross_module: &ts_read_cross_module,
+        },
         level,
         unresolved_mark,
         indexed_returns,
@@ -218,10 +224,73 @@ fn has_inline_sliced_to_array_candidate(module: &Module) -> bool {
 struct SlicedToArrayRewriter<'a> {
     local_helpers: &'a LocalHelperContext,
     cross_module_helpers: &'a CrossModuleHelperRefs,
-    maybe_array_like: &'a HashSet<BindingKey>,
+    sources: SlicedSources<'a>,
     level: RewriteLevel,
     unresolved_mark: Option<Mark>,
     indexed_returns: Option<IndexedReturnContext>,
+}
+
+/// Which helper sources a group may recover from.
+struct SlicedSources<'a> {
+    maybe_array_like: &'a HashSet<BindingKey>,
+    /// Babel's and swc's helpers take any iterable. Native destructuring of a
+    /// generic iterable is `standard` recovery (see
+    /// `iterator_materialization_independence`); below it they recover only
+    /// from an array literal. TypeScript's `__read` recovers at every level.
+    generic_iterables: bool,
+    ts_read_cross_module: &'a CrossModuleTsHelperRefs,
+}
+
+impl SlicedSources<'_> {
+    /// Whether a group whose helper is `callee` may recover from `source`.
+    fn admits(
+        &self,
+        callee: &Expr,
+        source: &Expr,
+        local_helpers: &LocalHelperContext,
+        unresolved_mark: Option<Mark>,
+    ) -> bool {
+        self.generic_iterables
+            || matches!(strip_parens(source), Expr::Array(_))
+            || self.is_ts_read_callee(callee, local_helpers, unresolved_mark)
+    }
+
+    fn is_ts_read_callee(
+        &self,
+        callee: &Expr,
+        local_helpers: &LocalHelperContext,
+        unresolved_mark: Option<Mark>,
+    ) -> bool {
+        let is_read_ident = |id: &Ident| {
+            let key = (id.sym.clone(), id.ctxt);
+            self.ts_read_cross_module.direct.contains(&key)
+                || local_helpers
+                    .ts_helpers_of_kind(TsHelperKind::Read)
+                    .contains(&key)
+        };
+        match callee {
+            Expr::Ident(id) if is_read_ident(id) => return true,
+            Expr::Member(member) => {
+                if let (Expr::Ident(obj), Some(name)) =
+                    (member.obj.as_ref(), static_member_prop_name(&member.prop))
+                {
+                    if self
+                        .ts_read_cross_module
+                        .namespaces
+                        .get(&(obj.sym.clone(), obj.ctxt))
+                        .is_some_and(|names| names.contains(name))
+                    {
+                        return true;
+                    }
+                }
+            }
+            _ => {}
+        }
+        ts_expr_matches_helper_kind(callee, TsHelperKind::Read)
+            || tslib_member_ts_helper_kind(callee, local_helpers.tslib_namespaces())
+                == Some(TsHelperKind::Read)
+            || tslib_require_ts_helper_kind(callee, unresolved_mark) == Some(TsHelperKind::Read)
+    }
 }
 
 impl VisitMut for SlicedToArrayRewriter<'_> {
@@ -232,7 +301,7 @@ impl VisitMut for SlicedToArrayRewriter<'_> {
                 function,
                 self.local_helpers,
                 self.cross_module_helpers,
-                self.maybe_array_like,
+                &self.sources,
                 self.unresolved_mark,
             );
         }
@@ -245,7 +314,7 @@ impl VisitMut for SlicedToArrayRewriter<'_> {
                 arrow,
                 self.local_helpers,
                 self.cross_module_helpers,
-                self.maybe_array_like,
+                &self.sources,
                 self.unresolved_mark,
             );
         }
@@ -257,7 +326,7 @@ impl VisitMut for SlicedToArrayRewriter<'_> {
             items,
             self.local_helpers,
             self.cross_module_helpers,
-            self.maybe_array_like,
+            &self.sources,
             self.unresolved_mark,
         );
     }
@@ -268,7 +337,7 @@ impl VisitMut for SlicedToArrayRewriter<'_> {
             stmts,
             self.local_helpers,
             self.cross_module_helpers,
-            self.maybe_array_like,
+            &self.sources,
             self.level,
             self.unresolved_mark,
         );
@@ -278,7 +347,7 @@ impl VisitMut for SlicedToArrayRewriter<'_> {
                     &stmts[start],
                     self.local_helpers,
                     self.cross_module_helpers,
-                    self.maybe_array_like,
+                    &self.sources,
                     self.unresolved_mark,
                 ) else {
                     continue;
@@ -475,7 +544,7 @@ fn rewrite_function_callback_params(
     function: &mut Function,
     local_helpers: &LocalHelperContext,
     cross_module_helpers: &CrossModuleHelperRefs,
-    maybe_array_like: &HashSet<BindingKey>,
+    sources: &SlicedSources<'_>,
     unresolved_mark: Option<Mark>,
 ) {
     if function.is_generator {
@@ -513,7 +582,7 @@ fn rewrite_function_callback_params(
                     &source.id,
                     local_helpers,
                     cross_module_helpers,
-                    maybe_array_like,
+                    sources,
                     unresolved_mark,
                 )
                 .filter(|pattern| {
@@ -563,7 +632,7 @@ fn rewrite_function_callback_params(
             &source,
             local_helpers,
             cross_module_helpers,
-            maybe_array_like,
+            sources,
             unresolved_mark,
         ) else {
             continue;
@@ -586,7 +655,7 @@ fn rewrite_arrow_callback_params(
     arrow: &mut ArrowExpr,
     local_helpers: &LocalHelperContext,
     cross_module_helpers: &CrossModuleHelperRefs,
-    maybe_array_like: &HashSet<BindingKey>,
+    sources: &SlicedSources<'_>,
     unresolved_mark: Option<Mark>,
 ) {
     if arrow.is_generator {
@@ -619,7 +688,7 @@ fn rewrite_arrow_callback_params(
                     &source.id,
                     local_helpers,
                     cross_module_helpers,
-                    maybe_array_like,
+                    sources,
                     unresolved_mark,
                 )
                 .filter(|pattern| {
@@ -666,7 +735,7 @@ fn rewrite_arrow_callback_params(
             &source,
             local_helpers,
             cross_module_helpers,
-            maybe_array_like,
+            sources,
             unresolved_mark,
         ) else {
             continue;
@@ -708,7 +777,7 @@ fn extract_callback_prologue(
     source_param: &swc_core::ecma::ast::Ident,
     local_helpers: &LocalHelperContext,
     cross_module_helpers: &CrossModuleHelperRefs,
-    maybe_array_like: &HashSet<BindingKey>,
+    sources: &SlicedSources<'_>,
     unresolved_mark: Option<Mark>,
 ) -> Option<ArrayPat> {
     let Stmt::Decl(Decl::Var(var)) = stmt else {
@@ -726,7 +795,7 @@ fn extract_callback_prologue(
         source_param,
         local_helpers,
         cross_module_helpers,
-        maybe_array_like,
+        sources,
         unresolved_mark,
     )?;
     Some(callback_array_pattern(binding.clone(), index, length))
@@ -737,7 +806,7 @@ fn rewrite_direct_callback_access(
     source: &BindingIdent,
     local_helpers: &LocalHelperContext,
     cross_module_helpers: &CrossModuleHelperRefs,
-    maybe_array_like: &HashSet<BindingKey>,
+    sources: &SlicedSources<'_>,
     unresolved_mark: Option<Mark>,
 ) -> Option<ArrayPat> {
     enum AccessPosition {
@@ -751,7 +820,7 @@ fn rewrite_direct_callback_access(
         &source.id,
         local_helpers,
         cross_module_helpers,
-        maybe_array_like,
+        sources,
         unresolved_mark,
     );
     let (position, index, length) = if let Some((index, length)) = direct {
@@ -771,7 +840,7 @@ fn rewrite_direct_callback_access(
             &source.id,
             local_helpers,
             cross_module_helpers,
-            maybe_array_like,
+            sources,
             unresolved_mark,
         );
         let right = extract_callback_access(
@@ -779,7 +848,7 @@ fn rewrite_direct_callback_access(
             &source.id,
             local_helpers,
             cross_module_helpers,
-            maybe_array_like,
+            sources,
             unresolved_mark,
         );
         match (left, right) {
@@ -813,7 +882,7 @@ fn extract_callback_access(
     source_param: &swc_core::ecma::ast::Ident,
     local_helpers: &LocalHelperContext,
     cross_module_helpers: &CrossModuleHelperRefs,
-    maybe_array_like: &HashSet<BindingKey>,
+    sources: &SlicedSources<'_>,
     unresolved_mark: Option<Mark>,
 ) -> Option<(usize, usize)> {
     let Expr::Member(member) = strip_parens(expr) else {
@@ -827,7 +896,7 @@ fn extract_callback_access(
         call,
         local_helpers,
         cross_module_helpers,
-        maybe_array_like,
+        sources,
         unresolved_mark,
     )?;
     let Expr::Ident(source) = strip_parens(source) else {
@@ -968,7 +1037,7 @@ fn fold_sliced_to_array_module_item_groups(
     body: &mut Vec<ModuleItem>,
     local_helpers: &LocalHelperContext,
     cross_module_helpers: &CrossModuleHelperRefs,
-    maybe_array_like: &HashSet<BindingKey>,
+    sources: &SlicedSources<'_>,
     unresolved_mark: Option<Mark>,
 ) {
     let mut i = 0;
@@ -978,7 +1047,7 @@ fn fold_sliced_to_array_module_item_groups(
             i,
             local_helpers,
             cross_module_helpers,
-            maybe_array_like,
+            sources,
             unresolved_mark,
         );
         i += 1;
@@ -990,14 +1059,14 @@ fn try_fold_sliced_to_array_module_item_group(
     start: usize,
     local_helpers: &LocalHelperContext,
     cross_module_helpers: &CrossModuleHelperRefs,
-    maybe_array_like: &HashSet<BindingKey>,
+    sources: &SlicedSources<'_>,
     unresolved_mark: Option<Mark>,
 ) -> bool {
     let Some(extraction) = extract_sliced_to_array_module_item(
         &body[start],
         local_helpers,
         cross_module_helpers,
-        maybe_array_like,
+        sources,
         unresolved_mark,
     ) else {
         return false;
@@ -1090,7 +1159,7 @@ fn fold_sliced_to_array_stmt_groups(
     stmts: &mut Vec<Stmt>,
     local_helpers: &LocalHelperContext,
     cross_module_helpers: &CrossModuleHelperRefs,
-    maybe_array_like: &HashSet<BindingKey>,
+    sources: &SlicedSources<'_>,
     level: RewriteLevel,
     unresolved_mark: Option<Mark>,
 ) {
@@ -1102,7 +1171,7 @@ fn fold_sliced_to_array_stmt_groups(
             i,
             local_helpers,
             cross_module_helpers,
-            maybe_array_like,
+            sources,
             allow_assignment_index_folds,
             unresolved_mark,
         ) || (allow_assignment_index_folds
@@ -1111,7 +1180,7 @@ fn fold_sliced_to_array_stmt_groups(
                 i,
                 local_helpers,
                 cross_module_helpers,
-                maybe_array_like,
+                sources,
                 unresolved_mark,
             ))
             || (allow_assignment_index_folds
@@ -1120,7 +1189,7 @@ fn fold_sliced_to_array_stmt_groups(
                     i,
                     local_helpers,
                     cross_module_helpers,
-                    maybe_array_like,
+                    sources,
                     unresolved_mark,
                 ));
         i += 1;
@@ -1132,7 +1201,7 @@ fn try_fold_sliced_to_array_stmt_group(
     start: usize,
     local_helpers: &LocalHelperContext,
     cross_module_helpers: &CrossModuleHelperRefs,
-    maybe_array_like: &HashSet<BindingKey>,
+    sources: &SlicedSources<'_>,
     allow_assignment_index_folds: bool,
     unresolved_mark: Option<Mark>,
 ) -> bool {
@@ -1140,7 +1209,7 @@ fn try_fold_sliced_to_array_stmt_group(
         &stmts[start],
         local_helpers,
         cross_module_helpers,
-        maybe_array_like,
+        sources,
         unresolved_mark,
     ) else {
         return false;
@@ -1154,7 +1223,7 @@ fn try_fold_sliced_to_array_stmt_group(
         &stmts[start],
         local_helpers,
         cross_module_helpers,
-        maybe_array_like,
+        sources,
         unresolved_mark,
     ) else {
         return false;
@@ -1309,14 +1378,14 @@ fn try_fold_sliced_to_array_assignment_stmt_group(
     start: usize,
     local_helpers: &LocalHelperContext,
     cross_module_helpers: &CrossModuleHelperRefs,
-    maybe_array_like: &HashSet<BindingKey>,
+    sources: &SlicedSources<'_>,
     unresolved_mark: Option<Mark>,
 ) -> bool {
     let Some((first, extraction)) = extract_sliced_to_array_assignment_stmt(
         &stmts[start],
         local_helpers,
         cross_module_helpers,
-        maybe_array_like,
+        sources,
         unresolved_mark,
     ) else {
         return false;
@@ -1390,14 +1459,14 @@ fn try_fold_sliced_to_array_ref_assignment_stmt_group(
     start: usize,
     local_helpers: &LocalHelperContext,
     cross_module_helpers: &CrossModuleHelperRefs,
-    maybe_array_like: &HashSet<BindingKey>,
+    sources: &SlicedSources<'_>,
     unresolved_mark: Option<Mark>,
 ) -> bool {
     let Some(extraction) = extract_sliced_to_array_ref_assignment_stmt(
         &stmts[start],
         local_helpers,
         cross_module_helpers,
-        maybe_array_like,
+        sources,
         unresolved_mark,
     ) else {
         return false;
@@ -1482,7 +1551,7 @@ fn extract_sliced_to_array_module_item(
     item: &ModuleItem,
     local_helpers: &LocalHelperContext,
     cross_module_helpers: &CrossModuleHelperRefs,
-    maybe_array_like: &HashSet<BindingKey>,
+    sources: &SlicedSources<'_>,
     unresolved_mark: Option<Mark>,
 ) -> Option<SlicedExtraction> {
     let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
@@ -1495,7 +1564,7 @@ fn extract_sliced_to_array_module_item(
         &var.decls[0],
         local_helpers,
         cross_module_helpers,
-        maybe_array_like,
+        sources,
         unresolved_mark,
     )
 }
@@ -1504,7 +1573,7 @@ fn extract_sliced_to_array_stmt(
     stmt: &Stmt,
     local_helpers: &LocalHelperContext,
     cross_module_helpers: &CrossModuleHelperRefs,
-    maybe_array_like: &HashSet<BindingKey>,
+    sources: &SlicedSources<'_>,
     unresolved_mark: Option<Mark>,
 ) -> Option<SlicedExtraction> {
     let Stmt::Decl(Decl::Var(var)) = stmt else {
@@ -1517,7 +1586,7 @@ fn extract_sliced_to_array_stmt(
         &var.decls[0],
         local_helpers,
         cross_module_helpers,
-        maybe_array_like,
+        sources,
         unresolved_mark,
     )
 }
@@ -1526,7 +1595,7 @@ fn extract_sliced_to_array_assignment_stmt(
     stmt: &Stmt,
     local_helpers: &LocalHelperContext,
     cross_module_helpers: &CrossModuleHelperRefs,
-    maybe_array_like: &HashSet<BindingKey>,
+    sources: &SlicedSources<'_>,
     unresolved_mark: Option<Mark>,
 ) -> Option<(BindingIdent, SlicedExtraction)> {
     let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
@@ -1554,7 +1623,7 @@ fn extract_sliced_to_array_assignment_stmt(
         call,
         local_helpers,
         cross_module_helpers,
-        maybe_array_like,
+        sources,
         unresolved_mark,
     )?;
     let length = numeric_length(length_val)?;
@@ -1580,7 +1649,7 @@ fn extract_sliced_to_array_ref_assignment_stmt(
     stmt: &Stmt,
     local_helpers: &LocalHelperContext,
     cross_module_helpers: &CrossModuleHelperRefs,
-    maybe_array_like: &HashSet<BindingKey>,
+    sources: &SlicedSources<'_>,
     unresolved_mark: Option<Mark>,
 ) -> Option<SlicedExtraction> {
     let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
@@ -1598,7 +1667,7 @@ fn extract_sliced_to_array_ref_assignment_stmt(
         call,
         local_helpers,
         cross_module_helpers,
-        maybe_array_like,
+        sources,
         unresolved_mark,
     )?;
     let length = numeric_length(length_val)?;
@@ -1751,7 +1820,7 @@ fn extract_sliced_to_array_decl(
     decl: &VarDeclarator,
     local_helpers: &LocalHelperContext,
     cross_module_helpers: &CrossModuleHelperRefs,
-    maybe_array_like: &HashSet<BindingKey>,
+    sources: &SlicedSources<'_>,
     unresolved_mark: Option<Mark>,
 ) -> Option<SlicedExtraction> {
     let Pat::Ident(binding) = &decl.name else {
@@ -1759,21 +1828,25 @@ fn extract_sliced_to_array_decl(
     };
     let init = decl.init.as_ref()?;
     let Expr::Call(call) = init.as_ref() else {
-        return extract_inline_sliced_to_array_call(init.as_ref()).map(|inline_call| {
-            SlicedExtraction {
+        // Babel's inlined helper chain takes any iterable, like the helper.
+        return extract_inline_sliced_to_array_call(init.as_ref())
+            .filter(|inline_call| {
+                sources.generic_iterables
+                    || matches!(strip_parens(inline_call.source.as_ref()), Expr::Array(_))
+            })
+            .map(|inline_call| SlicedExtraction {
                 ref_binding: binding.clone(),
                 source: inline_call.source,
                 source_ref: inline_call.source_ref,
                 length: inline_call.length,
-            }
-        });
+            });
     };
 
     let (source, length_val) = extract_sliced_call_args(
         call,
         local_helpers,
         cross_module_helpers,
-        maybe_array_like,
+        sources,
         unresolved_mark,
     )?;
     let length = numeric_length(length_val)?;
@@ -1924,7 +1997,7 @@ fn extract_sliced_call_args<'a>(
     call: &'a swc_core::ecma::ast::CallExpr,
     local_helpers: &LocalHelperContext,
     cross_module_helpers: &CrossModuleHelperRefs,
-    maybe_array_like: &HashSet<BindingKey>,
+    sources: &SlicedSources<'_>,
     unresolved_mark: Option<Mark>,
 ) -> Option<(&'a Expr, f64)> {
     let Callee::Expr(callee) = &call.callee else {
@@ -1940,11 +2013,15 @@ fn extract_sliced_call_args<'a>(
         let Expr::Lit(Lit::Num(num)) = call.args[1].expr.as_ref() else {
             return None;
         };
-        return Some((call.args[0].expr.as_ref(), num.value));
+        let source = call.args[0].expr.as_ref();
+        if !sources.admits(callee, source, local_helpers, unresolved_mark) {
+            return None;
+        }
+        return Some((source, num.value));
     }
 
     if call.args.len() == 3
-        && is_maybe_array_like_callee(callee, maybe_array_like)
+        && is_maybe_array_like_callee(callee, sources.maybe_array_like)
         && is_sliced_to_array_callee(
             call.args[0].expr.as_ref(),
             local_helpers,
@@ -1955,7 +2032,16 @@ fn extract_sliced_call_args<'a>(
         let Expr::Lit(Lit::Num(num)) = call.args[2].expr.as_ref() else {
             return None;
         };
-        return Some((call.args[1].expr.as_ref(), num.value));
+        let source = call.args[1].expr.as_ref();
+        if !sources.admits(
+            call.args[0].expr.as_ref(),
+            source,
+            local_helpers,
+            unresolved_mark,
+        ) {
+            return None;
+        }
+        return Some((source, num.value));
     }
 
     None

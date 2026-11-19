@@ -477,7 +477,13 @@ loop, and return of that exact allocation. Near-matches with a different guard,
 source index, output binding, or shadowed `Array` remain untouched.
 
 `UnSlicedToArray` removes iterator materialization only together with a
-proven destructuring group. At `standard` and above, an adjacent return made
+proven destructuring group. Babel's and SWC's helpers (called, or inlined as
+their `||` chain) take any iterable, and native destructuring of one is
+`standard` recovery under
+[`iterator_materialization_independence`](rewrite-assumptions.md#iterator_materialization_independence);
+at `minimal` their groups recover only from an array literal source, and keep
+the helper otherwise. TypeScript's `__read` groups recover at every level (see
+that assumption). At `standard` and above, an adjacent return made
 of ordered `temp[0]` through `temp[N - 1]` reads and eager binary operators
 can recover a complete pattern with fresh, collision-free element bindings.
 After all `N` reads, the expression may also contain literal or identifier
