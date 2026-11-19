@@ -67,6 +67,17 @@ struct ScopeModuleMeta {
     public_exports: Option<Vec<(Atom, Atom)>>,
 }
 
+impl ScopeModuleMeta {
+    /// Whether the module's own code uses its namespace object, as esbuild's
+    /// `__reExport(entry_exports, __toESM(require_x()))` for `export * from`
+    /// a CommonJS module does. Such a module defines the object before its
+    /// body runs, and every other user imports that one object: a copy built
+    /// elsewhere would miss what the module's code adds to it.
+    fn owns_namespace(&self, namespace: &BindingId) -> bool {
+        self.public_exports.is_none() && self.referenced_bindings.contains(namespace)
+    }
+}
+
 pub(super) struct ScopeExtractionRefs<'a> {
     pub(super) factory_referenced: &'a HashSet<BindingId>,
     pub(super) factory_preassigned_bindings: &'a HashMap<BindingId, String>,
@@ -1323,9 +1334,14 @@ fn compute_scope_imports_exports(
         entry_referenced.extend(item_infos[i].references.iter().cloned());
     }
     // A lazily loaded module's namespace is never restored: `import()`
-    // returns the module's own namespace instead.
+    // returns the module's own namespace instead. Nor is one its module
+    // owns: users import the module's object.
     for &(ns_idx, call_idx, boundary) in consumed_ns.iter() {
-        if is_lazy_namespace(refs, &boundary.ns_binding) {
+        if is_lazy_namespace(refs, &boundary.ns_binding)
+            || binding_to_module
+                .get(&boundary.ns_binding)
+                .is_some_and(|&mi| metas[mi].owns_namespace(&boundary.ns_binding))
+        {
             continue;
         }
         entry_referenced.extend(item_infos[ns_idx].references.iter().cloned());
@@ -1908,6 +1924,7 @@ fn emit_scope_modules(
         };
 
         // Body items with export promotion for exported bindings.
+        let body_start = module_items.len();
         let mut remaining_exports = exports;
         for item in scope_owned_support_decl_items(
             &meta.owned_support_bindings,
@@ -1964,6 +1981,21 @@ fn emit_scope_modules(
         }
 
         rename_bindings(&mut module_items, &import_renames);
+        // A namespace the module's own code uses is defined before the body,
+        // where esbuild defines it, so the body never sees it undefined.
+        let owned_namespace_items: Vec<ModuleItem> =
+            meta.namespaces
+                .iter()
+                .filter(|namespace| meta.owns_namespace(&namespace.namespace_binding))
+                .flat_map(|namespace| {
+                    std::iter::once(make_namespace_object_decl(&namespace.namespace_binding.0))
+                        .chain(make_namespace_define_property_items(
+                            &namespace.namespace_binding.0,
+                            &namespace.export_entries,
+                        ))
+                })
+                .collect();
+        module_items.splice(body_start..body_start, owned_namespace_items);
         let mut code = emit_items(
             module_items,
             meta.filename.clone(),
@@ -1972,6 +2004,7 @@ fn emit_scope_modules(
         );
         for namespace in &meta.namespaces {
             if meta.public_exports.is_some()
+                || meta.owns_namespace(&namespace.namespace_binding)
                 || !effective_exports[mi].contains(&namespace.namespace_binding.0)
             {
                 continue;
@@ -2083,6 +2116,13 @@ fn build_scope_entry(
         let factory_needs = factory_referenced.contains(&boundary.ns_binding);
         let scope_module_needs = scope_needed_entry_bindings.contains(&boundary.ns_binding);
         if !entry_needs && !factory_needs && !scope_module_needs {
+            continue;
+        }
+        // Users of a namespace its module owns import the module's object.
+        if binding_to_module
+            .get(&boundary.ns_binding)
+            .is_some_and(|&mi| metas[mi].owns_namespace(&boundary.ns_binding))
+        {
             continue;
         }
         restored_namespace_bindings.insert(boundary.ns_binding.clone());

@@ -6034,3 +6034,82 @@ fn scope_module_adopts_the_builtin_aliases_of_its_helpers() {
         );
     }
 }
+
+#[test]
+fn scope_module_defines_the_namespace_its_code_re_exports_into() {
+    // `export * from` a CommonJS module copies the module's names into the
+    // escaping entry namespace with `__reExport`. The namespace's module runs
+    // that copy, so it defines the object before its body and the entry
+    // imports that object instead of building one without the copied names.
+    let bundle = r#"
+(() => {
+  var __create = Object.create;
+  var __defProp = Object.defineProperty;
+  var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+  var __getOwnPropNames = Object.getOwnPropertyNames;
+  var __getProtoOf = Object.getPrototypeOf;
+  var __hasOwnProp = Object.prototype.hasOwnProperty;
+  var __commonJS = (cb, mod) => function __require() {
+    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  };
+  var __export = (target, all) => {
+    for (var name in all)
+      __defProp(target, name, { get: all[name], enumerable: true });
+  };
+  var __copyProps = (to, from, except, desc) => {
+    if (from && typeof from === "object" || typeof from === "function") {
+      for (let key of __getOwnPropNames(from))
+        if (!__hasOwnProp.call(to, key) && key !== except)
+          __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+    }
+    return to;
+  };
+  var __reExport = (target, mod, secondTarget) => (__copyProps(target, mod, "default"), secondTarget && __copyProps(secondTarget, mod, "default"));
+  var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+    isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+    mod
+  ));
+
+  // provider.js
+  var require_provider = __commonJS({
+    "provider.js"(exports) {
+      exports.alpha = "alpha";
+    }
+  });
+
+  // entry.js
+  var entry_exports = {};
+  __export(entry_exports, {
+    own: () => own
+  });
+  __reExport(entry_exports, __toESM(require_provider()));
+  var own = "own";
+  globalThis.sink = entry_exports;
+})();
+"#;
+
+    for pairs in [
+        expect_unpack_raw(bundle),
+        expect_unpack(bundle, "bundle.js"),
+    ] {
+        assert_eq!(validate_output_modules(&pairs), vec![], "{pairs:#?}");
+        let (_, module) = pairs
+            .iter()
+            .find(|(name, _)| name == "entry_exports.js")
+            .unwrap_or_else(|| panic!("missing the namespace module: {pairs:#?}"));
+        let defined = module
+            .find("entry_exports = {}")
+            .unwrap_or_else(|| panic!("the module defines no namespace: {module}"));
+        let copied = module
+            .find("__reExport(entry_exports")
+            .unwrap_or_else(|| panic!("the module lost the copy: {module}"));
+        assert!(defined < copied, "{module}");
+        assert_eq!(module.matches("entry_exports = {}").count(), 1, "{module}");
+        let (_, entry) = pairs
+            .iter()
+            .find(|(name, _)| name == "entry.js")
+            .unwrap_or_else(|| panic!("missing entry.js: {pairs:#?}"));
+        assert!(!entry.contains("entry_exports = {}"), "{entry}");
+        assert!(entry.contains("import { entry_exports } from"), "{entry}");
+    }
+}
