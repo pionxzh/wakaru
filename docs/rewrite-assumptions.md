@@ -188,21 +188,19 @@ propagates the error without closing the iterator. Babel's `_slicedToArray`
 matches native here (checked with `@babel/plugin-transform-destructuring`
 7.28.5). This difference applies to every recovered `__read` group, not only to
 groups with defaults: `UnSlicedToArray` recovers a plain
-`var _a = __read(src, 2), a = _a[0], b = _a[1]` to `const [a, b] = src` at
-every level, `minimal` included. Compressed indexed returns recovered into
-complete patterns share the same boundary.
+`var _a = __read(src, 2), a = _a[0], b = _a[1]` to `const [a, b] = src`.
+Compressed indexed returns recovered into complete patterns share the same
+boundary.
 
 Affects: `UnDestructuring` (complete sliced-helper groups with defaults) and
-`UnSlicedToArray` (every recovered `__read` group, Babel and SWC helper groups
-whose source is not an array literal, plus compressed indexed returns
-recovered into complete patterns). `UnParameters2` may subsequently
+`UnSlicedToArray` (sliced-helper groups, Babel's, SWC's, or TypeScript's
+`__read`, whose source is not an array literal, plus compressed indexed
+returns recovered into complete patterns). `UnParameters2` may subsequently
 fold the recovered pattern into a parameter.
 
-Level: the default-ordering difference, compressed indexed returns, and Babel
-or SWC helper groups over a source that is not an array literal need
-`standard` or above; `minimal` retains the helper materialization for those.
-The `__read` close-on-throw difference is accepted at every level, because
-`minimal` already recovers plain `__read` groups. These recoveries use the
+Level: `standard` or above. `minimal` retains the helper materialization,
+except for a group whose source is an array literal: an array's own iterator
+has no default, closing, or throwing step to reorder. These recoveries use the
 existing source-recovery policy; helper identity and complete-pattern checks
 remain required.
 

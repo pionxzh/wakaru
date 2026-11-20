@@ -17,7 +17,7 @@ pub(crate) struct CrossModuleHelperRefs {
     pub namespaces: HashMap<BindingKey, HashMap<String, TranspilerHelperKind>>,
 }
 
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub(crate) struct CrossModuleTsHelperRefs {
     pub direct: HashSet<BindingKey>,
     pub namespaces: HashMap<BindingKey, HashSet<String>>,

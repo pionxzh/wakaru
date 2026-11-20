@@ -15,14 +15,14 @@ use swc_core::ecma::ast::{
 
 use super::cross_module_helper_refs::{
     collect_cross_module_helper_refs, collect_cross_module_ts_helper_refs,
-    cross_module_member_helper_kind, CrossModuleHelperRefs, CrossModuleTsHelperRefs,
+    cross_module_member_helper_kind, CrossModuleHelperRefs,
 };
 use super::decl_utils::{
     can_remove_prior_uninitialized_decls_by, contains_use_strict_string_statement,
     has_direct_use_strict_directive, remove_prior_uninitialized_decls_by, UninitializedDeclKind,
 };
 use super::eval_utils::is_direct_eval_call;
-use super::helper_matcher::{static_member_prop_name, BindingKey};
+use super::helper_matcher::BindingKey;
 use super::transpiler_helper_utils::{
     collect_maybe_array_like_bindings, extract_inline_sliced_to_array_call,
     ts_expr_matches_helper_kind, tslib_member_ts_helper_kind, tslib_require_ts_helper_kind,
@@ -143,17 +143,15 @@ fn run_un_sliced_to_array(
             })
         })
         .unwrap_or_default();
-    let mut ts_read_cross_module = CrossModuleTsHelperRefs::default();
     if let Some(facts) = module_facts {
-        ts_read_cross_module = collect_cross_module_ts_helper_refs(
-            module,
-            facts,
-            current_filename,
-            TypeScriptHelperKind::Read,
-        );
         extend_cross_module_helpers(
             &mut cross_module_helpers,
-            ts_read_cross_module.clone(),
+            collect_cross_module_ts_helper_refs(
+                module,
+                facts,
+                current_filename,
+                TypeScriptHelperKind::Read,
+            ),
             TranspilerHelperKind::SlicedToArray,
         );
     }
@@ -182,7 +180,6 @@ fn run_un_sliced_to_array(
         sources: SlicedSources {
             maybe_array_like: &maybe_array_like,
             generic_iterables: level >= RewriteLevel::Standard,
-            ts_read_cross_module: &ts_read_cross_module,
         },
         level,
         unresolved_mark,
@@ -233,63 +230,16 @@ struct SlicedToArrayRewriter<'a> {
 /// Which helper sources a group may recover from.
 struct SlicedSources<'a> {
     maybe_array_like: &'a HashSet<BindingKey>,
-    /// Babel's and swc's helpers take any iterable. Native destructuring of a
-    /// generic iterable is `standard` recovery (see
-    /// `iterator_materialization_independence`); below it they recover only
-    /// from an array literal. TypeScript's `__read` recovers at every level.
+    /// Sliced-to-array helpers (Babel's, SWC's, TypeScript's `__read`) take
+    /// any iterable. Native destructuring of a generic iterable is `standard`
+    /// recovery (see `iterator_materialization_independence`); below it a
+    /// group recovers only from an array literal.
     generic_iterables: bool,
-    ts_read_cross_module: &'a CrossModuleTsHelperRefs,
 }
 
 impl SlicedSources<'_> {
-    /// Whether a group whose helper is `callee` may recover from `source`.
-    fn admits(
-        &self,
-        callee: &Expr,
-        source: &Expr,
-        local_helpers: &LocalHelperContext,
-        unresolved_mark: Option<Mark>,
-    ) -> bool {
-        self.generic_iterables
-            || matches!(strip_parens(source), Expr::Array(_))
-            || self.is_ts_read_callee(callee, local_helpers, unresolved_mark)
-    }
-
-    fn is_ts_read_callee(
-        &self,
-        callee: &Expr,
-        local_helpers: &LocalHelperContext,
-        unresolved_mark: Option<Mark>,
-    ) -> bool {
-        let is_read_ident = |id: &Ident| {
-            let key = (id.sym.clone(), id.ctxt);
-            self.ts_read_cross_module.direct.contains(&key)
-                || local_helpers
-                    .ts_helpers_of_kind(TsHelperKind::Read)
-                    .contains(&key)
-        };
-        match callee {
-            Expr::Ident(id) if is_read_ident(id) => return true,
-            Expr::Member(member) => {
-                if let (Expr::Ident(obj), Some(name)) =
-                    (member.obj.as_ref(), static_member_prop_name(&member.prop))
-                {
-                    if self
-                        .ts_read_cross_module
-                        .namespaces
-                        .get(&(obj.sym.clone(), obj.ctxt))
-                        .is_some_and(|names| names.contains(name))
-                    {
-                        return true;
-                    }
-                }
-            }
-            _ => {}
-        }
-        ts_expr_matches_helper_kind(callee, TsHelperKind::Read)
-            || tslib_member_ts_helper_kind(callee, local_helpers.tslib_namespaces())
-                == Some(TsHelperKind::Read)
-            || tslib_require_ts_helper_kind(callee, unresolved_mark) == Some(TsHelperKind::Read)
+    fn admits(&self, source: &Expr) -> bool {
+        self.generic_iterables || matches!(strip_parens(source), Expr::Array(_))
     }
 }
 
@@ -1830,10 +1780,7 @@ fn extract_sliced_to_array_decl(
     let Expr::Call(call) = init.as_ref() else {
         // Babel's inlined helper chain takes any iterable, like the helper.
         return extract_inline_sliced_to_array_call(init.as_ref())
-            .filter(|inline_call| {
-                sources.generic_iterables
-                    || matches!(strip_parens(inline_call.source.as_ref()), Expr::Array(_))
-            })
+            .filter(|inline_call| sources.admits(inline_call.source.as_ref()))
             .map(|inline_call| SlicedExtraction {
                 ref_binding: binding.clone(),
                 source: inline_call.source,
@@ -2014,7 +1961,7 @@ fn extract_sliced_call_args<'a>(
             return None;
         };
         let source = call.args[0].expr.as_ref();
-        if !sources.admits(callee, source, local_helpers, unresolved_mark) {
+        if !sources.admits(source) {
             return None;
         }
         return Some((source, num.value));
@@ -2033,12 +1980,7 @@ fn extract_sliced_call_args<'a>(
             return None;
         };
         let source = call.args[1].expr.as_ref();
-        if !sources.admits(
-            call.args[0].expr.as_ref(),
-            source,
-            local_helpers,
-            unresolved_mark,
-        ) {
+        if !sources.admits(source) {
             return None;
         }
         return Some((source, num.value));

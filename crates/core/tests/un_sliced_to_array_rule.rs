@@ -1586,7 +1586,8 @@ function firstTwo(source) {
 }
 
 #[test]
-fn minimal_still_recovers_a_typescript_read_group() {
+fn minimal_keeps_a_typescript_read_group_over_a_generic_iterable() {
+    // `__read` takes any iterable too.
     let input = r#"
 import { __read } from "tslib";
 function firstTwo(source) {
@@ -1596,8 +1597,14 @@ function firstTwo(source) {
     return [a, b];
 }
 "#;
-    let output = common::render_rule(input, |_| {
-        UnSlicedToArray::new_with_level(RewriteLevel::Minimal)
+    assert_eq_normalized(
+        &common::render_rule(input, |_| {
+            UnSlicedToArray::new_with_level(RewriteLevel::Minimal)
+        }),
+        input,
+    );
+    let standard = common::render_rule(input, |_| {
+        UnSlicedToArray::new_with_level(RewriteLevel::Standard)
     });
-    assert!(output.contains("[a, b] = source"), "{output}");
+    assert!(standard.contains("[a, b] = source"), "{standard}");
 }
