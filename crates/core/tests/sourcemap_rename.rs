@@ -37,6 +37,39 @@ fn identifier_inside_a_computed_object_key_votes_for_its_original_name() {
 }
 
 #[test]
+fn non_ascii_text_before_an_identifier_does_not_shift_the_lookup() {
+    // `中` is three bytes but one UTF-16 unit, so `c`, `a`, `b` and the `c`
+    // reference sit at UTF-16 columns 4, 6, 12 and 14 (byte column of `b` is
+    // 14). The original names are `total`, `user`, `count` and `total`.
+    let source = "var c,a=\"中\",b=c;\n";
+    let map = r#"{
+        "version": 3,
+        "sources": ["orig.js"],
+        "names": ["user", "count", "total"],
+        "mappings": "IAAIE,EAAEF,MAAMC,EAAEC"
+    }"#;
+    let output = rename_with_map(source, map);
+    assert!(output.contains("count = total"), "{output}");
+    assert!(!output.contains("total_2"), "{output}");
+}
+
+#[test]
+fn non_ascii_text_before_an_original_identifier_is_skipped_by_utf16_column() {
+    // No `names` array: the name is read from the original source, where `é`
+    // is two bytes but one UTF-16 unit, so `value` starts at UTF-16 column 19.
+    let source = "var a = 1;\n";
+    let map = r#"{
+        "version": 3,
+        "sources": ["orig.js"],
+        "sourcesContent": ["const s = 'é'; let value = 1;\n"],
+        "names": [],
+        "mappings": "IAAmB"
+    }"#;
+    let output = rename_with_map(source, map);
+    assert!(output.contains("var value = 1;"), "{output}");
+}
+
+#[test]
 fn source_paths_drop_traversal_written_with_either_separator() {
     let out_dir = std::path::Path::new("out");
     for (source, expected) in [

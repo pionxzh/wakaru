@@ -24,6 +24,49 @@ fn compute_line_starts(src: &str) -> Vec<u32> {
     starts
 }
 
+/// Non-ASCII characters of the generated source, for converting byte columns
+/// to the UTF-16 columns that source maps use.
+///
+/// `cum[i]` is the number of UTF-8 bytes beyond UTF-16 code units contributed by
+/// every non-ASCII character up to and including the one starting at `pos[i]`.
+/// Empty for an all-ASCII source, so the common case needs no conversion.
+struct Utf16Delta {
+    pos: Vec<u32>,
+    cum: Vec<u32>,
+}
+
+impl Utf16Delta {
+    fn new(src: &str) -> Self {
+        let mut pos = Vec::new();
+        let mut cum = Vec::new();
+        let mut total = 0u32;
+        if !src.is_ascii() {
+            for (i, ch) in src.char_indices() {
+                let extra = ch.len_utf8() - ch.len_utf16();
+                if extra > 0 {
+                    total += extra as u32;
+                    pos.push(i as u32);
+                    cum.push(total);
+                }
+            }
+        }
+        Self { pos, cum }
+    }
+
+    /// Extra bytes over UTF-16 units in the source before byte offset `offset`.
+    fn before(&self, offset: u32) -> u32 {
+        match self.pos.partition_point(|&p| p < offset) {
+            0 => 0,
+            n => self.cum[n - 1],
+        }
+    }
+
+    /// UTF-16 column of `offset` on the line that starts at byte offset `line_start`.
+    fn column(&self, line_start: u32, offset: u32) -> u32 {
+        (offset - line_start) - (self.before(offset) - self.before(line_start))
+    }
+}
+
 use crate::rules::decl_utils::collect_decl_binding_ids;
 use crate::rules::rename_utils::{rename_bindings_in_module, BindingId, BindingRename};
 
@@ -128,11 +171,13 @@ fn collect_sourcemap_renames(
     let src_file = cm.lookup_source_file(module.span.lo);
     let start_pos = src_file.start_pos.0;
     let line_starts = compute_line_starts(&src_file.src);
+    let utf16_delta = Utf16Delta::new(&src_file.src);
 
     // Phase 1: scan every identifier and vote on its original name.
     let mut voter = NameVoter {
         sm,
         line_starts: &line_starts,
+        utf16_delta: &utf16_delta,
         start_pos,
         source_lines: &source_lines,
         unresolved_mark,
@@ -239,6 +284,8 @@ struct NameVoter<'a> {
     sm: &'a SourceMap,
     /// Byte offsets of each line start within the generated file (relative to file start).
     line_starts: &'a [u32],
+    /// Byte-to-UTF-16 column conversion for the generated file.
+    utf16_delta: &'a Utf16Delta,
     /// `BytePos.0` of the first byte of the generated source file.
     start_pos: u32,
     source_lines: &'a Vec<Vec<&'a str>>,
@@ -264,7 +311,8 @@ impl Visit for NameVoter<'_> {
         // This is O(log lines) instead of the O(col) UTF-8 scan that lookup_char_pos does.
         let relative = ident.span.lo.0.saturating_sub(self.start_pos);
         let sm_line = self.line_starts.partition_point(|&s| s <= relative) - 1;
-        let sm_col = relative - self.line_starts[sm_line];
+        // Source map columns count UTF-16 code units, not bytes.
+        let sm_col = self.utf16_delta.column(self.line_starts[sm_line], relative);
         let sm_line = sm_line as u32;
 
         // Clone early so `self` is no longer borrowed before the mutable vote access.
@@ -323,11 +371,15 @@ impl NameVoter<'_> {
 // Identifier extraction — ASCII-fast, zero allocation
 // ---------------------------------------------------------------------------
 
-/// Extract a JS identifier starting at byte column `col` (works for ASCII source).
+/// Extract a JS identifier starting at UTF-16 column `col` of `line`.
 /// Source map columns are in UTF-16 code units; for ASCII this equals the byte offset.
 fn extract_identifier_at(line: &str, col: usize) -> Option<&str> {
+    let start = if line.is_ascii() {
+        col
+    } else {
+        utf16_col_to_byte_index(line, col)?
+    };
     let bytes = line.as_bytes();
-    let start = col;
     if start >= bytes.len() {
         return None;
     }
@@ -340,6 +392,22 @@ fn extract_identifier_at(line: &str, col: usize) -> Option<&str> {
         .count();
     // Safety: all bytes are ASCII (checked by is_ident_start/continue), valid UTF-8.
     Some(unsafe { std::str::from_utf8_unchecked(&bytes[start..start + len]) })
+}
+
+/// Byte index of the character at UTF-16 column `col`, or `None` when the
+/// column is past the end of the line or inside a surrogate pair.
+fn utf16_col_to_byte_index(line: &str, col: usize) -> Option<usize> {
+    let mut units = 0;
+    for (i, ch) in line.char_indices() {
+        if units == col {
+            return Some(i);
+        }
+        if units > col {
+            return None;
+        }
+        units += ch.len_utf16();
+    }
+    None
 }
 
 #[inline]
