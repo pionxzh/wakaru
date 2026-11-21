@@ -17,6 +17,7 @@ mod umd_node_branch;
 pub mod webpack4;
 mod webpack4_module_decorator;
 pub mod webpack5;
+mod webpack5_cw;
 mod webpack_common;
 mod wrappers;
 
@@ -364,11 +365,14 @@ fn stmts_have_function_level_await(statements: &[Stmt]) -> bool {
 #[derive(Default)]
 struct FunctionLevelSpecialBindings {
     found: bool,
+    /// Leave `this` out: the caller keeps the statements in a scope that
+    /// gives `this` the same value.
+    ignore_this: bool,
 }
 
 impl Visit for FunctionLevelSpecialBindings {
     fn visit_this_expr(&mut self, _: &swc_core::ecma::ast::ThisExpr) {
-        self.found = true;
+        self.found |= !self.ignore_this;
     }
 
     fn visit_ident(&mut self, ident: &swc_core::ecma::ast::Ident) {
@@ -416,6 +420,19 @@ impl Visit for FunctionLevelSpecialBindings {
 
 pub(crate) fn stmts_have_function_level_special_bindings(statements: &[Stmt]) -> bool {
     let mut finder = FunctionLevelSpecialBindings::default();
+    for statement in statements {
+        statement.visit_with(&mut finder);
+    }
+    finder.found
+}
+
+/// Like [`stmts_have_function_level_special_bindings`], but only `arguments`
+/// and `new.target` count.
+pub(crate) fn stmts_have_function_level_arguments_or_new_target(statements: &[Stmt]) -> bool {
+    let mut finder = FunctionLevelSpecialBindings {
+        ignore_this: true,
+        ..Default::default()
+    };
     for statement in statements {
         statement.visit_with(&mut finder);
     }

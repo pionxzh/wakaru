@@ -328,6 +328,15 @@ pub(super) fn detect_from_module_prepared(
         ) {
             return Some(result);
         }
+        if let Some(result) = super::webpack5_cw::detect_from_bootstrap(
+            &module.body,
+            idx,
+            bootstrap_body,
+            cm.clone(),
+            positions,
+        ) {
+            return Some(result);
+        }
     }
     // Fallback: `output.iife: false` and `experiments.outputModule` emit the
     // bootstrap statements at the top level instead of inside an IIFE.

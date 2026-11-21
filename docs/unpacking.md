@@ -27,7 +27,11 @@ attempted in order — first match wins:
    `var __webpack_exports__ = {}` form and Vercel ncc's variant), and the
    unwrapped `output.iife: false` form. `experiments.outputModule` bundles that
    carry top-level ESM `export`/`import` declarations are left untouched — their
-   public surface can't yet be recovered faithfully
+   public surface can't yet be recovered faithfully. A bootstrap without a
+   table whose concatenated root wraps CommonJS modules in the
+   `__webpack_require__.cw` runtime splits each wrapped module into its own
+   file (see [Webpack 5 concatenated CommonJS
+   modules](#webpack-5-concatenated-commonjs-modules))
 2. **webpack4** — `(function(modules) { ... })([...])` with `__webpack_require__` runtime,
    webpack 1 to 4. The entry module is the one the startup records in
    `__webpack_require__.s` (or the computed `__webpack_require__['s']` an
@@ -306,6 +310,87 @@ calls retain their invocation boundaries; an async IIFE must not turn into
 top-level await. Doing so would make module evaluation wait for an unawaited
 call and turn that call's rejection into a module-evaluation failure. This
 restriction applies to raw extraction as well as normal unpacking.
+
+### Webpack 5 concatenated CommonJS modules
+
+From 5.110.0, `optimization.concatenateModules` can hoist a CommonJS module
+into the concatenated root module (producer `webpack@5.112.2` mode
+production, target node, with and without Terser). Its body becomes a
+function wrapped by the `concatenation wrap` runtime, and every use of the
+module calls the accessor that returns:
+
+```js
+const __webpack_require__ = {};
+__webpack_require__.cw = (body) => {
+  var mod;
+  return () => {
+    if (body) { var fn = body; body = 0; mod = { exports: {} };
+      fn.call(mod.exports, mod, mod.exports); }
+    return mod.exports;
+  };
+};
+// MODULE: ./provider.js
+var provider_namespaceFn = __webpack_require__.cw(function(module, exports) { … });
+provider_namespaceFn();            // at the import's position
+… provider_namespaceFn().count …
+```
+
+The accessor runs the body once, on the first call, with the exports object
+as `this` and second argument and a module object that exists before the
+body runs (a cycle sees the partial exports), and returns `mod.exports`, so
+a body that replaces `module.exports` is honored. That is `require()` of the
+body as a CommonJS file. Each wrapped body becomes its own module with its
+parameters named `module` and `exports`, every accessor call becomes
+`require("./<file>")`, and the rest of the bootstrap becomes `entry.js`. A
+strict bootstrap gives each module a `"use strict"` directive. The file is
+the path of the `// MODULE: <path>` comment before the declaration,
+otherwise `module-cw-<n>.js` in declaration order.
+
+The runtime is recognized by its shape, not its names: as a property of the
+require-scope object (`R.cw = …`, or `const R = { cw: …, d: … }` beside
+webpack's other helpers), in a binding of its own (Terser with several
+wrapped modules), or inlined into the call of its only accessor (Terser
+with one: `var r = (r => { … })(function(r, t) { … })`). Its helpers and the
+require-scope object stay in `entry.js` while entry code uses them, and go
+when nothing does.
+
+The import-position stub `X();` becomes `var X = require("./<file>");` and
+every later call reads `X`, so the pipeline sees an import, when both hold:
+
+- every top-level statement before the stub runs nothing a call could see:
+  directives, function declarations, declarations and assignments to
+  bootstrap bindings of literals, functions, and plain object or array
+  literals, and other stubs. No bootstrap function has run yet, so the stub
+  is the first call;
+- the body uses its module object only as `module.exports`, outside any
+  function or class in it, so `module.exports` cannot change once the body
+  returns, and every later call returns what the stub returned.
+
+A module that the stub's body loads on every run (a pass-through
+`module.exports = (helper_namespaceFn())`) is complete after the stub as
+well, and is bound right after it. Otherwise the calls stay `require()`
+calls, which keeps `entry.js` CommonJS. They also stay when entry code reads
+an `__esModule` marker (webpack's `.n` interop helper, which stays local
+code): binding the accessor would let the pipeline turn the provider into an
+ES module, whose namespace has no marker.
+
+The input stays one file when the split could change behavior:
+
+- an accessor is used other than as a zero-argument call (passed as a value,
+  reassigned, called with arguments), or the runtime member could be
+  replaced (another write to it, or the require-scope object escapes);
+- a wrapped body reads a bootstrap binding other than an accessor (a
+  concatenated ES module's binding, the require-scope object, a helper):
+  such a body is not moved, and no part of the bundle is split;
+- a wrapped body reads `arguments` or `new.target` or returns, or, as an
+  arrow, reads `this` (the bootstrap's, not the exports object);
+- the rest of the bootstrap reads its `this` or `arguments` or returns;
+- the bootstrap binds the name `require` anywhere, or has a `with` statement
+  or a direct `eval`;
+- code around the bootstrap declares `require`, `module`, or `exports`, or a
+  wrapped body reads a name it declares (see [Webpack 5 code around the
+  bootstrap](#webpack-5-code-around-the-bootstrap); here there is no
+  `prelude.js`).
 
 ### Webpack 5 code around the bootstrap
 
@@ -1069,6 +1154,16 @@ layout directly is a proposal:
     which throws, because the factory returns the exports object.
 
   AMD, Closure, Metro, and Turbopack were not checked with a producer.
+- **Some webpack 5 concatenated CommonJS modules stay in `entry.js`.** A
+  bootstrap that also has a module table (a CommonJS module the concatenated
+  root reaches through `__webpack_require__(id)`, an `// EXTERNAL MODULE:`
+  accessor) splits through the table path, and its `.cw`-wrapped modules
+  stay in `entry.js` with their runtime; their bodies read the table's
+  accessors, which [the split](#webpack-5-concatenated-commonjs-modules)
+  does not move. When entry code reads an `__esModule` marker, a split
+  `entry.js` keeps its `require()` calls and stays CommonJS: the pipeline
+  does not recover webpack's memoized default-interop shape
+  (`function d() { return d.c || (d.c = __webpack_require__.n(X())); }`).
 - **A repeated function declaration around a webpack 5 bootstrap.** Code
   around the bootstrap goes to `entry.js` verbatim, and `entry.js` becomes an
   ES module when it imports the startup module. When that code declares one

@@ -1049,3 +1049,60 @@ fn wp5_trailing_user_iife_keeps_entry_dependencies_and_async_boundary() {
         assert_eq!(validate_output_modules(&pairs), vec![]);
     }
 }
+
+// ========================================================================
+// Webpack 5 — concatenated CommonJS modules (`__webpack_require__.cw`)
+// ========================================================================
+
+#[test]
+fn wp5_concat_cw_wrapped_modules_split() {
+    // webpack 5.112.2 production, concatenateModules, minimize off: three
+    // wrapped CommonJS modules named by their `// MODULE:` comments.
+    for source_map in [false, true] {
+        let pairs = unpack_fixture_with_options("wp5-concat-cw/bundle.js", source_map);
+        let mut names = filenames(&pairs);
+        names.sort_unstable();
+        assert_eq!(
+            names,
+            [
+                "entry.js",
+                "src/concat-cw/helper.js",
+                "src/concat-cw/provider.js",
+                "src/concat-cw/relay.js"
+            ]
+        );
+        let entry = &pairs.iter().find(|(name, _)| name == "entry.js").unwrap().1;
+        assert!(
+            entry.contains("from \"./src/concat-cw/provider.js\"")
+                && entry.contains("from \"./src/concat-cw/helper.js\"")
+                && !entry.contains("namespaceFn")
+                && !entry.contains("require("),
+            "the accessors become imports, got:\n{entry}"
+        );
+        assert_eq!(validate_output_modules(&pairs), vec![]);
+    }
+}
+
+#[test]
+fn wp5_concat_cw_min_wrapped_modules_split() {
+    // Minified: one wrapped module inlines the runtime into its call; with
+    // several, the runtime keeps a binding of its own.
+    for (path, modules) in [
+        ("wp5-concat-cw-min/bundle.js", 1),
+        ("wp5-concat-cw-pair-min/bundle.js", 3),
+    ] {
+        let pairs = unpack_fixture(path);
+        let mut expected: Vec<String> = (0..modules).map(|n| format!("module-cw-{n}.js")).collect();
+        expected.push("entry.js".to_string());
+        expected.sort_unstable();
+        let mut names = filenames(&pairs);
+        names.sort_unstable();
+        assert_eq!(names, expected, "{path}");
+        let entry = &pairs.iter().find(|(name, _)| name == "entry.js").unwrap().1;
+        assert!(
+            entry.contains("import ") && !entry.contains(".call("),
+            "{path}: got:\n{entry}"
+        );
+        assert_eq!(validate_output_modules(&pairs), vec![], "{path}");
+    }
+}

@@ -172,6 +172,20 @@ echo "  wp5-esm-entry-min: ESM entry chunk with a separate runtime chunk (5.112.
 npx --yes -p webpack@5.112.2 -p webpack-cli@6.0.1 webpack \
   --config webpack5-esm-entry-min.config.cjs 2>/dev/null
 
+echo "  wp5-concat-cw:     CommonJS modules concatenated through __webpack_require__.cw (5.112.2)"
+# Pin the default minifier too: it decides how the runtime is inlined.
+webpack5_cw() {
+  npx --yes -p webpack@5.112.2 -p webpack-cli@6.0.1 \
+    -p minimizer-webpack-plugin@5.10.1 -p terser@5.51.2 webpack "$@"
+}
+webpack5_cw --config webpack5-concat-cw.config.cjs 2>/dev/null
+
+echo "  wp5-concat-cw-min: The same, minified, with one wrapped module (5.112.2)"
+webpack5_cw --config webpack5-concat-cw-min.config.cjs 2>/dev/null
+
+echo "  wp5-concat-cw-pair-min: The same, minified, with three wrapped modules (5.112.2)"
+webpack5_cw --config webpack5-concat-cw-pair-min.config.cjs 2>/dev/null
+
 echo "=== Rspack (2.3.2) ==="
 
 echo "  rspack-esm-chunk-min: ESM output with a lazy chunk in chunkFormat \"module\""
@@ -202,6 +216,7 @@ npx --yes @vercel/ncc@0.44.1 build src/ncc-entry.cjs -m -o dist/wp5-ncc-min 2>/d
 node - \
   dist/wp5-array/bundle.js \
   dist/wp5-array/chunk-1.js \
+  dist/wp5-concat-cw/bundle.js \
   dist/wp5-ncc/index.cjs \
   dist/wp5-ncc-min/index.cjs <<'NODE'
 const fs = require("node:fs");
