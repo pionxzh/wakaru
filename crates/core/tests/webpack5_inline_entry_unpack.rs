@@ -1064,6 +1064,118 @@ fn sequenced_bare_directly_invoked_require_keeps_the_other_elements() {
 }
 
 #[test]
+fn directly_invoked_require_in_a_umd_factory_return_splits() {
+    // Terser inlines the one-call startup into the UMD factory's return;
+    // the returned `{}` is wrapper plumbing.
+    // shape: producer webpack@5.111.1 mode=production target=node
+    // output.library umd concatenateModules=false (Terser); sink renamed to
+    // `globalThis.lib`.
+    let source = r#"!function(e,t){"object"==typeof exports&&"object"==typeof module?module.exports=t():"function"==typeof define&&define.amd?define([],t):"object"==typeof exports?exports.Lib=t():e.Lib=t()}(global,()=>(()=>{var e={574(e,t,r){var o=r(240);t.describe=o.describe,t.name="umd-entry"},240(e,t){t.describe=function(e){return"umd-provider:"+e}}};const t={};return globalThis.lib=function r(o){const n=t[o];if(void 0!==n)return n.exports;const i=t[o]={exports:{}};return e[o](i,i.exports,r),i.exports}(574),{}})());"#;
+
+    let pairs = expect_unpack(source, "bundle.js");
+    for name in ["module-240.js", "module-574.js"] {
+        assert!(
+            pairs.iter().any(|(file, _)| file == name),
+            "{name} must be extracted, got {:?}",
+            pairs.iter().map(|(file, _)| file).collect::<Vec<_>>()
+        );
+    }
+    let entry = entry_of(&pairs);
+    assert!(
+        entry.contains(r#"from "./module-574.js""#) && entry.contains("globalThis.lib = lib;"),
+        "the library assignment must survive as an import of the entry module, got:\n{entry}"
+    );
+    assert!(
+        !entry.contains("return") && !entry.contains("export default"),
+        "the returned value is wrapper plumbing and must not become entry code, got:\n{entry}"
+    );
+}
+
+#[test]
+fn umd_factory_with_its_declarations_hoisted_into_the_return_splits() {
+    // Terser turns the factory's declarations into assignments at the head
+    // of the returned sequence and leaves the `var` after the return.
+    // shape: hypothetical (Terser sequences over a webpack 5 UMD factory
+    // whose bootstrap declares its table and cache with `var`:
+    // `return t={…},n={},function e(r){…}(9);var t,n`).
+    let source = r#"!function(t,n){"object"==typeof exports&&"object"==typeof module?module.exports=n():"function"==typeof define&&define.amd?define([],n):"object"==typeof exports?exports.Lib=n():t.Lib=n()}(this,function(){return t={7:function(t,n){n.value=1},9:function(t,n,e){var r=e(7);t.exports={value:r.value}}},n={},function e(r){var i=n[r];if(void 0!==i)return i.exports;var s=n[r]={exports:{}};return t[r].call(s.exports,s,s.exports,e),s.exports}(9);var t,n});"#;
+
+    let pairs = expect_unpack(source, "bundle.js");
+    for name in ["module-7.js", "module-9.js"] {
+        assert!(
+            pairs.iter().any(|(file, _)| file == name),
+            "{name} must be extracted, got {:?}",
+            pairs.iter().map(|(file, _)| file).collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
+fn directly_invoked_require_in_a_final_return_keeps_an_effectful_returned_value() {
+    // shape: hypothetical (the factory returns a call after the startup).
+    let source = r#"
+(function (root, factory) {
+    if (typeof exports === "object") module.exports = factory();
+    else root.Lib = factory();
+})(this, function () {
+    return (function () {
+        var modules = {
+            1: function (module, exports) {
+                exports.value = 42;
+            }
+        };
+        var cache = {};
+        return function require(id) {
+            var cached = cache[id];
+            if (cached !== undefined) return cached.exports;
+            var module = cache[id] = { exports: {} };
+            modules[id].call(module.exports, module, module.exports, require);
+            return module.exports;
+        }(1), globalThis.ready();
+    })();
+});
+"#;
+
+    let pairs = expect_unpack(source, "bundle.js");
+    assert!(
+        pairs.iter().any(|(name, _)| name == "module-1.js"),
+        "the webpack module must be extracted, got {:?}",
+        pairs.iter().map(|(name, _)| name).collect::<Vec<_>>()
+    );
+    let entry = entry_of(&pairs);
+    assert!(
+        entry.contains(r#""./module-1.js""#) && entry.contains("globalThis.ready()"),
+        "entry.js must load the entry module and keep the returned call, got:\n{entry}"
+    );
+}
+
+#[test]
+fn code_beside_a_umd_wrapper_stays_with_the_entry() {
+    // A raw banner and footer around the UMD wrapper run with the bundle.
+    // shape: producer webpack@5.111.1 mode=production target=node
+    // output.library umd concatenateModules=false (Terser), BannerPlugin
+    // raw banner and footer at the report stage; names neutralized.
+    let source = r#"globalThis.banner={v:1};
+!function(e,t){"object"==typeof exports&&"object"==typeof module?module.exports=t():"function"==typeof define&&define.amd?define([],t):"object"==typeof exports?exports.Lib=t():e.Lib=t()}(global,()=>(()=>{var e={574(e,t,r){var o=r(240);t.describe=o.describe},240(e,t){t.describe=function(e){return"umd-provider:"+e}}};const t={};return globalThis.lib=function r(o){const n=t[o];if(void 0!==n)return n.exports;const i=t[o]={exports:{}};return e[o](i,i.exports,r),i.exports}(574),{}})());
+globalThis.footer=2;"#;
+
+    let pairs = expect_unpack(source, "bundle.js");
+    assert!(
+        pairs.iter().any(|(name, _)| name == "module-574.js"),
+        "the bundle must split, got {:?}",
+        pairs.iter().map(|(name, _)| name).collect::<Vec<_>>()
+    );
+    let entry = entry_of(&pairs);
+    let banner = entry.find("globalThis.banner").expect("banner kept");
+    let lib = entry.find("globalThis.lib = lib").expect("startup kept");
+    let footer = entry.find("globalThis.footer").expect("footer kept");
+    assert!(
+        banner < lib && lib < footer,
+        "the banner and footer must keep their places around the startup, got:\n{entry}"
+    );
+}
+
+#[test]
 fn sequenced_directly_invoked_require_reading_a_bootstrap_local_stays_unsplit() {
     // The sequence's other elements read bootstrap bindings (`r`, `i`).
     // Moved to entry.js they would be free references, and dropping them

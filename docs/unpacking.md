@@ -209,7 +209,18 @@ declaration such as `var app = (() => { ... })()`. A terminal `return expr`
 retains `expr` as an evaluated startup statement. Named function expressions,
 function-only binding observations (`this`, `arguments`, or `new.target`),
 parameters, async/generator wrappers, nested function-level returns, and
-top-level siblings retain their original boundary. Finally, **AMD** (`amd.rs`)
+top-level siblings retain their original boundary. A UMD factory or AMD
+`define()` candidate keeps the top-level statements beside the wrapper in
+its place, so a raw banner or footer around a UMD library reaches the
+detector as code around the bundle (see [Webpack 5 code around the
+bootstrap](#webpack-5-code-around-the-bootstrap)) instead of being dropped. A
+UMD factory that Terser left as `return t = {…}, n = {}, function e(r) {…}(1);
+var t, n` is retried with the assignments back as the `var`'s initializers
+(`var t = {…}, n = {}; return function e(r) {…}(1)`): they run first and
+in order, so the code is the same, and the webpack bootstrap is then a
+region like any other. A directly invoked require in the factory's final
+`return` is a startup call; the value the factory returns is wrapper
+plumbing and is kept only when it has an effect. Finally, **AMD** (`amd.rs`)
 detects files consisting of top-level `define(id, deps, factory)` calls and
 splits each define into a module, or lifts a file whose only statement is a
 UMD wrapper call (see [Plain UMD files](#plain-umd-files)).
@@ -1055,10 +1066,7 @@ layout directly is a proposal:
     (producer `rollup@4.63.6` `format: "system"`, unminified) drops it;
   - a UMD library (producer `webpack@5.111.1` `output.library.type: "umd"`
     + Terser) with an ES module entry keeps `require.r(o)` in `entry.js`,
-    which throws, because the factory returns the exports object; a banner
-    at the report stage, outside the wrapper, is dropped. When the startup
-    calls require once, Terser inlines it into the factory's `return`, and
-    the bundle is not detected.
+    which throws, because the factory returns the exports object.
 
   AMD, Closure, Metro, and Turbopack were not checked with a producer.
 - **A repeated function declaration around a webpack 5 bootstrap.** Code

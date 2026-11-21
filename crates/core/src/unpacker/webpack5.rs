@@ -1354,14 +1354,36 @@ fn region_fn_candidates(stmts: &[Stmt]) -> Vec<RegionFnCandidate<'_>> {
                     }
                 }
             }
-            _ => candidates.extend(directly_invoked_require_candidates(stmt_idx, stmt)),
+            _ => candidates.extend(directly_invoked_require_candidates(
+                stmt_idx,
+                stmt,
+                stmt_idx + 1 == stmts.len(),
+            )),
         }
     }
     candidates
 }
 
-fn directly_invoked_require_candidates(stmt_idx: usize, stmt: &Stmt) -> Vec<RegionFnCandidate<'_>> {
-    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+/// The expression that can hold a directly invoked require: an expression
+/// statement's, or the argument of the region's final `return`. Terser
+/// inlines a UMD factory's one-call startup into the factory's return
+/// (`return sink = function require(id) {...}(1), {}`); the value returned
+/// is wrapper plumbing that [`direct_entry_stmts`] lowers like
+/// [`lower_final_return`] does.
+fn direct_entry_site_expr(stmt: &Stmt, is_last: bool) -> Option<&Expr> {
+    match stmt {
+        Stmt::Expr(ExprStmt { expr, .. }) => Some(expr),
+        Stmt::Return(ret) if is_last => ret.arg.as_deref(),
+        _ => None,
+    }
+}
+
+fn directly_invoked_require_candidates(
+    stmt_idx: usize,
+    stmt: &Stmt,
+    is_last: bool,
+) -> Vec<RegionFnCandidate<'_>> {
+    let Some(expr) = direct_entry_site_expr(stmt, is_last) else {
         return Vec::new();
     };
     // Terser merges an `output.library` startup into one comma sequence
@@ -2568,33 +2590,40 @@ fn direct_entry_stmts(
     site_stmt.visit_with(&mut names);
     trailing.visit_with(&mut names);
     let unrolled_call = |call: &CallExpr| direct_entry_require_call(call.clone(), require_ctxt);
+    let is_return = matches!(site_stmt, Stmt::Return(_));
+    let site_expr = direct_entry_site_expr(site_stmt, trailing.is_empty());
 
     let mut out = Vec::with_capacity(trailing.len() + 2);
-    match (site, site_stmt) {
-        (DirectEntrySite::Expr, Stmt::Expr(expr_stmt)) => {
-            if matches!(strip_parens(&expr_stmt.expr), Expr::Assign(_)) {
+    match (site, site_expr, site_stmt) {
+        (DirectEntrySite::Expr, Some(expr), _) => {
+            let span = site_stmt.span();
+            if matches!(strip_parens(expr), Expr::Assign(_)) {
                 out.extend(unrolled_direct_entry_assignment(
-                    &expr_stmt.expr,
-                    expr_stmt.span,
+                    expr,
+                    span,
                     &names.0,
                     require_ctxt,
                 )?);
             } else {
                 out.push(Stmt::Expr(ExprStmt {
-                    span: expr_stmt.span,
-                    expr: Box::new(Expr::Call(unrolled_call(direct_invoke_call(
-                        &expr_stmt.expr,
-                    )?))),
+                    span,
+                    expr: Box::new(Expr::Call(unrolled_call(direct_invoke_call(expr)?))),
                 }));
             }
         }
-        (DirectEntrySite::SeqElement(element_idx), Stmt::Expr(expr_stmt)) => {
-            let Expr::Seq(seq) = strip_parens(&expr_stmt.expr) else {
+        (DirectEntrySite::SeqElement(element_idx), Some(expr), _) => {
+            let Expr::Seq(seq) = strip_parens(expr) else {
                 return None;
             };
+            let last_idx = seq.exprs.len() - 1;
             for (idx, element) in seq.exprs.iter().enumerate() {
                 let span = element.span();
                 if idx != element_idx {
+                    // The value a final `return` hands back is wrapper
+                    // plumbing; it is kept only for its side effects.
+                    if is_return && idx == last_idx && !returned_value_has_effect(element) {
+                        continue;
+                    }
                     out.push(Stmt::Expr(ExprStmt {
                         span,
                         expr: element.clone(),
@@ -2616,6 +2645,7 @@ fn direct_entry_stmts(
         }
         (
             DirectEntrySite::Declarator(decl_idx),
+            _,
             Stmt::Decl(swc_core::ecma::ast::Decl::Var(var_decl)),
         ) => {
             // Earlier declarators are runtime (the module cache); the call's
@@ -2640,16 +2670,19 @@ fn direct_entry_stmts(
 
 /// The directly invoked call at `site` in `stmt`.
 fn direct_entry_call(stmt: &Stmt, site: DirectEntrySite) -> Option<&CallExpr> {
-    match (site, stmt) {
-        (DirectEntrySite::Expr, Stmt::Expr(expr_stmt)) => direct_invoke_call(&expr_stmt.expr),
-        (DirectEntrySite::SeqElement(idx), Stmt::Expr(expr_stmt)) => {
-            let Expr::Seq(seq) = strip_parens(&expr_stmt.expr) else {
+    // A `return` site is only ever a candidate as the region's last
+    // statement, so its position is not re-checked here.
+    match (site, direct_entry_site_expr(stmt, true), stmt) {
+        (DirectEntrySite::Expr, Some(expr), _) => direct_invoke_call(expr),
+        (DirectEntrySite::SeqElement(idx), Some(expr), _) => {
+            let Expr::Seq(seq) = strip_parens(expr) else {
                 return None;
             };
             direct_invoke_call(seq.exprs.get(idx)?)
         }
         (
             DirectEntrySite::Declarator(idx),
+            _,
             Stmt::Decl(swc_core::ecma::ast::Decl::Var(var_decl)),
         ) => match strip_parens(var_decl.decls.get(idx)?.init.as_ref()?) {
             Expr::Call(call) => Some(call),
@@ -3395,16 +3428,23 @@ fn lower_final_return(stmts: &mut Vec<Stmt>) {
         return;
     };
     if let Some(arg) = ret.arg {
-        if matches!(
-            strip_parens(&arg),
-            Expr::Call(_) | Expr::New(_) | Expr::Assign(_) | Expr::Await(_) | Expr::Seq(_)
-        ) {
+        if returned_value_has_effect(&arg) {
             stmts.push(Stmt::Expr(ExprStmt {
                 span: ret.span,
                 expr: arg,
             }));
         }
     }
+}
+
+/// Whether a value a wrapper's `return` hands back is kept as a statement when
+/// the return is lowered: calls, assignments and the like run code; inert
+/// values like the minified `{}` do not.
+fn returned_value_has_effect(expr: &Expr) -> bool {
+    matches!(
+        strip_parens(expr),
+        Expr::Call(_) | Expr::New(_) | Expr::Assign(_) | Expr::Await(_) | Expr::Seq(_)
+    )
 }
 
 /// If `stmt` begins with an empty-object declarator (`var x = {}` — webpack's

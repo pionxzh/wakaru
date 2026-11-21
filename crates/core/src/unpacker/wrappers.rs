@@ -1,8 +1,9 @@
 use swc_core::atoms::Atom;
 use swc_core::common::{Span, Spanned, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, ArrowFunctionBody, CallExpr, Callee, Decl, Expr, ExprStmt, FnExpr, Function,
-    FunctionBody, Ident, Module, ModuleItem, Pat, ReturnStmt, Stmt, UnaryOp,
+    ArrowExpr, ArrowFunctionBody, AssignOp, AssignTarget, CallExpr, Callee, Decl, Expr, ExprStmt,
+    FnExpr, Function, FunctionBody, Ident, Module, ModuleItem, ParenExpr, Pat, ReturnStmt, SeqExpr,
+    SimpleAssignTarget, Stmt, UnaryOp, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -11,12 +12,22 @@ use crate::utils::paren::{strip_parens, strip_parens_mut};
 pub(super) fn collect_unwrap_candidates(module: &Module) -> Vec<Module> {
     let mut candidates = Vec::new();
 
-    for item in &module.body {
+    for (idx, item) in module.body.iter().enumerate() {
         let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
             continue;
         };
+        let start = candidates.len();
         collect_umd_factory_candidates(expr, &mut candidates);
         collect_amd_define_candidates(expr, &mut candidates);
+        // The code beside the wrapper (a raw banner or footer) runs with the
+        // bundle; the candidate keeps it where the wrapper stood, so a
+        // detector sees it as the code around the bundle instead of dropping
+        // it.
+        if module.body.len() > 1 {
+            for candidate in &mut candidates[start..] {
+                splice_wrapper_siblings(candidate, &module.body, idx);
+            }
+        }
     }
     collect_plain_iife_module_candidate(module, &mut candidates);
 
@@ -321,7 +332,119 @@ fn collect_function_candidates(function: &Function, candidates: &mut Vec<Module>
     let Some(body) = &function.body else {
         return;
     };
+    if function.params.is_empty() && !function.is_async && !function.is_generator {
+        if let Some(body) = hoisted_return_body(body) {
+            // The factory, called as the wrapper calls it, with its
+            // declarations back in place.
+            let span = body.span;
+            let factory = Expr::Fn(FnExpr {
+                ident: None,
+                function: Box::new(Function {
+                    body: Some(body),
+                    ..function.clone()
+                }),
+            });
+            push_expr_candidate(
+                &Expr::Call(CallExpr {
+                    span,
+                    callee: Callee::Expr(Box::new(Expr::Paren(ParenExpr {
+                        span,
+                        expr: Box::new(factory),
+                    }))),
+                    ..Default::default()
+                }),
+                candidates,
+            );
+            return;
+        }
+    }
     collect_block_candidates(body, candidates);
+}
+
+/// Terser's form of a factory that returns its bundle: the declarations
+/// become assignments at the head of the returned sequence, and the `var`
+/// is left after the return,
+/// `return t = {…}, n = {}, function e(r) {…}(1); var t, n`. Since the
+/// assignments run first, in order, putting them back as the `var`'s
+/// initializers before the return runs the same code:
+/// `var t = {…}, n = {}; return function e(r) {…}(1)`. `None` for any
+/// other body.
+fn hoisted_return_body(body: &FunctionBody) -> Option<FunctionBody> {
+    let [Stmt::Return(ret), rest @ ..] = body.stmts.as_slice() else {
+        return None;
+    };
+    if rest.is_empty() {
+        return None;
+    }
+    let mut decls: Vec<VarDeclarator> = Vec::new();
+    for stmt in rest {
+        let Stmt::Decl(Decl::Var(var)) = stmt else {
+            return None;
+        };
+        if var.kind != VarDeclKind::Var {
+            return None;
+        }
+        for decl in &var.decls {
+            if decl.init.is_some() || !matches!(decl.name, Pat::Ident(_)) {
+                return None;
+            }
+            decls.push(decl.clone());
+        }
+    }
+    let Expr::Seq(seq) = strip_parens(ret.arg.as_deref()?) else {
+        return None;
+    };
+    let mut moved = 0;
+    for element in &seq.exprs {
+        let Expr::Assign(assign) = strip_parens(element) else {
+            break;
+        };
+        if assign.op != AssignOp::Assign {
+            break;
+        }
+        let AssignTarget::Simple(SimpleAssignTarget::Ident(target)) = &assign.left else {
+            break;
+        };
+        let Some(decl) = decls
+            .iter_mut()
+            .find(|decl| matches!(&decl.name, Pat::Ident(name) if name.sym == target.sym))
+        else {
+            break;
+        };
+        if decl.init.is_some() {
+            break;
+        }
+        decl.init = Some(assign.right.clone());
+        decl.span = assign.span;
+        moved += 1;
+    }
+    let remaining = &seq.exprs[moved..];
+    if moved == 0 || remaining.is_empty() {
+        return None;
+    }
+    let arg = match remaining {
+        [only] => only.clone(),
+        _ => Box::new(Expr::Seq(SeqExpr {
+            span: Span::new(remaining[0].span().lo, seq.span.hi),
+            exprs: remaining.to_vec(),
+        })),
+    };
+    let var_span = Span::new(seq.exprs[0].span().lo, seq.exprs[moved - 1].span().hi);
+    Some(FunctionBody {
+        span: body.span,
+        stmts: vec![
+            Stmt::Decl(Decl::Var(Box::new(VarDecl {
+                span: var_span,
+                kind: VarDeclKind::Var,
+                decls,
+                ..Default::default()
+            }))),
+            Stmt::Return(ReturnStmt {
+                span: ret.span,
+                arg: Some(arg),
+            }),
+        ],
+    })
 }
 
 fn collect_arrow_candidates(arrow: &ArrowExpr, candidates: &mut Vec<Module>) {
@@ -346,6 +469,24 @@ fn collect_block_candidates(body: &FunctionBody, candidates: &mut Vec<Module>) {
         .all(|stmt| !matches!(stmt, Stmt::Return(_)))
     {
         candidates.push(module_from_stmts(body.stmts.clone()));
+    }
+}
+
+/// Put the module items before and after `body[idx]` (the wrapper statement)
+/// around `candidate`'s statements.
+fn splice_wrapper_siblings(candidate: &mut Module, body: &[ModuleItem], idx: usize) {
+    let inner = std::mem::take(&mut candidate.body);
+    candidate.body = body[..idx]
+        .iter()
+        .cloned()
+        .chain(inner)
+        .chain(body[idx + 1..].iter().cloned())
+        .collect();
+    let (Some(first), Some(last)) = (candidate.body.first(), candidate.body.last()) else {
+        return;
+    };
+    if first.span().lo.0 != 0 && last.span().hi.0 != 0 {
+        candidate.span = Span::new(first.span().lo, last.span().hi);
     }
 }
 
