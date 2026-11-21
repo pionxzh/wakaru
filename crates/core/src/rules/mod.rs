@@ -22,6 +22,7 @@ pub(crate) mod helper_matcher;
 mod import_dedup;
 mod import_source_rename;
 pub(crate) mod lowered_dynamic_import;
+mod lowered_private_field_helpers;
 pub(crate) mod match_context;
 mod merge_declaration_init;
 mod obj_shorthand;

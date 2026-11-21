@@ -642,22 +642,61 @@ too. The cross-module super-call prediction recognizes the same wrappers.
 ### Private-field backing-map lifetime
 
 `UnClassFields` promotes a backing WeakMap only when one class owns it and
-its initialization has a stable lifetime. It must have exactly one allocation:
-either before the class, or immediately after a class without definition-time
-executable members. Owners include top-level class declarations, default-export
-classes, single-declarator class expressions, and class assignments to resolved
-local bindings (the result of splitting tsc's class-expression sequences).
-For class expressions, the owner binding is the outer target, not an optional
-class self name. Local export lists, empty statements, and a default export
-reading that exact owner binding may intervene; arbitrary identifiers, calls,
-and other executable statements may not. Earlier construction, later resets
-(including comma expressions), escaping maps, and unsupported map uses keep the lowered
-form. These are proof requirements, not rewrite assumptions.
+its initialization has a stable lifetime. It must have exactly one allocation,
+as a statement of the module body or of a function body, the list the class is
+in. It comes either before the class, or immediately after a class without
+definition-time executable members. Owners include class declarations,
+default-export classes, single-declarator class expressions, and class
+assignments to resolved local bindings (the result of splitting tsc's
+class-expression sequences). For class expressions, the owner binding is the
+outer target, not an optional class self name. After the allocation, the
+class may also sit inside a later statement's expression, as minified
+factories return it (`return new class { … }`), but not inside a function, a
+loop, or another class there. Local export lists, function declarations, empty
+statements, other `local = new WeakMap()` or `new WeakSet()` allocations
+(esbuild creates each of a class's maps in turn after it), and a default
+export reading that exact owner binding may intervene; arbitrary identifiers,
+calls, and other executable statements may not. A map allocated in a function
+body must also be declared in that body: one declared outside would be reset
+by a second call while the first call's instances still use it. Earlier
+construction, later resets (including comma expressions), escaping maps
+(including reads from a private method lowered outside the class), a second
+initialization in the class, and unsupported map uses keep the lowered form.
+These are proof requirements, not rewrite assumptions.
 
-Get/set calls accept resolver-proven tslib named aliases, namespaces, direct
-`require("tslib")` members, and inline marker/body matches. The consumer still
-requires `this`, field mode `"f"`, exact arity, and no spread arguments. Written
-helper bindings or namespaces and dynamic `with` lookup prevent promotion.
+The initializers promoted are the constructor's leading ones. A derived class
+defines its fields when `super(…)` returns, so there they must directly follow
+the constructor's only super call, a top-level statement, and may not read a
+binding the statements before it declare. A private-method brand add
+(`__privateAdd(this, brand)`, Babel's `_classPrivateMethodInitSpec`,
+`brand.add(this)`) may come first: the method stays lowered, so a promoted
+field now runs before the brand exists, and a field promoted past one must
+have a value that cannot observe it (a literal, a function, an empty literal
+or builtin collection, or no value). A read whose rewrite would change its
+meaning keeps the map: a callee or tag (`this.#x(…)` binds `this`) or a
+`delete` operand.
+
+tsc get/set calls accept resolver-proven tslib named aliases, namespaces,
+direct `require("tslib")` members, and inline marker/body matches, and
+require field mode `"f"`. Babel 7.24+, swc (and older Babel releases with
+the same descriptor helpers), and esbuild helpers are recognized by body in
+`lowered_private_field_helpers.rs`, never by name, in any statement list (a
+UMD wrapper or an unsplit module factory holds them in a function body). Each
+helper's statements must do what the producer's does with its parameters,
+following its brand, redeclaration, and descriptor sub-helpers through a
+binding or an inline function (Terser's form for a single-use helper). Older
+esbuild forms and the getter- and setter-free forms a minifier leaves in a
+bundle without private accessors are accepted. The helpers pass the receiver
+and map in different orders (Babel's get is `get(map, this)`), and swc stores
+a `{ writable: true, value }` descriptor, which recovery unwraps and requires
+exactly. An init helper with no read or write in the class cannot tell
+Babel's value from swc's descriptor, so a descriptor-shaped value keeps the
+lowered form. Every consumer requires `this` as the receiver, exact arity (an
+esbuild getter or setter argument means an accessor), and no spread
+arguments; a private name the class already uses keeps the map. Written helper
+bindings or namespaces and dynamic `with` lookup prevent promotion. Helpers
+reached through a bundled `@babel/runtime` or `@swc/helpers` module are not
+recognized.
 
 ### Tagged template body shapes
 

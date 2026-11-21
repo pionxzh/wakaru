@@ -575,7 +575,9 @@ rationale, or level gating appear.
   (`_defineProperty(this, "x", value)` → `x = value`) is `standard+`, base
   classes only, and skips initializers that reference constructor params or
   `arguments`. Direct constructor assignments are preserved unless another
-  pattern proves they came from class fields.
+  pattern proves they came from class fields. Private fields lowered to a
+  WeakMap (tsc, Babel, swc, esbuild) are recovered in base and derived
+  classes under the backing-map lifetime proof in helper-detection.md.
 - **UnAsyncAwait** — consumes `__awaiter`/`__generator` identities detected
   by `LocalHelperContext` directly (no alias renaming step). Its consumed
   inline TS helper cleanup must run after UnEsm (Exp 3: early cleanup strips

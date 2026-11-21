@@ -11,6 +11,9 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::helper_matcher::{binding_key, remove_unused_helper_declarations};
+use super::lowered_private_field_helpers::{
+    collect_lowered_private_helpers, LoweredPrivateHelper, LoweredPrivateHelpers, PrivateStorage,
+};
 use super::transpiler_helper_utils::{
     tslib_member_ts_helper_kind, tslib_require_ts_helper_kind, BindingKey, LocalHelperContext,
     TranspilerHelperKind, TsHelperKind,
@@ -44,8 +47,10 @@ pub struct UnClassFields {
     unresolved_mark: Mark,
     define_property_helpers: HashSet<BindingKey>,
     private_maps: HashMap<BindingKey, Atom>,
+    private_brand_sets: HashSet<BindingKey>,
     private_get_helpers: PrivateHelperCallees,
     private_set_helpers: PrivateHelperCallees,
+    lowered_private_helpers: LoweredPrivateHelpers,
     private_single_owner_maps: HashSet<BindingKey>,
     consumed_private_maps: HashSet<BindingKey>,
 }
@@ -140,6 +145,7 @@ impl UnClassFields {
             unresolved_mark,
             define_property_helpers: HashSet::default(),
             private_maps: HashMap::default(),
+            private_brand_sets: HashSet::default(),
             private_get_helpers: PrivateHelperCallees::empty(
                 TsHelperKind::ClassPrivateFieldGet,
                 unresolved_mark,
@@ -148,6 +154,7 @@ impl UnClassFields {
                 TsHelperKind::ClassPrivateFieldSet,
                 unresolved_mark,
             ),
+            lowered_private_helpers: LoweredPrivateHelpers::default(),
             private_single_owner_maps: HashSet::default(),
             consumed_private_maps: HashSet::default(),
         }
@@ -172,6 +179,14 @@ impl UnClassFields {
         );
         let private_maps = collect_private_weak_maps(module, self.unresolved_mark);
         let previous_private_maps = std::mem::replace(&mut self.private_maps, private_maps);
+        let previous_private_brand_sets = std::mem::replace(
+            &mut self.private_brand_sets,
+            if self.private_maps.is_empty() {
+                HashSet::default()
+            } else {
+                collect_private_brand_sets(module, self.unresolved_mark)
+            },
+        );
         let previous_private_get_helpers = std::mem::replace(
             &mut self.private_get_helpers,
             PrivateHelperCallees::collect(
@@ -190,6 +205,14 @@ impl UnClassFields {
                 self.unresolved_mark,
             ),
         );
+        // Without a WeakMap there is no backing map for a helper to reach.
+        let lowered_private_helpers = if self.private_maps.is_empty() {
+            LoweredPrivateHelpers::default()
+        } else {
+            collect_lowered_private_helpers(module, self.unresolved_mark)
+        };
+        let previous_lowered_private_helpers =
+            std::mem::replace(&mut self.lowered_private_helpers, lowered_private_helpers);
         let previous_private_single_owner_maps = std::mem::replace(
             &mut self.private_single_owner_maps,
             collect_single_owner_private_maps(module, &self.private_maps, self.unresolved_mark),
@@ -217,12 +240,15 @@ impl UnClassFields {
             }
         }
 
-        let private_helpers: HashSet<BindingKey> = self
+        let mut private_helpers: HashSet<BindingKey> = self
             .private_get_helpers
             .iter()
             .chain(self.private_set_helpers.iter())
             .cloned()
             .collect();
+        if !self.consumed_private_maps.is_empty() {
+            private_helpers.extend(self.lowered_private_helpers.bindings.iter().cloned());
+        }
         remove_unused_helper_declarations(module, &private_helpers);
 
         if !helpers.is_empty() {
@@ -236,8 +262,10 @@ impl UnClassFields {
         }
         self.define_property_helpers = previous_helpers;
         self.private_maps = previous_private_maps;
+        self.private_brand_sets = previous_private_brand_sets;
         self.private_get_helpers = previous_private_get_helpers;
         self.private_set_helpers = previous_private_set_helpers;
+        self.lowered_private_helpers = previous_lowered_private_helpers;
         self.private_single_owner_maps = previous_private_single_owner_maps;
         self.consumed_private_maps = previous_consumed_private_maps;
     }
@@ -335,32 +363,35 @@ impl VisitMut for UnClassFields {
             });
         }
 
-        if inlined_names.is_empty()
-            && self.level >= RewriteLevel::Standard
-            && class.super_class.is_none()
-        {
+        if inlined_names.is_empty() && self.level >= RewriteLevel::Standard {
+            let sites = PrivateCallSites {
+                tsc_get: &self.private_get_helpers,
+                tsc_set: &self.private_set_helpers,
+                lowered: &self.lowered_private_helpers.roles,
+                brand_sets: &self.private_brand_sets,
+                unresolved_mark: self.unresolved_mark,
+            };
             let promoted_private_maps = promote_private_field_initializers(
                 class,
                 &self.private_maps,
                 &self.private_single_owner_maps,
-                &self.private_get_helpers,
-                &self.private_set_helpers,
+                &sites,
             );
             if !promoted_private_maps.is_empty() {
-                rewrite_private_field_accesses(
-                    class,
-                    &promoted_private_maps,
-                    &self.private_maps,
-                    &self.private_get_helpers,
-                    &self.private_set_helpers,
-                );
-                self.consumed_private_maps.extend(promoted_private_maps);
+                class.visit_mut_with(&mut PrivateFieldAccessRewriter {
+                    promoted_maps: &promoted_private_maps,
+                    sites: &sites,
+                });
+                self.consumed_private_maps
+                    .extend(promoted_private_maps.into_keys());
             }
-            promote_constructor_field_assignments(
-                class,
-                &self.define_property_helpers,
-                self.unresolved_mark,
-            );
+            if class.super_class.is_none() {
+                promote_constructor_field_assignments(
+                    class,
+                    &self.define_property_helpers,
+                    self.unresolved_mark,
+                );
+            }
         }
     }
 }
@@ -381,33 +412,88 @@ fn prop_name_str(key: &swc_core::ecma::ast::PropName) -> Option<String> {
     }
 }
 
+/// Every `x = new WeakMap()` and `var x = new WeakMap()` binding, at any
+/// depth, with its backing name. Which of them back a recoverable field is
+/// decided by the ownership and lifetime proofs.
 fn collect_private_weak_maps(module: &Module, unresolved_mark: Mark) -> HashMap<BindingKey, Atom> {
-    let mut maps = HashMap::default();
-    for item in &module.body {
-        match item {
-            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) => {
-                for decl in &var_decl.decls {
-                    let Pat::Ident(BindingIdent { id, .. }) = &decl.name else {
-                        continue;
-                    };
-                    if decl
-                        .init
-                        .as_deref()
-                        .is_some_and(|init| is_new_weak_map_expression(init, unresolved_mark))
-                    {
-                        if let Some(name) = private_name_from_backing_ident(&id.sym) {
-                            maps.insert(binding_key(id), name);
-                        }
+    struct Collector {
+        unresolved_mark: Mark,
+        maps: HashMap<BindingKey, Atom>,
+    }
+    impl Visit for Collector {
+        fn visit_var_declarator(&mut self, decl: &swc_core::ecma::ast::VarDeclarator) {
+            if let Pat::Ident(BindingIdent { id, .. }) = &decl.name {
+                if decl
+                    .init
+                    .as_deref()
+                    .is_some_and(|init| is_new_weak_map_expression(init, self.unresolved_mark))
+                {
+                    self.maps.insert(binding_key(id), id.sym.clone());
+                }
+            }
+            decl.visit_children_with(self);
+        }
+        fn visit_expr(&mut self, expr: &Expr) {
+            if let Expr::Assign(assign) = expr {
+                if let AssignTarget::Simple(SimpleAssignTarget::Ident(left)) = &assign.left {
+                    if private_weak_map_assignment_key(expr, self.unresolved_mark).is_some() {
+                        self.maps.insert(binding_key(&left.id), left.id.sym.clone());
                     }
                 }
             }
-            ModuleItem::Stmt(Stmt::Expr(expr_stmt)) => {
-                collect_private_weak_map_assignments(&expr_stmt.expr, &mut maps, unresolved_mark);
-            }
-            _ => {}
+            expr.visit_children_with(self);
         }
     }
-    maps
+    let mut collector = Collector {
+        unresolved_mark,
+        maps: HashMap::default(),
+    };
+    module.visit_with(&mut collector);
+    collector.maps
+}
+
+/// Every binding created as `new WeakSet()`, at any depth.
+fn collect_private_brand_sets(module: &Module, unresolved_mark: Mark) -> HashSet<BindingKey> {
+    struct Collector {
+        unresolved_mark: Mark,
+        sets: HashSet<BindingKey>,
+    }
+    impl Collector {
+        fn is_new_weak_set(&self, expr: &Expr) -> bool {
+            matches!(expr, Expr::New(new_expr)
+                if new_expr.args.as_ref().is_none_or(|args| args.is_empty())
+                    && matches!(new_expr.callee.as_ref(), Expr::Ident(id)
+                        if id.sym.as_ref() == "WeakSet" && id.ctxt.outer() == self.unresolved_mark))
+        }
+    }
+    impl Visit for Collector {
+        fn visit_var_declarator(&mut self, decl: &swc_core::ecma::ast::VarDeclarator) {
+            if let Pat::Ident(BindingIdent { id, .. }) = &decl.name {
+                if decl
+                    .init
+                    .as_deref()
+                    .is_some_and(|init| self.is_new_weak_set(init))
+                {
+                    self.sets.insert(binding_key(id));
+                }
+            }
+            decl.visit_children_with(self);
+        }
+        fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+            if let AssignTarget::Simple(SimpleAssignTarget::Ident(left)) = &assign.left {
+                if assign.op == AssignOp::Assign && self.is_new_weak_set(&assign.right) {
+                    self.sets.insert(binding_key(&left.id));
+                }
+            }
+            assign.visit_children_with(self);
+        }
+    }
+    let mut collector = Collector {
+        unresolved_mark,
+        sets: HashSet::default(),
+    };
+    module.visit_with(&mut collector);
+    collector.sets
 }
 
 fn collect_single_owner_private_maps(
@@ -427,33 +513,40 @@ fn collect_single_owner_private_maps(
     module.visit_with(&mut counter);
 
     let mut outside_finder = OutsidePrivateMapRefFinder {
-        private_maps,
         unresolved_mark,
+        private_maps,
         refs: HashSet::default(),
     };
     module.visit_with(&mut outside_finder);
 
-    private_maps
+    let candidates: HashSet<BindingKey> = private_maps
         .keys()
         .filter(|key| class_counts.get(*key).copied() == Some(1))
         .filter(|key| !outside_finder.refs.contains(*key))
-        .filter(|key| private_map_has_stable_lifetime(module, key, private_maps, unresolved_mark))
+        .filter(|key| private_map_initializer_count(module, key, unresolved_mark) == 1)
         .cloned()
-        .collect()
+        .collect();
+    if candidates.is_empty() {
+        return HashSet::default();
+    }
+    let mut prover = PrivateMapLifetimeProver {
+        candidates: &candidates,
+        private_maps,
+        unresolved_mark,
+        proven: HashSet::default(),
+    };
+    module.visit_with(&mut prover);
+    prover.proven
 }
 
-// A backing map must exist before instances can be constructed, and must
-// never be reset. The usual tsc form initializes it immediately after the
-// class; only a class without definition-time executable members is safe there.
-fn private_map_has_stable_lifetime(
+// Count initialization writes throughout the AST, including comma
+// expressions and nested functions. The statement-list proof alone would
+// miss a later reset hidden inside a sequence.
+fn private_map_initializer_count(
     module: &Module,
     key: &BindingKey,
-    private_maps: &HashMap<BindingKey, Atom>,
     unresolved_mark: Mark,
-) -> bool {
-    // Count initialization writes throughout the AST, including comma
-    // expressions and nested functions. The top-level shape check below alone
-    // would miss a later reset hidden inside a sequence.
+) -> usize {
     struct InitializerCounter<'a> {
         key: &'a BindingKey,
         unresolved_mark: Mark,
@@ -486,58 +579,172 @@ fn private_map_has_stable_lifetime(
         count: 0,
     };
     module.visit_with(&mut counter);
-    if counter.count != 1 {
-        return false;
+    counter.count
+}
+
+/// An item of a statement list a backing map can be created in: the module
+/// body, or a function body.
+#[derive(Clone, Copy)]
+enum ListItem<'a> {
+    Stmt(&'a Stmt),
+    ModuleDecl(&'a swc_core::ecma::ast::ModuleDecl),
+}
+
+/// Proves, for each candidate map, the lifetime of its single initializer
+/// in the statement list that holds it (see `list_gives_stable_lifetime`).
+struct PrivateMapLifetimeProver<'a> {
+    candidates: &'a HashSet<BindingKey>,
+    private_maps: &'a HashMap<BindingKey, Atom>,
+    unresolved_mark: Mark,
+    proven: HashSet<BindingKey>,
+}
+
+impl PrivateMapLifetimeProver<'_> {
+    fn check_list(&mut self, items: &[ListItem], is_function_body: bool) {
+        for key in self.candidates {
+            let Some(initializer) = items
+                .iter()
+                .position(|item| list_item_initializes(item, key, self.unresolved_mark))
+            else {
+                continue;
+            };
+            if list_gives_stable_lifetime(
+                items,
+                initializer,
+                key,
+                is_function_body,
+                self.private_maps,
+                self.unresolved_mark,
+            ) {
+                self.proven.insert(key.clone());
+            }
+        }
     }
-    let mut initializer = None;
-    let mut owner = None;
-    for (index, item) in module.body.iter().enumerate() {
-        let initializes = match item {
-            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
-                var.decls.len() == 1 && var.decls.iter().any(|decl| {
+
+    fn check_stmts(&mut self, stmts: &[Stmt]) {
+        let items: Vec<ListItem> = stmts.iter().map(ListItem::Stmt).collect();
+        self.check_list(&items, true);
+    }
+}
+
+impl Visit for PrivateMapLifetimeProver<'_> {
+    fn visit_module(&mut self, module: &Module) {
+        let items: Vec<ListItem> = module
+            .body
+            .iter()
+            .map(|item| match item {
+                ModuleItem::Stmt(stmt) => ListItem::Stmt(stmt),
+                ModuleItem::ModuleDecl(decl) => ListItem::ModuleDecl(decl),
+            })
+            .collect();
+        self.check_list(&items, false);
+        module.visit_children_with(self);
+    }
+
+    fn visit_function(&mut self, function: &swc_core::ecma::ast::Function) {
+        if let Some(body) = &function.body {
+            self.check_stmts(&body.stmts);
+        }
+        function.visit_children_with(self);
+    }
+
+    fn visit_arrow_expr(&mut self, arrow: &swc_core::ecma::ast::ArrowExpr) {
+        if let swc_core::ecma::ast::ArrowFunctionBody::FunctionBody(body) = arrow.body.as_ref() {
+            self.check_stmts(&body.stmts);
+        }
+        arrow.visit_children_with(self);
+    }
+}
+
+fn list_item_initializes(item: &ListItem, key: &BindingKey, unresolved_mark: Mark) -> bool {
+    match item {
+        ListItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
+            var.decls.len() == 1
+                && var.decls.iter().any(|decl| {
                     matches!(&decl.name, Pat::Ident(binding) if binding_key(&binding.id) == *key)
                         && decl
                             .init
                             .as_deref()
                             .is_some_and(|expr| is_new_weak_map_expression(expr, unresolved_mark))
                 })
-            }
-            ModuleItem::Stmt(Stmt::Expr(expr)) => {
-                private_weak_map_assignment_key(&expr.expr, unresolved_mark).as_ref() == Some(key)
-            }
-            _ => false,
-        };
-        if initializes && initializer.replace(index).is_some() {
-            return false;
         }
+        ListItem::Stmt(Stmt::Expr(expr)) => {
+            private_weak_map_assignment_key(&expr.expr, unresolved_mark).as_ref() == Some(key)
+        }
+        _ => false,
+    }
+}
+
+// A backing map must exist before instances can be constructed, and must
+// never be reset. The usual tsc and esbuild form initializes it immediately
+// after the class; only a class without definition-time executable members
+// is safe there. In a function body the map must also be that body's own
+// binding: one declared outside would be reset by each call while instances
+// of the previous call's class still use it.
+fn list_gives_stable_lifetime(
+    items: &[ListItem],
+    initializer: usize,
+    key: &BindingKey,
+    is_function_body: bool,
+    private_maps: &HashMap<BindingKey, Atom>,
+    unresolved_mark: Mark,
+) -> bool {
+    if is_function_body
+        && !items.iter().any(|item| {
+            matches!(item, ListItem::Stmt(Stmt::Decl(Decl::Var(var)))
+                if var.decls.iter().any(|decl| matches!(&decl.name,
+                    Pat::Ident(binding) if binding_key(&binding.id) == *key)))
+        })
+    {
+        return false;
+    }
+    let references_key = |class: &Class| {
+        let mut refs = PrivateMapRefCollector {
+            private_maps,
+            refs: HashSet::default(),
+        };
+        class.body.visit_with(&mut refs);
+        refs.refs.contains(key)
+    };
+    let mut owner = None;
+    for (index, item) in items.iter().enumerate() {
         if let Some((class, binding)) = private_map_class_owner(item, unresolved_mark) {
-            let mut refs = PrivateMapRefCollector {
-                private_maps,
-                refs: HashSet::default(),
-            };
-            class.body.visit_with(&mut refs);
-            if refs.refs.contains(key) {
-                owner = Some((index, class, binding));
+            if references_key(class) {
+                owner = Some((index, Some((class, binding))));
             }
+        } else if index > initializer && item_evaluates_owner_class(item, &references_key) {
+            owner = Some((index, None));
         }
     }
-    let (Some(initializer), Some((owner, class, binding))) = (initializer, owner) else {
+    let Some((owner, owner_form)) = owner else {
         return false;
     };
     if initializer < owner {
         return true;
     }
-    // Local export lists have no evaluation step. Reading the already-created
-    // owner binding for a default export cannot run user code either. Do not
-    // allow arbitrary identifiers: an unresolved global can invoke a getter.
-    module.body[owner + 1..initializer].iter().all(|item| {
-        matches!(item, ModuleItem::ModuleDecl(swc_core::ecma::ast::ModuleDecl::ExportNamed(export)) if export.src.is_none())
-            || matches!(item, ModuleItem::ModuleDecl(swc_core::ecma::ast::ModuleDecl::ExportDefaultExpr(export))
-                if matches!(crate::utils::paren::strip_parens(&export.expr), Expr::Ident(id)
-                    if binding.is_some_and(|owner_id| binding_key(owner_id) == binding_key(id))))
-            || matches!(item, ModuleItem::Stmt(Stmt::Empty(_)))
-    })
-        && class.decorators.is_empty()
+    // Only a class in one of the owner forms can come before its map.
+    let Some((class, binding)) = owner_form else {
+        return false;
+    };
+    // Local export lists and function declarations have no evaluation step.
+    // Reading the already-created owner binding for a default export cannot
+    // run user code either. Do not allow arbitrary identifiers: an
+    // unresolved global can invoke a getter.
+    items[owner + 1..initializer].iter().all(|item| match item {
+        ListItem::ModuleDecl(swc_core::ecma::ast::ModuleDecl::ExportNamed(export)) => {
+            export.src.is_none()
+        }
+        ListItem::ModuleDecl(swc_core::ecma::ast::ModuleDecl::ExportDefaultExpr(export)) => {
+            matches!(crate::utils::paren::strip_parens(&export.expr), Expr::Ident(id)
+                if binding.is_some_and(|owner_id| binding_key(owner_id) == binding_key(id)))
+        }
+        ListItem::Stmt(Stmt::Empty(_) | Stmt::Decl(Decl::Fn(_))) => true,
+        // esbuild creates each of a class's maps and sets in turn after it.
+        ListItem::Stmt(Stmt::Expr(expr)) => {
+            is_local_brand_collection_initializer(&expr.expr, unresolved_mark)
+        }
+        _ => false,
+    }) && class.decorators.is_empty()
         && class.body.iter().all(|member| match member {
             ClassMember::Constructor(_) | ClassMember::Empty(_) => true,
             ClassMember::Method(method) => {
@@ -548,25 +755,61 @@ fn private_map_has_stable_lifetime(
         })
 }
 
+/// Whether evaluating `item` once evaluates a class whose body references the
+/// map, and only once: the class is reached through expressions alone, not
+/// through a function, a loop, or another class. Minified code returns the
+/// class from its factory directly, `return new class { … }`.
+fn item_evaluates_owner_class(item: &ListItem, references_key: &dyn Fn(&Class) -> bool) -> bool {
+    struct Finder<'a> {
+        references_key: &'a dyn Fn(&Class) -> bool,
+        found: bool,
+    }
+    impl Visit for Finder<'_> {
+        fn visit_class(&mut self, class: &Class) {
+            if (self.references_key)(class) {
+                self.found = true;
+            }
+        }
+        fn visit_function(&mut self, _: &swc_core::ecma::ast::Function) {}
+        fn visit_arrow_expr(&mut self, _: &swc_core::ecma::ast::ArrowExpr) {}
+        fn visit_getter_prop(&mut self, _: &swc_core::ecma::ast::GetterProp) {}
+        fn visit_setter_prop(&mut self, _: &swc_core::ecma::ast::SetterProp) {}
+    }
+    let mut finder = Finder {
+        references_key,
+        found: false,
+    };
+    match item {
+        ListItem::Stmt(Stmt::Return(ret)) => ret.arg.visit_with(&mut finder),
+        ListItem::Stmt(Stmt::Expr(expr)) => expr.expr.visit_with(&mut finder),
+        ListItem::Stmt(Stmt::Decl(Decl::Var(var))) => var.visit_with(&mut finder),
+        ListItem::ModuleDecl(swc_core::ecma::ast::ModuleDecl::ExportDefaultExpr(export)) => {
+            export.expr.visit_with(&mut finder)
+        }
+        _ => {}
+    }
+    finder.found
+}
+
 // Identify the class and the outer binding that receives it. A named class
 // expression's self binding is not the variable that owns the resulting class.
-fn private_map_class_owner(
-    item: &ModuleItem,
+fn private_map_class_owner<'a>(
+    item: &ListItem<'a>,
     unresolved_mark: Mark,
-) -> Option<(&Class, Option<&Ident>)> {
+) -> Option<(&'a Class, Option<&'a Ident>)> {
     use crate::utils::paren::strip_parens;
     use swc_core::ecma::ast::{DefaultDecl, ModuleDecl};
 
-    let decl = match item {
-        ModuleItem::Stmt(Stmt::Decl(decl)) => decl,
-        ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => &export.decl,
-        ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultDecl(export)) => {
+    let decl = match *item {
+        ListItem::Stmt(Stmt::Decl(decl)) => decl,
+        ListItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => &export.decl,
+        ListItem::ModuleDecl(ModuleDecl::ExportDefaultDecl(export)) => {
             let DefaultDecl::Class(expr) = &export.decl else {
                 return None;
             };
             return Some((&expr.class, expr.ident.as_ref()));
         }
-        ModuleItem::Stmt(Stmt::Expr(stmt)) => {
+        ListItem::Stmt(Stmt::Expr(stmt)) => {
             // Sequence splitting turns tsc class-expression factories into
             // `_a = class ...; map = new WeakMap(); const Foo = _a;`.
             let Expr::Assign(assign) = strip_parens(&stmt.expr) else {
@@ -639,41 +882,28 @@ impl Visit for PrivateMapRefCollector<'_> {
     }
 }
 
+/// References to a map outside any class body, other than its declaration
+/// and its `map = new WeakMap()` initializers.
 struct OutsidePrivateMapRefFinder<'a> {
-    private_maps: &'a HashMap<BindingKey, Atom>,
     unresolved_mark: Mark,
+    private_maps: &'a HashMap<BindingKey, Atom>,
     refs: HashSet<BindingKey>,
 }
 
 impl Visit for OutsidePrivateMapRefFinder<'_> {
-    fn visit_module(&mut self, module: &Module) {
-        for item in &module.body {
-            match item {
-                ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) => {
-                    for decl in &var_decl.decls {
-                        if let Some(init) = &decl.init {
-                            init.visit_with(self);
-                        }
-                    }
-                }
-                ModuleItem::Stmt(Stmt::Expr(expr_stmt)) => {
-                    visit_expr_skipping_module_private_initializers(
-                        &expr_stmt.expr,
-                        self.unresolved_mark,
-                        self,
-                    );
-                }
-                _ => item.visit_with(self),
-            }
-        }
-    }
-
     fn visit_class(&mut self, _class: &Class) {}
 
     fn visit_var_declarator(&mut self, decl: &swc_core::ecma::ast::VarDeclarator) {
         if let Some(init) = &decl.init {
             init.visit_with(self);
         }
+    }
+
+    fn visit_expr(&mut self, expr: &Expr) {
+        if private_weak_map_assignment_key(expr, self.unresolved_mark).is_some() {
+            return;
+        }
+        expr.visit_children_with(self);
     }
 
     fn visit_ident(&mut self, ident: &Ident) {
@@ -684,49 +914,7 @@ impl Visit for OutsidePrivateMapRefFinder<'_> {
     }
 }
 
-fn visit_expr_skipping_module_private_initializers<V: Visit>(
-    expr: &Expr,
-    unresolved_mark: Mark,
-    visitor: &mut V,
-) {
-    match expr {
-        Expr::Seq(seq) => {
-            for expr in &seq.exprs {
-                visit_expr_skipping_module_private_initializers(expr, unresolved_mark, visitor);
-            }
-        }
-        _ if private_weak_map_assignment_key(expr, unresolved_mark).is_some() => {}
-        _ => expr.visit_with(visitor),
-    }
-}
-
-fn collect_private_weak_map_assignments(
-    expr: &Expr,
-    maps: &mut HashMap<BindingKey, Atom>,
-    unresolved_mark: Mark,
-) {
-    match expr {
-        Expr::Seq(seq) => {
-            for expr in &seq.exprs {
-                collect_private_weak_map_assignments(expr, maps, unresolved_mark);
-            }
-        }
-        Expr::Assign(assign) if assign.op == AssignOp::Assign => {
-            let AssignTarget::Simple(SimpleAssignTarget::Ident(left)) = &assign.left else {
-                return;
-            };
-            if !is_new_weak_map_expression(&assign.right, unresolved_mark) {
-                return;
-            }
-            if let Some(name) = private_name_from_backing_ident(&left.id.sym) {
-                maps.insert(binding_key(&left.id), name);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn private_name_from_backing_ident(sym: &Atom) -> Option<Atom> {
+fn private_name_from_tsc_backing_ident(sym: &Atom) -> Option<Atom> {
     let name = sym.as_ref().trim_start_matches('_');
     if name.is_empty() {
         return None;
@@ -737,6 +925,14 @@ fn private_name_from_backing_ident(sym: &Atom) -> Option<Atom> {
     } else {
         None
     }
+}
+
+/// Babel, swc, and esbuild name the map `_x` for `#x` (`_x2` when the
+/// name is taken).
+fn private_name_from_underscore_backing_ident(sym: &Atom) -> Option<Atom> {
+    let name = sym.as_ref();
+    let name = name.strip_prefix('_').unwrap_or(name);
+    (!name.is_empty() && is_identifier_name(name)).then(|| name.into())
 }
 
 fn is_new_weak_map_expression(expr: &Expr, unresolved_mark: Mark) -> bool {
@@ -761,35 +957,6 @@ fn private_map_has_remaining_refs(
     }
 
     impl Visit for RefFinder<'_> {
-        fn visit_module(&mut self, module: &Module) {
-            for item in &module.body {
-                match item {
-                    ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) => {
-                        for decl in &var_decl.decls {
-                            if let Pat::Ident(BindingIdent { id, .. }) = &decl.name {
-                                if binding_key(id) == *self.key
-                                    && decl.init.as_deref().is_none_or(|init| {
-                                        is_new_weak_map_expression(init, self.unresolved_mark)
-                                    })
-                                {
-                                    continue;
-                                }
-                            }
-                            decl.visit_with(self);
-                        }
-                    }
-                    ModuleItem::Stmt(Stmt::Expr(expr_stmt)) => {
-                        visit_expr_skipping_module_private_initializers(
-                            &expr_stmt.expr,
-                            self.unresolved_mark,
-                            self,
-                        );
-                    }
-                    _ => item.visit_with(self),
-                }
-            }
-        }
-
         fn visit_var_declarator(&mut self, decl: &swc_core::ecma::ast::VarDeclarator) {
             if let Pat::Ident(BindingIdent { id, .. }) = &decl.name {
                 if binding_key(id) == *self.key
@@ -802,6 +969,15 @@ fn private_map_has_remaining_refs(
                 }
             }
             decl.visit_children_with(self);
+        }
+
+        fn visit_expr(&mut self, expr: &Expr) {
+            if private_weak_map_assignment_key(expr, self.unresolved_mark).as_ref()
+                == Some(self.key)
+            {
+                return;
+            }
+            expr.visit_children_with(self);
         }
 
         fn visit_ident(&mut self, ident: &Ident) {
@@ -820,32 +996,60 @@ fn private_map_has_remaining_refs(
     finder.found
 }
 
+/// Drops the declarations and initializers of maps no code reads any more,
+/// in the module body and in function bodies.
 fn remove_private_map_initializers(
     module: &mut Module,
     removable: &HashSet<BindingKey>,
     unresolved_mark: Mark,
 ) {
-    module.body.retain_mut(|item| match item {
-        ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) => {
-            var_decl.decls.retain(|decl| {
-                let Pat::Ident(BindingIdent { id, .. }) = &decl.name else {
-                    return true;
-                };
-                let key = binding_key(id);
-                if !removable.contains(&key) {
-                    return true;
+    struct Remover<'a> {
+        removable: &'a HashSet<BindingKey>,
+        unresolved_mark: Mark,
+    }
+    impl Remover<'_> {
+        fn retain_stmt(&self, stmt: &mut Stmt) -> bool {
+            match stmt {
+                Stmt::Decl(Decl::Var(var_decl)) => {
+                    var_decl.decls.retain(|decl| {
+                        let Pat::Ident(BindingIdent { id, .. }) = &decl.name else {
+                            return true;
+                        };
+                        if !self.removable.contains(&binding_key(id)) {
+                            return true;
+                        }
+                        !decl.init.as_deref().is_none_or(|init| {
+                            is_new_weak_map_expression(init, self.unresolved_mark)
+                        })
+                    });
+                    !var_decl.decls.is_empty()
                 }
-                !decl
-                    .init
-                    .as_deref()
-                    .is_none_or(|init| is_new_weak_map_expression(init, unresolved_mark))
+                Stmt::Expr(expr_stmt) => remove_private_weak_map_assignment_expr(
+                    &mut expr_stmt.expr,
+                    self.removable,
+                    self.unresolved_mark,
+                ),
+                _ => true,
+            }
+        }
+    }
+    impl VisitMut for Remover<'_> {
+        fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
+            items.retain_mut(|item| match item {
+                ModuleItem::Stmt(stmt) => self.retain_stmt(stmt),
+                ModuleItem::ModuleDecl(_) => true,
             });
-            !var_decl.decls.is_empty()
+            items.visit_mut_children_with(self);
         }
-        ModuleItem::Stmt(Stmt::Expr(expr_stmt)) => {
-            remove_private_weak_map_assignment_expr(&mut expr_stmt.expr, removable, unresolved_mark)
+
+        fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
+            stmts.retain_mut(|stmt| self.retain_stmt(stmt));
+            stmts.visit_mut_children_with(self);
         }
-        _ => true,
+    }
+    module.visit_mut_with(&mut Remover {
+        removable,
+        unresolved_mark,
     });
 }
 
@@ -874,6 +1078,24 @@ fn remove_private_weak_map_assignment_expr(
     }
 }
 
+/// `local = new WeakMap()` or `local = new WeakSet()`: no user code runs.
+fn is_local_brand_collection_initializer(expr: &Expr, unresolved_mark: Mark) -> bool {
+    let Expr::Assign(assign) = expr else {
+        return false;
+    };
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(left)) = &assign.left else {
+        return false;
+    };
+    let Expr::New(new_expr) = assign.right.as_ref() else {
+        return false;
+    };
+    assign.op == AssignOp::Assign
+        && left.id.ctxt.outer() != unresolved_mark
+        && new_expr.args.as_ref().is_none_or(|args| args.is_empty())
+        && matches!(new_expr.callee.as_ref(), Expr::Ident(id)
+            if matches!(id.sym.as_ref(), "WeakMap" | "WeakSet") && id.ctxt.outer() == unresolved_mark)
+}
+
 fn private_weak_map_assignment_key(expr: &Expr, unresolved_mark: Mark) -> Option<BindingKey> {
     let Expr::Assign(assign) = expr else {
         return None;
@@ -888,163 +1110,501 @@ fn private_weak_map_assignment_key(expr: &Expr, unresolved_mark: Mark) -> Option
     Some(binding_key(&left.id))
 }
 
-fn class_has_unsupported_private_map_refs(
+/// The private-field helper calls UnClassFields rewrites, from tsc and from
+/// the producers in `lowered_private_field_helpers`.
+struct PrivateCallSites<'a> {
+    tsc_get: &'a PrivateHelperCallees,
+    tsc_set: &'a PrivateHelperCallees,
+    lowered: &'a HashMap<BindingKey, LoweredPrivateHelper>,
+    /// `new WeakSet()` bindings: private-method brands.
+    brand_sets: &'a HashSet<BindingKey>,
+    unresolved_mark: Mark,
+}
+
+/// One operation on a backing map with `this` as the receiver.
+enum PrivateOp<'a> {
+    /// `map.set(this, value)` (tsc and older Babel) or an init helper. No
+    /// value is esbuild's `__privateAdd(this, map)` for `#x;`.
+    Init {
+        map: &'a Ident,
+        value: Option<&'a Expr>,
+        through_helper: bool,
+    },
+    Get {
+        map: &'a Ident,
+        storage: PrivateStorage,
+        through_helper: bool,
+    },
+    Set {
+        map: &'a Ident,
+        value: &'a Expr,
+        storage: PrivateStorage,
+        through_helper: bool,
+    },
+}
+
+impl<'a> PrivateOp<'a> {
+    fn map(&self) -> &'a Ident {
+        match self {
+            PrivateOp::Init { map, .. }
+            | PrivateOp::Get { map, .. }
+            | PrivateOp::Set { map, .. } => map,
+        }
+    }
+}
+
+impl PrivateCallSites<'_> {
+    fn op<'c>(&self, call: &'c CallExpr) -> Option<PrivateOp<'c>> {
+        if call.args.iter().any(|arg| arg.spread.is_some()) {
+            return None;
+        }
+        let Callee::Expr(callee) = &call.callee else {
+            return None;
+        };
+        let args: Vec<&Expr> = call.args.iter().map(|arg| arg.expr.as_ref()).collect();
+        let is_this = |expr: &Expr| matches!(expr, Expr::This(_));
+        let map_ident = |expr: &'c Expr| match expr {
+            Expr::Ident(ident) => Some(ident),
+            _ => None,
+        };
+        if let Expr::Member(member) = callee.as_ref() {
+            if let (MemberProp::Ident(prop), Expr::Ident(map), [receiver, value]) =
+                (&member.prop, member.obj.as_ref(), args.as_slice())
+            {
+                if prop.sym.as_ref() == "set" && is_this(receiver) {
+                    return Some(PrivateOp::Init {
+                        map,
+                        value: Some(value),
+                        through_helper: false,
+                    });
+                }
+            }
+        }
+        if self.tsc_get.matches(callee) {
+            if let [receiver, map, kind] = args.as_slice() {
+                if is_this(receiver) && is_private_field_kind(kind) {
+                    return Some(PrivateOp::Get {
+                        map: map_ident(map)?,
+                        storage: PrivateStorage::Raw,
+                        through_helper: false,
+                    });
+                }
+            }
+        }
+        if self.tsc_set.matches(callee) {
+            if let [receiver, map, value, kind] = args.as_slice() {
+                if is_this(receiver) && is_private_field_kind(kind) {
+                    return Some(PrivateOp::Set {
+                        map: map_ident(map)?,
+                        value,
+                        storage: PrivateStorage::Raw,
+                        through_helper: false,
+                    });
+                }
+            }
+        }
+        let Expr::Ident(callee) = crate::utils::paren::strip_parens(callee) else {
+            return None;
+        };
+        match *self.lowered.get(&binding_key(callee))? {
+            LoweredPrivateHelper::AddBrand => None,
+            LoweredPrivateHelper::Init => {
+                let (receiver, map, value) = match args.as_slice() {
+                    [receiver, map, value] => (receiver, map, Some(*value)),
+                    [receiver, map] => (receiver, map, None),
+                    _ => return None,
+                };
+                is_this(receiver).then_some(())?;
+                Some(PrivateOp::Init {
+                    map: map_ident(map)?,
+                    value,
+                    through_helper: true,
+                })
+            }
+            LoweredPrivateHelper::Get {
+                receiver,
+                map,
+                arity,
+                storage,
+            } => {
+                (args.len() == arity && is_this(args[receiver])).then_some(())?;
+                Some(PrivateOp::Get {
+                    map: map_ident(args[map])?,
+                    storage,
+                    through_helper: true,
+                })
+            }
+            LoweredPrivateHelper::Set {
+                receiver,
+                map,
+                value,
+                arity,
+                storage,
+            } => {
+                (args.len() == arity && is_this(args[receiver])).then_some(())?;
+                Some(PrivateOp::Set {
+                    map: map_ident(args[map])?,
+                    value: args[value],
+                    storage,
+                    through_helper: true,
+                })
+            }
+        }
+    }
+}
+
+impl PrivateCallSites<'_> {
+    /// `add(this, brand)`, `__privateAdd(this, brand)`, or `brand.add(this)`:
+    /// the constructor adds a private-method brand, which the method itself
+    /// stays lowered for.
+    fn is_brand_add(&self, stmt: &Stmt) -> bool {
+        let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+            return false;
+        };
+        let Expr::Call(call) = expr.as_ref() else {
+            return false;
+        };
+        let Callee::Expr(callee) = &call.callee else {
+            return false;
+        };
+        let is_brand = |expr: &Expr| matches!(expr, Expr::Ident(id) if self.brand_sets.contains(&binding_key(id)));
+        let args: Option<Vec<&Expr>> = call
+            .args
+            .iter()
+            .map(|arg| arg.spread.is_none().then_some(arg.expr.as_ref()))
+            .collect();
+        let Some(args) = args else {
+            return false;
+        };
+        match crate::utils::paren::strip_parens(callee) {
+            Expr::Ident(helper) => {
+                matches!(
+                    self.lowered.get(&binding_key(helper)),
+                    Some(LoweredPrivateHelper::AddBrand | LoweredPrivateHelper::Init)
+                ) && matches!(args.as_slice(), [receiver, brand]
+                    if matches!(receiver, Expr::This(_)) && is_brand(brand))
+            }
+            Expr::Member(member) => {
+                matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "add")
+                    && is_brand(&member.obj)
+                    && matches!(args.as_slice(), [receiver] if matches!(receiver, Expr::This(_)))
+            }
+            _ => false,
+        }
+    }
+}
+
+/// A field value whose evaluation cannot observe a private-method brand:
+/// literals, function values, `void` of a literal, empty builtin
+/// collections, and arrays and plain objects of those.
+fn is_inert_field_value(expr: &Expr, unresolved_mark: Mark) -> bool {
+    use swc_core::ecma::ast::UnaryOp;
+    match crate::utils::paren::strip_parens(expr) {
+        Expr::Lit(_) | Expr::Fn(_) | Expr::Arrow(_) => true,
+        Expr::Tpl(tpl) => tpl.exprs.is_empty(),
+        Expr::Ident(id) => id.sym.as_ref() == "undefined" && id.ctxt.outer() == unresolved_mark,
+        Expr::Unary(unary) => {
+            matches!(unary.op, UnaryOp::Void | UnaryOp::Bang | UnaryOp::Minus)
+                && matches!(crate::utils::paren::strip_parens(&unary.arg), Expr::Lit(_))
+        }
+        Expr::Array(array) => array.elems.iter().all(|elem| match elem {
+            None => true,
+            Some(elem) => {
+                elem.spread.is_none() && is_inert_field_value(&elem.expr, unresolved_mark)
+            }
+        }),
+        Expr::Object(object) => object.props.iter().all(|prop| match prop {
+            PropOrSpread::Prop(prop) => match prop.as_ref() {
+                Prop::KeyValue(KeyValueProp { key, value }) => {
+                    !matches!(key, PropName::Computed(_))
+                        && is_inert_field_value(value, unresolved_mark)
+                }
+                _ => false,
+            },
+            PropOrSpread::Spread(_) => false,
+        }),
+        Expr::New(new_expr) => {
+            new_expr.args.as_ref().is_none_or(|args| args.is_empty())
+                && matches!(new_expr.callee.as_ref(), Expr::Ident(id)
+                    if id.ctxt.outer() == unresolved_mark
+                        && matches!(id.sym.as_ref(), "Map" | "Set" | "WeakMap" | "WeakSet"))
+        }
+        _ => false,
+    }
+}
+
+/// How a class uses one backing map, when every reference is a supported
+/// operation with `this` as the receiver.
+struct PrivateMapUse {
+    inits: usize,
+    storage: Option<PrivateStorage>,
+    through_helper: bool,
+}
+
+fn class_private_map_use(
     class: &Class,
     map_key: &BindingKey,
-    get_helpers: &PrivateHelperCallees,
-    set_helpers: &PrivateHelperCallees,
-) -> bool {
-    struct UnsupportedRefFinder<'a> {
+    sites: &PrivateCallSites,
+) -> Option<PrivateMapUse> {
+    struct UseFinder<'a> {
         map_key: &'a BindingKey,
-        get_helpers: &'a PrivateHelperCallees,
-        set_helpers: &'a PrivateHelperCallees,
-        found: bool,
+        sites: &'a PrivateCallSites<'a>,
+        usage: PrivateMapUse,
+        unsupported: bool,
     }
 
-    impl Visit for UnsupportedRefFinder<'_> {
-        fn visit_call_expr(&mut self, call: &CallExpr) {
-            if self.is_supported_initializer(call) {
-                if let Some(value) = call.args.get(1) {
-                    value.expr.visit_with(self);
+    impl UseFinder<'_> {
+        /// A read in a position where `this.#x` would mean something else:
+        /// a callee or tag (it would bind `this`), or a `delete` operand (a
+        /// syntax error on a private reference).
+        fn flag_read_in(&mut self, expr: &Expr) {
+            if let Expr::Call(call) = crate::utils::paren::strip_parens(expr) {
+                if matches!(self.sites.op(call), Some(PrivateOp::Get { map, .. })
+                    if binding_key(map) == *self.map_key)
+                {
+                    self.unsupported = true;
                 }
-                return;
             }
-            if let Some(value_index) = self.supported_helper_value_index(call) {
-                if let Some(value) = value_index.and_then(|index| call.args.get(index)) {
-                    value.expr.visit_with(self);
-                }
-                return;
-            }
+        }
+    }
+
+    impl Visit for UseFinder<'_> {
+        fn visit_tagged_tpl(&mut self, tagged: &swc_core::ecma::ast::TaggedTpl) {
+            self.flag_read_in(&tagged.tag);
+            tagged.visit_children_with(self);
+        }
+
+        fn visit_opt_call(&mut self, call: &swc_core::ecma::ast::OptCall) {
+            self.flag_read_in(&call.callee);
             call.visit_children_with(self);
+        }
+
+        fn visit_unary_expr(&mut self, unary: &swc_core::ecma::ast::UnaryExpr) {
+            if unary.op == swc_core::ecma::ast::UnaryOp::Delete {
+                self.flag_read_in(&unary.arg);
+            }
+            unary.visit_children_with(self);
+        }
+
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if let Callee::Expr(callee) = &call.callee {
+                self.flag_read_in(callee);
+            }
+            let Some(op) = self.sites.op(call) else {
+                call.visit_children_with(self);
+                return;
+            };
+            if binding_key(op.map()) != *self.map_key {
+                call.visit_children_with(self);
+                return;
+            }
+            let (value, storage, through_helper) = match op {
+                PrivateOp::Init {
+                    value,
+                    through_helper,
+                    ..
+                } => {
+                    self.usage.inits += 1;
+                    (value, None, through_helper)
+                }
+                PrivateOp::Get {
+                    storage,
+                    through_helper,
+                    ..
+                } => (None, Some(storage), through_helper),
+                PrivateOp::Set {
+                    value,
+                    storage,
+                    through_helper,
+                    ..
+                } => (Some(value), Some(storage), through_helper),
+            };
+            self.usage.through_helper |= through_helper;
+            if let Some(storage) = storage {
+                match self.usage.storage {
+                    Some(seen) if seen != storage => self.unsupported = true,
+                    _ => self.usage.storage = Some(storage),
+                }
+            }
+            if let Some(value) = value {
+                value.visit_with(self);
+            }
         }
 
         fn visit_ident(&mut self, ident: &Ident) {
             if binding_key(ident) == *self.map_key {
-                self.found = true;
+                self.unsupported = true;
             }
         }
     }
 
-    impl UnsupportedRefFinder<'_> {
-        fn is_supported_initializer(&self, call: &CallExpr) -> bool {
-            if call.args.len() != 2 || call.args.iter().any(|arg| arg.spread.is_some()) {
-                return false;
-            }
-            let Callee::Expr(callee) = &call.callee else {
-                return false;
-            };
-            let Expr::Member(member) = callee.as_ref() else {
-                return false;
-            };
-            if !matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "set") {
-                return false;
-            }
-            let Expr::Ident(map_ident) = member.obj.as_ref() else {
-                return false;
-            };
-            if binding_key(map_ident) != *self.map_key {
-                return false;
-            }
-            matches!(call.args[0].expr.as_ref(), Expr::This(_))
-        }
-
-        fn supported_helper_value_index(&self, call: &CallExpr) -> Option<Option<usize>> {
-            if call.args.iter().any(|arg| arg.spread.is_some()) {
-                return None;
-            }
-            let Callee::Expr(callee) = &call.callee else {
-                return None;
-            };
-            if self.get_helpers.matches(callee) {
-                let [ExprOrSpread { expr: receiver, .. }, ExprOrSpread { expr: map, .. }, ExprOrSpread { expr: kind, .. }] =
-                    call.args.as_slice()
-                else {
-                    return None;
-                };
-                if matches!(receiver.as_ref(), Expr::This(_))
-                    && map_matches_binding(map, self.map_key)
-                    && is_private_field_kind(kind)
-                {
-                    return Some(None);
-                }
-            }
-            if self.set_helpers.matches(callee) {
-                let [ExprOrSpread { expr: receiver, .. }, ExprOrSpread { expr: map, .. }, ExprOrSpread { expr: _value, .. }, ExprOrSpread { expr: kind, .. }] =
-                    call.args.as_slice()
-                else {
-                    return None;
-                };
-                if matches!(receiver.as_ref(), Expr::This(_))
-                    && map_matches_binding(map, self.map_key)
-                    && is_private_field_kind(kind)
-                {
-                    return Some(Some(2));
-                }
-            }
-            None
-        }
-    }
-
-    let mut finder = UnsupportedRefFinder {
+    let mut finder = UseFinder {
         map_key,
-        get_helpers,
-        set_helpers,
-        found: false,
+        sites,
+        usage: PrivateMapUse {
+            inits: 0,
+            storage: None,
+            through_helper: false,
+        },
+        unsupported: false,
     };
     class.visit_with(&mut finder);
-    finder.found
+    (!finder.unsupported).then_some(finder.usage)
 }
 
-fn map_matches_binding(expr: &Expr, key: &BindingKey) -> bool {
-    matches!(expr, Expr::Ident(ident) if binding_key(ident) == *key)
+/// `{ writable: true, value }`, the descriptor swc and older Babel store:
+/// its value.
+fn private_field_descriptor_value(expr: &Expr) -> Option<Box<Expr>> {
+    let Expr::Object(object) = crate::utils::paren::strip_parens(expr) else {
+        return None;
+    };
+    let mut writable = false;
+    let mut value = None;
+    for prop in &object.props {
+        let PropOrSpread::Prop(prop) = prop else {
+            return None;
+        };
+        let Prop::KeyValue(KeyValueProp {
+            key,
+            value: prop_value,
+        }) = prop.as_ref()
+        else {
+            return None;
+        };
+        match prop_name_str(key).as_deref() {
+            Some("writable") if !writable && is_true_literal(prop_value) => writable = true,
+            Some("value") if value.is_none() => value = Some(prop_value.clone()),
+            _ => return None,
+        }
+    }
+    if writable {
+        value
+    } else {
+        None
+    }
+}
+
+fn class_private_names(class: &Class) -> HashSet<Atom> {
+    struct Names(HashSet<Atom>);
+    impl Visit for Names {
+        fn visit_private_name(&mut self, name: &PrivateName) {
+            self.0.insert(name.name.clone());
+        }
+    }
+    let mut names = Names(HashSet::default());
+    class.visit_with(&mut names);
+    names.0
 }
 
 fn promote_private_field_initializers(
     class: &mut Class,
     private_maps: &HashMap<BindingKey, Atom>,
     single_owner_maps: &HashSet<BindingKey>,
-    get_helpers: &PrivateHelperCallees,
-    set_helpers: &PrivateHelperCallees,
-) -> HashSet<BindingKey> {
+    sites: &PrivateCallSites,
+) -> HashMap<BindingKey, Atom> {
     let Some(ctor_index) = class
         .body
         .iter()
         .position(|member| matches!(member, ClassMember::Constructor(_)))
     else {
-        return HashSet::default();
+        return HashMap::default();
     };
 
-    let unsupported_private_maps: HashSet<BindingKey> = private_maps
-        .keys()
-        .filter(|key| class_has_unsupported_private_map_refs(class, key, get_helpers, set_helpers))
-        .cloned()
+    let map_uses: HashMap<BindingKey, PrivateMapUse> = single_owner_maps
+        .iter()
+        .filter_map(|key| {
+            class_private_map_use(class, key, sites).map(|usage| (key.clone(), usage))
+        })
         .collect();
+    let mut taken_names = class_private_names(class);
+    let is_derived = class.super_class.is_some();
 
     let (private_props, promoted_maps, remove_empty_ctor) = {
         let ClassMember::Constructor(ctor) = &mut class.body[ctor_index] else {
-            return HashSet::default();
+            return HashMap::default();
         };
         let Some(body) = &mut ctor.body else {
-            return HashSet::default();
+            return HashMap::default();
         };
-        let blocked_bindings = constructor_blocked_bindings(&ctor.params);
+        let mut blocked_bindings = constructor_blocked_bindings(&ctor.params);
+        // A derived class defines its fields when `super(…)` returns: the
+        // initializers follow the constructor's one top-level super call, and
+        // may not read what the statements before it declare.
+        let start = if is_derived {
+            let Some(super_index) = single_top_level_super_call(&body.stmts) else {
+                return HashMap::default();
+            };
+            collect_declared_bindings(&body.stmts[..super_index], &mut blocked_bindings);
+            super_index + 1
+        } else {
+            0
+        };
         let mut private_props = Vec::new();
-        let mut promoted_maps = HashSet::default();
-        let mut consumed = 0;
+        let mut promoted_maps = HashMap::default();
+        let mut consumed = Vec::new();
+        // Private methods get their brand before any field. A field promoted
+        // past a lowered brand add now runs first, so its value must not be
+        // able to observe the brand.
+        let mut past_brand_add = false;
 
-        for stmt in &body.stmts {
-            let Some((map_key, private_name, value)) =
-                extract_private_field_initializer(stmt, private_maps)
+        for (index, stmt) in body.stmts.iter().enumerate().skip(start) {
+            if sites.is_brand_add(stmt) {
+                past_brand_add = true;
+                continue;
+            }
+            let Some((map_key, value, init_through_helper)) =
+                extract_private_field_initializer(stmt, private_maps, sites)
             else {
                 break;
             };
-            if expr_uses_blocked_binding(&value, &blocked_bindings) {
+            let Some(usage) = map_uses.get(&map_key) else {
+                break;
+            };
+            if usage.inits != 1 {
                 break;
             }
-            if !single_owner_maps.contains(&map_key) {
+            let value = match (usage.storage, value) {
+                (Some(PrivateStorage::Descriptor), value) => {
+                    let Some(value) = value.as_deref().and_then(private_field_descriptor_value)
+                    else {
+                        break;
+                    };
+                    Some(value)
+                }
+                // An init helper with no read or write is shared by Babel
+                // (value) and swc (descriptor); a descriptor-shaped value
+                // cannot tell them apart.
+                (None, Some(value))
+                    if init_through_helper && private_field_descriptor_value(&value).is_some() =>
+                {
+                    break;
+                }
+                (_, value) => value,
+            };
+            if value
+                .as_deref()
+                .is_some_and(|value| expr_uses_blocked_binding(value, &blocked_bindings))
+            {
                 break;
             }
-            if unsupported_private_maps.contains(&map_key) {
+            if past_brand_add
+                && !value
+                    .as_deref()
+                    .is_none_or(|value| is_inert_field_value(value, sites.unresolved_mark))
+            {
+                break;
+            }
+            let backing = &private_maps[&map_key];
+            let private_name =
+                if usage.through_helper || usage.storage == Some(PrivateStorage::Descriptor) {
+                    private_name_from_underscore_backing_ident(backing)
+                } else {
+                    private_name_from_tsc_backing_ident(backing)
+                };
+            let Some(private_name) = private_name else {
+                break;
+            };
+            if !taken_names.insert(private_name.clone()) {
                 break;
             }
             private_props.push(ClassMember::PrivateProp(PrivateProp {
@@ -1052,9 +1612,9 @@ fn promote_private_field_initializers(
                 ctxt: SyntaxContext::empty(),
                 key: PrivateName {
                     span: DUMMY_SP,
-                    name: private_name,
+                    name: private_name.clone(),
                 },
-                value: Some(value),
+                value,
                 type_ann: None,
                 is_static: false,
                 decorators: Vec::new(),
@@ -1064,16 +1624,18 @@ fn promote_private_field_initializers(
                 readonly: false,
                 definite: false,
             }));
-            promoted_maps.insert(map_key);
-            consumed += 1;
+            promoted_maps.insert(map_key, private_name);
+            consumed.push(index);
         }
 
         if private_props.is_empty() {
-            return HashSet::default();
+            return HashMap::default();
         }
 
-        body.stmts.drain(0..consumed);
-        let remove_empty_ctor = body.stmts.is_empty() && ctor.params.is_empty();
+        for index in consumed.into_iter().rev() {
+            body.stmts.remove(index);
+        }
+        let remove_empty_ctor = !is_derived && body.stmts.is_empty() && ctor.params.is_empty();
         (private_props, promoted_maps, remove_empty_ctor)
     };
 
@@ -1089,61 +1651,34 @@ fn promote_private_field_initializers(
 fn extract_private_field_initializer(
     stmt: &Stmt,
     private_maps: &HashMap<BindingKey, Atom>,
-) -> Option<(BindingKey, Atom, Box<Expr>)> {
+    sites: &PrivateCallSites,
+) -> Option<(BindingKey, Option<Box<Expr>>, bool)> {
     let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
         return None;
     };
     let Expr::Call(call) = expr.as_ref() else {
         return None;
     };
-    if call.args.len() != 2 || call.args.iter().any(|arg| arg.spread.is_some()) {
-        return None;
-    }
-    let Callee::Expr(callee) = &call.callee else {
-        return None;
-    };
-    let Expr::Member(member) = callee.as_ref() else {
-        return None;
-    };
-    if !matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "set") {
-        return None;
-    }
-    let Expr::Ident(map_ident) = member.obj.as_ref() else {
-        return None;
-    };
-    let map_key = binding_key(map_ident);
-    let private_name = private_maps.get(&map_key)?;
-    let [ExprOrSpread { expr: receiver, .. }, ExprOrSpread { expr: value, .. }] =
-        call.args.as_slice()
+    let PrivateOp::Init {
+        map,
+        value,
+        through_helper,
+    } = sites.op(call)?
     else {
         return None;
     };
-    if !matches!(receiver.as_ref(), Expr::This(_)) {
-        return None;
-    }
-    Some((map_key, private_name.clone(), value.clone()))
-}
-
-fn rewrite_private_field_accesses(
-    class: &mut Class,
-    promoted_maps: &HashSet<BindingKey>,
-    private_maps: &HashMap<BindingKey, Atom>,
-    get_helpers: &PrivateHelperCallees,
-    set_helpers: &PrivateHelperCallees,
-) {
-    class.visit_mut_with(&mut PrivateFieldAccessRewriter {
-        promoted_maps,
-        private_maps,
-        get_helpers,
-        set_helpers,
-    });
+    let map_key = binding_key(map);
+    private_maps.contains_key(&map_key).then_some(())?;
+    Some((
+        map_key,
+        value.map(|value| Box::new(value.clone())),
+        through_helper,
+    ))
 }
 
 struct PrivateFieldAccessRewriter<'a> {
-    promoted_maps: &'a HashSet<BindingKey>,
-    private_maps: &'a HashMap<BindingKey, Atom>,
-    get_helpers: &'a PrivateHelperCallees,
-    set_helpers: &'a PrivateHelperCallees,
+    promoted_maps: &'a HashMap<BindingKey, Atom>,
+    sites: &'a PrivateCallSites<'a>,
 }
 
 impl VisitMut for PrivateFieldAccessRewriter<'_> {
@@ -1153,7 +1688,12 @@ impl VisitMut for PrivateFieldAccessRewriter<'_> {
         let Expr::Call(call) = expr else {
             return;
         };
-        let Some((private_name, value)) = self.extract_private_helper_access(call) else {
+        let (map, value) = match self.sites.op(call) {
+            Some(PrivateOp::Get { map, .. }) => (map, None),
+            Some(PrivateOp::Set { map, value, .. }) => (map, Some(Box::new(value.clone()))),
+            _ => return,
+        };
+        let Some(private_name) = self.promoted_maps.get(&binding_key(map)).cloned() else {
             return;
         };
         let original_span = call.span;
@@ -1168,53 +1708,6 @@ impl VisitMut for PrivateFieldAccessRewriter<'_> {
         } else {
             *expr = Expr::Member(member);
         }
-    }
-}
-
-impl PrivateFieldAccessRewriter<'_> {
-    fn extract_private_helper_access(&self, call: &CallExpr) -> Option<(Atom, Option<Box<Expr>>)> {
-        if call.args.iter().any(|arg| arg.spread.is_some()) {
-            return None;
-        }
-        let Callee::Expr(callee) = &call.callee else {
-            return None;
-        };
-        if self.get_helpers.matches(callee) {
-            let [ExprOrSpread { expr: receiver, .. }, ExprOrSpread { expr: map, .. }, ExprOrSpread { expr: kind, .. }] =
-                call.args.as_slice()
-            else {
-                return None;
-            };
-            if !matches!(receiver.as_ref(), Expr::This(_)) || !is_private_field_kind(kind) {
-                return None;
-            }
-            let private_name = self.private_name_for_map(map)?;
-            return Some((private_name, None));
-        }
-        if self.set_helpers.matches(callee) {
-            let [ExprOrSpread { expr: receiver, .. }, ExprOrSpread { expr: map, .. }, ExprOrSpread { expr: value, .. }, ExprOrSpread { expr: kind, .. }] =
-                call.args.as_slice()
-            else {
-                return None;
-            };
-            if !matches!(receiver.as_ref(), Expr::This(_)) || !is_private_field_kind(kind) {
-                return None;
-            }
-            let private_name = self.private_name_for_map(map)?;
-            return Some((private_name, Some(value.clone())));
-        }
-        None
-    }
-
-    fn private_name_for_map(&self, expr: &Expr) -> Option<Atom> {
-        let Expr::Ident(map_ident) = expr else {
-            return None;
-        };
-        let map_key = binding_key(map_ident);
-        if !self.promoted_maps.contains(&map_key) {
-            return None;
-        }
-        self.private_maps.get(&map_key).cloned()
     }
 }
 
@@ -1309,6 +1802,52 @@ fn extract_instance_field_initializer(
     extract_babel_instance_field_initializer(stmt, define_property_helpers).or_else(|| {
         extract_object_define_property_instance_field_initializer(stmt, unresolved_mark)
     })
+}
+
+/// The index of the constructor statement `super(…);`, when it is the only
+/// super call in the constructor.
+fn single_top_level_super_call(stmts: &[Stmt]) -> Option<usize> {
+    struct SuperCalls(usize);
+    impl Visit for SuperCalls {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if matches!(call.callee, Callee::Super(_)) {
+                self.0 += 1;
+            }
+            call.visit_children_with(self);
+        }
+        // A nested class has its own super calls; a nested function cannot
+        // call `super`.
+        fn visit_class(&mut self, _: &Class) {}
+        fn visit_function(&mut self, _: &swc_core::ecma::ast::Function) {}
+    }
+    let mut calls = SuperCalls(0);
+    stmts.visit_with(&mut calls);
+    if calls.0 != 1 {
+        return None;
+    }
+    stmts.iter().position(|stmt| {
+        matches!(stmt, Stmt::Expr(ExprStmt { expr, .. })
+            if matches!(expr.as_ref(), Expr::Call(call) if matches!(call.callee, Callee::Super(_))))
+    })
+}
+
+/// Every binding the statements declare, at any depth.
+fn collect_declared_bindings(stmts: &[Stmt], bindings: &mut Vec<(Atom, SyntaxContext)>) {
+    struct Declared<'a>(&'a mut Vec<(Atom, SyntaxContext)>);
+    impl Visit for Declared<'_> {
+        fn visit_binding_ident(&mut self, binding: &BindingIdent) {
+            self.0.push((binding.id.sym.clone(), binding.id.ctxt));
+        }
+        fn visit_fn_decl(&mut self, decl: &swc_core::ecma::ast::FnDecl) {
+            self.0.push((decl.ident.sym.clone(), decl.ident.ctxt));
+            decl.visit_children_with(self);
+        }
+        fn visit_class_decl(&mut self, decl: &swc_core::ecma::ast::ClassDecl) {
+            self.0.push((decl.ident.sym.clone(), decl.ident.ctxt));
+            decl.visit_children_with(self);
+        }
+    }
+    stmts.visit_with(&mut Declared(bindings));
 }
 
 fn constructor_blocked_bindings(
