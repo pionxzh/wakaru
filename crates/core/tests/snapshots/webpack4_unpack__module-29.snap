@@ -25,9 +25,7 @@ export default (()=>{
         "abcdefghijklmnopqrst".split("").forEach((e)=>{
             r[e] = e;
         });
-        return Object.keys({
-            ...r
-        }).join("") === "abcdefghijklmnopqrst";
+        return Object.keys(Object.assign({}, r)).join("") === "abcdefghijklmnopqrst";
     } catch (e) {
         return false;
     }

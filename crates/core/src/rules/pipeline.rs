@@ -448,9 +448,9 @@ runner!(run_un_array_concat_spread_rest, |ctx| {
     UnArrayConcatSpreadRest::new(ctx.unresolved_mark, ctx.rewrite_level)
 });
 runner!(run_un_spread_array_literal, UnSpreadArrayLiteral);
-runner!(run_object_assign_spread, |ctx| ObjectAssignSpread::new(
-    ctx.unresolved_mark
-));
+runner!(run_object_assign_spread, |ctx| {
+    ObjectAssignSpread::new_with_level(ctx.unresolved_mark, ctx.rewrite_level)
+});
 runner!(
     run_un_variable_merging_decls_only,
     UnVariableMergingDeclsOnly

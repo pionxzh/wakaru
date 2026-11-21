@@ -848,9 +848,41 @@ The rule also rejects, at every level, a seed literal containing an accessor
 or a `__proto__` key, and any temporary that is observable outside the matched
 pattern (see "Generated Temporaries" below).
 
-Affects: `UnComputedProperties`.
+A merge into a fresh object literal makes the same trade per copied key.
+`Object.assign({}, a, b)`, Babel's `_extends({}, a, b)` and TypeScript's
+`__assign({}, a, b)` assign each own enumerable key of each source, while
+`{ ...a, ...b }` defines it. Inherited setters and read-only properties on
+`Object.prototype` are excluded by the Execution Environment Baseline, which
+leaves the `__proto__` key: a source with an own `__proto__` key (as
+`JSON.parse('{"__proto__": {}}')` makes) sets the merged object's prototype
+under assignment and becomes an own property under spread:
 
-Level: `standard` and above. `minimal` preserves the sequence.
+```js
+const src = JSON.parse('{"__proto__": {"x": 1}}');
+Object.assign({}, src).x; // 1: the prototype was replaced
+({ ...src }).x;           // undefined: `__proto__` is an own key
+```
+
+A source that is an object literal of plain data properties, without a
+spread, computed key, accessor, method, or `__proto__` key, cannot have that
+key, so `Object.assign` with only such sources needs no assumption. A
+dynamic source can. Babel's and TypeScript's helpers are emitted for an
+object spread or a JSX spread attribute in the source, so the helper call is
+producer evidence that the source defined the keys (Babel's
+`plugin-transform-object-assign` also rewrites a handwritten `Object.assign`
+to `_extends`; that rare case is covered by this assumption). A plain
+`Object.assign({}, defaults, overrides)` is no evidence: handwritten merges
+and clones are common, and older code relies on their assignment semantics.
+
+Affects: `UnComputedProperties`, `UnObjectSpread` (`_extends` and `__assign`
+calls with a dynamic source), `ObjectAssignSpread` (calls with a dynamic
+source).
+
+Level: `UnComputedProperties` needs `standard` and above; `minimal`
+preserves the sequence. `UnObjectSpread` applies at every level, since the
+helper call is the producer evidence. `ObjectAssignSpread` converts a call
+with a dynamic source only at `aggressive`; below it, only calls whose
+sources are all plain data object literals convert.
 
 ### `transpiled_class_accessor_attributes`
 
@@ -1728,7 +1760,7 @@ against a modified runtime.
 
 This is what lets a rule treat an unresolved `Math`, `Object`, `Array`,
 `Promise`, or `String.prototype.concat` as the intrinsic: `Math.pow(a, b)` →
-`a ** b`, `"a".concat(b)` → `` `a${b}` ``, `Object.assign({}, x)` → spread,
+`a ** b`, `"a".concat(b)` → `` `a${b}` ``, `Object.assign({}, { a })` → `{ a }`,
 `new (P || (P = Promise))` → a native `async` function. Resolver identity is
 still required — a local binding named `Math` is never the intrinsic. A future
 `EnvironmentHazards` pre-pass over the resolved original AST could record

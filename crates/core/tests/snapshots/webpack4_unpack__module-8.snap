@@ -89,10 +89,7 @@ const l = function e(state, n) {
         if (r !== state || o !== n) {
             return e(r, o);
         }
-        return Object.keys({
-            ...state,
-            ...n
-        }).every((r)=>e(state[r], n[r]));
+        return Object.keys(Object.assign({}, state, n)).every((r)=>e(state[r], n[r]));
     }
     return false;
 };

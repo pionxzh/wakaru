@@ -1,6 +1,5 @@
 ---
 source: crates/core/tests/bun_unpack.rs
-assertion_line: 69
 expression: output
 ---
 const { getPrototypeOf, defineProperty, getOwnPropertyNames } = Object;
@@ -91,9 +90,7 @@ const A = x(S(), 1);
 const v = "change";
 class c {
     constructor(t){
-        this._data = {
-            ...t
-        };
+        this._data = Object.assign({}, t);
         this._subs = [];
     }
     get(t) {

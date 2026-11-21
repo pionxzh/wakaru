@@ -36,6 +36,10 @@ use crate::utils::paren::strip_parens;
 ///   `_objectSpread2({}, y)` → `{ ...y }`
 ///   `_extends(target, source)` → left as-is (mutation semantics)
 ///   `_objectSpread2(existing, {a: 1})` → left as-is (mutation semantics)
+///
+/// `_extends` and TypeScript's `__assign` copy with assignment where spread
+/// defines; a source with an own `__proto__` key tells them apart. The helper
+/// call is evidence the source had a spread (`set_computed_properties`).
 pub struct UnObjectSpread<'a> {
     module_facts: Option<&'a ModuleFactsMap>,
     current_filename: Option<&'a str>,

@@ -2,6 +2,7 @@ mod common;
 
 use common::{assert_eq_normalized, render_rule};
 use wakaru_core::rules::ObjectAssignSpread;
+use wakaru_core::RewriteLevel;
 
 fn apply(input: &str) -> String {
     render_rule(input, ObjectAssignSpread::new)
@@ -189,4 +190,52 @@ with (o) {
 }
 "#;
     assert_eq_normalized(&apply(input), input);
+}
+
+fn apply_at(input: &str, level: RewriteLevel) -> String {
+    render_rule(input, |mark| {
+        ObjectAssignSpread::new_with_level(mark, level)
+    })
+}
+
+#[test]
+fn below_aggressive_keeps_a_dynamic_source() {
+    // `Object.assign` writes with [[Set]]: a source with an own `__proto__`
+    // key (parsed JSON) sets the result's prototype, where spread would add an
+    // own property. A dynamic source is a common hand-written merge.
+    for input in [
+        "const x = Object.assign({}, defaults, overrides);",
+        "const x = Object.assign({}, state, { changes: next });",
+        "const x = Object.assign({ a: 1 }, load());",
+    ] {
+        for level in [RewriteLevel::Minimal, RewriteLevel::Standard] {
+            assert_eq_normalized(&apply_at(input, level), input);
+        }
+        assert!(
+            !apply_at(input, RewriteLevel::Aggressive).contains("Object.assign"),
+            "{input}"
+        );
+    }
+}
+
+#[test]
+fn below_aggressive_converts_static_data_literal_sources() {
+    let input = r#"const x = Object.assign({}, { a: 1, "b": 2, 3: c }, { d });"#;
+    let expected = r#"const x = { a: 1, "b": 2, 3: c, d };"#;
+    for level in [RewriteLevel::Minimal, RewriteLevel::Standard] {
+        assert_eq_normalized(&apply_at(input, level), expected);
+    }
+}
+
+#[test]
+fn below_aggressive_keeps_literal_sources_that_may_carry_a_proto_key() {
+    for input in [
+        "const x = Object.assign({}, { [key]: 1 });",
+        "const x = Object.assign({}, { ...rest });",
+        r#"const x = Object.assign({}, { "__proto__": p });"#,
+        "const x = Object.assign({}, { get a() { return 1; } });",
+        "const x = Object.assign({}, { m() {} });",
+    ] {
+        assert_eq_normalized(&apply_at(input, RewriteLevel::Standard), input);
+    }
 }

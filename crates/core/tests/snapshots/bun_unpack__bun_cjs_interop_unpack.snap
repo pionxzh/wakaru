@@ -1,6 +1,5 @@
 ---
 source: crates/core/tests/bun_unpack.rs
-assertion_line: 111
 expression: combined
 ---
 // === src-cjs/math.js ===
@@ -109,9 +108,7 @@ const import_logger = __toESM(require_logger(), 1);
 const CHANGE = "change";
 class Store {
     constructor(initial){
-        this._data = {
-            ...initial
-        };
+        this._data = Object.assign({}, initial);
         this._subs = [];
     }
     get(key) {
