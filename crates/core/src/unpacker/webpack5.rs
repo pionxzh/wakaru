@@ -2305,12 +2305,56 @@ fn extract_modules_from_container(
 /// `require_plan`, when the caller already gated the region, is reused for
 /// container validation and entry extraction instead of resolving the region
 /// again. `surrounding` is the input's top-level code around a bootstrap IIFE.
+///
+/// A bootstrap IIFE whose concatenated root wraps modules in the `.cw`
+/// runtime first splits with those modules as extra table modules (see
+/// [`super::webpack5_cw::split_table_wrappers`]); when that split fails,
+/// they stay in the entry as before.
 fn extract_webpack5_modules_with_plan(
+    bootstrap_body: &swc_core::ecma::ast::FunctionBody,
+    cm: Lrc<SourceMap>,
+    require_plan: Option<RequireFnPlan>,
+    positions: SourcePositions,
+    surrounding: SurroundingItems<'_>,
+) -> Option<DetectedBundle> {
+    if require_plan.is_none() {
+        if let Some(split) = super::webpack5_cw::split_table_wrappers(bootstrap_body, &cm) {
+            // A refusal here is not the input's: the plain split runs next.
+            let (result, _) = refusal::capture(|| {
+                extract_webpack5_modules_from_bootstrap(
+                    &split.bootstrap,
+                    cm.clone(),
+                    None,
+                    positions,
+                    surrounding,
+                    Some(&split),
+                )
+            });
+            if result.is_some() {
+                return result;
+            }
+        }
+    }
+    extract_webpack5_modules_from_bootstrap(
+        bootstrap_body,
+        cm,
+        require_plan,
+        positions,
+        surrounding,
+        None,
+    )
+}
+
+/// [`extract_webpack5_modules_with_plan`] for one bootstrap. `wrapped`, when
+/// set, is the split that produced `bootstrap_body`: its factories join the
+/// table, and any of them failing to normalize refuses the split.
+fn extract_webpack5_modules_from_bootstrap(
     bootstrap_body: &swc_core::ecma::ast::FunctionBody,
     cm: Lrc<SourceMap>,
     mut require_plan: Option<RequireFnPlan>,
     positions: SourcePositions,
     surrounding: SurroundingItems<'_>,
+    wrapped: Option<&super::webpack5_cw::TableWrapperSplit>,
 ) -> Option<DetectedBundle> {
     let span = tracing::info_span!("webpack5: extract_modules");
     let _enter = span.enter();
@@ -2368,6 +2412,65 @@ fn extract_webpack5_modules_with_plan(
             collect_module_descriptors(&modules_container)?
         }
     };
+    let mut module_entries = module_entries;
+    let table_len = module_entries.len();
+    if let Some(split) = wrapped {
+        // The wrapped bodies call the require function the table's lifecycle
+        // runs.
+        if !matches!(&require_plan, Some(RequireFnPlan::Declared { sym, .. }) if *sym == split.require_sym)
+        {
+            return None;
+        }
+        let mut seen: HashSet<String> = module_entries
+            .iter()
+            .map(|entry| crate::driver::filename_case_key(&entry.filename))
+            .collect();
+        seen.insert(crate::driver::filename_case_key("entry.js"));
+        // A moved body reads these modules' exports through a fresh load
+        // instead of the binding that held them.
+        for module_id in &split.loaded_module_ids {
+            let settles = module_entries.iter().any(|entry| {
+                let same = match module_id {
+                    Expr::Lit(Lit::Num(number)) => entry.numeric_id == Some(number.value),
+                    Expr::Lit(Lit::Str(string)) => string.value == *entry.id,
+                    _ => false,
+                };
+                same && {
+                    let params: Vec<Pat> = match &entry.params {
+                        Webpack5FactoryParams::Function(params) => {
+                            params.iter().map(|param| param.pat.clone()).collect()
+                        }
+                        Webpack5FactoryParams::Arrow(params) => params.to_vec(),
+                    };
+                    super::webpack5_cw::table_factory_settles(&params, entry.body_stmts)
+                }
+            });
+            if !settles {
+                return None;
+            }
+        }
+        for factory in &split.factories {
+            if module_entries[..table_len]
+                .iter()
+                .any(|entry| entry.id == factory.id)
+            {
+                return None;
+            }
+            module_entries.push(Webpack5ModuleDescriptor {
+                id: factory.id.clone(),
+                numeric_id: None,
+                filename: super::emit_esm::dedup_filename(
+                    &factory.filename,
+                    &mut seen,
+                    super::emit_esm::FilenameDedupStyle::PathAware {
+                        fallback_stem: "module",
+                    },
+                ),
+                params: Webpack5FactoryParams::Arrow(&factory.params),
+                body_stmts: &factory.body,
+            });
+        }
+    }
 
     let PreparedWebpack5Factories {
         mut prepared,
@@ -2379,6 +2482,14 @@ fn extract_webpack5_modules_with_plan(
         prepare_webpack5_factories(&module_entries, false),
         SplitRefusalReason::FactoryRecovery,
     )?;
+    // An opaque wrapped module would keep its raw body, which still calls
+    // the accessors of the bootstrap it left.
+    if module_entries[table_len..]
+        .iter()
+        .any(|entry| failures.contains_key(&entry.filename))
+    {
+        return because(None, SplitRefusalReason::FactoryRecovery);
+    }
     if !module_entries.is_empty() && failures.len() == module_entries.len() {
         // A synthetic startup cannot make an entirely opaque module table
         // trustworthy; retain the original whole-input fallback.
@@ -4290,6 +4401,7 @@ pub(crate) fn is_webpack_runtime_property(property: &str) -> bool {
             | "r"
             | "zO"
             | "c"
+            | "cw"
             | "m"
             | "nmd"
             | "O"

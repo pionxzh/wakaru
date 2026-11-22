@@ -27,11 +27,13 @@ attempted in order — first match wins:
    `var __webpack_exports__ = {}` form and Vercel ncc's variant), and the
    unwrapped `output.iife: false` form. `experiments.outputModule` bundles that
    carry top-level ESM `export`/`import` declarations are left untouched — their
-   public surface can't yet be recovered faithfully. A bootstrap without a
-   table whose concatenated root wraps CommonJS modules in the
-   `__webpack_require__.cw` runtime splits each wrapped module into its own
-   file (see [Webpack 5 concatenated CommonJS
-   modules](#webpack-5-concatenated-commonjs-modules))
+   public surface can't yet be recovered faithfully. A bootstrap whose
+   concatenated root wraps modules in the `__webpack_require__.cw` runtime
+   splits each wrapped module into its own file, without a module table (see
+   [Webpack 5 concatenated CommonJS
+   modules](#webpack-5-concatenated-commonjs-modules)) or as extra modules of
+   one (see [Webpack 5 wrapped modules beside a module
+   table](#webpack-5-wrapped-modules-beside-a-module-table))
 2. **webpack4** — `(function(modules) { ... })([...])` with `__webpack_require__` runtime,
    webpack 1 to 4. The entry module is the one the startup records in
    `__webpack_require__.s` (or the computed `__webpack_require__['s']` an
@@ -391,6 +393,89 @@ The input stays one file when the split could change behavior:
   wrapped body reads a name it declares (see [Webpack 5 code around the
   bootstrap](#webpack-5-code-around-the-bootstrap); here there is no
   `prelude.js`).
+
+### Webpack 5 wrapped modules beside a module table
+
+The runtime also wraps ES modules: everything a module reached through
+`require()` imports runs lazily, so webpack wraps those modules too, and a
+wrapped ES module defines its exports with `__webpack_require__.r(exports)`
+and `__webpack_require__.d(exports, …)` (the 5.108+ array form included).
+Modules the concatenated root cannot hold, such as one a lazy chunk also
+imports, stay in the module table, and webpack declares an accessor for each
+beside the wrappers (producer `webpack@5.112.2` mode production, target web,
+concatenateModules, with and without Terser; `webpack@5.110.3` with Terser,
+whose bodies are function expressions):
+
+```js
+function n(id) { … }               // the table's require function
+n.cw = (body) => { … };
+var a = () => n(184),              // EXTERNAL MODULE: a table module
+  o = n.cw((e, t) => {
+    n.d(t, { describe: () => s });
+    function s(v) { return (0, a().T)(v); }
+    function l() { return n.e(913).then(() => n(913)); }
+  }),
+  c = {};                          // NAMESPACE OBJECT of a wrapped module
+n.r(c), n.d(c, { describe: () => o().describe });
+const d = o();                     // entry code
+```
+
+A wrapped body that reads `n` is a module factory `(module, exports,
+__webpack_require__)` with the require function closed over, and `n` calls
+it the same way (`fn.call(module.exports, module, module.exports, n)`). So
+the table path takes each wrapped body as one more table module, named as
+above, and the factory pipeline recovers its `require.d` exports, lazy
+`require.e` imports, and `require(id)` edges like any other. Every
+zero-argument call of an accessor, a wrapper's or a table module's, becomes
+`n(<id>)`, which loads the module once and returns its `module.exports`, as
+the accessor does. Beside that:
+
+- a namespace object a moved body reads, or one declared among the
+  accessors that entry code reads, becomes a module of its own,
+  `module-cw-namespace-<n>.js`, holding its `n.r` / `n.d` calls, and every
+  read of it loads that module; one nothing reads goes with its calls;
+- a body's read of a table module loaded in place (`var X = n(<id>)`, one
+  object per module) becomes a fresh load, which returns the same object
+  when the module replaces `module.exports` only while it loads (its module
+  parameter used only as `module.exports`, outside every function in it);
+- the import-position stubs bind as above, from the first statement after
+  the declarations and loads on; a table module load does not stop the scan,
+  since a table module cannot call an accessor.
+
+`n` gets a name no other identifier of the bootstrap spells (usually
+`__webpack_require__`), so no binding can capture the inserted calls. The
+wrappers sit at the top level of the bootstrap or of the startup IIFE that
+ends it (`(() => { "use strict"; n.cw(…)(); … })()`, which also covers a
+wrapper called where it is built); a wrapper anywhere else keeps them all in
+`entry.js`.
+
+The reads keep their values because nothing can run a moved body, an
+accessor, or a namespace getter before what they read is initialized: before
+the first declaration nothing (the runtime, a table module) mentions a
+binding declared from there on; from there to the last declaration the
+statements only declare values and call `n`'s members (`n.cw`, `n.r`,
+`n.d`); after that, up to the last load a body reads, statements read only
+their own bindings, `n`, globals, and table module accessors; and an
+accessor or a moved namespace object is read in place only after that. This relies on webpack's runtime
+helpers keeping their meaning, as the rest of the table path does: `n.d`
+and `n.r` define properties without calling the functions they get, and
+`n.cw` is the runtime installed once.
+
+The wrapped modules stay in `entry.js` with their runtime, and only the
+table splits, when:
+
+- an accessor of a wrapped module is used other than as a zero-argument
+  call, or the runtime member is used for anything but building wrappers
+  (another install or write), or `n` is written;
+- a body reads a bootstrap binding other than `n`, an accessor, a namespace
+  object, or a table module loaded in place, or one of those orders does not
+  hold;
+- a body reads `arguments` or `new.target` or returns, or, as an arrow,
+  reads `this`;
+- a table module a body reads through a loaded binding can replace
+  `module.exports` later, or is not in the table;
+- the bootstrap has a `with` statement or a direct `eval`, or a moved module
+  fails factory normalization.
 
 ### Webpack 5 code around the bootstrap
 
@@ -1154,14 +1239,15 @@ layout directly is a proposal:
     which throws, because the factory returns the exports object.
 
   AMD, Closure, Metro, and Turbopack were not checked with a producer.
-- **Some webpack 5 concatenated CommonJS modules stay in `entry.js`.** A
-  bootstrap that also has a module table (a CommonJS module the concatenated
-  root reaches through `__webpack_require__(id)`, an `// EXTERNAL MODULE:`
-  accessor) splits through the table path, and its `.cw`-wrapped modules
-  stay in `entry.js` with their runtime; their bodies read the table's
-  accessors, which [the split](#webpack-5-concatenated-commonjs-modules)
-  does not move. When entry code reads an `__esModule` marker, a split
-  `entry.js` keeps its `require()` calls and stays CommonJS: the pipeline
+- **Some webpack 5 wrapped modules stay in `entry.js`.** Beside a module
+  table, the wrapped modules stay in `entry.js` with their runtime when
+  [a check](#webpack-5-wrapped-modules-beside-a-module-table) fails, and
+  always in the `output.iife: false` form, whose bootstrap is the file's
+  top level. A table module's accessor does not bind at its
+  import-position stub: entry calls of it stay `require()` calls in place.
+  When entry code
+  reads an `__esModule` marker, a split `entry.js` keeps its `require()`
+  calls and stays CommonJS: the pipeline
   does not recover webpack's memoized default-interop shape
   (`function d() { return d.c || (d.c = __webpack_require__.n(X())); }`).
 - **A repeated function declaration around a webpack 5 bootstrap.** Code

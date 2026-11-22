@@ -421,3 +421,278 @@ fn escaping_require_scope_object_keeps_the_bundle_whole() {
         "globalThis.scope = __webpack_require__;\nglobalThis.v = provider_namespaceFn().U9;",
     ));
 }
+
+// ========================================================================
+// Wrapped modules beside a module table
+// ========================================================================
+
+/// A minified bootstrap with a module table (module 10, CommonJS, and module
+/// 20, which replaces its exports later) around `startup`, which runs after
+/// webpack's runtime helpers on the require function `n`.
+// shape: producer webpack@5.112.2 mode production, concatenateModules, Terser
+// (the table, the `n.cw` install, and the declarations reduced to a minimum)
+fn table_bootstrap(startup: &str) -> String {
+    format!(
+        "(()=>{{\"use strict\";var e={{10(e,t){{t.tag=function(e){{return\"[\"+e+\"]\"}}}},\
+20(e,t){{e.exports={{v:1}},globalThis.later=()=>{{e.exports={{v:2}}}}}}}};\
+const t={{}};function n(o){{const s=t[o];if(void 0!==s)return s.exports;\
+const r=t[o]={{exports:{{}}}};return e[o].call(r.exports,r,r.exports,n),r.exports}}\
+n.m=e,n.cw=e=>{{var t;return()=>{{if(e){{var n=e;e=0,t={{exports:{{}}}},n.call(t.exports,t,t.exports)}}return t.exports}}}},\
+n.d=(e,t)=>{{for(var o in t)n.o(t,o)&&!n.o(e,o)&&Object.defineProperty(e,o,{{enumerable:!0,get:t[o]}})}},\
+n.o=(e,t)=>Object.prototype.hasOwnProperty.call(e,t),\
+n.r=e=>{{Object.defineProperty(e,\"__esModule\",{{value:!0}})}};\
+{startup}}})();"
+    )
+}
+
+/// Asserts the table split without moving a wrapped module: the wrappers
+/// stay in entry.js.
+fn assert_wrappers_stay(source: &str) {
+    let modules = raw_modules(source);
+    assert!(
+        filenames(&modules).contains(&"module-10.js")
+            && !filenames(&modules)
+                .iter()
+                .any(|name| name.starts_with("module-cw")),
+        "the table splits, the wrapped modules stay, got {:?}",
+        filenames(&modules)
+    );
+    let entry = module(&modules, "entry.js");
+    assert!(entry.contains(".cw("), "got:\n{entry}");
+}
+
+/// A wrapped ES module exporting through `n.d`, an accessor of table module
+/// 10 it reads, and the entry code that requires it.
+const TABLE_STARTUP: &str = "var a=()=>n(10),o=n.cw(function(e,t){n.r(t),\
+n.d(t,{label:()=>s});function s(e){return(0,a().tag)(\"widget:\"+e)}});\
+const i=o();globalThis.sink={run:()=>i.label(\"x\")};";
+
+#[test]
+fn table_wrapped_body_becomes_a_table_module() {
+    let modules = raw_modules(&table_bootstrap(TABLE_STARTUP));
+    assert_eq!(
+        filenames(&modules),
+        ["entry.js", "module-10.js", "module-20.js", "module-cw-0.js"]
+    );
+    let wrapped = module(&modules, "module-cw-0.js");
+    assert!(
+        wrapped.contains("require.r(exports)")
+            && wrapped.contains("require.d(exports")
+            && wrapped.contains("require(\"./module-10.js\").tag")
+            && !wrapped.contains("a()"),
+        "the body is a factory of the table and the accessor call a require, got:\n{wrapped}"
+    );
+    assert!(
+        wrapped.trim_start().starts_with("\"use strict\""),
+        "got:\n{wrapped}"
+    );
+    let entry = module(&modules, "entry.js");
+    assert!(
+        entry.contains("const i = require(\"./module-cw-0.js\")")
+            && !entry.contains(".cw")
+            && !entry.contains("n(10)"),
+        "got:\n{entry}"
+    );
+}
+
+#[test]
+fn table_wrapped_esm_body_with_array_define_becomes_esm() {
+    // webpack 5.108+ defines a harmony export with a fixed value through the
+    // array form of `require.d`.
+    // shape: producer webpack@5.112.2 mode production, concatenateModules
+    let source = table_bootstrap(
+        "var o=n.cw(function(e,t){n.r(t),n.d(t,[\"A\",0,\"circle\",\"b\",0,()=>1])});\
+const i=o();globalThis.sink={run:()=>[i.A,i.b()]};",
+    );
+    let output = unpack(
+        &source,
+        DecompileOptions {
+            filename: "bundle.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("unpack should succeed");
+    let wrapped = module(&output.modules, "module-cw-0.js");
+    assert!(
+        wrapped.contains("export") && !wrapped.contains("require.d"),
+        "the harmony exports become ESM exports, got:\n{wrapped}"
+    );
+    let entry = module(&output.modules, "entry.js");
+    assert!(
+        entry.contains("./module-cw-0.js") && !entry.contains(".cw"),
+        "got:\n{entry}"
+    );
+}
+
+#[test]
+fn table_wrapper_reading_another_wrapper_requires_it() {
+    let modules = raw_modules(&table_bootstrap(
+        "var o=n.cw(function(e,t){t.label=e=>\"widget:\"+e}),\
+s=n.cw(function(e,t){t.run=()=>(0,o().label)(\"x\")});\
+globalThis.sink={run:()=>s().run()};",
+    ));
+    assert_eq!(
+        filenames(&modules),
+        [
+            "entry.js",
+            "module-10.js",
+            "module-20.js",
+            "module-cw-0.js",
+            "module-cw-1.js"
+        ]
+    );
+    let second = module(&modules, "module-cw-1.js");
+    assert!(
+        second.contains("require(\"./module-cw-0.js\").label"),
+        "got:\n{second}"
+    );
+    let entry = module(&modules, "entry.js");
+    assert!(
+        entry.contains("require(\"./module-cw-1.js\").run()"),
+        "got:\n{entry}"
+    );
+}
+
+#[test]
+fn table_wrapper_called_where_it_is_built_splits() {
+    // Terser inlines a one-use accessor into its call, here inside the
+    // startup IIFE.
+    let modules = raw_modules(&table_bootstrap(
+        "(()=>{\"use strict\";n.cw(function(e,t){globalThis.polyfilled||(globalThis.polyfilled=!0)})();\
+var i=n(10);globalThis.sink={run:()=>(0,i.tag)(\"x\")}})();",
+    ));
+    assert!(
+        filenames(&modules).contains(&"module-cw-0.js"),
+        "got {:?}",
+        filenames(&modules)
+    );
+    let wrapped = module(&modules, "module-cw-0.js");
+    assert!(wrapped.contains("globalThis.polyfilled"), "got:\n{wrapped}");
+    let entry = module(&modules, "entry.js");
+    assert!(
+        entry.contains("require(\"./module-cw-0.js\")") && !entry.contains(".cw"),
+        "got:\n{entry}"
+    );
+}
+
+#[test]
+fn table_namespace_object_a_body_reads_becomes_a_module() {
+    // webpack declares a namespace object for `import * as ns` of a wrapped
+    // module beside the accessors; its getters call the accessor.
+    // shape: producer webpack@5.112.2 mode production, concatenateModules
+    let modules = raw_modules(&table_bootstrap(
+        "var o=n.cw(function(e,t){n.r(t),n.d(t,{circle:()=>s});const s=\"circle\"}),c={};\
+n.r(c),n.d(c,{circle:()=>o().circle});\
+var l=n.cw(function(e,t){n.d(t,{kinds:()=>s});function s(){return Object.keys(c)}});\
+const i=l();globalThis.sink={run:()=>i.kinds()};",
+    ));
+    let namespace = module(&modules, "module-cw-namespace-0.js");
+    assert!(
+        namespace.contains("require.r(exports)")
+            && namespace.contains("require(\"./module-cw-0.js\").circle"),
+        "the namespace object is a module of its own, got:\n{namespace}"
+    );
+    let reader = module(&modules, "module-cw-1.js");
+    assert!(
+        reader.contains("Object.keys(require(\"./module-cw-namespace-0.js\"))"),
+        "got:\n{reader}"
+    );
+}
+
+#[test]
+fn table_loaded_binding_a_body_reads_becomes_a_require() {
+    let modules = raw_modules(&table_bootstrap(
+        "var o=n.cw(function(e,t){t.run=()=>(0,q.tag)(\"x\")});\
+var q=n(10);globalThis.sink={run:()=>o().run()};",
+    ));
+    let wrapped = module(&modules, "module-cw-0.js");
+    assert!(
+        wrapped.contains("require(\"./module-10.js\").tag") && !wrapped.contains("q."),
+        "got:\n{wrapped}"
+    );
+}
+
+#[test]
+fn table_loaded_binding_of_a_module_that_replaces_its_exports_later_stays() {
+    // Module 20 replaces `module.exports` after it loads: the binding keeps
+    // the first object, a fresh load would return the second.
+    assert_wrappers_stay(&table_bootstrap(
+        "var o=n.cw(function(e,t){t.run=()=>q.v});\
+var q=n(20);globalThis.sink={run:()=>o().run()};",
+    ));
+}
+
+#[test]
+fn table_accessor_used_as_a_value_keeps_the_wrappers() {
+    assert_wrappers_stay(&table_bootstrap(&format!(
+        "{TABLE_STARTUP}globalThis.keep=o;"
+    )));
+}
+
+#[test]
+fn table_body_reading_another_bootstrap_binding_keeps_the_wrappers() {
+    assert_wrappers_stay(&table_bootstrap(
+        "var k=[1],o=n.cw(function(e,t){t.run=()=>k[0]});globalThis.sink={run:()=>o().run()};",
+    ));
+}
+
+#[test]
+fn table_body_reading_arguments_keeps_the_wrappers() {
+    assert_wrappers_stay(&table_bootstrap(
+        "var o=n.cw(function(e,t){t.count=arguments.length});globalThis.sink={run:()=>o().count};",
+    ));
+}
+
+#[test]
+fn table_arrow_body_reading_this_keeps_the_wrappers() {
+    assert_wrappers_stay(&table_bootstrap(
+        "var o=n.cw((e,t)=>{t.self=this});globalThis.sink={run:()=>o().self};",
+    ));
+}
+
+#[test]
+fn table_accessor_called_before_it_is_declared_keeps_the_wrappers() {
+    // `o()` runs before `s` is defined: the original throws there.
+    assert_wrappers_stay(&table_bootstrap(
+        "var o=n.cw(function(e,t){t.run=()=>s().v});globalThis.early=o().run;\
+var s=n.cw(function(e,t){t.v=1});globalThis.sink={run:()=>o().run()};",
+    ));
+}
+
+#[test]
+fn table_module_reaching_entry_code_keeps_the_wrappers() {
+    // Module 30 can call the entry function, which calls an accessor, from
+    // wherever it loads.
+    assert_wrappers_stay(
+        &table_bootstrap(&format!(
+            "{TABLE_STARTUP}function g(){{return o().label(\"y\")}}"
+        ))
+        .replacen("20(e,t){", "30(e,t){t.f=()=>g()},20(e,t){", 1),
+    );
+}
+
+#[test]
+fn table_replaced_runtime_member_keeps_the_wrappers() {
+    assert_wrappers_stay(&table_bootstrap(&format!("{TABLE_STARTUP}n.cw=e=>e;")));
+}
+
+#[test]
+fn table_written_require_function_keeps_the_wrappers() {
+    assert_wrappers_stay(&table_bootstrap(&format!(
+        "{TABLE_STARTUP}globalThis.reset=()=>{{n=null}};"
+    )));
+}
+
+#[test]
+fn table_import_stub_becomes_a_binding() {
+    let modules = raw_modules(&table_bootstrap(
+        "var o=n.cw(function(e,t){t.v=1});o();globalThis.sink={run:()=>o().v};",
+    ));
+    let entry = module(&modules, "entry.js");
+    assert!(
+        entry.contains("var o = require(\"./module-cw-0.js\")")
+            && entry.contains("o.v")
+            && !entry.contains("o()"),
+        "got:\n{entry}"
+    );
+}

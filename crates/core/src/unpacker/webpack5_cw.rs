@@ -33,6 +33,10 @@
 //! property (`const R = { cw: … }`), bound to its own variable
 //! (`const t = …`, Terser with several wrapped modules), or inlined into its
 //! only call (`var r = (…)(function(r, t) { … })`, Terser with one).
+//!
+//! A bootstrap that also has a module table splits through the table path
+//! instead, with each wrapped body as one more module of the table
+//! ([`split_table_wrappers`]).
 
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, Mark, SourceMap, Span, Spanned, SyntaxContext, DUMMY_SP};
@@ -50,7 +54,7 @@ use crate::module_path::relative_import_specifier;
 use crate::rules::eval_utils::node_has_dynamic_scope_construct;
 use crate::unpacker::emit_esm::{dedup_filename, FilenameDedupStyle};
 use crate::unpacker::refusal::{self, because, SplitRefusalReason};
-use crate::unpacker::surrounding::{SurroundingCode, SurroundingItems};
+use crate::unpacker::surrounding::{IdentNameCollector, SurroundingCode, SurroundingItems};
 use crate::unpacker::webpack5::{prepare_translated_webpack_factories, TranslatedWebpackFactory};
 use crate::unpacker::webpack_common::webpack_module_filename;
 use crate::unpacker::{
@@ -768,7 +772,12 @@ fn wrapper_factory(stmts: &[&Stmt], wrapper: &Wrapper) -> Option<Factory> {
     let Expr::Call(call) = strip_parens(var.decls[wrapper.decl].init.as_deref()?) else {
         return None;
     };
-    match factory_arg(call)? {
+    function_factory(factory_arg(call)?)
+}
+
+/// The parts of a wrapped function `factory_arg` returned.
+fn function_factory(function: &Expr) -> Option<Factory> {
+    match function {
         Expr::Arrow(ArrowExpr {
             params,
             body,
@@ -1817,6 +1826,2016 @@ fn module_comment_path(cm: &SourceMap, span: Span) -> Option<String> {
     let line = before.trim_end().rsplit('\n').next()?.trim();
     let path = line.strip_prefix("// MODULE: ")?.trim();
     (!path.is_empty() && !path.contains(char::is_whitespace)).then(|| path.to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Wrapped modules beside a module table
+// ---------------------------------------------------------------------------
+
+/// The id the module at `index` of a [`TableWrapperSplit`] gets among the
+/// table's modules. A webpack module id never has this form; the table path
+/// still checks that no table module uses it.
+pub(super) fn table_wrapper_id(index: usize) -> String {
+    format!("cw:{index}")
+}
+
+/// The `.cw` wrapped modules of a bootstrap that also has a module table, as
+/// extra factories of that table (see [`split_table_wrappers`]).
+pub(super) struct TableWrapperSplit {
+    /// The bootstrap without what moved to the factories, contexts cleared.
+    pub(super) bootstrap: FunctionBody,
+    /// One factory per wrapped module in source order, then one per
+    /// namespace object, with parameters `(module, exports, <require_sym>)`;
+    /// the one at `index` has the id [`table_wrapper_id`] gives.
+    pub(super) factories: Vec<TranslatedWebpackFactory>,
+    /// The require function's name in `bootstrap`.
+    pub(super) require_sym: Atom,
+    /// The table modules whose loaded exports a factory now reads through
+    /// `<require_sym>(<id>)` instead of a binding of the bootstrap: each of
+    /// them must replace `module.exports` only while it loads.
+    pub(super) loaded_module_ids: Vec<Expr>,
+}
+
+/// A wrapped module of a bootstrap with a module table.
+struct TableWrapped {
+    /// The accessor binding; `None` for a wrapper called where it is built,
+    /// `R.cw(function () { … })()` (Terser inlining a one-use accessor).
+    id: Option<Id>,
+    stmt: usize,
+    /// For an accessor binding, the index of its declarator in `stmt`.
+    decl: usize,
+    /// The wrapped function's span, which identifies it.
+    function_span: Span,
+}
+
+/// A binding of the wrapper scope a wrapped body may read.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ScopeBindingKind {
+    /// `X = () => R(<id>)`: a table module's accessor.
+    Accessor,
+    /// `X = {}` that `R.r(X)` and `R.d(X, { … })` fill: a namespace object.
+    Namespace,
+    /// `X = R(<id>)`: a table module's exports, loaded in place.
+    Loaded,
+}
+
+struct ScopeBinding {
+    id: Id,
+    kind: ScopeBindingKind,
+    stmt: usize,
+    decl: usize,
+    /// The module id literal of an accessor or a loaded binding.
+    module_id: Option<Expr>,
+}
+
+/// Turn the `.cw` wrapped modules of a bootstrap that also has a module table
+/// into factories of that table.
+///
+/// The runtime is installed on the require function `R` (`R.cw = …`). A
+/// wrapped body may read `R` itself (`R.d(exports, …)`, `R.e(id)`, `R(id)`),
+/// the accessors of other wrapped modules, and what webpack declares for the
+/// table modules beside them: it is the factory `(module, exports, R)` with
+/// `R` closed over, called the way `R` calls a table factory,
+/// `fn.call(module.exports, module, module.exports, R)`. Each wrapped body
+/// becomes such a factory, and the bindings around it become loads:
+///
+/// - a zero-argument accessor call, of a wrapped module or of a table module
+///   (`var X = () => R(<id>)`), becomes `R(<id>)`. Both load the module once,
+///   on the first call, and return its `module.exports`;
+/// - a namespace object (`var N = {}` filled by `R.r(N), R.d(N, { a: () =>
+///   X().a })`) that a moved body reads, or one among the declarations
+///   that entry code reads, becomes a factory of its own holding those
+///   calls, and every read of it `R(<its id>)`: one object, defined before
+///   anything reads it. One nothing reads goes with its calls;
+/// - a body's read of a table module loaded in place (`var X = R(<id>)`)
+///   becomes `R(<id>)`, which returns the same exports once the load has
+///   run, as long as the module keeps its `module.exports`
+///   ([`TableWrapperSplit::loaded_module_ids`]);
+/// - an import-position stub `X();` becomes `var X = R(<id>)` that later
+///   entry calls read, as in a bootstrap without a table
+///   ([`table_import_stubs`]).
+///
+/// The reads keep their values because nothing can run a moved body, an
+/// accessor, or a namespace getter before every binding they read is
+/// initialized. webpack declares the accessors and namespace objects first,
+/// with only runtime helper calls in between; then the loads of table
+/// modules; then the code that calls accessors. So outside wrapped bodies,
+/// which run only through a call: nothing before the first declaration
+/// mentions a binding declared from there on (so neither the runtime nor a
+/// table module can reach an accessor), the statements from
+/// there to the last declaration only define values and call `R`'s members,
+/// the statements after them up to the last load a body reads mention only
+/// their own bindings, `R`, globals, and table module accessors (a table
+/// module cannot reach the bootstrap's bindings), and an accessor or a moved
+/// namespace object is read in place only after that.
+///
+/// `R` gets a name no other identifier of the bootstrap spells, so no
+/// binding can capture the inserted calls. The wrappers sit at the top level
+/// of the bootstrap, or of the startup IIFE that ends it
+/// (`(() => { "use strict"; … })()`), which runs once.
+///
+/// `None` leaves the bootstrap to the table path as it is: an accessor of a
+/// wrapped module is used other than as a zero-argument call (a table
+/// module's accessor used that way stays entry code, unless a body reads
+/// it), `R.cw` is used for anything but building wrappers or `R` is written,
+/// one of the orders above does not hold, a body reads another binding
+/// around it or observes its function boundary, or the bootstrap has a
+/// `with` statement or a direct `eval`.
+pub(super) fn split_table_wrappers(
+    bootstrap_body: &FunctionBody,
+    cm: &SourceMap,
+) -> Option<TableWrapperSplit> {
+    if !bootstrap_body.stmts.iter().any(stmt_holds_runtime) {
+        return None;
+    }
+    let span = tracing::info_span!("webpack5: split_table_cw");
+    let _enter = span.enter();
+
+    let mut analysis = Module {
+        span: DUMMY_SP,
+        body: bootstrap_body
+            .stmts
+            .iter()
+            .cloned()
+            .map(ModuleItem::Stmt)
+            .collect(),
+        shebang: None,
+    };
+    let unresolved_mark = Mark::new();
+    let top_level_mark = Mark::new();
+    analysis.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+    let top_ctxt = SyntaxContext::empty().apply_mark(top_level_mark);
+    if node_has_dynamic_scope_construct(&analysis) {
+        return None;
+    }
+    let mut bootstrap: Vec<Stmt> = analysis
+        .body
+        .into_iter()
+        .filter_map(|item| match item {
+            ModuleItem::Stmt(stmt) => Some(stmt),
+            ModuleItem::ModuleDecl(_) => None,
+        })
+        .collect();
+
+    let (require, prop, installed_at) = {
+        let top: Vec<&Stmt> = bootstrap.iter().collect();
+        let runtimes = collect_runtime_sites(&top, top_ctxt);
+        let [site] = runtimes.as_slice() else {
+            return None;
+        };
+        let RuntimeHost::Member(require, prop) = &site.host else {
+            return None;
+        };
+        let require_is_function = top.iter().any(|stmt| {
+            matches!(stmt, Stmt::Decl(Decl::Fn(function)) if function.ident.to_id() == *require)
+        });
+        if !site.assigned || !require_is_function {
+            return None;
+        }
+        (require.clone(), prop.clone(), site.stmt)
+    };
+
+    let scope = if scope_builds_wrappers(&bootstrap, &require, &prop) {
+        WrapperScope::Top
+    } else {
+        let scope = startup_iife_scope(&bootstrap)?;
+        if !scope_builds_wrappers(scope_stmts(&bootstrap, &scope)?, &require, &prop) {
+            return None;
+        }
+        scope
+    };
+    let scope_body = scope_stmts(&bootstrap, &scope)?;
+    let stmts: Vec<&Stmt> = scope_body.iter().collect();
+    // In the startup IIFE every statement runs after the runtime is installed.
+    let installed_at = match scope {
+        WrapperScope::Top => Some(installed_at),
+        WrapperScope::Iife { .. } => None,
+    };
+
+    // The wrapped modules and the bindings beside them.
+    let mut wrapped: Vec<TableWrapped> = Vec::new();
+    let mut bindings: Vec<ScopeBinding> = Vec::new();
+    for (index, stmt) in stmts.iter().enumerate() {
+        if let Stmt::Decl(Decl::Var(var)) = stmt {
+            for (decl_index, decl) in var.decls.iter().enumerate() {
+                let Some(init) = decl.init.as_deref() else {
+                    continue;
+                };
+                let Pat::Ident(name) = &decl.name else {
+                    if is_wrapper_build(Some(init), &require, &prop) {
+                        return None;
+                    }
+                    continue;
+                };
+                let id = name.id.to_id();
+                if is_wrapper_build(Some(init), &require, &prop) {
+                    if installed_at.is_some_and(|at| index <= at) {
+                        return None;
+                    }
+                    let function = declarator_wrapped_function(var, decl_index)?;
+                    wrapped.push(TableWrapped {
+                        id: Some(id),
+                        stmt: index,
+                        decl: decl_index,
+                        function_span: function_span(function)?,
+                    });
+                    continue;
+                }
+                let (kind, module_id) = if let Some(module_id) =
+                    table_accessor_module_id(init, &require)
+                {
+                    (ScopeBindingKind::Accessor, Some(module_id))
+                } else if let Some(module_id) = table_load_module_id(init, &require) {
+                    (ScopeBindingKind::Loaded, Some(module_id))
+                } else if matches!(strip_parens(init), Expr::Object(object) if object.props.is_empty())
+                {
+                    (ScopeBindingKind::Namespace, None)
+                } else {
+                    continue;
+                };
+                bindings.push(ScopeBinding {
+                    id,
+                    kind,
+                    stmt: index,
+                    decl: decl_index,
+                    module_id,
+                });
+            }
+        }
+        for value in top_level_values(stmt) {
+            let Some(function) = inline_called_wrapper(value, &require, &prop) else {
+                continue;
+            };
+            if installed_at.is_some_and(|at| index <= at) {
+                return None;
+            }
+            wrapped.push(TableWrapped {
+                id: None,
+                stmt: index,
+                decl: 0,
+                function_span: function_span(function)?,
+            });
+        }
+    }
+    if wrapped.is_empty() {
+        return None;
+    }
+    wrapped.sort_by_key(|module| module.function_span.lo);
+
+    let wrapper_ids: Vec<Id> = wrapped
+        .iter()
+        .filter_map(|module| module.id.clone())
+        .collect();
+    let namespace_ids: HashSet<Id> = bindings
+        .iter()
+        .filter(|binding| binding.kind == ScopeBindingKind::Namespace)
+        .map(|binding| binding.id.clone())
+        .collect();
+    let tracked: HashSet<Id> = wrapper_ids
+        .iter()
+        .cloned()
+        .chain(bindings.iter().map(|binding| binding.id.clone()))
+        .collect();
+    let lazy: HashSet<Span> = wrapped
+        .iter()
+        .filter(|module| module.id.is_some())
+        .map(|module| module.function_span)
+        .collect();
+    let inline: HashSet<Span> = wrapped
+        .iter()
+        .filter(|module| module.id.is_none())
+        .map(|module| module.function_span)
+        .collect();
+    let mut scan = TableUseScan {
+        tracked: &tracked,
+        namespaces: &namespace_ids,
+        require: &require,
+        prop: &prop,
+        lazy: &lazy,
+        inline: &inline,
+        scope_body: match &scope {
+            WrapperScope::Top => None,
+            WrapperScope::Iife { body_span, .. } => Some(*body_span),
+        },
+        stmt: 0,
+        lazy_depth: 0,
+        function_depth: 0,
+        uses: HashMap::default(),
+        declared: HashMap::default(),
+        calls: HashMap::default(),
+        written: HashSet::default(),
+        defines: HashMap::default(),
+        nested_defines: HashSet::default(),
+        first_use: HashMap::default(),
+        first_eager_use: HashMap::default(),
+        host_uses: 0,
+        require_functions: 0,
+        require_bound: false,
+    };
+    match scope {
+        WrapperScope::Top => {
+            for (index, stmt) in bootstrap.iter().enumerate() {
+                scan.stmt = index;
+                stmt.visit_with(&mut scan);
+            }
+        }
+        WrapperScope::Iife { .. } => bootstrap.visit_with(&mut scan),
+    }
+    let count = |map: &HashMap<Id, usize>, id: &Id| map.get(id).copied().unwrap_or(0);
+    let declared_once = |id: &Id| count(&scan.declared, id) == 1 && !scan.written.contains(id);
+    let exclusive = |id: &Id| declared_once(id) && count(&scan.uses, id) == count(&scan.calls, id);
+    if !wrapper_ids.iter().all(exclusive)
+        || scan.host_uses != wrapped.len() + 1
+        || scan.require_functions != 1
+        || scan.require_bound
+    {
+        return None;
+    }
+
+    // Each namespace object's `R.r(N)` / `R.d(N, …)` calls, which must all
+    // be top-level expressions of the scope.
+    let mut define_sites: HashMap<Id, Vec<(usize, usize)>> = HashMap::default();
+    for (index, stmt) in stmts.iter().enumerate() {
+        let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+            continue;
+        };
+        let elements: Vec<&Expr> = match strip_parens(expr) {
+            Expr::Seq(seq) => seq.exprs.iter().map(|expr| &**expr).collect(),
+            expr => vec![expr],
+        };
+        for (element, value) in elements.into_iter().enumerate() {
+            if let Some(id) = namespace_define_target(value, &require, &namespace_ids) {
+                define_sites.entry(id).or_default().push((index, element));
+            }
+        }
+    }
+    bindings.retain(|binding| match binding.kind {
+        ScopeBindingKind::Accessor => exclusive(&binding.id),
+        ScopeBindingKind::Loaded => declared_once(&binding.id),
+        ScopeBindingKind::Namespace => {
+            declared_once(&binding.id)
+                && count(&scan.defines, &binding.id) > 0
+                && !scan.nested_defines.contains(&binding.id)
+                && define_sites.get(&binding.id).map_or(0, Vec::len)
+                    == count(&scan.defines, &binding.id)
+        }
+    });
+    let binding_kind = |id: &Id| {
+        bindings
+            .iter()
+            .find(|binding| binding.id == *id)
+            .map(|binding| binding.kind)
+    };
+    let callable: HashSet<Id> = wrapper_ids
+        .iter()
+        .cloned()
+        .chain(
+            bindings
+                .iter()
+                .filter(|binding| binding.kind == ScopeBindingKind::Accessor)
+                .map(|binding| binding.id.clone()),
+        )
+        .collect();
+
+    // What the moved code reads: each wrapped body, then the getters of each
+    // namespace object that moves.
+    let mut needed: Vec<Id> = Vec::new();
+    let mut inline_reads: Vec<bool> = Vec::with_capacity(wrapped.len());
+    for module in &wrapped {
+        let function = wrapped_function(stmts[module.stmt], module, &require, &prop)?;
+        let reads = table_factory_reads(function, &callable, &require, unresolved_mark)?;
+        inline_reads.push(module.id.is_none() && !reads.is_empty());
+        needed.extend(reads);
+    }
+    let namespace_reads = |id: &Id| -> Option<Vec<Id>> {
+        let mut reads = Vec::new();
+        for &(stmt, element) in &define_sites[id] {
+            let Expr::Call(call) = strip_parens(top_level_element(stmts[stmt], element)?) else {
+                return None;
+            };
+            for arg in &call.args[1..] {
+                reads.extend(expr_outer_reads(
+                    &arg.expr,
+                    &callable,
+                    &require,
+                    unresolved_mark,
+                )?);
+            }
+        }
+        Some(reads)
+    };
+    let mut namespaces: Vec<Id> = Vec::new();
+    let mut loaded: Vec<Id> = Vec::new();
+    let mut index = 0;
+    while let Some(id) = needed.get(index).cloned() {
+        index += 1;
+        match binding_kind(&id) {
+            Some(ScopeBindingKind::Accessor) => {}
+            Some(ScopeBindingKind::Loaded) => {
+                if !loaded.contains(&id) {
+                    loaded.push(id);
+                }
+            }
+            Some(ScopeBindingKind::Namespace) => {
+                if !namespaces.contains(&id) {
+                    needed.extend(namespace_reads(&id)?);
+                    namespaces.push(id);
+                }
+            }
+            None => return None,
+        }
+    }
+
+    // The orders that keep every read's value (see above).
+    let binding_stmt = |id: &Id| {
+        bindings
+            .iter()
+            .find(|binding| binding.id == *id)
+            .map(|binding| binding.stmt)
+    };
+    let namespace_stmts = |id: &Id| {
+        binding_stmt(id)
+            .into_iter()
+            .chain(define_sites[id].iter().map(|(stmt, _)| *stmt))
+            .collect::<Vec<_>>()
+    };
+    let definitions: Vec<usize> = wrapped
+        .iter()
+        .filter(|module| module.id.is_some())
+        .map(|module| module.stmt)
+        .chain(callable.iter().filter_map(binding_stmt))
+        .chain(namespaces.iter().flat_map(namespace_stmts))
+        .collect();
+    let first_definition = definitions.iter().min().copied();
+    let last_definition = definitions.iter().max().copied();
+    let in_definitions = |stmt: usize| {
+        first_definition.is_some_and(|first| first <= stmt)
+            && last_definition.is_some_and(|last| stmt <= last)
+    };
+    // Mentioned from the first declaration on, read in place only after the
+    // last.
+    let defined_in_time = |id: &Id| {
+        first_definition
+            .is_none_or(|first| scan.first_use.get(id).is_none_or(|stmt| *stmt >= first))
+            && last_definition
+                .is_none_or(|last| scan.first_eager_use.get(id).is_none_or(|stmt| *stmt > last))
+    };
+    if !callable.iter().chain(&namespaces).all(defined_in_time) {
+        return None;
+    }
+    if let (Some(first), Some(last)) = (first_definition, last_definition) {
+        if !stmts[first..=last]
+            .iter()
+            .all(|stmt| is_definition_stmt(stmt, &require, top_ctxt))
+        {
+            return None;
+        }
+        // Nor can the code before the declarations (the runtime, the module
+        // table) reach what is declared from there on, such as an entry
+        // function that calls an accessor.
+        let mut later = DeclaredIds::default();
+        for stmt in &stmts[first..] {
+            stmt.visit_with(&mut later);
+        }
+        if stmts_mention(&stmts[..first], &later.0) {
+            return None;
+        }
+    }
+    // The other namespace objects among the declarations move too, when
+    // their getters read only what moved code may: entry code then reads
+    // a module whose runtime calls the pipeline recovers. One nothing reads
+    // only ever has its runtime calls run on it, and goes with them.
+    let mut unread: Vec<Id> = Vec::new();
+    let mut optional: Vec<(Id, Vec<Id>)> = Vec::new();
+    for binding in &bindings {
+        if binding.kind != ScopeBindingKind::Namespace
+            || namespaces.contains(&binding.id)
+            || !namespace_stmts(&binding.id).into_iter().all(in_definitions)
+        {
+            continue;
+        }
+        if count(&scan.uses, &binding.id) == 0 {
+            unread.push(binding.id.clone());
+        } else if defined_in_time(&binding.id) {
+            if let Some(reads) = namespace_reads(&binding.id) {
+                optional.push((binding.id.clone(), reads));
+            }
+        }
+    }
+    loop {
+        let before = optional.len();
+        let liftable: Vec<Id> = optional.iter().map(|(id, _)| id.clone()).collect();
+        optional.retain(|(_, reads)| {
+            reads.iter().all(|read| match binding_kind(read) {
+                Some(ScopeBindingKind::Loaded) => true,
+                Some(ScopeBindingKind::Namespace) => {
+                    namespaces.contains(read) || liftable.contains(read)
+                }
+                _ => false,
+            })
+        });
+        if optional.len() == before {
+            break;
+        }
+    }
+    for (id, reads) in optional {
+        for read in reads {
+            if binding_kind(&read) == Some(ScopeBindingKind::Loaded) && !loaded.contains(&read) {
+                loaded.push(read);
+            }
+        }
+        namespaces.push(id);
+    }
+
+    let last_load = loaded.iter().filter_map(binding_stmt).max();
+    let settled = match (last_definition, last_load) {
+        (Some(definition), Some(load)) if load > definition => {
+            let table_accessors: HashSet<Id> = bindings
+                .iter()
+                .filter(|binding| binding.kind == ScopeBindingKind::Accessor)
+                .map(|binding| binding.id.clone())
+                .collect();
+            if !stmts_read_only_their_own(
+                &stmts[definition + 1..=load],
+                &table_accessors,
+                &require,
+                unresolved_mark,
+            ) {
+                return None;
+            }
+            Some(load)
+        }
+        (definition, load) => definition.max(load),
+    };
+    for (module, reads) in wrapped.iter().zip(&inline_reads) {
+        if *reads && settled.is_some_and(|settled| module.stmt <= settled) {
+            return None;
+        }
+    }
+
+    // The import-position stubs `X();` that become `var X = R("<id>")`, as in
+    // a bootstrap without a table (see `bind_import_stubs`). Before the last
+    // declaration or load nothing can call an accessor, so the scan starts
+    // after it; table module loads cannot call one either.
+    let stub_bindings = {
+        let table_loads: HashSet<Id> = bindings
+            .iter()
+            .filter(|binding| binding.kind == ScopeBindingKind::Accessor)
+            .map(|binding| binding.id.clone())
+            .collect();
+        let from = match (settled, installed_at) {
+            (Some(settled), _) => settled + 1,
+            (None, Some(installed)) => installed + 1,
+            (None, None) => 0,
+        };
+        let entry = &stmts[from.min(stmts.len())..];
+        let observes_interop = entry.iter().any(|stmt| {
+            reads_es_module_marker(std::slice::from_ref(*stmt))
+                || stmt_uses_member(stmt, &require, "n")
+        });
+        if observes_interop {
+            Vec::new()
+        } else {
+            let mut settles = Vec::with_capacity(wrapped.len());
+            let mut loads = Vec::with_capacity(wrapped.len());
+            let wrapper_set: HashSet<Id> = wrapper_ids.iter().cloned().collect();
+            for module in &wrapped {
+                let factory = function_factory(wrapped_function(
+                    stmts[module.stmt],
+                    module,
+                    &require,
+                    &prop,
+                )?)?;
+                settles.push(module.id.is_some() && exports_settle_on_load(&factory));
+                loads.push(
+                    unconditional_loads(&factory.body, &wrapper_set)
+                        .into_iter()
+                        .filter_map(|id| {
+                            wrapped
+                                .iter()
+                                .position(|other| other.id.as_ref() == Some(&id))
+                        })
+                        .collect::<Vec<_>>(),
+                );
+            }
+            table_import_stubs(
+                entry,
+                from,
+                &wrapped,
+                &settles,
+                &loads,
+                &table_loads,
+                &require,
+                top_ctxt,
+            )
+        }
+    };
+
+    // A name only `R` spells: its own when no other identifier spells it.
+    let mut spellings = ForeignSpellings {
+        id: &require,
+        syms: HashSet::default(),
+    };
+    bootstrap.visit_with(&mut spellings);
+    let require_sym = if spellings.syms.contains(&require.0) {
+        (0..)
+            .map(|suffix| match suffix {
+                0 => Atom::from("__webpack_require__"),
+                n => Atom::from(format!("__webpack_require___{n}")),
+            })
+            .find(|candidate| !spellings.syms.contains(candidate))?
+    } else {
+        require.0.clone()
+    };
+
+    let mut filenames: Vec<String> = wrapped
+        .iter()
+        .enumerate()
+        .map(|(index, module)| table_wrapper_filename(cm, stmts[module.stmt], module, index))
+        .collect();
+    filenames.extend(
+        (0..namespaces.len())
+            .map(|index| webpack_module_filename(&format!("cw-namespace-{index}"))),
+    );
+    let strict = has_use_strict_directive(&bootstrap_body.stmts)
+        || matches!(scope, WrapperScope::Iife { .. }) && has_use_strict_directive(scope_body);
+    let removed: HashSet<(usize, usize)> = wrapped
+        .iter()
+        .filter(|module| module.id.is_some())
+        .map(|module| (module.stmt, module.decl))
+        .chain(
+            bindings
+                .iter()
+                .filter(|binding| {
+                    binding.kind == ScopeBindingKind::Accessor
+                        || namespaces.contains(&binding.id)
+                        || unread.contains(&binding.id)
+                })
+                .map(|binding| (binding.stmt, binding.decl)),
+        )
+        .collect();
+    let moved_defines: HashSet<(usize, usize)> = namespaces
+        .iter()
+        .chain(&unread)
+        .flat_map(|id| define_sites[id].iter().copied())
+        .collect();
+    let loaded_ids: HashMap<Id, Expr> = bindings
+        .iter()
+        .filter(|binding| loaded.contains(&binding.id))
+        .filter_map(|binding| Some((binding.id.clone(), binding.module_id.clone()?)))
+        .collect();
+    let loaded_module_ids: Vec<Expr> = loaded_ids.values().cloned().collect();
+    drop(stmts);
+
+    // Rewrite: accessor calls and wrappers called where they are built.
+    let mut targets: HashMap<Id, Expr> = HashMap::default();
+    let mut inline_index: HashMap<Span, usize> = HashMap::default();
+    for (index, module) in wrapped.iter().enumerate() {
+        match &module.id {
+            Some(id) => {
+                targets.insert(id.clone(), str_lit(&table_wrapper_id(index)));
+            }
+            None => {
+                inline_index.insert(module.function_span, index);
+            }
+        }
+    }
+    for binding in &bindings {
+        if binding.kind == ScopeBindingKind::Accessor {
+            targets.insert(binding.id.clone(), binding.module_id.clone()?);
+        }
+    }
+    let mut rewriter = TableCallRewriter {
+        targets: &targets,
+        inline: &inline_index,
+        require: &require,
+        inline_factories: HashMap::default(),
+    };
+    bootstrap.visit_mut_with(&mut rewriter);
+    let mut factories: Vec<Option<Factory>> = (0..wrapped.len())
+        .map(|index| rewriter.inline_factories.remove(&index))
+        .collect();
+
+    // Move out the namespace objects' calls and the declarations.
+    let scope_body = scope_stmts_mut(&mut bootstrap, &scope)?;
+    let mut namespace_calls: HashMap<Id, Vec<Expr>> = HashMap::default();
+    for (index, stmt) in scope_body.iter_mut().enumerate() {
+        match stmt {
+            Stmt::Expr(ExprStmt { expr, span })
+                if moved_defines.iter().any(|(at, _)| *at == index) =>
+            {
+                let invalid = Expr::Invalid(swc_core::ecma::ast::Invalid { span: DUMMY_SP });
+                let elements = match *std::mem::replace(expr, Box::new(invalid)) {
+                    Expr::Seq(seq) => seq.exprs,
+                    Expr::Paren(paren) => match *paren.expr {
+                        Expr::Seq(seq) => seq.exprs,
+                        expr => vec![Box::new(expr)],
+                    },
+                    expr => vec![Box::new(expr)],
+                };
+                let mut kept = Vec::with_capacity(elements.len());
+                for (element, value) in elements.into_iter().enumerate() {
+                    if moved_defines.contains(&(index, element)) {
+                        let id = namespace_define_target(&value, &require, &namespace_ids)?;
+                        namespace_calls.entry(id).or_default().push(*value);
+                    } else {
+                        kept.push(value);
+                    }
+                }
+                let span = *span;
+                let mut out = Vec::new();
+                flush_elements(&mut kept, span, &mut out);
+                *stmt = out
+                    .pop()
+                    .unwrap_or(Stmt::Empty(swc_core::ecma::ast::EmptyStmt { span }));
+            }
+            Stmt::Decl(Decl::Var(var)) if removed.iter().any(|(at, _)| *at == index) => {
+                for (position, module) in wrapped.iter().enumerate() {
+                    if module.id.is_some() && module.stmt == index {
+                        let function = declarator_wrapped_function(var, module.decl)?;
+                        factories[position] = Some(function_factory(function)?);
+                    }
+                }
+                let mut decl_index = 0;
+                var.decls.retain(|_| {
+                    let keep = !removed.contains(&(index, decl_index));
+                    decl_index += 1;
+                    keep
+                });
+                if var.decls.is_empty() {
+                    *stmt = Stmt::Empty(swc_core::ecma::ast::EmptyStmt { span: var.span });
+                }
+            }
+            _ => {}
+        }
+    }
+    // Bind the stubs; every call left in entry code reads the binding.
+    if !stub_bindings.is_empty() {
+        let mut bound: HashMap<String, Id> = HashMap::default();
+        for &index in stub_bindings.iter().flat_map(|stub| &stub.bind) {
+            bound.insert(table_wrapper_id(index), wrapped[index].id.clone()?);
+        }
+        scope_body.visit_mut_with(&mut ReadBoundLoads {
+            require: &require,
+            bound: &bound,
+        });
+        let mut expanded = Vec::with_capacity(scope_body.len() + bound.len());
+        for (index, stmt) in std::mem::take(scope_body).into_iter().enumerate() {
+            let stubs: Vec<&StubBinding> = stub_bindings
+                .iter()
+                .filter(|stub| stub.stmt == index)
+                .collect();
+            if stubs.is_empty() {
+                expanded.push(stmt);
+                continue;
+            }
+            let Stmt::Expr(ExprStmt { span, expr }) = stmt else {
+                return None;
+            };
+            let elements = match *expr {
+                Expr::Seq(seq) => seq.exprs,
+                Expr::Paren(paren) => match *paren.expr {
+                    Expr::Seq(seq) => seq.exprs,
+                    expr => vec![Box::new(expr)],
+                },
+                expr => vec![Box::new(expr)],
+            };
+            let mut pending = Vec::new();
+            for (element, value) in elements.into_iter().enumerate() {
+                let Some(stub) = stubs.iter().find(|stub| stub.element == element) else {
+                    pending.push(value);
+                    continue;
+                };
+                let at = value.span();
+                if stub.bind.first() != Some(&stub.module) {
+                    pending.push(value);
+                }
+                flush_elements(&mut pending, span, &mut expanded);
+                for &module in &stub.bind {
+                    let id = wrapped[module].id.clone()?;
+                    expanded.push(Stmt::Decl(Decl::Var(Box::new(VarDecl {
+                        span: at,
+                        kind: swc_core::ecma::ast::VarDeclKind::Var,
+                        decls: vec![VarDeclarator {
+                            span: DUMMY_SP,
+                            name: Pat::Ident(Ident::new(id.0, DUMMY_SP, id.1).into()),
+                            init: Some(Box::new(require_call_expr(
+                                &require,
+                                str_lit(&table_wrapper_id(module)),
+                            ))),
+                            definite: false,
+                        }],
+                        ..Default::default()
+                    }))));
+                }
+            }
+            flush_elements(&mut pending, span, &mut expanded);
+        }
+        *scope_body = expanded;
+    }
+    scope_body.retain(|stmt| !matches!(stmt, Stmt::Empty(_)));
+
+    // Reads of the moved namespace objects, everywhere, and of loaded table
+    // modules, in the moved code.
+    let namespace_reads: HashMap<Id, Expr> = namespaces
+        .iter()
+        .enumerate()
+        .map(|(index, id)| {
+            let module_id = str_lit(&table_wrapper_id(wrapped.len() + index));
+            (id.clone(), require_call_expr(&require, module_id))
+        })
+        .collect();
+    let mut replace_namespaces = ReplaceReads {
+        reads: &namespace_reads,
+    };
+    bootstrap.visit_mut_with(&mut replace_namespaces);
+    let mut namespace_factories: Vec<Factory> = Vec::with_capacity(namespaces.len());
+    for id in &namespaces {
+        let calls = namespace_calls.remove(id)?;
+        namespace_factories.push(Factory {
+            params: Vec::new(),
+            body: calls
+                .into_iter()
+                .map(|call| {
+                    Stmt::Expr(ExprStmt {
+                        span: call.span(),
+                        expr: Box::new(call),
+                    })
+                })
+                .collect(),
+            is_arrow: false,
+            span: DUMMY_SP,
+        });
+    }
+    let loaded_reads: HashMap<Id, Expr> = loaded_ids
+        .iter()
+        .map(|(id, module_id)| (id.clone(), require_call_expr(&require, module_id.clone())))
+        .collect();
+    let mut factories: Vec<Factory> = factories.into_iter().collect::<Option<Vec<_>>>()?;
+    for factory in factories.iter_mut().chain(namespace_factories.iter_mut()) {
+        factory.body.visit_mut_with(&mut replace_namespaces);
+        factory.body.visit_mut_with(&mut ReplaceReads {
+            reads: &loaded_reads,
+        });
+    }
+    let namespace_count = namespace_factories.len();
+    factories.extend(namespace_factories);
+
+    let mut rename = RenameBinding {
+        id: &require,
+        to: &require_sym,
+    };
+    bootstrap.visit_mut_with(&mut rename);
+    bootstrap.visit_mut_with(&mut ClearContexts);
+
+    let mut translated = Vec::with_capacity(factories.len());
+    for (index, (factory, filename)) in factories.into_iter().zip(filenames).enumerate() {
+        let is_namespace = index >= wrapped.len();
+        let Factory {
+            mut params,
+            mut body,
+            ..
+        } = factory;
+        body.visit_mut_with(&mut rename);
+        let mut names = IdentNameCollector::default();
+        body.visit_with(&mut names);
+        params.visit_with(&mut names);
+        names.0.insert(require_sym.clone());
+        for base in ["__webpack_module__", "__webpack_exports__"]
+            .into_iter()
+            .skip(params.len())
+        {
+            let name = fresh_name(base, &names.0);
+            names.0.insert(name.clone());
+            params.push(Pat::Ident(Ident::new_no_ctxt(name, DUMMY_SP).into()));
+        }
+        params.push(Pat::Ident(
+            Ident::new_no_ctxt(require_sym.clone(), DUMMY_SP).into(),
+        ));
+        if is_namespace {
+            // `R.r(N)` / `R.d(N, …)` define the module's own exports.
+            let Pat::Ident(exports) = &params[1] else {
+                return None;
+            };
+            let exports = Expr::Ident(exports.id.clone());
+            for stmt in &mut body {
+                let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+                    return None;
+                };
+                let Expr::Call(call) = strip_parens_mut(expr) else {
+                    return None;
+                };
+                *call.args.first_mut()?.expr = exports.clone();
+            }
+        }
+        // The body ran inside the strict bootstrap.
+        if strict && !has_use_strict_directive(&body) {
+            body.insert(0, use_strict_directive());
+        }
+        body.visit_mut_with(&mut ClearContexts);
+        params.visit_mut_with(&mut ClearContexts);
+        translated.push(TranslatedWebpackFactory {
+            id: table_wrapper_id(index),
+            filename,
+            params,
+            body,
+        });
+    }
+    debug_assert_eq!(translated.len(), wrapped.len() + namespace_count);
+
+    Some(TableWrapperSplit {
+        bootstrap: FunctionBody {
+            span: bootstrap_body.span,
+            stmts: bootstrap,
+        },
+        factories: translated,
+        require_sym,
+        loaded_module_ids,
+    })
+}
+
+/// An import-position stub `X();` of a bootstrap with a module table, and
+/// the wrapped modules bound right at it.
+struct StubBinding {
+    stmt: usize,
+    element: usize,
+    /// The wrapped module the stub loads.
+    module: usize,
+    /// The wrapped modules whose load the stub completes and whose exports
+    /// settle on load, `module` first when it is one of them.
+    bind: Vec<usize>,
+}
+
+/// The stubs among `entry`, the scope's statements from `from` on, that can
+/// bind their module (see [`bind_import_stubs`]): every statement before a
+/// stub runs nothing that can call an accessor, so the stub is the first
+/// call. Loading a table module counts as running nothing: a table module
+/// cannot reach the bootstrap's accessors.
+#[allow(clippy::too_many_arguments)]
+fn table_import_stubs(
+    entry: &[&Stmt],
+    from: usize,
+    wrapped: &[TableWrapped],
+    settles: &[bool],
+    loads: &[Vec<usize>],
+    table_loads: &HashSet<Id>,
+    require: &Id,
+    top_ctxt: SyntaxContext,
+) -> Vec<StubBinding> {
+    let positions: HashMap<Id, usize> = wrapped
+        .iter()
+        .enumerate()
+        .filter_map(|(index, module)| Some((module.id.clone()?, index)))
+        .collect();
+    let wrapper_ids: HashSet<Id> = positions.keys().cloned().collect();
+    let quiet = |expr: &Expr| {
+        is_inert_expr(expr, top_ctxt)
+            || matches!(strip_parens(expr), Expr::Call(call)
+                if accessor_call_target(call, table_loads).is_some())
+            || table_load_module_id(expr, require).is_some()
+    };
+    let mut loaded: HashSet<usize> = HashSet::default();
+    let mut out = Vec::new();
+    for (offset, stmt) in entry.iter().enumerate() {
+        let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+            let quiet_stmt = match stmt {
+                Stmt::Decl(Decl::Var(var)) => var.decls.iter().all(|decl| {
+                    matches!(decl.name, Pat::Ident(_)) && decl.init.as_deref().is_none_or(quiet)
+                }),
+                stmt => is_inert_stmt(stmt, top_ctxt),
+            };
+            if !quiet_stmt {
+                break;
+            }
+            continue;
+        };
+        let elements: Vec<&Expr> = match strip_parens(expr) {
+            Expr::Seq(seq) => seq.exprs.iter().map(|expr| &**expr).collect(),
+            expr => vec![expr],
+        };
+        for (element, value) in elements.into_iter().enumerate() {
+            let target = match strip_parens(value) {
+                Expr::Call(call) => {
+                    accessor_call_target(call, &wrapper_ids).map(|ident| positions[&ident.to_id()])
+                }
+                _ => None,
+            };
+            let Some(module) = target else {
+                if !quiet(value) {
+                    return out;
+                }
+                continue;
+            };
+            if loaded.contains(&module) {
+                continue;
+            }
+            let mut completed = vec![module];
+            let mut next = 0;
+            while let Some(current) = completed.get(next).copied() {
+                next += 1;
+                for &other in &loads[current] {
+                    if !completed.contains(&other) && !loaded.contains(&other) {
+                        completed.push(other);
+                    }
+                }
+            }
+            let bind: Vec<usize> = completed
+                .iter()
+                .copied()
+                .filter(|module| settles[*module])
+                .collect();
+            loaded.extend(completed);
+            if !bind.is_empty() {
+                out.push(StubBinding {
+                    stmt: from + offset,
+                    element,
+                    module,
+                    bind,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// Whether an identifier of `stmts` is one of `ids`.
+fn stmts_mention(stmts: &[&Stmt], ids: &HashSet<Id>) -> bool {
+    struct Finder<'a> {
+        ids: &'a HashSet<Id>,
+        found: bool,
+    }
+    impl Visit for Finder<'_> {
+        fn visit_ident(&mut self, ident: &Ident) {
+            self.found |= self.ids.contains(&ident.to_id());
+        }
+    }
+    let mut finder = Finder { ids, found: false };
+    for stmt in stmts {
+        stmt.visit_with(&mut finder);
+    }
+    finder.found
+}
+
+/// Whether `stmt` reads the member `require.<prop>`.
+fn stmt_uses_member(stmt: &Stmt, require: &Id, prop: &str) -> bool {
+    struct Finder<'a> {
+        require: &'a Id,
+        prop: &'a str,
+        found: bool,
+    }
+    impl Visit for Finder<'_> {
+        fn visit_member_expr(&mut self, member: &MemberExpr) {
+            self.found |= matches!(&*member.obj, Expr::Ident(object) if object.to_id() == *self.require)
+                && static_prop_name(&member.prop) == Some(self.prop);
+            member.visit_children_with(self);
+        }
+    }
+    let mut finder = Finder {
+        require,
+        prop,
+        found: false,
+    };
+    stmt.visit_with(&mut finder);
+    finder.found
+}
+
+/// Replaces each `require("<id>")` of a bound wrapped module with its binding.
+struct ReadBoundLoads<'a> {
+    require: &'a Id,
+    bound: &'a HashMap<String, Id>,
+}
+
+impl VisitMut for ReadBoundLoads<'_> {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        expr.visit_mut_children_with(self);
+        let Expr::Call(call) = expr else {
+            return;
+        };
+        let Callee::Expr(callee) = &call.callee else {
+            return;
+        };
+        if !matches!(&**callee, Expr::Ident(ident) if ident.to_id() == *self.require) {
+            return;
+        }
+        let [arg] = call.args.as_slice() else {
+            return;
+        };
+        let Expr::Lit(Lit::Str(module_id)) = &*arg.expr else {
+            return;
+        };
+        let Some(id) = module_id
+            .value
+            .as_str()
+            .and_then(|module_id| self.bound.get(module_id))
+        else {
+            return;
+        };
+        *expr = Expr::Ident(Ident::new(id.0.clone(), call.span, id.1));
+    }
+}
+
+/// Whether the table factory `(params) { body }` replaces `module.exports`
+/// only while it loads: its module parameter is used only as
+/// `module.exports`, outside every function in it (see
+/// [`exports_settle_on_load`]).
+pub(super) fn table_factory_settles(params: &[Pat], body: &[Stmt]) -> bool {
+    match params.first() {
+        None => return true,
+        Some(Pat::Ident(_)) => {}
+        Some(_) => return false,
+    }
+    // Resolve the factory on its own, so a local spelled like the module
+    // parameter is not taken for it.
+    let mut program = Module {
+        span: DUMMY_SP,
+        body: vec![ModuleItem::Stmt(Stmt::Expr(ExprStmt {
+            span: DUMMY_SP,
+            expr: Box::new(Expr::Fn(swc_core::ecma::ast::FnExpr {
+                ident: None,
+                function: Box::new(Function {
+                    params: params
+                        .iter()
+                        .cloned()
+                        .map(|pat| swc_core::ecma::ast::Param {
+                            span: DUMMY_SP,
+                            decorators: Vec::new(),
+                            pat,
+                        })
+                        .collect(),
+                    body: Some(FunctionBody {
+                        span: DUMMY_SP,
+                        stmts: body.to_vec(),
+                    }),
+                    ..Default::default()
+                }),
+            })),
+        }))],
+        shebang: None,
+    };
+    program.visit_mut_with(&mut resolver(Mark::new(), Mark::new(), false));
+    let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = &program.body[0] else {
+        return false;
+    };
+    let Expr::Fn(function) = &**expr else {
+        return false;
+    };
+    let Some(Pat::Ident(module)) = function.function.params.first().map(|param| &param.pat) else {
+        return false;
+    };
+    let Some(body) = &function.function.body else {
+        return false;
+    };
+    let mut scan = ModuleObjectScan {
+        module: module.id.to_id(),
+        depth: 0,
+        settles: true,
+    };
+    body.stmts.visit_with(&mut scan);
+    scan.settles
+}
+
+/// Where the wrappers of a bootstrap with a module table are declared.
+enum WrapperScope {
+    /// The bootstrap's top level.
+    Top,
+    /// The body of the startup IIFE that is the bootstrap's last statement,
+    /// or the last element of its comma sequence.
+    Iife {
+        stmt: usize,
+        element: Option<usize>,
+        body_span: Span,
+    },
+}
+
+/// Whether a top-level statement of `stmts` builds a wrapper with
+/// `R.<prop>(function () { … })`.
+fn scope_builds_wrappers(stmts: &[Stmt], require: &Id, prop: &Atom) -> bool {
+    stmts.iter().any(|stmt| {
+        top_level_values(stmt).into_iter().any(|value| {
+            is_wrapper_build(Some(value), require, prop)
+                || inline_called_wrapper(value, require, prop).is_some()
+        })
+    })
+}
+
+fn is_wrapper_build(expr: Option<&Expr>, require: &Id, prop: &Atom) -> bool {
+    let Some(Expr::Call(call)) = expr.map(strip_parens) else {
+        return false;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    factory_arg(call).is_some()
+        && matches!(strip_parens(callee), Expr::Member(member)
+            if matches!(&*member.obj, Expr::Ident(object) if object.to_id() == *require)
+                && static_prop_name(&member.prop) == Some(prop.as_str()))
+}
+
+/// The namespace object `N` of `R.r(N)` or `R.d(N, { … })`.
+fn namespace_define_target(expr: &Expr, require: &Id, namespaces: &HashSet<Id>) -> Option<Id> {
+    let Expr::Call(call) = strip_parens(expr) else {
+        return None;
+    };
+    namespace_define_call_target(call, require, namespaces)
+}
+
+fn namespace_define_call_target(
+    call: &CallExpr,
+    require: &Id,
+    namespaces: &HashSet<Id>,
+) -> Option<Id> {
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Member(member) = strip_parens(callee) else {
+        return None;
+    };
+    if !matches!(&*member.obj, Expr::Ident(object) if object.to_id() == *require)
+        || !matches!(static_prop_name(&member.prop), Some("r" | "d"))
+    {
+        return None;
+    }
+    let target = call.args.first()?;
+    match &*target.expr {
+        Expr::Ident(ident) if target.spread.is_none() && namespaces.contains(&ident.to_id()) => {
+            Some(ident.to_id())
+        }
+        _ => None,
+    }
+}
+
+/// The `element`-th top-level expression of an expression statement.
+fn top_level_element(stmt: &Stmt, element: usize) -> Option<&Expr> {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    match strip_parens(expr) {
+        Expr::Seq(seq) => seq.exprs.get(element).map(|expr| &**expr),
+        expr => (element == 0).then_some(expr),
+    }
+}
+
+/// The startup IIFE `(() => { … })()` (or `(function () { … })()`) the
+/// bootstrap ends with.
+fn startup_iife_scope(bootstrap: &[Stmt]) -> Option<WrapperScope> {
+    let (index, stmt) = bootstrap
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, stmt)| !matches!(stmt, Stmt::Return(_) | Stmt::Empty(_)))?;
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let (element, value) = match strip_parens(expr) {
+        Expr::Seq(seq) => (Some(seq.exprs.len() - 1), &**seq.exprs.last()?),
+        expr => (None, expr),
+    };
+    let body = iife_body(value)?;
+    Some(WrapperScope::Iife {
+        stmt: index,
+        element,
+        body_span: body.span,
+    })
+}
+
+/// The body of a parameterless, argument-less, sync IIFE.
+fn iife_body(expr: &Expr) -> Option<&FunctionBody> {
+    let Expr::Call(call) = strip_parens(expr) else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    if !call.args.is_empty() {
+        return None;
+    }
+    match strip_parens(callee) {
+        Expr::Arrow(arrow) if !arrow.is_async && !arrow.is_generator && arrow.params.is_empty() => {
+            match &*arrow.body {
+                ArrowFunctionBody::FunctionBody(body) => Some(body),
+                ArrowFunctionBody::Expr(_) => None,
+            }
+        }
+        Expr::Fn(function)
+            if is_plain_function(&function.function) && function.function.params.is_empty() =>
+        {
+            function.function.body.as_ref()
+        }
+        _ => None,
+    }
+}
+
+fn iife_body_mut(expr: &mut Expr) -> Option<&mut FunctionBody> {
+    let Expr::Call(call) = strip_parens_mut(expr) else {
+        return None;
+    };
+    let Callee::Expr(callee) = &mut call.callee else {
+        return None;
+    };
+    match strip_parens_mut(callee) {
+        Expr::Arrow(arrow) => match &mut *arrow.body {
+            ArrowFunctionBody::FunctionBody(body) => Some(body),
+            ArrowFunctionBody::Expr(_) => None,
+        },
+        Expr::Fn(function) => function.function.body.as_mut(),
+        _ => None,
+    }
+}
+
+fn scope_stmts<'a>(bootstrap: &'a [Stmt], scope: &WrapperScope) -> Option<&'a [Stmt]> {
+    let WrapperScope::Iife { stmt, element, .. } = scope else {
+        return Some(bootstrap);
+    };
+    let Stmt::Expr(ExprStmt { expr, .. }) = bootstrap.get(*stmt)? else {
+        return None;
+    };
+    let value = match (element, strip_parens(expr)) {
+        (Some(element), Expr::Seq(seq)) => &**seq.exprs.get(*element)?,
+        (None, expr) => expr,
+        _ => return None,
+    };
+    Some(&iife_body(value)?.stmts)
+}
+
+fn scope_stmts_mut<'a>(
+    bootstrap: &'a mut Vec<Stmt>,
+    scope: &WrapperScope,
+) -> Option<&'a mut Vec<Stmt>> {
+    let WrapperScope::Iife { stmt, element, .. } = scope else {
+        return Some(bootstrap);
+    };
+    let Stmt::Expr(ExprStmt { expr, .. }) = bootstrap.get_mut(*stmt)? else {
+        return None;
+    };
+    let value = match (element, strip_parens_mut(expr)) {
+        (Some(element), Expr::Seq(seq)) => &mut **seq.exprs.get_mut(*element)?,
+        (None, expr) => expr,
+        _ => return None,
+    };
+    Some(&mut iife_body_mut(value)?.stmts)
+}
+
+/// A statement among the accessor and namespace object declarations: it only
+/// defines values ([`is_inert_expr`]) and calls members of `R`, webpack's
+/// runtime helpers (`R.cw(function () { … })`, `R.d(ns, { a: () => X().a })`,
+/// `R.r(ns)`), which call none of the functions they are given.
+fn is_definition_stmt(stmt: &Stmt, require: &Id, top_ctxt: SyntaxContext) -> bool {
+    let defines = |expr: &Expr| {
+        is_inert_expr(expr, top_ctxt)
+            || matches!(strip_parens(expr), Expr::Call(call)
+                if matches!(&call.callee, Callee::Expr(callee)
+                    if matches!(strip_parens(callee), Expr::Member(member)
+                        if matches!(&*member.obj, Expr::Ident(object) if object.to_id() == *require)
+                            && static_prop_name(&member.prop).is_some()))
+                    && call.args.iter().all(|arg| arg.spread.is_none() && is_inert_expr(&arg.expr, top_ctxt)))
+    };
+    match stmt {
+        Stmt::Empty(_) | Stmt::Decl(Decl::Fn(_)) => true,
+        Stmt::Decl(Decl::Var(var)) => var.decls.iter().all(|decl| {
+            matches!(decl.name, Pat::Ident(_)) && decl.init.as_deref().is_none_or(defines)
+        }),
+        Stmt::Expr(ExprStmt { expr, .. }) => match strip_parens(expr) {
+            Expr::Seq(seq) => seq.exprs.iter().all(|expr| defines(expr)),
+            expr => defines(expr),
+        },
+        _ => false,
+    }
+}
+
+/// Whether `stmts` read no binding but `require`, globals, the bindings they
+/// declare themselves, and zero-argument calls of the table module
+/// accessors `accessors`: then running them runs no wrapped body and no
+/// namespace getter, which only code declared elsewhere in the bootstrap
+/// reaches (a table module cannot).
+fn stmts_read_only_their_own(
+    stmts: &[&Stmt],
+    accessors: &HashSet<Id>,
+    require: &Id,
+    unresolved_mark: Mark,
+) -> bool {
+    let mut declared = DeclaredIds::default();
+    for stmt in stmts {
+        stmt.visit_with(&mut declared);
+    }
+    let mut scan = OuterReadScan {
+        declared: &declared.0,
+        callable: accessors,
+        require,
+        unresolved_mark,
+        reads: Vec::new(),
+    };
+    for stmt in stmts {
+        stmt.visit_with(&mut scan);
+    }
+    scan.reads.is_empty()
+}
+
+/// What a wrapped function of a bootstrap with a module table reads around
+/// it, other than `R` and zero-argument calls of `callable`. `None` when it
+/// cannot run as the factory `(module, exports, R)`: more than two
+/// parameters or one that is not plain, or `arguments`, `new.target`, or
+/// `return` at its level (and `this` in an arrow, the bootstrap's).
+fn table_factory_reads(
+    function: &Expr,
+    callable: &HashSet<Id>,
+    require: &Id,
+    unresolved_mark: Mark,
+) -> Option<Vec<Id>> {
+    let factory = function_factory(function)?;
+    if factory.params.len() > 2
+        || !factory
+            .params
+            .iter()
+            .all(|param| matches!(param, Pat::Ident(_)))
+    {
+        return None;
+    }
+    let observes_boundary = if factory.is_arrow {
+        stmts_have_function_level_special_bindings(&factory.body)
+    } else {
+        stmts_have_function_level_arguments_or_new_target(&factory.body)
+    };
+    if observes_boundary || stmts_have_function_level_return(&factory.body) {
+        return None;
+    }
+    expr_outer_reads(function, callable, require, unresolved_mark)
+}
+
+/// The bindings `expr` reads that it does not declare, other than `require`
+/// and zero-argument calls of `callable`.
+fn expr_outer_reads(
+    expr: &Expr,
+    callable: &HashSet<Id>,
+    require: &Id,
+    unresolved_mark: Mark,
+) -> Option<Vec<Id>> {
+    let mut declared = DeclaredIds::default();
+    expr.visit_with(&mut declared);
+    let mut scan = OuterReadScan {
+        declared: &declared.0,
+        callable,
+        require,
+        unresolved_mark,
+        reads: Vec::new(),
+    };
+    expr.visit_with(&mut scan);
+    Some(scan.reads)
+}
+
+/// Every binding a node declares, at any depth.
+#[derive(Default)]
+struct DeclaredIds(HashSet<Id>);
+
+impl DeclaredIds {
+    fn pat(&mut self, pat: &Pat) {
+        struct Bindings<'a>(&'a mut HashSet<Id>);
+        impl Visit for Bindings<'_> {
+            fn visit_binding_ident(&mut self, binding: &swc_core::ecma::ast::BindingIdent) {
+                self.0.insert(binding.id.to_id());
+            }
+            // A default value is an expression, not a declaration.
+            fn visit_expr(&mut self, _: &Expr) {}
+        }
+        pat.visit_with(&mut Bindings(&mut self.0));
+    }
+}
+
+impl Visit for DeclaredIds {
+    fn visit_var_declarator(&mut self, decl: &VarDeclarator) {
+        self.pat(&decl.name);
+        decl.visit_children_with(self);
+    }
+
+    fn visit_param(&mut self, param: &swc_core::ecma::ast::Param) {
+        self.pat(&param.pat);
+        param.visit_children_with(self);
+    }
+
+    fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
+        for param in &arrow.params {
+            self.pat(param);
+        }
+        arrow.visit_children_with(self);
+    }
+
+    fn visit_catch_clause(&mut self, clause: &swc_core::ecma::ast::CatchClause) {
+        if let Some(param) = &clause.param {
+            self.pat(param);
+        }
+        clause.visit_children_with(self);
+    }
+
+    fn visit_fn_decl(&mut self, decl: &swc_core::ecma::ast::FnDecl) {
+        self.0.insert(decl.ident.to_id());
+        decl.visit_children_with(self);
+    }
+
+    fn visit_fn_expr(&mut self, function: &swc_core::ecma::ast::FnExpr) {
+        if let Some(ident) = &function.ident {
+            self.0.insert(ident.to_id());
+        }
+        function.visit_children_with(self);
+    }
+
+    fn visit_class_decl(&mut self, decl: &swc_core::ecma::ast::ClassDecl) {
+        self.0.insert(decl.ident.to_id());
+        decl.visit_children_with(self);
+    }
+
+    fn visit_class_expr(&mut self, class: &swc_core::ecma::ast::ClassExpr) {
+        if let Some(ident) = &class.ident {
+            self.0.insert(ident.to_id());
+        }
+        class.visit_children_with(self);
+    }
+}
+
+/// The bindings a node reads that it does not declare (`declared`), other
+/// than `require` and zero-argument calls of `callable`.
+struct OuterReadScan<'a> {
+    declared: &'a HashSet<Id>,
+    callable: &'a HashSet<Id>,
+    require: &'a Id,
+    unresolved_mark: Mark,
+    reads: Vec<Id>,
+}
+
+impl Visit for OuterReadScan<'_> {
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if accessor_call_target(call, self.callable).is_some() {
+            return;
+        }
+        call.visit_children_with(self);
+    }
+
+    fn visit_ident(&mut self, ident: &Ident) {
+        let id = ident.to_id();
+        if ident.ctxt.outer() != self.unresolved_mark
+            && id != *self.require
+            && !self.declared.contains(&id)
+            && !self.reads.contains(&id)
+        {
+            self.reads.push(id);
+        }
+    }
+
+    // Labels are not bindings.
+    fn visit_labeled_stmt(&mut self, stmt: &swc_core::ecma::ast::LabeledStmt) {
+        stmt.body.visit_with(self);
+    }
+
+    fn visit_break_stmt(&mut self, _: &swc_core::ecma::ast::BreakStmt) {}
+
+    fn visit_continue_stmt(&mut self, _: &swc_core::ecma::ast::ContinueStmt) {}
+}
+
+/// The values a top-level statement evaluates once, in place: the expression
+/// of an expression statement (each element of a comma sequence), and the
+/// initializers of a declaration.
+fn top_level_values(stmt: &Stmt) -> Vec<&Expr> {
+    match stmt {
+        Stmt::Expr(ExprStmt { expr, .. }) => match strip_parens(expr) {
+            Expr::Seq(seq) => seq.exprs.iter().map(|expr| &**expr).collect(),
+            expr => vec![expr],
+        },
+        Stmt::Decl(Decl::Var(var)) => var
+            .decls
+            .iter()
+            .filter_map(|decl| decl.init.as_deref())
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// The wrapped function of `R.<prop>(function () { … })()`.
+fn inline_called_wrapper<'a>(expr: &'a Expr, require: &Id, prop: &Atom) -> Option<&'a Expr> {
+    let Expr::Call(outer) = strip_parens(expr) else {
+        return None;
+    };
+    let Callee::Expr(callee) = &outer.callee else {
+        return None;
+    };
+    let Expr::Call(inner) = strip_parens(callee) else {
+        return None;
+    };
+    let Callee::Expr(runtime) = &inner.callee else {
+        return None;
+    };
+    let Expr::Member(member) = strip_parens(runtime) else {
+        return None;
+    };
+    (outer.args.is_empty()
+        && matches!(&*member.obj, Expr::Ident(object) if object.to_id() == *require)
+        && static_prop_name(&member.prop) == Some(prop.as_str()))
+    .then(|| factory_arg(inner))
+    .flatten()
+}
+
+/// The wrapped function of the declarator `X = R.<prop>(function () { … })`.
+fn declarator_wrapped_function(var: &VarDecl, decl: usize) -> Option<&Expr> {
+    let Expr::Call(call) = strip_parens(var.decls.get(decl)?.init.as_deref()?) else {
+        return None;
+    };
+    factory_arg(call)
+}
+
+fn wrapped_function<'a>(
+    stmt: &'a Stmt,
+    module: &TableWrapped,
+    require: &Id,
+    prop: &Atom,
+) -> Option<&'a Expr> {
+    match (&module.id, stmt) {
+        (Some(_), Stmt::Decl(Decl::Var(var))) => declarator_wrapped_function(var, module.decl),
+        (Some(_), _) => None,
+        (None, stmt) => top_level_values(stmt)
+            .into_iter()
+            .filter_map(|value| inline_called_wrapper(value, require, prop))
+            .find(|function| function_span(function) == Some(module.function_span)),
+    }
+}
+
+fn function_span(function: &Expr) -> Option<Span> {
+    match function {
+        Expr::Arrow(arrow) => Some(arrow.span),
+        Expr::Fn(function) => Some(function.function.span),
+        _ => None,
+    }
+}
+
+/// The id literal of a table module accessor, `() => R(<id>)`,
+/// `() => { return R(<id>); }`, or `function () { return R(<id>); }`.
+fn table_accessor_module_id(init: &Expr, require: &Id) -> Option<Expr> {
+    let returned = match strip_parens(init) {
+        Expr::Arrow(arrow) if !arrow.is_async && !arrow.is_generator && arrow.params.is_empty() => {
+            match &*arrow.body {
+                ArrowFunctionBody::Expr(expr) => &**expr,
+                ArrowFunctionBody::FunctionBody(body) => sole_return(&body.stmts)?,
+            }
+        }
+        Expr::Fn(function)
+            if function.ident.is_none()
+                && is_plain_function(&function.function)
+                && function.function.params.is_empty() =>
+        {
+            sole_return(&function.function.body.as_ref()?.stmts)?
+        }
+        _ => return None,
+    };
+    table_load_module_id(returned, require)
+}
+
+/// The id literal of `R(<id>)`.
+fn table_load_module_id(expr: &Expr, require: &Id) -> Option<Expr> {
+    let Expr::Call(call) = strip_parens(expr) else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    if !matches!(strip_parens(callee), Expr::Ident(ident) if ident.to_id() == *require) {
+        return None;
+    }
+    let [arg] = call.args.as_slice() else {
+        return None;
+    };
+    match strip_parens(&arg.expr) {
+        id @ Expr::Lit(Lit::Num(_) | Lit::Str(_)) if arg.spread.is_none() => Some(id.clone()),
+        _ => None,
+    }
+}
+
+fn sole_return(stmts: &[Stmt]) -> Option<&Expr> {
+    match stmts {
+        [Stmt::Return(ret)] => ret.arg.as_deref(),
+        _ => None,
+    }
+}
+
+/// The wrapped module's file: the path of a `// MODULE: <path>` comment
+/// before its own statement, otherwise `module-cw-<index>.js`. The table
+/// path makes the names unique.
+fn table_wrapper_filename(
+    cm: &SourceMap,
+    stmt: &Stmt,
+    module: &TableWrapped,
+    index: usize,
+) -> String {
+    let hint = match (stmt, &module.id) {
+        (Stmt::Decl(Decl::Var(var)), Some(_)) if var.decls.len() == 1 => {
+            module_comment_path(cm, var.span)
+        }
+        (Stmt::Expr(ExprStmt { span, expr }), None)
+            if !matches!(strip_parens(expr), Expr::Seq(_)) =>
+        {
+            module_comment_path(cm, *span)
+        }
+        _ => None,
+    };
+    webpack_module_filename(&hint.unwrap_or_else(|| format!("cw-{index}")))
+}
+
+fn str_lit(value: &str) -> Expr {
+    Expr::Lit(Lit::Str(Str {
+        span: DUMMY_SP,
+        value: value.into(),
+        raw: None,
+    }))
+}
+
+/// `require(<module_id>)`, with `require` the binding `require`.
+fn require_call_expr(require: &Id, module_id: Expr) -> Expr {
+    Expr::Call(CallExpr {
+        span: DUMMY_SP,
+        callee: Callee::Expr(Box::new(Expr::Ident(Ident::new(
+            require.0.clone(),
+            DUMMY_SP,
+            require.1,
+        )))),
+        args: vec![module_id.into()],
+        ..Default::default()
+    })
+}
+
+fn fresh_name(base: &str, taken: &HashSet<Atom>) -> Atom {
+    let mut name = Atom::from(base);
+    let mut suffix = 1;
+    while taken.contains(&name) {
+        name = Atom::from(format!("{base}_{suffix}"));
+        suffix += 1;
+    }
+    name
+}
+
+/// How the bootstrap uses the wrapper scope's bindings (`tracked`) and the
+/// require function `require`, by statement of that scope.
+struct TableUseScan<'a> {
+    tracked: &'a HashSet<Id>,
+    /// The tracked namespace object candidates: their `R.r(N)` / `R.d(N, …)`
+    /// calls do not count as uses.
+    namespaces: &'a HashSet<Id>,
+    require: &'a Id,
+    prop: &'a Atom,
+    /// The wrapped functions that run only when their accessor is called.
+    lazy: &'a HashSet<Span>,
+    /// The wrapped functions called where they are built: no nesting.
+    inline: &'a HashSet<Span>,
+    /// The startup IIFE's body when it is the scope; `stmt` counts its
+    /// statements, and the IIFE is no nesting.
+    scope_body: Option<Span>,
+    stmt: usize,
+    lazy_depth: usize,
+    function_depth: usize,
+    /// References other than the declaration and namespace definitions.
+    uses: HashMap<Id, usize>,
+    declared: HashMap<Id, usize>,
+    calls: HashMap<Id, usize>,
+    /// Bindings a pattern or an update writes.
+    written: HashSet<Id>,
+    /// `R.r(N)` / `R.d(N, …)` calls by namespace object.
+    defines: HashMap<Id, usize>,
+    /// Namespace objects with such a call inside a function.
+    nested_defines: HashSet<Id>,
+    /// The first statement with a reference outside a lazily run body.
+    first_use: HashMap<Id, usize>,
+    /// The first statement with a reference outside every function.
+    first_eager_use: HashMap<Id, usize>,
+    /// `require.<prop>` reads and writes.
+    host_uses: usize,
+    require_functions: usize,
+    /// Whether a pattern or an update writes `require`.
+    require_bound: bool,
+}
+
+impl TableUseScan<'_> {
+    fn nested(&mut self, span: Span, body: Option<Span>, visit: impl FnOnce(&mut Self)) {
+        let lazy = usize::from(self.lazy.contains(&span));
+        let function = usize::from(
+            !self.inline.contains(&span) && (body.is_none() || body != self.scope_body),
+        );
+        self.lazy_depth += lazy;
+        self.function_depth += function;
+        visit(self);
+        self.lazy_depth -= lazy;
+        self.function_depth -= function;
+    }
+}
+
+impl Visit for TableUseScan<'_> {
+    fn visit_function_body(&mut self, body: &FunctionBody) {
+        if Some(body.span) != self.scope_body {
+            body.visit_children_with(self);
+            return;
+        }
+        for (index, stmt) in body.stmts.iter().enumerate() {
+            self.stmt = index;
+            stmt.visit_with(self);
+        }
+    }
+
+    fn visit_var_declarator(&mut self, decl: &VarDeclarator) {
+        if let Pat::Ident(name) = &decl.name {
+            let id = name.id.to_id();
+            if self.tracked.contains(&id) {
+                *self.declared.entry(id).or_default() += 1;
+                decl.init.visit_with(self);
+                return;
+            }
+        }
+        decl.visit_children_with(self);
+    }
+
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if let Some(ident) = accessor_call_target(call, self.tracked) {
+            *self.calls.entry(ident.to_id()).or_default() += 1;
+        }
+        if let Some(id) = namespace_define_call_target(call, self.require, self.namespaces) {
+            *self.defines.entry(id.clone()).or_default() += 1;
+            if self.function_depth > 0 {
+                self.nested_defines.insert(id);
+            }
+            call.callee.visit_with(self);
+            for arg in &call.args[1..] {
+                arg.visit_with(self);
+            }
+            return;
+        }
+        call.visit_children_with(self);
+    }
+
+    fn visit_member_expr(&mut self, member: &MemberExpr) {
+        if matches!(&*member.obj, Expr::Ident(object) if object.to_id() == *self.require)
+            && static_prop_name(&member.prop) == Some(self.prop.as_str())
+        {
+            self.host_uses += 1;
+        }
+        member.visit_children_with(self);
+    }
+
+    fn visit_fn_decl(&mut self, decl: &swc_core::ecma::ast::FnDecl) {
+        if decl.ident.to_id() == *self.require {
+            self.require_functions += 1;
+        }
+        decl.visit_children_with(self);
+    }
+
+    fn visit_binding_ident(&mut self, binding: &swc_core::ecma::ast::BindingIdent) {
+        let id = binding.id.to_id();
+        self.require_bound |= id == *self.require;
+        if self.tracked.contains(&id) {
+            self.written.insert(id);
+        }
+        binding.visit_children_with(self);
+    }
+
+    fn visit_update_expr(&mut self, update: &swc_core::ecma::ast::UpdateExpr) {
+        if let Expr::Ident(ident) = &*update.arg {
+            let id = ident.to_id();
+            self.require_bound |= id == *self.require;
+            if self.tracked.contains(&id) {
+                self.written.insert(id);
+            }
+        }
+        update.visit_children_with(self);
+    }
+
+    fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
+        let body = match &*arrow.body {
+            ArrowFunctionBody::FunctionBody(body) => Some(body.span),
+            ArrowFunctionBody::Expr(_) => None,
+        };
+        self.nested(arrow.span, body, |scan| arrow.visit_children_with(scan));
+    }
+
+    fn visit_function(&mut self, function: &Function) {
+        let body = function.body.as_ref().map(|body| body.span);
+        self.nested(function.span, body, |scan| {
+            function.visit_children_with(scan)
+        });
+    }
+
+    fn visit_ident(&mut self, ident: &Ident) {
+        let id = ident.to_id();
+        if self.tracked.contains(&id) {
+            *self.uses.entry(id.clone()).or_default() += 1;
+            if self.lazy_depth == 0 {
+                self.first_use.entry(id.clone()).or_insert(self.stmt);
+            }
+            if self.function_depth == 0 {
+                self.first_eager_use.entry(id).or_insert(self.stmt);
+            }
+        }
+    }
+}
+
+/// Every name spelled by an identifier that is not the binding `id`.
+struct ForeignSpellings<'a> {
+    id: &'a Id,
+    syms: HashSet<Atom>,
+}
+
+impl Visit for ForeignSpellings<'_> {
+    fn visit_ident(&mut self, ident: &Ident) {
+        if ident.to_id() != *self.id {
+            self.syms.insert(ident.sym.clone());
+        }
+    }
+}
+
+/// Rewrites each zero-argument accessor call to `require(<id>)` and each
+/// wrapper called where it is built to `require("<its id>")`, taking that
+/// wrapper's function.
+struct TableCallRewriter<'a> {
+    targets: &'a HashMap<Id, Expr>,
+    inline: &'a HashMap<Span, usize>,
+    require: &'a Id,
+    inline_factories: HashMap<usize, Factory>,
+}
+
+impl VisitMut for TableCallRewriter<'_> {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        expr.visit_mut_children_with(self);
+        let Expr::Call(call) = expr else {
+            return;
+        };
+        if !call.args.is_empty() {
+            return;
+        }
+        let Callee::Expr(callee) = &call.callee else {
+            return;
+        };
+        let module_id = match strip_parens(callee) {
+            Expr::Ident(ident) => match self.targets.get(&ident.to_id()) {
+                Some(module_id) => module_id.clone(),
+                None => return,
+            },
+            Expr::Call(inner) => {
+                let Some(function) = factory_arg(inner) else {
+                    return;
+                };
+                let Some(&index) = function_span(function).and_then(|span| self.inline.get(&span))
+                else {
+                    return;
+                };
+                let Some(factory) = function_factory(function) else {
+                    return;
+                };
+                self.inline_factories.insert(index, factory);
+                str_lit(&table_wrapper_id(index))
+            }
+            _ => return,
+        };
+        let span = call.span;
+        let mut replacement = require_call_expr(self.require, module_id);
+        if let Expr::Call(call) = &mut replacement {
+            call.span = span;
+        }
+        *expr = replacement;
+    }
+}
+
+/// Replaces each read of a binding in `reads` with its expression.
+struct ReplaceReads<'a> {
+    reads: &'a HashMap<Id, Expr>,
+}
+
+impl VisitMut for ReplaceReads<'_> {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        if let Expr::Ident(ident) = expr {
+            if let Some(replacement) = self.reads.get(&ident.to_id()) {
+                *expr = replacement.clone();
+                return;
+            }
+        }
+        expr.visit_mut_children_with(self);
+    }
+
+    fn visit_mut_prop(&mut self, prop: &mut Prop) {
+        if let Prop::Shorthand(ident) = prop {
+            if let Some(replacement) = self.reads.get(&ident.to_id()) {
+                *prop = Prop::KeyValue(swc_core::ecma::ast::KeyValueProp {
+                    key: PropName::Ident(ident.clone().into()),
+                    value: Box::new(replacement.clone()),
+                });
+                return;
+            }
+        }
+        prop.visit_mut_children_with(self);
+    }
+}
+
+/// Renames every reference to the binding `id` to `to`.
+struct RenameBinding<'a> {
+    id: &'a Id,
+    to: &'a Atom,
+}
+
+impl VisitMut for RenameBinding<'_> {
+    fn visit_mut_ident(&mut self, ident: &mut Ident) {
+        if ident.to_id() == *self.id {
+            ident.sym = self.to.clone();
+        }
+    }
 }
 
 #[cfg(test)]

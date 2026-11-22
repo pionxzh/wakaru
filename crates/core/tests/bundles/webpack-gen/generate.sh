@@ -186,6 +186,17 @@ webpack5_cw --config webpack5-concat-cw-min.config.cjs 2>/dev/null
 echo "  wp5-concat-cw-pair-min: The same, minified, with three wrapped modules (5.112.2)"
 webpack5_cw --config webpack5-concat-cw-pair-min.config.cjs 2>/dev/null
 
+echo "  wp5-concat-cw-table: Wrapped ES and CommonJS modules beside a module table (5.112.2)"
+webpack5_cw --config webpack5-concat-cw-table.config.cjs 2>/dev/null
+
+echo "  wp5-concat-cw-table-min: The same, minified (5.112.2)"
+webpack5_cw --config webpack5-concat-cw-table-min.config.cjs 2>/dev/null
+
+echo "  wp5-concat-cw-table-fn-min: The same, with function-expression bodies (5.110.3)"
+npx --yes -p webpack@5.110.3 -p webpack-cli@6.0.1 \
+  -p minimizer-webpack-plugin@5.10.1 -p terser@5.51.2 \
+  webpack --config webpack5-concat-cw-table-fn-min.config.cjs 2>/dev/null
+
 echo "=== Rspack (2.3.2) ==="
 
 echo "  rspack-esm-chunk-min: ESM output with a lazy chunk in chunkFormat \"module\""
@@ -217,6 +228,8 @@ node - \
   dist/wp5-array/bundle.js \
   dist/wp5-array/chunk-1.js \
   dist/wp5-concat-cw/bundle.js \
+  dist/wp5-concat-cw-table/bundle.js \
+  dist/wp5-concat-cw-table/913.bundle.js \
   dist/wp5-ncc/index.cjs \
   dist/wp5-ncc-min/index.cjs <<'NODE'
 const fs = require("node:fs");

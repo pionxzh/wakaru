@@ -93,7 +93,7 @@ crates/
         webpack4.rs                 — webpack4 splitter + normalization
         webpack4_module_decorator.rs — webpack 4 `buildin/module.js` / `harmony-module.js` recognition and reduction
         webpack5.rs                 — webpack5 splitter (incl. runtime entry, ncc + chunk)
-        webpack5_cw.rs              — webpack 5.110+ `__webpack_require__.cw` concatenated CommonJS modules
+        webpack5_cw.rs              — webpack 5.110+ `__webpack_require__.cw` wrapped modules, alone or beside a module table
         turbopack.rs                — Turbopack chunk detection + translation to webpack factories
         browserify.rs               — browserify-family splitter (incl. Cocos Creator 2.x)
         closure_module_manager.rs   — Closure ModuleManager/gstatic splitter

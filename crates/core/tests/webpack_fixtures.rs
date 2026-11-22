@@ -1106,3 +1106,51 @@ fn wp5_concat_cw_min_wrapped_modules_split() {
         assert_eq!(validate_output_modules(&pairs), vec![], "{path}");
     }
 }
+
+#[test]
+fn wp5_concat_cw_table_wrapped_modules_join_the_table() {
+    // shape: producer webpack@5.112.2 mode production, target web,
+    // concatenateModules, with and without Terser, and webpack@5.110.3 with
+    // Terser (function-expression bodies): ES and CommonJS modules wrapped
+    // beside a module table that a lazy chunk keeps.
+    let minified = vec![
+        "module-cw-0.js",
+        "module-cw-1.js",
+        "module-cw-2.js",
+        "module-cw-3.js",
+    ];
+    for (path, wrapped) in [
+        (
+            "wp5-concat-cw-table/bundle.js",
+            vec![
+                "src/concat-cw-table/polyfill.cjs",
+                "src/concat-cw-table/provider.js",
+                "src/concat-cw-table/shapes.js",
+                "src/concat-cw-table/widget.js",
+            ],
+        ),
+        ("wp5-concat-cw-table-min/bundle.js", minified.clone()),
+        ("wp5-concat-cw-table-fn-min/bundle.js", minified),
+    ] {
+        let pairs = unpack_fixture(path);
+        let mut expected = vec![
+            "entry.js",
+            "module-184.js",
+            "module-585.js",
+            "module-cw-namespace-0.js",
+            "module-cw-namespace-1.js",
+        ];
+        expected.extend(wrapped);
+        expected.sort_unstable();
+        let mut names = filenames(&pairs);
+        names.sort_unstable();
+        assert_eq!(names, expected, "{path}");
+        for (name, code) in &pairs {
+            assert!(
+                !code.contains(".cw(") && !code.contains("namespaceFn()"),
+                "{path}: {name} keeps a wrapper, got:\n{code}"
+            );
+        }
+        assert_eq!(validate_output_modules(&pairs), vec![], "{path}");
+    }
+}
