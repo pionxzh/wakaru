@@ -992,7 +992,7 @@ export async function runRoundTrip(options) {
 
     // Phase 2: batch-decompile all pending tests in parallel.
     if (pending.length > 0) {
-      const wakaruCmd = resolveWakaruCmd();
+      const wakaruCmd = options.wakaruCmd ?? resolveWakaruCmd();
       const decompileJobs = [];
 
       for (const entry of pending) {

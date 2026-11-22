@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -1228,17 +1228,17 @@ test("runRoundTrip records missing harness includes without aborting", async () 
 
 test("runRoundTrip reports Wakaru decompile timeouts as failures", async () => {
   const root = makeTempTest262();
-  const previousWakaru = process.env.WAKARU;
   try {
     const testDir = join(root, "test", "language", "sample");
     const hangingWakaru = join(root, "hanging-wakaru.mjs");
     mkdirSync(testDir, { recursive: true });
     writeFileSync(join(testDir, "case.js"), "/*---\n---*/\nvoid 0;\n");
-    writeFileSync(hangingWakaru, "#!/usr/bin/env node\nsetTimeout(() => {}, 10000);\n");
-    chmodSync(hangingWakaru, 0o755);
-    process.env.WAKARU = hangingWakaru;
+    writeFileSync(hangingWakaru, "setTimeout(() => {}, 10000);\n");
 
     const report = await runRoundTrip({
+      // Run the script through Node: Windows cannot execute a script file
+      // by its shebang.
+      wakaruCmd: { command: process.execPath, prefix: [hangingWakaru] },
       test262Root: root,
       paths: ["test/language/sample"],
       limit: Number.POSITIVE_INFINITY,
@@ -1256,8 +1256,6 @@ test("runRoundTrip reports Wakaru decompile timeouts as failures", async () => {
     assert.equal(report.results[0].phase, "wakaru-timeout");
     assert.equal(test262ReportExitCode(report), 1);
   } finally {
-    if (previousWakaru === undefined) delete process.env.WAKARU;
-    else process.env.WAKARU = previousWakaru;
     rmSync(root, { recursive: true, force: true });
   }
 });
