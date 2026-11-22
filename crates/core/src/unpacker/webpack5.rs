@@ -1090,7 +1090,7 @@ fn direct_entry_is_movable(
     probe_stmts[..candidate.stmt_idx].visit_with(&mut runtime);
     call.callee.visit_with(&mut runtime);
     if let (
-        DirectEntrySite::Declarator(decl_idx),
+        DirectEntrySite::Declarator(decl_idx) | DirectEntrySite::DeclaratorArg(decl_idx, _),
         Stmt::Decl(swc_core::ecma::ast::Decl::Var(var_decl)),
     ) = (site, site_stmt)
     {
@@ -1128,6 +1128,11 @@ enum DirectEntrySite {
     /// The initializer of the statement's declarator at this index
     /// (`var lib = function r(id) {...}(1)`).
     Declarator(usize),
+    /// An argument (second index) of the call that initializes the
+    /// statement's declarator (first index): Terser inlines the require into
+    /// its only call, an interop helper's argument
+    /// (`var m = interop(function r(id) {...}(1))`).
+    DeclaratorArg(usize, usize),
 }
 
 /// Resolved [`Id`] of the region-level `var` declarator binding `sym`.
@@ -1357,6 +1362,22 @@ fn region_fn_candidates(stmts: &[Stmt]) -> Vec<RegionFnCandidate<'_>> {
                                 DirectEntrySite::Declarator(decl_idx),
                             ) {
                                 candidates.push(candidate);
+                            } else {
+                                candidates.extend(call.args.iter().enumerate().filter_map(
+                                    |(arg_idx, arg)| {
+                                        let Expr::Call(inner) = strip_parens(&arg.expr) else {
+                                            return None;
+                                        };
+                                        if arg.spread.is_some() {
+                                            return None;
+                                        }
+                                        require_candidate_from_call(
+                                            stmt_idx,
+                                            inner,
+                                            DirectEntrySite::DeclaratorArg(decl_idx, arg_idx),
+                                        )
+                                    },
+                                ));
                             }
                         }
                         _ => {}
@@ -2781,6 +2802,29 @@ fn direct_entry_stmts(
                 entry_decl,
             ))));
         }
+        (
+            DirectEntrySite::DeclaratorArg(decl_idx, arg_idx),
+            _,
+            Stmt::Decl(swc_core::ecma::ast::Decl::Var(var_decl)),
+        ) => {
+            // As for a declarator, with the call around the require kept:
+            // `var m = interop(__webpack_require__(1))`.
+            let mut entry_decl = (**var_decl).clone();
+            entry_decl.decls.drain(..decl_idx);
+            let init = entry_decl.decls.first_mut()?.init.as_mut()?;
+            let Expr::Call(outer) = &mut **init else {
+                return None;
+            };
+            let arg = outer.args.get_mut(arg_idx)?;
+            let Expr::Call(call) = strip_parens(&arg.expr) else {
+                return None;
+            };
+            let unrolled = Expr::Call(unrolled_call(call));
+            *arg.expr = unrolled;
+            out.push(Stmt::Decl(swc_core::ecma::ast::Decl::Var(Box::new(
+                entry_decl,
+            ))));
+        }
         _ => return None,
     }
     out.extend(trailing.iter().cloned());
@@ -2808,6 +2852,19 @@ fn direct_entry_call(stmt: &Stmt, site: DirectEntrySite) -> Option<&CallExpr> {
             Expr::Call(call) => Some(call),
             _ => None,
         },
+        (
+            DirectEntrySite::DeclaratorArg(idx, arg_idx),
+            _,
+            Stmt::Decl(swc_core::ecma::ast::Decl::Var(var_decl)),
+        ) => {
+            let Expr::Call(outer) = strip_parens(var_decl.decls.get(idx)?.init.as_ref()?) else {
+                return None;
+            };
+            match strip_parens(&outer.args.get(arg_idx)?.expr) {
+                Expr::Call(call) => Some(call),
+                _ => None,
+            }
+        }
         _ => None,
     }
 }
@@ -3239,7 +3296,23 @@ fn extract_webpack5_inline_startup(
             }
             without_anchor.extend(entry_region[1..].iter().cloned());
 
-            let evidence = anchor_export_helper_evidence(&entry_region, &require_sym, &binding);
+            let mut evidence = anchor_export_helper_evidence(&entry_region, &require_sym, &binding);
+            // A library build hands the exports object to its wrapper last:
+            // `return …, o` (UMD and other factory-returning types) or
+            // `module.exports = o` (commonjs2). That hand-off is plumbing, not
+            // entry code: entry.js's own exports are the library's.
+            if evidence.helper && evidence.other_uses {
+                if let Some(stripped) = strip_library_exports_handoff(&without_anchor, &binding) {
+                    let mut region = vec![entry_region[0].clone()];
+                    region.extend(stripped.iter().cloned());
+                    let stripped_evidence =
+                        anchor_export_helper_evidence(&region, &require_sym, &binding);
+                    if stripped_evidence.helper && !stripped_evidence.other_uses {
+                        without_anchor = stripped;
+                        evidence = stripped_evidence;
+                    }
+                }
+            }
             if evidence.helper && !evidence.other_uses {
                 // Real exports anchor (`require.r(binding)` / `require.d(binding,
                 // ...)`): drop the declaration and rename the binding to
@@ -3274,6 +3347,112 @@ fn extract_webpack5_inline_startup(
         require_sym,
         exports_sym,
     })
+}
+
+/// `stmts` without a library build's final hand-off of the exports object
+/// `binding` to its wrapper: the value of a final `return` (`return o` or
+/// `return …, o`), or a final `module.exports = o` statement or sequence
+/// element, with `module` not bound in `stmts`. `None` when the last
+/// statement is no such hand-off.
+fn strip_library_exports_handoff(stmts: &[Stmt], binding: &Atom) -> Option<Vec<Stmt>> {
+    let is_anchor =
+        |expr: &Expr| matches!(strip_parens(expr), Expr::Ident(ident) if ident.sym == *binding);
+    let is_module_exports_write = |expr: &Expr| {
+        let Expr::Assign(assign) = strip_parens(expr) else {
+            return false;
+        };
+        let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left else {
+            return false;
+        };
+        assign.op == AssignOp::Assign
+            && is_anchor(&assign.right)
+            && matches!(&*member.obj, Expr::Ident(obj) if obj.sym == "module")
+            && matches!(&member.prop, MemberProp::Ident(prop) if prop.sym == "exports")
+    };
+    // The hand-off as the last element of `expr`: `None` when it is not one,
+    // `Some(None)` when it is all of `expr`, `Some(Some(rest))` otherwise.
+    let without_handoff = |expr: &Expr, is_handoff: &dyn Fn(&Expr) -> bool| match strip_parens(expr)
+    {
+        Expr::Seq(seq) if seq.exprs.last().is_some_and(|last| is_handoff(last)) => {
+            let mut rest = seq.exprs[..seq.exprs.len() - 1].to_vec();
+            Some(Some(if rest.len() == 1 {
+                rest.pop().expect("one element left")
+            } else {
+                Box::new(Expr::Seq(SeqExpr {
+                    span: seq.span,
+                    exprs: rest,
+                }))
+            }))
+        }
+        expr if is_handoff(expr) => Some(None),
+        _ => None,
+    };
+    let (last, init) = stmts.split_last()?;
+    let mut out = init.to_vec();
+    match last {
+        Stmt::Return(ret) => {
+            let rest = without_handoff(ret.arg.as_deref()?, &is_anchor)?;
+            out.push(Stmt::Return(swc_core::ecma::ast::ReturnStmt {
+                span: ret.span,
+                arg: rest,
+            }));
+        }
+        // A final `return` already lowered to a statement ends in the read of
+        // the declared anchor, which has no effect; commonjs2 assigns it.
+        Stmt::Expr(expr_stmt) => {
+            let is_handoff = |expr: &Expr| is_anchor(expr) || is_module_exports_write(expr);
+            if let Some(rest) = without_handoff(&expr_stmt.expr, &is_handoff)? {
+                out.push(Stmt::Expr(ExprStmt {
+                    span: expr_stmt.span,
+                    expr: rest,
+                }));
+            }
+        }
+        _ => return None,
+    }
+    if binds_name(stmts, "module") {
+        return None;
+    }
+    Some(out)
+}
+
+/// Whether any declaration or parameter in `stmts`, at any depth, binds
+/// `name`.
+fn binds_name(stmts: &[Stmt], name: &str) -> bool {
+    struct Binder<'a> {
+        name: &'a str,
+        found: bool,
+    }
+    impl Visit for Binder<'_> {
+        fn visit_binding_ident(&mut self, ident: &swc_core::ecma::ast::BindingIdent) {
+            self.found |= ident.id.sym == self.name;
+        }
+        fn visit_fn_decl(&mut self, decl: &swc_core::ecma::ast::FnDecl) {
+            self.found |= decl.ident.sym == self.name;
+            decl.visit_children_with(self);
+        }
+        fn visit_class_decl(&mut self, decl: &swc_core::ecma::ast::ClassDecl) {
+            self.found |= decl.ident.sym == self.name;
+            decl.visit_children_with(self);
+        }
+        fn visit_fn_expr(&mut self, expr: &swc_core::ecma::ast::FnExpr) {
+            self.found |= expr
+                .ident
+                .as_ref()
+                .is_some_and(|ident| ident.sym == self.name);
+            expr.visit_children_with(self);
+        }
+        fn visit_class_expr(&mut self, expr: &swc_core::ecma::ast::ClassExpr) {
+            self.found |= expr
+                .ident
+                .as_ref()
+                .is_some_and(|ident| ident.sym == self.name);
+            expr.visit_children_with(self);
+        }
+    }
+    let mut binder = Binder { name, found: false };
+    stmts.visit_with(&mut binder);
+    binder.found
 }
 
 /// Recover the complete startup region before choosing whether a trailing
@@ -3399,7 +3578,11 @@ fn entry_declaration_in_runtime(
         let Stmt::Decl(swc_core::ecma::ast::Decl::Var(var)) = stmt else {
             continue;
         };
-        if var.kind != swc_core::ecma::ast::VarDeclKind::Var {
+        // Terser also hoists the entry's `let`s into one `let r, t, o;` at the
+        // top of the bootstrap. Nothing before the startup mentions such a
+        // binding, so its temporal dead zone is never observed and the
+        // entry's `var` declares the same variable.
+        if var.kind == swc_core::ecma::ast::VarDeclKind::Const {
             continue;
         }
         for (decl_idx, declarator) in var.decls.iter().enumerate() {

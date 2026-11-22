@@ -1091,6 +1091,135 @@ fn directly_invoked_require_in_a_umd_factory_return_splits() {
     );
 }
 
+/// webpack 5's minified runtime for an ES module library entry: the table,
+/// the require function `t`, and the `.d`/`.o`/`.r` helpers, followed by
+/// `startup`.
+fn esm_library_bootstrap(startup: &str) -> String {
+    format!(
+        "var e={{574(e,r,t){{t.d(r,[\"U\",0,\"library-entry\"])}},240(e,r,t){{function o(e){{return\"library-provider:\"+e}}t.d(r,{{q:()=>o}})}}}};\
+const r={{}};function t(o){{const n=r[o];if(void 0!==n)return n.exports;const i=r[o]={{exports:{{}}}};return e[o](i,i.exports,t),i.exports}}\
+t.d=(e,r)=>{{for(var n in r)t.o(r,n)&&!t.o(e,n)&&Object.defineProperty(e,n,{{enumerable:!0,get:r[n]}})}},\
+t.o=(e,r)=>Object.prototype.hasOwnProperty.call(e,r),\
+t.r=e=>{{Object.defineProperty(e,Symbol.toStringTag,{{value:\"Module\"}}),Object.defineProperty(e,\"__esModule\",{{value:!0}})}};\
+{startup}"
+    )
+}
+
+#[test]
+fn umd_library_handing_its_exports_object_to_the_wrapper_drops_the_hand_off() {
+    // An ES module entry marks its exports object and the factory returns
+    // it; the return is UMD plumbing, so the object is the entry's exports.
+    // shape: producer webpack@5.111.1 mode=production target=node
+    // output.library umd concatenateModules=false (Terser), ES module entry;
+    // sink renamed to `globalThis.lib`.
+    let source = format!(
+        "!function(e,r){{\"object\"==typeof exports&&\"object\"==typeof module?module.exports=r():\"function\"==typeof define&&define.amd?define([],r):\"object\"==typeof exports?exports.Lib=r():e.Lib=r()}}(global,()=>(()=>{{\"use strict\";{}}})());",
+        esm_library_bootstrap(
+            "let o={};t.r(o);var n=t(574),i=t(240);return globalThis.lib=Object.freeze({get describe(){return i.q},get name(){return n.U}}),o"
+        )
+    );
+
+    let pairs = expect_unpack(&source, "bundle.js");
+    let entry = entry_of(&pairs);
+    assert!(
+        !entry.contains("require.r") && !entry.contains("o;") && entry.contains("globalThis.lib"),
+        "the exports object is the entry's own and its hand-off is gone, got:\n{entry}"
+    );
+}
+
+#[test]
+fn commonjs2_library_assigning_its_exports_object_drops_the_hand_off() {
+    // shape: producer webpack@5.111.1 mode=production target=node
+    // output.library commonjs2 concatenateModules=false (Terser), ES module
+    // entry; sink renamed to `globalThis.lib`.
+    let source = format!(
+        "(()=>{{\"use strict\";{}}})();",
+        esm_library_bootstrap(
+            "let o={};t.r(o);var n=t(574);globalThis.lib=Object.freeze({get name(){return n.U}}),module.exports=o"
+        )
+    );
+
+    let pairs = expect_unpack(&source, "bundle.js");
+    let entry = entry_of(&pairs);
+    assert!(
+        !entry.contains("require.r")
+            && !entry.contains("module.exports")
+            && entry.contains("globalThis.lib"),
+        "the exports object is the entry's own and its hand-off is gone, got:\n{entry}"
+    );
+}
+
+#[test]
+fn library_exports_object_read_before_the_hand_off_stays_a_local() {
+    // shape: hypothetical (the entry also stores its exports object).
+    let source = format!(
+        "(()=>{{\"use strict\";{}}})();",
+        esm_library_bootstrap(
+            "let o={};t.r(o);var n=t(574);globalThis.keep=o,globalThis.lib=n.U,module.exports=o"
+        )
+    );
+
+    let pairs = expect_unpack(&source, "bundle.js");
+    let entry = entry_of(&pairs);
+    assert!(
+        entry.contains("let o = {}") && entry.contains("globalThis.keep = o"),
+        "an anchor read elsewhere stays an entry local, got:\n{entry}"
+    );
+}
+
+#[test]
+fn directly_invoked_require_as_an_interop_argument_becomes_the_entry_require() {
+    // Terser inlines the require into its only call, the argument of
+    // Babel's wildcard interop around a CommonJS entry.
+    // shape: producer babel@7.28 (CommonJS) then webpack@5.111.1
+    // mode=production target=node (Terser); interop body shortened, sink
+    // renamed to `globalThis.lib`.
+    let source = r#"(()=>{"use strict";var e={574(e,t,r){t.flag="interop-arg-entry"}};const t={};var r=function(e){return e&&e.__esModule?e:{default:e}}(function r(n){const o=t[n];if(void 0!==o)return o.exports;const a=t[n]={exports:{}};return e[n](a,a.exports,r),a.exports}(574));globalThis.lib=r})();"#;
+
+    let pairs = expect_unpack(source, "bundle.js");
+    assert!(
+        pairs.iter().any(|(name, _)| name == "module-574.js"),
+        "the entry module must be extracted, got {:?}",
+        pairs.iter().map(|(name, _)| name).collect::<Vec<_>>()
+    );
+    let entry = entry_of(&pairs);
+    assert!(
+        entry.contains("./module-574.js")
+            && entry.contains("globalThis.lib")
+            && !entry.contains("exports: {}"),
+        "entry.js keeps the interop call around the entry module's require, got:\n{entry}"
+    );
+}
+
+#[test]
+fn directly_invoked_require_as_an_argument_of_a_bootstrap_function_stays_unsplit() {
+    // The outer callee is a bootstrap binding; it cannot leave the
+    // bootstrap with the entry code.
+    // shape: hypothetical
+    let source = r#"(()=>{"use strict";var e={574(e,t,r){t.flag=1}};const t={};function w(e){return t.hit=1,e}var r=w(function r(n){const o=t[n];if(void 0!==o)return o.exports;const a=t[n]={exports:{}};return e[n](a,a.exports,r),a.exports}(574));globalThis.lib=r})();"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "bundle.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("unpack should succeed");
+    assert!(
+        !output
+            .modules
+            .iter()
+            .any(|(name, _)| name == "module-574.js"),
+        "got {:?}",
+        output
+            .modules
+            .iter()
+            .map(|(name, _)| name)
+            .collect::<Vec<_>>()
+    );
+}
+
 #[test]
 fn umd_factory_with_its_declarations_hoisted_into_the_return_splits() {
     // Terser turns the factory's declarations into assignments at the head
@@ -1849,6 +1978,38 @@ fn startup_binding_joined_with_the_module_table_keeps_its_declaration() {
 }
 
 #[test]
+fn startup_binding_hoisted_into_a_leading_let_keeps_its_declaration() {
+    // Terser hoists the entry's `let`s into one `let e;` at the top of the
+    // bootstrap, before the module table.
+    // shape: hypothetical (Terser's leading `let r, t, o;` over a webpack 5
+    // bootstrap, reduced to one binding)
+    let source = r#"
+(() => {
+  "use strict";
+  let e;
+  var r = {
+      97(e, r, t) { Object.defineProperty(r, "__esModule", { value: !0 }), (r.load = function () { return "loaded"; }); },
+    },
+    t = {};
+  function o(e) {
+    var a = t[e];
+    if (void 0 !== a) return a.exports;
+    var n = (t[e] = { exports: {} });
+    return r[e](n, n.exports, o), n.exports;
+  }
+  (o.rv = () => "1.7.12"), (e = o(97)), (globalThis.__sink = { get load() { return e.load; } });
+})();
+"#;
+    let pairs = expect_unpack(source, "bundle.js");
+    let entry = entry_of(&pairs);
+    assert!(
+        entry.contains(r#"import { load } from "./module-97.js";"#)
+            && !entry.contains("e = require"),
+        "the startup binding must stay declared, got:\n{entry}"
+    );
+}
+
+#[test]
 fn startup_binding_without_an_assignment_stays_a_bare_declaration() {
     // hypothetical: the startup writes the binding only inside a branch.
     let source = joined_var_bootstrap(
@@ -2193,12 +2354,14 @@ fn startup_merged_into_runtime_sequence_is_recovered() {
 }
 
 #[test]
-fn library_anchor_consumed_by_wrapper_keeps_its_declaration() {
+fn library_anchor_handed_to_module_exports_becomes_the_entry_exports() {
     // In a minified CommonJS library the export-helper anchor is also the
     // library value: `var t = {}; r.r(t); r.d(t, ...); module.exports = t;`.
-    // Renaming it to a free `exports` and dropping the declaration leaves
-    // `module.exports = exports` with no `exports` binding — a runtime
-    // ReferenceError after ESM recovery. Such an anchor must stay untouched.
+    // The final `module.exports = t` is the hand-off to the wrapper: it is
+    // dropped with the declaration, and the helpers define the entry's own
+    // exports. Renaming the anchor while keeping the hand-off would leave
+    // `module.exports = exports` with no `exports` binding after ESM
+    // recovery.
     let source = r#"
 (() => {
     var e = ({
@@ -2220,15 +2383,13 @@ fn library_anchor_consumed_by_wrapper_keeps_its_declaration() {
 "#;
     let pairs = expect_unpack(source, "bundle.js");
     let entry = entry_of(&pairs);
-    assert!(
-        entry.contains("= {}"),
-        "the anchor declaration must be kept when the wrapper consumes it, got:\n{entry}"
-    );
     // The getter keeps a require inside a function, so the entry stays
-    // CommonJS and the tail stays `module.exports = t`.
+    // CommonJS and defines the export on its own `exports`.
     assert!(
-        entry.contains("module.exports = t"),
-        "the wrapper tail must survive, got:\n{entry}"
+        entry.contains("Object.defineProperty(exports, \"greet\"")
+            && !entry.contains("= {}")
+            && !entry.contains("module.exports"),
+        "the anchor is the entry's exports and the hand-off is gone, got:\n{entry}"
     );
     assert!(
         !entry.contains("export default exports") && !entry.contains("module.exports = exports"),

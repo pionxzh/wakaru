@@ -275,7 +275,13 @@ A trailing IIFE is extracted as webpack's entry wrapper only when it occupies
 the whole startup region, optionally preceded by a standalone unused empty-object
 anchor or a canonical `__webpack_exports__ = {}` anchor used exclusively by
 webpack export helpers. A live anchor passed to application code or captured by
-a closure retains its declaration and wrapper, even with the canonical name. Entry declarations and side effects before
+a closure retains its declaration and wrapper, even with the canonical name.
+A library build's final hand-off of the anchor to its wrapper does not count
+as such a use: `return …, o` in a UMD factory (also after the return is
+lowered to `…, o;`) and `module.exports = o` in `commonjs2` output are
+dropped, and the anchor becomes the entry's own `exports`, since the
+library's exports are the entry module's. The anchor stays a local when any
+other code reads it, or when a binding named `module` exists. Entry declarations and side effects before
 an authored trailing call remain in `entry.js`, including entry expressions
 merged into the last runtime sequence. Terser can also merge the wrapper itself
 into that sequence (`r.d = ..., r.o = ..., (() => { ... })()`); the wrapper at
@@ -284,7 +290,9 @@ the same boundary.
 
 Terser's `join_vars` (and Rspack's minifier) can declare a startup binding in
 the runtime's first statement (`var e, r = {…}, t = {}`); `entry.js` keeps
-that declaration. A trailing wrapper that writes such a binding is not
+that declaration. Terser also hoists the entry's `let`s into one `let r, t;`
+at the top of the bootstrap; nothing before the startup mentions those
+bindings, so `entry.js` declares them the same way. A trailing wrapper that writes such a binding is not
 unwrapped, since its body alone would lose the declaration.
 
 Terser can inline a single-use require function into the startup and call it
@@ -297,7 +305,10 @@ becomes `var lib = require("./module-100.js"); window.lib = lib;`, which
 (`var lib = function r(id) { ... }(100)`) becomes
 `var lib = require("./module-100.js")`. An `output.library` of type
 `commonjs2` makes Terser merge the call into a comma sequence with
-`module.exports = {}`; each element then becomes its own statement. A bare or
+`module.exports = {}`; each element then becomes its own statement. Babel's
+interop around a CommonJS entry makes the call an argument
+(`var m = interop(function r(id) { ... }(100))`), which becomes
+`var m = interop(require("./module-100.js"))`. A bare or
 `!`-prefixed call with nothing after it only marks module 100 as the entry.
 The entry code moves only when it means the same outside the bootstrap: it
 shares no binding with the runtime left behind, and it does not read the
@@ -1235,10 +1246,7 @@ layout directly is a proposal:
     optimization.runtimeChunk`): it inlines the entry module after the
     install, reading the imported require;
   - a SystemJS bundle with `output.banner` or `output.footer` set to code
-    (producer `rollup@4.63.6` `format: "system"`, unminified) drops it;
-  - a UMD library (producer `webpack@5.111.1` `output.library.type: "umd"`
-    + Terser) with an ES module entry keeps `require.r(o)` in `entry.js`,
-    which throws, because the factory returns the exports object.
+    (producer `rollup@4.63.6` `format: "system"`, unminified) drops it.
 
   AMD, Closure, Metro, and Turbopack were not checked with a producer.
 - **Some webpack 5 wrapped modules stay in `entry.js`.** Beside a module
