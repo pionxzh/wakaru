@@ -70,6 +70,38 @@ fn non_ascii_text_before_an_original_identifier_is_skipped_by_utf16_column() {
 }
 
 #[test]
+fn original_identifier_after_a_non_ascii_line_is_read_at_its_own_column() {
+    // No `names` array. `中` on the first original line must not shift the
+    // column on the second, where `value` starts at UTF-16 column 4.
+    let source = "var a = 1;\n";
+    let map = r#"{
+        "version": 3,
+        "sources": ["orig.js"],
+        "sourcesContent": ["const s = '中';\nlet value = 1;\n"],
+        "names": [],
+        "mappings": "IACI"
+    }"#;
+    let output = rename_with_map(source, map);
+    assert!(output.contains("var value = 1;"), "{output}");
+}
+
+#[test]
+fn original_identifier_with_non_ascii_letters_is_read_whole() {
+    // No `names` array, so the name comes from `let café = 1;`. Reading
+    // ASCII letters only would stop at `é` and rename `a` to `caf`.
+    let source = "var a = 1;\n";
+    let map = r#"{
+        "version": 3,
+        "sources": ["orig.js"],
+        "sourcesContent": ["let café = 1;\n"],
+        "names": [],
+        "mappings": "IAAI"
+    }"#;
+    let output = rename_with_map(source, map);
+    assert!(output.contains("var café = 1;"), "{output}");
+}
+
+#[test]
 fn source_paths_drop_traversal_written_with_either_separator() {
     let out_dir = std::path::Path::new("out");
     for (source, expected) in [

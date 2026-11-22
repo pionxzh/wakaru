@@ -7,7 +7,7 @@ use sourcemap::SourceMap;
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, Mark, SourceMap as SwcSourceMap};
 use swc_core::ecma::ast::{
-    ImportSpecifier, MemberProp, Module, ModuleDecl, ModuleItem, PropName, Stmt,
+    Ident, ImportSpecifier, MemberProp, Module, ModuleDecl, ModuleItem, PropName, Stmt,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -310,22 +310,23 @@ impl NameVoter<'_> {
 // Identifier extraction — zero allocation
 // ---------------------------------------------------------------------------
 
-/// Extract the JS identifier at the start of `text`.
+/// Extract the JS identifier at the start of `text`, Unicode letters
+/// included (`café`, `名前`). A Unicode escape sequence is not decoded: the
+/// scan stops at the backslash.
 fn extract_identifier_at(text: &str) -> Option<&str> {
-    let bytes = text.as_bytes();
-    if !is_ident_start(*bytes.first()?) {
+    let mut chars = text.char_indices();
+    let (_, first) = chars.next()?;
+    if !Ident::is_valid_start(first) {
         return None;
     }
-    let len = bytes.iter().take_while(|&&b| is_ident_continue(b)).count();
-    Some(&text[..len])
+    let end = chars
+        .find(|&(_, ch)| !is_ident_continue(ch))
+        .map_or(text.len(), |(i, _)| i);
+    Some(&text[..end])
 }
 
+/// ECMAScript IdentifierPart: ID_Continue, `$`, ZWNJ and ZWJ.
 #[inline]
-fn is_ident_start(b: u8) -> bool {
-    b.is_ascii_alphabetic() || b == b'_' || b == b'$'
-}
-
-#[inline]
-fn is_ident_continue(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
+fn is_ident_continue(ch: char) -> bool {
+    Ident::is_valid_continue(ch) || ch == '\u{200C}' || ch == '\u{200D}'
 }
