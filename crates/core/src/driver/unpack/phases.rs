@@ -57,7 +57,7 @@ use crate::kept_require::run_kept_require_default_reads;
 use crate::namespace_decomposition::run_namespace_decomposition_with_tags;
 use crate::provider_helpers::ProviderHelpers;
 use crate::provider_namespace_repair::{
-    run_provider_namespace_repair, run_whole_value_wildcard_repair,
+    run_default_getter_repair, run_provider_namespace_repair, run_whole_value_wildcard_repair,
 };
 use crate::require_edges::{
     declarator_require_calls, tag_declarator_imports, ImportTags, RequireEdges,
@@ -1309,7 +1309,16 @@ pub(super) fn unpack_multi_module_with_plan(
                 )
             });
             let barrier = ranged.as_ref().map(|_| module.clone());
-            // Late pass at the barrier
+            // Late pass at the barrier. The getter repair runs first: the
+            // namespace repair would take a getter read for a use of the
+            // whole required value.
+            run_default_getter_repair(
+                &mut module,
+                facts_ref,
+                Some(&unpacked.module.filename),
+                unresolved_mark,
+                &import_tags,
+            );
             run_provider_namespace_repair(
                 &mut module,
                 facts_ref,

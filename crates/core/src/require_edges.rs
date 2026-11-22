@@ -230,6 +230,18 @@ pub struct RequireEdge {
     pub interop: Interop,
     /// `__esModule` is read on the call or on that binding.
     pub esmodule_tested: bool,
+    /// The reads of webpack's default getter of a top-level declarator's
+    /// binding `x`, read on the input: the span of each `d()` and `d.a`,
+    /// where a top-level `var d` holds `require.n(x)` or the arrow the
+    /// unpacker spells it as (`() => x && x.__esModule ? x.default : x`).
+    /// `UnWebpackInterop` replaces each read with `x` under the read's own
+    /// span, which is how the passes after the fact barrier find them again
+    /// ([`RequireEdges::default_getter_reads`]). `None` when the binding has
+    /// no such getter, or a read has a dummy or shared span.
+    pub default_getter_reads: Option<Vec<Span>>,
+    /// An interop or an `__esModule` read of the call or its binding sits
+    /// outside the declaration of its default getter.
+    pub interop_outside_default_getter: bool,
     /// Uses on the AST `UnEsm` sees; `None` when that AST does not hold the
     /// call exactly once.
     pub uses: Option<RequireUses>,
@@ -307,13 +319,17 @@ impl RequireEdges {
                 bindings.insert(binding.clone(), *index);
             }
         }
+        let getters = default_getters(module, &bindings, unresolved_mark);
         let mut marks = InteropMarks {
             unresolved_mark,
             local_helpers: &local_helpers,
             bindings: &bindings,
             calls: &index_of,
+            getters: &getters,
+            in_getter: false,
             interop: Vec::new(),
             esmodule_tested: Vec::new(),
+            outside_getter: Vec::new(),
         };
         module.visit_with(&mut marks);
         for (index, interop) in marks.interop {
@@ -324,6 +340,28 @@ impl RequireEdges {
         }
         for index in marks.esmodule_tested {
             edges[index].esmodule_tested = true;
+        }
+        for index in marks.outside_getter {
+            edges[index].interop_outside_default_getter = true;
+        }
+        if !getters.is_empty() {
+            let mut reads = GetterReads {
+                getters: &getters,
+                reads: HashMap::default(),
+            };
+            module.visit_with(&mut reads);
+            let mut counts: HashMap<EdgeKey, usize> = HashMap::default();
+            for span in reads.reads.values().flatten() {
+                *counts.entry(key_of(*span)).or_default() += 1;
+            }
+            let indices: HashSet<usize> = getters.values().copied().collect();
+            for index in &indices {
+                let spans = reads.reads.remove(index).unwrap_or_default();
+                let keyed = spans
+                    .iter()
+                    .all(|span| !span.is_dummy() && counts[&key_of(*span)] == 1);
+                edges[*index].default_getter_reads = keyed.then_some(spans);
+            }
         }
 
         // A span shared by several calls cannot be told apart later, as a
@@ -493,6 +531,29 @@ impl RequireEdges {
     pub fn uses_only_wildcard_interop(&self, source: &str) -> bool {
         self.of_source(source)
             .is_some_and(|mut edges| edges.all(RequireEdge::is_top_level_wildcard_arg))
+    }
+
+    /// The keys of the default getter reads of `source`
+    /// ([`RequireEdge::default_getter_reads`]), when they are its only
+    /// interop: every call of the source is a top-level
+    /// `var x = require("src")` with a default getter whose reads are all
+    /// keyed, and no interop or `__esModule` read of the call or its binding
+    /// sits outside that getter. Once each read means `x.default`, the
+    /// module uses `x` as the plain required value.
+    pub fn default_getter_reads(&self, source: &str) -> Option<HashSet<EdgeKey>> {
+        let mut reads = HashSet::default();
+        for edge in self.of_source(source)? {
+            if !edge.is_top_level_declarator() || edge.interop_outside_default_getter {
+                return None;
+            }
+            reads.extend(
+                edge.default_getter_reads
+                    .as_ref()?
+                    .iter()
+                    .map(|span| key_of(*span)),
+            );
+        }
+        Some(reads)
     }
 
     /// Whether the module passes the value of `source` to `require.n` or an
@@ -1016,6 +1077,8 @@ impl Visit for EdgeCollector<'_> {
                         && self.module_decl_depth == 0,
                     interop: Interop::None,
                     esmodule_tested: false,
+                    default_getter_reads: None,
+                    interop_outside_default_getter: false,
                     uses: None,
                     via: None,
                 },
@@ -1032,11 +1095,23 @@ struct InteropMarks<'a> {
     local_helpers: &'a LocalHelperContext,
     bindings: &'a HashMap<BindingId, usize>,
     calls: &'a HashMap<CallId, usize>,
+    /// Each default getter binding, with the edge of the binding it reads.
+    getters: &'a HashMap<BindingId, usize>,
+    /// The walk is inside the initializer of a default getter.
+    in_getter: bool,
     interop: Vec<(usize, Interop)>,
     esmodule_tested: Vec<usize>,
+    /// Edges with an interop or `__esModule` read outside their getter.
+    outside_getter: Vec<usize>,
 }
 
 impl InteropMarks<'_> {
+    fn mark(&mut self, index: usize) {
+        if !self.in_getter {
+            self.outside_getter.push(index);
+        }
+    }
+
     fn edge_of(&self, expr: &Expr) -> Option<usize> {
         match strip_parens(expr) {
             Expr::Ident(ident) => self.bindings.get(&binding_id(ident)).copied(),
@@ -1056,6 +1131,7 @@ impl Visit for InteropMarks<'_> {
                 for arg in &call.args {
                     if let Some(index) = self.edge_of(&arg.expr) {
                         self.interop.push((index, interop));
+                        self.mark(index);
                     }
                 }
             }
@@ -1067,6 +1143,84 @@ impl Visit for InteropMarks<'_> {
         if matches!(&member.prop, MemberProp::Ident(prop) if prop.sym == "__esModule") {
             if let Some(index) = self.edge_of(&member.obj) {
                 self.esmodule_tested.push(index);
+                self.mark(index);
+            }
+        }
+        member.visit_children_with(self);
+    }
+
+    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+        let getter = matches!(&declarator.name,
+            Pat::Ident(binding) if self.getters.contains_key(&binding_id(&binding.id)));
+        let outer = self.in_getter;
+        self.in_getter |= getter;
+        declarator.visit_children_with(self);
+        self.in_getter = outer;
+    }
+}
+
+/// The top-level bindings that hold webpack's default getter of a top-level
+/// declarator binding ([`RequireEdge::default_getter_reads`]), each with the
+/// edge of that binding.
+fn default_getters(
+    module: &Module,
+    bindings: &HashMap<BindingId, usize>,
+    unresolved_mark: Mark,
+) -> HashMap<BindingId, usize> {
+    let mut getters = HashMap::default();
+    if bindings.is_empty() {
+        return getters;
+    }
+    let required: HashSet<BindingId> = bindings.keys().cloned().collect();
+    for item in &module.body {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            continue;
+        };
+        for declarator in &var.decls {
+            let (Pat::Ident(getter), Some(init)) = (&declarator.name, &declarator.init) else {
+                continue;
+            };
+            let Some(base) = crate::rules::un_webpack_interop::match_default_getter(
+                init,
+                &required,
+                unresolved_mark,
+            ) else {
+                continue;
+            };
+            if let Some(index) = bindings.get(&binding_id(&base)) {
+                getters.insert(binding_id(&getter.id), *index);
+            }
+        }
+    }
+    getters
+}
+
+/// The span of each read of a default getter (`d()`, `d.a`), by the edge
+/// the getter reads.
+struct GetterReads<'a> {
+    getters: &'a HashMap<BindingId, usize>,
+    reads: HashMap<usize, Vec<Span>>,
+}
+
+impl Visit for GetterReads<'_> {
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if let (Callee::Expr(callee), true) = (&call.callee, call.args.is_empty()) {
+            if let Expr::Ident(getter) = callee.as_ref() {
+                if let Some(index) = self.getters.get(&binding_id(getter)) {
+                    self.reads.entry(*index).or_default().push(call.span);
+                    return;
+                }
+            }
+        }
+        call.visit_children_with(self);
+    }
+
+    fn visit_member_expr(&mut self, member: &MemberExpr) {
+        if let Expr::Ident(getter) = member.obj.as_ref() {
+            if let Some(index) = self.getters.get(&binding_id(getter)) {
+                if static_member_name(&member.prop).is_some_and(|name| name == "a") {
+                    self.reads.entry(*index).or_default().push(member.span);
+                }
             }
         }
         member.visit_children_with(self);

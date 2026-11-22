@@ -224,6 +224,21 @@ console.log(_lib);
 }
 
 #[test]
+fn unused_getter_removed() {
+    let input = r#"
+var _lib = require("./lib");
+var _lib2 = require.n(_lib);
+var _lib3 = () => _lib && _lib.__esModule ? _lib.default : _lib;
+console.log(_lib.name);
+"#;
+    let expected = r#"
+var _lib = require("./lib");
+console.log(_lib.name);
+"#;
+    assert_eq_normalized(&render(input), expected.trim());
+}
+
+#[test]
 fn direct_require_n_getter_used_as_value_not_inlined() {
     let input = r#"
 import _lib from "./lib";

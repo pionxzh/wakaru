@@ -93,7 +93,7 @@ mod un_typeof_strict;
 mod un_undefined_init;
 mod un_variable_merging;
 mod un_webpack_define_getters;
-mod un_webpack_interop;
+pub(crate) mod un_webpack_interop;
 mod un_webpack_object_getters;
 mod un_while_loop;
 mod unminify_booleans;

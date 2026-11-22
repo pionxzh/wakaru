@@ -254,6 +254,22 @@ stage and `UnWebpackInterop` later replace an interop default
 `UnEsm` merges every binding of one source into one default import, so after
 Phase 1 the two meanings can no longer be told apart.
 
+webpack's default getter is the one interop whose reads are kept apart. A
+harmony consumer of a module webpack could not prove ESM declares
+`var d = require.n(x)` (the extractors spell it as the arrow above) and
+reads the default import as `d()` or `d.a`, and each named import as a
+member of `x`. The input pass records the span of each getter read
+(`RequireEdge::default_getter_reads`), and `UnWebpackInterop` gives the `x`
+it puts there that span. `RequireEdges::default_getter_reads` returns them
+for a source whose every call is such a declarator with no other interop or
+`__esModule` read. After the fact barrier, `run_default_getter_repair`
+(`provider_namespace_repair.rs`) reads them as `x.default` when the provider
+marked itself `__esModule`, which is what `.n` returned for it: the default
+import stays for a provider that stays CommonJS, and the namespace import
+replaces it for one whose namespace is its exports. A getter nothing reads is
+removed in the rule range, so its own `__esModule` and `.default` reads do
+not count as uses.
+
 `RequireEdges::reads_through_interop` is the opposite: the required value of
 the source, or its top-level binding, goes to `require.n` or an interop
 helper or has its `__esModule` read. Unpack reads it only for the

@@ -43,6 +43,11 @@ use crate::utils::paren::strip_parens;
 /// 4. Replaces each safe usage with the underlying require binding
 /// 5. Removes the now-dead getter declaration
 ///
+/// A getter with no use at all is removed too: webpack declares one for
+/// every harmony import of a module it cannot prove ESM, also when the source
+/// imported only names, and the dead getter's `__esModule` and `.default`
+/// reads would otherwise keep the binding from becoming a namespace import.
+///
 /// Runs twice in the pipeline (as `UnWebpackInterop` and `UnWebpackInterop2`)
 /// to catch getters that only become visible after other rules simplify the AST.
 pub struct UnWebpackInterop {
@@ -117,13 +122,7 @@ impl VisitMut for UnWebpackInterop {
                     continue;
                 };
                 if let Some(base) =
-                    match_interop_getter(init.as_ref(), &module_bindings).or_else(|| {
-                        match_require_n_getter(
-                            init.as_ref(),
-                            &module_bindings,
-                            self.unresolved_mark,
-                        )
-                    })
+                    match_default_getter(init.as_ref(), &module_bindings, self.unresolved_mark)
                 {
                     candidates.insert(binding_key(&binding.id), base);
                 }
@@ -149,7 +148,7 @@ impl VisitMut for UnWebpackInterop {
             .filter(|(key, _)| {
                 usage
                     .get(key)
-                    .map(|stats| stats.supported >= 1 && !stats.unsupported)
+                    .map(|stats| !stats.unsupported)
                     .unwrap_or(false)
             })
             .collect();
@@ -253,6 +252,19 @@ fn is_require_call(expr: &Expr, unresolved_mark: Mark) -> bool {
         Expr::Ident(id)
             if id.sym.as_ref() == "require" && id.ctxt.outer() == unresolved_mark
     )
+}
+
+/// The binding read by webpack's default getter `expr`: `require.n(x)`, or
+/// the arrow the unpacker spells it as
+/// (`() => x && x.__esModule ? x.default : x`), for `x` in
+/// `require_bindings`. `RequireEdges::collect` reads the same getters.
+pub(crate) fn match_default_getter(
+    expr: &Expr,
+    require_bindings: &HashSet<BindingKey>,
+    unresolved_mark: Mark,
+) -> Option<Ident> {
+    match_interop_getter(expr, require_bindings)
+        .or_else(|| match_require_n_getter(expr, require_bindings, unresolved_mark))
 }
 
 fn match_interop_getter(expr: &Expr, require_bindings: &HashSet<BindingKey>) -> Option<Ident> {
@@ -857,7 +869,13 @@ impl VisitMut for GetterReplacer<'_> {
                 if let Expr::Ident(id) = callee.as_ref() {
                     if call.args.is_empty() {
                         if let Some(replacement) = self.map.get(&binding_key(id)) {
-                            *expr = Expr::Ident(replacement.clone());
+                            // The read's own span: `RequireEdges` recorded it,
+                            // and the passes after the fact barrier find the
+                            // read by it (`run_default_getter_repair`).
+                            *expr = Expr::Ident(Ident {
+                                span: call.span,
+                                ..replacement.clone()
+                            });
                             return;
                         }
                     }
@@ -876,7 +894,10 @@ impl VisitMut for GetterReplacer<'_> {
                 };
                 if is_dot_a {
                     if let Some(replacement) = self.map.get(&binding_key(id)) {
-                        *expr = Expr::Ident(replacement.clone());
+                        *expr = Expr::Ident(Ident {
+                            span: member.span,
+                            ..replacement.clone()
+                        });
                     }
                 }
             }

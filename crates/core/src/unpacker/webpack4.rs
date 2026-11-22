@@ -379,8 +379,9 @@ impl VisitMut for RequireNAccessRewriter {
             return;
         }
 
+        // The access's own span: `RequireEdges` keys each getter read by it.
         *expr = Expr::Call(CallExpr {
-            span: Default::default(),
+            span: member.span,
             ctxt: Default::default(),
             callee: Callee::Expr(Box::new(Expr::Ident(obj_ident.clone()))),
             args: vec![],

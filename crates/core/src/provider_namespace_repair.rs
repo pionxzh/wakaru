@@ -42,7 +42,7 @@ use crate::collections::HashSet;
 
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignOp, AssignTarget, CallExpr, Callee, Expr, FnDecl, Ident,
+    AssignExpr, AssignOp, AssignTarget, CallExpr, Callee, Expr, FnDecl, Ident, IdentName,
     ImportDefaultSpecifier, ImportSpecifier, ImportStarAsSpecifier, MemberExpr, MemberProp, Module,
     ModuleDecl, ModuleItem, OptChainBase, Pat, SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp,
     UpdateExpr, VarDeclarator,
@@ -52,7 +52,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use crate::analysis::{binding_id, ident_matches_binding, BindingId};
 use crate::facts::ModuleFactsMap;
 use crate::provider_interface::{ProviderInterface, RequiredValue};
-use crate::require_edges::ImportTags;
+use crate::require_edges::{EdgeKey, ImportTags};
 use crate::rules::expr_utils::is_unresolved_ident;
 use crate::utils::paren::strip_parens;
 
@@ -111,6 +111,165 @@ pub(crate) fn run_provider_namespace_repair(
         import_tags,
         |source, _| namespace_provider(source),
     );
+}
+
+/// Read webpack's default getter as the `.default` of a provider marked
+/// `__esModule`.
+///
+/// A webpack harmony consumer of a module webpack could not prove ESM reads
+/// the default import through `require.n(x)` and each named import as a
+/// member of `x` (`new (d())(); (0, x.name)()`). `UnWebpackInterop` replaces
+/// each getter read `d()` with `x`, which is right while `.n` returns the
+/// whole `exports`. For a provider that marked itself `__esModule`, `.n`
+/// returns `exports.default` instead, so `UnEsm`'s one default import would
+/// call the default where the input called the getter and read the named
+/// exports as members of the default.
+///
+/// The reads are found by the spans [`RequireEdges::collect`] recorded on
+/// the input and `UnWebpackInterop` kept
+/// ([`crate::require_edges::RequireEdge::default_getter_reads`]); each becomes
+/// `x.default`. The binding then holds the required value itself, and the
+/// import that holds that value replaces `UnEsm`'s: the default import of a
+/// provider that stays CommonJS, or the namespace import of one whose
+/// namespace is its marked `exports`. A namespace import must pass the usage
+/// checks of [`run_provider_namespace_repair`]; when it does not, the module
+/// is left as it was. A marked `module.exports = v` holds itself as
+/// `default` ([`RequiredValue::Default`]), so its getter reads already read
+/// the binding.
+///
+/// [`RequireEdges::collect`]: crate::require_edges::RequireEdges
+pub(crate) fn run_default_getter_repair(
+    module: &mut Module,
+    module_facts: &ModuleFactsMap,
+    current_filename: Option<&str>,
+    unresolved_mark: Mark,
+    import_tags: &ImportTags,
+) {
+    let Some(current_filename) = current_filename else {
+        return;
+    };
+    let Some(consumer) = module_facts
+        .get(current_filename)
+        .map(|facts| &facts.require_edges)
+    else {
+        return;
+    };
+    // The bindings to repair, each with its getter reads and whether its
+    // provider's value is read through a namespace import.
+    let mut candidates: Vec<(BindingId, HashSet<EdgeKey>, bool)> = Vec::new();
+    for item in &module.body {
+        let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+            continue;
+        };
+        if import.type_only {
+            continue;
+        }
+        let Some(source) = import.src.value.as_str() else {
+            continue;
+        };
+        for specifier in &import.specifiers {
+            let ImportSpecifier::Default(default) = specifier else {
+                continue;
+            };
+            let binding = binding_id(&default.local);
+            if !import_tags.is_synthesized(&binding) {
+                continue;
+            }
+            let Some(reads) = consumer
+                .default_getter_reads(source)
+                .filter(|reads| !reads.is_empty())
+            else {
+                continue;
+            };
+            let Some(provider) = module_facts.get_from(Some(current_filename), source) else {
+                continue;
+            };
+            let provider = ProviderInterface::of(provider);
+            if !provider.marks_es_module() {
+                continue;
+            }
+            let namespace = match provider.value {
+                // The default import holds the kept `module.exports`.
+                RequiredValue::CommonJs => false,
+                // The namespace is the marked `exports` object.
+                RequiredValue::Marked { .. } => true,
+                // A marked `module.exports = v` holds itself as `default`
+                // (`Default { marked: true }`), so the binding already reads
+                // what the getter returned; no import holds the value of
+                // the other forms.
+                _ => continue,
+            };
+            candidates.push((binding, reads, namespace));
+        }
+    }
+
+    for (binding, reads, namespace) in candidates {
+        let original = namespace.then(|| module.clone());
+        let mut rewrite = GetterReadToDefault {
+            binding: &binding,
+            reads: &reads,
+            rewritten: false,
+        };
+        module.visit_mut_with(&mut rewrite);
+        if !rewrite.rewritten {
+            continue;
+        }
+        let Some(original) = original else {
+            continue;
+        };
+        let policy = UsagePolicy {
+            allow_default_read: true,
+            allow_value_escape: true,
+        };
+        repair_synthesized_default_imports(
+            module,
+            unresolved_mark,
+            policy,
+            import_tags,
+            |_, candidate| *candidate == binding,
+        );
+        if !imports_namespace(module, &binding) {
+            *module = original;
+        }
+    }
+}
+
+/// Rewrites each read of `binding` at a recorded getter read to
+/// `binding.default`.
+struct GetterReadToDefault<'a> {
+    binding: &'a BindingId,
+    reads: &'a HashSet<EdgeKey>,
+    rewritten: bool,
+}
+
+impl VisitMut for GetterReadToDefault<'_> {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        if let Expr::Ident(ident) = expr {
+            if ident_matches_binding(ident, self.binding)
+                && !ident.span.is_dummy()
+                && self.reads.contains(&(ident.span.lo, ident.span.hi))
+            {
+                let span = ident.span;
+                *expr = Expr::Member(MemberExpr {
+                    span,
+                    obj: Box::new(Expr::Ident(ident.clone())),
+                    prop: MemberProp::Ident(IdentName::new("default".into(), DUMMY_SP)),
+                });
+                self.rewritten = true;
+                return;
+            }
+        }
+        expr.visit_mut_children_with(self);
+    }
+}
+
+/// Whether `binding` is the local of a namespace import of `module`.
+fn imports_namespace(module: &Module, binding: &BindingId) -> bool {
+    module.body.iter().any(|item| {
+        matches!(item, ModuleItem::ModuleDecl(ModuleDecl::Import(import))
+            if import.specifiers.iter().any(|specifier| matches!(specifier,
+                ImportSpecifier::Namespace(namespace) if binding_id(&namespace.local) == *binding)))
+    })
 }
 
 /// Without provider facts, repair the synthesized default imports of
