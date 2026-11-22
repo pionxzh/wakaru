@@ -56,6 +56,36 @@ impl LineIndex {
         let narrowed = narrowed_at(offset) - narrowed_at(line_start);
         Some((line as u32, offset - line_start - narrowed))
     }
+
+    /// Byte offset of the char at zero-based `line` and UTF-16 column `col`,
+    /// the inverse of [`Self::position`]. `source` must be the text this
+    /// index was built from. `None` when the line does not exist, the column
+    /// is past the end of the line, or it falls inside a surrogate pair.
+    pub(crate) fn offset(&self, source: &str, line: u32, col: u32) -> Option<u32> {
+        let line = line as usize;
+        let line_start = *self.line_starts.get(line)?;
+        let line_end = self
+            .line_starts
+            .get(line + 1)
+            .map_or(self.len, |&next| next - 1);
+        // Non-ASCII chars from the line start on; the sentinel ends the slice.
+        let first = self
+            .narrowing
+            .partition_point(|&(char_pos, _)| char_pos < line_start);
+        let rest = &self.narrowing[first..];
+        let base = rest[0].1;
+        // UTF-16 column of each of these chars rises with its index, so the
+        // first one at or past `col` bounds the chars that come before it.
+        let column_of = |(char_pos, narrowed): (u32, u32)| {
+            u64::from(char_pos - line_start) - u64::from(narrowed - base)
+        };
+        let index = rest.partition_point(|&entry| column_of(entry) < u64::from(col));
+        let offset = u64::from(line_start) + u64::from(col) + u64::from(rest.get(index)?.1 - base);
+        if offset > u64::from(line_end) || !source.is_char_boundary(offset as usize) {
+            return None;
+        }
+        Some(offset as u32)
+    }
 }
 
 #[cfg(test)]
@@ -74,5 +104,33 @@ mod tests {
         assert_eq!(index.position(12), Some((2, 0)));
         assert_eq!(index.position(13), Some((2, 1)));
         assert_eq!(index.position(14), None);
+    }
+
+    #[test]
+    fn offset_inverts_position_on_every_char() {
+        let source = "a\n中b𝒳c\né\nd";
+        let index = LineIndex::new(source);
+        for (offset, _) in source.char_indices().chain([(source.len(), ' ')]) {
+            let (line, col) = index.position(offset as u32).unwrap();
+            assert_eq!(
+                index.offset(source, line, col),
+                Some(offset as u32),
+                "{line}:{col}"
+            );
+        }
+    }
+
+    #[test]
+    fn offset_rejects_columns_off_the_line_or_inside_a_surrogate_pair() {
+        let source = "a\n中b𝒳c\nd";
+        let index = LineIndex::new(source);
+        // "𝒳" covers UTF-16 columns 2 and 3 of line 1.
+        assert_eq!(index.offset(source, 1, 3), None);
+        // Line 1 ends at column 5; column 6 would be on the next line.
+        assert_eq!(index.offset(source, 1, 5), Some(11));
+        assert_eq!(index.offset(source, 1, 6), None);
+        assert_eq!(index.offset(source, 0, 2), None);
+        assert_eq!(index.offset(source, 3, 0), None);
+        assert_eq!(index.offset(source, 1, u32::MAX), None);
     }
 }

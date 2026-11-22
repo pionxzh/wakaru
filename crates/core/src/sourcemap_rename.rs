@@ -100,14 +100,14 @@ fn collect_sourcemap_renames(
 ) -> Vec<BindingRename> {
     let module_level_ids = collect_module_level_bindings(module);
 
-    // Pre-process source files into per-line slices.
-    // Using &str (zero-copy, borrowed from SourceMap) avoids String allocation overhead.
+    // Index every original source once. A minified vendor file can be one
+    // long line that many identifiers map into, so turning a (line, UTF-16
+    // column) into a byte offset must not rescan the line on each lookup.
     let source_count = sm.get_source_count();
-    let source_lines: Vec<Vec<&str>> = (0..source_count)
+    let original_sources: Vec<Option<(&str, LineIndex)>> = (0..source_count)
         .map(|i| {
             sm.get_source_contents(i)
-                .map(|content| content.lines().collect())
-                .unwrap_or_default()
+                .map(|content| (content, LineIndex::new(content)))
         })
         .collect();
 
@@ -123,7 +123,7 @@ fn collect_sourcemap_renames(
         sm,
         generated_lines: &generated_lines,
         start_pos,
-        source_lines: &source_lines,
+        original_sources: &original_sources,
         unresolved_mark,
         votes: HashMap::default(),
     };
@@ -230,7 +230,8 @@ struct NameVoter<'a> {
     generated_lines: &'a LineIndex,
     /// `BytePos.0` of the first byte of the generated source file.
     start_pos: u32,
-    source_lines: &'a Vec<Vec<&'a str>>,
+    /// Content and line index of each original source, by source id.
+    original_sources: &'a [Option<(&'a str, LineIndex)>],
     /// Identifiers with this mark as their outermost SyntaxContext are global/unresolved
     /// references (e.g. `Object`, `Symbol`).  We never rename these.
     unresolved_mark: Mark,
@@ -299,55 +300,24 @@ impl NameVoter<'_> {
 
         // Fall back: extract the identifier from the original source content.
         let src_idx = token.get_src_id() as usize;
-        let orig_line = token.get_src_line() as usize;
-        let orig_col = token.get_src_col() as usize;
-
-        let line = self.source_lines.get(src_idx)?.get(orig_line)?;
-        extract_identifier_at(line, orig_col)
+        let (content, lines) = self.original_sources.get(src_idx)?.as_ref()?;
+        let start = lines.offset(content, token.get_src_line(), token.get_src_col())?;
+        extract_identifier_at(&content[start as usize..])
     }
 }
 
 // ---------------------------------------------------------------------------
-// Identifier extraction — ASCII-fast, zero allocation
+// Identifier extraction — zero allocation
 // ---------------------------------------------------------------------------
 
-/// Extract a JS identifier starting at UTF-16 column `col` of `line`.
-/// Source map columns are in UTF-16 code units; for ASCII this equals the byte offset.
-fn extract_identifier_at(line: &str, col: usize) -> Option<&str> {
-    let start = if line.is_ascii() {
-        col
-    } else {
-        utf16_col_to_byte_index(line, col)?
-    };
-    let bytes = line.as_bytes();
-    if start >= bytes.len() {
+/// Extract the JS identifier at the start of `text`.
+fn extract_identifier_at(text: &str) -> Option<&str> {
+    let bytes = text.as_bytes();
+    if !is_ident_start(*bytes.first()?) {
         return None;
     }
-    if !is_ident_start(bytes[start]) {
-        return None;
-    }
-    let len = bytes[start..]
-        .iter()
-        .take_while(|&&b| is_ident_continue(b))
-        .count();
-    // Safety: all bytes are ASCII (checked by is_ident_start/continue), valid UTF-8.
-    Some(unsafe { std::str::from_utf8_unchecked(&bytes[start..start + len]) })
-}
-
-/// Byte index of the character at UTF-16 column `col`, or `None` when the
-/// column is past the end of the line or inside a surrogate pair.
-fn utf16_col_to_byte_index(line: &str, col: usize) -> Option<usize> {
-    let mut units = 0;
-    for (i, ch) in line.char_indices() {
-        if units == col {
-            return Some(i);
-        }
-        if units > col {
-            return None;
-        }
-        units += ch.len_utf16();
-    }
-    None
+    let len = bytes.iter().take_while(|&&b| is_ident_continue(b)).count();
+    Some(&text[..len])
 }
 
 #[inline]
