@@ -336,9 +336,38 @@ struct TraceArgs {
     dce: bool,
 }
 
+/// Stack size of the thread that runs the command and of every Rayon worker.
+///
+/// Parsing, the rules, and printing recurse once per level of expression
+/// nesting, at several kilobytes a level in an optimized build. A long
+/// left-nested expression — a builder's method chain of hundreds of calls,
+/// a string concatenation of hundreds of terms — nests that many levels and
+/// overflows the platform defaults (1 MiB for the main thread on Windows,
+/// 2 MiB for a spawned thread). The size is address space reserved per
+/// thread; pages are committed only as the stack grows into them.
+const WORK_STACK_SIZE: usize = 64 * 1024 * 1024;
+
 fn main() -> Result<()> {
     install_panic_hook();
 
+    // Nothing builds the global pool before this point, so this cannot find
+    // one already in place.
+    rayon::ThreadPoolBuilder::new()
+        .stack_size(WORK_STACK_SIZE)
+        .build_global()
+        .context("failed to start the worker thread pool")?;
+    let work = std::thread::Builder::new()
+        .name("main".to_string())
+        .stack_size(WORK_STACK_SIZE)
+        .spawn(run)
+        .context("failed to start the main thread")?;
+    match work.join() {
+        Ok(result) => result,
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}
+
+fn run() -> Result<()> {
     let cli = Cli::parse();
     let _profile_guard = init_profile(cli.profile.as_deref(), cli.profile_rules)?;
 

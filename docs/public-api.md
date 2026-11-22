@@ -169,3 +169,16 @@ filename or sentinel string for a later adapter to decode.
 These invariants prevent the public API from reintroducing the emit/parse
 round trips removed by the prepared-AST work. They are enforced by span tests
 in `wakaru-core` (see `docs/fact-system.md` and the driver tests).
+
+### Stack depth
+
+Parsing, the rules, and printing recurse once per level of expression
+nesting, so stack use follows the deepest expression of an input, not its
+size. Real code nests hundreds of levels: a builder's method chain of hundreds
+of calls, a string concatenation of hundreds of terms. The platform default
+stacks (1 MiB for the main thread on Windows, 2 MiB for a spawned thread)
+overflow on such inputs, and a stack overflow aborts the process. The CLI runs
+its work on a thread with a 64 MiB stack and builds the global Rayon pool with
+the same worker stack size; a caller of this API should do the same: call it
+from a thread with a large stack, and build the Rayon pool it runs in (the
+global one, or one it `install`s) with `ThreadPoolBuilder::stack_size`.

@@ -45,7 +45,7 @@
         "pathIncludes": ["test/language/statements/function/S13.2.1_A1_T1.js"],
         "errorIncludes": ["has overflowed its stack"]
       },
-      "note": "The embedded SWC parser overflows on this deeply nested IIFE chain before Wakaru rules run."
+      "note": "In a debug build the embedded SWC parser overflows even the CLI's 64 MiB stack on this deeply nested IIFE chain, before Wakaru rules run; a release build parses it."
     },
     {
       "reason": "swc-parse-yield-ident",

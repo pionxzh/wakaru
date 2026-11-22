@@ -34,9 +34,10 @@ Setup checks the corpus out with LF line endings regardless of the global
 `core.autocrlf`, and converts an existing CRLF checkout, so parse-error
 offsets and report fingerprints match CI on Windows too. It also enables
 `core.longpaths`, so a `--root` under a deep directory can hold Test262's
-longest file names past Windows' 260-character limit. The default
-Windows main-thread stack (1 MB) is still smaller than Linux's, so deeply
-nested cases can overflow locally while they pass on CI.
+longest file names past Windows' 260-character limit. The CLI runs its work
+on 64 MiB stacks on every platform, so a deeply nested case overflows or not
+the same way locally and on CI; a debug build, which CI uses, needs far more
+stack per nesting level than a release build.
 
 Setup refuses to modify a dirty checkout. `--force` explicitly replaces dirty
 or mismatched fixture state. Updating the tracked revision is separate and does
