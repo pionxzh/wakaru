@@ -11,62 +11,8 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
+use crate::driver::line_index::LineIndex;
 use crate::js_names::is_valid_identifier_name;
-
-/// Precompute byte offset of each line start for O(log n) (line, col) lookup.
-fn compute_line_starts(src: &str) -> Vec<u32> {
-    let mut starts = vec![0u32];
-    for (i, &b) in src.as_bytes().iter().enumerate() {
-        if b == b'\n' {
-            starts.push((i + 1) as u32);
-        }
-    }
-    starts
-}
-
-/// Non-ASCII characters of the generated source, for converting byte columns
-/// to the UTF-16 columns that source maps use.
-///
-/// `cum[i]` is the number of UTF-8 bytes beyond UTF-16 code units contributed by
-/// every non-ASCII character up to and including the one starting at `pos[i]`.
-/// Empty for an all-ASCII source, so the common case needs no conversion.
-struct Utf16Delta {
-    pos: Vec<u32>,
-    cum: Vec<u32>,
-}
-
-impl Utf16Delta {
-    fn new(src: &str) -> Self {
-        let mut pos = Vec::new();
-        let mut cum = Vec::new();
-        let mut total = 0u32;
-        if !src.is_ascii() {
-            for (i, ch) in src.char_indices() {
-                let extra = ch.len_utf8() - ch.len_utf16();
-                if extra > 0 {
-                    total += extra as u32;
-                    pos.push(i as u32);
-                    cum.push(total);
-                }
-            }
-        }
-        Self { pos, cum }
-    }
-
-    /// Extra bytes over UTF-16 units in the source before byte offset `offset`.
-    fn before(&self, offset: u32) -> u32 {
-        match self.pos.partition_point(|&p| p < offset) {
-            0 => 0,
-            n => self.cum[n - 1],
-        }
-    }
-
-    /// UTF-16 column of `offset` on the line that starts at byte offset `line_start`.
-    fn column(&self, line_start: u32, offset: u32) -> u32 {
-        (offset - line_start) - (self.before(offset) - self.before(line_start))
-    }
-}
-
 use crate::rules::decl_utils::collect_decl_binding_ids;
 use crate::rules::rename_utils::{rename_bindings_in_module, BindingId, BindingRename};
 
@@ -165,19 +111,17 @@ fn collect_sourcemap_renames(
         })
         .collect();
 
-    // Precompute line-start byte offsets from the generated source file so we can
-    // convert a BytePos to (line, col) with a binary search instead of the O(col)
-    // UTF-8 character scan that cm.lookup_char_pos() performs.
+    // Index the generated source once so a BytePos becomes a source map
+    // (line, UTF-16 column) with binary searches, not the O(col) scan that
+    // cm.lookup_char_pos() performs on a long minified line.
     let src_file = cm.lookup_source_file(module.span.lo);
     let start_pos = src_file.start_pos.0;
-    let line_starts = compute_line_starts(&src_file.src);
-    let utf16_delta = Utf16Delta::new(&src_file.src);
+    let generated_lines = LineIndex::new(&src_file.src);
 
     // Phase 1: scan every identifier and vote on its original name.
     let mut voter = NameVoter {
         sm,
-        line_starts: &line_starts,
-        utf16_delta: &utf16_delta,
+        generated_lines: &generated_lines,
         start_pos,
         source_lines: &source_lines,
         unresolved_mark,
@@ -282,10 +226,8 @@ fn collect_module_level_bindings(module: &Module) -> HashSet<BindingId> {
 
 struct NameVoter<'a> {
     sm: &'a SourceMap,
-    /// Byte offsets of each line start within the generated file (relative to file start).
-    line_starts: &'a [u32],
-    /// Byte-to-UTF-16 column conversion for the generated file.
-    utf16_delta: &'a Utf16Delta,
+    /// Line and UTF-16 column lookup for the generated file.
+    generated_lines: &'a LineIndex,
     /// `BytePos.0` of the first byte of the generated source file.
     start_pos: u32,
     source_lines: &'a Vec<Vec<&'a str>>,
@@ -307,13 +249,11 @@ impl Visit for NameVoter<'_> {
             return;
         }
 
-        // Convert BytePos to (line, col) via binary search over precomputed line_starts.
-        // This is O(log lines) instead of the O(col) UTF-8 scan that lookup_char_pos does.
-        let relative = ident.span.lo.0.saturating_sub(self.start_pos);
-        let sm_line = self.line_starts.partition_point(|&s| s <= relative) - 1;
         // Source map columns count UTF-16 code units, not bytes.
-        let sm_col = self.utf16_delta.column(self.line_starts[sm_line], relative);
-        let sm_line = sm_line as u32;
+        let relative = ident.span.lo.0.saturating_sub(self.start_pos);
+        let Some((sm_line, sm_col)) = self.generated_lines.position(relative) else {
+            return;
+        };
 
         // Clone early so `self` is no longer borrowed before the mutable vote access.
         let Some(orig_name) = self.lookup_original_name(sm_line, sm_col).map(Atom::from) else {

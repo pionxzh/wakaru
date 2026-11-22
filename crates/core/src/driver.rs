@@ -3,7 +3,7 @@ mod discovery;
 mod error;
 mod export_storage;
 pub(crate) mod io;
-mod line_index;
+pub(crate) mod line_index;
 mod normalize;
 mod output;
 mod output_finalize;
