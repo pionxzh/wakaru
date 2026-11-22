@@ -576,6 +576,30 @@ var i=n(10);globalThis.sink={run:()=>(0,i.tag)(\"x\")}})();",
 }
 
 #[test]
+fn table_wrappers_in_a_startup_iife_before_a_library_assignment_split() {
+    // `output.library` with an assignment type writes the exports after the
+    // startup IIFE: `let x = {}; (() => {…})(); Lib = x;`.
+    // shape: hypothetical (the startup of the table bootstrap above moved
+    // into an IIFE followed by an `output.library` assignment)
+    let modules = raw_modules(&table_bootstrap(
+        "let x={};(()=>{\"use strict\";var a=()=>n(10),o=n.cw(function(e,t){t.label=function(e){return(0,a().tag)(e)}});\
+globalThis.sink={run:()=>o().label(\"x\")}})();globalThis.Lib=x;",
+    ));
+    assert!(
+        filenames(&modules).contains(&"module-cw-0.js"),
+        "got {:?}",
+        filenames(&modules)
+    );
+    let entry = module(&modules, "entry.js");
+    assert!(
+        entry.contains("require(\"./module-cw-0.js\")")
+            && !entry.contains(".cw")
+            && entry.contains("globalThis.Lib"),
+        "the wrapper leaves the IIFE and the assignment after it stays, got:\n{entry}"
+    );
+}
+
+#[test]
 fn table_namespace_object_a_body_reads_becomes_a_module() {
     // webpack declares a namespace object for `import * as ns` of a wrapped
     // module beside the accessors; its getters call the accessor.

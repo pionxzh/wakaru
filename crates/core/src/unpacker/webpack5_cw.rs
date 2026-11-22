@@ -3075,27 +3075,55 @@ fn top_level_element(stmt: &Stmt, element: usize) -> Option<&Expr> {
     }
 }
 
-/// The startup IIFE `(() => { … })()` (or `(function () { … })()`) the
-/// bootstrap ends with.
+/// The last top-level startup IIFE `(() => { … })()` (or
+/// `(function () { … })()`) of the bootstrap that builds wrappers: a
+/// statement of its own or one element of a comma sequence. Code may follow
+/// it, such as an `output.library` assignment
+/// (`Lib = __webpack_exports__`); the IIFE still runs once at its position,
+/// and nothing after it sees its bindings. A wrapper built anywhere else
+/// fails the `.cw` use count, so the choice cannot miss one.
 fn startup_iife_scope(bootstrap: &[Stmt]) -> Option<WrapperScope> {
-    let (index, stmt) = bootstrap
+    bootstrap
         .iter()
         .enumerate()
         .rev()
-        .find(|(_, stmt)| !matches!(stmt, Stmt::Return(_) | Stmt::Empty(_)))?;
-    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
-        return None;
-    };
-    let (element, value) = match strip_parens(expr) {
-        Expr::Seq(seq) => (Some(seq.exprs.len() - 1), &**seq.exprs.last()?),
-        expr => (None, expr),
-    };
-    let body = iife_body(value)?;
-    Some(WrapperScope::Iife {
-        stmt: index,
-        element,
-        body_span: body.span,
-    })
+        .find_map(|(index, stmt)| {
+            let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+                return None;
+            };
+            let elements: Vec<(Option<usize>, &Expr)> = match strip_parens(expr) {
+                Expr::Seq(seq) => seq
+                    .exprs
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, element)| (Some(idx), &**element))
+                    .collect(),
+                expr => vec![(None, expr)],
+            };
+            elements.into_iter().rev().find_map(|(element, value)| {
+                let body = iife_body(value)?;
+                builds_wrappers(body).then_some(WrapperScope::Iife {
+                    stmt: index,
+                    element,
+                    body_span: body.span,
+                })
+            })
+        })
+}
+
+/// Whether `body` reads a `.cw` member at all (the precise use checks run
+/// later).
+fn builds_wrappers(body: &FunctionBody) -> bool {
+    struct CwMember(bool);
+    impl Visit for CwMember {
+        fn visit_member_expr(&mut self, member: &MemberExpr) {
+            self.0 |= static_prop_name(&member.prop) == Some("cw");
+            member.visit_children_with(self);
+        }
+    }
+    let mut finder = CwMember(false);
+    body.visit_with(&mut finder);
+    finder.0
 }
 
 /// The body of a parameterless, argument-less, sync IIFE.

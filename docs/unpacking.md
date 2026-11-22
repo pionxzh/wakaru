@@ -444,10 +444,12 @@ the accessor does. Beside that:
 
 `n` gets a name no other identifier of the bootstrap spells (usually
 `__webpack_require__`), so no binding can capture the inserted calls. The
-wrappers sit at the top level of the bootstrap or of the startup IIFE that
-ends it (`(() => { "use strict"; n.cw(…)(); … })()`, which also covers a
-wrapper called where it is built); a wrapper anywhere else keeps them all in
-`entry.js`.
+wrappers sit at the top level of the bootstrap or of its last top-level
+startup IIFE that builds them (`(() => { "use strict"; n.cw(…)(); … })()`,
+which also covers a wrapper called where it is built). Code may follow that
+IIFE, such as an `output.library` assignment (`Lib = __webpack_exports__`):
+the IIFE runs once at its position and nothing after it sees its bindings. A
+wrapper anywhere else keeps them all in `entry.js`.
 
 The reads keep their values because nothing can run a moved body, an
 accessor, or a namespace getter before what they read is initialized: before
