@@ -301,3 +301,34 @@ fn getter_call_of_a_marked_provider_that_stays_commonjs_reads_its_default() {
         "`total` stays a member of the required value:\n{main}"
     );
 }
+
+#[test]
+fn getter_call_of_a_provider_that_replaced_module_exports_is_left_alone() {
+    // `.n` tests the value `require` returned: here `v`, which carries no
+    // marker, so the getter returned `v` whole.
+    let provider = r#"
+        20(module, exports) {
+            exports.__esModule = true;
+            exports.default = void 0;
+            class Gadget {
+                constructor(name){
+                    this.name = name;
+                }
+            }
+            Gadget.total = 0;
+            exports.default = Gadget;
+            module.exports = exports.default;
+        }
+"#;
+    let source = bundle(&format!(
+        "{}{}",
+        consumer(r#"new (_gadget__WEBPACK_IMPORTED_MODULE_0___default())("one")"#),
+        provider
+    ));
+    let modules = expect_unpack(&source);
+    let main = module(&modules, "module-10.js");
+    assert!(
+        !main.contains(".default"),
+        "the getter returned the replaced value whole:\n{main}"
+    );
+}

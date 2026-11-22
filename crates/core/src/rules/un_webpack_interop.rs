@@ -790,6 +790,11 @@ impl GetterUsageCollector<'_> {
 impl Visit for GetterUsageCollector<'_> {
     fn visit_var_decl(&mut self, var: &VarDecl) {
         for decl in &var.decls {
+            // A declared name is not a use; a pattern's defaults and
+            // computed keys are (`const { x = getter } = e`).
+            if !matches!(decl.name, Pat::Ident(_)) {
+                decl.name.visit_with(self);
+            }
             if let Some(init) = &decl.init {
                 init.visit_with(self);
             }

@@ -239,6 +239,34 @@ console.log(_lib.name);
 }
 
 #[test]
+fn getter_used_as_a_pattern_default_value_not_inlined() {
+    let input = r#"
+var _lib = require("./lib");
+var _lib2 = () => _lib && _lib.__esModule ? _lib.default : _lib;
+function f(e) { const { x = _lib2 } = e; return x; }
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("var _lib2 ="),
+        "a getter read as a value must keep its declaration:\n{output}"
+    );
+}
+
+#[test]
+fn getter_called_in_a_pattern_default_inlined() {
+    let input = r#"
+var _lib = require("./lib");
+var _lib2 = () => _lib && _lib.__esModule ? _lib.default : _lib;
+function f(e) { const { x = _lib2() } = e; return x; }
+"#;
+    let expected = r#"
+var _lib = require("./lib");
+function f(e) { const { x = _lib } = e; return x; }
+"#;
+    assert_eq_normalized(&render(input), expected.trim());
+}
+
+#[test]
 fn direct_require_n_getter_used_as_value_not_inlined() {
     let input = r#"
 import _lib from "./lib";

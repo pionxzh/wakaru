@@ -133,9 +133,10 @@ pub(crate) fn run_provider_namespace_repair(
 /// provider that stays CommonJS, or the namespace import of one whose
 /// namespace is its marked `exports`. A namespace import must pass the usage
 /// checks of [`run_provider_namespace_repair`]; when it does not, the module
-/// is left as it was. A marked `module.exports = v` holds itself as
-/// `default` ([`RequiredValue::Default`]), so its getter reads already read
-/// the binding.
+/// is left as it was. A provider that replaced `module.exports` is left
+/// alone: `.n` tests the value `require` returned, which need not carry the
+/// marker its `exports` had (`exports.default = v; module.exports =
+/// exports.default` returns `v` whole).
 ///
 /// [`RequireEdges::collect`]: crate::require_edges::RequireEdges
 pub(crate) fn run_default_getter_repair(
@@ -181,10 +182,17 @@ pub(crate) fn run_default_getter_repair(
             else {
                 continue;
             };
-            let Some(provider) = module_facts.get_from(Some(current_filename), source) else {
+            let Some(facts) = module_facts.get_from(Some(current_filename), source) else {
                 continue;
             };
-            let provider = ProviderInterface::of(provider);
+            // `.n` tests the value `require` returned. A provider that
+            // replaced `module.exports` may have returned a value that does
+            // not carry the marker its `exports` had, which `.n` returns
+            // whole (`exports.default = v; module.exports = exports.default`).
+            if facts.replaces_module_exports {
+                continue;
+            }
+            let provider = ProviderInterface::of(facts);
             if !provider.marks_es_module() {
                 continue;
             }
@@ -193,10 +201,7 @@ pub(crate) fn run_default_getter_repair(
                 RequiredValue::CommonJs => false,
                 // The namespace is the marked `exports` object.
                 RequiredValue::Marked { .. } => true,
-                // A marked `module.exports = v` holds itself as `default`
-                // (`Default { marked: true }`), so the binding already reads
-                // what the getter returned; no import holds the value of
-                // the other forms.
+                // The other forms replaced `module.exports`.
                 _ => continue,
             };
             candidates.push((binding, reads, namespace));
