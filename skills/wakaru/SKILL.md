@@ -49,6 +49,8 @@ npx wakaru --version
 
 If invoked repeatedly, install once: `npm install -g wakaru@latest`.
 In this document `wakaru` means `npx wakaru` unless installed globally.
+Under a memory limit (`prlimit --as`, `ulimit -v`), Node can fail to start:
+run `node_modules/@wakaru/cli-<platform>-<arch>/wakaru` directly instead.
 
 ## Core workflows
 

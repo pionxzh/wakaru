@@ -509,6 +509,25 @@ version only when you need byte-identical module output. Human-readable output
 on stderr is not covered either. `debug` subcommands follow
 their own [compatibility policy](cli-debug.md#compatibility-policy).
 
+## Run under a memory limit
+
+The `wakaru` command that npm installs is a Node.js script that starts the
+platform binary. Node reserves a large block of virtual address space when it
+starts, so under an address-space limit (`prlimit --as`, `ulimit -v`) Node
+can fail before Wakaru runs. Under such a limit, run the platform binary
+directly. It does not need Node:
+
+- from an npm install: `node_modules/@wakaru/cli-<platform>-<arch>/wakaru`
+  (`wakaru.exe` on Windows), or the path that
+  `require.resolve("@wakaru/cli-linux-x64/wakaru")` returns;
+- from [GitHub Releases](https://github.com/pionxzh/wakaru/releases): the
+  binary in the archive for your platform.
+
+Wakaru recovers modules in parallel, one worker thread per CPU core. Set
+`RAYON_NUM_THREADS=1` to recover one module at a time, which lowers peak
+memory. Peak memory grows with the largest module, not with the whole input:
+a bundle that Wakaru does not split is one large module.
+
 ## Diagnostics and profiling
 
 ```bash

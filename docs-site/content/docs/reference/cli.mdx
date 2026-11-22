@@ -262,6 +262,21 @@ the inputs. It also lists webpack `require(id)` calls whose module id the
 output does not link: in no input, in an opaque module, or in several modules
 of the build. The rest of the module is recovered.
 
+## Run under a memory limit
+
+The `wakaru` command from npm is a Node.js script that starts the platform
+binary. Under an address-space limit (`prlimit --as`, `ulimit -v`), Node can
+fail to start before Wakaru runs. Run the platform binary directly instead.
+It does not need Node:
+
+- `node_modules/@wakaru/cli-<platform>-<arch>/wakaru` after an npm install
+  (`wakaru.exe` on Windows)
+- the binary from [GitHub Releases](https://github.com/pionxzh/wakaru/releases)
+
+Set `RAYON_NUM_THREADS=1` to recover one module at a time, which lowers peak
+memory. Peak memory grows with the largest module, so a bundle that Wakaru
+does not split uses the most.
+
 ## Overwrite protection
 
 Wakaru refuses to overwrite existing files or write into a non-empty output
