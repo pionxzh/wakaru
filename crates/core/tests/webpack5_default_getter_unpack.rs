@@ -332,3 +332,72 @@ fn getter_call_of_a_provider_that_replaced_module_exports_is_left_alone() {
         "the getter returned the replaced value whole:\n{main}"
     );
 }
+
+#[test]
+fn getter_call_through_a_kept_require_reads_the_default() {
+    // The global write must run before the provider loads, so the consumer
+    // keeps its `require` and stays CommonJS. The provider still becomes ESM,
+    // whose namespace `require` returns: the getter read is its `default`.
+    let consumer = r#"
+        10(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
+            __webpack_require__.d(__webpack_exports__, {
+                e: () => (run)
+            });
+            globalThis.gadgetMode = "test";
+            var _gadget__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(20);
+            var _gadget__WEBPACK_IMPORTED_MODULE_0___default = __webpack_require__.n(_gadget__WEBPACK_IMPORTED_MODULE_0__);
+            function run() {
+                return _gadget__WEBPACK_IMPORTED_MODULE_0___default().describe();
+            }
+        },
+"#;
+    let provider = r#"
+        20(__unused_webpack_module, exports) {
+            Object.defineProperty(exports, "__esModule", {
+                value: true
+            });
+            Object.defineProperty(exports, "default", {
+                enumerable: true,
+                get: function() {
+                    return gadget;
+                }
+            });
+            const mode = globalThis.gadgetMode;
+            const gadget = {
+                describe: () => "mode:" + mode
+            };
+        }
+"#;
+    let source = bundle(&format!("{consumer}{provider}"));
+    let output = unpack(
+        &source,
+        DecompileOptions {
+            filename: "bundle.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("unpack should succeed");
+    let main = module(&output.modules, "module-10.js");
+    assert!(
+        main.contains("require(\"./module-20.js\")"),
+        "the consumer should keep its require:\n{main}"
+    );
+    assert!(
+        main.contains(".default.describe()"),
+        "the getter read should be the default of the namespace:\n{main}"
+    );
+    let provider = module(&output.modules, "module-20.js");
+    assert!(
+        provider.contains("export"),
+        "the provider should be ESM:\n{provider}"
+    );
+    assert!(
+        !output
+            .warnings
+            .iter()
+            .any(|warning| format!("{warning:?}")
+                .contains("interop that read its default was removed")),
+        "no warning for a restored getter read: {:?}",
+        output.warnings
+    );
+}

@@ -5297,27 +5297,29 @@ fn webpack5_kept_require_of_a_module_exports_provider_reads_its_default() {
 }
 
 #[test]
-fn commonjs_require_of_a_marked_provider_now_esm_is_reported() {
+fn commonjs_require_of_a_marked_provider_now_esm_reads_its_default() {
     // hypothetical, with webpack 5's `require.n`: module 1 keeps a require in
     // a function, so it stays CommonJS. `UnWebpackInterop` replaced the
-    // interop getter with the binding, which then means module 2's default;
-    // module 2 marked itself `__esModule` and is now ESM, so the binding holds
-    // a namespace and `n.k` misses. Which reads mean the default is not
-    // known, so the require is reported.
+    // interop getter with the binding; module 2 marked itself `__esModule` and
+    // is now ESM, so the binding holds a namespace. The getter read, found
+    // again by its position, reads the namespace's `default`.
     let source = r#"(()=>{var t={1(t,e,o){var n=o(2),a=o.n(n);e.run=function(){return a().k+o(3).x}},2(t,e){"use strict";Object.defineProperty(e,"__esModule",{value:!0}),e.default={k:1}},3(t,e){e.x=1}};const e={};function o(r){const l=e[r];if(void 0!==l)return l.exports;const i=e[r]={exports:{}};return t[r](i,i.exports,o),i.exports}o.n=t=>{var e=t&&t.__esModule?()=>t.default:()=>t;return o.d(e,{a:e}),e},o.d=(t,e)=>{for(var r in e)o.o(e,r)&&!o.o(t,r)&&Object.defineProperty(t,r,{enumerable:!0,get:e[r]})},o.o=(t,e)=>Object.prototype.hasOwnProperty.call(t,e),globalThis.lib=o(1)})();"#;
     let output = unpack(source, DecompileOptions::default()).expect("bundle should unpack");
-    let warnings = output
-        .warnings
+    let consumer = output
+        .modules
         .iter()
-        .filter(|w| w.kind == wakaru_core::UnpackWarningKind::CommonJsRequireOfEsm)
-        .collect::<Vec<_>>();
-    assert_eq!(warnings.len(), 1, "{:#?}", output.warnings);
-    assert_eq!(warnings[0].filename, "module-1.js");
-    assert!(warnings[0].message.contains("\"./module-2.js\""));
-    assert!(warnings[0]
-        .message
-        .contains("the interop that read its default was removed"));
-    assert!(!warnings[0].kind.is_error());
+        .find(|(name, _)| name == "module-1.js")
+        .map(|(_, code)| code.clone())
+        .expect("consumer module");
+    assert!(consumer.contains(".default.k"), "{consumer}");
+    assert!(
+        !output
+            .warnings
+            .iter()
+            .any(|w| w.kind == wakaru_core::UnpackWarningKind::CommonJsRequireOfEsm),
+        "{:#?}",
+        output.warnings
+    );
 
     // An interop still in the output tests `__esModule`, which Node sets on
     // the namespace of a module with a default export: it reads the default,

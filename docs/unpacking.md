@@ -1318,16 +1318,19 @@ layout directly is a proposal:
     read of a name that is not a named export reads `.default`, directly or
     through a binding every use of which is one of those;
   - a provider that marked itself `__esModule`: a local interop helper around
-    the call, which returned it unchanged, is dropped.
+    the call, which returned it unchanged, is dropped;
+  - the same provider, when it never replaced `module.exports`, read through
+    webpack's `require.n` getter (`require.n(x).a`, or `x()` of the getter):
+    `UnWebpackInterop` put the binding where the getter was read, and those
+    reads, found again by the positions the input recorded, read `.default`.
 
   What is left is reported as `commonjs_require_of_esm`: a binding of such a
   provider passed on as a value (code that calls it and also reads a named
   export from it needs both), read as an optional member (`x?.name`), or used to call a named export that reads
-  `this`; and an interop default of a marked provider whose helper
-  `UnWebpackInterop` already removed (`require.n(x).a`, producer
-  `webpack@4.47` concatenation + Terser with an `swc@1.16` CommonJS
-  dependency, where which reads mean the default is known only per use), or
-  of a marked provider without a default export. An interop still in the
+  `this`; and an interop default of a marked provider whose helper the rule
+  range removed, when the provider replaced `module.exports` or the reads
+  cannot be found again (a read copied, or without a position in the input),
+  or of a marked provider without a default export. An interop still in the
   output works: Node (since v22.12 and v20.19) adds `__esModule` to the
   namespace of a module with a default export, so the interop reads that
   default.

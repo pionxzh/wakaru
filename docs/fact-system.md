@@ -264,9 +264,12 @@ it puts there that span. `RequireEdges::default_getter_reads` returns them
 for a source whose every call is such a declarator with no other interop or
 `__esModule` read. After the fact barrier, `run_default_getter_repair`
 (`provider_namespace_repair.rs`) reads them as `x.default` when the provider
-marked itself `__esModule`, which is what `.n` returned for it: the default
-import stays for a provider that stays CommonJS, and the namespace import
-replaces it for one whose namespace is its exports. A getter nothing reads is
+marked itself `__esModule` and never replaced `module.exports`, which is
+what `.n` returned for it: the default import stays for a provider that
+stays CommonJS, and the namespace import replaces it for one whose namespace
+is its exports. A module that stays CommonJS keeps `var x = require("./p")`,
+and `run_kept_require_default_reads` (`kept_require.rs`) reads the same
+reads as `x.default`. A getter nothing reads is
 removed in the rule range, so its own `__esModule` and `.default` reads do
 not count as uses.
 

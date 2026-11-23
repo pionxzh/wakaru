@@ -122,6 +122,12 @@ impl<'a> ProviderInterface<'a> {
         self.facts.marks_es_module
     }
 
+    /// The module assigns `module.exports` itself somewhere, so the value
+    /// `require` returned may not be its `exports` object.
+    pub(crate) fn replaces_module_exports(&self) -> bool {
+        self.facts.replaces_module_exports
+    }
+
     /// Named exports whose function reads `this`.
     pub(crate) fn receiver_observing_exports(&self) -> &'a [Atom] {
         &self.facts.receiver_observing_exports

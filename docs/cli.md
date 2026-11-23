@@ -578,15 +578,17 @@ Unpack reports a non-error `commonjs_require_of_esm` warning, with or without
 recovered as ESM whose namespace differs from the CommonJS value it replaced.
 `require` of an ES module returns its namespace. Unpack first rewrites the
 reads it can: `.default` for a provider that was `module.exports = v`, per
-use when the provider also has named exports, and a local interop helper
-dropped for a provider that marked itself `__esModule`. The warning names
+use when the provider also has named exports, a local interop helper
+dropped for a provider that marked itself `__esModule`, and `.default` where
+webpack's `require.n` getter of such a provider was read. The warning names
 what is left and why: the replaced `module.exports` value used as a value or
 through an unknown read, or a marked provider whose default was read
 through an interop. Node (since v22.12 and v20.19) adds `__esModule` to the
 namespace of a module with a default export, so an interop still in the
 output reads that default and is not reported. What is reported is an
-interop that is gone (`UnWebpackInterop` removed `require.n`) or a provider
-without a default export. A provider that a module of the input writes to
+interop that is gone (`UnWebpackInterop` removed `require.n`) where the
+provider replaced `module.exports` or a read of it cannot be found again, or a
+provider without a default export. A provider that a module of the input writes to
 (`p.x = v`, `delete p.x`, `Object.assign(p, …)`, or a function of the same
 module that writes the value passed to it) stays CommonJS, so the write lands
 where it did. The exception is a provider whose only export is one

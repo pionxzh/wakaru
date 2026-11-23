@@ -210,13 +210,7 @@ pub(crate) fn run_default_getter_repair(
 
     for (binding, reads, namespace) in candidates {
         let original = namespace.then(|| module.clone());
-        let mut rewrite = GetterReadToDefault {
-            binding: &binding,
-            reads: &reads,
-            rewritten: false,
-        };
-        module.visit_mut_with(&mut rewrite);
-        if !rewrite.rewritten {
+        if !rewrite_default_getter_reads(module, &binding, &reads) {
             continue;
         }
         let Some(original) = original else {
@@ -239,8 +233,25 @@ pub(crate) fn run_default_getter_repair(
     }
 }
 
-/// Rewrites each read of `binding` at a recorded getter read to
-/// `binding.default`.
+/// Rewrites each use of `binding` at one of the recorded default getter
+/// `reads` ([`RequireEdges::default_getter_reads`]) to `binding.default`.
+/// Returns whether any was rewritten.
+///
+/// [`RequireEdges::default_getter_reads`]: crate::require_edges::RequireEdges::default_getter_reads
+pub(crate) fn rewrite_default_getter_reads(
+    module: &mut Module,
+    binding: &BindingId,
+    reads: &HashSet<EdgeKey>,
+) -> bool {
+    let mut rewrite = GetterReadToDefault {
+        binding,
+        reads,
+        rewritten: false,
+    };
+    module.visit_mut_with(&mut rewrite);
+    rewrite.rewritten
+}
+
 struct GetterReadToDefault<'a> {
     binding: &'a BindingId,
     reads: &'a HashSet<EdgeKey>,

@@ -16,6 +16,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use crate::collections::HashMap;
 use crate::facts::ModuleFactsMap;
 use crate::provider_interface::{ProviderInterface, RequiredValue};
+use crate::provider_namespace_repair::rewrite_default_getter_reads;
 use crate::require_edges::RequireEdges;
 use crate::rules::lowered_dynamic_import::LoweredImportMatcher;
 use crate::rules::transpiler_helper_utils::{LocalHelperContext, TranspilerHelperKind};
@@ -605,6 +606,12 @@ impl Visit for KeptRequireFinder {
 /// interop helper around the call, which returned it unchanged, is dropped.
 /// A write through the required value of a provider whose namespace is what
 /// `require` returns cannot be moved anywhere and is only reported.
+///
+/// webpack's default getter of a marked provider returned
+/// `exports.default`, and `UnWebpackInterop` put the binding in its place:
+/// those reads, found again by the spans the module's require edges
+/// recorded ([`RequireEdges::default_getter_reads`]), read `.default` of
+/// the binding first ([`default_getter_reads_of_kept_requires`]).
 pub(crate) fn run_kept_require_default_reads(
     module: &mut Module,
     module_facts: &ModuleFactsMap,
@@ -626,6 +633,9 @@ pub(crate) fn run_kept_require_default_reads(
     let own_edges = current_filename
         .and_then(|filename| module_facts.get(filename))
         .map(|own| &own.require_edges);
+    let getter_sources = own_edges.map_or_else(HashSet::default, |edges| {
+        default_getter_reads_of_kept_requires(module, edges, &provider_of, unresolved_mark)
+    });
 
     // Bindings of a `DefaultWithNamed` provider, declared once, whose every
     // use is a call, a `new`, or a static member read (see
@@ -660,6 +670,7 @@ pub(crate) fn run_kept_require_default_reads(
         good: &good,
         local_helpers: LocalHelperContext::collect_with_mark(module, unresolved_mark),
         own_edges,
+        getter_sources,
         esmodule_tested_sources: esmodule_tested_sources(module, unresolved_mark),
         unhandled: Vec::new(),
     };
@@ -673,6 +684,52 @@ pub(crate) fn run_kept_require_default_reads(
         );
     }
     rewriter.unhandled
+}
+
+/// Rewrites webpack's default getter reads of each top-level
+/// `var x = require("./p")` to `x.default`, where `./p` marked itself
+/// `__esModule` and never replaced `module.exports`: `.n` returned its
+/// `exports.default`, and `require` of it now returns its `exports` or, once
+/// it is ESM, its namespace, which both hold that default as `default`.
+/// Returns the sources whose reads were rewritten.
+fn default_getter_reads_of_kept_requires<'a>(
+    module: &mut Module,
+    edges: &RequireEdges,
+    provider_of: &dyn Fn(&str) -> Option<ProviderInterface<'a>>,
+    unresolved_mark: Mark,
+) -> HashSet<Atom> {
+    let mut targets = Vec::new();
+    for item in &module.body {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            continue;
+        };
+        for declarator in &var.decls {
+            let (Pat::Ident(binding), Some(init)) = (&declarator.name, &declarator.init) else {
+                continue;
+            };
+            let Some(source) = require_source(init, unresolved_mark) else {
+                continue;
+            };
+            let Some(reads) = edges
+                .default_getter_reads(&source)
+                .filter(|reads| !reads.is_empty())
+            else {
+                continue;
+            };
+            if provider_of(&source).is_some_and(|provider| {
+                provider.marks_es_module() && !provider.replaces_module_exports()
+            }) {
+                targets.push((binding_id(&binding.id), source, reads));
+            }
+        }
+    }
+    let mut rewritten = HashSet::default();
+    for (binding, source, reads) in targets {
+        if rewrite_default_getter_reads(module, &binding, &reads) {
+            rewritten.insert(source);
+        }
+    }
+    rewritten
 }
 
 /// Sources of kept requires that `module` writes through, directly
@@ -1016,6 +1073,10 @@ struct DefaultReadRewriter<'a, F> {
     /// This module's require edges, read on its input: whether it read a
     /// source through an interop the rule range removed.
     own_edges: Option<&'a RequireEdges>,
+    /// Sources whose default getter reads now read `.default`
+    /// ([`default_getter_reads_of_kept_requires`]): the interop the rule
+    /// range removed is restored.
+    getter_sources: HashSet<Atom>,
     /// Sources whose required value the module still tests for
     /// `__esModule`, directly or through a binding.
     esmodule_tested_sources: HashSet<Atom>,
@@ -1095,7 +1156,8 @@ impl<'a, F: Fn(&str) -> Option<ProviderInterface<'a>>> DefaultReadRewriter<'a, F
             // an interop that still tests `__esModule` reads the default.
             Some(RequiredValue::Marked { has_default: true })
                 if self.reads_through_interop(&source)
-                    && !self.esmodule_tested_sources.contains(&source) =>
+                    && !self.esmodule_tested_sources.contains(&source)
+                    && !self.getter_sources.contains(&source) =>
             {
                 self.report(
                     source,
