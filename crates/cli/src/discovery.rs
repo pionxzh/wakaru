@@ -11,12 +11,14 @@ use anyhow::{Context, Result};
 
 /// Counts produced by a directory scan: how many candidate files were read,
 /// how many were detected as bundle/chunk inputs, how many matched a bundle
-/// format whose split was refused (kept whole), and how many were skipped.
+/// format whose split was refused (kept whole), how many are plain files
+/// decompiled as one file, and how many were skipped because they do not parse.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DirectoryScanStats {
     pub scanned: usize,
     pub detected: usize,
     pub refused: usize,
+    pub plain: usize,
     pub skipped: usize,
 }
 

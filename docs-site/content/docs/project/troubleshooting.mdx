@@ -54,9 +54,10 @@ npx wakaru entry.js chunk.js --unpack -o out/
 Use a fresh output directory. If you have the whole build directory, you can
 pass that instead. See [Inputs](/guides/unpack-a-bundle#inputs).
 
-Directory scans skip files they do not recognize as bundles or chunks. If
-a missing JavaScript file exists in the build but was skipped, include it as
-an explicit input. Wakaru cannot recover code from a chunk you do not have.
+Directory scans skip hidden paths, `node_modules`, and files that do not
+parse. If a missing JavaScript file exists in the build but was skipped,
+include it as an explicit input. Wakaru cannot recover code from a chunk you
+do not have.
 
 If all the relevant inputs are present, check
 [Output & warnings](/reference/output-and-warnings#validating-an-output-tree)
@@ -78,12 +79,10 @@ Wakaru refuses to write into a directory that is not empty, and refuses to
 overwrite an existing output file. Pass `--force` to allow overwrites.
 Use a fresh directory to avoid mixing new output with files from an earlier run.
 
-## "no bundle or chunk files detected in directory input"
+## "no parseable JavaScript files found in directory input"
 
-A directory scan found nothing it recognizes. Directory scans only look at
-`.js`, `.mjs`, and `.cjs` files, and skip hidden paths and `node_modules`.
-A file that matches a bundle format but is not split counts as found: it is
-kept as one file with a `bundle_split_refused` warning.
+A directory scan found no JavaScript it could parse. Directory scans only look
+at `.js`, `.mjs`, and `.cjs` files, and skip hidden paths and `node_modules`.
 Point Wakaru at the bundle file directly instead of the directory. A Bun
 single-file executable also needs an explicit path. Directory scans do not
 pick it up.

@@ -2149,7 +2149,7 @@ fn unpack_output_survives_worker_pool_teardown_and_reuse() {
 }
 
 #[test]
-fn unpack_directory_inputs_are_recursive_detected_js_files_only() {
+fn unpack_directory_inputs_are_every_recursive_js_file() {
     let dir = temp_test_dir("unpack-dir");
     let nested = dir.join("nested");
     let hidden = dir.join(".hidden");
@@ -2185,7 +2185,8 @@ fn unpack_directory_inputs_are_recursive_detected_js_files_only() {
             scanned: 4,
             detected: 2,
             refused: 0,
-            skipped: 2,
+            plain: 2,
+            skipped: 0,
         })
     );
     assert!(!execution.output.modules.is_empty());
@@ -2238,6 +2239,7 @@ fn unpack_mixed_explicit_and_directory_inputs_processes_plain_explicit_file() {
             scanned: 1,
             detected: 1,
             refused: 0,
+            plain: 0,
             skipped: 0,
         })
     );
@@ -2436,6 +2438,7 @@ fn unpack_directory_skips_malformed_javascript_candidate() {
             scanned: 2,
             detected: 1,
             refused: 0,
+            plain: 0,
             skipped: 1,
         })
     );
@@ -2462,8 +2465,8 @@ fn split_refusal_warnings_of(execution: &PublicUnpackExecution) -> Vec<&CliWarni
 
 #[test]
 fn unpack_directory_keeps_a_refused_bundle_whole_with_a_warning() {
-    // A directory whose only candidates are a refused bundle and a plain
-    // file is not an empty scan: the refused bundle is kept as one file.
+    // The refused bundle is kept as one file with a warning; the plain file
+    // beside it is kept as one file without one.
     let dir = temp_test_dir("unpack-dir-refused");
     fs::create_dir_all(&dir).expect("create temp dir");
     fs::write(dir.join("refused.js"), refused_webpack4_source()).expect("write refused bundle");
@@ -2486,16 +2489,22 @@ fn unpack_directory_keeps_a_refused_bundle_whole_with_a_warning() {
             scanned: 2,
             detected: 0,
             refused: 1,
-            skipped: 1,
+            plain: 1,
+            skipped: 0,
         })
     );
-    assert_eq!(execution.output.modules.len(), 1);
-    let (_, code) = &execution.output.modules[0];
+    let modules = &execution.output.modules;
+    assert_eq!(modules.len(), 2, "modules: {modules:?}");
     assert!(
-        code.contains("greeting"),
-        "refused bundle kept whole: {code}"
+        modules
+            .iter()
+            .any(|(_, code)| code.contains("greeting") && !code.contains("plainValue")),
+        "refused bundle kept whole: {modules:?}"
     );
-    assert!(!code.contains("plainValue"));
+    assert!(
+        modules.iter().any(|(_, code)| code.contains("plainValue")),
+        "plain file kept: {modules:?}"
+    );
 
     let warnings = split_refusal_warnings_of(&execution);
     assert_eq!(
@@ -2515,7 +2524,7 @@ fn unpack_directory_keeps_a_refused_bundle_whole_with_a_warning() {
 }
 
 #[test]
-fn unpack_directory_mixes_split_refused_and_skipped_candidates() {
+fn unpack_directory_mixes_split_refused_and_plain_candidates() {
     let dir = temp_test_dir("unpack-dir-refused-mixed");
     let nested = dir.join("nested");
     fs::create_dir_all(&nested).expect("create nested dir");
@@ -2540,7 +2549,8 @@ fn unpack_directory_mixes_split_refused_and_skipped_candidates() {
             scanned: 3,
             detected: 1,
             refused: 1,
-            skipped: 1,
+            plain: 1,
+            skipped: 0,
         })
     );
     let modules = &execution.output.modules;
@@ -2549,8 +2559,8 @@ fn unpack_directory_mixes_split_refused_and_skipped_candidates() {
         "refused bundle missing: {modules:?}"
     );
     assert!(
-        modules.iter().all(|(_, code)| !code.contains("plainValue")),
-        "plain file must stay skipped: {modules:?}"
+        modules.iter().any(|(_, code)| code.contains("plainValue")),
+        "plain file missing: {modules:?}"
     );
     assert!(
         execution
@@ -2600,10 +2610,10 @@ fn unpack_explicit_refused_bundle_is_processed_without_a_refusal_warning() {
 }
 
 #[test]
-fn unpack_directory_without_detected_files_errors() {
+fn unpack_directory_without_parseable_files_errors() {
     let dir = temp_test_dir("unpack-dir-empty");
     fs::create_dir_all(&dir).expect("create temp dir");
-    fs::write(dir.join("plain.js"), "const value = 1;").expect("write plain file");
+    fs::write(dir.join("malformed.js"), "function {").expect("write malformed file");
 
     let err = run_public_unpack(
         std::slice::from_ref(&dir),
@@ -2615,12 +2625,69 @@ fn unpack_directory_without_detected_files_errors() {
         false,
     )
     .err()
-    .expect("directory with no detected bundles should error");
+    .expect("directory with no parseable files should error");
     assert!(
         err.to_string()
-            .contains("no bundle or chunk files detected in directory input"),
+            .contains("no parseable JavaScript files found in directory input"),
         "unexpected error: {err}"
     );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn unpack_directory_keeps_single_module_esm_chunks_under_their_names() {
+    // Chunks that hold one module are not detected as bundles or chunks. A
+    // scan keeps them, so the imports between them still resolve.
+    let dir = temp_test_dir("unpack-dir-esm-chunks");
+    let assets = dir.join("assets");
+    fs::create_dir_all(&assets).expect("create assets dir");
+    fs::write(
+        assets.join("index.js"),
+        r#"class Store{constructor(n){this.items=[];this.name=n}add(x){this.items.push(x);return this.items.length}}
+const main=new Store("main-store-label");
+globalThis.openPage=()=>import("./page-lazy.js").then(m=>m.render(main));
+export{Store as S};"#,
+    )
+    .expect("write entry chunk");
+    fs::write(
+        assets.join("page-lazy.js"),
+        r#"import{S as Store}from"./index.js";
+export function render(el){const s=new Store("page-store-label");el.count=s.add(1)}"#,
+    )
+    .expect("write page chunk");
+
+    let execution = run_public_unpack(
+        std::slice::from_ref(&dir),
+        false,
+        UnpackMode::Auto,
+        DceMode::Off,
+        RewriteLevel::Standard,
+        false,
+        false,
+    )
+    .expect("a directory of ESM chunks should unpack");
+
+    assert_eq!(
+        execution.scan_stats,
+        Some(DirectoryScanStats {
+            scanned: 2,
+            detected: 0,
+            refused: 0,
+            plain: 2,
+            skipped: 0,
+        })
+    );
+    let modules = &execution.output.modules;
+    let module = |name: &str| {
+        modules
+            .iter()
+            .find(|(path, _)| path.replace('\\', "/").ends_with(name))
+            .map(|(_, code)| code.as_str())
+            .unwrap_or_else(|| panic!("missing {name}: {modules:?}"))
+    };
+    assert!(module("index.js").contains("import(\"./page-lazy.js\")"));
+    assert!(module("page-lazy.js").contains("from \"./index.js\""));
 
     fs::remove_dir_all(&dir).expect("remove temp dir");
 }
@@ -3246,6 +3313,20 @@ fn a_gtm_container_next_to_a_bundle_writes_both_under_distinct_names() {
         written.iter().any(|path| path.ends_with("module-1.js")),
         "{written:?}"
     );
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn a_directory_scan_splits_a_gtm_container_like_an_explicit_input() {
+    let (dir, out_dir) = gtm_test_dir("gtm-directory", &[("gtm.js", SYNTHETIC_GTM_CONTAINER)]);
+    let inputs = dir.join("inputs");
+    fs::create_dir_all(&inputs).expect("create inputs dir");
+    fs::rename(dir.join("gtm.js"), inputs.join("gtm.js")).expect("move container");
+    run_unpack_with(&dir, &out_dir, &["inputs"]).expect("unpack");
+
+    // a directory input can hold several files, so the pieces sit under the file name
+    assert!(out_dir.join("gtm/macros/jsm-0.js").is_file());
+    assert!(out_dir.join("gtm/index.md").is_file());
     fs::remove_dir_all(&dir).expect("remove temp dir");
 }
 

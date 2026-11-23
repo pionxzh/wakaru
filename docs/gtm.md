@@ -10,8 +10,8 @@ through GTM, often outside the normal code review process.
 `--unpack` recognizes a container by that object shape — a `var data = {…}`
 whose `resource` carries `macros`, `tags`, `predicates` and `rules` arrays —
 read from the AST and not from the file name, so a container saved by hand
-works too. Explicit file inputs and stdin are checked; directory scans are
-not. The runtime is skipped: it is the same library in every file, and
+works too. Explicit file inputs, stdin, and the files a directory scan finds
+are checked. The runtime is skipped: it is the same library in every file, and
 running wakaru without `--unpack` still decompiles the whole input.
 
 ```

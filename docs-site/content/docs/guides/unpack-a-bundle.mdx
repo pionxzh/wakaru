@@ -22,9 +22,11 @@ npx wakaru dist/ --unpack -o out/               # recursively scan a directory
 ```
 
 Directory inputs recursively scan `.js`, `.mjs`, and `.cjs` files. Hidden
-paths and `node_modules` are skipped. Only files detected as bundles or
-chunks are included. A bundle that cannot be split safely is kept as one
-file, with a warning that gives the reason.
+paths and `node_modules` are skipped. Every file found is included, as if you
+passed it explicitly: bundles and chunks are split, and other files are
+decompiled as one file each. Files that do not parse are skipped. A bundle
+that cannot be split safely is kept as one file, with a warning that gives the
+reason.
 
 ## Output
 

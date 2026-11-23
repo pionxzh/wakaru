@@ -795,9 +795,14 @@ fn run_unpack(cli: Cli) -> Result<()> {
             } else {
                 String::new()
             };
+            let skipped = if stats.skipped > 0 {
+                format!(", skipped (does not parse): {} file(s)", stats.skipped)
+            } else {
+                String::new()
+            };
             eprintln!(
-                "scanned: {} file(s), detected: {} bundle/chunk file(s){kept_whole}, skipped: {} file(s)",
-                stats.scanned, stats.detected, stats.skipped
+                "scanned: {} file(s), detected: {} bundle/chunk file(s){kept_whole}, plain: {} file(s){skipped}",
+                stats.scanned, stats.detected, stats.plain
             );
         }
         if !output.detected_formats.is_empty() {
@@ -1880,21 +1885,28 @@ fn run_public_unpack(
                     continue;
                 }
 
+                // Every parseable candidate is kept, as if it were passed explicitly: a chunk
+                // that holds one module is not detected as a bundle or chunk, and dropping it
+                // breaks the imports of the files around it.
                 for candidate in collect_directory_js_inputs(path)? {
                     stats.scanned += 1;
                     let code = fs::read_to_string(&candidate)
                         .with_context(|| format!("failed to read {}", candidate.display()))?;
-                    let receipt = match job.push_with_unmatched(
-                        wakaru::Source::new(candidate.to_string_lossy().to_string(), code),
-                        wakaru::UnmatchedInput::SkipUnrecognized,
-                    ) {
-                        Ok(receipt) => receipt,
-                        Err(error) if error.kind() == wakaru::ErrorKind::Parse => {
-                            stats.skipped += 1;
-                            continue;
-                        }
-                        Err(error) => return Err(error.into()),
+                    let source = wakaru::Source::new(candidate.to_string_lossy().to_string(), code);
+                    let Some(source) = set_aside_gtm_container(source, true, &mut gtm) else {
+                        stats.detected += 1;
+                        pushed_inputs += 1;
+                        continue;
                     };
+                    let receipt =
+                        match job.push_with_unmatched(source, wakaru::UnmatchedInput::Process) {
+                            Ok(receipt) => receipt,
+                            Err(error) if error.kind() == wakaru::ErrorKind::Parse => {
+                                stats.skipped += 1;
+                                continue;
+                            }
+                            Err(error) => return Err(error.into()),
+                        };
                     pushed_inputs += 1;
                     job_inputs += 1;
                     if receipt.detection != wakaru::InputDetection::Plain {
@@ -1903,7 +1915,7 @@ fn run_public_unpack(
                         stats.refused += 1;
                         refused_candidates.push(receipt.id);
                     } else {
-                        stats.skipped += 1;
+                        stats.plain += 1;
                     }
                 }
             }
@@ -1911,7 +1923,7 @@ fn run_public_unpack(
     }
 
     if saw_directory && pushed_inputs == 0 {
-        bail!("no bundle or chunk files detected in directory input");
+        bail!("no parseable JavaScript files found in directory input");
     }
     let (mut output, single_input_name) = if job_inputs == 0 && !gtm.is_empty() {
         let empty = CliUnpackOutput {
@@ -1930,7 +1942,7 @@ fn run_public_unpack(
             job.finish()?
         };
         if saw_directory && output.modules.is_empty() {
-            bail!("no bundle or chunk files detected in directory input");
+            bail!("no parseable JavaScript files found in directory input");
         }
         let single_input_name =
             (output.inputs.len() == 1).then(|| output.inputs[0].filename.clone());
@@ -1998,9 +2010,22 @@ fn push_explicit_source(
     prefix_pieces: bool,
     gtm: &mut Vec<GtmIntake>,
 ) -> Result<bool> {
+    let Some(source) = set_aside_gtm_container(source, prefix_pieces, gtm) else {
+        return Ok(false);
+    };
+    job.push(source)?;
+    Ok(true)
+}
+
+/// Sets a Google Tag Manager container aside for [`decompile_gtm_scripts`] and returns `None`;
+/// any other source is handed back for the job.
+fn set_aside_gtm_container(
+    source: wakaru::Source,
+    prefix_pieces: bool,
+    gtm: &mut Vec<GtmIntake>,
+) -> Option<wakaru::Source> {
     let Some(container) = wakaru::gtm::extract_container(source.code()) else {
-        job.push(source)?;
-        return Ok(true);
+        return Some(source);
     };
     let input = source.filename().to_string();
     let prefix = if prefix_pieces {
@@ -2025,7 +2050,7 @@ fn push_explicit_source(
         prefix,
         container,
     });
-    Ok(false)
+    None
 }
 
 /// Decompiles every container script on its own, as a single file: a script is not a bundle, and

@@ -72,10 +72,9 @@ extraction), and `vue` (experimental standalone SFC recovery). See rustdoc for e
   and report the format and reason on `InputReport::refusal` (and the
   receipt), so every existing `UnmatchedInput` policy treats it as before.
   `UnmatchedInput::SkipUnrecognized` is the one policy that tells them
-  apart: it processes a refused input as one file and skips the rest, which
-  is what a directory walk needs. The core prepares a refused input's AST
-  even when plain ASTs are not requested, so processing it does not parse it
-  again.
+  apart: it processes a refused input as one file and skips the rest. The
+  core prepares a refused input's AST even when plain ASTs are not
+  requested, so processing it does not parse it again.
 - Represent heuristic scope-hoist recovery as
   `InputDetection::HeuristicScopeHoisted` instead of pretending it identified
   a bundler; `BundleFormat` stays structural-only.

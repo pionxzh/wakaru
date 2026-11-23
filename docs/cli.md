@@ -37,21 +37,22 @@ wakaru gtm.js --unpack -o out/                # split a Google Tag Manager conta
 
 Directory inputs are supported only with `--unpack`. Wakaru recursively scans
 `.js`, `.mjs`, and `.cjs` files, skips hidden files/directories and
-`node_modules`, and includes only files detected as bundles or chunks. Skipped
-files are not copied or decompiled. Explicit file inputs keep the normal
-fallback behavior when no bundle format is detected.
+`node_modules`, and handles every file it finds as if it were passed
+explicitly: bundles and chunks are split, and other files are decompiled as
+one file each and placed like a plain input (see below). A chunk that holds a
+single module, such as a Vite or esbuild page chunk, is such a file. A Google
+Tag Manager container is split as it is for an explicit input. A file that
+does not parse is skipped; the
+`no parseable JavaScript files found in directory input` error means every
+candidate was skipped or there were none.
 
 A file can match a bundle format (webpack 4 or 5, a webpack 5 chunk push,
 Browserify, Turbopack, Metro, or SystemJS) and still not be split, because
 splitting would change what it does: for example, a module reads a name that
-code after the bundle declares. A directory scan keeps such a file: it is
-decompiled as one file, as an explicit input is, and placed like a plain
-input (see below). Wakaru also reports a non-error `bundle_split_refused`
+code after the bundle declares. Such a file is decompiled as one file. In a
+directory scan, Wakaru also reports a non-error `bundle_split_refused`
 warning that names the file, the matched format, and the reason. An explicit
-input gets the same one-file output without this warning. A directory whose
-candidates are only such files and plain files is not an empty scan; the
-`no bundle or chunk files detected in directory input` error needs every
-candidate to be plain or unparseable.
+input gets the same one-file output without this warning.
 
 An explicit PE, Mach-O, or ELF file can be a Bun single-file executable. Wakaru
 validates Bun's embedded module graph, selects its JS/JSX/TS/TSX entries, and
@@ -75,12 +76,12 @@ skips the GTM runtime, and writes each Custom JS variable to
 `macros/jsm-<n>.js`, each inline Custom HTML script to
 `tags/html-<tag_id>-<n>.js`, and an `index.md` listing the macros, the tags with
 the triggers that fire or block them, and the external
-script URLs. With more than one input, a container's files go under a
-directory named after its input file. Each script is decompiled on its own as
-a single file, without bundle detection; `--raw` writes it as extracted.
-Container scripts appear in `--json` output as modules, but `--provenance`,
-`--emit-source-map`, and `--vue-sfc` do not cover them. Directory scans do not
-detect containers. See [gtm.md](gtm.md) for macro references and current
+script URLs. With more than one input or a directory input, a container's
+files go under a directory named after its input file. Each script is
+decompiled on its own as a single file, without bundle detection; `--raw`
+writes it as extracted. Container scripts appear in `--json` output as
+modules, but `--provenance`, `--emit-source-map`, and `--vue-sfc` do not cover
+them. See [gtm.md](gtm.md) for macro references and current
 limits.
 
 Unpacked output follows Node's rules for ESM and CommonJS, except for the
