@@ -838,11 +838,15 @@ fn run_single(cli: Cli) -> Result<()> {
     };
 
     if cli.inputs.len() > 1 {
-        bail!("multiple input files require --unpack");
+        bail!(
+            "multiple input files require --unpack, which decompiles them together so imports between them are followed"
+        );
     }
     if let Some(input) = cli.inputs.first() {
         if input.is_dir() {
-            bail!("cannot decompile a directory. Pass a JavaScript file or use --unpack");
+            bail!(
+                "cannot decompile a directory. Pass a JavaScript file, or use --unpack to decompile the files in it together"
+            );
         }
     }
     let (input, filename) = read_input(cli.inputs.first())?;

@@ -2080,11 +2080,23 @@ fn decompile_rejects_directory_input() {
     let err = run_default(cli).expect_err("decompile should reject directory input");
     assert!(
         err.to_string()
-            .contains("cannot decompile a directory. Pass a JavaScript file or use --unpack"),
+            .contains("cannot decompile a directory. Pass a JavaScript file, or use --unpack"),
         "unexpected error: {err}"
     );
 
     fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn decompile_rejects_multiple_inputs_and_points_to_unpack() {
+    let cli = Cli::try_parse_from(["wakaru", "first.js", "second.js"])
+        .expect("multiple inputs should parse");
+    let err = run_default(cli).expect_err("decompile should reject multiple inputs");
+    assert!(
+        err.to_string()
+            .contains("multiple input files require --unpack, which decompiles them together"),
+        "unexpected error: {err}"
+    );
 }
 
 #[test]
